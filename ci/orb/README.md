@@ -28,13 +28,18 @@ reviewer agent has approved it (Working Agreement).
   closed or come from a fork.
 - Checks that commit out in a fresh worktree under `~/mo-ci/work`.
 - Runs the commit's own `ci/check.sh` with `CI=1`, under `env -i` with only
-  `PATH`, a fresh `HOME`, `LANG` and `CI`, so none of the orb's credentials
-  reach the code under test. The check runs in its own process group with a
-  time limit (`MO_CI_TIMEOUT_SECONDS`, 1800 by default); stopping the script
-  stops everything the check started.
+  `PATH`, a fresh `HOME`, `LANG` and `CI`, so the check doesn't inherit the
+  orb's credentials. That is not a hard boundary: the check runs as the same
+  user and could read another process's environment under `/proc`, which is
+  acceptable only because just Robert and his agents can push here. The check
+  runs in its own process group with a time limit (`MO_CI_TIMEOUT_SECONDS`,
+  1800 by default). Stopping the script with TERM or INT stops everything the
+  check started; a script killed with KILL can't, and its check runs on until
+  its time limit. The next run clears what it left behind.
 - Keeps the full log in `~/mo-ci/logs/robertguss__mo-pr<N>-<sha>.log`.
 - Comments the result on the pull request, prints a summary, and exits with the
-  check's status.
+  check's status: 0 when every check passed. It exits with 64 for a usage
+  error and 69 when it could not run the check at all.
 
 Runs share one clone, so a second run waits for the first.
 
