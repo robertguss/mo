@@ -29,6 +29,18 @@ Mo draws on Elixir and the BEAM (processes, supervision, hot code loading),
 Rust (safety plus control over memory and performance), Koka (effects and
 in-place updates) and Elm (helpful error messages).
 
+## Building
+
+Mo is implemented in C. With a C compiler and `make`:
+
+```sh
+make              # build build/<compiler>/debug/mo
+bash ci/check.sh  # every check CI runs
+```
+
+See [docs/design/implementation.md](docs/design/implementation.md) for the
+rules the implementation follows and how it is checked.
+
 ## Roadmap
 
 See [docs/ROADMAP.md](docs/ROADMAP.md). The first public release, v0.1, is
