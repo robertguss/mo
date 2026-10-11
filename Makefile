@@ -5,10 +5,11 @@
 #   make sanitize     run the tests under AddressSanitizer and UndefinedBehaviorSanitizer
 #   make fuzz-smoke   run every fuzz target briefly (needs clang with libFuzzer)
 #   make format       format the C sources with clang-format
+#   make tidy         check that results of standard-library calls are used (needs clang-tidy)
 #
 # ci/check.sh runs every check; CI runs ci/check.sh. Choose a compiler with
 # CC=gcc or CC=clang. Each compiler builds into its own directory, so switching
-# never forces a full rebuild.
+# never forces a full rebuild. Changing this Makefile rebuilds everything.
 
 CC ?= cc
 FUZZ_CC ?= clang
@@ -30,6 +31,7 @@ MAIN_SOURCE := src/main.c
 TEST_SOURCES := $(wildcard tests/test_*.c)
 FUZZ_SOURCES := $(wildcard fuzz/fuzz_*.c)
 C_FILES := $(wildcard src/*.c src/*.h tests/*.c tests/*.h fuzz/*.c)
+TIDY_FILES := $(wildcard src/*.c tests/*.c fuzz/*.c)
 
 objects = $(patsubst %.c,$(1)/%.o,$(2))
 
@@ -37,10 +39,15 @@ DEBUG_TESTS := $(patsubst tests/%.c,$(BUILD)/debug/tests/%.test,$(TEST_SOURCES))
 SANITIZE_TESTS := $(patsubst tests/%.c,$(BUILD)/sanitize/tests/%.test,$(TEST_SOURCES))
 FUZZERS := $(patsubst fuzz/%.c,$(FUZZ_BUILD)/bin/%,$(FUZZ_SOURCES))
 
-export ASAN_OPTIONS := detect_leaks=1:abort_on_error=1
-export UBSAN_OPTIONS := halt_on_error=1:print_stacktrace=1
+# Stop at the first sanitizer error. These are only defaults: options you have set in your
+# environment, or on the make command line, win. Leak detection is not forced, because Apple
+# clang's AddressSanitizer has no LeakSanitizer and aborts when asked for it; it is on by
+# default on Linux.
+ASAN_OPTIONS ?= abort_on_error=1
+UBSAN_OPTIONS ?= halt_on_error=1:print_stacktrace=1
+export ASAN_OPTIONS UBSAN_OPTIONS
 
-.PHONY: all test sanitize fuzz fuzz-smoke format format-check clean
+.PHONY: all test sanitize fuzz fuzz-smoke format format-check tidy clean
 
 all: $(BUILD)/debug/mo
 
@@ -54,7 +61,10 @@ sanitize: $(SANITIZE_TESTS) $(BUILD)/sanitize/mo
 
 fuzz: $(FUZZERS)
 
+# A crash artifact fails the run that found it. Start with none, so that one saved by an
+# earlier run does not keep failing the runs after the bug is fixed.
 fuzz-smoke: $(FUZZERS)
+	@rm -rf $(FUZZ_BUILD)/artifacts
 	@mkdir -p $(FUZZ_BUILD)/artifacts
 	@for f in $(FUZZERS); do \
 		name=$$(basename $$f); corpus=$(FUZZ_BUILD)/corpus/$$name; mkdir -p $$corpus; \
@@ -73,18 +83,29 @@ format:
 format-check:
 	clang-format --dry-run --Werror $(C_FILES)
 
+# cert-err33-c flags a call to a standard-library function whose result is ignored, such as
+# fflush or fprintf: the functions on CERT rule ERR33-C's list, which does not include printf,
+# puts or putchar. Casting the call to (void) ignores the result on purpose. Mo's own functions
+# are covered by MO_MUST_USE. The flags are the debug build's, so clang-tidy sees the code as
+# the compiler does (it ignores the -M options).
+tidy:
+	clang-tidy --quiet -checks='-*,cert-err33-c' -warnings-as-errors='*' -header-filter='.*' \
+		$(TIDY_FILES) -- $(COMMON) $(DEBUG)
+
 clean:
 	rm -rf build
 
-$(BUILD)/debug/%.o: %.c
+# Object files also depend on this Makefile, so a change to the flags rebuilds them. It comes
+# after the source file because $< is the first prerequisite.
+$(BUILD)/debug/%.o: %.c Makefile
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) -c $< -o $@
 
-$(BUILD)/sanitize/%.o: %.c
+$(BUILD)/sanitize/%.o: %.c Makefile
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(SANITIZE) -c $< -o $@
 
-$(FUZZ_BUILD)/%.o: %.c
+$(FUZZ_BUILD)/%.o: %.c Makefile
 	@mkdir -p $(dir $@)
 	$(FUZZ_CC) $(COMMON) $(FUZZ) -c $< -o $@
 

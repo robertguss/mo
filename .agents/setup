@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prepares an orb for robertguss/mo: C compilers with sanitizers and libFuzzer,
-# clang-format, make, and jq (used by the CI orb's runner). Installs only;
-# never builds or runs anything.
+# clang-format and clang-tidy, make, and jq (used by the CI orb's runner).
+# Installs only; never builds or runs anything.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
@@ -18,7 +18,7 @@ install_missing() {
 	fi
 }
 
-install_missing build-essential clang clang-format make jq git
+install_missing build-essential clang clang-format clang-tidy make jq git
 
 # libFuzzer and the sanitizer runtimes ship in a package named after clang's
 # major version.

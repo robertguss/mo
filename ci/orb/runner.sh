@@ -4,6 +4,11 @@
 # ci/check.sh and reports a "mo-ci" commit status to GitHub. On a failure it
 # also comments the end of the log on the commit's open pull requests.
 #
+# The check runs in its own process group with a minimal environment, so none
+# of the orb's credentials reach it. Stopping the runner stops the check and
+# everything it started; a job that a restart interrupted goes back to the
+# queue and runs again.
+#
 # Runs only in the CI orb, as the orb service "mo-ci-runner"; see
 # ci/orb/README.md.
 set -uo pipefail
@@ -18,12 +23,47 @@ context="mo-ci"
 timeout_seconds="${MO_CI_TIMEOUT_SECONDS:-1800}"
 mkdir -p "$queue" "$running" "$finished" "$work" "$logs"
 
+check_pid=""  # leads the process group of the check that is running, if any
+check_home="" # that check's HOME
+idle_pid=""   # the sleep between looks at the queue, if one is running
+
 thread_url=""
 if [[ -n "${AMP_URL:-}" && -n "${AMP_THREAD_ID:-}" ]]; then
 	thread_url="${AMP_URL%/}/threads/$AMP_THREAD_ID"
 fi
 
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+
+# Runs when the runner exits for any reason it can catch: stops the running check
+# and everything the check started, and removes its HOME. The job stays in
+# running/, and the next start of the runner puts it back in the queue.
+cleanup() {
+	if [[ -n "$idle_pid" ]]; then kill "$idle_pid" 2>/dev/null; fi
+	if [[ -n "$check_pid" ]]; then
+		# The check leads its own process group, so one signal reaches all of it. If
+		# TERM is ignored, the check's own timeout --kill-after sends KILL.
+		kill -s TERM -- "-$check_pid" 2>/dev/null
+		wait "$check_pid" 2>/dev/null
+		kill -s KILL -- "-$check_pid" 2>/dev/null
+		check_pid=""
+	fi
+	if [[ -n "$check_home" ]]; then
+		rm -rf "$check_home"
+		check_home=""
+	fi
+}
+trap cleanup EXIT
+trap 'exit 143' TERM # The EXIT trap stops the check.
+trap 'exit 130' INT
+
+# Sleeps in the background and waits, because bash runs a trap for a signal that
+# arrives during a foreground command only after the command ends.
+idle() {
+	sleep 3 &
+	idle_pid=$!
+	wait "$idle_pid"
+	idle_pid=""
+}
 
 post_status() { # repo sha state description
 	local args=(-f "state=$3" -f "context=$context" -f "description=$4")
@@ -73,16 +113,36 @@ run_job() { # job file
 		return
 	fi
 
+	if ! check_home=$(mktemp -d "$work/home.XXXXXX"); then
+		check_home=""
+		post_status "$repo" "$sha" error "The CI orb could not create a home directory for the checks"
+		return
+	fi
 	local start status=0 took
 	start=$(date +%s)
-	(cd "$tree" && CI=1 timeout --kill-after=30 "$timeout_seconds" bash ci/check.sh) >"$logfile" 2>&1 || status=$?
+	# The code under test gets only what it needs: no API keys, and a fresh HOME.
+	# setsid makes the check lead a new process group, whose id is $check_pid.
+	(
+		cd "$tree" || exit 1
+		exec setsid env -i PATH="$PATH" HOME="$check_home" LANG=C.UTF-8 CI=1 \
+			timeout --kill-after=30 "$timeout_seconds" bash ci/check.sh
+	) >"$logfile" 2>&1 &
+	check_pid=$!
+	wait "$check_pid" || status=$?
+	check_pid=""
+	rm -rf "$check_home"
+	check_home=""
 	took=$(($(date +%s) - start))
 
 	if ((status == 0)); then
 		post_status "$repo" "$sha" success "All checks passed in ${took}s"
-	elif ((status == 124 || status == 137)); then
+	elif ((status == 124)); then
 		post_status "$repo" "$sha" failure "Timed out after ${timeout_seconds}s"
 		comment_failure "$repo" "$sha" "$logfile" "checks timed out after ${timeout_seconds}s"
+	elif ((status == 137)); then
+		# SIGKILL: timeout's last resort after a timeout, or the kernel's out-of-memory killer.
+		post_status "$repo" "$sha" failure "Killed after ${took}s (timeout or out of memory)"
+		comment_failure "$repo" "$sha" "$logfile" "checks were killed after ${took}s (timeout or out of memory)"
 	else
 		post_status "$repo" "$sha" failure "Checks failed after ${took}s"
 		comment_failure "$repo" "$sha" "$logfile" "checks failed"
@@ -92,10 +152,20 @@ run_job() { # job file
 }
 
 log "mo-ci-runner started"
+
+# A job still in running/ was interrupted by a restart: it goes back in the queue
+# and runs again, instead of staying pending forever. Homes left by a runner that
+# was killed are removed too.
+for interrupted in "$running"/*.json; do
+	[[ -e "$interrupted" ]] || continue # the pattern matched nothing
+	if mv "$interrupted" "$queue/"; then log "requeued the interrupted job ${interrupted##*/}"; fi
+done
+rm -rf "$work"/home.*
+
 while true; do
 	next=$(ls -1tr "$queue"/*.json 2>/dev/null | head -n 1)
 	if [[ -z "$next" ]]; then
-		sleep 3
+		idle
 		continue
 	fi
 	claimed="$running/$(basename "$next")"

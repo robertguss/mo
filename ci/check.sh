@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Every check robertguss/mo's CI runs, in order. Run it before every push: the
-# CI orb runs exactly this on every push and pull request (decision D208).
+# CI orb runs exactly this on every push (decision D208).
 #
-# Locally, a check whose tool is missing is skipped with a note. In CI (CI=1)
-# a missing tool is an error, so nothing is skipped silently.
+# Locally, a check whose tool is missing is skipped with a note, and the summary
+# at the end counts what was skipped instead of claiming that all checks passed.
+# In CI (CI=1) a missing tool is an error, so nothing is skipped silently.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+skipped=() # why each skipped check was skipped
 
 step() { printf '\n==> %s\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -15,6 +18,7 @@ missing() {
 		exit 1
 	fi
 	echo "skipped: $1"
+	skipped+=("$1")
 }
 has_libfuzzer() {
 	local dir
@@ -51,7 +55,18 @@ fi
 step "Formatting"
 if have clang-format; then make --no-print-directory format-check; else missing "clang-format is not installed"; fi
 
+step "Results of standard-library calls are used (clang-tidy)"
+if have clang-tidy; then make --no-print-directory tidy; else missing "clang-tidy is not installed"; fi
+
 step "The CI orb's webhook plugin"
 if have bun; then bun test ci/orb; else missing "bun is not installed"; fi
 
-step "All checks passed"
+if ((${#skipped[@]} == 0)); then
+	step "All checks passed"
+else
+	noun="checks were"
+	if ((${#skipped[@]} == 1)); then noun="check was"; fi
+	step "${#skipped[@]} $noun skipped; the others passed"
+	printf '  - %s\n' "${skipped[@]}"
+	echo "CI treats a missing tool as an error. Install what is missing (.agents/setup does) before relying on this result."
+fi
