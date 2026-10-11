@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Every check robertguss/mo's CI runs, in order. Run it before every push: the
-# CI orb runs exactly this on every push (decision D208).
+# CI orb runs exactly this on each pull request it is sent (decisions D208, D214).
 #
 # Locally, a check whose tool is missing is skipped with a note, and the summary
 # at the end counts what was skipped instead of claiming that all checks passed.
@@ -57,9 +57,6 @@ if have clang-format; then make --no-print-directory format-check; else missing 
 
 step "Results of standard-library calls are used (clang-tidy)"
 if have clang-tidy; then make --no-print-directory tidy; else missing "clang-tidy is not installed"; fi
-
-step "The CI orb's webhook plugin"
-if have bun; then bun test ci/orb; else missing "bun is not installed"; fi
 
 if ((${#skipped[@]} == 0)); then
 	step "All checks passed"

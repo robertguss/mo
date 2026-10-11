@@ -22,7 +22,7 @@ check.
    code arrives; there is none to check yet.
 2. **Fuzzing in CI.** The parser, the bytecode loader, the VM and everything
    that reads outside input get fuzz targets in `fuzz/`, with seed inputs in
-   `fuzz/corpus/<target>/`. CI runs every target on every commit.
+   `fuzz/corpus/<target>/`. `ci/check.sh` runs every target, so every CI run fuzzes them all.
 3. **Tiger Style.** Assertions everywhere (`MO_ASSERT` is never compiled out),
    explicit limits, arenas instead of scattered `malloc` and `free`, every
    return value checked, and warnings treated as errors, including
@@ -60,11 +60,11 @@ options instead.
 
 ## CI
 
-CI runs in a dedicated Amp orb (decision D208): GitHub sends every push to the
-CI orb, which runs the commit's `ci/check.sh` and reports a `mo-ci` commit
-status. A pull request's commits arrive as pushes, because every pull request
-comes from a branch of this repository; forks are not accepted. See
-`ci/orb/README.md`.
+CI runs in a dedicated Amp orb, on request (decisions D208 and D214). An
+implementation thread pushes its branch, opens a pull request and sends it to
+the CI orb, which runs that commit's `ci/check.sh` in a clean environment,
+comments the result on the pull request, and replies. Nothing runs on GitHub.
+See `ci/orb/README.md`.
 
 ## Rust-era plans, replaced
 
