@@ -6,6 +6,8 @@
 #   make fuzz-smoke   run every fuzz target briefly (needs clang with libFuzzer)
 #   make format       format the C sources with clang-format
 #   make tidy         check that results of standard-library calls are used (needs clang-tidy)
+#   make grammar      check that Mo code parses with the executable grammar (needs bison):
+#                     the grammar's own tests, examples/ and the reference's examples
 #
 # ci/check.sh runs every check; CI runs ci/check.sh. Choose a compiler with
 # CC=gcc or CC=clang. Each compiler builds into its own directory, so switching
@@ -30,8 +32,22 @@ LIB_SOURCES := src/base.c src/cli.c
 MAIN_SOURCE := src/main.c
 TEST_SOURCES := $(wildcard tests/test_*.c)
 FUZZ_SOURCES := $(wildcard fuzz/fuzz_*.c)
-C_FILES := $(wildcard src/*.c src/*.h tests/*.c tests/*.h fuzz/*.c)
-TIDY_FILES := $(wildcard src/*.c tests/*.c fuzz/*.c)
+C_FILES := $(wildcard src/*.c src/*.h tests/*.c tests/*.h fuzz/*.c grammar/*.c grammar/*.h)
+TIDY_FILES := $(wildcard src/*.c tests/*.c fuzz/*.c grammar/*.c)
+
+# The executable grammar (grammar/): Bison builds its parser from grammar/mo.y. The code Bison
+# writes doesn't meet Mo's own warning flags, so it gets the plain ones.
+GRAMMAR_GENERATED := build/grammar
+GRAMMAR_SOURCES := grammar/lexer.c grammar/ast.c
+GRAMMAR_INCLUDES := -Igrammar -I$(GRAMMAR_GENERATED)
+GRAMMAR_PARSER_WARNINGS := $(CSTD) -Wall -Wextra -Werror -MMD -MP
+grammar_objects = $(patsubst grammar/%.c,$(1)/grammar/%.o,$(GRAMMAR_SOURCES)) \
+	$(1)/grammar/mo.tab.o $(1)/src/base.o
+GRAMMAR_CHECK = $(1) --fragment grammar/tests/good/*.mo && \
+	$(1) --fragment --expect-error grammar/tests/bad/*.mo && \
+	$(1) --expect-error grammar/tests/bad-files/*.mo && \
+	$(1) examples/*.mo && \
+	$(1) docs/reference/README.md
 
 objects = $(patsubst %.c,$(1)/%.o,$(2))
 
@@ -47,7 +63,7 @@ ASAN_OPTIONS ?= abort_on_error=1
 UBSAN_OPTIONS ?= halt_on_error=1:print_stacktrace=1
 export ASAN_OPTIONS UBSAN_OPTIONS
 
-.PHONY: all test sanitize fuzz fuzz-smoke format format-check tidy clean
+.PHONY: all test sanitize fuzz fuzz-smoke format format-check tidy grammar clean
 
 all: $(BUILD)/debug/mo
 
@@ -58,6 +74,11 @@ test: $(DEBUG_TESTS) $(BUILD)/debug/mo
 sanitize: $(SANITIZE_TESTS) $(BUILD)/sanitize/mo
 	@for t in $(SANITIZE_TESTS); do $$t || exit 1; done
 	@$(BUILD)/sanitize/mo >/dev/null && $(BUILD)/sanitize/mo --version >/dev/null
+
+# The grammar checks run on the debug build, then again under the sanitizers.
+grammar: $(BUILD)/debug/mo-grammar $(BUILD)/sanitize/mo-grammar
+	@$(call GRAMMAR_CHECK,$(BUILD)/debug/mo-grammar)
+	@($(call GRAMMAR_CHECK,$(BUILD)/sanitize/mo-grammar)) >/dev/null
 
 fuzz: $(FUZZERS)
 
@@ -88,9 +109,9 @@ format-check:
 # puts or putchar. Casting the call to (void) ignores the result on purpose. Mo's own functions
 # are covered by MO_MUST_USE. The flags are the debug build's, so clang-tidy sees the code as
 # the compiler does (it ignores the -M options).
-tidy:
-	clang-tidy --quiet -checks='-*,cert-err33-c' -warnings-as-errors='*' -header-filter='.*' \
-		$(TIDY_FILES) -- $(COMMON) $(DEBUG)
+tidy: $(GRAMMAR_GENERATED)/mo.tab.h
+	clang-tidy --quiet -checks='-*,cert-err33-c' -warnings-as-errors='*' -header-filter='^(src|tests|fuzz|grammar)/' \
+		$(TIDY_FILES) -- $(COMMON) $(DEBUG) $(GRAMMAR_INCLUDES)
 
 clean:
 	rm -rf build
@@ -124,6 +145,51 @@ $(BUILD)/sanitize/tests/%.test: $(BUILD)/sanitize/tests/%.o $(call objects,$(BUI
 $(FUZZ_BUILD)/bin/%: $(FUZZ_BUILD)/fuzz/%.o $(call objects,$(FUZZ_BUILD),$(LIB_SOURCES))
 	@mkdir -p $(dir $@)
 	$(FUZZ_CC) $(FUZZ) $^ -o $@
+
+$(FUZZ_BUILD)/bin/fuzz_grammar: $(FUZZ_BUILD)/fuzz/fuzz_grammar.o $(call grammar_objects,$(FUZZ_BUILD))
+	@mkdir -p $(dir $@)
+	$(FUZZ_CC) $(FUZZ) $^ -o $@
+
+$(FUZZ_BUILD)/fuzz/fuzz_grammar.o: fuzz/fuzz_grammar.c $(GRAMMAR_GENERATED)/mo.tab.h Makefile
+	@mkdir -p $(dir $@)
+	$(FUZZ_CC) $(COMMON) $(FUZZ) $(GRAMMAR_INCLUDES) -c $< -o $@
+
+# The executable grammar
+$(GRAMMAR_GENERATED)/mo.tab.c: grammar/mo.y Makefile
+	@mkdir -p $(dir $@)
+	bison -Wall -Werror --header=$(GRAMMAR_GENERATED)/mo.tab.h -o $@ $<
+
+$(GRAMMAR_GENERATED)/mo.tab.h: $(GRAMMAR_GENERATED)/mo.tab.c
+
+$(BUILD)/debug/mo-grammar: $(BUILD)/debug/grammar/main.o $(call grammar_objects,$(BUILD)/debug)
+	$(CC) $(DEBUG) $^ -o $@
+
+$(BUILD)/sanitize/mo-grammar: $(BUILD)/sanitize/grammar/main.o $(call grammar_objects,$(BUILD)/sanitize)
+	$(CC) $(SANITIZE) $^ -o $@
+
+$(BUILD)/debug/grammar/%.o: grammar/%.c $(GRAMMAR_GENERATED)/mo.tab.h Makefile
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) $(GRAMMAR_INCLUDES) -c $< -o $@
+
+$(BUILD)/sanitize/grammar/%.o: grammar/%.c $(GRAMMAR_GENERATED)/mo.tab.h Makefile
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) $(GRAMMAR_INCLUDES) -c $< -o $@
+
+$(FUZZ_BUILD)/grammar/%.o: grammar/%.c $(GRAMMAR_GENERATED)/mo.tab.h Makefile
+	@mkdir -p $(dir $@)
+	$(FUZZ_CC) $(COMMON) $(FUZZ) $(GRAMMAR_INCLUDES) -c $< -o $@
+
+$(BUILD)/debug/grammar/mo.tab.o: $(GRAMMAR_GENERATED)/mo.tab.c Makefile
+	@mkdir -p $(dir $@)
+	$(CC) $(GRAMMAR_PARSER_WARNINGS) $(DEBUG) $(GRAMMAR_INCLUDES) -c $< -o $@
+
+$(BUILD)/sanitize/grammar/mo.tab.o: $(GRAMMAR_GENERATED)/mo.tab.c Makefile
+	@mkdir -p $(dir $@)
+	$(CC) $(GRAMMAR_PARSER_WARNINGS) $(SANITIZE) $(GRAMMAR_INCLUDES) -c $< -o $@
+
+$(FUZZ_BUILD)/grammar/mo.tab.o: $(GRAMMAR_GENERATED)/mo.tab.c Makefile
+	@mkdir -p $(dir $@)
+	$(FUZZ_CC) $(GRAMMAR_PARSER_WARNINGS) $(FUZZ) $(GRAMMAR_INCLUDES) -c $< -o $@
 
 # Keep object files between builds, so only changed files recompile.
 .SECONDARY:

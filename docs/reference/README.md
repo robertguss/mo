@@ -1,4 +1,1180 @@
-# Mo Language Reference
+# Mo Language Reference, v0.1
 
-This reference is written during Phase 1, one part at a time as the core
-design settles. It is meant to be small enough for an agent to read in full.
+**Draft for review, 12 October 2026.** This is core Mo, the language that later
+versions build services, live upgrades and approved intent on. It is written to
+be read in full, by people and by agents, before writing Mo.
+
+Every rule has an example, and every code example parses with Mo's executable
+grammar (`grammar/` in this repository). "An error" below means the compiler
+rejects the program. "Stops" means a running program has hit a bug and ends
+with a report (section 13.2).
+
+## 1. A first program
+
+```mo
+## Prints each word given on the command line, in capitals.
+module Shout
+
+fn main(args: Args, console: Console)
+  for word in args.list
+    console.print(word.ascii_uppercase)
+  end
+end
+```
+
+- A file is one module, named on its first line.
+- `main` lists the capabilities the program needs: here its arguments and the
+  console. They are its whole authority. It can't touch files, the network or
+  the clock, because it wasn't handed them (section 11).
+- Blocks open with a keyword and close with `end`. Indentation carries no
+  meaning; `mo format` lays code out with two spaces per level.
+
+## 2. Source text
+
+### 2.1 Files
+
+A program is a tree of modules under one root folder. The module
+`Shop.OrderBook` lives in `shop/order-book.mo`: each part of its name becomes a
+lowercase folder or file name, with hyphens between words.
+
+Source is UTF-8. Characters that change how text looks without being seen are
+an error anywhere, even in text and comments: direction overrides, zero-width
+characters, and control characters other than tab and line breaks. In text,
+write them as escapes, such as `"\u{200B}"`.
+
+### 2.2 Comments
+
+`#` starts a comment that runs to the end of the line. `##` documents the
+declaration below it, or the module when it comes before `module`.
+
+```mo
+## The price of an order, with tax.
+fn total(order: Order) : Decimal
+  order.subtotal + order.tax  # the tax is already rounded
+end
+```
+
+### 2.3 Names
+
+- Values, functions, fields and parameters are snake_case: lowercase ASCII
+  letters, digits and `_`, starting with a letter.
+- Types, the cases of choice types, and modules are CapCase: `OrderBook`,
+  `NotFound`.
+- A type parameter is a single capital letter: `T`, `K`, `V`.
+- A name ending in `?` is a yes-or-no answer: a `Bool`, or a function that
+  returns one, such as `empty?` or `paid?`.
+- `_` alone means "ignored". A name starting with `_` is unused on purpose.
+
+Names are ASCII; text and comments may use any Unicode. These words are
+reserved:
+
+```text
+allows and assert break case continue else end enum examples expose false fn
+for forbids if implies in is module not or promise return stop struct test true
+try use var where while
+```
+
+### 2.4 Lines
+
+A line break ends a statement; there are no semicolons. A statement continues
+on the next line when its line ends with an opening bracket, a comma, `.`, `=`
+or a binary operator, or when the next line starts with a closing bracket, `.`,
+`where` or a binary operator other than `-`.
+
+```mo
+order = Order(
+  id: 7,
+  lines: [],
+  paid?: false
+)
+names = customers
+  .filter(fn(c) c.active? end)
+  .map(fn(c) c.name end)
+ready = stocked and
+  priced
+```
+
+## 3. Values and types
+
+| Type | Values | Section |
+| --- | --- | --- |
+| `Bool` | `true` and `false` | 3.1 |
+| `Int`, `BigInt`, `Byte` | whole numbers | 3.2 |
+| `Decimal`, `Float` | fractions | 3.3 |
+| `Text`, `Char`, `Bytes` | Unicode text, one character, binary data | 3.4 |
+| `Unit` | just `Unit`, what a function that returns nothing returns | 3.5 |
+| `(A, B)` | tuples | 3.6 |
+| `List(T)`, `Map(K, V)`, `Set(T)` | collections | 3.7, 3.8 |
+| `Time`, `Duration` | instants and lengths of time | 3.9 |
+| records and choice types | declared with `struct` and `enum` | 4 |
+| `fn(A) : B` | functions | 5.6 |
+| `Option(T)`, `Result(T, E)` | maybe-missing values, and success or failure | 8 |
+| capabilities | `Console`, `Files` and the others | 11 |
+
+All values are immutable. A `var` (section 6.2) changes which value a name
+holds, never a value someone else holds. Mo never converts between types
+silently: a conversion is a function call, and one that could lose information
+or fail returns an `Option`. Comparing or combining values of different types
+is an error.
+
+### 3.1 Bool
+
+`and` and `or` evaluate their right side only when they need it, and `not`
+negates. A condition must be a `Bool`: no numbers, texts or lists stand in for
+one.
+
+```mo
+ready = in_stock and not on_hold
+if order.lines.empty?
+  console.print("nothing to ship")
+end
+```
+
+`a implies b` means `not a or b`. It reads best in promises (section 12.2).
+
+### 3.2 Whole numbers
+
+`Int` is a 64-bit signed whole number, and the type of counts, sizes and
+positions. Literals may put `_` between digits, and may be hexadecimal or
+binary:
+
+```mo
+population = 8_100_000_000
+mask = 0xFF
+flags = 0b1010
+```
+
+`+`, `-`, `*`, `/` and `%` take two numbers of the same type. `/` rounds toward
+zero, and `%` gives the remainder with the sign of the left side: `-7 / 2` is
+`-3`, and `-7 % 2` is `-1`. `a.floor_div(b)` and `a.floor_mod(b)` round toward
+negative infinity instead.
+
+Overflow, and dividing by zero, are bugs: the program stops. Code that expects
+a result might not fit says what it wants instead:
+
+```mo
+fits = a.checked_add(b)            # an Option(Int): None if it doesn't fit
+hash = h.wrapping_mul(31)          # wraps around
+level = level.saturating_add(10)   # stops at the largest Int
+```
+
+`BigInt` holds whole numbers of any size: `n.to_big` converts to one, and
+`big.to_int` returns `None` when the value doesn't fit. `Byte` holds 0 to 255,
+for binary data; `n.to_byte` returns an `Option(Byte)`.
+
+### 3.3 Decimal and Float
+
+A literal with a decimal point, such as `19.99`, is a `Decimal`: an exact
+fraction with 18 decimal places, up to about ±1.7 × 10²⁰. Decimal arithmetic is
+exact while results fit in 18 places, so `0.1 + 0.2 == 0.3`. A result that
+needs more places, such as `1.00 / 3`, is rounded to the nearest 18th place,
+with an exact tie rounded to the even digit. Overflow and dividing by zero stop
+the program, as with `Int`. A decimal's text form is its shortest exact
+spelling: `15.5`, `3`, `0.001`.
+
+`Float` is a 64-bit IEEE 754 binary floating-point number, for science and
+graphics. A number literal takes the type its context needs: in `x * 0.5`, with
+`x` a `Float`, `0.5` is a `Float`, and in `price * 2`, with `price` a
+`Decimal`, `2` is a `Decimal`. A literal with nothing to decide its type is an
+`Int`, or a `Decimal` if it has a decimal point. Converting is explicit:
+
+```mo
+share = cents.to_decimal / 100      # Int to Decimal
+ratio = share.to_float              # Decimal to Float, rounded to the nearest float
+back = ratio.to_decimal             # an Option: a float may be infinite or not a number
+rounded = share.round(2)            # 2 places, ties away from zero, as people round by hand
+label = rounded.to_fixed(2)         # the text "0.10": exactly 2 places
+```
+
+### 3.4 Text, Char and Bytes
+
+`Text` is Unicode text. It is stored as UTF-8 and is always valid. Text is
+written in double quotes, with the escapes `\n`, `\t`, `\r`, `\\`, `\"`, `\'`,
+`\#` and `\u{1F600}` (a character by its hexadecimal code). `#{...}` inside text
+inserts the text form of any value that has one (section 9.2):
+
+```mo
+greeting = "Hello, #{name}! You have #{count} new messages."
+literal = "write \#{name} to insert a name"
+```
+
+Text on several lines starts with `"""` at the end of a line and ends with
+`"""` on a line of its own. It holds the lines between them, without the line
+break before the closing `"""`, which sets the indentation every line drops:
+
+```mo
+usage = """
+  Usage: report [--json] FILE
+  Prints a summary of FILE.
+  """
+```
+
+A `Char` is one Unicode character (a code point), in single quotes: `'a'`,
+`'\n'`, `'é'`.
+
+Text has no single "length". `text.byte_count` counts UTF-8 bytes, instantly;
+`text.char_count` counts characters, reading the text. There is no `text[i]`:
+use whole-text operations such as `split`, `lines`, `trim`, `starts_with?` and
+`replace`, or walk `text.chars`. Two texts are equal when their bytes are
+equal, and texts sort by character code. Mo never normalizes text silently.
+The `Unicode16` module (section 14) normalizes text, splits it into
+user-perceived characters, and converts case beyond ASCII.
+
+`Bytes` is binary data. `text.bytes` always succeeds; `bytes.decode_utf8`
+returns `None` when the bytes aren't valid UTF-8.
+
+### 3.5 Unit
+
+`Unit` is the type with one value, also written `Unit`. A function with no
+result type returns it. `Result(Unit, E)` is the result of an action that can
+fail but has nothing to return.
+
+### 3.6 Tuples
+
+A tuple groups two or more values: `(3, "three")` has type `(Int, Text)`.
+`pair.0` and `pair.1` read its parts, and a pattern takes it apart:
+
+```mo
+(low, high) = bounds(readings)
+spread = high - low
+```
+
+### 3.7 Lists
+
+`List(T)` is Mo's sequence: `[1, 2, 3]`, or `[]` when empty. Every element has
+the same type. Reading by position returns an `Option`, because the position
+may be past the end:
+
+```mo
+first = items.first          # an Option
+third = items.get(2)         # positions start at 0
+longer = items.append(4)     # a new list; items itself is unchanged
+```
+
+Functions that "change" a list return a new one. When the old list has no
+other holder, the new one reuses its memory, so building a list in a loop costs
+what it would with a mutable array (section 13.3).
+
+### 3.8 Maps and sets
+
+`Map(K, V)` maps keys to values: `{"apples": 3, "pears": 5}`, or `{}` when
+empty. Keys are expressions, so `{fruit: 3}` uses the value of `fruit`. A
+literal that gives the same key twice is an error. `Set(T)` holds
+distinct values: `Set.empty`, or `items.to_set`. Keys and set members need
+equality and hashing, which most types have (section 9.2).
+
+Maps and sets keep insertion order, also after removals: iterating visits keys
+in the order they were first added, and setting an existing key keeps its
+place. Two maps are equal when they hold the same entries, in any order.
+Iterating a map gives `(key, value)` tuples.
+
+```mo
+stock = {"apples": 3}
+more = stock.set("pears", 5)
+count = more.get("apples") or 0   # get returns an Option
+for (fruit, n) in more
+  console.print("#{fruit}: #{n}")
+end
+```
+
+### 3.9 Time and Duration
+
+A `Time` is an instant, read from a `Clock` (section 11). A `Duration` is a
+length of time, made from an `Int`: `5.seconds`, `200.milliseconds`,
+`3.minutes`, `2.hours`, `7.days`. Subtracting two times gives a `Duration`;
+adding a `Duration` to a `Time` gives a `Time`; durations add, subtract and
+multiply by an `Int`. Times and durations compare with `<` and the other
+comparisons.
+
+```mo
+expires = now + 30.minutes
+late? = now - order.placed > 2.days
+```
+
+## 4. Records and choice types
+
+### 4.1 Records
+
+A `struct` declares a record type: named fields, each with a type. A record is
+built by naming every field, in any order, and its fields are read with `.`:
+
+```mo
+struct Point
+  x: Decimal
+  y: Decimal
+end
+
+origin = Point(x: 0, y: 0)
+sum = origin.x + origin.y
+```
+
+There are no optional fields; a field that may be missing has an `Option`
+type. Records have no methods: functions in the record's module work on it
+(section 5.4).
+
+### 4.2 Choice types
+
+An `enum` declares a choice type: each value is exactly one of its cases. A
+case carries no data, one unnamed value, or named fields:
+
+```mo
+enum Shape
+  Dot
+  Circle(Decimal)
+  Rectangle(width: Decimal, height: Decimal)
+end
+
+fn area(shape: Shape) : Decimal
+  case shape
+    Dot: 0
+    Circle(r): 3.14159 * r * r
+    Rectangle(width: w, height: h): w * h
+  end
+end
+```
+
+A case is built like a record, by naming its fields, or from its one unnamed
+value: `Circle(2.5)`. Types may be generic and recursive:
+
+```mo
+enum Tree(T)
+  Leaf
+  Node(left: Tree(T), value: T, right: Tree(T))
+end
+```
+
+A module's cases share one name space: no two of its enums have a case of the
+same name, and none reuses a name that is always in scope, such as `None` or
+`Error`. `Option` and `Result` are ordinary choice types (section 8).
+
+## 5. Functions
+
+### 5.1 Definitions
+
+```mo
+fn shipping(weight: Decimal, express?: Bool) : Decimal
+  base = 4.50 + weight * 0.75
+  if express?: base * 2 else: base
+end
+```
+
+A signature gives every parameter's type and the result's type; a function
+with no result type returns `Unit`. Inside a body, types are inferred. A body is
+a sequence of statements, and its value is the value of its last line. `return`
+leaves early. A trailing `if`, a guard, is allowed only on the three early
+exits: `return`, `break` and `continue`.
+
+```mo
+fn discount(total: Decimal, member?: Bool) : Decimal
+  return 0 if not member?
+  return total * 0.10 if total > 100
+  total * 0.05
+end
+```
+
+Functions are declared at the top level of a module. There are no default or
+optional parameters. Two functions in a module share a name only when their
+first parameters are different types declared in that module, so both `Order`
+and `OrderLine` can have a `total`; a call picks the one whose first parameter
+matches.
+
+### 5.2 Calls
+
+Arguments are passed by position: `shipping(2.5, false)`. Only records and
+cases are built with named fields.
+
+### 5.3 Recursion
+
+Functions may call themselves and each other. A call in tail position, the last
+thing a function does, uses no stack, so a recursive loop can run as long as it
+needs to:
+
+```mo
+fn sum_to(n: Int, total: Int) : Int
+  if n == 0: total else: sum_to(n - 1, total + n)
+end
+```
+
+### 5.4 Dot calls
+
+`x.f(a, b)` calls `f(x, a, b)`, and `x.f`, with no other arguments, calls
+`f(x)`. Mo looks for `f` first in the module that declares the type of `x`, then
+among the names in scope. Chains read left to right: `text.trim.lines.size`.
+
+```mo
+words = sentence.split(" ")      # Text's split
+loud = shout(words)              # a function in this module
+same = words.shout               # the same call
+```
+
+Where a record's field and a function share a name, `x.name` is the field
+where the field is visible, and the function elsewhere (section 10.2). When the
+field holds a function, `x.name(a)` calls it with `a`.
+
+### 5.5 Generic functions
+
+A single capital letter in a signature is a type parameter, and `where` asks
+for abilities (section 9):
+
+```mo
+fn largest(items: List(T)) : Option(T) where T: Order
+  items.sort.last
+end
+```
+
+### 5.6 Functions as values
+
+A named function is a value: `prices.map(with_tax)`. An anonymous function is
+written `fn(x) ... end`, on one line or several, and its parameter types are
+inferred. A function type is written like a signature: `fn(Decimal) : Decimal`,
+or `fn(Text)` for one that returns `Unit`.
+
+```mo
+taxed = prices.map(fn(p) p * 1.2 end)
+labels = orders.map(fn(order)
+  status = if order.paid?: "paid" else: "due"
+  "#{order.id}: #{status}"
+end)
+```
+
+A function value is pure. It can read names in scope where it is made, but it
+can't assign a `var`, and it can't capture a capability (section 11.4).
+
+## 6. Names, bindings and variables
+
+### 6.1 Bindings
+
+`name = value` binds a name once. A name is visible from its binding to the end
+of its block. Within a function a name means one thing: while a local name is
+visible it can't be bound again, even in an inner block or an anonymous
+function's parameters, and a function can't use one name both for a local and
+for one of its module's functions or constants. Unused names, parameters,
+imports and results are errors; a name starting with `_` is unused on purpose.
+
+```mo
+subtotal = order.lines.map(fn(line) line.price end).sum
+tax = subtotal * 0.2
+```
+
+### 6.2 Variables
+
+`var name = value` declares a name that can be assigned again within the
+function that declares it. Assigning to a field, or to a field of a field,
+builds a new record with that field changed:
+
+```mo
+var cart = Cart(owner: "ana", items: [], total: 0)
+cart.items = cart.items.append(item)
+cart.total += item.price
+```
+
+`+=` and `-=` add to and subtract from a `var` or its fields; `mo format`
+writes `x = x + y` as `x += y`. Assignment never changes a value anyone else
+holds: whoever holds the old cart still sees the old cart. When the `var` is its
+value's only holder, the new value reuses its memory.
+
+No parameter is passed by reference: a function returns a new value, and its
+caller assigns it.
+
+## 7. Control flow and patterns
+
+### 7.1 if
+
+`if` runs a block when its condition is true, with optional `else if` and
+`else` blocks. With an `else`, an `if` has a value: the value of the block that
+ran. A block `if` stands on a line of its own or after `=`.
+
+```mo
+if temperature > 30
+  console.print("hot")
+else if temperature < 5
+  console.print("cold")
+else
+  console.print("mild")
+end
+
+grade = if score >= 90
+  "A"
+else
+  "B"
+end
+```
+
+A value that fits on one line uses the one-line form, which always has an
+`else` and may chain:
+
+```mo
+unit = if count == 1: "item" else: "items"
+sign = if n < 0: "negative" else if n == 0: "zero" else: "positive"
+```
+
+### 7.2 case
+
+`case` compares a value with patterns, top to bottom, and runs the first arm
+that matches. An arm is `Pattern: statement` on one line, or `Pattern:` followed
+by lines that run until the next arm or `end`. The value of a `case` is the
+value of the arm that ran.
+
+```mo
+message = case outcome
+  Ok(order): "placed order #{order.id}"
+  Error(UnknownItem(name: n)): "no such item: #{n}"
+  Error(BadQuantity(problem)):
+    detail = describe(problem)
+    "bad quantity: #{detail}"
+end
+```
+
+The arms must cover every possible value; if they don't, the error lists what's
+missing. A catch-all arm (`_` or a name) can't stand in for a choice type's
+cases: list them, so that a case added later shows every place that must handle
+it. Arms with the same body share a line, as in `Saturday | Sunday: "weekend"`,
+and an arm may have a guard, as in `Some(n) if n > 10: "many"`.
+
+### 7.3 Patterns
+
+| Pattern | Matches |
+| --- | --- |
+| `_` | anything, and ignores it |
+| `name` | anything, and binds it to `name` |
+| `42`, `-1`, `2.5`, `"GET"`, `'x'`, `true` | that literal value |
+| `None`, `Some(p)`, `Circle(p)` | that case, with its value matching `p` |
+| `Rectangle(width: p, height: q)` | that case or record, with the named fields matching; fields not named are ignored |
+| `(p, q)` | a tuple |
+| `[]`, `[p, q]`, `[first, ..rest]` | an empty list, a list of exactly two, a list of at least one |
+
+### 7.4 is
+
+`value is Pattern` tests a pattern, giving a `Bool`. The names the pattern
+binds are visible where the test is known to be true: in the block of the `if`
+or `while` it guards, after `and` in the same condition, after `implies`, and
+after an `assert`.
+
+```mo
+if reply is Ok(body) and body.size > 0
+  console.print(body)
+end
+while console.read_line is Some(line)
+  console.print(line.ascii_uppercase)
+end
+```
+
+### 7.5 Loops
+
+`for` runs a block for each element of a list, set, map or range, and `while`
+runs a block while a condition is true. `break` leaves the loop, and `continue`
+starts its next round. A range `a..b` counts from `a` up to, but not including,
+`b`.
+
+```mo
+var total = 0
+for i in 0..10
+  continue if i % 2 == 0
+  total += i
+end
+
+var remaining = 100
+var halvings = 0
+while remaining > 1
+  remaining = remaining / 2
+  halvings += 1
+end
+```
+
+## 8. Failures and missing values
+
+Mo has no null and no exceptions. A value that may be missing is an `Option`; a
+function that can fail returns a `Result`; and a bug stops the program
+(section 13.2). Both are ordinary choice types:
+
+```mo
+enum Option(T)
+  Some(T)
+  None
+end
+
+enum Result(T, E)
+  Ok(T)
+  Error(E)
+end
+```
+
+### 8.1 Options
+
+`x or default` gives the value inside a `Some`, or the default for `None`.
+`x.or_fail(e)` turns `None` into `Error(e)`. `case` and `is` handle both cases:
+
+```mo
+city = address.city or "unknown"
+case users.get(id)
+  Some(user): console.print(user.name)
+  None: console.print("no user #{id}")
+end
+```
+
+### 8.2 Results and declared failures
+
+A function that can fail declares its failures as a choice type, and returns a
+`Result`:
+
+```mo
+enum QuantityError
+  Empty
+  NotANumber(text: Text)
+  Negative(value: Int)
+end
+
+fn parse_quantity(text: Text) : Result(Int, QuantityError)
+  trimmed = text.trim
+  return Error(Empty) if trimmed.empty?
+  case trimmed.to_int
+    Some(n) if n < 0: Error(Negative(value: n))
+    Some(n): Ok(n)
+    None: Error(NotANumber(text: trimmed))
+  end
+end
+```
+
+### 8.3 Passing failures upward: try
+
+`try expr` takes the value out of an `Ok`, or returns the `Error` from the
+function it is in. It works on a `Result` in a function that returns a
+`Result`, and on an `Option` in a function that returns an `Option`. When the
+failure types differ, `try` wraps the failure if the function's failure type
+has exactly one case that holds it:
+
+```mo
+enum OrderError
+  BadQuantity(QuantityError)
+  UnknownItem(name: Text)
+end
+
+fn parse_line(line: Text, catalog: Map(Text, Item)) : Result(OrderLine, OrderError)
+  parts = line.split(",")
+  name = try parts.get(0).or_fail(UnknownItem(name: line))
+  quantity = try parse_quantity(parts.get(1) or "")   # a QuantityError becomes BadQuantity(...)
+  item = try catalog.get(name).or_fail(UnknownItem(name: name))
+  Ok(OrderLine(item: item, quantity: quantity))
+end
+```
+
+With no such case, or more than one, `try` is an error that says which case to
+add. Ignoring a `Result` is an error too: every failure is passed upward or
+handled.
+
+### 8.4 Can't happen
+
+There is no "unwrap". Where a failure truly can't happen, the code says why,
+with `stop`:
+
+```mo
+rate = case rates.get(currency)
+  Some(r): r
+  None: stop "every currency was checked against the rate table at startup"
+end
+```
+
+Reaching a `stop` is a bug: the program stops and reports the reason.
+
+## 9. Generics and abilities
+
+### 9.1 Generic types
+
+`List(T)`, `Map(K, V)` and your own types take type parameters:
+
+```mo
+struct Page(T)
+  items: List(T)
+  number: Int
+end
+```
+
+### 9.2 The five abilities
+
+An ability is something a type can do. There are five, all built in:
+
+| Ability | What it gives | Customized with |
+| --- | --- | --- |
+| `Equal` | `==` and `!=` | nothing: equality is always structural |
+| `Hash` | use as a map key or a set member | nothing: always structural |
+| `Order` | `<`, `<=`, `>`, `>=`, `sort`, `min` and `max` | `fn compare(a: T, b: T) : Ordering` |
+| `Text` | a text form, for `#{...}` and printing | `fn to_text(x: T) : Text` |
+| `Number` | `+`, `-`, `*`, `/`, `%` and `sum` | nothing: only `Int`, `BigInt`, `Decimal` and `Float` have it |
+
+```mo
+enum Ordering
+  Less
+  Equal
+  Greater
+end
+```
+
+A type with `Hash` or `Order` also has `Equal`. Ability names appear only after
+`where`, so they don't clash with other names. Records and choice types get
+`Equal`, `Hash`, `Order` and `Text` automatically whenever all their fields
+have them. Equality compares field by field; order
+compares fields in the order they are declared, and cases in the order they are
+declared. The automatic text form looks like the code that builds the value:
+`Point(x: 1.5, y: 2)`. A `Text` value's text form is itself, and it is quoted
+inside another value's. Functions and capabilities have no abilities.
+
+A type customizes `Order` or `Text` with one ordinary function in its own
+module:
+
+```mo
+struct Money
+  cents: Int
+  currency: Text
+end
+
+fn to_text(money: Money) : Text
+  "#{(money.cents.to_decimal / 100).to_fixed(2)} #{money.currency}"
+end
+```
+
+`Float` follows IEEE rules: "not a number" equals nothing and sorts last, and
+floats have no `Hash`, so they can't be map keys.
+
+There are no user-defined abilities in v0.1. Code that needs something other
+than these five takes a function as a parameter.
+
+## 10. Modules
+
+### 10.1 The header
+
+A module starts with its name, then the `expose` line listing its public names,
+then its `use` lines:
+
+```mo
+## Orders: building, pricing and checking them.
+module Shop.Orders
+expose Order, OrderError(..), place, total
+use Shop.Catalog
+use Shop.Money{Money, add}
+```
+
+Everything not on the `expose` line is private to the module. Tests in the same
+file see everything (section 12.3).
+
+### 10.2 Hidden insides
+
+`expose Order` exposes the type without its fields or cases. Outside the module
+an `Order` can't be built, taken apart or have its fields read; it can only be
+passed to the module's functions. `expose OrderError(..)` exposes the fields or
+cases too. Hidden insides keep values valid: if `place` is the only way to get
+an `Order`, every `Order` has passed `place`'s checks.
+
+### 10.3 use
+
+`use Shop.Catalog` lets this module write `Catalog.find(...)` and
+`Catalog.Item`. `use Shop.Money{Money, add}` also brings those names in
+unqualified, and a choice type's exposed cases come with it. There are no
+wildcards and no aliases. A clash between names is an error that suggests the
+qualified form, and so is a cycle of modules that use each other.
+
+### 10.4 Constants
+
+A module may bind fixed values at its top level:
+
+```mo
+max_attempts = 3
+default_currency = "EUR"
+```
+
+There is no module-level state. Values that last and change belong to
+processes, which come in a later version.
+
+### 10.5 Always in scope
+
+Always in scope: the built-in types of section 3, `Option` with `Some` and
+`None`, `Result` with `Ok` and `Error`, `Ordering` with its cases, and the
+capability types. The functions of section 14 belong to their types' modules:
+call them with a dot, as in `text.lines`, or through the module, as in
+`Set.empty` and `Time.parse(text)`. So a local may be called `lines` or
+`count` without clashing with them.
+
+## 11. Capabilities and effects
+
+### 11.1 What a function can touch
+
+A function can affect or observe the world outside the program only through
+capabilities it is handed as parameters. A capability's type names what it can
+do: `Console` prints, `Files` reads and writes files, `Clock` tells the time.
+So a function's parameter types are its complete list of effects, and a
+function with no capability parameter only computes: given the same arguments,
+it always gives the same result.
+
+| Capability | Lets a program |
+| --- | --- |
+| `Args` | read its command-line arguments |
+| `Env` | read environment variables |
+| `Console` | print to standard output and standard error, and read standard input |
+| `Files` | read and write files in one folder and the folders inside it |
+| `ReadFiles` | only read them |
+| `Clock` | read the current time |
+| `Random` | draw random numbers |
+
+### 11.2 main
+
+`main` lists the capabilities the program needs, in any order and at most one
+of each type. The runtime hands over exactly those, so a program's whole
+authority is on its first line. The `Files` or `ReadFiles` it gets reach the
+folder the program was started in.
+
+`main` returns nothing, and the program exits with status 0; or an `Int`, the
+exit status, from 0 to 255; or `Result(Unit, E)`, where `Error(e)` prints `e`'s
+text form to standard error and exits with status 1.
+
+```mo
+## Prints the first line of each file named on the command line.
+module Head
+
+fn main(args: Args, console: Console, files: ReadFiles) : Result(Unit, FileError)
+  for name in args.list
+    text = try files.read_text(name)
+    console.print(text.lines.first or "")
+  end
+  Ok(Unit)
+end
+```
+
+### 11.3 Passing less
+
+A capability can be narrowed before it is passed on. `files.within("reports")`
+reaches only that folder, and `files.read_only` returns a `ReadFiles`, which
+can only read. Pass each function the least it needs:
+
+```mo
+summary = try summarize(files.within("reports").read_only)
+```
+
+### 11.4 Rules
+
+- Records may hold capabilities, so a function that needs several can take one
+  record.
+- Anonymous functions can't capture capabilities, or values holding them. A
+  function that needs one takes it as a parameter.
+- Only the runtime makes real capabilities. Tests, examples and promises use
+  fakes (section 12.4).
+- Capabilities have no abilities: they can't be compared, printed or used as
+  keys.
+- There are no log statements. To report something, print it or return it.
+
+## 12. Examples, promises and tests
+
+A function's specification sits at the top of its body: its promises and
+examples, then a blank line, then its code.
+
+### 12.1 Examples
+
+`examples` lists calls with their expected results. Each line is a `Bool`
+expression, usually `call == expected`, and `mo test` checks every line:
+
+```mo
+fn initials(name: Text) : Text
+  examples
+    initials("Ada Lovelace") == "AL"
+    initials("") == ""
+  end
+
+  firsts = name.words.filter_map(fn(word) word.chars.first end)
+  Text.from_chars(firsts)
+end
+```
+
+### 12.2 Promises
+
+A `promise` states what must hold for every call. It has three parts:
+
+- **a sentence** saying, in plain words, what is promised;
+- **a body**: one or more `Bool` lines over the parameters and `result`, the
+  function's result, which must all be true;
+- **anchors**: at least one `allows` line and one `forbids` line. Each gives
+  every parameter and `result` a value, which the body must accept or reject.
+
+```mo
+fn apply_discount(price: Decimal, percent: Int) : Decimal
+  promise "a discount never raises a price or makes it negative"
+    result <= price
+    result >= 0
+    allows price: 50.00, percent: 10, result: 45.00
+    forbids price: 50.00, percent: 10, result: 55.00
+  end
+
+  return price if percent <= 0
+  return 0 if percent >= 100
+  price - price * percent.to_decimal / 100
+end
+```
+
+The compiler checks that the body accepts every `allows` and rejects every
+`forbids`, which catches a body that doesn't say what its sentence says.
+`mo test` checks the body against the function on many generated inputs,
+boundaries first. Proofs come in a later version.
+
+A promise about many steps, such as "an accepted job is never lost", is a
+promise on the function that takes one step: something each step keeps true
+between its input and its result.
+
+There are no preconditions. What a caller must guarantee becomes a type, such
+as a `Quantity` that its module never builds negative, or a failure, such as
+`Error(InvalidAmount)`.
+
+### 12.3 Tests
+
+A `test` names a scenario in a sentence and checks it with `assert`. Tests
+live in the same file as the code and see its private names. A name bound by
+`assert ... is Pattern` stays in scope for the rest of the test:
+
+```mo
+test "a quantity is read past spaces"
+  assert parse_quantity(" 12 ") is Ok(n)
+  assert n == 12
+  assert parse_quantity("-1") == Error(Negative(value: -1))
+end
+```
+
+### 12.4 Fakes
+
+Tests, examples and promises make fake capabilities, which reach nothing
+outside the program: `Console.fake`, whose `printed` and `printed_errors` list
+the lines written to standard output and standard error;
+`Console.fake_input(lines)`, which also has those lines to read;
+`Files.in_memory(files)`, from a map of paths to texts; `Clock.fixed(time)`;
+`Random.seeded(n)`; `Args.of(list)`; and `Env.of(map)`. Fakes are made only
+there, never in a module's constants or its functions.
+
+```mo
+test "head prints the first line of each file"
+  console = Console.fake
+  files = Files.in_memory({"a.txt": "one\ntwo\n"}).read_only
+  assert main(Args.of(["a.txt"]), console, files) == Ok(Unit)
+  assert console.printed == ["one"]
+end
+```
+
+## 13. Running
+
+### 13.1 Evaluation
+
+Mo evaluates eagerly, left to right: a call's arguments, then the call; an
+operator's left side, then its right. `and`, `or` and `implies` skip their right
+side when the left decides the answer. `try` returns early, and `stop` stops the
+program.
+
+### 13.2 Bugs
+
+A bug stops the program at once, with a report of what happened and where, and
+exit status 70. These are bugs: overflow in `Int`, `Decimal` or `Duration`
+arithmetic; dividing by zero; reaching a `stop`; running out of stack in calls
+that aren't in tail position; running out of memory; an exit status outside 0
+to 255; and printing to an output that is gone. Bugs are never caught.
+
+### 13.3 Costs
+
+Mo promises what operations cost, not how values are stored:
+
+| Operation | Cost |
+| --- | --- |
+| `get`, `size`, `first` and `last` on a list | constant |
+| `append` on a list, and assigning a `var`'s field | constant when the value has one holder; a copy when it's shared |
+| `get`, `set`, `remove` and `has?` on a map, and the same on a set | constant on average |
+| `byte_count` | constant |
+| `char_count`, `split`, `lines`, `contains?` | proportional to the text's length |
+| `sort` and `sort_by` | n log n, and stable |
+
+A value is shared when two names, fields or collections hold it. Changing a
+value with one holder reuses its memory; changing a shared value copies it
+first, and its other holders keep the old value.
+
+## 14. The core library
+
+Functions are listed under the type of their first parameter, which is how
+they are called with a dot: `text.split(",")`. `pred` is a function returning a
+`Bool`, and `f` is any function. Where a function needs an ability, the note
+says so.
+
+**Int**: `abs`, `min(b)`, `max(b)`, `pow(n)` (`n` at least 0), `floor_div(b)`,
+`floor_mod(b)`; `checked_add(b)`, `checked_sub(b)`, `checked_mul(b)` (each an
+`Option(Int)`); `wrapping_add(b)`, `wrapping_sub(b)`, `wrapping_mul(b)`;
+`saturating_add(b)`, `saturating_sub(b)`, `saturating_mul(b)`; `to_decimal`,
+`to_float`, `to_big`, `to_byte` (an `Option`), `to_char` (an `Option`),
+`to_text`; `seconds`, `milliseconds`, `minutes`, `hours`, `days` (each a
+`Duration`).
+
+**Decimal**: `abs`, `min(b)`, `max(b)`, `round(places)`, `floor`, `ceil`,
+`to_int` (an `Option`: `None` unless whole and in range), `to_float`,
+`to_fixed(places)` (a `Text`), `to_text`.
+
+**Float**: `abs`, `floor`, `ceil`, `round`, `sqrt`, `nan?`, `infinite?`,
+`to_decimal` (an `Option`), `to_text`.
+
+**Text**: `byte_count`, `char_count`, `empty?`, `chars` (a `List(Char)`),
+`bytes`, `lines` (without their line endings), `words` (split at ASCII white
+space), `split(separator)`, `trim`, `trim_start`, `trim_end` (ASCII white
+space), `starts_with?(prefix)`, `ends_with?(suffix)`, `contains?(part)`,
+`drop_prefix(prefix)` and `drop_suffix(suffix)` (each an `Option(Text)`, `None`
+when the text doesn't have it), `replace(old, new)`, `repeat(n)`,
+`pad_left(width)` and `pad_right(width)` (with spaces, counting characters),
+`ascii_lowercase`, `ascii_uppercase`; `to_int`, `to_decimal` and `to_float`
+(each an `Option`, `None` unless the whole text is the number).
+`Text.from_chars(chars)` builds text from characters.
+
+**Char**: `code` (an `Int`), `ascii_digit?`, `ascii_letter?`,
+`ascii_white_space?`, `ascii_lowercase`, `ascii_uppercase`, `to_text`.
+
+**Bytes**: `size`, `get(i)` (an `Option(Byte)`), `decode_utf8` (an
+`Option(Text)`).
+
+**List(T)**: `size`, `empty?`; `get(i)`, `first`, `last` (each an `Option`);
+`append(x)`, `prepend(x)`, `concat(other)`; `set(i, x)` and `remove_at(i)`
+(each an `Option(List(T))`, `None` past the end); `take(n)`, `drop(n)`,
+`reverse`; `map(f)`, `filter(pred)`, `filter_map(f)` (keeps the values in the
+`Some`s that `f` returns), `flat_map(f)`, `reduce(start, f)` (calls
+`f(so_far, element)` from the left), `find(pred)` (an `Option`), `any?(pred)`,
+`all?(pred)`, `count(pred)`, `enumerate` (a `List((Int, T))`), `zip(other)`;
+`sort_by(key)` and `sort_by_desc(key)` (the key needs `Order`);
+`contains?(x)` (needs `Equal`); `sort`, `min`, `max` (need `Order`); `unique`,
+`to_set`, `group_by(key)` (a `Map(K, List(T))`; need `Hash`); `sum` (needs
+`Number`); `join(separator)` (on a `List(Text)`); `to_map` (on a
+`List((K, V))`).
+
+**Map(K, V)**: `size`, `empty?`, `get(key)` (an `Option(V)`), `has?(key)`,
+`set(key, value)`, `remove(key)`, `update(key, default, f)` (sets the key to
+`f` of its value, or of `default` when it has none), `keys`, `values`, `entries`
+(a `List((K, V))`).
+
+**Set(T)**: `size`, `empty?`, `has?(x)`, `add(x)`, `remove(x)`, `union(other)`,
+`intersection(other)`, `difference(other)`, `to_list`. `Set.empty` is the empty
+set.
+
+**Range**: `for` loops over it; `to_list`, `contains?(n)`.
+
+**Option(T)**: `or` (an operator: `x or default`), `or_fail(e)`, `map(f)`.
+
+**Result(T, E)**: `map(f)`, `map_error(f)`.
+
+**Time**: `Time.parse(text)` (an `Option`, from RFC 3339 text), `to_text` (RFC
+3339), and the operators of section 3.9. **Duration**: `in_milliseconds` (an
+`Int`), `in_seconds` (a `Decimal`), `to_text`.
+
+**Args**: `list` (the arguments after the program's name).
+
+**Env**: `get(name)` (an `Option(Text)`).
+
+**Console**: `print(text)` and `error(text)` write a line to standard output or
+standard error; `read_line` reads one from standard input (an `Option(Text)`,
+`None` at the end).
+
+**Files**: `read_text(path)` (a `Result(Text, FileError)`), `read_bytes(path)`,
+`write_text(path, text)` (replaces the whole file; a `Result(Unit, FileError)`),
+`append_text(path, text)`, `remove(path)`, `list(folder)` (the names in it,
+sorted), `exists?(path)`, `within(folder)`, `read_only`. **ReadFiles** has
+`read_text`, `read_bytes`, `list`, `exists?` and `within`. Paths are relative,
+use `/`, and can't leave the capability's folder.
+
+**FileError**: `NotFound(path: Text)`, `NotAllowed(path: Text)`,
+`NotText(path: Text)`, `Failed(path: Text, reason: Text)`. Its text form reads
+like `notes/a.md: no such file`.
+
+**Clock**: `now`. **Random**: `int(low, high)`, a whole number from `low` up to,
+but not including, `high`.
+
+**Unicode16**, following Unicode 16.0: `graphemes(text)`, `display_width(text)`,
+`normalize_nfc(text)`, `lowercase(text)`, `uppercase(text)`. A later runtime
+adds `Unicode17` beside it, so what a program computes changes only when its
+`use` line does.
+
+## 15. What comes later
+
+Processes, messages and supervision, and tool schemas derived from types
+(Phase 3); runtime introspection and replay (Phase 4); live upgrades
+(Phase 5); approving and locking promises (Phase 6); demanding that a function
+update its input in place (Phase 7); packages and user-defined abilities
+(Phase 8). None of them changes a rule in this reference.
+
+## Appendix A. Errors
+
+Every error has a headline in this reference's words, the code with the exact
+spot marked, one reason citing the rule's section, and the fix:
+
+```text
+error E0412: a failure is ignored                        shop/orders.mo:14:3
+
+   14 │   files.write_text("orders.txt", report)
+      │   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ returns Result(Unit, FileError), and the result is dropped
+
+Mo never drops a failure silently (reference 8.3). Pass it upward, or handle it:
+
+Fix:
+   14 │   try files.write_text("orders.txt", report)
+```
+
+A code such as `E0412` never changes its meaning. `mo check --json` gives each
+error as JSON, with its code, positions, message, and fixes as text edits, and
+`mo fix` applies a fix when there is only one. Errors are reported in source
+order, without the follow-on errors one mistake causes. There are no warnings:
+a problem is an error, or it isn't reported.
+
+## Appendix B. Grammar
+
+The executable grammar, `grammar/mo.y`, is the authority, and this is its
+summary. `x*` means zero or more, `x+` one or more, `x?` optional, and `NL` a
+line break as section 2.4 defines it.
+
+```text
+module      = "module" Path NL ("expose" exposed ("," exposed)* NL)? use* item*
+exposed     = name | Name | Name "(" ".." ")"
+use         = "use" Path ("{" (name | Name) ("," (name | Name))* "}")? NL
+item        = function | struct | enum | test | name "=" expr NL
+function    = "fn" name "(" params? ")" (":" type)? where? NL (promise | examples)* statement* "end" NL
+params      = name ":" type ("," name ":" type)*
+where       = "where" Name ":" Name ("," Name ":" Name)*
+type        = Name ("." Name)? ("(" type ("," type)* ")")?
+            | "(" type ("," type)+ ")"
+            | "fn" "(" (type ("," type)*)? ")" (":" type)?
+struct      = "struct" Name ("(" Name ("," Name)* ")")? NL (name ":" type NL)+ "end" NL
+enum        = "enum" Name ("(" Name ("," Name)* ")")? NL (case NL)+ "end" NL
+case        = Name | Name "(" type ")" | Name "(" name ":" type ("," name ":" type)* ")"
+promise     = "promise" text NL (expr NL)+ (("allows" | "forbids") anchor ("," anchor)* NL)+ "end" NL
+anchor      = name ":" expr
+examples    = "examples" NL (expr NL)+ "end" NL
+test        = "test" text NL statement* "end" NL
+statement   = simple NL
+            | "for" binder "in" expr NL statement* "end" NL
+            | "while" expr NL statement* "end" NL
+simple      = expr | block_if
+            | target "=" (expr | block_if) | target ("+=" | "-=") expr | "var" name "=" (expr | block_if)
+            | "return" expr? ("if" expr)? | ("break" | "continue") ("if" expr)? | "assert" expr
+binder      = name | "_" | "(" binder ("," binder)+ ")"
+block_if    = "if" expr NL statement* ("else" "if" expr NL statement*)* ("else" NL statement*)? "end"
+expr        = "if" expr ":" expr "else" (":" expr | expr)        # one-line if; "else if" chains
+            | expr ("implies" | "or" | "and") expr | "not" expr
+            | expr ("==" | "!=" | "<" | "<=" | ">" | ">=") expr | expr "is" pattern
+            | expr ".." expr | expr ("+" | "-" | "*" | "/" | "%") expr | ("-" | "try") expr
+            | expr "." (name | Name | digits) | expr "(" (arg ("," arg)*)? ")"
+            | literal | name | Name | "(" expr ")" | "(" expr ("," expr)+ ")"
+            | "[" (expr ("," expr)*)? "]" | "{" (expr ":" expr ("," expr ":" expr)*)? "}"
+            | "case" expr NL arm (arm | statement)* "end"
+            | "fn" "(" (name ("," name)*)? ")" (expr | NL statement*) "end"
+            | "stop" text
+arg         = expr | name ":" expr
+arm         = pattern ("|" pattern)* ("if" expr)? ":" simple? NL
+```
+
+Operators, from loosest to tightest. Comparisons, `..` and `implies` don't
+chain; the others do, left to right.
+
+| Level | Operators |
+| --- | --- |
+| 1 | one-line `if ... else ...` |
+| 2 | `implies` |
+| 3 | `or` |
+| 4 | `and` |
+| 5 | `not` |
+| 6 | `==` `!=` `<` `<=` `>` `>=` `is` |
+| 7 | `..` |
+| 8 | `+` `-` |
+| 9 | `*` `/` `%` |
+| 10 | `-` (negation) and `try` |
+| 11 | `.name`, `.0`, and calls |

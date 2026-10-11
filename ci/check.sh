@@ -52,6 +52,13 @@ else
 	missing "clang with libFuzzer is not installed"
 fi
 
+step "The executable grammar: its tests, the examples and the reference's code parse"
+if have bison && (have clang || have gcc); then
+	if have clang; then make --no-print-directory grammar CC=clang; else make --no-print-directory grammar CC=gcc; fi
+else
+	missing "bison or a C compiler is not installed"
+fi
+
 step "Formatting"
 if have clang-format; then make --no-print-directory format-check; else missing "clang-format is not installed"; fi
 

@@ -49,6 +49,7 @@ make sanitize       # the tests under AddressSanitizer and UndefinedBehaviorSani
 make fuzz-smoke     # every fuzz target for 20 seconds (needs clang with libFuzzer)
 make format         # format the C sources with clang-format
 make tidy           # standard-library results are used (needs clang-tidy)
+make grammar        # Mo code parses with the executable grammar (needs bison)
 bash ci/check.sh    # everything CI runs: run it before every push
 ```
 
@@ -57,6 +58,16 @@ own directory, and only changed files recompile; changing the Makefile
 recompiles everything. `make sanitize` stops at the first error by default;
 set `ASAN_OPTIONS` or `UBSAN_OPTIONS` in your environment to use your own
 options instead.
+
+## The executable grammar
+
+`grammar/` holds Mo's grammar as a Bison file, with the lexer and the checks a
+grammar can't express. It is an instrument, not the compiler: it checks that
+the reference's examples, the programs in `examples/` and the learnability
+test's answers parse, and it proves the grammar unambiguous, because Bison
+refuses a grammar with any conflict. Phase 2's parser is hand-written, for
+better error messages, and is tested against this grammar. See
+`grammar/README.md`.
 
 ## CI
 
