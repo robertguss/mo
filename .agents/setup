@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Prepares an orb for robertguss/mo: C compilers with sanitizers and libFuzzer,
-# clang-format and clang-tidy, make, and jq (used by the CI orb's runner).
+# clang-format and clang-tidy, make, and jq.
 # Installs only; never builds or runs anything.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
