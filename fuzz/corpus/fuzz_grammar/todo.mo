@@ -24,7 +24,7 @@ enum TodoError
   Usage
   BadLine(number: Int)
   NoSuchItem(number: Int)
-  Unreadable(FileError)
+  Storage(FileError)
 end
 
 fn to_text(problem: TodoError) : Text
@@ -32,7 +32,7 @@ fn to_text(problem: TodoError) : Text
     Usage: "usage: todo add TEXT | list | done N | remove N"
     BadLine(number: n): "line #{n} of #{file} isn't an item"
     NoSuchItem(number: n): "there is no item #{n}"
-    Unreadable(failure): "#{failure}"
+    Storage(failure): "#{failure}"
   end
 end
 
@@ -58,6 +58,7 @@ end
 fn parse_items(text: Text) : Result(List(Item), TodoError)
   examples
     parse_items("[ ] milk\n[x] eggs\n") == Ok([Item(text: "milk", done?: false), Item(text: "eggs", done?: true)])
+    parse_items("") == Ok([])
     parse_items("milk\n") == Error(BadLine(number: 1))
   end
 
@@ -93,14 +94,23 @@ fn apply(items: List(Item), command: Command) : Result(List(Item), TodoError)
     forbids items: [milk], command: Done(number: 1), result: Ok([])
   end
 
+  examples
+    apply([milk], Done(number: 1)) == Ok([milk_done])
+    apply([milk], Remove(number: 0)) == Error(NoSuchItem(number: 0))
+    apply([milk], Remove(number: 2)) == Error(NoSuchItem(number: 2))
+  end
+
   case command
     Add(text: text): Ok(items.append(Item(text: text, done?: false)))
     Show: Ok(items)
     Done(number: n):
+      return Error(NoSuchItem(number: n)) if n < 1
       var item = try items.get(n - 1).or_fail(NoSuchItem(number: n))
       item.done? = true
       items.set(n - 1, item).or_fail(NoSuchItem(number: n))
-    Remove(number: n): items.remove_at(n - 1).or_fail(NoSuchItem(number: n))
+    Remove(number: n):
+      return Error(NoSuchItem(number: n)) if n < 1
+      items.remove_at(n - 1).or_fail(NoSuchItem(number: n))
   end
 end
 
@@ -109,7 +119,7 @@ fn main(args: Args, console: Console, files: Files) : Result(Unit, TodoError)
   saved = case files.read_text(file)
     Ok(text): text
     Error(NotFound(path: _)): ""
-    Error(failure): return Error(Unreadable(failure))
+    Error(failure): return Error(Storage(failure))
   end
   items = try apply(try parse_items(saved), command)
   if command == Show
@@ -127,7 +137,7 @@ milk_done = Item(text: "milk", done?: true)
 
 test "items added and marked done are saved, and listed by number"
   files = Files.in_memory({})
-  console = Console.fake
+  console = Console.fake()
   assert main(Args.of(["add", "buy", "milk"]), console, files) == Ok(Unit)
   assert main(Args.of(["add", "call", "Ana"]), console, files) == Ok(Unit)
   assert main(Args.of(["done", "1"]), console, files) == Ok(Unit)
@@ -138,5 +148,5 @@ end
 
 test "an item that isn't there is reported"
   files = Files.in_memory({file: "[ ] milk\n"})
-  assert main(Args.of(["remove", "3"]), Console.fake, files) == Error(NoSuchItem(number: 3))
+  assert main(Args.of(["remove", "3"]), Console.fake(), files) == Error(NoSuchItem(number: 3))
 end

@@ -15,7 +15,7 @@ fn main(args: Args, console: Console)
 end
 
 test "only the first argument is used"
-  console = Console.fake
+  console = Console.fake()
   main(Args.of(["Ada", "Grace"]), console)
   assert console.printed == ["Hello, Ada!"]
 end

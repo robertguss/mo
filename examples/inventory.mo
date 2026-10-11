@@ -1,6 +1,6 @@
 ## Generic helpers for lists, and a text table whose columns line up, used on
-## a product list: the most valuable stock, the products in each category, and
-## the categories once each.
+## a product list: the most valuable stock, how many products each category
+## has, and one product from each category.
 module Inventory
 
 struct Product
@@ -30,32 +30,33 @@ fn top_by(items: List(T), n: Int, key: fn(T) : K) : List(T) where K: Order
   items.sort_by_desc(key).take(n)
 end
 
-## The items grouped by key: keys in the order they first appear, and each
-## group in the items' order.
-fn group_by_key(items: List(T), key: fn(T) : K) : Map(K, List(T)) where K: Hash
+## How many items have each key, keys in the order they first appear.
+fn count_by(items: List(T), key: fn(T) : K) : Map(K, Int) where K: Hash
   examples
-    group_by_key(["apple", "bean", "avocado"], fn(s) s.chars.first end) == {Some('a'): ["apple", "avocado"], Some('b'): ["bean"]}
+    count_by(["apple", "bean", "avocado"], fn(s) s.char_count end) == {5: 1, 4: 1, 7: 1}
+    count_by([1, 2, 3, 4], fn(n) n % 2 end) == {1: 2, 0: 2}
   end
 
-  var groups = {}
+  var counts = {}
   for item in items
-    groups = groups.update(key(item), [], fn(group) group.append(item) end)
+    counts = counts.update(key(item), 0, fn(n) n + 1 end)
   end
-  groups
+  counts
 end
 
-## Each item once, where it first appears.
-fn distinct(items: List(T)) : List(T) where T: Hash
+## The first item for each key, in the items' order.
+fn first_by(items: List(T), key: fn(T) : K) : List(T) where K: Hash
   examples
-    distinct([2, 1, 2, 3, 1]) == [2, 1, 3]
-    distinct(["a"]) == ["a"]
+    first_by(["apple", "bean", "avocado"], fn(s) s.chars.first end) == ["apple", "bean"]
+    first_by([3, 3, 1], fn(n) n end) == [3, 1]
   end
 
   var seen = Set.empty
   var kept = []
   for item in items
-    continue if seen.has?(item)
-    seen = seen.add(item)
+    k = key(item)
+    continue if seen.has?(k)
+    seen = seen.add(k)
     kept = kept.append(item)
   end
   kept
@@ -82,20 +83,21 @@ fn pad_column(rows: List(T), column: Column(T)) : List(Text)
   cells.map(fn(cell) if column.numeric?: cell.pad_left(width) else: cell.pad_right(width) end)
 end
 
-products = [
-  Product(name: "Kettle", category: "kitchen", price: 39.90, stock: 12),
-  Product(name: "Desk lamp", category: "office", price: 24.50, stock: 40),
-  Product(name: "Chef's knife", category: "kitchen", price: 89.00, stock: 5),
-  Product(name: "Notebook", category: "office", price: 3.20, stock: 300),
-  Product(name: "Doormat", category: "home", price: 19.99, stock: 0)
-]
+kettle = Product(name: "Kettle", category: "kitchen", price: 39.90, stock: 12)
+lamp = Product(name: "Desk lamp", category: "office", price: 24.50, stock: 40)
+knife = Product(name: "Chef's knife", category: "kitchen", price: 89.00, stock: 5)
+notebook = Product(name: "Notebook", category: "office", price: 3.20, stock: 300)
+doormat = Product(name: "Doormat", category: "home", price: 19.99, stock: 0)
+products = [kettle, lamp, knife, notebook, doormat]
 
-product_columns = [
-  Column(title: "product", cell: fn(p) p.name end, numeric?: false),
-  Column(title: "category", cell: fn(p) p.category end, numeric?: false),
-  Column(title: "price", cell: fn(p) p.price.to_fixed(2) end, numeric?: true),
-  Column(title: "stock", cell: fn(p) "#{p.stock}" end, numeric?: true)
-]
+fn product_columns() : List(Column(Product))
+  [
+    Column(title: "product", cell: fn(p) p.name end, numeric?: false),
+    Column(title: "category", cell: fn(p) p.category end, numeric?: false),
+    Column(title: "price", cell: fn(p) p.price.to_fixed(2) end, numeric?: true),
+    Column(title: "stock", cell: fn(p) "#{p.stock}" end, numeric?: true)
+  ]
+end
 
 fn stock_value(product: Product) : Decimal
   product.price * product.stock.to_decimal
@@ -103,22 +105,25 @@ end
 
 fn main(console: Console)
   console.print("The three most valuable stocks:")
-  console.print(table(top_by(products, 3, stock_value), product_columns))
+  console.print(table(top_by(products, 3, stock_value), product_columns()))
   console.print("")
-  for (category, group) in group_by_key(products, fn(p) p.category end)
-    names = group.map(fn(p) p.name end).join(", ")
-    console.print("#{category}: #{names}")
+  for (category, count) in count_by(products, fn(p) p.category end)
+    console.print("#{category}: #{count}")
   end
   console.print("")
-  console.print("Categories: #{distinct(products.map(fn(p) p.category end)).join(", ")}")
+  picks = first_by(products, fn(p) p.category end).map(fn(p) p.name end)
+  console.print("One from each category: #{picks.join(", ")}")
 end
 
 test "the table lines up text on the left and numbers on the right"
-  rows = [products.get(0), products.get(3)].filter_map(fn(p) p end)
   expected = """
     product   category  price  stock
     Kettle    kitchen   39.90     12
     Notebook  office     3.20    300
     """
-  assert table(rows, product_columns) == expected
+  assert table([kettle, notebook], product_columns()) == expected
+end
+
+test "the most valuable stock comes first"
+  assert top_by(products, 2, stock_value) == [lamp, notebook]
 end

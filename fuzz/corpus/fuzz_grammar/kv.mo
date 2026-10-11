@@ -5,6 +5,9 @@
 module Kv
 expose Store, Command(..), Reply(..), ParseError(..), empty_store, parse, apply
 
+## The longest expiry EXPIRE accepts, in seconds: about 100 years.
+max_expiry = 3_153_600_000
+
 struct Entry
   value: Text
   expires: Option(Time)
@@ -15,7 +18,7 @@ struct Store
 end
 
 enum Command
-  Set(key: Text, value: Text)
+  Put(key: Text, value: Text)
   Get(key: Text)
   Del(keys: List(Text))
   Incr(key: Text)
@@ -51,7 +54,7 @@ empty_store = Store(entries: {})
 
 fn parse(line: Text) : Result(Command, ParseError)
   examples
-    parse("SET name ada") == Ok(Set(key: "name", value: "ada"))
+    parse("SET name ada") == Ok(Put(key: "name", value: "ada"))
     parse("get name") == Ok(Get(key: "name"))
     parse("DEL a b") == Ok(Del(keys: ["a", "b"]))
     parse("EXPIRE name ten") == Error(NotAnInteger(text: "ten"))
@@ -62,13 +65,13 @@ fn parse(line: Text) : Result(Command, ParseError)
 
   case line.words
     []: Error(Empty)
-    [name, ..args]: command(name.ascii_uppercase, args)
+    [name, ..args]: build_command(name.ascii_uppercase, args)
   end
 end
 
-fn command(name: Text, args: List(Text)) : Result(Command, ParseError)
+fn build_command(name: Text, args: List(Text)) : Result(Command, ParseError)
   case (name, args)
-    ("SET", [key, value]): Ok(Set(key: key, value: value))
+    ("SET", [key, value]): Ok(Put(key: key, value: value))
     ("GET", [key]): Ok(Get(key: key))
     ("DEL", [_, .._]): Ok(Del(keys: args))
     ("INCR", [key]): Ok(Incr(key: key))
@@ -83,13 +86,13 @@ end
 fn apply(store: Store, command: Command, now: Time) : (Store, Reply)
   promise "a store never holds a key past its expiry"
     result.0.entries.values.all?(fn(entry) entry.expires is Some(at) implies at > now end)
-    allows store: empty_store, command: Set(key: "a", value: "1"), now: t0, result: (holding("a", "1", None), Okay)
-    forbids store: empty_store, command: Set(key: "a", value: "1"), now: t0, result: (holding("a", "1", Some(t0)), Okay)
+    allows store: empty_store, command: Put(key: "a", value: "1"), now: t0, result: (holding("a", "1", None), Okay)
+    forbids store: empty_store, command: Put(key: "a", value: "1"), now: t0, result: (holding("a", "1", Some(t0)), Okay)
   end
 
   live = without_expired(store, now)
   case command
-    Set(key: key, value: value): (put(live, key, Entry(value: value, expires: None)), Okay)
+    Put(key: key, value: value): (put(live, key, Entry(value: value, expires: None)), Okay)
     Get(key: key):
       case live.entries.get(key)
         Some(entry): (live, Value(entry.value))
@@ -102,14 +105,7 @@ fn apply(store: Store, command: Command, now: Time) : (Store, Reply)
       end
       (after, Count(live.entries.size - after.entries.size))
     Incr(key: key): increment(live, key)
-    Expire(key: key, seconds: seconds):
-      case live.entries.get(key)
-        None: (live, Count(0))
-        Some(entry):
-          var timed = entry
-          timed.expires = Some(now + seconds.seconds)
-          (without_expired(put(live, key, timed), now), Count(1))
-      end
+    Expire(key: key, seconds: n): expire(live, key, n, now)
   end
 end
 
@@ -131,6 +127,31 @@ fn increment(store: Store, key: Text) : (Store, Reply)
           var updated = entry
           updated.value = "#{more}"
           (put(store, key, updated), Count(more))
+      end
+  end
+end
+
+## Sets a key to expire `ttl` seconds from now. A `ttl` of 0 or less removes
+## the key at once, as Redis does.
+fn expire(store: Store, key: Text, ttl: Int, now: Time) : (Store, Reply)
+  examples
+    expire(empty_store, "a", 10, t0).1 == Count(0)
+    expire(holding("a", "1", None), "a", 10, t0).1 == Count(1)
+    expire(holding("a", "1", None), "a", -1, t0) == (empty_store, Count(1))
+    expire(holding("a", "1", None), "a", 4_000_000_000, t0).1 == Failure(message: "invalid expire time")
+  end
+
+  return (store, Failure(message: "invalid expire time")) if ttl > max_expiry
+  case store.entries.get(key)
+    None: (store, Count(0))
+    Some(_) if ttl <= 0: (Store(entries: store.entries.remove(key)), Count(1))
+    Some(entry):
+      case now.checked_add(ttl.seconds)
+        None: (store, Failure(message: "invalid expire time"))
+        Some(at):
+          var timed = entry
+          timed.expires = Some(at)
+          (put(store, key, timed), Count(1))
       end
   end
 end
@@ -179,7 +200,7 @@ fn holding(key: Text, value: Text, expires: Option(Time)) : Store
 end
 
 test "a key expires after its time"
-  (with_key, _) = apply(empty_store, Set(key: "session", value: "abc"), t0)
+  (with_key, _) = apply(empty_store, Put(key: "session", value: "abc"), t0)
   (timed, set) = apply(with_key, Expire(key: "session", seconds: 10), t0)
   assert set == Count(1)
   (_, before) = apply(timed, Get(key: "session"), t0 + 9.seconds)

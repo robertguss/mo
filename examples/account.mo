@@ -3,6 +3,9 @@
 module Account
 expose Account, AccountError(..), open, owner, balance, deposit, withdraw, transfer
 
+## The most one deposit or withdrawal may move.
+max_amount = 1_000_000_000.00
+
 struct Account
   owner: Text
   balance: Decimal
@@ -38,9 +41,10 @@ fn deposit(account: Account, amount: Decimal) : Result(Account, AccountError)
     deposit(alice(10.00), 5.50) == Ok(alice(15.50))
     deposit(alice(10.00), 0) == Error(InvalidAmount)
     deposit(alice(10.00), -1.00) == Error(InvalidAmount)
+    deposit(alice(10.00), 1_000_000_000.01) == Error(InvalidAmount)
   end
 
-  return Error(InvalidAmount) if amount <= 0
+  return Error(InvalidAmount) if amount <= 0 or amount > max_amount
   var after = account
   after.balance += amount
   Ok(after)
@@ -66,7 +70,7 @@ fn withdraw(account: Account, amount: Decimal) : Result(Account, AccountError)
     withdraw(alice(100.00), 0.00) == Error(InvalidAmount)
   end
 
-  return Error(InvalidAmount) if amount <= 0
+  return Error(InvalidAmount) if amount <= 0 or amount > max_amount
   return Error(InsufficientFunds(short_by: amount - account.balance)) if amount > account.balance
   var after = account
   after.balance -= amount
@@ -103,10 +107,9 @@ test "a deposit and a withdrawal of the same amount change nothing"
   assert withdraw(more, 12.50) == Ok(alice(40.00))
 end
 
-test "a failed transfer leaves both accounts as they were"
-  from = alice(10.00)
-  to = bob(0)
-  assert transfer(from, to, 20.00) is Error(InsufficientFunds(short_by: short))
-  assert short == 10.00
-  assert from.balance == 10.00 and to.balance == 0
+test "money moved back and forth adds up"
+  assert deposit(open("ana"), 50.00) is Ok(ana)
+  assert transfer(ana, open("ben"), 20.00) is Ok((ana_after, ben))
+  assert transfer(ben, ana_after, 5.00) is Ok((ben_after, ana_final))
+  assert ana_final.balance == 35.00 and ben_after.balance == 15.00
 end

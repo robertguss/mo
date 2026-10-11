@@ -119,13 +119,13 @@ end
 
 test "matching ignores case only when asked"
   files = Files.in_memory({"pets.txt": "a cat\nCats!\ndog\n"}).read_only
-  console = Console.fake
+  console = Console.fake()
   assert main(Args.of(["-i", "cat", "pets.txt"]), console, files) == 0
   assert console.printed == ["pets.txt:1: a cat", "pets.txt:2: Cats!"]
 end
 
 test "no match gives status 1, and a missing file status 2"
   files = Files.in_memory({"pets.txt": "dog\n"}).read_only
-  assert main(Args.of(["cat", "pets.txt"]), Console.fake, files) == 1
-  assert main(Args.of(["cat", "gone.txt"]), Console.fake, files) == 2
+  assert main(Args.of(["cat", "pets.txt"]), Console.fake(), files) == 1
+  assert main(Args.of(["cat", "gone.txt"]), Console.fake(), files) == 2
 end

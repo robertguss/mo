@@ -120,7 +120,7 @@ end
 test "a malformed line is reported by number, and the rest still totalled"
   csv = "date,category,amount\n2026-10-01,food,12.50\n2026-10-02,food,x\n2026-10-03,rent,900\n"
   files = Files.in_memory({"october.csv": csv}).read_only
-  console = Console.fake
+  console = Console.fake()
   assert main(Args.of(["october.csv"]), console, files) == 1
   assert console.printed == ["rent  900.00", "food   12.50"]
   assert console.printed_errors == ["line 3: the amount \"x\" is not a number"]

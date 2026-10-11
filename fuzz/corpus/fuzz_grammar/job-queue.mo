@@ -30,6 +30,7 @@ end
 enum QueueError
   NoSuchJob(id: Int)
   NotLeased(id: Int)
+  BadLease(length: Duration)
 end
 
 empty = Queue(jobs: {}, next_id: 1)
@@ -48,28 +49,37 @@ fn submit(queue: Queue, payload: Text) : (Queue, Int)
   (after, id)
 end
 
-## Leases the oldest ready job until now + length, counting an attempt.
-fn lease(queue: Queue, now: Time, length: Duration) : (Queue, Option(Job))
+## Leases the oldest ready job until now + length, counting an attempt. The
+## length must be positive, and the lease must end by the year 9999.
+fn lease(queue: Queue, now: Time, length: Duration) : Result((Queue, Option(Job)), QueueError)
   promise "a lease never loses a job"
-    queue.jobs.keys.all?(fn(id) result.0.jobs.has?(id) end)
-    allows queue: holding([ready(1)]), now: t0, length: 30.seconds, result: (holding([leased(1, t0 + 30.seconds)]), Some(leased(1, t0 + 30.seconds)))
-    forbids queue: holding([ready(1)]), now: t0, length: 30.seconds, result: (empty, None)
+    result is Ok((after, _)) implies queue.jobs.keys.all?(fn(id) after.jobs.has?(id) end)
+    allows queue: holding([ready(1)]), now: t0, length: 30.seconds, result: Ok((holding([leased(1, t0 + 30.seconds)]), Some(leased(1, t0 + 30.seconds))))
+    forbids queue: holding([ready(1)]), now: t0, length: 30.seconds, result: Ok((empty, None))
   end
 
+  examples
+    lease(empty, t0, 30.seconds) == Ok((empty, None))
+    lease(empty, t0, 0.seconds) == Error(BadLease(length: 0.seconds))
+  end
+
+  return Error(BadLease(length: length)) if length <= 0.seconds
+  until = try now.checked_add(length).or_fail(BadLease(length: length))
   case queue.jobs.values.find(fn(job) job.state == Ready end)
-    None: (queue, None)
+    None: Ok((queue, None))
     Some(job):
       var taken = job
-      taken.state = Leased(until: now + length)
+      taken.state = Leased(until: until)
       taken.attempts += 1
-      (put(queue, taken), Some(taken))
+      Ok((put(queue, taken), Some(taken)))
   end
 end
 
 fn acknowledge(queue: Queue, id: Int) : Result(Queue, QueueError)
-  promise "acknowledging finishes the job and keeps every other job"
-    result is Ok(after) implies after.jobs.size == queue.jobs.size and after.jobs.get(id) is Some(job) and job.state == Done
-    allows queue: holding([leased(1, t0)]), id: 1, result: Ok(holding([done(1)]))
+  promise "acknowledging finishes the job and keeps every job"
+    result is Ok(after) implies queue.jobs.keys.all?(fn(other) after.jobs.has?(other) end)
+    result is Ok(after) implies after.jobs.get(id) is Some(job) and job.state == Done
+    allows queue: holding([leased(1, t0), ready(2)]), id: 1, result: Ok(holding([done(1), ready(2)]))
     forbids queue: holding([leased(1, t0), ready(2)]), id: 1, result: Ok(holding([done(1)]))
   end
 
@@ -108,9 +118,8 @@ fn expire(queue: Queue, now: Time) : Queue
 
   var after = queue
   for job in queue.jobs.values
-    case job.state
-      Leased(until: until) if until <= now: after = release(after, job)
-      Leased(until: _) | Ready | Done | Dead: continue
+    if job.state is Leased(until: until) and until <= now
+      after = release(after, job)
     end
   end
   after
@@ -170,13 +179,12 @@ test "a job that keeps failing is tried three times, then dead"
   (submitted, id) = submit(empty, "send the invoice")
   var queue = submitted
   for attempt in 1..4
-    (leased_queue, job) = lease(queue, t0, 30.seconds)
-    assert job is Some(taken) and taken.attempts == attempt
+    assert lease(queue, t0, 30.seconds) is Ok((leased_queue, Some(job)))
+    assert job.attempts == attempt
     assert fail(leased_queue, id) is Ok(after)
     queue = after
   end
   assert queue.jobs.get(id) is Some(final)
   assert final.state == Dead
-  (_, nothing) = lease(queue, t0, 30.seconds)
-  assert nothing == None
+  assert lease(queue, t0, 30.seconds) == Ok((queue, None))
 end

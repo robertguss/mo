@@ -1,7 +1,8 @@
 ## Reads JSON from standard input and prints it laid out with two-space
 ## indentation; or, given a path such as items.0.name, prints only the value at
 ## that path. Numbers are exact decimals, so 0.1 stays 0.1. Not supported:
-## numbers with exponents, such as 1e5, and \u escapes in strings.
+## numbers with exponents, such as 1e5, numbers with more than 18 decimal
+## places, and \u escapes for characters beyond U+FFFF.
 ##
 ##   json [PATH] < FILE.json
 module Json
@@ -35,6 +36,7 @@ fn parse(text: Text) : Result(Json, JsonError)
     parse("{\"a\": {\"b\": \"c\"}}") == Ok(Object({"a": Object({"b": String("c")})}))
     parse("[1,") == Error(UnexpectedEnd)
     parse("[1] 2") == Error(Unexpected(at: 4))
+    parse("\"caf\\u00e9\"") == Ok(String("café"))
   end
 
   chars = text.chars
@@ -78,9 +80,42 @@ fn string_at(chars: List(Char), at: Int, read: List(Char)) : Result((Text, Int),
     '"': Ok((Text.from_chars(read), at + 1))
     '\\':
       escaped = try chars.get(at + 1).or_fail(UnexpectedEnd)
-      plain = try unescape(escaped).or_fail(Unexpected(at: at + 1))
-      string_at(chars, at + 2, read.append(plain))
+      if escaped == 'u'
+        code = try hex_value(chars.drop(at + 2).take(4)).or_fail(Unexpected(at: at + 2))
+        plain = try code.to_char.or_fail(Unexpected(at: at))
+        string_at(chars, at + 6, read.append(plain))
+      else
+        plain = try unescape(escaped).or_fail(Unexpected(at: at + 1))
+        string_at(chars, at + 2, read.append(plain))
+      end
     _: string_at(chars, at + 1, read.append(c))
+  end
+end
+
+## The value of four hexadecimal digits.
+fn hex_value(digits: List(Char)) : Option(Int)
+  examples
+    hex_value(['0', '0', 'e', '9']) == Some(233)
+    hex_value(['1', '2']) == None
+    hex_value(['0', '0', 'g', '0']) == None
+  end
+
+  return None if digits.size != 4
+  var value = 0
+  for digit in digits
+    value = value * 16 + try hex_digit_value(digit)
+  end
+  Some(value)
+end
+
+fn hex_digit_value(c: Char) : Option(Int)
+  lower = c.ascii_lowercase
+  if c.ascii_digit?
+    Some(c.code - '0'.code)
+  else if lower >= 'a' and lower <= 'f'
+    Some(lower.code - 'a'.code + 10)
+  else
+    None
   end
 end
 
@@ -185,10 +220,32 @@ end
 fn quoted(text: Text) : Text
   examples
     quoted("say \"hi\"\n") == "\"say \\\"hi\\\"\\n\""
+    quoted("tab\tbell\u{7}") == "\"tab\\tbell\\u0007\""
   end
 
-  escaped = text.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\t", "\\t")
-  "\"#{escaped}\""
+  "\"#{text.chars.map(escape_char).join("")}\""
+end
+
+## A character as JSON writes it inside a string.
+fn escape_char(c: Char) : Text
+  case c
+    '"': "\\\""
+    '\\': "\\\\"
+    '\n': "\\n"
+    '\r': "\\r"
+    '\t': "\\t"
+    '\u{8}': "\\b"
+    '\u{C}': "\\f"
+    _ if c.code < 32: "\\u00#{hex_digit(c.code / 16)}#{hex_digit(c.code % 16)}"
+    _: c.to_text
+  end
+end
+
+fn hex_digit(n: Int) : Text
+  case "0123456789abcdef".chars.get(n)
+    Some(digit): digit.to_text
+    None: stop "a hexadecimal digit is from 0 to 15"
+  end
 end
 
 ## The value at a path of object keys and array positions.
@@ -220,27 +277,34 @@ fn read_input(console: Console) : Text
 end
 
 fn main(args: Args, console: Console) : Int
+  path = case args.list
+    []: []
+    [steps]: steps.split(".")
+    _:
+      console.error("usage: json [PATH] < FILE.json")
+      return 2
+  end
   case parse(read_input(console))
     Error(problem):
       console.error("json: #{problem}")
       1
-    Ok(value):
-      case args.list
-        []:
-          console.print(pretty(value, ""))
-          0
-        [path]:
-          case at_path(value, path.split("."))
-            Some(found):
-              console.print(pretty(found, ""))
-              0
-            None:
-              console.error("json: nothing at #{path}")
-              1
-          end
-        _:
-          console.error("usage: json [PATH] < FILE.json")
-          2
-      end
+    Ok(value): show(at_path(value, path), console)
   end
+end
+
+fn show(found: Option(Json), console: Console) : Int
+  case found
+    Some(value):
+      console.print(pretty(value, ""))
+      0
+    None:
+      console.error("json: nothing is at that path")
+      1
+  end
+end
+
+test "a path picks out one value"
+  console = Console.fake_input(["{\"items\": [{\"name\": \"pen\"}]}"])
+  assert main(Args.of(["items.0.name"]), console) == 0
+  assert console.printed == ["\"pen\""]
 end

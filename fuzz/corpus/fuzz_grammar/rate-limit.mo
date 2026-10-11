@@ -21,8 +21,8 @@ enum Decision
   Refused(retry_after: Duration)
 end
 
-## A limiter, or None unless the capacity is at least 1 and the rate at least
-## one token every 1,000 seconds.
+## A limiter, or None unless the capacity is from 1 to 1,000,000,000 tokens and
+## the rate from 0.001 to 1,000,000 tokens a second.
 fn new_limiter(capacity: Decimal, per_second: Decimal) : Option(Limiter)
   examples
     new_limiter(10, 2) is Some(_)
@@ -30,7 +30,8 @@ fn new_limiter(capacity: Decimal, per_second: Decimal) : Option(Limiter)
     new_limiter(10, 0) == None
   end
 
-  return None if capacity < 1 or per_second < 0.001
+  return None if capacity < 1 or capacity > 1_000_000_000
+  return None if per_second < 0.001 or per_second > 1_000_000
   Some(Limiter(capacity: capacity, per_second: per_second, buckets: {}))
 end
 
@@ -43,15 +44,14 @@ fn request(limiter: Limiter, client: Text, now: Time) : (Limiter, Decision)
 
   full = Bucket(tokens: limiter.capacity, updated: now)
   bucket = refill(limiter.buckets.get(client) or full, limiter, now)
-  if bucket.tokens >= 1
-    var after = limiter
-    after.buckets = after.buckets.set(client, Bucket(tokens: bucket.tokens - 1, updated: now))
-    (after, Allowed(remaining: bucket.tokens - 1))
+  (kept, decision) = if bucket.tokens >= 1
+    (Bucket(tokens: bucket.tokens - 1, updated: now), Allowed(remaining: bucket.tokens - 1))
   else
-    var after = limiter
-    after.buckets = after.buckets.set(client, bucket)
-    (after, Refused(retry_after: wait_for_one(bucket.tokens, limiter.per_second)))
+    (bucket, Refused(retry_after: wait_for_one(bucket.tokens, limiter.per_second)))
   end
+  var after = limiter
+  after.buckets = after.buckets.set(client, kept)
+  (after, decision)
 end
 
 ## The bucket with the tokens that dripped in since it was last updated. A clock
@@ -64,10 +64,10 @@ end
 
 ## How long until a bucket holding `tokens`, less than one, holds one.
 fn wait_for_one(tokens: Decimal, per_second: Decimal) : Duration
-  milliseconds = ((1 - tokens) * 1000 / per_second).ceil
-  case milliseconds.to_int
+  wait = ((1 - tokens) * 1000 / per_second).ceil
+  case wait.to_int
     Some(n): n.milliseconds
-    None: stop "the rate is at least 0.001 a second, so the wait is at most 10^9 milliseconds"
+    None: stop "the rate is at least 0.001 a second, so the wait is at most 10^6 milliseconds"
   end
 end
 

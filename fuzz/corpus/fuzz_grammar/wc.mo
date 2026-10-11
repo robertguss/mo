@@ -60,7 +60,7 @@ fn main(args: Args, console: Console, files: ReadFiles) : Int
 end
 
 test "a missing file is reported, and the others still counted"
-  console = Console.fake
+  console = Console.fake()
   files = Files.in_memory({"a.txt": "one two\n", "b.txt": "three\n"}).read_only
   status = main(Args.of(["a.txt", "gone.txt", "b.txt"]), console, files)
   assert status == 1
