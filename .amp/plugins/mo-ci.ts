@@ -21,6 +21,10 @@ const doneDir = join(home, 'done')
 // Repositories this CI builds. mo-v2 joins once its checks move here.
 const repositories = new Set(['robertguss/mo'])
 
+// The webhook's key. Its URL is a credential: to rotate the URL after an exposure, bump this
+// (see "Rotating the webhook URL" in ci/orb/README.md). github-2 replaced github on 11 Oct 2026.
+const webhookKey = 'github-2'
+
 // How often the keep-alive lease is checked against the job directories.
 const leaseCheckMilliseconds = 10_000
 
@@ -80,7 +84,7 @@ export default async function (amp: PluginAPI) {
 	})
 
 	const { url } = await amp.createWebhook({
-		key: 'github',
+		key: webhookKey,
 		headers: ['x-github-event', 'x-hub-signature-256'],
 		handler: async (event, ctx) => {
 			if (!signatureMatches(event.body, event.headers['x-hub-signature-256'])) {

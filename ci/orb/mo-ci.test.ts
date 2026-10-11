@@ -156,7 +156,7 @@ test('does nothing outside the CI orb', async () => {
 
 test('registers the github webhook and keeps its URL private', async () => {
 	await loadPlugin(true)
-	expect(registeredKey).toBe('github')
+	expect(registeredKey).toBe('github-2')
 	const urlFile = join(home, 'mo-ci', 'webhook-url')
 	expect(readFileSync(urlFile, 'utf8')).toBe('https://example.invalid/webhook/capability')
 	expect(statSync(urlFile).mode & 0o777).toBe(0o600)
