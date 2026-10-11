@@ -15,7 +15,7 @@ step for anything a Mo user would notice.
 | 7. Fast | Fast enough for serious services | v0.4 |
 | 8. Ecosystem | Others build and share | 1.0 |
 
-**Current phase: 0, Reset.**
+**Current phase: 1, Design the core.** Phase 0 (Reset) finished on 11 Oct 2026.
 
 Four tracks run alongside every phase:
 
