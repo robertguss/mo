@@ -6,7 +6,7 @@ agent runs before pushing.
 
 ```
 GitHub push
-  └─▶ webhook "github" in the mo-ci plugin (.amp/plugins/mo-ci.ts)
+  └─▶ webhook "github-2" in the mo-ci plugin (.amp/plugins/mo-ci.ts)
         checks the signature, queues one job per commit in ~/mo-ci/queue,
         and keeps the orb awake while a job is waiting or running
   └─▶ orb service "mo-ci-runner" (ci/orb/runner.sh)
@@ -40,7 +40,8 @@ Done once, by the CI orb's agent, in the orb's checkout of robertguss/mo on
 3. Reload plugins (the `reload_plugins` or `load_plugin` tool, or
    `amp orb restart-processes`). The plugin registers the webhook and writes
    its URL to `~/mo-ci/webhook-url`.
-4. Start the runner:
+4. Check that the GitHub token is in the environment (see "The GitHub token"
+   below): `[ -n "${MO_CI_GITHUB_TOKEN:-}" ] && echo set || echo MISSING`. Then start the runner:
    ```sh
    amp orb service start mo-ci-runner --command "bash $PWD/ci/orb/runner.sh"
    ```
@@ -59,6 +60,35 @@ Done once, by the CI orb's agent, in the orb's checkout of robertguss/mo on
    ```
 6. Check it end to end: push a branch with a small change, then watch
    `amp orb service logs mo-ci-runner` and the commit's `mo-ci` status.
+
+## The GitHub token
+
+Amp's own GitHub credential in orbs can push, open pull requests and comment,
+but GitHub refuses it for commit statuses and check runs ("Resource not
+accessible by integration"). So the runner posts statuses, and comments on
+failures, with a dedicated token:
+
+- **What it is:** a fine-grained personal access token with repository access
+  to robertguss/mo only, and two permissions: Commit statuses (read and write)
+  and Pull requests (read and write). Nothing else.
+- **Where it lives:** the Amp project secret `MO_CI_GITHUB_TOKEN` on the
+  robertguss/mo project. After adding or rotating it, run
+  `amp orb restart-processes` in the CI orb so the environment picks it up, then
+  restart the runner.
+- **Who sees it:** the runner passes it to `gh` for its own API calls only.
+  Checks run under `env -i`, so they don't inherit it. That is not a hard
+  boundary: a check runs as the same user and could read the runner's
+  environment from `/proc`, which is acceptable only because just Robert and
+  his agents can push here. Project secrets reach every orb on this project, so
+  other agents must never use it: a commit status means "the CI orb ran the
+  checks", and nothing else may post one. Never print or paste the token; if it
+  is ever exposed, revoke it on GitHub and add a new one.
+- **When it runs out:** fine-grained tokens expire. When statuses stop
+  appearing and the runner's log reports a 401 or 403, rotate it. The runner
+  logs at startup whether the token is set (never its value).
+
+Without the token, the runner still runs every check and logs the result, but
+GitHub shows no `mo-ci` status.
 
 ## How jobs run
 
@@ -95,6 +125,15 @@ when the orb wakes up), and releases the lease when both are empty. Unloading
 the plugin releases it too. If `keepAlive()` fails, the plugin logs that and
 carries on: the webhook still queues jobs. Jobs waiting for a stopped runner
 keep the orb awake, so restart the runner or delete the job files.
+
+## Rotating the webhook URL
+
+The webhook URL is a credential. If it is ever exposed, bump `webhookKey` in
+`.amp/plugins/mo-ci.ts` (for example from `github-2` to `github-3`), merge, then
+in the CI orb pull `main`, reload plugins, and point GitHub's hook at the new URL
+with `gh api -X PATCH repos/robertguss/mo/hooks/<id>/config` (reading the URL
+from `~/mo-ci/webhook-url`, never printing it). Deliveries are signed, so a
+leaked URL alone cannot queue a build, but it should still be replaced.
 
 ## After changing the plugin or the runner
 

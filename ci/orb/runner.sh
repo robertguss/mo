@@ -58,22 +58,43 @@ trap 'exit 130' INT
 
 # Sleeps in the background and waits, because bash runs a trap for a signal that
 # arrives during a foreground command only after the command ends.
-idle() {
-	sleep 3 &
+idle() { # seconds, 3 by default
+	sleep "${1:-3}" &
 	idle_pid=$!
 	wait "$idle_pid"
 	idle_pid=""
 }
 
+# Calls the GitHub API. Amp's own GitHub credential in orbs can push and comment but
+# may not write commit statuses, so the runner uses MO_CI_GITHUB_TOKEN when it is set:
+# a fine-grained token for this repository with "Commit statuses" and "Pull requests"
+# write access (see ci/orb/README.md). The check itself never sees it (env -i).
+github() {
+	if [[ -n "${MO_CI_GITHUB_TOKEN:-}" ]]; then
+		GH_TOKEN="$MO_CI_GITHUB_TOKEN" gh api "$@"
+	else
+		gh api "$@"
+	fi
+}
+
 post_status() { # repo sha state description
 	local args=(-f "state=$3" -f "context=$context" -f "description=$4")
 	if [[ -n "$thread_url" ]]; then args+=(-f "target_url=$thread_url"); fi
-	gh api --silent "repos/$1/statuses/$2" "${args[@]}" || log "could not post the $3 status for $1@$2"
+	local attempt
+	for attempt in 1 2 3; do
+		if github --silent "repos/$1/statuses/$2" "${args[@]}"; then return 0; fi
+		if ((attempt < 3)); then idle $((attempt * 2)); fi
+	done
+	log "could not post the $3 status for $1@$2 after 3 attempts; if GitHub said 401 or 403, MO_CI_GITHUB_TOKEN is missing, expired, or lacks Commit statuses write access"
+	return 1
 }
 
 comment_failure() { # repo sha logfile reason
 	local prs pr body
-	prs=$(gh api "repos/$1/commits/$2/pulls" --jq '.[] | select(.state == "open") | .number' 2>/dev/null) || return 0
+	if ! prs=$(github "repos/$1/commits/$2/pulls" --jq '.[] | select(.state == "open") | .number' 2>/dev/null); then
+		log "could not look up the pull requests for $1@$2, so no failure comment was posted"
+		return 0
+	fi
 	[[ -z "$prs" ]] && return 0
 	body=$(
 		printf 'CI orb: %s on %s. The last 60 lines of the log:\n\n' "$4" "${2:0:7}"
@@ -82,7 +103,7 @@ comment_failure() { # repo sha logfile reason
 		printf '~~~\n'
 	)
 	for pr in $prs; do
-		gh api --silent "repos/$1/issues/$pr/comments" -f body="$body" || log "could not comment on $1#$pr"
+		github --silent "repos/$1/issues/$pr/comments" -f body="$body" || log "could not comment on $1#$pr"
 	done
 }
 
@@ -152,6 +173,11 @@ run_job() { # job file
 }
 
 log "mo-ci-runner started"
+if [[ -n "${MO_CI_GITHUB_TOKEN:-}" ]]; then
+	log "MO_CI_GITHUB_TOKEN is set; statuses and comments use it"
+else
+	log "MO_CI_GITHUB_TOKEN is not set; statuses use Amp's GitHub credential, which GitHub refuses for commit statuses"
+fi
 
 # A job still in running/ was interrupted by a restart: it goes back in the queue
 # and runs again, instead of staying pending forever. Homes left by a runner that
