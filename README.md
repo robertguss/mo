@@ -1,0 +1,51 @@
+# Mo
+
+**An open-source language and runtime for living software.** Humans state the
+intent, agents write the code, and agents can see inside the running system,
+diagnose it, and evolve it safely while it runs.
+
+> **Status: pre-release, design phase.** Mo isn't usable yet, and nothing here
+> is stable. The repository is public so the work is visible, but it isn't
+> accepting contributions yet.
+
+## The idea
+
+Agents now write a growing share of software, but languages and runtimes are
+still built for human authors and human operators. Mo is designed for agents
+first:
+
+- **Intent lives in the language.** People state what a program must do, as
+  promises and example tables, and approve it. Agents write the
+  implementation, and the compiler won't let them quietly weaken an approved
+  promise.
+- **A runtime agents can operate.** Agents can look inside a running Mo
+  system: its processes, state, memory and history. They can run safe live
+  queries and replay failures exactly.
+- **Living software.** Running services evolve without restarts. State
+  migrations are type-checked, versions are checked for compatibility, and
+  upgrades are checked against the real state before anything changes.
+
+Mo draws on Elixir and the BEAM (processes, supervision, hot code loading),
+Rust (safety plus control over memory and performance), Koka (effects and
+in-place updates) and Elm (helpful error messages).
+
+## Roadmap
+
+See [docs/ROADMAP.md](docs/ROADMAP.md). The first public release, v0.1, is
+planned for when agents can build services in Mo and see inside them while
+they run.
+
+## Background
+
+The research behind Mo is archived in
+[robertguss/mo-v2](https://github.com/robertguss/mo-v2). It includes 13
+experiments and Lean proofs of Mo's memory-reuse rules.
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT), at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in Mo by you, as defined in the Apache-2.0 license, shall be dual
+licensed as above, without any additional terms or conditions.

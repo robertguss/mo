@@ -1,0 +1,12 @@
+[package]
+name = "mo-cli"
+description = "The mo command (a placeholder until the toolchain exists)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "mo"
+path = "src/main.rs"
