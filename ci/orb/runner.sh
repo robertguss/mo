@@ -65,15 +65,33 @@ idle() {
 	idle_pid=""
 }
 
+# Calls the GitHub API. Amp's own GitHub credential in orbs can push and comment but
+# may not write commit statuses, so the runner uses MO_CI_GITHUB_TOKEN when it is set:
+# a fine-grained token for this repository with "Commit statuses" and "Pull requests"
+# write access (see ci/orb/README.md). The check itself never sees it (env -i).
+github() {
+	if [[ -n "${MO_CI_GITHUB_TOKEN:-}" ]]; then
+		GH_TOKEN="$MO_CI_GITHUB_TOKEN" gh api "$@"
+	else
+		gh api "$@"
+	fi
+}
+
 post_status() { # repo sha state description
 	local args=(-f "state=$3" -f "context=$context" -f "description=$4")
 	if [[ -n "$thread_url" ]]; then args+=(-f "target_url=$thread_url"); fi
-	gh api --silent "repos/$1/statuses/$2" "${args[@]}" || log "could not post the $3 status for $1@$2"
+	local attempt
+	for attempt in 1 2 3; do
+		if github --silent "repos/$1/statuses/$2" "${args[@]}"; then return 0; fi
+		sleep $((attempt * 2))
+	done
+	log "could not post the $3 status for $1@$2 after 3 attempts; if GitHub said 403, MO_CI_GITHUB_TOKEN is missing or lacks Commit statuses write access"
+	return 1
 }
 
 comment_failure() { # repo sha logfile reason
 	local prs pr body
-	prs=$(gh api "repos/$1/commits/$2/pulls" --jq '.[] | select(.state == "open") | .number' 2>/dev/null) || return 0
+	prs=$(github "repos/$1/commits/$2/pulls" --jq '.[] | select(.state == "open") | .number' 2>/dev/null) || return 0
 	[[ -z "$prs" ]] && return 0
 	body=$(
 		printf 'CI orb: %s on %s. The last 60 lines of the log:\n\n' "$4" "${2:0:7}"
@@ -82,7 +100,7 @@ comment_failure() { # repo sha logfile reason
 		printf '~~~\n'
 	)
 	for pr in $prs; do
-		gh api --silent "repos/$1/issues/$pr/comments" -f body="$body" || log "could not comment on $1#$pr"
+		github --silent "repos/$1/issues/$pr/comments" -f body="$body" || log "could not comment on $1#$pr"
 	done
 }
 
