@@ -4,7 +4,7 @@ import MoCore.Examples.Greet
 import MoCore.Examples.Wc
 import MoCore.Examples.Find
 import MoCore.Examples.Expenses
-import MoCore.Examples.Json
+import MoCore.Examples.JsonQuery
 import MoCore.Examples.Todo
 import MoCore.Examples.Account
 import MoCore.Examples.RateLimit
@@ -17,7 +17,7 @@ namespace MoCore.TextChecks
 open Text Examples
 
 def programs : List Program :=
-  [Greet.program, Wc.program, Find.program, Expenses.program, Json.program, Todo.program,
+  [Greet.program, Wc.program, Find.program, Expenses.program, JsonQuery.program, Todo.program,
    Account.program, RateLimit.program, JobQueue.program, Kv.program, NotesTool.program, Inventory.program]
 
 #guard programs.all programRoundTrip
@@ -90,7 +90,7 @@ def world : World :=
 #guard (structural Account.program (.data "Account")
   (.con "Account" [.text "alice", .decimal (1500000000000000000)])).toOption ==
   some "Account(owner: \"alice\", balance: 1.5)"
-#guard (structural Json.program Json.J (.con "String" [.text "é"])).toOption == some "String(\"é\")"
+#guard (structural JsonQuery.program JsonQuery.J (.con "String" [.text "é"])).toOption == some "String(\"é\")"
 #guard (structural Greet.program (.cap .readFiles) (.cap .readFiles (some "notes") (some 1))).toOption ==
   some "(cap (readFiles) (some \"notes\") (some 1))"
 #guard (parseSexp "(cap (console) (some \"\"))" >>= valueIn).toOption.isNone
@@ -121,7 +121,7 @@ def samples : List (String × Run) :=
      { args := ["-i", "needle", "a.txt"], files := [("a.txt", "Needle\nother\n")] }),
    ("Expenses", cliRun Expenses.program { args := ["october.csv"], files := [("october.csv",
      "date,category,amount\n2026-10-01,food,12.50\n2026-10-02,food,x\n2026-10-03,rent,900\n")] }),
-   ("Json", cliRun Json.program { args := ["items.0.name"], stdin := ["{\"items\": [{\"name\": \"pen\"}]}"] }),
+   ("JsonQuery", cliRun JsonQuery.program { args := ["items.0.name"], stdin := ["{\"items\": [{\"name\": \"pen\"}]}"] }),
    ("Todo", cliRun Todo.program { args := ["add", "write the codec"] }),
    ("Account", ⟨Account.program, {}, .entry [.con "Account" [.text "alice", .decimal (100*decScale)],
      .con "Account" [.text "bob", .decimal (20*decScale)], .decimal (5*decScale)], 10000⟩),

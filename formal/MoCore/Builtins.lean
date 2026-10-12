@@ -684,4 +684,13 @@ def fakeExpressions : List (Expr × Ty) :=
 #guard stops program (io .printed [v "c"]) (tList tText)
   (.outside "console observation needs a fake") {} [("c", .console)]
 
+-- Int.to_char admits scalar values on both sides of the surrogate gap.
+#guard
+  [(-1, none_ tChar), (0xD7FF, some_ tChar (chr (Char.ofNat 0xD7FF))),
+   (0xD800, none_ tChar), (0xDFFF, none_ tChar),
+   (0xE000, some_ tChar (chr (Char.ofNat 0xE000))),
+   (0x10FFFF, some_ tChar (chr (Char.ofNat 0x10FFFF))),
+   (0x110000, none_ tChar), (int64Max, none_ tChar)].all fun (n, expected) =>
+    passes program (eq (tOpt tChar) (prim (.int .toChar) [int n]) expected)
+
 end MoCore.Builtins
