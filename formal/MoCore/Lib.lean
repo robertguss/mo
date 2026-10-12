@@ -176,6 +176,19 @@ def update (k val : Ty) : FunDecl :=
 
 /-! ## Text forms -/
 
+/-- `to_text[Set(T)]`, a set's text form, which the lowering derives
+(reference 9.2): its elements in insertion order, written as a list's, then
+`.to_set`, as in `[1, 2].to_set`; the empty set is `[].to_set`. `part x` is
+the text form of an element `x` inside another value: for a number, a `Bool`,
+a time, a duration or a range, the same as alone; for a `Text` or `Char`,
+quoted and escaped; for any other type, the type's own `to_text` or the
+`to_text[T]` the lowering derives for it, such as `to_text[Set(Int)]`. -/
+def setText (t : Ty) (part : Expr → Expr) : FunDecl :=
+  fn (inst "to_text" [tSet t]) [("s", tSet t)] tText <|
+    forSet "l" t "x" (v "s") [("parts", tList tText)] [nil tText]
+      (nextRound "l" [lop tText .append [v "parts", part (v "x")]])
+      (cat [str "[", top .join [v "parts", str ", "], str "].to_set"])
+
 /-- `FileError`'s text form, which reads like `notes/a.md: no such file`. -/
 def fileErrorText : FunDecl :=
   fn "FileError.to_text" [("e", tFileError)] tText <|
@@ -202,6 +215,7 @@ def sortByL (a k : Ty) (xs key : Expr) : Expr := call (inst "List.sort_by" [a, k
 def updateL (k val : Ty) (m key default f : Expr) : Expr :=
   call (inst "Map.update" [k, val]) [m, key, default, f]
 def fileErrorTextL (e : Expr) : Expr := call "FileError.to_text" [e]
+def setTextL (t : Ty) (s : Expr) : Expr := call (inst "to_text" [tSet t]) [s]
 
 /-! ## A check: "not a number" sorts last (reference 9.2)
 

@@ -445,6 +445,17 @@ A set's elements are a list in insertion order, none equal to another
 /-- Removes the element equal to `x`; the others keep their order. -/
 def setRemove (xs : List Value) (x : Value) : List Value := xs.filter fun y => !Value.equiv y x
 
+/-- `a.union(b)`: the elements of `a`, then those of `b` that `a` doesn't hold,
+in `b`'s order, as if each were added to `a` in turn. -/
+def setUnion (xs ys : List Value) : List Value := ys.foldl setAdd xs
+
+/-- `a.intersection(b)`: the elements of `a` that `b` holds, in `a`'s order. -/
+def setIntersection (xs ys : List Value) : List Value := xs.filter fun x => setHas ys x
+
+/-- `a.difference(b)`: the elements of `a` that `b` doesn't hold, in `a`'s
+order. -/
+def setDifference (xs ys : List Value) : List Value := xs.filter fun x => !setHas ys x
+
 def evalSetOp (op : SetOp) (vs : List Value) (w : World) : Outcome :=
   match op, vs with
   | .empty, [] => .ok (.set []) w
@@ -453,6 +464,9 @@ def evalSetOp (op : SetOp) (vs : List Value) (w : World) : Outcome :=
   | .has, [.set xs, x] => .ok (.bool (setHas xs x)) w
   | .add, [.set xs, x] => .ok (.set (setAdd xs x)) w
   | .remove, [.set xs, x] => .ok (.set (setRemove xs x)) w
+  | .union, [.set xs, .set ys] => .ok (.set (setUnion xs ys)) w
+  | .intersection, [.set xs, .set ys] => .ok (.set (setIntersection xs ys)) w
+  | .difference, [.set xs, .set ys] => .ok (.set (setDifference xs ys)) w
   | .toList, [.set xs] => .ok (.list xs) w
   | .ofList, [.list xs] => .ok (.set (uniqueVals xs)) w
   | _, _ => wrongArgs "Set primitive"

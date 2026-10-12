@@ -8,6 +8,7 @@
   * `int_result_in_range`: an `Int` result is a 64-bit whole number, so
     overflow can only stop the program, never wrap; likewise
     `byte_result_in_range` and `decimal_result_in_range`.
+  * `set_result_distinct`: a `Set` result holds no element twice.
   * `eval_deterministic`: the evaluator is a function.
 
   All of them hold for every fuel and every world.
@@ -82,6 +83,17 @@ theorem decimal_result_in_range {P : Program} (hP : WellTyped P) {Γ : Ctx} {e :
   have hv := eval_ok_typed hP he hρ h
   cases hv with
   | decimal hk => exact ⟨_, rfl, hk⟩
+  | con hcs => simp [ctorsOf] at hcs
+
+/-- A `Set` that a well-typed expression returns holds no element twice: no
+element equals (`==`) one after it. -/
+theorem set_result_distinct {P : Program} (hP : WellTyped P) {Γ : Ctx} {e : Expr} {ρ : Env}
+    {t : Ty} (he : Typed P Γ [] e (.set t)) (hρ : EnvTy P ρ Γ) {n : Nat} {w w' : World}
+    {v : Value} (h : eval n P ρ w e = .ok v w') :
+    ∃ xs, v = .set xs ∧ xs.Pairwise fun a b => Value.equiv a b = false := by
+  have hv := eval_ok_typed hP he hρ h
+  cases hv with
+  | set _ hd => exact ⟨_, rfl, hd⟩
   | con hcs => simp [ctorsOf] at hcs
 
 /-- **Determinism.** The evaluator is a function, so the same fuel, program,

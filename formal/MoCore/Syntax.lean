@@ -321,7 +321,8 @@ twice (reference 3.8). `empty` is the constant `Set.empty`; `ofList` is
 `List.to_set`; `toList` is `to_list`, which a `for` loop takes apart as it
 takes a list apart. -/
 inductive SetOp where
-  | empty | size | isEmpty | has | add | remove | toList | ofList
+  | empty | size | isEmpty | has | add | remove | union | intersection | difference
+  | toList | ofList
   deriving DecidableEq, Repr, Inhabited
 
 /-- Operations on capabilities: the only way a program touches the world.
@@ -500,6 +501,7 @@ def SetOp.sig (t : Ty) : SetOp → List Ty × Ty
   | .isEmpty => ([.set t], .bool)
   | .has => ([.set t, t], .bool)
   | .add | .remove => ([.set t, t], .set t)
+  | .union | .intersection | .difference => ([.set t, .set t], .set t)
   | .toList => ([.set t], .list t)
   | .ofList => ([.list t], .set t)
 

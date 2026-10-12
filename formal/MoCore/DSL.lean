@@ -238,6 +238,13 @@ def forList (lbl : String) (t : Ty) (x : String) (xs : Expr) (st : List (String 
 def nextRound (lbl : String) (st : List Expr) : Expr :=
   .jump (lbl ++ ".loop") (v (lbl ++ ".rest") :: st)
 
+/-- `for x in s ... end; after`, over a `Set(t)`: a loop over its elements in
+insertion order, `%set.toList(s)`, as a loop over a map takes apart its
+entries. `nextRound` and `breakLoop` work as in `forList`. -/
+def forSet (lbl : String) (t : Ty) (x : String) (s : Expr) (st : List (String × Ty))
+    (init : List Expr) (body : Expr) (after : Expr) : Expr :=
+  forList lbl t x (sop t .toList [s]) st init body after
+
 /-- `while ...`: `body` decides, with `nextWhile` or `breakLoop`. -/
 def whileLoop (lbl : String) (st : List (String × Ty)) (init : List Expr) (body after : Expr) : Expr :=
   .join (lbl ++ ".done") st after <| .join (lbl ++ ".loop") st body (.jump (lbl ++ ".loop") init)

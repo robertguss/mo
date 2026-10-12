@@ -756,8 +756,8 @@ theorem mapOp_safe (k t : Ty) (op : MapOp) : PrimSafe P (.map k t op) := by
 
 /-! ## Sets -/
 
-/-- Some of a set's elements, as `remove` keeps them: still typed, and none
-equal to another. -/
+/-- Some of a set's elements, as `remove`, `intersection` and `difference` keep
+them: still typed, and none equal to another. -/
 theorem setFilter_ty {xs : List Value} {t : Ty} (p : Value → Bool) (hxs : ∀ y ∈ xs, ValTy P y t)
     (hd : Distinct xs) : ValTy P (.set (xs.filter p)) (.set t) :=
   .set (fun y hy => hxs y (List.mem_filter.mp hy).1) (List.Pairwise.filter p hd)
@@ -772,6 +772,12 @@ theorem setOp_safe (t : Ty) (op : SetOp) : PrimSafe P (.set t op) := by
     obtain ⟨h1, h2⟩ := setAdd_ok ‹_› ‹_› ‹_›
     exact .set h1 h2
   case remove => exact setFilter_ty _ ‹_› ‹_›
+  case union =>
+    rename_i xs hxs hd ys hys _
+    obtain ⟨h1, h2⟩ := foldl_setAdd_ok hxs hd hys
+    exact .set h1 h2
+  case intersection => exact setFilter_ty _ ‹_› ‹_›
+  case difference => exact setFilter_ty _ ‹_› ‹_›
   case toList => exact .list ‹_›
   case ofList =>
     obtain ⟨h1, h2⟩ := uniqueVals_ok ‹_›
