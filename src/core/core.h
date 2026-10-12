@@ -760,10 +760,14 @@ MO_MUST_USE bool mo_core_text_print(enum mo_core_text_kind kind, const void *val
                                     struct mo_buffer *out);
 
 /* The program-only interfaces used by lowering and code generation (architecture 12).
- * Stream 2 supplies mo_core_check; parsing deliberately does not type-check. */
+ * Parsing deliberately does not type-check. */
 /* Shape only, not source truth or Core typing; false also on scratch allocation failure.
  * Inputs must be complete arena trees with readable arrays, as for printing. */
 MO_MUST_USE bool mo_core_metadata_valid(const struct mo_core *core);
+/* The executable Lean checker's verdict, plus metadata shape and base/limits.h bounds.
+ * Inputs are complete parsed or arena-built trees with valid tags and readable arrays.
+ * Does not mutate Core. On refusal, appends the first implementation diagnostic;
+ * without compiler source metadata its span has file UINT32_MAX, start/end zero. */
 MO_MUST_USE bool mo_core_check(const struct mo_core *core, struct mo_diags *diags);
 MO_MUST_USE bool mo_core_print(const struct mo_core *core, struct mo_buffer *out);
 MO_MUST_USE struct mo_core *mo_core_parse(struct mo_arena *arena, const char *text, size_t length,

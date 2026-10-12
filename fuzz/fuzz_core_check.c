@@ -4,7 +4,7 @@
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 
 /* Type checking sees only successfully parsed Core, including ill-typed numeric literals.
- * Diagnostic storage already contains a sentinel: acceptance must not clear earlier errors. */
+ * Rechecking must agree and preserve any diagnostic from the earlier refusal. */
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     const enum mo_core_text_kind kinds[] = {MO_CORE_TEXT_PROGRAM, MO_CORE_TEXT_RUN};
     for (size_t i = 0; i < sizeof kinds / sizeof kinds[0]; i++) {

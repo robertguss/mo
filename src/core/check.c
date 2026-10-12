@@ -150,9 +150,11 @@ static MO_MUST_USE bool put(struct checker *c, struct mo_arena *a, struct index 
     if (item == NULL)
         return false;
     if (copy) {
-        char *bytes = allocate(c, a, key.length, 1);
-        if (bytes == NULL)
+        char *bytes = mo_arena_allocate(a, key.length, 1);
+        if (bytes == NULL) {
+            c->fatal = MO_CODE_CORE_CHECK_MEMORY;
             return false;
+        }
         if (key.length != 0)
             memcpy(bytes, key.bytes, key.length);
         key.bytes = bytes;
@@ -216,7 +218,7 @@ static MO_MUST_USE struct type *capability(struct checker *c, enum mo_core_cap_t
     return intern(c, MO_CORE_TY_CAP, NULL, 0, (mo_core_string){0}, cap);
 }
 static MO_MUST_USE struct type *annotation(struct checker *c, mo_core_ty t, size_t depth) {
-    if (t == NULL || depth >= MO_LIMIT_CORE_DEPTH || ++c->nodes > MO_LIMIT_CORE_NODES) {
+    if (t == NULL || depth >= MO_LIMIT_CORE_DEPTH) {
         c->fatal = MO_CODE_CORE_CHECK_LIMIT;
         return NULL;
     }
@@ -224,6 +226,10 @@ static MO_MUST_USE struct type *annotation(struct checker *c, mo_core_ty t, size
     struct type *cached = find(c->annotations, key);
     if (cached != NULL)
         return cached;
+    if (++c->nodes > MO_LIMIT_CORE_NODES) {
+        c->fatal = MO_CODE_CORE_CHECK_LIMIT;
+        return NULL;
+    }
     struct type *r = NULL;
     switch (t->tag) {
     case MO_CORE_TY_TUPLE:
@@ -1285,6 +1291,8 @@ static MO_MUST_USE struct answer tc(struct checker *c, struct expr *e, const str
                                     const struct context *joins, struct type *exp) {
     if (c->fatal != 0)
         return bad(e, c->fatal);
+    /* Each prepared occurrence has fixed bindings, joins, spec mode and constant prefix.
+     * Only its expected type varies when inference retries an if, case or join. */
     size_t id = exp == NULL ? 0 : exp->id;
     mo_core_string key = bytes_key(&id, sizeof id);
     struct answer *cached = find(e->memo, key);

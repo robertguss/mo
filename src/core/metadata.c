@@ -63,7 +63,7 @@ static MO_MUST_USE bool walk_args(struct body_walk *w, mo_core_expr_list xs, siz
     return true;
 }
 static MO_MUST_USE bool walk_expr(struct body_walk *w, mo_core_expr e, size_t depth) {
-    if (e == NULL || depth > MO_LIMIT_CORE_DEPTH || w->node >= w->meta->spans.count ||
+    if (e == NULL || depth >= MO_LIMIT_CORE_DEPTH || w->node >= w->meta->spans.count ||
         !span_valid(w->meta->spans.items[w->node], w->files))
         return false;
     size_t node = w->node++;

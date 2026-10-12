@@ -24,6 +24,8 @@ static void check_program(const char *payload, uint16_t code) {
             CHECK(diags.items[0].code == code);
             CHECK(diags.items[0].section == NULL && diags.items[0].reason != NULL);
             CHECK(strstr(diags.items[0].message, "bug in Mo") != NULL);
+            CHECK(diags.items[0].primary.span.file == UINT32_MAX);
+            CHECK(diags.items[0].primary.span.start == 0 && diags.items[0].primary.span.end == 0);
         }
     }
     mo_buffer_free(&input);
@@ -148,6 +150,12 @@ static void test_literal_boundaries(void) {
     expression("(bytes)", "(lit (bytes (0 256)))", MO_CODE_CORE_CHECK_LITERAL);
     expression("(bytes)", "(lit (bytes (-1 255)))", MO_CODE_CORE_CHECK_LITERAL);
     expression("(float)", "(lit (float 0x7ff8000000000001))", 0);
+    /* Lean constructs List.replicate at this count before checking arity. C must not. */
+    expression("(list (int))", "(prim (list (int) (lit 999999999999999999999999999)) ())",
+               MO_CODE_CORE_CHECK_ARGUMENTS);
+    expression("(map (text) (int))",
+               "(prim (map (text) (int) (lit 999999999999999999999999999)) ())",
+               MO_CODE_CORE_CHECK_ARGUMENTS);
 }
 
 static void test_limits_and_metadata(void) {
@@ -175,7 +183,46 @@ static void test_limits_and_metadata(void) {
     p.metadata.source = true;
     CHECK(!mo_core_check(&p, &d));
     CHECK(d.count == 2 && d.items[1].code == MO_CODE_CORE_CHECK_METADATA);
+    /* A name's bytes are not nodes. This fits the interchange and scratch byte limits. */
+    struct mo_arena names;
+    mo_arena_init(&names, MO_LIMIT_CORE_TEXT_SIZE);
+    size_t length = MO_LIMIT_CORE_NODES + 1;
+    char *name = mo_arena_allocate(&names, length, 1);
+    CHECK(name != NULL);
+    if (name != NULL) {
+        memset(name, 'x', length);
+        ty = (struct mo_core_ty){.tag = MO_CORE_TY_DATA, .as.data = {name, length}};
+        p.metadata.source = false;
+        CHECK(mo_core_check(&p, &d));
+        CHECK(d.count == 2);
+    }
+    mo_arena_free(&names);
     mo_diags_free(&d);
+}
+
+static void test_source_span(void) {
+    const char *text =
+        "(core 0.5 (Program () ((FunDecl \"main\" () (tuple ((int) (int))) (tuple ((lit (int "
+        "7)) (var \"missing\"))) \"Main\" (function) 0)) () \"main\" (Metadata (\"main.mo\") "
+        "((ModuleMeta \"Main\" () (0) () () ())) ((FunMeta \"Main.main\" (none) (none) "
+        "(BodyMeta ((none) (none) (some (SourceSpan 0 29 40))) () () ()) (none) (none) ())) "
+        "())))";
+    struct mo_arena arena;
+    struct mo_diags diags;
+    mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+    CHECK(mo_diags_init(&diags));
+    struct mo_core *p = mo_core_parse(&arena, text, strlen(text), &diags);
+    CHECK(p != NULL && !mo_diags_any(&diags));
+    if (p != NULL) {
+        CHECK(!mo_core_check(p, &diags));
+        CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CORE_CHECK_VARIABLE);
+        if (diags.count == 1) {
+            struct mo_span span = diags.items[0].primary.span;
+            CHECK(span.file == 0 && span.start == 29 && span.end == 40);
+        }
+    }
+    mo_diags_free(&diags);
+    mo_arena_free(&arena);
 }
 
 /* The differential harness uses this same public parse/check path, not a private checker hook.
@@ -227,5 +274,6 @@ int main(int argc, char **argv) {
     test_refusals();
     test_literal_boundaries();
     test_limits_and_metadata();
+    test_source_span();
     return mo_test_report("test_core_check");
 }
