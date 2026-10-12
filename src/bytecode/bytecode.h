@@ -443,8 +443,8 @@ MO_MUST_USE bool mo_bytecode_write(const struct mo_bytecode *file, struct mo_buf
 
 /* Assemble section 10's indexed or shorthand text into verified bytes. Indexed text supplies
  * every entry and index; shorthand appends first-use entries after optional indexed pool seeds.
- * The two forms mix only through those seeds. Text is bounded by 8 *
- * (size_t)MO_LIMIT_BYTECODE_SIZE; bytes by MO_LIMIT_BYTECODE_SIZE. Invalid text, verification
+ * The two forms mix only through those seeds. Text is bounded by MO_LIMIT_BYTECODE_TEXT_SIZE;
+ * bytes by MO_LIMIT_BYTECODE_SIZE. Invalid text, verification
  * refusal, a text/bytecode/output limit or no memory returns false. The header and checksum are
  * regenerated. Disassembling successful output gives the unique canonical indexed text, never
  * shorthand. */
@@ -454,7 +454,8 @@ MO_MUST_USE bool mo_bytecode_assemble(const char *text, size_t length, struct mo
 /* Verify bytes, then print section 10's canonical indexed text without a terminating NUL.
  * Preserve all entries, indices, array order, literal bits, exposures and debug metadata,
  * including unused entries; assembling the text reproduces the input byte for byte.
- * Text is bounded by 8 * (size_t)MO_LIMIT_BYTECODE_SIZE, which fits every verified file's
+ * Scalars use exact natural spellings, except float uses bits to retain every NaN and signed zero.
+ * Text is bounded by MO_LIMIT_BYTECODE_TEXT_SIZE, which fits every verified file's
  * canonical spelling and keeps text offsets within u32. Invalid bytes, an output limit or
  * no memory returns false; offset zero denotes a failure not tied to an input byte. */
 MO_MUST_USE bool mo_bytecode_disassemble(const uint8_t *bytes, size_t length, struct mo_buffer *out,

@@ -854,8 +854,11 @@ layouts     = "layouts" { L layout_body } "end"
 layout_body = ( "record" | "tuple" ) T list(T)
             | "case" T U list(T) | "closure" T F list(T)
 constants   = "constants" { K T payload } "end"
-payload     = "bits" HEX | "text" S | "bytes" HEX
+payload     = scalar | "text" S | "bytes" HEX
             | "bigint" SIGN HEX | "closure" F
+scalar      = "()" | "true" | "false" | NUMBER | CODEPOINT | "bits" HEX
+NUMBER      = [ "-" ] DIGITS [ "." DIGITS ]
+CODEPOINT   = "U+" HEXDIGITS
 globals     = "globals" { G T S M } "end"
 init        = "init" { I F } "end"
 functions   = "functions" { indexed_fn } "end"
@@ -889,11 +892,42 @@ heads, including variable operand counts, without changing the code words.
 two hex digits for one byte). Raw control bytes are not allowed; the decoded
 string must be valid UTF-8. `HEX` is `hex"` followed by an even number of
 hex digits and `"`, with no spaces inside; each pair is one byte in file
-order. `bits` has exactly 8 bytes, or 16 for `decimal`. It preserves float
-bits, including negative zero and every accepted NaN payload. The type
-selects the payload form as in 3.1; a mismatched form is an error. Big integer
-magnitudes retain their little-endian order and canonical sign. Byte strings
-may contain any bytes.
+order. `DIGITS` and `HEXDIGITS` are one or more decimal and hex digits,
+respectively. The constant's type selects exactly one payload form:
+
+| Type | Payload | Canonical spelling |
+| --- | --- | --- |
+| `unit` | `()` | `()` |
+| `bool` | `true` or `false` | the word for its value |
+| `byte` | unsigned decimal integer | `0` to `255`, without leading zeros |
+| `char` | `U+` and its Unicode scalar value in hex | `U+0`, `U+41`, `U+1f600`; lowercase hex without leading zeros |
+| `int` | signed decimal integer | `0`, `7`, `-7`; no leading zeros, `+` or negative zero |
+| `time` | signed decimal integer, microseconds since the epoch of 2.2 | as `int`, not a date string |
+| `duration` | signed decimal integer, microseconds | as `int`, without a unit suffix |
+| `decimal` | exact decimal number | `0`, `7`, `-0.125`; the rules below |
+| `float` | `bits HEX`, exactly 8 bytes | lowercase hex in file byte order |
+| `text` | `text S` | the string index |
+| `bytes` | `bytes HEX` | lowercase hex in file byte order |
+| `bigint` | `bigint SIGN HEX` | canonical sign and little-endian magnitude (3.1) |
+| `function` | `closure F` | the capture-less closure's function index |
+
+Integer payloads have no fraction; unsigned ones have no sign. `NUMBER`
+accepts no `+` sign, exponent, separators or type suffix. A decimal
+has an integer part and at most 18 fractional digits. Its numeric value
+times 10¹⁸ is the signed coefficient in 3.1; parsing never rounds or goes
+through `float`.
+Canonical decimals have no integer leading zeros except `0`; a fraction is
+printed only when nonzero, without trailing zeros. Fractional leading zeros
+are significant and remain. A minus sign is printed only for a negative,
+nonzero value, so decimal zero is `0`. The assembler accepts integer leading
+zeros, fractional trailing zeros and signed negative zero as noncanonical
+spellings, within these rules. Every value must satisfy 3.1's type bounds.
+
+`bits` is valid only for `float`: it retains negative zero and every accepted
+NaN payload. No other scalar accepts raw bits, and a float accepts no natural
+number spelling in indexed text. All other scalar encodings are uniquely
+determined by their exact value. A mismatched payload is an error. Byte
+strings may contain any bytes.
 
 Registers list **all** register types, including parameters and a closure's
 implicit `env`. Parameters list only explicit arguments. Module type exports
@@ -1056,8 +1090,8 @@ layouts
   L1 tuple t3 [t1, t1]
 end
 constants
-  k0 t1 bits hex"0700000000000000"
-  k1 t0 bits hex"0000000000000000"
+  k0 t1 7
+  k1 t0 ()
 end
 globals
 end
@@ -1143,9 +1177,10 @@ Canonical text is indexed text with these printing rules:
   is followed by one space and preceded by none. Tuples have no space after
   `(` or before `)`, nor lists just inside brackets. There are no trailing
   spaces. Each function property (`params` through `code`) has its own line.
-- Numbers use decimal without leading zeros, except `0`. Hex digits are
-  lowercase. Quoted strings print ASCII bytes 0x20 to 0x7e literally except
-  `"` and `\`, which use `\"` and `\\`. Every other byte uses `\xhh`,
+- Indices and offsets use decimal without leading zeros, except `0`;
+  scalar payloads follow 10.1. Hex digits are lowercase. Quoted strings
+  print ASCII bytes 0x20 to 0x7e literally except `"` and `\`, which use
+  `\"` and `\\`. Every other byte uses `\xhh`,
   including each byte of non-ASCII UTF-8. No Unicode normalization occurs.
 - Lines end with LF, including the last line. No terminating NUL is printed.
   Every optional array and spec flag is explicit; absence is `-`. There are
@@ -1171,7 +1206,7 @@ The assembler and disassembler live in `src/bytecode`.
 bounded by `MO_LIMIT_BYTECODE_SIZE`.
 `mo_bytecode_disassemble(bytes, length, out, error_out)` verifies its input
 before writing canonical indexed text. Text input and output are bounded by
-`8 * (size_t)MO_LIMIT_BYTECODE_SIZE` (2 GiB in v0.1), not by the binary limit:
+`MO_LIMIT_BYTECODE_TEXT_SIZE` (2 GiB in v0.1), eight times the binary limit:
 quoting and instruction names expand bytes. The canonical spelling above
 fits within eight times the binary file's length, so every verified file's
 text fits and text byte offsets still fit `u32`. Noncanonical input past the

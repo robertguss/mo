@@ -794,7 +794,8 @@ MO_MUST_USE bool mo_bytecode_write(const struct mo_bytecode *file, struct mo_buf
 /* Assembly accepts bytecode.md section 10's indexed form or shorthand with optional pool seeds.
  * Disassembly verifies and prints only canonical indexed text, retaining every entry, index,
  * literal bit, exposure flag and debug field, so reassembly gives identical bytes.
- * Text input/output fits 8 * (size_t)MO_LIMIT_BYTECODE_SIZE; binary files fit the binary limit.
+ * Scalars use exact natural spellings, except float uses its bits. Text input/output fits
+ * MO_LIMIT_BYTECODE_TEXT_SIZE; binary files fit MO_LIMIT_BYTECODE_SIZE.
  * Neither form changes the binary format. No terminating NUL is printed. */
 MO_MUST_USE bool mo_bytecode_assemble(const char *text, size_t length, struct mo_buffer *out,
                                       struct mo_assemble_error *error_out);
