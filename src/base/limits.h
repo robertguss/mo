@@ -99,6 +99,10 @@
  * checks every count and index before using it. The code generator reports a program whose file
  * would pass one as too big for the format: E1015. */
 
+/* Symbolic links one path may pass through before it is refused with "too many links"
+ * (architecture 7, D236): Linux's own limit. */
+#define MO_LIMIT_PATH_LINKS 40
+
 /* Bytes in one bytecode file. */
 #define MO_LIMIT_BYTECODE_SIZE (256 << 20)
 
