@@ -20,6 +20,10 @@ __extension__ typedef __int128 mo_i128;
 __extension__ typedef unsigned __int128 mo_u128;
 _Static_assert(sizeof(mo_i128) == 16, "Mo needs 128-bit integers.");
 
+/* BigInt signs shared by the bytecode's literals and heap's C builder. The
+ * magnitude is little-endian; zero has no bytes, nonzero has no high zero byte. */
+enum mo_bigint_sign { MO_BIGINT_ZERO = 0, MO_BIGINT_POSITIVE = 1, MO_BIGINT_NEGATIVE = 2 };
+
 /* A result the caller must use. Ignoring it is a compile error, because
  * warnings are errors. */
 #define MO_MUST_USE __attribute__((warn_unused_result))

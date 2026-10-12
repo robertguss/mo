@@ -190,7 +190,7 @@ canonical_type(const struct mo_types *types, const struct mo_type *input, struct
         limit = 2;
         break;
     case MO_TYPE_FUNCTION:
-        limit = MO_LIMIT_PARAMETERS;
+        limit = MO_LIMIT_BYTECODE_PARAMETERS;
         if (input->result >= types->count) {
             return MO_TYPES_INVALID;
         }

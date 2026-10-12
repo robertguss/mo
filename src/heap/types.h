@@ -66,7 +66,12 @@ struct mo_type_case {
 
 /* Only the member selected by kind is used. Names are UTF-8, NUL-terminated.
  * parameter_count is zero for all but tuple, list, set, map and function.
- * Function parameters do not include env; result is its result type. */
+ * Function parameters do not include env; result is its result type. Runtime
+ * function types allow MO_LIMIT_BYTECODE_PARAMETERS, including generated promises;
+ * the source checker separately enforces MO_LIMIT_PARAMETERS.
+ * These are decoded structures, not a wire format. bytecode.md section 3 defines
+ * each kind's encoding: names are string indices, and defined, reference,
+ * has_fields and a case's unnamed are derived and never written. */
 struct mo_type {
     enum mo_type_kind kind;
     const uint32_t *parameters;
@@ -127,8 +132,10 @@ void mo_types_init(struct mo_types *types, struct mo_arena *arena);
 
 /* Interns all non-nominal kinds, including built-ins, env and capabilities.
  * Type indices must already exist; incomplete nominal entries are allowed.
- * The loader resolves nominal declarations first, then structural dependencies,
- * remapping file indices. This prevents cycles made only of structural types.
+ * The loader may validate through a scratch builder, declaring nominal entries
+ * before structural dependencies. Any remapping is private to that validation;
+ * the image keeps file indices in its decoded and runtime tables. The loader
+ * rejects cycles made only of structural types and duplicate interned types.
  * Copies active parameters. On failure, out and table entries are unchanged;
  * arena storage used by a failed allocation sequence lasts until arena_free. */
 MO_MUST_USE enum mo_type_problem mo_types_intern(struct mo_types *types, const struct mo_type *type,

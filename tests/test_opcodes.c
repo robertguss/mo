@@ -1,6 +1,7 @@
 /* The independently transcribed instruction list of bytecode.md 4.3 to 4.7. It checks the
  * public descriptors the compiler, assembler, verifier and VM build against. */
 #include "bytecode/bytecode.h"
+#include "heap/types.h"
 #include "test.h"
 
 #include <string.h>
@@ -83,10 +84,10 @@ static const struct expected_opcode specification[] = {
     {"jump", "J", '-', 0},
     {"branch", "rJJ", '-', 0},
     {"switch", "r", 'J', MO_LIMIT_CHOICE_CASES},
-    {"call", "wF", 'a', MO_LIMIT_PARAMETERS},
-    {"call_closure", "wc", 'c', MO_LIMIT_PARAMETERS},
-    {"tail_call", "F", 'a', MO_LIMIT_PARAMETERS},
-    {"tail_call_closure", "c", 'c', MO_LIMIT_PARAMETERS},
+    {"call", "wF", 'a', 256},
+    {"call_closure", "wc", 'c', 255},
+    {"tail_call", "F", 'a', 256},
+    {"tail_call_closure", "c", 'c', 255},
     {"ret", "c", '-', 0},
     {"stop", "r", '-', 0},
     {"fail", "r", '-', 0},
@@ -97,8 +98,8 @@ static const struct expected_opcode specification[] = {
     {"set_field", "wcIc", '-', 0},
     {"make_closure", "wF", 'c', MO_LIMIT_FIELDS},
     {"equal", "wTrr", '-', 0},
-    {"prim", "wPT", 'p', MO_LIMIT_PARAMETERS},
-    {"host", "wH", 'h', MO_LIMIT_PARAMETERS},
+    {"prim", "wPT", 'p', 256},
+    {"host", "wH", 'h', 256},
     {"reset", "tc", '-', 0},
     {"reuse", "wqL", 'c', MO_LIMIT_FIELDS},
     {"free_token", "q", '-', 0},
@@ -248,9 +249,133 @@ static void test_family_names(void) {
     }
 }
 
+/* Enum numbers are wire data, not the compiler's choice of C representation. */
+static void test_wire_numbers(void) {
+    const enum mo_type_kind kinds[] = {
+        MO_TYPE_UNIT, MO_TYPE_BOOL,       MO_TYPE_BYTE,     MO_TYPE_INT,     MO_TYPE_FLOAT,
+        MO_TYPE_CHAR, MO_TYPE_TIME,       MO_TYPE_DURATION, MO_TYPE_DECIMAL, MO_TYPE_RANGE,
+        MO_TYPE_TEXT, MO_TYPE_BYTES,      MO_TYPE_BIGINT,   MO_TYPE_TUPLE,   MO_TYPE_LIST,
+        MO_TYPE_SET,  MO_TYPE_MAP,        MO_TYPE_RECORD,   MO_TYPE_CHOICE,  MO_TYPE_FUNCTION,
+        MO_TYPE_ENV,  MO_TYPE_CAPABILITY,
+    };
+    const enum mo_layout_kind layouts[] = {MO_LAYOUT_RECORD, MO_LAYOUT_TUPLE, MO_LAYOUT_CASE,
+                                           MO_LAYOUT_CLOSURE};
+    const enum mo_capability capabilities[] = {MO_CAP_ARGS,  MO_CAP_ENV,        MO_CAP_CONSOLE,
+                                               MO_CAP_FILES, MO_CAP_READ_FILES, MO_CAP_CLOCK,
+                                               MO_CAP_RANDOM};
+    for (size_t i = 0; i < sizeof kinds / sizeof kinds[0]; i++) {
+        CHECK((uint32_t)kinds[i] == i);
+    }
+    for (size_t i = 0; i < sizeof layouts / sizeof layouts[0]; i++) {
+        CHECK((uint32_t)layouts[i] == i);
+    }
+    for (size_t i = 0; i < sizeof capabilities / sizeof capabilities[0]; i++) {
+        CHECK((uint32_t)capabilities[i] == i);
+    }
+    CHECK(MO_BIGINT_ZERO == 0 && MO_BIGINT_POSITIVE == 1 && MO_BIGINT_NEGATIVE == 2);
+    CHECK(MO_NO_INDEX == UINT32_MAX && MO_BYTECODE_NO_INDEX == MO_NO_INDEX);
+}
+
+/* The worked type/layout sections of bytecode.md 3, as data. This is not a
+ * replacement writer: stream 3 will test encoding/decoding through its APIs.
+ * Keep the expected hex independent of enum numbers and native endianness. */
+static void test_wire_example(void) {
+    const uint32_t words[] = {
+        8,
+        MO_TYPE_UNIT,
+        MO_TYPE_INT,
+        MO_TYPE_TEXT,
+        MO_TYPE_CHOICE,
+        0,
+        3,
+        1,
+        0, /* End */
+        2,
+        2,
+        3,
+        1,
+        4,
+        3, /* Link(value: Int, next: Chain) */
+        5,
+        1,
+        MO_BYTECODE_NO_INDEX,
+        3, /* Alias(Chain) */
+        MO_TYPE_LIST,
+        1,
+        3,
+        MO_TYPE_TUPLE,
+        2,
+        1,
+        4,
+        MO_TYPE_FUNCTION,
+        1,
+        3,
+        1,
+        MO_TYPE_ENV,
+        0,
+        4,
+        MO_LAYOUT_CASE,
+        3,
+        1,
+        2,
+        1,
+        3,
+        MO_LAYOUT_CASE,
+        3,
+        2,
+        1,
+        3,
+        MO_LAYOUT_TUPLE,
+        5,
+        2,
+        1,
+        4,
+        MO_LAYOUT_CLOSURE,
+        6,
+        0,
+        2,
+        3,
+        2,
+    };
+    const char expected[] = "08000000"
+                            "00000000"
+                            "03000000"
+                            "0a000000"
+                            "120000000000000003000000"
+                            "0100000000000000"
+                            "020000000200000003000000010000000400000003000000"
+                            "0500000001000000ffffffff03000000"
+                            "0e0000000100000003000000"
+                            "0d000000020000000100000004000000"
+                            "13000000010000000300000001000000"
+                            "1400000000000000"
+                            "04000000"
+                            "020000000300000001000000020000000100000003000000"
+                            "0200000003000000020000000100000003000000"
+                            "0100000005000000020000000100000004000000"
+                            "030000000600000000000000020000000300000002000000";
+    struct mo_buffer bytes;
+    struct mo_buffer hex;
+    mo_buffer_init(&bytes, 1024);
+    mo_buffer_init(&hex, 2048);
+    for (size_t i = 0; i < sizeof words / sizeof words[0]; i++) {
+        CHECK(mo_buffer_append_le32(&bytes, words[i]));
+    }
+    for (size_t i = 0; i < bytes.length; i++) {
+        CHECK(mo_buffer_append_hex(&hex, bytes.bytes[i], 2));
+    }
+    CHECK(hex.length == sizeof expected - 1);
+    CHECK(hex.length == sizeof expected - 1 &&
+          memcmp(hex.bytes, expected, sizeof expected - 1) == 0);
+    mo_buffer_free(&hex);
+    mo_buffer_free(&bytes);
+}
+
 int main(void) {
     test_numbers_names_and_descriptors();
     test_every_specified_opcode();
     test_family_names();
+    test_wire_numbers();
+    test_wire_example();
     return mo_test_report("test_opcodes");
 }
