@@ -177,6 +177,9 @@ theorem ValTy.notFound {path : String} : ValTy P (fileErrorV "NotFound" path) .f
 theorem ValTy.notAllowed {path : String} : ValTy P (fileErrorV "NotAllowed" path) .fileError :=
   .con rfl rfl (.cons .text .nil)
 
+theorem ValTy.fileFailed {path reason : String} : ValTy P (fileFailedV path reason) .fileError :=
+  .con rfl rfl (.cons .text (.cons .text .nil))
+
 theorem ValTy.optOf {o : Option Value} {t : Ty} (h : ∀ x, o = some x → ValTy P x t) :
     ValTy P (optOf o) (.option t) := by
   cases o with
@@ -826,6 +829,7 @@ theorem hostIoOp_safe (op : IoOp) : ∀ vs w, ValsTy P vs op.sig.1 →
     | exact ValTy.okV folderEntries_safe
     | exact ValTy.errorV ValTy.notFound
     | exact ValTy.errorV ValTy.notAllowed
+    | exact ValTy.errorV ValTy.fileFailed
     | exact ValTy.bool
     | exact ValTy.cap
     | exact okTime_safe

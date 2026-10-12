@@ -148,9 +148,9 @@ def shortestFloatDecimal (bits : UInt64) : Nat × Int :=
         if ratioToFloatBits false a b == magnitude then some (c, e) else none
     found.getD (candidate 17)
 
-/-- Render the shortest decimal in fixed or scientific form, whichever is
-shorter (fixed on equal lengths). Trailing coefficient zeros are removed;
-negative zero is `-0`, and exponents have no redundant plus or leading zeros. -/
+/-- Render shortest round-trip digits in fixed notation for decimal exponents
+from -6 through 20, scientific otherwise (D236). Both zeros stay in plain
+digits; exponents have no plus sign or leading zeros. -/
 def shortestFloatText (bits : UInt64) : String :=
   let sign := if bits.toNat ≥ 2 ^ 63 then "-" else ""
   let (c, e) := shortestFloatDecimal bits
@@ -167,7 +167,7 @@ def shortestFloatText (bits : UInt64) : String :=
     let mantissa := String.ofList (ds.take 1) ++
       (if ds.length = 1 then "" else "." ++ String.ofList (ds.drop 1))
     let scientific := mantissa ++ "e" ++ toString (point - 1)
-    sign ++ (if fixed.length ≤ scientific.length then fixed else scientific)
+    sign ++ (if -5 ≤ point && point ≤ 21 then fixed else scientific)
 
 /-- `Float.to_decimal` uses the shortest decimal, not the exact binary ratio,
 then rounds once to 18 places, ties to even. Range checking is in the primitive. -/

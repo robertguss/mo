@@ -178,6 +178,8 @@ inductive Bug where
   /-- Two keys of a map literal that turn out equal as the program runs, as
   in `{a: 1, b: 2}` when `a == b` (reference 3.8, 13.2). -/
   | repeatedKey
+  /-- `Files.in_memory` gives one path both file and folder roles (D236). -/
+  | fileFolderConflict (path : String)
   deriving Repr, Inhabited, DecidableEq
 
 /-- The outcome of evaluating an expression. -/

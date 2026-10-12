@@ -644,7 +644,8 @@ enum mo_core_bug_tag {
     MO_CORE_BUG_DIV_BY_ZERO,
     MO_CORE_BUG_STOP,
     MO_CORE_BUG_OUTSIDE,
-    MO_CORE_BUG_REPEATED_KEY
+    MO_CORE_BUG_REPEATED_KEY,
+    MO_CORE_BUG_FILE_FOLDER_CONFLICT
 };
 struct mo_core_bug {
     enum mo_core_bug_tag tag;
@@ -752,7 +753,7 @@ enum mo_core_text_kind {
     MO_CORE_TEXT_CAP_STATE,
     MO_CORE_TEXT_RANDOM_STATE
 };
-#define MO_CORE_TEXT_VERSION "0.5"
+#define MO_CORE_TEXT_VERSION "0.6"
 MO_MUST_USE void *mo_core_text_parse(struct mo_arena *arena, enum mo_core_text_kind kind,
                                      const char *text, size_t length, struct mo_diags *diags);
 MO_MUST_USE bool mo_core_text_print(enum mo_core_text_kind kind, const void *value,

@@ -1,7 +1,7 @@
-# Core text, version 0.5
+# Core text, version 0.6
 
 The Lean implementation in `MoCore/Text/` is the reference codec. Every file
-is `(core 0.5 PAYLOAD)` followed by LF. Constructors are case-sensitive and
+is `(core 0.6 PAYLOAD)` followed by LF. Constructors are case-sensitive and
 named after Lean. A nullary constructor is still a list: `(unit)`.
 
 This is an interchange format, not Mo source or the informal notation in
@@ -10,11 +10,23 @@ transport (`Outcome`, including closures), and observable reports (`Report`,
 the protocol `mocore` writes). The latter uses reference 9.2's structural
 value spelling inside a string. C differential tests compare **reports**.
 
-## Changes from 0.4
+## Changes from 0.5
 
-Version 0.5 adds a mandatory compiler-metadata field to Program. Expressions,
-typing, evaluation and proofs are unchanged. The envelope accepts only 0.5;
-older and unknown versions are rejected, not upgraded. Metadata is preserved
+Version 0.6 implements D236: `Bug` gains `(fileFolderConflict S)` naming a
+file/folder collision refused by `Files.in_memory` before allocation. File
+kind mismatches use `Failed` with the exact reasons `"not a folder"` and
+`"is a folder"` for real modeled handles and fakes. Float.to_text keeps the
+shortest round-trip digits but uses fixed notation from 1e-6 through below
+1e21; both zeros stay plain `0`/`-0`. Float wire values and structural
+reports still use bits. Symbolic-link resolution remains host behavior,
+to be verified on real folders by VM/host tests, not by this text-file model.
+The envelope accepts only 0.6; 0.5 and unknown versions are rejected.
+No existing record shape, primitive signature or metadata field changes.
+
+### Earlier changes from 0.4
+
+Version 0.5 added a mandatory compiler-metadata field to Program. Expressions,
+typing, evaluation and proofs were unchanged. Metadata is preserved
 losslessly, checked for shape at program decoding, and never read by `mocore`
 execution or structural observations. A shape error is `parseError`, not
 `illTyped`. There are no omitted/default fields on the wire.
@@ -69,7 +81,7 @@ buffer's own limit is an independent constraint. Lean's codec does not
 impose the C resource limits.
 
 ```ebnf
-file = "(", "core", "0.5", payload, ")" ;
+file = "(", "core", "0.6", payload, ")" ;
 sexp = atom | string | "(", { sexp }, ")" ;
 integer = [ "-" ], digit, { digit } ;
 bits = "0x", hex-digit (* exactly sixteen *) ;
@@ -94,14 +106,14 @@ Decimal integers count 10⁻¹⁸ units; Time and Duration integers count
 microseconds. Char strings contain exactly one Unicode scalar.
 
 ```text
-(core 0.5 (map (text) (list (byte))))
-(core 0.5 (float 0x8000000000000000))
-(core 0.5 (text "hello\nβ"))
+(core 0.6 (map (text) (list (byte))))
+(core 0.6 (float 0x8000000000000000))
+(core 0.6 (text "hello\nβ"))
 ```
 
 Files are UTF-8 without a BOM; invalid UTF-8 is a parse error. An atom is a
 nonempty run of scalars other than the delimiters defined above. Symbols
-are atoms used as constructor names, `core`, `0.5`, `true` and `false`;
+are atoms used as constructor names, `core`, `0.6`, `true` and `false`;
 only the exact symbols listed in this document are accepted in those
 positions. There is no symbol escaping. Empty lists are `()`. Parsing
 accepts any layout using those delimiters, including adjacent lists,
@@ -347,9 +359,12 @@ when false. The guillemets around Lean's reserved identifiers `repeat`,
 `0x3ff0000000000000`, not the next float. The shortest decimal coefficient
 is the nearest among those with the fewest significant digits that round
 back to the original bits, ties to an even coefficient. `%float.toText`
-renders it in fixed or scientific form, whichever is shorter, fixed on a
-tie; exponent `e` is lowercase with no redundant plus or leading zeros.
-Negative zero prints `-0`. `%float.toDecimal` uses that same decimal's exact
+renders fixed notation for shortest decimal exponents -6 through 20,
+scientific otherwise: `1000`, `0.000001`, `1e21`, `1.5e-7`, `1e-7`.
+Whole floats have no `.0`; zero and negative zero always print `0`/`-0`.
+Scientific `e` is lowercase, minus only for negative exponents, without
+padding or a plus. `nan`, `inf`, `-inf` are unchanged.
+`%float.toDecimal` uses that same decimal's exact
 rational value, not the float's exact binary rational (so 0.1 gives 0.1).
 These algorithms are executable definitions with type-safety proofs and
 regression checks, not proofs of numerical functional correctness.
@@ -365,7 +380,7 @@ arguments, a **reached** call stops with the exact report below (exit 1),
 where effects are everything produced so far:
 
 ```text
-(core 0.5 (stopped (outside "Unicode16 is a trusted primitive unavailable in mocore") (effects () () () ())))
+(core 0.6 (stopped (outside "Unicode16 is a trusted primitive unavailable in mocore") (effects () () () ())))
 ```
 
 An unchosen branch or unused function containing such a call still runs.
@@ -389,10 +404,37 @@ The text-file maps used for both real modeled handles and in-memory fakes
 imply folders from descendants and cannot represent links or special files.
 Those kind values still type-check and transport; the OS host must classify
 them without following links. The top folder always exists, other folders
-only while a descendant exists. If a malformed map has both a file and
-descendants, Folder wins. Names are immediate names, not relative paths;
+only while a descendant exists. `Files.in_memory` refuses any key that is
+also a folder, with `(fileFolderConflict "path")` (exit 1): exact stored
+keys and slash prefixes are compared, without normalization. The first
+conflicting file key in insertion order is reported, including `""` if a
+key tries to replace the implicit root. No fake state is allocated on error.
+Arbitrary host World/CapState maps still decode losslessly, and `entries`
+classifies a name with descendants as Folder in malformed host state.
+Names are immediate names, not relative paths;
 old lists remain snapshots after a shared/narrowed/read-only handle changes
 the map. `walk` is Mo library code in `lib/`, not a Core operation.
+
+Result-returning file operations check kinds after lexical confinement.
+`list`/`entries` on a file give `Error(Failed(path, "not a folder"))`.
+`readText`, `readBytes`, `writeText`, `appendText` and `remove` on a folder
+(including `"."`) give `Error(Failed(path, "is a folder"))`. Using a file
+as an intermediate folder or a `within` root gives `"not a folder"` for
+all Result operations, even reading `"."`. Errors preserve the caller's
+original path and leave state unchanged. `exists` is false through a file
+root/intermediate component. `within` and `readOnly` still derive handles
+without returning Result; invalid lexical roots remain inaccessible.
+Missing reads/removes/lists/entries remain `NotFound`; writes/appends still
+create files and imply missing folders. TRANSLATION.md's D236 table covers
+every file operation, ReadFiles variant and failure precedence.
+
+Host operations follow relative links that remain inside the capability's
+folder; absolute/escaping targets are `NotAllowed`, and more than 40 links
+give `Failed(path, "too many links")`. `remove` removes the
+final link itself rather than opening its target (intermediate links still
+follow confinement). Folder arguments to `list`/`entries` may follow links,
+but reported child kinds and `walk` never follow them. These are real-folder
+VM/host tests, not representable runs of `mocore`; no links are modeled.
 
 ### Fake construction and dispatch
 
@@ -413,7 +455,7 @@ lexically inside spec code may use them, as for `fail`, `printed` and
 | `Env.of(map)` | `envOf` | Map(Text, Text) | Env | env = map entries |
 
 Default list/map fields are empty, now is zero, and random is seed 0's state
-(listed below). Every construction
+(listed below). Every successful construction
 appends one state at index equal to the previous store length, regardless of
 kind; the returned root is `(some "")`. Indices are zero-based, never reused
 or garbage-collected within a run, and preexisting states count. Two handles
@@ -440,8 +482,8 @@ composites. Lossless codecs still transport such values.
 File maps retain their paths and insertion order without constructor-time
 normalization. Paths are resolved on use with the existing rules; files hold
 UTF-8 texts, and readBytes returns their encoding. Folder existence/listing
-rules are unchanged. Fake input lines are verbatim texts, including any
-embedded CR/LF; they are not split or decoded again.
+rules and D236 kind failures are specified above. Fake input lines are
+verbatim texts, including any embedded CR/LF; they are not split or decoded again.
 
 Seeded fakes and real modeled Random use `xoshiro256** 1.0`, seeded
 through four consecutive SplitMix64 outputs, starting after its first
@@ -470,6 +512,7 @@ RandomState := (RandomState bits bits bits bits)
 CapState := (CapState (S*) ((S S)*) (S*) (S*) (S*) ((S S)*) I RandomState)
 World := (World (S*) ((S S)*) (S*) (S*) (S*) ((S S)*) I RandomState (CapState*))
 Bug := (overflow S) | (divByZero) | (stop S) | (outside S) | (repeatedKey)
+     | (fileFolderConflict S)
 Outcome := (ok V World) | (stopped Bug World) | (failed S World)
          | (jumped S (V*) World) | (wrong S) | (outOfFuel)
 ```
@@ -556,7 +599,7 @@ Separators are `, ` and `: `, with no spaces just inside delimiters.
 returned list of texts contains two levels of quoting:
 
 ```text
-(core 0.5 (returned "[\"a\", \"b\\n\"]" (effects () () () ())))
+(core 0.6 (returned "[\"a\", \"b\\n\"]" (effects () () () ())))
 ```
 
 This avoids confusing a top-level Text with a constructor/number, and
@@ -646,7 +689,7 @@ A complete one-file program returning a Float's negative zero, with a
 preexisting file and one input line (layout expanded for reading):
 
 ```text
-(core 0.5
+(core 0.6
   (Run
     (Program ()
       ((FunDecl "main" () (float) (lit (float 0x8000000000000000))
@@ -660,13 +703,13 @@ preexisting file and one input line (layout expanded for reading):
 The exact canonical report (exit 0):
 
 ```text
-(core 0.5 (returned "0x8000000000000000" (effects () () (("a" "hi\n")) ())))
+(core 0.6 (returned "0x8000000000000000" (effects () () (("a" "hi\n")) ())))
 ```
 
 A named test demonstrating failure without a bug:
 
 ```text
-(core 0.5
+(core 0.6
   (Run
     (Program ()
       ((FunDecl "main" () (unit) (lit (unit)) "Main" (function) 0)
@@ -677,15 +720,15 @@ A named test demonstrating failure without a bug:
     (test "expected seven") 30))
 ```
 
-Its report is `(core 0.5 (failed "got six" (effects () () () ())))` (exit 2).
-Changing fuel to 0 gives `(core 0.5 (outOfFuel))` (exit 3). An ordinary
+Its report is `(core 0.6 (failed "got six" (effects () () () ())))` (exit 2).
+Changing fuel to 0 gives `(core 0.6 (outOfFuel))` (exit 3). An ordinary
 function with `fail` instead is `illTyped` (exit 5), never evaluated.
 
 A test constructs a console and passes it to ordinary `main`. Observing the
 same handle after the call reads its output; real output stays empty:
 
 ```text
-(core 0.5
+(core 0.6
   (Run
     (Program ()
       ((FunDecl "main" (("c" (cap (console)))) (unit)
@@ -708,7 +751,7 @@ same handle after the call reads its output; real output stays empty:
 Its exact report (exit 0) includes the allocated state's full eight fields:
 
 ```text
-(core 0.5 (returned "Unit" (effects () () () ((CapState () () () ("hello") () () 0 (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec))))))
+(core 0.6 (returned "Unit" (effects () () () ((CapState () () () ("hello") () () 0 (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec))))))
 ```
 
 The exporter below writes all twelve real programs with their timing worlds
@@ -749,7 +792,7 @@ all 16 caller-supplied categories, including standalone RandomState.
 
 Historical **version 0.1** measurements, 2026-10-12 in a Linux x86-64 orb,
 Lean 4.34.0 native executable; sizes/timings below predate fake state. Use
-the command below for today's 0.5 corpus, which includes Fakes, Library and Metadata.
+the command below for today's 0.6 corpus, which includes Fakes, Library and Metadata.
 One warm-up, then **21 fresh processes per sample**; wall time includes
 process startup, input I/O, parse, checker, initialization, entry evaluation,
 structural rendering and captured stdout. Fuel 10000. These are the inputs
@@ -783,7 +826,7 @@ for path in sorted(pathlib.Path('/tmp/mocore-samples').glob('*.core')):
     for _ in range(21):
         start = time.perf_counter_ns()
         result = subprocess.run([exe, str(path)], check=True, capture_output=True)
-        assert result.stdout.startswith(b'(core 0.5 (returned ')
+        assert result.stdout.startswith(b'(core 0.6 (returned ')
         times.append((time.perf_counter_ns() - start) / 1e6)
     print(path.stem, path.stat().st_size, statistics.median(times), min(times), max(times))
 PY
@@ -804,9 +847,9 @@ need new run/report examples too. Do not silently reinterpret RandomState,
 Boolean `ro`, root, fake index, or a constructor's field order.
 
 Any added constructor or changed shape/meaning advances the minor wire
-version (next `0.6`), updates both Lean and C and their differential corpus,
+version (next `0.7`), updates both Lean and C and their differential corpus,
 and adds tests for rejecting unsupported versions. The current parser
-accepts **only `0.5`** and rejects unknown constructors; there are no ignored
+accepts **only `0.6`** and rejects unknown constructors; there are no ignored
 extension fields or fallback operation names. Support for older versions,
 if wanted, must be explicit. This document, not the informal lowering
 notation or Lean's `Repr`, specifies what the C implementation must write.

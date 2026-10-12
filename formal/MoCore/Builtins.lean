@@ -81,11 +81,17 @@ def numericReturns (t : Ty) (e : Expr) (expected : String) : Bool :=
   fun (bits, want) => numericReturns (.option .decimal)
     (prim (.float .toDecimal) [.lit (.float bits)]) want
 
--- The reference leaves fixed/scientific layout open; keep the chosen spelling
--- and its shared shortest coefficient observable through the Core operation.
+-- D236 fixes layout at decimal exponents -6 and 21. Adjacent binary64 values
+-- distinguish each boundary; zeros are always plain digits.
 #guard ([
   (0x3fb999999999999a, "0.1"), (0x3ff8000000000000, "1.5"),
-  (0x408f400000000000, "1e3"), (0x8000000000000000, "-0"),
+  (0x408f400000000000, "1000"), (0x4008000000000000, "3"),
+  (0x0000000000000000, "0"), (0x8000000000000000, "-0"),
+  (0x3eb0c6f7a0b5ed8d, "0.000001"), (0x3eb0c6f7a0b5ed8c, "9.999999999999997e-7"),
+  (0xbeb0c6f7a0b5ed8d, "-0.000001"), (0xbeb0c6f7a0b5ed8c, "-9.999999999999997e-7"),
+  (0x444b1ae4d6e2ef50, "1e21"), (0x444b1ae4d6e2ef4f, "999999999999999900000"),
+  (0xc44b1ae4d6e2ef50, "-1e21"), (0xc44b1ae4d6e2ef4f, "-999999999999999900000"),
+  (0x3e7ad7f29abcaf48, "1e-7"), (0x3e8421f5f40d8376, "1.5e-7"),
   (0x0000000000000001, "5e-324"), (0x7fefffffffffffff, "1.7976931348623157e308")]
   : List (UInt64 × String)).all fun (bits, want) =>
     numericReturns .text (prim (.float .toText) [.lit (.float bits)]) want
@@ -868,7 +874,78 @@ def entryChecks : Expr :=
   eq result (io (.entries false) [v "files", str "."])
     (ok_ (tList .entry) tFileError (listOf .entry [entryE "a" "Folder"]))
 
-def libraryChecks : Expr := and_ numberChecks (and_ randomChecks entryChecks)
+/-- Every Result-returning file operation, including ReadFiles variants. -/
+def fileCalls : List (IoOp × Ty × List Expr) :=
+  [(.readText false, tText, []), (.readText true, tText, []),
+   (.readBytes false, tBytes, []), (.readBytes true, tBytes, []),
+   (.writeText, tUnit, [str "new"]), (.appendText, tUnit, [str "new"]), (.remove, tUnit, []),
+   (.list false, tList tText, []), (.list true, tList tText, []),
+   (.entries false, tList .entry, []), (.entries true, tList .entry, [])]
+
+/-- Run the same contract through real and fake handles. Failed writes/removes
+must leave both the leaf and its sibling/descendant files intact. -/
+def fileKindChecks : Expr :=
+  let failures := fileCalls.foldr (fun (op, t, extra) rest =>
+    let ro := match op with
+      | .readText ro | .readBytes ro | .list ro | .entries ro => ro
+      | _ => false
+    let h := if ro then v "read" else v "files"
+    let call (h : Expr) (path : String) := io op ([h, str path] ++ extra)
+    let failure (h : Expr) (path reason : String) :=
+      eq (tRes t tFileError) (call h path)
+        (err_ t tFileError (.con tFileError "Failed" [str path, str reason]))
+    let folderOp := match op with | .list _ | .entries _ => true | _ => false
+    and_ (failure h (if folderOp then "leaf" else "dir")
+      (if folderOp then "not a folder" else "is a folder")) <|
+    and_ (if folderOp then tt else failure h "." "is a folder") <|
+    and_ (failure (io (.within ro) [h, str "leaf"]) "." "not a folder") <|
+    and_ (failure (io (.within ro) [h, str "leaf"]) "child" "not a folder") <|
+    and_ (failure h "leaf/child" "not a folder") <|
+    and_ (eq (tRes t tFileError) (call h "../leaf")
+      (err_ t tFileError (notAllowed "../leaf"))) rest) tt
+  lets [("read", io .readOnly [v "files"])] <|
+  and_ failures <|
+  and_ (eq (tRes tText tFileError) (io (.readText true) [v "read", str "leaf"])
+    (ok_ tText tFileError (str "old"))) <|
+  and_ (eq (tRes tText tFileError) (io (.readText false) [v "files", str "dir/item"])
+    (ok_ tText tFileError (str "kept"))) <|
+  and_ (eq (tRes tText tFileError) (io (.readText false) [v "files", str "leafish/item"])
+    (ok_ tText tFileError (str "sibling"))) <|
+  and_ (eq (tRes tText tFileError) (io (.readText false) [v "files", str "gone"])
+    (err_ tText tFileError (notFound "gone"))) <|
+  and_ (io (.exists false) [v "files", str "leaf"]) <|
+  and_ (io (.exists true) [v "read", str "dir"]) <|
+  and_ (not_ (io (.exists false) [io (.within false) [v "files", str "leaf"], str "."])) <|
+  and_ (not_ (io (.exists true) [io (.within true) [v "read", str "leaf"], str "child"])) <|
+  and_ (eq (tRes tUnit tFileError) (io .writeText [v "files", str "new/item", str "made"])
+    (ok_ tUnit tFileError unitE)) <|
+  and_ (eq (tRes tUnit tFileError) (io .appendText [v "files", str "new/item", str "!"])
+    (ok_ tUnit tFileError unitE)) <|
+  and_ (eq (tRes tText tFileError) (io (.readText true) [v "read", str "new/item"])
+    (ok_ tText tFileError (str "made!"))) <|
+  and_ (eq (tRes tUnit tFileError) (io .remove [v "files", str "new/item"])
+    (ok_ tUnit tFileError unitE)) <|
+  not_ (io (.exists false) [v "files", str "new"])
+
+def kindFiles : List (String × String) :=
+  [("leaf", "old"), ("dir/item", "kept"), ("leafish/item", "sibling")]
+
+def fakeFileKindChecks : Expr :=
+  lets [("files", io .filesInMemory [mapOf tText tText
+    (kindFiles.map fun (p, text) => (str p, str text))])] fileKindChecks
+
+#guard passes program fileKindChecks { files := kindFiles } [("files", .files)]
+#guard passes program fakeFileKindChecks
+#guard ([
+  ([("a", "file"), ("a/b", "child")], "a"),
+  ([("a/b", "child"), ("a", "file")], "a"),
+  ([("β/deep/n", "child"), ("β/deep", "file")], "β/deep"),
+  ([("z/n", "child"), ("a", "file"), ("z", "file"), ("a/n", "child")], "a"),
+  ([("", "file")], "")] : List (List (String × String) × String)).all fun (files, path) =>
+    stops program (io .filesInMemory [mapOf tText tText (files.map fun (p, text) => (str p, str text))])
+      (tCap .files) (.fileFolderConflict path)
+
+def libraryChecks : Expr := and_ numberChecks (and_ randomChecks (and_ entryChecks fakeFileKindChecks))
 def libraryProgram : Program :=
   { program with funs := program.funs ++
     [{ (fn "library" [] tUnit (assertThat libraryChecks (str "library check failed"))) with kind := .test }] ++
