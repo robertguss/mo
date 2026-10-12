@@ -81,11 +81,17 @@ def numericReturns (t : Ty) (e : Expr) (expected : String) : Bool :=
   fun (bits, want) => numericReturns (.option .decimal)
     (prim (.float .toDecimal) [.lit (.float bits)]) want
 
--- The reference leaves fixed/scientific layout open; keep the chosen spelling
--- and its shared shortest coefficient observable through the Core operation.
+-- D236 fixes layout at decimal exponents -6 and 21. Adjacent binary64 values
+-- distinguish each boundary; zeros are always plain digits.
 #guard ([
   (0x3fb999999999999a, "0.1"), (0x3ff8000000000000, "1.5"),
-  (0x408f400000000000, "1e3"), (0x8000000000000000, "-0"),
+  (0x408f400000000000, "1000"), (0x4008000000000000, "3"),
+  (0x0000000000000000, "0"), (0x8000000000000000, "-0"),
+  (0x3eb0c6f7a0b5ed8d, "0.000001"), (0x3eb0c6f7a0b5ed8c, "9.999999999999997e-7"),
+  (0xbeb0c6f7a0b5ed8d, "-0.000001"), (0xbeb0c6f7a0b5ed8c, "-9.999999999999997e-7"),
+  (0x444b1ae4d6e2ef50, "1e21"), (0x444b1ae4d6e2ef4f, "999999999999999900000"),
+  (0xc44b1ae4d6e2ef50, "-1e21"), (0xc44b1ae4d6e2ef4f, "-999999999999999900000"),
+  (0x3e7ad7f29abcaf48, "1e-7"), (0x3e8421f5f40d8376, "1.5e-7"),
   (0x0000000000000001, "5e-324"), (0x7fefffffffffffff, "1.7976931348623157e308")]
   : List (UInt64 × String)).all fun (bits, want) =>
     numericReturns .text (prim (.float .toText) [.lit (.float bits)]) want
