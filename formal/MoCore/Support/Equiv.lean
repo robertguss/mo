@@ -2,10 +2,10 @@
   Mo Core support: structural equality and the built-in orders.
 
   `Equal` can't be customized in Mo (reference 9.2): values are equal when
-  their fields are, maps compare their entries in any order, and floats follow
-  IEEE rules. So one structural equality serves every type with `Equal`, and
-  `Prim.eq` is it. Functions and capabilities have no `Equal`; they compare
-  unequal here, and well-typed lowering never compares them.
+  their fields are, maps and sets compare their entries in any order, and
+  floats follow IEEE rules. So one structural equality serves every type with
+  `Equal`, and `Prim.eq` is it. Functions and capabilities have no `Equal`;
+  they compare unequal here, and well-typed lowering never compares them.
 -/
 import MoCore.Support.Text
 import MoCore.Support.Bytes
@@ -27,6 +27,7 @@ def Value.equiv : Value → Value → Bool
   | .tuple as, .tuple bs | .list as, .list bs => Value.equivList as bs
   | .con c as, .con d bs => c == d && Value.equivList as bs
   | .map es, .map fs => es.length == fs.length && Value.equivEntries es fs
+  | .set as, .set bs => as.length == bs.length && Value.equivMembers as bs
   | _, _ => false
 termination_by a _ => (sizeOf a, 0)
 /-- Pointwise equality of two lists. -/
@@ -45,9 +46,24 @@ def Value.findEntry : Value → Value → List (Value × Value) → Bool
   | _, _, [] => false
   | k, v, (k', v') :: fs => (Value.equiv k k' && Value.equiv v v') || Value.findEntry k v fs
 termination_by k v fs => (sizeOf k + sizeOf v + 1, fs.length)
+/-- Every element of the first set has an equal element in the second. -/
+def Value.equivMembers : List Value → List Value → Bool
+  | [], _ => true
+  | a :: as, bs => Value.findMember a bs && Value.equivMembers as bs
+termination_by as _ => (sizeOf as, 0)
+/-- Whether a set's elements hold one equal to `a`. -/
+def Value.findMember : Value → List Value → Bool
+  | _, [] => false
+  | a, b :: bs => Value.equiv a b || Value.findMember a bs
+termination_by a bs => (sizeOf a, bs.length)
 end
 
 instance : BEq Value := ⟨Value.equiv⟩
+
+/-- No element of a list equals (`==`) one after it. A set's elements are so,
+as a set holds no element twice (reference 3.8), and value typing requires it
+(`ValTy.set`). -/
+def Distinct (xs : List Value) : Prop := xs.Pairwise fun a b => Value.equiv a b = false
 
 /-- The built-in order of two values of a base type, or `none` when they are
 not values of that type. Numbers (bytes too), times and durations by size,

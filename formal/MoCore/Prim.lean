@@ -339,9 +339,17 @@ def enumerateVals (k : Nat) : List Value → List Value
   | [] => []
   | x :: xs => .tuple [.int k, x] :: enumerateVals (k + 1) xs
 
-/-- The elements in order, without later duplicates. -/
-def uniqueVals (xs : List Value) : List Value :=
-  xs.foldl (fun acc x => if acc.any (fun y => Value.equiv y x) then acc else acc ++ [x]) []
+/-- Whether a set's elements hold one equal to `x`. -/
+def setHas (xs : List Value) (x : Value) : Bool := xs.any fun y => Value.equiv y x
+
+/-- Adds `x` to a set's elements: a new element goes last, and when an equal
+element is there already, the elements are left as they are, so it keeps its
+place (reference 3.8). -/
+def setAdd (xs : List Value) (x : Value) : List Value := if setHas xs x then xs else xs ++ [x]
+
+/-- The elements in order, without later duplicates: each added in turn. They
+are `List.unique`, and the elements of `List.to_set`. -/
+def uniqueVals (xs : List Value) : List Value := xs.foldl setAdd []
 
 def evalListOp (op : ListOp) (vs : List Value) (w : World) : Outcome :=
   match op, vs with
@@ -428,6 +436,40 @@ def evalMapOp (op : MapOp) (vs : List Value) (w : World) : Outcome :=
     | some kvs => .ok (.map (mapOfPairs kvs)) w
     | none => wrongArgs "List.to_map"
   | _, _ => wrongArgs "Map primitive"
+
+/-! ## Sets
+
+A set's elements are a list in insertion order, none equal to another
+(reference 3.8), which `setHas` and `setAdd` above keep. -/
+
+/-- Removes the element equal to `x`; the others keep their order. -/
+def setRemove (xs : List Value) (x : Value) : List Value := xs.filter fun y => !Value.equiv y x
+
+/-- `a.union(b)`: the elements of `a`, then those of `b` that `a` doesn't hold,
+in `b`'s order, as if each were added to `a` in turn. -/
+def setUnion (xs ys : List Value) : List Value := ys.foldl setAdd xs
+
+/-- `a.intersection(b)`: the elements of `a` that `b` holds, in `a`'s order. -/
+def setIntersection (xs ys : List Value) : List Value := xs.filter fun x => setHas ys x
+
+/-- `a.difference(b)`: the elements of `a` that `b` doesn't hold, in `a`'s
+order. -/
+def setDifference (xs ys : List Value) : List Value := xs.filter fun x => !setHas ys x
+
+def evalSetOp (op : SetOp) (vs : List Value) (w : World) : Outcome :=
+  match op, vs with
+  | .empty, [] => .ok (.set []) w
+  | .size, [.set xs] => okInt xs.length w
+  | .isEmpty, [.set xs] => .ok (.bool xs.isEmpty) w
+  | .has, [.set xs, x] => .ok (.bool (setHas xs x)) w
+  | .add, [.set xs, x] => .ok (.set (setAdd xs x)) w
+  | .remove, [.set xs, x] => .ok (.set (setRemove xs x)) w
+  | .union, [.set xs, .set ys] => .ok (.set (setUnion xs ys)) w
+  | .intersection, [.set xs, .set ys] => .ok (.set (setIntersection xs ys)) w
+  | .difference, [.set xs, .set ys] => .ok (.set (setDifference xs ys)) w
+  | .toList, [.set xs] => .ok (.list xs) w
+  | .ofList, [.list xs] => .ok (.set (uniqueVals xs)) w
+  | _, _ => wrongArgs "Set primitive"
 
 /-! ## Capabilities and the world -/
 
@@ -625,6 +667,7 @@ def Prim.eval : Prim → List Value → World → Outcome
   | .time op, vs, w => evalTimeOp op vs w
   | .list _ op, vs, w => evalListOp op vs w
   | .map _ _ op, vs, w => evalMapOp op vs w
+  | .set _ op, vs, w => evalSetOp op vs w
   | .eq _, [a, b], w => .ok (.bool (Value.equiv a b)) w
   | .eq _, _, _ => wrongArgs "=="
   | .io op, vs, w => evalIoOp op vs w

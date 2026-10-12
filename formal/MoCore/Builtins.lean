@@ -1,5 +1,5 @@
 /-
-  Mo Core: checks of the built-in types `Byte`, `Bytes` and `Range`.
+  Mo Core: checks of the built-in types `Byte`, `Bytes`, `Range` and `Set`.
 
   The twelve samples use these types little or not at all, so this file checks
   their primitives the way the samples check their functions: each check is a
@@ -12,8 +12,15 @@ namespace MoCore.Builtins
 
 open MoCore DSL Lib
 
-/-- The library functions the checks call. -/
-def program : Program := { data := [], funs := sortBy tByte tByte ++ sortBy tBytes tBytes }
+/-- The library functions the checks call, and the text forms the lowering
+derives for the sets they write. -/
+def program : Program :=
+  { data := [],
+    funs := sortBy tByte tByte ++ sortBy tBytes tBytes ++
+      [setText tInt intText, setText (tSet tInt) (setTextL tInt),
+       setText tRange fun r => prim (.range .toText) [r]] }
+
+#guard wellTyped? program
 
 /-- `x.to_byte`. -/
 def toByte (x : Expr) : Expr := iop .toByte [x]
@@ -309,5 +316,161 @@ def countTo (start : Expr) : Expr :=
 -- countTo(9223372036854775804) == 3, and an empty range runs no round: countTo(9223372036854775807) == 0
 #guard passes program (ieq (countTo (int (int64Max - 3))) (int 3))
 #guard passes program (ieq (countTo (int int64Max)) (int 0))
+
+/-! ## Set
+
+`Set(T)` holds distinct values in insertion order, also after removals
+(reference 3.8). It has `Equal`, comparing elements in any order, `Hash`, so
+a set can be a map key or a set member, and a text form, `[1, 2].to_set`, but
+no order (reference 9.2). -/
+
+/-- `[n1, ..., nk].to_set`, a set of `Int`s. -/
+def intSet (ns : List Int) : Expr := sop tInt .ofList [listOf tInt (ns.map int)]
+
+/-- `s.to_list == [n1, ..., nk]`: the set of `Int`s `s` holds these, in this
+order. -/
+def holdsInOrder (s : Expr) (ns : List Int) : Expr :=
+  eq (tList tInt) (sop tInt .toList [s]) (listOf tInt (ns.map int))
+
+-- Set.empty.size == 0, Set.empty.empty?, and Set.empty.to_list == []
+#guard passes program
+  (and_ (ieq (sop tInt .size [emptySet tInt]) (int 0)) <|
+    and_ (sop tInt .isEmpty [emptySet tInt]) (holdsInOrder (emptySet tInt) []))
+
+-- A new element goes last: s = Set.empty.add(3).add(1).add(2) holds [3, 1, 2];
+-- one already there keeps its place: s.add(3) holds [3, 1, 2], and
+-- s.add(1).size == 3
+#guard passes program
+  (lets [("s", sop tInt .add [sop tInt .add [sop tInt .add [emptySet tInt, int 3], int 1], int 2])] <|
+    and_ (holdsInOrder (v "s") [3, 1, 2]) <|
+      and_ (holdsInOrder (sop tInt .add [v "s", int 3]) [3, 1, 2])
+        (ieq (sop tInt .size [sop tInt .add [v "s", int 1]]) (int 3)))
+
+-- s = [3, 1, 3, 2, 1].to_set holds [3, 1, 2], each element in its first place,
+-- as [3, 1, 3, 2, 1].unique gives them; s.size == 3, and not s.empty?
+#guard passes program
+  (lets [("s", intSet [3, 1, 3, 2, 1])] <|
+    and_ (holdsInOrder (v "s") [3, 1, 2]) <|
+    and_ (eq (tList tInt) (sop tInt .toList [v "s"])
+      (lop tInt .unique [listOf tInt ([3, 1, 3, 2, 1].map int)])) <|
+    and_ (ieq (sop tInt .size [v "s"]) (int 3)) (not_ (sop tInt .isEmpty [v "s"])))
+
+-- ["b", "a", "b"].to_set.to_list == ["b", "a"], and it has?("a")
+#guard passes program
+  (lets [("s", sop tText .ofList [strs ["b", "a", "b"]])] <|
+    and_ (eq (tList tText) (sop tText .toList [v "s"]) (strs ["b", "a"]))
+      (sop tText .has [v "s", str "a"]))
+
+-- With s = [3, 1, 2].to_set: s.has?(1), and not s.has?(4)
+#guard passes program
+  (lets [("s", intSet [3, 1, 2])] <|
+    and_ (sop tInt .has [v "s", int 1]) (not_ (sop tInt .has [v "s", int 4])))
+
+-- remove keeps the others' order: with s = [3, 1, 2].to_set, s.remove(1)
+-- holds [3, 2] and s.remove(4) holds [3, 1, 2]; an element removed and added
+-- again goes last: s.remove(3).add(3) holds [1, 2, 3]
+#guard passes program
+  (lets [("s", intSet [3, 1, 2])] <|
+    and_ (holdsInOrder (sop tInt .remove [v "s", int 1]) [3, 2]) <|
+    and_ (holdsInOrder (sop tInt .remove [v "s", int 4]) [3, 1, 2])
+      (holdsInOrder (sop tInt .add [sop tInt .remove [v "s", int 3], int 3]) [1, 2, 3]))
+
+-- union keeps the first set's elements in their order, then adds the second's
+-- that are new, in theirs: [3, 1].to_set.union([2, 1, 4].to_set) holds
+-- [3, 1, 2, 4], [2, 1, 4].to_set.union([3, 1].to_set) holds [2, 1, 4, 3], and
+-- Set.empty.union([2, 1].to_set) holds [2, 1]
+#guard passes program
+  (and_ (holdsInOrder (sop tInt .union [intSet [3, 1], intSet [2, 1, 4]]) [3, 1, 2, 4]) <|
+    and_ (holdsInOrder (sop tInt .union [intSet [2, 1, 4], intSet [3, 1]]) [2, 1, 4, 3])
+      (holdsInOrder (sop tInt .union [emptySet tInt, intSet [2, 1]]) [2, 1]))
+
+-- intersection and difference keep the first set's order:
+-- [3, 1, 2].to_set.intersection([2, 3, 5].to_set) holds [3, 2],
+-- [3, 1, 2].to_set.difference([2, 5].to_set) holds [3, 1], and with
+-- Set.empty, they hold [] and [3, 1, 2]
+#guard passes program
+  (and_ (holdsInOrder (sop tInt .intersection [intSet [3, 1, 2], intSet [2, 3, 5]]) [3, 2]) <|
+    and_ (holdsInOrder (sop tInt .difference [intSet [3, 1, 2], intSet [2, 5]]) [3, 1]) <|
+    and_ (holdsInOrder (sop tInt .intersection [intSet [3, 1, 2], emptySet tInt]) [])
+      (holdsInOrder (sop tInt .difference [intSet [3, 1, 2], emptySet tInt]) [3, 1, 2]))
+
+-- Two sets are equal when they hold the same elements, in any order:
+-- [1, 2].to_set == [2, 1].to_set and Set.empty == [].to_set, but
+-- [1, 2].to_set != [1, 2, 3].to_set and [1, 2].to_set != [1, 3].to_set
+#guard passes program
+  (and_ (eq (tSet tInt) (intSet [1, 2]) (intSet [2, 1])) <|
+    and_ (eq (tSet tInt) (emptySet tInt) (intSet [])) <|
+    and_ (ne (tSet tInt) (intSet [1, 2]) (intSet [1, 2, 3]))
+      (ne (tSet tInt) (intSet [1, 2]) (intSet [1, 3])))
+
+-- Sets are map keys and set members, equal sets being the same key:
+-- {[1, 2].to_set: "a"}.get([2, 1].to_set) == Some("a"), and
+-- [[1, 2].to_set, [2, 1].to_set, Set.empty].to_set.size == 2
+#guard passes program
+  (and_ (eq (tOpt tText)
+      (mop (tSet tInt) tText .get [mapOf (tSet tInt) tText [(intSet [1, 2], str "a")], intSet [2, 1]])
+      (some_ tText (str "a")))
+    (ieq (sop (tSet tInt) .size
+      [sop (tSet tInt) .ofList [listOf (tSet tInt) [intSet [1, 2], intSet [2, 1], emptySet tInt]]])
+      (int 2)))
+
+-- An element equal to one already there leaves the set as it is, with the
+-- element it held: [{1: "a", 2: "b"}].to_set.add({2: "b", 1: "a"}) holds one
+-- map, whose keys are still [1, 2]
+#guard
+  let tM := tMap tInt tText
+  let m := mapOf tInt tText [(int 1, str "a"), (int 2, str "b")]
+  let m2 := mapOf tInt tText [(int 2, str "b"), (int 1, str "a")]
+  passes program
+    (lets [("s", sop tM .add [sop tM .ofList [listOf tM [m]], m2])] <|
+      and_ (ieq (sop tM .size [v "s"]) (int 1))
+        (caseOpt (lop tM .first [sop tM .toList [v "s"]]) "m"
+          (eq (tList tInt) (mop tInt tText .keys [v "m"]) (listOf tInt [int 1, int 2])) ff))
+
+-- "#{[3, 1, 2].to_set}" == "[3, 1, 2].to_set" and Set.empty.to_text == "[].to_set";
+-- [2, 1].to_set == [1, 2].to_set, but each is written in its own order:
+-- "[2, 1].to_set" and "[1, 2].to_set"
+#guard passes program
+  (and_ (teq (setTextL tInt (intSet [3, 1, 2])) (str "[3, 1, 2].to_set")) <|
+    and_ (teq (setTextL tInt (emptySet tInt)) (str "[].to_set")) <|
+    and_ (teq (setTextL tInt (intSet [2, 1])) (str "[2, 1].to_set"))
+      (teq (setTextL tInt (intSet [1, 2])) (str "[1, 2].to_set")))
+
+-- Inside a set, a set or a range is written as it is alone:
+-- [[1, 2].to_set, Set.empty].to_set.to_text == "[[1, 2].to_set, [].to_set].to_set",
+-- and [0..3, -2..1].to_set.to_text == "[0..3, -2..1].to_set"
+#guard passes program
+  (and_ (teq (setTextL (tSet tInt)
+        (sop (tSet tInt) .ofList [listOf (tSet tInt) [intSet [1, 2], emptySet tInt]]))
+      (str "[[1, 2].to_set, [].to_set].to_set"))
+    (teq (setTextL tRange (sop tRange .ofList
+        [listOf tRange [range (int 0) (int 3), range (iop .neg [int 2]) (int 1)]]))
+      (str "[0..3, -2..1].to_set")))
+
+/-- ```
+var order = []
+for n in [3, 1, 3, 2, 4].to_set
+  continue if n == 1
+  break if n == 4
+  order = order.append(n)
+end
+order == [3, 2]
+```
+A `for` loop visits a set's elements in insertion order. -/
+def setLoop : Expr :=
+  lets [("order", nil tInt)] <|
+    forSet "l" tInt "n" (intSet [3, 1, 3, 2, 4]) [("order", tList tInt)] [v "order"]
+      (ite (ieq (v "n") (int 1)) (nextRound "l" [v "order"]) <|
+        ite (ieq (v "n") (int 4)) (breakLoop "l" [v "order"]) <|
+          nextRound "l" [lop tInt .append [v "order", v "n"]])
+      (eq (tList tInt) (v "order") (listOf tInt [int 3, int 2]))
+
+#guard passes program setLoop
+
+-- A set is a type of its own, not a map to Unit: the checker refuses
+-- Set.empty where a Map(Int, Unit) is expected, and a Text added to a Set(Int).
+#guard typedAs? program [] (emptySet tInt) (tSet tInt)
+#guard !typedAs? program [] (emptySet tInt) (tMap tInt tUnit)
+#guard !typedAs? program [] (sop tInt .add [emptySet tInt, str "a"]) (tSet tInt)
 
 end MoCore.Builtins

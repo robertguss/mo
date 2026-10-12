@@ -60,6 +60,8 @@ instance (t : Int) : Decidable (InTime t) := inferInstanceAs (Decidable (_ ∧ _
 * `con c fields` is a constructed value of a record or choice type: its
   constructor's name and its fields, in declaration order.
 * `map` is an association list in insertion order, with distinct keys.
+* `set` is a list of elements in insertion order, none equal to another
+  (value typing requires it: `ValTy.set`).
 * A `closure` captures the environment it was made in.
 * A capability value `cap c root` is a handle: what it reaches is in the
   `World`. `root` is the folder a `Files` or `ReadFiles` handle is narrowed to
@@ -83,6 +85,7 @@ inductive Value where
   | tuple (vs : List Value)
   | list (vs : List Value)
   | map (es : List (Value × Value))
+  | set (vs : List Value)
   | con (c : String) (fields : List Value)
   | closure (env : List (String × Value)) (params : List (String × Ty)) (body : Expr)
   | cap (c : Cap) (root : Option String)

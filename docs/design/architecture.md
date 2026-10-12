@@ -272,10 +272,9 @@ section summarizes it; `formal/README.md` lists what is proven.
 
 This program layer is what the bytecode compiler needs beyond expressions:
 kinds become the bytecode's kinds, constants become `init` functions, and the
-compiler never has to look back at the checked program. The model in
-`formal/` today has the expressions except `Byte`, `Bytes`, `Set` and `Range`
-as types of their own (it treats a set as a map to `Unit`, and a range as the
-pair of its ends), `fail`, the fake constructors, the `Unicode16` module, and
+compiler never has to look back at the checked program. Stream 0 has given
+the model in `formal/` `Byte`, `Bytes`, `Set` and `Range` as types of their
+own. It still lacks `fail`, the fake constructors, the `Unicode16` module, and
 the program layer: its constants are functions without parameters, and it has
 no kinds. Stream 0 adds them, and the text form of 4.4 (section 12). The Lean
 evaluator reads kinds but needs none of them to run a program.
@@ -717,6 +716,8 @@ MO_MUST_USE bool mo_value_list(struct mo_process *process, uint32_t type, const 
                                uint32_t count, struct mo_cell *out);
 MO_MUST_USE bool mo_value_map(struct mo_process *process, uint32_t type, const struct mo_cell *keys,
                               const struct mo_cell *values, uint32_t count, struct mo_cell *out);
+MO_MUST_USE bool mo_value_set(struct mo_process *process, uint32_t type, const struct mo_cell *elements,
+                              uint32_t count, struct mo_cell *out);
 MO_MUST_USE bool mo_value_closure(struct mo_process *process, uint32_t function, const struct mo_cell *captures,
                                   uint32_t count, struct mo_cell *out);
 
