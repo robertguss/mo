@@ -1,0 +1,44 @@
+/* Private lexer and parser state. */
+#ifndef MO_SYNTAX_INTERNAL_H
+#define MO_SYNTAX_INTERNAL_H
+
+#include "base/limits.h"
+#include "syntax/syntax.h"
+
+struct mo_token {
+    enum mo_syntax_token kind;
+    struct mo_span span;
+    uint32_t line;
+    uint32_t column;
+};
+
+struct mo_lex {
+    const struct mo_source *source;
+    uint32_t file;
+    uint32_t pos;
+    uint32_t line;
+    uint32_t column;
+    enum mo_syntax_token last;
+    struct mo_token pending;
+    bool has_pending;
+    uint32_t depth;
+    struct {
+        uint32_t braces;
+        bool triple;
+        uint32_t indent;
+    } interpolations[MO_LIMIT_INTERPOLATION_DEPTH];
+    struct mo_arena *arena;
+    struct mo_diags *diags;
+    struct mo_syntax_comment *comments;
+    struct mo_syntax_comment **comment_tail;
+    bool failed;
+    bool fatal;
+};
+
+void mo_syntax_lex_init(struct mo_lex *lx, struct mo_arena *arena, const struct mo_sources *sources,
+                        uint32_t file, struct mo_diags *diags);
+MO_MUST_USE struct mo_token mo_syntax_next(struct mo_lex *lx);
+MO_MUST_USE bool mo_syntax_error(struct mo_lex *lx, uint16_t code, struct mo_span span,
+                                 const char *message, const char *reason);
+
+#endif

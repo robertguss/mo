@@ -19,6 +19,23 @@
 
 /* X(number, identifier, section) */
 #define MO_CODES(X)                                                                                \
+    /* Source text, tokens and syntax (the executable grammar checks these too). */                \
+    X(1, SOURCE_UTF8, "2.1")                                                                       \
+    X(2, SOURCE_INVISIBLE, "2.1")                                                                  \
+    X(3, SOURCE_NAME, "2.3")                                                                       \
+    X(4, SOURCE_NUMBER, "3.2")                                                                     \
+    X(5, SOURCE_TEXT, "3.4")                                                                       \
+    X(6, SOURCE_TOKEN, "2.4")                                                                      \
+    X(7, SOURCE_SYNTAX, "2.4")                                                                     \
+    X(8, SOURCE_HEADER, "10.1")                                                                    \
+    X(9, SOURCE_PATTERN, "7.3")                                                                    \
+    X(10, SOURCE_TARGET, "6.2")                                                                    \
+    X(11, SOURCE_CONSTRUCTION, "4.2")                                                              \
+    X(12, SOURCE_ARGUMENTS, "5.2")                                                                 \
+    X(13, SOURCE_STRUCT, "4.1")                                                                    \
+    X(14, SOURCE_ENUM, "4.2")                                                                      \
+    X(15, SOURCE_PROMISE, "12.2")                                                                  \
+    X(16, SOURCE_CASE, "7.2")                                                                      \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \
@@ -67,7 +84,9 @@
     X(1023, CORE_ARITY, NULL)                                                                      \
     X(1024, CORE_FIELD, NULL)                                                                      \
     X(1025, CORE_NUMBER, NULL)                                                                     \
-    X(1026, CORE_CHARACTER, NULL)
+    X(1026, CORE_CHARACTER, NULL)                                                                  \
+    /* The supplied syntax arena, or the system, has no room. */                                   \
+    X(1027, SYNTAX_NO_MEMORY, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */
 enum mo_code {
