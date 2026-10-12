@@ -54,7 +54,10 @@ TIDY_FILES := $(wildcard src/*/*.c tests/*.c fuzz/*.c grammar/*.c)
 GRAMMAR_GENERATED := build/grammar
 GRAMMAR_SOURCES := grammar/lexer.c grammar/ast.c
 GRAMMAR_INCLUDES := -Igrammar -I$(GRAMMAR_GENERATED)
-GRAMMAR_PARSER_WARNINGS := $(CSTD) $(INCLUDES) -Wall -Wextra -Werror -MMD -MP
+# LR stack height can follow flat prefix chains, not source nesting. Its default
+# 10,000 states reject valid source; bound it by the input budget instead.
+GRAMMAR_PARSER_WARNINGS := $(CSTD) $(INCLUDES) -Wall -Wextra -Werror -MMD -MP \
+	-include src/base/limits.h '-DYYMAXDEPTH=(4 * MO_LIMIT_FILE_SIZE)'
 grammar_objects = $(patsubst grammar/%.c,$(1)/grammar/%.o,$(GRAMMAR_SOURCES)) \
 	$(1)/grammar/mo.tab.o $(call objects,$(1),$(BASE_SOURCES))
 GRAMMAR_CHECK = $(1) --fragment grammar/tests/good/*.mo && \
@@ -121,6 +124,10 @@ fuzz-smoke: $(FUZZERS)
 			if [ -d fuzz/corpus/$$name ]; then cp -R fuzz/corpus/$$name/. $$corpus/; fi; \
 			if [ "$$name" = fuzz_core_text ]; then cp tests/core/*.core $$corpus/; fi; \
 			if [ "$$name" = fuzz_syntax ]; then cp grammar/tests/good/*.mo grammar/tests/bad/*.mo examples/*.mo $$corpus/; fi; \
+			if [ "$$name" = fuzz_syntax ]; then \
+				awk 'BEGIN { printf "x = 0"; for (i = 0; i < 30000; i++) printf " +\n1"; print "" }' >$$corpus/flat-binary.mo; \
+				awk 'BEGIN { printf "x = "; for (i = 0; i < 12000; i++) printf "not "; print "true" }' >$$corpus/flat-prefix.mo; \
+			fi; \
 			log=$(FUZZ_BUILD)/$$name.log; echo "fuzzing $$name for $(FUZZ_SECONDS)s"; \
 			dictionary=; if [ -f fuzz/$$name.dict ]; then dictionary=-dict=fuzz/$$name.dict; fi; \
 			$$f $$options $$dictionary -max_total_time=$(FUZZ_SECONDS) -print_final_stats=1 \
