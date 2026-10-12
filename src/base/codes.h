@@ -75,6 +75,17 @@
     X(47, IMPORT_HIDDEN_CASE, "10.2")                                                              \
     X(48, TYPE_NAME, "10.3")                                                                       \
     X(49, TYPE_ARGUMENTS, "9.1")                                                                   \
+    X(50, NAME_UNKNOWN, "6.1")                                                                     \
+    X(51, BIND_REPEATED, "6.1")                                                                    \
+    X(52, UNUSED_NAME, "6.1")                                                                      \
+    X(53, TYPE_MISMATCH, "3")                                                                      \
+    X(54, CANNOT_INFER, "5.1")                                                                     \
+    X(55, CALL_ARGUMENTS, "5.2")                                                                   \
+    X(56, UNUSED_VALUE, "6.1")                                                                     \
+    X(57, NOT_VARIABLE, "6.2")                                                                     \
+    X(58, EXIT_OUTSIDE_LOOP, "7.5")                                                                \
+    X(59, BOOL_NAME, "2.3")                                                                        \
+    X(60, LITERAL_RANGE, "3.3")                                                                    \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \
@@ -172,6 +183,10 @@
     X(1101, MODULE_OUTSIDE_ROOT, NULL)                                                             \
     /* The toolchain's library folder cannot be inspected. */                                      \
     X(1102, LIBRARY_UNREADABLE, NULL)                                                              \
+    /* A surface form whose body rules are not implemented by the staged checker. */               \
+    X(1103, CHECK_UNFINISHED, NULL)                                                                \
+    /* Inference exceeds MO_LIMIT_SOURCE_CHECK_WORK for one function. */                           \
+    X(1104, CHECK_WORK, NULL)                                                                      \
     /* The ordinary entry's full runtime name is not unique in the image. */                       \
     X(1200, CODEGEN_ENTRY, NULL)                                                                   \
     /* Core uses a representation that source lowering never produces: a lowering bug. */          \

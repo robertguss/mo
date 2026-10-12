@@ -782,6 +782,36 @@ static void function_signatures(void) {
     finish(&f);
 }
 
+static void body_inference(void) {
+    const uint8_t text[] = "module Main\nfn add(value: Int) : Int\n"
+                           "total = value + 1\ntotal\nend\n";
+    struct fixture f;
+    init(&f, 16 << 20);
+    struct mo_module_syntax *modules[] = {parse_bytes(&f, "main.mo", text, sizeof(text) - 1)};
+    uint32_t *uses[] = {NULL};
+    struct mo_module_set set = {.count = 1, .modules = modules, .uses = uses};
+    struct mo_module_interfaces *names = mo_resolve_modules(&f.arena, &set, &f.diags);
+    MO_ASSERT(names != NULL);
+    struct mo_signatures *signatures = mo_prepare_signatures(&f.arena, &set, names, &f.diags);
+    MO_ASSERT(signatures != NULL);
+    struct mo_inferred_body *body = mo_infer_function(&f.arena, names, signatures, 0, &f.diags);
+    CHECK(body != NULL && f.diags.count == 0);
+    if (body != NULL) {
+        const struct mo_syntax *syntax = signatures->items[0].function->declaration->children[5];
+        const struct mo_syntax *binding = syntax->children[0]->children[0];
+        const struct mo_syntax *reference = syntax->children[1]->children[0];
+        bool found = false;
+        for (uint32_t i = 0; i < body->count; i++)
+            if (body->items[i].syntax == reference) {
+                CHECK(strcmp(body->items[i].type->name, "Int") == 0);
+                CHECK(body->items[i].binding == binding);
+                found = true;
+            }
+        CHECK(found);
+    }
+    finish(&f);
+}
+
 static void import_limit(void) {
     struct mo_buffer source;
     mo_buffer_init(&source, MO_LIMIT_FILE_SIZE);
@@ -1000,6 +1030,7 @@ int main(void) {
     independent_errors();
     name_rules();
     function_signatures();
+    body_inference();
     import_limit();
     import_scaling();
     source_limits();

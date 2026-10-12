@@ -113,6 +113,11 @@
  * Lowering stops at it: E1012. */
 #define MO_LIMIT_INSTANTIATION_DEPTH 64
 
+/* Type construction, unification, occurs checks and expression visits in one
+ * surface function. E1104 bounds generated constraints and shared type DAGs
+ * independently of the caller's arena limit. */
+#define MO_LIMIT_SOURCE_CHECK_WORK (1 << 24)
+
 /* Registers of one function, its parameters included. The code generator refuses a function that
  * needs more: E1013. The loader refuses a function with more. */
 #define MO_LIMIT_FUNCTION_REGISTERS 65535

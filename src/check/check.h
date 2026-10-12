@@ -120,4 +120,33 @@ MO_MUST_USE struct mo_signatures *
 mo_prepare_signatures(struct mo_arena *arena, const struct mo_module_set *set,
                       const struct mo_module_interfaces *interfaces, struct mo_diags *diags);
 
+struct mo_inferred_expression {
+    const struct mo_syntax *syntax;
+    const struct mo_source_type *type;
+    const struct mo_syntax *binding; /* local binder or parameter, otherwise NULL */
+    const struct mo_symbol *symbol;  /* resolved module function, otherwise NULL */
+    bool never;                      /* every path leaves the current function or loop, or stops */
+};
+
+struct mo_inferred_body {
+    const struct mo_function_signature *function;
+    uint32_t count;
+    struct mo_inferred_expression *items; /* visited expressions/statements, in postorder */
+};
+
+/* Infers one named function's body against its prepared signature. Local names,
+ * positional calls, lambdas, scalar/collection expressions, variables and
+ * control flow are supported. E1061 explicitly refuses unfinished forms.
+ * This is not mo_check: fields/constructors/patterns, dot calls, abilities,
+ * capability/capture flow, specs, constants, unused imports and main's contract
+ * still need their checking stages. A success is not suitable for lowering.
+ * NULL with a diagnostic on failure, stopping at the first error in this body.
+ * Output belongs to arena and borrows syntax, interfaces and signatures. Equal
+ * inferred types are structurally equal; pointer identity is not required.
+ * All work and storage obey base limits and the caller arena's budget. */
+MO_MUST_USE struct mo_inferred_body *
+mo_infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
+                  const struct mo_signatures *signatures, uint32_t function,
+                  struct mo_diags *diags);
+
 #endif
