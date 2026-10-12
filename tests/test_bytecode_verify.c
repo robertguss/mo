@@ -372,8 +372,8 @@ static void choices_and_joins(void) {
     expect(&t, "case is not known", 0, 11);
     init(&t);
     const uint32_t joins[] = {
-        MO_OP_CONST, 0,  0,  MO_OP_CONST, 3, 2, MO_OP_CONST, 4,  3,          MO_OP_BRANCH,
-        3,           13, 18, MO_OP_DUP,   5, 4, MO_OP_JUMP,  20, MO_OP_JUMP, 20,
+        MO_OP_CONST, 0,  0,  MO_OP_CONST, 3, 2, MO_OP_CONST, 1,  1,          MO_OP_BRANCH,
+        3,           13, 18, MO_OP_DUP,   2, 1, MO_OP_JUMP,  20, MO_OP_JUMP, 20,
         MO_OP_RET,   0};
     code(&t, joins, N(joins));
     expect(&t, "register states disagree at join", 0, 20);
@@ -1015,7 +1015,7 @@ static void closure_initialization(void) {
                                                          MO_OP_RET,
                                                          0};
     const uint32_t closure_regs[] = {20, 3},
-                   closure_body[] = {MO_OP_GLOBAL, 1, 0, MO_OP_DROP, 0, MO_OP_RET, 1};
+                   closure_body[] = {MO_OP_CONST, 1, 1, MO_OP_DROP, 0, MO_OP_RET, 1};
     const uint32_t helper_regs[] = {19, 19, 3},
                    helper[] = {MO_OP_DUP, 1, 0, MO_OP_CALL_CLOSURE, 2, 1, MO_OP_RET, 2};
     t.functions[1].register_types = init_regs;
@@ -1036,11 +1036,10 @@ static void closure_initialization(void) {
     expect(&t, NULL, 0, 0);
     t.init[0] = 1;
     t.init[1] = 0;
-    expect(&t, "init reads an unset global", 1, 3);
+    expect(&t, NULL, 0, 0);
     t.init[0] = 0;
     t.init[1] = 1;
-    /* A second same-signature closure is a possible target of the helper's unknown call.
-     * Even though the constant passed here is the safe closure, conservative analysis refuses. */
+    /* An unrelated same-signature closure must not create an initializer dependency. */
     t.file.function_count = 5;
     t.file.debug_count = 5;
     t.types[21] = (struct mo_type){.kind = MO_TYPE_ENV, .function = 4};
@@ -1055,7 +1054,10 @@ static void closure_initialization(void) {
     t.functions[4].result_type = 3;
     t.functions[4].code = other;
     t.functions[4].code_count = N(other);
-    expect(&t, "init reads an unset global", 1, 3);
+    expect(&t, NULL, 0, 0);
+    t.init[0] = 1;
+    t.init[1] = 0;
+    expect(&t, NULL, 0, 0);
 }
 
 static void abilities(void) {
@@ -1419,8 +1421,11 @@ static void work_bound(void) {
             mo_bytecode_decode_info(&arena, wire.bytes, wire.length, &offsets, &view, &le);
         CHECK(f != NULL);
         if (f != NULL) {
+            struct mo_verification verified;
+            CHECK(mo_bytecode_verify(f, &view, offsets, wire.length, &arena, &verified, &le));
             uint64_t work = 0;
-            CHECK(mo_bytecode_readable(f, &view, 0, offsets[0], 3 + n * 4, readable, &work, &le));
+            CHECK(mo_bytecode_readable(f, &view, &verified, 0, offsets[0], 3 + n * 4, readable,
+                                       &work, &le));
             for (uint32_t i = 0; i <= n; i++) {
                 CHECK(readable[i]);
             }
@@ -1431,6 +1436,74 @@ static void work_bound(void) {
         mo_arena_free(&arena);
         mo_buffer_free(&wire);
     }
+}
+
+static void hostile_work(void) {
+    struct fixture t;
+    init(&t);
+    struct mo_arena arena;
+    mo_arena_init(&arena, (size_t)64 << 20);
+    const uint32_t count = MO_LIMIT_FUNCTION_REGISTERS;
+    uint32_t *regs = mo_arena_allocate_array(&arena, count, sizeof *regs, _Alignof(uint32_t));
+    uint32_t *words = mo_arena_allocate_array(&arena, MO_LIMIT_FUNCTION_CODE_WORDS, sizeof *words,
+                                              _Alignof(uint32_t));
+    bool *readable = mo_arena_allocate_array(&arena, count, sizeof *readable, _Alignof(bool));
+    MO_ASSERT(regs != NULL && words != NULL && readable != NULL);
+    for (uint32_t r = 0; r < count; r++) {
+        regs[r] = r == 0 ? 0U : 15U;
+    }
+    words[0] = MO_OP_CONST;
+    words[1] = 0;
+    words[2] = 0;
+    uint32_t pc = 3;
+    for (uint32_t i = 0; i < 262000; i++) {
+        words[pc++] = MO_OP_DROP;
+        words[pc++] = 0;
+    }
+    words[pc++] = MO_OP_RET;
+    words[pc++] = 0;
+    t.functions[0].register_types = regs;
+    t.functions[0].register_count = count;
+    code(&t, words, pc);
+    expect(&t, NULL, 0, 0);
+    struct mo_buffer wire;
+    struct mo_write_error we;
+    struct mo_load_error le;
+    struct mo_types view;
+    struct mo_verification verified;
+    const uint32_t *offsets;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    CHECK(mo_bytecode_encode(&t.file, &wire, &we));
+    const struct mo_bytecode *f =
+        mo_bytecode_decode_info(&arena, wire.bytes, wire.length, &offsets, &view, &le);
+    MO_ASSERT(f != NULL);
+    CHECK(mo_bytecode_verify(f, &view, offsets, wire.length, &arena, &verified, &le));
+    uint64_t work = 0;
+    CHECK(mo_bytecode_readable(f, &view, &verified, 0, offsets[0], pc - 2, readable, &work, &le));
+    CHECK(work < UINT64_C(4) * (pc + count));
+    CHECK(readable[0] && !readable[count - 1]);
+    CHECK(printf("unused-choice regression: %u registers, %u words, %llu steps\n", count, pc,
+                 (unsigned long long)work) >= 0);
+    mo_buffer_free(&wire);
+    /* A jump chain needs no state snapshots. Test the exact product bound, then its next
+     * representable value, using only unused registers and otherwise identical code. */
+    for (uint32_t blocks = 2048; blocks <= 2049; blocks++) {
+        t.functions[0].register_count = 2048;
+        pc = 0;
+        for (uint32_t b = 1; b < blocks; b++) {
+            words[pc++] = MO_OP_JUMP;
+            words[pc] = pc + 1;
+            pc++;
+        }
+        words[pc++] = MO_OP_CONST;
+        words[pc++] = 0;
+        words[pc++] = 0;
+        words[pc++] = MO_OP_RET;
+        words[pc++] = 0;
+        code(&t, words, pc);
+        expect(&t, blocks == 2048 ? NULL : "register-block limit", 0, 0);
+    }
+    mo_arena_free(&arena);
 }
 
 int main(void) {
@@ -1449,5 +1522,6 @@ int main(void) {
     linked_promise();
     worked_examples();
     work_bound();
+    hostile_work();
     return mo_test_report("bytecode verifier");
 }

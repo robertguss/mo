@@ -193,13 +193,16 @@ operand index bounds and instruction boundaries are structural too: debug
 ranges and jump offsets must be safe to inspect before dataflow. Field and
 case operands have their format limits checked here; their compatibility with
 the operand's type is a verifier check. Passing decoding alone never permits
-execution, and `mo_load` is not implemented until verification is available.
-The writer currently performs the same structural checks by decoding its
-encoded output; the verifier will join those checks when implemented.
+execution.
+`mo_load` decodes and verifies before publishing an image. The writer performs
+both checks by loading its encoded output.
 Working-storage ceilings derive from wire size and native entry sizes, including
-arena overhead; they impose no additional format limit. Tables and scratch
+arena overhead. Tables and scratch
 arrays are allocated to their counts, and names are shared with the strings
-table. The caller chooses the decoded table arena's budget. Allocation failure
+table. Private decoder callers choose their arena budget; `mo_load` bounds its
+image and whole-program scratch arenas by `mo_bytecode_work_budget(wire_size)`.
+Function verification has the additional work and register-block ceilings in
+section 9. Allocation failure
 reports zero with a no-memory reason. A decoded file is independent of the input
 bytes.
 
@@ -807,6 +810,13 @@ reads, such as `get`, `size` or `contains?`, borrows. The list in `prims.def`
 is written first in Phase 2, from reference section 14 and these rules, and
 grows only with the library.
 
+On a stop, primitives and host operations must leave operands in their
+pre-instruction state, including their ownership and the objects they name, or
+the VM must preserve that state for the defect report before the operation
+consumes or changes it. This applies to partial in-place updates followed by
+allocation failure and to `Map.%literal_insert` stopping on a duplicate key.
+A consumed or freed operand must never be printed from pre-instruction replay.
+
 ## 7. Capabilities and host operations
 
 A capability is a heap object that carries its own operations. It has:
@@ -935,10 +945,11 @@ An init function's stores all name one global, distinct from every other
 initializer's global. Dataflow proves exactly one store on each normally
 returning path; `stop` may precede the store. A store in a cycle or a second
 store on a path is refused. At each global read or call in an init function,
-all possibly read globals must already be initialized. This includes reads
-through recursive helpers and closure calls. An unknown closure call considers
-every non-spec closure of its function type; this conservative rule can refuse
-an init even when a particular closure value would be safe. Reading its own
+all globals read directly or through direct calls must already be initialized,
+including recursive helpers. Unknown closure calls are not charged with every
+closure of the same type: unrelated closures may depend on this very global.
+The compiler orders actual source dependencies; the VM's unset-global guard
+handles dependencies reached through unknown closure calls. Reading its own
 global after its store is allowed. The VM still guards unset reads as an
 internal error (3.2). Source-order tie breaking is a compiler rule, not a
 loader check: the file contains no source-order dependency information.
@@ -976,11 +987,21 @@ read/consume/write refusals point to the offending operand; a join refusal
 points to the destination block's first instruction. Whole-table relations
 point to payload offset 20. Allocation failures have offset zero.
 
-Ownership propagates once per basic block and compares complete states on
-every incoming edge. Known-case analysis runs separately per choice register:
+Ownership visits each basic block once with an explicit depth-first stack and
+an undo log of changed registers. Complete vectors are retained only at joins
+and loop entries; repeated incoming edges compare with those vectors.
+Known-case analysis runs only for choice registers used by `case_field` or `reset`:
 each block's fact can change only from unreached to a case/unknown, then to
-unknown. Thus function dataflow takes O(code words × registers) work, with
-O(blocks × registers + code words) scratch storage. Ability propagation and
+unknown. Before doing work or allocating vectors, verification enforces
+`MO_LIMIT_FUNCTION_REGISTER_BLOCKS` (registers × blocks ≤ 2²²), and charges at
+most `MO_LIMIT_VERIFY_WORK_PER_WORD` (128) steps per encoded code/register word
+plus 32 header words. Exceeding either ceiling is a load error at the entry
+instruction or the instruction where work would cross the ceiling, respectively.
+Scratch is bounded by `MO_LIMIT_VERIFY_BYTES_PER_WORD` (2,048) bytes times that
+same word count, including arena overhead. Lowering must respect these ceilings.
+Unused choice registers and jump chains take linear work; expensive dataflow
+is refused within a wire-sized budget, rather than asking for quadratic storage.
+Ability propagation and
 initialization dependency summaries take linear graph work; fixed-layout
 lookups use a sorted index. All graph walks use explicit stacks or queues.
 
@@ -998,6 +1019,11 @@ never reads a register whose reference was consumed.
 The VM-facing `mo_image_registers_readable` wraps the private replay through
 the module's `bytecode.h`. It reports states immediately before the instruction, never after
 its consumes or writes, and refuses non-boundary PCs.
+The image caches abilities and the sorted layout index; replay never repeats
+whole-file type checks. Replay uses the same per-function ceilings. The VM,
+primitives and host must preserve the pre-instruction operand state on a stop,
+as section 6 requires, or supply a saved state to the report. Pre-instruction
+readability alone does not make a partially consumed or mutated operand safe.
 
 ## 10. The text form
 

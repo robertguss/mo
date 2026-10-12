@@ -23,13 +23,21 @@ struct mo_verify_function {
 MO_MUST_USE bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc);
 MO_MUST_USE const char *mo_verify_parameter_modes(const uint32_t *instruction);
 
+struct mo_verification {
+    const uint8_t *abilities;
+    const struct layout_key *layouts;
+};
+/* Metadata survives in the image arena; whole-program scratch does not. */
 MO_MUST_USE bool mo_bytecode_verify(const struct mo_bytecode *file, const struct mo_types *types,
-                                    const uint32_t *code_offsets, struct mo_load_error *error);
+                                    const uint32_t *code_offsets, size_t wire_size,
+                                    struct mo_arena *arena, struct mo_verification *out,
+                                    struct mo_load_error *error);
 
 /* Replay only this function, reporting states before pc. pc must be an instruction boundary.
  * readable has register_count elements. work counts analysis steps for the bounded-work test. */
 MO_MUST_USE bool mo_bytecode_readable(const struct mo_bytecode *file, const struct mo_types *types,
-                                      uint32_t function, uint32_t base, uint32_t pc, bool *readable,
-                                      uint64_t *work, struct mo_load_error *error);
+                                      const struct mo_verification *verified, uint32_t function,
+                                      uint32_t base, uint32_t pc, bool *readable, uint64_t *work,
+                                      struct mo_load_error *error);
 
 #endif

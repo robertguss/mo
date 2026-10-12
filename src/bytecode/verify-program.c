@@ -122,8 +122,8 @@ static MO_MUST_USE bool summaries(struct mo_arena *arena, struct graph *g, uint3
 bool mo_verify_program_init(struct mo_arena *arena, const struct mo_bytecode *f,
                             const uint32_t *code_offsets, struct mo_verify_program *out,
                             struct mo_load_error *error) {
-    uint32_t nodes = f->function_count + f->type_count;
-    size_t capacity = f->layout_count;
+    uint32_t nodes = f->function_count;
+    size_t capacity = 0;
     for (uint32_t i = 0; i < f->function_count; i++) {
         capacity += f->functions[i].code_count;
     }
@@ -174,13 +174,6 @@ bool mo_verify_program_init(struct mo_arena *arena, const struct mo_bytecode *f,
             return refuse(error, 20, "global has no initializer");
         }
     }
-    for (uint32_t i = 0; i < f->layout_count; i++) {
-        const struct mo_layout *l = &f->layouts[i];
-        if (l->kind == MO_LAYOUT_CLOSURE && !f->functions[l->function].spec_code) {
-            MO_ASSERT(g.count < capacity);
-            add(&g, f->function_count + l->type, l->function);
-        }
-    }
     for (uint32_t i = 0; i < f->function_count; i++) {
         const struct mo_bytecode_function *fn = &f->functions[i];
         for (uint32_t pc = 0; pc < fn->code_count; pc = next(fn, pc)) {
@@ -194,11 +187,6 @@ bool mo_verify_program_init(struct mo_arena *arena, const struct mo_bytecode *f,
             if (op == MO_OP_CALL || op == MO_OP_TAIL_CALL) {
                 MO_ASSERT(g.count < capacity);
                 add(&g, i, fn->code[pc + (op == MO_OP_CALL ? 2U : 1U)]);
-            }
-            if (op == MO_OP_CALL_CLOSURE || op == MO_OP_TAIL_CALL_CLOSURE) {
-                uint32_t r = fn->code[pc + (op == MO_OP_CALL_CLOSURE ? 2U : 1U)];
-                MO_ASSERT(g.count < capacity);
-                add(&g, i, f->function_count + fn->register_types[r]);
             }
         }
     }

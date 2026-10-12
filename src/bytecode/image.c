@@ -5,17 +5,20 @@ struct mo_image {
     const struct mo_bytecode *file;
     const uint32_t *code_offsets;
     struct mo_types types;
+    struct mo_verification verified;
 };
 
 struct mo_image *mo_load(const uint8_t *bytes, size_t length, struct mo_load_error *error_out) {
     MO_ASSERT(error_out != NULL && (bytes != NULL || length == 0));
     struct mo_arena arena;
-    mo_arena_init(&arena, SIZE_MAX);
+    mo_arena_init(&arena, length <= MO_LIMIT_BYTECODE_SIZE ? mo_bytecode_work_budget(length) : 0);
     const uint32_t *offsets = NULL;
     struct mo_types types;
+    struct mo_verification verified;
     struct mo_bytecode *file =
         mo_bytecode_decode_info(&arena, bytes, length, &offsets, &types, error_out);
-    if (file == NULL || !mo_bytecode_verify(file, &types, offsets, error_out)) {
+    if (file == NULL ||
+        !mo_bytecode_verify(file, &types, offsets, length, &arena, &verified, error_out)) {
         mo_arena_free(&arena);
         return NULL;
     }
@@ -25,7 +28,7 @@ struct mo_image *mo_load(const uint8_t *bytes, size_t length, struct mo_load_err
         mo_arena_free(&arena);
         return NULL;
     }
-    *image = (struct mo_image){arena, file, offsets, types};
+    *image = (struct mo_image){arena, file, offsets, types, verified};
     return image;
 }
 
@@ -42,8 +45,8 @@ bool mo_image_registers_readable(const struct mo_image *image, uint32_t function
         return false;
     }
     uint64_t work = 0;
-    return mo_bytecode_readable(image->file, &image->types, function, image->code_offsets[function],
-                                pc, readable, &work, error);
+    return mo_bytecode_readable(image->file, &image->types, &image->verified, function,
+                                image->code_offsets[function], pc, readable, &work, error);
 }
 
 void mo_image_free(struct mo_image *image) {
