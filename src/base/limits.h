@@ -41,8 +41,10 @@
 #define MO_LIMIT_PATH_SIZE 4096
 
 /* Characters in one line, its line ending not counted. They are counted as columns are
- * (src/base/diag.h). The lexer refuses a longer line: E1005. */
-#define MO_LIMIT_LINE_LENGTH 4096
+ * (src/base/diag.h). The lexer refuses a longer line: E1005. It is far above any line a person
+ * writes, so that a long text literal on one line still fits; MO_LIMIT_FILE_SIZE bounds lines
+ * anyway. */
+#define MO_LIMIT_LINE_LENGTH 65536
 
 /* How deeply code may nest: blocks, brackets, and expressions and patterns inside each other. It
  * bounds the recursion of the parser, and of every stage that walks the syntax tree. The parser
