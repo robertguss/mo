@@ -97,6 +97,7 @@ inductive ValTy (P : Program) : Value → Ty → Prop
   | text {s} : ValTy P (.text s) .text
   | bytes {bs} : (∀ b ∈ bs, InByte b) → ValTy P (.bytes bs) .bytes
   | unit : ValTy P .unit .unit
+  | range {a b} : InInt64 a → InInt64 b → ValTy P (.range a b) .range
   | time {t} : InTime t → ValTy P (.time t) .time
   | duration {d} : InInt64 d → ValTy P (.duration d) .duration
   | tuple {vs ts} : ValsTy P vs ts → ValTy P (.tuple vs) (.tuple ts)

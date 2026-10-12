@@ -41,6 +41,7 @@ inductive Ty where
   | text
   | bytes      -- a sequence of bytes
   | unit
+  | range      -- `a..b`: two `Int`s, its start and its end
   | time       -- microseconds since 1970-01-01T00:00:00Z, years 1 to 9999
   | duration   -- microseconds, 64-bit, checked
   | tuple (ts : List Ty)
@@ -65,7 +66,7 @@ mutual
 def Ty.beq : Ty → Ty → Bool
   | .int, .int | .bigInt, .bigInt | .byte, .byte | .decimal, .decimal | .float, .float
   | .bool, .bool | .char, .char | .text, .text | .bytes, .bytes | .unit, .unit
-  | .time, .time | .duration, .duration | .ordering, .ordering
+  | .range, .range | .time, .time | .duration, .duration | .ordering, .ordering
   | .fileError, .fileError => true
   | .tuple as, .tuple bs => Ty.beqList as bs
   | .list a, .list b => Ty.beq a b
@@ -86,7 +87,7 @@ end
 mutual
 theorem Ty.beq_refl : ∀ (a : Ty), Ty.beq a a = true
   | .int | .bigInt | .byte | .decimal | .float | .bool | .char | .text | .bytes | .unit
-  | .time | .duration | .ordering | .fileError => rfl
+  | .range | .time | .duration | .ordering | .fileError => rfl
   | .tuple as => by simp only [Ty.beq]; exact Ty.beqList_refl as
   | .list a => by simp only [Ty.beq]; exact Ty.beq_refl a
   | .map k v => by simp only [Ty.beq, Ty.beq_refl k, Ty.beq_refl v, Bool.and_self]
@@ -103,8 +104,8 @@ end
 mutual
 theorem Ty.eq_of_beq : ∀ (a b : Ty), Ty.beq a b = true → a = b
   | .int, b, h | .bigInt, b, h | .byte, b, h | .decimal, b, h | .float, b, h | .bool, b, h
-  | .char, b, h | .text, b, h | .bytes, b, h | .unit, b, h | .time, b, h | .duration, b, h
-  | .ordering, b, h | .fileError, b, h => by cases b <;> simp_all [Ty.beq]
+  | .char, b, h | .text, b, h | .bytes, b, h | .unit, b, h | .range, b, h | .time, b, h
+  | .duration, b, h | .ordering, b, h | .fileError, b, h => by cases b <;> simp_all [Ty.beq]
   | .data s, b, h | .cap s, b, h => by cases b <;> simp_all [Ty.beq]
   | .tuple as, b, h => by
       cases b <;> simp only [Ty.beq, Bool.false_eq_true] at h
@@ -146,8 +147,8 @@ as `List.map[Text,Int]`. -/
 def Ty.render : Ty → String
   | .int => "Int" | .bigInt => "BigInt" | .byte => "Byte" | .decimal => "Decimal"
   | .float => "Float" | .bool => "Bool" | .char => "Char" | .text => "Text"
-  | .bytes => "Bytes" | .unit => "Unit" | .time => "Time" | .duration => "Duration"
-  | .ordering => "Ordering" | .fileError => "FileError"
+  | .bytes => "Bytes" | .unit => "Unit" | .range => "Range" | .time => "Time"
+  | .duration => "Duration" | .ordering => "Ordering" | .fileError => "FileError"
   | .tuple ts => "(" ++ Ty.renderList ts ++ ")"
   | .list t => "List(" ++ Ty.render t ++ ")"
   | .map k v => "Map(" ++ Ty.render k ++ ", " ++ Ty.render v ++ ")"
@@ -210,8 +211,6 @@ inductive IntOp where
   | saturatingAdd | saturatingSub | saturatingMul
   | toText | toDecimal | toBig | toFloat | toChar | toByte
   | seconds | milliseconds | minutes | hours | days
-  /-- `(a..b).to_list`: the whole numbers from `a` up to, not including, `b`. -/
-  | range
   deriving DecidableEq, Repr, Inhabited
 
 /-- Operations on `BigInt`. -/
@@ -275,6 +274,13 @@ inductive BytesOp where
   | size | get | decodeUtf8
   deriving DecidableEq, Repr, Inhabited
 
+/-- Operations on `Range`. `make a b` is `a..b`, the whole numbers from `a` up
+to, not including, `b` (reference 7.5); `start` and `end` read its ends, which
+is how a `for` loop takes a range apart, as `uncons` takes a list apart. -/
+inductive RangeOp where
+  | make | start | «end» | toList | contains | toText
+  deriving DecidableEq, Repr, Inhabited
+
 /-- Operations on `Time` and `Duration` (reference 3.9). `sub` is `Time - Time`,
 a `Duration`; `add` and `subDur` are `Time + Duration` and `Time - Duration`,
 each a bug outside the years 1 to 9999; `checkedAdd` is `checked_add`, which
@@ -332,6 +338,7 @@ inductive Prim where
   | char (op : CharOp)
   | text (op : TextOp)
   | bytes (op : BytesOp)
+  | range (op : RangeOp)
   | time (op : TimeOp)
   | list (t : Ty) (op : ListOp)
   | map (k v : Ty) (op : MapOp)
@@ -357,7 +364,6 @@ def IntOp.sig : IntOp → List Ty × Ty
   | .toChar => ([.int], .option .char)
   | .toByte => ([.int], .option .byte)
   | .seconds | .milliseconds | .minutes | .hours | .days => ([.int], .duration)
-  | .range => ([.int, .int], .list .int)
 
 def BigOp.sig : BigOp → List Ty × Ty
   | .add | .sub | .mul | .div | .rem => ([.bigInt, .bigInt], .bigInt)
@@ -412,6 +418,13 @@ def BytesOp.sig : BytesOp → List Ty × Ty
   | .size => ([.bytes], .int)
   | .get => ([.bytes, .int], .option .byte)
   | .decodeUtf8 => ([.bytes], .option .text)
+
+def RangeOp.sig : RangeOp → List Ty × Ty
+  | .make => ([.int, .int], .range)
+  | .start | .end => ([.range], .int)
+  | .toList => ([.range], .list .int)
+  | .contains => ([.range, .int], .bool)
+  | .toText => ([.range], .text)
 
 def TimeOp.sig : TimeOp → List Ty × Ty
   | .sub => ([.time, .time], .duration)
@@ -492,6 +505,7 @@ def Prim.sig : Prim → List Ty × Ty
   | .char op => op.sig
   | .text op => op.sig
   | .bytes op => op.sig
+  | .range op => op.sig
   | .time op => op.sig
   | .list t op => op.sig t
   | .map k v op => op.sig k v

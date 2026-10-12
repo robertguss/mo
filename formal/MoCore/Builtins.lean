@@ -223,4 +223,91 @@ def allBytes : List Int := (List.range 256).map Int.ofNat
 ", "é€😀a", String.ofList [Char.ofNat 0x10FFFF, Char.ofNat 0xD7FF]].all fun t =>
   textBytes t == t.toUTF8.toList.map fun b => (b.toNat : Int)
 
+/-! ## Range
+
+`a..b` is a value of type `Range`: the whole numbers from `a` up to, not
+including, `b` (reference 7.5). It has `Equal`, `Hash` and a text form, `0..3`,
+but no order (reference 9.2). -/
+
+/-- `r.to_list`. -/
+def toList (r : Expr) : Expr := prim (.range .toList) [r]
+
+/-- `r.contains?(n)`. -/
+def contains (r n : Expr) : Expr := prim (.range .contains) [r, n]
+
+-- (0..3).to_list == [0, 1, 2], (-2..1).to_list == [-2, -1, 0], and
+-- (3..3).to_list and (5..2).to_list are []
+#guard passes program
+  (and_ (eq (tList tInt) (toList (range (int 0) (int 3))) (listOf tInt [int 0, int 1, int 2])) <|
+    and_ (eq (tList tInt) (toList (range (iop .neg [int 2]) (int 1)))
+      (listOf tInt [iop .neg [int 2], iop .neg [int 1], int 0])) <|
+    and_ (eq (tList tInt) (toList (range (int 3) (int 3))) (nil tInt))
+      (eq (tList tInt) (toList (range (int 5) (int 2))) (nil tInt)))
+
+-- With r = 0..3: r.contains?(0) and r.contains?(2), but not r.contains?(3) or
+-- r.contains?(-1); and (5..2).contains?(3) is false
+#guard passes program
+  (lets [("r", range (int 0) (int 3))] <|
+    and_ (contains (v "r") (int 0)) <|
+    and_ (contains (v "r") (int 2)) <|
+    and_ (not_ (contains (v "r") (int 3))) <|
+    and_ (not_ (contains (v "r") (iop .neg [int 1])))
+      (not_ (contains (range (int 5) (int 2)) (int 3))))
+
+-- (0..3).to_text == "0..3", and "#{-2..10}" == "-2..10"
+#guard passes program
+  (and_ (teq (prim (.range .toText) [range (int 0) (int 3)]) (str "0..3"))
+    (teq (prim (.range .toText) [range (iop .neg [int 2]) (int 10)]) (str "-2..10")))
+
+-- Two ranges are equal when their ends are: 0..3 == 0..3 and 0..3 != 0..4,
+-- and 5..2 != 6..2, though both are empty
+#guard passes program
+  (and_ (eq tRange (range (int 0) (int 3)) (range (int 0) (int 3))) <|
+    and_ (ne tRange (range (int 0) (int 3)) (range (int 0) (int 4)))
+      (ne tRange (range (int 5) (int 2)) (range (int 6) (int 2))))
+
+-- Ranges are map keys: {0..3: "short", 0..10: "long"}.get(0..10) == Some("long")
+#guard passes program
+  (eq (tOpt tText)
+    (mop tRange tText .get [mapOf tRange tText [(range (int 0) (int 3), str "short"),
+      (range (int 0) (int 10), str "long")], range (int 0) (int 10)])
+    (some_ tText (str "long")))
+
+/-- ```
+var total = 0
+for i in 0..10
+  continue if i % 2 == 0
+  total += i
+end
+total == 25
+``` -/
+def oddSum : Expr :=
+  lets [("total", int 0)] <|
+    forRange "r" "i" (range (int 0) (int 10)) [("total", tInt)] [v "total"]
+      (ite (ieq (irem (v "i") (int 2)) (int 0)) (nextRange "r" "i" [v "total"])
+        (nextRange "r" "i" [iadd (v "total") (v "i")]))
+      (ieq (v "total") (int 25))
+
+#guard passes program oddSum
+
+/-- ```
+r = start..9223372036854775807
+var count = 0
+for i in r
+  count += 1
+end
+count
+```
+A loop up to the largest `Int` counts to its end without overflow: the counter
+is below the end whenever it is increased. -/
+def countTo (start : Expr) : Expr :=
+  lets [("r", range start (int int64Max)), ("count", int 0)] <|
+    forRange "r" "i" (v "r") [("count", tInt)] [v "count"]
+      (nextRange "r" "i" [iadd (v "count") (int 1)])
+      (v "count")
+
+-- countTo(9223372036854775804) == 3, and an empty range runs no round: countTo(9223372036854775807) == 0
+#guard passes program (ieq (countTo (int (int64Max - 3))) (int 3))
+#guard passes program (ieq (countTo (int int64Max)) (int 0))
+
 end MoCore.Builtins

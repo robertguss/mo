@@ -89,6 +89,13 @@ theorem valTy_unit_iff : ValTy P v .unit ↔ v = .unit := by
     | con hcs => simp [ctorsOf] at hcs
   · rintro rfl; exact .unit
 
+theorem valTy_range_iff : ValTy P v .range ↔ ∃ a b, v = .range a b ∧ InInt64 a ∧ InInt64 b := by
+  constructor
+  · intro h; cases h with
+    | range ha hb => exact ⟨_, _, rfl, ha, hb⟩
+    | con hcs => simp [ctorsOf] at hcs
+  · rintro ⟨a, b, rfl, ha, hb⟩; exact .range ha hb
+
 theorem valTy_time_iff : ValTy P v .time ↔ ∃ t, v = .time t ∧ InTime t := by
   constructor
   · intro h; cases h with
@@ -263,25 +270,15 @@ macro "invert_args" : tactic => `(tactic| (
   intro vs w h
   revert h
   simp only [Prim.sig, IntOp.sig, BigOp.sig, ByteOp.sig, DecOp.sig, FloatOp.sig, CharOp.sig,
-    TextOp.sig, BytesOp.sig, TimeOp.sig, ListOp.sig, MapOp.sig, IoOp.sig, Base.ty, filesCap,
-    valsTy_cons_iff, valsTy_nil_iff, valTy_int_iff, valTy_bigInt_iff, valTy_byte_iff,
+    TextOp.sig, BytesOp.sig, RangeOp.sig, TimeOp.sig, ListOp.sig, MapOp.sig, IoOp.sig, Base.ty,
+    filesCap, valsTy_cons_iff, valsTy_nil_iff, valTy_int_iff, valTy_bigInt_iff, valTy_byte_iff,
     valTy_decimal_iff, valTy_float_iff, valTy_bool_iff, valTy_char_iff, valTy_text_iff,
-    valTy_bytes_iff, valTy_time_iff, valTy_duration_iff, valTy_list_iff, valTy_map_iff,
-    valTy_cap_iff, forall_exists_index, and_imp]
+    valTy_bytes_iff, valTy_range_iff, valTy_time_iff, valTy_duration_iff, valTy_list_iff,
+    valTy_map_iff, valTy_cap_iff, forall_exists_index, and_imp]
   intros
   subst_vars))
 
 /-! ## Numbers -/
-
-/-- The whole numbers of a range between two `Int`s are `Int`s. -/
-theorem intRange_ty {a b : Int} (ha : InInt64 a) (hb : InInt64 b) :
-    ∀ x ∈ intRange a b, ValTy P x .int := by
-  intro x hx
-  simp only [intRange, List.mem_map, List.mem_range] at hx
-  obtain ⟨i, hi, rfl⟩ := hx
-  apply ValTy.int
-  unfold InInt64 at *
-  omega
 
 theorem intOp_safe (op : IntOp) : PrimSafe P (.int op) := by
   cases op <;> invert_args <;>
@@ -297,7 +294,6 @@ theorem intOp_safe (op : IntOp) : PrimSafe P (.int op) := by
     | exact .bigInt
     | exact .float
     | exact ⟨fun _ => trivial, fun _ => okInt_safe⟩
-    | exact .list (intRange_ty ‹_› ‹_›)
     | skip
 
 theorem bigOp_safe (op : BigOp) : PrimSafe P (.big op) := by
@@ -434,6 +430,25 @@ theorem bytesOp_safe (op : BytesOp) : PrimSafe P (.bytes op) := by
   case size => exact okInt_safe
   case get => exact bytesGet_ty ‹_›
   case decodeUtf8 => exact .optText
+
+/-- The whole numbers of a range between two `Int`s are `Int`s. -/
+theorem intRange_ty {a b : Int} (ha : InInt64 a) (hb : InInt64 b) :
+    ∀ x ∈ intRange a b, ValTy P x .int := by
+  intro x hx
+  simp only [intRange, List.mem_map, List.mem_range] at hx
+  obtain ⟨i, hi, rfl⟩ := hx
+  apply ValTy.int
+  unfold InInt64 at *
+  omega
+
+theorem rangeOp_safe (op : RangeOp) : PrimSafe P (.range op) := by
+  cases op <;> invert_args <;> simp only [Prim.eval, evalRangeOp, outcomeOk_ok]
+  case make => exact .range ‹_› ‹_›
+  case start => exact .int ‹_›
+  case «end» => exact .int ‹_›
+  case toList => exact .list (intRange_ty ‹_› ‹_›)
+  case contains => exact .bool
+  case toText => exact .text
 
 theorem timeOp_safe (op : TimeOp) : PrimSafe P (.time op) := by
   cases op <;> invert_args <;> simp only [Prim.eval, evalTimeOp, outcomeOk_ok] <;>
@@ -763,6 +778,7 @@ theorem prims_safe : PrimsSafe P := by
   | char op => exact charOp_safe op
   | text op => exact textOp_safe op
   | bytes op => exact bytesOp_safe op
+  | range op => exact rangeOp_safe op
   | time op => exact timeOp_safe op
   | list t op => exact listOp_safe t op
   | map k t op => exact mapOp_safe k t op

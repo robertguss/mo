@@ -55,6 +55,8 @@ instance (t : Int) : Decidable (InTime t) := inferInstanceAs (Decidable (_ ∧ _
   `n * 10^-18`; `time` and `duration` count microseconds; `float` holds IEEE
   754 bits.
 * `bytes bs` is a sequence of bytes, each from 0 to 255.
+* `range a b` is the range `a..b`: the whole numbers from `a` up to, not
+  including, `b`, none when `b ≤ a`.
 * `con c fields` is a constructed value of a record or choice type: its
   constructor's name and its fields, in declaration order.
 * `map` is an association list in insertion order, with distinct keys.
@@ -75,6 +77,7 @@ inductive Value where
   | text (s : String)
   | bytes (bs : List Int)
   | unit
+  | range (a b : Int)
   | time (us : Int)
   | duration (us : Int)
   | tuple (vs : List Value)

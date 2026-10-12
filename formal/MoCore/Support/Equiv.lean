@@ -23,6 +23,7 @@ def Value.equiv : Value → Value → Bool
   | .text a, .text b => a == b
   | .bytes a, .bytes b => a == b
   | .unit, .unit => true
+  | .range a b, .range c d => a == c && b == d
   | .tuple as, .tuple bs | .list as, .list bs => Value.equivList as bs
   | .con c as, .con d bs => c == d && Value.equivList as bs
   | .map es, .map fs => es.length == fs.length && Value.equivEntries es fs
