@@ -58,15 +58,20 @@ partial def valueIn : Sexp → Parse Value
 def stringsOut (ss : List String) : Sexp := seq (ss.map Sexp.str)
 def pairsOut (ss : List (String × String)) : Sexp := seq (ss.map fun (k, v) => seq [.str k, .str v])
 
+def randomOut (s : RandomState) : Sexp := tag "RandomState" [bits s.s0, bits s.s1, bits s.s2, bits s.s3]
+def randomIn : Sexp → Parse RandomState
+  | .node [.atom "RandomState", a, b, c, d] => return ⟨← asBits a, ← asBits b, ← asBits c, ← asBits d⟩
+  | _ => throw "invalid RandomState"
+
 def stateFields (w : CapState) : List Sexp :=
   [stringsOut w.args, pairsOut w.env, stringsOut w.stdin, stringsOut w.stdout,
-   stringsOut w.stderr, pairsOut w.files, integer w.now, natural w.seed]
+   stringsOut w.stderr, pairsOut w.files, integer w.now, randomOut w.random]
 def stateOut (s : CapState) : Sexp := tag "CapState" (stateFields s)
 def stateIn : Sexp → Parse CapState
   | .node [.atom "CapState", args, env, stdin, stdout, stderr, files, now, seed] => do
       return ⟨← asList asString args, ← asList (asPair asString asString) env,
         ← asList asString stdin, ← asList asString stdout, ← asList asString stderr,
-        ← asList (asPair asString asString) files, ← asInt now, ← asNat seed⟩
+        ← asList (asPair asString asString) files, ← asInt now, ← randomIn seed⟩
   | _ => throw "invalid CapState"
 
 def worldOut (w : World) : Sexp := tag "World"

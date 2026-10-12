@@ -789,6 +789,17 @@ theorem eq_safe (t : Ty) : PrimSafe P (.eq t) := by
 
 /-! ## Capabilities -/
 
+theorem folderEntries_safe : ValTy P (folderEntries dir files) (.list .entry) := by
+  apply ValTy.list
+  intro v hv
+  simp only [List.mem_map] at hv
+  obtain ⟨name, _, rfl⟩ := hv
+  apply ValTy.con (fs := [("name", .text), ("kind", .entryKind)]) rfl rfl
+  apply ValsTy.cons ValTy.text
+  apply ValsTy.cons
+  · (repeat' split) <;> exact ValTy.con (fs := []) rfl rfl ValsTy.nil
+  · exact ValsTy.nil
+
 theorem hostIoOp_safe (op : IoOp) : ∀ vs w, ValsTy P vs op.sig.1 →
     OutcomeOk P [] op.sig.2 (evalHostIoOp op vs w) := by
   cases op <;> invert_args <;>
@@ -804,6 +815,7 @@ theorem hostIoOp_safe (op : IoOp) : ∀ vs w, ValsTy P vs op.sig.1 →
     | exact ValTy.okV ValTy.textBytes
     | exact ValTy.okV ValTy.unit
     | exact ValTy.okV ValTy.texts
+    | exact ValTy.okV folderEntries_safe
     | exact ValTy.errorV ValTy.notFound
     | exact ValTy.errorV ValTy.notAllowed
     | exact ValTy.bool
@@ -855,6 +867,7 @@ theorem prims_safe : PrimsSafe P := by
   | char op => exact charOp_safe op
   | text op => exact textOp_safe op
   | bytes op => exact bytesOp_safe op
+  | unicode16 _ => intro vs w h; exact True.intro
   | range op => exact rangeOp_safe op
   | time op => exact timeOp_safe op
   | list t op => exact listOp_safe t op

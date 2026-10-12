@@ -42,6 +42,9 @@ def textOps : List (String × TextOp) :=
    ("repeat", .«repeat»), ("padLeft", .padLeft), ("padRight", .padRight), ("lower", .lower),
    ("upper", .upper), ("toInt", .toInt), ("toDecimal", .toDecimal), ("join", .join), ("bytes", .bytes)]
 def bytesOps : List (String × BytesOp) := [("size", .size), ("get", .get), ("decodeUtf8", .decodeUtf8)]
+def unicodeOps : List (String × UnicodeOp) :=
+  [("graphemes", .graphemes), ("displayWidth", .displayWidth), ("normalizeNfc", .normalizeNfc),
+   ("lowercase", .lowercase), ("uppercase", .uppercase)]
 def rangeOps : List (String × RangeOp) :=
   [("make", .make), ("start", .start), ("end", .«end»), ("toList", .toList),
    ("contains", .contains), ("toText", .toText)]
@@ -99,6 +102,7 @@ def ioOut : IoOp → Sexp
   | .readText ro => tag "readText" [boolean ro]
   | .readBytes ro => tag "readBytes" [boolean ro]
   | .list ro => tag "list" [boolean ro]
+  | .entries ro => tag "entries" [boolean ro]
   | .«exists» ro => tag "exists" [boolean ro]
   | .within ro => tag "within" [boolean ro]
   | o => enumOut ioOps o
@@ -106,6 +110,7 @@ def ioIn : Sexp → Parse IoOp
   | .node [.atom "readText", ro] => return .readText (← asBool ro)
   | .node [.atom "readBytes", ro] => return .readBytes (← asBool ro)
   | .node [.atom "list", ro] => return .list (← asBool ro)
+  | .node [.atom "entries", ro] => return .entries (← asBool ro)
   | .node [.atom "exists", ro] => return .«exists» (← asBool ro)
   | .node [.atom "within", ro] => return .within (← asBool ro)
   | s => enumIn ioOps s
@@ -121,6 +126,7 @@ def primOut : Prim → Sexp
   | .char o => tag "char" [enumOut charOps o]
   | .text o => tag "text" [enumOut textOps o]
   | .bytes o => tag "bytes" [enumOut bytesOps o]
+  | .unicode16 o => tag "unicode16" [enumOut unicodeOps o]
   | .range o => tag "range" [enumOut rangeOps o]
   | .time o => tag "time" [enumOut timeOps o]
   | .list t o => tag "list" [tyOut t, listOut o]
@@ -139,6 +145,7 @@ def primIn : Sexp → Parse Prim
   | .node [.atom "char", o] => return .char (← enumIn charOps o)
   | .node [.atom "text", o] => return .text (← enumIn textOps o)
   | .node [.atom "bytes", o] => return .bytes (← enumIn bytesOps o)
+  | .node [.atom "unicode16", o] => return .unicode16 (← enumIn unicodeOps o)
   | .node [.atom "range", o] => return .range (← enumIn rangeOps o)
   | .node [.atom "time", o] => return .time (← enumIn timeOps o)
   | .node [.atom "list", t, o] => return .list (← tyIn t) (← listIn o)

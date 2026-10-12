@@ -676,7 +676,7 @@ def fakeExpressions : List (Expr × Ty) :=
   let host : World :=
     { args := ["host"], env := [("K", "host")], stdin := ["host"],
       stdout := ["real"], stderr := ["real error"], files := [("a/note", "real file")],
-      now := 999, seed := 123, fakes := [{ stdout := ["existing"] }] }
+      now := 999, random := RandomState.seeded 123, fakes := [{ stdout := ["existing"] }] }
   match run fakeProgram fakeChecks host with
   | .ok (.bool true) w => reprStr w.toCapState == reprStr host.toCapState &&
       w.fakes.length == 13 && reprStr w.fakes.head? == reprStr host.fakes.head?

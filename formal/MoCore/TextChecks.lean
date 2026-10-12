@@ -38,6 +38,7 @@ def primitives : List Prim :=
   (byteOps.map fun (_, o) => .byte o) ++ (decOps.map fun (_, o) => .dec o) ++
   (floatOps.map fun (_, o) => .float o) ++ (charOps.map fun (_, o) => .char o) ++
   (textOps.map fun (_, o) => .text o) ++ (bytesOps.map fun (_, o) => .bytes o) ++
+  (unicodeOps.map fun (_, o) => .unicode16 o) ++
   (rangeOps.map fun (_, o) => .range o) ++ (timeOps.map fun (_, o) => .time o) ++
   (bases.flatMap fun (_, b) => cmpOps.map fun (_, o) => .cmp b o) ++
   (setOps.map fun (_, o) => .set (.option .float) o) ++
@@ -46,7 +47,7 @@ def primitives : List Prim :=
     .take, .drop, .set, .removeAt, .uncons, .enumerate, .contains, .unique, .zip .char].map fun o => .list .byte o) ++
   (ioOps.map fun (_, o) => .io o) ++
   ([false, true].flatMap fun ro => [Prim.io (.readText ro), .io (.readBytes ro), .io (.list ro),
-    .io (.«exists» ro), .io (.within ro)]) ++ [.not, .eq (.tuple [.int, .char]), .map .int .text (.lit 2)]
+    .io (.entries ro), .io (.«exists» ro), .io (.within ro)]) ++ [.not, .eq (.tuple [.int, .char]), .map .int .text (.lit 2)]
 
 #guard primitives.all fun p =>
   match parseDocument (document (primOut p)) >>= primIn with
@@ -65,9 +66,10 @@ def values : List Value :=
    .cap .readFiles (some "notes") (some 1)]
 def world : World :=
   { args := ["a", ""], env := [("Z", "last"), ("A", "first")], stdin := ["one", "two"],
-    stdout := ["old"], stderr := ["err"], files := [("b", "β\n"), ("a", "")], now := -1, seed := 10^40,
+    stdout := ["old"], stderr := ["err"], files := [("b", "β\n"), ("a", "")], now := -1,
+    random := ⟨0, 0xffffffffffffffff, 0x8000000000000000, 42⟩,
     fakes := [{ stdin := ["fake input"], stdout := ["fake output"] },
-      { files := [("notes/a", "first"), ("z", "last")], seed := 123 }] }
+      { files := [("notes/a", "first"), ("z", "last")], random := RandomState.seeded 123 }] }
 
 #guard values.all fun v =>
   match parseDocument (document (valueOut v)) >>= valueIn with
@@ -100,11 +102,12 @@ def world : World :=
   (.tuple [.char '\'', .text "\n", .duration 1500000, .time 0, .range (-2) 3, .bytes [0, 255]])).toOption ==
   some "('\\'', \"\\n\", 1.5s, 1970-01-01T00:00:00Z, -2..3, bytes[0, 255])"
 
-#guard (["", "(core 0.1 (unit))", "(core 0.3 (unit))", "(core 0.2 (unit)) extra", "(core 0.2 (unit)",
-  "(core 0.2 \"\\q\")", "(core 0.2 \"\\u{d800}\")", "(core 0.2 \"\\u{110000}\")",
-  "(core 0.2 \"\\u{}\")", "(core 0.2 \"unterminated)"]).all fun s => (parseDocument s).toOption.isNone
-#guard (parseDocument ";before\n(core ;version\n0.2 (int -00012));after" >>= litIn).toOption == some (.int (-12))
-#guard (parseDocument "(core 0.2 (float 0xFFFFFFFFFFFFFFFF))" >>= litIn).toOption == some (.float 0xffffffffffffffff)
+#guard (["", "(core 0.1 (unit))", "(core 0.2 (unit))", "(core 0.4 (unit))",
+  "(core 0.3 (unit)) extra", "(core 0.3 (unit)",
+  "(core 0.3 \"\\q\")", "(core 0.3 \"\\u{d800}\")", "(core 0.3 \"\\u{110000}\")",
+  "(core 0.3 \"\\u{}\")", "(core 0.3 \"unterminated)"]).all fun s => (parseDocument s).toOption.isNone
+#guard (parseDocument ";before\n(core ;version\n0.3 (int -00012));after" >>= litIn).toOption == some (.int (-12))
+#guard (parseDocument "(core 0.3 (float 0xFFFFFFFFFFFFFFFF))" >>= litIn).toOption == some (.float 0xffffffffffffffff)
 #guard (["(float 0x123)", "(float 0x10000000000000000)", "(char \"ab\")", "(unit extra)",
   "(int +1)", "(int 1_0)"]).all fun s => (parseSexp s >>= litIn).toOption.isNone
 

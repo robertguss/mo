@@ -7,11 +7,11 @@ static const struct schema s_ty_list, s_integer_list, s_expr_list, s_string_list
 static const struct schema s_param, s_arm, s_ctor, s_ctors, s_data, s_data_list, s_fun, s_funs;
 static const struct schema s_const, s_consts, s_program, s_kind, s_prim;
 static const struct schema s_int_op, s_big_op, s_byte_op, s_dec_op, s_float_op, s_base, s_cmp_op;
-static const struct schema s_char_op, s_text_op, s_bytes_op, s_range_op, s_time_op;
+static const struct schema s_char_op, s_text_op, s_bytes_op, s_unicode_op, s_range_op, s_time_op;
 static const struct schema s_list_op, s_map_op, s_set_op, s_io_op;
 static const struct schema s_values, s_value_pair, s_value_pairs, s_binding, s_env, s_root;
 static const struct schema s_string_pair, s_string_pairs, s_world, s_bug, s_outcome;
-static const struct schema s_fake, s_cap_state, s_cap_states;
+static const struct schema s_fake, s_random_state, s_cap_state, s_cap_states;
 static const struct schema s_effects, s_report, s_selection, s_run;
 
 #define END                                                                                        \
@@ -80,7 +80,8 @@ NODE(ty_object, struct mo_core_ty, enum mo_core_ty_tag, T(INT, "int", END),
      T(OPTION, "option", F(struct mo_core_ty, as.option, ty), END),
      T(RESULT, "result", F(struct mo_core_ty, as.result.t, ty),
        F(struct mo_core_ty, as.result.e, ty), END),
-     T(ORDERING, "ordering", END), T(FILE_ERROR, "fileError", END),
+     T(ORDERING, "ordering", END), T(FILE_ERROR, "fileError", END), T(ENTRY, "entry", END),
+     T(ENTRY_KIND, "entryKind", END),
      T(FN, "fn", F(struct mo_core_ty, as.fn.params, ty_list), F(struct mo_core_ty, as.fn.ret, ty),
        END),
      T(CAP, "cap", F(struct mo_core_ty, as.cap, cap), END));
@@ -138,6 +139,9 @@ ENUM(text_op, enum mo_core_text_op, MO_CORE_TEXT_OPS(OP));
 #define OP(tag, wire) V(enum mo_core_bytes_op, MO_CORE_BYTES_OP_##tag, wire, END),
 ENUM(bytes_op, enum mo_core_bytes_op, MO_CORE_BYTES_OPS(OP));
 #undef OP
+#define OP(tag, wire) V(enum mo_core_unicode_op, MO_CORE_UNICODE_OP_##tag, wire, END),
+ENUM(unicode_op, enum mo_core_unicode_op, MO_CORE_UNICODE_OPS(OP));
+#undef OP
 #define OP(tag, wire) V(enum mo_core_range_op, MO_CORE_RANGE_OP_##tag, wire, END),
 ENUM(range_op, enum mo_core_range_op, MO_CORE_RANGE_OPS(OP));
 #undef OP
@@ -164,7 +168,7 @@ ENUM(set_op, enum mo_core_set_op, MO_CORE_SET_OPS(OP));
     V(enum mo_core_io_op_tag, MO_CORE_IO_OP_##tag, wire, F(struct mo_core_io_op, ro, boolean), END)
 NODE(io_op, struct mo_core_io_op, enum mo_core_io_op_tag,
      MO_CORE_IO_OPS(OP) RO(READ_TEXT, "readText"), RO(READ_BYTES, "readBytes"), RO(LIST, "list"),
-     RO(EXISTS, "exists"), RO(WITHIN, "within"));
+     RO(ENTRIES, "entries"), RO(EXISTS, "exists"), RO(WITHIN, "within"));
 #undef OP
 #undef RO
 
@@ -176,6 +180,7 @@ NODE(prim, struct mo_core_prim, enum mo_core_prim_tag, P(INT, "int", PF(int_, in
      P(NOT, "not", END), P(CMP, "cmp", PF(cmp.base, base), PF(cmp.op, cmp_op), END),
      P(CHAR, "char", PF(char_, char_op), END), P(TEXT, "text", PF(text, text_op), END),
      P(BYTES, "bytes", PF(bytes, bytes_op), END), P(RANGE, "range", PF(range, range_op), END),
+     P(UNICODE16, "unicode16", PF(unicode16, unicode_op), END),
      P(TIME, "time", PF(time, time_op), END),
      P(LIST, "list", PF(list.t, ty), PF(list.op, list_op), END),
      P(MAP, "map", PF(map.k, ty), PF(map.v, ty), PF(map.op, map_op), END),
@@ -266,6 +271,9 @@ static const struct schema s_fake = {
                                  {NULL, NULL, NULL}}};
 RECORD(string_pair, struct mo_core_string_pair, "", F(struct mo_core_string_pair, key, string),
        F(struct mo_core_string_pair, value, string), END);
+RECORD(random_state, struct mo_core_random_state, "RandomState",
+       F(struct mo_core_random_state, s0, bits), F(struct mo_core_random_state, s1, bits),
+       F(struct mo_core_random_state, s2, bits), F(struct mo_core_random_state, s3, bits), END);
 RECORD(cap_state, struct mo_core_cap_state, "CapState",
        F(struct mo_core_cap_state, args, string_list),
        F(struct mo_core_cap_state, env, string_pairs),
@@ -273,12 +281,13 @@ RECORD(cap_state, struct mo_core_cap_state, "CapState",
        F(struct mo_core_cap_state, stdout_, string_list),
        F(struct mo_core_cap_state, stderr_, string_list),
        F(struct mo_core_cap_state, files, string_pairs), F(struct mo_core_cap_state, now, integer),
-       F(struct mo_core_cap_state, seed, natural), END);
+       F(struct mo_core_cap_state, random, random_state), END);
 RECORD(world, struct mo_core_world, "World", F(struct mo_core_world, args, string_list),
        F(struct mo_core_world, env, string_pairs), F(struct mo_core_world, stdin_, string_list),
        F(struct mo_core_world, stdout_, string_list), F(struct mo_core_world, stderr_, string_list),
        F(struct mo_core_world, files, string_pairs), F(struct mo_core_world, now, integer),
-       F(struct mo_core_world, seed, natural), F(struct mo_core_world, fakes, cap_states), END);
+       F(struct mo_core_world, random, random_state), F(struct mo_core_world, fakes, cap_states),
+       END);
 #define B(tag, wire, ...) V(enum mo_core_bug_tag, MO_CORE_BUG_##tag, wire, __VA_ARGS__)
 NODE(bug, struct mo_core_bug, enum mo_core_bug_tag,
      B(OVERFLOW, "overflow", F(struct mo_core_bug, detail, string), END),

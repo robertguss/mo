@@ -511,12 +511,13 @@ def setFile (files : List (String × String)) (p text : String) : List (String �
   if files.any (·.1 = p) then files.map fun e => if e.1 = p then (p, text) else e
   else files ++ [(p, text)]
 
-/-- The next state and draw of the random number generator (SplitMix64). -/
-def nextRandom (s : Nat) : Nat × Nat :=
-  let s' := (s + 0x9E3779B97F4A7C15) % 18446744073709551616
-  let z := ((s' ^^^ (s' >>> 30)) * 0xBF58476D1CE4E5B9) % 18446744073709551616
-  let z := ((z ^^^ (z >>> 27)) * 0x94D049BB133111EB) % 18446744073709551616
-  (z ^^^ (z >>> 31), s')
+/-- The file map has no links or special files; descendants imply folders.
+    If a malformed host map contains both a file and descendants, folder wins. -/
+def folderEntries (dir : String) (files : List (String × String)) : Value :=
+  .list ((folderNames dir files).map fun name =>
+    let path := if dir = "" then name else dir ++ "/" ++ name
+    let kind := if files.any (fun e => textStartsWith e.1 (path ++ "/")) then "Folder" else "File"
+    .con "Entry" [.text name, .con kind []])
 
 /-- The root of a capability value of the expected kind. -/
 def capRoot (expected : Cap) : Value → Option (Option String)
@@ -543,7 +544,7 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
   | .consoleFakeInput, [.list lines] => newFake .console { stdin := lines.map valueText } w
   | .filesInMemory, [.map files] => newFake .files { files := statePairs files } w
   | .clockFixed, [.time t] => newFake .clock { now := t } w
-  | .randomSeeded, [.int n] => newFake .random { seed := (n % 18446744073709551616).toNat } w
+  | .randomSeeded, [.int n] => newFake .random { random := RandomState.seeded n } w
   | .argsOf, [.list args] => newFake .args { args := args.map valueText } w
   | .envOf, [.map env] => newFake .env { env := statePairs env } w
   | .argsList, [h] =>
@@ -633,6 +634,16 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
         if names.isEmpty && dir ≠ "" then .ok (errorV (fileErrorV "NotFound" folder)) w
         else .ok (okV (texts names)) w
     | none => wrongArgs "Files.list"
+  | .entries ro, [h, .text folder] =>
+    match capRoot (filesKind ro) h with
+    | some root =>
+      match resolvePath root folder with
+      | none => .ok (errorV (fileErrorV "NotAllowed" folder)) w
+      | some dir =>
+        if (folderNames dir w.files).isEmpty && dir ≠ "" then
+          .ok (errorV (fileErrorV "NotFound" folder)) w
+        else .ok (okV (folderEntries dir w.files)) w
+    | none => wrongArgs "Files.entries"
   | .exists ro, [h, .text path] =>
     match capRoot (filesKind ro) h with
     | some root =>
@@ -661,8 +672,10 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
     match capRoot .random h with
     | some _ =>
       if lo < hi then
-        let (z, s') := nextRandom w.seed
-        okInt (lo + (z : Int) % (hi - lo)) { w with seed := s' }
+        if w.random == ⟨0, 0, 0, 0⟩ then outside "Random has an all-zero state" w
+        else match w.random.bounded (2^256 - 1) (hi - lo).toNat with
+          | some (n, state) => okInt (lo + (n : Int)) { w with random := state }
+          | none => outside "Random exhausted its period" w
       else outside "Random.int needs low below high" w
     | none => wrongArgs "Random.int"
   | _, _ => wrongArgs "capability primitive"
@@ -705,6 +718,7 @@ def Prim.eval : Prim → List Value → World → Outcome
   | .char op, vs, w => evalCharOp op vs w
   | .text op, vs, w => evalTextOp op vs w
   | .bytes op, vs, w => evalBytesOp op vs w
+  | .unicode16 _, _, w => outside "Unicode16 is a trusted primitive unavailable in mocore" w
   | .range op, vs, w => evalRangeOp op vs w
   | .time op, vs, w => evalTimeOp op vs w
   | .list _ op, vs, w => evalListOp op vs w

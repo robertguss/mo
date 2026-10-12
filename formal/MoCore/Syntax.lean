@@ -54,6 +54,8 @@ inductive Ty where
   | result (t e : Ty)
   | ordering
   | fileError
+  | entry
+  | entryKind
   | fn (params : List Ty) (ret : Ty)
   | cap (c : Cap)
   deriving Repr, Inhabited
@@ -69,7 +71,7 @@ def Ty.beq : Ty → Ty → Bool
   | .int, .int | .bigInt, .bigInt | .byte, .byte | .decimal, .decimal | .float, .float
   | .bool, .bool | .char, .char | .text, .text | .bytes, .bytes | .unit, .unit
   | .range, .range | .time, .time | .duration, .duration | .ordering, .ordering
-  | .fileError, .fileError => true
+  | .fileError, .fileError | .entry, .entry | .entryKind, .entryKind => true
   | .tuple as, .tuple bs => Ty.beqList as bs
   | .list a, .list b => Ty.beq a b
   | .map k v, .map k' v' => Ty.beq k k' && Ty.beq v v'
@@ -90,7 +92,7 @@ end
 mutual
 theorem Ty.beq_refl : ∀ (a : Ty), Ty.beq a a = true
   | .int | .bigInt | .byte | .decimal | .float | .bool | .char | .text | .bytes | .unit
-  | .range | .time | .duration | .ordering | .fileError => rfl
+  | .range | .time | .duration | .ordering | .fileError | .entry | .entryKind => rfl
   | .tuple as => by simp only [Ty.beq]; exact Ty.beqList_refl as
   | .list a => by simp only [Ty.beq]; exact Ty.beq_refl a
   | .map k v => by simp only [Ty.beq, Ty.beq_refl k, Ty.beq_refl v, Bool.and_self]
@@ -109,7 +111,8 @@ mutual
 theorem Ty.eq_of_beq : ∀ (a b : Ty), Ty.beq a b = true → a = b
   | .int, b, h | .bigInt, b, h | .byte, b, h | .decimal, b, h | .float, b, h | .bool, b, h
   | .char, b, h | .text, b, h | .bytes, b, h | .unit, b, h | .range, b, h | .time, b, h
-  | .duration, b, h | .ordering, b, h | .fileError, b, h => by cases b <;> simp_all [Ty.beq]
+  | .duration, b, h | .ordering, b, h | .fileError, b, h
+  | .entry, b, h | .entryKind, b, h => by cases b <;> simp_all [Ty.beq]
   | .data s, b, h | .cap s, b, h => by cases b <;> simp_all [Ty.beq]
   | .tuple as, b, h => by
       cases b <;> simp only [Ty.beq, Bool.false_eq_true] at h
@@ -156,6 +159,7 @@ def Ty.render : Ty → String
   | .float => "Float" | .bool => "Bool" | .char => "Char" | .text => "Text"
   | .bytes => "Bytes" | .unit => "Unit" | .range => "Range" | .time => "Time"
   | .duration => "Duration" | .ordering => "Ordering" | .fileError => "FileError"
+  | .entry => "Entry" | .entryKind => "EntryKind"
   | .tuple ts => "(" ++ Ty.renderList ts ++ ")"
   | .list t => "List(" ++ Ty.render t ++ ")"
   | .map k v => "Map(" ++ Ty.render k ++ ", " ++ Ty.render v ++ ")"
@@ -282,6 +286,11 @@ inductive BytesOp where
   | size | get | decodeUtf8
   deriving DecidableEq, Repr, Inhabited
 
+/-- Unicode 16.0 trusted primitives; Core specifies their interface, not tables. -/
+inductive UnicodeOp where
+  | graphemes | displayWidth | normalizeNfc | lowercase | uppercase
+  deriving DecidableEq, Repr, Inhabited
+
 /-- Operations on `Range`. `make a b` is `a..b`, the whole numbers from `a` up
 to, not including, `b` (reference 7.5); `start` and `end` read its ends, which
 is how a `for` loop takes a range apart, as `uncons` takes a list apart. -/
@@ -338,7 +347,7 @@ inductive IoOp where
   are its text's UTF-8 encoding. -/
   | readBytes (ro : Bool)
   | writeText | appendText | remove
-  | list (ro : Bool) | «exists» (ro : Bool) | within (ro : Bool) | readOnly
+  | list (ro : Bool) | entries (ro : Bool) | «exists» (ro : Bool) | within (ro : Bool) | readOnly
   | now | randomInt
   /-- Fake constructors: only spec code may allocate these handles. -/
   | consoleFake | consoleFakeInput | filesInMemory | clockFixed | randomSeeded | argsOf | envOf
@@ -357,6 +366,7 @@ inductive Prim where
   | char (op : CharOp)
   | text (op : TextOp)
   | bytes (op : BytesOp)
+  | unicode16 (op : UnicodeOp)
   | range (op : RangeOp)
   | time (op : TimeOp)
   | list (t : Ty) (op : ListOp)
@@ -507,6 +517,11 @@ def SetOp.sig (t : Ty) : SetOp → List Ty × Ty
   | .toList => ([.set t], .list t)
   | .ofList => ([.list t], .set t)
 
+def UnicodeOp.sig : UnicodeOp → List Ty × Ty
+  | .graphemes => ([.text], .list .text)
+  | .displayWidth => ([.text], .int)
+  | .normalizeNfc | .lowercase | .uppercase => ([.text], .text)
+
 def IoOp.sig : IoOp → List Ty × Ty
   | .argsList => ([.cap .args], .list .text)
   | .envGet => ([.cap .env, .text], .option .text)
@@ -518,6 +533,7 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .writeText | .appendText => ([.cap .files, .text, .text], .result .unit .fileError)
   | .remove => ([.cap .files, .text], .result .unit .fileError)
   | .list ro => ([filesCap ro, .text], .result (.list .text) .fileError)
+  | .entries ro => ([filesCap ro, .text], .result (.list .entry) .fileError)
   | .exists ro => ([filesCap ro, .text], .bool)
   | .within ro => ([filesCap ro, .text], filesCap ro)
   | .readOnly => ([.cap .files], .cap .readFiles)
@@ -543,6 +559,7 @@ def Prim.sig : Prim → List Ty × Ty
   | .char op => op.sig
   | .text op => op.sig
   | .bytes op => op.sig
+  | .unicode16 op => op.sig
   | .range op => op.sig
   | .time op => op.sig
   | .list t op => op.sig t
@@ -722,6 +739,8 @@ def ctorsOf (P : Program) : Ty → Option (List Ctor)
   | .result t e => some (resultCtors t e)
   | .ordering => some orderingCtors
   | .fileError => some fileErrorCtors
+  | .entry => some [⟨"Entry", [("name", .text), ("kind", .entryKind)]⟩]
+  | .entryKind => some [⟨"File", []⟩, ⟨"Folder", []⟩, ⟨"Link", []⟩, ⟨"Other", []⟩]
   | _ => none
 
 end MoCore

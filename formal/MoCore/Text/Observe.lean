@@ -47,7 +47,7 @@ partial def structural (p : Program) (t : Ty) (v : Value) (nested : Bool := fals
       pure (valueOut (.cap c root fake)).render
   | _, _ => throw "value does not match result type"
 where
-  tNameFields := match t with | .data _ | .fileError => true | _ => false
+  tNameFields := match t with | .data _ | .fileError | .entry => true | _ => false
 
 /-- Only observable effects, in model insertion order. -/
 structure Effects where
