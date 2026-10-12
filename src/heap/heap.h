@@ -8,6 +8,8 @@
 #include <stdint.h>
 
 #include "base/base.h"
+#include "base/buffer.h"
+#include "base/limits.h"
 #include "heap/types.h"
 
 /* A cell is native-endian runtime storage, not a serialized constant. Alignment
@@ -65,6 +67,28 @@ MO_MUST_USE uint32_t mo_cell_get_tag(struct mo_cell cell);
 MO_MUST_USE struct mo_cell mo_cell_get_payload(struct mo_cell cell);
 
 struct mo_process;
+
+/* Heap-only process context. The sealed table is borrowed and must outlive the
+ * process. VM frames and image initialization are separate from this context.
+ * All allocations, including bookkeeping, count against limits.heap_size.
+ * Free reclaims even immortal objects and values abandoned by a stopped call. */
+MO_MUST_USE struct mo_process *mo_heap_new(const struct mo_types *types,
+                                           const struct mo_limits *limits);
+void mo_heap_free(struct mo_process *process);
+MO_MUST_USE size_t mo_heap_used(const struct mo_process *process);
+MO_MUST_USE size_t mo_heap_objects(const struct mo_process *process);
+
+/* Borrowed views last until the owner is dropped or updated. */
+MO_MUST_USE const uint8_t *mo_value_data(struct mo_cell value, size_t *length);
+MO_MUST_USE struct mo_cell mo_value_field(struct mo_cell value, uint32_t field);
+MO_MUST_USE uint32_t mo_list_size(struct mo_cell list);
+MO_MUST_USE bool mo_list_get(struct mo_cell list, uint32_t index, struct mo_cell *out);
+/* Updates consume *list only on success; element is borrowed. On failure both
+ * are unchanged. Shared and immortal values are copied before modification. */
+MO_MUST_USE bool mo_list_append(struct mo_process *process, uint32_t type, struct mo_cell *list,
+                                struct mo_cell element);
+MO_MUST_USE bool mo_list_set(struct mo_process *process, uint32_t type, struct mo_cell *list,
+                             uint32_t index, struct mo_cell element);
 
 /* Stream 3 implements type-directed ownership for C callers. type is an index
  * in the process image's type table; value is a valid cell of that type, from
