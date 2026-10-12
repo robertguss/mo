@@ -55,6 +55,8 @@ inductive Typed (P : Program) : Ctx → JCtx → Expr → Ty → Prop
   | prim {Γ Δ p args} : TypedArgs P Γ args p.sig.1 → Typed P Γ Δ (.prim p args) p.sig.2
   /-- `stop` fits wherever a value is expected (reference 8.4). -/
   | stop {Γ Δ r τ} : Typed P Γ Δ (.stop r) τ
+  /-- Failure never returns, but its detail must be Text. -/
+  | fail {Γ Δ detail τ} : Typed P Γ [] detail .text → Typed P Γ Δ (.fail detail) τ
   /-- The body sees the parameters and may jump to the join point itself; both
   the body and the rest are in tail position. -/
   | join {Γ Δ j ps body rest τ} :
@@ -131,6 +133,7 @@ point of `Δ` with values of its parameter types. Never `wrong`. -/
 def OutcomeOk (P : Program) (Δ : JCtx) (τ : Ty) : Outcome → Prop
   | .ok v _ => ValTy P v τ
   | .stopped _ _ => True
+  | .failed _ _ => True
   | .jumped j vs _ => ∃ ts, lookup j Δ = some ts ∧ ValsTy P vs ts
   | .wrong _ => False
   | .outOfFuel => True
@@ -152,6 +155,7 @@ def EvSafe (P : Program) (ev : Env → World → Expr → Outcome) : Prop :=
 
 @[simp] theorem outcomeOk_ok : OutcomeOk P Δ τ (.ok v w) ↔ ValTy P v τ := Iff.rfl
 @[simp] theorem outcomeOk_stopped : OutcomeOk P Δ τ (.stopped b w) := trivial
+@[simp] theorem outcomeOk_failed : OutcomeOk P Δ τ (.failed detail w) := trivial
 @[simp] theorem outcomeOk_outOfFuel : OutcomeOk P Δ τ .outOfFuel := trivial
 @[simp] theorem outcomeOk_wrong : ¬ OutcomeOk P Δ τ (.wrong m) := id
 

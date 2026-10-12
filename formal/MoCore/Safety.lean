@@ -41,6 +41,7 @@ theorem OutcomeOk.bind {o : Outcome} {k : Value → World → Outcome} {σ τ : 
   cases o with
   | ok v w => exact hk v w ho
   | stopped => trivial
+  | failed => trivial
   | jumped j vs w => obtain ⟨ts, h, _⟩ := ho; simp [lookup] at h
   | wrong => exact absurd ho id
   | outOfFuel => trivial
@@ -157,6 +158,7 @@ theorem joinLoop_safe {Γ : Ctx} {Δ : JCtx} {ρ : Env} {j : String} {ps : List 
         exact ⟨ts, hts, hvs'⟩
     | ok v w' => exact h
     | stopped => trivial
+    | failed => trivial
     | wrong => exact absurd h id
     | outOfFuel => trivial
 
@@ -181,6 +183,7 @@ theorem catchJump_safe {Γ : Ctx} {Δ : JCtx} {ρ : Env} {j : String} {ps : List
       exact ⟨ts, hts, hvs⟩
   | ok v w' => exact hrest
   | stopped => trivial
+  | failed => trivial
   | wrong => exact absurd hrest id
   | outOfFuel => trivial
 
@@ -238,6 +241,12 @@ theorem eval_safe (hP : WellTyped P) (hprims : PrimsSafe P) : ∀ n, EvSafe P (e
       simp only [eval]
       exact evalArgs_safe ih hρ hargs fun vs w' hvs => (hprims _ vs w' hvs).weaken
     | stop => trivial
+    | fail hd =>
+      simp only [eval]
+      refine (ih _ _ _ _ _ w hd hρ).bind fun v w' hv => ?_
+      cases hv with
+      | text => trivial
+      | con hcs => simp [ctorsOf] at hcs
     | join hb hr =>
       simp only [eval]
       exact catchJump_safe ih hρ hb (ih _ _ _ _ _ w hr hρ)

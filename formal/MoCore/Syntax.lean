@@ -574,6 +574,8 @@ inductive Expr where
   | prim (p : Prim) (args : List Expr)
   /-- `stop "reason"`: a bug, reported with its reason. -/
   | stop (reason : String)
+  /-- An assertion or example failed, with a computed text detail. -/
+  | fail (detail : Expr)
   | join (j : String) (params : List (String × Ty)) (body : Expr) (rest : Expr)
   | jump (j : String) (args : List Expr)
   deriving Repr, Inhabited

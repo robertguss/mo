@@ -120,6 +120,11 @@ def eval : Nat → Program → Env → World → Expr → Outcome
         | _ => .wrong "if on a value that isn't a Bool"
     | .prim p args => evalArgs (eval n P) ρ w args fun vs w' => Prim.eval p vs w'
     | .stop r => .stopped (.stop r) w
+    | .fail detail =>
+      (eval n P ρ w detail).bind fun v w' =>
+        match v with
+        | .text s => .failed s w'
+        | _ => .wrong "fail with a detail that isn't Text"
     | .join j ps body rest => catchJump (eval n P) ρ j ps body n (eval n P ρ w rest)
     | .jump j args => evalArgs (eval n P) ρ w args fun vs w' => .jumped j vs w'
 

@@ -473,4 +473,22 @@ def setLoop : Expr :=
 #guard !typedAs? program [] (emptySet tInt) (tMap tInt tUnit)
 #guard !typedAs? program [] (sop tInt .add [emptySet tInt, str "a"]) (tSet tInt)
 
+/-! ## Failure is not a stop -/
+
+#guard typedAs? program [] (DSL.fail (cat [str "left: ", intText (int 7)])) tUnit
+#guard !typedAs? program [] (DSL.fail (int 7)) tUnit
+#guard match run program (DSL.fail (cat [str "left: ", intText (int 7)])) with
+  | .failed "left: 7" _ => true
+  | _ => false
+
+-- Effects in the detail survive, and a failure skips the continuation.
+#guard match run program
+    (seq (DSL.fail (seq (print (v "console") (str "before")) (str "detail")))
+      (print (v "console") (str "after"))) {} (handles [("console", .console)]) with
+  | .failed "detail" w => w.stdout == ["before"]
+  | _ => false
+
+-- A bug while computing the detail stays a bug, not an assertion failure.
+#guard stops program (DSL.fail (stop "detail stopped")) tUnit (.stop "detail stopped")
+
 end MoCore.Builtins

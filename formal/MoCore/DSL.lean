@@ -81,6 +81,7 @@ def fst (e : Expr) : Expr := .proj e 0
 def snd (e : Expr) : Expr := .proj e 1
 def ite (c t f : Expr) : Expr := .if_ c t f
 def stop (r : String) : Expr := .stop r
+def fail (detail : Expr) : Expr := .fail detail
 def prim (p : Prim) (args : List Expr) : Expr := .prim p args
 
 /-! ## Booleans and equality -/

@@ -165,6 +165,13 @@ def tc : Nat → Program → Ctx → JCtx → Expr → Option Ty → Except Stri
       match exp with
       | some τ => .ok τ
       | none => .error "can't infer the type of a stop"
+    | .fail detail =>
+      match tc n P Γ [] detail (some .text) with
+      | .ok _ =>
+        match exp with
+        | some τ => .ok τ
+        | none => .error "can't infer the type of a fail"
+      | .error m => .error s!"in a failure detail: {m}"
     | .join j ps body rest =>
       match exp with
       | some τ =>
@@ -447,6 +454,18 @@ theorem tc_sound {P : Program} : ∀ n, TcSound P (tc n P)
       · simp only [Except.ok.injEq] at h
         subst h
         exact ⟨.stop, by simp_all⟩
+      · cases h
+    | fail detail =>
+      simp only [tc] at h
+      split at h
+      · rename_i hd
+        split at h
+        · simp only [Except.ok.injEq] at h
+          subst h
+          obtain ⟨hdt, hde⟩ := ih _ _ _ _ _ hd
+          obtain rfl := hde .text rfl
+          exact ⟨.fail hdt, by simp_all⟩
+        · cases h
       · cases h
     | join j ps body rest =>
       simp only [tc] at h

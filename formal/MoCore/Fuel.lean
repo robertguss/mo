@@ -22,6 +22,7 @@ theorem bind_agrees {o o' : Outcome} {k k' : Value → World → Outcome}
     rw [ho (by simp)]
     exact hk v w h
   | stopped b w => rw [ho (by simp)]; rfl
+  | failed detail w => rw [ho (by simp)]; rfl
   | jumped j vs w => rw [ho (by simp)]; rfl
   | wrong m => rw [ho (by simp)]; rfl
   | outOfFuel => exact absurd rfl h
@@ -170,6 +171,9 @@ theorem eval_agrees_succ {P : Program} : ∀ n, Agrees (eval n P) (eval (n + 1) 
     | prim p args =>
       simp only [eval] at h ⊢
       exact evalArgs_agrees ih (fun _ _ _ => rfl) h
+    | fail detail =>
+      simp only [eval] at h ⊢
+      exact bind_agrees (ih ρ w detail) (fun _ _ _ => rfl) h
     | join j ps body rest =>
       simp only [eval] at h ⊢
       exact catchJump_agrees ih (ih ρ w rest) h
