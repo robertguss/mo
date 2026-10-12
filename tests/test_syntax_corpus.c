@@ -21,7 +21,7 @@ static void check_bytes(const char *path, const uint8_t *bytes, size_t size, boo
     struct mo_module_syntax *tree = fragment ? mo_parse_fragment(&arena, &sources, file, &diags)
                                              : mo_parse(&arena, &sources, file, &diags);
     bool accepted = tree != NULL && !mo_diags_any(&diags);
-    if (accepted != good) {
+    if (accepted != good || (!good && diags.count != 1)) {
         (void)fprintf(stderr, "%s: expected %s; got %s\n", path, good ? "accept" : "reject",
                       accepted ? "accept" : "reject");
         for (uint32_t i = 0; i < diags.count; i++)
@@ -29,6 +29,7 @@ static void check_bytes(const char *path, const uint8_t *bytes, size_t size, boo
                           diags.items[i].primary.span.start);
     }
     CHECK(accepted == good);
+    CHECK(good || diags.count == 1);
     checked++;
     mo_arena_free(&arena);
     mo_diags_free(&diags);

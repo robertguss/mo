@@ -3,6 +3,7 @@
 #include "syntax/internal.h"
 
 #include <setjmp.h>
+#include <stdio.h>
 #include <string.h>
 
 struct parser {
@@ -14,18 +15,21 @@ struct parser {
     jmp_buf *escape;
     uint32_t depth;
     uint32_t names;
+    enum mo_syntax_token depth_opener;
+    uint16_t expect_code;
 };
 
 struct syntax_node {
     struct mo_syntax value;
     uint32_t capacity;
-    uint32_t height;
+    uint32_t postfix_start;
+    uint8_t validated;
+    struct mo_syntax *operator;
 };
 
 static _Noreturn void error(struct parser *p, uint16_t code, struct mo_span span,
                             const char *message, const char *reason) {
-    bool kept = mo_syntax_error(&p->lx, code, span, message, reason);
-    (void)kept;
+    mo_syntax_error(&p->lx, code, span, message, reason);
     MO_ASSERT(p->escape != NULL);
     longjmp(*p->escape, 1);
 }
@@ -33,9 +37,8 @@ static _Noreturn void error(struct parser *p, uint16_t code, struct mo_span span
 static MO_MUST_USE void *allocate(struct parser *p, size_t size) {
     void *result = mo_arena_allocate(p->lx.arena, size, _Alignof(max_align_t));
     if (result == NULL) {
-        bool kept = mo_syntax_error(&p->lx, MO_CODE_SYNTAX_NO_MEMORY, p->current.span,
-                                    "the syntax arena has no room", NULL);
-        (void)kept;
+        mo_syntax_error(&p->lx, MO_CODE_SYNTAX_NO_MEMORY, p->current.span,
+                        "the syntax arena has no room", NULL);
         p->lx.fatal = true;
         longjmp(*p->escape, 1);
     }
@@ -63,34 +66,170 @@ static MO_MUST_USE bool take(struct parser *p, enum mo_syntax_token token) {
     return true;
 }
 
+static MO_MUST_USE const char *spelling(enum mo_syntax_token token) {
+    static const char *const names[] = {"end of file",
+                                        "invalid token",
+                                        "line break",
+                                        "snake_case name",
+                                        "CapCase name",
+                                        "_",
+                                        "integer",
+                                        "decimal",
+                                        "character",
+                                        "text",
+                                        "text interpolation",
+                                        "text interpolation",
+                                        "text tail",
+                                        "module",
+                                        "expose",
+                                        "use",
+                                        "fn",
+                                        "struct",
+                                        "enum",
+                                        "var",
+                                        "if",
+                                        "else",
+                                        "case",
+                                        "for",
+                                        "in",
+                                        "while",
+                                        "break",
+                                        "continue",
+                                        "return",
+                                        "try",
+                                        "and",
+                                        "or",
+                                        "not",
+                                        "is",
+                                        "implies",
+                                        "true",
+                                        "false",
+                                        "stop",
+                                        "promise",
+                                        "allows",
+                                        "forbids",
+                                        "examples",
+                                        "test",
+                                        "assert",
+                                        "where",
+                                        "end",
+                                        "(",
+                                        ")",
+                                        "[",
+                                        "]",
+                                        "{",
+                                        "}",
+                                        ",",
+                                        ":",
+                                        ".",
+                                        "..",
+                                        "|",
+                                        "=",
+                                        "+=",
+                                        "-=",
+                                        "==",
+                                        "!=",
+                                        "<",
+                                        "<=",
+                                        ">",
+                                        ">=",
+                                        "+",
+                                        "-",
+                                        "*",
+                                        "/",
+                                        "%"};
+    MO_ASSERT((unsigned)token < sizeof names / sizeof names[0]);
+    return names[token];
+}
+
+static MO_MUST_USE const char *advice(struct parser *p, struct mo_span span) {
+    static const struct {
+        const char *word;
+        const char *message;
+    } words[] = {
+        {"def", "Mo defines a function with fn"},
+        {"func", "Mo defines a function with fn"},
+        {"function", "Mo defines a function with fn"},
+        {"fun", "Mo defines a function with fn"},
+        {"elif", "Mo writes else if"},
+        {"elsif", "Mo writes else if"},
+        {"then", "an if needs no then: the condition, a line break, the body, and end"},
+        {"unless", "Mo writes if not"},
+        {"until", "Mo writes while not"},
+        {"loop", "Mo loops with for and while"},
+        {"match", "Mo matches with case"},
+        {"switch", "Mo matches with case"},
+        {"when", "Mo matches with case, with arms written Pattern: value"},
+        {"let", "Mo binds a name with name = value, and a changeable one with var"},
+        {"const", "Mo binds a name with name = value, and a changeable one with var"},
+        {"import", "Mo imports with use"},
+        {"export", "a module lists its public names on its expose line"},
+    };
+    for (size_t i = 0; i < sizeof words / sizeof words[0]; i++)
+        if (strlen(words[i].word) == span.end - span.start &&
+            memcmp(p->lx.source->bytes + span.start, words[i].word, span.end - span.start) == 0)
+            return words[i].message;
+    return NULL;
+}
+
 static void expect(struct parser *p, enum mo_syntax_token token) {
     struct mo_span previous = p->previous;
-    if (!take(p, token))
-        error(p, MO_CODE_SOURCE_SYNTAX, p->current.span,
-              "a statement ends with a line break; blocks close with end",
-              "Blocks open with a keyword and close with end (reference 2.4).");
+    if (!take(p, token)) {
+        uint16_t code = p->expect_code == 0 ? MO_CODE_SOURCE_SYNTAX : p->expect_code;
+        const struct mo_code_info *info = mo_code_find(code);
+        MO_ASSERT(info != NULL && info->section != NULL);
+        const char *rule =
+            code == MO_CODE_SOURCE_FUNCTION
+                ? "A signature gives each parameter's type and uses : before its result"
+            : code == MO_CODE_SOURCE_TYPE ? "A type has a name and parenthesized type arguments"
+            : code == MO_CODE_SOURCE_IF
+                ? "An if uses a condition, then a line break and body or : and a value"
+            : code == MO_CODE_SOURCE_LOOP
+                ? "A for uses a binder followed by in; loops close with end"
+            : code == MO_CODE_SOURCE_CALL
+                ? "Arguments are passed in parentheses, separated by commas"
+            : code == MO_CODE_SOURCE_HEADER
+                ? "A module starts with its name, then expose and use lines"
+            : code == MO_CODE_SOURCE_LITERAL ? "A tuple has two or more elements in parentheses"
+            : code == MO_CODE_SOURCE_LIST
+                ? "A list's elements are separated by commas inside brackets"
+            : code == MO_CODE_SOURCE_MAP
+                ? "A map has key: value entries separated by commas inside braces"
+            : code == MO_CODE_SOURCE_BINDING
+                ? "A binding gives a name a value with ="
+                : "Use the declaration or statement's syntax and close its delimiters";
+        char message[192], reason[256];
+        int n = snprintf(message, sizeof message, "expected %s, found %s", spelling(token),
+                         spelling(p->current.kind));
+        MO_ASSERT(n >= 0 && (size_t)n < sizeof message);
+        n = snprintf(reason, sizeof reason, "%s (reference %s).", rule, info->section);
+        MO_ASSERT(n >= 0 && (size_t)n < sizeof reason);
+        const char *help = advice(p, p->current.span);
+        if (help == NULL)
+            help = advice(p, previous);
+        if (help != NULL) {
+            size_t length = strlen(message);
+            n = snprintf(message + length, sizeof message - length, "; %s", help);
+            MO_ASSERT(n >= 0 && (size_t)n < sizeof message - length);
+        }
+        error(p, code, p->current.span, message, reason);
+    }
     if (token == MO_T_NL)
         p->previous = previous;
 }
 
 static void enter(struct parser *p) {
-    if (p->depth == MO_LIMIT_NESTING_DEPTH)
-        error(p, MO_CODE_NESTED_TOO_DEEPLY, p->current.span, "code is nested too deeply", NULL);
+    if (p->depth == MO_LIMIT_NESTING_DEPTH) {
+        struct mo_span at = p->current.span;
+        p->depth_opener = p->current.kind == MO_T_TEXT_HEAD ? MO_T_EOF : p->current.kind;
+        if (p->current.kind == MO_T_FN && p->expect_code == MO_CODE_SOURCE_TYPE) {
+            /* A function type closes with ), not a block's end. */
+            p->depth_opener = MO_T_LPAREN;
+            next(p);
+        }
+        error(p, MO_CODE_NESTED_TOO_DEEPLY, at, "code is nested too deeply", NULL);
+    }
     p->depth++;
-}
-
-static void height(struct parser *p, struct mo_syntax *n, const struct mo_syntax *child) {
-    if (child == NULL)
-        return;
-    uint32_t h = ((const struct syntax_node *)child)->height;
-    if (n->kind != MO_S_SEQUENCE && n->kind != MO_S_FILE && n->kind != MO_S_MODULE &&
-        n->kind != MO_S_EXPR_STMT)
-        h++;
-    if (h > MO_LIMIT_NESTING_DEPTH)
-        error(p, MO_CODE_NESTED_TOO_DEEPLY, n->span, "code is nested too deeply", NULL);
-    struct syntax_node *storage = (struct syntax_node *)n;
-    if (h > storage->height)
-        storage->height = h;
 }
 
 static MO_MUST_USE struct mo_syntax *node(struct parser *p, enum mo_syntax_kind kind,
@@ -107,7 +246,6 @@ static MO_MUST_USE struct mo_syntax *node(struct parser *p, enum mo_syntax_kind 
         memcpy(n->children, children, count * sizeof *n->children);
     }
     for (uint32_t i = 0; i < count; i++) {
-        height(p, n, children[i]);
         if (children[i] != NULL)
             n->incomplete = n->incomplete || children[i]->incomplete;
     }
@@ -141,7 +279,6 @@ static void append(struct parser *p, struct mo_syntax *n, struct mo_syntax *chil
             n->span.start = child->span.start;
         n->span.end = child->span.end;
     }
-    height(p, n, child);
     n->incomplete = n->incomplete || (child != NULL && child->incomplete);
 }
 
@@ -155,7 +292,10 @@ static MO_MUST_USE struct mo_syntax *leaf(struct parser *p) {
                                : token.kind == MO_T_TRUE       ? MO_S_TRUE
                                : token.kind == MO_T_FALSE      ? MO_S_FALSE
                                : token.kind == MO_T_UNDERSCORE ? MO_S_UNDERSCORE
-                                                               : MO_S_TEXT;
+                               : token.kind == MO_T_TEXT || token.kind == MO_T_TEXT_HEAD ||
+                                       token.kind == MO_T_TEXT_MID || token.kind == MO_T_TEXT_TAIL
+                                   ? MO_S_TEXT
+                                   : MO_S_TOKEN;
     next(p);
     struct mo_syntax *n = node(p, kind, token.span, 0, NULL);
     n->span = token.span;
@@ -182,6 +322,7 @@ static MO_MUST_USE struct mo_syntax *path(struct parser *p) {
 
 static MO_MUST_USE struct mo_syntax *header(struct parser *p, struct mo_header *out) {
     struct mo_span start = p->current.span;
+    p->expect_code = MO_CODE_SOURCE_HEADER;
     if (p->current.kind != MO_T_MODULE)
         error(p, MO_CODE_SOURCE_HEADER, p->current.span,
               "a file is one module, named on its first line of code",
@@ -231,7 +372,8 @@ static MO_MUST_USE struct mo_syntax *header(struct parser *p, struct mo_header *
 static MO_MUST_USE struct mo_syntax *expr(struct parser *p, unsigned minimum);
 static MO_MUST_USE struct mo_syntax *statement(struct parser *p, bool newline);
 static MO_MUST_USE struct mo_syntax *statements(struct parser *p);
-static void validate(struct parser *p, const struct mo_syntax *n, bool pattern);
+static MO_MUST_USE struct mo_syntax *binder(struct parser *p);
+static void validate(struct parser *p, struct mo_syntax *n, bool pattern);
 enum item_context {
     MODULE_ITEM,
     FRAGMENT_ITEM,
@@ -246,6 +388,44 @@ enum item_context {
 static MO_MUST_USE struct mo_syntax *read_item(struct parser *p, enum item_context context);
 static void recover(struct parser *p, uint32_t first_line);
 
+static MO_MUST_USE bool control_header(struct parser *p, enum mo_syntax_token token,
+                                       struct mo_syntax **parts, bool colon) {
+    jmp_buf escape;
+    jmp_buf *saved = p->escape;
+    uint16_t code = p->expect_code;
+    uint32_t first_line = p->current.line;
+    uint32_t depth = p->depth;
+    p->escape = &escape;
+    if (setjmp(escape) != 0) {
+        p->escape = saved;
+        p->expect_code = code;
+        p->depth = depth;
+        if (p->lx.fatal)
+            longjmp(*saved, 1);
+        recover(p, first_line);
+        if (p->lx.fatal)
+            longjmp(*saved, 1);
+        parts[0] = NULL;
+        parts[1] = NULL;
+        return false;
+    }
+    p->expect_code = token == MO_T_IF     ? MO_CODE_SOURCE_IF
+                     : token == MO_T_CASE ? MO_CODE_SOURCE_CASE
+                                          : MO_CODE_SOURCE_LOOP;
+    next(p);
+    if (token == MO_T_FOR) {
+        parts[0] = binder(p);
+        expect(p, MO_T_IN);
+    }
+    parts[1] = expr(p, token == MO_T_CASE || token == MO_T_FOR ? 0 : 1);
+    validate(p, parts[1], false);
+    if (!colon || (p->current.kind != MO_T_COLON && p->current.kind != MO_T_NL))
+        expect(p, MO_T_NL);
+    p->escape = saved;
+    p->expect_code = code;
+    return true;
+}
+
 static void limit(struct parser *p, const struct mo_syntax *n, uint32_t maximum, uint16_t code,
                   const char *message) {
     if (n->count > maximum)
@@ -253,7 +433,11 @@ static void limit(struct parser *p, const struct mo_syntax *n, uint32_t maximum,
 }
 
 static MO_MUST_USE struct mo_syntax *type(struct parser *p) {
-    enter(p);
+    uint16_t code = p->expect_code;
+    p->expect_code = MO_CODE_SOURCE_TYPE;
+    bool nested = p->current.kind == MO_T_FN || p->current.kind == MO_T_LPAREN;
+    if (nested)
+        enter(p);
     struct mo_span start = p->current.span;
     struct mo_syntax *n = NULL;
     if (take(p, MO_T_FN)) {
@@ -287,7 +471,10 @@ static MO_MUST_USE struct mo_syntax *type(struct parser *p) {
         if (take(p, MO_T_DOT))
             base = N(MO_S_QUALIFIED, start, base, name(p, MO_T_CAPNAME));
         struct mo_syntax *args = NULL;
-        if (take(p, MO_T_LPAREN)) {
+        if (p->current.kind == MO_T_LPAREN) {
+            enter(p);
+            nested = true;
+            next(p);
             args = sequence(p);
             do {
                 append(p, args, type(p));
@@ -296,7 +483,9 @@ static MO_MUST_USE struct mo_syntax *type(struct parser *p) {
         }
         n = N(MO_S_TYPE, start, base, args);
     }
-    p->depth--;
+    if (nested)
+        p->depth--;
+    p->expect_code = code;
     return n;
 }
 
@@ -341,28 +530,34 @@ static MO_MUST_USE struct mo_syntax *line_if_tail(struct parser *p, struct mo_sp
 static MO_MUST_USE struct mo_syntax *if_expr(struct parser *p, bool block) {
     enter(p);
     struct mo_span start = p->current.span;
-    expect(p, MO_T_IF);
-    struct mo_syntax *condition = expr(p, 1), *body = NULL, *otherwise = NULL;
+    struct mo_syntax *parts_header[2] = {NULL};
+    bool valid = control_header(p, MO_T_IF, parts_header, true);
+    struct mo_syntax *condition = parts_header[1], *body = NULL, *otherwise = NULL;
     enum mo_syntax_kind kind = MO_S_LINE_IF;
-    if (p->current.kind == MO_T_COLON) {
+    if (valid && p->current.kind == MO_T_COLON) {
         struct mo_syntax *n = line_if_tail(p, start, condition);
         p->depth--;
         return n;
     } else {
-        if (!block)
+        if (!block) {
+            p->depth_opener = MO_T_IF;
             expect(p, MO_T_COLON);
+        }
         kind = MO_S_IF;
-        expect(p, MO_T_NL);
+        if (valid)
+            expect(p, MO_T_NL);
         body = statements(p);
         struct mo_syntax *parts = sequence(p);
-        while (take(p, MO_T_ELSE)) {
-            struct mo_span else_start = p->previous;
+        while (p->current.kind == MO_T_ELSE) {
+            struct mo_span else_start = p->current.span;
+            next(p);
             struct mo_syntax *part;
-            if (take(p, MO_T_IF)) {
-                struct mo_syntax *c = expr(p, 1);
-                expect(p, MO_T_NL);
+            if (p->current.kind == MO_T_IF) {
+                struct mo_syntax *header_parts[2] = {NULL};
+                bool good = control_header(p, MO_T_IF, header_parts, false);
                 struct mo_syntax *b = statements(p);
-                part = N(MO_S_IF, else_start, c, b, NULL);
+                part = N(MO_S_IF_PART, else_start, header_parts[1], b);
+                part->incomplete = part->incomplete || !good;
             } else {
                 expect(p, MO_T_NL);
                 part = N(MO_S_ELSE, else_start, statements(p));
@@ -372,18 +567,15 @@ static MO_MUST_USE struct mo_syntax *if_expr(struct parser *p, bool block) {
                 break;
         }
         expect(p, MO_T_END);
-        for (uint32_t i = parts->count; i > 0; i--) {
-            struct mo_syntax *part = parts->children[i - 1];
-            if (part->kind == MO_S_IF) {
-                part->children[2] = otherwise;
-                height(p, part, otherwise);
-                part->incomplete = part->incomplete || (otherwise != NULL && otherwise->incomplete);
-            }
-            part->span.end = p->previous.end;
-            otherwise = part;
-        }
+        for (uint32_t i = 0; i < parts->count; i++)
+            parts->children[i]->span.end =
+                i + 1 < parts->count ? parts->children[i + 1]->span.start : p->previous.end;
+        if (parts->count != 0)
+            parts->span.end = p->previous.end;
+        otherwise = parts;
     }
     struct mo_syntax *n = N(kind, start, condition, body, otherwise);
+    n->incomplete = n->incomplete || !valid;
     p->depth--;
     return n;
 }
@@ -392,17 +584,28 @@ static MO_MUST_USE struct mo_syntax *line_if_tail(struct parser *p, struct mo_sp
                                                   struct mo_syntax *condition) {
     expect(p, MO_T_COLON);
     struct mo_syntax *body = expr(p, 1);
-    expect(p, MO_T_ELSE);
-    struct mo_syntax *otherwise = take(p, MO_T_COLON) ? expr(p, 0) : if_expr(p, false);
+    struct mo_syntax *otherwise = sequence(p);
+    for (;;) {
+        expect(p, MO_T_ELSE);
+        struct mo_span at = p->previous;
+        if (take(p, MO_T_COLON)) {
+            append(p, otherwise, N(MO_S_ELSE, at, expr(p, 0)));
+            break;
+        }
+        expect(p, MO_T_IF);
+        struct mo_syntax *c = expr(p, 1);
+        expect(p, MO_T_COLON);
+        append(p, otherwise, N(MO_S_IF_PART, at, c, expr(p, 1)));
+    }
     return N(MO_S_LINE_IF, start, condition, body, otherwise);
 }
 
 static MO_MUST_USE struct mo_syntax *case_expr(struct parser *p) {
     enter(p);
     struct mo_span start = p->current.span;
-    expect(p, MO_T_CASE);
-    struct mo_syntax *value = expr(p, 0);
-    expect(p, MO_T_NL);
+    struct mo_syntax *header_parts[2] = {NULL};
+    bool valid = control_header(p, MO_T_CASE, header_parts, false);
+    struct mo_syntax *value = header_parts[1];
     struct mo_syntax *lines = sequence(p);
     struct mo_syntax *arm = NULL;
     while (p->current.kind != MO_T_END && p->current.kind != MO_T_EOF) {
@@ -424,7 +627,8 @@ static MO_MUST_USE struct mo_syntax *case_expr(struct parser *p) {
             append(p, lines, line);
         } else if (arm != NULL) {
             append(p, arm->children[2], line);
-            height(p, arm, arm->children[2]);
+            arm->incomplete = arm->incomplete || line->incomplete;
+            lines->incomplete = lines->incomplete || line->incomplete;
         } else
             append(p, lines, line);
     }
@@ -432,11 +636,10 @@ static MO_MUST_USE struct mo_syntax *case_expr(struct parser *p) {
         arm->span.end = p->current.span.start;
     if (lines->count > 0) {
         lines->span.end = lines->children[lines->count - 1]->span.end;
-        for (uint32_t i = 0; i < lines->count; i++)
-            height(p, lines, lines->children[i]);
     }
     expect(p, MO_T_END);
     struct mo_syntax *n = N(MO_S_CASE, start, value, lines);
+    n->incomplete = n->incomplete || !valid;
     p->depth--;
     return n;
 }
@@ -480,6 +683,10 @@ static MO_MUST_USE struct mo_syntax *primary(struct parser *p) {
         return N(MO_S_STOP, start, text(p));
     if (token == MO_T_LPAREN || token == MO_T_LBRACK || token == MO_T_LBRACE) {
         enter(p);
+        uint16_t code = p->expect_code;
+        p->expect_code = token == MO_T_LPAREN   ? MO_CODE_SOURCE_LITERAL
+                         : token == MO_T_LBRACK ? MO_CODE_SOURCE_LIST
+                                                : MO_CODE_SOURCE_MAP;
         next(p);
         struct mo_syntax *n = sequence(p);
         n->kind = token == MO_T_LPAREN ? MO_S_GROUP : token == MO_T_LBRACK ? MO_S_LIST : MO_S_MAP;
@@ -519,28 +726,41 @@ static MO_MUST_USE struct mo_syntax *primary(struct parser *p) {
         n->span.start = start.start;
         n->span.end = p->previous.end;
         p->depth--;
+        p->expect_code = code;
         return n;
     }
+    if (p->current.kind == MO_T_EXAMPLES || p->current.kind == MO_T_PROMISE) {
+        p->depth_opener = p->current.kind;
+        error(p,
+              p->current.kind == MO_T_EXAMPLES ? MO_CODE_SOURCE_EXAMPLES : MO_CODE_SOURCE_PROMISE,
+              p->current.span, "examples and promises come first in a function's body",
+              p->current.kind == MO_T_EXAMPLES
+                  ? "Examples precede the function's body (reference 12.1)."
+                  : "Promises precede the function's body (reference 12.2).");
+    }
     error(p, MO_CODE_SOURCE_SYNTAX, p->current.span, "a value is an expression",
-          "A body is a sequence of statements, and its value is the value of its last line "
-          "(reference 2.4).");
+          "Statements are separated by logical line breaks (reference 2.4).");
 }
 
 static MO_MUST_USE struct mo_syntax *postfix(struct parser *p) {
     struct mo_syntax *n = primary(p);
     while (p->current.kind == MO_T_DOT || p->current.kind == MO_T_LPAREN) {
         struct mo_span start = n->span;
+        struct mo_syntax *step;
         if (take(p, MO_T_DOT)) {
             enum mo_syntax_token token = p->current.kind;
             struct mo_syntax *field = name(p, token == MO_T_CAPNAME ? MO_T_CAPNAME
                                               : token == MO_T_INT   ? MO_T_INT
                                                                     : MO_T_NAME);
-            n = N(token == MO_T_CAPNAME ? MO_S_QUALIFIED
-                  : token == MO_T_INT   ? MO_S_POSITION
-                                        : MO_S_FIELD_ACCESS,
-                  start, n, field);
+            step = N(token == MO_T_CAPNAME ? MO_S_QUALIFIED
+                     : token == MO_T_INT   ? MO_S_POSITION
+                                           : MO_S_FIELD_ACCESS,
+                     field->span, field);
         } else {
             enter(p);
+            uint16_t code = p->expect_code;
+            p->expect_code = MO_CODE_SOURCE_CALL;
+            struct mo_span call_start = p->current.span;
             expect(p, MO_T_LPAREN);
             struct mo_syntax *args = sequence(p);
             if (p->current.kind != MO_T_RPAREN) {
@@ -554,15 +774,35 @@ static MO_MUST_USE struct mo_syntax *postfix(struct parser *p) {
                 } while (true);
             }
             expect(p, MO_T_RPAREN);
-            bool constructor = n->kind == MO_S_CAPNAME ||
-                               (n->kind == MO_S_QUALIFIED && n->children[1]->kind == MO_S_CAPNAME);
+            const struct mo_syntax *last = n->kind == MO_S_POSTFIX ? n->children[n->count - 1] : n;
+            bool constructor = last->kind == MO_S_CAPNAME ||
+                               (last->kind == MO_S_QUALIFIED &&
+                                last->children[last->count - 1]->kind == MO_S_CAPNAME);
             limit(p, args, constructor ? MO_LIMIT_FIELDS : MO_LIMIT_PARAMETERS,
                   constructor ? MO_CODE_TOO_MANY_FIELDS : MO_CODE_TOO_MANY_PARAMETERS,
                   constructor ? "a record or case has too many fields"
                               : "a call has too many arguments");
-            n = N(MO_S_CALL, start, n, args);
+            step = N(MO_S_CALL, call_start, args);
             p->depth--;
+            p->expect_code = code;
         }
+        if (n->kind != MO_S_POSTFIX) {
+            if (n->kind == MO_S_CALL || n->kind == MO_S_QUALIFIED || n->kind == MO_S_POSITION ||
+                n->kind == MO_S_FIELD_ACCESS) {
+                struct mo_syntax *base = n->children[0];
+                n->children[0] = n->children[1];
+                n->count = 1;
+                n->span.start = ((struct syntax_node *)n)->postfix_start;
+                n = N(MO_S_POSTFIX, start, base, n);
+            } else {
+                struct mo_syntax *single = N(step->kind, start, n, step->children[0]);
+                single->token = step->token;
+                ((struct syntax_node *)single)->postfix_start = step->span.start;
+                n = single;
+                continue;
+            }
+        }
+        append(p, n, step);
     }
     return n;
 }
@@ -592,29 +832,61 @@ static MO_MUST_USE struct mo_syntax *expr(struct parser *p, unsigned minimum) {
     if (token == MO_T_IF && minimum == 0)
         return if_expr(p, false);
     struct mo_syntax *n;
-    if (token == MO_T_MINUS || token == MO_T_TRY || (token == MO_T_NOT && minimum <= 5)) {
-        enter(p);
-        next(p);
-        n = N(token == MO_T_MINUS ? MO_S_NEGATE
-              : token == MO_T_TRY ? MO_S_TRY
-                                  : MO_S_NOT,
-              start, expr(p, token == MO_T_NOT ? 5 : 10));
-        p->depth--;
+    unsigned last_level = 10;
+    if (token == MO_T_NOT && minimum <= 5) {
+        struct mo_syntax *prefix = sequence(p);
+        while (p->current.kind == MO_T_NOT)
+            append(p, prefix, leaf(p));
+        struct mo_syntax *value = expr(p, 5);
+        if (prefix->count == 1)
+            n = N(MO_S_NOT, start, value);
+        else {
+            prefix->kind = MO_S_PREFIX;
+            append(p, prefix, value);
+            n = prefix;
+        }
+        last_level = 5;
+    } else if (token == MO_T_MINUS || token == MO_T_TRY) {
+        struct mo_syntax *prefix = sequence(p);
+        while (p->current.kind == MO_T_MINUS || p->current.kind == MO_T_TRY)
+            append(p, prefix, leaf(p));
+        struct mo_syntax *value = postfix(p);
+        if (prefix->count == 1)
+            n = N(token == MO_T_MINUS ? MO_S_NEGATE : MO_S_TRY, start, value);
+        else {
+            prefix->kind = MO_S_PREFIX;
+            append(p, prefix, value);
+            n = prefix;
+        }
     } else
         n = postfix(p);
     unsigned nonchain = 0;
     for (;;) {
         token = p->current.kind;
         unsigned level = precedence(token);
-        if (level == 0 || level < minimum || (nonchain != 0 && level >= nonchain))
+        if (level == 0 || level < minimum || level > last_level ||
+            (nonchain != 0 && level >= nonchain))
             break;
-        next(p);
+        struct mo_syntax *op = leaf(p);
         struct mo_syntax *rhs = expr(p, token == MO_T_IS ? 10 : level + 1);
-        n = N(token == MO_T_IS       ? MO_S_IS
-              : token == MO_T_DOTDOT ? MO_S_RANGE
-                                     : MO_S_BINARY,
-              start, n, rhs);
-        n->token = token;
+        if (level == last_level && (n->kind == MO_S_BINARY || n->kind == MO_S_BINARY_CHAIN)) {
+            if (n->kind == MO_S_BINARY) {
+                struct mo_syntax *chain = N(MO_S_BINARY_CHAIN, start, n->children[0],
+                                            ((struct syntax_node *)n)->operator, n->children[1]);
+                chain->token = n->token;
+                n = chain;
+            }
+            append(p, n, op);
+            append(p, n, rhs);
+        } else {
+            n = N(token == MO_T_IS       ? MO_S_IS
+                  : token == MO_T_DOTDOT ? MO_S_RANGE
+                                         : MO_S_BINARY,
+                  start, n, rhs);
+            n->token = token;
+            ((struct syntax_node *)n)->operator= op;
+        }
+        last_level = level;
         if (level == 2 || level == 6 || level == 7)
             nonchain = level;
     }
@@ -623,10 +895,11 @@ static MO_MUST_USE struct mo_syntax *expr(struct parser *p, unsigned minimum) {
 
 static MO_MUST_USE struct mo_syntax *binder(struct parser *p) {
     struct mo_span start = p->current.span;
-    if (!take(p, MO_T_LPAREN))
+    if (p->current.kind != MO_T_LPAREN)
         return N(MO_S_BINDER, start,
                  name(p, p->current.kind == MO_T_UNDERSCORE ? MO_T_UNDERSCORE : MO_T_NAME));
     enter(p);
+    next(p);
     struct mo_syntax *n = sequence(p);
     n->kind = MO_S_TUPLE;
     append(p, n, binder(p));
@@ -647,16 +920,14 @@ static MO_MUST_USE struct mo_syntax *statement(struct parser *p, bool newline) {
     struct mo_syntax *n;
     if (token == MO_T_FOR || token == MO_T_WHILE) {
         enter(p);
-        next(p);
-        struct mo_syntax *b = token == MO_T_FOR ? binder(p) : NULL;
-        if (b != NULL)
-            expect(p, MO_T_IN);
-        struct mo_syntax *condition = expr(p, token == MO_T_FOR ? 0 : 1);
-        expect(p, MO_T_NL);
+        struct mo_syntax *parts[2] = {NULL};
+        bool valid = control_header(p, token, parts, false);
+        struct mo_syntax *b = parts[0], *condition = parts[1];
         struct mo_syntax *body = statements(p);
         expect(p, MO_T_END);
-        n = b == NULL ? N(MO_S_WHILE, start, condition, body)
-                      : N(MO_S_FOR, start, b, condition, body);
+        n = token == MO_T_WHILE ? N(MO_S_WHILE, start, condition, body)
+                                : N(MO_S_FOR, start, b, condition, body);
+        n->incomplete = n->incomplete || !valid;
         p->depth--;
     } else if (token == MO_T_VAR) {
         next(p);
@@ -728,9 +999,11 @@ static MO_MUST_USE bool declaration_header(struct parser *p, enum mo_syntax_toke
     jmp_buf escape;
     jmp_buf *saved = p->escape;
     uint32_t depth = p->depth, first_line = p->current.line;
+    uint16_t code = p->expect_code;
     p->escape = &escape;
     if (setjmp(escape) != 0) {
         p->depth = depth;
+        p->expect_code = code;
         p->escape = saved;
         if (p->lx.fatal)
             longjmp(*saved, 1);
@@ -739,6 +1012,12 @@ static MO_MUST_USE bool declaration_header(struct parser *p, enum mo_syntax_toke
             longjmp(*saved, 1);
         return false;
     }
+    p->expect_code = token == MO_T_FN        ? MO_CODE_SOURCE_FUNCTION
+                     : token == MO_T_STRUCT  ? MO_CODE_SOURCE_STRUCT
+                     : token == MO_T_ENUM    ? MO_CODE_SOURCE_ENUM
+                     : token == MO_T_TEST    ? MO_CODE_SOURCE_TEST
+                     : token == MO_T_PROMISE ? MO_CODE_SOURCE_PROMISE
+                                             : MO_CODE_SOURCE_EXAMPLES;
     next(p);
     if (token == MO_T_FN) {
         parts[0] = name(p, MO_T_NAME);
@@ -771,6 +1050,7 @@ static MO_MUST_USE bool declaration_header(struct parser *p, enum mo_syntax_toke
         parts[0] = name(p, MO_T_TEXT);
     expect(p, MO_T_NL);
     p->escape = saved;
+    p->expect_code = code;
     return true;
 }
 
@@ -872,6 +1152,10 @@ static MO_MUST_USE struct mo_syntax *declaration(struct parser *p, bool fragment
     enum mo_syntax_token token = p->current.kind;
     if (fragment && token == MO_T_FN && peek_next(p) == MO_T_LPAREN)
         return statement(p, true);
+    bool nested =
+        token == MO_T_FN || token == MO_T_STRUCT || token == MO_T_ENUM || token == MO_T_TEST;
+    if (nested)
+        enter(p);
     struct mo_syntax *n;
     struct mo_syntax *parts[4] = {NULL};
     bool valid = true;
@@ -917,6 +1201,7 @@ static MO_MUST_USE struct mo_syntax *declaration(struct parser *p, bool fragment
             p->previous = p->current.span;
         n = N(MO_S_TEST, start, parts[0], body);
     } else if (!fragment) {
+        p->expect_code = MO_CODE_SOURCE_BINDING;
         struct mo_syntax *id = name(p, MO_T_NAME);
         expect(p, MO_T_ASSIGN);
         struct mo_syntax *value = expr(p, 0);
@@ -925,15 +1210,25 @@ static MO_MUST_USE struct mo_syntax *declaration(struct parser *p, bool fragment
     } else
         n = statement(p, true);
     n->incomplete = n->incomplete || !valid;
+    if (nested)
+        p->depth--;
     return n;
 }
 
 static MO_MUST_USE bool constructor(const struct mo_syntax *n) {
+    if (n->kind == MO_S_POSTFIX)
+        n = n->children[n->count - 1];
     return n->kind == MO_S_CAPNAME ||
-           (n->kind == MO_S_QUALIFIED && n->children[1]->kind == MO_S_CAPNAME);
+           (n->kind == MO_S_QUALIFIED && n->children[n->count - 1]->kind == MO_S_CAPNAME);
 }
 
 static MO_MUST_USE bool place(const struct mo_syntax *n) {
+    if (n->kind == MO_S_POSTFIX) {
+        for (uint32_t i = 1; i < n->count; i++)
+            if (n->children[i]->kind != MO_S_FIELD_ACCESS)
+                return false;
+        return place(n->children[0]);
+    }
     return n->kind == MO_S_NAME || (n->kind == MO_S_FIELD_ACCESS && place(n->children[0]));
 }
 
@@ -948,10 +1243,62 @@ static MO_MUST_USE bool tuple_names(const struct mo_syntax *n) {
     return true;
 }
 
-static void validate(struct parser *p, const struct mo_syntax *n, bool pattern) {
-    if (n == NULL || n->incomplete)
+static void validate_call(struct parser *p, struct mo_syntax *n, struct mo_syntax *args,
+                          bool construct, bool pattern) {
+    uint32_t named = 0;
+    for (uint32_t i = 0; i < args->count; i++)
+        named += args->children[i]->kind == MO_S_NAMED_ARG ? 1u : 0u;
+    if (construct) {
+        if (args->count == 0 || (named != args->count && !(named == 0 && args->count == 1)))
+            error(p, pattern ? MO_CODE_SOURCE_PATTERN : MO_CODE_SOURCE_CONSTRUCTION, n->span,
+                  "a case carries no data, one unnamed value, or named fields",
+                  pattern ? "A case with named fields is matched by naming them (reference 7.3)."
+                          : "A case is built by naming its fields or from its one unnamed value "
+                            "(reference 4.2).");
+    } else if (pattern)
+        error(p, MO_CODE_SOURCE_PATTERN, n->span,
+              "a function call can't be matched; a pattern names a case, as in Some(x)",
+              "A pattern matches the forms listed in reference 7.3.");
+    else if (named != 0)
+        error(p, MO_CODE_SOURCE_ARGUMENTS, n->span, "arguments are passed by position",
+              "Only records and cases are built with named fields (reference 5.2).");
+    for (uint32_t i = 0; i < args->count; i++) {
+        struct mo_syntax *arg = args->children[i];
+        validate(p, arg->kind == MO_S_NAMED_ARG ? arg->children[1] : arg, pattern);
+    }
+}
+
+static void validate(struct parser *p, struct mo_syntax *n, bool pattern) {
+    if (n == NULL)
         return;
+    struct syntax_node *storage = (struct syntax_node *)n;
+    uint8_t mode = pattern ? 2 : 1;
+    if ((storage->validated & mode) != 0)
+        return;
+    storage->validated |= mode;
     enum mo_syntax_kind kind = n->kind;
+    if (kind == MO_S_POSTFIX) {
+        struct mo_syntax *last = n->children[n->count - 1];
+        if (pattern) {
+            if (constructor(n))
+                return;
+            if (last->kind != MO_S_CALL)
+                error(p, MO_CODE_SOURCE_PATTERN, n->span,
+                      "this can't be matched: a pattern is a name, _, a literal, a case, a tuple "
+                      "or a list",
+                      "A pattern matches the forms listed in reference 7.3.");
+            validate_call(p, n, last->children[0], constructor(n->children[n->count - 2]), true);
+        } else {
+            validate(p, n->children[0], false);
+            for (uint32_t i = 1; i < n->count; i++) {
+                struct mo_syntax *step = n->children[i];
+                if (step->kind == MO_S_CALL)
+                    validate_call(p, step, step->children[0], constructor(n->children[i - 1]),
+                                  false);
+            }
+        }
+        return;
+    }
     if (pattern) {
         if (kind == MO_S_NAME || kind == MO_S_CAPNAME || kind == MO_S_UNDERSCORE ||
             kind == MO_S_INT || kind == MO_S_DECIMAL || kind == MO_S_TEXT || kind == MO_S_CHAR ||
@@ -962,7 +1309,7 @@ static void validate(struct parser *p, const struct mo_syntax *n, bool pattern) 
         if (kind == MO_S_GROUP || kind == MO_S_TUPLE || kind == MO_S_LIST ||
             kind == MO_S_SEQUENCE) {
             for (uint32_t i = 0; i < n->count; i++) {
-                const struct mo_syntax *child = n->children[i];
+                struct mo_syntax *child = n->children[i];
                 if (kind == MO_S_LIST && child->kind == MO_S_REST && i + 1 == n->count)
                     continue;
                 validate(p, child, true);
@@ -975,27 +1322,9 @@ static void validate(struct parser *p, const struct mo_syntax *n, bool pattern) 
                   "A pattern matches the forms listed in reference 7.3.");
     }
     if (kind == MO_S_CALL) {
-        const struct mo_syntax *args = n->children[1];
-        uint32_t named = 0;
-        for (uint32_t i = 0; i < args->count; i++)
-            named += args->children[i]->kind == MO_S_NAMED_ARG ? 1u : 0u;
-        if (constructor(n->children[0])) {
-            if (args->count == 0 || (named != args->count && !(named == 0 && args->count == 1)))
-                error(p, pattern ? MO_CODE_SOURCE_PATTERN : MO_CODE_SOURCE_CONSTRUCTION, n->span,
-                      "a case carries no data, one unnamed value, or named fields",
-                      pattern
-                          ? "A case with named fields is matched by naming them (reference 7.3)."
-                          : "A case is built like a record, by naming its fields, or from its one "
-                            "unnamed value (reference 4.2).");
-        } else if (named != 0)
-            error(p, MO_CODE_SOURCE_ARGUMENTS, n->span, "arguments are passed by position",
-                  "Only records and cases are built with named fields (reference 5.2).");
+        validate_call(p, n, n->children[1], constructor(n->children[0]), pattern);
         if (!pattern)
             validate(p, n->children[0], false);
-        for (uint32_t i = 0; i < args->count; i++) {
-            const struct mo_syntax *arg = args->children[i];
-            validate(p, arg->kind == MO_S_NAMED_ARG ? arg->children[1] : arg, pattern);
-        }
         return;
     }
     if (kind == MO_S_UNDERSCORE || kind == MO_S_REST)
@@ -1006,7 +1335,7 @@ static void validate(struct parser *p, const struct mo_syntax *n, bool pattern) 
         kind == MO_S_EXPOSE || kind == MO_S_EXPOSE_ALL || kind == MO_S_USE || kind == MO_S_BINDER)
         return;
     if (kind == MO_S_STRUCT || kind == MO_S_ENUM) {
-        if (n->children[2]->count == 0)
+        if (!n->incomplete && n->children[2]->count == 0)
             error(p, kind == MO_S_STRUCT ? MO_CODE_SOURCE_STRUCT : MO_CODE_SOURCE_ENUM, n->span,
                   kind == MO_S_STRUCT ? "a record has named fields, each with a type"
                                       : "a choice type has cases",
@@ -1017,7 +1346,7 @@ static void validate(struct parser *p, const struct mo_syntax *n, bool pattern) 
         return;
     }
     if (kind == MO_S_PROMISE) {
-        if (n->children[1]->count == 0)
+        if (!n->incomplete && n->children[1]->count == 0)
             error(p, MO_CODE_SOURCE_PROMISE, n->span, "a promise is one or more Boolean lines",
                   "A promise's body is one or more Boolean lines (reference 12.2).");
         const struct mo_syntax *anchors = n->children[2];
@@ -1026,15 +1355,15 @@ static void validate(struct parser *p, const struct mo_syntax *n, bool pattern) 
             allows = allows || anchors->children[i]->token == MO_T_ALLOWS;
             forbids = forbids || anchors->children[i]->token == MO_T_FORBIDS;
         }
-        if (!allows || !forbids)
+        if (!n->incomplete && (!allows || !forbids))
             error(p, MO_CODE_SOURCE_PROMISE, n->span,
                   "a promise has at least one allows line and one forbids line",
                   "Anchors give every parameter and result a value which the body must accept or "
                   "reject (reference 12.2).");
     }
-    if (kind == MO_S_EXAMPLES && n->children[0]->count == 0)
-        error(p, MO_CODE_SOURCE_SYNTAX, n->span, "an example is a Boolean line",
-              "An example is a Boolean line that must be true (reference 2.4).");
+    if (kind == MO_S_EXAMPLES && !n->incomplete && n->children[0]->count == 0)
+        error(p, MO_CODE_SOURCE_EXAMPLES, n->span, "an example is a Boolean line",
+              "An example is a Boolean line that must be true (reference 12.1).");
     if (kind == MO_S_BIND || kind == MO_S_ADD_ASSIGN || kind == MO_S_SUB_ASSIGN) {
         if (!place(n->children[0]) && !(kind == MO_S_BIND && tuple_names(n->children[0])))
             error(p, MO_CODE_SOURCE_TARGET, n->children[0]->span,
@@ -1049,7 +1378,7 @@ static void validate(struct parser *p, const struct mo_syntax *n, bool pattern) 
         validate(p, n->children[1], true);
         return;
     }
-    if (kind == MO_S_CASE &&
+    if (kind == MO_S_CASE && !n->incomplete &&
         (n->children[1]->count == 0 || n->children[1]->children[0]->kind != MO_S_ARM))
         error(p, MO_CODE_SOURCE_CASE, n->span, "an arm is Pattern: statement",
               "Case compares a value with patterns, top to bottom (reference 7.2).");
@@ -1098,10 +1427,52 @@ static MO_MUST_USE bool can_start(enum mo_syntax_token token) {
 
 static void recover(struct parser *p, uint32_t first_line) {
     p->lx.recovering = true;
+    if (p->depth_opener != MO_T_EOF) {
+        enum mo_syntax_token open = p->depth_opener;
+        enum mo_syntax_token close = open == MO_T_LPAREN   ? MO_T_RPAREN
+                                     : open == MO_T_LBRACK ? MO_T_RBRACK
+                                     : open == MO_T_LBRACE ? MO_T_RBRACE
+                                                           : MO_T_END;
+        uint32_t level = 1;
+        uint32_t closing_line = 0;
+        bool limited = p->lx.diags->count != 0 &&
+                       p->lx.diags->items[p->lx.diags->count - 1].code == MO_CODE_NESTED_TOO_DEEPLY;
+        p->depth_opener = MO_T_EOF;
+        p->lx.failed = false;
+        next(p);
+        enum mo_syntax_token previous = open;
+        while (level != 0 && p->current.kind != MO_T_EOF && !p->lx.fatal) {
+            enum mo_syntax_token token = p->current.kind;
+            if (token == MO_T_ERROR) {
+                mo_syntax_resume(&p->lx);
+                p->has_lookahead = false;
+            } else {
+                if (close == MO_T_END) {
+                    if ((token == MO_T_IF && previous != MO_T_ELSE) || token == MO_T_FN ||
+                        token == MO_T_FOR || token == MO_T_WHILE || token == MO_T_CASE)
+                        level++;
+                } else if (token == open)
+                    level++;
+                if (token == close) {
+                    level--;
+                    closing_line = p->current.line;
+                }
+            }
+            previous = token;
+            next(p);
+        }
+        if (!limited && p->current.line == closing_line && p->current.kind != MO_T_EOF &&
+            p->current.kind != MO_T_NL) {
+            mo_syntax_resume(&p->lx);
+            p->has_lookahead = false;
+            p->current = mo_syntax_next(&p->lx);
+        }
+    }
     if (p->current.kind == MO_T_NL) {
         p->lx.failed = false;
         next(p);
-    } else if (p->current.kind != MO_T_ERROR && p->current.line > first_line && line_start(p)) {
+    } else if (p->current.kind != MO_T_ERROR && p->current.line > first_line && line_start(p) &&
+               p->lx.depth == 0) {
         p->lx.failed = false;
     } else if (p->current.kind != MO_T_ERROR && p->current.kind != MO_T_EOF &&
                p->current.line > first_line) {
@@ -1115,11 +1486,11 @@ static void recover(struct parser *p, uint32_t first_line) {
         p->lx.has_pending = false;
         p->has_lookahead = false;
         p->lx.failed = false;
-        struct mo_syntax_comment **tail = &p->lx.comments;
-        while (*tail != NULL && (*tail)->span.start < p->lx.pos)
-            tail = &(*tail)->next;
-        *tail = NULL;
-        p->lx.comment_tail = tail;
+        while (p->lx.last_comment != NULL && p->lx.last_comment->value.span.start >= p->lx.pos)
+            p->lx.last_comment = p->lx.last_comment->previous;
+        p->lx.comment_tail =
+            p->lx.last_comment == NULL ? &p->lx.comments : &p->lx.last_comment->value.next;
+        *p->lx.comment_tail = NULL;
         p->current = mo_syntax_next(&p->lx);
     } else {
         p->has_lookahead = false;
@@ -1140,20 +1511,32 @@ static MO_MUST_USE struct mo_syntax *read_item(struct parser *p, enum item_conte
     jmp_buf escape;
     jmp_buf *saved = p->escape;
     uint32_t depth = p->depth, first_line = p->current.line;
+    struct mo_span start = p->current.span;
+    uint16_t code = p->expect_code;
     p->escape = &escape;
     if (setjmp(escape) != 0) {
         p->depth = depth;
+        p->expect_code = code;
         p->escape = saved;
         if (p->lx.fatal)
             longjmp(*saved, 1);
         recover(p, first_line);
         if (p->lx.fatal)
             longjmp(*saved, 1);
+        if (context == CASE_ITEM) {
+            struct mo_syntax *placeholder = N(MO_S_ARM, start, NULL, NULL, NULL);
+            placeholder->incomplete = true;
+            return placeholder;
+        }
         return NULL;
     }
+    p->expect_code = context == FIELD_ITEM       ? MO_CODE_SOURCE_STRUCT
+                     : context == CASE_DECL_ITEM ? MO_CODE_SOURCE_ENUM
+                     : context == EXPR_ITEM      ? MO_CODE_SOURCE_EXAMPLES
+                     : context == ANCHOR_ITEM    ? MO_CODE_SOURCE_PROMISE
+                                                 : 0;
     struct mo_syntax *n;
     if (context == CASE_ITEM) {
-        struct mo_span start = p->current.span;
         n = statement(p, false);
         if (n->kind == MO_S_EXPR_STMT &&
             (p->current.kind == MO_T_BAR || p->current.kind == MO_T_IF ||
@@ -1194,6 +1577,7 @@ static MO_MUST_USE struct mo_syntax *read_item(struct parser *p, enum item_conte
         }
     }
     p->escape = saved;
+    p->expect_code = code;
     return n;
 }
 
@@ -1211,6 +1595,17 @@ static MO_MUST_USE struct mo_syntax *initial(struct parser *p, struct mo_header 
     }
     next(p);
     struct mo_syntax *h = NULL;
+    if (!fragment && p->current.kind != MO_T_MODULE && p->current.kind != MO_T_ERROR) {
+        (void)mo_syntax_error(
+            &p->lx, MO_CODE_SOURCE_HEADER, p->current.span,
+            "a file is one module, named on its first line of code",
+            "A module starts with its name, then expose and use lines (reference 10.1).");
+        if (p->lx.fatal)
+            longjmp(*saved, 1);
+        p->lx.failed = false;
+        p->escape = saved;
+        return NULL;
+    }
     if (!fragment || p->current.kind == MO_T_MODULE)
         h = header(p, out);
     p->escape = saved;
@@ -1229,6 +1624,14 @@ static MO_MUST_USE struct mo_module_syntax *parse_run(struct parser *p, bool fra
     bool incomplete = errors != p->lx.diags->count;
     struct mo_syntax *items = sequence(p);
     while (p->current.kind != MO_T_EOF) {
+        if (p->lx.diags->count > errors &&
+            (p->current.kind == MO_T_END || p->current.kind == MO_T_ELSE)) {
+            next(p);
+            if (p->current.kind == MO_T_NL)
+                next(p);
+            items->incomplete = true;
+            continue;
+        }
         struct mo_syntax *item = read_item(p, fragment ? FRAGMENT_ITEM : MODULE_ITEM);
         if (item != NULL)
             append(p, items, item);
@@ -1247,10 +1650,9 @@ static MO_MUST_USE struct mo_module_syntax *parse(struct mo_arena *arena,
     mo_syntax_lex_init(&p.lx, arena, sources, file, diags);
     p.current.span.file = file;
     struct mo_module_syntax *module = parse_run(&p, fragment);
-    if (module != NULL && !mo_syntax_attach(sources, module->tree, p.lx.comments)) {
-        bool kept = mo_syntax_error(&p.lx, MO_CODE_SYNTAX_NO_MEMORY, module->span,
-                                    "comment attachment has no room", NULL);
-        (void)kept;
+    if (module != NULL && !mo_syntax_attach(arena, sources, module->tree, p.lx.comments)) {
+        mo_syntax_error(&p.lx, MO_CODE_SYNTAX_NO_MEMORY, module->span,
+                        "comment attachment has no room", NULL);
         return NULL;
     }
     return module;

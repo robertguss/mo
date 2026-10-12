@@ -12,6 +12,11 @@ struct mo_token {
     uint32_t column;
 };
 
+struct mo_comment_storage {
+    struct mo_syntax_comment value;
+    struct mo_comment_storage *previous;
+};
+
 struct mo_lex {
     const struct mo_source *source;
     uint32_t file;
@@ -31,6 +36,12 @@ struct mo_lex {
     struct mo_diags *diags;
     struct mo_syntax_comment *comments;
     struct mo_syntax_comment **comment_tail;
+    struct mo_comment_storage *last_comment;
+    uint32_t triple_close;
+    uint32_t triple_indent;
+    uint32_t recovery_end;
+    uint8_t limits_reported;
+    bool triple_cached;
     bool failed;
     bool fatal;
     bool header_only;
@@ -41,10 +52,10 @@ void mo_syntax_lex_init(struct mo_lex *lx, struct mo_arena *arena, const struct 
                         uint32_t file, struct mo_diags *diags);
 MO_MUST_USE uint32_t mo_syntax_decode(const uint8_t *bytes, uint32_t length, uint32_t *cp);
 MO_MUST_USE struct mo_token mo_syntax_next(struct mo_lex *lx);
-MO_MUST_USE bool mo_syntax_error(struct mo_lex *lx, uint16_t code, struct mo_span span,
-                                 const char *message, const char *reason);
+void mo_syntax_error(struct mo_lex *lx, uint16_t code, struct mo_span span, const char *message,
+                     const char *reason);
 void mo_syntax_resume(struct mo_lex *lx);
-MO_MUST_USE bool mo_syntax_attach(const struct mo_sources *sources, struct mo_syntax *tree,
-                                  struct mo_syntax_comment *comments);
+MO_MUST_USE bool mo_syntax_attach(struct mo_arena *arena, const struct mo_sources *sources,
+                                  struct mo_syntax *tree, struct mo_syntax_comment *comments);
 
 #endif

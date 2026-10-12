@@ -122,7 +122,8 @@ fuzz-smoke: $(FUZZERS)
 			if [ "$$name" = fuzz_core_text ]; then cp tests/core/*.core $$corpus/; fi; \
 			if [ "$$name" = fuzz_syntax ]; then cp grammar/tests/good/*.mo grammar/tests/bad/*.mo examples/*.mo $$corpus/; fi; \
 			log=$(FUZZ_BUILD)/$$name.log; echo "fuzzing $$name for $(FUZZ_SECONDS)s"; \
-			$$f $$options -max_total_time=$(FUZZ_SECONDS) -print_final_stats=1 \
+			dictionary=; if [ -f fuzz/$$name.dict ]; then dictionary=-dict=fuzz/$$name.dict; fi; \
+			$$f $$options $$dictionary -max_total_time=$(FUZZ_SECONDS) -print_final_stats=1 \
 				-artifact_prefix=$(FUZZ_BUILD)/artifacts/ $$corpus >$$log 2>&1; status=$$?; \
 			grep -E '^(Done|stat::(number_of_executed_units|new_units_added|peak_rss_mb))' $$log; \
 			if [ $$status -ne 0 ] || ls $(FUZZ_BUILD)/artifacts/* >/dev/null 2>&1; then \

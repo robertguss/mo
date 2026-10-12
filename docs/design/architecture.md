@@ -140,8 +140,10 @@ mistake gives one error.
 
 `mo format` prints the syntax tree back. The tree keeps every comment: a
 comment on its own line is attached to the next node at its indentation, or
-to the end of its block if nothing follows. A comment at the end of a line is
-attached to that line's last node. Formatting is a function of the tree.
+to the end of its scope if nothing follows. Blocks and multi-line lists,
+maps, tuples, groups and calls are scopes; a comment before a closing bracket
+stays inside that scope. A comment at the end of a line is attached to that
+line's last node. Formatting is a function of the tree.
 Formatting twice changes nothing, and the formatted program's tree equals the
 original's, except for the rewrites the reference names: `x = x + y` becomes
 `x += y` (reference 6.2).
@@ -155,7 +157,7 @@ tree does not borrow source storage. Grouping parentheses remain nodes;
 lists, maps, tuples and argument sequences remain distinct. No typing or
 name resolution is done here.
 
-Children follow the executable grammar's production order with three
+Children follow the executable grammar's production order with these
 normalizations: a function type has its argument sequence and optional
 result, with token `FN`; a tuple type has one sequence, with token `LPAREN`;
 other types have their name and optional type arguments. Interpolated text
@@ -163,23 +165,40 @@ has alternating raw text parts and expressions in one flat sequence. A
 case has arms, each with alternatives, an optional guard, and a statement
 sequence which includes the statement on its header line. An arm's span
 extends to the next arm or the case's `end`, so comments ending an arm have
-an owner. A chained block `else if` is nested `IF` nodes.
+an owner. Block and one-line `if` nodes have the first condition and body,
+then a sequence of `IF_PART` (condition, body) and optional `ELSE` (body)
+nodes. Else-if parts are flat, not nested `IF` nodes. Same-precedence binary
+chains with at least two operators are `BINARY_CHAIN` nodes containing
+operand, operator token, operand, and so on; a single operator remains
+`BINARY`. Postfix chains with at least two steps are `POSTFIX` nodes: base,
+then call or field steps, each with only its arguments or field child, not
+a repeated base. A single postfix keeps its two-child shape. Repeated
+prefix operators are `PREFIX` nodes containing operator tokens then the
+operand; a single prefix keeps its one-child shape. Consumers walk these
+chains iteratively, preserving operator order and left associativity.
 
 Erroneous items are omitted. Their containers have `incomplete` set, so the
 checker can inspect retained children without checking the container as a
 whole. A damaged declaration header can leave even a required child `NULL`,
-but its body is retained. Line recovery has boundaries inside declaration
-headers, statement blocks, case arms, record and choice declarations,
+but its body is retained. A damaged control-block header has the same
+boundary. A failed case-arm header leaves an incomplete placeholder arm,
+so its body cannot become part of the previous arm. Valid retained children
+are still validated; `incomplete` suppresses only whole-container checks.
+Line recovery has boundaries inside declaration and control headers,
+statement blocks, case arms, record and choice declarations,
 specification lines and anchors. Only allocation failure or inability to
 keep a diagnostic returns `NULL`.
 `mo_read_header` stops before the body's first token and leaves its output
 unchanged on failure. `mo_parse_fragment` uses the grammar's fragment mode
 for reference snippets, fixtures and differential fuzzing.
 
-Nesting is bounded both while descending and when constructing nodes, so
-left-associative chains cannot leave an unbounded tree. Leaves have depth
-zero; sequence, file, module and expression-statement wrappers add no
-depth, and each other enclosing node adds one. The parser also checks the
+Nesting counts enclosing source constructs: declaration and control blocks,
+brackets and parentheses, lambdas, call arguments, parenthesized types and
+interpolated text. Leaves, tree wrappers, operator and postfix chains,
+and else-if parts add no depth. The same nesting bound applies in a
+fragment, binding or function; a function's block adds one. E1006 points
+to the innermost opener that exceeds the bound. Each source limit is
+reported at most once per parse. The parser also checks the
 source counts already visible in syntax: module declarations, parameters
 and calls (including function types), record and case fields, tuples
 (including types and binders), and choice cases. The module-name limit
@@ -187,7 +206,24 @@ counts declarations, not distinct spellings; overloads count separately.
 Capture counts and limits which need types, lowering or bytecode remain
 with their owning stages.
 The differential target includes Bison's lexer and AST validation, not
-just `yyparse`; only named source-limit diagnostics exclude a comparison.
+just `yyparse`, and compares exact normalized trees, including operators
+and leaf positions. It excludes a mismatch only when every parser
+diagnostic is a source-limit code and an independent walk of the grammar's
+tree or source proves each reported limit was exceeded. It also compares
+header reads with accepted full parses and exercises input-derived arena
+limits. A token dictionary and regression seeds run in CI.
+
+**Resources.** The caller chooses an arena budget, not just a source-size
+budget. Dense generated source can need roughly 100 bytes of arena per
+source byte (about 800 MiB for an 8 MiB source), and some flat chains need
+more; this is an estimate, not a bound. Failure to allocate is E1054, even
+during recovery. Comment attachment uses temporary arena storage for two
+node indexes, bounded by the caller arena's unused budget and freed before
+returning: caller arena plus scratch never exceeds that arena's limit.
+Source storage and diagnostics have their own base-module budgets.
+Reserve at least 2 MiB of C stack for the parser and tree walks. Deep
+255-lambda fixtures need about 256–512 KiB in optimized builds and about
+1 MiB with AddressSanitizer; actual requirements depend on compiler flags.
 
 ### 3.2 Loading a program
 

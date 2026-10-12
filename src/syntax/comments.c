@@ -54,7 +54,9 @@ static MO_MUST_USE bool block(const struct mo_syntax *n) {
            n->kind == MO_S_STRUCT || n->kind == MO_S_ENUM || n->kind == MO_S_TEST ||
            n->kind == MO_S_IF || n->kind == MO_S_ELSE || n->kind == MO_S_CASE ||
            n->kind == MO_S_FOR || n->kind == MO_S_WHILE || n->kind == MO_S_LAMBDA ||
-           n->kind == MO_S_PROMISE || n->kind == MO_S_EXAMPLES || n->kind == MO_S_ARM;
+           n->kind == MO_S_PROMISE || n->kind == MO_S_EXAMPLES || n->kind == MO_S_ARM ||
+           n->kind == MO_S_IF_PART || n->kind == MO_S_LIST || n->kind == MO_S_MAP ||
+           n->kind == MO_S_TUPLE || n->kind == MO_S_GROUP || n->kind == MO_S_CALL;
 }
 
 static MO_MUST_USE struct mo_syntax *owner(struct mo_syntax *n, uint32_t offset,
@@ -65,7 +67,8 @@ static MO_MUST_USE struct mo_syntax *owner(struct mo_syntax *n, uint32_t offset,
         enclosing = n;
         *end = n->span.end;
     }
-    if (n->kind == MO_S_IF && n->children[2] != NULL && offset < n->children[2]->span.start)
+    if (n->kind == MO_S_IF && n->children[2] != NULL && n->children[2]->count != 0 &&
+        offset < n->children[2]->span.start)
         *end = n->children[2]->span.start;
     if (n->count <= 6) {
         for (uint32_t i = 0; i < n->count; i++) {
@@ -94,14 +97,14 @@ static void attach(struct mo_syntax_comment **list, struct mo_syntax_comment *co
     *list = comment;
 }
 
-bool mo_syntax_attach(const struct mo_sources *sources, struct mo_syntax *tree,
-                      struct mo_syntax_comment *comments) {
+bool mo_syntax_attach(struct mo_arena *arena, const struct mo_sources *sources,
+                      struct mo_syntax *tree, struct mo_syntax_comment *comments) {
     if (comments == NULL)
         return true;
     struct mo_arena scratch;
     size_t nodes = count_nodes(tree);
-    mo_arena_init(&scratch,
-                  nodes * (2 * sizeof(struct candidate)) + MO_ARENA_CHUNK_HEADER * 4u + 4096u);
+    MO_ASSERT(arena->used <= arena->limit);
+    mo_arena_init(&scratch, arena->limit - arena->used);
     struct candidate *starts =
         mo_arena_allocate_array(&scratch, nodes, sizeof *starts, _Alignof(struct candidate));
     struct candidate *ends =

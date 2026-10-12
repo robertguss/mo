@@ -1,6 +1,13 @@
 /* Source syntax. The caller owns the arena; the tree copies token and comment text.
  * Spans are half-open byte ranges. Children follow source order, including NULL
- * for an absent optional child. Architecture 3.1 records the normalized shapes. */
+ * for an absent optional child. Architecture 3.1 records the normalized shapes.
+ *
+ * Reserve at least 2 MiB of C stack: 255 nested lambdas need roughly 256-512 KiB
+ * optimized, or 1 MiB under ASan, depending on compiler flags. Dense source can
+ * need about 100 arena bytes per source byte (800 MiB for 8 MiB), or more for
+ * flat chains. These are estimates, not bounds. The caller's arena limit bounds
+ * tree storage plus temporary comment indexes; scratch uses only its unused
+ * budget and is freed before return. Source and diagnostics have separate budgets. */
 #ifndef MO_SYNTAX_H
 #define MO_SYNTAX_H
 
@@ -73,6 +80,10 @@ enum mo_syntax_kind {
     MO_S_MAP_ENTRY,
     MO_S_STOP,
     MO_S_TOKEN,
+    MO_S_BINARY_CHAIN, /* operand, operator token, operand, ... */
+    MO_S_POSTFIX,      /* base, then steps with no repeated base */
+    MO_S_PREFIX,       /* operator tokens, then operand */
+    MO_S_IF_PART,      /* condition, body */
 };
 
 /* Tokens are independent of Bison's generated numeric values. */
@@ -167,7 +178,7 @@ struct mo_syntax {
     struct mo_syntax **children;
     struct mo_syntax_comment *leading;
     struct mo_syntax_comment *trailing;
-    struct mo_syntax_comment *ending; /* comments at the end of a block */
+    struct mo_syntax_comment *ending; /* comments at the end of a block or bracket scope */
     bool incomplete; /* an erroneous child was omitted; do not check this as a whole */
 };
 

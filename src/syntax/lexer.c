@@ -3,20 +3,36 @@
 #include "base/codes.h"
 #include "syntax/internal.h"
 
+#include <stdio.h>
 #include <string.h>
 
-bool mo_syntax_error(struct mo_lex *lx, uint16_t code, struct mo_span span, const char *message,
+void mo_syntax_error(struct mo_lex *lx, uint16_t code, struct mo_span span, const char *message,
                      const char *reason) {
-    if (lx->failed || lx->fatal)
-        return false;
+    bool allocation = code == MO_CODE_SYNTAX_NO_MEMORY;
+    if ((lx->failed || lx->fatal) && !allocation)
+        return;
     lx->failed = true;
-    if (lx->recovering)
-        return false;
+    if (allocation)
+        lx->fatal = true;
+    if (lx->diags->count != 0) {
+        const struct mo_diag *last = &lx->diags->items[lx->diags->count - 1];
+        if ((allocation && last->code == code) ||
+            (!allocation && last->primary.span.file == span.file &&
+             last->primary.span.start == span.start && last->primary.span.end == span.end))
+            return;
+    }
+    if (lx->recovering && !allocation)
+        return;
+    if (code >= MO_CODE_LINE_TOO_LONG && code <= MO_CODE_TOO_MANY_CASES) {
+        uint8_t bit = (uint8_t)(1u << (code - MO_CODE_LINE_TOO_LONG));
+        if ((lx->limits_reported & bit) != 0)
+            return;
+        lx->limits_reported |= bit;
+    }
     struct mo_diag diag = {
         .code = code, .primary = {span, NULL}, .message = message, .reason = reason};
     if (!mo_diags_add(lx->diags, &diag))
         lx->fatal = true;
-    return false;
 }
 
 void mo_syntax_lex_init(struct mo_lex *lx, struct mo_arena *arena, const struct mo_sources *sources,
@@ -67,20 +83,35 @@ static MO_MUST_USE bool invisible(uint32_t c) {
            c == 0xe0001 || (c >= 0xe0020 && c <= 0xe007f);
 }
 
-static MO_MUST_USE bool lex_error(struct mo_lex *lx, uint16_t code, const char *message) {
+static void lex_error(struct mo_lex *lx, uint16_t code, const char *message) {
     struct mo_span span = {lx->file, lx->pos, lx->pos < lx->source->length ? lx->pos + 1 : lx->pos};
     const struct mo_code_info *info = mo_code_find(code);
     MO_ASSERT(info != NULL);
-    return mo_syntax_error(
-        lx, code, span, message,
+    const char *rule =
         info->section == NULL ? NULL
         : code == MO_CODE_SOURCE_UTF8 || code == MO_CODE_SOURCE_INVISIBLE
-            ? "Source is UTF-8; invisible characters are an error anywhere (reference 2.1)."
-        : code == MO_CODE_SOURCE_NAME ? "Names are ASCII, in snake_case or CapCase (reference 2.3)."
-        : code == MO_CODE_SOURCE_NUMBER ? "Whole numbers may put _ between digits (reference 3.2)."
+            ? "Source is UTF-8; invisible characters are an error anywhere"
+        : code == MO_CODE_SOURCE_NAME   ? "Names are ASCII, in snake_case or CapCase"
+        : code == MO_CODE_SOURCE_NUMBER ? "Whole numbers may put _ between digits"
         : code == MO_CODE_SOURCE_TEXT
-            ? "Text and characters use the escapes listed in reference 3.4."
-            : "A line break ends a statement; there are no semicolons (reference 2.4).");
+            ? "Text and characters use the listed escapes and Unicode scalar values"
+        : code == MO_CODE_SOURCE_INDEX ? "List positions are read with get, which returns an Option"
+        : code == MO_CODE_SOURCE_BOOLEAN ? "Boolean expressions use and, or and not"
+        : code == MO_CODE_SOURCE_FUNCTION
+            ? "A function signature uses fn and : before its result type"
+        : code == MO_CODE_SOURCE_ASSIGNMENT    ? "Compound assignment uses only += and -="
+        : code == MO_CODE_SOURCE_QUALIFICATION ? "Module-qualified names use ."
+        : code == MO_CODE_SOURCE_COMMENT       ? "Comments start with #"
+        : code == MO_CODE_SOURCE_OPERATOR      ? "Use Mo's arithmetic operators"
+        : code == MO_CODE_SOURCE_CALL          ? "Dot calls chain with ."
+        : code == MO_CODE_SOURCE_CASE          ? "A case arm is Pattern: value"
+                                               : "A line break ends a statement; use Mo's tokens";
+    char reason[256];
+    if (rule != NULL) {
+        int n = snprintf(reason, sizeof reason, "%s (reference %s).", rule, info->section);
+        MO_ASSERT(n >= 0 && (size_t)n < sizeof reason);
+    }
+    mo_syntax_error(lx, code, span, message, rule == NULL ? NULL : reason);
 }
 
 static MO_MUST_USE bool advance(struct mo_lex *lx) {
@@ -88,15 +119,14 @@ static MO_MUST_USE bool advance(struct mo_lex *lx) {
     uint32_t c = 0;
     uint32_t n = mo_syntax_decode(lx->source->bytes + lx->pos, lx->source->length - lx->pos, &c);
     if (n == 0) {
-        bool ok = lex_error(lx, MO_CODE_SOURCE_UTF8, "source is UTF-8");
+        lex_error(lx, MO_CODE_SOURCE_UTF8, "source is UTF-8");
         lx->pos++;
-        return ok;
+        return false;
     }
     if (invisible(c) || (c == 13 && peek(lx, 1) != 10)) {
-        bool ok =
-            lex_error(lx, MO_CODE_SOURCE_INVISIBLE, "invisible characters are an error anywhere");
+        lex_error(lx, MO_CODE_SOURCE_INVISIBLE, "invisible characters are an error anywhere");
         lx->pos += n;
-        return ok;
+        return false;
     }
     lx->pos += n;
     if (c == 10) {
@@ -104,8 +134,10 @@ static MO_MUST_USE bool advance(struct mo_lex *lx) {
         lx->column = 1;
     } else if (c != 13)
         lx->column++;
-    if (lx->column > MO_LIMIT_LINE_LENGTH + 1u)
-        return lex_error(lx, MO_CODE_LINE_TOO_LONG, "a source line is too long");
+    if (lx->column > MO_LIMIT_LINE_LENGTH + 1u) {
+        lex_error(lx, MO_CODE_LINE_TOO_LONG, "a source line is too long");
+        return false;
+    }
     return true;
 }
 
@@ -178,8 +210,10 @@ static MO_MUST_USE bool digits(struct mo_lex *lx, int base) {
         if (!advance(lx))
             return false;
     }
-    if (!any || underscore || peek(lx, 0) == '_')
-        return lex_error(lx, MO_CODE_SOURCE_NUMBER, "whole numbers put _ between digits");
+    if (!any || underscore || peek(lx, 0) == '_') {
+        lex_error(lx, MO_CODE_SOURCE_NUMBER, "whole numbers put _ between digits");
+        return false;
+    }
     return true;
 }
 
@@ -210,7 +244,9 @@ static MO_MUST_USE bool escape(struct mo_lex *lx) {
             peek(lx, 0) == '}')
             return advance(lx);
     }
-    return lex_error(lx, MO_CODE_SOURCE_TEXT, "text uses escapes for Unicode characters");
+    lex_error(lx, MO_CODE_SOURCE_TEXT,
+              "unknown escape; Mo has \\n, \\t, \\r, \\\\, \\\", \\', \\# and \\u{...}");
+    return false;
 }
 
 static MO_MUST_USE enum mo_syntax_token text_body(struct mo_lex *lx, bool start, bool triple,
@@ -228,13 +264,15 @@ static MO_MUST_USE enum mo_syntax_token text_body(struct mo_lex *lx, bool start,
                         return MO_T_ERROR;
                 if (!start)
                     lx->depth--;
+                lx->recovery_end = 0;
                 return start ? MO_T_TEXT : MO_T_TEXT_TAIL;
             }
             int after = peek(lx, spaces);
             if (after != 10 && after != 13 && after != -1 && spaces < indent) {
-                if (!lex_error(lx, MO_CODE_SOURCE_TEXT,
-                               "the closing triple quote sets the indentation"))
-                    return MO_T_ERROR;
+                (void)lex_error(
+                    lx, MO_CODE_SOURCE_TEXT,
+                    "a non-empty line has less indentation than the closing triple quote");
+                return MO_T_ERROR;
             }
         }
         int c = peek(lx, 0);
@@ -247,9 +285,15 @@ static MO_MUST_USE enum mo_syntax_token text_body(struct mo_lex *lx, bool start,
         }
         if (c == 10 || c == 13) {
             if (!triple) {
-                if (!lex_error(lx, MO_CODE_SOURCE_TEXT,
-                               "text on several lines starts with a triple quote"))
-                    return MO_T_ERROR;
+                uint32_t at = lx->pos + 1;
+                while (at < lx->source->length && lx->source->bytes[at] != '\n' &&
+                       lx->source->bytes[at] != '"')
+                    at++;
+                if (at < lx->source->length && lx->source->bytes[at] == '"')
+                    lx->recovery_end = at + 1;
+                (void)lex_error(lx, MO_CODE_SOURCE_TEXT,
+                                "a line break in text needs triple quotes: \"\"\"");
+                return MO_T_ERROR;
             }
             if (!advance(lx) || (c == 13 && !advance(lx)))
                 return MO_T_ERROR;
@@ -262,10 +306,11 @@ static MO_MUST_USE enum mo_syntax_token text_body(struct mo_lex *lx, bool start,
                 return MO_T_ERROR;
             if (start) {
                 if (lx->depth == MO_LIMIT_INTERPOLATION_DEPTH) {
-                    if (!lex_error(lx, MO_CODE_INTERPOLATIONS_TOO_DEEP,
-                                   "interpolations are nested too deeply"))
-                        return MO_T_ERROR;
+                    (void)lex_error(lx, MO_CODE_INTERPOLATIONS_TOO_DEEP,
+                                    "interpolations are nested too deeply");
+                    return MO_T_ERROR;
                 }
+                MO_ASSERT(lx->depth < MO_LIMIT_INTERPOLATION_DEPTH);
                 lx->interpolations[lx->depth].braces = 0;
                 lx->interpolations[lx->depth].triple = triple;
                 lx->interpolations[lx->depth].indent = indent;
@@ -275,9 +320,8 @@ static MO_MUST_USE enum mo_syntax_token text_body(struct mo_lex *lx, bool start,
         } else if (!advance(lx))
             return MO_T_ERROR;
     }
-    if (!lex_error(lx, MO_CODE_SOURCE_TEXT, "text has a closing quote"))
-        return MO_T_ERROR;
-    MO_UNREACHABLE();
+    (void)lex_error(lx, MO_CODE_SOURCE_TEXT, "text has a closing quote");
+    return MO_T_ERROR;
 }
 
 static MO_MUST_USE enum mo_syntax_token scan_word(struct mo_lex *lx) {
@@ -294,9 +338,9 @@ static MO_MUST_USE enum mo_syntax_token scan_word(struct mo_lex *lx) {
             return MO_T_ERROR;
     }
     if (bad || (cap && peek(lx, 0) == '_')) {
-        if (!lex_error(lx, MO_CODE_SOURCE_NAME,
-                       "names are snake_case; types and modules are CapCase"))
-            return MO_T_ERROR;
+        (void)lex_error(lx, MO_CODE_SOURCE_NAME,
+                        "names are snake_case; types and modules are CapCase");
+        return MO_T_ERROR;
     }
     uint32_t length = lx->pos - start;
     const uint8_t *text = lx->source->bytes + start;
@@ -327,8 +371,8 @@ static MO_MUST_USE enum mo_syntax_token scan_literal(struct mo_lex *lx) {
             if (!digits(lx, 10))
                 return MO_T_ERROR;
             if (c == '0' && lx->pos - start > 1) {
-                if (!lex_error(lx, MO_CODE_SOURCE_NUMBER, "a whole number does not start with 0"))
-                    return MO_T_ERROR;
+                (void)lex_error(lx, MO_CODE_SOURCE_NUMBER, "a whole number doesn't start with 0");
+                return MO_T_ERROR;
             }
             if (peek(lx, 0) == '.' && digit(peek(lx, 1))) {
                 if (!advance(lx) || !digits(lx, 10))
@@ -337,8 +381,8 @@ static MO_MUST_USE enum mo_syntax_token scan_literal(struct mo_lex *lx) {
             }
         }
         if (alnum(peek(lx, 0)) || peek(lx, 0) == '_') {
-            if (!lex_error(lx, MO_CODE_SOURCE_NUMBER, "Mo has no number suffixes or exponents"))
-                return MO_T_ERROR;
+            (void)lex_error(lx, MO_CODE_SOURCE_NUMBER, "Mo has no number suffixes or exponents");
+            return MO_T_ERROR;
         }
         return kind;
     }
@@ -347,14 +391,14 @@ static MO_MUST_USE enum mo_syntax_token scan_literal(struct mo_lex *lx) {
             return MO_T_ERROR;
         c = peek(lx, 0);
         if (c == -1 || c == 10 || c == 13 || c == '\'') {
-            if (!lex_error(lx, MO_CODE_SOURCE_TEXT, "a Char is one Unicode character"))
-                return MO_T_ERROR;
+            (void)lex_error(lx, MO_CODE_SOURCE_TEXT, "a Char is one Unicode character");
+            return MO_T_ERROR;
         }
         if (!advance(lx) || (c == '\\' && !escape(lx)))
             return MO_T_ERROR;
         if (peek(lx, 0) != '\'') {
-            if (!lex_error(lx, MO_CODE_SOURCE_TEXT, "a Char is one Unicode character"))
-                return MO_T_ERROR;
+            (void)lex_error(lx, MO_CODE_SOURCE_TEXT, "a Char is one Unicode character");
+            return MO_T_ERROR;
         }
         if (!advance(lx))
             return MO_T_ERROR;
@@ -372,31 +416,38 @@ static MO_MUST_USE enum mo_syntax_token scan_literal(struct mo_lex *lx) {
             if (!advance(lx))
                 return MO_T_ERROR;
         if (peek(lx, 0) != 10 && peek(lx, 0) != 13) {
-            if (!lex_error(lx, MO_CODE_SOURCE_TEXT,
-                           "text on several lines starts at the end of a line"))
-                return MO_T_ERROR;
+            (void)lex_error(lx, MO_CODE_SOURCE_TEXT,
+                            "text on several lines starts at the end of a line");
+            return MO_T_ERROR;
         }
-        uint32_t at = lx->pos;
-        bool found = false;
-        while (at < lx->source->length && !found) {
-            while (at < lx->source->length && lx->source->bytes[at] != 10)
+        if (!lx->triple_cached || lx->triple_close < lx->pos) {
+            uint32_t at = lx->pos;
+            lx->triple_close = lx->source->length;
+            lx->triple_cached = true;
+            while (at < lx->source->length) {
+                while (at < lx->source->length && lx->source->bytes[at] != 10)
+                    at++;
+                if (at == lx->source->length)
+                    break;
                 at++;
-            if (at == lx->source->length)
-                break;
-            at++;
-            uint32_t spaces = 0;
-            while (spaces < lx->source->length - at && lx->source->bytes[at + spaces] == ' ')
-                spaces++;
-            if (lx->source->length - at - spaces >= 3 &&
-                memcmp(lx->source->bytes + at + spaces, "\"\"\"", 3) == 0) {
-                indent = spaces;
-                found = true;
+                uint32_t spaces = 0;
+                while (spaces < lx->source->length - at && lx->source->bytes[at + spaces] == ' ')
+                    spaces++;
+                if (lx->source->length - at - spaces >= 3 &&
+                    memcmp(lx->source->bytes + at + spaces, "\"\"\"", 3) == 0) {
+                    lx->triple_close = at;
+                    lx->triple_indent = spaces;
+                    break;
+                }
             }
         }
-        if (!found) {
-            if (!lex_error(lx, MO_CODE_SOURCE_TEXT, "text has a closing triple quote"))
-                return MO_T_ERROR;
+        if (lx->triple_close == lx->source->length) {
+            lx->recovery_end = lx->source->length;
+            (void)lex_error(lx, MO_CODE_SOURCE_TEXT, "text has a closing triple quote");
+            return MO_T_ERROR;
         }
+        indent = lx->triple_indent;
+        lx->recovery_end = lx->triple_close + indent + 3;
         if (peek(lx, 0) == 13 && !advance(lx))
             return MO_T_ERROR;
         if (!advance(lx))
@@ -413,13 +464,30 @@ static MO_MUST_USE enum mo_syntax_token punctuation(struct mo_lex *lx) {
         {"..", MO_T_DOTDOT}, {"+=", MO_T_PLUSEQ}, {"-=", MO_T_MINUSEQ}, {"==", MO_T_EQ},
         {"!=", MO_T_NE},     {"<=", MO_T_LE},     {">=", MO_T_GE},
     };
-    static const char *bad[] = {"::", "...", "=>", "->", "**", "*=", "//", "/=", "||", "|>"};
+    static const struct {
+        const char *text;
+        const char *message;
+        uint16_t code;
+    } bad[] = {
+        {"::", "Mo separates a module from a name with ., not ::", MO_CODE_SOURCE_QUALIFICATION},
+        {"...", "a range is written with .., not ...", MO_CODE_SOURCE_OPERATOR},
+        {"=>", "a case arm is written Pattern: value, with no =>", MO_CODE_SOURCE_CASE},
+        {"->", "a function's result type follows :, not ->", MO_CODE_SOURCE_FUNCTION},
+        {"**", "Mo has no ** operator", MO_CODE_SOURCE_OPERATOR},
+        {"*=", "Mo has += and -=, and no other compound assignment", MO_CODE_SOURCE_ASSIGNMENT},
+        {"//", "comments start with #", MO_CODE_SOURCE_COMMENT},
+        {"/=", "Mo has += and -=, and no other compound assignment", MO_CODE_SOURCE_ASSIGNMENT},
+        {"||", "Mo writes or instead of ||", MO_CODE_SOURCE_BOOLEAN},
+        {"&&", "Mo writes and instead of &&", MO_CODE_SOURCE_BOOLEAN},
+        {"|>", "Mo has no pipe operator; chain calls with dots, as in text.trim.lines",
+         MO_CODE_SOURCE_CALL},
+    };
     for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
-        size_t n = strlen(bad[i]);
+        size_t n = strlen(bad[i].text);
         if (n <= lx->source->length - lx->pos &&
-            memcmp(lx->source->bytes + lx->pos, bad[i], n) == 0) {
-            if (!lex_error(lx, MO_CODE_SOURCE_TOKEN, "this operator is not part of Mo"))
-                return MO_T_ERROR;
+            memcmp(lx->source->bytes + lx->pos, bad[i].text, n) == 0) {
+            (void)lex_error(lx, bad[i].code, bad[i].message);
+            return MO_T_ERROR;
         }
     }
     enum mo_syntax_token kind = MO_T_ERROR;
@@ -446,13 +514,23 @@ static MO_MUST_USE enum mo_syntax_token punctuation(struct mo_lex *lx) {
     }
     if (kind == MO_T_ERROR) {
         uint32_t start = lx->pos;
+        int c = peek(lx, 0);
         if (!advance(lx))
             return MO_T_ERROR;
-        if (!mo_syntax_error(
-                lx, MO_CODE_SOURCE_TOKEN, (struct mo_span){lx->file, start, lx->pos},
-                "this character is not part of Mo",
-                "A line break ends a statement; there are no semicolons (reference 2.4)."))
-            return MO_T_ERROR;
+        const char *message = c == ';'   ? "a line break ends a statement; Mo has no semicolons"
+                              : c == '!' ? "Mo writes not instead of !"
+                              : c == '&' ? "Mo has no & operator"
+                                         : "this character isn't part of Mo";
+        uint16_t code = c == '!'   ? MO_CODE_SOURCE_BOOLEAN
+                        : c == '&' ? MO_CODE_SOURCE_OPERATOR
+                                   : MO_CODE_SOURCE_TOKEN;
+        const char *reason =
+            c == '!'   ? "Boolean expressions use and, or and not (reference 3.1)."
+            : c == '&' ? "Use Mo's arithmetic operators (reference 3.2)."
+                       : "A line break ends a statement; use Mo's tokens (reference 2.4).";
+        (void)mo_syntax_error(lx, code, (struct mo_span){lx->file, start, lx->pos}, message,
+                              reason);
+        return MO_T_ERROR;
     }
     if (!advance(lx))
         return MO_T_ERROR;
@@ -505,15 +583,15 @@ struct mo_token mo_syntax_next(struct mo_lex *lx) {
             if (!advance(lx))
                 goto bad_gap;
         } else if (c == '#') {
-            struct mo_syntax_comment *comment =
-                mo_arena_allocate(lx->arena, sizeof *comment, _Alignof(struct mo_syntax_comment));
-            if (comment == NULL) {
-                if (!lex_error(lx, MO_CODE_SYNTAX_NO_MEMORY, "the syntax arena has no room")) {
-                    lx->fatal = true;
-                    token.kind = MO_T_ERROR;
-                    return token;
-                }
+            struct mo_comment_storage *storage =
+                mo_arena_allocate(lx->arena, sizeof *storage, _Alignof(struct mo_comment_storage));
+            if (storage == NULL) {
+                (void)lex_error(lx, MO_CODE_SYNTAX_NO_MEMORY, "the syntax arena has no room");
+                token.kind = MO_T_ERROR;
+                return token;
             }
+            storage->previous = lx->last_comment;
+            struct mo_syntax_comment *comment = &storage->value;
             *comment = (struct mo_syntax_comment){.span = {lx->file, lx->pos, lx->pos},
                                                   .indentation = lx->column - 1,
                                                   .documentation = peek(lx, 1) == '#'};
@@ -524,14 +602,14 @@ struct mo_token mo_syntax_next(struct mo_lex *lx) {
             comment->text = mo_arena_copy(lx->arena, lx->source->bytes + comment->span.start,
                                           comment->span.end - comment->span.start, 1);
             if (comment->text == NULL) {
-                bool kept = lex_error(lx, MO_CODE_SYNTAX_NO_MEMORY, "the syntax arena has no room");
-                (void)kept;
+                lex_error(lx, MO_CODE_SYNTAX_NO_MEMORY, "the syntax arena has no room");
                 lx->fatal = true;
                 token.kind = MO_T_ERROR;
                 return token;
             }
             *lx->comment_tail = comment;
             lx->comment_tail = &comment->next;
+            lx->last_comment = storage;
         } else
             break;
     }
@@ -552,6 +630,7 @@ struct mo_token mo_syntax_next(struct mo_lex *lx) {
         if (!header_word) {
             lx->pending = token;
             lx->pending.kind = MO_T_EOF;
+            lx->pending.span.end = lx->pending.span.start;
             lx->has_pending = true;
             nl.kind = MO_T_NL;
             nl.span.end = nl.span.start;
@@ -565,7 +644,14 @@ struct mo_token mo_syntax_next(struct mo_lex *lx) {
         token.kind = scan_word(lx);
     else if (digit(c) || c == '"' || c == '\'')
         token.kind = scan_literal(lx);
-    else if (c == '}' && depth > 0 && lx->interpolations[depth - 1].braces == 0) {
+    else if (c == '[' && !newline &&
+             (lx->last == MO_T_NAME || lx->last == MO_T_CAPNAME || lx->last == MO_T_RPAREN ||
+              lx->last == MO_T_RBRACK || lx->last == MO_T_TEXT || lx->last == MO_T_TEXT_TAIL)) {
+        (void)lex_error(
+            lx, MO_CODE_SOURCE_INDEX,
+            "Mo has no indexing with [...]: items.get(i) and map.get(key) return an Option");
+        token.kind = MO_T_ERROR;
+    } else if (c == '}' && depth > 0 && lx->interpolations[depth - 1].braces == 0) {
         if (!advance(lx))
             token.kind = MO_T_ERROR;
         else
@@ -576,8 +662,8 @@ struct mo_token mo_syntax_next(struct mo_lex *lx) {
 scanned:
     token.span.end = lx->pos;
     if (token.kind == MO_T_EOF && depth > 0) {
-        if (!lex_error(lx, MO_CODE_SOURCE_TEXT, "an interpolation is closed with }"))
-            token.kind = MO_T_ERROR;
+        (void)lex_error(lx, MO_CODE_SOURCE_TEXT, "an interpolation is closed with }");
+        token.kind = MO_T_ERROR;
     }
     if (lx->last != MO_T_EOF && lx->last != MO_T_NL &&
         (token.kind == MO_T_EOF ||
@@ -604,8 +690,11 @@ bad_gap:
 void mo_syntax_resume(struct mo_lex *lx) {
     /* Skip the remainder of the erroneous physical line, even when it isn't
      * valid UTF-8. Reset interpolations and logical-line continuation. */
-    while (lx->pos < lx->source->length && lx->source->bytes[lx->pos] != '\n')
-        lx->pos++;
+    while (lx->pos < lx->source->length &&
+           (lx->pos < lx->recovery_end || lx->source->bytes[lx->pos] != '\n')) {
+        if (lx->source->bytes[lx->pos++] == '\n')
+            lx->line++;
+    }
     if (lx->pos < lx->source->length) {
         lx->pos++;
         lx->line++;
@@ -614,5 +703,6 @@ void mo_syntax_resume(struct mo_lex *lx) {
     lx->last = MO_T_EOF;
     lx->has_pending = false;
     lx->depth = 0;
+    lx->recovery_end = 0;
     lx->failed = false;
 }

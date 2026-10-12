@@ -36,6 +36,23 @@
     X(14, SOURCE_ENUM, "4.2")                                                                      \
     X(15, SOURCE_PROMISE, "12.2")                                                                  \
     X(16, SOURCE_CASE, "7.2")                                                                      \
+    X(17, SOURCE_FUNCTION, "5.1")                                                                  \
+    X(18, SOURCE_EXAMPLES, "12.1")                                                                 \
+    X(19, SOURCE_LITERAL, "3.6")                                                                   \
+    X(20, SOURCE_TYPE, "9.1")                                                                      \
+    X(21, SOURCE_CALL, "5.2")                                                                      \
+    X(22, SOURCE_IF, "7.1")                                                                        \
+    X(23, SOURCE_LOOP, "7.5")                                                                      \
+    X(24, SOURCE_INDEX, "3.7")                                                                     \
+    X(25, SOURCE_BOOLEAN, "3.1")                                                                   \
+    X(26, SOURCE_ASSIGNMENT, "6.2")                                                                \
+    X(27, SOURCE_QUALIFICATION, "10.1")                                                            \
+    X(28, SOURCE_COMMENT, "2.2")                                                                   \
+    X(29, SOURCE_OPERATOR, "3.2")                                                                  \
+    X(30, SOURCE_TEST, "12.3")                                                                     \
+    X(31, SOURCE_BINDING, "6.1")                                                                   \
+    X(32, SOURCE_LIST, "3.7")                                                                      \
+    X(33, SOURCE_MAP, "3.8")                                                                       \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \
@@ -86,7 +103,7 @@
     X(1025, CORE_NUMBER, NULL)                                                                     \
     X(1026, CORE_CHARACTER, NULL)                                                                  \
     /* The supplied syntax arena, or the system, has no room. */                                   \
-    X(1027, SYNTAX_NO_MEMORY, NULL)
+    X(1054, SYNTAX_NO_MEMORY, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */
 enum mo_code {
