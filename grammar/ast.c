@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "base/buffer.h"
 #include "lexer.h"
 #include "mo.tab.h"
 
@@ -54,7 +55,20 @@ static bool fail(struct lexer *lx, const struct node *n, const char *message) {
     return false;
 }
 
-static bool check(struct lexer *lx, const struct node *n);
+struct pending_check {
+    const struct node *node;
+    bool pattern;
+};
+
+static void pending(struct mo_buffer *stack, const struct node *n, bool pattern) {
+    if (n == NULL)
+        return;
+    struct pending_check item = {n, pattern};
+    if (!mo_buffer_append(stack, &item, sizeof item)) {
+        (void)fprintf(stderr, "mo-grammar: out of memory\n");
+        exit(2);
+    }
+}
 
 static bool is_constructor(const struct node *n) {
     return n->kind == K_CAPNAME ||
@@ -145,11 +159,10 @@ static bool check_pattern(struct lexer *lx, const struct node *n) {
 }
 
 // What may stand on the left of `=`, `+=` and `-=`.
-static bool is_place(const struct node *n) {
-    if (n->kind == K_NAME) {
-        return true;
-    }
-    return n->kind == K_FIELD_ACCESS && is_place(n->kids[0]);
+static MO_MUST_USE bool is_place(const struct node *n) {
+    while (n->kind == K_FIELD_ACCESS)
+        n = n->kids[0];
+    return n->kind == K_NAME;
 }
 
 static bool is_name_tuple(const struct node *n) {
@@ -165,7 +178,8 @@ static bool is_name_tuple(const struct node *n) {
     return true;
 }
 
-static bool check_call(struct lexer *lx, const struct node *n) {
+static MO_MUST_USE bool check_call(struct lexer *lx, const struct node *n,
+                                   struct mo_buffer *stack) {
     const struct node *callee = n->kids[0];
     const struct node *args = n->kids[1];
     int named = 0;
@@ -186,28 +200,21 @@ static bool check_call(struct lexer *lx, const struct node *n) {
                     "a function's arguments are passed by position; only records and cases are "
                     "built with names");
     }
-    if (!check(lx, callee)) {
-        return false;
+    for (int i = args->count; i > 0; i--) {
+        const struct node *arg = args->kids[i - 1];
+        pending(stack, arg->kind == K_NAMED_ARG ? arg->kids[1] : arg, false);
     }
-    for (int i = 0; i < args->count; i++) {
-        const struct node *arg = args->kids[i];
-        if (!check(lx, arg->kind == K_NAMED_ARG ? arg->kids[1] : arg)) {
-            return false;
-        }
-    }
+    pending(stack, callee, false);
     return true;
 }
 
-static bool check_kids(struct lexer *lx, const struct node *n, int from) {
-    for (int i = from; i < n->count; i++) {
-        if (n->kids[i] != NULL && !check(lx, n->kids[i])) {
-            return false;
-        }
-    }
+static MO_MUST_USE bool check_kids(const struct node *n, int from, struct mo_buffer *stack) {
+    for (int i = n->count; i > from; i--)
+        pending(stack, n->kids[i - 1], false);
     return true;
 }
 
-static bool check(struct lexer *lx, const struct node *n) {
+static MO_MUST_USE bool check(struct lexer *lx, const struct node *n, struct mo_buffer *stack) {
     if (n == NULL) {
         return true;
     }
@@ -237,7 +244,7 @@ static bool check(struct lexer *lx, const struct node *n) {
         }
         return true;
     case K_FN:
-        return check(lx, n->kids[4]) && check(lx, n->kids[5]);
+        return check_kids(n, 4, stack);
     case K_PROMISE: {
         bool allows = false;
         bool forbids = false;
@@ -249,57 +256,62 @@ static bool check(struct lexer *lx, const struct node *n) {
         if (!allows || !forbids) {
             return fail(lx, n, "a promise has at least one allows line and one forbids line");
         }
-        return check_kids(lx, n, 1);
+        return check_kids(n, 1, stack);
     }
     case K_NAMED_ARG:
-        return check(lx, n->kids[1]);
     case K_TEST:
-        return check(lx, n->kids[1]);
     case K_CONST:
-        return check(lx, n->kids[1]);
+        pending(stack, n->kids[1], false);
+        return true;
     case K_BIND:
         if (!is_place(n->kids[0]) && !is_name_tuple(n->kids[0])) {
             return fail(lx, n->kids[0],
                         "the left of = is a name, a var's field, or a tuple of names, as in "
                         "(low, high)");
         }
-        return check(lx, n->kids[1]);
+        pending(stack, n->kids[1], false);
+        return true;
     case K_ADD_ASSIGN:
     case K_SUB_ASSIGN:
         if (!is_place(n->kids[0])) {
             return fail(lx, n->kids[0], "the left of += or -= is a var or a var's field");
         }
-        return check(lx, n->kids[1]);
+        pending(stack, n->kids[1], false);
+        return true;
     case K_VAR:
-        return check(lx, n->kids[1]);
+        pending(stack, n->kids[1], false);
+        return true;
     case K_FOR:
-        return check(lx, n->kids[1]) && check(lx, n->kids[2]);
+        return check_kids(n, 1, stack);
     case K_LAMBDA:
-        return check(lx, n->kids[1]);
+        pending(stack, n->kids[1], false);
+        return true;
     case K_IS:
-        return check(lx, n->kids[0]) && check_pattern(lx, n->kids[1]);
+        pending(stack, n->kids[1], true);
+        pending(stack, n->kids[0], false);
+        return true;
     case K_CASE: {
         const struct node *lines = n->kids[1];
         if (lines->count == 0 || lines->kids[0]->kind != K_ARM) {
             return fail(lx, n, "a case starts with an arm: Pattern: value");
         }
-        return check(lx, n->kids[0]) && check(lx, lines);
+        return check_kids(n, 0, stack);
     }
     case K_ARM: {
         const struct node *alternatives = n->kids[0];
-        for (int i = 0; i < alternatives->count; i++) {
-            if (!check_pattern(lx, alternatives->kids[i])) {
-                return false;
-            }
-        }
-        return check(lx, n->kids[1]) && check(lx, n->kids[2]);
+        pending(stack, n->kids[2], false);
+        pending(stack, n->kids[1], false);
+        for (int i = alternatives->count; i > 0; i--)
+            pending(stack, alternatives->kids[i - 1], true);
+        return true;
     }
     case K_CALL:
-        return check_call(lx, n);
+        return check_call(lx, n, stack);
     case K_FIELD_ACCESS:
     case K_QUALIFIED:
     case K_POSITION:
-        return check(lx, n->kids[0]);
+        pending(stack, n->kids[0], false);
+        return true;
     case K_FILE:
     case K_MODULE:
     case K_CASE_DECL:
@@ -335,12 +347,26 @@ static bool check(struct lexer *lx, const struct node *n) {
     case K_MAP:
     case K_MAP_ENTRY:
     case K_STOP:
-        return check_kids(lx, n, 0);
+        return check_kids(n, 0, stack);
     }
     MO_UNREACHABLE();
 }
 
 bool mo_validate(struct lexer *lx, const struct node *root) {
     MO_ASSERT(root != NULL);
-    return check(lx, root);
+    struct mo_buffer stack;
+    mo_buffer_init(&stack, MO_GRAMMAR_ARENA_LIMIT);
+    pending(&stack, root, false);
+    bool valid = true;
+    // A left-recursive grammar gives flat chains nested trees. Keep their
+    // traversal off the C stack, preserving the original first-error order.
+    while (valid && stack.length != 0) {
+        struct pending_check item;
+        MO_ASSERT(stack.length >= sizeof item);
+        stack.length -= sizeof item;
+        memcpy(&item, stack.bytes + stack.length, sizeof item);
+        valid = item.pattern ? check_pattern(lx, item.node) : check(lx, item.node, &stack);
+    }
+    mo_buffer_free(&stack);
+    return valid;
 }

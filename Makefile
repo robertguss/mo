@@ -54,7 +54,10 @@ TIDY_FILES := $(wildcard src/*/*.c tests/*.c fuzz/*.c grammar/*.c)
 GRAMMAR_GENERATED := build/grammar
 GRAMMAR_SOURCES := grammar/lexer.c grammar/ast.c
 GRAMMAR_INCLUDES := -Igrammar -I$(GRAMMAR_GENERATED)
-GRAMMAR_PARSER_WARNINGS := $(CSTD) $(INCLUDES) -Wall -Wextra -Werror -MMD -MP
+# LR stack height can follow flat prefix chains, not source nesting. Its default
+# 10,000 states reject valid source; bound it by the input budget instead.
+GRAMMAR_PARSER_WARNINGS := $(CSTD) $(INCLUDES) -Wall -Wextra -Werror -MMD -MP \
+	-include src/base/limits.h '-DYYMAXDEPTH=(4 * MO_LIMIT_FILE_SIZE)'
 grammar_objects = $(patsubst grammar/%.c,$(1)/grammar/%.o,$(GRAMMAR_SOURCES)) \
 	$(1)/grammar/mo.tab.o $(call objects,$(1),$(BASE_SOURCES))
 GRAMMAR_CHECK = $(1) --fragment grammar/tests/good/*.mo && \
@@ -123,8 +126,14 @@ fuzz-smoke: $(FUZZERS)
 			if [ -d fuzz/corpus/$$name ]; then cp -R fuzz/corpus/$$name/. $$corpus/; fi; \
 			if [ "$$name" = fuzz_core_text ] || [ "$$name" = fuzz_core_check ]; then \
 				cp tests/core/*.core fuzz/corpus/fuzz_core_text/*.core $$corpus/; fi; \
+			if [ "$$name" = fuzz_syntax ]; then cp grammar/tests/good/*.mo grammar/tests/bad/*.mo examples/*.mo $$corpus/; fi; \
+			if [ "$$name" = fuzz_syntax ]; then \
+				awk 'BEGIN { printf "x = 0"; for (i = 0; i < 30000; i++) printf " +\n1"; print "" }' >$$corpus/flat-binary.mo; \
+				awk 'BEGIN { printf "x = "; for (i = 0; i < 12000; i++) printf "not "; print "true" }' >$$corpus/flat-prefix.mo; \
+			fi; \
 			log=$(FUZZ_BUILD)/$$name.log; echo "fuzzing $$name for $(FUZZ_SECONDS)s"; \
-			$$f $$options -max_total_time=$(FUZZ_SECONDS) -print_final_stats=1 \
+			dictionary=; if [ -f fuzz/$$name.dict ]; then dictionary=-dict=fuzz/$$name.dict; fi; \
+			$$f $$options $$dictionary -max_total_time=$(FUZZ_SECONDS) -print_final_stats=1 \
 				-artifact_prefix=$(FUZZ_BUILD)/artifacts/ $$corpus >$$log 2>&1; status=$$?; \
 			grep -E '^(Done|stat::(number_of_executed_units|new_units_added|peak_rss_mb))' $$log; \
 			if [ $$status -ne 0 ] || ls $(FUZZ_BUILD)/artifacts/* >/dev/null 2>&1; then \
@@ -201,6 +210,14 @@ $(FUZZ_BUILD)/bin/%: $(FUZZ_BUILD)/fuzz/%.o $(call objects,$(FUZZ_BUILD),$(LIB_S
 $(FUZZ_BUILD)/bin/fuzz_grammar: $(FUZZ_BUILD)/fuzz/fuzz_grammar.o $(call grammar_objects,$(FUZZ_BUILD))
 	@mkdir -p $(dir $@)
 	$(FUZZ_CC) $(FUZZ) $^ -o $@
+
+$(FUZZ_BUILD)/bin/fuzz_syntax: $(FUZZ_BUILD)/fuzz/fuzz_syntax.o $(sort $(call grammar_objects,$(FUZZ_BUILD)) $(call objects,$(FUZZ_BUILD),$(LIB_SOURCES)))
+	@mkdir -p $(dir $@)
+	$(FUZZ_CC) $(FUZZ) $^ -o $@
+
+$(FUZZ_BUILD)/fuzz/fuzz_syntax.o: fuzz/fuzz_syntax.c $(GRAMMAR_GENERATED)/mo.tab.h Makefile
+	@mkdir -p $(dir $@)
+	$(FUZZ_CC) $(COMMON) $(FUZZ) $(GRAMMAR_INCLUDES) -c $< -o $@
 
 $(FUZZ_BUILD)/fuzz/fuzz_grammar.o: fuzz/fuzz_grammar.c $(GRAMMAR_GENERATED)/mo.tab.h Makefile
 	@mkdir -p $(dir $@)

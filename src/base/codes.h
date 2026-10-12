@@ -19,6 +19,40 @@
 
 /* X(number, identifier, section) */
 #define MO_CODES(X)                                                                                \
+    /* Source text, tokens and syntax (the executable grammar checks these too). */                \
+    X(1, SOURCE_UTF8, "2.1")                                                                       \
+    X(2, SOURCE_INVISIBLE, "2.1")                                                                  \
+    X(3, SOURCE_NAME, "2.3")                                                                       \
+    X(4, SOURCE_NUMBER, "3.2")                                                                     \
+    X(5, SOURCE_TEXT, "3.4")                                                                       \
+    X(6, SOURCE_TOKEN, "2.4")                                                                      \
+    X(7, SOURCE_SYNTAX, "2.4")                                                                     \
+    X(8, SOURCE_HEADER, "10.1")                                                                    \
+    X(9, SOURCE_PATTERN, "7.3")                                                                    \
+    X(10, SOURCE_TARGET, "6.2")                                                                    \
+    X(11, SOURCE_CONSTRUCTION, "4.2")                                                              \
+    X(12, SOURCE_ARGUMENTS, "5.2")                                                                 \
+    X(13, SOURCE_STRUCT, "4.1")                                                                    \
+    X(14, SOURCE_ENUM, "4.2")                                                                      \
+    X(15, SOURCE_PROMISE, "12.2")                                                                  \
+    X(16, SOURCE_CASE, "7.2")                                                                      \
+    X(17, SOURCE_FUNCTION, "5.1")                                                                  \
+    X(18, SOURCE_EXAMPLES, "12.1")                                                                 \
+    X(19, SOURCE_LITERAL, "3.6")                                                                   \
+    X(20, SOURCE_TYPE, "9.1")                                                                      \
+    X(21, SOURCE_CALL, "5.2")                                                                      \
+    X(22, SOURCE_IF, "7.1")                                                                        \
+    X(23, SOURCE_LOOP, "7.5")                                                                      \
+    X(24, SOURCE_INDEX, "3.7")                                                                     \
+    X(25, SOURCE_BOOLEAN, "3.1")                                                                   \
+    X(26, SOURCE_ASSIGNMENT, "6.2")                                                                \
+    X(27, SOURCE_QUALIFICATION, "10.1")                                                            \
+    X(28, SOURCE_COMMENT, "2.2")                                                                   \
+    X(29, SOURCE_OPERATOR, "3.2")                                                                  \
+    X(30, SOURCE_TEST, "12.3")                                                                     \
+    X(31, SOURCE_BINDING, "6.1")                                                                   \
+    X(32, SOURCE_LIST, "3.7")                                                                      \
+    X(33, SOURCE_MAP, "3.8")                                                                       \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \
@@ -95,7 +129,9 @@
     X(1050, CORE_CHECK_FAIL, NULL)                                                                 \
     X(1051, CORE_CHECK_JUMP, NULL)                                                                 \
     X(1052, CORE_CHECK_LIMIT, NULL)                                                                \
-    X(1053, CORE_CHECK_MEMORY, NULL)
+    X(1053, CORE_CHECK_MEMORY, NULL)                                                               \
+    /* The supplied syntax arena, or the system, has no room. */                                   \
+    X(1054, SYNTAX_NO_MEMORY, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */
 enum mo_code {
