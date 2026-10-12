@@ -554,6 +554,44 @@ static void test_limits_and_ownership(void) {
     mo_diags_free(&diags);
     mo_arena_free(&arena);
 }
+static void test_print_byte_limit(void) {
+    /* Caller-built trees can be larger than any accepted input. Include wire overhead,
+     * escapes and final LF, but not an earlier document, in the per-document byte count. */
+    struct mo_buffer chars, out;
+    mo_buffer_init(&chars, MO_LIMIT_CORE_TEXT_SIZE);
+    mo_buffer_init(&out, MO_LIMIT_CORE_TEXT_SIZE * 3);
+    for (size_t i = 0; i < MO_LIMIT_CORE_TEXT_SIZE; i++)
+        CHECK(mo_buffer_append_byte(&chars, 'a'));
+    struct mo_core_lit lit = {.tag = MO_CORE_LIT_TEXT};
+    lit.as.text = (mo_core_string){(const char *)chars.bytes, chars.length};
+    CHECK(mo_buffer_append_text(&out, "prefix"));
+    CHECK(!mo_core_text_print(MO_CORE_TEXT_LITERAL, &lit, &out));
+    CHECK(holds(&out, "prefix", 6));
+
+    size_t overhead = strlen("(core " MO_CORE_TEXT_VERSION " (text \"\"))\n");
+    lit.as.text.length = MO_LIMIT_CORE_TEXT_SIZE - overhead;
+    CHECK(mo_core_text_print(MO_CORE_TEXT_LITERAL, &lit, &out));
+    CHECK(out.length == 6 + MO_LIMIT_CORE_TEXT_SIZE);
+    struct mo_arena arena;
+    struct mo_diags diags;
+    mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+    CHECK(mo_diags_init(&diags));
+    CHECK(mo_core_text_parse(&arena, MO_CORE_TEXT_LITERAL, (const char *)out.bytes + 6,
+                             MO_LIMIT_CORE_TEXT_SIZE, &diags) != NULL);
+    CHECK(!mo_diags_any(&diags));
+    size_t saved = out.length;
+    lit.as.text.length++;
+    CHECK(!mo_core_text_print(MO_CORE_TEXT_LITERAL, &lit, &out));
+    CHECK(out.length == saved && memcmp(out.bytes, "prefix", 6) == 0);
+    lit.as.text.length--;
+    chars.bytes[0] = '\n'; /* escaped output is one byte longer */
+    CHECK(!mo_core_text_print(MO_CORE_TEXT_LITERAL, &lit, &out));
+    CHECK(out.length == saved);
+    mo_diags_free(&diags);
+    mo_arena_free(&arena);
+    mo_buffer_free(&chars);
+    mo_buffer_free(&out);
+}
 int main(void) {
     test_fixtures();
     test_shapes();
@@ -562,5 +600,6 @@ int main(void) {
     test_malformed();
     test_typed_fields();
     test_limits_and_ownership();
+    test_print_byte_limit();
     return mo_test_report("test_core_text");
 }

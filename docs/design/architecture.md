@@ -456,9 +456,12 @@ it is given. It never calls the operating system itself.
 - **Files.** A real `Files` or `ReadFiles` holds an open handle on its folder.
   Every path is resolved beneath it, one component at a time, with `openat`
   and `O_NOFOLLOW`, or with `openat2` and `RESOLVE_BENEATH` where the system
-  has it. Absolute paths, empty components and `..` are refused before
-  anything is opened. So symbolic links and races can't lead outside the
-  folder. System errors map to `FileError`: a missing file to `NotFound`, a
+  has it. Before anything is opened, paths are normalized lexically: `.`
+  is skipped, and `..` removes the preceding component. Absolute paths, empty
+  components and paths whose `..` would leave the capability's root are
+  refused; `a/../b` resolves to `b`. The normalized path is still opened
+  beneath the root without following links, so symbolic links and races can't
+  lead outside the folder. System errors map to `FileError`: a missing file to `NotFound`, a
   refused path or permission to `NotAllowed`, invalid UTF-8 in `read_text` to
   `NotText`, and anything else to `Failed`, with the system's message.
   `list` sorts names by their bytes, which is the order of their characters.

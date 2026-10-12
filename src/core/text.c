@@ -732,7 +732,8 @@ bool mo_core_text_print(enum mo_core_text_kind kind, const void *value, struct m
     size_t start = out->length;
     struct writer w = {out, 3}; /* outer list, core, version */
     bool ok = mo_buffer_append_text(out, "(core " MO_CORE_TEXT_VERSION " ") &&
-              encode(&w, document_schema(kind), value, 2) && mo_buffer_append_text(out, ")\n");
+              encode(&w, document_schema(kind), value, 2) && mo_buffer_append_text(out, ")\n") &&
+              out->length - start <= MO_LIMIT_CORE_TEXT_SIZE;
     if (!ok)
         out->length = start;
     return ok;
