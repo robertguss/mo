@@ -1028,7 +1028,12 @@ boundaries first. It builds a type exposed without its insides only through a
 limited number of calls to its module's exposed functions, other types from any
 values of their fields, and capabilities as fakes. A promise speaks about calls
 that return; a call that stops on a generated input is reported as a bug, with
-the input. Proofs come in a later version.
+the input. The boundaries include each type's extremes, such as `Decimal`'s
+largest value and the last instant of the year 9999, so a promise that passes
+holds for every call its types allow. When an extreme stops a call, the report
+says so, as in "stops with overflow when `amount` is `Decimal`'s largest
+value", and shows the two fixes: return a failure for such inputs, or take a
+type whose module keeps its values in range. Proofs come in a later version.
 
 A promise about many steps, such as "an accepted job is never lost", is a
 promise on the function that takes one step: something each step keeps true
@@ -1125,6 +1130,10 @@ Each command is given the file of the program's main module. `mo check FILE`
 reports the program's errors, `mo run FILE [ARGS...]` runs it with the
 arguments after the file's name, and `mo test FILE` checks its examples,
 promises and tests. `mo format` and `mo fix` rewrite the files they are given.
+`mo guide` needs no file. It prints a short guide for agents writing Mo,
+matched to the installed version: how to work with the `mo` command, a small
+complete program with its tests, and when a task is done. `mo guide
+--reference` prints this reference.
 `mo` exits with status 0 when everything passed, 1 when the program has errors
 or an example, promise or test fails, and 2 for a mistake in the command
 itself. Once the program runs, `mo run` exits with the program's own status
