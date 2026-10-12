@@ -15,6 +15,11 @@
 
 _Static_assert(sizeof(void *) == 8, "Mo assumes a 64-bit platform.");
 
+/* Decimal's count and base's checked arithmetic (architecture section 2). */
+__extension__ typedef __int128 mo_i128;
+__extension__ typedef unsigned __int128 mo_u128;
+_Static_assert(sizeof(mo_i128) == 16, "Mo needs 128-bit integers.");
+
 /* A result the caller must use. Ignoring it is a compile error, because
  * warnings are errors. */
 #define MO_MUST_USE __attribute__((warn_unused_result))

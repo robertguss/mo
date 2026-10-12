@@ -390,7 +390,7 @@ Every operation on text is a primitive (architecture section 7).
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
 | `a + b`, `a - b` | instruction | `add` and `sub` at `duration` | |
-| `d * n`, with an `Int` | instruction | `mul_int` at `duration` | |
+| `d * n`, with an `Int` | instruction | `scale_duration` | |
 | `-d` | instruction | `neg` at `duration` | |
 | `a == b`, `a != b` | instruction | `eq` at `duration`, and `not` for `!=` | |
 | `a < b`, `a <= b`, `a > b`, `a >= b` | instruction | `lt` and `le` at `duration`; `>` and `>=` swap the operands | |
