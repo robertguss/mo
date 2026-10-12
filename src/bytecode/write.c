@@ -62,6 +62,10 @@ static MO_MUST_USE bool name(struct writer *w, const char *text, bool optional) 
         w->reason = "invalid name";
         return false;
     }
+    uint32_t cached = mo_bytecode_name_pointer(&w->names, text);
+    if (cached != MO_BYTECODE_NO_INDEX) {
+        return word(w, cached);
+    }
     size_t length = 0;
     while (length <= MO_LIMIT_STRING_SIZE && text[length] != '\0') {
         length++;
@@ -271,6 +275,18 @@ static MO_MUST_USE bool sections(struct writer *w) {
             WRITE(word(w, d->names[j].code_end));
         }
         WRITE(word(w, d->text));
+        WRITE(word(w, d->file));
+        WRITE(word(w, d->start));
+        WRITE(word(w, d->end));
+        WRITE(word(w, d->subject));
+        WRITE(word(w, (uint32_t)d->expectation));
+        WRITE(count(w, d->line_count, MO_LIMIT_DEBUG_ENTRIES, d->lines));
+        for (uint32_t j = 0; j < d->line_count; j++) {
+            WRITE(word(w, d->lines[j].file));
+            WRITE(word(w, d->lines[j].start));
+            WRITE(word(w, d->lines[j].end));
+            WRITE(word(w, d->lines[j].text));
+        }
     }
     return true;
 }
@@ -279,7 +295,8 @@ bool mo_bytecode_write(const struct mo_bytecode *file, struct mo_buffer *out,
                        struct mo_write_error *error_out) {
     MO_ASSERT(file != NULL && out != NULL && error_out != NULL && out->length == 0);
     struct writer w = {.file = file, .out = out, .reason = "bytecode/output limit or no memory"};
-    mo_arena_init(&w.scratch, MO_LIMIT_BYTECODE_SIZE);
+    size_t name_bytes = file->string_count <= MO_LIMIT_STRINGS ? (size_t)file->string_count * 4 : 0;
+    mo_arena_init(&w.scratch, mo_bytecode_work_budget(MO_BYTECODE_HEADER_SIZE + name_bytes));
     const uint8_t header[MO_BYTECODE_HEADER_SIZE] = {'M', 'O', 'B', 'C', 0, 0, 1, 0};
     bool encoded = raw(&w, header, sizeof header) && sections(&w);
     mo_arena_free(&w.scratch);
@@ -299,7 +316,7 @@ bool mo_bytecode_write(const struct mo_bytecode *file, struct mo_buffer *out,
      * The later verifier will also run here before this API promises executable bytes. */
     struct mo_arena scratch;
     struct mo_load_error error;
-    mo_arena_init(&scratch, MO_LIMIT_BYTECODE_SIZE);
+    mo_arena_init(&scratch, mo_bytecode_work_budget(out->length));
     bool ok = mo_bytecode_decode(&scratch, out->bytes, out->length, &error) != NULL;
     mo_arena_free(&scratch);
     if (!ok) {

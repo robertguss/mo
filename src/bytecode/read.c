@@ -12,6 +12,9 @@ struct reader {
     const uint8_t *bytes;
     size_t length;
     size_t offset;
+    uint32_t field;
+    uint32_t *code_positions;
+    struct mo_bytecode_debug_positions *debug_positions;
     struct mo_bytecode *file;
     struct mo_type *types;
     struct mo_load_error *error;
@@ -20,7 +23,7 @@ struct reader {
 
 static void refuse(struct reader *r, const char *reason) {
     if (!r->failed) {
-        *r->error = (struct mo_load_error){.offset = (uint32_t)r->offset, .reason = reason};
+        *r->error = (struct mo_load_error){.offset = r->field, .reason = reason};
         r->failed = true;
     }
 }
@@ -29,6 +32,7 @@ static MO_MUST_USE uint32_t word(struct reader *r) {
     if (r->failed) {
         return 0;
     }
+    r->field = (uint32_t)r->offset;
     if (r->length - r->offset < 4) {
         refuse(r, "truncated word");
         return 0;
@@ -50,6 +54,18 @@ static MO_MUST_USE void *allocate(struct reader *r, size_t n, size_t size, size_
         r->error->offset = 0;
     } else {
         memset(p, 0, n * size);
+    }
+    return p;
+}
+
+static MO_MUST_USE void *scratch(struct reader *r, uint32_t n, size_t size, size_t alignment) {
+    if (r->failed || n == 0) {
+        return NULL;
+    }
+    void *p = mo_arena_allocate_array(&r->scratch, n, size, alignment);
+    if (p == NULL) {
+        refuse(r, "no memory");
+        r->error->offset = 0;
     }
     return p;
 }
@@ -77,10 +93,54 @@ static MO_MUST_USE const uint32_t *indices(struct reader *r, uint32_t *n, uint32
     return p;
 }
 
+static MO_MUST_USE bool utf8(const uint8_t *bytes, uint32_t length) {
+    for (uint32_t i = 0; i < length;) {
+        uint32_t scalar = bytes[i++];
+        unsigned n = 0;
+        uint32_t minimum = 0;
+        if (scalar < 0x80) {
+            continue;
+        }
+        if (scalar >= 0xc2 && scalar <= 0xdf) {
+            n = 1;
+            minimum = 0x80;
+            scalar &= 0x1f;
+        } else if (scalar >= 0xe0 && scalar <= 0xef) {
+            n = 2;
+            minimum = 0x800;
+            scalar &= 0x0f;
+        } else if (scalar >= 0xf0 && scalar <= 0xf4) {
+            n = 3;
+            minimum = 0x10000;
+            scalar &= 0x07;
+        } else {
+            return false;
+        }
+        if (n > length - i) {
+            return false;
+        }
+        for (unsigned j = 0; j < n; j++) {
+            uint32_t b = bytes[i++];
+            if ((b & 0xc0) != 0x80) {
+                return false;
+            }
+            scalar = (scalar << 6) | (b & 0x3f);
+        }
+        if (scalar < minimum || scalar >= 0x110000 || (scalar >= 0xd800 && scalar <= 0xdfff)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static MO_MUST_USE const uint8_t *blob(struct reader *r, uint32_t *n, bool terminate) {
     *n = word(r);
     if (*n > MO_LIMIT_STRING_SIZE || *n > r->length - r->offset) {
         refuse(r, "byte length past limit or remaining bytes");
+    }
+    if (!r->failed && terminate && !utf8(r->bytes + r->offset, *n)) {
+        r->field = (uint32_t)r->offset;
+        refuse(r, "invalid UTF-8 string");
     }
     uint8_t *p = allocate(r, (size_t)*n + (terminate ? 1U : 0U), 1, 1);
     if (r->failed) {
@@ -112,11 +172,11 @@ static MO_MUST_USE const char *name(struct reader *r, bool optional) {
         return NULL;
     }
     const struct mo_bytecode_string *s = &r->file->strings[index];
-    if (s->length == 0 || memchr(s->bytes, 0, s->length) != NULL) {
+    if (r->names.canonical[index] == MO_BYTECODE_NO_INDEX) {
         refuse(r, "name is empty or contains NUL");
         return NULL;
     }
-    if (mo_bytecode_name_find(&r->names, s->bytes, s->length) != index) {
+    if (r->names.canonical[index] != index) {
         refuse(r, "name does not use lowest string index");
         return NULL;
     }
@@ -168,14 +228,22 @@ static void types(struct reader *r) {
         case MO_TYPE_LIST:
         case MO_TYPE_SET:
         case MO_TYPE_MAP:
-        case MO_TYPE_FUNCTION:
+        case MO_TYPE_FUNCTION: {
+            uint32_t count_offset = (uint32_t)r->offset;
             t->parameters = indices(r, &t->parameter_count,
                                     t->kind == MO_TYPE_FUNCTION ? MO_LIMIT_BYTECODE_PARAMETERS
                                                                 : MO_LIMIT_FIELDS);
+            if ((t->kind == MO_TYPE_TUPLE && t->parameter_count < 2) ||
+                ((t->kind == MO_TYPE_LIST || t->kind == MO_TYPE_SET) && t->parameter_count != 1) ||
+                (t->kind == MO_TYPE_MAP && t->parameter_count != 2)) {
+                r->field = count_offset;
+                refuse(r, "invalid type parameter count");
+            }
             if (t->kind == MO_TYPE_FUNCTION) {
                 t->result = word(r);
             }
             break;
+        }
         case MO_TYPE_RECORD:
             t->name = name(r, false);
             t->fields = fields(r, &t->field_count, false);
@@ -185,6 +253,9 @@ static void types(struct reader *r) {
             struct mo_type_case *cases = array(r, &t->case_count, MO_LIMIT_CHOICE_CASES, 8,
                                                sizeof *cases, _Alignof(struct mo_type_case));
             t->cases = cases;
+            if (t->case_count == 0) {
+                refuse(r, "choice has no cases");
+            }
             for (uint32_t j = 0; j < t->case_count && !r->failed; j++) {
                 cases[j].name = name(r, false);
                 cases[j].fields = fields(r, &cases[j].field_count, true);
@@ -226,6 +297,7 @@ static void constants(struct reader *r) {
         if (kind <= MO_TYPE_DECIMAL) {
             size_t n = kind == MO_TYPE_DECIMAL ? 16 : 8;
             if (n > r->length - r->offset) {
+                r->field = (uint32_t)r->offset;
                 refuse(r, "truncated literal");
                 break;
             }
@@ -261,6 +333,8 @@ static void functions(struct reader *r) {
     struct mo_bytecode_function *p = array(r, &f->function_count, MO_LIMIT_FUNCTIONS, 36, sizeof *p,
                                            _Alignof(struct mo_bytecode_function));
     f->functions = p;
+    r->code_positions =
+        scratch(r, f->function_count, sizeof *r->code_positions, _Alignof(uint32_t));
     for (uint32_t i = 0; i < f->function_count && !r->failed; i++) {
         struct mo_bytecode_function *fn = &p[i];
         fn->name = word(r);
@@ -285,6 +359,7 @@ static void functions(struct reader *r) {
         fn->result_type = word(r);
         fn->capture_types = indices(r, &fn->capture_count, MO_LIMIT_FIELDS);
         fn->register_types = indices(r, &fn->register_count, MO_LIMIT_FUNCTION_REGISTERS);
+        r->code_positions[i] = (uint32_t)r->offset + 4;
         fn->code = indices(r, &fn->code_count, MO_LIMIT_FUNCTION_CODE_WORDS);
     }
 }
@@ -352,11 +427,14 @@ static void sections(struct reader *r) {
         m->functions = indices(r, &m->function_count, MO_LIMIT_MODULE_NAMES);
         m->globals = indices(r, &m->global_count, MO_LIMIT_MODULE_NAMES);
     }
-    struct mo_bytecode_debug *debug = array(r, &f->debug_count, MO_LIMIT_FUNCTIONS, 12,
+    struct mo_bytecode_debug *debug = array(r, &f->debug_count, MO_LIMIT_FUNCTIONS, 36,
                                             sizeof *debug, _Alignof(struct mo_bytecode_debug));
     f->debug = debug;
+    r->debug_positions = scratch(r, f->debug_count, sizeof *r->debug_positions,
+                                 _Alignof(struct mo_bytecode_debug_positions));
     for (uint32_t i = 0; i < f->debug_count && !r->failed; i++) {
         struct mo_bytecode_debug *d = &debug[i];
+        r->debug_positions[i].spans = (uint32_t)r->offset;
         struct mo_bytecode_span *spans = array(r, &d->span_count, MO_LIMIT_DEBUG_ENTRIES, 16,
                                                sizeof *spans, _Alignof(struct mo_bytecode_span));
         d->spans = spans;
@@ -366,6 +444,7 @@ static void sections(struct reader *r) {
             spans[j].start = word(r);
             spans[j].end = word(r);
         }
+        r->debug_positions[i].names = (uint32_t)r->offset;
         struct mo_bytecode_register_name *names =
             array(r, &d->name_count, MO_LIMIT_DEBUG_ENTRIES, 16, sizeof *names,
                   _Alignof(struct mo_bytecode_register_name));
@@ -376,7 +455,28 @@ static void sections(struct reader *r) {
             names[j].code_start = word(r);
             names[j].code_end = word(r);
         }
+        r->debug_positions[i].metadata = (uint32_t)r->offset;
         d->text = word(r);
+        d->file = word(r);
+        d->start = word(r);
+        d->end = word(r);
+        d->subject = word(r);
+        uint32_t expectation = word(r);
+        if (expectation > MO_BYTECODE_FORBIDS) {
+            refuse(r, "invalid anchor expectation");
+        }
+        d->expectation = (enum mo_bytecode_anchor_expectation)expectation;
+        r->debug_positions[i].lines = (uint32_t)r->offset;
+        struct mo_bytecode_spec_line *lines =
+            array(r, &d->line_count, MO_LIMIT_DEBUG_ENTRIES, 16, sizeof *lines,
+                  _Alignof(struct mo_bytecode_spec_line));
+        d->lines = lines;
+        for (uint32_t j = 0; j < d->line_count; j++) {
+            lines[j].file = word(r);
+            lines[j].start = word(r);
+            lines[j].end = word(r);
+            lines[j].text = word(r);
+        }
     }
 }
 
@@ -390,9 +490,13 @@ struct mo_bytecode *mo_bytecode_decode(struct mo_arena *arena, const uint8_t *by
     }
     uint16_t major = (uint16_t)((uint16_t)bytes[4] | (uint16_t)((uint16_t)bytes[5] << 8));
     uint16_t minor = (uint16_t)((uint16_t)bytes[6] | (uint16_t)((uint16_t)bytes[7] << 8));
-    if (major != MO_BYTECODE_MAJOR || minor != MO_BYTECODE_MINOR || bytes[8] != 0 ||
-        bytes[9] != 0 || bytes[10] != 0 || bytes[11] != 0) {
-        *error = (struct mo_load_error){.offset = 4, .reason = "unsupported version or flags"};
+    if (major != MO_BYTECODE_MAJOR || minor != MO_BYTECODE_MINOR) {
+        *error = (struct mo_load_error){.offset = major != MO_BYTECODE_MAJOR ? 4U : 6U,
+                                        .reason = "unsupported version or flags"};
+        return NULL;
+    }
+    if (bytes[8] != 0 || bytes[9] != 0 || bytes[10] != 0 || bytes[11] != 0) {
+        *error = (struct mo_load_error){.offset = 8, .reason = "unsupported version or flags"};
         return NULL;
     }
     uint64_t expected = 0;
@@ -420,17 +524,27 @@ struct mo_bytecode *mo_bytecode_decode(struct mo_arena *arena, const uint8_t *by
     r.file->header.major = major;
     r.file->header.minor = minor;
     r.file->header.checksum = checksum;
-    mo_arena_init(&r.scratch, MO_LIMIT_BYTECODE_SIZE);
+    mo_arena_init(&r.scratch, mo_bytecode_work_budget(length));
     sections(&r);
-    mo_arena_free(&r.scratch);
     if (r.failed) {
+        mo_arena_free(&r.scratch);
         return NULL;
     }
     if (r.offset != length) {
+        r.field = (uint32_t)r.offset;
         refuse(&r, "trailing bytes");
+        mo_arena_free(&r.scratch);
         return NULL;
     }
-    if (!mo_bytecode_validate(r.file, error)) {
+    struct mo_bytecode_read_info info = {
+        .types = {.items = r.types, .count = r.file->type_count, .finished = true},
+        .names = &r.names,
+        .code = r.code_positions,
+        .debug = r.debug_positions,
+        .wire_size = length};
+    bool valid = mo_bytecode_validate(r.file, &info, error);
+    mo_arena_free(&r.scratch);
+    if (!valid) {
         return NULL;
     }
     struct mo_types view = {.items = r.types, .count = r.file->type_count, .finished = true};

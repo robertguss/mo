@@ -3,6 +3,7 @@
 #include "test.h"
 
 #include <string.h>
+#include <time.h>
 
 /* The first eight types and four layouts are section 3's worked Chain encoding. Extra types
  * cover every kind, all seven capabilities, all choice shapes and a second nominal identity. */
@@ -222,21 +223,39 @@ static const struct mo_bytecode_module modules[] = {{.name = 11,
                                                      .function_count = 1,
                                                      .globals = module_globals,
                                                      .global_count = 1}};
-static const struct mo_bytecode_span spans[] = {{0, 19, 13, 24}, {4, 19, 25, 30}};
+static const struct mo_bytecode_span spans[] = {{0, 19, 13, 24}, {4, MO_BYTECODE_NO_INDEX, 0, 0}};
 /* Unsorted, adjacent reuse of the same register; sorting must not change the wire order. */
 static const struct mo_bytecode_register_name names[] = {{0, 20, 4, 8}, {0, 3, 0, 4}};
-static const struct mo_bytecode_debug debug[] = {{.text = MO_BYTECODE_NO_INDEX},
-                                                 {.spans = spans,
-                                                  .span_count = 2,
-                                                  .names = names,
-                                                  .name_count = 2,
-                                                  .text = MO_BYTECODE_NO_INDEX},
-                                                 {.text = MO_BYTECODE_NO_INDEX},
-                                                 {.text = 22},
-                                                 {.text = 21},
-                                                 {.text = 21},
-                                                 {.text = 22},
-                                                 {.text = MO_BYTECODE_NO_INDEX}};
+static const struct mo_bytecode_spec_line lines[] = {{19, 101, 110, 21},
+                                                     {MO_BYTECODE_NO_INDEX, 0, 0, 22}};
+static const struct mo_bytecode_debug debug[] = {
+    {.text = MO_BYTECODE_NO_INDEX, .file = MO_BYTECODE_NO_INDEX, .subject = MO_BYTECODE_NO_INDEX},
+    {.spans = spans,
+     .span_count = 2,
+     .names = names,
+     .name_count = 2,
+     .text = MO_BYTECODE_NO_INDEX,
+     .file = 19,
+     .start = 11,
+     .end = 31,
+     .subject = MO_BYTECODE_NO_INDEX},
+    {.text = MO_BYTECODE_NO_INDEX, .file = MO_BYTECODE_NO_INDEX, .subject = MO_BYTECODE_NO_INDEX},
+    {.text = 22, .file = MO_BYTECODE_NO_INDEX, .subject = MO_BYTECODE_NO_INDEX},
+    {.text = 21, .file = 19, .start = 35, .end = 63, .subject = MO_BYTECODE_NO_INDEX},
+    {.text = 21,
+     .file = 19,
+     .start = 100,
+     .end = 140,
+     .subject = 1,
+     .lines = lines,
+     .line_count = 2},
+    {.text = 22,
+     .file = 19,
+     .start = 141,
+     .end = 150,
+     .subject = 5,
+     .expectation = MO_BYTECODE_ALLOWS},
+    {.text = MO_BYTECODE_NO_INDEX, .file = MO_BYTECODE_NO_INDEX, .subject = MO_BYTECODE_NO_INDEX}};
 /* Table names are plural but their count fields are singular. */
 static const struct mo_bytecode fixture = {.strings = strings,
                                            .string_count = ARRAY_COUNT(strings),
@@ -357,6 +376,12 @@ static void equal_structure(const struct mo_bytecode *a, const struct mo_bytecod
                           (size_t)a->debug[i].span_count * sizeof *a->debug[i].spans));
         CHECK(equal_bytes(a->debug[i].names, b->debug[i].names,
                           (size_t)a->debug[i].name_count * sizeof *a->debug[i].names));
+        CHECK(a->debug[i].file == b->debug[i].file && a->debug[i].start == b->debug[i].start &&
+              a->debug[i].end == b->debug[i].end && a->debug[i].subject == b->debug[i].subject &&
+              a->debug[i].expectation == b->debug[i].expectation &&
+              a->debug[i].line_count == b->debug[i].line_count);
+        CHECK(equal_bytes(a->debug[i].lines, b->debug[i].lines,
+                          (size_t)a->debug[i].line_count * sizeof *a->debug[i].lines));
     }
 }
 
@@ -367,7 +392,7 @@ static void round_trip(const struct mo_bytecode *file) {
     struct mo_load_error load_error;
     mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
     mo_buffer_init(&again, MO_LIMIT_BYTECODE_SIZE);
-    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    mo_arena_init(&arena, (size_t)4 << 30);
     bool written = mo_bytecode_write(file, &out, &write_error);
     CHECK(written);
     if (written) {
@@ -384,13 +409,6 @@ static void round_trip(const struct mo_bytecode *file) {
                 CHECK(mo_bytecode_write(decoded, &again, &write_error));
                 CHECK(out.length == again.length && equal_bytes(saved, again.bytes, out.length));
             }
-            CHECK(decoded->types[3].reference && decoded->types[3].has_fields);
-            CHECK(!decoded->types[21].reference && !decoded->types[21].has_fields);
-            CHECK(decoded->types[22].reference && decoded->types[22].has_fields);
-            CHECK(decoded->types[3].cases[2].unnamed);
-            CHECK(decoded->constants[4].encoding == MO_CONSTANT_IMMEDIATE64);
-            CHECK(decoded->constants[8].encoding == MO_CONSTANT_DECIMAL128);
-            CHECK(decoded->constants[12].encoding == MO_CONSTANT_CLOSURE);
         }
     } else {
         (void)fprintf(stderr, "round trip refused: %s\n", write_error.reason);
@@ -445,15 +463,50 @@ static void refuse_bytes(const uint8_t *bytes, size_t n) {
     mo_arena_free(&arena);
 }
 
-static void expect_write(const struct mo_bytecode *file, bool success) {
+static void refuse_reason(const uint8_t *bytes, size_t n, const char *reason, uint32_t offset) {
+    struct mo_arena arena;
+    struct mo_load_error error = {0};
+    mo_arena_init(&arena, (size_t)4 << 30);
+    CHECK(mo_bytecode_decode(&arena, bytes, n, &error) == NULL);
+    if (error.reason == NULL || strcmp(error.reason, reason) != 0 || error.offset != offset) {
+        (void)fprintf(stderr, "wanted '%s' at %u; got '%s' at %u\n", reason, offset,
+                      error.reason == NULL ? "accepted" : error.reason, error.offset);
+    }
+    CHECK(error.reason != NULL && strcmp(error.reason, reason) == 0);
+    CHECK(error.offset == offset);
+    mo_arena_free(&arena);
+}
+
+static void reject_word(struct mo_buffer *out, size_t offset, uint32_t value, const char *reason,
+                        uint32_t error_offset) {
+    uint32_t saved = 0;
+    for (unsigned i = 0; i < 4; i++) {
+        saved |= (uint32_t)out->bytes[offset + i] << (8 * i);
+    }
+    replace_word(out, offset, value);
+    checksum(out);
+    refuse_reason(out->bytes, out->length, reason, error_offset);
+    replace_word(out, offset, saved);
+    checksum(out);
+}
+
+static void expect_write_reason(const struct mo_bytecode *file, const char *reason) {
     struct mo_buffer out;
     struct mo_write_error error = {0};
     mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
-    bool actual = mo_bytecode_write(file, &out, &error);
-    CHECK(actual == success);
-    if (!actual) {
-        CHECK(out.length == 0 && error.reason != NULL);
+    CHECK(!mo_bytecode_write(file, &out, &error));
+    if (error.reason != NULL && strcmp(error.reason, reason) != 0) {
+        CHECK(fprintf(stderr, "writer expected %s, got %s\n", reason, error.reason) >= 0);
     }
+    CHECK(out.length == 0 && error.reason != NULL && strcmp(error.reason, reason) == 0);
+    mo_buffer_free(&out);
+}
+
+static void expect_write(const struct mo_bytecode *file) {
+    struct mo_buffer out;
+    struct mo_write_error error = {0};
+    mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+    CHECK(mo_bytecode_write(file, &out, &error));
     mo_buffer_free(&out);
 }
 
@@ -465,38 +518,40 @@ static void expect_write(const struct mo_bytecode *file, bool success) {
 #define TABLE_TYPE_globals struct mo_bytecode_global
 #define TABLE_TYPE_modules struct mo_bytecode_module
 #define TABLE_TYPE_debug struct mo_bytecode_debug
-#define BAD_TABLE(table, row, member, value)                                                       \
+#define BAD_TABLE(table, row, member, value, reason)                                               \
     do {                                                                                           \
         struct mo_bytecode changed_file = fixture;                                                 \
         TABLE_TYPE_##table copy[ARRAY_COUNT(table)];                                               \
         memcpy(copy, table, sizeof copy);                                                          \
         copy[row].member = (value);                                                                \
         changed_file.table = copy;                                                                 \
-        expect_write(&changed_file, false);                                                        \
+        expect_write_reason(&changed_file, reason);                                                \
     } while (0)
 
 static void test_refusals(void) {
-    BAD_TABLE(types, 0, kind, (enum mo_type_kind)99);
-    BAD_TABLE(types, 3, defined, false);
-    BAD_TABLE(types, 3, name, "missing");
-    BAD_TABLE(types, 3, name, "");
-    BAD_TABLE(types, 3, case_count, 0);
-    BAD_TABLE(types, 3, case_count, MO_LIMIT_CHOICE_CASES + 1U);
-    BAD_TABLE(types, 4, parameter_count, 0);
-    BAD_TABLE(types, 5, parameter_count, 1);
-    BAD_TABLE(types, 5, parameter_count, MO_LIMIT_FIELDS + 1U);
-    BAD_TABLE(types, 6, parameter_count, MO_LIMIT_BYTECODE_PARAMETERS + 1U);
-    BAD_TABLE(types, 6, result, UINT32_MAX);
-    BAD_TABLE(types, 7, function, UINT32_MAX);
-    BAD_TABLE(types, 7, function, 1);
-    BAD_TABLE(types, 18, parameter_count, 0);
-    BAD_TABLE(types, 19, parameter_count, 1);
-    BAD_TABLE(types, 20, field_count, MO_LIMIT_FIELDS + 1U);
-    BAD_TABLE(types, 25, capability, (enum mo_capability)7);
-    BAD_TABLE(types, 31, kind, MO_TYPE_INT); /* duplicate interned built-in */
+    BAD_TABLE(types, 0, kind, (enum mo_type_kind)99, "unknown type kind");
+    BAD_TABLE(types, 3, defined, false, "incomplete nominal type");
+    BAD_TABLE(types, 3, name, "missing", "name missing from strings or past limit");
+    BAD_TABLE(types, 3, name, "", "invalid name");
+    BAD_TABLE(types, 3, case_count, 0, "choice has no cases");
+    BAD_TABLE(types, 3, case_count, MO_LIMIT_CHOICE_CASES + 1U,
+              "invalid array or count past limit");
+    BAD_TABLE(types, 4, parameter_count, 0, "invalid type parameter count");
+    BAD_TABLE(types, 5, parameter_count, 1, "invalid type parameter count");
+    BAD_TABLE(types, 5, parameter_count, MO_LIMIT_FIELDS + 1U, "invalid array or count past limit");
+    BAD_TABLE(types, 6, parameter_count, MO_LIMIT_BYTECODE_PARAMETERS + 1U,
+              "invalid array or count past limit");
+    BAD_TABLE(types, 6, result, UINT32_MAX, "type result or env function out of range/kind");
+    BAD_TABLE(types, 7, function, UINT32_MAX, "closure env mismatch");
+    BAD_TABLE(types, 7, function, 1, "closure env mismatch");
+    BAD_TABLE(types, 18, parameter_count, 0, "invalid type parameter count");
+    BAD_TABLE(types, 19, parameter_count, 1, "invalid type parameter count");
+    BAD_TABLE(types, 20, field_count, MO_LIMIT_FIELDS + 1U, "invalid array or count past limit");
+    BAD_TABLE(types, 25, capability, (enum mo_capability)7, "unknown capability");
+    BAD_TABLE(types, 31, kind, MO_TYPE_INT, "duplicate interned type");
     const uint32_t bad_index[] = {UINT32_MAX}, cycle[] = {4};
-    BAD_TABLE(types, 4, parameters, bad_index);
-    BAD_TABLE(types, 4, parameters, cycle);
+    BAD_TABLE(types, 4, parameters, bad_index, "type index out of range");
+    BAD_TABLE(types, 4, parameters, cycle, "structural type cycle");
     struct mo_type nominal_copy[ARRAY_COUNT(types)];
     memcpy(nominal_copy, types, sizeof nominal_copy);
     struct mo_type_field bad_fields[] = {{"value", 1}, {"value", 3}};
@@ -505,153 +560,165 @@ static void test_refusals(void) {
     file.types = nominal_copy;
     nominal_copy[20].fields = bad_fields;
     nominal_copy[20].field_count = 2;
-    expect_write(&file, false); /* duplicate field names */
+    expect_write_reason(&file, "duplicate field name");
     bad_fields[1].name = NULL;
-    expect_write(&file, false); /* unnamed record field */
+    expect_write_reason(&file, "invalid name");
     bad_fields[1].name = "next";
     bad_fields[1].type = UINT32_MAX;
-    expect_write(&file, false);
+    expect_write_reason(&file, "field type out of range");
     nominal_copy[20] = types[20];
     nominal_copy[3].cases = bad_cases;
     nominal_copy[3].case_count = 2;
-    expect_write(&file, false); /* duplicate case names */
+    expect_write_reason(&file, "duplicate case name");
     bad_cases[1].name = "Link";
     bad_cases[1].fields = bad_fields;
     bad_cases[1].field_count = 2;
     bad_fields[1].name = NULL;
     bad_fields[1].type = 3;
-    expect_write(&file, false); /* unnamed field in a multi-field case */
+    expect_write_reason(&file, "invalid name");
 
-    BAD_TABLE(layouts, 0, kind, (enum mo_layout_kind)4);
-    BAD_TABLE(layouts, 0, type, UINT32_MAX);
-    BAD_TABLE(layouts, 0, type, 1);
-    BAD_TABLE(layouts, 0, case_index, 0); /* not boxed */
-    BAD_TABLE(layouts, 0, case_index, UINT32_MAX);
-    BAD_TABLE(layouts, 0, field_count, 1);
-    BAD_TABLE(layouts, 1, fields, bad_index);
-    BAD_TABLE(layouts, 2, type, 20);
-    BAD_TABLE(layouts, 3, function, UINT32_MAX);
-    BAD_TABLE(layouts, 3, function, 7); /* signature mismatch */
-    BAD_TABLE(layouts, 3, field_count, 1);
-    BAD_TABLE(layouts, 3, fields, link_layout); /* captures mismatch */
-    BAD_TABLE(layouts, 4, field_count, MO_LIMIT_FIELDS + 1U);
+    BAD_TABLE(layouts, 0, kind, (enum mo_layout_kind)4, "unknown layout kind");
+    BAD_TABLE(layouts, 0, type, UINT32_MAX, "layout type out of range");
+    BAD_TABLE(layouts, 0, type, 1, "invalid case layout");
+    BAD_TABLE(layouts, 0, case_index, 0, "invalid case layout");
+    BAD_TABLE(layouts, 0, case_index, UINT32_MAX, "invalid case layout");
+    BAD_TABLE(layouts, 0, field_count, 1, "layout field count mismatch");
+    BAD_TABLE(layouts, 1, fields, bad_index, "layout field type out of range");
+    BAD_TABLE(layouts, 2, type, 20, "tuple layout fields mismatch");
+    BAD_TABLE(layouts, 3, function, UINT32_MAX, "closure layout signature mismatch");
+    BAD_TABLE(layouts, 3, function, 7, "closure layout signature mismatch");
+    BAD_TABLE(layouts, 3, field_count, 1, "closure layout captures mismatch");
+    BAD_TABLE(layouts, 3, fields, link_layout, "closure layout captures mismatch");
+    BAD_TABLE(layouts, 4, field_count, MO_LIMIT_FIELDS + 1U, "invalid array or count past limit");
 
-    BAD_TABLE(constants, 0, type, UINT32_MAX);
-    BAD_TABLE(constants, 0, type, 15); /* Range has no literal encoding */
-    BAD_TABLE(constants, 0, type, 21); /* nor Choice */
-    BAD_TABLE(constants, 0, value.immediate[0], 1);
-    BAD_TABLE(constants, 1, value.immediate[0], 2);
-    BAD_TABLE(constants, 2, value.immediate[1], 1);
-    BAD_TABLE(constants, 5, value.immediate[3], 1);
-    BAD_TABLE(constants, 9, value.string, UINT32_MAX);
-    BAD_TABLE(constants, 10, value.bytes.length, MO_LIMIT_STRING_SIZE + 1U);
-    BAD_TABLE(constants, 11, value.bigint.sign, (enum mo_bigint_sign)3);
-    BAD_TABLE(constants, 11, value.bigint.sign, MO_BIGINT_ZERO);
-    BAD_TABLE(constants, 13, value.bigint.sign, MO_BIGINT_POSITIVE);
+    BAD_TABLE(constants, 0, type, UINT32_MAX, "constant type out of range");
+    BAD_TABLE(constants, 0, type, 15, "type has no literal encoding");
+    BAD_TABLE(constants, 0, type, 21, "type has no literal encoding");
+    BAD_TABLE(constants, 0, value.immediate[0], 1, "invalid scalar literal");
+    BAD_TABLE(constants, 1, value.immediate[0], 2, "invalid scalar literal");
+    BAD_TABLE(constants, 2, value.immediate[1], 1, "invalid scalar literal");
+    BAD_TABLE(constants, 5, value.immediate[3], 1, "invalid scalar literal");
+    BAD_TABLE(constants, 9, value.string, UINT32_MAX, "text string index out of range");
+    BAD_TABLE(constants, 10, value.bytes.length, MO_LIMIT_STRING_SIZE + 1U,
+              "invalid array or count past limit");
+    BAD_TABLE(constants, 11, value.bigint.sign, (enum mo_bigint_sign)3, "invalid bigint sign");
+    BAD_TABLE(constants, 11, value.bigint.sign, MO_BIGINT_ZERO, "noncanonical bigint literal");
+    BAD_TABLE(constants, 13, value.bigint.sign, MO_BIGINT_POSITIVE, "noncanonical bigint literal");
     const uint8_t high_zero[] = {1, 0};
-    BAD_TABLE(constants, 11, value.bigint.magnitude.bytes, high_zero);
-    BAD_TABLE(constants, 12, value.function, 0); /* captured closure */
-    BAD_TABLE(constants, 12, value.function, 1); /* wrong kind */
-    BAD_TABLE(constants, 12, value.function, UINT32_MAX);
+    BAD_TABLE(constants, 11, value.bigint.magnitude.bytes, high_zero,
+              "noncanonical bigint literal");
+    BAD_TABLE(constants, 12, value.function, 0, "invalid closure literal");
+    BAD_TABLE(constants, 12, value.function, 1, "invalid closure literal");
+    BAD_TABLE(constants, 12, value.function, UINT32_MAX, "invalid closure literal");
 
-    BAD_TABLE(functions, 1, name, UINT32_MAX);
-    BAD_TABLE(functions, 1, name, 21); /* embedded NUL */
-    BAD_TABLE(functions, 1, name, 22); /* empty */
-    BAD_TABLE(functions, 1, module, UINT32_MAX);
-    BAD_TABLE(functions, 1, result_type, UINT32_MAX);
-    BAD_TABLE(functions, 1, kind, (enum mo_function_kind)7);
-    BAD_TABLE(functions, 1, spec_code, true);
-    BAD_TABLE(functions, 3, spec_code, false);
-    BAD_TABLE(functions, 0, register_count, 1);
-    BAD_TABLE(functions, 1, parameter_count, MO_LIMIT_BYTECODE_PARAMETERS + 1U);
-    BAD_TABLE(functions, 1, capture_count, 2);
-    BAD_TABLE(functions, 0, capture_count, MO_LIMIT_FIELDS + 1U);
-    BAD_TABLE(functions, 1, register_count, MO_LIMIT_FUNCTION_REGISTERS + 1U);
-    BAD_TABLE(functions, 1, code_count, MO_LIMIT_FUNCTION_CODE_WORDS + 1U);
-    BAD_TABLE(functions, 3, result_type, 1);
-    BAD_TABLE(functions, 5, result_type, 0);
-    BAD_TABLE(functions, 5, parameter_count, 0);
-    BAD_TABLE(functions, 6, parameter_count, 1);
+    BAD_TABLE(functions, 1, name, UINT32_MAX, "function name, module or result out of range");
+    BAD_TABLE(functions, 1, name, 21, "function name, module or result out of range");
+    BAD_TABLE(functions, 1, name, 22, "function name, module or result out of range");
+    BAD_TABLE(functions, 1, module, UINT32_MAX, "function name, module or result out of range");
+    BAD_TABLE(functions, 1, result_type, UINT32_MAX,
+              "function name, module or result out of range");
+    BAD_TABLE(functions, 1, kind, (enum mo_function_kind)7, "unknown function kind");
+    BAD_TABLE(functions, 1, spec_code, true, "function spec flag disagrees with kind");
+    BAD_TABLE(functions, 3, spec_code, false, "function spec flag disagrees with kind");
+    BAD_TABLE(functions, 0, register_count, 1,
+              "invalid function parameter/register/capture counts");
+    BAD_TABLE(functions, 1, parameter_count, MO_LIMIT_BYTECODE_PARAMETERS + 1U,
+              "invalid array or count past limit");
+    BAD_TABLE(functions, 1, capture_count, 2, "invalid array or count past limit");
+    BAD_TABLE(functions, 0, capture_count, MO_LIMIT_FIELDS + 1U,
+              "invalid array or count past limit");
+    BAD_TABLE(functions, 1, register_count, MO_LIMIT_FUNCTION_REGISTERS + 1U,
+              "invalid array or count past limit");
+    BAD_TABLE(functions, 1, code_count, MO_LIMIT_FUNCTION_CODE_WORDS + 1U,
+              "invalid array or count past limit");
+    BAD_TABLE(functions, 3, result_type, 1, "invalid function kind signature");
+    BAD_TABLE(functions, 5, result_type, 0, "invalid function kind signature");
+    BAD_TABLE(functions, 5, parameter_count, 0, "invalid function kind signature");
+    BAD_TABLE(functions, 6, parameter_count, 1, "invalid array or count past limit");
     const uint32_t invalid_capture[] = {UINT32_MAX, 2};
-    BAD_TABLE(functions, 0, capture_types, invalid_capture);
+    BAD_TABLE(functions, 0, capture_types, invalid_capture, "capture type out of range");
     const uint32_t wrong_env[] = {3, 24, 1}, invalid_reg[] = {3, 7, UINT32_MAX};
-    BAD_TABLE(functions, 0, register_types, wrong_env);
-    BAD_TABLE(functions, 0, register_types, invalid_reg);
+    BAD_TABLE(functions, 0, register_types, wrong_env, "closure env mismatch");
+    BAD_TABLE(functions, 0, register_types, invalid_reg, "register type out of range");
     const struct mo_parameter wrong_param[] = {{1, MO_PARAMETER_OWNED}},
                               borrowed_closure[] = {{3, MO_PARAMETER_BORROWED}},
                               invalid_ownership[] = {{3, (enum mo_parameter_ownership)2}};
-    BAD_TABLE(functions, 0, parameters, wrong_param);
-    BAD_TABLE(functions, 0, parameters, borrowed_closure);
-    BAD_TABLE(functions, 0, parameters, invalid_ownership);
+    BAD_TABLE(functions, 0, parameters, wrong_param, "invalid parameter type or borrowing");
+    BAD_TABLE(functions, 0, parameters, borrowed_closure, "invalid parameter type or borrowing");
+    BAD_TABLE(functions, 0, parameters, invalid_ownership, "invalid parameter ownership");
 
-    BAD_TABLE(globals, 0, type, UINT32_MAX);
-    BAD_TABLE(globals, 0, name, UINT32_MAX);
-    BAD_TABLE(globals, 0, module, 1);
-    BAD_TABLE(modules, 0, name, UINT32_MAX);
-    BAD_TABLE(modules, 0, type_count, MO_LIMIT_MODULE_NAMES + 1U);
-    BAD_TABLE(modules, 0, function_count, MO_LIMIT_MODULE_NAMES + 1U);
-    BAD_TABLE(modules, 0, global_count, MO_LIMIT_MODULE_NAMES + 1U);
-    BAD_TABLE(modules, 0, functions, bad_index);
-    BAD_TABLE(modules, 0, globals, bad_index);
-    BAD_TABLE(modules, 0, global_count, 0);
+    BAD_TABLE(globals, 0, type, UINT32_MAX, "global type, name or module out of range");
+    BAD_TABLE(globals, 0, name, UINT32_MAX, "global type, name or module out of range");
+    BAD_TABLE(globals, 0, module, 1, "global type, name or module out of range");
+    BAD_TABLE(modules, 0, name, UINT32_MAX, "invalid module name");
+    BAD_TABLE(modules, 0, type_count, MO_LIMIT_MODULE_NAMES + 1U,
+              "invalid array or count past limit");
+    BAD_TABLE(modules, 0, function_count, MO_LIMIT_MODULE_NAMES + 1U,
+              "invalid array or count past limit");
+    BAD_TABLE(modules, 0, global_count, MO_LIMIT_MODULE_NAMES + 1U,
+              "invalid array or count past limit");
+    BAD_TABLE(modules, 0, functions, bad_index, "exposed function out of range/module");
+    BAD_TABLE(modules, 0, globals, bad_index, "module global out of range/module or repeated");
+    BAD_TABLE(modules, 0, global_count, 0, "global absent from module");
     const uint32_t repeated_globals[] = {0, 0};
     struct mo_bytecode_module module = modules[0];
     module.globals = repeated_globals;
     module.global_count = 2;
     file = fixture;
     file.modules = &module;
-    expect_write(&file, false);
+    expect_write_reason(&file, "module global out of range/module or repeated");
     const struct mo_bytecode_type_export invalid_export[] = {{UINT32_MAX, false}, {3, true}};
-    BAD_TABLE(modules, 0, types, invalid_export);
+    BAD_TABLE(modules, 0, types, invalid_export, "exposed type out of range");
     file = fixture;
     file.init = bad_index;
-    expect_write(&file, false);
+    expect_write_reason(&file, "invalid or repeated init function");
     file.init_count = 0;
-    expect_write(&file, false);
+    expect_write_reason(&file, "init/global or debug/function count mismatch");
     file = fixture;
     file.init = element; /* non-init function */
-    expect_write(&file, false);
+    expect_write_reason(&file, "invalid or repeated init function");
     file = fixture;
     file.debug_count = 0;
-    expect_write(&file, false);
-    BAD_TABLE(debug, 1, text, 0);
-    BAD_TABLE(debug, 3, text, MO_BYTECODE_NO_INDEX);
-    BAD_TABLE(debug, 3, text, ARRAY_COUNT(strings));
-    BAD_TABLE(debug, 1, span_count, MO_LIMIT_DEBUG_ENTRIES + 1U);
-    BAD_TABLE(debug, 1, name_count, MO_LIMIT_DEBUG_ENTRIES + 1U);
+    expect_write_reason(&file, "init/global or debug/function count mismatch");
+    BAD_TABLE(debug, 1, text, 0, "invalid debug text index");
+    BAD_TABLE(debug, 3, text, ARRAY_COUNT(strings), "invalid debug text index");
+    BAD_TABLE(debug, 1, span_count, MO_LIMIT_DEBUG_ENTRIES + 1U,
+              "invalid array or count past limit");
+    BAD_TABLE(debug, 1, name_count, MO_LIMIT_DEBUG_ENTRIES + 1U,
+              "invalid array or count past limit");
     struct mo_bytecode_span bad_spans[2];
     memcpy(bad_spans, spans, sizeof bad_spans);
     bad_spans[1].code_offset = 1; /* operand, not head */
-    BAD_TABLE(debug, 1, spans, bad_spans);
+    BAD_TABLE(debug, 1, spans, bad_spans, "invalid debug span");
     bad_spans[1].code_offset = 0;
-    BAD_TABLE(debug, 1, spans, bad_spans);
+    BAD_TABLE(debug, 1, spans, bad_spans, "invalid debug span");
     bad_spans[1] = spans[1];
     bad_spans[0].file = UINT32_MAX;
-    BAD_TABLE(debug, 1, spans, bad_spans);
+    BAD_TABLE(debug, 1, spans, bad_spans, "invalid debug span");
     bad_spans[0] = spans[0];
     bad_spans[0].start = 25;
-    BAD_TABLE(debug, 1, spans, bad_spans);
+    BAD_TABLE(debug, 1, spans, bad_spans, "invalid debug span");
     bad_spans[0] = spans[0];
     bad_spans[0].end = MO_LIMIT_FILE_SIZE + 1U;
-    BAD_TABLE(debug, 1, spans, bad_spans);
+    BAD_TABLE(debug, 1, spans, bad_spans, "invalid debug span");
     struct mo_bytecode_register_name bad_names[2];
     memcpy(bad_names, names, sizeof bad_names);
     bad_names[0].reg = UINT32_MAX;
-    BAD_TABLE(debug, 1, names, bad_names);
+    BAD_TABLE(debug, 1, names, bad_names, "invalid debug register range");
     bad_names[0] = names[0];
     bad_names[0].name = UINT32_MAX;
-    BAD_TABLE(debug, 1, names, bad_names);
+    BAD_TABLE(debug, 1, names, bad_names, "invalid debug register range");
     bad_names[0] = names[0];
     bad_names[0].code_end = 5;
-    BAD_TABLE(debug, 1, names, bad_names);
+    BAD_TABLE(debug, 1, names, bad_names, "invalid debug register range");
     bad_names[0].code_end = UINT32_MAX;
-    BAD_TABLE(debug, 1, names, bad_names);
+    BAD_TABLE(debug, 1, names, bad_names, "invalid debug register range");
     bad_names[0] = names[0];
     bad_names[0].code_start = bad_names[0].code_end;
-    BAD_TABLE(debug, 1, names, bad_names);
+    BAD_TABLE(debug, 1, names, bad_names, "invalid debug register range");
     bad_names[0] = names[0];
     bad_names[1].code_end = 8;
-    BAD_TABLE(debug, 1, names, bad_names); /* overlap */
+    BAD_TABLE(debug, 1, names, bad_names, "overlapping debug register ranges");
 
     const uint32_t broken_code[][5] = {
         {0, 2, 3, MO_OP_RET, 2},
@@ -661,9 +728,11 @@ static void test_refusals(void) {
         {MO_OP_JUMP, 1, MO_OP_RET, 2, MO_OP_RET}, /* jump to operand, then truncated ret */
         {MO_OP_JUMP, UINT32_MAX, MO_OP_RET, 2, MO_OP_RET}};
     for (size_t i = 0; i < sizeof broken_code / sizeof broken_code[0]; i++) {
-        BAD_TABLE(functions, 0, code, broken_code[i]);
+        BAD_TABLE(functions, 0, code, broken_code[i],
+                  i == 2 || i == 3 ? "instruction index out of range or target not a boundary"
+                                   : "invalid instruction shape or instruction limit");
     }
-    BAD_TABLE(functions, 0, code_count, 4); /* truncated ret */
+    BAD_TABLE(functions, 0, code_count, 4, "invalid instruction shape or instruction limit");
     const uint32_t reg_limit[] = {MO_OP_RET, MO_LIMIT_FUNCTION_REGISTERS};
     struct mo_bytecode_function fn_copy[ARRAY_COUNT(functions)];
     memcpy(fn_copy, functions, sizeof fn_copy);
@@ -671,7 +740,140 @@ static void test_refusals(void) {
     fn_copy[0].code_count = 2;
     file = fixture;
     file.functions = fn_copy;
-    expect_write(&file, false);
+    expect_write_reason(&file, "instruction index out of range or target not a boundary");
+    fn_copy[0] = functions[0];
+    fn_copy[1].capture_types = link_layout;
+    fn_copy[1].capture_count = 2;
+    expect_write_reason(&file, "invalid function parameter/register/capture counts");
+    fn_copy[1] = functions[1];
+    fn_copy[6].parameters = wrong_param;
+    fn_copy[6].parameter_count = 1;
+    expect_write_reason(&file, "invalid function kind signature");
+}
+
+static void test_debug_metadata(void) {
+    BAD_TABLE(debug, 1, file, ARRAY_COUNT(strings), "invalid declaration span");
+    BAD_TABLE(debug, 1, file, 22, "invalid declaration span");
+    BAD_TABLE(debug, 1, file, 21, "invalid declaration span");
+    BAD_TABLE(debug, 1, file, MO_BYTECODE_NO_INDEX, "invalid declaration span");
+    BAD_TABLE(debug, 0, start, 1, "invalid declaration span");
+    BAD_TABLE(debug, 0, end, 1, "invalid declaration span");
+    BAD_TABLE(debug, 1, start, 32, "invalid declaration span");
+    BAD_TABLE(debug, 1, end, MO_LIMIT_FILE_SIZE + 1U, "invalid declaration span");
+    BAD_TABLE(debug, 1, subject, 1, "invalid spec subject or missing linked metadata");
+    BAD_TABLE(debug, 5, subject, ARRAY_COUNT(functions),
+              "invalid spec subject or missing linked metadata");
+    BAD_TABLE(debug, 5, subject, 0, "invalid spec subject or missing linked metadata");
+    BAD_TABLE(debug, 5, subject, 5, "invalid spec subject or missing linked metadata");
+    BAD_TABLE(debug, 6, subject, 1, "invalid spec subject or missing linked metadata");
+    BAD_TABLE(debug, 5, line_count, 0, "invalid spec subject or missing linked metadata");
+    BAD_TABLE(debug, 5, line_count, MO_LIMIT_DEBUG_ENTRIES + 1U,
+              "invalid array or count past limit");
+    BAD_TABLE(debug, 5, lines, NULL, "invalid array or count past limit");
+    BAD_TABLE(debug, 5, expectation, MO_BYTECODE_ALLOWS,
+              "condition lines or expectation on wrong function kind");
+    BAD_TABLE(debug, 6, expectation, MO_BYTECODE_NOT_ANCHOR,
+              "invalid spec subject or missing linked metadata");
+    BAD_TABLE(debug, 6, expectation, (enum mo_bytecode_anchor_expectation)3,
+              "invalid anchor expectation");
+
+    struct mo_bytecode_spec_line bad_lines[ARRAY_COUNT(lines)];
+    memcpy(bad_lines, lines, sizeof bad_lines);
+    bad_lines[0].file = ARRAY_COUNT(strings);
+    BAD_TABLE(debug, 5, lines, bad_lines, "invalid condition line");
+    bad_lines[0].file = 22;
+    BAD_TABLE(debug, 5, lines, bad_lines, "invalid condition line");
+    bad_lines[0].file = 21;
+    BAD_TABLE(debug, 5, lines, bad_lines, "invalid condition line");
+    bad_lines[0].file = MO_BYTECODE_NO_INDEX;
+    BAD_TABLE(debug, 5, lines, bad_lines, "invalid condition line");
+    bad_lines[0] = lines[0];
+    bad_lines[0].start = 111;
+    BAD_TABLE(debug, 5, lines, bad_lines, "invalid condition line");
+    bad_lines[0] = lines[0];
+    bad_lines[0].end = MO_LIMIT_FILE_SIZE + 1U;
+    BAD_TABLE(debug, 5, lines, bad_lines, "invalid condition line");
+    bad_lines[0] = lines[0];
+    bad_lines[0].text = MO_BYTECODE_NO_INDEX;
+    BAD_TABLE(debug, 5, lines, bad_lines, "invalid condition line");
+    bad_lines[0] = lines[0];
+    bad_lines[1].start = 1;
+    BAD_TABLE(debug, 5, lines, bad_lines, "invalid condition line");
+    bad_lines[1] = lines[1];
+    bad_lines[1].end = 1;
+    BAD_TABLE(debug, 5, lines, bad_lines, "invalid condition line");
+
+    struct mo_bytecode f = fixture;
+    struct mo_bytecode_debug ds[ARRAY_COUNT(debug)];
+    memcpy(ds, debug, sizeof ds);
+    f.debug = ds;
+    ds[6].line_count = 1;
+    ds[6].lines = lines;
+    expect_write_reason(&f, "condition lines or expectation on wrong function kind");
+    ds[6] = debug[6];
+    ds[6].expectation = MO_BYTECODE_FORBIDS;
+    ds[1].start = MO_LIMIT_FILE_SIZE;
+    ds[1].end = MO_LIMIT_FILE_SIZE; /* a zero-length declaration at the limit */
+    round_trip(&f);
+    ds[1] = debug[1];
+    const struct mo_bytecode_span cleared[] = {{0, MO_BYTECODE_NO_INDEX, 0, 0}, {4, 19, 25, 30}};
+    ds[1].spans = cleared;
+    round_trip(&f); /* attribution clears, then resumes at a later instruction */
+    for (uint32_t i = 0; i < ARRAY_COUNT(ds); i++) {
+        ds[i] = (struct mo_bytecode_debug){.text = MO_BYTECODE_NO_INDEX,
+                                           .file = MO_BYTECODE_NO_INDEX,
+                                           .subject = MO_BYTECODE_NO_INDEX};
+    }
+    round_trip(&f); /* noSource has no spec text, links, conditions or expectations */
+
+    /* Independent wire words for the final promise, anchor and source-less closure entries. */
+    const uint32_t tail[] = {0,  0,          21,         19,  100,        140,        1, 0,  2,
+                             19, 101,        110,        21,  UINT32_MAX, 0,          0, 22, 0,
+                             0,  22,         19,         141, 150,        5,          1, 0,  0,
+                             0,  UINT32_MAX, UINT32_MAX, 0,   0,          UINT32_MAX, 0, 0};
+    struct mo_buffer expected, out;
+    struct mo_write_error error;
+    mo_buffer_init(&expected, 1024);
+    mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+    for (size_t i = 0; i < sizeof tail / sizeof tail[0]; i++) {
+        CHECK(mo_buffer_append_le32(&expected, tail[i]));
+    }
+    CHECK(mo_bytecode_write(&fixture, &out, &error));
+    CHECK(out.length >= expected.length);
+    if (out.length >= expected.length) {
+        size_t offset = out.length - expected.length;
+        CHECK(equal_bytes(out.bytes + offset, expected.bytes, expected.length));
+        const size_t slots[] = {3, 4, 6, 7, 8, 9, 10, 12, 24, 34};
+        const uint32_t values[] = {
+            ARRAY_COUNT(strings), 141, 0, 1, MO_LIMIT_DEBUG_ENTRIES + 1U, ARRAY_COUNT(strings), 111,
+            MO_BYTECODE_NO_INDEX, 3,   1};
+        const char *reasons[] = {"invalid declaration span",
+                                 "invalid declaration span",
+                                 "invalid spec subject or missing linked metadata",
+                                 "condition lines or expectation on wrong function kind",
+                                 "count past limit or remaining bytes",
+                                 "invalid condition line",
+                                 "invalid condition line",
+                                 "invalid condition line",
+                                 "invalid anchor expectation",
+                                 "count past limit or remaining bytes"};
+        const uint32_t reported[] = {3, 3, 6, 7, 8, 9, 9, 9, 24, 34};
+        for (size_t i = 0; i < sizeof slots / sizeof slots[0]; i++) {
+            replace_word(&out, offset + slots[i] * 4, values[i]);
+            checksum(&out);
+            refuse_reason(out.bytes, out.length, reasons[i], (uint32_t)offset + reported[i] * 4);
+            replace_word(&out, offset + slots[i] * 4, tail[slots[i]]);
+        }
+        /* Every truncation within the extension refuses with a valid checksum. */
+        size_t length = out.length;
+        for (size_t end = offset; end < length; end++) {
+            out.length = end;
+            checksum(&out);
+            refuse_bytes(out.bytes, end);
+        }
+    }
+    mo_buffer_free(&out);
+    mo_buffer_free(&expected);
 }
 
 static void test_wire_refusals(void) {
@@ -682,7 +884,11 @@ static void test_wire_refusals(void) {
     CHECK(mo_bytecode_write(&empty, &out, &error));
     for (size_t i = 0; i < 20; i++) {
         out.bytes[i] ^= 0x80;
-        refuse_bytes(out.bytes, out.length);
+        uint32_t offset = i < 4 ? 0U : i < 6 ? 4U : i < 8 ? 6U : i < 12 ? 8U : 12U;
+        const char *reason = i < 4    ? "invalid header or bytecode size"
+                             : i < 12 ? "unsupported version or flags"
+                                      : "checksum mismatch";
+        refuse_reason(out.bytes, out.length, reason, offset);
         out.bytes[i] ^= 0x80;
     }
     for (size_t n = 0; n < out.length; n++) {
@@ -694,16 +900,18 @@ static void test_wire_refusals(void) {
     for (size_t i = 0; i < sizeof limits / sizeof limits[0]; i++) {
         replace_word(&out, 20 + i * 4, limits[i] + 1U);
         checksum(&out);
-        refuse_bytes(out.bytes, out.length);
+        refuse_reason(out.bytes, out.length, "count past limit or remaining bytes",
+                      (uint32_t)(20 + i * 4));
         replace_word(&out, 20 + i * 4, limits[i]); /* within limit, not within remaining bytes */
         checksum(&out);
-        refuse_bytes(out.bytes, out.length);
+        refuse_reason(out.bytes, out.length, "count past limit or remaining bytes",
+                      (uint32_t)(20 + i * 4));
         replace_word(&out, 20 + i * 4, 0);
     }
     checksum(&out);
     CHECK(mo_buffer_append_byte(&out, 0));
     checksum(&out);
-    refuse_bytes(out.bytes, out.length);
+    refuse_reason(out.bytes, out.length, "trailing bytes", 56);
     out.length--;
     checksum(&out);
     struct mo_arena no_memory;
@@ -723,7 +931,7 @@ static void test_wire_refusals(void) {
     mo_buffer_init(&out, 1024);
     CHECK(mo_buffer_append(&out, duplicate_name, sizeof duplicate_name));
     checksum(&out);
-    refuse_bytes(out.bytes, out.length);
+    refuse_reason(out.bytes, out.length, "name does not use lowest string index", 42);
     replace_word(&out, 42, 0);
     checksum(&out);
     struct mo_arena arena;
@@ -761,15 +969,17 @@ static void test_worked_encoding(void) {
                        "0200000003000000020000000100000003000000"
                        "0100000005000000020000000100000004000000"
                        "030000000600000000000000020000000300000002000000";
-    const uint32_t suffix[] = {0, 0,  0,    /* constants, globals, init */
-                               1,           /* functions */
-                               0, 0,  1, 0, /* name, module, closure, not spec */
-                               1, 3,  0,    /* one owned Chain parameter */
-                               1, 2,  3, 2, /* result Int, captures Chain, Text */
-                               2, 3,  7,    /* registers Chain, env */
-                               2, 71, 0, /* ret r0: deliberately not type-verified in this task */
-                               1, 0,  0, 0,         0, /* module Chain with no exports or globals */
-                               1, 0,  0, UINT32_MAX};  /* debug: empty entry */
+    const uint32_t suffix[] = {
+        0,          0,  0,                /* constants, globals, init */
+        1,                                /* functions */
+        0,          0,  1, 0,             /* name, module, closure, not spec */
+        1,          3,  0,                /* one owned Chain parameter */
+        1,          2,  3, 2,             /* result Int, captures Chain, Text */
+        2,          3,  7,                /* registers Chain, env */
+        2,          71, 0,                /* ret r0: deliberately not type-verified in this task */
+        1,          0,  0, 0,          0, /* module Chain with no exports or globals */
+        1,          0,  0, UINT32_MAX,    /* debug: empty span/name arrays, no text */
+        UINT32_MAX, 0,  0, UINT32_MAX, 0, 0}; /* no source or links/lines */
     const uint8_t header[20] = {'M', 'O', 'B', 'C', 0, 0, 1, 0};
     struct mo_buffer expected, actual;
     mo_buffer_init(&expected, 4096);
@@ -882,28 +1092,36 @@ static void test_literal_boundaries(void) {
                               UINT64_C(253402300799999999), UINT64_C(253402300800000000)};
     for (size_t i = 0; i < sizeof times / sizeof times[0]; i++) {
         literal_bits(&copy[6], times[i]);
-        expect_write(&f, i == 1 || i == 2);
+        if (i == 1 || i == 2) {
+            expect_write(&f);
+        } else {
+            expect_write_reason(&f, "time literal out of range");
+        }
     }
     copy[6] = constants[6];
     const uint64_t chars[] = {0xd7ff, 0xd800, 0xdfff, 0xe000, 0x10ffff, 0x110000};
     for (size_t i = 0; i < sizeof chars / sizeof chars[0]; i++) {
         literal_bits(&copy[5], chars[i]);
-        expect_write(&f, i == 0 || i == 3 || i == 4);
+        if (i == 0 || i == 3 || i == 4) {
+            expect_write(&f);
+        } else {
+            expect_write_reason(&f, "invalid scalar literal");
+        }
     }
     copy[5] = constants[5];
     memset(copy[8].value.immediate, 0, 16);
     copy[8].value.immediate[15] = 0x80;
-    expect_write(&f, false); /* -2^127 */
+    expect_write_reason(&f, "decimal literal out of range"); /* -2^127 */
     copy[8].value.immediate[0] = 1;
-    expect_write(&f, true); /* -(2^127 - 1) */
+    expect_write(&f); /* -(2^127 - 1) */
     memset(copy[8].value.immediate, 0xff, 16);
     copy[8].value.immediate[15] = 0x7f;
-    expect_write(&f, true); /* 2^127 - 1 */
+    expect_write(&f); /* 2^127 - 1 */
     const uint64_t floats[] = {UINT64_C(0x7ff0000000000000), UINT64_C(0xfff0000000000000),
                                UINT64_C(0x7ff0000000000001), UINT64_C(0x8000000000000000)};
     for (size_t i = 0; i < sizeof floats / sizeof floats[0]; i++) {
         literal_bits(&copy[4], floats[i]);
-        expect_write(&f, true);
+        expect_write(&f);
     }
 }
 
@@ -935,11 +1153,15 @@ static void test_utf8(void) {
     f.strings = copy;
     for (size_t i = 0; i < sizeof lengths / sizeof lengths[0]; i++) {
         copy[21] = (struct mo_bytecode_string){.length = lengths[i], .bytes = sequences[i]};
-        expect_write(&f, i < 7);
+        if (i < 7) {
+            expect_write(&f);
+        } else {
+            expect_write_reason(&f, "invalid UTF-8 string");
+        }
     }
     copy[21] = strings[21];
     copy[21].length = MO_LIMIT_STRING_SIZE + 1U;
-    expect_write(&f, false);
+    expect_write_reason(&f, "invalid array or count past limit");
 }
 
 static void test_limits_and_caches(void) {
@@ -969,7 +1191,7 @@ static void test_limits_and_caches(void) {
     ts[5].parameter_count = MO_LIMIT_FIELDS;
     ls[2].fields = many;
     ls[2].field_count = MO_LIMIT_FIELDS;
-    expect_write(&f, true); /* largest tuple and matching layout */
+    expect_write(&f); /* largest tuple and matching layout */
     ts[5] = types[5];
     ls[2] = layouts[2];
     struct mo_parameter parameters[MO_LIMIT_BYTECODE_PARAMETERS];
@@ -982,7 +1204,7 @@ static void test_limits_and_caches(void) {
     fs[5].parameter_count = MO_LIMIT_BYTECODE_PARAMETERS;
     fs[5].register_types = registers;
     fs[5].register_count = MO_LIMIT_BYTECODE_PARAMETERS;
-    expect_write(&f, true); /* generated promise's 256th argument */
+    expect_write(&f); /* generated promise's 256th argument */
     fs[5] = functions[5];
     for (uint32_t i = 0; i < MO_LIMIT_BYTECODE_PARAMETERS; i++) {
         parameters[i].type = 3;
@@ -996,13 +1218,13 @@ static void test_limits_and_caches(void) {
     fs[0].register_count = MO_LIMIT_BYTECODE_PARAMETERS;
     ts[6].parameters = many;
     ts[6].parameter_count = MO_LIMIT_BYTECODE_PARAMETERS - 1U;
-    expect_write(&f, true); /* 255 explicit arguments plus env */
+    expect_write(&f); /* 255 explicit arguments plus env */
     fs[0].parameter_count++;
     registers[MO_LIMIT_BYTECODE_PARAMETERS - 1] = 3;
     registers[MO_LIMIT_BYTECODE_PARAMETERS] = 7;
     fs[0].register_count++;
     ts[6].parameter_count++;
-    expect_write(&f, false); /* 256 explicit arguments plus env */
+    expect_write_reason(&f, "invalid function parameter/register/capture counts");
     fs[0] = functions[0];
     ts[6] = types[6];
     for (uint32_t i = 0; i < MO_LIMIT_FUNCTION_REGISTERS; i++) {
@@ -1010,7 +1232,7 @@ static void test_limits_and_caches(void) {
     }
     fs[1].register_types = many;
     fs[1].register_count = MO_LIMIT_FUNCTION_REGISTERS;
-    expect_write(&f, true);
+    expect_write(&f);
     fs[1] = functions[1];
     uint32_t *code = mo_arena_allocate_array(&arena, 2U * (MO_LIMIT_FUNCTION_INSTRUCTIONS + 1U),
                                              sizeof *code, _Alignof(uint32_t));
@@ -1022,9 +1244,9 @@ static void test_limits_and_caches(void) {
         }
         fs[7].code = code;
         fs[7].code_count = 2U * MO_LIMIT_FUNCTION_INSTRUCTIONS;
-        expect_write(&f, true);
+        expect_write(&f);
         fs[7].code_count += 2;
-        expect_write(&f, false);
+        expect_write_reason(&f, "invalid instruction shape or instruction limit");
     }
     fs[7] = functions[7];
     for (uint32_t i = 0; i < MO_LIMIT_CHOICE_CASES; i++) {
@@ -1039,7 +1261,7 @@ static void test_limits_and_caches(void) {
         memcpy(switch_code + 2, many, (size_t)MO_LIMIT_CHOICE_CASES * 4);
         fs[0].code = switch_code;
         fs[0].code_count = 2U + MO_LIMIT_CHOICE_CASES;
-        expect_write(&f, true); /* maximal variable tail; switch type compatibility is later */
+        expect_write(&f); /* maximal variable tail; switch type compatibility is later */
     }
     fs[0] = functions[0];
     /* Garbage in decoded-only and inactive fields must not enter the wire or change acceptance. */
@@ -1070,24 +1292,558 @@ static void test_limits_and_caches(void) {
     mo_buffer_init(&out, expected.length);
     CHECK(mo_bytecode_write(&fixture, &out, &error));
     CHECK(out.length == expected.length);
+    struct mo_load_error load_error;
+    const struct mo_bytecode *decoded =
+        mo_bytecode_decode(&arena, out.bytes, out.length, &load_error);
+    CHECK(decoded != NULL);
+    if (decoded != NULL) {
+        CHECK(decoded->types[3].reference && decoded->types[3].has_fields);
+        CHECK(!decoded->types[21].reference && !decoded->types[21].has_fields);
+        CHECK(decoded->types[22].reference && decoded->types[22].has_fields);
+        CHECK(decoded->types[3].cases[2].unnamed);
+        CHECK(decoded->constants[4].encoding == MO_CONSTANT_IMMEDIATE64);
+        CHECK(decoded->constants[8].encoding == MO_CONSTANT_DECIMAL128);
+        CHECK(decoded->constants[12].encoding == MO_CONSTANT_CLOSURE);
+    }
     /* The exposed-type boolean is u32, not a C bool copied from memory. */
-    const size_t module_start = out.length - (4 + 8 * 12 + 4 * 16) - 44;
+    const size_t module_start = out.length - (4 + 8 * 36 + 6 * 16) - 44;
     replace_word(&out, module_start + 16, 2);
     checksum(&out);
     refuse_bytes(out.bytes, out.length);
     mo_buffer_free(&out);
     mo_buffer_free(&expected);
     mo_arena_free(&arena);
+    const char shared[] = "Counts";
+    const struct mo_bytecode_string prefixes[] = {{1, (const uint8_t *)shared},
+                                                  {6, (const uint8_t *)shared}};
+    const struct mo_type record = {.kind = MO_TYPE_RECORD, .name = shared, .defined = true};
+    const struct mo_bytecode prefixed = {
+        .strings = prefixes, .string_count = 2, .types = &record, .type_count = 1};
+    round_trip(&prefixed); /* pointer equality must not turn a complete name into a prefix */
+}
+
+static void test_large_tables(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, (size_t)1 << 30);
+    uint32_t n = MO_LIMIT_TYPES;
+    struct mo_type *ts = mo_arena_allocate_array(&arena, n, sizeof *ts, _Alignof(struct mo_type));
+    struct mo_layout *ls =
+        mo_arena_allocate_array(&arena, n, sizeof *ls, _Alignof(struct mo_layout));
+    uint32_t *parameters = mo_arena_allocate_array(&arena, (size_t)(n - 2) * 3, sizeof *parameters,
+                                                   _Alignof(uint32_t));
+    struct mo_bytecode_type_export *es = mo_arena_allocate_array(
+        &arena, MO_LIMIT_MODULE_NAMES, sizeof *es, _Alignof(struct mo_bytecode_type_export));
+    CHECK(ts != NULL && ls != NULL && parameters != NULL && es != NULL);
+    if (ts == NULL || ls == NULL || parameters == NULL || es == NULL) {
+        mo_arena_free(&arena);
+        return;
+    }
+    const struct mo_bytecode_string ss[] = {STRING("C"), STRING("x"), STRING("y")};
+    const struct mo_type_field fields[] = {{"x", 0}, {"y", 0}};
+    const struct mo_type_case cases[] = {{.name = "x", .fields = fields, .field_count = 2},
+                                         {.name = "y", .fields = fields, .field_count = 2}};
+    const uint32_t two_ints[] = {0, 0};
+    ts[0] = (struct mo_type){.kind = MO_TYPE_INT, .defined = true};
+    ts[1] = (struct mo_type){
+        .kind = MO_TYPE_CHOICE, .name = "C", .defined = true, .cases = cases, .case_count = 2};
+    ls[0] = (struct mo_layout){
+        .kind = MO_LAYOUT_CASE, .type = 1, .case_index = 0, .fields = two_ints, .field_count = 2};
+    ls[1] = ls[0];
+    ls[1].case_index = 1;
+    for (uint32_t i = 2; i < n; i++) {
+        uint32_t *p = parameters + (size_t)(i - 2) * 3;
+        p[0] = 0;
+        p[1] = 0;
+        p[2] = i + 1 < n ? i + 1 : 0;
+        ts[i] = (struct mo_type){
+            .kind = MO_TYPE_TUPLE, .parameters = p, .parameter_count = 3, .defined = true};
+        ls[i] =
+            (struct mo_layout){.kind = MO_LAYOUT_TUPLE, .type = i, .fields = p, .field_count = 3};
+    }
+    for (uint32_t i = 0; i < MO_LIMIT_MODULE_NAMES; i++) {
+        es[i] = (struct mo_bytecode_type_export){i, (i & 1U) != 0};
+    }
+    struct mo_bytecode_module module = {
+        .name = 0, .types = es, .type_count = MO_LIMIT_MODULE_NAMES};
+    struct mo_bytecode f = {.strings = ss,
+                            .string_count = ARRAY_COUNT(ss),
+                            .types = ts,
+                            .type_count = n,
+                            .layouts = ls,
+                            .layout_count = n,
+                            .modules = &module,
+                            .module_count = 1};
+    /* A million forward dependencies exercise the explicit DFS stack. Two boxed cases let
+     * both table counts reach their exact limits without duplicate layouts. */
+    round_trip(&f);
+    struct mo_buffer out;
+    struct mo_write_error error;
+    mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+    CHECK(mo_bytecode_write(&f, &out, &error));
+    reject_word(&out, 39, n + 1, "count past limit or remaining bytes", 39);
+    uint32_t layout_count = 43 + 4 + 60 + (n - 2) * 20;
+    reject_word(&out, layout_count, MO_LIMIT_LAYOUTS + 1U, "count past limit or remaining bytes",
+                layout_count);
+    uint32_t module_count = (uint32_t)out.length - 4 - (16 + MO_LIMIT_MODULE_NAMES * 8);
+    reject_word(&out, module_count + 4, MO_LIMIT_MODULE_NAMES + 1U,
+                "count past limit or remaining bytes", module_count + 4);
+    /* Equal type exports are refused even when they disagree on visibility. */
+    reject_word(&out, module_count + 16, 0, "repeated exposed type", 20);
+    f.type_count++;
+    expect_write_reason(&f, "invalid array or count past limit");
+    f.type_count--;
+    f.layout_count++;
+    expect_write_reason(&f, "invalid array or count past limit");
+    mo_buffer_free(&out);
+    mo_arena_free(&arena);
+}
+
+static void test_large_names(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, 16 << 20);
+    uint8_t *text = mo_arena_allocate(&arena, (size_t)MO_LIMIT_STRING_SIZE + 1, 1);
+    CHECK(text != NULL);
+    if (text == NULL) {
+        mo_arena_free(&arena);
+        return;
+    }
+    memset(text, 'a', MO_LIMIT_STRING_SIZE);
+    text[MO_LIMIT_STRING_SIZE] = 0;
+    const struct mo_bytecode_string s = {MO_LIMIT_STRING_SIZE, text};
+    struct mo_type ts[300];
+    for (uint32_t i = 0; i < ARRAY_COUNT(ts); i++) {
+        ts[i] =
+            (struct mo_type){.kind = MO_TYPE_RECORD, .name = (const char *)text, .defined = true};
+    }
+    const struct mo_bytecode f = {
+        .strings = &s, .string_count = 1, .types = ts, .type_count = ARRAY_COUNT(ts)};
+    round_trip(&f); /* names are shared, not copied once per nominal identity */
+    struct mo_buffer out;
+    mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+    const uint8_t header[20] = {'M', 'O', 'B', 'C', 0, 0, 1, 0};
+    CHECK(mo_buffer_append(&out, header, sizeof header));
+    CHECK(mo_buffer_append_le32(&out, 1));
+    CHECK(mo_buffer_append_le32(&out, MO_LIMIT_STRING_SIZE));
+    CHECK(mo_buffer_append(&out, text, MO_LIMIT_STRING_SIZE));
+    const uint32_t prefix[] = {2, 3, 17, 0, MO_LIMIT_FIELDS};
+    for (uint32_t i = 0; i < ARRAY_COUNT(prefix); i++) {
+        CHECK(mo_buffer_append_le32(&out, prefix[i]));
+    }
+    for (uint32_t i = 0; i < MO_LIMIT_FIELDS; i++) {
+        CHECK(mo_buffer_append_le32(&out, 0));
+        CHECK(mo_buffer_append_le32(&out, 0));
+    }
+    for (unsigned i = 0; i < 7; i++) {
+        CHECK(mo_buffer_append_le32(&out, 0));
+    }
+    checksum(&out);
+    clock_t start = clock();
+    refuse_reason(out.bytes, out.length, "duplicate field name", 20);
+    clock_t end = clock();
+    CHECK(start != (clock_t)-1 && end != (clock_t)-1);
+    /* The old repeated scans take tens of CPU seconds; allow ample sanitizer/CI margin. */
+    double seconds = (double)(end - start) / CLOCKS_PER_SEC;
+    CHECK(seconds < 10);
+    CHECK(printf("bytecode repeated-name refusal: %.3f CPU seconds\n", seconds) >= 0);
+    reject_word(&out, 24, MO_LIMIT_STRING_SIZE + 1U, "byte length past limit or remaining bytes",
+                24);
+    mo_buffer_free(&out);
+    mo_arena_free(&arena);
+}
+
+/* Reproduce collisions in the old heap interner without depending on its current hash.
+ * Distinct tuples all land in a 1024-slot window of a 262144-slot table. */
+static MO_MUST_USE uint64_t collision_mix(uint64_t hash, uint32_t value) {
+    hash ^= value;
+    hash *= UINT64_C(0x9e3779b185ebca87);
+    return hash ^ (hash >> 32);
+}
+
+static MO_MUST_USE struct mo_bytecode collision_fixture(struct mo_arena *arena) {
+    enum { NOMINALS = 257, TUPLES = 65536 };
+    static const struct mo_bytecode_string s = STRING("C");
+    struct mo_type *ts =
+        mo_arena_allocate_array(arena, NOMINALS + TUPLES, sizeof *ts, _Alignof(struct mo_type));
+    uint32_t *parameters =
+        mo_arena_allocate_array(arena, TUPLES * 3, sizeof *parameters, _Alignof(uint32_t));
+    CHECK(ts != NULL && parameters != NULL);
+    if (ts == NULL || parameters == NULL) {
+        return (struct mo_bytecode){0};
+    }
+    for (uint32_t i = 0; i < NOMINALS; i++) {
+        ts[i] = (struct mo_type){.kind = MO_TYPE_RECORD, .name = "C", .defined = true};
+    }
+    uint64_t base = collision_mix(0, 13);
+    for (unsigned i = 0; i < 3; i++) {
+        base = collision_mix(base, 0);
+    }
+    base = collision_mix(base, 3);
+    uint32_t count = 0;
+    for (uint32_t a = 0; a < NOMINALS && count < TUPLES; a++) {
+        uint64_t first = collision_mix(base, a);
+        for (uint32_t b = 0; b < NOMINALS && count < TUPLES; b++) {
+            uint64_t second = collision_mix(first, b);
+            for (uint32_t c = 0; c < NOMINALS && count < TUPLES; c++) {
+                if ((collision_mix(second, c) & UINT64_C(262143)) >= 1024) {
+                    continue;
+                }
+                uint32_t *p = parameters + (size_t)count * 3;
+                p[0] = a;
+                p[1] = b;
+                p[2] = c;
+                ts[NOMINALS + count++] = (struct mo_type){
+                    .kind = MO_TYPE_TUPLE, .parameters = p, .parameter_count = 3, .defined = true};
+            }
+        }
+    }
+    CHECK(count == TUPLES);
+    return (struct mo_bytecode){
+        .strings = &s, .string_count = 1, .types = ts, .type_count = NOMINALS + count};
+}
+
+static void test_hash_collisions(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, 16 << 20);
+    struct mo_bytecode f = collision_fixture(&arena);
+    clock_t start = clock();
+    round_trip(&f);
+    clock_t end = clock();
+    CHECK(start != (clock_t)-1 && end != (clock_t)-1);
+    double seconds = (double)(end - start) / CLOCKS_PER_SEC;
+    CHECK(seconds < 10);
+    CHECK(printf("bytecode collision round trip: %.3f CPU seconds\n", seconds) >= 0);
+    mo_arena_free(&arena);
+}
+
+static void test_large_choice_and_code(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, 16 << 20);
+    uint32_t n = MO_LIMIT_CHOICE_CASES;
+    struct mo_bytecode_string *ss = mo_arena_allocate_array(&arena, (size_t)n + 1, sizeof *ss,
+                                                            _Alignof(struct mo_bytecode_string));
+    struct mo_type_case *cases =
+        mo_arena_allocate_array(&arena, n, sizeof *cases, _Alignof(struct mo_type_case));
+    char *text = mo_arena_allocate(&arena, (size_t)n * 6, 1);
+    CHECK(ss != NULL && cases != NULL && text != NULL);
+    if (ss != NULL && cases != NULL && text != NULL) {
+        ss[0] = (struct mo_bytecode_string)STRING("Choice");
+        for (uint32_t i = 0; i < n; i++) {
+            char *name = text + (size_t)i * 6;
+            CHECK(snprintf(name, 6, "c%04x", i) == 5);
+            ss[i + 1] = (struct mo_bytecode_string){5, (const uint8_t *)name};
+            cases[i] = (struct mo_type_case){.name = name};
+        }
+        struct mo_type t = {.kind = MO_TYPE_CHOICE,
+                            .name = "Choice",
+                            .defined = true,
+                            .cases = cases,
+                            .case_count = n};
+        struct mo_bytecode f = {.strings = ss, .string_count = n + 1, .types = &t, .type_count = 1};
+        round_trip(&f);
+        struct mo_buffer out;
+        struct mo_write_error error;
+        mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+        CHECK(mo_bytecode_write(&f, &out, &error));
+        uint32_t count = 34 + 9 * n + 12;
+        reject_word(&out, count, n + 1, "count past limit or remaining bytes", count);
+        t.case_count++;
+        expect_write_reason(&f, "invalid array or count past limit");
+        mo_buffer_free(&out);
+    }
+    uint32_t *code = mo_arena_allocate_array(&arena, MO_LIMIT_FUNCTION_CODE_WORDS + 1U,
+                                             sizeof *code, _Alignof(uint32_t));
+    CHECK(code != NULL);
+    if (code != NULL) {
+        for (uint32_t i = 0; i < MO_LIMIT_FUNCTION_CODE_WORDS; i += 4) {
+            code[i] = MO_OP_FIELD;
+            code[i + 1] = 0;
+            code[i + 2] = 0;
+            code[i + 3] = 0;
+        }
+        struct mo_bytecode f = fixture;
+        struct mo_bytecode_function fs[ARRAY_COUNT(functions)];
+        memcpy(fs, functions, sizeof fs);
+        f.functions = fs;
+        fs[7].code = code;
+        fs[7].code_count = MO_LIMIT_FUNCTION_CODE_WORDS;
+        round_trip(&f); /* also exactly MO_LIMIT_FUNCTION_INSTRUCTIONS */
+        fs[7].code_count++;
+        expect_write_reason(&f, "invalid array or count past limit");
+    }
+    mo_arena_free(&arena);
+}
+
+struct fixture_positions {
+    uint32_t types[ARRAY_COUNT(types)];
+    uint32_t layouts[ARRAY_COUNT(layouts)];
+    uint32_t constants[ARRAY_COUNT(constants)];
+    uint32_t functions[ARRAY_COUNT(functions)];
+    uint32_t code[ARRAY_COUNT(functions)];
+    uint32_t debug[ARRAY_COUNT(debug)];
+    uint32_t globals;
+    uint32_t init;
+    uint32_t module;
+};
+
+/* Offsets from the documented wire sizes, not native sizeofs or decoder bookkeeping. */
+static MO_MUST_USE struct fixture_positions fixture_positions(void) {
+    struct fixture_positions p = {0};
+    uint32_t next = 24;
+    for (uint32_t i = 0; i < ARRAY_COUNT(strings); i++) {
+        next += 4 + strings[i].length;
+    }
+    next += 4;
+    for (uint32_t i = 0; i < ARRAY_COUNT(types); i++) {
+        p.types[i] = next;
+        const struct mo_type *t = &types[i];
+        next += 4;
+        if (t->kind >= MO_TYPE_TUPLE && t->kind <= MO_TYPE_MAP) {
+            next += 4 + t->parameter_count * 4;
+        } else if (t->kind == MO_TYPE_FUNCTION) {
+            next += 8 + t->parameter_count * 4;
+        } else if (t->kind == MO_TYPE_RECORD) {
+            next += 8 + t->field_count * 8;
+        } else if (t->kind == MO_TYPE_CHOICE) {
+            next += 8;
+            for (uint32_t j = 0; j < t->case_count; j++) {
+                next += 8 + t->cases[j].field_count * 8;
+            }
+        } else if (t->kind == MO_TYPE_ENV || t->kind == MO_TYPE_CAPABILITY) {
+            next += 4;
+        }
+    }
+    next += 4;
+    for (uint32_t i = 0; i < ARRAY_COUNT(layouts); i++) {
+        p.layouts[i] = next;
+        const struct mo_layout *l = &layouts[i];
+        next += 12 + l->field_count * 4;
+        if (l->kind == MO_LAYOUT_CASE || l->kind == MO_LAYOUT_CLOSURE) {
+            next += 4;
+        }
+    }
+    next += 4;
+    for (uint32_t i = 0; i < ARRAY_COUNT(constants); i++) {
+        p.constants[i] = next;
+        const struct mo_bytecode_constant *k = &constants[i];
+        enum mo_type_kind kind = types[k->type].kind;
+        next += 4;
+        next += kind == MO_TYPE_DECIMAL    ? 16U
+                : kind <= MO_TYPE_DURATION ? 8U
+                : kind == MO_TYPE_BYTES    ? 4 + k->value.bytes.length
+                : kind == MO_TYPE_BIGINT   ? 8 + k->value.bigint.magnitude.length
+                                           : 4U;
+    }
+    p.globals = next + 4;
+    next += 4 + ARRAY_COUNT(globals) * 12;
+    p.init = next;
+    next += 4 + ARRAY_COUNT(init) * 4;
+    next += 4;
+    for (uint32_t i = 0; i < ARRAY_COUNT(functions); i++) {
+        p.functions[i] = next;
+        const struct mo_bytecode_function *fn = &functions[i];
+        next += 36 + fn->parameter_count * 8 + fn->capture_count * 4 + fn->register_count * 4;
+        p.code[i] = next;
+        next += fn->code_count * 4;
+    }
+    p.module = next + 4;
+    next += 4 + 16 + modules[0].type_count * 8 +
+            (modules[0].function_count + modules[0].global_count) * 4;
+    next += 4;
+    for (uint32_t i = 0; i < ARRAY_COUNT(debug); i++) {
+        p.debug[i] = next;
+        next += 36 + (debug[i].span_count + debug[i].name_count + debug[i].line_count) * 16;
+    }
+    return p;
+}
+
+static void test_refusal_details(void) {
+    struct mo_buffer out;
+    struct mo_write_error error;
+    mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+    CHECK(mo_bytecode_write(&fixture, &out, &error));
+    struct fixture_positions p = fixture_positions();
+    struct mutation {
+        uint32_t offset;
+        uint32_t value;
+        const char *reason;
+        uint32_t reported;
+    };
+#define LOCAL(at, value, reason)                                                                   \
+    { at, value, reason, at }
+#define RELATION(at, value, reason)                                                                \
+    { at, value, reason, 20 }
+    const struct mutation cases[] = {
+        LOCAL(p.types[0], 22, "unknown type kind"),
+        LOCAL(p.types[3] + 4, ARRAY_COUNT(strings), "name string index out of range"),
+        LOCAL(p.types[3] + 4, 22, "name is empty or contains NUL"),
+        LOCAL(p.types[3] + 4, 21, "name is empty or contains NUL"),
+        LOCAL(p.types[25] + 4, 7, "unknown capability"),
+        LOCAL(p.types[3] + 8, 0, "choice has no cases"),
+        LOCAL(p.types[4] + 4, 0, "invalid type parameter count"),
+        LOCAL(p.types[5] + 4, 1, "invalid type parameter count"),
+        LOCAL(p.types[19] + 4, 1, "invalid type parameter count"),
+        RELATION(p.types[4] + 8, ARRAY_COUNT(types), "type index out of range"),
+        RELATION(p.types[4] + 8, 4, "structural type cycle"),
+        RELATION(p.types[6] + 12, ARRAY_COUNT(types),
+                 "type result or env function out of range/kind"),
+        RELATION(p.types[7] + 4, 1, "closure env mismatch"),
+        RELATION(p.types[8], 3, "duplicate interned type"),
+        RELATION(p.types[20] + 20, 7, "duplicate field name"),
+        RELATION(p.types[21] + 20, 1, "duplicate case name"),
+        LOCAL(p.layouts[0], 4, "unknown layout kind"),
+        RELATION(p.layouts[0] + 4, ARRAY_COUNT(types), "layout type out of range"),
+        RELATION(p.layouts[0] + 8, 0, "invalid case layout"),
+        RELATION(p.layouts[0] + 16, ARRAY_COUNT(types), "layout field type out of range"),
+        RELATION(p.layouts[0] + 16, 0, "layout field type mismatch"),
+        LOCAL(p.constants[0], ARRAY_COUNT(types), "constant type out of range"),
+        LOCAL(p.constants[0], 15, "type has no literal encoding"),
+        RELATION(p.constants[0] + 4, 1, "invalid scalar literal"),
+        LOCAL(p.constants[11] + 4, 3, "invalid bigint sign"),
+        RELATION(p.constants[9] + 4, ARRAY_COUNT(strings), "text string index out of range"),
+        RELATION(p.constants[12] + 4, 0, "invalid closure literal"),
+        LOCAL(p.functions[0] + 8, 7, "unknown function kind"),
+        LOCAL(p.functions[0] + 12, 2, "invalid boolean"),
+        LOCAL(p.functions[0] + 24, 2, "invalid parameter ownership"),
+        LOCAL(p.functions[0] + 16, MO_LIMIT_BYTECODE_PARAMETERS + 1U,
+              "count past limit or remaining bytes"),
+        LOCAL(p.code[0] - 4, MO_LIMIT_FUNCTION_CODE_WORDS + 1U,
+              "count past limit or remaining bytes"),
+        RELATION(p.globals, ARRAY_COUNT(types), "global type, name or module out of range"),
+        RELATION(p.init + 4, 1, "invalid or repeated init function"),
+        LOCAL(p.module + 12, 2, "invalid boolean"),
+        RELATION(p.module + 16, 20, "repeated exposed type"),
+        LOCAL(p.code[0], 0, "invalid instruction shape or instruction limit"),
+        LOCAL(p.code[0] + 4, 3, "instruction index out of range or target not a boundary"),
+        LOCAL(p.debug[1] + 20, 0, "invalid debug span"),
+        LOCAL(p.debug[1] + 36 + 4, ARRAY_COUNT(add_regs), "invalid debug register range"),
+        LOCAL(p.debug[1] + 72 + 4, 22, "invalid declaration span"),
+        LOCAL(p.debug[5] + 24, 6, "invalid spec subject or missing linked metadata"),
+        LOCAL(p.debug[6] + 28, 3, "invalid anchor expectation")};
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        reject_word(&out, cases[i].offset, cases[i].value, cases[i].reason, cases[i].reported);
+    }
+#undef RELATION
+#undef LOCAL
+    /* An unused env entry reaches the type-table check without a closure register masking it. */
+    replace_word(&out, p.types[25], MO_TYPE_ENV);
+    replace_word(&out, p.types[25] + 4, ARRAY_COUNT(functions));
+    checksum(&out);
+    refuse_reason(out.bytes, out.length, "type result or env function out of range/kind", 20);
+    mo_buffer_clear(&out);
+    CHECK(mo_bytecode_write(&fixture, &out, &error));
+    /* A closure entry and a two-field case have equal wire widths. Replace the former with
+     * another copy of case layout 0, retaining all following section boundaries. */
+    const uint32_t duplicate[] = {2, 3, 1, 2, 1, 3};
+    for (uint32_t i = 0; i < ARRAY_COUNT(duplicate); i++) {
+        replace_word(&out, p.layouts[3] + i * 4, duplicate[i]);
+    }
+    checksum(&out);
+    refuse_reason(out.bytes, out.length, "duplicate layout", 20);
+    mo_buffer_clear(&out);
+    CHECK(mo_bytecode_write(&fixture, &out, &error));
+    /* A newly declared init is absent from the order, not merely an invalid init index. */
+    replace_word(&out, p.functions[3] + 8, MO_FUNCTION_INIT);
+    replace_word(&out, p.functions[3] + 12, 0);
+    checksum(&out);
+    refuse_reason(out.bytes, out.length, "init function absent from init section", 20);
+    mo_buffer_free(&out);
+
+    /* The last scalar payload is short, but the advertised count's minimum still fits. */
+    mo_buffer_init(&out, 1024);
+    const uint8_t header[20] = {'M', 'O', 'B', 'C', 0, 0, 1, 0};
+    CHECK(mo_buffer_append(&out, header, sizeof header));
+    const uint32_t prefix[] = {0, 1, 3, 0, 1, 0};
+    for (uint32_t i = 0; i < ARRAY_COUNT(prefix); i++) {
+        CHECK(mo_buffer_append_le32(&out, prefix[i]));
+    }
+    for (unsigned i = 0; i < 7; i++) {
+        CHECK(mo_buffer_append_byte(&out, 0));
+    }
+    checksum(&out);
+    refuse_reason(out.bytes, out.length, "truncated literal", 44);
+    mo_buffer_free(&out);
+}
+
+static void test_operand_refusals(void) {
+    const char *reason = "instruction index out of range or target not a boundary";
+    struct fixture_positions p = fixture_positions();
+    for (uint32_t i = 0; i < MO_OPCODE_COUNT; i++) {
+        const struct mo_opcode_info *op = &mo_opcodes[i];
+        uint32_t code[1 + MO_OPCODE_FIXED_OPERANDS + 2] = {op->number};
+        uint32_t tail = op->variable_limit == 0 ? 0U : 2U;
+        code[0] |= tail << 16;
+        struct mo_bytecode f = fixture;
+        struct mo_bytecode_function fs[ARRAY_COUNT(functions)];
+        memcpy(fs, functions, sizeof fs);
+        f.functions = fs;
+        fs[7].code = code;
+        fs[7].code_count = 1U + op->fixed_count + tail;
+        struct mo_buffer out;
+        struct mo_write_error error;
+        mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+        CHECK(mo_bytecode_write(&f, &out, &error));
+        for (uint32_t j = 0; j < op->fixed_count + tail; j++) {
+            enum mo_operand_kind kind = j < op->fixed_count ? op->fixed[j].kind : op->variable.kind;
+            uint32_t limit = 0;
+            switch (kind) {
+            case MO_OPERAND_REGISTER:
+                limit = fs[7].register_count;
+                break;
+            case MO_OPERAND_TYPE:
+                limit = f.type_count;
+                break;
+            case MO_OPERAND_LAYOUT:
+                limit = f.layout_count;
+                break;
+            case MO_OPERAND_CONSTANT:
+                limit = f.constant_count;
+                break;
+            case MO_OPERAND_GLOBAL:
+                limit = f.global_count;
+                break;
+            case MO_OPERAND_FUNCTION:
+                limit = f.function_count;
+                break;
+            case MO_OPERAND_PRIMITIVE:
+                limit = MO_PRIM_COUNT;
+                break;
+            case MO_OPERAND_HOST:
+                limit = MO_HOST_COUNT;
+                break;
+            case MO_OPERAND_TARGET:
+                limit = fs[7].code_count;
+                break;
+            case MO_OPERAND_FIELD:
+                limit = MO_LIMIT_FIELDS;
+                break;
+            case MO_OPERAND_CASE:
+                limit = MO_LIMIT_CHOICE_CASES;
+                break;
+            case MO_OPERAND_NONE:
+                MO_UNREACHABLE();
+            }
+            uint32_t offset = p.code[7] + 4 * (1 + j);
+            reject_word(&out, offset, limit, reason, offset);
+        }
+        mo_buffer_free(&out);
+    }
 }
 
 int main(void) {
     test_empty();
     round_trip(&fixture);
     test_refusals();
+    test_debug_metadata();
     test_wire_refusals();
     test_worked_encoding();
     test_literal_boundaries();
     test_utf8();
     test_limits_and_caches();
+    test_large_tables();
+    test_large_names();
+    test_hash_collisions();
+    test_large_choice_and_code();
+    test_refusal_details();
+    test_operand_refusals();
     return mo_test_report("test_bytecode_io");
 }
