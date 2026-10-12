@@ -477,8 +477,17 @@ static void round_trip(const uint8_t *data, size_t size) {
         struct mo_buffer out;
         struct mo_write_error write_error;
         mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
-        MO_ASSERT(mo_bytecode_write(file, &out, &write_error));
+        MO_ASSERT(mo_bytecode_encode(file, &out, &write_error));
         MO_ASSERT(size == out.length && memcmp(data, out.bytes, size) == 0);
+        struct mo_image *image = mo_load(data, size, &load_error);
+        if (image != NULL) {
+            mo_buffer_clear(&out);
+            MO_ASSERT(mo_bytecode_write(mo_image_bytecode(image), &out, &write_error));
+            MO_ASSERT(size == out.length && memcmp(data, out.bytes, size) == 0);
+            mo_image_free(image);
+        } else {
+            MO_ASSERT(load_error.reason != NULL && load_error.offset <= size);
+        }
         mo_buffer_free(&out);
     } else {
         MO_ASSERT(load_error.reason != NULL && load_error.offset <= size);

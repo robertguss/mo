@@ -1,61 +1,603 @@
 #include "bytecode/verify.h"
+#include "bytecode/signature.h"
+#include "bytecode/verify-program.h"
 
+#include <stdlib.h>
 #include <string.h>
 
-/* Ownership is checked separately from case knowledge: the former must agree exactly. */
 enum state { UNDEFINED, VALUE, OWNED, BORROWED, MOVED, TOKEN };
+#define CASE_UNKNOWN UINT32_MAX
+#define CASE_UNREACHED (UINT32_MAX - 1)
+struct block {
+    uint32_t start, end, last;
+    uint32_t *state;
+};
+struct flow {
+    struct mo_verify_function v;
+    struct mo_arena arena;
+    struct block *blocks;
+    uint32_t *map, *known, *reset, *queue;
+    uint32_t count;
+    const struct layout_key *layouts;
+    const struct mo_types *types;
+    const struct mo_verify_program *program;
+    uint32_t index;
+    uint32_t replay;
+    bool *readable;
+    uint64_t work;
+};
 
-static MO_MUST_USE bool refuse(struct mo_load_error *error, uint32_t offset, const char *reason) {
-    *error = (struct mo_load_error){offset, reason};
+static MO_MUST_USE bool refuse(struct flow *f, uint32_t pc, const char *reason) {
+    *f->v.error = (struct mo_load_error){f->v.base + pc * 4, reason};
     return false;
 }
+static MO_MUST_USE void *array(struct flow *f, size_t count, size_t size, size_t alignment) {
+    void *p = mo_arena_allocate_array(&f->arena, count, size, alignment);
+    if (p == NULL) {
+        *f->v.error = (struct mo_load_error){.reason = "no memory"};
+    }
+    return p;
+}
+static MO_MUST_USE uint32_t next(const struct mo_bytecode_function *fn, uint32_t pc) {
+    const struct mo_opcode_info *op = mo_opcode_find(fn->code[pc] & MO_OPCODE_MASK);
+    MO_ASSERT(op != NULL);
+    return pc + 1U + op->fixed_count + (fn->code[pc] >> MO_OPCODE_VARIABLE_SHIFT);
+}
+static MO_MUST_USE bool terminal(uint32_t op) {
+    return op >= MO_OP_TAIL_CALL && op <= MO_OP_FAIL;
+}
+static MO_MUST_USE bool transfer(uint32_t op) {
+    return terminal(op) || op == MO_OP_JUMP || op == MO_OP_BRANCH || op == MO_OP_SWITCH;
+}
+static MO_MUST_USE uint32_t edge_count(const struct flow *f, uint32_t b) {
+    const struct mo_bytecode_function *fn = f->v.fn;
+    uint32_t pc = f->blocks[b].last, op = fn->code[pc] & MO_OPCODE_MASK;
+    return terminal(op)         ? 0U
+           : op == MO_OP_BRANCH ? 2U
+           : op == MO_OP_SWITCH ? fn->code[pc] >> 16
+                                : 1U;
+}
+static MO_MUST_USE uint32_t edge(const struct flow *f, uint32_t b, uint32_t e) {
+    const struct mo_bytecode_function *fn = f->v.fn;
+    uint32_t pc = f->blocks[b].last, op = fn->code[pc] & MO_OPCODE_MASK;
+    uint32_t target = op == MO_OP_JUMP                           ? fn->code[pc + 1]
+                      : op == MO_OP_BRANCH || op == MO_OP_SWITCH ? fn->code[pc + 2 + e]
+                                                                 : f->blocks[b].end;
+    MO_ASSERT(target < fn->code_count);
+    return f->map[target];
+}
 
-bool mo_bytecode_verify(const struct mo_bytecode *file, const uint32_t *code_offsets,
-                        struct mo_load_error *error) {
-    for (uint32_t index = 0; index < file->function_count; index++) {
-        const struct mo_bytecode_function *fn = &file->functions[index];
-        struct mo_arena scratch;
-        mo_arena_init(&scratch, SIZE_MAX);
-        uint8_t *states = mo_arena_allocate_array(&scratch, fn->register_count, 1, 1);
-        if (states == NULL) {
-            mo_arena_free(&scratch);
-            return refuse(error, 0, "no memory");
+static MO_MUST_USE bool graph(struct flow *f) {
+    const struct mo_bytecode_function *fn = f->v.fn;
+    if (fn->code_count == 0) {
+        return refuse(f, 0, "function has no entry instruction");
+    }
+    f->map = array(f, (size_t)fn->code_count + 1, sizeof *f->map, _Alignof(uint32_t));
+    if (f->map == NULL) {
+        return false;
+    }
+    memset(f->map, 0, ((size_t)fn->code_count + 1) * sizeof *f->map);
+    f->map[0] = 1;
+    for (uint32_t pc = 0; pc < fn->code_count; pc = next(fn, pc)) {
+        if (!mo_verify_instruction(&f->v, pc)) {
+            return false;
         }
-        memset(states, UNDEFINED, fn->register_count);
-        for (uint32_t i = 0; i < fn->parameter_count; i++) {
-            states[i] = file->types[fn->register_types[i]].reference
-                            ? (fn->parameters[i].ownership == MO_PARAMETER_OWNED ? OWNED : BORROWED)
-                            : VALUE;
+        uint32_t op = fn->code[pc] & MO_OPCODE_MASK, end = next(fn, pc);
+        if (transfer(op)) {
+            f->map[end] = 1;
         }
-        if (fn->kind == MO_FUNCTION_CLOSURE) {
-            states[fn->parameter_count] = OWNED;
+        if (op == MO_OP_JUMP) {
+            f->map[fn->code[pc + 1]] = 1;
         }
-        for (uint32_t pc = 0; pc < fn->code_count;) {
-            const struct mo_opcode_info *op = mo_opcode_find(fn->code[pc] & MO_OPCODE_MASK);
-            MO_ASSERT(op != NULL);
-            uint32_t n = fn->code[pc] >> MO_OPCODE_VARIABLE_SHIFT;
-            for (uint32_t i = 0; i < op->fixed_count + n; i++) {
-                struct mo_operand_info operand = i < op->fixed_count ? op->fixed[i] : op->variable;
-                if (operand.kind != MO_OPERAND_REGISTER || operand.access == MO_ACCESS_WRITE ||
-                    operand.access == MO_ACCESS_TOKEN_WRITE) {
-                    continue;
-                }
-                uint32_t reg = fn->code[pc + 1 + i];
-                if (states[reg] != VALUE && states[reg] != OWNED && states[reg] != BORROWED) {
-                    mo_arena_free(&scratch);
-                    return refuse(error, code_offsets[index] + 4 * (pc + 1 + i),
-                                  "register is not readable");
-                }
+        if (op == MO_OP_BRANCH || op == MO_OP_SWITCH) {
+            uint32_t n = op == MO_OP_BRANCH ? 2U : fn->code[pc] >> 16;
+            for (uint32_t i = 0; i < n; i++) {
+                f->map[fn->code[pc + 2 + i]] = 1;
             }
-            for (uint32_t i = 0; i < op->fixed_count; i++) {
-                if (op->fixed[i].access == MO_ACCESS_WRITE) {
-                    uint32_t reg = fn->code[pc + 1 + i];
-                    states[reg] = file->types[fn->register_types[reg]].reference ? OWNED : VALUE;
-                }
-            }
-            pc += 1U + op->fixed_count + n;
         }
-        mo_arena_free(&scratch);
+        if (end == fn->code_count && !transfer(op)) {
+            return refuse(f, pc, "function falls off code");
+        }
+    }
+    for (uint32_t pc = 0; pc < fn->code_count; pc = next(fn, pc)) {
+        f->count += f->map[pc];
+    }
+    f->blocks = array(f, f->count, sizeof *f->blocks, _Alignof(struct block));
+    f->queue = array(f, f->count, sizeof *f->queue, _Alignof(uint32_t));
+    f->known = array(f, fn->code_count, sizeof *f->known, _Alignof(uint32_t));
+    f->reset = array(f, fn->code_count, sizeof *f->reset, _Alignof(uint32_t));
+    if (f->blocks == NULL || f->queue == NULL || f->known == NULL || f->reset == NULL) {
+        return false;
+    }
+    uint32_t b = 0;
+    for (uint32_t pc = 0; pc < fn->code_count; pc = next(fn, pc)) {
+        if (f->map[pc] != 0) {
+            if (pc != 0) {
+                f->blocks[b++].end = pc;
+            }
+            f->blocks[b] = (struct block){.start = pc};
+        }
+        f->map[pc] = b;
+        f->blocks[b].last = pc;
+        f->known[pc] = CASE_UNKNOWN;
+        f->reset[pc] = MO_NO_INDEX;
+    }
+    f->blocks[b].end = fn->code_count;
+    bool *seen = array(f, f->count, sizeof *seen, _Alignof(bool));
+    if (seen == NULL) {
+        return false;
+    }
+    memset(seen, 0, f->count * sizeof *seen);
+    uint32_t end = 1;
+    f->queue[0] = 0;
+    seen[0] = true;
+    for (uint32_t start = 0; start < end; start++) {
+        uint32_t from = f->queue[start];
+        for (uint32_t i = 0; i < edge_count(f, from); i++) {
+            uint32_t to = edge(f, from, i);
+            if (!seen[to]) {
+                seen[to] = true;
+                f->queue[end++] = to;
+            }
+        }
+    }
+    for (uint32_t i = 0; i < f->count; i++) {
+        if (!seen[i]) {
+            return refuse(f, f->blocks[i].start, "unreachable instruction");
+        }
     }
     return true;
+}
+
+static MO_MUST_USE int layout_order(const void *a, const void *b) {
+    const struct layout_key *x = a, *y = b;
+    if (x->type != y->type) {
+        return (x->type > y->type) - (x->type < y->type);
+    }
+    return (x->tag > y->tag) - (x->tag < y->tag);
+}
+uint32_t mo_verify_layout_lookup(const struct layout_key *keys, uint32_t count, uint32_t type,
+                                 uint32_t tag) {
+    uint32_t lo = 0, hi = count;
+    struct layout_key key = {type, tag, 0};
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (layout_order(&keys[mid], &key) < 0) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo < count && layout_order(&keys[lo], &key) == 0 ? keys[lo].index : MO_NO_INDEX;
+}
+static MO_MUST_USE uint32_t layout(const struct flow *f, uint32_t type, uint32_t tag) {
+    return mo_verify_layout_lookup(f->layouts, f->v.file->layout_count, type, tag);
+}
+
+/* Each case fact changes only from unreached to a case/unknown, then to unknown. Work queues
+ * operate on one register, not full state vectors: O(code words * registers), including loops. */
+static MO_MUST_USE bool cases(struct flow *f) {
+    const struct mo_bytecode_function *fn = f->v.fn;
+    uint32_t *facts = array(f, f->count, sizeof *facts, _Alignof(uint32_t));
+    uint32_t *last_write = array(f, f->count, sizeof *last_write, _Alignof(uint32_t));
+    bool *queued = array(f, f->count, sizeof *queued, _Alignof(bool));
+    if (facts == NULL || queued == NULL || last_write == NULL) {
+        return false;
+    }
+    for (uint32_t r = 0; r < fn->register_count; r++) {
+        if (f->v.file->types[fn->register_types[r]].kind != MO_TYPE_CHOICE) {
+            continue;
+        }
+        for (uint32_t b = 0; b < f->count; b++) {
+            facts[b] = CASE_UNREACHED;
+            queued[b] = false;
+            last_write[b] = MO_NO_INDEX;
+            for (uint32_t pc = f->blocks[b].start; pc < f->blocks[b].end; pc = next(fn, pc)) {
+                const struct mo_opcode_info *op = mo_opcode_find(fn->code[pc] & MO_OPCODE_MASK);
+                MO_ASSERT(op != NULL);
+                f->work++;
+                for (uint32_t i = 0; i < op->fixed_count; i++) {
+                    if ((op->fixed[i].access == MO_ACCESS_WRITE ||
+                         op->fixed[i].access == MO_ACCESS_TOKEN_WRITE) &&
+                        fn->code[pc + 1 + i] == r) {
+                        last_write[b] = pc;
+                    }
+                }
+            }
+        }
+        uint32_t start = 0, end = 0, pending = 1;
+        f->queue[end] = 0;
+        end = (end + 1) % f->count;
+        facts[0] = CASE_UNKNOWN;
+        queued[0] = true;
+        while (pending != 0) {
+            uint32_t b = f->queue[start];
+            start = (start + 1) % f->count;
+            pending--;
+            queued[b] = false;
+            uint32_t out = last_write[b] == MO_NO_INDEX ? facts[b] : CASE_UNKNOWN;
+            uint32_t pc = f->blocks[b].last;
+            bool switches =
+                (fn->code[pc] & MO_OPCODE_MASK) == MO_OP_SWITCH && fn->code[pc + 1] == r;
+            for (uint32_t i = 0; i < edge_count(f, b); i++) {
+                f->work++;
+                uint32_t to = edge(f, b, i), incoming = switches ? i : out;
+                uint32_t merged = facts[to] == CASE_UNREACHED ? incoming
+                                  : facts[to] == incoming     ? incoming
+                                                              : CASE_UNKNOWN;
+                if (merged != facts[to]) {
+                    facts[to] = merged;
+                    if (!queued[to]) {
+                        MO_ASSERT(pending < f->count);
+                        f->queue[end] = to;
+                        end = (end + 1) % f->count;
+                        pending++;
+                        queued[to] = true;
+                    }
+                }
+            }
+        }
+        for (uint32_t b = 0; b < f->count; b++) {
+            uint32_t fact = facts[b];
+            for (uint32_t pc = f->blocks[b].start; pc < f->blocks[b].end; pc = next(fn, pc)) {
+                const struct mo_opcode_info *op = mo_opcode_find(fn->code[pc] & MO_OPCODE_MASK);
+                MO_ASSERT(op != NULL);
+                uint32_t number = op->number;
+                if ((number == MO_OP_CASE_FIELD || number == MO_OP_RESET) &&
+                    fn->code[pc + 2] == r) {
+                    f->known[pc] = fact;
+                }
+                for (uint32_t i = 0; i < op->fixed_count; i++) {
+                    if ((op->fixed[i].access == MO_ACCESS_WRITE ||
+                         op->fixed[i].access == MO_ACCESS_TOKEN_WRITE) &&
+                        fn->code[pc + 1 + i] == r) {
+                        fact = CASE_UNKNOWN;
+                    }
+                }
+                f->work++;
+            }
+        }
+    }
+    for (uint32_t pc = 0; pc < fn->code_count; pc = next(fn, pc)) {
+        uint32_t op = fn->code[pc] & MO_OPCODE_MASK;
+        if (op == MO_OP_CASE_FIELD && f->known[pc] != fn->code[pc + 3]) {
+            return refuse(f, pc, "case is not known");
+        }
+        if (op == MO_OP_RESET || op == MO_OP_MAKE_CASE || op == MO_OP_MAKE_CLOSURE) {
+            uint32_t type, tag;
+            if (op == MO_OP_RESET) {
+                type = fn->register_types[fn->code[pc + 2]];
+                tag = f->v.file->types[type].kind == MO_TYPE_CHOICE ? f->known[pc] : MO_NO_INDEX;
+            } else if (op == MO_OP_MAKE_CASE) {
+                type = fn->code[pc + 2];
+                tag = fn->code[pc + 3];
+            } else {
+                type = fn->register_types[fn->code[pc + 1]];
+                tag = fn->code[pc + 2];
+            }
+            uint32_t l = layout(f, type, tag);
+            if (op == MO_OP_RESET && l == MO_NO_INDEX) {
+                return refuse(f, pc, "reset needs a known fixed layout");
+            }
+            /* Inline/empty/ref cases have no fixed block; only boxed cases need a layout. */
+            if (op == MO_OP_MAKE_CLOSURE && l == MO_NO_INDEX) {
+                return refuse(f, pc, "closure layout is missing");
+            }
+            if (op == MO_OP_MAKE_CASE && l == MO_NO_INDEX) {
+                if (mo_case_shape(f->types, type, tag) == MO_CASE_BOXED) {
+                    return refuse(f, pc, "boxed case layout is missing");
+                }
+            }
+            f->reset[pc] = l;
+        }
+    }
+    return true;
+}
+
+static MO_MUST_USE enum mo_operand_access access(const struct flow *f, uint32_t pc, uint32_t i) {
+    const struct mo_bytecode_function *fn = f->v.fn;
+    const struct mo_opcode_info *op = mo_opcode_find(fn->code[pc] & MO_OPCODE_MASK);
+    MO_ASSERT(op != NULL);
+    if (i < op->fixed_count) {
+        return op->fixed[i].access;
+    }
+    uint32_t parameter = i - op->fixed_count;
+    if (op->variable.access == MO_ACCESS_CALL_PARAMETER) {
+        uint32_t target = fn->code[pc + (op->number == MO_OP_CALL ? 2U : 1U)];
+        return f->v.file->functions[target].parameters[parameter].ownership == MO_PARAMETER_OWNED
+                   ? MO_ACCESS_CONSUME
+                   : MO_ACCESS_READ;
+    }
+    if (op->variable.access == MO_ACCESS_PRIM_PARAMETER ||
+        op->variable.access == MO_ACCESS_HOST_PARAMETER) {
+        const char *modes = mo_verify_parameter_modes(fn->code + pc);
+        MO_ASSERT(modes != NULL);
+        return modes[parameter] == 'o' ? MO_ACCESS_CONSUME : MO_ACCESS_READ;
+    }
+    return op->variable.access;
+}
+
+static MO_MUST_USE bool ownership(struct flow *f) {
+    const struct mo_bytecode_function *fn = f->v.fn;
+    size_t slots = (size_t)fn->register_count + 1;
+    uint32_t *state = array(f, slots, sizeof *state, _Alignof(uint32_t));
+    uint32_t *seen = array(f, fn->register_count, sizeof *seen, _Alignof(uint32_t));
+    uint32_t *consumed = array(f, fn->register_count, sizeof *consumed, _Alignof(uint32_t));
+    if (state == NULL || seen == NULL || consumed == NULL) {
+        return false;
+    }
+    memset(state, 0, slots * sizeof *state);
+    memset(seen, 0, fn->register_count * sizeof *seen);
+    memset(consumed, 0, fn->register_count * sizeof *consumed);
+    for (uint32_t r = 0; r < fn->parameter_count; r++) {
+        state[r] = f->v.file->types[fn->register_types[r]].reference
+                       ? fn->parameters[r].ownership == MO_PARAMETER_OWNED ? OWNED : BORROWED
+                       : VALUE;
+    }
+    if (fn->kind == MO_FUNCTION_CLOSURE) {
+        state[fn->parameter_count] = OWNED;
+    }
+    f->blocks[0].state = mo_arena_copy(&f->arena, state, slots * sizeof *state, _Alignof(uint32_t));
+    if (f->blocks[0].state == NULL) {
+        *f->v.error = (struct mo_load_error){.reason = "no memory"};
+        return false;
+    }
+    uint32_t end = 1;
+    f->queue[0] = 0;
+    for (uint32_t start = 0; start < end; start++) {
+        uint32_t b = f->queue[start];
+        memcpy(state, f->blocks[b].state, slots * sizeof *state);
+        for (uint32_t pc = f->blocks[b].start; pc < f->blocks[b].end; pc = next(fn, pc)) {
+            uint32_t op = fn->code[pc] & MO_OPCODE_MASK;
+            const struct mo_opcode_info *info = mo_opcode_find(op);
+            MO_ASSERT(info != NULL);
+            const uint32_t *a = fn->code + pc + 1;
+            uint32_t count = info->fixed_count + (fn->code[pc] >> 16), move = 0;
+            if (f->program != NULL && fn->kind == MO_FUNCTION_INIT) {
+                uint32_t needed = 0;
+                if (op == MO_OP_GLOBAL) {
+                    needed = f->program->global_rank[a[1]];
+                }
+                if (op == MO_OP_CALL || op == MO_OP_TAIL_CALL) {
+                    needed = f->program->required[a[op == MO_OP_CALL ? 1 : 0]];
+                }
+                if (op == MO_OP_CALL_CLOSURE || op == MO_OP_TAIL_CALL_CLOSURE) {
+                    uint32_t r = a[op == MO_OP_CALL_CLOSURE ? 1 : 0];
+                    needed =
+                        f->program->required[f->v.file->function_count + fn->register_types[r]];
+                }
+                uint32_t available =
+                    f->program->init_rank[f->index] - 1 + state[fn->register_count];
+                if (needed > available) {
+                    return refuse(f, pc, "init reads an unset global");
+                }
+            }
+            if (f->readable != NULL && pc == f->replay) {
+                for (uint32_t r = 0; r < fn->register_count; r++) {
+                    f->readable[r] = state[r] == VALUE || state[r] == OWNED || state[r] == BORROWED;
+                }
+            }
+            for (uint32_t i = 0; i < count; i++) {
+                enum mo_operand_access mode = access(f, pc, i);
+                if (mode == MO_ACCESS_NONE || mode == MO_ACCESS_WRITE ||
+                    mode == MO_ACCESS_TOKEN_WRITE) {
+                    continue;
+                }
+                uint32_t r = a[i], s = state[r];
+                f->work++;
+                bool consumes = mode == MO_ACCESS_TOKEN_CONSUME || mode == MO_ACCESS_CONSUME ||
+                                (mode == MO_ACCESS_MOVE && s == OWNED);
+                if (mode == MO_ACCESS_TOKEN_CONSUME) {
+                    if (s < TOKEN) {
+                        return refuse(f, pc + 1 + i, "register is not a token");
+                    }
+                } else if (s != VALUE && s != OWNED && s != BORROWED) {
+                    return refuse(f, pc + 1 + i, "register is not readable");
+                }
+                if (mode == MO_ACCESS_MOVE) {
+                    move = s;
+                }
+                bool reference = f->v.file->types[fn->register_types[r]].reference;
+                if (consumes && reference && mode != MO_ACCESS_TOKEN_CONSUME && s != OWNED) {
+                    return refuse(f, pc + 1 + i, "consume needs an owned reference");
+                }
+                if (reference || mode == MO_ACCESS_TOKEN_CONSUME) {
+                    if ((seen[r] == pc + 1 && consumes) || consumed[r] == pc + 1) {
+                        return refuse(f, pc + 1 + i, "consumed register is repeated");
+                    }
+                    seen[r] = pc + 1;
+                    if (consumes) {
+                        consumed[r] = pc + 1;
+                    }
+                }
+                if (op == MO_OP_TAIL_CALL && i >= info->fixed_count && mode == MO_ACCESS_READ &&
+                    reference && s != BORROWED) {
+                    return refuse(f, pc + 1 + i, "tail borrow needs a borrowed reference");
+                }
+            }
+            if (op == MO_OP_REUSE && state[a[1]] != TOKEN + a[2]) {
+                return refuse(f, pc, "reuse layout differs from token");
+            }
+            for (uint32_t i = 0; i < count; i++) {
+                enum mo_operand_access mode = access(f, pc, i);
+                if (mode == MO_ACCESS_TOKEN_CONSUME ||
+                    ((mode == MO_ACCESS_CONSUME || mode == MO_ACCESS_MOVE) &&
+                     f->v.file->types[fn->register_types[a[i]]].reference &&
+                     state[a[i]] == OWNED)) {
+                    state[a[i]] = MOVED;
+                }
+            }
+            for (uint32_t i = 0; i < info->fixed_count; i++) {
+                enum mo_operand_access mode = info->fixed[i].access;
+                if (mode != MO_ACCESS_WRITE && mode != MO_ACCESS_TOKEN_WRITE) {
+                    continue;
+                }
+                uint32_t r = a[i];
+                if (state[r] == OWNED || state[r] >= TOKEN) {
+                    return refuse(f, pc + 1 + i, "write overwrites ownership or token");
+                }
+                state[r] = mode == MO_ACCESS_TOKEN_WRITE ? TOKEN + f->reset[pc]
+                           : op == MO_OP_MOVE            ? move
+                           : f->v.file->types[fn->register_types[r]].reference
+                               ? op == MO_OP_CONST || op == MO_OP_GLOBAL ? BORROWED : OWNED
+                               : VALUE;
+            }
+            if (op == MO_OP_SET_GLOBAL) {
+                if (state[fn->register_count] != 0) {
+                    return refuse(f, pc, "init sets its global twice");
+                }
+                state[fn->register_count] = 1;
+            }
+            if (op == MO_OP_RET || op == MO_OP_TAIL_CALL || op == MO_OP_TAIL_CALL_CLOSURE) {
+                for (uint32_t r = 0; r < fn->register_count; r++) {
+                    f->work++;
+                    if (state[r] == OWNED || state[r] >= TOKEN) {
+                        return refuse(f, pc, "return leaves ownership or token");
+                    }
+                }
+                if (fn->kind == MO_FUNCTION_INIT && state[fn->register_count] == 0) {
+                    return refuse(f, pc, "init returns without setting its global");
+                }
+            }
+        }
+        for (uint32_t i = 0; i < edge_count(f, b); i++) {
+            uint32_t to = edge(f, b, i);
+            f->work += slots;
+            if (f->blocks[to].state == NULL) {
+                f->blocks[to].state =
+                    mo_arena_copy(&f->arena, state, slots * sizeof *state, _Alignof(uint32_t));
+                if (f->blocks[to].state == NULL) {
+                    *f->v.error = (struct mo_load_error){.reason = "no memory"};
+                    return false;
+                }
+                MO_ASSERT(end < f->count);
+                f->queue[end++] = to;
+            } else if (memcmp(state, f->blocks[to].state, slots * sizeof *state) != 0) {
+                return refuse(f, f->blocks[to].start, "register states disagree at join");
+            }
+        }
+    }
+    return true;
+}
+
+static MO_MUST_USE bool function(struct flow *f) {
+    mo_arena_init(&f->arena, SIZE_MAX);
+    bool ok = graph(f) && cases(f) && ownership(f);
+    mo_arena_free(&f->arena);
+    return ok;
+}
+
+bool mo_bytecode_verify(const struct mo_bytecode *file, const struct mo_types *types,
+                        const uint32_t *code_offsets, struct mo_load_error *error) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, SIZE_MAX);
+    uint8_t *abilities = mo_bytecode_abilities(&arena, file);
+    struct layout_key *layouts = mo_arena_allocate_array(
+        &arena, file->layout_count, sizeof *layouts, _Alignof(struct layout_key));
+    if (abilities == NULL || layouts == NULL) {
+        *error = (struct mo_load_error){.reason = "no memory"};
+        mo_arena_free(&arena);
+        return false;
+    }
+    for (uint32_t i = 0; i < file->type_count; i++) {
+        const struct mo_type *t = &file->types[i];
+        if ((t->kind == MO_TYPE_SET || t->kind == MO_TYPE_MAP) &&
+            (abilities[t->parameters[0]] & MO_ABILITY_HASH) == 0) {
+            *error = (struct mo_load_error){20, "map/set key lacks Hash"};
+            mo_arena_free(&arena);
+            return false;
+        }
+    }
+    for (uint32_t i = 0; i < file->function_count; i++) {
+        const struct mo_bytecode_function *fn = &file->functions[i];
+        if (fn->kind != MO_FUNCTION_PROMISE || file->debug[i].subject == MO_NO_INDEX) {
+            continue;
+        }
+        const struct mo_bytecode_function *subject = &file->functions[file->debug[i].subject];
+        bool matches = fn->parameter_count == subject->parameter_count + 1;
+        for (uint32_t j = 0; j < subject->parameter_count && matches; j++) {
+            matches = fn->parameters[j].type == subject->parameters[j].type;
+        }
+        if (!matches || fn->parameters[subject->parameter_count].type != subject->result_type) {
+            *error = (struct mo_load_error){20, "promise parameters differ from subject"};
+            mo_arena_free(&arena);
+            return false;
+        }
+    }
+    for (uint32_t i = 0; i < file->layout_count; i++) {
+        const struct mo_layout *l = &file->layouts[i];
+        layouts[i] = (struct layout_key){l->type,
+                                         l->kind == MO_LAYOUT_CASE      ? l->case_index
+                                         : l->kind == MO_LAYOUT_CLOSURE ? l->function
+                                                                        : MO_NO_INDEX,
+                                         i};
+    }
+    qsort(layouts, file->layout_count, sizeof *layouts, layout_order);
+    struct flow lookup = {.v = {.file = file}, .layouts = layouts, .types = types};
+    for (uint32_t i = 0; i < file->constant_count; i++) {
+        const struct mo_bytecode_constant *c = &file->constants[i];
+        if (file->types[c->type].kind == MO_TYPE_FUNCTION &&
+            layout(&lookup, c->type, c->value.function) == MO_NO_INDEX) {
+            *error = (struct mo_load_error){20, "closure constant layout is missing"};
+            mo_arena_free(&arena);
+            return false;
+        }
+    }
+    struct mo_verify_program program;
+    bool ok = mo_verify_program_init(&arena, file, code_offsets, &program, error);
+    for (uint32_t i = 0; i < file->function_count && ok; i++) {
+        struct flow f = {
+            .v = {file, &file->functions[i], abilities, code_offsets[i], error, types, layouts},
+            .layouts = layouts,
+            .types = types,
+            .program = &program,
+            .index = i};
+        ok = function(&f);
+    }
+    mo_arena_free(&arena);
+    return ok;
+}
+
+bool mo_bytecode_readable(const struct mo_bytecode *file, const struct mo_types *types,
+                          uint32_t index, uint32_t base, uint32_t pc, bool *readable,
+                          uint64_t *work, struct mo_load_error *error) {
+    MO_ASSERT(file != NULL && types != NULL && index < file->function_count && readable != NULL &&
+              work != NULL && error != NULL);
+    const struct mo_bytecode_function *fn = &file->functions[index];
+    bool boundary = false;
+    for (uint32_t at = 0; at < fn->code_count; at = next(fn, at)) {
+        boundary |= at == pc;
+    }
+    if (!boundary) {
+        *error = (struct mo_load_error){.reason = "invalid replay instruction"};
+        return false;
+    }
+    struct mo_arena arena;
+    mo_arena_init(&arena, SIZE_MAX);
+    uint8_t *abilities = mo_bytecode_abilities(&arena, file);
+    struct layout_key *layouts = mo_arena_allocate_array(
+        &arena, file->layout_count, sizeof *layouts, _Alignof(struct layout_key));
+    if (abilities == NULL || layouts == NULL) {
+        *error = (struct mo_load_error){.reason = "no memory"};
+        mo_arena_free(&arena);
+        return false;
+    }
+    for (uint32_t i = 0; i < file->layout_count; i++) {
+        const struct mo_layout *l = &file->layouts[i];
+        layouts[i] = (struct layout_key){l->type,
+                                         l->kind == MO_LAYOUT_CASE      ? l->case_index
+                                         : l->kind == MO_LAYOUT_CLOSURE ? l->function
+                                                                        : MO_NO_INDEX,
+                                         i};
+    }
+    qsort(layouts, file->layout_count, sizeof *layouts, layout_order);
+    struct flow f = {.v = {file, fn, abilities, base, error, types, layouts},
+                     .layouts = layouts,
+                     .types = types,
+                     .replay = pc,
+                     .readable = readable};
+    bool ok = function(&f);
+    *work = f.work;
+    mo_arena_free(&arena);
+    return ok;
 }

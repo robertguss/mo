@@ -482,6 +482,7 @@ static void sections(struct reader *r) {
 
 struct mo_bytecode *mo_bytecode_decode_info(struct mo_arena *arena, const uint8_t *bytes,
                                             size_t length, const uint32_t **code_offsets,
+                                            struct mo_types *types_out,
                                             struct mo_load_error *error) {
     MO_ASSERT(arena != NULL && error != NULL && (bytes != NULL || length == 0));
     *error = (struct mo_load_error){.reason = "invalid header or bytecode size"};
@@ -569,10 +570,13 @@ struct mo_bytecode *mo_bytecode_decode_info(struct mo_arena *arena, const uint8_
             }
         }
     }
+    if (types_out != NULL) {
+        *types_out = view;
+    }
     return r.file;
 }
 
 struct mo_bytecode *mo_bytecode_decode(struct mo_arena *arena, const uint8_t *bytes, size_t length,
                                        struct mo_load_error *error) {
-    return mo_bytecode_decode_info(arena, bytes, length, NULL, error);
+    return mo_bytecode_decode_info(arena, bytes, length, NULL, NULL, error);
 }

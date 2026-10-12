@@ -318,9 +318,8 @@ ff ff ff ff 03 00 00 00                         ; unnamed, t3 (recursive)
 ```
 
 **Writing and reading.** `mo_bytecode_write` borrows a decoded `mo_bytecode`
-and writes structurally checked bytes to an initialized, empty `mo_buffer`
-(and fully verified bytes once the verifier is implemented). It preserves
-all table order and indices, never adds strings, and regenerates the header
+and writes fully verified bytes to an initialized, empty `mo_buffer`. It
+preserves all table order and indices, never adds strings, and regenerates the header
 and checksum rather than trusting the decoded header. It ignores the
 constant's decoded-only `encoding`, selecting its payload by type. On invalid
 data, a format/output limit or no memory, it returns false with a static
@@ -565,7 +564,9 @@ Each instruction **reads** some operands and **consumes** others:
   keeps its state.
 - To consume a register of a reference type means it must be `owned`, and it
   becomes `moved`. To consume a register of an immediate type only reads it.
-- A register an instruction consumes can't appear in that instruction twice.
+- A reference register an instruction consumes can't appear among its read or
+  consume operands twice, even when the other occurrence only borrows it.
+  Immediate operands may repeat. A result operand is not a second occurrence.
 - An instruction reads and consumes its operands first, then writes its
   result. The result register must not be `owned` or hold a token at that
   point. So `prim r1, List.append, List(Int), r1, r2` is valid: it consumes
@@ -575,6 +576,10 @@ Each instruction **reads** some operands and **consumes** others:
   type, unless the instruction says otherwise.
 
 For a parameter of an immediate type, `owned` and `borrowed` mean nothing.
+Tokens temporarily replace the register's declared type: no ordinary read,
+move, duplicate or drop can use them. Consuming a token leaves `moved`, even
+in an immediate-typed register; a later ordinary write restores its declared
+type's state.
 
 A choice register can also have a **known case**. A `switch` gives it one on
 each edge it takes. Any instruction that writes the register removes it, and
@@ -889,16 +894,24 @@ checks:
    valid (3.1).
 2. **Types and layouts.** Every type well-formed (2.1); every layout's fields
    matching its record, tuple, case or closure; every choice type with at
-   least one case and at most 65,535.
+   least one case and at most 65,535. Every allocation has its fixed layout;
+   unused types need no layout. Every closure constant has its closure layout.
+   Map keys and set elements have `Hash`.
 3. **Code shape.** Every function's code decodes into whole instructions, with
    the right number of operands for each opcode; every jump target is the
    start of an instruction in the same function; every path ends as section
-   4.5 requires.
+   4.5 requires. Every instruction is reachable from its function's entry;
+   unreachable instructions are refused. Infinite loops are allowed: this
+   checks finite paths and fall-through, not termination.
 4. **Types of operands.** Each instruction's registers have the types its
    opcode, primitive or host operation requires at its instantiation type;
    calls match their targets' parameter and result types; `ret` matches the
    function's result type; `make_closure` matches its function; `switch` has
-   one target per case.
+   one target per case. `construct` and `reuse` cannot build closures;
+   `make_closure` requires its closure layout. `set_field` changes only a
+   record or tuple, not a choice or an `env`; `field` may read `env` captures.
+   Direct calls cannot target closure code (whose `env` only closure calls
+   supply).
 5. **Ownership and definition.** A dataflow over the states of section 4.2,
    with known cases, per function. Every read and every consume follows 4.2.
    At every join, each register's state is the same on every incoming edge.
@@ -909,9 +922,67 @@ checks:
    global set by exactly one of them, listed once in the `init` section.
    `fail`, the fake constructors, and `Console`'s `printed` and
    `printed_errors` only in spec code (reference 12.4). Code that isn't spec
-   code doesn't call, tail-call or make a closure of a spec function or an
-   `init` function. No function of a kind other than `function` has a
-   borrowed parameter. Each kind has its signature (3.3).
+   code doesn't call, tail-call, make a closure of, or load a closure constant
+   of spec code. No code calls an `init` function: only image initialization
+   invokes it. No function of a kind other than `function` has a borrowed
+   parameter. Each kind has its signature (3.3).
+
+A promise linked to a subject has the subject's parameter types in order,
+then its result type, all owned. Without a subject link there is no signature
+to compare; its nonempty parameter array and Int result are still checked.
+
+An init function's stores all name one global, distinct from every other
+initializer's global. Dataflow proves exactly one store on each normally
+returning path; `stop` may precede the store. A store in a cycle or a second
+store on a path is refused. At each global read or call in an init function,
+all possibly read globals must already be initialized. This includes reads
+through recursive helpers and closure calls. An unknown closure call considers
+every non-spec closure of its function type; this conservative rule can refuse
+an init even when a particular closure value would be safe. Reading its own
+global after its store is allowed. The VM still guards unset reads as an
+internal error (3.2). Source-order tie breaking is a compiler rule, not a
+loader check: the file contains no source-order dependency information.
+
+Primitive and host signatures come only from `prims.def` and `hostops.def`.
+Generic variables bind exact type indices consistently, and `Equal`, `Hash`
+and `Number` constraints are checked, including recursive nominal types.
+Functions, environments and capabilities have neither `Equal` nor `Hash`;
+Float has `Equal` but not `Hash`. Other compound types have an ability exactly
+when all their parts have it. `Number` is Int, BigInt, Decimal or Float.
+The binary format has no marker for a library nominal declaration. For this
+ABI, signature matching recognizes library declarations by their exact ordered
+case/field shapes, not their printable type names: Option has `None` and
+unnamed `Some(T)`; Result has unnamed `Ok(T)` and `Error(U)`; Ordering has
+field-less `Less`, `Equal`, `Greater`; FileError has `NotFound(path: Text)`,
+`NotAllowed(path: Text)`, `NotText(path: Text)`, and
+`Failed(path: Text, reason: Text)`. Their field types still bind file indices.
+Entry is a record `(name: Text, kind: EntryKind)`; EntryKind has field-less
+`File`, `Folder`, `Link`, `Other` cases. Entry needs its record layout.
+This permits a nominal declaration of the same shape at an ABI boundary
+without letting a name disguise a different representation.
+Tuples and boxed cases appearing explicitly in a primitive or host signature
+need their fixed layouts. Generic variables do not impose this requirement
+on their bound types: these values are passed or copied, not constructed by
+the operation.
+
+Non-spec code can obtain function values only from non-spec closure creation,
+non-spec closure constants, its inputs or globals initialized by non-spec
+code. Consequently a run starting at non-spec `main` cannot obtain or call a
+spec closure, even through containers or ordinary helper parameters. C callers
+that explicitly inject spec function values are outside that entry guarantee.
+
+Local type, kind, case and exit refusals point to the instruction head;
+read/consume/write refusals point to the offending operand; a join refusal
+points to the destination block's first instruction. Whole-table relations
+point to payload offset 20. Allocation failures have offset zero.
+
+Ownership propagates once per basic block and compares complete states on
+every incoming edge. Known-case analysis runs separately per choice register:
+each block's fact can change only from unreached to a case/unknown, then to
+unknown. Thus function dataflow takes O(code words × registers) work, with
+O(blocks × registers + code words) scratch storage. Ability propagation and
+initialization dependency summaries take linear graph work; fixed-layout
+lookups use a sorted index. All graph walks use explicit stacks or queues.
 
 A file that passes runs without use-after-free, double frees, leaks, reads of
 undefined registers, out-of-range fields or type confusion, given a correct VM,
@@ -924,6 +995,9 @@ variables. It prints only registers that are `value`, `owned` or `borrowed` at
 the stopping instruction, named from the debug ranges of 3.4. It gets those
 states by running the verifier's dataflow again over that one function. So it
 never reads a register whose reference was consumed.
+The VM-facing `mo_image_registers_readable` wraps the private replay through
+the module's `bytecode.h`. It reports states immediately before the instruction, never after
+its consumes or writes, and refuses non-boundary PCs.
 
 ## 10. The text form
 

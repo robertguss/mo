@@ -4,7 +4,32 @@
 
 #include "bytecode/io.h"
 
-MO_MUST_USE bool mo_bytecode_verify(const struct mo_bytecode *file, const uint32_t *code_offsets,
-                                    struct mo_load_error *error);
+struct layout_key {
+    uint32_t type, tag, index;
+};
+MO_MUST_USE uint32_t mo_verify_layout_lookup(const struct layout_key *keys, uint32_t count,
+                                             uint32_t type, uint32_t tag);
+
+struct mo_verify_function {
+    const struct mo_bytecode *file;
+    const struct mo_bytecode_function *fn;
+    const uint8_t *abilities;
+    uint32_t base;
+    struct mo_load_error *error;
+    const struct mo_types *types;
+    const struct layout_key *layouts;
+};
+/* All local instruction types, even in unreachable code. */
+MO_MUST_USE bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc);
+MO_MUST_USE const char *mo_verify_parameter_modes(const uint32_t *instruction);
+
+MO_MUST_USE bool mo_bytecode_verify(const struct mo_bytecode *file, const struct mo_types *types,
+                                    const uint32_t *code_offsets, struct mo_load_error *error);
+
+/* Replay only this function, reporting states before pc. pc must be an instruction boundary.
+ * readable has register_count elements. work counts analysis steps for the bounded-work test. */
+MO_MUST_USE bool mo_bytecode_readable(const struct mo_bytecode *file, const struct mo_types *types,
+                                      uint32_t function, uint32_t base, uint32_t pc, bool *readable,
+                                      uint64_t *work, struct mo_load_error *error);
 
 #endif

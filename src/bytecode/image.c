@@ -4,6 +4,7 @@ struct mo_image {
     struct mo_arena arena;
     const struct mo_bytecode *file;
     const uint32_t *code_offsets;
+    struct mo_types types;
 };
 
 struct mo_image *mo_load(const uint8_t *bytes, size_t length, struct mo_load_error *error_out) {
@@ -11,8 +12,10 @@ struct mo_image *mo_load(const uint8_t *bytes, size_t length, struct mo_load_err
     struct mo_arena arena;
     mo_arena_init(&arena, SIZE_MAX);
     const uint32_t *offsets = NULL;
-    struct mo_bytecode *file = mo_bytecode_decode_info(&arena, bytes, length, &offsets, error_out);
-    if (file == NULL || !mo_bytecode_verify(file, offsets, error_out)) {
+    struct mo_types types;
+    struct mo_bytecode *file =
+        mo_bytecode_decode_info(&arena, bytes, length, &offsets, &types, error_out);
+    if (file == NULL || !mo_bytecode_verify(file, &types, offsets, error_out)) {
         mo_arena_free(&arena);
         return NULL;
     }
@@ -22,13 +25,25 @@ struct mo_image *mo_load(const uint8_t *bytes, size_t length, struct mo_load_err
         mo_arena_free(&arena);
         return NULL;
     }
-    *image = (struct mo_image){arena, file, offsets};
+    *image = (struct mo_image){arena, file, offsets, types};
     return image;
 }
 
 const struct mo_bytecode *mo_image_bytecode(const struct mo_image *image) {
     MO_ASSERT(image != NULL);
     return image->file;
+}
+
+bool mo_image_registers_readable(const struct mo_image *image, uint32_t function, uint32_t pc,
+                                 bool *readable, struct mo_load_error *error) {
+    MO_ASSERT(image != NULL && readable != NULL && error != NULL);
+    if (function >= image->file->function_count) {
+        *error = (struct mo_load_error){.reason = "invalid replay function"};
+        return false;
+    }
+    uint64_t work = 0;
+    return mo_bytecode_readable(image->file, &image->types, function, image->code_offsets[function],
+                                pc, readable, &work, error);
 }
 
 void mo_image_free(struct mo_image *image) {

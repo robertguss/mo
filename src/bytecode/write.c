@@ -291,8 +291,8 @@ static MO_MUST_USE bool sections(struct writer *w) {
     return true;
 }
 
-bool mo_bytecode_write(const struct mo_bytecode *file, struct mo_buffer *out,
-                       struct mo_write_error *error_out) {
+bool mo_bytecode_encode(const struct mo_bytecode *file, struct mo_buffer *out,
+                        struct mo_write_error *error_out) {
     MO_ASSERT(file != NULL && out != NULL && error_out != NULL && out->length == 0);
     struct writer w = {.file = file, .out = out, .reason = "bytecode/output limit or no memory"};
     size_t name_bytes = file->string_count <= MO_LIMIT_STRINGS ? (size_t)file->string_count * 4 : 0;
@@ -312,8 +312,7 @@ bool mo_bytecode_write(const struct mo_bytecode *file, struct mo_buffer *out,
     for (unsigned i = 0; i < 8; i++) {
         out->bytes[12 + i] = (uint8_t)(checksum >> (i * 8));
     }
-    /* Validate the actual encoding, so caches and inactive fields cannot influence acceptance.
-     * The later verifier will also run here before this API promises executable bytes. */
+    /* Validate the actual encoding, so caches and inactive fields cannot influence acceptance. */
     struct mo_arena scratch;
     struct mo_load_error error;
     mo_arena_init(&scratch, mo_bytecode_work_budget(out->length));
@@ -324,4 +323,20 @@ bool mo_bytecode_write(const struct mo_bytecode *file, struct mo_buffer *out,
         error_out->reason = error.reason;
     }
     return ok;
+}
+
+bool mo_bytecode_write(const struct mo_bytecode *file, struct mo_buffer *out,
+                       struct mo_write_error *error_out) {
+    if (!mo_bytecode_encode(file, out, error_out)) {
+        return false;
+    }
+    struct mo_load_error error;
+    struct mo_image *image = mo_load(out->bytes, out->length, &error);
+    if (image == NULL) {
+        mo_buffer_clear(out);
+        error_out->reason = error.reason;
+        return false;
+    }
+    mo_image_free(image);
+    return true;
 }

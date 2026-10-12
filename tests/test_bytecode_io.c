@@ -5,6 +5,9 @@
 #include <string.h>
 #include <time.h>
 
+/* These section-3 fixtures deliberately omit section-9 semantics. The private encoder keeps
+ * their structural refusal and boundary checks independent of the public verified writer. */
+
 /* The first eight types and four layouts are section 3's worked Chain encoding. Extra types
  * cover every kind, all seven capabilities, all choice shapes and a second nominal identity. */
 #define STRING(text)                                                                               \
@@ -393,7 +396,7 @@ static void round_trip(const struct mo_bytecode *file) {
     mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
     mo_buffer_init(&again, MO_LIMIT_BYTECODE_SIZE);
     mo_arena_init(&arena, (size_t)4 << 30);
-    bool written = mo_bytecode_write(file, &out, &write_error);
+    bool written = mo_bytecode_encode(file, &out, &write_error);
     CHECK(written);
     if (written) {
         const struct mo_bytecode *decoded =
@@ -406,7 +409,7 @@ static void round_trip(const struct mo_bytecode *file) {
             CHECK(saved != NULL);
             if (saved != NULL) {
                 memset(out.bytes, 0xa5, out.length);
-                CHECK(mo_bytecode_write(decoded, &again, &write_error));
+                CHECK(mo_bytecode_encode(decoded, &again, &write_error));
                 CHECK(out.length == again.length && equal_bytes(saved, again.bytes, out.length));
             }
         }
@@ -423,7 +426,7 @@ static void test_empty(void) {
     struct mo_buffer out;
     struct mo_write_error error;
     mo_buffer_init(&out, 1024);
-    CHECK(mo_bytecode_write(&file, &out, &error));
+    CHECK(mo_bytecode_encode(&file, &out, &error));
     CHECK(out.length == 56);
     CHECK(memcmp(out.bytes, "MOBC\0\0\1\0\0\0\0\0", 12) == 0);
     for (size_t i = 20; i < out.length; i++) {
@@ -431,7 +434,7 @@ static void test_empty(void) {
     }
     mo_buffer_free(&out);
     mo_buffer_init(&out, 55);
-    CHECK(!mo_bytecode_write(&file, &out, &error));
+    CHECK(!mo_bytecode_encode(&file, &out, &error));
     CHECK(out.length == 0 && error.reason != NULL);
     mo_buffer_free(&out);
 }
@@ -494,7 +497,7 @@ static void expect_write_reason(const struct mo_bytecode *file, const char *reas
     struct mo_buffer out;
     struct mo_write_error error = {0};
     mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
-    CHECK(!mo_bytecode_write(file, &out, &error));
+    CHECK(!mo_bytecode_encode(file, &out, &error));
     if (error.reason != NULL && strcmp(error.reason, reason) != 0) {
         CHECK(fprintf(stderr, "writer expected %s, got %s\n", reason, error.reason) >= 0);
     }
@@ -506,7 +509,7 @@ static void expect_write(const struct mo_bytecode *file) {
     struct mo_buffer out;
     struct mo_write_error error = {0};
     mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
-    CHECK(mo_bytecode_write(file, &out, &error));
+    CHECK(mo_bytecode_encode(file, &out, &error));
     mo_buffer_free(&out);
 }
 
@@ -838,7 +841,7 @@ static void test_debug_metadata(void) {
     for (size_t i = 0; i < sizeof tail / sizeof tail[0]; i++) {
         CHECK(mo_buffer_append_le32(&expected, tail[i]));
     }
-    CHECK(mo_bytecode_write(&fixture, &out, &error));
+    CHECK(mo_bytecode_encode(&fixture, &out, &error));
     CHECK(out.length >= expected.length);
     if (out.length >= expected.length) {
         size_t offset = out.length - expected.length;
@@ -881,7 +884,7 @@ static void test_wire_refusals(void) {
     struct mo_write_error error;
     const struct mo_bytecode empty = {0};
     mo_buffer_init(&out, 1024);
-    CHECK(mo_bytecode_write(&empty, &out, &error));
+    CHECK(mo_bytecode_encode(&empty, &out, &error));
     for (size_t i = 0; i < 20; i++) {
         out.bytes[i] ^= 0x80;
         uint32_t offset = i < 4 ? 0U : i < 6 ? 4U : i < 8 ? 6U : i < 12 ? 8U : 12U;
@@ -1010,7 +1013,7 @@ static void test_worked_encoding(void) {
     f.debug = debug;
     f.debug_count = 1;
     struct mo_write_error write_error;
-    CHECK(mo_bytecode_write(&f, &actual, &write_error));
+    CHECK(mo_bytecode_encode(&f, &actual, &write_error));
     CHECK(expected.length == actual.length &&
           equal_bytes(expected.bytes, actual.bytes, expected.length));
     struct mo_arena arena;
@@ -1022,7 +1025,7 @@ static void test_worked_encoding(void) {
     if (decoded != NULL) {
         equal_structure(&f, decoded);
         mo_buffer_clear(&actual);
-        CHECK(mo_bytecode_write(decoded, &actual, &write_error));
+        CHECK(mo_bytecode_encode(decoded, &actual, &write_error));
         CHECK(expected.length == actual.length &&
               equal_bytes(expected.bytes, actual.bytes, expected.length));
     }
@@ -1281,16 +1284,16 @@ static void test_limits_and_caches(void) {
     struct mo_write_error error;
     mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
     mo_buffer_init(&expected, MO_LIMIT_BYTECODE_SIZE);
-    CHECK(mo_bytecode_write(&fixture, &expected, &error));
-    CHECK(mo_bytecode_write(&f, &out, &error));
+    CHECK(mo_bytecode_encode(&fixture, &expected, &error));
+    CHECK(mo_bytecode_encode(&f, &out, &error));
     CHECK(out.length == expected.length && equal_bytes(out.bytes, expected.bytes, out.length));
     mo_buffer_free(&out);
     mo_buffer_init(&out, expected.length - 1);
-    CHECK(!mo_bytecode_write(&fixture, &out, &error));
+    CHECK(!mo_bytecode_encode(&fixture, &out, &error));
     CHECK(out.length == 0);
     mo_buffer_free(&out);
     mo_buffer_init(&out, expected.length);
-    CHECK(mo_bytecode_write(&fixture, &out, &error));
+    CHECK(mo_bytecode_encode(&fixture, &out, &error));
     CHECK(out.length == expected.length);
     struct mo_load_error load_error;
     const struct mo_bytecode *decoded =
@@ -1379,7 +1382,7 @@ static void test_large_tables(void) {
     struct mo_buffer out;
     struct mo_write_error error;
     mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
-    CHECK(mo_bytecode_write(&f, &out, &error));
+    CHECK(mo_bytecode_encode(&f, &out, &error));
     reject_word(&out, 39, n + 1, "count past limit or remaining bytes", 39);
     uint32_t layout_count = 43 + 4 + 60 + (n - 2) * 20;
     reject_word(&out, layout_count, MO_LIMIT_LAYOUTS + 1U, "count past limit or remaining bytes",
@@ -1543,7 +1546,7 @@ static void test_large_choice_and_code(void) {
         struct mo_buffer out;
         struct mo_write_error error;
         mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
-        CHECK(mo_bytecode_write(&f, &out, &error));
+        CHECK(mo_bytecode_encode(&f, &out, &error));
         uint32_t count = 34 + 9 * n + 12;
         reject_word(&out, count, n + 1, "count past limit or remaining bytes", count);
         t.case_count++;
@@ -1660,7 +1663,7 @@ static void test_refusal_details(void) {
     struct mo_buffer out;
     struct mo_write_error error;
     mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
-    CHECK(mo_bytecode_write(&fixture, &out, &error));
+    CHECK(mo_bytecode_encode(&fixture, &out, &error));
     struct fixture_positions p = fixture_positions();
     struct mutation {
         uint32_t offset;
@@ -1730,7 +1733,7 @@ static void test_refusal_details(void) {
     checksum(&out);
     refuse_reason(out.bytes, out.length, "type result or env function out of range/kind", 20);
     mo_buffer_clear(&out);
-    CHECK(mo_bytecode_write(&fixture, &out, &error));
+    CHECK(mo_bytecode_encode(&fixture, &out, &error));
     /* A closure entry and a two-field case have equal wire widths. Replace the former with
      * another copy of case layout 0, retaining all following section boundaries. */
     const uint32_t duplicate[] = {2, 3, 1, 2, 1, 3};
@@ -1740,7 +1743,7 @@ static void test_refusal_details(void) {
     checksum(&out);
     refuse_reason(out.bytes, out.length, "duplicate layout", 20);
     mo_buffer_clear(&out);
-    CHECK(mo_bytecode_write(&fixture, &out, &error));
+    CHECK(mo_bytecode_encode(&fixture, &out, &error));
     /* A newly declared init is absent from the order, not merely an invalid init index. */
     replace_word(&out, p.functions[3] + 8, MO_FUNCTION_INIT);
     replace_word(&out, p.functions[3] + 12, 0);
@@ -1781,7 +1784,7 @@ static void test_operand_refusals(void) {
         struct mo_buffer out;
         struct mo_write_error error;
         mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
-        CHECK(mo_bytecode_write(&f, &out, &error));
+        CHECK(mo_bytecode_encode(&f, &out, &error));
         for (uint32_t j = 0; j < op->fixed_count + tail; j++) {
             enum mo_operand_kind kind = j < op->fixed_count ? op->fixed[j].kind : op->variable.kind;
             uint32_t limit = 0;
