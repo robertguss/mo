@@ -196,6 +196,31 @@ static void test_the_memory_of_diagnostics_is_limited(void) {
     mo_diags_free(&diags);
 }
 
+static void test_a_dropped_diagnostic_takes_no_memory(void) {
+    /* A diagnostic too big to keep, with a 40 MiB label and a 30 MiB fix, leaves room for one of
+     * 60 MiB after it. */
+    struct mo_diags diags;
+    CHECK(mo_diags_init(&diags));
+    static char label[40 << 20];
+    static char replacement[30 << 20];
+    static char message[60 << 20];
+    memset(label, 'l', sizeof label - 1);
+    memset(replacement, 'r', sizeof replacement - 1);
+    memset(message, 'm', sizeof message - 1);
+    struct mo_fix fix = {.span = span(0, 0, 0), .replacement = replacement};
+    struct mo_diag too_big = plain(MO_CODE_FAILURE_IGNORED, span(0, 0, 0), "too big");
+    too_big.primary.text = label;
+    too_big.fixes = &fix;
+    too_big.fix_count = 1;
+    size_t used = diags.arena.used;
+    CHECK(!mo_diags_add(&diags, &too_big));
+    CHECK(diags.count == 0 && diags.dropped == 1 && diags.arena.used == used);
+    struct mo_diag big = plain(MO_CODE_FAILURE_IGNORED, span(0, 0, 0), message);
+    CHECK(mo_diags_add(&diags, &big));
+    CHECK(diags.count == 1 && strlen(diags.items[0].message) == sizeof message - 1);
+    mo_diags_free(&diags);
+}
+
 static void test_a_dropped_diagnostic_still_counts(void) {
     /* Even when nothing could be kept, the run knows something was wrong. */
     struct mo_diags diags;
@@ -220,6 +245,7 @@ int main(void) {
     test_sorting_the_most_diagnostics();
     test_the_number_of_diagnostics_is_limited();
     test_the_memory_of_diagnostics_is_limited();
+    test_a_dropped_diagnostic_takes_no_memory();
     test_a_dropped_diagnostic_still_counts();
     return mo_test_report("test_diag");
 }

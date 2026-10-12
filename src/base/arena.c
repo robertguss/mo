@@ -6,7 +6,8 @@
 #include <string.h>
 
 /* A chunk: its header, then capacity bytes, of which the first used have been handed out. The
- * data starts aligned for any type, since malloc's memory is, and so is the header's size. */
+ * data starts aligned for any type: malloc's memory is (C17 7.22.3), and the header's size is a
+ * multiple of max_align_t's alignment, the alignment of data. */
 struct mo_arena_chunk {
     struct mo_arena_chunk *previous;
     size_t capacity;
@@ -16,6 +17,8 @@ struct mo_arena_chunk {
 
 _Static_assert(sizeof(struct mo_arena_chunk) <= MO_ARENA_CHUNK_HEADER,
                "MO_ARENA_CHUNK_HEADER covers a chunk's header");
+_Static_assert(sizeof(struct mo_arena_chunk) % _Alignof(max_align_t) == 0,
+               "a chunk's data is aligned for any type");
 
 /* Chunks start small, so a small arena takes little, and double up to the largest size, so a large
  * one makes few calls to malloc. A request that needs more gets a chunk of its own size. */
@@ -47,8 +50,8 @@ static bool fits(struct mo_arena_chunk *chunk, size_t size, size_t alignment) {
 static bool add_chunk(struct mo_arena *arena, size_t size, size_t alignment) {
     MO_ASSERT(arena->used <= arena->limit);
     size_t header = sizeof(struct mo_arena_chunk);
-    /* The worst padding, whatever alignment malloc's memory has. */
-    size_t padding = alignment - 1;
+    /* The data is aligned for max_align_t, so only a larger alignment can need padding. */
+    size_t padding = alignment > _Alignof(max_align_t) ? alignment - _Alignof(max_align_t) : 0;
     size_t remaining = arena->limit - arena->used;
     if (size > remaining || header + padding > remaining - size) {
         return false;

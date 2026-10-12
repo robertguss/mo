@@ -1,9 +1,10 @@
 /* A growable buffer of bytes, within a limit: the output of mo_core_print, mo_compile and
  * mo_render_defect (architecture section 12), and of anything else that writes text or bytes.
  *
- * A buffer holds its bytes in an arena of its own, so they live until mo_buffer_free. Every append
- * either adds all of what it is given, or nothing: past the limit, or when the system has no
- * memory, it returns false and leaves the buffer as it was. */
+ * A buffer holds its bytes in an arena of its own, until mo_buffer_free. They move when the buffer
+ * grows, so a pointer into them lasts only until the next append: keep offsets instead. Every
+ * append either adds all of what it is given, or nothing: past the limit, or when the system has
+ * no memory, it returns false and leaves the buffer as it was. */
 #ifndef MO_BUFFER_H
 #define MO_BUFFER_H
 
@@ -33,7 +34,7 @@ void mo_buffer_free(struct mo_buffer *buffer);
 /* Empties the buffer, keeping its memory for what comes next. */
 void mo_buffer_clear(struct mo_buffer *buffer);
 
-/* Appends length bytes. */
+/* Appends length bytes, which may be some of the buffer's own. */
 MO_MUST_USE bool mo_buffer_append(struct mo_buffer *buffer, const void *bytes, size_t length);
 
 /* Appends one byte. */

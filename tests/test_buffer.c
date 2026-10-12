@@ -41,17 +41,42 @@ static void test_it_grows(void) {
 }
 
 static void test_it_wastes_nothing_as_it_grows(void) {
-    /* The buffer's arena takes no more than the bytes it may hold and one chunk header. */
+    /* The buffer's arena may take only the bytes the buffer may hold and one chunk header. Growing
+     * by copying would leave old blocks behind and run out of room before the buffer is full. */
     struct mo_buffer buffer;
     size_t limit = (size_t)3 << 20;
     mo_buffer_init(&buffer, limit);
     uint8_t piece[1000];
     memset(piece, 'y', sizeof piece);
-    while (buffer.length + sizeof piece <= limit) {
-        CHECK(mo_buffer_append(&buffer, piece, sizeof piece));
-        CHECK(buffer.arena.used <= limit + MO_ARENA_CHUNK_HEADER);
+    bool appended = true;
+    while (appended && buffer.length + sizeof piece <= limit) {
+        appended = mo_buffer_append(&buffer, piece, sizeof piece);
     }
-    CHECK(buffer.length == limit / 1000 * 1000);
+    CHECK(appended && buffer.length == limit / 1000 * 1000);
+    CHECK(mo_buffer_append(&buffer, piece, limit - buffer.length));
+    CHECK(buffer.length == limit);
+    mo_buffer_free(&buffer);
+}
+
+static void test_it_appends_its_own_bytes(void) {
+    /* Each append doubles the text by appending the buffer's own bytes, which move as it grows. */
+    struct mo_buffer buffer;
+    mo_buffer_init(&buffer, 1 << 20);
+    CHECK(mo_buffer_append_text(&buffer, "ab"));
+    for (int i = 0; i < 16; i++) {
+        CHECK(mo_buffer_append(&buffer, buffer.bytes, buffer.length));
+    }
+    CHECK(buffer.length == (size_t)2 << 16);
+    bool alternating = buffer.bytes != NULL;
+    for (size_t i = 0; alternating && i < buffer.length; i++) {
+        alternating = buffer.bytes[i] == (i % 2 == 0 ? 'a' : 'b');
+    }
+    CHECK(alternating);
+    /* Part of its own bytes, from the middle. */
+    mo_buffer_clear(&buffer);
+    CHECK(mo_buffer_append_text(&buffer, "0123456789"));
+    CHECK(mo_buffer_append(&buffer, buffer.bytes + 3, 4));
+    CHECK(holds(&buffer, "01234567893456"));
     mo_buffer_free(&buffer);
 }
 
@@ -157,6 +182,7 @@ static void test_it_can_be_used_again(void) {
 int main(void) {
     test_it_grows();
     test_it_wastes_nothing_as_it_grows();
+    test_it_appends_its_own_bytes();
     test_the_limit_holds();
     test_numbers_in_decimal();
     test_numbers_in_hexadecimal();

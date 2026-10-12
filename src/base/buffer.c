@@ -59,11 +59,18 @@ static bool reserve(struct mo_buffer *buffer, size_t more) {
 
 bool mo_buffer_append(struct mo_buffer *buffer, const void *bytes, size_t length) {
     MO_ASSERT(buffer != NULL && (bytes != NULL || length == 0));
+    /* Bytes of the buffer's own move with it if it grows, so they are found again by offset. */
+    uintptr_t from = (uintptr_t)bytes;
+    uintptr_t start = (uintptr_t)buffer->bytes;
+    bool own = buffer->bytes != NULL && from >= start && from - start < buffer->capacity;
+    size_t offset = own ? (size_t)(from - start) : 0;
+    MO_ASSERT(!own || (offset <= buffer->length && length <= buffer->length - offset));
     if (!reserve(buffer, length)) {
         return false;
     }
     if (length > 0) {
-        memcpy(buffer->bytes + buffer->length, bytes, length);
+        const uint8_t *source = own ? buffer->bytes + offset : bytes;
+        memcpy(buffer->bytes + buffer->length, source, length);
         buffer->length += length;
     }
     return true;

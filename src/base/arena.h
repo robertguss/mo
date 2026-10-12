@@ -16,7 +16,8 @@
 
 /* The most memory an arena takes from the system beyond what it hands out, per chunk: the chunk's
  * header. An arena that must hold n bytes in one piece needs a limit of at least
- * n + MO_ARENA_CHUNK_HEADER. */
+ * n + MO_ARENA_CHUNK_HEADER, with alignment - _Alignof(max_align_t) more for an alignment larger
+ * than max_align_t's. */
 enum { MO_ARENA_CHUNK_HEADER = 32 };
 
 /* The largest alignment an arena hands out. */
@@ -54,13 +55,15 @@ MO_MUST_USE void *mo_arena_allocate_array(struct mo_arena *arena, size_t count, 
  * keeping its first bytes, as many as both sizes have. A block may be NULL with an old_size of 0,
  * which allocates.
  *
- * The newest block of an arena changes size in place while its chunk has room, and when it is
- * alone in its chunk, the chunk itself grows. Other blocks move to a new block and leave the old
- * one unused until mo_arena_free. On failure it returns NULL and leaves the block as it was. So a
- * buffer that grows by doubling, and is the only thing its arena holds, wastes nothing.
+ * The newest block of an arena changes size in place while its chunk has room. When it is alone in
+ * its chunk, with an alignment no larger than max_align_t's, the chunk itself grows, and may move.
+ * Other blocks move to a new block and leave the old one unused until mo_arena_free. So a buffer
+ * that grows by doubling, and is the only thing its arena holds, wastes nothing.
  *
- * Shrinking never fails, and keeps the block where it is. The newest block gives what it no longer
- * needs to the blocks after it, all of it when shrunk to 0, after which it must not be used. */
+ * Once it succeeds, use only the block it returns: the old one may be gone. On failure it returns
+ * NULL and leaves the block as it was. Shrinking never fails, and keeps the block where it is: the
+ * newest block gives what it no longer needs to the blocks after it, all of it when shrunk to 0,
+ * after which it must not be used. */
 MO_MUST_USE void *mo_arena_resize(struct mo_arena *arena, void *block, size_t old_size,
                                   size_t new_size, size_t alignment);
 

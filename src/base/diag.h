@@ -73,8 +73,8 @@ void mo_diags_free(struct mo_diags *diags);
  * code must be registered, and its section NULL or its code's.
  *
  * Past MO_LIMIT_DIAGNOSTICS diagnostics or MO_LIMIT_DIAGNOSTICS_SIZE bytes, or when the system has
- * no memory, it adds nothing, counts the diagnostic in dropped, and returns false. The stage should
- * then stop, since it can't report anything more. */
+ * no memory, it adds nothing, takes no memory, counts the diagnostic in dropped, and returns false.
+ * The stage should then stop, since it may not be able to report anything more. */
 MO_MUST_USE bool mo_diags_add(struct mo_diags *diags, const struct mo_diag *diag);
 
 /* Whether any diagnostic was reported, whether it was kept or dropped. */
@@ -115,7 +115,7 @@ enum mo_source_problem {
 
 struct mo_source_error {
     enum mo_source_problem problem;
-    int system_error; /* errno, for MO_SOURCE_UNREADABLE; 0 otherwise */
+    int system_error; /* errno, for MO_SOURCE_UNREADABLE if the system gave one; 0 otherwise */
 };
 
 /* Prepares an empty set of source files, with room for MO_LIMIT_FILES of them. False when the
@@ -126,8 +126,8 @@ MO_MUST_USE bool mo_sources_init(struct mo_sources *sources);
 void mo_sources_free(struct mo_sources *sources);
 
 /* Reads the file at path, within the limits, and keeps its path and bytes. Sets *file_out to its
- * index, the number of files added before it. On failure it adds nothing, and says why in
- * *error_out. */
+ * index, the number of files added before it. On failure it adds nothing, takes no memory, and
+ * says why in *error_out. */
 MO_MUST_USE bool mo_sources_add(struct mo_sources *sources, const char *path, uint32_t *file_out,
                                 struct mo_source_error *error_out);
 

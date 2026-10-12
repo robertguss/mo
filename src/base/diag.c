@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "base/buffer.h"
 #include "base/codes.h"
 #include "base/limits.h"
 
@@ -31,79 +32,107 @@ static void check_span(struct mo_span span) {
     MO_ASSERT(span.start <= span.end);
 }
 
-/* Copies text into the arena; NULL stays NULL. False when it doesn't fit. */
-static bool copy_text(struct mo_arena *arena, const char *text, const char **copy) {
+/* Checks what every diagnostic must be, whether it is kept or not. */
+static void check_diag(const struct mo_diag *diag, const struct mo_code_info *code) {
+    MO_ASSERT(code != NULL);
+    MO_ASSERT(diag->section == NULL ||
+              (code->section != NULL && strcmp(diag->section, code->section) == 0));
+    MO_ASSERT(diag->message != NULL);
+    check_span(diag->primary.span);
+    MO_ASSERT(diag->secondary_count == 0 || diag->secondary != NULL);
+    for (uint32_t i = 0; i < diag->secondary_count; i++) {
+        check_span(diag->secondary[i].span);
+    }
+    MO_ASSERT(diag->fix_count == 0 || diag->fixes != NULL);
+    for (uint32_t i = 0; i < diag->fix_count; i++) {
+        check_span(diag->fixes[i].span);
+        MO_ASSERT(diag->fixes[i].replacement != NULL);
+    }
+}
+
+/* Adds to *size the bytes a copy of text takes, with its NUL, and nothing for NULL. False when the
+ * sum doesn't fit in a size_t. */
+static bool count_text(size_t *size, const char *text) {
     if (text == NULL) {
-        *copy = NULL;
         return true;
     }
-    *copy = mo_arena_copy_text(arena, text);
-    return *copy != NULL;
-}
-
-static bool copy_label(struct mo_arena *arena, const struct mo_label *label,
-                       struct mo_label *copy) {
-    check_span(label->span);
-    copy->span = label->span;
-    return copy_text(arena, label->text, &copy->text);
-}
-
-/* Fills *copy with diag, its strings, labels and fixes copied into the arena. False when they
- * don't fit, leaving *copy unfinished. */
-static bool copy_diag(struct mo_arena *arena, const struct mo_diag *diag, const char *section,
-                      struct mo_diag *copy) {
-    *copy = (struct mo_diag){.code = diag->code, .section = section};
-    if (!copy_label(arena, &diag->primary, &copy->primary) ||
-        !copy_text(arena, diag->message, &copy->message)) {
+    size_t more = strlen(text) + 1;
+    if (more > SIZE_MAX - *size) {
         return false;
     }
+    *size += more;
+    return true;
+}
+
+/* Copies text to *place and moves *place past the copy. NULL stays NULL. */
+static const char *place_text(char **place, const char *text) {
+    if (text == NULL) {
+        return NULL;
+    }
+    size_t size = strlen(text) + 1;
+    memcpy(*place, text, size);
+    const char *copy = *place;
+    *place += size;
+    return copy;
+}
+
+_Static_assert(_Alignof(struct mo_fix) <= _Alignof(struct mo_label) &&
+                   sizeof(struct mo_label) % _Alignof(struct mo_fix) == 0,
+               "a diagnostic's fixes can follow its labels in one block");
+
+/* Fills *copy with diag, with copies of its labels, its fixes and then its strings, all in one
+ * block of the arena, so that a diagnostic is kept whole or takes nothing. False when the block
+ * doesn't fit. */
+static bool copy_diag(struct mo_arena *arena, const struct mo_diag *diag, const char *section,
+                      struct mo_diag *copy) {
+    /* Neither count can pass UINT32_MAX, so on a 64-bit platform neither product overflows. */
+    size_t labels_size = (size_t)diag->secondary_count * sizeof(struct mo_label);
+    size_t fixes_size = (size_t)diag->fix_count * sizeof(struct mo_fix);
+    size_t size = labels_size + fixes_size;
+    bool counted = count_text(&size, diag->primary.text) && count_text(&size, diag->message);
+    for (uint32_t i = 0; counted && i < diag->secondary_count; i++) {
+        counted = count_text(&size, diag->secondary[i].text);
+    }
+    for (uint32_t i = 0; counted && i < diag->fix_count; i++) {
+        counted = count_text(&size, diag->fixes[i].replacement);
+    }
+    void *block = counted ? mo_arena_allocate(arena, size, _Alignof(struct mo_label)) : NULL;
+    if (block == NULL) {
+        return false;
+    }
+    struct mo_label *labels = block;
+    void *after_labels = (char *)block + labels_size;
+    struct mo_fix *fixes = after_labels;
+    char *place = (char *)block + labels_size + fixes_size;
+    *copy = (struct mo_diag){.code = diag->code, .section = section};
+    copy->primary.span = diag->primary.span;
+    copy->primary.text = place_text(&place, diag->primary.text);
+    copy->message = place_text(&place, diag->message);
+    for (uint32_t i = 0; i < diag->secondary_count; i++) {
+        labels[i].span = diag->secondary[i].span;
+        labels[i].text = place_text(&place, diag->secondary[i].text);
+    }
     if (diag->secondary_count > 0) {
-        struct mo_label *labels = mo_arena_allocate_array(
-            arena, diag->secondary_count, sizeof(struct mo_label), _Alignof(struct mo_label));
-        if (labels == NULL) {
-            return false;
-        }
-        for (uint32_t i = 0; i < diag->secondary_count; i++) {
-            if (!copy_label(arena, &diag->secondary[i], &labels[i])) {
-                return false;
-            }
-        }
         copy->secondary = labels;
         copy->secondary_count = diag->secondary_count;
     }
+    for (uint32_t i = 0; i < diag->fix_count; i++) {
+        fixes[i].span = diag->fixes[i].span;
+        fixes[i].replacement = place_text(&place, diag->fixes[i].replacement);
+    }
     if (diag->fix_count > 0) {
-        struct mo_fix *fixes = mo_arena_allocate_array(
-            arena, diag->fix_count, sizeof(struct mo_fix), _Alignof(struct mo_fix));
-        if (fixes == NULL) {
-            return false;
-        }
-        for (uint32_t i = 0; i < diag->fix_count; i++) {
-            const struct mo_fix *fix = &diag->fixes[i];
-            check_span(fix->span);
-            MO_ASSERT(fix->replacement != NULL);
-            fixes[i].span = fix->span;
-            if (!copy_text(arena, fix->replacement, &fixes[i].replacement)) {
-                return false;
-            }
-        }
         copy->fixes = fixes;
         copy->fix_count = diag->fix_count;
     }
+    MO_ASSERT(place == (char *)block + size);
     return true;
 }
 
 bool mo_diags_add(struct mo_diags *diags, const struct mo_diag *diag) {
     MO_ASSERT(diags != NULL && diags->items != NULL && diag != NULL);
-    const struct mo_code_info *code = mo_code_find(diag->code);
-    MO_ASSERT(code != NULL);
-    MO_ASSERT(diag->section == NULL ||
-              (code->section != NULL && strcmp(diag->section, code->section) == 0));
-    MO_ASSERT(diag->message != NULL);
-    MO_ASSERT(diag->secondary_count == 0 || diag->secondary != NULL);
-    MO_ASSERT(diag->fix_count == 0 || diag->fixes != NULL);
     MO_ASSERT(diags->count <= MO_LIMIT_DIAGNOSTICS);
-    /* A diagnostic that doesn't fit leaves what it copied in the arena, unused until
-     * mo_diags_free: the arena never frees one piece alone. */
+    const struct mo_code_info *code = mo_code_find(diag->code);
+    check_diag(diag, code);
     if (diags->count == MO_LIMIT_DIAGNOSTICS ||
         !copy_diag(&diags->arena, diag, code->section, &diags->items[diags->count])) {
         if (diags->dropped < UINT32_MAX) {
@@ -144,21 +173,21 @@ void mo_diags_sort(struct mo_diags *diags) {
 
 /* Source files */
 
-/* The memory the source files may take. It holds MO_LIMIT_PROGRAM_SIZE bytes of source with line
- * tables for as many lines as they could have, at four bytes a line, the paths, and a file read
- * past MO_LIMIT_FILE_SIZE before it is refused, twice over, since an arena may leave as much
- * unused as it hands out (src/base/arena.c). So the limits on source files, not this one, decide
- * what a program may hold. */
+/* The memory the source files may take. Each file takes one block: its line table, at four bytes
+ * a line, its bytes and a NUL, and its path. MO_LIMIT_PROGRAM_SIZE bytes of source, with as many
+ * lines as they could have, MO_LIMIT_FILES paths and the table of files take less than this, twice
+ * over, since an arena may leave as much unused as it hands out, and with room for the newest
+ * chunk's unused end, a mebibyte at most (src/base/arena.c). So the limits on source files, not
+ * this one, decide what a program may hold. */
 #define SOURCES_ARENA_LIMIT ((size_t)1 << 30)
 _Static_assert(2 * (5 * ((size_t)MO_LIMIT_PROGRAM_SIZE + MO_LIMIT_FILES) +
-                    (size_t)MO_LIMIT_FILES * (MO_LIMIT_PATH_SIZE + 1 + sizeof(struct mo_source)) +
-                    2 * ((size_t)MO_LIMIT_FILE_SIZE + 1)) <=
+                    (size_t)MO_LIMIT_FILES * (MO_LIMIT_PATH_SIZE + 2 + sizeof(struct mo_source))) +
+                       ((size_t)1 << 20) <=
                    SOURCES_ARENA_LIMIT,
                "the sources' arena holds the largest program the limits allow");
 
-/* The first block a file is read into. It doubles from there, up to one byte more than
- * MO_LIMIT_FILE_SIZE, which tells that a file is too big without reading the rest of it. */
-enum { FIRST_READ_SIZE = 16 * 1024 };
+/* Files are read in pieces this big. */
+enum { READ_SIZE = 16 * 1024 };
 
 bool mo_sources_init(struct mo_sources *sources) {
     MO_ASSERT(sources != NULL);
@@ -197,15 +226,6 @@ static bool check_room(const struct mo_sources *sources, const char *path,
     return true;
 }
 
-/* Hands back a block that wasn't kept, so its memory can be used again if it is the arena's
- * newest. Shrinking never fails. */
-static void give_back(struct mo_arena *arena, uint8_t *bytes, size_t size) {
-    if (bytes != NULL) {
-        void *kept = mo_arena_resize(arena, bytes, size, 0, 1);
-        MO_ASSERT(kept == bytes);
-    }
-}
-
 /* Finds where each line starts: returns how many lines there are, and writes their starts to
  * starts unless it is NULL. */
 static uint32_t find_lines(const uint8_t *bytes, uint32_t length, uint32_t *starts) {
@@ -228,24 +248,40 @@ static uint32_t find_lines(const uint8_t *bytes, uint32_t length, uint32_t *star
     return count;
 }
 
-/* Adds a file whose bytes, length of them and then a NUL, are already in the arena. */
+/* Adds a file of length bytes, once check_room has passed it. The file takes one block of the
+ * arena, which holds its line table, its bytes with a NUL after them, and its path, so it is added
+ * whole or takes nothing. */
 static bool add_file(struct mo_sources *sources, const char *path, const uint8_t *bytes,
                      size_t length, uint32_t *file_out, struct mo_source_error *error_out) {
-    MO_ASSERT(length <= MO_LIMIT_FILE_SIZE && bytes[length] == 0);
-    MO_ASSERT(sources->size + length <= MO_LIMIT_PROGRAM_SIZE);
+    MO_ASSERT(bytes != NULL || length == 0);
+    if (length > MO_LIMIT_FILE_SIZE) {
+        return refuse(error_out, MO_SOURCE_TOO_BIG, 0);
+    }
+    if (length > MO_LIMIT_PROGRAM_SIZE - sources->size) {
+        return refuse(error_out, MO_SOURCE_PROGRAM_TOO_BIG, 0);
+    }
     uint32_t size = (uint32_t)length;
     uint32_t line_count = find_lines(bytes, size, NULL);
-    uint32_t *line_starts =
-        mo_arena_allocate_array(&sources->arena, line_count, sizeof(uint32_t), _Alignof(uint32_t));
-    const char *path_copy = line_starts == NULL ? NULL : mo_arena_copy_text(&sources->arena, path);
-    if (path_copy == NULL) {
+    size_t table_size = (size_t)line_count * sizeof(uint32_t);
+    size_t path_size = strlen(path) + 1;
+    void *block =
+        mo_arena_allocate(&sources->arena, table_size + length + 1 + path_size, _Alignof(uint32_t));
+    if (block == NULL) {
         return refuse(error_out, MO_SOURCE_NO_MEMORY, 0);
     }
-    uint32_t found = find_lines(bytes, size, line_starts);
+    uint32_t *line_starts = block;
+    uint8_t *copy = (uint8_t *)block + table_size;
+    char *path_copy = (char *)copy + length + 1;
+    if (length > 0) {
+        memcpy(copy, bytes, length);
+    }
+    copy[length] = 0;
+    memcpy(path_copy, path, path_size);
+    uint32_t found = find_lines(copy, size, line_starts);
     MO_ASSERT(found == line_count);
     uint32_t file = sources->count;
     sources->files[file] = (struct mo_source){.path = path_copy,
-                                              .bytes = bytes,
+                                              .bytes = copy,
                                               .length = size,
                                               .line_count = line_count,
                                               .line_starts = line_starts};
@@ -259,70 +295,37 @@ bool mo_sources_add_bytes(struct mo_sources *sources, const char *path, const ui
                           size_t length, uint32_t *file_out, struct mo_source_error *error_out) {
     MO_ASSERT(sources != NULL && path != NULL && (bytes != NULL || length == 0));
     MO_ASSERT(file_out != NULL && error_out != NULL);
-    if (!check_room(sources, path, error_out)) {
-        return false;
-    }
-    if (length > MO_LIMIT_FILE_SIZE) {
-        return refuse(error_out, MO_SOURCE_TOO_BIG, 0);
-    }
-    if (length > MO_LIMIT_PROGRAM_SIZE - sources->size) {
-        return refuse(error_out, MO_SOURCE_PROGRAM_TOO_BIG, 0);
-    }
-    uint8_t *copy = mo_arena_allocate(&sources->arena, length + 1, 1);
-    if (copy == NULL) {
-        return refuse(error_out, MO_SOURCE_NO_MEMORY, 0);
-    }
-    if (length > 0) {
-        memcpy(copy, bytes, length);
-    }
-    copy[length] = 0;
-    if (!add_file(sources, path, copy, length, file_out, error_out)) {
-        give_back(&sources->arena, copy, length + 1);
-        return false;
-    }
-    return true;
+    return check_room(sources, path, error_out) &&
+           add_file(sources, path, bytes, length, file_out, error_out);
 }
 
-/* Reads a whole file into a block of the arena, with a NUL after it. Sets *bytes_out and
- * *length_out, or says in *error_out why it can't. */
-static bool read_file(struct mo_arena *arena, const char *path, uint8_t **bytes_out,
-                      size_t *length_out, struct mo_source_error *error_out) {
+/* Reads a whole file into scratch, up to MO_LIMIT_FILE_SIZE bytes. False, saying why in
+ * *error_out, when it can't. */
+static bool read_file(const char *path, struct mo_buffer *scratch,
+                      struct mo_source_error *error_out) {
     errno = 0;
     FILE *file = fopen(path, "rb");
     if (file == NULL) {
         return refuse(error_out, MO_SOURCE_UNREADABLE, errno);
     }
-    size_t most = (size_t)MO_LIMIT_FILE_SIZE + 1;
-    uint8_t *bytes = NULL;
-    size_t capacity = 0;
-    size_t length = 0;
+    uint8_t piece[READ_SIZE];
     struct mo_source_error error = {.problem = MO_SOURCE_UNREADABLE, .system_error = 0};
     bool complete = false;
     for (;;) {
-        if (length == capacity) {
-            if (capacity == most) {
-                error.problem = MO_SOURCE_TOO_BIG;
-                break;
-            }
-            size_t grown = capacity == 0 ? FIRST_READ_SIZE : 2 * capacity;
-            if (grown > most) {
-                grown = most;
-            }
-            uint8_t *moved = mo_arena_resize(arena, bytes, capacity, grown, 1);
-            if (moved == NULL) {
-                error.problem = MO_SOURCE_NO_MEMORY;
-                break;
-            }
-            bytes = moved;
-            capacity = grown;
-        }
-        size_t wanted = capacity - length;
         errno = 0;
-        size_t got = fread(bytes + length, 1, wanted, file);
-        length += got;
-        if (got < wanted) {
+        size_t got = fread(piece, 1, sizeof piece, file);
+        int read_error = errno;
+        if (got > MO_LIMIT_FILE_SIZE - scratch->length) {
+            error.problem = MO_SOURCE_TOO_BIG;
+            break;
+        }
+        if (!mo_buffer_append(scratch, piece, got)) {
+            error.problem = MO_SOURCE_NO_MEMORY;
+            break;
+        }
+        if (got < sizeof piece) {
             if (ferror(file) != 0) {
-                error.system_error = errno;
+                error.system_error = read_error;
             } else {
                 complete = true;
             }
@@ -335,18 +338,9 @@ static bool read_file(struct mo_arena *arena, const char *path, uint8_t **bytes_
         error.system_error = errno;
     }
     if (!complete) {
-        give_back(arena, bytes, capacity);
         *error_out = error;
-        return false;
     }
-    /* The last read stopped short of the block's end, so the NUL fits. */
-    MO_ASSERT(length < capacity);
-    uint8_t *kept = mo_arena_resize(arena, bytes, capacity, length + 1, 1);
-    MO_ASSERT(kept == bytes);
-    bytes[length] = 0;
-    *bytes_out = bytes;
-    *length_out = length;
-    return true;
+    return complete;
 }
 
 bool mo_sources_add(struct mo_sources *sources, const char *path, uint32_t *file_out,
@@ -355,20 +349,14 @@ bool mo_sources_add(struct mo_sources *sources, const char *path, uint32_t *file
     if (!check_room(sources, path, error_out)) {
         return false;
     }
-    uint8_t *bytes = NULL;
-    size_t length = 0;
-    if (!read_file(&sources->arena, path, &bytes, &length, error_out)) {
-        return false;
-    }
-    if (length > MO_LIMIT_PROGRAM_SIZE - sources->size) {
-        give_back(&sources->arena, bytes, length + 1);
-        return refuse(error_out, MO_SOURCE_PROGRAM_TOO_BIG, 0);
-    }
-    if (!add_file(sources, path, bytes, length, file_out, error_out)) {
-        give_back(&sources->arena, bytes, length + 1);
-        return false;
-    }
-    return true;
+    /* The file is read outside the sources' arena, so a file that is refused takes nothing from
+     * it. */
+    struct mo_buffer scratch;
+    mo_buffer_init(&scratch, MO_LIMIT_FILE_SIZE);
+    bool added = read_file(path, &scratch, error_out) &&
+                 add_file(sources, path, scratch.bytes, scratch.length, file_out, error_out);
+    mo_buffer_free(&scratch);
+    return added;
 }
 
 static const struct mo_source *source_at(const struct mo_sources *sources, uint32_t file) {

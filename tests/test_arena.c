@@ -91,17 +91,21 @@ static void test_the_limit_holds(void) {
 }
 
 static void test_one_header_of_room_is_enough(void) {
-    /* An arena with a limit of n + MO_ARENA_CHUNK_HEADER holds n bytes in one piece. */
-    for (size_t n = 1; n < 20000; n = n * 3 + 1) {
-        struct mo_arena arena;
-        mo_arena_init(&arena, n + MO_ARENA_CHUNK_HEADER);
-        unsigned char *block = mo_arena_allocate(&arena, n, 1);
-        CHECK(block != NULL);
-        if (block != NULL) {
-            memset(block, 0xAB, n);
+    /* An arena with a limit of n + MO_ARENA_CHUNK_HEADER holds n bytes in one piece, at any
+     * alignment up to max_align_t's, and with the difference more at a larger one. */
+    for (size_t alignment = 1; alignment <= 256; alignment *= 2) {
+        size_t extra = alignment > _Alignof(max_align_t) ? alignment - _Alignof(max_align_t) : 0;
+        for (size_t n = 1; n < 120000; n = n * 3 + 1) {
+            struct mo_arena arena;
+            mo_arena_init(&arena, n + MO_ARENA_CHUNK_HEADER + extra);
+            unsigned char *block = mo_arena_allocate(&arena, n, alignment);
+            CHECK(block != NULL && aligned(block, alignment));
+            if (block != NULL) {
+                memset(block, 0xAB, n);
+            }
+            CHECK(arena.used <= n + MO_ARENA_CHUNK_HEADER + extra);
+            mo_arena_free(&arena);
         }
-        CHECK(arena.used <= n + MO_ARENA_CHUNK_HEADER);
-        mo_arena_free(&arena);
     }
 }
 

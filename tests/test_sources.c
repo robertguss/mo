@@ -286,19 +286,21 @@ static void test_a_file_over_the_limit_is_refused(void) {
     CHECK(write_file("over.mo", "x = 1\n", (size_t)MO_LIMIT_FILE_SIZE + 1));
     CHECK(mo_sources_add(&sources, path_of("exact.mo"), &file, &error));
     CHECK(file == 0 && sources.files[0].length == MO_LIMIT_FILE_SIZE);
-    /* Refusing a file gives its memory back: refusing it again takes no more. */
-    CHECK(!mo_sources_add(&sources, path_of("over.mo"), &file, &error));
-    CHECK(error.problem == MO_SOURCE_TOO_BIG);
-    size_t used = sources.arena.used;
-    CHECK(!mo_sources_add(&sources, path_of("over.mo"), &file, &error));
-    CHECK(error.problem == MO_SOURCE_TOO_BIG && sources.arena.used == used);
-    CHECK(sources.count == 1 && sources.size == MO_LIMIT_FILE_SIZE);
+    /* A refused file takes no memory from the sources, even between files that are kept. */
+    CHECK(write_file("small.mo", "x = 1\n", 6));
+    for (int round = 0; round < 5; round++) {
+        size_t used = sources.arena.used;
+        CHECK(!mo_sources_add(&sources, path_of("over.mo"), &file, &error));
+        CHECK(error.problem == MO_SOURCE_TOO_BIG && sources.arena.used == used);
+        CHECK(mo_sources_add(&sources, path_of("small.mo"), &file, &error));
+    }
+    CHECK(sources.count == 6 && sources.size == MO_LIMIT_FILE_SIZE + 5 * 6);
     /* The same from memory. */
     static uint8_t bytes[MO_LIMIT_FILE_SIZE + 1];
     CHECK(!mo_sources_add_bytes(&sources, "over.mo", bytes, sizeof bytes, &file, &error));
     CHECK(error.problem == MO_SOURCE_TOO_BIG);
     CHECK(mo_sources_add_bytes(&sources, "exact.mo", bytes, sizeof bytes - 1, &file, &error));
-    CHECK(file == 1);
+    CHECK(file == 6);
     mo_sources_free(&sources);
 }
 
@@ -318,8 +320,13 @@ static void test_a_program_over_the_limit_is_refused(void) {
     CHECK(write_file("one.mo", "x", 1));
     CHECK(!mo_sources_add(&sources, path_of("one.mo"), &file, &error));
     CHECK(error.problem == MO_SOURCE_PROGRAM_TOO_BIG);
+    /* A refused file takes no memory from the sources. */
+    size_t used = sources.arena.used;
+    CHECK(!mo_sources_add(&sources, path_of("one.mo"), &file, &error));
+    CHECK(sources.arena.used == used);
     /* An empty file adds nothing to the program's size. */
     CHECK(mo_sources_add_bytes(&sources, "empty.mo", bytes, 0, &file, &error));
+    CHECK(sources.size == MO_LIMIT_PROGRAM_SIZE && sources.count == 9);
     mo_sources_free(&sources);
 }
 
@@ -360,7 +367,8 @@ static void test_a_path_over_the_limit_is_refused(void) {
 }
 
 static void remove_files(void) {
-    const char *names[] = {"main.mo", "empty.mo", "long.mo", "exact.mo", "over.mo", "one.mo"};
+    const char *names[] = {"main.mo", "empty.mo", "long.mo", "exact.mo",
+                           "over.mo", "small.mo", "one.mo"};
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         (void)remove(path_of(names[i]));
     }
