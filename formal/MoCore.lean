@@ -22,6 +22,8 @@ import MoCore.Fuel
 import MoCore.DSL
 import MoCore.Lib
 import MoCore.Testing
+-- Checks of the built-in types the samples use little
+import MoCore.Builtins
 -- The twelve samples
 import MoCore.Examples.Greet
 import MoCore.Examples.Wc

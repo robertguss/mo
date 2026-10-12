@@ -33,12 +33,15 @@ inductive Cap where
 inductive Ty where
   | int        -- 64-bit, checked
   | bigInt
+  | byte       -- a whole number from 0 to 255
   | decimal    -- an integer count of 10^-18, within ±(2^127 - 1)
   | float
   | bool
   | char
   | text
+  | bytes      -- a sequence of bytes
   | unit
+  | range      -- `a..b`: two `Int`s, its start and its end
   | time       -- microseconds since 1970-01-01T00:00:00Z, years 1 to 9999
   | duration   -- microseconds, 64-bit, checked
   | tuple (ts : List Ty)
@@ -61,9 +64,9 @@ Boolean equality and prove it sound and reflexive. -/
 mutual
 /-- Boolean equality of types. -/
 def Ty.beq : Ty → Ty → Bool
-  | .int, .int | .bigInt, .bigInt | .decimal, .decimal | .float, .float
-  | .bool, .bool | .char, .char | .text, .text | .unit, .unit
-  | .time, .time | .duration, .duration | .ordering, .ordering
+  | .int, .int | .bigInt, .bigInt | .byte, .byte | .decimal, .decimal | .float, .float
+  | .bool, .bool | .char, .char | .text, .text | .bytes, .bytes | .unit, .unit
+  | .range, .range | .time, .time | .duration, .duration | .ordering, .ordering
   | .fileError, .fileError => true
   | .tuple as, .tuple bs => Ty.beqList as bs
   | .list a, .list b => Ty.beq a b
@@ -83,8 +86,8 @@ end
 
 mutual
 theorem Ty.beq_refl : ∀ (a : Ty), Ty.beq a a = true
-  | .int | .bigInt | .decimal | .float | .bool | .char | .text | .unit
-  | .time | .duration | .ordering | .fileError => rfl
+  | .int | .bigInt | .byte | .decimal | .float | .bool | .char | .text | .bytes | .unit
+  | .range | .time | .duration | .ordering | .fileError => rfl
   | .tuple as => by simp only [Ty.beq]; exact Ty.beqList_refl as
   | .list a => by simp only [Ty.beq]; exact Ty.beq_refl a
   | .map k v => by simp only [Ty.beq, Ty.beq_refl k, Ty.beq_refl v, Bool.and_self]
@@ -100,9 +103,9 @@ end
 
 mutual
 theorem Ty.eq_of_beq : ∀ (a b : Ty), Ty.beq a b = true → a = b
-  | .int, b, h | .bigInt, b, h | .decimal, b, h | .float, b, h | .bool, b, h
-  | .char, b, h | .text, b, h | .unit, b, h | .time, b, h | .duration, b, h
-  | .ordering, b, h | .fileError, b, h => by cases b <;> simp_all [Ty.beq]
+  | .int, b, h | .bigInt, b, h | .byte, b, h | .decimal, b, h | .float, b, h | .bool, b, h
+  | .char, b, h | .text, b, h | .bytes, b, h | .unit, b, h | .range, b, h | .time, b, h
+  | .duration, b, h | .ordering, b, h | .fileError, b, h => by cases b <;> simp_all [Ty.beq]
   | .data s, b, h | .cap s, b, h => by cases b <;> simp_all [Ty.beq]
   | .tuple as, b, h => by
       cases b <;> simp only [Ty.beq, Bool.false_eq_true] at h
@@ -142,10 +145,10 @@ mutual
 /-- A type written as Mo writes it, used to name instantiated functions such
 as `List.map[Text,Int]`. -/
 def Ty.render : Ty → String
-  | .int => "Int" | .bigInt => "BigInt" | .decimal => "Decimal" | .float => "Float"
-  | .bool => "Bool" | .char => "Char" | .text => "Text" | .unit => "Unit"
-  | .time => "Time" | .duration => "Duration" | .ordering => "Ordering"
-  | .fileError => "FileError"
+  | .int => "Int" | .bigInt => "BigInt" | .byte => "Byte" | .decimal => "Decimal"
+  | .float => "Float" | .bool => "Bool" | .char => "Char" | .text => "Text"
+  | .bytes => "Bytes" | .unit => "Unit" | .range => "Range" | .time => "Time"
+  | .duration => "Duration" | .ordering => "Ordering" | .fileError => "FileError"
   | .tuple ts => "(" ++ Ty.renderList ts ++ ")"
   | .list t => "List(" ++ Ty.render t ++ ")"
   | .map k v => "Map(" ++ Ty.render k ++ ", " ++ Ty.render v ++ ")"
@@ -167,15 +170,19 @@ instance : ToString Ty := ⟨Ty.render⟩
 
 /-- Literal constants. Number literals carry their exact Core representation:
 `decimal n` is `n * 10^-18`, `time t` and `duration d` count microseconds, and
-`float bits` holds the IEEE 754 bits of a `Float`. -/
+`float bits` holds the IEEE 754 bits of a `Float`. Mo has no way to write a
+`Bytes` value, but Core has a literal for one, as the bytecode has constants
+for them (`bytecode.md` 3.1). -/
 inductive Lit where
   | int (n : Int)
   | bigInt (n : Int)
+  | byte (n : Int)
   | decimal (n : Int)
   | float (bits : UInt64)
   | bool (b : Bool)
   | char (c : Char)
   | text (s : String)
+  | bytes (bs : List Int)
   | unit
   | time (us : Int)
   | duration (us : Int)
@@ -183,9 +190,9 @@ inductive Lit where
 
 /-- The type of a literal. -/
 def Lit.ty : Lit → Ty
-  | .int _ => .int | .bigInt _ => .bigInt | .decimal _ => .decimal | .float _ => .float
-  | .bool _ => .bool | .char _ => .char | .text _ => .text | .unit => .unit
-  | .time _ => .time | .duration _ => .duration
+  | .int _ => .int | .bigInt _ => .bigInt | .byte _ => .byte | .decimal _ => .decimal
+  | .float _ => .float | .bool _ => .bool | .char _ => .char | .text _ => .text
+  | .bytes _ => .bytes | .unit => .unit | .time _ => .time | .duration _ => .duration
 
 /-! ## Primitive operations
 
@@ -202,15 +209,19 @@ inductive IntOp where
   | checkedAdd | checkedSub | checkedMul
   | wrappingAdd | wrappingSub | wrappingMul
   | saturatingAdd | saturatingSub | saturatingMul
-  | toText | toDecimal | toBig | toFloat | toChar
+  | toText | toDecimal | toBig | toFloat | toChar | toByte
   | seconds | milliseconds | minutes | hours | days
-  /-- `(a..b).to_list`: the whole numbers from `a` up to, not including, `b`. -/
-  | range
   deriving DecidableEq, Repr, Inhabited
 
 /-- Operations on `BigInt`. -/
 inductive BigOp where
   | add | sub | mul | div | rem | neg | abs | toInt | toText
+  deriving DecidableEq, Repr, Inhabited
+
+/-- Operations on `Byte`, which has no arithmetic (reference 3.2): a program
+converts a byte with `to_int` first. -/
+inductive ByteOp where
+  | toInt | toText
   deriving DecidableEq, Repr, Inhabited
 
 /-- Operations on `Decimal`. -/
@@ -228,13 +239,13 @@ inductive FloatOp where
 
 /-- The types whose order is built in. -/
 inductive Base where
-  | int | bigInt | decimal | float | bool | char | text | time | duration
+  | int | bigInt | byte | decimal | float | bool | char | text | bytes | time | duration
   deriving DecidableEq, Repr, Inhabited
 
 /-- The type a `Base` stands for. -/
 def Base.ty : Base → Ty
-  | .int => .int | .bigInt => .bigInt | .decimal => .decimal | .float => .float
-  | .bool => .bool | .char => .char | .text => .text | .time => .time
+  | .int => .int | .bigInt => .bigInt | .byte => .byte | .decimal => .decimal | .float => .float
+  | .bool => .bool | .char => .char | .text => .text | .bytes => .bytes | .time => .time
   | .duration => .duration
 
 /-- Order comparisons. Equality is the structural `Prim.eq`. -/
@@ -253,6 +264,21 @@ inductive TextOp where
   | split | trim | trimStart | trimEnd | startsWith | endsWith | contains
   | dropPrefix | dropSuffix | replace | «repeat» | padLeft | padRight | lower | upper
   | toInt | toDecimal | join
+  /-- `text.bytes`: the text's UTF-8 encoding. -/
+  | bytes
+  deriving DecidableEq, Repr, Inhabited
+
+/-- Operations on `Bytes`. `decodeUtf8` gives `None` for bytes that aren't
+valid UTF-8 (reference 3.4). -/
+inductive BytesOp where
+  | size | get | decodeUtf8
+  deriving DecidableEq, Repr, Inhabited
+
+/-- Operations on `Range`. `make a b` is `a..b`, the whole numbers from `a` up
+to, not including, `b` (reference 7.5); `start` and `end` read its ends, which
+is how a `for` loop takes a range apart, as `uncons` takes a list apart. -/
+inductive RangeOp where
+  | make | start | «end» | toList | contains | toText
   deriving DecidableEq, Repr, Inhabited
 
 /-- Operations on `Time` and `Duration` (reference 3.9). `sub` is `Time - Time`,
@@ -290,7 +316,11 @@ inductive IoOp where
   /-- What a fake console has printed: only tests, examples and promises use
   these (reference 12.4). -/
   | printed | printedErrors
-  | readText (ro : Bool) | writeText | appendText | remove
+  | readText (ro : Bool)
+  /-- `read_bytes`: the world keeps each file as its text, so a file's bytes
+  are its text's UTF-8 encoding. -/
+  | readBytes (ro : Bool)
+  | writeText | appendText | remove
   | list (ro : Bool) | «exists» (ro : Bool) | within (ro : Bool) | readOnly
   | now | randomInt
   deriving DecidableEq, Repr, Inhabited
@@ -299,6 +329,7 @@ inductive IoOp where
 inductive Prim where
   | int (op : IntOp)
   | big (op : BigOp)
+  | byte (op : ByteOp)
   | dec (op : DecOp)
   | float (op : FloatOp)
   /-- Boolean negation (`and`, `or` and `implies` lower to `if`). -/
@@ -306,6 +337,8 @@ inductive Prim where
   | cmp (b : Base) (op : CmpOp)
   | char (op : CharOp)
   | text (op : TextOp)
+  | bytes (op : BytesOp)
+  | range (op : RangeOp)
   | time (op : TimeOp)
   | list (t : Ty) (op : ListOp)
   | map (k v : Ty) (op : MapOp)
@@ -329,14 +362,18 @@ def IntOp.sig : IntOp → List Ty × Ty
   | .toBig => ([.int], .bigInt)
   | .toFloat => ([.int], .float)
   | .toChar => ([.int], .option .char)
+  | .toByte => ([.int], .option .byte)
   | .seconds | .milliseconds | .minutes | .hours | .days => ([.int], .duration)
-  | .range => ([.int, .int], .list .int)
 
 def BigOp.sig : BigOp → List Ty × Ty
   | .add | .sub | .mul | .div | .rem => ([.bigInt, .bigInt], .bigInt)
   | .neg | .abs => ([.bigInt], .bigInt)
   | .toInt => ([.bigInt], .option .int)
   | .toText => ([.bigInt], .text)
+
+def ByteOp.sig : ByteOp → List Ty × Ty
+  | .toInt => ([.byte], .int)
+  | .toText => ([.byte], .text)
 
 def DecOp.sig : DecOp → List Ty × Ty
   | .add | .sub | .mul | .div | .rem | .min | .max => ([.decimal, .decimal], .decimal)
@@ -375,6 +412,19 @@ def TextOp.sig : TextOp → List Ty × Ty
   | .toInt => ([.text], .option .int)
   | .toDecimal => ([.text], .option .decimal)
   | .join => ([.list .text, .text], .text)
+  | .bytes => ([.text], .bytes)
+
+def BytesOp.sig : BytesOp → List Ty × Ty
+  | .size => ([.bytes], .int)
+  | .get => ([.bytes, .int], .option .byte)
+  | .decodeUtf8 => ([.bytes], .option .text)
+
+def RangeOp.sig : RangeOp → List Ty × Ty
+  | .make => ([.int, .int], .range)
+  | .start | .end => ([.range], .int)
+  | .toList => ([.range], .list .int)
+  | .contains => ([.range, .int], .bool)
+  | .toText => ([.range], .text)
 
 def TimeOp.sig : TimeOp → List Ty × Ty
   | .sub => ([.time, .time], .duration)
@@ -433,6 +483,7 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .readLine => ([.cap .console], .option .text)
   | .printed | .printedErrors => ([.cap .console], .list .text)
   | .readText ro => ([filesCap ro, .text], .result .text .fileError)
+  | .readBytes ro => ([filesCap ro, .text], .result .bytes .fileError)
   | .writeText | .appendText => ([.cap .files, .text, .text], .result .unit .fileError)
   | .remove => ([.cap .files, .text], .result .unit .fileError)
   | .list ro => ([filesCap ro, .text], .result (.list .text) .fileError)
@@ -446,12 +497,15 @@ def IoOp.sig : IoOp → List Ty × Ty
 def Prim.sig : Prim → List Ty × Ty
   | .int op => op.sig
   | .big op => op.sig
+  | .byte op => op.sig
   | .dec op => op.sig
   | .float op => op.sig
   | .not => ([.bool], .bool)
   | .cmp b _ => ([b.ty, b.ty], .bool)
   | .char op => op.sig
   | .text op => op.sig
+  | .bytes op => op.sig
+  | .range op => op.sig
   | .time op => op.sig
   | .list t op => op.sig t
   | .map k v op => op.sig k v

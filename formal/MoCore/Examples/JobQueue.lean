@@ -314,7 +314,7 @@ A failed `assert` stops the test. -/
 #guard passes program
   (lets [("%s", call "submit" [emptyE, str "send the invoice"]),
          ("submitted", fst (v "%s")), ("id", snd (v "%s")), ("queue", v "submitted")] <|
-    forRange "t" "attempt" (int 1) (int 4) [("queue", Queue.ty)] [v "queue"]
+    forRange "t" "attempt" (range (int 1) (int 4)) [("queue", Queue.ty)] [v "queue"]
       (caseRes (call "lease" [v "queue", t0E, seconds 30])
         "%lq"
           (lets [("leased_queue", fst (v "%lq"))] <|

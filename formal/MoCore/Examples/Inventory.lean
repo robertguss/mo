@@ -85,7 +85,7 @@ def table (t : Ty) : FunDecl :=
   fn (inst "table" [t]) [("rows", tList t), ("columns", tList col)] tText <|
     lets [("laid_out", mapL col (tList tText) (v "columns")
             (lam [("column", col)] (call (inst "pad_column" [t]) [v "rows", v "column"]))),
-          ("lines", mapL tInt tText (iop .range [int 0, iadd (lop t .size [v "rows"]) (int 1)])
+          ("lines", mapL tInt tText (prim (.range .toList) [range (int 0) (iadd (lop t .size [v "rows"]) (int 1))])
             (lam [("i", tInt)]
               (top .trimEnd [top .join [mapL (tList tText) tText (v "laid_out")
                 (lam [("cells", tList tText)] (orElse (lop tText .get [v "cells", v "i"]) (str ""))), str "  "]])))] <|

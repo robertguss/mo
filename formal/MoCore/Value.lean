@@ -20,6 +20,11 @@ def InInt64 (n : Int) : Prop := int64Min ≤ n ∧ n ≤ int64Max
 
 instance (n : Int) : Decidable (InInt64 n) := inferInstanceAs (Decidable (_ ∧ _))
 
+/-- A `Byte`: a whole number from 0 to 255 (reference 3.2). -/
+def InByte (n : Int) : Prop := 0 ≤ n ∧ n ≤ 255
+
+instance (n : Int) : Decidable (InByte n) := inferInstanceAs (Decidable (_ ∧ _))
+
 /-- `10^18`: a `Decimal` is an integer count of `10^-18`. -/
 def decScale : Int := 1000000000000000000
 
@@ -46,8 +51,12 @@ instance (t : Int) : Decidable (InTime t) := inferInstanceAs (Decidable (_ ∧ _
 
 /-- Core values.
 
-* Numbers are exact: `decimal n` is `n * 10^-18`; `time` and `duration` count
-  microseconds; `float` holds IEEE 754 bits.
+* Numbers are exact: `byte n` is a whole number from 0 to 255; `decimal n` is
+  `n * 10^-18`; `time` and `duration` count microseconds; `float` holds IEEE
+  754 bits.
+* `bytes bs` is a sequence of bytes, each from 0 to 255.
+* `range a b` is the range `a..b`: the whole numbers from `a` up to, not
+  including, `b`, none when `b ≤ a`.
 * `con c fields` is a constructed value of a record or choice type: its
   constructor's name and its fields, in declaration order.
 * `map` is an association list in insertion order, with distinct keys.
@@ -60,12 +69,15 @@ instance (t : Int) : Decidable (InTime t) := inferInstanceAs (Decidable (_ ∧ _
 inductive Value where
   | int (n : Int)
   | bigInt (n : Int)
+  | byte (n : Int)
   | decimal (n : Int)
   | float (bits : UInt64)
   | bool (b : Bool)
   | char (c : Char)
   | text (s : String)
+  | bytes (bs : List Int)
   | unit
+  | range (a b : Int)
   | time (us : Int)
   | duration (us : Int)
   | tuple (vs : List Value)
@@ -83,18 +95,23 @@ abbrev Env := List (String × Value)
 def Lit.value : Lit → Value
   | .int n => .int n
   | .bigInt n => .bigInt n
+  | .byte n => .byte n
   | .decimal n => .decimal n
   | .float b => .float b
   | .bool b => .bool b
   | .char c => .char c
   | .text s => .text s
+  | .bytes bs => .bytes bs
   | .unit => .unit
   | .time t => .time t
   | .duration d => .duration d
 
-/-- A literal is well formed when its number is in its type's range. -/
+/-- A literal is well formed when its number is in its type's range, and a
+`Bytes` literal when each of its bytes is from 0 to 255. -/
 def Lit.Ok : Lit → Prop
   | .int n => InInt64 n
+  | .byte n => InByte n
+  | .bytes bs => ∀ b ∈ bs, InByte b
   | .decimal n => InDecimal n
   | .time t => InTime t
   | .duration d => InInt64 d

@@ -8,7 +8,8 @@
     so jumps can only be in tail position.
   * `WellTyped P`: every function's body has its declared result type.
   * `ValTy P v τ`: value `v` has type `τ`. It includes the number ranges, so
-    `Int` values are 64-bit and `Decimal` values within `±(2^127 - 1)`.
+    `Int` values are 64-bit, `Byte` values from 0 to 255 and `Decimal` values
+    within `±(2^127 - 1)`.
   * `OutcomeOk P Δ τ o`: what type safety promises of an outcome.
   * `PrimSafe P p`: primitive `p` respects its signature.
 -/
@@ -88,12 +89,15 @@ mutual
 inductive ValTy (P : Program) : Value → Ty → Prop
   | int {n} : InInt64 n → ValTy P (.int n) .int
   | bigInt {n} : ValTy P (.bigInt n) .bigInt
+  | byte {n} : InByte n → ValTy P (.byte n) .byte
   | decimal {n} : InDecimal n → ValTy P (.decimal n) .decimal
   | float {b} : ValTy P (.float b) .float
   | bool {b} : ValTy P (.bool b) .bool
   | char {c} : ValTy P (.char c) .char
   | text {s} : ValTy P (.text s) .text
+  | bytes {bs} : (∀ b ∈ bs, InByte b) → ValTy P (.bytes bs) .bytes
   | unit : ValTy P .unit .unit
+  | range {a b} : InInt64 a → InInt64 b → ValTy P (.range a b) .range
   | time {t} : InTime t → ValTy P (.time t) .time
   | duration {d} : InInt64 d → ValTy P (.duration d) .duration
   | tuple {vs ts} : ValsTy P vs ts → ValTy P (.tuple vs) (.tuple ts)

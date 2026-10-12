@@ -4,8 +4,8 @@
   `prims_safe : PrimsSafe P` discharges the hypothesis of `eval_safe` for every
   primitive of `Prim`, in every program: given arguments of its argument
   types, a primitive returns a value of its result type or stops. In
-  particular every `Int`, `Decimal`, `Duration` and `Time` it returns is in
-  range: overflow stops, it never wraps.
+  particular every `Int`, `Byte`, `Decimal`, `Duration` and `Time` it returns
+  is in range: overflow stops, it never wraps.
 
   The proofs go group by group (`IntOp`, `DecOp`, `TextOp`, ...). Each one
   inverts the typing of the arguments (`invert_args`), unfolds the primitive,
@@ -32,6 +32,13 @@ theorem valTy_bigInt_iff : ValTy P v .bigInt ↔ ∃ n, v = .bigInt n := by
     | bigInt => exact ⟨_, rfl⟩
     | con hcs => simp [ctorsOf] at hcs
   · rintro ⟨n, rfl⟩; exact .bigInt
+
+theorem valTy_byte_iff : ValTy P v .byte ↔ ∃ n, v = .byte n ∧ InByte n := by
+  constructor
+  · intro h; cases h with
+    | byte hn => exact ⟨_, rfl, hn⟩
+    | con hcs => simp [ctorsOf] at hcs
+  · rintro ⟨n, rfl, hn⟩; exact .byte hn
 
 theorem valTy_decimal_iff : ValTy P v .decimal ↔ ∃ n, v = .decimal n ∧ InDecimal n := by
   constructor
@@ -68,12 +75,26 @@ theorem valTy_text_iff : ValTy P v .text ↔ ∃ s, v = .text s := by
     | con hcs => simp [ctorsOf] at hcs
   · rintro ⟨s, rfl⟩; exact .text
 
+theorem valTy_bytes_iff : ValTy P v .bytes ↔ ∃ bs, v = .bytes bs ∧ ∀ b ∈ bs, InByte b := by
+  constructor
+  · intro h; cases h with
+    | bytes h => exact ⟨_, rfl, h⟩
+    | con hcs => simp [ctorsOf] at hcs
+  · rintro ⟨bs, rfl, h⟩; exact .bytes h
+
 theorem valTy_unit_iff : ValTy P v .unit ↔ v = .unit := by
   constructor
   · intro h; cases h with
     | unit => rfl
     | con hcs => simp [ctorsOf] at hcs
   · rintro rfl; exact .unit
+
+theorem valTy_range_iff : ValTy P v .range ↔ ∃ a b, v = .range a b ∧ InInt64 a ∧ InInt64 b := by
+  constructor
+  · intro h; cases h with
+    | range ha hb => exact ⟨_, _, rfl, ha, hb⟩
+    | con hcs => simp [ctorsOf] at hcs
+  · rintro ⟨a, b, rfl, ha, hb⟩; exact .range ha hb
 
 theorem valTy_time_iff : ValTy P v .time ↔ ∃ t, v = .time t ∧ InTime t := by
   constructor
@@ -157,6 +178,11 @@ theorem ValTy.optOf {o : Option Value} {t : Ty} (h : ∀ x, o = some x → ValTy
 theorem ValTy.optInt {n : Int} : ValTy P (optInt n) (.option .int) := by
   unfold MoCore.optInt; split
   · exact .someV (.int ‹_›)
+  · exact .noneV
+
+theorem ValTy.optByte {n : Int} : ValTy P (optByte n) (.option .byte) := by
+  unfold MoCore.optByte; split
+  · exact .someV (.byte ‹_›)
   · exact .noneV
 
 theorem ValTy.optDec {n : Int} : ValTy P (optDec n) (.option .decimal) := by
@@ -243,26 +269,16 @@ argument values (substituted away) and their range facts. -/
 macro "invert_args" : tactic => `(tactic| (
   intro vs w h
   revert h
-  simp only [Prim.sig, IntOp.sig, BigOp.sig, DecOp.sig, FloatOp.sig, CharOp.sig, TextOp.sig,
-    TimeOp.sig, ListOp.sig, MapOp.sig, IoOp.sig, Base.ty, filesCap,
-    valsTy_cons_iff, valsTy_nil_iff, valTy_int_iff, valTy_bigInt_iff, valTy_decimal_iff,
-    valTy_float_iff, valTy_bool_iff, valTy_char_iff, valTy_text_iff, valTy_time_iff,
-    valTy_duration_iff, valTy_list_iff, valTy_map_iff, valTy_cap_iff,
-    forall_exists_index, and_imp]
+  simp only [Prim.sig, IntOp.sig, BigOp.sig, ByteOp.sig, DecOp.sig, FloatOp.sig, CharOp.sig,
+    TextOp.sig, BytesOp.sig, RangeOp.sig, TimeOp.sig, ListOp.sig, MapOp.sig, IoOp.sig, Base.ty,
+    filesCap, valsTy_cons_iff, valsTy_nil_iff, valTy_int_iff, valTy_bigInt_iff, valTy_byte_iff,
+    valTy_decimal_iff, valTy_float_iff, valTy_bool_iff, valTy_char_iff, valTy_text_iff,
+    valTy_bytes_iff, valTy_range_iff, valTy_time_iff, valTy_duration_iff, valTy_list_iff,
+    valTy_map_iff, valTy_cap_iff, forall_exists_index, and_imp]
   intros
   subst_vars))
 
 /-! ## Numbers -/
-
-/-- The whole numbers of a range between two `Int`s are `Int`s. -/
-theorem intRange_ty {a b : Int} (ha : InInt64 a) (hb : InInt64 b) :
-    ∀ x ∈ intRange a b, ValTy P x .int := by
-  intro x hx
-  simp only [intRange, List.mem_map, List.mem_range] at hx
-  obtain ⟨i, hi, rfl⟩ := hx
-  apply ValTy.int
-  unfold InInt64 at *
-  omega
 
 theorem intOp_safe (op : IntOp) : PrimSafe P (.int op) := by
   cases op <;> invert_args <;>
@@ -273,11 +289,11 @@ theorem intOp_safe (op : IntOp) : PrimSafe P (.int op) := by
     | exact okDur_safe
     | exact .optInt
     | exact .optChar
+    | exact .optByte
     | exact .text
     | exact .bigInt
     | exact .float
     | exact ⟨fun _ => trivial, fun _ => okInt_safe⟩
-    | exact .list (intRange_ty ‹_› ‹_›)
     | skip
 
 theorem bigOp_safe (op : BigOp) : PrimSafe P (.big op) := by
@@ -288,6 +304,12 @@ theorem bigOp_safe (op : BigOp) : PrimSafe P (.big op) := by
     | exact .optInt
     | exact .text
     | exact ⟨fun _ => trivial, fun _ => .bigInt⟩
+
+theorem byteOp_safe (op : ByteOp) : PrimSafe P (.byte op) := by
+  cases op <;> invert_args <;> simp only [Prim.eval, evalByteOp, outcomeOk_ok] <;>
+    first
+    | exact okInt_safe
+    | exact .text
 
 theorem decOp_safe (op : DecOp) : PrimSafe P (.dec op) := by
   cases op <;> invert_args <;>
@@ -339,6 +361,28 @@ theorem textsOf_some : ∀ {xs : List Value}, (∀ x ∈ xs, ∃ s, x = .text s)
     obtain ⟨l, hl⟩ := textsOf_some (xs := xs) fun y hy => h y (by simp [hy])
     exact ⟨s :: l, by simp [textsOf, hl]⟩
 
+/-- A character's code is below `0x110000`. -/
+theorem char_toNat_lt (c : Char) : c.toNat < 0x110000 := by
+  have := c.valid
+  simp only [UInt32.isValidChar, Nat.isValidChar] at this
+  simp only [Char.toNat]
+  omega
+
+/-- Every byte of a text's UTF-8 encoding is from 0 to 255. -/
+theorem textBytes_inByte (s : String) : ∀ b ∈ textBytes s, InByte b := by
+  intro b hb
+  simp only [textBytes, List.mem_flatMap] at hb
+  obtain ⟨c, _, hb⟩ := hb
+  have := char_toNat_lt c
+  unfold utf8EncodeChar at hb
+  dsimp only at hb
+  unfold InByte
+  split at hb <;> (try split at hb) <;> (try split at hb) <;>
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hb <;> omega
+
+theorem ValTy.textBytes {s : String} : ValTy P (.bytes (textBytes s)) .bytes :=
+  .bytes (textBytes_inByte s)
+
 theorem textOp_safe (op : TextOp) : PrimSafe P (.text op) := by
   cases op
   case fromChars =>
@@ -369,8 +413,42 @@ theorem textOp_safe (op : TextOp) : PrimSafe P (.text op) := by
     | exact .optText
     | exact .optIntOf
     | exact .optDecOf
+    | exact .textBytes
     | exact ⟨fun _ => trivial, fun _ => .texts⟩
     | exact ⟨fun _ => trivial, fun _ => .text⟩
+
+theorem bytesGet_ty {bs : List Int} {i : Int} (h : ∀ b ∈ bs, InByte b) :
+    ValTy P (bytesGet bs i) (.option .byte) := by
+  unfold bytesGet; split
+  · refine .optOf fun x hx => ?_
+    obtain ⟨b, hb, rfl⟩ := Option.map_eq_some_iff.mp hx
+    exact .byte (h b (List.mem_of_getElem? hb))
+  · exact .noneV
+
+theorem bytesOp_safe (op : BytesOp) : PrimSafe P (.bytes op) := by
+  cases op <;> invert_args <;> simp only [Prim.eval, evalBytesOp, outcomeOk_ok]
+  case size => exact okInt_safe
+  case get => exact bytesGet_ty ‹_›
+  case decodeUtf8 => exact .optText
+
+/-- The whole numbers of a range between two `Int`s are `Int`s. -/
+theorem intRange_ty {a b : Int} (ha : InInt64 a) (hb : InInt64 b) :
+    ∀ x ∈ intRange a b, ValTy P x .int := by
+  intro x hx
+  simp only [intRange, List.mem_map, List.mem_range] at hx
+  obtain ⟨i, hi, rfl⟩ := hx
+  apply ValTy.int
+  unfold InInt64 at *
+  omega
+
+theorem rangeOp_safe (op : RangeOp) : PrimSafe P (.range op) := by
+  cases op <;> invert_args <;> simp only [Prim.eval, evalRangeOp, outcomeOk_ok]
+  case make => exact .range ‹_› ‹_›
+  case start => exact .int ‹_›
+  case «end» => exact .int ‹_›
+  case toList => exact .list (intRange_ty ‹_› ‹_›)
+  case contains => exact .bool
+  case toText => exact .text
 
 theorem timeOp_safe (op : TimeOp) : PrimSafe P (.time op) := by
   cases op <;> invert_args <;> simp only [Prim.eval, evalTimeOp, outcomeOk_ok] <;>
@@ -673,6 +751,7 @@ theorem ioOp_safe (op : IoOp) : PrimSafe P (.io op) := by
     | exact ValTy.someV ValTy.text
     | exact ValTy.noneV
     | exact ValTy.okV ValTy.text
+    | exact ValTy.okV ValTy.textBytes
     | exact ValTy.okV ValTy.unit
     | exact ValTy.okV ValTy.texts
     | exact ValTy.errorV ValTy.notFound
@@ -691,12 +770,15 @@ theorem prims_safe : PrimsSafe P := by
   cases p with
   | int op => exact intOp_safe op
   | big op => exact bigOp_safe op
+  | byte op => exact byteOp_safe op
   | dec op => exact decOp_safe op
   | float op => exact floatOp_safe op
   | not => exact not_safe
   | cmp b op => exact cmp_safe b op
   | char op => exact charOp_safe op
   | text op => exact textOp_safe op
+  | bytes op => exact bytesOp_safe op
+  | range op => exact rangeOp_safe op
   | time op => exact timeOp_safe op
   | list t op => exact listOp_safe t op
   | map k t op => exact mapOp_safe k t op

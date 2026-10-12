@@ -6,7 +6,8 @@
     `OutcomeOk`: never `wrong`, a returned value of its type, no stray jump.
   * `eval_never_wrong`, `eval_ok_typed`, `eval_no_stray_jump`: the three parts.
   * `int_result_in_range`: an `Int` result is a 64-bit whole number, so
-    overflow can only stop the program, never wrap.
+    overflow can only stop the program, never wrap; likewise
+    `byte_result_in_range` and `decimal_result_in_range`.
   * `eval_deterministic`: the evaluator is a function.
 
   All of them hold for every fuel and every world.
@@ -61,6 +62,16 @@ theorem int_result_in_range {P : Program} (hP : WellTyped P) {Γ : Ctx} {e : Exp
   have hv := eval_ok_typed hP he hρ h
   cases hv with
   | int hk => exact ⟨_, rfl, hk⟩
+  | con hcs => simp [ctorsOf] at hcs
+
+/-- A `Byte` that a well-typed expression returns is a whole number from 0 to
+255. -/
+theorem byte_result_in_range {P : Program} (hP : WellTyped P) {Γ : Ctx} {e : Expr} {ρ : Env}
+    (he : Typed P Γ [] e .byte) (hρ : EnvTy P ρ Γ) {n : Nat} {w w' : World} {v : Value}
+    (h : eval n P ρ w e = .ok v w') : ∃ k, v = .byte k ∧ 0 ≤ k ∧ k ≤ 255 := by
+  have hv := eval_ok_typed hP he hρ h
+  cases hv with
+  | byte hk => exact ⟨_, rfl, hk⟩
   | con hcs => simp [ctorsOf] at hcs
 
 /-- A `Decimal` that a well-typed expression returns is within `±(2^127 - 1)`

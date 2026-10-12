@@ -30,6 +30,9 @@ def okTime (t : Int) (w : World) : Outcome :=
 /-- `Some(n)` when `n` fits in an `Int`, else `None`. -/
 def optInt (n : Int) : Value := if InInt64 n then someV (.int n) else noneV
 
+/-- `Some(n)` when `n` is a `Byte`, from 0 to 255, else `None`. -/
+def optByte (n : Int) : Value := if InByte n then someV (.byte n) else noneV
+
 /-- `Some(n)` when `n` fits in a `Decimal`, else `None`. -/
 def optDec (n : Int) : Value := if InDecimal n then someV (.decimal n) else noneV
 
@@ -74,10 +77,6 @@ def wrongArgs (what : String) : Outcome := .wrong s!"{what}: arguments of the wr
 
 /-! ## Numbers -/
 
-/-- The whole numbers from `a` up to, not including, `b`. -/
-def intRange (a b : Int) : List Value :=
-  (List.range (b - a).toNat).map fun (i : Nat) => .int (a + (i : Int))
-
 def evalIntOp (op : IntOp) (vs : List Value) (w : World) : Outcome :=
   match op, vs with
   | .add, [.int a, .int b] => okInt (a + b) w
@@ -107,12 +106,12 @@ def evalIntOp (op : IntOp) (vs : List Value) (w : World) : Outcome :=
   | .toBig, [.int a] => .ok (.bigInt a) w
   | .toFloat, [.int a] => .ok (.float (Float.ofInt a).toBits) w
   | .toChar, [.int a] => .ok (optChar (charOfCode a)) w
+  | .toByte, [.int a] => .ok (optByte a) w
   | .seconds, [.int a] => okDur (a * 1000000) w
   | .milliseconds, [.int a] => okDur (a * 1000) w
   | .minutes, [.int a] => okDur (a * 60000000) w
   | .hours, [.int a] => okDur (a * 3600000000) w
   | .days, [.int a] => okDur (a * 86400000000) w
-  | .range, [.int a, .int b] => .ok (.list (intRange a b)) w
   | _, _ => wrongArgs "Int primitive"
 
 def evalBigOp (op : BigOp) (vs : List Value) (w : World) : Outcome :=
@@ -127,6 +126,14 @@ def evalBigOp (op : BigOp) (vs : List Value) (w : World) : Outcome :=
   | .toInt, [.bigInt a] => .ok (optInt a) w
   | .toText, [.bigInt a] => .ok (.text (toString a)) w
   | _, _ => wrongArgs "BigInt primitive"
+
+/-- `Byte.to_int` always fits; a byte's text form is its decimal digits, as an
+`Int`'s is. -/
+def evalByteOp (op : ByteOp) (vs : List Value) (w : World) : Outcome :=
+  match op, vs with
+  | .toInt, [.byte a] => okInt a w
+  | .toText, [.byte a] => .ok (.text (toString a)) w
+  | _, _ => wrongArgs "Byte primitive"
 
 /-- `Decimal.to_int`: `None` unless whole and in the `Int` range. -/
 def decToIntV (a : Int) : Value := if a % decScale = 0 then optInt (a / decScale) else noneV
@@ -261,7 +268,41 @@ def evalTextOp (op : TextOp) (vs : List Value) (w : World) : Outcome :=
     match textsOf xs with
     | some ts => .ok (.text (String.intercalate sep ts)) w
     | none => wrongArgs "List.join"
+  | .bytes, [.text a] => .ok (.bytes (textBytes a)) w
   | _, _ => wrongArgs "Text primitive"
+
+/-! ## Bytes -/
+
+/-- `bytes.get(i)`: `None` for a position below 0 or past the end, as for a
+list. -/
+def bytesGet (bs : List Int) (i : Int) : Value :=
+  if 0 ≤ i then optOf (bs[i.toNat]?.map .byte) else noneV
+
+def evalBytesOp (op : BytesOp) (vs : List Value) (w : World) : Outcome :=
+  match op, vs with
+  | .size, [.bytes bs] => okInt bs.length w
+  | .get, [.bytes bs, .int i] => .ok (bytesGet bs i) w
+  | .decodeUtf8, [.bytes bs] => .ok (optText ((utf8Decode bs).map String.ofList)) w
+  | _, _ => wrongArgs "Bytes primitive"
+
+/-! ## Ranges -/
+
+/-- The whole numbers from `a` up to, not including, `b`. -/
+def intRange (a b : Int) : List Value :=
+  (List.range (b - a).toNat).map fun (i : Nat) => .int (a + (i : Int))
+
+/-- A range's text form is its ends with `..` between them, as in `0..3`
+(reference 9.2). Its `for` loop counts from its start while below its end, so
+the counter never passes the end and never overflows (TRANSLATION.md 7.5). -/
+def evalRangeOp (op : RangeOp) (vs : List Value) (w : World) : Outcome :=
+  match op, vs with
+  | .make, [.int a, .int b] => .ok (.range a b) w
+  | .start, [.range a _] => .ok (.int a) w
+  | .end, [.range _ b] => .ok (.int b) w
+  | .toList, [.range a b] => .ok (.list (intRange a b)) w
+  | .contains, [.range a b, .int n] => .ok (.bool (a ≤ n && n < b)) w
+  | .toText, [.range a b] => .ok (.text (toString a ++ ".." ++ toString b)) w
+  | _, _ => wrongArgs "Range primitive"
 
 /-! ## Time and durations -/
 
@@ -485,6 +526,18 @@ def evalIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
         | some text => .ok (okV (.text text)) w
         | none => .ok (errorV (fileErrorV "NotFound" path)) w
     | none => wrongArgs "Files.read_text"
+  | .readBytes ro, [h, .text path] =>
+    -- The world keeps each file as its text, so a file's bytes are its text's
+    -- UTF-8 encoding.
+    match capRoot (filesKind ro) h with
+    | some root =>
+      match resolvePath root path with
+      | none => .ok (errorV (fileErrorV "NotAllowed" path)) w
+      | some p =>
+        match lookup p w.files with
+        | some text => .ok (okV (.bytes (textBytes text))) w
+        | none => .ok (errorV (fileErrorV "NotFound" path)) w
+    | none => wrongArgs "Files.read_bytes"
   | .writeText, [h, .text path, .text text] =>
     match capRoot .files h with
     | some root =>
@@ -559,6 +612,7 @@ def evalIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
 def Prim.eval : Prim → List Value → World → Outcome
   | .int op, vs, w => evalIntOp op vs w
   | .big op, vs, w => evalBigOp op vs w
+  | .byte op, vs, w => evalByteOp op vs w
   | .dec op, vs, w => evalDecOp op vs w
   | .float op, vs, w => evalFloatOp op vs w
   | .not, [.bool b], w => .ok (.bool !b) w
@@ -566,6 +620,8 @@ def Prim.eval : Prim → List Value → World → Outcome
   | .cmp b op, vs, w => evalCmp b op vs w
   | .char op, vs, w => evalCharOp op vs w
   | .text op, vs, w => evalTextOp op vs w
+  | .bytes op, vs, w => evalBytesOp op vs w
+  | .range op, vs, w => evalRangeOp op vs w
   | .time op, vs, w => evalTimeOp op vs w
   | .list _ op, vs, w => evalListOp op vs w
   | .map _ _ op, vs, w => evalMapOp op vs w

@@ -16,12 +16,15 @@ open MoCore
 
 abbrev tInt : Ty := .int
 abbrev tBig : Ty := .bigInt
+abbrev tByte : Ty := .byte
 abbrev tDec : Ty := .decimal
 abbrev tFloat : Ty := .float
 abbrev tBool : Ty := .bool
 abbrev tChar : Ty := .char
 abbrev tText : Ty := .text
+abbrev tBytes : Ty := .bytes
 abbrev tUnit : Ty := .unit
+abbrev tRange : Ty := .range
 abbrev tTime : Ty := .time
 abbrev tDur : Ty := .duration
 abbrev tFileError : Ty := .fileError
@@ -38,10 +41,14 @@ def tCap (c : Cap) : Ty := .cap c
 /-! ## Literals -/
 
 def int (n : Int) : Expr := .lit (.int n)
+/-- A byte literal, from 0 to 255. -/
+def byteE (n : Int) : Expr := .lit (.byte n)
 /-- A decimal literal, written as in Mo: `dec "12.50"`. -/
 def dec (s : String) : Expr := .lit (.decimal (decLit s))
 def str (s : String) : Expr := .lit (.text s)
 def chr (c : Char) : Expr := .lit (.char c)
+/-- A `Bytes` literal, each byte from 0 to 255. Mo has no way to write one. -/
+def bytesE (bs : List Int) : Expr := .lit (.bytes bs)
 def bool (b : Bool) : Expr := .lit (.bool b)
 def tt : Expr := bool true
 def ff : Expr := bool false
@@ -99,6 +106,8 @@ def imul (a b : Expr) : Expr := iop .mul [a, b]
 def idiv (a b : Expr) : Expr := iop .div [a, b]
 def irem (a b : Expr) : Expr := iop .rem [a, b]
 def cmp (b : Base) (op : CmpOp) (x y : Expr) : Expr := prim (.cmp b op) [x, y]
+/-- `a..b`: the whole numbers from `a` up to, not including, `b`. -/
+def range (a b : Expr) : Expr := prim (.range .make) [a, b]
 def ilt (a b : Expr) : Expr := cmp .int .lt a b
 def ile (a b : Expr) : Expr := cmp .int .le a b
 def igt (a b : Expr) : Expr := cmp .int .gt a b
@@ -298,14 +307,17 @@ def matchList (t : Ty) (xs : Expr) (names : List String) (rest : Option String)
     (onMatch onFail : Expr) : Expr :=
   matchListAt t 0 xs names rest onMatch onFail
 
-/-- `for i in a..b ... end; after`: counts from `a` up to, not including, `b`. -/
-def forRange (lbl i : String) (a b : Expr) (st : List (String × Ty)) (init : List Expr)
+/-- `for i in r ... end; after`, over a range `r`: counts from its start while
+below its end, so `i + 1` (`nextRange`) never passes the end, and the counter
+never overflows (architecture 4.3). -/
+def forRange (lbl i : String) (r : Expr) (st : List (String × Ty)) (init : List Expr)
     (body after : Expr) : Expr :=
-  lets [(lbl ++ ".end", b)] <|
+  let rv := lbl ++ ".range"
+  lets [(rv, r), (lbl ++ ".end", prim (.range .end) [v rv])] <|
     .join (lbl ++ ".done") st after <|
       .join (lbl ++ ".loop") ((i, .int) :: st)
         (ite (ilt (v i) (v (lbl ++ ".end"))) body (.jump (lbl ++ ".done") (st.map fun s => v s.1)))
-        (.jump (lbl ++ ".loop") (a :: init))
+        (.jump (lbl ++ ".loop") (prim (.range .start) [v rv] :: init))
 
 /-- The next round of a range loop, with the new state. -/
 def nextRange (lbl i : String) (st : List Expr) : Expr :=

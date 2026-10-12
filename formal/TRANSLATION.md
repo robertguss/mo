@@ -15,7 +15,7 @@ compact text form:
 
 | Text form | Lean (`Expr`) | Helper in `MoCore/DSL.lean` |
 | --- | --- | --- |
-| `42`, `12.50`, `"hi"`, `'c'`, `true`, `Unit` | `.lit` | `int`, `dec`, `str`, `chr`, `bool`, `unitE` |
+| `42`, `12.50`, `"hi"`, `'c'`, `true`, `Unit`, `bytes[0x68, 0x69]` | `.lit` | `int`, `dec`, `str`, `chr`, `bool`, `unitE`, `byteE`, `bytesE` |
 | `x` | `.var "x"` | `v` |
 | `let x = e in body` | `.let_` | `lets`, `seq` |
 | `fn(x: T, ...) => body` | `.lam` | `lam` |
@@ -33,8 +33,8 @@ compact text form:
 Primitives are written with their Lean names: `%int.add` is
 `Prim.int .add`, `%cmp.decimal.lt` is `Prim.cmp .decimal .lt`, `%text.isEmpty`
 is `Prim.text .isEmpty`, `%list.uncons` is `Prim.list T .uncons`, `%map.set` is
-`Prim.map K V .set`, `%eq` is `Prim.eq T`, `%io.print` is `Prim.io .print`.
-Their types are in `Prim.sig`.
+`Prim.map K V .set`, `%range.make` is `Prim.range .make`, `%eq` is `Prim.eq T`,
+`%io.print` is `Prim.io .print`. Their types are in `Prim.sig`.
 
 Core is explicit where Mo infers: function, anonymous-function and join-point
 parameters carry their types, and a constructor application names its type.
@@ -87,22 +87,24 @@ lowering qualifies the name: `LineError.to_text`.
 | `Bool` | `bool` | `bool b` |
 | `Int` | `int` | `int n`, `n` within −2⁶³ to 2⁶³ − 1 |
 | `BigInt` | `bigInt` | `bigInt n` |
+| `Byte` | `byte` | `byte n`, `n` from 0 to 255 |
 | `Decimal` | `decimal` | `decimal n`, meaning `n × 10⁻¹⁸`, within ±(2¹²⁷ − 1) |
 | `Float` | `float` | `float bits` (IEEE 754) |
 | `Text`, `Char` | `text`, `char` | `text s`, `char c` |
+| `Bytes` | `bytes` | `bytes [b, ...]`, each `b` from 0 to 255 |
 | `Unit` | `unit` | `unit` |
 | `(A, B)` | `tuple [A, B]` | `tuple [a, b]` |
 | `List(T)` | `list T` | `list [...]` |
 | `Map(K, V)` | `map K V` | `map [(k, v), ...]`, in insertion order |
 | `Set(T)` | `map T Unit` | a map to `Unit` |
 | `Time`, `Duration` | `time`, `duration` | microseconds (since 1970-01-01T00:00:00Z for a time) |
-| `Range` | `tuple [Int, Int]` | `(a, b)` for `a..b` |
+| `Range` | `range` | `range a b` for `a..b`, two `Int`s |
 | a `struct` or `enum` | `data "Name"` | `con "Case" [fields]` |
 | `Option(T)`, `Result(T, E)` | `option T`, `result T E` | `con "Some" [v]`, `con "Error" [e]`, ... |
 | `fn(A) : B` | `fn [A] B` | a closure |
 | `Console`, `Files`, ... | `cap c` | a handle, `cap c folder` |
 
-`Byte`, `Bytes` and the `Unicode16` module are not in this model of Core yet.
+The `Unicode16` module is not in this model of Core yet.
 
 ### 3.1 Bool
 
@@ -146,6 +148,25 @@ let hash = %int.wrappingMul(h, 31) in ...
 own primitives (`%big.add`, ..., `%big.toInt`), and `n.to_big` is
 `%int.toBig(n)`.
 
+A `Byte` holds 0 to 255 and has no arithmetic (reference 3.2, 9.2).
+`n.to_byte` is `%int.toByte(n)`, an `Option(Byte)`; `b.to_int` is
+`%byte.toInt(b)`; and `b.to_text` is `%byte.toText(b)`, the byte's decimal
+digits, as an `Int`'s are. Bytes compare with `%cmp.byte.lt` and the others,
+and `==` is `%eq`. A whole-number literal where a `Byte` is expected is a byte
+literal, as one where a `Decimal` is expected is a decimal (3.3), so in
+`b < 128`, with `b` a `Byte`, the `128` is the byte `128`. Typing requires a
+byte literal from 0 to 255, and the front end reports one outside that range.
+
+```mo
+low? = b < 128
+code = b.to_int
+```
+
+```
+let low? = %cmp.byte.lt(b, 128) in
+let code = %byte.toInt(b) in ...
+```
+
 ### 3.3 Decimal and Float
 
 A decimal literal is its exact count of 10⁻¹⁸: `19.99` is
@@ -183,11 +204,12 @@ converted to its text form:
 | `Char` | `%char.toText(c)` |
 | `Int` | `%int.toText(n)` |
 | `BigInt` | `%big.toText(n)` |
+| `Byte` | `%byte.toText(b)`, its decimal digits |
 | `Decimal` | `%dec.toText(d)`, the shortest exact spelling |
 | `Float` | `%float.toText(x)`: `nan` for a float that is not a number, `inf` and `-inf` for the infinities (reference 9.2); for any other float, reference 9.2 asks for the shortest spelling, which the model doesn't give yet (item 19 of the section on D227) |
 | `Bool` | `if b then "true" else "false"` |
 | `Time`, `Duration` | `%time.toText(t)`, RFC 3339 in UTC with `Z` and the shortest fraction of a second; `%time.durToText(d)`, in seconds, as `1.5s` |
-| `Range` | `%text.concat(%int.toText(r.0), %text.concat("..", %int.toText(r.1)))`, as in `0..3` (reference 9.2); a range is the pair of its ends (7.5), so the lowering writes this, not a tuple's form |
+| `Range` | `%range.toText(r)`, its ends with `..` between them, as in `0..3` (reference 9.2) |
 | a type with its own `to_text` | a call of it, such as `LineError.to_text(problem)` |
 | `FileError` | `FileError.to_text(e)` (`MoCore/Lib.lean`) |
 | any other record, choice type, tuple, list or map | a call of `to_text[T]`, a Core function the lowering derives per type, which quotes texts and characters inside, and writes ranges inside as `0..3` |
@@ -214,6 +236,33 @@ generate `to_text[T]` yet, and none of the samples needs it.
 
 The text functions of section 14 are primitives (`%text.lines`,
 `%text.split`, ...); see section 14 below.
+
+`text.bytes` is `%text.bytes(text)`, the text's UTF-8 encoding, with as many
+bytes as `byte_count` counts. On `Bytes`, `size` is `%bytes.size`; `get(i)` is
+`%bytes.get`, `None` below 0 or past the end, as for a list; and
+`decode_utf8` is `%bytes.decodeUtf8`, which gives `None` unless the bytes are
+well-formed UTF-8 as table 3-7 of the Unicode Standard defines it: no
+overlong form, no surrogate (U+D800 to U+DFFF), nothing above U+10FFFF, and
+no sequence cut short. A byte order mark is the character U+FEFF, kept like
+any other, as Mo never normalizes text silently (reference 3.4). `Bytes` has
+`Equal`, `Hash` and an order, byte by byte, in which a sequence comes before
+any longer one it begins, as a list does; it has no text form (reference
+9.2), so it can't be interpolated.
+
+```mo
+size = text.bytes.size
+back = text.bytes.decode_utf8 or ""
+```
+
+```
+let size = %bytes.size(%text.bytes(text)) in
+let back = case %bytes.decodeUtf8(%text.bytes(text)) of None -> "" | Some(%or) -> %or end in ...
+```
+
+Mo has no way to write a `Bytes` value, but Core has a literal for one,
+`bytes[0x68, 0x69]`, as the bytecode has constants for them (`bytecode.md`
+3.1). The lowering never makes one from Mo; the model's checks use it to
+build bytes that aren't UTF-8.
 
 ### 3.5 Unit
 
@@ -706,8 +755,8 @@ the body assigns, and runs one round; `l.done` takes the `var`s and runs what
 follows the loop. Every path through the body ends by jumping: to `l.loop`
 for the next round (the end of the body, or `continue`), or to `l.done`
 (`break`). A `for` over a list takes it apart with `%list.uncons`; over a map,
-its `%map.entries`; over a set, its keys; over a range `a..b`, an `Int` that
-counts up to `b`.
+its `%map.entries`; over a set, its keys; over a range, an `Int` that counts
+from the range's start while below its end.
 
 ```mo
 var total = 0
@@ -719,14 +768,15 @@ end
 
 ```
 let total = 0 in
-let r.end = 10 in
+let r.range = %range.make(0, 10) in
+let r.end = %range.end(r.range) in
 join r.done(total: Int) = <what follows> in
 join r.loop(i: Int, total: Int) =
   if %cmp.int.lt(i, r.end) then
     if %eq(%int.rem(i, 2), 0) then jump r.loop(%int.add(i, 1), total)
     else jump r.loop(%int.add(i, 1), %int.add(total, i))
   else jump r.done(total)
-in jump r.loop(0, total)
+in jump r.loop(%range.start(r.range), total)
 ```
 
 ```mo
@@ -749,13 +799,21 @@ join w.loop(remaining: Int, halvings: Int) =
 in jump w.loop(remaining, halvings)
 ```
 
-A range kept in a variable is the pair of its ends: `r = 0..10` is
-`let r = (0, 10) in`, and `for i in r` counts from `r.0` up to `r.1`;
-`r.to_list` is `%int.range(r.0, r.1)` and `r.contains?(n)` is
-`r.0 <= n and n < r.1`. Reference 9.2 gives `Range` `Equal`, `Hash` and a
-text form but no order: two ranges are equal when their ends are (`%eq` on
-the pair), a range can be a map key or a set member, and its text form,
-`0..3`, is written by the lowering (3.4).
+A range is a value of type `Range`, two `Int`s (architecture 4.3): `a..b` is
+`%range.make(a, b)`, which computes `a`, then `b`, and is never a bug, so
+`r = 0..10` is `let r = %range.make(0, 10) in`. `for i in r` binds the range,
+reads its end once with `%range.end`, as above, and starts counting at
+`%range.start(r)`; `%range.start` and `%range.end` are Core's way to take a
+range apart, as `%list.uncons` takes a list apart, and Mo has neither. The
+body runs only while `i` is below the end, so `%int.add(i, 1)` is at most the
+end and never overflows, even in a range that ends at the largest `Int`.
+A range whose end isn't above its start is empty: the loop runs no round.
+`r.to_list` is `%range.toList(r)`, and `r.contains?(n)` is
+`%range.contains(r, n)`, true when `r`'s start `<= n` and `n <` its end.
+Reference 9.2 gives `Range` `Equal`, `Hash` and a text form but no order: two
+ranges are equal when their ends are, so `5..2 != 6..2`, though both are
+empty; a range can be a map key or a set member; and its text form, `0..3`,
+is `%range.toText` (3.4).
 
 `break` is `jump l.done(vars)`, `continue` is `jump l.loop(next position,
 vars)`, and `return e` inside a loop is `jump %return(e)` (section 5.1), or
@@ -906,7 +964,7 @@ type it is used at:
 | --- | --- |
 | `Equal` (`==`, `!=`) | `%eq` at the type: structural equality, maps and sets by their entries in any order, floats by IEEE, ranges by their ends. `a != b` is `%not(%eq(a, b))`. |
 | `Hash` | nothing to call: map and set primitives compare keys with the same structural equality. Floats have none, so they are never keys. |
-| `Order` | for `Int`, `BigInt`, `Decimal`, `Float`, `Bool` (`false` first), `Char` and `Text` (by character code), `Time` and `Duration`, the primitives `%cmp.b.lt`, `le`, `gt`, `ge`, which follow IEEE for `Float`, as the bytecode's `lt` and `le` do (`bytecode.md` 4.4). For a tuple, a list, a record or a choice type, a Core function `compare[T]`: the module's own `compare`, or one the lowering derives (tuples part by part from the left; lists element by element, a list before a longer one it starts; records field by field and choice types case by case, in declaration order, so `None` before `Some`, `Ok` before `Error`, and `Less`, `Equal`, `Greater`). `Unit` has one value, which never comes before itself: `a < b` is `false` once both sides are computed. `sort`, `min`, `max`, `sort_by` and `sort_by_desc` are Core functions instantiated with it (`Lib.lt`), in which a `Float` that is "not a number" comes after every other float, as in the bytecode's `cmp_float`. Maps, sets and ranges have no order (reference 9.2). |
+| `Order` | for `Int`, `BigInt`, `Byte`, `Decimal`, `Float`, `Bool` (`false` first), `Char` and `Text` (by character code), `Bytes` (byte by byte, a sequence before any longer one it begins), `Time` and `Duration`, the primitives `%cmp.b.lt`, `le`, `gt`, `ge`, which follow IEEE for `Float`, as the bytecode's `lt` and `le` do (`bytecode.md` 4.4). For a tuple, a list, a record or a choice type, a Core function `compare[T]`: the module's own `compare`, or one the lowering derives (tuples part by part from the left; lists element by element, a list before a longer one it starts; records field by field and choice types case by case, in declaration order, so `None` before `Some`, `Ok` before `Error`, and `Less`, `Equal`, `Greater`). `Unit` has one value, which never comes before itself: `a < b` is `false` once both sides are computed. `sort`, `min`, `max`, `sort_by` and `sort_by_desc` are Core functions instantiated with it (`Lib.lt`), in which a `Float` that is "not a number" comes after every other float, as in the bytecode's `cmp_float`. Maps, sets and ranges have no order (reference 9.2). |
 | `Text` | the type's text form, as in 3.4, for `"#{x}"` and `x.to_text` alike. |
 | `Number` | the arithmetic primitives of the type; `sum` is the Core function `List.sum[T]`. |
 
@@ -992,6 +1050,15 @@ handle that reaches nothing (11.3). Every effect is a primitive on a handle
 one `World`: arguments, environment variables, standard input, standard
 output and error, the files, the clock's time and the random seed. A function
 without a capability parameter can't reach them.
+
+The world's files are texts, as `Files.in_memory` makes them (reference 14),
+so `files.read_bytes(path)`, which is `%io.readBytes(files, path)` on `Files`
+and on `ReadFiles`, gives the UTF-8 encoding of the file's text: the bytes a
+real file holding that text holds. Its failures are `read_text`'s: `NotFound`
+for a file that isn't there, and `NotAllowed` for a path that would leave the
+folder (11.3). A real file can hold bytes that aren't UTF-8, which
+`read_text` can't give as text (`NotText`, reference 14) and `read_bytes`
+can; no file in the model is like that.
 
 ### 11.2 main
 
@@ -1193,8 +1260,8 @@ place; *not modeled* ones are not in this model yet.
 
 | Mo | In Core |
 | --- | --- |
-| `Int`: `+ - * / %`, unary `-`, `abs`, `min`, `max`, `pow`, `floor_div`, `floor_mod`, `checked_*`, `wrapping_*`, `saturating_*`, `to_decimal`, `to_float`, `to_big`, `to_char`, `to_text`, `seconds` ... `days` | prim (`%int.*`) |
-| `Int`: `to_byte` | not modeled |
+| `Int`: `+ - * / %`, unary `-`, `abs`, `min`, `max`, `pow`, `floor_div`, `floor_mod`, `checked_*`, `wrapping_*`, `saturating_*`, `to_decimal`, `to_float`, `to_big`, `to_char`, `to_byte`, `to_text`, `seconds` ... `days` | prim (`%int.*`) |
+| `Byte`: `to_int`, `to_text` | prim (`%byte.*`) |
 | `BigInt`: `+ - * / %`, unary `-`, `abs`, `to_int`, `to_text` | prim (`%big.*`) |
 | `BigInt`: `min`, `max`, `pow`, `floor_div`, `floor_mod` | not modeled |
 | `Decimal`: `+ - * / %`, unary `-`, `abs`, `min`, `max`, `round`, `floor`, `ceil`, `to_int`, `to_float`, `to_fixed`, `to_text` | prim (`%dec.*`) |
@@ -1202,9 +1269,10 @@ place; *not modeled* ones are not in this model yet.
 | `Float`: `to_decimal` | not modeled |
 | `<`, `<=`, `>`, `>=` at a built-in type | prim (`%cmp.*`) |
 | `==`, `!=` | prim (`%eq`), with `%not` |
-| `Text`: `byte_count`, `char_count`, `empty?`, `chars`, `lines`, `words`, `split`, `trim`, `trim_start`, `trim_end`, `starts_with?`, `ends_with?`, `contains?`, `drop_prefix`, `drop_suffix`, `replace`, `repeat`, `pad_left`, `pad_right`, `ascii_lowercase`, `ascii_uppercase`, `to_int`, `to_decimal`, `Text.from_chars`, interpolation | prim (`%text.*`) |
-| `Text`: `bytes`, `to_float` | not modeled |
+| `Text`: `byte_count`, `char_count`, `empty?`, `chars`, `bytes`, `lines`, `words`, `split`, `trim`, `trim_start`, `trim_end`, `starts_with?`, `ends_with?`, `contains?`, `drop_prefix`, `drop_suffix`, `replace`, `repeat`, `pad_left`, `pad_right`, `ascii_lowercase`, `ascii_uppercase`, `to_int`, `to_decimal`, `Text.from_chars`, interpolation | prim (`%text.*`) |
+| `Text`: `to_float` | not modeled |
 | `Char`: `code`, `ascii_digit?`, `ascii_letter?`, `ascii_white_space?`, `ascii_lowercase`, `ascii_uppercase`, `to_text` | prim (`%char.*`) |
+| `Bytes`: `size`, `get`, `decode_utf8` | prim (`%bytes.*`) |
 | `List`: literals, `size`, `empty?`, `get`, `first`, `last`, `append`, `prepend`, `concat`, `reverse`, `take`, `drop`, `set`, `remove_at`, `enumerate`, `zip`, `contains?`, `unique` | prim (`%list.*`) |
 | `List`: `join` | prim (`%text.join`) |
 | `List`: `to_map` | prim (`%map.ofList`): for a key given twice, the later value, in the key's first place |
@@ -1215,11 +1283,10 @@ place; *not modeled* ones are not in this model yet.
 | `Map`: `update` | Core (`Map.update[K,V]`) |
 | `Set`: `Set.empty`, `size`, `empty?`, `has?`, `add`, `remove`, `to_list` | prim, on `Map(T, Unit)` |
 | `Set`: `union`, `intersection`, `difference` | lowered as loops over keys, not written out |
-| `Range`: `for`, `to_list`, `contains?` | a counting loop; `%int.range`; `a <= n and n < b` |
+| `Range`: `a..b`, `for`, `to_list`, `contains?`, `to_text` | `%range.make`; a counting loop over `%range.start` and `%range.end` (7.5); `%range.toList`; `%range.contains`; `%range.toText` |
 | `Option`: `or`, `or_fail`, `map`; `Result`: `map`, `map_error` | lowered: a `case` |
 | `Time`: `+ -` with durations, `-` of two times, `checked_add`, `to_text`, `Time.parse`; `Duration`: `+ - *`, `in_milliseconds`, `in_seconds`, `to_text` | prim (`%time.*`) |
-| `Args.list`, `Env.get`, `Console.print`, `error`, `read_line`, `printed`, `printed_errors`, `Files.read_text`, `write_text`, `append_text`, `remove`, `list`, `exists?`, `within`, `read_only`, `Clock.now`, `Random.int` | prim (`%io.*`) |
-| `Files.read_bytes` | not modeled |
+| `Args.list`, `Env.get`, `Console.print`, `error`, `read_line`, `printed`, `printed_errors`, `Files.read_text`, `read_bytes`, `write_text`, `append_text`, `remove`, `list`, `exists?`, `within`, `read_only`, `Clock.now`, `Random.int` | prim (`%io.*`); `read_bytes` gives a file's text as UTF-8 (11.1) |
 | `FileError`'s text form | Core (`FileError.to_text`) |
 | `to_text`, at every type with `Text` | lowered as the part `#{x}` of a text is (3.4), so the two give the same text; the `to_text[T]` the lowering derives for records, choice types, tuples, lists and maps without their own `to_text` is not modeled |
 | `Console.fake`, `fake_input`, `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `Args.of`, `Env.of` | the test's world (12.4) |
@@ -1315,7 +1382,9 @@ section numbers after the topic are the reference's; those after "Already",
 23. **`Range` values** (9.2): `Equal` and `Hash`, no order, and the text form
     `0..3`. Equality and hashing already did that, on the pair of the ends;
     changed: the text form is now lowered to `0..3` rather than a tuple's
-    (3.4, 7.5).
+    (3.4, 7.5). A range has since become a value of its own type, still
+    equal when its ends are, with the text form `%range.toText` (last
+    section).
 
 D227 settled a few more questions, and the model follows them too. `Option`'s
 cases are declared and ordered `None`, `Some` (reference 8, 9.2): changed in
@@ -1356,3 +1425,61 @@ reference's, and the others this document's.
    Lean's own `Float.toString` writes "not a number" as `NaN`.
    `MoCore/Lib.lean` checks all three. Any other float is still written as
    item 19 above says (3.4).
+
+## `Byte`, `Bytes` and `Range` as types of their own
+
+Architecture 4.1 asks the model for `Byte`, `Bytes` and `Range` as types of
+their own, so that the VM, whose types `bytecode.md` 2.1 lists, can be tested
+against it. The reference and the architecture leave the questions below
+open, and the model decides them as each item says. As above, the section
+numbers after the topic are the reference's, and those at the end of an item
+this document's.
+
+1. **A literal that is a `Byte`** (3.2, 3.3): a number literal takes the type
+   its context needs, and the reference doesn't say whether that includes
+   `Byte`. The model takes it to: with `b` a `Byte`, `b < 128` compares with
+   the byte `128`. A byte literal is from 0 to 255; Core's typing refuses any
+   other (`Lit.Ok`), and the front end reports it first. The bytecode's `byte`
+   constants come from these literals (`bytecode.md` 3.1). (3.2)
+2. **A byte's text form** (9.2): its decimal digits, as an `Int`'s: `200`.
+   (3.2, 3.4)
+3. **`get` on `Bytes`** (14): `None` for a position below 0 or past the end,
+   as `List.get` gives. (3.4)
+4. **What `decode_utf8` accepts** (3.4): well-formed UTF-8 as table 3-7 of
+   the Unicode Standard defines it, so `None` for an overlong form, a
+   surrogate, a code above U+10FFFF, a continuation byte out of place, a byte
+   that never appears in UTF-8, or a sequence cut short. A byte order mark is
+   the character U+FEFF, and is kept. `MoCore/Support/Bytes.lean` follows the
+   table row by row, and `MoCore/Builtins.lean` checks it against Lean's own
+   decoder. (3.4)
+5. **The order of `Bytes`** (9.2, "byte by byte"): at the first place two
+   sequences differ, the smaller byte comes first, and a sequence comes
+   before any longer one it begins, as a list does (`[1, 2] < [1, 2, 0]`).
+   Two texts' bytes are in the order of the texts themselves, by character
+   code, as UTF-8 keeps that order. (3.4, 9.2)
+6. **A `Bytes` literal** (3.4): Mo has no way to write bytes, nor a function
+   that builds them from a list of bytes, so in Mo, bytes that aren't UTF-8
+   can only come from `read_bytes` on a real file. Core has a literal for
+   `Bytes`, as the bytecode has constants for them (`bytecode.md` 3.1). The
+   lowering never makes one from Mo; tests of the model, and of the VM against
+   it, use it to build bytes that aren't UTF-8. (3.4)
+7. **`read_bytes` in the model** (14): the world keeps files as texts, as
+   `Files.in_memory` takes them, so `read_bytes` gives the UTF-8 encoding of
+   the file's text, with `read_text`'s failures. (11.1)
+8. **A range whose end isn't above its start** (7.5): it is empty. `to_list`
+   gives `[]`, `contains?` is `false`, and a loop over it runs no round. Such
+   ranges are equal only when their ends are, as equality is structural:
+   `5..2 != 6..2`. (7.5)
+9. **`contains?(n)`** (14): `true` when the start `<= n` and `n <` the end,
+   for exactly the numbers a loop over the range counts. (7.5)
+10. **Taking a range apart** (7.5): Core's `%range.start` and `%range.end`,
+    which Mo doesn't have, do it as `%list.uncons` takes a list apart; they
+    are the bytecode's `range_start` and `range_end` (`bytecode.md` 4.4). A
+    `for` loop reads its range's end once, before the first round, and counts
+    from the start while below it, so the counter is never increased past the
+    end and never overflows (architecture 4.3). `a..b` computes `a`, then
+    `b`, and building a range is never a bug. (7.5)
+11. **A range's text form** (9.2): `0..3`, or `-2..10`, written by the
+    primitive `%range.toText`, as every other built-in type with a text form
+    has its own primitive, rather than by a concatenation the lowering
+    writes out. (3.4)
