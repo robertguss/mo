@@ -484,17 +484,27 @@ it is given. It never calls the operating system itself.
   only as programs change values: a test that still holds the map it gave
   `Files.in_memory` keeps seeing the old map (`bytecode.md` section 7).
 - **Files.** A real `Files` or `ReadFiles` holds an open handle on its folder.
-  Every path is resolved beneath it, one component at a time, with `openat`
-  and `O_NOFOLLOW`, or with `openat2` and `RESOLVE_BENEATH` where the system
-  has it. Before anything is opened, paths are normalized lexically: `.`
-  is skipped, and `..` removes the preceding component. Absolute paths, empty
-  components and paths whose `..` would leave the capability's root are
-  refused; `a/../b` resolves to `b`. The normalized path is still opened
-  beneath the root without following links, so symbolic links and races can't
-  lead outside the folder. System errors map to `FileError`: a missing file
-  to `NotFound`, a refused path or permission to `NotAllowed`, invalid UTF-8
-  in `read_text` to `NotText`, and anything else to `Failed`, with the
-  system's message.
+  Before anything is opened, paths are normalized lexically: `.` is skipped,
+  and `..` removes the preceding component. Absolute paths, empty components
+  and paths whose `..` would leave the capability's root are refused;
+  `a/../b` resolves to `b`. The normalized path is then resolved beneath the
+  root, following symbolic links only while they stay inside (D236). Where
+  the system has `openat2`, `RESOLVE_BENEATH` does exactly that. Elsewhere
+  the VM resolves one component at a time with `openat` and `O_NOFOLLOW`;
+  when a component is a link, it reads it with `readlinkat`, refuses an
+  absolute target, and resolves the target from the link's folder in the same
+  way, refusing any step that would leave the root. Either way a path passes
+  through at most `MO_LIMIT_PATH_LINKS` links, and a race can't lead outside
+  the folder. `remove` unlinks its last component without following it, so it
+  removes a link itself. A refused link gives `NotAllowed`, like any path that
+  would leave the folder. Errors map to `FileError`: a missing file to
+  `NotFound`, a refused path or permission to `NotAllowed`, invalid UTF-8 in
+  `read_text` to `NotText`, and the rest to `Failed`. Three reasons are Mo's
+  own, the same on every system and in fakes: "not a folder" where a folder
+  was needed, "is a folder" where a file was, and "too many links"; the VM
+  checks a path's kind itself rather than trusting `errno`, since systems
+  differ, as macOS's `unlink` of a folder gives `EPERM`. Any other failure
+  carries the system's message.
   `list` sorts names by their bytes, which is the order of their characters.
 - **Console.** The runtime ignores `SIGPIPE`. Writing to a closed output
   returns `EPIPE`, which is a bug with status 70: "printing to an output that

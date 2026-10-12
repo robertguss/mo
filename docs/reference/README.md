@@ -210,8 +210,9 @@ literal = "write \#{name} to insert a name"
 ```
 
 Text on several lines starts with `"""` at the end of a line and ends with
-`"""` on a line of its own. It holds the lines between them, without the line
-break before the closing `"""`, which sets the indentation every line drops:
+`"""` first on a line, after its indentation; code may go on after it on that
+line, as in `""")`. It holds the lines between them, without the line break
+before the closing `"""`, which sets the indentation every line drops:
 
 ```mo
 usage = """
@@ -814,8 +815,11 @@ last, and floats have no `Hash`, so they can't be map keys.
 A value's text form looks like the code that builds it: `Point(x: 1.5, y: 2)`,
 `Some(3)`, `[1, 2]`, `{"a": 1}`, `(1, true)`, `[1, 2].to_set`. A `Text` or
 `Char` value's text form is itself; inside another value's, it is quoted and
-escaped as in code. Numbers have their shortest spelling, and a `Float` that is
-not a number is `nan` and the infinities `inf` and `-inf`. A `Bool` is `true`
+escaped as in code. Numbers have their shortest spelling. A `Float` is written
+in plain digits, as `1000` or `0.25`, unless its size is below 1e-6 or at
+least 1e21, when it has an exponent, as `1e21` or `1.5e-7`. A whole float has
+no `.0`, zero is `0` and negative zero `-0`, and a float that is not a number
+is `nan`, the infinities `inf` and `-inf`. A `Bool` is `true`
 or `false`, a `Time` is RFC 3339 text, and a `Duration` is in seconds, as
 `1.5s`. `x.to_text` gives the text form of any value whose type has `Text`:
 the same text as `"#{x}"`.
@@ -1103,8 +1107,9 @@ using more stack, call depth or memory than section 13.4's limits allow, or
 more memory than the machine has; calling a library function outside what it
 accepts, such as `take(-1)` or `random.int(5, 5)`; two keys of a map literal
 that turn out equal (section 3.8); an exit status outside 0 to 255; printing to
-an output that is gone; and having too many folders open at once (section 14).
-Bugs are never caught.
+an output that is gone; having too many folders open at once; and a fake whose
+files make one path both a file and a folder (section 14). Bugs are never
+caught.
 
 ### 13.3 Costs
 
@@ -1318,14 +1323,22 @@ enter links, and stops at the first folder it can't read. A capability from
 many open at once is a bug (13.2).
 `Files.in_memory(files: Map(Text, Text)) : Files`. In such a fake, a folder
 exists when some file is inside it, and `list` and `entries` give the names
-directly inside a folder, each subfolder once. **ReadFiles** has `read_text`,
+directly inside a folder, each subfolder once. Files that make one path both a
+file and a folder, as `{"a": "x", "a/b": "y"}` do, are a bug (13.2). **ReadFiles** has `read_text`,
 `read_bytes`, `list`, `entries`, `walk`, `exists?` and `within`. Paths are relative and use `/`; `"."` is the capability's own
 folder, and no path can leave it. Given a path that would leave the folder,
 such as `"../a.txt"`, reading, writing, removing and listing give
 `Error(NotAllowed(path: path))`, and `exists?` gives `false`. Calling `within` with
 such a path gives a capability that reaches nothing: every call on it that
 returns a `Result` gives `Error(NotAllowed(path: path))`, and `exists?` on it gives
-`false`.
+`false`. A path may pass through symbolic links that stay inside the folder,
+and every operation follows them; a path through an absolute link, or one that
+leads outside, is refused in the same way, and one through more than 40 links
+gives `Error(Failed(path: path, reason: "too many links"))`. `remove` removes a
+link itself, never what it points to. Listing a file gives
+`Error(Failed(path: path, reason: "not a folder"))`, and reading, writing,
+appending to or removing a folder gives
+`Error(Failed(path: path, reason: "is a folder"))`.
 
 **FileError**: `NotFound(path: Text)`, `NotAllowed(path: Text)`,
 `NotText(path: Text)`, when `read_text` finds a file that isn't valid UTF-8,
@@ -1456,6 +1469,9 @@ pattern     = "_" | name | literal | "-" number | Name ("." Name)?
             | "(" pattern ("," pattern)+ ")"
             | "[" (pattern ("," pattern)*)? "]" | "[" (pattern ",")* ".." (name | "_") "]"
 ```
+
+A function's parameters, a call's arguments, a case's named fields, and
+tuples, lists and maps may end with a comma.
 
 Operators, from loosest to tightest. Comparisons, `..` and `implies` don't
 chain; the others do, left to right.
