@@ -96,9 +96,11 @@ grammar: $(BUILD)/debug/mo-grammar $(BUILD)/sanitize/mo-grammar
 	@($(call GRAMMAR_CHECK,$(BUILD)/sanitize/mo-grammar)) >/dev/null
 
 # Mo Core in Lean: lake builds the model, its twelve sample programs and their checks, and
-# every proof. formal/lean-toolchain names the Lean version, which elan fetches on first use.
+# every proof, plus the mocore oracle. formal/lean-toolchain names the Lean version,
+# which elan fetches on first use.
 formal:
-	cd formal && lake build
+	cd formal && lake build MoCore mocore
+	sh ci/test_mocore.sh
 
 fuzz: $(FUZZERS)
 

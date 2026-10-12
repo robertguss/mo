@@ -78,6 +78,13 @@ all twelve sample programs inside the kernel, and evaluates every example and
 test, and the checks of `MoCore/Builtins.lean`, with `#guard`, so a wrong
 result fails the build.
 
+`lake build` also builds `mocore`, the native differential-test oracle.
+`lake exe mocore run.core` reads a versioned Core program and world, checks
+the program, runs its entry or a selected test/example, and prints one
+observable report. [TEXT.md](TEXT.md) specifies the complete wire grammar,
+canonical printing, result protocol, extension rules and sample timings.
+`make formal` additionally runs the executable's file/CLI checks.
+
 ## Layout
 
 | File | What it holds |
@@ -103,6 +110,11 @@ result fails the build.
 | `MoCore/Testing.lean` | `passes` and `scenario` for checking examples and tests, and `stops` for checking that an expression stops on a bug; lemmas turning a checked program into "never goes wrong" theorems. |
 | `MoCore/Builtins.lean` | Checks of `Byte`, `Bytes`, `Range`, `Set`, failure, initialization, kind signatures, spec-only operations/calls, closures and runners. |
 | `MoCore/Examples/*.lean` | The twelve samples of `examples/`, each in Core, with every example line and test of the sample as a `#guard`, and theorems that the program is well typed and never goes wrong. |
+| `MoCore/Text/*.lean` | The reference text codec: S-expressions, types/literals, primitives, programs, lossless values/worlds/outcomes, structural observations and checked run requests. |
+| `MoCore/TextChecks.lean` | Round trips for all twelve programs, every primitive/value, Builtins programs, reproducible runs and report/lexical checks. |
+| `Main.lean` | The `mocore` file/CLI protocol, with distinct diagnostic and outcome exit codes. |
+| `ExportSamples.lean` | Writes the twelve timing Run fixtures (`lake env lean --run ExportSamples.lean DIR`). |
+| `TEXT.md` | Complete Core text contract for Lean and the later C implementation, worked runs and measurements. |
 | `TRANSLATION.md` | The lowering from every v0.1 feature to Core, how the model follows the answers D227 gave to the questions writing it raised, the three things D228 added, and what the model decided in making `Byte`, `Bytes`, `Range` and `Set` types of their own. |
 
 ## The twelve programs
@@ -256,9 +268,10 @@ inside another value (`to_text[T]`, which both `"#{x}"` and `x.to_text` call,
 TRANSLATION.md 3.4; a set's is `Lib.setText`, given how its elements are
 written), the fake constructors (a test's fakes are its starting world, so
 two fakes of one kind can't be in use at the same time, TRANSLATION.md 12.4),
-and a text form (S-expressions) for Core programs
-and values, which architecture section 4.4 asks `formal/` to define for
-exchanging programs with the C toolchain. `Byte`, `Bytes`, `Range` and `Set`
+and the architecture's actual random generator (the model's `randomInt` is
+a placeholder). The interchange text and structural oracle observations
+are now defined in TEXT.md; they do not implement the Mo `to_text[T]`
+functions inside the calculus. `Byte`, `Bytes`, `Range` and `Set`
 are types of their own (TRANSLATION.md 3.2, 3.4, 7.5 and 3.8, and the
 decisions in TRANSLATION.md). Failure and the program layer are now modeled;
 their decisions and the remaining design/reference mismatches are recorded

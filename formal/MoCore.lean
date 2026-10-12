@@ -37,3 +37,6 @@ import MoCore.Examples.JobQueue
 import MoCore.Examples.Kv
 import MoCore.Examples.NotesTool
 import MoCore.Examples.Inventory
+-- The text interchange contract and its round-trip checks
+import MoCore.Text.Run
+import MoCore.TextChecks

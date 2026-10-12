@@ -7,10 +7,18 @@
   checks is well typed and evaluates to `true` (`passes`).
 -/
 import MoCore.Testing
+import MoCore.Text.Run
 
 namespace MoCore.Builtins
 
 open MoCore DSL Lib
+
+/-- Each existing expression case also exercises both directions of the text codec. -/
+def passes (p : Program) (e : Expr) (w : World := {}) (caps : List (String × Cap) := []) : Bool :=
+  Text.programRoundTrip p && Text.exprRoundTrip e &&
+    match Text.parseProgram (Text.printProgram p), Text.parseDocument (Text.document (Text.exprOut e)) >>= Text.exprIn with
+    | .ok p', .ok e' => MoCore.passes p' e' w caps
+    | _, _ => false
 
 /-- The library functions the checks call, and the text forms the lowering
 derives for the sets they write. -/
