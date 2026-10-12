@@ -16,6 +16,7 @@ open MoCore
 
 abbrev tInt : Ty := .int
 abbrev tBig : Ty := .bigInt
+abbrev tByte : Ty := .byte
 abbrev tDec : Ty := .decimal
 abbrev tFloat : Ty := .float
 abbrev tBool : Ty := .bool
@@ -38,6 +39,8 @@ def tCap (c : Cap) : Ty := .cap c
 /-! ## Literals -/
 
 def int (n : Int) : Expr := .lit (.int n)
+/-- A byte literal, from 0 to 255. -/
+def byteE (n : Int) : Expr := .lit (.byte n)
 /-- A decimal literal, written as in Mo: `dec "12.50"`. -/
 def dec (s : String) : Expr := .lit (.decimal (decLit s))
 def str (s : String) : Expr := .lit (.text s)

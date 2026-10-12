@@ -27,7 +27,7 @@ theorem ValTy.bool_inv (h : ValTy P v .bool) : ∃ b, v = .bool b := by
 
 theorem Lit.value_ty {l : Lit} (h : l.Ok) : ValTy P l.value l.ty := by
   cases l <;> first
-    | exact .int h | exact .decimal h | exact .time h | exact .duration h
+    | exact .int h | exact .byte h | exact .decimal h | exact .time h | exact .duration h
     | exact .bigInt | exact .float | exact .bool | exact .char | exact .text | exact .unit
 
 /-! ## Sequencing -/

@@ -4,8 +4,8 @@
   `prims_safe : PrimsSafe P` discharges the hypothesis of `eval_safe` for every
   primitive of `Prim`, in every program: given arguments of its argument
   types, a primitive returns a value of its result type or stops. In
-  particular every `Int`, `Decimal`, `Duration` and `Time` it returns is in
-  range: overflow stops, it never wraps.
+  particular every `Int`, `Byte`, `Decimal`, `Duration` and `Time` it returns
+  is in range: overflow stops, it never wraps.
 
   The proofs go group by group (`IntOp`, `DecOp`, `TextOp`, ...). Each one
   inverts the typing of the arguments (`invert_args`), unfolds the primitive,
@@ -32,6 +32,13 @@ theorem valTy_bigInt_iff : ValTy P v .bigInt ↔ ∃ n, v = .bigInt n := by
     | bigInt => exact ⟨_, rfl⟩
     | con hcs => simp [ctorsOf] at hcs
   · rintro ⟨n, rfl⟩; exact .bigInt
+
+theorem valTy_byte_iff : ValTy P v .byte ↔ ∃ n, v = .byte n ∧ InByte n := by
+  constructor
+  · intro h; cases h with
+    | byte hn => exact ⟨_, rfl, hn⟩
+    | con hcs => simp [ctorsOf] at hcs
+  · rintro ⟨n, rfl, hn⟩; exact .byte hn
 
 theorem valTy_decimal_iff : ValTy P v .decimal ↔ ∃ n, v = .decimal n ∧ InDecimal n := by
   constructor
@@ -159,6 +166,11 @@ theorem ValTy.optInt {n : Int} : ValTy P (optInt n) (.option .int) := by
   · exact .someV (.int ‹_›)
   · exact .noneV
 
+theorem ValTy.optByte {n : Int} : ValTy P (optByte n) (.option .byte) := by
+  unfold MoCore.optByte; split
+  · exact .someV (.byte ‹_›)
+  · exact .noneV
+
 theorem ValTy.optDec {n : Int} : ValTy P (optDec n) (.option .decimal) := by
   unfold MoCore.optDec; split
   · exact .someV (.decimal ‹_›)
@@ -243,11 +255,11 @@ argument values (substituted away) and their range facts. -/
 macro "invert_args" : tactic => `(tactic| (
   intro vs w h
   revert h
-  simp only [Prim.sig, IntOp.sig, BigOp.sig, DecOp.sig, FloatOp.sig, CharOp.sig, TextOp.sig,
-    TimeOp.sig, ListOp.sig, MapOp.sig, IoOp.sig, Base.ty, filesCap,
-    valsTy_cons_iff, valsTy_nil_iff, valTy_int_iff, valTy_bigInt_iff, valTy_decimal_iff,
-    valTy_float_iff, valTy_bool_iff, valTy_char_iff, valTy_text_iff, valTy_time_iff,
-    valTy_duration_iff, valTy_list_iff, valTy_map_iff, valTy_cap_iff,
+  simp only [Prim.sig, IntOp.sig, BigOp.sig, ByteOp.sig, DecOp.sig, FloatOp.sig, CharOp.sig,
+    TextOp.sig, TimeOp.sig, ListOp.sig, MapOp.sig, IoOp.sig, Base.ty, filesCap,
+    valsTy_cons_iff, valsTy_nil_iff, valTy_int_iff, valTy_bigInt_iff, valTy_byte_iff,
+    valTy_decimal_iff, valTy_float_iff, valTy_bool_iff, valTy_char_iff, valTy_text_iff,
+    valTy_time_iff, valTy_duration_iff, valTy_list_iff, valTy_map_iff, valTy_cap_iff,
     forall_exists_index, and_imp]
   intros
   subst_vars))
@@ -273,6 +285,7 @@ theorem intOp_safe (op : IntOp) : PrimSafe P (.int op) := by
     | exact okDur_safe
     | exact .optInt
     | exact .optChar
+    | exact .optByte
     | exact .text
     | exact .bigInt
     | exact .float
@@ -288,6 +301,12 @@ theorem bigOp_safe (op : BigOp) : PrimSafe P (.big op) := by
     | exact .optInt
     | exact .text
     | exact ⟨fun _ => trivial, fun _ => .bigInt⟩
+
+theorem byteOp_safe (op : ByteOp) : PrimSafe P (.byte op) := by
+  cases op <;> invert_args <;> simp only [Prim.eval, evalByteOp, outcomeOk_ok] <;>
+    first
+    | exact okInt_safe
+    | exact .text
 
 theorem decOp_safe (op : DecOp) : PrimSafe P (.dec op) := by
   cases op <;> invert_args <;>
@@ -691,6 +710,7 @@ theorem prims_safe : PrimsSafe P := by
   cases p with
   | int op => exact intOp_safe op
   | big op => exact bigOp_safe op
+  | byte op => exact byteOp_safe op
   | dec op => exact decOp_safe op
   | float op => exact floatOp_safe op
   | not => exact not_safe

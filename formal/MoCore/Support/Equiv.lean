@@ -14,7 +14,7 @@ namespace MoCore
 mutual
 /-- Structural equality of values (Mo's `==`). -/
 def Value.equiv : Value → Value → Bool
-  | .int a, .int b | .bigInt a, .bigInt b | .decimal a, .decimal b
+  | .int a, .int b | .bigInt a, .bigInt b | .byte a, .byte b | .decimal a, .decimal b
   | .time a, .time b | .duration a, .duration b => a == b
   | .float a, .float b => Float.ofBits a == Float.ofBits b
   | .bool a, .bool b => a == b
@@ -47,11 +47,11 @@ end
 instance : BEq Value := ⟨Value.equiv⟩
 
 /-- The built-in order of two values of a base type, or `none` when they are
-not values of that type. Numbers, times and durations by size, `false` before
-`true`, characters by code, texts by character code. Floats are left to
-`floatCmp`, because "not a number" is unordered. -/
+not values of that type. Numbers (bytes too), times and durations by size,
+`false` before `true`, characters by code, texts by character code. Floats are
+left to `floatCmp`, because "not a number" is unordered. -/
 def baseOrder : Base → Value → Value → Option Ordering
-  | .int, .int a, .int b | .bigInt, .bigInt a, .bigInt b
+  | .int, .int a, .int b | .bigInt, .bigInt a, .bigInt b | .byte, .byte a, .byte b
   | .decimal, .decimal a, .decimal b | .time, .time a, .time b
   | .duration, .duration a, .duration b => some (compare a b)
   | .bool, .bool a, .bool b => some (compare a.toNat b.toNat)

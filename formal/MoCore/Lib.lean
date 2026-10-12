@@ -21,7 +21,7 @@ def inst (base : String) (ts : List Ty) : String :=
 
 /-- The types whose order is built in. -/
 def baseOf? : Ty → Option Base
-  | .int => some .int | .bigInt => some .bigInt | .decimal => some .decimal
+  | .int => some .int | .bigInt => some .bigInt | .byte => some .byte | .decimal => some .decimal
   | .float => some .float | .bool => some .bool | .char => some .char
   | .text => some .text | .time => some .time | .duration => some .duration
   | _ => none

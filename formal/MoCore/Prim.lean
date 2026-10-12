@@ -30,6 +30,9 @@ def okTime (t : Int) (w : World) : Outcome :=
 /-- `Some(n)` when `n` fits in an `Int`, else `None`. -/
 def optInt (n : Int) : Value := if InInt64 n then someV (.int n) else noneV
 
+/-- `Some(n)` when `n` is a `Byte`, from 0 to 255, else `None`. -/
+def optByte (n : Int) : Value := if InByte n then someV (.byte n) else noneV
+
 /-- `Some(n)` when `n` fits in a `Decimal`, else `None`. -/
 def optDec (n : Int) : Value := if InDecimal n then someV (.decimal n) else noneV
 
@@ -107,6 +110,7 @@ def evalIntOp (op : IntOp) (vs : List Value) (w : World) : Outcome :=
   | .toBig, [.int a] => .ok (.bigInt a) w
   | .toFloat, [.int a] => .ok (.float (Float.ofInt a).toBits) w
   | .toChar, [.int a] => .ok (optChar (charOfCode a)) w
+  | .toByte, [.int a] => .ok (optByte a) w
   | .seconds, [.int a] => okDur (a * 1000000) w
   | .milliseconds, [.int a] => okDur (a * 1000) w
   | .minutes, [.int a] => okDur (a * 60000000) w
@@ -127,6 +131,14 @@ def evalBigOp (op : BigOp) (vs : List Value) (w : World) : Outcome :=
   | .toInt, [.bigInt a] => .ok (optInt a) w
   | .toText, [.bigInt a] => .ok (.text (toString a)) w
   | _, _ => wrongArgs "BigInt primitive"
+
+/-- `Byte.to_int` always fits; a byte's text form is its decimal digits, as an
+`Int`'s is. -/
+def evalByteOp (op : ByteOp) (vs : List Value) (w : World) : Outcome :=
+  match op, vs with
+  | .toInt, [.byte a] => okInt a w
+  | .toText, [.byte a] => .ok (.text (toString a)) w
+  | _, _ => wrongArgs "Byte primitive"
 
 /-- `Decimal.to_int`: `None` unless whole and in the `Int` range. -/
 def decToIntV (a : Int) : Value := if a % decScale = 0 then optInt (a / decScale) else noneV
@@ -559,6 +571,7 @@ def evalIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
 def Prim.eval : Prim → List Value → World → Outcome
   | .int op, vs, w => evalIntOp op vs w
   | .big op, vs, w => evalBigOp op vs w
+  | .byte op, vs, w => evalByteOp op vs w
   | .dec op, vs, w => evalDecOp op vs w
   | .float op, vs, w => evalFloatOp op vs w
   | .not, [.bool b], w => .ok (.bool !b) w
