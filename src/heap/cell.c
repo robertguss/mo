@@ -3,7 +3,7 @@
 #include <float.h>
 #include <string.h>
 
-_Static_assert(sizeof(double) == 8 && DBL_MANT_DIG == 53 && DBL_MAX_EXP == 1024,
+_Static_assert(sizeof(double) == 8 && FLT_RADIX == 2 && DBL_MANT_DIG == 53 && DBL_MAX_EXP == 1024,
                "Float is IEEE 754 binary64");
 _Static_assert(sizeof(struct mo_range) == 16, "Range is two Ints");
 

@@ -79,8 +79,9 @@ struct mo_type {
     uint32_t field_count;
     const struct mo_type_case *cases; /* choice, in declaration order */
     uint32_t case_count;
-    bool defined;   /* nominal declarations may be incomplete while building */
-    bool reference; /* computed by mo_types_finish, not supplied by callers */
+    bool defined;    /* nominal declarations may be incomplete while building */
+    bool reference;  /* computed by mo_types_finish, not supplied by callers */
+    bool has_fields; /* choice: cached by define, so case shapes take constant time */
 };
 
 struct mo_layout {
@@ -103,6 +104,10 @@ struct mo_types {
     struct mo_layout *layouts;
     uint32_t layout_count;
     uint32_t layout_capacity;
+    uint32_t *type_slots; /* private interning indices, zero means unused */
+    uint32_t type_slot_count;
+    uint32_t *layout_slots;
+    uint32_t layout_slot_count;
     bool finished;
 };
 
@@ -150,7 +155,9 @@ MO_MUST_USE enum mo_type_problem mo_types_layout(struct mo_types *types,
                                                  const struct mo_layout *layout, uint32_t *out);
 
 /* Refuses incomplete declarations and computes choice reference classifications
- * without C recursion. Seals types on success; repeat calls are harmless. */
+ * without C recursion. Seals types on success; repeat calls are harmless.
+ * A nested choice with fields is always boxed, even when it is a reference
+ * type: its tag and payload cannot fit together in eight bytes (2.3). */
 MO_MUST_USE enum mo_type_problem mo_types_finish(struct mo_types *types);
 
 /* Only on a successfully finished table, with valid type/case indices. */
