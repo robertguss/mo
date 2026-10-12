@@ -25,16 +25,17 @@ compact text form:
 | `C(e1, ..., en)` | `.con T "C" [...]` | `mk`, `mkC`, `some_`, `ok_`, ... |
 | `case e of C1(x, y) -> e1 \| C2 -> e2 end` | `.case_` | `caseOpt`, `caseRes`, `get` |
 | `if c then a else b` | `.if_` | `ite`, `and_`, `or_` |
-| `%op(e1, ..., en)` | `.prim` | `prim`, `iadd`, `top`, `lop`, `mop`, `io`, ... |
+| `%op(e1, ..., en)` | `.prim` | `prim`, `iadd`, `top`, `lop`, `mop`, `sop`, `io`, ... |
 | `stop "reason"` | `.stop` | `stop` |
-| `join j(x: T, ...) = body in rest` | `.join` | `forList`, `whileLoop`, `forRange` |
+| `join j(x: T, ...) = body in rest` | `.join` | `forList`, `forSet`, `whileLoop`, `forRange` |
 | `jump j(e1, ..., en)` | `.jump` | `nextRound`, `breakLoop`, `ret` |
 
 Primitives are written with their Lean names: `%int.add` is
 `Prim.int .add`, `%cmp.decimal.lt` is `Prim.cmp .decimal .lt`, `%text.isEmpty`
 is `Prim.text .isEmpty`, `%list.uncons` is `Prim.list T .uncons`, `%map.set` is
-`Prim.map K V .set`, `%range.make` is `Prim.range .make`, `%eq` is `Prim.eq T`,
-`%io.print` is `Prim.io .print`. Their types are in `Prim.sig`.
+`Prim.map K V .set`, `%set.add` is `Prim.set T .add`, `%range.make` is
+`Prim.range .make`, `%eq` is `Prim.eq T`, `%io.print` is `Prim.io .print`.
+Their types are in `Prim.sig`.
 
 Core is explicit where Mo infers: function, anonymous-function and join-point
 parameters carry their types, and a constructor application names its type.
@@ -96,7 +97,7 @@ lowering qualifies the name: `LineError.to_text`.
 | `(A, B)` | `tuple [A, B]` | `tuple [a, b]` |
 | `List(T)` | `list T` | `list [...]` |
 | `Map(K, V)` | `map K V` | `map [(k, v), ...]`, in insertion order |
-| `Set(T)` | `map T Unit` | a map to `Unit` |
+| `Set(T)` | `set T` | `set [x, ...]`, in insertion order, no element equal to another |
 | `Time`, `Duration` | `time`, `duration` | microseconds (since 1970-01-01T00:00:00Z for a time) |
 | `Range` | `range` | `range a b` for `a..b`, two `Int`s |
 | a `struct` or `enum` | `data "Name"` | `con "Case" [fields]` |
@@ -210,6 +211,7 @@ converted to its text form:
 | `Bool` | `if b then "true" else "false"` |
 | `Time`, `Duration` | `%time.toText(t)`, RFC 3339 in UTC with `Z` and the shortest fraction of a second; `%time.durToText(d)`, in seconds, as `1.5s` |
 | `Range` | `%range.toText(r)`, its ends with `..` between them, as in `0..3` (reference 9.2) |
+| `Set(T)` | a call of `to_text[Set(T)]`, which the lowering derives: the elements in insertion order, written as a list's, then `.to_set`, as in `[1, 2].to_set`, and `[].to_set` for the empty set (`Lib.setText`, given how an element is written inside another value) |
 | a type with its own `to_text` | a call of it, such as `LineError.to_text(problem)` |
 | `FileError` | `FileError.to_text(e)` (`MoCore/Lib.lean`) |
 | any other record, choice type, tuple, list or map | a call of `to_text[T]`, a Core function the lowering derives per type, which quotes texts and characters inside, and writes ranges inside as `0..3` |
@@ -232,7 +234,9 @@ the same Core as the part `#{x}` in the table above: `count.to_text` is
 `problem.to_text` is `LineError.to_text(problem)`, and at a type whose text
 form the lowering derives, it calls the one `to_text[T]` derived for that type,
 which interpolation calls too. So the two never differ. The Lean model doesn't
-generate `to_text[T]` yet, and none of the samples needs it.
+generate `to_text[T]` yet, except a set's, `Lib.setText`, which takes as a
+parameter how an element is written inside another value; none of the
+samples needs it.
 
 The text functions of section 14 are primitives (`%text.lines`,
 `%text.split`, ...); see section 14 below.
@@ -344,10 +348,50 @@ join m.loop(m.rest: List((Text, Int))) =
 in jump m.loop(%map.entries(more))
 ```
 
-`Set(T)` is `Map(T, Unit)`: `Set.empty` is `%map.empty()`, `s.add(x)` is
-`%map.set(s, x, Unit)`, `s.has?(x)` is `%map.has(s, x)`, `s.to_list` is
-`%map.keys(s)`, and `items.to_set` sets each item to `Unit`. Inventory's
-`first_by` uses a set this way.
+A set is a value of its own type, `set T`, as in the VM (`bytecode.md` 2.1):
+its elements in insertion order, none equal to another, which value typing
+requires (`ValTy.set`). `Set.empty` is `%set.empty()`, and `items.to_set` is
+`%set.ofList(items)`, which keeps each element in its first place, as
+`items.unique` does. `s.size`, `s.empty?`, `s.has?(x)`, `s.add(x)`,
+`s.remove(x)` and `s.to_list` are `%set.size`, `%set.isEmpty`, `%set.has`,
+`%set.add`, `%set.remove` and `%set.toList`. `add` puts a new element last,
+and leaves the set as it is when an equal element is there, so that element
+keeps its place, as `%map.set` keeps a key's. `remove` keeps the others'
+order, and an element removed and added again goes last. `a.union(b)` is
+`%set.union(a, b)`: the elements of `a` in their order, then those of `b`
+that `a` doesn't hold, in `b`'s order, as if each were added to `a` in turn.
+`a.intersection(b)` and `a.difference(b)` are `%set.intersection(a, b)` and
+`%set.difference(a, b)`: the elements of `a` that `b` holds, or doesn't, in
+`a`'s order. Equality (`%eq`) compares elements in any order. A `for` loop
+visits the elements in insertion order (7.5):
+
+```mo
+seen = [3, 1, 3].to_set            # 3, then 1
+more = seen.add(2).add(3)          # 3, 1, 2: 3 keeps its place
+both = more.union([4, 1].to_set)   # 3, 1, 2, 4
+for n in both
+  console.print("#{n}")
+end
+```
+
+```
+let seen = %set.ofList(%list.lit3(3, 1, 3)) in
+let more = %set.add(%set.add(seen, 2), 3) in
+let both = %set.union(more, %set.ofList(%list.lit2(4, 1))) in
+join s.done() = ... in
+join s.loop(s.rest: List(Int)) =
+  case %list.uncons(s.rest) of
+    None -> jump s.done()
+  | Some(s.p) -> let n = s.p.0 in let s.rest = s.p.1 in
+                 let %_ = %io.print(console, %int.toText(n)) in
+                 jump s.loop(s.rest)
+  end
+in jump s.loop(%set.toList(both))
+```
+
+Inventory's `first_by` keeps the keys it has seen in a set. The last section
+of this document lists what the model decided where the reference leaves a
+question about sets open.
 
 ### 3.9 Time and Duration
 
@@ -755,8 +799,9 @@ the body assigns, and runs one round; `l.done` takes the `var`s and runs what
 follows the loop. Every path through the body ends by jumping: to `l.loop`
 for the next round (the end of the body, or `continue`), or to `l.done`
 (`break`). A `for` over a list takes it apart with `%list.uncons`; over a map,
-its `%map.entries`; over a set, its keys; over a range, an `Int` that counts
-from the range's start while below its end.
+its `%map.entries`; over a set, its elements in insertion order,
+`%set.toList` (3.8); over a range, an `Int` that counts from the range's
+start while below its end.
 
 ```mo
 var total = 0
@@ -962,8 +1007,8 @@ type it is used at:
 
 | Ability | In Core |
 | --- | --- |
-| `Equal` (`==`, `!=`) | `%eq` at the type: structural equality, maps and sets by their entries in any order, floats by IEEE, ranges by their ends. `a != b` is `%not(%eq(a, b))`. |
-| `Hash` | nothing to call: map and set primitives compare keys with the same structural equality. Floats have none, so they are never keys. |
+| `Equal` (`==`, `!=`) | `%eq` at the type: structural equality, maps by their entries and sets by their elements, in any order, floats by IEEE, ranges by their ends. `a != b` is `%not(%eq(a, b))`. |
+| `Hash` | nothing to call: map and set primitives compare keys and elements with the same structural equality, so a map or a set can be a key or a set member, and equal ones, in any order, are the same key. Floats have none, so they are never keys. |
 | `Order` | for `Int`, `BigInt`, `Byte`, `Decimal`, `Float`, `Bool` (`false` first), `Char` and `Text` (by character code), `Bytes` (byte by byte, a sequence before any longer one it begins), `Time` and `Duration`, the primitives `%cmp.b.lt`, `le`, `gt`, `ge`, which follow IEEE for `Float`, as the bytecode's `lt` and `le` do (`bytecode.md` 4.4). For a tuple, a list, a record or a choice type, a Core function `compare[T]`: the module's own `compare`, or one the lowering derives (tuples part by part from the left; lists element by element, a list before a longer one it starts; records field by field and choice types case by case, in declaration order, so `None` before `Some`, `Ok` before `Error`, and `Less`, `Equal`, `Greater`). `Unit` has one value, which never comes before itself: `a < b` is `false` once both sides are computed. `sort`, `min`, `max`, `sort_by` and `sort_by_desc` are Core functions instantiated with it (`Lib.lt`), in which a `Float` that is "not a number" comes after every other float, as in the bytecode's `cmp_float`. Maps, sets and ranges have no order (reference 9.2). |
 | `Text` | the type's text form, as in 3.4, for `"#{x}"` and `x.to_text` alike. |
 | `Number` | the arithmetic primitives of the type; `sum` is the Core function `List.sum[T]`. |
@@ -1276,19 +1321,19 @@ place; *not modeled* ones are not in this model yet.
 | `List`: literals, `size`, `empty?`, `get`, `first`, `last`, `append`, `prepend`, `concat`, `reverse`, `take`, `drop`, `set`, `remove_at`, `enumerate`, `zip`, `contains?`, `unique` | prim (`%list.*`) |
 | `List`: `join` | prim (`%text.join`) |
 | `List`: `to_map` | prim (`%map.ofList`): for a key given twice, the later value, in the key's first place |
+| `List`: `to_set` | prim (`%set.ofList`): each element in its first place, as `unique` gives them |
 | `List`: `map`, `filter`, `filter_map`, `find`, `any?`, `all?`, `count`, `reduce`, `max`, `sum`, `sort_by`, `sort_by_desc` | Core (`List.map[A,B]`, ...); `max` gives the first of equal elements |
 | `List`: `sort`, `min` | lowered: `sort` is `sort_by` with the element itself as key, `min` is `max` with the order reversed, so it too gives the first of equal elements (not written out in `Lib.lean`) |
-| `List`: `flat_map`, `group_by`, `to_set` | lowered the same way as `map` (a loop with join points), not written out in `Lib.lean` |
+| `List`: `flat_map`, `group_by` | lowered the same way as `map` (a loop with join points), not written out in `Lib.lean` |
 | `Map`: literals (`%map.lit n`, which stops on a repeated key, 3.8), `size`, `empty?`, `get`, `has?`, `set`, `remove`, `keys`, `values`, `entries` | prim (`%map.*`) |
 | `Map`: `update` | Core (`Map.update[K,V]`) |
-| `Set`: `Set.empty`, `size`, `empty?`, `has?`, `add`, `remove`, `to_list` | prim, on `Map(T, Unit)` |
-| `Set`: `union`, `intersection`, `difference` | lowered as loops over keys, not written out |
+| `Set`: `Set.empty`, `size`, `empty?`, `has?`, `add`, `remove`, `union`, `intersection`, `difference`, `to_list`, `for` | prim (`%set.*`); `for` is a list loop over `%set.toList` (3.8, 7.5) |
 | `Range`: `a..b`, `for`, `to_list`, `contains?`, `to_text` | `%range.make`; a counting loop over `%range.start` and `%range.end` (7.5); `%range.toList`; `%range.contains`; `%range.toText` |
 | `Option`: `or`, `or_fail`, `map`; `Result`: `map`, `map_error` | lowered: a `case` |
 | `Time`: `+ -` with durations, `-` of two times, `checked_add`, `to_text`, `Time.parse`; `Duration`: `+ - *`, `in_milliseconds`, `in_seconds`, `to_text` | prim (`%time.*`) |
 | `Args.list`, `Env.get`, `Console.print`, `error`, `read_line`, `printed`, `printed_errors`, `Files.read_text`, `read_bytes`, `write_text`, `append_text`, `remove`, `list`, `exists?`, `within`, `read_only`, `Clock.now`, `Random.int` | prim (`%io.*`); `read_bytes` gives a file's text as UTF-8 (11.1) |
 | `FileError`'s text form | Core (`FileError.to_text`) |
-| `to_text`, at every type with `Text` | lowered as the part `#{x}` of a text is (3.4), so the two give the same text; the `to_text[T]` the lowering derives for records, choice types, tuples, lists and maps without their own `to_text` is not modeled |
+| `to_text`, at every type with `Text` | lowered as the part `#{x}` of a text is (3.4), so the two give the same text; a set's is `Lib.setText` (3.4), and the `to_text[T]` the lowering derives for records, choice types, tuples, lists and maps without their own `to_text` is not modeled |
 | `Console.fake`, `fake_input`, `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `Args.of`, `Env.of` | the test's world (12.4) |
 | `Unicode16` | not modeled |
 
@@ -1483,3 +1528,51 @@ this document's.
     primitive `%range.toText`, as every other built-in type with a text form
     has its own primitive, rather than by a concatenation the lowering
     writes out. (3.4)
+
+## `Set` as a type of its own
+
+Architecture 4.1 lists `Set` among the types the model lacks: it lowered
+`Set(T)` to `Map(T, Unit)`, and the VM has a set type of its own
+(`bytecode.md` 2.1). A set is now a value of type `set T`, its elements in
+insertion order (3.8). Value typing requires that no element equals (`==`)
+one after it, and every set primitive keeps that, so a set a program computes
+never holds an element twice (`set_result_distinct`). The reference leaves
+the questions below open, and the model decides them as each item says. As
+above, the section numbers after the topic are the reference's, and those at
+the end of an item this document's.
+
+1. **`add` with an element already there** (3.8, 14): setting an existing key
+   keeps its place, and so does adding an element a set holds: the set is
+   left as it is. It keeps the element it held, not the new one, though the
+   two are equal. That shows only where equal values differ in another way,
+   such as two maps with the same entries added in different orders: with
+   `m2` equal to `m`, `[m].to_set.add(m2)` still holds `m`, whose keys come in
+   `m`'s order, as `%map.set` keeps the key it held. `List.to_set` and `union`
+   add elements in the same way, so each keeps the first of equal elements,
+   and `union` the first set's. (3.8)
+2. **An element removed, then added again** (3.8): it goes last, as any new
+   element does. Reference 3.8 visits keys "in the order they were first
+   added", and a removal forgets an element, so it counts from when it came
+   back: `[3, 1, 2].to_set.remove(3).add(3)` holds `1, 2, 3`. A map's key
+   removed and set again goes last too. (3.8)
+3. **`union`'s order** (14): the first set's elements in their order, then
+   those of the second that the first doesn't hold, in the second's order, as
+   if each were added to the first in turn: `[3, 1].to_set.union([2, 1,
+   4].to_set)` holds `3, 1, 2, 4`. (3.8)
+4. **`intersection` and `difference`** (14): the elements of the first set
+   that the second holds, or doesn't, in the first set's order:
+   `[3, 1, 2].to_set.intersection([2, 3, 5].to_set)` holds `3, 2`. (3.8)
+5. **`List.to_set`** (3.8, 14): the elements in the order they first appear,
+   each in its first place, as `unique` gives them: `[3, 1, 3, 2].to_set`
+   holds `3, 1, 2`. (3.8)
+6. **A set's text form** (9.2): its elements in insertion order, written as a
+   list's, then `.to_set`: `[1, 2].to_set`. An element is written as inside
+   any other value, so a text is quoted and a set inside a set is written as
+   alone: `[[1].to_set].to_set`. The empty set is `[].to_set`, not
+   `Set.empty`, so that every set is written in the one form that reference
+   9.2 and `bytecode.md` 8 give. Two equal sets whose elements came in
+   different orders are written differently, `[1, 2].to_set` and
+   `[2, 1].to_set`, as two equal maps are. The text form is a Core function
+   the lowering derives for each element type, `to_text[Set(T)]`, as it is
+   for lists and maps, not a primitive: an element's text form may be the
+   element type's own `to_text`, which a primitive can't call. (3.4)

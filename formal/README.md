@@ -11,8 +11,8 @@ Core is a **typed, monomorphic, strict functional language**:
 - **Types**: `Int` (64-bit, checked), `BigInt`, `Byte` (0 to 255), `Decimal`
   (an integer count of 10⁻¹⁸ within ±(2¹²⁷ − 1)), `Float`, `Bool`, `Char`,
   `Text`, `Bytes`, `Unit`, `Range` (`a..b`, two `Int`s), `Time` and
-  `Duration` (whole microseconds), tuples, `List`, `Map`
-  (insertion-ordered; `Set(T)` is `Map(T, Unit)`), declared data types
+  `Duration` (whole microseconds), tuples, `List`, `Map` and `Set` (both
+  insertion-ordered; a set holds no element twice), declared data types
   (records and choice types share one form, looked up by name in the
   program's data table), the library's `Option` (`None`, then `Some`, as
   reference 8 declares it), `Result`, `Ordering` and `FileError`, function
@@ -70,7 +70,7 @@ result fails the build.
 | `MoCore/Support/Text.lean` | The text functions of reference 14 (`lines`, `words`, `split`, `trim`, ...), over lists of characters. |
 | `MoCore/Support/Time.lean` | Calendar conversions and RFC 3339 text for times; durations' text form. |
 | `MoCore/Support/Bytes.lean` | UTF-8 over lists of bytes: encoding text (`Text.bytes`) and decoding it (`Bytes.decode_utf8`, by table 3-7 of the Unicode Standard); the order of bytes. |
-| `MoCore/Support/Equiv.lean` | Structural equality of values (maps in any order, floats by IEEE) and the built-in orders. |
+| `MoCore/Support/Equiv.lean` | Structural equality of values (maps and sets in any order, floats by IEEE), `Distinct` (no element of a list equals one after it, as in a set), and the built-in orders. |
 | `MoCore/Prim.lean` | What every primitive does: `Prim.eval`, with the range checks. |
 | `MoCore/Eval.lean` | The evaluator `eval`, and `run`/`holds` for running programs. |
 | `MoCore/Typing.lean` | The typing judgment `Typed`, well-typed programs `WellTyped`, value typing `ValTy`, `OutcomeOk`, `PrimSafe`. |
@@ -80,11 +80,11 @@ result fails the build.
 | `MoCore/Check.lean` | An executable type checker, `tc`, and its soundness: `tc_sound`, `checkProgram_sound`. |
 | `MoCore/Fuel.lean` | Fuel is only a bound: `eval_fuel_mono`. |
 | `MoCore/DSL.lean` | Lean helpers for writing Core programs readably, named after the Mo constructs they lower. |
-| `MoCore/Lib.lean` | Library functions written in Core (`map`, `filter`, `sort_by_desc`, `update`, ...), as generators instantiated per type, and the order they sort by (`Lib.lt`, in which a float that is "not a number" comes last). |
+| `MoCore/Lib.lean` | Library functions written in Core (`map`, `filter`, `sort_by_desc`, `update`, ...), as generators instantiated per type, the order they sort by (`Lib.lt`, in which a float that is "not a number" comes last), and a set's text form (`setText`, `[1, 2].to_set`). |
 | `MoCore/Testing.lean` | `passes` and `scenario` for checking examples and tests, and `stops` for checking that an expression stops on a bug; lemmas turning a checked program into "never goes wrong" theorems. |
-| `MoCore/Builtins.lean` | Checks of `Byte`, `Bytes` and `Range`, which the samples use little, written like the samples' checks: every primitive of the three, ranges up to the largest `Int`, and UTF-8 decoding against Lean's own decoder. |
+| `MoCore/Builtins.lean` | Checks of `Byte`, `Bytes`, `Range` and `Set`, which the samples use little, written like the samples' checks: every primitive of the four, ranges up to the largest `Int`, UTF-8 decoding against Lean's own decoder, the order each set operation keeps, and a set's text form. |
 | `MoCore/Examples/*.lean` | The twelve samples of `examples/`, each in Core, with every example line and test of the sample as a `#guard`, and theorems that the program is well typed and never goes wrong. |
-| `TRANSLATION.md` | The lowering from every v0.1 feature to Core, how the model follows the answers D227 gave to the questions writing it raised, the three things D228 added, and what the model decided in making `Byte`, `Bytes` and `Range` types of their own. |
+| `TRANSLATION.md` | The lowering from every v0.1 feature to Core, how the model follows the answers D227 gave to the questions writing it raised, the three things D228 added, and what the model decided in making `Byte`, `Bytes`, `Range` and `Set` types of their own. |
 
 ## The twelve programs
 
@@ -127,6 +127,9 @@ Everything below is fully proven: there is no `sorry` anywhere.
   `decimal_result_in_range`: an `Int` result is within the 64-bit range, a
   `Byte` result from 0 to 255 and a `Decimal` result within ±(2¹²⁷ − 1),
   because value typing includes the ranges: overflow can only stop.
+- `set_result_distinct`: a `Set` result holds no element twice: no element
+  equals (`==`) one after it, which value typing requires of every set, and
+  every set primitive keeps.
 - `eval_deterministic`: the evaluator is a function, so equal inputs give
   equal outcomes.
 
@@ -150,11 +153,12 @@ Everything below is fully proven: there is no `sorry` anywhere.
   `bytes` included), `bytesOp_safe` (3), `rangeOp_safe` (all 6 `Range`
   operations), `timeOp_safe` (all 13 `Time` and `Duration` operations),
   `listOp_safe` (all 19 list operations, at every element type), `mapOp_safe`
-  (all 12, map literals included, at every key and value type), `eq_safe`
-  (structural equality at every type), and `ioOp_safe` (all 18 capability
-  operations on the world, 23 counting the `Files` and `ReadFiles` forms
-  apart). So every primitive is proven safe, and `type_safety` has no
-  hypothesis on primitives.
+  (all 12, map literals included, at every key and value type), `setOp_safe`
+  (all 11 set operations, at every element type), `eq_safe` (structural
+  equality at every type), and `ioOp_safe` (all 18 capability operations on
+  the world, 23 counting the `Files` and `ReadFiles` forms apart). So every
+  primitive is proven safe, and `type_safety` has no hypothesis on
+  primitives.
 
 **The checker is sound** (`MoCore/Check.lean`):
 
@@ -213,20 +217,21 @@ No theorem is left with `sorry`. What the proofs don't yet cover:
 - **Progress for programs that don't terminate**: the evaluator returns
   `outOfFuel` for them; there is no coinductive semantics.
 
-Not modeled yet: `Set` as a type of its own, as the VM has it (`bytecode.md`
-2.1; here a set is a map to `Unit`, TRANSLATION.md 3.8), `fail`, the failure
-of an assertion with its detail (architecture 4.1; here an `assert` stops,
-TRANSLATION.md 12.3), the `Unicode16` module, the text forms the lowering
-derives for records, choice types, tuples, lists and maps (`to_text[T]`,
-which both `"#{x}"` and `x.to_text` call, TRANSLATION.md 3.4), the fake
-constructors (a test's fakes are its starting world, so two fakes of one kind
-can't be in use at the same time, TRANSLATION.md 12.4), the program layer of
-architecture section 4.1 (constants are functions without parameters, and
-nothing computes them all before `main` or the first test, TRANSLATION.md
-10.4), and a text form (S-expressions) for Core programs and values, which
-architecture section 4.4 asks `formal/` to define for exchanging programs
-with the C toolchain. `Byte`, `Bytes` and `Range` are types of their own
-(TRANSLATION.md 3.2, 3.4 and 7.5, and the decisions in its last section).
+Not modeled yet: `fail`, the failure of an assertion with its detail
+(architecture 4.1; here an `assert` stops, TRANSLATION.md 12.3), the
+`Unicode16` module, the text forms the lowering derives for records, choice
+types, tuples, lists and maps, and the quoted form of a text or a character
+inside another value (`to_text[T]`, which both `"#{x}"` and `x.to_text` call,
+TRANSLATION.md 3.4; a set's is `Lib.setText`, given how its elements are
+written), the fake constructors (a test's fakes are its starting world, so
+two fakes of one kind can't be in use at the same time, TRANSLATION.md 12.4),
+the program layer of architecture section 4.1 (constants are functions
+without parameters, and nothing computes them all before `main` or the first
+test, TRANSLATION.md 10.4), and a text form (S-expressions) for Core programs
+and values, which architecture section 4.4 asks `formal/` to define for
+exchanging programs with the C toolchain. `Byte`, `Bytes`, `Range` and `Set`
+are types of their own (TRANSLATION.md 3.2, 3.4, 7.5 and 3.8, and the
+decisions in its last two sections).
 
 ## Axioms
 
