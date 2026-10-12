@@ -91,9 +91,8 @@ skipped='(Program () ((FunDecl "main" () (int) (if_ (lit (bool false)) (prim (un
 printf '(core 0.5 %s)\n' "$skipped" >"$tree/skipped"
 check 0 '(core 0.5 (returned "7" (effects () () () ())))' "$tree/skipped" "$tree/world"
 
-# Decimal-to-Float must round the exact rational once, not round a 60-bit
-# count to Float and then divide it (which gives the previous Float here).
-decimal='(Program () ((FunDecl "main" () (float) (prim (dec (toFloat)) ((lit (decimal 999999999999999944)))) "Main" (function) 0)) () "main" (noSource))'
+# Native regression: round the Decimal's exact ratio, not its already-rounded count.
+decimal='(Program () ((FunDecl "main" () (float) (prim (dec (toFloat)) ((lit (decimal 1000000000000000065)))) "Main" (function) 0)) () "main" (noSource))'
 printf '(core 0.5 %s)\n' "$decimal" >"$tree/decimal"
 check 0 '(core 0.5 (returned "0x3ff0000000000000" (effects () () () ())))' "$tree/decimal" "$tree/world"
 
