@@ -58,6 +58,10 @@
     X(31, SOURCE_BINDING, "6.1")                                                                   \
     X(32, SOURCE_LIST, "3.7")                                                                      \
     X(33, SOURCE_MAP, "3.8")                                                                       \
+    /* Program loading and module interfaces. */                                                   \
+    X(34, MODULE_MISSING, "2.1")                                                                   \
+    X(35, MODULE_NAME, "2.1")                                                                      \
+    X(36, MODULE_CYCLE, "10.3")                                                                    \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \
@@ -142,7 +146,9 @@
     /* Code generation's scratch limit or system allocation failure. */                            \
     X(1056, CODEGEN_MEMORY, NULL)                                                                  \
     /* The bytecode writer/verifier refused compiler-produced data: a compiler bug. */             \
-    X(1057, CODEGEN_INVALID, NULL)
+    X(1057, CODEGEN_INVALID, NULL)                                                                 \
+    /* The supplied surface checking arena, or source storage, has no room. */                     \
+    X(1058, CHECK_NO_MEMORY, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */
 enum mo_code {
