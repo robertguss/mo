@@ -120,6 +120,16 @@ static MO_MUST_USE int type_form(const struct mo_source *s, const struct node *n
     return s->bytes[at] == '(' ? LPAREN : s->bytes[at] == 'f' ? FN : 0;
 }
 
+static MO_MUST_USE bool line_continuation(const struct mo_source *s, const struct node *n) {
+    if (n == NULL || n->kind != K_LINE_IF)
+        return false;
+    uint32_t at = offset(s, n);
+    while (at != 0 && (s->bytes[at - 1] == ' ' || s->bytes[at - 1] == '\t' ||
+                       s->bytes[at - 1] == '\r' || s->bytes[at - 1] == '\n'))
+        at--;
+    return at != 0 && s->bytes[at - 1] != ':';
+}
+
 struct visit {
     const struct node *node;
     uint32_t depth;
@@ -179,7 +189,8 @@ static MO_MUST_USE uint32_t limits(const struct mo_source *source, const struct 
         bool nested =
             k == K_FN || k == K_STRUCT || k == K_ENUM || k == K_TEST || k == K_CASE ||
             k == K_LAMBDA || k == K_FOR || k == K_WHILE || k == K_LIST || k == K_MAP ||
-            k == K_GROUP || k == K_TUPLE || k == K_CALL ||
+            k == K_GROUP || k == K_TUPLE || k == K_CALL || k == K_PROMISE || k == K_EXAMPLES ||
+            (k == K_CASE_DECL && n->kids[1] != NULL) ||
             ((k == K_IF || k == K_LINE_IF || k == K_TEXT_INTERPOLATED) && !v.continuation) ||
             (k == K_TYPE && (type_form(source, n) != 0 || n->count == 2));
         uint32_t depth = v.depth + (nested ? 1u : 0u);
@@ -206,8 +217,12 @@ static MO_MUST_USE uint32_t limits(const struct mo_source *source, const struct 
         for (int i = n->count; i > 0; i--) {
             int index = i - 1;
             bool continuation =
-                (index == 2 && (k == K_IF || k == K_LINE_IF || k == K_TEXT_INTERPOLATED));
-            push(&stack, n->kids[index], k == K_CALL && index == 0 ? v.depth : depth, continuation);
+                index == 2 && (k == K_IF || k == K_TEXT_INTERPOLATED ||
+                               (k == K_LINE_IF && line_continuation(source, n->kids[index])));
+            uint32_t child_depth = k == K_CALL && index == 0 ? v.depth : depth;
+            if (k == K_FN && index == 1)
+                child_depth++;
+            push(&stack, n->kids[index], child_depth, continuation);
         }
     }
     mo_buffer_free(&stack);
@@ -348,14 +363,14 @@ static void compare(const uint8_t *data, size_t size, bool fragment) {
     int status = yyparse(&lx, &root);
     bool parsed = status == 0 && lx.errors == 0;
     uint32_t exceeded = parsed ? limits(&sources.files[file], root) : 0;
-    bool oracle_accepted = parsed && mo_validate(&lx, root);
-    bool excluded = diags.count != 0 && diags.dropped == 0 && oracle_accepted;
+    bool excluded = diags.count != 0 && diags.dropped == 0 && parsed;
     for (uint32_t i = 0; i < diags.count; i++) {
         uint16_t code = diags.items[i].code;
         if (code < MO_CODE_LINE_TOO_LONG || code > MO_CODE_TOO_MANY_CASES ||
             (exceeded & bit(code)) == 0)
             excluded = false;
     }
+    bool oracle_accepted = parsed && !excluded && mo_validate(&lx, root);
     MO_ASSERT(excluded || accepted == oracle_accepted);
     struct mo_buffer actual, expected;
     mo_buffer_init(&actual, MO_GRAMMAR_ARENA_LIMIT);

@@ -182,9 +182,11 @@ checker can inspect retained children without checking the container as a
 whole. A damaged declaration header can leave even a required child `NULL`,
 but its body is retained. A damaged control-block header has the same
 boundary. A failed case-arm header leaves an incomplete placeholder arm,
-so its body cannot become part of the previous arm. Valid retained children
-are still validated; `incomplete` suppresses only whole-container checks.
-Line recovery has boundaries inside declaration and control headers,
+so its body cannot become part of the previous arm. Recovery identifies an
+arm's colon outside quotes and brackets through the failing physical line;
+a failed ordinary statement stays in its existing arm. Valid retained
+children are still validated; `incomplete` suppresses only whole-container
+checks. Line recovery has boundaries inside declaration and control headers,
 statement blocks, case arms, record and choice declarations,
 specification lines and anchors. Only allocation failure or inability to
 keep a diagnostic returns `NULL`.
@@ -192,11 +194,14 @@ keep a diagnostic returns `NULL`.
 unchanged on failure. `mo_parse_fragment` uses the grammar's fragment mode
 for reference snippets, fixtures and differential fuzzing.
 
-Nesting counts enclosing source constructs: declaration and control blocks,
-brackets and parentheses, lambdas, call arguments, parenthesized types and
-interpolated text. Leaves, tree wrappers, operator and postfix chains,
-and else-if parts add no depth. The same nesting bound applies in a
-fragment, binding or function; a function's block adds one. E1006 points
+Nesting counts enclosing source constructs: declaration, specification and
+control blocks, brackets and parentheses, lambdas, call arguments,
+parenthesized types and interpolated text. Function parameter lists and
+case-field lists add one around their types. Leaves, tree wrappers,
+operator and postfix chains, and else-if parts add no depth. The same
+nesting bound applies in a fragment, binding or function; a function's block
+adds one. An `else if`
+is a continuation, but `else: if ...` contains a nested value. E1006 points
 to the innermost opener that exceeds the bound. Each source limit is
 reported at most once per parse. The parser also checks the
 source counts already visible in syntax: module declarations, parameters
@@ -211,7 +216,14 @@ and leaf positions. It excludes a mismatch only when every parser
 diagnostic is a source-limit code and an independent walk of the grammar's
 tree or source proves each reported limit was exceeded. It also compares
 header reads with accepted full parses and exercises input-derived arena
-limits. A token dictionary and regression seeds run in CI.
+limits. A token dictionary and regression seeds run in CI, including
+generated long binary and prefix chains. The grammar's AST validator walks
+ordinary expressions with an explicit stack, preserving its first-error
+order. Bison's maximum stack is four times the source-byte limit rather
+than its default 10,000 states: flat prefix chains need LR stack space but
+add no source nesting. These are instrument resource changes, not grammar
+rule changes. The independent limit walk precedes AST validation, so a
+proved out-of-domain input need not validate an over-deep pattern.
 
 **Resources.** The caller chooses an arena budget, not just a source-size
 budget. Dense generated source can need roughly 100 bytes of arena per

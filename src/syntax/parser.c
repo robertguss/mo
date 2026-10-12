@@ -1021,6 +1021,7 @@ static MO_MUST_USE bool declaration_header(struct parser *p, enum mo_syntax_toke
     next(p);
     if (token == MO_T_FN) {
         parts[0] = name(p, MO_T_NAME);
+        enter(p);
         expect(p, MO_T_LPAREN);
         parts[1] = sequence(p);
         if (p->current.kind != MO_T_RPAREN) {
@@ -1033,6 +1034,7 @@ static MO_MUST_USE bool declaration_header(struct parser *p, enum mo_syntax_toke
             } while (true);
         }
         expect(p, MO_T_RPAREN);
+        p->depth--;
         parts[2] = take(p, MO_T_COLON) ? type(p) : NULL;
         if (take(p, MO_T_WHERE)) {
             parts[3] = sequence(p);
@@ -1071,6 +1073,7 @@ static MO_MUST_USE struct mo_syntax *anchor(struct parser *p) {
 }
 
 static MO_MUST_USE struct mo_syntax *specification_item(struct parser *p) {
+    enter(p);
     bool promise = p->current.kind == MO_T_PROMISE;
     struct mo_span start = p->current.span;
     struct mo_syntax *parts[4] = {NULL};
@@ -1102,6 +1105,7 @@ static MO_MUST_USE struct mo_syntax *specification_item(struct parser *p) {
     struct mo_syntax *n =
         promise ? N(MO_S_PROMISE, start, parts[0], lines, anchors) : N(MO_S_EXAMPLES, start, lines);
     n->incomplete = n->incomplete || !valid;
+    p->depth--;
     return n;
 }
 
@@ -1126,7 +1130,9 @@ static MO_MUST_USE struct mo_syntax *member(struct parser *p, bool record) {
         return n;
     }
     struct mo_syntax *id = name(p, MO_T_CAPNAME), *fields = NULL;
-    if (take(p, MO_T_LPAREN)) {
+    if (p->current.kind == MO_T_LPAREN) {
+        enter(p);
+        next(p);
         if (p->current.kind == MO_T_NAME) {
             fields = sequence(p);
             do {
@@ -1141,6 +1147,7 @@ static MO_MUST_USE struct mo_syntax *member(struct parser *p, bool record) {
         } else
             fields = type(p);
         expect(p, MO_T_RPAREN);
+        p->depth--;
     }
     struct mo_syntax *n = N(MO_S_CASE_DECL, id->span, id, fields);
     expect(p, MO_T_NL);
@@ -1507,11 +1514,57 @@ static void recover(struct parser *p, uint32_t first_line) {
     p->lx.failed = false;
 }
 
+static MO_MUST_USE bool arm_header(const struct parser *p, struct mo_token first, uint32_t end) {
+    enum mo_syntax_token kind = first.kind;
+    if (kind == MO_T_VAR || kind == MO_T_RETURN || kind == MO_T_BREAK || kind == MO_T_CONTINUE ||
+        kind == MO_T_ASSERT || kind == MO_T_IF || kind == MO_T_FOR || kind == MO_T_WHILE)
+        return false;
+    const uint8_t *bytes = p->lx.source->bytes;
+    uint32_t depth = 0;
+    uint8_t quote = 0;
+    bool guard = false;
+    /* Only a colon outside literals and brackets starts an arm. This bounded
+     * scan through the failing line recognizes a pattern that failed early. */
+    MO_ASSERT(first.span.start <= end && end <= p->lx.source->length);
+    for (uint32_t at = first.span.start; at < end; at++) {
+        uint8_t c = bytes[at];
+        if (quote != 0) {
+            if (c == '\\' && at + 1 < end && bytes[at + 1] != '\n')
+                at++;
+            else if (c == quote)
+                quote = 0;
+        } else if (c == '#') {
+            while (at + 1 < end && bytes[at + 1] != '\n')
+                at++;
+        } else if (c == '"' || c == '\'')
+            quote = c;
+        else if (c == '(' || c == '[' || c == '{')
+            depth++;
+        else if (c == ')' || c == ']' || c == '}') {
+            if (depth != 0)
+                depth--;
+        } else if (depth == 0) {
+            if (c == ':')
+                return true;
+            if (c == 'i' && at > first.span.start &&
+                (bytes[at - 1] == ' ' || bytes[at - 1] == '\t') && end - at > 2 &&
+                bytes[at + 1] == 'f' && (bytes[at + 2] == ' ' || bytes[at + 2] == '\t'))
+                guard = true;
+            if (c == '=' && !guard && (at + 1 == end || bytes[at + 1] != '=') &&
+                (at == first.span.start || (bytes[at - 1] != '=' && bytes[at - 1] != '!' &&
+                                            bytes[at - 1] != '<' && bytes[at - 1] != '>')))
+                return false;
+        }
+    }
+    return false;
+}
+
 static MO_MUST_USE struct mo_syntax *read_item(struct parser *p, enum item_context context) {
     jmp_buf escape;
     jmp_buf *saved = p->escape;
     uint32_t depth = p->depth, first_line = p->current.line;
-    struct mo_span start = p->current.span;
+    struct mo_token first = p->current;
+    struct mo_span start = first.span;
     uint16_t code = p->expect_code;
     p->escape = &escape;
     if (setjmp(escape) != 0) {
@@ -1520,10 +1573,14 @@ static MO_MUST_USE struct mo_syntax *read_item(struct parser *p, enum item_conte
         p->escape = saved;
         if (p->lx.fatal)
             longjmp(*saved, 1);
+        uint32_t line = p->current.line;
+        uint32_t end = line < p->lx.source->line_count ? p->lx.source->line_starts[line]
+                                                       : p->lx.source->length;
+        bool failed_arm = context == CASE_ITEM && arm_header(p, first, end);
         recover(p, first_line);
         if (p->lx.fatal)
             longjmp(*saved, 1);
-        if (context == CASE_ITEM) {
+        if (failed_arm) {
             struct mo_syntax *placeholder = N(MO_S_ARM, start, NULL, NULL, NULL);
             placeholder->incomplete = true;
             return placeholder;

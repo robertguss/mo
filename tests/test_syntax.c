@@ -613,15 +613,49 @@ static void review_recovery(void) {
         free_fixture(&f);
     }
     struct fixture f;
-    init(&f, "case value\nOk(value): value\nError(problem: ):\ndescribe(problem)\nend\n", true);
-    CHECK(f.module != NULL && f.diags.count == 1);
-    if (f.module != NULL) {
-        struct mo_syntax *arms = item(&f, 0)->children[0]->children[1];
-        CHECK(arms->count == 2 && arms->incomplete);
-        CHECK(arms->children[0]->children[2]->count == 1);
-        CHECK(arms->children[1]->incomplete && arms->children[1]->children[2]->count == 1);
+    const char *arm_errors[] = {
+        "case value\nOk(value): value\nError(problem: ):\ndescribe(problem)\nend\n",
+        "case value\nOk(value): value\nError(\n# header\nproblem:\n):\ndescribe(problem)\nend\n",
+        "case value\nOk(value): value\nError(problem)\tif y = 2:\ndescribe(problem)\nend\n",
+    };
+    for (size_t i = 0; i < sizeof arm_errors / sizeof arm_errors[0]; i++) {
+        init(&f, arm_errors[i], true);
+        CHECK(f.module != NULL && f.diags.count == 1);
+        if (f.module != NULL) {
+            struct mo_syntax *arms = item(&f, 0)->children[0]->children[1];
+            CHECK(arms->count == 2 && arms->incomplete);
+            CHECK(arms->children[0]->children[2]->count == 1);
+            CHECK(arms->children[1]->incomplete && arms->children[1]->children[2]->count == 1);
+            spans(&f, f.module->tree);
+        }
+        free_fixture(&f);
     }
-    free_fixture(&f);
+    const char *body_errors[] = {
+        "case x\nSome(v):\nbad = )\nv\nend\n",
+        "case x\nSome(v):\nbad(\":\", ,)\nv\nend\n",
+        "case x\nSome(v):\nbad({1:})\nv\nend\n",
+        "case x\nSome(v):\nbad(n:)\nv\nend\n",
+        "case x\nSome(v):\nbad = if true: ) else: 2\nv\nend\n",
+    };
+    for (size_t i = 0; i < sizeof body_errors / sizeof body_errors[0]; i++) {
+        init(&f, body_errors[i], true);
+        CHECK(f.module != NULL && f.diags.count == 1);
+        if (f.module != NULL) {
+            struct mo_syntax *arms = item(&f, 0)->children[0]->children[1];
+            CHECK(arms->count == 1 && arms->incomplete);
+            if (arms->count == 1) {
+                CHECK(arms->children[0]->incomplete);
+                struct mo_syntax *body = arms->children[0]->children[2];
+                CHECK(body->count == 1);
+                if (body->count == 1) {
+                    struct mo_syntax *value = body->children[0]->children[0];
+                    CHECK(value->kind == MO_S_NAME && value->span.end - value->span.start == 1 &&
+                          value->text[0] == 'v');
+                }
+            }
+        }
+        free_fixture(&f);
+    }
     init(&f, "case x\nA:\nif y\nbad = )\nend\nend\n", true);
     CHECK(f.module != NULL && f.diags.count == 1);
     if (f.module != NULL)
@@ -755,6 +789,34 @@ static void nesting_and_chains(void) {
     MO_ASSERT(mo_buffer_append_text(&source, "0\n"));
     repeat(&source, "end\n", MO_LIMIT_NESTING_DEPTH + 1u);
     boundary(&source, MO_CODE_NESTED_TOO_DEEPLY, true);
+    mo_buffer_clear(&source);
+    for (uint32_t extra = 0; extra < 2; extra++) {
+        MO_ASSERT(mo_buffer_append_text(&source, "module M\nfn f(x: "));
+        repeat(&source, "List(", MO_LIMIT_NESTING_DEPTH - 2u + extra);
+        MO_ASSERT(mo_buffer_append_text(&source, "Int"));
+        repeat(&source, ")", MO_LIMIT_NESTING_DEPTH - 2u + extra);
+        MO_ASSERT(mo_buffer_append_text(&source, ")\nend\n"));
+        boundary(&source, extra == 0 ? 0 : MO_CODE_NESTED_TOO_DEEPLY, false);
+        mo_buffer_clear(&source);
+        MO_ASSERT(mo_buffer_append_text(&source, "enum E\nC("));
+        repeat(&source, "List(", MO_LIMIT_NESTING_DEPTH - 2u + extra);
+        MO_ASSERT(mo_buffer_append_text(&source, "Int"));
+        repeat(&source, ")", MO_LIMIT_NESTING_DEPTH - 2u + extra);
+        MO_ASSERT(mo_buffer_append_text(&source, ")\nend\n"));
+        boundary(&source, extra == 0 ? 0 : MO_CODE_NESTED_TOO_DEEPLY, true);
+        mo_buffer_clear(&source);
+        MO_ASSERT(mo_buffer_append_text(&source, "module M\nfn f()\nexamples\n"));
+        repeat(&source, "fn()\n", MO_LIMIT_NESTING_DEPTH - 2u + extra);
+        MO_ASSERT(mo_buffer_append_text(&source, "0\n"));
+        repeat(&source, "end\n", MO_LIMIT_NESTING_DEPTH + extra);
+        boundary(&source, extra == 0 ? 0 : MO_CODE_NESTED_TOO_DEEPLY, false);
+        mo_buffer_clear(&source);
+        MO_ASSERT(mo_buffer_append_text(&source, "x = "));
+        repeat(&source, "if true: 0 else: ", MO_LIMIT_NESTING_DEPTH + extra);
+        MO_ASSERT(mo_buffer_append_text(&source, "0\n"));
+        boundary(&source, extra == 0 ? 0 : MO_CODE_NESTED_TOO_DEEPLY, true);
+        mo_buffer_clear(&source);
+    }
     mo_buffer_free(&source);
 }
 
