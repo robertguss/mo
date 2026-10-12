@@ -93,10 +93,9 @@ struct node {
     struct node **kids;
 };
 
-struct arena;
-
-MO_MUST_USE struct arena *mo_arena_new(void);
-void mo_arena_free(struct arena *arena);
+// The most memory one parse's tree may take from its arena (src/base/arena.h). The
+// grammar reads the repository's own code, so this only stops a runaway.
+enum { MO_GRAMMAR_ARENA_LIMIT = 1 << 30 };
 
 MO_MUST_USE struct node *mo_node(struct lexer *lx, enum node_kind kind, int line, int col,
                                  int count, struct node *const kids[]);

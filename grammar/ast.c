@@ -10,58 +10,14 @@
 #include "lexer.h"
 #include "mo.tab.h"
 
-enum { CHUNK_SIZE = 64 * 1024 };
-
-struct chunk {
-    struct chunk *next;
-    size_t used;
-    size_t size;
-    max_align_t data[];
-};
-
-struct arena {
-    struct chunk *chunks;
-};
-
-struct arena *mo_arena_new(void) {
-    struct arena *arena = calloc(1, sizeof *arena);
-    if (arena == NULL) {
+// Memory from the parse's arena. The grammar is an instrument, so running out of memory ends
+// it, as any other failure to run does.
+static void *allocate(struct mo_arena *arena, size_t size) {
+    void *memory = mo_arena_allocate(arena, size, _Alignof(max_align_t));
+    if (memory == NULL) {
         (void)fprintf(stderr, "mo-grammar: out of memory\n");
         exit(2);
     }
-    return arena;
-}
-
-void mo_arena_free(struct arena *arena) {
-    if (arena == NULL) {
-        return;
-    }
-    struct chunk *chunk = arena->chunks;
-    while (chunk != NULL) {
-        struct chunk *next = chunk->next;
-        free(chunk);
-        chunk = next;
-    }
-    free(arena);
-}
-
-static void *allocate(struct arena *arena, size_t size) {
-    size_t align = sizeof(max_align_t);
-    size = (size + align - 1) / align * align;
-    if (arena->chunks == NULL || arena->chunks->size - arena->chunks->used < size) {
-        size_t capacity = size > CHUNK_SIZE ? size : CHUNK_SIZE;
-        struct chunk *chunk = malloc(sizeof *chunk + capacity);
-        if (chunk == NULL) {
-            (void)fprintf(stderr, "mo-grammar: out of memory\n");
-            exit(2);
-        }
-        chunk->next = arena->chunks;
-        chunk->used = 0;
-        chunk->size = capacity;
-        arena->chunks = chunk;
-    }
-    void *memory = (unsigned char *)arena->chunks->data + arena->chunks->used;
-    arena->chunks->used += size;
     return memory;
 }
 
