@@ -450,7 +450,9 @@ struct mo_assemble_error {
  * zero (capacity may have grown), and fills the required error_out. Inputs are borrowed and
  * unchanged; successful bytes live until the next buffer mutation or mo_buffer_free.
  *
- * The writer encodes section 3 and verifies by the same rules as the loader. It preserves table
+ * The writer encodes and structurally checks section 3. Full verification joins this path when
+ * the verifier is implemented; structural success alone is not permission to execute.
+ * It preserves table
  * order and indices, ignores cached type booleans/constant encoding, and regenerates the
  * header (including checksum) rather than using file->header. Names must already occur in
  * strings; use the lowest index with matching bytes. It never adds or reorders entries.

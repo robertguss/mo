@@ -186,6 +186,22 @@ index, never a table entry. Type and layout entries use the per-kind forms
 below, not the memory representation of `struct mo_type` or `struct mo_layout`.
 The other sections follow the field order documented in `bytecode.h`.
 
+**Structural decoding.** The private decoder in `src/bytecode/io.h` copies
+the tables into a caller-owned arena. It checks this section before the later
+verifier checks control flow, operand types and ownership. Instruction widths,
+operand index bounds and instruction boundaries are structural too: debug
+ranges and jump offsets must be safe to inspect before dataflow. Field and
+case operands have their format limits checked here; their compatibility with
+the operand's type is a verifier check. Passing decoding alone never permits
+execution, and `mo_load` is not implemented until verification is available.
+The writer currently performs the same structural checks by decoding its
+encoded output; the verifier will join those checks when implemented.
+Temporary I/O and type-validation arenas each use `MO_LIMIT_BYTECODE_SIZE`
+as their allocation budget; exhaustion is a no-memory refusal. The caller
+chooses the decoded table arena's budget. Local wire errors report the read
+cursor, cross-table errors the start of the payload (20), and allocation
+failures zero. A decoded file is independent of the input bytes.
+
 **Type entries.** An entry starts with its `mo_type_kind` number, followed by
 only the payload in this table. All type references are indices into this
 file's type table; forward references are allowed, including nominal recursion.
@@ -285,7 +301,8 @@ ff ff ff ff 03 00 00 00                         ; unnamed, t3 (recursive)
 ```
 
 **Writing and reading.** `mo_bytecode_write` borrows a decoded `mo_bytecode`
-and writes verified bytes to an initialized, empty `mo_buffer`. It preserves
+and writes structurally checked bytes to an initialized, empty `mo_buffer`
+(and fully verified bytes once the verifier is implemented). It preserves
 all table order and indices, never adds strings, and regenerates the header
 and checksum rather than trusting the decoded header. It ignores the
 constant's decoded-only `encoding`, selecting its payload by type. On invalid
@@ -317,6 +334,14 @@ Each constant has a type and a value:
   byte length and little-endian magnitude bytes. Zero has sign ZERO and no
   bytes; nonzero has sign POSITIVE/NEGATIVE and a nonzero final byte;
 - or a capture-less closure, as a function index.
+
+Unit must be zero; Bool must be 0 or 1; Byte and Char must have zero high
+bytes. Signed payloads are two's complement. Every binary64 bit pattern,
+including infinities and NaNs with distinct payloads, is accepted and retained;
+finiteness is a source-literal rule, not a wire-format rule. Time's bounds are
+−62135596800000000 inclusive and 253402300800000000 exclusive microseconds.
+Decimal rejects only the two's-complement encoding of −2¹²⁷. Range and choice
+constants have no encoding; instructions construct them.
 
 The loader checks each one. Texts are valid UTF-8, and a `char` is a Unicode
 scalar value: below 0x110000 and not a surrogate. Times are within the years 1
@@ -445,6 +470,23 @@ promise may have condition lines, and only an anchor may have an expectation.
 With a subject present, a promise has at least one condition and an anchor
 has ALLOWS or FORBIDS. Metadata validity does not make a promise true.
 The assembler/disassembler preserves every new field, including absent ones.
+
+The debug section's count equals the function count, including empty entries.
+Its span and register-name arrays together, across all functions, have at most
+`MO_LIMIT_DEBUG_ENTRIES` entries. Spans have strictly increasing instruction
+offsets, nonempty NUL-free file names, and `start <= end <= MO_LIMIT_FILE_SIZE`.
+Register-name ranges are nonempty, half-open word ranges, with both endpoints
+at instruction boundaries (the end may equal the function's code length).
+Ranges of one register never overlap; array order itself is unrestricted.
+Register names, function/global names and module names are nonempty and
+NUL-free. A test, example, promise or anchor must have a text string index;
+other function kinds have `MO_BYTECODE_NO_INDEX`, including spec closures.
+An empty spec-text string is allowed. Only names in type entries require the
+lowest matching string index; other string indices are retained as supplied.
+Module global arrays contain every global exactly once, in its owning module.
+Exposed functions belong to the exposing module. The init array has one
+entry per global and names every init function exactly once; which global
+each function sets is checked by the verifier, not the decoder.
 
 ### 3.5 Names
 

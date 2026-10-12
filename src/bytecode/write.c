@@ -1,4 +1,5 @@
 #include "bytecode/io.h"
+#include "bytecode/names.h"
 
 #include <string.h>
 
@@ -7,6 +8,8 @@
 struct writer {
     const struct mo_bytecode *file;
     struct mo_buffer *out;
+    struct mo_arena scratch;
+    struct mo_bytecode_names names;
     const char *reason;
 };
 
@@ -64,11 +67,9 @@ static MO_MUST_USE bool name(struct writer *w, const char *text, bool optional) 
         length++;
     }
     if (length <= MO_LIMIT_STRING_SIZE) {
-        for (uint32_t i = 0; i < w->file->string_count; i++) {
-            const struct mo_bytecode_string *s = &w->file->strings[i];
-            if (s->length == length && memcmp(s->bytes, text, length) == 0) {
-                return word(w, i);
-            }
+        uint32_t index = mo_bytecode_name_find(&w->names, (const uint8_t *)text, length);
+        if (index != MO_BYTECODE_NO_INDEX) {
+            return word(w, index);
         }
     }
     w->reason = "name missing from strings or past limit";
@@ -194,6 +195,10 @@ static MO_MUST_USE bool sections(struct writer *w) {
         WRITE(count(w, f->strings[i].length, MO_LIMIT_STRING_SIZE, f->strings[i].bytes));
         WRITE(raw(w, f->strings[i].bytes, f->strings[i].length));
     }
+    if (!mo_bytecode_names_init(&w->names, &w->scratch, f)) {
+        w->reason = "no memory";
+        return false;
+    }
     WRITE(types(w));
     WRITE(count(w, f->layout_count, MO_LIMIT_LAYOUTS, f->layouts));
     for (uint32_t i = 0; i < f->layout_count; i++) {
@@ -274,8 +279,11 @@ bool mo_bytecode_write(const struct mo_bytecode *file, struct mo_buffer *out,
                        struct mo_write_error *error_out) {
     MO_ASSERT(file != NULL && out != NULL && error_out != NULL && out->length == 0);
     struct writer w = {.file = file, .out = out, .reason = "bytecode/output limit or no memory"};
+    mo_arena_init(&w.scratch, MO_LIMIT_BYTECODE_SIZE);
     const uint8_t header[MO_BYTECODE_HEADER_SIZE] = {'M', 'O', 'B', 'C', 0, 0, 1, 0};
-    if (!raw(&w, header, sizeof header) || !sections(&w)) {
+    bool encoded = raw(&w, header, sizeof header) && sections(&w);
+    mo_arena_free(&w.scratch);
+    if (!encoded) {
         mo_buffer_clear(out);
         error_out->reason = w.reason;
         return false;
@@ -287,5 +295,16 @@ bool mo_bytecode_write(const struct mo_bytecode *file, struct mo_buffer *out,
     for (unsigned i = 0; i < 8; i++) {
         out->bytes[12 + i] = (uint8_t)(checksum >> (i * 8));
     }
-    return true;
+    /* Validate the actual encoding, so caches and inactive fields cannot influence acceptance.
+     * The later verifier will also run here before this API promises executable bytes. */
+    struct mo_arena scratch;
+    struct mo_load_error error;
+    mo_arena_init(&scratch, MO_LIMIT_BYTECODE_SIZE);
+    bool ok = mo_bytecode_decode(&scratch, out->bytes, out->length, &error) != NULL;
+    mo_arena_free(&scratch);
+    if (!ok) {
+        mo_buffer_clear(out);
+        error_out->reason = error.reason;
+    }
+    return ok;
 }

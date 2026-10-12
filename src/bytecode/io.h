@@ -11,7 +11,9 @@
 MO_MUST_USE struct mo_bytecode *mo_bytecode_decode(struct mo_arena *arena, const uint8_t *bytes,
                                                    size_t length, struct mo_load_error *error);
 
-/* Checks section 3, without ownership dataflow or execution. */
+/* For the decoder's complete, bounded tables only, not arbitrary caller-built structures.
+ * Checks section 3, without ownership dataflow or execution. Relational refusals point to the
+ * start of the payload; the reader's local wire errors point to its cursor. */
 MO_MUST_USE bool mo_bytecode_validate(const struct mo_bytecode *file, struct mo_load_error *error);
 
 #endif
