@@ -1,5 +1,10 @@
-/* The tests write files, so they use POSIX for a temporary folder. */
+/* The tests write files, so they use POSIX for a temporary folder. mkdtemp is
+ * declared in <unistd.h> on macOS (and <stdlib.h> on Linux), and macOS hides it
+ * under _POSIX_C_SOURCE alone, so Darwin also needs its own source macro. */
 #define _POSIX_C_SOURCE 200809L
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE 1
+#endif
 
 #include "base/diag.h"
 #include "base/limits.h"
@@ -11,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* Adds text as a file named test.mo, and returns its index. */
 static uint32_t add_text(struct mo_sources *sources, const char *text, size_t length) {
