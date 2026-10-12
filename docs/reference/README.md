@@ -279,8 +279,8 @@ distinct values: `Set.empty`, a constant, or `items.to_set`. Keys and set member
 equality and hashing, which most types have (section 9.2).
 
 Maps and sets keep insertion order, also after removals: iterating visits keys
-in the order they were first added, and setting an existing key keeps its
-place. Two maps are equal when they hold the same entries, in any order.
+in the order they were added, setting an existing key keeps its place, and a
+key removed and added again goes last. Two maps are equal when they hold the same entries, in any order.
 Iterating a map gives `(key, value)` tuples.
 
 ```mo
@@ -786,8 +786,8 @@ end
 A type with `Hash` or `Order` also has `Equal`. Ability names appear only after
 `where`, so they don't clash with other names. Records and choice types get
 `Equal`, `Hash`, `Order` and `Text` automatically whenever all their fields
-have them. Equality compares field by field, and maps and sets compare their
-entries in any order. Order compares fields in the order they are declared, and
+have them. Equality compares field by field; maps compare their entries, and
+sets their elements, in any order. Order compares fields in the order they are declared, and
 cases in the order they are declared. Functions and capabilities have no
 abilities. The built-in types have these:
 
@@ -819,6 +819,9 @@ not a number is `nan` and the infinities `inf` and `-inf`. A `Bool` is `true`
 or `false`, a `Time` is RFC 3339 text, and a `Duration` is in seconds, as
 `1.5s`. `x.to_text` gives the text form of any value whose type has `Text`:
 the same text as `"#{x}"`.
+
+`x.compare(y)` compares two values whose type has `Order`, giving `Less`,
+`Equal` or `Greater`.
 
 A type customizes `Order` or `Text` with one ordinary function in its own
 module, which applies wherever the type goes, exposed or not:
@@ -871,7 +874,9 @@ unqualified, and a choice type's exposed cases come with it. A module may
 declare a type with its own name, as the module `Account` declares `Account`:
 `Account.open(...)` calls the module's function, and `Account` in a type is the
 type. There are no wildcards and no aliases. A clash between names is an error that suggests the
-qualified form, and so is a cycle of modules that use each other.
+qualified form, and so is a cycle of modules that use each other. The
+library's modules, `Json` and `Unicode16`, are used the same way, and a program
+can't declare a module with one of their names.
 
 ### 10.4 Constants
 
@@ -897,7 +902,7 @@ version.
 
 Always in scope: the built-in types of section 3, `Option` with `Some` and
 `None`, `Result` with `Ok` and `Error`, `Ordering` with its cases, the
-capability types, and `FileError` with its cases. The functions of section 14 belong to their types' modules:
+capability types, `FileError` with its cases, and `Entry` with `EntryKind` and its cases. The functions of section 14 belong to their types' modules:
 call them with a dot, as in `text.lines`, or through the module, as in
 `Set.empty` and `Time.parse(text)`. So a local may be called `lines` or
 `count` without clashing with them.
@@ -1092,8 +1097,8 @@ arithmetic, or a time outside the years 1 to 9999; dividing by zero; reaching a 
 running out of stack in calls that aren't in tail position; running out of
 memory; calling a library function outside what it accepts, such as `take(-1)`
 or `random.int(5, 5)`; two keys of a map literal that turn out equal (section
-3.8); an exit status outside 0 to 255; and printing to an output that is gone.
-Bugs are never caught.
+3.8); an exit status outside 0 to 255; printing to an output that is gone; and
+having too many folders open at once (section 14). Bugs are never caught.
 
 ### 13.3 Costs
 
@@ -1103,7 +1108,7 @@ Mo promises what operations cost, not how values are stored:
 | --- | --- |
 | `get`, `size`, `first` and `last` on a list | constant |
 | `append` on a list, and assigning a `var`'s field | constant when the value has one holder; a copy when it's shared |
-| `get` and `has?` on a map or a set | constant on average |
+| `get` on a map, and `has?` on a map or a set | constant on average |
 | `set` and `remove` on a map, and `add` and `remove` on a set | constant on average when the value has one holder; a copy when it's shared |
 | `byte_count` | constant |
 | `char_count`, `split`, `lines`, `contains?` | proportional to the text's length |
@@ -1131,8 +1136,8 @@ is called with a dot: under **Text**, `split(separator: Text) : List(Text)` is
 called as `text.split(",")`. A function written `Type.name(...)` is called
 through the type's module. `pred` is a function returning a `Bool`. Calling a
 function outside what it accepts, such as `take(-1)`, is a bug (section 13.2).
-Every type with the `Text` ability also has `to_text : Text`, its text form
-(section 9.2).
+Every type with the `Text` ability also has `to_text : Text`, its text form,
+and every type with `Order` has `compare(other: T) : Ordering` (section 9.2).
 
 **Int**: `abs`, `min(b: Int)`, `max(b: Int)`, `pow(n: Int)` (`n` at least 0),
 `floor_div(b: Int)`, `floor_mod(b: Int)`, and `wrapping_add`, `wrapping_sub`,
@@ -1154,8 +1159,11 @@ to the nearest float), `to_big : BigInt`, `to_byte : Option(Byte)`,
 (rounded to the nearest float), `to_fixed(places: Int) : Text` (rounded as
 `round` does), `to_text : Text`. `places` is from 0 to 18.
 
-**Float**: `abs`, `floor`, `ceil`, `round` and `sqrt`, all `: Float`; `nan?` and
-`infinite? : Bool`; `to_decimal : Option(Decimal)`, `to_text : Text`.
+**Float**: `abs`, `floor`, `ceil`, `round` (ties away from zero) and `sqrt`,
+all `: Float`; `nan?` and `infinite? : Bool`; `to_decimal : Option(Decimal)`:
+the number the float's text form writes, rounded to 18 places with ties to
+even, so `0.1.to_decimal` is `Some(0.1)`, and `None` for not-a-number, the
+infinities and anything beyond `Decimal`'s range; `to_text : Text`.
 
 **Text**: `byte_count : Int`, `char_count : Int`, `empty? : Bool`,
 `chars : List(Char)`, `bytes : Bytes`. `lines : List(Text)`: split where `\n`
@@ -1178,7 +1186,11 @@ optional `-` and ASCII digits, in the `Int` range, and nothing else.
 `to_decimal : Option(Decimal)`: an optional `-`, one or more ASCII digits, then
 optionally `.` and 1 to 18 digits, in the `Decimal` range, and nothing else, so
 `"1."` and `".5"` give `None`.
-`to_float : Option(Float)`. `Text.from_chars(chars: List(Char)) : Text`.
+`to_float : Option(Float)`: an optional `-`, one or more ASCII digits,
+optionally `.` and one or more digits, and optionally `e` or `E`, an optional
+sign and one or more digits; or exactly `nan`, `inf` or `-inf`, the text forms
+of section 9.2. It gives the nearest float, and `None` for anything else or for
+a number too large to be a finite `Float`. `Text.from_chars(chars: List(Char)) : Text`.
 
 **Char**: `code : Int`, `ascii_digit?`, `ascii_letter?` and
 `ascii_white_space? : Bool`, `ascii_lowercase` and `ascii_uppercase : Char`,
@@ -1261,10 +1273,19 @@ outside tests, examples and promises is an error (section 12.4).
 `: Result(Unit, FileError)`; `list(folder: Text) : Result(List(Text), FileError)`,
 the names in the folder, sorted; `exists?(path: Text) : Bool`;
 `within(folder: Text) : Files`; `read_only : ReadFiles`.
+`entries(folder: Text) : Result(List(Entry), FileError)` gives the folder's
+entries in `list`'s order, each an `Entry(name: Text, kind: EntryKind)` whose
+kind is `File`, `Folder`, `Link` or `Other`; a link is reported, never
+followed. `walk(folder: Text) : Result(List(Entry), FileError)` gives every
+entry below the folder, each named by its path from the folder: a folder's
+entries in `list`'s order, each folder followed by what's inside it. It doesn't
+enter links, and stops at the first folder it can't read. A capability from
+`within` or `read_only` holds its folder open while it's used, and having too
+many open at once is a bug (13.2).
 `Files.in_memory(files: Map(Text, Text)) : Files`. In such a fake, a folder
-exists when some file is inside it, and `list` gives the names directly inside
-a folder, each subfolder once. **ReadFiles** has `read_text`, `read_bytes`, `list`, `exists?`
-and `within`. Paths are relative and use `/`; `"."` is the capability's own
+exists when some file is inside it, and `list` and `entries` give the names
+directly inside a folder, each subfolder once. **ReadFiles** has `read_text`,
+`read_bytes`, `list`, `entries`, `walk`, `exists?` and `within`. Paths are relative and use `/`; `"."` is the capability's own
 folder, and no path can leave it. Given a path that would leave the folder,
 such as `"../a.txt"`, reading, writing, removing and listing give
 `Error(NotAllowed(path: path))`, and `exists?` gives `false`. Calling `within` with
@@ -1273,14 +1294,45 @@ returns a `Result` gives `Error(NotAllowed(path: path))`, and `exists?` on it gi
 `false`.
 
 **FileError**: `NotFound(path: Text)`, `NotAllowed(path: Text)`,
-`NotText(path: Text)`, `Failed(path: Text, reason: Text)`. Its text forms are
+`NotText(path: Text)`, when `read_text` finds a file that isn't valid UTF-8,
+and `Failed(path: Text, reason: Text)`. Its text forms are
 `PATH: no such file`, `PATH: not allowed`, `PATH: not text` and
 `PATH: REASON`, as in `notes/a.md: no such file`.
 
-**Clock**: `now : Time`; `Clock.fixed(time: Time) : Clock`. **Random**:
+**Clock**: `now : Time`, a bug if the system's clock is outside the years 1 to
+9999; `Clock.fixed(time: Time) : Clock`. **Random**:
 `int(low: Int, high: Int) : Int`, from `low` up to, but not including, `high`,
 which must be greater; `Random.seeded(seed: Int) : Random`. **Args** and
 **Env** fakes: `Args.of(list: List(Text))`, `Env.of(map: Map(Text, Text))`.
+
+**Json**, with `use Json`: `Json.parse(text: Text) : Result(Json, JsonError)`
+reads JSON as RFC 8259 defines it, into this type:
+
+```mo
+enum Json
+  Null
+  Boolean(Bool)
+  Number(JsonNumber)
+  String(Text)
+  Array(List(Json))
+  Object(Map(Text, Json))
+end
+```
+
+An object keeps its keys in the document's order, and a key given twice is an
+error. A `JsonNumber` keeps the number as it was written, and two are equal
+when they're written the same: its `to_int : Option(Int)`,
+`to_decimal : Option(Decimal)` and `to_float : Option(Float)` each give `None`
+when the number doesn't fit, and `to_text : Text` gives it as written.
+`Json.int(n: Int)` and `Json.decimal(d: Decimal)` make a number, and
+`Json.float(f: Float) : Option(Json)` gives `None` for not-a-number and the
+infinities, which JSON can't write. `json.to_text` writes compact JSON, and
+`json.pretty` indents it by two spaces; both keep each object's order and each
+number's text. A `JsonError(line: Int, column: Int, problem: JsonProblem)` says
+where reading stopped, counting both from 1, and why: `UnexpectedEnd`,
+`Unexpected(found: Char)`, `BadNumber`, `BadEscape` (including a lone surrogate
+in a `\u` escape), `DuplicateKey(key: Text)`, or `TooDeep`, for arrays and
+objects nested more than 128 deep.
 
 **Unicode16**, following Unicode 16.0: `graphemes(text: Text) : List(Text)`,
 `display_width(text: Text) : Int`, and `normalize_nfc`, `lowercase` and

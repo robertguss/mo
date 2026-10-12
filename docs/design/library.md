@@ -69,7 +69,7 @@ two rows in a section.
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
 | hashing, for map keys and set members | generic | the map and set primitives, with SipHash-1-3 (`bytecode.md` 8) | |
-| `compare`: the order `sort`, `sort_by`, `sort_by_desc`, `min` and `max` use, and `<` on tuples, lists, records and choice types | lowering | generated for each type with `Order`: the type's own `compare` where it has one; for the immediates of `bytecode.md` 4.4, `lt` and `eq`, except for `Float`, whose order is `cmp_float`, with not-a-number last; `Equal` for `Unit`; `Text.%compare`, `BigInt.%compare` and `Bytes.%compare`; tuples part by part from the left, lists element by element, records field by field and choice types case by case, in declaration order | the text forms and the order programs see are Mo functions, not VM operations (`bytecode.md` 8). Mo code in `lib/` orders with `compare`, not `<`, because `<` on floats follows IEEE 754 and leaves not-a-number unordered |
+| `x.compare(y)` (D232), the order `sort`, `sort_by`, `sort_by_desc`, `min` and `max` use, and `<` on tuples, lists, records and choice types | lowering | generated for each type with `Order`: the type's own `compare` where it has one; for the immediates of `bytecode.md` 4.4, `lt` and `eq`, except for `Float`, whose order is `cmp_float`, with not-a-number last; `Equal` for `Unit`; `Text.%compare`, `BigInt.%compare` and `Bytes.%compare`; tuples part by part from the left, lists element by element, records field by field and choice types case by case, in declaration order | the text forms and the order programs see are Mo functions, not VM operations (`bytecode.md` 8). Mo code in `lib/` orders with `compare`, not `<`, because `<` on floats follows IEEE 754 and leaves not-a-number unordered |
 | `to_text`, at a type without its own, and `#{x}` in a text | lowering | generated for each type with `Text`, in the form that looks like code (reference 9.2): from the built-in types' `to_text`, with `Text.%quoted` and `Char.%quoted` for texts and characters inside another value, joined with `Text.%concat` | as for `compare` |
 
 ## Bool
@@ -468,6 +468,8 @@ spec code (reference 12.4).
 | `append_text(path, text)` | host | `FILES_APPEND_TEXT` | |
 | `remove(path)` | host | `FILES_REMOVE` | |
 | `list(folder)` | host | `FILES_LIST` | |
+| `entries(folder)` | host | `FILES_ENTRIES` | |
+| `walk(folder)` | Mo | `lib/files.mo` | written over `entries` one folder at a time, entering folders by path rather than with `within`, so it holds no folder open (D232) |
 | `exists?(path)` | host | `FILES_EXISTS` | |
 | `within(folder)` | host | `FILES_WITHIN` | |
 | `read_only` | host | `FILES_READ_ONLY` | |
@@ -484,6 +486,8 @@ the same code as `Files`'s, on a handle marked read-only (`bytecode.md` 7).
 | `read_text(path)` | host | `READFILES_READ_TEXT` | |
 | `read_bytes(path)` | host | `READFILES_READ_BYTES` | |
 | `list(folder)` | host | `READFILES_LIST` | |
+| `entries(folder)` | host | `READFILES_ENTRIES` | |
+| `walk(folder)` | Mo | `lib/read-files.mo` | as for `Files` |
 | `exists?(path)` | host | `READFILES_EXISTS` | |
 | `within(folder)` | host | `READFILES_WITHIN` | |
 
@@ -494,6 +498,25 @@ the same code as `Files`'s, on a handle marked read-only (`bytecode.md` 7).
 | `NotFound(path: p)`, and the other cases | instruction | `make_case`; `switch` and `case_field` | |
 | `a == b`, `a != b` | generic | `equal`, and `not` for `!=` | |
 | `to_text` | Mo | `lib/file-error.mo` | a type's own `to_text` is an ordinary function in its module (reference 9.2), and Mo expresses this one as one `case` |
+
+## Entry and EntryKind
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `Entry(name: n, kind: k)`, and `EntryKind`'s cases | instruction | `construct` and `make_case`; `field` and `switch` | |
+| `a == b`, `a != b` | generic | `equal`, and `not` for `!=` | |
+
+## Json
+
+`Json` is a module of the library, written in Mo (D232). The VM needs nothing
+new for it: it parses and prints with text and list primitives.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `Json.parse(text)` | Mo | `lib/json.mo` | a parser over `text.chars`, with the nesting limit of reference 14 |
+| `json.to_text`, `json.pretty` | Mo | `lib/json.mo` | |
+| `Json.int(n)`, `Json.decimal(d)`, `Json.float(f)` | Mo | `lib/json.mo` | |
+| `to_int`, `to_decimal`, `to_float` and `to_text` on a `JsonNumber` | Mo | `lib/json.mo` | reads the number's text with `Text.to_int`, `to_decimal` and `to_float`, after checking JSON's own number syntax |
 
 ## Clock
 
