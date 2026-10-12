@@ -1,7 +1,7 @@
-# Core text, version 0.4
+# Core text, version 0.5
 
 The Lean implementation in `MoCore/Text/` is the reference codec. Every file
-is `(core 0.4 PAYLOAD)` followed by LF. Constructors are case-sensitive and
+is `(core 0.5 PAYLOAD)` followed by LF. Constructors are case-sensitive and
 named after Lean. A nullary constructor is still a list: `(unit)`.
 
 This is an interchange format, not Mo source or the informal notation in
@@ -10,15 +10,23 @@ transport (`Outcome`, including closures), and observable reports (`Report`,
 the protocol `mocore` writes). The latter uses reference 9.2's structural
 value spelling inside a string. C differential tests compare **reports**.
 
-## Changes from 0.3
+## Changes from 0.4
+
+Version 0.5 adds a mandatory compiler-metadata field to Program. Expressions,
+typing, evaluation and proofs are unchanged. The envelope accepts only 0.5;
+older and unknown versions are rejected, not upgraded. Metadata is preserved
+losslessly, checked for shape at program decoding, and never read by `mocore`
+execution or structural observations. A shape error is `parseError`, not
+`illTyped`. There are no omitted/default fields on the wire.
+
+### Earlier changes from 0.3
 
 Version 0.4 adds BigOp `min`, `max`, `pow`, `floorDiv`, `floorMod`, FloatOp
 `rem`, `toDecimal`, and TextOp `toFloat`. Decimal-to-Float and decimal text
 parsing round an exact rational once to binary64, including ties, subnormals
 and overflow; Float-to-Decimal rounds its shortest decimal to 18 places.
 Numeric signatures and choices are recorded below and in TRANSLATION.md.
-Only envelope version **0.4** is accepted; 0.1, 0.2, 0.3 and unknown versions
-are rejected, not upgraded. Report tags and record layouts are unchanged.
+Report tags and record layouts other than Program's metadata are unchanged.
 
 ### Earlier changes from 0.2
 
@@ -61,7 +69,7 @@ buffer's own limit is an independent constraint. Lean's codec does not
 impose the C resource limits.
 
 ```ebnf
-file = "(", "core", "0.4", payload, ")" ;
+file = "(", "core", "0.5", payload, ")" ;
 sexp = atom | string | "(", { sexp }, ")" ;
 integer = [ "-" ], digit, { digit } ;
 bits = "0x", hex-digit (* exactly sixteen *) ;
@@ -86,14 +94,14 @@ Decimal integers count 10⁻¹⁸ units; Time and Duration integers count
 microseconds. Char strings contain exactly one Unicode scalar.
 
 ```text
-(core 0.4 (map (text) (list (byte))))
-(core 0.4 (float 0x8000000000000000))
-(core 0.4 (text "hello\nβ"))
+(core 0.5 (map (text) (list (byte))))
+(core 0.5 (float 0x8000000000000000))
+(core 0.5 (text "hello\nβ"))
 ```
 
 Files are UTF-8 without a BOM; invalid UTF-8 is a parse error. An atom is a
 nonempty run of scalars other than the delimiters defined above. Symbols
-are atoms used as constructor names, `core`, `0.4`, `true` and `false`;
+are atoms used as constructor names, `core`, `0.5`, `true` and `false`;
 only the exact symbols listed in this document are accepted in those
 positions. There is no symbol escaping. Empty lists are `()`. Parsing
 accepts any layout using those delimiters, including adjacent lists,
@@ -130,7 +138,7 @@ The following schema is exhaustive, in **Lean field order**. No metadata is
 implicit. A module is metadata; a function name is the resolved lookup key.
 
 ```text
-Program   := (Program (DataDecl*) (FunDecl*) (ConstDecl*) S)
+Program   := (Program (DataDecl*) (FunDecl*) (ConstDecl*) S Metadata)
 DataDecl  := (DataDecl S (Ctor*))
 Ctor      := (Ctor S ((S T)*))
 ConstDecl := (ConstDecl S T E)
@@ -167,7 +175,108 @@ E := (lit L)
 branch, false branch; `join` holds name, parameters, body, rest. Projection
 indices are zero-based. `case_` arms are constructor name, bound field
 names, body, in constructor declaration order. Empty parameter/argument/
-field/arm lists are still present. No source locations are transported.
+field/arm lists are still present. Source locations live in the side tables
+below, never in expression constructors.
+
+### Compiler metadata is beside the meaning
+
+The final Program field is mandatory. Its indices refer to the declaration
+lists above, not future bytecode indices. `U` below is a natural bounded by
+2³²−1; `opt X` is `(none)` or `(some X)`. C uses `uint32_t`, and spans are
+`struct mo_span`. Lean uses Nat and validates these bounds/references.
+
+```text
+Metadata    := (noSource) | (Metadata (S*) (ModuleMeta*) (FunMeta*) (ConstMeta*))
+ModuleMeta  := (ModuleMeta S (U*) (U*) (U*) ((U B)*) (U*))
+FunMeta     := (FunMeta S (opt SourceSpan) (opt S) BodyMeta (opt U) (opt B) (SpecLine*))
+ConstMeta   := (ConstMeta S (opt SourceSpan) BodyMeta)
+BodyMeta    := (BodyMeta ((opt SourceSpan)*) ((opt S)*) (BindingMeta*) ((U S)*))
+BindingMeta := (BindingMeta U U S)
+SourceSpan  := (SourceSpan U U U)
+SpecLine    := (SpecLine (opt SourceSpan) S)
+```
+
+- **Files:** every `mo_sources.files[i].path`, copied in exactly that order,
+  including unused files; `SourceSpan.file = i`. Spans are half-open UTF-8
+  byte offsets, `start ≤ end`. The transport checks file bounds and u32
+  range, not source contents/lengths. Lowering must check offsets against the
+  original source and copy text now; compilation never opens source files.
+  Filenames, module names, display names and source binding names are nonempty
+  and NUL-free. Spec text may be empty and may contain NUL/escaped controls.
+- **Modules:** name; owned data, function and constant indices; exposed data
+  indices paired with `contents_exposed`; exposed function indices. These
+  ownership lists partition each declaration list exactly once. Function
+  ownership agrees with `FunDecl.module`. Exports are distinct members of
+  that module, and only ordinary functions are exposed. A type absent from
+  exports is private, `(i false)` is `T`, and `(i true)` is `T(..)`. All types
+  retain complete constructors/fields for VM layouts and structural printing;
+  exposure restricts tools, not evaluation. Modules are unique, in loader
+  order; member and export lists are in source declaration order. Instances
+  belong to the requesting module (architecture 4.2). Constant ownership
+  order is independent of Program's dependency order. Files and modules have
+  at most 4096 entries, matching C's limits.
+- **Functions/constants:** metadata lists align exactly with Program's
+  declaration lists. `name` is the full bytecode/display name of bytecode 3.5,
+  independent of the Core lookup key; a constant's init name is `name + ".init"`.
+  Lowering makes display names globally unambiguous, assigns spec and closure
+  numbers in source order *before* rewriting the bodies, and retains overload
+  and monomorphic-instance identity. Declaration spans support listing/results.
+  `text` is absent on ordinary functions, present on all four spec kinds: a
+  test's decoded sentence; the verbatim example/anchor line; a promise's
+  header line. Verbatim lines exclude indentation and CR/LF, retain internal
+  spacing/comments, and may contain line breaks inside a literal via escapes.
+- **Spec links:** a promise's `subject` is its ordinary function's index; an
+  anchor's is its promise's index. Others have no subject. Only anchors have
+  `allows`: true requires 0, false requires nonzero. A promise has one
+  `SpecLine` per condition, in source order (at least one); other kinds have
+  none. Its Int result n > 0 selects line n − 1. Lowering supplies matching
+  subject parameters/result and accurate condition spans/text; shape checks
+  validate kinds and bounds, not truth or a correspondence to generated code.
+- **Body traversal:** start at the root with index 0. Visit each Expr before
+  its children, in the expression schema's field order, and lists/arms in
+  their existing order. Count only Expr constructors, not types, literals,
+  parameters or arms. Traverse lambda bodies too. Thus `join` visits body
+  before rest, and `case_` visits its scrutinee before arm bodies. Every body,
+  including a constant initializer, has **exactly one optional span per node**.
+  Synthesized nodes use the nearest responsible source construct's span;
+  `none` means genuinely source-less, never file 0/offset 0 by convention.
+- **Bindings:** `BodyMeta.params` has one optional source name per top-level
+  function parameter (empty for constants). `none` denotes a generated
+  parameter. Each BindingMeta is node index, binder slot, original name.
+  At `let_`, slot 0 is its binder; at `lam`/`join`, slots follow parameter
+  order; at `case_`, flatten arm bound names in arm order. No other node binds.
+  Records are sparse, strictly ordered by (node, slot); an absent slot is
+  generated, not a source variable. Multiple occurrences (SSA versions,
+  loop parameters, pattern lowering) may carry the same source name; compiler
+  register live ranges distinguish them. Core lexical lookup resolves uses
+  to these binding occurrences, including shadowing and closure captures.
+  `BodyMeta.closures` has exactly one (node, full name) pair per `lam`, in
+  preorder. Nested names/locations survive lifting without another source pass.
+
+Lowering must fill **all** source metadata, including library instances,
+entry wrappers, constants and spec code, and update the tables whenever it
+rewrites a body. Compiler passes carry provenance through lifting, register
+allocation and optimization; they compute instruction offsets and readable
+register ranges themselves. Generated instructions use their responsible
+node/declaration span. Shape validation (`metadataValid` in Lean,
+`mo_core_metadata_valid` in C) is separate from `checkProgram`/Core typing.
+C parsing and printing reject malformed shapes; Lean printing is lossless
+even for malformed in-memory metadata, while decoding rejects it. Changing
+valid metadata can change bytecode/debugging/tools, **never a Core outcome**.
+
+**Handwritten Lean programs use `(noSource)`.** This is a deliberate whole
+document mode, not an empty source envelope or permission for `mo_lower` to
+omit metadata. It compiles with empty spans/register names/spec text and no
+exports/spec links/condition lines. Functions retain their resolved names
+and modules; all nominal data/constants belong to a synthetic `%Core` module
+(first), followed by function modules in first-occurrence order. Constants
+retain lookup names, with `.init` appended; closures use the enclosing lookup
+name plus `.fn.N`, numbered in preorder. Promise generation/anchor checking
+requiring surface links is unavailable in this mode; direct Core/VM runs and
+selected tests/examples remain usable. No filenames, exposure or wording are
+invented. `Metadata.core` is an explicitly synthetic full-envelope fixture,
+with two files/modules, both exposure modes, all spec kinds, closures and
+bindings, and an absent span. The other Lean-written fixtures use `noSource`.
 
 ## Every primitive
 
@@ -256,7 +365,7 @@ arguments, a **reached** call stops with the exact report below (exit 1),
 where effects are everything produced so far:
 
 ```text
-(core 0.4 (stopped (outside "Unicode16 is a trusted primitive unavailable in mocore") (effects () () () ())))
+(core 0.5 (stopped (outside "Unicode16 is a trusted primitive unavailable in mocore") (effects () () () ())))
 ```
 
 An unchosen branch or unused function containing such a call still runs.
@@ -447,7 +556,7 @@ Separators are `, ` and `: `, with no spaces just inside delimiters.
 returned list of texts contains two levels of quoting:
 
 ```text
-(core 0.4 (returned "[\"a\", \"b\\n\"]" (effects () () () ())))
+(core 0.5 (returned "[\"a\", \"b\\n\"]" (effects () () () ())))
 ```
 
 This avoids confusing a top-level Text with a constructor/number, and
@@ -537,12 +646,12 @@ A complete one-file program returning a Float's negative zero, with a
 preexisting file and one input line (layout expanded for reading):
 
 ```text
-(core 0.4
+(core 0.5
   (Run
     (Program ()
       ((FunDecl "main" () (float) (lit (float 0x8000000000000000))
         "Main" (function) 0))
-      () "main")
+      () "main" (noSource))
     (World ("argument") (("MODE" "test")) ("input") () () (("a" "hi\n")) 0
       (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec) ())
     (entry ()) 30))
@@ -551,32 +660,32 @@ preexisting file and one input line (layout expanded for reading):
 The exact canonical report (exit 0):
 
 ```text
-(core 0.4 (returned "0x8000000000000000" (effects () () (("a" "hi\n")) ())))
+(core 0.5 (returned "0x8000000000000000" (effects () () (("a" "hi\n")) ())))
 ```
 
 A named test demonstrating failure without a bug:
 
 ```text
-(core 0.4
+(core 0.5
   (Run
     (Program ()
       ((FunDecl "main" () (unit) (lit (unit)) "Main" (function) 0)
        (FunDecl "expected seven" () (unit) (fail (lit (text "got six"))) "Spec" (test) 0))
-      () "main")
+      () "main" (noSource))
     (World () () () () () () 0
       (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec) ())
     (test "expected seven") 30))
 ```
 
-Its report is `(core 0.4 (failed "got six" (effects () () () ())))` (exit 2).
-Changing fuel to 0 gives `(core 0.4 (outOfFuel))` (exit 3). An ordinary
+Its report is `(core 0.5 (failed "got six" (effects () () () ())))` (exit 2).
+Changing fuel to 0 gives `(core 0.5 (outOfFuel))` (exit 3). An ordinary
 function with `fail` instead is `illTyped` (exit 5), never evaluated.
 
 A test constructs a console and passes it to ordinary `main`. Observing the
 same handle after the call reads its output; real output stays empty:
 
 ```text
-(core 0.4
+(core 0.5
   (Run
     (Program ()
       ((FunDecl "main" (("c" (cap (console)))) (unit)
@@ -590,7 +699,7 @@ same handle after the call reads its output; real output stays empty:
                     (prim (list (text) (lit 1)) ((lit (text "hello"))))))
               (lit (unit)) (fail (lit (text "unexpected output"))))))
         "Spec" (test) 0))
-      () "main")
+      () "main" (noSource))
     (World () () () () () () 0
       (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec) ())
     (test "fake") 50))
@@ -599,7 +708,7 @@ same handle after the call reads its output; real output stays empty:
 Its exact report (exit 0) includes the allocated state's full eight fields:
 
 ```text
-(core 0.4 (returned "Unit" (effects () () () ((CapState () () () ("hello") () () 0 (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec))))))
+(core 0.5 (returned "Unit" (effects () () () ((CapState () () () ("hello") () () 0 (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec))))))
 ```
 
 The exporter below writes all twelve real programs with their timing worlds
@@ -609,6 +718,8 @@ and shared file writes through an ordinary function. `Library.core` tests
 Lemire results, maximum-span Int intervals and entries; its five Unicode16
 functions are present and checked but not called by that test. `JsonQuery.core`
 is the renamed `examples/json-query.mo` translation, module JsonQuery.
+`Metadata.core` exercises the full compiler envelope on a synthetic program
+returning 12; it does not assert source provenance for any Mo example.
 Wc's run returns the **Core value** `1` but the oracle
 process exits 0, with the three counted rows and missing-file error in its
 effects. Account's returns
@@ -631,14 +742,14 @@ Regenerate **both** corpora from `formal/`:
 lake env lean --run ExportSamples.lean ../tests/core ../fuzz/corpus/fuzz_core_text
 ```
 
-`ci/check_core_fixtures.sh` compares all 14 run fixtures and 13 canonical
+`ci/check_core_fixtures.sh` compares all 15 run fixtures and 14 canonical
 fuzz seeds with fresh Lean output. C's schema-driven codec round-trips
 every fixture and all new types/operations/state records; the fuzzer tries
 all 16 caller-supplied categories, including standalone RandomState.
 
 Historical **version 0.1** measurements, 2026-10-12 in a Linux x86-64 orb,
 Lean 4.34.0 native executable; sizes/timings below predate fake state. Use
-the command below for today's 0.4 corpus, which includes Fakes and Library.
+the command below for today's 0.5 corpus, which includes Fakes, Library and Metadata.
 One warm-up, then **21 fresh processes per sample**; wall time includes
 process startup, input I/O, parse, checker, initialization, entry evaluation,
 structural rendering and captured stdout. Fuel 10000. These are the inputs
@@ -672,7 +783,7 @@ for path in sorted(pathlib.Path('/tmp/mocore-samples').glob('*.core')):
     for _ in range(21):
         start = time.perf_counter_ns()
         result = subprocess.run([exe, str(path)], check=True, capture_output=True)
-        assert result.stdout.startswith(b'(core 0.4 (returned ')
+        assert result.stdout.startswith(b'(core 0.5 (returned ')
         times.append((time.perf_counter_ns() - start) / 1e6)
     print(path.stem, path.stat().st_size, statistics.median(times), min(times), max(times))
 PY
@@ -693,9 +804,9 @@ need new run/report examples too. Do not silently reinterpret RandomState,
 Boolean `ro`, root, fake index, or a constructor's field order.
 
 Any added constructor or changed shape/meaning advances the minor wire
-version (next `0.5`), updates both Lean and C and their differential corpus,
+version (next `0.6`), updates both Lean and C and their differential corpus,
 and adds tests for rejecting unsupported versions. The current parser
-accepts **only `0.4`** and rejects unknown constructors; there are no ignored
+accepts **only `0.5`** and rejects unknown constructors; there are no ignored
 extension fields or fallback operation names. Support for older versions,
 if wanted, must be explicit. This document, not the informal lowering
 notation or Lean's `Repr`, specifies what the C implementation must write.

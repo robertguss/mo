@@ -1,4 +1,5 @@
 import MoCore.Text.Prim
+import MoCore.Metadata
 
 namespace MoCore.Text
 
@@ -91,8 +92,7 @@ def bodyMetaOut (b : BodyMeta) := tag "BodyMeta"
   [seq (b.spans.map (optionOut spanOut)), seq (b.params.map (optionOut Sexp.str)),
    seq (b.bindings.map bindingOut), seq (b.closures.map fun (n, s) => seq [natural n, .str s])]
 def bodyMetaIn : Sexp → Parse BodyMeta
-  | .node [.atom "BodyMeta", ss, ps, bs, cs] => return
-      ⟨← asList (optionIn spanIn) ss, ← asList (optionIn asString) ps,
+  | .node [.atom "BodyMeta", ss, ps, bs, cs] => return ⟨← asList (optionIn spanIn) ss, ← asList (optionIn asString) ps,
        ← asList bindingIn bs, ← asList (asPair asNat asString) cs⟩
   | _ => throw "invalid BodyMeta"
 def lineOut (l : SpecLine) := tag "SpecLine" [optionOut spanOut l.span, .str l.text]
@@ -103,8 +103,7 @@ def funMetaOut (f : FunMeta) := tag "FunMeta"
   [.str f.name, optionOut spanOut f.span, optionOut Sexp.str f.text, bodyMetaOut f.body,
    optionOut natural f.subject, optionOut boolean f.allows, seq (f.lines.map lineOut)]
 def funMetaIn : Sexp → Parse FunMeta
-  | .node [.atom "FunMeta", n, s, t, b, subject, allows, ls] => return
-      ⟨← asString n, ← optionIn spanIn s, ← optionIn asString t, ← bodyMetaIn b,
+  | .node [.atom "FunMeta", n, s, t, b, subject, allows, ls] => return ⟨← asString n, ← optionIn spanIn s, ← optionIn asString t, ← bodyMetaIn b,
        ← optionIn asNat subject, ← optionIn asBool allows, ← asList lineIn ls⟩
   | _ => throw "invalid FunMeta"
 def constMetaOut (c : ConstMeta) := tag "ConstMeta" [.str c.name, optionOut spanOut c.span, bodyMetaOut c.body]
@@ -115,8 +114,7 @@ def moduleMetaOut (m : ModuleMeta) := tag "ModuleMeta"
   [.str m.name, seq (m.data.map natural), seq (m.funs.map natural), seq (m.consts.map natural),
    seq (m.exposedTypes.map fun (n, b) => seq [natural n, boolean b]), seq (m.exposedFuns.map natural)]
 def moduleMetaIn : Sexp → Parse ModuleMeta
-  | .node [.atom "ModuleMeta", n, ds, fs, cs, ts, es] => return
-      ⟨← asString n, ← asList asNat ds, ← asList asNat fs, ← asList asNat cs,
+  | .node [.atom "ModuleMeta", n, ds, fs, cs, ts, es] => return ⟨← asString n, ← asList asNat ds, ← asList asNat fs, ← asList asNat cs,
        ← asList (asPair asNat asBool) ts, ← asList asNat es⟩
   | _ => throw "invalid ModuleMeta"
 def metadataOut : CompilerMeta → Sexp
@@ -125,15 +123,19 @@ def metadataOut : CompilerMeta → Sexp
       seq (ms.map moduleMetaOut), seq (fs.map funMetaOut), seq (cs.map constMetaOut)]
 def metadataIn : Sexp → Parse CompilerMeta
   | .node [.atom "noSource"] => pure .noSource
-  | .node [.atom "Metadata", files, ms, fs, cs] => return .source
-      (← asList asString files) (← asList moduleMetaIn ms) (← asList funMetaIn fs) (← asList constMetaIn cs)
+  | .node [.atom "Metadata", files, ms, fs, cs] => do
+      return .source (← asList asString files) (← asList moduleMetaIn ms)
+        (← asList funMetaIn fs) (← asList constMetaIn cs)
   | _ => throw "invalid compiler metadata"
 
 def programOut (p : Program) : Sexp := tag "Program"
   [seq (p.data.map dataOut), seq (p.funs.map funOut), seq (p.consts.map constOut), .str p.entry, metadataOut p.metadata]
 def programIn : Sexp → Parse Program
   | .node [.atom "Program", ds, fs, cs, entry, metadata] => do
-      return ⟨← asList dataIn ds, ← asList funIn fs, ← asList constIn cs, ← asString entry, ← metadataIn metadata⟩
+      let p := Program.mk (← asList dataIn ds) (← asList funIn fs) (← asList constIn cs)
+        (← asString entry) (← metadataIn metadata)
+      if !metadataValid p then throw "invalid compiler metadata shape"
+      return p
   | _ => throw "invalid Program"
 
 def printProgram (p : Program) : String := document (programOut p)

@@ -10,4 +10,4 @@ if ! diff -ru tests/core "$tree/runs" || ! diff -ru fuzz/corpus/fuzz_core_text "
     echo 'error: Core fixtures differ from Lean; regenerate with formal/ExportSamples.lean' >&2
     exit 1
 fi
-echo 'Core fixtures: all 14 runs and 13 fuzz seeds match the Lean exporter byte for byte'
+echo 'Core fixtures: all 15 runs and 14 fuzz seeds match the Lean exporter byte for byte'

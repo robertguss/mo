@@ -13,6 +13,12 @@ static const struct schema s_values, s_value_pair, s_value_pairs, s_binding, s_e
 static const struct schema s_string_pair, s_string_pairs, s_world, s_bug, s_outcome;
 static const struct schema s_fake, s_random_state, s_cap_state, s_cap_states;
 static const struct schema s_effects, s_report, s_selection, s_run;
+static const struct schema s_u32, s_indices, s_span_value, s_span, s_spans, s_name, s_names;
+static const struct schema s_index, s_expectation, s_binding_meta, s_binding_metas;
+static const struct schema s_closure_meta, s_closure_metas, s_body_meta, s_spec_line, s_spec_lines;
+static const struct schema s_fun_meta, s_fun_metas, s_const_meta, s_const_metas;
+static const struct schema s_exposed_type, s_exposed_types, s_module_meta, s_module_metas,
+    s_metadata;
 
 #define END                                                                                        \
     { NULL, 0, 0 }
@@ -229,9 +235,64 @@ RECORD(fun, struct mo_core_fun, "FunDecl", F(struct mo_core_fun, name, string),
        F(struct mo_core_fun, kind, kind), F(struct mo_core_fun, const_count, natural), END);
 RECORD(const, struct mo_core_const, "ConstDecl", F(struct mo_core_const, name, string),
        F(struct mo_core_const, ty, ty), F(struct mo_core_const, body, expr), END);
+SCALAR(u32, uint32_t, SH_U32);
+RECORD(span_value, struct mo_span, "SourceSpan", F(struct mo_span, file, u32),
+       F(struct mo_span, start, u32), F(struct mo_span, end, u32), END);
+#define OPTION(name, type, elem)                                                                   \
+    static const struct schema s_##name = {                                                        \
+        .kind = SH_NODE,                                                                           \
+        .size = sizeof(type),                                                                      \
+        .tag_offset = offsetof(type, some),                                                        \
+        .tag_size = sizeof(bool),                                                                  \
+        .variants = (const struct variant[]){V(bool, false, "none", END),                          \
+                                             V(bool, true, "some", F(type, value, elem), END),     \
+                                             {NULL, NULL, NULL}}}
+OPTION(span, struct mo_core_span, span_value);
+OPTION(name, struct mo_core_name, string);
+OPTION(index, struct mo_core_index, u32);
+OPTION(expectation, struct mo_core_expectation, boolean);
+#undef OPTION
+RECORD(binding_meta, struct mo_core_binding_meta, "BindingMeta",
+       F(struct mo_core_binding_meta, node, u32), F(struct mo_core_binding_meta, slot, u32),
+       F(struct mo_core_binding_meta, name, string), END);
+RECORD(closure_meta, struct mo_core_closure_meta, "", F(struct mo_core_closure_meta, node, u32),
+       F(struct mo_core_closure_meta, name, string), END);
+RECORD(body_meta, struct mo_core_body_meta, "BodyMeta", F(struct mo_core_body_meta, spans, spans),
+       F(struct mo_core_body_meta, params, names),
+       F(struct mo_core_body_meta, bindings, binding_metas),
+       F(struct mo_core_body_meta, closures, closure_metas), END);
+RECORD(spec_line, struct mo_core_spec_line, "SpecLine", F(struct mo_core_spec_line, span, span),
+       F(struct mo_core_spec_line, text, string), END);
+RECORD(fun_meta, struct mo_core_fun_meta, "FunMeta", F(struct mo_core_fun_meta, name, string),
+       F(struct mo_core_fun_meta, span, span), F(struct mo_core_fun_meta, text, name),
+       F(struct mo_core_fun_meta, body, body_meta), F(struct mo_core_fun_meta, subject, index),
+       F(struct mo_core_fun_meta, allows, expectation),
+       F(struct mo_core_fun_meta, lines, spec_lines), END);
+RECORD(const_meta, struct mo_core_const_meta, "ConstMeta",
+       F(struct mo_core_const_meta, name, string), F(struct mo_core_const_meta, span, span),
+       F(struct mo_core_const_meta, body, body_meta), END);
+RECORD(exposed_type, struct mo_core_exposed_type, "", F(struct mo_core_exposed_type, index, u32),
+       F(struct mo_core_exposed_type, contents_exposed, boolean), END);
+RECORD(module_meta, struct mo_core_module_meta, "ModuleMeta",
+       F(struct mo_core_module_meta, name, string), F(struct mo_core_module_meta, data, indices),
+       F(struct mo_core_module_meta, funs, indices), F(struct mo_core_module_meta, consts, indices),
+       F(struct mo_core_module_meta, exposed_types, exposed_types),
+       F(struct mo_core_module_meta, exposed_funs, indices), END);
+static const struct schema s_metadata = {
+    .kind = SH_NODE,
+    .size = sizeof(struct mo_core_metadata),
+    .tag_offset = offsetof(struct mo_core_metadata, source),
+    .tag_size = sizeof(bool),
+    .variants = (const struct variant[]){V(bool, false, "noSource", END),
+                                         V(bool, true, "Metadata",
+                                           F(struct mo_core_metadata, files, string_list),
+                                           F(struct mo_core_metadata, modules, module_metas),
+                                           F(struct mo_core_metadata, funs, fun_metas),
+                                           F(struct mo_core_metadata, consts, const_metas), END),
+                                         {NULL, NULL, NULL}}};
 RECORD(program, struct mo_core, "Program", F(struct mo_core, data, data_list),
        F(struct mo_core, funs, funs), F(struct mo_core, consts, consts),
-       F(struct mo_core, entry, string), END);
+       F(struct mo_core, entry, string), F(struct mo_core, metadata, metadata), END);
 
 #define W(tag, wire, ...) V(enum mo_core_value_tag, MO_CORE_VALUE_##tag, wire, __VA_ARGS__)
 #define WF(member, name) F(struct mo_core_value, as.member, name)
@@ -347,6 +408,16 @@ LIST(value_pairs, mo_core_value_pairs, value_pair);
 LIST(env, mo_core_env, binding);
 LIST(string_pairs, mo_core_string_pairs, string_pair);
 LIST(cap_states, mo_core_cap_states, cap_state);
+LIST(indices, mo_core_indices, u32);
+LIST(spans, mo_core_spans, span);
+LIST(names, mo_core_names, name);
+LIST(binding_metas, mo_core_binding_metas, binding_meta);
+LIST(closure_metas, mo_core_closure_metas, closure_meta);
+LIST(spec_lines, mo_core_spec_lines, spec_line);
+LIST(fun_metas, mo_core_fun_metas, fun_meta);
+LIST(const_metas, mo_core_const_metas, const_meta);
+LIST(exposed_types, mo_core_exposed_types, exposed_type);
+LIST(module_metas, mo_core_module_metas, module_meta);
 
 #undef END
 #undef F

@@ -399,10 +399,52 @@ For every function there is:
   where it holds it, since a register can hold different variables at
   different times;
 - for a `test`, its sentence, and for an `example`, `promise` or `anchor`, the
-  text of its line.
+  text of its line (the header for a promise);
+- its declaration span, for `mo test --list` and result locations;
+- a promise's ordinary subject function, or an anchor's promise, by function
+  index, and an anchor's `allows`/`forbids` expectation;
+- a promise's condition lines, each with a span and verbatim text, in source
+  order. Its result n > 0 selects condition n − 1.
 
 File names are strings. The VM needs this section to report bugs, and Phase 4
 needs it to show a running program.
+
+**Provenance.** Lowering fills the compiler metadata in Core's program
+document (`formal/TEXT.md`); code generation never consults the checked
+program or reopens source. The compiler maps expression-preorder spans to
+emitted instruction offsets and binder identities/original names to register
+ranges after allocation. Lambda lifting carries these tables into closure
+code. Generated instructions use their responsible expression/declaration
+span. Constants' metadata supplies init names/spans; full function/closure
+names are supplied by lowering, numbered in source order (3.5). Core's file
+indices are `mo_sources` indices; the compiler interns each filename and
+remaps them to this file's **string** indices, not source-file indices.
+Module metadata supplies exports, `contents_exposed` and all global owners.
+Complete Core data declarations already supply structural type/field/case
+names; no second surface type table is required.
+
+**Encoding.** Each debug entry is: span array, register-name array, text
+string index, declaration file/start/end, subject function index, anchor
+expectation (`NOT_ANCHOR = 0`, `ALLOWS = 1`, `FORBIDS = 2`), condition-line
+array. Each condition entry is file/start/end/text; files and texts are string
+indices. An absent declaration/condition file is `MO_BYTECODE_NO_INDEX`, with
+start/end zero. Code-span entries use that same sentinel to clear source
+attribution until the next entry, rather than inheriting the previous source
+span for genuinely source-less instructions. All other spans have valid
+files and `start ≤ end`. Every
+array, and their total, obeys `MO_LIMIT_DEBUG_ENTRIES`. This extends the Phase
+2 draft v0.1 debug encoding before a writer/VM implements it; Core's wire
+version advances independently.
+
+Core's explicit `noSource` form has empty span/name arrays, absent text and
+declaration span, no links/conditions and `NOT_ANCHOR`; no exports are
+invented. Tools requiring subject/anchor metadata report it unavailable,
+rather than guessing from function names. They can still call selected
+tests/examples. A supplied subject must have the appropriate kind; only a
+promise may have condition lines, and only an anchor may have an expectation.
+With a subject present, a promise has at least one condition and an anchor
+has ALLOWS or FORBIDS. Metadata validity does not make a promise true.
+The assembler/disassembler preserves every new field, including absent ones.
 
 ### 3.5 Names
 

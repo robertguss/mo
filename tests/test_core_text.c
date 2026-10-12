@@ -37,7 +37,7 @@ static void round_trip_bytes(enum mo_core_text_kind kind, const char *input, siz
 static void canonical(enum mo_core_text_kind kind, const char *payload) {
     struct mo_buffer text;
     mo_buffer_init(&text, MO_LIMIT_CORE_TEXT_SIZE);
-    CHECK(mo_buffer_append_text(&text, "(core 0.4 "));
+    CHECK(mo_buffer_append_text(&text, "(core 0.5 "));
     CHECK(mo_buffer_append_text(&text, payload));
     CHECK(mo_buffer_append_text(&text, ")\n"));
     round_trip_bytes(kind, (const char *)text.bytes, text.length, (const char *)text.bytes,
@@ -75,7 +75,7 @@ static void test_fixtures(void) {
         mo_sources_free(&sources);
     }
     CHECK(closedir(dir) == 0);
-    CHECK(count == 14);
+    CHECK(count == 15);
 }
 static void test_shapes(void) {
     /* Asymmetric fields expose swapped field order; every Ty, Lit and Value constructor appears. */
@@ -145,7 +145,7 @@ static void test_shapes(void) {
               "(FunDecl \"e\" () (unit) (lit (unit)) \"Examples\" (example) 0) "
               "(FunDecl \"p\" ((\"result\" (text))) (int) (lit (int 1)) \"Spec\" (promise) 1) "
               "(FunDecl \"a\" () (int) (lit (int 2)) \"Spec\" (anchor) 0)) "
-              "((ConstDecl \"C\" (text) (lit (text \"constant\")))) \"main\")");
+              "((ConstDecl \"C\" (text) (lit (text \"constant\")))) \"main\" (noSource))");
     canonical(MO_CORE_TEXT_EXPR,
               "(join \"loop\" ((\"i\" (int))) (if_ (lit (bool true)) (jump \"loop\" ((var \"i\"))) "
               "(stop \"done\")) "
@@ -199,10 +199,11 @@ static void test_shapes(void) {
               "(effects (\"out\") (\"err\") ((\"z\" \"1\") (\"a\" \"2\")) ())");
     canonical(MO_CORE_TEXT_SELECTION, "(entry ((int 3) (cap (args) (some \"\") (none))))");
     canonical(MO_CORE_TEXT_SELECTION, "(test \"a named example\")");
-    canonical(MO_CORE_TEXT_RUN,
-              "(Run (Program () () () \"missing\") (World () () () () () () 0 (RandomState "
-              "0x0000000000000001 0x0000000000000002 0x0000000000000003 0x0000000000000004) ()) "
-              "(test \"named\") 123456789012345678901234567890)");
+    canonical(
+        MO_CORE_TEXT_RUN,
+        "(Run (Program () () () \"missing\" (noSource)) (World () () () () () () 0 (RandomState "
+        "0x0000000000000001 0x0000000000000002 0x0000000000000003 0x0000000000000004) ()) "
+        "(test \"named\") 123456789012345678901234567890)");
 }
 
 static void test_operations(void) {
@@ -292,20 +293,20 @@ static void test_operations(void) {
 }
 static void test_normalization(void) {
     const char *input =
-        "; before\r\n(core\t0.4(text\"\\u{000000}\\u{00000A}\\u{00007F}\\u{01F600}é\")); after";
-    const char *expected = "(core 0.4 (text \"\\u{0}\\n\\u{7f}😀é\"))\n";
+        "; before\r\n(core\t0.5(text\"\\u{000000}\\u{00000A}\\u{00007F}\\u{01F600}é\")); after";
+    const char *expected = "(core 0.5 (text \"\\u{0}\\n\\u{7f}😀é\"))\n";
     round_trip_bytes(MO_CORE_TEXT_LITERAL, input, strlen(input), expected, strlen(expected));
-    input = "(core 0.4(bytes(-0000 00000255 -00123456789012345678901234567890)))";
-    expected = "(core 0.4 (bytes (0 255 -123456789012345678901234567890)))\n";
+    input = "(core 0.5(bytes(-0000 00000255 -00123456789012345678901234567890)))";
+    expected = "(core 0.5 (bytes (0 255 -123456789012345678901234567890)))\n";
     round_trip_bytes(MO_CORE_TEXT_LITERAL, input, strlen(input), expected, strlen(expected));
-    input = "(core 0.4(float 0x7FF800000000ABCD))";
-    expected = "(core 0.4 (float 0x7ff800000000abcd))\n";
+    input = "(core 0.5(float 0x7FF800000000ABCD))";
+    expected = "(core 0.5 (float 0x7ff800000000abcd))\n";
     round_trip_bytes(MO_CORE_TEXT_LITERAL, input, strlen(input), expected, strlen(expected));
-    input = "(core 0.4 (proj(var\"v\") -000))";
-    expected = "(core 0.4 (proj (var \"v\") 0))\n";
+    input = "(core 0.5 (proj(var\"v\") -000))";
+    expected = "(core 0.5 (proj (var \"v\") 0))\n";
     round_trip_bytes(MO_CORE_TEXT_EXPR, input, strlen(input), expected, strlen(expected));
-    input = "(core 0.4(cap(files)(some\"notes\")(some -000)))";
-    expected = "(core 0.4 (cap (files) (some \"notes\") (some 0)))\n";
+    input = "(core 0.5(cap(files)(some\"notes\")(some -000)))";
+    expected = "(core 0.5 (cap (files) (some \"notes\") (some 0)))\n";
     round_trip_bytes(MO_CORE_TEXT_VALUE, input, strlen(input), expected, strlen(expected));
 }
 static void malformed(enum mo_core_text_kind kind, const char *input, size_t length, uint16_t code,
@@ -328,70 +329,72 @@ static void test_malformed(void) {
         uint16_t code;
     } cases[] = {
         {MO_CORE_TEXT_LITERAL, "", MO_CODE_CORE_SYNTAX},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (unit)", MO_CODE_CORE_SYNTAX},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (unit)))", MO_CODE_CORE_SYNTAX},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (unit)) (unit)", MO_CODE_CORE_SYNTAX},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (text \"a", MO_CODE_CORE_SYNTAX},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (text \"\\q\"))", MO_CODE_CORE_ESCAPE},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (text \"\\u{}\"))", MO_CODE_CORE_ESCAPE},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (text \"\\u{0000000}\"))", MO_CODE_CORE_ESCAPE},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (text \"\\u{xyz}\"))", MO_CODE_CORE_ESCAPE},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (text \"\\u{D800}\"))", MO_CODE_CORE_ESCAPE},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (text \"\\u{110000}\"))", MO_CODE_CORE_ESCAPE},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (text \"raw\ncontrol\"))", MO_CODE_CORE_ESCAPE},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (text \"raw\177control\"))", MO_CODE_CORE_ESCAPE},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (unit)", MO_CODE_CORE_SYNTAX},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (unit)))", MO_CODE_CORE_SYNTAX},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (unit)) (unit)", MO_CODE_CORE_SYNTAX},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (text \"a", MO_CODE_CORE_SYNTAX},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (text \"\\q\"))", MO_CODE_CORE_ESCAPE},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (text \"\\u{}\"))", MO_CODE_CORE_ESCAPE},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (text \"\\u{0000000}\"))", MO_CODE_CORE_ESCAPE},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (text \"\\u{xyz}\"))", MO_CODE_CORE_ESCAPE},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (text \"\\u{D800}\"))", MO_CODE_CORE_ESCAPE},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (text \"\\u{110000}\"))", MO_CODE_CORE_ESCAPE},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (text \"raw\ncontrol\"))", MO_CODE_CORE_ESCAPE},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (text \"raw\177control\"))", MO_CODE_CORE_ESCAPE},
         {MO_CORE_TEXT_LITERAL, "(core 0.1 (unit))", MO_CODE_CORE_VERSION},
         {MO_CORE_TEXT_LITERAL, "(core 0.2 (unit))", MO_CODE_CORE_VERSION},
         {MO_CORE_TEXT_LITERAL, "(core 0.3 (unit))", MO_CODE_CORE_VERSION},
-        {MO_CORE_TEXT_LITERAL, "(core 0.5 (unit))", MO_CODE_CORE_VERSION},
+        {MO_CORE_TEXT_LITERAL, "(core 0.4 (unit))", MO_CODE_CORE_VERSION},
+        {MO_CORE_TEXT_LITERAL, "(core 0.6 (unit))", MO_CODE_CORE_VERSION},
         {MO_CORE_TEXT_LITERAL, "(core 9.9 (unit))", MO_CODE_CORE_VERSION},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (Unit))", MO_CODE_CORE_CONSTRUCTOR},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (unit extra))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (text name))", MO_CODE_CORE_FIELD},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (bool True))", MO_CODE_CORE_FIELD},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (int +1))", MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (int -))", MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (int 1_000))", MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (int １２))", MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (float 0X8000000000000000))", MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (float 0x800000000000000))", MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (float 0x800000000000000g))", MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (char \"\"))", MO_CODE_CORE_CHARACTER},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (char \"ab\"))", MO_CODE_CORE_CHARACTER},
-        {MO_CORE_TEXT_LITERAL, "(core 0.4 (bytes 0))", MO_CODE_CORE_FIELD},
-        {MO_CORE_TEXT_EXPR, "(core 0.4 (proj (var \"x\") -1))", MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_PRIMITIVE, "(core 0.4 (int add))", MO_CODE_CORE_FIELD},
-        {MO_CORE_TEXT_PRIMITIVE, "(core 0.4 (big (checkedAdd)))", MO_CODE_CORE_CONSTRUCTOR},
-        {MO_CORE_TEXT_PRIMITIVE, "(core 0.4 (io (consoleFake true)))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_PRIMITIVE, "(core 0.4 (io (consolefake)))", MO_CODE_CORE_CONSTRUCTOR},
-        {MO_CORE_TEXT_PRIMITIVE, "(core 0.4 (unicode16 (normalizeNFC)))", MO_CODE_CORE_CONSTRUCTOR},
-        {MO_CORE_TEXT_PRIMITIVE, "(core 0.4 (unicode16 (graphemes true)))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_PRIMITIVE, "(core 0.4 (io (entries)))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_VALUE, "(core 0.4 (map (((int 1)))))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_OUTCOME, "(core 0.4 (outOfFuel (World () () () () () () 0 0 ())))",
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (Unit))", MO_CODE_CORE_CONSTRUCTOR},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (unit extra))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (text name))", MO_CODE_CORE_FIELD},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (bool True))", MO_CODE_CORE_FIELD},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (int +1))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (int -))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (int 1_000))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (int １２))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (float 0X8000000000000000))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (float 0x800000000000000))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (float 0x800000000000000g))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (char \"\"))", MO_CODE_CORE_CHARACTER},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (char \"ab\"))", MO_CODE_CORE_CHARACTER},
+        {MO_CORE_TEXT_LITERAL, "(core 0.5 (bytes 0))", MO_CODE_CORE_FIELD},
+        {MO_CORE_TEXT_EXPR, "(core 0.5 (proj (var \"x\") -1))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_PRIMITIVE, "(core 0.5 (int add))", MO_CODE_CORE_FIELD},
+        {MO_CORE_TEXT_PRIMITIVE, "(core 0.5 (big (checkedAdd)))", MO_CODE_CORE_CONSTRUCTOR},
+        {MO_CORE_TEXT_PRIMITIVE, "(core 0.5 (io (consoleFake true)))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_PRIMITIVE, "(core 0.5 (io (consolefake)))", MO_CODE_CORE_CONSTRUCTOR},
+        {MO_CORE_TEXT_PRIMITIVE, "(core 0.5 (unicode16 (normalizeNFC)))", MO_CODE_CORE_CONSTRUCTOR},
+        {MO_CORE_TEXT_PRIMITIVE, "(core 0.5 (unicode16 (graphemes true)))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_PRIMITIVE, "(core 0.5 (io (entries)))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_VALUE, "(core 0.5 (map (((int 1)))))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_OUTCOME, "(core 0.5 (outOfFuel (World () () () () () () 0 0 ())))",
          MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_PROGRAM, "(core 0.4 (Program () () \"main\"))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_VALUE, "(core 0.4 (cap (files) \"notes\" (none)))", MO_CODE_CORE_FIELD},
-        {MO_CORE_TEXT_VALUE, "(core 0.4 (cap (files) (some \"notes\")))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_VALUE, "(core 0.4 (cap (files) (none) (some -1)))", MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_VALUE, "(core 0.4 (cap (files) (none) (some \"0\")))", MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_VALUE, "(core 0.4 (cap (files) (some 2) (none)))", MO_CODE_CORE_FIELD},
-        {MO_CORE_TEXT_VALUE, "(core 0.4 (cap (files) (none) (none 0)))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_WORLD, "(core 0.4 (World () () () () () () 0 0))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_WORLD, "(core 0.4 (World () () () () () () 0 0 ()))", MO_CODE_CORE_FIELD},
-        {MO_CORE_TEXT_CAP_STATE, "(core 0.4 (CapState () () () () () () 0))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_CAP_STATE, "(core 0.4 (CapState () () () () () () 0 0 ()))",
+        {MO_CORE_TEXT_PROGRAM, "(core 0.5 (Program () () \"main\"))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_PROGRAM, "(core 0.5 (Program () () () \"main\"))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_VALUE, "(core 0.5 (cap (files) \"notes\" (none)))", MO_CODE_CORE_FIELD},
+        {MO_CORE_TEXT_VALUE, "(core 0.5 (cap (files) (some \"notes\")))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_VALUE, "(core 0.5 (cap (files) (none) (some -1)))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_VALUE, "(core 0.5 (cap (files) (none) (some \"0\")))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_VALUE, "(core 0.5 (cap (files) (some 2) (none)))", MO_CODE_CORE_FIELD},
+        {MO_CORE_TEXT_VALUE, "(core 0.5 (cap (files) (none) (none 0)))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_WORLD, "(core 0.5 (World () () () () () () 0 0))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_WORLD, "(core 0.5 (World () () () () () () 0 0 ()))", MO_CODE_CORE_FIELD},
+        {MO_CORE_TEXT_CAP_STATE, "(core 0.5 (CapState () () () () () () 0))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_CAP_STATE, "(core 0.5 (CapState () () () () () () 0 0 ()))",
          MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_CAP_STATE, "(core 0.4 (CapState () () () () () () 0 -1))",
+        {MO_CORE_TEXT_CAP_STATE, "(core 0.5 (CapState () () () () () () 0 -1))",
          MO_CODE_CORE_FIELD},
-        {MO_CORE_TEXT_RANDOM_STATE, "(core 0.4 (RandomState 0x0000000000000001))",
+        {MO_CORE_TEXT_RANDOM_STATE, "(core 0.5 (RandomState 0x0000000000000001))",
          MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_RANDOM_STATE, "(core 0.4 (RandomState 0 1 2 3))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_RANDOM_STATE, "(core 0.5 (RandomState 0 1 2 3))", MO_CODE_CORE_NUMBER},
         {MO_CORE_TEXT_RANDOM_STATE,
-         "(core 0.4 (RandomState 0x0000000000000001 0x0000000000000002 0x0000000000000003 "
+         "(core 0.5 (RandomState 0x0000000000000001 0x0000000000000002 0x0000000000000003 "
          "0x10000000000000000))",
          MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_EFFECTS, "(core 0.4 (effects () () ()))", MO_CODE_CORE_ARITY}};
+        {MO_CORE_TEXT_EFFECTS, "(core 0.5 (effects () () ()))", MO_CODE_CORE_ARITY}};
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++)
         malformed(cases[i].kind, cases[i].text, strlen(cases[i].text), cases[i].code,
                   MO_LIMIT_CORE_SCRATCH_SIZE);
@@ -400,10 +403,107 @@ static void test_malformed(void) {
     for (size_t i = 0; i < sizeof invalid_utf8 / sizeof invalid_utf8[0]; i++)
         malformed(MO_CORE_TEXT_LITERAL, invalid_utf8[i], strlen(invalid_utf8[i]), MO_CODE_CORE_UTF8,
                   MO_LIMIT_CORE_SCRATCH_SIZE);
-    const char *unit = "(core 0.4 (unit))";
+    const char *unit = "(core 0.5 (unit))";
     malformed(MO_CORE_TEXT_LITERAL, unit, strlen(unit), MO_CODE_CORE_NO_MEMORY, 0);
     malformed(MO_CORE_TEXT_LITERAL, unit, MO_LIMIT_CORE_TEXT_SIZE + 1, MO_CODE_CORE_TEXT_LIMIT,
               MO_LIMIT_CORE_SCRATCH_SIZE);
+}
+static void test_metadata(void) {
+    struct mo_sources sources;
+    struct mo_source_error error;
+    uint32_t file;
+    CHECK(mo_sources_init(&sources));
+    bool read = mo_sources_add(&sources, "tests/core/Metadata.core", &file, &error);
+    CHECK(read);
+    if (!read) {
+        mo_sources_free(&sources);
+        return;
+    }
+    const char *text = (const char *)sources.files[file].bytes;
+    size_t length = sources.files[file].length;
+    struct mo_arena arena;
+    struct mo_diags diags;
+    struct mo_buffer out;
+    mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+    mo_buffer_init(&out, MO_LIMIT_CORE_TEXT_SIZE);
+    CHECK(mo_diags_init(&diags));
+    struct mo_core_run *run = mo_core_text_parse(&arena, MO_CORE_TEXT_RUN, text, length, &diags);
+    CHECK(run != NULL && !mo_diags_any(&diags));
+    if (run != NULL) {
+        const struct mo_core_metadata *m = &run->program.metadata;
+        CHECK(m->source && m->files.count == 2 && m->modules.count == 2);
+        CHECK(strcmp(m->files.items[1].bytes, "fixtures/main.mo") == 0);
+        CHECK(!m->modules.items[0].exposed_types.items[0].contents_exposed);
+        CHECK(m->modules.items[1].exposed_types.items[0].contents_exposed);
+        CHECK(m->funs.count == 7 && m->consts.count == 1);
+        const struct mo_core_fun_meta *f = &m->funs.items[1];
+        CHECK(strcmp(f->name.bytes, "Main.main") == 0);
+        CHECK(f->span.value.file == 1 && f->span.value.end == 90);
+        CHECK(f->body.spans.count == 17 && f->body.bindings.count == 5);
+        CHECK(f->body.bindings.items[4].node == 8 && f->body.bindings.items[4].slot == 0);
+        CHECK(strcmp(f->body.bindings.items[4].name.bytes, "q") == 0);
+        CHECK(f->body.closures.items[0].node == 3);
+        CHECK(strcmp(f->body.closures.items[0].name.bytes, "Main.main.fn.1") == 0);
+        CHECK(strcmp(m->funs.items[0].body.params.items[0].value.bytes, "n") == 0);
+        CHECK(strcmp(m->funs.items[2].text.value.bytes, "a sentence with β and \"quotes\"") == 0);
+        CHECK(m->funs.items[4].subject.value == 0 && m->funs.items[4].lines.count == 2);
+        CHECK(m->funs.items[4].lines.items[1].span.value.start == 71);
+        CHECK(strcmp(m->funs.items[4].lines.items[1].text.bytes, "n >= 0") == 0);
+        CHECK(m->funs.items[5].subject.value == 4 && m->funs.items[5].allows.value);
+        CHECK(!m->funs.items[6].allows.value && !m->funs.items[6].body.spans.items[0].some);
+        CHECK(strcmp(m->consts.items[0].name.bytes, "Hidden.seed") == 0);
+    }
+    const struct {
+        const char *old, *replacement;
+        uint16_t code;
+    } changes[] = {{"SourceSpan 0 0 40", "SourceSpan 2 0 40", MO_CODE_CORE_FIELD},
+                   {"SourceSpan 0 0 40", "SourceSpan 0 41 40", MO_CODE_CORE_FIELD},
+                   {"SourceSpan 0 0 40", "SourceSpan 0 0 4294967296", MO_CODE_CORE_NUMBER},
+                   {"(some (SourceSpan 1 13 15))", "", MO_CODE_CORE_FIELD},
+                   {"((some \"n\"))", "()", MO_CODE_CORE_FIELD},
+                   {"BindingMeta 0 0 \"x\"", "BindingMeta 0 1 \"x\"", MO_CODE_CORE_FIELD},
+                   {"BindingMeta 2 0 \"f\"", "BindingMeta 0 0 \"f\"", MO_CODE_CORE_FIELD},
+                   {"BindingMeta 2 0 \"f\"", "BindingMeta 1 0 \"f\"", MO_CODE_CORE_FIELD},
+                   {"((3 \"Main.main.fn.1\"))", "()", MO_CODE_CORE_FIELD},
+                   {"((3 \"Main.main.fn.1\"))", "((4 \"Main.main.fn.1\"))", MO_CODE_CORE_FIELD},
+                   {"(0 4 5 6)", "(0 4 5)", MO_CODE_CORE_FIELD},
+                   {"((0 false))", "((1 false))", MO_CODE_CORE_FIELD},
+                   {"((0 false))", "((0 false) (0 true))", MO_CODE_CORE_FIELD},
+                   {"((1 true)) (1)", "((1 true)) (2)", MO_CODE_CORE_FIELD},
+                   {"(some 0) (none)", "(some 4) (none)", MO_CODE_CORE_FIELD},
+                   {"(some 4) (some true)", "(some 0) (some true)", MO_CODE_CORE_FIELD},
+                   {"(some 4) (some false)", "(some 4) (none)", MO_CODE_CORE_FIELD},
+                   {"(some \"main() == 12\")", "(none)", MO_CODE_CORE_FIELD},
+                   {"\"fixtures/main.mo\"", "\"fixtures/main\\u{0}.mo\"", MO_CODE_CORE_FIELD}};
+    for (size_t i = 0; i < sizeof changes / sizeof changes[0]; i++) {
+        const char *at = strstr(text, changes[i].old);
+        CHECK(at != NULL);
+        if (at == NULL)
+            continue;
+        size_t prefix = (size_t)(at - text), old_length = strlen(changes[i].old);
+        mo_buffer_clear(&out);
+        CHECK(mo_buffer_append(&out, text, prefix));
+        CHECK(mo_buffer_append_text(&out, changes[i].replacement));
+        CHECK(mo_buffer_append(&out, at + old_length, length - prefix - old_length));
+        malformed(MO_CORE_TEXT_RUN, (const char *)out.bytes, out.length, changes[i].code,
+                  MO_LIMIT_CORE_SCRATCH_SIZE);
+    }
+    mo_sources_free(&sources);
+    /* Every decoded string/table belongs to the arena, not the input/source registry. */
+    if (run != NULL) {
+        mo_buffer_clear(&out);
+        CHECK(mo_core_text_print(MO_CORE_TEXT_RUN, run, &out));
+        CHECK(out.length == length);
+        round_trip_bytes(MO_CORE_TEXT_RUN, (const char *)out.bytes, out.length,
+                         (const char *)out.bytes, out.length);
+        run->program.metadata.funs.items[1].body.spans.count--;
+        mo_buffer_clear(&out);
+        CHECK(!mo_core_text_print(MO_CORE_TEXT_RUN, run, &out));
+        CHECK(out.length == 0);
+    }
+    mo_buffer_free(&out);
+    mo_diags_free(&diags);
+    mo_arena_free(&arena);
 }
 static void test_typed_fields(void) {
     struct mo_arena arena;
@@ -411,10 +511,10 @@ static void test_typed_fields(void) {
     mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
     CHECK(mo_diags_init(&diags));
     const char *text =
-        "(core 0.4 (Run (Program ((DataDecl \"D\" ((Ctor \"C\" ((\"field\" (byte))))))) "
+        "(core 0.5 (Run (Program ((DataDecl \"D\" ((Ctor \"C\" ((\"field\" (byte))))))) "
         "((FunDecl \"f\" ((\"x\" (int))) (text) (join \"j\" ((\"y\" (byte))) "
         "(call \"g\" ((var \"y\"))) (jump \"j\" ((lit (byte 7))))) \"Module\" (promise) 123)) "
-        "((ConstDecl \"K\" (bool) (lit (bool true)))) \"f\") "
+        "((ConstDecl \"K\" (bool) (lit (bool true)))) \"f\" (noSource)) "
         "(World (\"arg\") ((\"key\" \"env\")) (\"in\") (\"out\") (\"err\") ((\"path\" \"file\")) "
         "-19 (RandomState 0x0000000000000017 0x000000000000001d 0x8000000000000000 "
         "0xffffffffffffffff) "
@@ -488,7 +588,7 @@ static void test_typed_fields(void) {
         CHECK(real->tag == MO_CORE_VALUE_CAP && !real->as.cap.root.some && !real->as.cap.fake.some);
         CHECK(strcmp(run->fuel.digits.bytes, "31") == 0);
     }
-    text = "(core 0.4 (map (text) (int) (lit 27)))";
+    text = "(core 0.5 (map (text) (int) (lit 27)))";
     struct mo_core_prim *prim =
         mo_core_text_parse(&arena, MO_CORE_TEXT_PRIMITIVE, text, strlen(text), &diags);
     CHECK(prim != NULL);
@@ -503,7 +603,7 @@ static void test_typed_fields(void) {
 static void test_limits_and_ownership(void) {
     struct mo_buffer text;
     mo_buffer_init(&text, MO_LIMIT_CORE_TEXT_SIZE);
-    CHECK(mo_buffer_append_text(&text, "(core 0.4 "));
+    CHECK(mo_buffer_append_text(&text, "(core 0.5 "));
     for (size_t i = 0; i < MO_LIMIT_CORE_DEPTH - 2; i++)
         CHECK(mo_buffer_append_text(&text, "(list "));
     CHECK(mo_buffer_append_text(&text, "(int)"));
@@ -529,7 +629,7 @@ static void test_limits_and_ownership(void) {
     struct mo_diags diags;
     mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
     CHECK(mo_diags_init(&diags));
-    char input[] = "(core 0.4 (Program () () () \"a\\u{0}b\"))";
+    char input[] = "(core 0.5 (Program () () () \"a\\u{0}b\" (noSource)))";
     struct mo_core *program = mo_core_parse(&arena, input, strlen(input), &diags);
     CHECK(program != NULL);
     memset(input, 'x', sizeof input);
@@ -538,7 +638,8 @@ static void test_limits_and_ownership(void) {
         struct mo_buffer out;
         mo_buffer_init(&out, 1000);
         CHECK(mo_core_print(program, &out));
-        CHECK(holds(&out, "(core 0.4 (Program () () () \"a\\u{0}b\"))\n", 40));
+        const char *expected = "(core 0.5 (Program () () () \"a\\u{0}b\" (noSource)))\n";
+        CHECK(holds(&out, expected, strlen(expected)));
         mo_buffer_free(&out);
         mo_buffer_init(&out, 20);
         CHECK(mo_buffer_append_text(&out, "prefix"));
@@ -600,6 +701,7 @@ int main(void) {
     test_operations();
     test_normalization();
     test_malformed();
+    test_metadata();
     test_typed_fields();
     test_limits_and_ownership();
     test_print_byte_limit();
