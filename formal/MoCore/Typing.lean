@@ -95,6 +95,7 @@ inductive ValTy (P : Program) : Value → Ty → Prop
   | bool {b} : ValTy P (.bool b) .bool
   | char {c} : ValTy P (.char c) .char
   | text {s} : ValTy P (.text s) .text
+  | bytes {bs} : (∀ b ∈ bs, InByte b) → ValTy P (.bytes bs) .bytes
   | unit : ValTy P .unit .unit
   | time {t} : InTime t → ValTy P (.time t) .time
   | duration {d} : InInt64 d → ValTy P (.duration d) .duration

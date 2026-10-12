@@ -23,7 +23,8 @@ def inst (base : String) (ts : List Ty) : String :=
 def baseOf? : Ty → Option Base
   | .int => some .int | .bigInt => some .bigInt | .byte => some .byte | .decimal => some .decimal
   | .float => some .float | .bool => some .bool | .char => some .char
-  | .text => some .text | .time => some .time | .duration => some .duration
+  | .text => some .text | .bytes => some .bytes | .time => some .time
+  | .duration => some .duration
   | _ => none
 
 /-- Whether `a` comes before `b` in the order of type `t` (reference 9.2), as

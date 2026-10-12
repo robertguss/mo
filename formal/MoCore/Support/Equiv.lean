@@ -8,6 +8,7 @@
   unequal here, and well-typed lowering never compares them.
 -/
 import MoCore.Support.Text
+import MoCore.Support.Bytes
 
 namespace MoCore
 
@@ -20,6 +21,7 @@ def Value.equiv : Value → Value → Bool
   | .bool a, .bool b => a == b
   | .char a, .char b => a == b
   | .text a, .text b => a == b
+  | .bytes a, .bytes b => a == b
   | .unit, .unit => true
   | .tuple as, .tuple bs | .list as, .list bs => Value.equivList as bs
   | .con c as, .con d bs => c == d && Value.equivList as bs
@@ -48,8 +50,9 @@ instance : BEq Value := ⟨Value.equiv⟩
 
 /-- The built-in order of two values of a base type, or `none` when they are
 not values of that type. Numbers (bytes too), times and durations by size,
-`false` before `true`, characters by code, texts by character code. Floats are
-left to `floatCmp`, because "not a number" is unordered. -/
+`false` before `true`, characters by code, texts by character code, `Bytes`
+byte by byte. Floats are left to `floatCmp`, because "not a number" is
+unordered. -/
 def baseOrder : Base → Value → Value → Option Ordering
   | .int, .int a, .int b | .bigInt, .bigInt a, .bigInt b | .byte, .byte a, .byte b
   | .decimal, .decimal a, .decimal b | .time, .time a, .time b
@@ -58,6 +61,8 @@ def baseOrder : Base → Value → Value → Option Ordering
   | .char, .char a, .char b => some (compare a.toNat b.toNat)
   | .text, .text a, .text b =>
     some (if textLt a b then .lt else if textLt b a then .gt else .eq)
+  | .bytes, .bytes a, .bytes b =>
+    some (if bytesLt a b then .lt else if bytesLt b a then .gt else .eq)
   | _, _, _ => none
 
 /-- Whether an ordering satisfies a comparison. -/

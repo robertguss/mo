@@ -75,6 +75,13 @@ theorem valTy_text_iff : ValTy P v .text ↔ ∃ s, v = .text s := by
     | con hcs => simp [ctorsOf] at hcs
   · rintro ⟨s, rfl⟩; exact .text
 
+theorem valTy_bytes_iff : ValTy P v .bytes ↔ ∃ bs, v = .bytes bs ∧ ∀ b ∈ bs, InByte b := by
+  constructor
+  · intro h; cases h with
+    | bytes h => exact ⟨_, rfl, h⟩
+    | con hcs => simp [ctorsOf] at hcs
+  · rintro ⟨bs, rfl, h⟩; exact .bytes h
+
 theorem valTy_unit_iff : ValTy P v .unit ↔ v = .unit := by
   constructor
   · intro h; cases h with
@@ -256,11 +263,11 @@ macro "invert_args" : tactic => `(tactic| (
   intro vs w h
   revert h
   simp only [Prim.sig, IntOp.sig, BigOp.sig, ByteOp.sig, DecOp.sig, FloatOp.sig, CharOp.sig,
-    TextOp.sig, TimeOp.sig, ListOp.sig, MapOp.sig, IoOp.sig, Base.ty, filesCap,
+    TextOp.sig, BytesOp.sig, TimeOp.sig, ListOp.sig, MapOp.sig, IoOp.sig, Base.ty, filesCap,
     valsTy_cons_iff, valsTy_nil_iff, valTy_int_iff, valTy_bigInt_iff, valTy_byte_iff,
     valTy_decimal_iff, valTy_float_iff, valTy_bool_iff, valTy_char_iff, valTy_text_iff,
-    valTy_time_iff, valTy_duration_iff, valTy_list_iff, valTy_map_iff, valTy_cap_iff,
-    forall_exists_index, and_imp]
+    valTy_bytes_iff, valTy_time_iff, valTy_duration_iff, valTy_list_iff, valTy_map_iff,
+    valTy_cap_iff, forall_exists_index, and_imp]
   intros
   subst_vars))
 
@@ -358,6 +365,28 @@ theorem textsOf_some : ∀ {xs : List Value}, (∀ x ∈ xs, ∃ s, x = .text s)
     obtain ⟨l, hl⟩ := textsOf_some (xs := xs) fun y hy => h y (by simp [hy])
     exact ⟨s :: l, by simp [textsOf, hl]⟩
 
+/-- A character's code is below `0x110000`. -/
+theorem char_toNat_lt (c : Char) : c.toNat < 0x110000 := by
+  have := c.valid
+  simp only [UInt32.isValidChar, Nat.isValidChar] at this
+  simp only [Char.toNat]
+  omega
+
+/-- Every byte of a text's UTF-8 encoding is from 0 to 255. -/
+theorem textBytes_inByte (s : String) : ∀ b ∈ textBytes s, InByte b := by
+  intro b hb
+  simp only [textBytes, List.mem_flatMap] at hb
+  obtain ⟨c, _, hb⟩ := hb
+  have := char_toNat_lt c
+  unfold utf8EncodeChar at hb
+  dsimp only at hb
+  unfold InByte
+  split at hb <;> (try split at hb) <;> (try split at hb) <;>
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hb <;> omega
+
+theorem ValTy.textBytes {s : String} : ValTy P (.bytes (textBytes s)) .bytes :=
+  .bytes (textBytes_inByte s)
+
 theorem textOp_safe (op : TextOp) : PrimSafe P (.text op) := by
   cases op
   case fromChars =>
@@ -388,8 +417,23 @@ theorem textOp_safe (op : TextOp) : PrimSafe P (.text op) := by
     | exact .optText
     | exact .optIntOf
     | exact .optDecOf
+    | exact .textBytes
     | exact ⟨fun _ => trivial, fun _ => .texts⟩
     | exact ⟨fun _ => trivial, fun _ => .text⟩
+
+theorem bytesGet_ty {bs : List Int} {i : Int} (h : ∀ b ∈ bs, InByte b) :
+    ValTy P (bytesGet bs i) (.option .byte) := by
+  unfold bytesGet; split
+  · refine .optOf fun x hx => ?_
+    obtain ⟨b, hb, rfl⟩ := Option.map_eq_some_iff.mp hx
+    exact .byte (h b (List.mem_of_getElem? hb))
+  · exact .noneV
+
+theorem bytesOp_safe (op : BytesOp) : PrimSafe P (.bytes op) := by
+  cases op <;> invert_args <;> simp only [Prim.eval, evalBytesOp, outcomeOk_ok]
+  case size => exact okInt_safe
+  case get => exact bytesGet_ty ‹_›
+  case decodeUtf8 => exact .optText
 
 theorem timeOp_safe (op : TimeOp) : PrimSafe P (.time op) := by
   cases op <;> invert_args <;> simp only [Prim.eval, evalTimeOp, outcomeOk_ok] <;>
@@ -692,6 +736,7 @@ theorem ioOp_safe (op : IoOp) : PrimSafe P (.io op) := by
     | exact ValTy.someV ValTy.text
     | exact ValTy.noneV
     | exact ValTy.okV ValTy.text
+    | exact ValTy.okV ValTy.textBytes
     | exact ValTy.okV ValTy.unit
     | exact ValTy.okV ValTy.texts
     | exact ValTy.errorV ValTy.notFound
@@ -717,6 +762,7 @@ theorem prims_safe : PrimsSafe P := by
   | cmp b op => exact cmp_safe b op
   | char op => exact charOp_safe op
   | text op => exact textOp_safe op
+  | bytes op => exact bytesOp_safe op
   | time op => exact timeOp_safe op
   | list t op => exact listOp_safe t op
   | map k t op => exact mapOp_safe k t op

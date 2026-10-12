@@ -273,7 +273,22 @@ def evalTextOp (op : TextOp) (vs : List Value) (w : World) : Outcome :=
     match textsOf xs with
     | some ts => .ok (.text (String.intercalate sep ts)) w
     | none => wrongArgs "List.join"
+  | .bytes, [.text a] => .ok (.bytes (textBytes a)) w
   | _, _ => wrongArgs "Text primitive"
+
+/-! ## Bytes -/
+
+/-- `bytes.get(i)`: `None` for a position below 0 or past the end, as for a
+list. -/
+def bytesGet (bs : List Int) (i : Int) : Value :=
+  if 0 ≤ i then optOf (bs[i.toNat]?.map .byte) else noneV
+
+def evalBytesOp (op : BytesOp) (vs : List Value) (w : World) : Outcome :=
+  match op, vs with
+  | .size, [.bytes bs] => okInt bs.length w
+  | .get, [.bytes bs, .int i] => .ok (bytesGet bs i) w
+  | .decodeUtf8, [.bytes bs] => .ok (optText ((utf8Decode bs).map String.ofList)) w
+  | _, _ => wrongArgs "Bytes primitive"
 
 /-! ## Time and durations -/
 
@@ -497,6 +512,18 @@ def evalIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
         | some text => .ok (okV (.text text)) w
         | none => .ok (errorV (fileErrorV "NotFound" path)) w
     | none => wrongArgs "Files.read_text"
+  | .readBytes ro, [h, .text path] =>
+    -- The world keeps each file as its text, so a file's bytes are its text's
+    -- UTF-8 encoding.
+    match capRoot (filesKind ro) h with
+    | some root =>
+      match resolvePath root path with
+      | none => .ok (errorV (fileErrorV "NotAllowed" path)) w
+      | some p =>
+        match lookup p w.files with
+        | some text => .ok (okV (.bytes (textBytes text))) w
+        | none => .ok (errorV (fileErrorV "NotFound" path)) w
+    | none => wrongArgs "Files.read_bytes"
   | .writeText, [h, .text path, .text text] =>
     match capRoot .files h with
     | some root =>
@@ -579,6 +606,7 @@ def Prim.eval : Prim → List Value → World → Outcome
   | .cmp b op, vs, w => evalCmp b op vs w
   | .char op, vs, w => evalCharOp op vs w
   | .text op, vs, w => evalTextOp op vs w
+  | .bytes op, vs, w => evalBytesOp op vs w
   | .time op, vs, w => evalTimeOp op vs w
   | .list _ op, vs, w => evalListOp op vs w
   | .map _ _ op, vs, w => evalMapOp op vs w

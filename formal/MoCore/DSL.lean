@@ -22,6 +22,7 @@ abbrev tFloat : Ty := .float
 abbrev tBool : Ty := .bool
 abbrev tChar : Ty := .char
 abbrev tText : Ty := .text
+abbrev tBytes : Ty := .bytes
 abbrev tUnit : Ty := .unit
 abbrev tTime : Ty := .time
 abbrev tDur : Ty := .duration
@@ -45,6 +46,8 @@ def byteE (n : Int) : Expr := .lit (.byte n)
 def dec (s : String) : Expr := .lit (.decimal (decLit s))
 def str (s : String) : Expr := .lit (.text s)
 def chr (c : Char) : Expr := .lit (.char c)
+/-- A `Bytes` literal, each byte from 0 to 255. Mo has no way to write one. -/
+def bytesE (bs : List Int) : Expr := .lit (.bytes bs)
 def bool (b : Bool) : Expr := .lit (.bool b)
 def tt : Expr := bool true
 def ff : Expr := bool false

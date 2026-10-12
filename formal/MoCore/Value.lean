@@ -54,6 +54,7 @@ instance (t : Int) : Decidable (InTime t) := inferInstanceAs (Decidable (_ ∧ _
 * Numbers are exact: `byte n` is a whole number from 0 to 255; `decimal n` is
   `n * 10^-18`; `time` and `duration` count microseconds; `float` holds IEEE
   754 bits.
+* `bytes bs` is a sequence of bytes, each from 0 to 255.
 * `con c fields` is a constructed value of a record or choice type: its
   constructor's name and its fields, in declaration order.
 * `map` is an association list in insertion order, with distinct keys.
@@ -72,6 +73,7 @@ inductive Value where
   | bool (b : Bool)
   | char (c : Char)
   | text (s : String)
+  | bytes (bs : List Int)
   | unit
   | time (us : Int)
   | duration (us : Int)
@@ -96,14 +98,17 @@ def Lit.value : Lit → Value
   | .bool b => .bool b
   | .char c => .char c
   | .text s => .text s
+  | .bytes bs => .bytes bs
   | .unit => .unit
   | .time t => .time t
   | .duration d => .duration d
 
-/-- A literal is well formed when its number is in its type's range. -/
+/-- A literal is well formed when its number is in its type's range, and a
+`Bytes` literal when each of its bytes is from 0 to 255. -/
 def Lit.Ok : Lit → Prop
   | .int n => InInt64 n
   | .byte n => InByte n
+  | .bytes bs => ∀ b ∈ bs, InByte b
   | .decimal n => InDecimal n
   | .time t => InTime t
   | .duration d => InInt64 d
