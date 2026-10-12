@@ -110,15 +110,23 @@ fuzz-smoke: $(FUZZERS)
 	@rm -rf $(FUZZ_BUILD)/artifacts
 	@mkdir -p $(FUZZ_BUILD)/artifacts
 	@for f in $(FUZZERS); do \
-		name=$$(basename $$f); corpus=$(FUZZ_BUILD)/corpus/$$name; mkdir -p $$corpus; \
-		if [ -d fuzz/corpus/$$name ]; then cp -R fuzz/corpus/$$name/. $$corpus/; fi; \
-		if [ "$$name" = fuzz_core_text ]; then cp tests/core/*.core $$corpus/; fi; \
-		log=$(FUZZ_BUILD)/$$name.log; echo "fuzzing $$name for $(FUZZ_SECONDS)s"; \
-		$$f -max_total_time=$(FUZZ_SECONDS) -print_final_stats=1 \
-			-artifact_prefix=$(FUZZ_BUILD)/artifacts/ $$corpus >$$log 2>&1; status=$$?; \
-		grep -E '^(Done|stat::(number_of_executed_units|new_units_added|peak_rss_mb))' $$log; \
-		if [ $$status -ne 0 ] || ls $(FUZZ_BUILD)/artifacts/* >/dev/null 2>&1; then \
-			tail -n 40 $$log; echo "error: fuzzing $$name failed (exit status $$status)"; exit 1; fi; \
+		base=$$(basename $$f); variants=small; \
+		if [ "$$base" = fuzz_bytecode_io ]; then variants="small large"; fi; \
+		for variant in $$variants; do \
+			name=$$base; options=; \
+			if [ "$$base" = fuzz_bytecode_io ]; then options="-max_len=4096 -timeout=15"; fi; \
+			if [ "$$variant" = large ]; then \
+				name=$${base}_large; options="-max_len=134217728 -timeout=30"; fi; \
+			corpus=$(FUZZ_BUILD)/corpus/$$name; mkdir -p $$corpus; \
+			if [ -d fuzz/corpus/$$name ]; then cp -R fuzz/corpus/$$name/. $$corpus/; fi; \
+			if [ "$$name" = fuzz_core_text ]; then cp tests/core/*.core $$corpus/; fi; \
+			log=$(FUZZ_BUILD)/$$name.log; echo "fuzzing $$name for $(FUZZ_SECONDS)s"; \
+			$$f $$options -max_total_time=$(FUZZ_SECONDS) -print_final_stats=1 \
+				-artifact_prefix=$(FUZZ_BUILD)/artifacts/ $$corpus >$$log 2>&1; status=$$?; \
+			grep -E '^(Done|stat::(number_of_executed_units|new_units_added|peak_rss_mb))' $$log; \
+			if [ $$status -ne 0 ] || ls $(FUZZ_BUILD)/artifacts/* >/dev/null 2>&1; then \
+				tail -n 40 $$log; echo "error: fuzzing $$name failed (exit status $$status)"; exit 1; fi; \
+		done; \
 	done
 
 format:
