@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include "base/base.h"
+#include "base/buffer.h"
 #include "base/limits.h"
 
 enum mo_operand_kind {
@@ -218,16 +219,16 @@ enum mo_bytecode_section {
     MO_SECTION_COUNT = 9,
 };
 
-/* The format leaves entry framing open. Use u32 for every count, index, enum and boolean after
+/* Section 3 uses u32 for every count, index, enum and boolean after
  * the header, except literal payloads and code words. Booleans are 0 or 1. There is no alignment
  * padding, trailing data or section directory; each section starts with its entry count.
  * Arrays below are encoded as count then entries; structs follow their declared field order,
  * except the explicitly decoded-only fields. Each count is checked against base/limits.h and
  * the bytes remaining before allocation. All indices start at zero.
  *
- * The types and layouts sections belong to heap/types.h. Its definitions supply their entry
- * encodings, not a second type or layout definition here. Forward declarations let this header
- * stand alone while that contract is built. Every type reference below is a u32 table index. */
+ * heap/types.h supplies the decoded types and layouts, not their wire encoding. The per-kind
+ * encodings are in bytecode.md section 3, including name indices and derived fields that are
+ * never written. Every type reference below is a u32 index in the file's type table. */
 struct mo_type;
 struct mo_layout;
 
@@ -253,17 +254,15 @@ enum mo_constant_encoding {
     MO_CONSTANT_CLOSURE,
 };
 
-/* The spec leaves the sign's encoding and the magnitude's byte order open. Use a u32 sign and
- * little-endian magnitude, like the other integers. Zero has ZERO and an empty magnitude;
- * nonzero values have POSITIVE/NEGATIVE and a nonzero final (most significant) byte. This gives
- * each integer exactly one encoding, and keeps sign independent of magnitude size. */
-enum mo_bigint_sign { MO_BIGINT_ZERO = 0, MO_BIGINT_POSITIVE = 1, MO_BIGINT_NEGATIVE = 2 };
-
 struct mo_bytecode_bytes {
     uint32_t length; /* at most MO_LIMIT_STRING_SIZE */
     const uint8_t *bytes;
 };
 
+/* Use a u32 sign and little-endian magnitude, like the other integers. Zero has ZERO and an empty
+ * magnitude; nonzero values have POSITIVE/NEGATIVE and a nonzero final (most significant) byte.
+ * This gives each integer exactly one encoding. The shared mo_bigint_sign is in base/base.h, so
+ * heap's C builder and this format use the same signs without heap depending on bytecode. */
 struct mo_bytecode_bigint {
     enum mo_bigint_sign sign;
     struct mo_bytecode_bytes magnitude; /* u32 length then magnitude bytes */
@@ -304,7 +303,11 @@ struct mo_bytecode_global {
  * register_types includes it, so a closure needs at least parameter_count + 1 registers.
  * Non-closures need at least parameter_count. Each parameter's type matches its register.
  *
- * capture_count <= MO_LIMIT_FIELDS; parameter_count <= MO_LIMIT_PARAMETERS;
+ * capture_count <= MO_LIMIT_FIELDS; parameter_count <= MO_LIMIT_BYTECODE_PARAMETERS;
+ * for CLOSURE, parameter_count + 1 <= MO_LIMIT_BYTECODE_PARAMETERS (including env).
+ * The verifier checks these bytecode bounds; the checker separately enforces the source
+ * MO_LIMIT_PARAMETERS diagnostic. Direct calls can pass 256 arguments to a promise; closure
+ * calls can pass 255 explicit arguments, with env supplied by the VM.
  * register_count <= MO_LIMIT_FUNCTION_REGISTERS; code_count <= MO_LIMIT_FUNCTION_CODE_WORDS,
  * with at most MO_LIMIT_FUNCTION_INSTRUCTIONS decoded instructions. */
 struct mo_bytecode_function {
@@ -324,8 +327,8 @@ struct mo_bytecode_function {
 };
 
 /* The module table's exposed-type entry needs more than an index: architecture 10.1 generates
- * values differently for a type exposed without its insides. The bytecode spec leaves that
- * distinction unencoded. Keep it here as a u32 boolean, since exposure is a module property,
+ * values differently for a type exposed without its insides. Encode that distinction as a u32
+ * boolean (section 3), since exposure is a module property,
  * not a runtime layout property; the verifier and VM still see the complete type definition. */
 struct mo_bytecode_type_export {
     uint32_t type;
@@ -378,8 +381,10 @@ struct mo_bytecode_debug {
     uint32_t text;
 };
 
-/* The loader fills these tables after decoding, then verifies them before publishing an image.
- * Pointers and everything they reach belong to the image; none points into the input bytes.
+/* The writer borrows these decoded tables from its caller. The loader fills its own copy,
+ * verifies it, and publishes it through mo_image_bytecode. In that copy, pointers and everything
+ * they reach belong to the image; none points into the input bytes. All table indices remain
+ * the file's indices, including type/layout indices used by C builders and mo_call.
  * Each section count has its MO_LIMIT_* bound in base/limits.h. init_count == global_count and
  * debug_count == function_count. init holds function indices in initialization order.
  *
@@ -413,6 +418,40 @@ struct mo_load_error {
     const char *reason; /* static text */
 };
 
+struct mo_write_error {
+    const char *reason; /* static text: invalid decoded data, a limit, or no memory */
+};
+
+struct mo_assemble_error {
+    uint32_t offset;    /* byte offset in the text, zero for no memory or an output limit */
+    const char *reason; /* static text */
+};
+
+/* Stream 3 implements these interfaces. out is an initialized, empty buffer owned by the
+ * caller, and must not back any input. Success writes a whole file/text; false leaves length
+ * zero (capacity may have grown), and fills the required error_out. Inputs are borrowed and
+ * unchanged; successful bytes live until the next buffer mutation or mo_buffer_free.
+ *
+ * The writer encodes section 3 and verifies by the same rules as the loader. It preserves table
+ * order and indices, ignores cached type booleans/constant encoding, and regenerates the
+ * header (including checksum) rather than using file->header. Names must already occur in
+ * strings; use the lowest index with matching bytes. It never adds or reorders entries.
+ * C callers supply readable arrays for nonzero counts and complete nominal definitions.
+ * The file must fit MO_LIMIT_BYTECODE_SIZE and out->limit; either limit returns false. */
+MO_MUST_USE bool mo_bytecode_write(const struct mo_bytecode *file, struct mo_buffer *out,
+                                   struct mo_write_error *error_out);
+
+/* Assemble section 10's text into verified bytes. Text is at most MO_LIMIT_BYTECODE_SIZE bytes;
+ * invalid text, verification refusal, either bytecode/output limit or no memory returns false.
+ * Disassembly verifies the bytes before printing lossless text, retaining every table index
+ * so assembling it reproduces the input bytes. Output text is also bounded by
+ * MO_LIMIT_BYTECODE_SIZE so successful disassembly can be assembled again. It returns false
+ * on either output limit or no memory (load error offset zero). No terminating NUL is appended. */
+MO_MUST_USE bool mo_bytecode_assemble(const char *text, size_t length, struct mo_buffer *out,
+                                      struct mo_assemble_error *error_out);
+MO_MUST_USE bool mo_bytecode_disassemble(const uint8_t *bytes, size_t length, struct mo_buffer *out,
+                                         struct mo_load_error *error_out);
+
 /* Loading always verifies. The image copies what it needs; bytes may be freed after this call.
  * NULL on refusal or allocation failure, with error_out filled (offset zero for a failure not
  * tied to an input byte, such as no memory). error_out is required; its reason is static text.
@@ -420,6 +459,10 @@ struct mo_load_error {
  * The caller owns the image; processes must be freed before mo_image_free. */
 MO_MUST_USE struct mo_image *mo_load(const uint8_t *bytes, size_t length,
                                      struct mo_load_error *error_out);
+/* image is non-NULL. The read-only decoded tables and everything they reach are valid until
+ * mo_image_free, including across initialization and calls. Nothing is remapped. Tools read
+ * kinds, signatures, debug text and module contents_exposed here to enumerate/generate specs. */
+MO_MUST_USE const struct mo_bytecode *mo_image_bytecode(const struct mo_image *image);
 void mo_image_free(struct mo_image *image);
 
 #endif

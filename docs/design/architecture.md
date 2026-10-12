@@ -646,6 +646,14 @@ build in parallel.
 The headers each stream codes against, in outline. Every pointer a function
 returns belongs to the arena it was given, unless its comment says otherwise.
 
+The complete contracts in the headers win over this outline. Types and layouts
+have per-kind wire encodings in `bytecode.md` section 3, never native C struct
+bytes. Source signatures have at most 255 parameters (E1009); bytecode has
+256 slots so a promise can add its result and closure code can add `env`.
+Stream 3 implements the writer, text tools, image accessor and C value APIs
+declared below. The image retains file indices in every decoded and runtime
+table, so streams 2 and 4 use the same indices in calls and value builders.
+
 ```c
 /* src/base/diag.h: diagnostics, rendered as text or JSON by src/tools. */
 struct mo_span { uint32_t file; uint32_t start; uint32_t end; };     /* byte offsets */
@@ -697,9 +705,23 @@ MO_MUST_USE struct mo_core *mo_core_parse(struct mo_arena *arena, const char *te
 /* src/codegen/codegen.h: the whole program, spec code included. */
 MO_MUST_USE bool mo_compile(const struct mo_core *core, struct mo_buffer *bytecode_out, struct mo_diags *diags);
 
-/* src/bytecode/bytecode.h: loading always verifies. The image copies what it needs from bytes. */
+/* src/bytecode/bytecode.h: writing and text tools borrow inputs. out is an initialized,
+ * empty caller-owned buffer, never input storage. On false it is empty (capacity may have
+ * grown), and required error_out gives static reason text. The writer verifies, preserves
+ * indices and regenerates the header/checksum. Names must already be in the strings table. */
+struct mo_write_error { const char *reason; };
+struct mo_assemble_error { uint32_t offset; const char *reason; };  /* text byte offset */
 struct mo_load_error { uint32_t offset; const char *reason; };       /* reason is static text */
+MO_MUST_USE bool mo_bytecode_write(const struct mo_bytecode *file, struct mo_buffer *out,
+                                   struct mo_write_error *error_out);
+MO_MUST_USE bool mo_bytecode_assemble(const char *text, size_t length, struct mo_buffer *out,
+                                      struct mo_assemble_error *error_out);
+MO_MUST_USE bool mo_bytecode_disassemble(const uint8_t *bytes, size_t length, struct mo_buffer *out,
+                                         struct mo_load_error *error_out);
+/* Loading always verifies and copies what it needs from bytes. The accessor's read-only
+ * tables live until mo_image_free, retaining file indices and module contents_exposed. */
 MO_MUST_USE struct mo_image *mo_load(const uint8_t *bytes, size_t length, struct mo_load_error *error_out);
+MO_MUST_USE const struct mo_bytecode *mo_image_bytecode(const struct mo_image *image);
 void mo_image_free(struct mo_image *image);
 
 /* src/vm/vm.h: initialization, processes and calls. */
@@ -710,9 +732,10 @@ MO_MUST_USE enum mo_outcome mo_image_init(struct mo_image *image, const struct m
 /* A process must not outlive its image, which must be initialized. */
 MO_MUST_USE struct mo_process *mo_process_new(const struct mo_image *image, const struct mo_limits *limits);
 void mo_process_free(struct mo_process *process);    /* frees its whole heap, never the image's */
-/* Arguments passed to owned parameters are consumed; those passed to borrowed ones stay the
- * caller's. result_out is owned by the caller and lives until mo_process_free. A stop or a
- * failed assertion is described in defect_out, which also lives until mo_process_free. */
+/* Arguments passed to owned parameters are consumed on every outcome; those passed to borrowed
+ * ones stay the caller's. Duplicate before the call to retain an owned argument for a promise.
+ * Only MO_RETURNED writes an owned result_out, which C may drop early. On stop/failure it is
+ * unchanged, and defect_out describes why, valid until mo_process_free. */
 MO_MUST_USE enum mo_outcome mo_call(struct mo_process *process, uint32_t function,
                                     const struct mo_cell *arguments, uint32_t argument_count,
                                     struct mo_cell *result_out, struct mo_defect *defect_out);
@@ -721,9 +744,20 @@ MO_MUST_USE bool mo_render_defect(const struct mo_process *process, const struct
 /* Initializes the image, then runs main with real capabilities; returns the exit status. */
 MO_MUST_USE int mo_run(struct mo_image *image, const struct mo_run_options *options);
 
-/* src/heap/heap.h: building values from C, for mo test's generated inputs. Each result is
- * owned by the caller, in the process's heap. */
+/* src/heap/heap.h: C ownership is type-directed. Both operations are infallible, copy/do nothing
+ * for immediates, and follow bytecode 2.4's immortal and saturating counts. dup returns another
+ * owned cell without consuming its input; drop consumes one owned cell without C recursion. */
+MO_MUST_USE struct mo_cell mo_value_dup(struct mo_process *process, uint32_t type, struct mo_cell value);
+void mo_value_drop(struct mo_process *process, uint32_t type, struct mo_cell value);
+/* Building generated inputs borrows input cells and duplicates references kept. Successful
+ * results are owned in the process heap; false leaves inputs and out unchanged. Byte builders
+ * copy at most MO_LIMIT_STRING_SIZE bytes; NULL is allowed only for zero length. Bytes accepts
+ * any sequence. BigInt uses base.h's sign enum and bytecode 3.1's canonical magnitude; invalid
+ * signs/magnitudes, lengths past the limit and allocation/heap-limit failure return false. */
 MO_MUST_USE bool mo_value_text(struct mo_process *process, const char *utf8, size_t length, struct mo_cell *out);
+MO_MUST_USE bool mo_value_bytes(struct mo_process *process, const uint8_t *bytes, size_t length, struct mo_cell *out);
+MO_MUST_USE bool mo_value_bigint(struct mo_process *process, enum mo_bigint_sign sign,
+                                 const uint8_t *magnitude, size_t length, struct mo_cell *out);
 MO_MUST_USE bool mo_value_construct(struct mo_process *process, uint32_t layout, const struct mo_cell *fields,
                                     uint32_t count, struct mo_cell *out);
 MO_MUST_USE bool mo_value_case(struct mo_process *process, uint32_t type, uint32_t tag, const struct mo_cell *fields,

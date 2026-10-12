@@ -176,6 +176,135 @@ attacker: Phase 5 signs upgrade packages separately. Every count and index has
 a limit in `src/base/limits.h`, and the loader checks every one before
 using it.
 
+**Entry encoding.** After the 20-byte header, every count, index, enum and
+boolean is a little-endian `u32`, except literal payload bytes and the `u32`
+code words. Booleans are 0 or 1. Arrays are a count followed by entries; there
+is no alignment padding, section directory, entry length or trailing data.
+Strings are a byte length followed by UTF-8 bytes, without a terminator.
+`UINT32_MAX` (`ff ff ff ff`, `MO_BYTECODE_NO_INDEX`) marks an absent optional
+index, never a table entry. Type and layout entries use the per-kind forms
+below, not the memory representation of `struct mo_type` or `struct mo_layout`.
+The other sections follow the field order documented in `bytecode.h`.
+
+**Type entries.** An entry starts with its `mo_type_kind` number, followed by
+only the payload in this table. All type references are indices into this
+file's type table; forward references are allowed, including nominal recursion.
+The numbers below are the enum values in `heap/types.h`.
+
+| Kind (number) | Payload after kind, in order |
+| --- | --- |
+| `unit` (0), `bool` (1), `byte` (2), `int` (3), `float` (4), `char` (5), `time` (6), `duration` (7), `decimal` (8), `range` (9), `text` (10), `bytes` (11), `bigint` (12) | none |
+| `tuple` (13) | element count, that many type indices; 2 to `MO_LIMIT_FIELDS` |
+| `list` (14), `set` (15) | parameter count (exactly 1), element type index |
+| `map` (16) | parameter count (exactly 2), key type index, value type index |
+| `record` (17) | name string index, field count, that many fields |
+| `choice` (18) | name string index, case count, that many cases |
+| `function` (19) | parameter count, that many type indices, result type index; at most `MO_LIMIT_BYTECODE_PARAMETERS`, without `env` |
+| `env` (20) | closure code's function index |
+| `capability` (21) | `mo_capability`: Args = 0, Env = 1, Console = 2, Files = 3, ReadFiles = 4, Clock = 5, Random = 6 |
+
+A **field** is its name string index, then its type index. A **case** is its
+name string index, field count, then its fields in declaration order. Only
+the one unnamed field of a case may have an absent name. Record fields and
+all type/case names must name nonempty strings without embedded NUL. The
+loader adds NUL terminators to decoded names. All name indices in these type
+entries use the lowest string index with the same bytes; the writer finds it
+by content and refuses a name missing from the supplied strings table.
+This keeps names deterministic even if a string's bytes occur more than once.
+
+No pointer, inactive member, or cached boolean is written. `defined` becomes
+true once the complete entry is decoded; incomplete builder declarations are
+not files. `has_fields` is derived from the cases' field counts, `reference`
+from section 2.3's shapes, and `unnamed` from a case having exactly one field
+whose name is absent. No other absent field name is valid. The writer derives
+these facts from the active data and ignores the cached booleans. The loader
+rejects unknown kinds, invalid names/counts/indices, duplicate interned types
+and cycles made only of structural types. Equal nominal names still do not
+merge declarations.
+
+**Layout entries.** An entry starts with its `mo_layout_kind` number. Only
+the listed fields are written; the field type list always has its own count.
+
+| Kind (number) | Payload after kind, in order |
+| --- | --- |
+| `record` (0) | record type index, field count, field type indices |
+| `tuple` (1) | tuple type index, field count, field type indices |
+| `case` (2) | choice type index, case index, field count, field type indices |
+| `closure` (3) | function type index, closure code's function index, capture count, capture type indices |
+
+Field/capture counts are at most `MO_LIMIT_FIELDS`. In decoded layouts,
+`case_index` is `MO_NO_INDEX` except for case blocks, and `function` is
+`MO_NO_INDEX` except for closures; these inactive indices are not written.
+Layout fields must match the record, tuple, boxed case or closure captures
+exactly, in order. Built-in heap layouts are never entries in this section.
+
+**A worked encoding.** The following are the complete strings, types and
+layouts sections, without the header or the other six sections. Each group of
+four hex bytes is one little-endian `u32`; comments and line breaks are not
+bytes. The types are `Unit`, `Int`, `Text`, recursive nominal `Chain`,
+`List(Chain)`, `(Int, List(Chain))`, `fn(Chain) : Int` and `env` for closure
+function 0. `Chain` has `End`, `Link(value: Int, next: Chain)` and
+`Alias(Chain)`. Both nonempty cases are boxed. Function 0, in the omitted
+functions section, has one explicit `Chain` parameter, an owned `env`, returns
+`Int`, and captures `Chain` and `Text`.
+
+```text
+06 00 00 00                                      ; six strings
+05 00 00 00 43 68 61 69 6e                       ; s0 = "Chain"
+03 00 00 00 45 6e 64                             ; s1 = "End"
+04 00 00 00 4c 69 6e 6b                          ; s2 = "Link"
+05 00 00 00 76 61 6c 75 65                       ; s3 = "value"
+04 00 00 00 6e 65 78 74                          ; s4 = "next"
+05 00 00 00 41 6c 69 61 73                       ; s5 = "Alias"
+
+08 00 00 00                                      ; eight types
+00 00 00 00                                      ; t0: unit
+03 00 00 00                                      ; t1: int
+0a 00 00 00                                      ; t2: text
+12 00 00 00 00 00 00 00 03 00 00 00             ; t3: choice, s0, three cases
+01 00 00 00 00 00 00 00                         ; End: s1, no fields
+02 00 00 00 02 00 00 00                         ; Link: s2, two fields
+03 00 00 00 01 00 00 00                         ; value: s3, t1
+04 00 00 00 03 00 00 00                         ; next: s4, t3 (recursive)
+05 00 00 00 01 00 00 00                         ; Alias: s5, one field
+ff ff ff ff 03 00 00 00                         ; unnamed, t3 (recursive)
+0e 00 00 00 01 00 00 00 03 00 00 00             ; t4: list, one parameter t3
+0d 00 00 00 02 00 00 00 01 00 00 00 04 00 00 00 ; t5: tuple(t1, t4)
+13 00 00 00 01 00 00 00 03 00 00 00 01 00 00 00 ; t6: function(t3) -> t1
+14 00 00 00 00 00 00 00                         ; t7: env for function 0
+
+04 00 00 00                                      ; four layouts
+02 00 00 00 03 00 00 00 01 00 00 00             ; L0: case, t3, Link (case 1)
+02 00 00 00 01 00 00 00 03 00 00 00             ; two fields: t1, t3
+02 00 00 00 03 00 00 00 02 00 00 00             ; L1: case, t3, Alias (case 2)
+01 00 00 00 03 00 00 00                         ; one field: t3
+01 00 00 00 05 00 00 00 02 00 00 00             ; L2: tuple, t5, two fields
+01 00 00 00 04 00 00 00                         ; t1, t4
+03 00 00 00 06 00 00 00 00 00 00 00             ; L3: closure, t6, function 0
+02 00 00 00 03 00 00 00 02 00 00 00             ; two captures: t3, t2
+```
+
+**Writing and reading.** `mo_bytecode_write` borrows a decoded `mo_bytecode`
+and writes verified bytes to an initialized, empty `mo_buffer`. It preserves
+all table order and indices, never adds strings, and regenerates the header
+and checksum rather than trusting the decoded header. It ignores the
+constant's decoded-only `encoding`, selecting its payload by type. On invalid
+data, a format/output limit or no memory, it returns false with a static
+`mo_write_error.reason`, and leaves the buffer empty; capacity may have grown.
+Inputs are unchanged and must not alias output storage. C callers supply
+readable arrays for nonzero counts and complete nominal definitions. The
+caller owns the buffer and frees it with `mo_buffer_free`.
+
+`mo_load` copies, decodes and verifies bytes into an image. The read-only
+`mo_image_bytecode(image)` exposes all decoded tables until `mo_image_free`,
+including across initialization and calls. **Indices remain the file's** in
+both decoded and runtime tables. Any scratch interning used to validate types
+must map back to those indices before publishing the image. Tools can read
+function kinds, parameter types and ownership, debug text and module exports
+without knowing the private image structure. An exposed type entry is its
+type index followed by a `u32` `contents_exposed` boolean; generators must
+honor it even though the image contains the full definition (Architecture 10.1).
+
 ### 3.1 Constants
 
 Each constant has a type and a value:
@@ -184,7 +313,9 @@ Each constant has a type and a value:
   bytes, and a `decimal` in 16;
 - a `text` as a string index;
 - `bytes` as a length and the bytes;
-- a `bigint` as a sign and its magnitude's bytes, with no leading zeros;
+- a `bigint` as a `u32` sign (ZERO = 0, POSITIVE = 1, NEGATIVE = 2), a `u32`
+  byte length and little-endian magnitude bytes. Zero has sign ZERO and no
+  bytes; nonzero has sign POSITIVE/NEGATIVE and a nonzero final byte;
 - or a capture-less closure, as a function index.
 
 The loader checks each one. Texts are valid UTF-8, and a `char` is a Unicode
@@ -245,6 +376,19 @@ The kinds, and the signatures of all but the first two:
 function, and calls each `promise` function on generated inputs (Architecture
 section 10.1). Functions of every kind but `function` have no borrowed
 parameters.
+
+The source checker allows at most `MO_LIMIT_PARAMETERS` (255) parameters and
+reports E1009 beyond it. Runtime function types and bytecode functions allow
+`MO_LIMIT_BYTECODE_PARAMETERS` (256). A promise for a 255-parameter subject
+has 256 explicit parameters: the subject's parameters, then its result.
+A closure has at most 255 explicit parameters plus its implicit owned `env`,
+for 256 total. The encoded parameter array and function type omit `env`;
+the register type array includes it at index `parameter_count`. The verifier
+checks the total including `env`, the leading register types against the
+explicit parameters, and the `env` type's function index against the closure.
+Direct call/tail-call operand tails allow 256 arguments; closure call tails
+allow 255, since the VM supplies `env`. Primitive and host tails use the
+bytecode bound and must also match their actual signatures.
 
 ### 3.4 Debug information
 
@@ -338,6 +482,33 @@ incoming edge has the same one.
 Freeing never recurses on the C stack. Dropping a long chain of nested values
 uses an explicit work list, and so do equality, hashing, comparison and
 printing (section 8).
+
+C callers use `mo_value_dup(process, type, value)` and
+`mo_value_drop(process, type, value)` in `heap.h`. The type index is the
+image's file index, and the cell must belong to that process or its image.
+Dup reads an owned or borrowed cell and returns a new owned cell; drop
+consumes one owned cell. Both are infallible, follow section 2.4's immortal
+and saturating rules, and are a copy/no-op for immediates. A choice's tag
+selects its payload's shape. Copying a C cell's bits does not retain ownership.
+
+`mo_call` consumes owned arguments on every outcome; borrowed arguments
+remain the caller's. To retain inputs for a promise, C keeps its original
+ownership, passes duplicates to the subject's owned parameters, then passes
+owned duplicates of the retained inputs and the subject's owned result to
+the promise. It drops retained ownership afterward. A returned result may be
+dropped before `mo_process_free`; no cell outlives its process (or image).
+On stop/failure, no result is returned and C must not reuse consumed cells.
+
+The C builders borrow input cells and duplicate whatever they keep. Their
+successful result is owned; false leaves inputs and output unchanged with
+no ownership transfer. `mo_value_bytes` copies an arbitrary byte sequence,
+including NUL and invalid UTF-8. `mo_value_bigint` copies a sign and
+little-endian magnitude in exactly section 3.1's canonical form; signs are
+shared in `base.h` so heap need not include bytecode. Both take a `size_t`
+length of at most `MO_LIMIT_STRING_SIZE`; a byte pointer may be NULL only
+for zero length. Invalid signs/magnitudes, lengths past the bound and
+allocation/heap-limit failures return false. These limits bound C input
+generation, not arithmetic results of a running program.
 
 ### 4.4 Arithmetic, comparison and ranges
 
@@ -693,6 +864,23 @@ end
 The assembler and disassembler live in `src/bytecode`. Assembling a text,
 disassembling the bytes and assembling the result gives the same bytes. A fuzz
 target checks this.
+
+`mo_bytecode_assemble(text, length, out, error_out)` accepts at most
+`MO_LIMIT_BYTECODE_SIZE` text bytes and writes verified bytecode.
+`mo_bytecode_disassemble(bytes, length, out, error_out)` verifies its input
+before writing text, without a terminating NUL. Its text output has the same
+`MO_LIMIT_BYTECODE_SIZE` bound so successful output can be assembled again;
+expansion past that bound returns false. Their declarations are in
+`bytecode.h`; stream 3 implements them along with the writer. Each borrows its
+input and requires an initialized, empty caller-owned buffer, which must not
+back the input. Invalid input, an output limit or no memory returns false,
+leaves the buffer empty (capacity may have grown), and fills the required
+error structure with static reason text. Assembly errors have a text byte
+offset; disassembly uses `mo_load_error` with an input byte offset. Offset zero
+denotes a failure not tied to an input byte, such as no memory or an output
+limit. Disassembly must preserve all table indices and unused entries,
+including debug metadata and exposure flags; first-use table construction is
+for hand-written text, not permission to renumber an existing file.
 
 ## 11. Versions
 

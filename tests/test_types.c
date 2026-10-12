@@ -355,6 +355,49 @@ static void test_table_limits(void) {
     mo_arena_free(&arena);
 }
 
+static void test_subject_and_promise_parameter_boundary(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, 1 << 20);
+    struct mo_types types;
+    mo_types_init(&types, &arena);
+    uint32_t integer = intern(&types, (struct mo_type){.kind = MO_TYPE_INT});
+    uint32_t text = intern(&types, (struct mo_type){.kind = MO_TYPE_TEXT});
+    uint32_t boolean = intern(&types, (struct mo_type){.kind = MO_TYPE_BOOL});
+    uint32_t parameters[257];
+    for (uint32_t i = 0; i < 255; i++) {
+        parameters[i] = i % 2 == 0 ? text : integer;
+    }
+    struct mo_type signature = {.kind = MO_TYPE_FUNCTION,
+                                .parameters = parameters,
+                                .parameter_count = 255,
+                                .result = boolean};
+    uint32_t subject = intern(&types, signature);
+    parameters[255] = boolean; /* subject's result, not another copy of its last input */
+    signature.parameter_count = 256;
+    signature.result = integer; /* promise's failing-line number */
+    uint32_t promise = intern(&types, signature);
+    CHECK(subject != promise);
+    CHECK(intern(&types, signature) == promise);
+    parameters[256] = integer;
+    signature.parameter_count = 257;
+    uint32_t count = types.count;
+    uint32_t out = 123;
+    CHECK(mo_types_intern(&types, &signature, &out) == MO_TYPES_PARAMETER_LIMIT);
+    CHECK(types.count == count && out == 123);
+    CHECK(mo_types_finish(&types) == MO_TYPES_OK);
+    CHECK(types.items[subject].parameter_count == 255);
+    CHECK(types.items[subject].result == boolean);
+    CHECK(types.items[promise].parameter_count == 256);
+    CHECK(types.items[promise].result == integer);
+    for (uint32_t i = 0; i < 255; i++) {
+        uint32_t expected = i % 2 == 0 ? text : integer;
+        CHECK(types.items[subject].parameters[i] == expected);
+        CHECK(types.items[promise].parameters[i] == expected);
+    }
+    CHECK(types.items[promise].parameters[255] == boolean);
+    mo_arena_free(&arena);
+}
+
 static void test_counts_and_name_limits(void) {
     struct mo_arena arena;
     mo_arena_init(&arena, (size_t)128 << 20);
@@ -542,6 +585,7 @@ int main(void) {
     test_shapes_and_layouts();
     test_invalid_and_recursive_definitions();
     test_table_limits();
+    test_subject_and_promise_parameter_boundary();
     test_counts_and_name_limits();
     test_allocation_failures();
     test_cells();
