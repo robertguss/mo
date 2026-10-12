@@ -1,6 +1,9 @@
 #include "../tests/heap_fixture.h"
 
+#include <math.h>
 #include <string.h>
+
+static const int operations = 1;
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 
@@ -25,7 +28,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         struct mo_cell unchanged = result;
         uint32_t type = types[src];
         bool built = false;
-        switch (data[i] % 14) {
+        switch (data[i] % 20) {
         case 0:
             type = fixture.builtin[MO_TYPE_TEXT];
             built = mo_value_text(p, (const char *)data + i + 2, 2, &result);
@@ -98,14 +101,87 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             break;
         case 12:
         case 13:
+        case 14:
             if (types[src] == fixture.builtin[MO_TYPE_TEXT] && types[other] == fixture.list) {
                 struct mo_cell fields[] = {values[src], values[other]};
-                bool closure = data[i] % 14 == 13;
-                type = closure ? fixture.function : fixture.tuple;
+                bool closure = data[i] % 20 == 13;
+                bool record = data[i] % 20 == 14;
+                type = closure ? fixture.function : record ? fixture.record : fixture.tuple;
                 built = closure ? mo_value_closure(p, 7, fields, 2, &result)
-                                : mo_value_construct(p, fixture.tuple_layout, fields, 2, &result);
+                                : mo_value_construct(
+                                      p, record ? fixture.record_layout : fixture.tuple_layout,
+                                      fields, 2, &result);
             }
             break;
+        case 15:
+            if (types[src] == fixture.tuple || types[src] == fixture.record) {
+                struct mo_cell fields[] = {
+                    mo_value_dup(p, fixture.builtin[MO_TYPE_TEXT], mo_value_field(values[src], 0)),
+                    mo_value_dup(p, fixture.list, mo_value_field(values[src], 1))};
+                struct mo_token token = mo_value_reset(p, type, values[src]);
+                values[src] = mo_cell_unit();
+                types[src] = fixture.builtin[MO_TYPE_UNIT];
+                built = mo_value_reuse(p, &token, fields, 2, &result);
+                mo_token_free(p, &token);
+                mo_value_drop(p, fixture.builtin[MO_TYPE_TEXT], fields[0]);
+                mo_value_drop(p, fixture.list, fields[1]);
+            }
+            break;
+        case 16:
+            if (type == fixture.builtin[MO_TYPE_TEXT]) {
+                struct mo_state *state;
+                if (mo_state_new(p, &type, &values[src], 1, &state)) {
+                    struct mo_capability_info info = {.operations = &operations,
+                                                      .state = state,
+                                                      .prefix = values[src],
+                                                      .has_prefix = true};
+                    type = fixture.capabilities[data[i + 1] % 7];
+                    built = mo_value_capability(p, type, &info, &result);
+                    mo_state_drop(p, state);
+                }
+            }
+            break;
+        case 17:
+            if (fixture.types.items[type].kind == MO_TYPE_CAPABILITY &&
+                types[other] == fixture.builtin[MO_TYPE_TEXT]) {
+                mo_state_set(p, mo_capability_get(values[src])->state, 0, values[other]);
+            }
+            break;
+        case 18: {
+            bool equal = true;
+            if (mo_value_equal(p, type, values[src], values[src], &equal)) {
+                MO_ASSERT(equal == (type != fixture.builtin[MO_TYPE_FLOAT] ||
+                                    !isnan(mo_cell_get_float(values[src]))));
+            } else {
+                MO_ASSERT(equal);
+            }
+            uint64_t hash = 37;
+            if (mo_value_hash(p, type, values[src], &hash)) {
+                uint64_t again;
+                MO_ASSERT(mo_value_hash(p, type, values[src], &again) && hash == again);
+            } else {
+                MO_ASSERT(hash == 37);
+            }
+            struct mo_buffer out;
+            mo_buffer_init(&out, 512);
+            MO_ASSERT(mo_buffer_append_text(&out, "kept"));
+            if (!mo_value_print(p, type, values[src], &out)) {
+                MO_ASSERT(out.length == 4 && memcmp(out.bytes, "kept", 4) == 0);
+            }
+            mo_buffer_free(&out);
+            break;
+        }
+        case 19: {
+            uint64_t bits = 0;
+            size_t length = steps - i < 8 ? steps - i : 8;
+            memcpy(&bits, data + i, length);
+            double number;
+            memcpy(&number, &bits, sizeof number);
+            type = fixture.builtin[MO_TYPE_FLOAT];
+            result = mo_cell_float(number);
+            built = true;
+            break;
+        }
         }
         if (built) {
             mo_value_drop(p, types[dst], values[dst]);

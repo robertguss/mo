@@ -10,11 +10,20 @@ struct heap_fixture {
     uint32_t list;
     uint32_t map;
     uint32_t set;
+    uint32_t integer_set;
     uint32_t map_keys;
     uint32_t node;
     uint32_t option;
     uint32_t tuple;
     uint32_t function;
+    uint32_t env;
+    uint32_t capabilities[MO_CAP_RANDOM + 1];
+    uint32_t record;
+    uint32_t record_layout;
+    uint32_t tree;
+    uint32_t tree_layout;
+    uint32_t no_equal_list;
+    uint32_t no_hash_map;
     uint32_t node_layout;
     uint32_t tuple_layout;
     uint32_t case_layout;
@@ -61,6 +70,10 @@ static void heap_fixture_init(struct heap_fixture *fixture) {
         types, (struct mo_type){.kind = MO_TYPE_MAP, .parameters = pair, .parameter_count = 2});
     fixture->set = heap_intern(
         types, (struct mo_type){.kind = MO_TYPE_SET, .parameters = &text, .parameter_count = 1});
+    fixture->integer_set =
+        heap_intern(types, (struct mo_type){.kind = MO_TYPE_SET,
+                                            .parameters = &fixture->builtin[MO_TYPE_INT],
+                                            .parameter_count = 1});
     uint32_t map_pair[] = {fixture->map, text};
     fixture->map_keys = heap_intern(
         types, (struct mo_type){.kind = MO_TYPE_MAP, .parameters = map_pair, .parameter_count = 2});
@@ -69,7 +82,40 @@ static void heap_fixture_init(struct heap_fixture *fixture) {
     fixture->function =
         heap_intern(types, (struct mo_type){.kind = MO_TYPE_FUNCTION,
                                             .result = fixture->builtin[MO_TYPE_UNIT]});
+    fixture->env = heap_intern(types, (struct mo_type){.kind = MO_TYPE_ENV, .function = 7});
+    for (unsigned i = 0; i <= MO_CAP_RANDOM; i++) {
+        fixture->capabilities[i] =
+            heap_intern(types, (struct mo_type){.kind = MO_TYPE_CAPABILITY,
+                                                .capability = (enum mo_capability)i});
+    }
+    fixture->no_equal_list = heap_intern(types, (struct mo_type){.kind = MO_TYPE_LIST,
+                                                                 .parameters = &fixture->function,
+                                                                 .parameter_count = 1});
+    uint32_t floats[] = {fixture->builtin[MO_TYPE_FLOAT], text};
+    fixture->no_hash_map = heap_intern(
+        types, (struct mo_type){.kind = MO_TYPE_MAP, .parameters = floats, .parameter_count = 2});
+    MO_ASSERT(mo_types_declare(types, MO_TYPE_RECORD, "Item", &fixture->record) == MO_TYPES_OK);
+    struct mo_type_field record_fields[] = {{"label", text}, {"entries", fixture->list}};
+    MO_ASSERT(mo_types_define_record(types, fixture->record, record_fields, 2) == MO_TYPES_OK);
+    MO_ASSERT(mo_types_declare(types, MO_TYPE_CHOICE, "Tree", &fixture->tree) == MO_TYPES_OK);
+    struct mo_type_field tree_fields[] = {{"left", fixture->tree}, {"right", fixture->tree}};
+    struct mo_type_case tree_cases[] = {
+        {.name = "Leaf"}, {.name = "Branch", .fields = tree_fields, .field_count = 2}};
+    MO_ASSERT(mo_types_define_choice(types, fixture->tree, tree_cases, 2) == MO_TYPES_OK);
     MO_ASSERT(mo_types_finish(types) == MO_TYPES_OK);
+    fixture->record_layout = heap_layout(types, (struct mo_layout){.kind = MO_LAYOUT_RECORD,
+                                                                   .type = fixture->record,
+                                                                   .case_index = MO_NO_INDEX,
+                                                                   .function = MO_NO_INDEX,
+                                                                   .fields = pair,
+                                                                   .field_count = 2});
+    uint32_t trees[] = {fixture->tree, fixture->tree};
+    fixture->tree_layout = heap_layout(types, (struct mo_layout){.kind = MO_LAYOUT_CASE,
+                                                                 .type = fixture->tree,
+                                                                 .case_index = 1,
+                                                                 .function = MO_NO_INDEX,
+                                                                 .fields = trees,
+                                                                 .field_count = 2});
     fixture->node_layout = heap_layout(types, (struct mo_layout){.kind = MO_LAYOUT_CASE,
                                                                  .type = fixture->node,
                                                                  .case_index = 1,

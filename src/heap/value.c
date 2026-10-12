@@ -139,8 +139,8 @@ bool mo_value_case(struct mo_process *process, uint32_t type, uint32_t tag,
     }
     enum mo_case_shape shape = mo_case_shape(process->types, type, tag);
     if (shape == MO_CASE_BOXED) {
-        uint32_t layout = mo_heap_layout(process, 0, type, tag);
-        return layout != MO_NO_INDEX && mo_value_construct(process, layout, fields, count, out);
+        struct mo_layout_lookup *layout = mo_heap_layout(process, 0, type, tag);
+        return layout != NULL && mo_value_construct(process, layout->index, fields, count, out);
     }
     struct mo_cell payload = mo_cell_unit();
     if (shape != MO_CASE_EMPTY) {
@@ -157,13 +157,18 @@ bool mo_value_closure(struct mo_process *process, uint32_t function, const struc
     if (count != 0 && captures == NULL) {
         return false;
     }
-    uint32_t index = mo_heap_layout(process, 1, function, 0);
-    if (index == MO_NO_INDEX) {
+    struct mo_layout_lookup *entry = mo_heap_layout(process, 1, function, 0);
+    if (entry == NULL) {
         return false;
     }
+    uint32_t index = entry->index;
     const struct mo_layout *layout = &process->types->layouts[index];
     if (count != layout->field_count) {
         return false;
+    }
+    if (entry->constant != NULL) {
+        *out = mo_cell_ref(entry->constant);
+        return true;
     }
     struct mo_allocation *allocation =
         mo_heap_allocate(process, layout->type, index, (size_t)count * sizeof(struct mo_cell));
@@ -177,6 +182,8 @@ bool mo_value_closure(struct mo_process *process, uint32_t function, const struc
     }
     if (count == 0) {
         allocation->object.count = MO_IMMORTAL_COUNT;
+        allocation->deep_immortal = true;
+        entry->constant = &allocation->object;
     }
     *out = mo_cell_ref(&allocation->object);
     return true;

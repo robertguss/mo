@@ -66,15 +66,15 @@ static void sort_lookup(struct mo_layout_lookup *items, uint32_t count) {
     }
 }
 
-uint32_t mo_heap_layout(const struct mo_process *process, uint32_t category, uint32_t first,
-                        uint32_t second) {
+struct mo_layout_lookup *mo_heap_layout(struct mo_process *process, uint32_t category,
+                                        uint32_t first, uint32_t second) {
     struct mo_layout_lookup key = {.category = category, .first = first, .second = second};
     uint32_t low = 0, high = process->lookup_count;
     while (low < high) {
         uint32_t middle = low + (high - low) / 2;
         int cmp = compare_lookup(&key, &process->lookup[middle]);
         if (cmp == 0) {
-            return process->lookup[middle].index;
+            return &process->lookup[middle];
         }
         if (cmp < 0) {
             high = middle;
@@ -82,7 +82,7 @@ uint32_t mo_heap_layout(const struct mo_process *process, uint32_t category, uin
             low = middle + 1;
         }
     }
-    return MO_NO_INDEX;
+    return NULL;
 }
 
 struct mo_process *mo_heap_new(const struct mo_types *types, const struct mo_limits *limits) {
@@ -129,6 +129,12 @@ struct mo_process *mo_heap_new(const struct mo_types *types, const struct mo_lim
         }
     }
     sort_lookup(process->lookup, process->lookup_count);
+    for (uint32_t i = 1; i < process->lookup_count; i++) {
+        if (compare_lookup(&process->lookup[i - 1], &process->lookup[i]) == 0) {
+            free(process);
+            return NULL;
+        }
+    }
     return process;
 }
 
@@ -149,7 +155,8 @@ struct mo_allocation *mo_heap_allocation(struct mo_object *object) {
 
 struct mo_allocation *mo_heap_allocate(struct mo_process *process, uint32_t type, uint32_t layout,
                                        size_t bytes) {
-    MO_ASSERT(process != NULL && type < process->types->count);
+    MO_ASSERT(process != NULL &&
+              (type < process->types->count || (type == MO_NO_INDEX && layout == MO_STATE_LAYOUT)));
     size_t header = offsetof(struct mo_allocation, cells);
     if (bytes > SIZE_MAX - header || header + bytes > process->limit - process->used) {
         return NULL;
@@ -186,6 +193,13 @@ void mo_heap_release(struct mo_process *process, struct mo_allocation *allocatio
     MO_ASSERT(process->used >= allocation->size);
     process->used -= allocation->size;
     process->objects--;
+    if (allocation->object.layout == MO_BUILTIN_LAYOUT(MO_TYPE_CAPABILITY)) {
+        const struct mo_capability_info *info =
+            (const struct mo_capability_info *)allocation->cells;
+        if (info->release != NULL) {
+            info->release(info->handle);
+        }
+    }
     /* Poison before returning memory even in a build without sanitizers. */
     memset(allocation, 0xa5, allocation->size);
     free(allocation);
@@ -227,9 +241,7 @@ struct mo_cell mo_value_dup(struct mo_process *process, uint32_t type, struct mo
     return value;
 }
 
-static void enqueue(const struct mo_types *types, uint32_t type, struct mo_cell value,
-                    struct mo_allocation **pending) {
-    struct mo_object *object = mo_value_object(types, type, value);
+static void enqueue_object(struct mo_object *object, struct mo_allocation **pending) {
     if (object == NULL || object->count == MO_IMMORTAL_COUNT) {
         return;
     }
@@ -242,16 +254,38 @@ static void enqueue(const struct mo_types *types, uint32_t type, struct mo_cell 
     }
 }
 
+static void enqueue(const struct mo_types *types, uint32_t type, struct mo_cell value,
+                    struct mo_allocation **pending) {
+    enqueue_object(mo_value_object(types, type, value), pending);
+}
+
 void mo_value_drop(struct mo_process *process, uint32_t type, struct mo_cell value) {
     MO_ASSERT(process != NULL);
+    mo_heap_drop_object(process, mo_value_object(process->types, type, value));
+}
+
+void mo_heap_drop_object(struct mo_process *process, struct mo_object *object) {
+    MO_ASSERT(process != NULL);
     struct mo_allocation *pending = NULL;
-    enqueue(process->types, type, value, &pending);
+    enqueue_object(object, &pending);
     /* Zero-count allocations supply the work list; drop never allocates. */
     while (pending != NULL) {
         struct mo_allocation *allocation = pending;
         pending = allocation->pending;
         uint32_t layout = allocation->object.layout;
-        if (layout < process->types->layout_count) {
+        if (layout == MO_STATE_LAYOUT) {
+            const uint32_t *types = (const uint32_t *)(allocation->cells + allocation->length);
+            for (uint32_t i = 0; i < allocation->length; i++) {
+                enqueue(process->types, types[i], allocation->cells[i], &pending);
+            }
+        } else if (layout == MO_BUILTIN_LAYOUT(MO_TYPE_CAPABILITY)) {
+            const struct mo_capability_info *info =
+                (const struct mo_capability_info *)allocation->cells;
+            enqueue_object((struct mo_object *)info->state, &pending);
+            if (info->has_prefix) {
+                enqueue(process->types, process->builtins[MO_TYPE_TEXT], info->prefix, &pending);
+            }
+        } else if (layout < process->types->layout_count) {
             const struct mo_layout *fixed = &process->types->layouts[layout];
             for (uint32_t i = 0; i < fixed->field_count; i++) {
                 enqueue(process->types, fixed->fields[i], allocation->cells[i], &pending);

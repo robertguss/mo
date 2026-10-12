@@ -639,6 +639,23 @@ once, whatever the counts say. So a stop or a failure in the middle of a
 function leaks nothing. Constants live in the image, made immortal, and
 every process shares them.
 
+`heap` supplies `mo_heap_new(types, limits)` as the heap-only process context
+for C value builders. It borrows the sealed type and layout tables, which
+must remain stable for its lifetime. Execution frames, image loading and
+outcomes remain `vm`'s work. The image keeps a separate initialization heap;
+making a module constant immortal walks its entire immutable graph, even
+when the root's count had already saturated. Processes never free image
+allocations.
+
+The heap limit counts native allocation prefixes, value storage, layout and
+ability indices, and temporary walk arenas, including their chunk overhead.
+Caller-owned type tables and output buffers are outside this limit. Scratch
+also has a named cap and is reclaimed after each generic operation. Heap
+teardown releases native handles as well as value memory; a host release
+callback cannot inspect children, which teardown may already have reclaimed.
+Printing that exceeds a resource bound preserves the output and lets the
+defect renderer use `<value unavailable>` rather than trigger another stop.
+
 - **`mo run`** initializes the image, makes a process and calls the entry
   function (4.3). It exits with `main`'s status. On a stop, it prints the
   defect report to standard error and exits with status 70. The verifier

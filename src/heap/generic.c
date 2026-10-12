@@ -4,8 +4,7 @@
 #include <string.h>
 
 /* One child at a time keeps scratch proportional to depth, not width. */
-static MO_MUST_USE uint32_t children(const struct mo_types *types, uint32_t type,
-                                     struct mo_cell value) {
+uint32_t mo_value_children(const struct mo_types *types, uint32_t type, struct mo_cell value) {
     const struct mo_type *kind = &types->items[type];
     if (kind->kind == MO_TYPE_CHOICE) {
         return kind->cases[mo_cell_get_tag(value)].field_count;
@@ -14,9 +13,8 @@ static MO_MUST_USE uint32_t children(const struct mo_types *types, uint32_t type
     return kind->kind == MO_TYPE_MAP ? a->length * 2 : a->length;
 }
 
-static MO_MUST_USE struct mo_cell child(const struct mo_types *types, uint32_t type,
-                                        struct mo_cell value, uint32_t index,
-                                        uint32_t *child_type) {
+struct mo_cell mo_value_child(const struct mo_types *types, uint32_t type, struct mo_cell value,
+                              uint32_t index, uint32_t *child_type) {
     const struct mo_type *kind = &types->items[type];
     if (kind->kind == MO_TYPE_CHOICE) {
         uint32_t tag = mo_cell_get_tag(value);
@@ -163,7 +161,7 @@ bool mo_value_hash_key(struct mo_process *process, uint32_t type, struct mo_cell
                 }
                 goto hash_done;
             }
-            f->count = children(process->types, f->type, f->value);
+            f->count = mo_value_children(process->types, f->type, f->value);
         }
         if (kind == MO_TYPE_MAP || kind == MO_TYPE_SET) {
             uint32_t stride = mo_table_stride(f->cache);
@@ -178,7 +176,8 @@ bool mo_value_hash_key(struct mo_process *process, uint32_t type, struct mo_cell
             goto hash_done;
         }
         uint32_t child_type;
-        struct mo_cell item = child(process->types, f->type, f->value, f->next++, &child_type);
+        struct mo_cell item =
+            mo_value_child(process->types, f->type, f->value, f->next++, &child_type);
         ok = grow_stack(&scratch, &storage, &capacity, depth, sizeof(struct hash_frame));
         if (ok) {
             ((struct hash_frame *)storage)[depth++] =
@@ -495,8 +494,8 @@ static MO_MUST_USE bool compare_values(struct mo_process *process, uint32_t type
                 }
                 f->stage = COMPARE_ENTRY;
             } else {
-                f->count = children(process->types, f->type, f->left);
-                f->other_count = children(process->types, f->type, f->right);
+                f->count = mo_value_children(process->types, f->type, f->left);
+                f->other_count = mo_value_children(process->types, f->type, f->right);
                 if (!order && f->count != f->other_count) {
                     result = 1;
                     goto compare_done;
@@ -510,8 +509,8 @@ static MO_MUST_USE bool compare_values(struct mo_process *process, uint32_t type
                 goto compare_done;
             }
             uint32_t other_type;
-            a = child(process->types, f->type, f->left, f->next, &child_type);
-            b = child(process->types, f->type, f->right, f->next++, &other_type);
+            a = mo_value_child(process->types, f->type, f->left, f->next, &child_type);
+            b = mo_value_child(process->types, f->type, f->right, f->next++, &other_type);
             MO_ASSERT(child_type == other_type);
         } else {
             uint32_t stride = mo_table_stride(f->a);

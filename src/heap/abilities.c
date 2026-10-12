@@ -41,18 +41,26 @@ static void add_edge(struct ability_edge *edges, uint32_t *heads, uint32_t *next
 bool mo_heap_abilities(struct mo_process *process) {
     const struct mo_types *types = process->types;
     size_t edge_count = 0;
+    size_t work = types->count;
     for (uint32_t i = 0; i < types->count; i++) {
         const struct mo_type *type = &types->items[i];
-        edge_count += dependency_count(type);
+        uint32_t count = dependency_count(type);
+        edge_count += count;
+        work += count;
         if (type->kind == MO_TYPE_CHOICE) {
+            work += type->case_count;
+            if (work > MO_LIMIT_HEAP_WORK) {
+                return false;
+            }
             for (uint32_t j = 0; j < type->case_count; j++) {
                 edge_count += type->cases[j].field_count;
-                if (edge_count > MO_LIMIT_HEAP_WORK) {
+                work += type->cases[j].field_count;
+                if (work > MO_LIMIT_HEAP_WORK) {
                     return false;
                 }
             }
         }
-        if (edge_count > MO_LIMIT_HEAP_WORK) {
+        if (work > MO_LIMIT_HEAP_WORK) {
             return false;
         }
     }

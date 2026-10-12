@@ -71,6 +71,8 @@ struct mo_process;
 /* Heap-only process context. The sealed table is borrowed and must outlive the
  * process. VM frames and image initialization are separate from this context.
  * All allocations, including bookkeeping, count against limits.heap_size.
+ * NULL means unavailable randomness, a limit/allocation failure, or ambiguous
+ * closure layouts (more than one layout for one function).
  * Free reclaims even immortal objects and values abandoned by a stopped call. */
 MO_MUST_USE struct mo_process *mo_heap_new(const struct mo_types *types,
                                            const struct mo_limits *limits);
@@ -100,6 +102,12 @@ MO_MUST_USE bool mo_value_hash(struct mo_process *process, uint32_t type, struct
                                uint64_t *out);
 MO_MUST_USE bool mo_value_compare(struct mo_process *process, uint32_t type, struct mo_cell left,
                                   struct mo_cell right, int *out);
+/* Append structural text, without executing Mo code. Caller-owned output is
+ * outside the process heap; scratch is charged to it. On failure the original
+ * output length and contents remain (capacity may grow). A defect renderer
+ * must use a fixed fallback rather than stop when printing runs out of room. */
+MO_MUST_USE bool mo_value_print(struct mo_process *process, uint32_t type, struct mo_cell value,
+                                struct mo_buffer *out);
 /* Lookup borrows its result; found=false leaves out unchanged. Operations
  * return false on limits or allocation failure, leaving every input unchanged.
  * Iteration's position is an entry cursor, not a live-element index. */
@@ -173,5 +181,53 @@ MO_MUST_USE bool mo_value_set(struct mo_process *process, uint32_t type,
 MO_MUST_USE bool mo_value_closure(struct mo_process *process, uint32_t function,
                                   const struct mo_cell *captures, uint32_t count,
                                   struct mo_cell *out);
+
+/* reset consumes a fixed-layout record, tuple or boxed choice. Tokens own
+ * cleared storage, not values. reuse borrows fields, consumes the token only
+ * on success, and preserves it on failure. VM instructions drop their owned
+ * inputs after a successful C builder. Never copy a token's ownership. */
+struct mo_token {
+    struct mo_object *memory;
+    uint32_t layout;
+};
+MO_MUST_USE struct mo_token mo_value_reset(struct mo_process *process, uint32_t type,
+                                           struct mo_cell value);
+MO_MUST_USE bool mo_value_reuse(struct mo_process *process, struct mo_token *token,
+                                const struct mo_cell *fields, uint32_t count, struct mo_cell *out);
+void mo_token_free(struct mo_process *process, struct mo_token *token);
+/* Image initialization only: the whole immutable graph becomes immortal.
+ * Functions may capture immutable values; no reachable capability/state is
+ * allowed. Infallible, allocation-free and iterative, including shared DAGs. */
+void mo_value_make_immortal(struct mo_process *process, uint32_t type, struct mo_cell value);
+
+/* Host storage, not host operations. A state shares typed mutable slots and
+ * accepts only types with Equal (therefore no reachable function/capability).
+ * Its slot types never change; get borrows, set borrows its input. */
+struct mo_state;
+MO_MUST_USE bool mo_state_new(struct mo_process *process, const uint32_t *types,
+                              const struct mo_cell *values, uint32_t count, struct mo_state **out);
+MO_MUST_USE struct mo_state *mo_state_dup(struct mo_state *state);
+void mo_state_drop(struct mo_process *process, struct mo_state *state);
+MO_MUST_USE struct mo_cell mo_state_get(struct mo_state *state, uint32_t index);
+void mo_state_set(struct mo_process *process, struct mo_state *state, uint32_t index,
+                  struct mo_cell value);
+
+/* operations is an opaque, borrowed, static host table. state and optional
+ * Text prefix are borrowed. On success the handle transfers to the heap;
+ * release(handle) runs once on final drop or teardown, and must neither touch
+ * child values nor reenter the heap. On false everything remains with caller.
+ * Real folder handle limits belong to host; this layer never opens a handle. */
+struct mo_capability_info {
+    const void *operations;
+    struct mo_state *state;
+    struct mo_cell prefix;
+    intptr_t handle;
+    void (*release)(intptr_t handle);
+    bool has_prefix;
+    bool read_only;
+};
+MO_MUST_USE bool mo_value_capability(struct mo_process *process, uint32_t type,
+                                     const struct mo_capability_info *info, struct mo_cell *out);
+MO_MUST_USE const struct mo_capability_info *mo_capability_get(struct mo_cell value);
 
 #endif
