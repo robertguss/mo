@@ -29,6 +29,21 @@ Mo draws on Elixir and the BEAM (processes, supervision, hot code loading),
 Rust (safety plus control over memory and performance), Koka (effects and
 in-place updates) and Elm (helpful error messages).
 
+## What's here
+
+- [The Mo Language Reference v0.1](docs/reference/README.md): core Mo, the
+  language later versions build on, written to be read in full by people and
+  agents.
+- [Architecture v0.1](docs/design/architecture.md) and
+  [the bytecode specification](docs/design/bytecode.md): how the toolchain and
+  virtual machine are built.
+- [Mo Core](formal/README.md): the small language every feature lowers to,
+  defined in Lean, with its type safety proven.
+- [Twelve sample programs](examples/), and the
+  [executable grammar](grammar/README.md) every example parses with.
+- [The learnability test](learnability/): fresh models from two families
+  writing Mo from the reference alone, and how they did.
+
 ## Building
 
 Mo is implemented in C. With a C compiler and `make`:

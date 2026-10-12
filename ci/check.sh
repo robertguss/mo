@@ -52,6 +52,24 @@ else
 	missing "clang with libFuzzer is not installed"
 fi
 
+step "The executable grammar: its tests, the examples and the reference's code parse"
+if have bison && (have clang || have gcc); then
+	if have clang; then make --no-print-directory grammar CC=clang; else make --no-print-directory grammar CC=gcc; fi
+else
+	missing "bison or a C compiler is not installed"
+fi
+
+step "Mo Core in Lean: the model builds and every proof checks"
+# elan lives in /opt/elan where .agents/setup puts it, since CI runs with a
+# fresh HOME, or else in the usual ~/.elan.
+for elan_home in "${ELAN_HOME:-}" /opt/elan "$HOME/.elan"; do
+	if [[ -n "$elan_home" && -x "$elan_home/bin/lake" ]]; then
+		export ELAN_HOME="$elan_home" PATH="$elan_home/bin:$PATH"
+		break
+	fi
+done
+if have lake; then make --no-print-directory formal; else missing "elan (Lean's installer) is not installed"; fi
+
 step "Formatting"
 if have clang-format; then make --no-print-directory format-check; else missing "clang-format is not installed"; fi
 
