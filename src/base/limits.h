@@ -82,6 +82,11 @@
 /* Prepared code, ordered indices and decoded bytecode tables; E1056 on exhaustion. */
 #define MO_LIMIT_CODEGEN_SCRATCH_SIZE (UINT64_C(512) * MO_LIMIT_CORE_NODES)
 
+/* Borrow inference slots and dependency edges, also E1056. They grow with prepared registers
+ * and Core operands; each owned slot is propagated once, never by rescanning the call graph. */
+#define MO_LIMIT_CODEGEN_OWNERSHIP_SLOTS (4u * MO_LIMIT_CORE_NODES)
+#define MO_LIMIT_CODEGEN_OWNERSHIP_EDGES (8u * MO_LIMIT_CORE_NODES)
+
 /* How deeply interpolations may nest inside each other's text, as the executable grammar allows
  * (grammar/lexer.c uses this limit). The lexer refuses deeper ones: E1007. */
 #define MO_LIMIT_INTERPOLATION_DEPTH 16

@@ -330,10 +330,11 @@ static void test_refusals(void) {
     mo_diags_free(&diags);
     CHECK(mo_diags_init(&diags));
     mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
-    p = parse(&arena,
-              "(Program () ((FunDecl \"main\" () (text) (lit (text \"x\")) \"M\" (function) 0)) () "
-              "\"main\" (noSource))",
-              &diags);
+    p = parse(
+        &arena,
+        "(Program () ((FunDecl \"main\" () (bigInt) (lit (bigInt 17)) \"M\" (function) 0)) () "
+        "\"main\" (noSource))",
+        &diags);
     if (p != NULL) {
         CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
         CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_UNSUPPORTED);
@@ -350,9 +351,247 @@ static void test_refusals(void) {
         CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
         CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_ENTRY);
     }
+    mo_diags_free(&diags);
+    CHECK(mo_diags_init(&diags));
+    p = parse(
+        &arena,
+        "(Program () ((FunDecl \"other\" () (unit) (lit (unit)) \"M\" (function) 0) "
+        "(FunDecl \"main\" () (unit) (lit (unit)) \"M\" (function) 0)) () \"main\" (noSource))",
+        &diags);
+    if (p != NULL) {
+        uint32_t members[] = {0, 1};
+        struct mo_core_span absent = {0};
+        struct mo_core_fun_meta meta[2] = {
+            {.name = {"M.main", 6}, .body = {.spans = {&absent, 1}}},
+            {.name = {"M.main", 6}, .body = {.spans = {&absent, 1}}},
+        };
+        struct mo_core_module_meta module = {.name = {"M", 1}, .funs = {members, 2}};
+        p->metadata =
+            (struct mo_core_metadata){.source = true, .modules = {&module, 1}, .funs = {meta, 2}};
+        CHECK(mo_core_check(p, &diags));
+        CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
+        CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_ENTRY &&
+              strstr(diags.items[0].primary.text, "shadows") != NULL);
+    }
     mo_buffer_free(&out);
     mo_diags_free(&diags);
     mo_arena_free(&arena);
+}
+
+static void test_references(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b =
+        compile(&arena, "(Program () ((FunDecl \"main\" ((\"x\" (text))) (text) (var \"x\") "
+                        "\"M\" (function) 0)) () \"main\" (noSource))");
+    if (b != NULL) {
+        const uint32_t expected[] = {MO_OP_DUP, 1, 0, MO_OP_DROP, 0, MO_OP_RET, 1};
+        CHECK(b->functions[0].parameters[0].ownership == MO_PARAMETER_OWNED);
+        CHECK(b->functions[0].code_count == sizeof expected / sizeof expected[0]);
+        CHECK(memcmp(b->functions[0].code, expected, sizeof expected) == 0);
+    }
+    mo_arena_free(&arena);
+}
+
+static MO_MUST_USE const uint32_t *instruction(const struct mo_bytecode_function *f,
+                                               enum mo_opcode wanted, uint32_t occurrence) {
+    for (uint32_t pc = 0; pc < f->code_count;) {
+        const struct mo_opcode_info *op = mo_opcode_find(f->code[pc] & MO_OPCODE_MASK);
+        CHECK(op != NULL);
+        if (op == NULL)
+            return NULL;
+        if (op->number == (uint32_t)wanted && occurrence-- == 0)
+            return &f->code[pc];
+        pc += 1u + op->fixed_count + (f->code[pc] >> MO_OPCODE_VARIABLE_SHIFT);
+    }
+    CHECK(false);
+    return NULL;
+}
+static void test_borrow_calls(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b = compile(
+        &arena,
+        "(Program () ((FunDecl \"main\" ((\"x\" (text))) (text) "
+        "(let_ \"y\" (call \"pick\" ((var \"x\") (var \"x\"))) (var \"y\")) \"M\" (function) 0) "
+        "(FunDecl \"pick\" ((\"x\" (text)) (\"ignored\" (text))) (text) "
+        "(var \"x\") \"M\" (function) 0)) () \"main\" (noSource))");
+    if (b != NULL) {
+        CHECK(b->functions[0].parameters[0].ownership == MO_PARAMETER_OWNED);
+        CHECK(b->functions[1].parameters[0].ownership == MO_PARAMETER_OWNED &&
+              b->functions[1].parameters[1].ownership == MO_PARAMETER_BORROWED);
+        const uint32_t *call = instruction(&b->functions[0], MO_OP_CALL, 0),
+                       *dup = instruction(&b->functions[0], MO_OP_DUP, 0);
+        if (call != NULL && dup != NULL)
+            CHECK(call[2] == 1 && call[3] == dup[1] && call[4] == 0 && dup[2] == 0);
+    }
+    mo_arena_free(&arena);
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    b = compile(
+        &arena,
+        "(Program () ((FunDecl \"main\" ((\"x\" (text))) (unit) "
+        "(call \"relay\" ((proj (tuple ((var \"x\") (lit (int 8)))) 0))) \"M\" (function) 0) "
+        "(FunDecl \"relay\" ((\"x\" (text))) (unit) (call \"sink\" ((var \"x\"))) \"M\" (function) "
+        "0) "
+        "(FunDecl \"sink\" ((\"x\" (text))) (unit) (lit (unit)) \"M\" (function) 0) "
+        "(FunDecl \"unused\" ((\"x\" (text))) (unit) (lit (unit)) \"M\" (function) 0)) "
+        "() \"main\" (noSource))");
+    if (b != NULL) {
+        for (uint32_t i = 0; i < 3; i++)
+            CHECK(b->functions[i].parameters[0].ownership == MO_PARAMETER_OWNED);
+        CHECK(b->functions[3].parameters[0].ownership == MO_PARAMETER_BORROWED);
+        const uint32_t *tail = instruction(&b->functions[0], MO_OP_TAIL_CALL, 0);
+        if (tail != NULL)
+            CHECK(tail[1] == 1);
+        tail = instruction(&b->functions[1], MO_OP_TAIL_CALL, 0);
+        if (tail != NULL)
+            CHECK(tail[1] == 2);
+        CHECK(b->layout_count == 1 && b->layouts[0].kind == MO_LAYOUT_TUPLE);
+    }
+    mo_arena_free(&arena);
+}
+
+static void test_aggregate_values(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b = compile(
+        &arena,
+        "(Program ((DataDecl \"Pair\" ((Ctor \"Pair\" ((\"left\" (text)) (\"right\" (text))))))) "
+        "((FunDecl \"main\" ((\"pair\" (data \"Pair\")) (\"b\" (bool))) (text) "
+        "(case_ (var \"pair\") ((\"Pair\" (\"x\" \"y\") (if_ (var \"b\") (var \"x\") (var "
+        "\"y\"))))) "
+        "\"M\" (function) 0) (FunDecl \"build\" ((\"x\" (text))) (data \"Pair\") "
+        "(con (data \"Pair\") \"Pair\" ((var \"x\") (var \"x\"))) \"M\" (function) 0) "
+        "(FunDecl \"bytes\" () (tuple ((bytes) (bytes))) "
+        "(tuple ((lit (bytes (0 128 255))) (lit (bytes (0 128 255))))) \"M\" (function) 0) "
+        "(FunDecl \"literal\" () (text) (lit (text \"A\\u{0}🙂\")) \"M\" (function) 0)) "
+        "() \"main\" (noSource))");
+    if (b != NULL) {
+        CHECK(b->functions[0].parameters[0].ownership == MO_PARAMETER_BORROWED);
+        CHECK(b->functions[1].parameters[0].ownership == MO_PARAMETER_OWNED);
+        CHECK(b->layout_count == 2 && b->layouts[0].kind == MO_LAYOUT_CASE &&
+              b->layouts[0].field_count == 2 && b->layouts[1].kind == MO_LAYOUT_TUPLE);
+        const uint32_t *con = instruction(&b->functions[1], MO_OP_MAKE_CASE, 0);
+        if (con != NULL)
+            CHECK(con[2] == b->functions[1].result_type && con[3] == 0 && con[4] != con[5]);
+        const uint8_t bytes[] = {0, 128, 255};
+        uint32_t found = 0;
+        for (uint32_t i = 0; i < b->constant_count; i++) {
+            const struct mo_bytecode_constant *k = &b->constants[i];
+            if (b->types[k->type].kind == MO_TYPE_BYTES && k->value.bytes.length != 0) {
+                CHECK(k->value.bytes.length == sizeof bytes &&
+                      memcmp(k->value.bytes.bytes, bytes, sizeof bytes) == 0);
+                found++;
+            }
+        }
+        CHECK(found == 1);
+        const uint32_t *lit = instruction(&b->functions[3], MO_OP_CONST, 1);
+        if (lit != NULL) {
+            uint32_t id = b->constants[lit[2]].value.string;
+            CHECK(b->strings[id].length == 6 && memcmp(b->strings[id].bytes, "A\0🙂", 6) == 0);
+        }
+    }
+    mo_arena_free(&arena);
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    b = compile(
+        &arena,
+        "(Program () ((FunDecl \"main\" ((\"b\" (bool)) (\"x\" (text))) (text) "
+        "(let_ \"chosen\" (if_ (var \"b\") (var \"x\") (stop \"stopped\")) (var \"chosen\")) "
+        "\"M\" (function) 0) (FunDecl \"spec\" ((\"unused\" (text))) (int) "
+        "(lit (int 0)) \"M\" (promise) 0)) () \"main\" (noSource))");
+    if (b != NULL) {
+        CHECK(b->functions[0].parameters[1].ownership == MO_PARAMETER_OWNED);
+        CHECK(b->functions[1].parameters[0].ownership == MO_PARAMETER_OWNED);
+        const uint32_t *drop = instruction(&b->functions[1], MO_OP_DROP, 0);
+        if (drop != NULL)
+            CHECK(drop[1] == 0);
+    }
+    mo_arena_free(&arena);
+}
+
+static void test_range_and_fail(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b = compile(
+        &arena,
+        "(Program () ((FunDecl \"main\" ((\"start\" (int)) (\"end\" (int))) (tuple ((int) (int))) "
+        "(let_ \"r\" (prim (range (make)) ((var \"start\") (var \"end\"))) "
+        "(tuple ((prim (range (start)) ((var \"r\"))) (prim (range (end)) ((var \"r\")))))) "
+        "\"M\" (function) 0) (FunDecl \"failed\" ((\"b\" (bool)) (\"why\" (text))) (int) "
+        "(if_ (var \"b\") (fail (var \"why\")) (lit (int 23))) \"M\" (promise) 0)) "
+        "() \"main\" (noSource))");
+    if (b != NULL) {
+        const uint32_t *make = instruction(&b->functions[0], MO_OP_MAKE_RANGE, 2),
+                       *move = instruction(&b->functions[0], MO_OP_MOVE, 0),
+                       *start = instruction(&b->functions[0], MO_OP_RANGE_START, 0),
+                       *end = instruction(&b->functions[0], MO_OP_RANGE_END, 0);
+        if (make != NULL && move != NULL && start != NULL && end != NULL)
+            CHECK(make[2] == 0 && make[3] == 1 && move[2] == make[1] && start[2] == move[1] &&
+                  end[2] == move[1] && start[1] != end[1]);
+        CHECK(b->functions[1].parameters[1].ownership == MO_PARAMETER_OWNED);
+        const uint32_t *fail = instruction(&b->functions[1], MO_OP_FAIL, 0);
+        if (fail != NULL)
+            CHECK(fail[1] == 1);
+    }
+    mo_arena_free(&arena);
+}
+
+static void test_representation_refusals(void) {
+    const struct {
+        const char *data, *params, *result, *body, *reason;
+    } cases[] = {
+        {"((DataDecl \"Empty\" ()))", "()", "(unit)", "(lit (unit))", "Empty data"},
+        {"((DataDecl \"D\" ((Ctor \"Same\" ()) (Ctor \"Same\" ()))))", "()", "(unit)",
+         "(lit (unit))", "Duplicate Core constructor"},
+        {"()", "((\"x\" (data \"Missing\")))", "(unit)", "(lit (unit))", "Undeclared data"},
+        {"()", "()", "(tuple ())", "(tuple ())", "Zero/one-element tuples"},
+        {"()", "()", "(tuple ((int)))", "(tuple ((lit (int 2))))", "Zero/one-element tuples"},
+        {"((DataDecl \"D\" ((Ctor \"\\u{0}\" ()))))", "()", "(unit)", "(lit (unit))",
+         "NUL-containing"},
+        {"((DataDecl \"\" ((Ctor \"C\" ()))))", "()", "(unit)", "(lit (unit))", "Empty or NUL"},
+        {"((DataDecl \"D\" ((Ctor \"C\" ((\"x\" (int)) (\"x\" (text)))))))", "()", "(unit)",
+         "(lit (unit))", "duplicate named fields"},
+        {"((DataDecl \"D\" ((Ctor \"C\" ((\"\" (int)) (\"x\" (text)))))))", "()", "(unit)",
+         "(lit (unit))", "Empty or duplicate"},
+        {"()", "((\"b\" (bool)) (\"x\" (text)))", "(text)",
+         "(let_ \"y\" (if_ (var \"b\") (proj (tuple ((var \"x\") (lit (int 1)))) 0) (var \"x\")) "
+         "(var \"y\"))",
+         "Reconverging branches"},
+        {"()", "((\"b\" (bool)) (\"x\" (text)))", "(text)",
+         "(let_ \"y\" (if_ (var \"b\") (if_ (var \"b\") (var \"x\") (lit (text \"z\"))) (var "
+         "\"x\")) (var \"y\"))",
+         "Reconverging branches"},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        struct mo_arena arena;
+        struct mo_diags diags;
+        struct mo_buffer payload, out;
+        mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+        CHECK(mo_diags_init(&diags));
+        mo_buffer_init(&payload, MO_LIMIT_CORE_TEXT_SIZE);
+        mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+        CHECK(mo_buffer_append_text(&payload, "(Program "));
+        CHECK(mo_buffer_append_text(&payload, cases[i].data));
+        CHECK(mo_buffer_append_text(&payload, " ((FunDecl \"main\" "));
+        CHECK(mo_buffer_append_text(&payload, cases[i].params));
+        CHECK(mo_buffer_append_byte(&payload, ' '));
+        CHECK(mo_buffer_append_text(&payload, cases[i].result));
+        CHECK(mo_buffer_append_byte(&payload, ' '));
+        CHECK(mo_buffer_append_text(&payload, cases[i].body));
+        CHECK(mo_buffer_append_text(&payload, " \"M\" (function) 0)) () \"main\" (noSource))"));
+        CHECK(mo_buffer_append_byte(&payload, 0));
+        struct mo_core *p = parse(&arena, (const char *)payload.bytes, &diags);
+        if (p != NULL) {
+            CHECK(mo_core_check(p, &diags));
+            CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
+            CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_UNSUPPORTED &&
+                  strstr(diags.items[0].primary.text, cases[i].reason) != NULL);
+        }
+        mo_buffer_free(&out);
+        mo_buffer_free(&payload);
+        mo_diags_free(&diags);
+        mo_arena_free(&arena);
+    }
 }
 
 static void test_register_limit(void) {
@@ -360,34 +599,23 @@ static void test_register_limit(void) {
      * register ceiling. One more temporary must still diagnose register overflow earlier,
      * during lowering, rather than reaching the writer. */
     for (uint32_t extra = 0; extra < 2; extra++) {
+        /* One basic block keeps this register boundary independent of verification's
+         * registers × blocks limit. Tuple fields, result and return duplicate fill the frame. */
         uint32_t count = MO_LIMIT_FUNCTION_REGISTERS - 2u + extra;
-        struct mo_buffer text, long_name, out;
+        struct mo_buffer text, out;
         struct mo_arena arena;
         struct mo_diags diags;
         mo_buffer_init(&text, MO_LIMIT_CORE_TEXT_SIZE);
-        mo_buffer_init(&long_name, MO_LIMIT_STRING_SIZE);
         mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
         mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
         CHECK(mo_diags_init(&diags));
-        for (uint32_t i = 0; i < 2u * 1000u * 1000u; i++)
-            CHECK(mo_buffer_append_byte(&long_name, 'D'));
-        CHECK(
-            mo_buffer_append_text(&text, "(core " MO_CORE_TEXT_VERSION " (Program ((DataDecl \""));
-        CHECK(mo_buffer_append(&text, long_name.bytes, long_name.length));
-        CHECK(mo_buffer_append_text(&text, "\" ("));
-        for (uint32_t i = 0; i < count; i++) {
-            CHECK(mo_buffer_append_text(&text, "(Ctor \"c"));
-            CHECK(mo_buffer_append_uint(&text, i));
-            CHECK(mo_buffer_append_text(&text, "\" ())"));
-        }
-        CHECK(mo_buffer_append_text(&text, "))) ((FunDecl \"main\" ((\"t\" (data \""));
-        CHECK(mo_buffer_append(&text, long_name.bytes, long_name.length));
-        CHECK(mo_buffer_append_text(&text, "\"))) (int) (case_ (var \"t\") ("));
-        for (uint32_t i = 0; i < count; i++) {
-            CHECK(mo_buffer_append_text(&text, "(\"c"));
-            CHECK(mo_buffer_append_uint(&text, i));
-            CHECK(mo_buffer_append_text(&text, "\" () (lit (int 1)))"));
-        }
+        CHECK(mo_buffer_append_text(&text, "(core " MO_CORE_TEXT_VERSION
+                                           " (Program () ((FunDecl \"main\" () (tuple ("));
+        for (uint32_t i = 0; i < count; i++)
+            CHECK(mo_buffer_append_text(&text, "(int)"));
+        CHECK(mo_buffer_append_text(&text, ")) (tuple ("));
+        for (uint32_t i = 0; i < count; i++)
+            CHECK(mo_buffer_append_text(&text, "(lit (int 1))"));
         CHECK(mo_buffer_append_text(&text, ")) \"M\" (function) 0)) () \"main\" (noSource)))"));
         struct mo_core *p = mo_core_parse(&arena, (const char *)text.bytes, text.length, &diags);
         CHECK(p != NULL);
@@ -405,14 +633,13 @@ static void test_register_limit(void) {
         mo_arena_free(&arena);
         mo_buffer_free(&out);
         mo_buffer_free(&text);
-        mo_buffer_free(&long_name);
     }
 }
 
 /* Batch corpus driver: malformed documents and ill-typed programs are not compiler inputs.
  * Partial implementation refusals are counted distinctly, never passed off as compilation. */
 static MO_MUST_USE int corpus(int argc, char **argv) {
-    unsigned compiled = 0, unsupported = 0, rejected = 0;
+    unsigned compiled = 0, unsupported = 0, entry = 0, rejected = 0;
     for (int i = 1; i < argc; i++) {
         struct mo_sources sources;
         struct mo_source_error source_error;
@@ -450,7 +677,10 @@ static MO_MUST_USE int corpus(int argc, char **argv) {
                         compiled++;
                         CHECK(memcmp(first.bytes, second.bytes, first.length) == 0);
                     } else {
-                        unsupported++;
+                        if (diags.count != 0 && diags.items[0].code == MO_CODE_CODEGEN_ENTRY)
+                            entry++;
+                        else
+                            unsupported++;
                         CHECK(first.length == 0 && diags.count == 2 &&
                               (diags.items[0].code == MO_CODE_CODEGEN_UNSUPPORTED ||
                                diags.items[0].code == MO_CODE_CODEGEN_ENTRY));
@@ -471,9 +701,10 @@ static MO_MUST_USE int corpus(int argc, char **argv) {
             rejected++;
         mo_sources_free(&sources);
     }
-    (void)printf("codegen corpus: %u compiled deterministically; %u explicitly unsupported; %u not "
+    (void)printf("codegen corpus: %u compiled deterministically; %u explicitly unsupported; %u "
+                 "entry mismatches; %u not "
                  "checked programs\n",
-                 compiled, unsupported, rejected);
+                 compiled, unsupported, entry, rejected);
     return mo_test_report("test_codegen corpus");
 }
 int main(int argc, char **argv) {
@@ -484,6 +715,11 @@ int main(int argc, char **argv) {
     test_calls_and_scopes();
     test_metadata();
     test_refusals();
+    test_references();
+    test_borrow_calls();
+    test_aggregate_values();
+    test_range_and_fail();
+    test_representation_refusals();
     test_register_limit();
     return mo_test_report("test_codegen");
 }

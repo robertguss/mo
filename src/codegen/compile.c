@@ -15,6 +15,15 @@ struct vector {
 };
 struct reg {
     uint32_t type, name;
+    uint32_t flow, previous, next;
+    bool owned;
+};
+struct ownership {
+    uint32_t type, edges;
+    bool owned;
+};
+struct edge {
+    uint32_t to, next;
 };
 struct node {
     mo_core_expr core;
@@ -23,23 +32,26 @@ struct node {
     uint32_t count, bind_count;
     struct node **children;
     uint32_t *binds, *cases;
+    bool temporary, activity;
 };
 struct function {
     struct vector regs, code, spans, names;
     struct node *body;
     struct mo_codegen_index *locals, *bindings, *zeros;
     const struct mo_core_fun_meta *meta;
-    uint32_t preorder, instructions;
+    uint32_t preorder, instructions, owned;
 };
 struct compiler {
     const struct mo_core *core;
     struct mo_arena arena;
     struct mo_types types;
-    struct vector strings, constants, modules, constructors;
+    struct vector strings, constants, modules, constructors, ownership, edges;
     struct mo_codegen_index *string_index, *constant_index, *data_index, *fun_index, *module_index,
         *builtin_index;
-    uint32_t *data, *files;
+    uint32_t *data, *files, *layouts;
+    uint32_t range_int;
     struct mo_bytecode_function *funs;
+    struct mo_parameter **parameters;
     struct mo_bytecode_debug *debug;
     struct function *bodies;
     uint32_t debug_entries;
@@ -72,7 +84,10 @@ static MO_MUST_USE void *append(struct compiler *c, struct vector *v, uint32_t n
                                 uint16_t code) {
     if (n > limit - v->count) {
         if (!problem(c, code,
-                     "Code generation exceeds the corresponding bytecode table or function limit."))
+                     code == MO_CODE_CODEGEN_MEMORY
+                         ? "Code generation exceeds its ownership graph limit."
+                         : "Code generation exceeds the corresponding bytecode table or function "
+                           "limit."))
             return NULL;
     }
     uint32_t required = v->count + n;
@@ -157,8 +172,8 @@ static MO_MUST_USE uint32_t type_result(struct compiler *c, enum mo_type_problem
     uint16_t code =
         status == MO_TYPES_NO_MEMORY ? MO_CODE_CODEGEN_MEMORY : MO_CODE_BYTECODE_TOO_BIG;
     if (status == MO_TYPES_INVALID)
-        code = MO_CODE_CODEGEN_UNSUPPORTED;
-    if (!problem(c, code, "Core type cannot be represented by this compiler's type table."))
+        code = MO_CODE_CODEGEN_INVALID;
+    if (!problem(c, code, "The generated type or layout was refused by the runtime type builder."))
         return MO_NO_INDEX;
     return MO_NO_INDEX;
 }
@@ -172,7 +187,9 @@ static MO_MUST_USE const char *type_name(struct compiler *c, uint32_t id) {
                                         "Char", "Time",  "Duration", "Decimal", "Range",
                                         "Text", "Bytes", "BigInt"};
     const struct mo_type *t = &c->types.items[id];
-    return t->kind <= MO_TYPE_BIGINT ? names[t->kind] : t->name;
+    return t->kind <= MO_TYPE_BIGINT  ? names[t->kind]
+           : t->kind == MO_TYPE_TUPLE ? "Tuple"
+                                      : t->name;
 }
 static MO_MUST_USE uint32_t type(struct compiler *c, mo_core_ty t, unsigned depth) {
     if (depth >= MO_LIMIT_CORE_DEPTH) {
@@ -209,6 +226,47 @@ static MO_MUST_USE uint32_t type(struct compiler *c, mo_core_ty t, unsigned dept
     case MO_CORE_TY_DECIMAL:
         kind = MO_TYPE_DECIMAL;
         break;
+    case MO_CORE_TY_TEXT:
+        kind = MO_TYPE_TEXT;
+        break;
+    case MO_CORE_TY_BYTES:
+        kind = MO_TYPE_BYTES;
+        break;
+    case MO_CORE_TY_BIG_INT:
+        kind = MO_TYPE_BIGINT;
+        break;
+    case MO_CORE_TY_RANGE:
+        c->range_int = scalar(c, MO_TYPE_INT);
+        if (c->range_int == MO_NO_INDEX)
+            return MO_NO_INDEX;
+        kind = MO_TYPE_RANGE;
+        break;
+    case MO_CORE_TY_TUPLE: {
+        if (t->as.tuple.count < 2) {
+            if (!unsupported(c, "Zero/one-element tuples need the bytecode tuple arity extension."))
+                return MO_NO_INDEX;
+        }
+        if (t->as.tuple.count > MO_LIMIT_FIELDS) {
+            if (!problem(c, MO_CODE_BYTECODE_TOO_BIG, "Tuple exceeds MO_LIMIT_FIELDS."))
+                return MO_NO_INDEX;
+        }
+        uint32_t *params = allocate(c, t->as.tuple.count, sizeof *params);
+        if (params == NULL)
+            return MO_NO_INDEX;
+        for (size_t i = 0; i < t->as.tuple.count; i++) {
+            params[i] = type(c, t->as.tuple.items[i], depth + 1);
+            if (params[i] == MO_NO_INDEX)
+                return MO_NO_INDEX;
+        }
+        uint32_t id = MO_NO_INDEX;
+        enum mo_type_problem status =
+            mo_types_intern(&c->types,
+                            &(struct mo_type){.kind = MO_TYPE_TUPLE,
+                                              .parameters = params,
+                                              .parameter_count = (uint32_t)t->as.tuple.count},
+                            &id);
+        return type_result(c, status, id);
+    }
     case MO_CORE_TY_DATA: {
         struct mo_codegen_index *entry = mo_codegen_find(c->data_index, t->as.data);
         if (entry != NULL)
@@ -288,11 +346,6 @@ static MO_MUST_USE uint32_t type(struct compiler *c, mo_core_ty t, unsigned dept
             return MO_NO_INDEX;
         return id;
     }
-    case MO_CORE_TY_BIG_INT:
-    case MO_CORE_TY_TEXT:
-    case MO_CORE_TY_BYTES:
-    case MO_CORE_TY_RANGE:
-    case MO_CORE_TY_TUPLE:
     case MO_CORE_TY_LIST:
     case MO_CORE_TY_MAP:
     case MO_CORE_TY_SET:
@@ -300,18 +353,34 @@ static MO_MUST_USE uint32_t type(struct compiler *c, mo_core_ty t, unsigned dept
     case MO_CORE_TY_ENTRY:
     case MO_CORE_TY_FN:
     case MO_CORE_TY_CAP:
-        if (!unsupported(
-                c, "Reference, aggregate, Range and capability types are not implemented yet."))
+        if (!unsupported(c, "Collection, function and capability types are not implemented yet."))
             return MO_NO_INDEX;
         return MO_NO_INDEX;
     }
     return scalar(c, kind);
 }
 static MO_MUST_USE uint32_t constant(struct compiler *c, struct mo_bytecode_constant value) {
-    uint8_t key[20];
+    uint8_t key[20] = {0};
     memcpy(key, &value.type, sizeof value.type);
-    memcpy(key + 4, value.value.immediate, 16);
+    enum mo_type_kind kind = c->types.items[value.type].kind;
+    if (kind == MO_TYPE_TEXT)
+        memcpy(key + 4, &value.value.string, sizeof value.value.string);
+    else if (kind == MO_TYPE_BIGINT) {
+        /* Only the zero initializer is implemented; decimal literals remain staged refusals. */
+        MO_ASSERT(value.value.bigint.sign == MO_BIGINT_ZERO &&
+                  value.value.bigint.magnitude.length == 0);
+    } else if (kind != MO_TYPE_BYTES)
+        memcpy(key + 4, value.value.immediate, 16);
     mo_core_string bytes = {(const char *)key, sizeof key};
+    if (kind == MO_TYPE_BYTES) {
+        char *payload = allocate(c, 4u + value.value.bytes.length, 1);
+        if (payload == NULL)
+            return MO_NO_INDEX;
+        memcpy(payload, &value.type, 4);
+        if (value.value.bytes.length != 0)
+            memcpy(payload + 4, value.value.bytes.bytes, value.value.bytes.length);
+        bytes = (mo_core_string){payload, 4u + value.value.bytes.length};
+    }
     struct mo_codegen_index *old = mo_codegen_find(c->constant_index, bytes);
     if (old != NULL)
         return old->value;
@@ -328,9 +397,8 @@ static MO_MUST_USE uint32_t literal(struct compiler *c, mo_core_lit lit, uint32_
                                               MO_TYPE_DECIMAL, MO_TYPE_FLOAT,  MO_TYPE_BOOL,
                                               MO_TYPE_CHAR,    MO_TYPE_TEXT,   MO_TYPE_BYTES,
                                               MO_TYPE_UNIT,    MO_TYPE_TIME,   MO_TYPE_DURATION};
-    if (lit->tag == MO_CORE_LIT_BIG_INT || lit->tag == MO_CORE_LIT_TEXT ||
-        lit->tag == MO_CORE_LIT_BYTES) {
-        if (!unsupported(c, "Reference literals are not implemented yet."))
+    if (lit->tag == MO_CORE_LIT_BIG_INT) {
+        if (!unsupported(c, "BigInt decimal-to-magnitude conversion is not implemented yet."))
             return MO_NO_INDEX;
     }
     *ty = scalar(c, kinds[lit->tag]);
@@ -365,9 +433,36 @@ static MO_MUST_USE uint32_t literal(struct compiler *c, mo_core_lit lit, uint32_
         break;
     case MO_CORE_LIT_UNIT:
         break;
+    case MO_CORE_LIT_TEXT: {
+        uint32_t s = string(c, lit->as.text);
+        if (s == MO_NO_INDEX)
+            return MO_NO_INDEX;
+        struct mo_bytecode_constant k = {.type = *ty};
+        k.value.string = s;
+        return constant(c, k);
+    }
+    case MO_CORE_LIT_BYTES: {
+        size_t count = lit->as.bytes.count;
+        if (count > MO_LIMIT_STRING_SIZE) {
+            if (!problem(c, MO_CODE_BYTECODE_TOO_BIG,
+                         "Bytes literal exceeds MO_LIMIT_STRING_SIZE."))
+                return MO_NO_INDEX;
+        }
+        uint8_t *payload = allocate(c, count, 1);
+        if (payload == NULL)
+            return MO_NO_INDEX;
+        for (size_t i = 0; i < count; i++) {
+            mo_core_string digits = lit->as.bytes.items[i].digits;
+            unsigned byte = 0;
+            for (size_t j = 0; j < digits.length; j++)
+                byte = byte * 10 + (unsigned)(digits.bytes[j] - '0');
+            payload[i] = (uint8_t)byte;
+        }
+        struct mo_bytecode_constant k = {.type = *ty};
+        k.value.bytes = (struct mo_bytecode_bytes){(uint32_t)count, payload};
+        return constant(c, k);
+    }
     case MO_CORE_LIT_BIG_INT:
-    case MO_CORE_LIT_TEXT:
-    case MO_CORE_LIT_BYTES:
         MO_UNREACHABLE();
     }
     if (integer != NULL) {
@@ -392,7 +487,14 @@ static MO_MUST_USE uint32_t register_add(struct compiler *c, struct function *f,
     struct reg *r = append(c, &f->regs, 1, MO_LIMIT_FUNCTION_REGISTERS, MO_CODE_TOO_MANY_REGISTERS);
     if (r == NULL)
         return MO_NO_INDEX;
-    *r = (struct reg){ty, original};
+    uint32_t flow = c->ownership.count;
+    struct ownership *o =
+        append(c, &c->ownership, 1, MO_LIMIT_CODEGEN_OWNERSHIP_SLOTS, MO_CODE_CODEGEN_MEMORY);
+    if (o == NULL)
+        return MO_NO_INDEX;
+    *o = (struct ownership){.type = ty, .edges = MO_NO_INDEX};
+    *r = (struct reg){
+        .type = ty, .name = original, .flow = flow, .previous = MO_NO_INDEX, .next = MO_NO_INDEX};
     return id;
 }
 static MO_MUST_USE uint32_t binding_name(struct function *f, uint32_t node, uint32_t slot) {
@@ -447,7 +549,11 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
     struct node *n = allocate(c, 1, sizeof *n);
     if (n == NULL)
         return NULL;
-    *n = (struct node){.core = expr, .type = MO_NO_INDEX, .reg = MO_NO_INDEX, .index = MO_NO_INDEX};
+    *n = (struct node){.core = expr,
+                       .type = MO_NO_INDEX,
+                       .reg = MO_NO_INDEX,
+                       .index = MO_NO_INDEX,
+                       .temporary = true};
     if (f->meta != NULL)
         n->span = f->meta->body.spans.items[preorder];
     c->span = n->span;
@@ -461,6 +567,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         MO_ASSERT(entry != NULL && entry->value != MO_NO_INDEX);
         n->reg = entry->value;
         n->type = ((struct reg *)f->regs.items)[n->reg].type;
+        n->temporary = false;
         return n;
     }
     case MO_CORE_EXPR_LET: {
@@ -486,6 +593,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
             return NULL;
         n->type = n->children[1]->type;
         n->reg = n->children[1]->reg;
+        n->temporary = n->children[1]->temporary || n->reg == n->binds[0];
         return n;
     }
     case MO_CORE_EXPR_CALL: {
@@ -580,16 +688,68 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         n->reg = register_add(c, f, ty, MO_NO_INDEX);
         return c->error == 0 ? n : NULL;
     }
+    case MO_CORE_EXPR_TUPLE: {
+        if (!children(c, f, n, expr->as.tuple, depth))
+            return NULL;
+        if (n->count < 2) {
+            if (!unsupported(c, "Zero/one-element tuples need the bytecode tuple arity extension."))
+                return NULL;
+        }
+        uint32_t *params = allocate(c, n->count, sizeof *params);
+        if (params == NULL)
+            return NULL;
+        for (uint32_t i = 0; i < n->count; i++)
+            params[i] = n->children[i]->type;
+        enum mo_type_problem status = mo_types_intern(
+            &c->types,
+            &(struct mo_type){
+                .kind = MO_TYPE_TUPLE, .parameters = params, .parameter_count = n->count},
+            &n->type);
+        if (type_result(c, status, n->type) == MO_NO_INDEX)
+            return NULL;
+        break;
+    }
+    case MO_CORE_EXPR_PROJ:
+        small[0] = expr->as.proj.expr;
+        if (!children(c, f, n, (mo_core_expr_list){small, 1}, depth))
+            return NULL;
+        n->index = 0;
+        for (size_t i = 0; i < expr->as.proj.index.digits.length; i++)
+            n->index = n->index * 10u + (unsigned)(expr->as.proj.index.digits.bytes[i] - '0');
+        n->type = c->types.items[n->children[0]->type].parameters[n->index];
+        break;
+    case MO_CORE_EXPR_FAIL:
+        small[0] = expr->as.fail;
+        if (!children(c, f, n, (mo_core_expr_list){small, 1}, depth))
+            return NULL;
+        return n;
+    case MO_CORE_EXPR_PRIM: {
+        const struct mo_core_prim *p = &expr->as.prim.prim;
+        if (p->tag != MO_CORE_PRIM_RANGE ||
+            (p->as.range != MO_CORE_RANGE_OP_MAKE && p->as.range != MO_CORE_RANGE_OP_START &&
+             p->as.range != MO_CORE_RANGE_OP_END)) {
+            if (!unsupported(c,
+                             "Only Range make/start/end primitives are implemented in this slice."))
+                return NULL;
+        }
+        if (!children(c, f, n, expr->as.prim.args, depth))
+            return NULL;
+        if (p->as.range == MO_CORE_RANGE_OP_MAKE) {
+            c->range_int = scalar(c, MO_TYPE_INT);
+            n->type = scalar(c, MO_TYPE_RANGE);
+            n->index = MO_OP_MAKE_RANGE;
+        } else {
+            n->type = scalar(c, MO_TYPE_INT);
+            n->index = p->as.range == MO_CORE_RANGE_OP_START ? MO_OP_RANGE_START : MO_OP_RANGE_END;
+        }
+        break;
+    }
     case MO_CORE_EXPR_GLOBAL:
     case MO_CORE_EXPR_LAM:
     case MO_CORE_EXPR_APP:
-    case MO_CORE_EXPR_TUPLE:
-    case MO_CORE_EXPR_PROJ:
-    case MO_CORE_EXPR_PRIM:
-    case MO_CORE_EXPR_FAIL:
     case MO_CORE_EXPR_JOIN:
     case MO_CORE_EXPR_JUMP:
-        if (!unsupported(c, "Globals, closures, aggregates, primitives, fail and joins are not "
+        if (!unsupported(c, "Globals, closures and joins are not "
                             "implemented yet."))
             return NULL;
     }
@@ -597,6 +757,153 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         return NULL;
     n->reg = register_add(c, f, n->type, MO_NO_INDEX);
     return c->error == 0 ? n : NULL;
+}
+
+static MO_MUST_USE bool reference(struct compiler *c, uint32_t type_id) {
+    return type_id != MO_NO_INDEX && mo_type_is_reference(&c->types, type_id);
+}
+static MO_MUST_USE uint32_t flow_id(struct function *f, uint32_t r) {
+    return r == MO_NO_INDEX ? MO_NO_INDEX : ((struct reg *)f->regs.items)[r].flow;
+}
+static void seed(struct compiler *c, uint32_t id) {
+    if (id != MO_NO_INDEX) {
+        struct ownership *o = &((struct ownership *)c->ownership.items)[id];
+        if (reference(c, o->type))
+            o->owned = true;
+    }
+}
+static MO_MUST_USE bool depends(struct compiler *c, uint32_t from, uint32_t to) {
+    if (from == MO_NO_INDEX || to == MO_NO_INDEX || from == to)
+        return true;
+    struct ownership *o = c->ownership.items;
+    if (!reference(c, o[from].type) || !reference(c, o[to].type))
+        return true;
+    uint32_t id = c->edges.count;
+    struct edge *e =
+        append(c, &c->edges, 1, MO_LIMIT_CODEGEN_OWNERSHIP_EDGES, MO_CODE_CODEGEN_MEMORY);
+    if (e == NULL)
+        return false;
+    *e = (struct edge){to, o[from].edges};
+    o[from].edges = id;
+    return true;
+}
+/* Dependencies propagate ownership once per slot. Tail calls add the reverse dependency:
+ * an argument owned by the disappearing frame makes the callee's parameter owned too. */
+static MO_MUST_USE bool borrow_walk(struct compiler *c, struct function *f, struct node *n,
+                                    bool tail, unsigned depth) {
+    MO_ASSERT(depth < MO_LIMIT_CORE_DEPTH);
+    uint32_t own = flow_id(f, n->reg);
+    if (n->core->tag == MO_CORE_EXPR_CASE) {
+        if (!borrow_walk(c, f, n->children[0], false, depth + 1))
+            return false;
+        for (uint32_t i = 1; i < n->count; i++) {
+            struct node *arm = n->children[i], *body = arm->children[0];
+            for (uint32_t j = 0; j < arm->bind_count; j++) {
+                uint32_t field = flow_id(f, arm->binds[j]);
+                seed(c, field);
+            }
+            if (!borrow_walk(c, f, body, tail, depth + 1) ||
+                !depends(c, own, flow_id(f, body->reg)) || !depends(c, flow_id(f, body->reg), own))
+                return false;
+        }
+    } else {
+        for (uint32_t i = 0; i < n->count; i++) {
+            bool child_tail = tail && ((n->core->tag == MO_CORE_EXPR_LET && i == 1) ||
+                                       (n->core->tag == MO_CORE_EXPR_IF && i != 0));
+            if (!borrow_walk(c, f, n->children[i], child_tail, depth + 1))
+                return false;
+        }
+    }
+    if (n->core->tag == MO_CORE_EXPR_LET) {
+        uint32_t bound = flow_id(f, n->children[0]->reg), binding = flow_id(f, n->binds[0]);
+        if (!depends(c, binding, bound) || !depends(c, bound, binding))
+            return false;
+    } else if (n->core->tag == MO_CORE_EXPR_IF) {
+        for (uint32_t i = 1; i < n->count; i++)
+            if (!depends(c, own, flow_id(f, n->children[i]->reg)) ||
+                !depends(c, flow_id(f, n->children[i]->reg), own))
+                return false;
+    } else if (n->core->tag == MO_CORE_EXPR_CALL) {
+        struct function *callee = &c->bodies[n->index];
+        for (uint32_t i = 0; i < n->count; i++) {
+            uint32_t arg = flow_id(f, n->children[i]->reg), param = flow_id(callee, i);
+            if (!depends(c, param, arg) || (tail && !depends(c, arg, param)))
+                return false;
+        }
+        seed(c, own);
+    } else if (n->core->tag == MO_CORE_EXPR_CON || n->core->tag == MO_CORE_EXPR_TUPLE) {
+        for (uint32_t i = 0; i < n->count; i++)
+            seed(c, flow_id(f, n->children[i]->reg));
+        seed(c, own);
+    } else if (n->core->tag == MO_CORE_EXPR_PROJ) {
+        seed(c, own);
+    }
+    if (tail && n->core->tag != MO_CORE_EXPR_STOP)
+        seed(c, own);
+    return true;
+}
+/* Mark paths needing reference state normalization only after ownership reaches its fixed point.
+ * A nested merge can produce an owner even when its own arms merely read variables. */
+static void activity(struct compiler *c, struct function *f, struct node *n, unsigned depth) {
+    MO_ASSERT(depth < MO_LIMIT_CORE_DEPTH);
+    bool choice = n->core->tag == MO_CORE_EXPR_CASE;
+    for (uint32_t i = 0; i < n->count; i++) {
+        struct node *child = choice && i != 0 ? n->children[i]->children[0] : n->children[i];
+        activity(c, f, child, depth + 1);
+        n->activity |= child->activity;
+        if (choice && i != 0)
+            for (uint32_t j = 0; j < n->children[i]->bind_count; j++)
+                n->activity |=
+                    reference(c, ((struct reg *)f->regs.items)[n->children[i]->binds[j]].type);
+    }
+    if (n->core->tag == MO_CORE_EXPR_LET)
+        n->activity |= reference(c, n->children[0]->type);
+    if (n->core->tag == MO_CORE_EXPR_CALL) {
+        for (uint32_t i = 0; i < n->count; i++)
+            n->activity |= reference(c, n->children[i]->type) &&
+                           c->parameters[n->index][i].ownership == MO_PARAMETER_OWNED;
+    }
+    if (n->core->tag == MO_CORE_EXPR_CALL || n->core->tag == MO_CORE_EXPR_CON ||
+        n->core->tag == MO_CORE_EXPR_TUPLE || n->core->tag == MO_CORE_EXPR_PROJ)
+        n->activity |= reference(c, n->type);
+    if (n->core->tag == MO_CORE_EXPR_IF || choice)
+        n->activity |= reference(c, n->type) &&
+                       ((struct ownership *)c->ownership.items)[flow_id(f, n->reg)].owned;
+}
+static MO_MUST_USE bool borrow_infer(struct compiler *c) {
+    for (size_t i = 0; i < c->core->funs.count; i++) {
+        struct function *f = &c->bodies[i];
+        if (c->funs[i].kind != MO_FUNCTION_FUNCTION)
+            for (uint32_t j = 0; j < c->funs[i].parameter_count; j++)
+                seed(c, flow_id(f, j));
+        if (!borrow_walk(c, f, f->body, true, 0))
+            return false;
+    }
+    uint32_t *queue = allocate(c, c->ownership.count, sizeof *queue);
+    if (queue == NULL)
+        return false;
+    struct ownership *slots = c->ownership.items;
+    const struct edge *edges = c->edges.items;
+    uint32_t end = 0;
+    for (uint32_t i = 0; i < c->ownership.count; i++)
+        if (slots[i].owned)
+            queue[end++] = i;
+    for (uint32_t at = 0; at < end; at++) {
+        for (uint32_t e = slots[queue[at]].edges; e != MO_NO_INDEX; e = edges[e].next) {
+            uint32_t to = edges[e].to;
+            if (!slots[to].owned) {
+                slots[to].owned = true;
+                queue[end++] = to;
+            }
+        }
+    }
+    for (size_t i = 0; i < c->core->funs.count; i++)
+        for (uint32_t j = 0; j < c->funs[i].parameter_count; j++)
+            if (reference(c, c->parameters[i][j].type) && !slots[flow_id(&c->bodies[i], j)].owned)
+                c->parameters[i][j].ownership = MO_PARAMETER_BORROWED;
+    for (size_t i = 0; i < c->core->funs.count; i++)
+        activity(c, &c->bodies[i], c->bodies[i].body, 0);
+    return true;
 }
 
 static MO_MUST_USE struct mo_bytecode_span span(struct compiler *c, struct mo_core_span s) {
@@ -666,13 +973,83 @@ static MO_MUST_USE bool named(struct compiler *c, struct function *f, uint32_t r
     *n = (struct mo_bytecode_register_name){reg, name_id, start, end};
     return true;
 }
-/* Value states at joins are identical. This first slice uses only immediates, plus borrowed
- * immortal stop reasons. Initialize every temporary before control splits; no owned values. */
+/* Track only live owners, not every register at every return. */
+static void owner_add(struct function *f, uint32_t r) {
+    struct reg *regs = f->regs.items;
+    MO_ASSERT(!regs[r].owned);
+    regs[r].owned = true;
+    regs[r].previous = MO_NO_INDEX;
+    regs[r].next = f->owned;
+    if (f->owned != MO_NO_INDEX)
+        regs[f->owned].previous = r;
+    f->owned = r;
+}
+static void owner_remove(struct function *f, uint32_t r) {
+    struct reg *regs = f->regs.items;
+    if (!regs[r].owned)
+        return;
+    if (regs[r].previous == MO_NO_INDEX)
+        f->owned = regs[r].next;
+    else
+        regs[regs[r].previous].next = regs[r].next;
+    if (regs[r].next != MO_NO_INDEX)
+        regs[regs[r].next].previous = regs[r].previous;
+    regs[r].owned = false;
+}
+static MO_MUST_USE bool drop(struct compiler *c, struct function *f, uint32_t r,
+                             struct mo_core_span s) {
+    if (r == MO_NO_INDEX || !((struct reg *)f->regs.items)[r].owned)
+        return true;
+    if (emit(c, f, s, MO_OP_DROP, &r, 1, NULL, 0) == MO_NO_INDEX)
+        return false;
+    owner_remove(f, r);
+    return true;
+}
+static MO_MUST_USE bool cleanup(struct compiler *c, struct function *f, struct mo_core_span s) {
+    while (f->owned != MO_NO_INDEX)
+        if (!drop(c, f, f->owned, s))
+            return false;
+    return true;
+}
+static MO_MUST_USE bool copy(struct compiler *c, struct function *f, uint32_t to, uint32_t from,
+                             bool owned, struct mo_core_span s) {
+    bool ref = reference(c, ((struct reg *)f->regs.items)[from].type);
+    enum mo_opcode op = ref && owned ? MO_OP_DUP : MO_OP_MOVE;
+    MO_ASSERT(!ref || owned || !((struct reg *)f->regs.items)[from].owned);
+    const uint32_t args[] = {to, from};
+    if (emit(c, f, s, op, args, 2, NULL, 0) == MO_NO_INDEX)
+        return false;
+    if (ref && owned)
+        owner_add(f, to);
+    return true;
+}
+static MO_MUST_USE uint32_t argument(struct compiler *c, struct function *f, uint32_t r, bool owned,
+                                     struct mo_core_span s) {
+    uint32_t ty = ((struct reg *)f->regs.items)[r].type;
+    if (!reference(c, ty) || !owned)
+        return r;
+    uint32_t tmp = register_add(c, f, ty, MO_NO_INDEX);
+    if (tmp == MO_NO_INDEX || !copy(c, f, tmp, r, true, s))
+        return MO_NO_INDEX;
+    return tmp;
+}
+/* Immediate and scalar-constant slots have stable join states. Aggregate references remain
+ * undefined until written; this slice refuses reconverging arms that create path-local owners. */
 static MO_MUST_USE bool initialize(struct compiler *c, struct function *f, uint32_t reg,
                                    unsigned depth) {
     MO_ASSERT(depth < MO_LIMIT_CORE_DEPTH);
     uint32_t ty = ((struct reg *)f->regs.items)[reg].type;
     const struct mo_type *t = &c->types.items[ty];
+    if (reference(c, ty) && t->kind != MO_TYPE_TEXT && t->kind != MO_TYPE_BYTES &&
+        t->kind != MO_TYPE_BIGINT)
+        return true;
+    if (t->kind == MO_TYPE_RANGE) {
+        uint32_t field = register_add(c, f, c->range_int, MO_NO_INDEX);
+        if (field == MO_NO_INDEX || !initialize(c, f, field, depth + 1))
+            return false;
+        const uint32_t args[] = {reg, field, field};
+        return emit(c, f, c->declaration, MO_OP_MAKE_RANGE, args, 3, NULL, 0) != MO_NO_INDEX;
+    }
     if (t->kind == MO_TYPE_CHOICE) {
         const struct mo_type_case *first = &t->cases[0];
         uint32_t field = MO_NO_INDEX;
@@ -698,7 +1075,10 @@ static MO_MUST_USE bool initialize(struct compiler *c, struct function *f, uint3
         k.value.string = string(c, text(""));
         if (k.value.string == MO_NO_INDEX)
             return false;
-    }
+    } else if (t->kind == MO_TYPE_BYTES)
+        k.value.bytes = (struct mo_bytecode_bytes){0};
+    else if (t->kind == MO_TYPE_BIGINT)
+        k.value.bigint = (struct mo_bytecode_bigint){.sign = MO_BIGINT_ZERO};
     uint32_t id = constant(c, k);
     const uint32_t fixed[] = {reg, id};
     return id != MO_NO_INDEX &&
@@ -723,21 +1103,29 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
         if (!generate(c, f, n->children[0], false, depth + 1, live) || !*live)
             return c->error == 0;
         uint32_t start = f->code.count;
-        const uint32_t args[] = {n->binds[0], n->children[0]->reg};
-        if (emit(c, f, n->span, MO_OP_MOVE, args, 2, NULL, 0) == MO_NO_INDEX ||
+        bool owned = ((struct ownership *)c->ownership.items)[flow_id(f, n->binds[0])].owned;
+        if (!copy(c, f, n->binds[0], n->children[0]->reg, owned, n->span) ||
+            (n->children[0]->temporary && !drop(c, f, n->children[0]->reg, n->span)) ||
             !generate(c, f, n->children[1], tail, depth + 1, live))
+            return false;
+        if (*live && n->binds[0] != n->reg && !drop(c, f, n->binds[0], n->span))
             return false;
         return named(c, f, n->binds[0], start, f->code.count);
     }
     case MO_CORE_EXPR_CALL:
-    case MO_CORE_EXPR_CON: {
+    case MO_CORE_EXPR_CON:
+    case MO_CORE_EXPR_TUPLE: {
         uint32_t *regs = allocate(c, n->count, sizeof *regs);
         if (regs == NULL)
             return false;
         for (uint32_t i = 0; i < n->count; i++) {
             if (!generate(c, f, n->children[i], false, depth + 1, live) || !*live)
                 return c->error == 0;
-            regs[i] = n->children[i]->reg;
+            bool owned = n->core->tag != MO_CORE_EXPR_CALL ||
+                         c->funs[n->index].parameters[i].ownership == MO_PARAMETER_OWNED;
+            regs[i] = argument(c, f, n->children[i]->reg, owned, n->span);
+            if (regs[i] == MO_NO_INDEX)
+                return false;
         }
         uint32_t args[] = {n->reg, n->index, 0};
         enum mo_opcode op = MO_OP_CALL;
@@ -747,20 +1135,50 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
             args[1] = n->type;
             args[2] = n->index;
             count = 3;
+        } else if (n->core->tag == MO_CORE_EXPR_TUPLE) {
+            op = MO_OP_CONSTRUCT;
+            args[1] = c->layouts[n->type];
         } else if (tail) {
             op = MO_OP_TAIL_CALL;
             args[0] = n->index;
             count = 1;
             *live = false;
         }
+        /* Reserve consumed argument copies while dropping the rest of a tail frame. */
+        for (uint32_t i = 0; i < n->count; i++)
+            if (regs[i] != n->children[i]->reg)
+                owner_remove(f, regs[i]);
+        if (op == MO_OP_TAIL_CALL && !cleanup(c, f, n->span))
+            return false;
         if (emit(c, f, n->span, op, args, count, regs, n->count) == MO_NO_INDEX)
             return false;
+        if (*live) {
+            if (reference(c, n->type))
+                owner_add(f, n->reg);
+            for (uint32_t i = 0; i < n->count; i++)
+                if (n->children[i]->temporary && !drop(c, f, n->children[i]->reg, n->span))
+                    return false;
+        }
         break;
     }
     case MO_CORE_EXPR_IF:
     case MO_CORE_EXPR_CASE: {
         if (!generate(c, f, n->children[0], false, depth + 1, live) || !*live)
             return c->error == 0;
+        bool choice = n->core->tag == MO_CORE_EXPR_CASE;
+        if (!tail) {
+            for (uint32_t i = 1; i < n->count; i++) {
+                struct node *arm = n->children[i];
+                bool local_owners = choice ? arm->children[0]->activity : arm->activity;
+                if (choice)
+                    for (uint32_t j = 0; j < arm->bind_count; j++)
+                        local_owners |=
+                            reference(c, ((struct reg *)f->regs.items)[arm->binds[j]].type);
+                if (local_owners)
+                    return unsupported(c, "Reconverging branches with path-local reference owners "
+                                          "are not implemented yet.");
+            }
+        }
         uint32_t arms = n->count - 1;
         uint32_t *targets = allocate(c, arms, sizeof *targets),
                  *jumps = allocate(c, arms, sizeof *jumps);
@@ -769,14 +1187,34 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
         memset(targets, 0, (size_t)arms * sizeof *targets);
         for (uint32_t i = 0; i < arms; i++)
             jumps[i] = MO_NO_INDEX;
-        bool choice = n->core->tag == MO_CORE_EXPR_CASE;
         uint32_t fixed[] = {n->children[0]->reg, 0, 0};
         uint32_t at = emit(c, f, n->span, choice ? MO_OP_SWITCH : MO_OP_BRANCH, fixed,
                            choice ? 1 : 3, choice ? targets : NULL, choice ? arms : 0);
         if (at == MO_NO_INDEX)
             return false;
+        uint32_t owners = f->owned;
         bool any = false;
         for (uint32_t i = 0; i < arms; i++) {
+            /* Existing owners are consumed only by whole-frame cleanup. Removing a head
+             * preserves its next link, so no snapshot/scan is needed on stop/fail paths. */
+            if (tail) {
+                struct reg *regs = f->regs.items;
+                bool retained = owners != MO_NO_INDEX && regs[owners].owned;
+                while (f->owned != (retained ? owners : MO_NO_INDEX))
+                    owner_remove(f, f->owned);
+                if (!retained) {
+                    uint32_t previous = MO_NO_INDEX;
+                    for (uint32_t r = owners; r != MO_NO_INDEX; r = regs[r].next) {
+                        MO_ASSERT(!regs[r].owned);
+                        regs[r].owned = true;
+                        regs[r].previous = previous;
+                        previous = r;
+                    }
+                    f->owned = owners;
+                }
+            } else if (n->reg != MO_NO_INDEX) {
+                owner_remove(f, n->reg);
+            }
             uint32_t case_id = choice ? n->cases[i] : i;
             targets[case_id] = f->code.count;
             uint32_t start = f->code.count;
@@ -786,6 +1224,8 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
                     const uint32_t field[] = {arm->binds[j], n->children[0]->reg, case_id, j};
                     if (emit(c, f, n->span, MO_OP_CASE_FIELD, field, 4, NULL, 0) == MO_NO_INDEX)
                         return false;
+                    if (reference(c, ((struct reg *)f->regs.items)[arm->binds[j]].type))
+                        owner_add(f, arm->binds[j]);
                 }
             }
             if (!generate(c, f, body, tail, depth + 1, live))
@@ -797,8 +1237,10 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
             }
             if (*live) {
                 any = true;
-                const uint32_t move[] = {n->reg, body->reg}, jump[] = {0};
-                if (emit(c, f, n->span, MO_OP_MOVE, move, 2, NULL, 0) == MO_NO_INDEX)
+                const uint32_t jump[] = {0};
+                bool owned = n->reg != MO_NO_INDEX &&
+                             ((struct ownership *)c->ownership.items)[flow_id(f, n->reg)].owned;
+                if (!copy(c, f, n->reg, body->reg, owned, n->span))
                     return false;
                 jumps[i] = emit(c, f, n->span, MO_OP_JUMP, jump, 1, NULL, 0);
                 if (jumps[i] == MO_NO_INDEX)
@@ -810,9 +1252,45 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
         for (uint32_t i = 0; i < arms; i++)
             if (jumps[i] != MO_NO_INDEX)
                 words[jumps[i] + 1] = f->code.count;
+        /* The last textual arm may stop even though an earlier arm reaches this join. */
+        if (!tail && any && reference(c, n->type) &&
+            ((struct ownership *)c->ownership.items)[flow_id(f, n->reg)].owned &&
+            !((struct reg *)f->regs.items)[n->reg].owned)
+            owner_add(f, n->reg);
         *live = any;
         break;
     }
+    case MO_CORE_EXPR_PROJ: {
+        if (!generate(c, f, n->children[0], false, depth + 1, live) || !*live)
+            return c->error == 0;
+        const uint32_t args[] = {n->reg, n->children[0]->reg, n->index};
+        if (emit(c, f, n->span, MO_OP_FIELD, args, 3, NULL, 0) == MO_NO_INDEX)
+            return false;
+        if (reference(c, n->type))
+            owner_add(f, n->reg);
+        if (n->children[0]->temporary && !drop(c, f, n->children[0]->reg, n->span))
+            return false;
+        break;
+    }
+    case MO_CORE_EXPR_PRIM: {
+        uint32_t args[3] = {n->reg, 0, 0};
+        for (uint32_t i = 0; i < n->count; i++) {
+            if (!generate(c, f, n->children[i], false, depth + 1, live) || !*live)
+                return c->error == 0;
+            args[i + 1] = n->children[i]->reg;
+        }
+        if (emit(c, f, n->span, (enum mo_opcode)n->index, args, 1 + n->count, NULL, 0) ==
+            MO_NO_INDEX)
+            return false;
+        break;
+    }
+    case MO_CORE_EXPR_FAIL:
+        if (!generate(c, f, n->children[0], false, depth + 1, live) || !*live)
+            return c->error == 0;
+        if (emit(c, f, n->span, MO_OP_FAIL, &n->children[0]->reg, 1, NULL, 0) == MO_NO_INDEX)
+            return false;
+        *live = false;
+        break;
     case MO_CORE_EXPR_STOP: {
         const uint32_t args[] = {n->reg, n->index}, stop[] = {n->reg};
         if (emit(c, f, n->span, MO_OP_CONST, args, 2, NULL, 0) == MO_NO_INDEX ||
@@ -824,17 +1302,18 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
     case MO_CORE_EXPR_GLOBAL:
     case MO_CORE_EXPR_LAM:
     case MO_CORE_EXPR_APP:
-    case MO_CORE_EXPR_TUPLE:
-    case MO_CORE_EXPR_PROJ:
-    case MO_CORE_EXPR_PRIM:
-    case MO_CORE_EXPR_FAIL:
     case MO_CORE_EXPR_JOIN:
     case MO_CORE_EXPR_JUMP:
         MO_UNREACHABLE();
     }
     if (*live && tail) {
-        const uint32_t args[] = {n->reg};
-        if (emit(c, f, n->span, MO_OP_RET, args, 1, NULL, 0) == MO_NO_INDEX)
+        uint32_t result = argument(c, f, n->reg, true, n->span);
+        if (result == MO_NO_INDEX)
+            return false;
+        if (result != n->reg)
+            owner_remove(f, result);
+        if (!cleanup(c, f, n->span) ||
+            emit(c, f, n->span, MO_OP_RET, &result, 1, NULL, 0) == MO_NO_INDEX)
             return false;
         *live = false;
     }
@@ -858,6 +1337,12 @@ static MO_MUST_USE bool entry_valid(struct compiler *c) {
             valid = n.length >= 5 && n.length - 5 == f->module.length &&
                     memcmp(n.bytes, f->module.bytes, f->module.length) == 0 &&
                     memcmp(n.bytes + f->module.length, ".main", 5) == 0;
+            for (size_t j = 0; valid && j < i; j++) {
+                mo_core_string earlier = p->metadata.funs.items[j].name;
+                if (earlier.length == n.length && memcmp(earlier.bytes, n.bytes, n.length) == 0)
+                    return problem(c, MO_CODE_CODEGEN_ENTRY,
+                                   "An earlier function shadows the entry's full runtime name.");
+            }
         } else {
             valid = f->name.length == 4 && memcmp(f->name.bytes, "main", 4) == 0;
         }
@@ -875,12 +1360,13 @@ static MO_MUST_USE bool declarations(struct compiler *c) {
                        "Core has too many function or type declarations.");
     c->data = allocate(c, p->data.count, sizeof *c->data);
     c->funs = allocate(c, p->funs.count, sizeof *c->funs);
+    c->parameters = allocate(c, p->funs.count, sizeof *c->parameters);
     c->bodies = allocate(c, p->funs.count, sizeof *c->bodies);
     c->debug = allocate(c, p->funs.count, sizeof *c->debug);
     size_t file_count = p->metadata.source ? p->metadata.files.count : 0;
     c->files = allocate(c, file_count, sizeof *c->files);
-    if (c->data == NULL || c->funs == NULL || c->bodies == NULL || c->debug == NULL ||
-        c->files == NULL)
+    if (c->data == NULL || c->funs == NULL || c->parameters == NULL || c->bodies == NULL ||
+        c->debug == NULL || c->files == NULL)
         return false;
     memset(c->funs, 0, p->funs.count * sizeof *c->funs);
     memset(c->bodies, 0, p->funs.count * sizeof *c->bodies);
@@ -913,16 +1399,24 @@ static MO_MUST_USE bool declarations(struct compiler *c) {
             const struct mo_core_ctor *ctor = &d->ctors.items[j];
             if (mo_codegen_find(seen, ctor->name) != NULL)
                 return unsupported(c,
-                                   "Duplicate Core constructor names are not representable yet.");
+                                   "Duplicate Core constructor remapping is not implemented yet.");
             if (index_add(c, &seen, ctor->name, 0, false) == NULL)
                 return false;
-            if (ctor->fields.count > 1)
-                return unsupported(c, "Boxed data payloads are not implemented yet.");
+            if (ctor->fields.count > MO_LIMIT_FIELDS)
+                return problem(c, MO_CODE_BYTECODE_TOO_BIG, "Constructor exceeds MO_LIMIT_FIELDS.");
             const char *n = name(c, ctor->name);
             struct mo_type_field *field = allocate(c, ctor->fields.count, sizeof *field);
             if (n == NULL || field == NULL)
                 return false;
+            struct mo_codegen_index *field_names = NULL;
             for (size_t k = 0; k < ctor->fields.count; k++) {
+                mo_core_string key = ctor->fields.items[k].name;
+                if ((key.length == 0 && ctor->fields.count != 1) ||
+                    mo_codegen_find(field_names, key) != NULL)
+                    return unsupported(
+                        c, "Empty or duplicate named fields need the bytecode naming extension.");
+                if (index_add(c, &field_names, key, 0, false) == NULL)
+                    return false;
                 field[k].name = ctor->fields.items[k].name.length == 0
                                     ? NULL
                                     : name(c, ctor->fields.items[k].name);
@@ -1004,6 +1498,7 @@ static MO_MUST_USE bool declarations(struct compiler *c) {
         struct mo_parameter *params = allocate(c, fun->params.count, sizeof *params);
         if (params == NULL)
             return false;
+        c->parameters[i] = params;
         for (size_t j = 0; j < fun->params.count; j++) {
             params[j] =
                 (struct mo_parameter){type(c, fun->params.items[j].ty, 0), MO_PARAMETER_OWNED};
@@ -1035,6 +1530,7 @@ static MO_MUST_USE bool bodies(struct compiler *c) {
         f->code.width = sizeof(uint32_t);
         f->spans.width = sizeof(struct mo_bytecode_span);
         f->names.width = sizeof(struct mo_bytecode_register_name);
+        f->owned = MO_NO_INDEX;
         if (meta != NULL) {
             for (size_t j = 0; j < meta->body.bindings.count; j++) {
                 const struct mo_core_binding_meta *binding = &meta->body.bindings.items[j];
@@ -1067,14 +1563,46 @@ static MO_MUST_USE bool bodies(struct compiler *c) {
     uint32_t ignored = 0;
     if (type_result(c, mo_types_finish(&c->types), ignored) == MO_NO_INDEX)
         return false;
+    c->layouts = allocate(c, c->types.count, sizeof *c->layouts);
+    if (c->layouts == NULL)
+        return false;
     for (uint32_t i = 0; i < c->types.count; i++) {
         const struct mo_type *t = &c->types.items[i];
+        c->layouts[i] = MO_NO_INDEX;
+        if (t->kind == MO_TYPE_TUPLE) {
+            enum mo_type_problem status =
+                mo_types_layout(&c->types,
+                                &(struct mo_layout){.kind = MO_LAYOUT_TUPLE,
+                                                    .type = i,
+                                                    .case_index = MO_NO_INDEX,
+                                                    .function = MO_NO_INDEX,
+                                                    .fields = t->parameters,
+                                                    .field_count = t->parameter_count},
+                                &c->layouts[i]);
+            if (type_result(c, status, c->layouts[i]) == MO_NO_INDEX)
+                return false;
+        }
         if (t->kind == MO_TYPE_CHOICE) {
-            for (uint32_t j = 0; j < t->case_count; j++)
-                if (mo_case_shape(&c->types, i, j) != MO_CASE_EMPTY &&
-                    mo_case_shape(&c->types, i, j) != MO_CASE_INLINE)
-                    return unsupported(
-                        c, "Reference and boxed choice payloads are not implemented yet.");
+            for (uint32_t j = 0; j < t->case_count; j++) {
+                if (mo_case_shape(&c->types, i, j) != MO_CASE_BOXED)
+                    continue;
+                uint32_t *fields = allocate(c, t->cases[j].field_count, sizeof *fields);
+                if (fields == NULL)
+                    return false;
+                for (uint32_t k = 0; k < t->cases[j].field_count; k++)
+                    fields[k] = t->cases[j].fields[k].type;
+                enum mo_type_problem status =
+                    mo_types_layout(&c->types,
+                                    &(struct mo_layout){.kind = MO_LAYOUT_CASE,
+                                                        .type = i,
+                                                        .case_index = j,
+                                                        .function = MO_NO_INDEX,
+                                                        .fields = fields,
+                                                        .field_count = t->cases[j].field_count},
+                                    &ignored);
+                if (type_result(c, status, ignored) == MO_NO_INDEX)
+                    return false;
+            }
         }
     }
     return true;
@@ -1088,6 +1616,10 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
         c->declaration = meta == NULL ? (struct mo_core_span){0} : meta->span;
         /* Helpers added while initializing are already initialized. Do not reinitialize them. */
         c->span = c->declaration;
+        for (uint32_t j = 0; j < fun->parameter_count; j++)
+            if (reference(c, fun->parameters[j].type) &&
+                fun->parameters[j].ownership == MO_PARAMETER_OWNED)
+                owner_add(f, j);
         uint32_t count = f->regs.count;
         for (uint32_t j = fun->parameter_count; j < count; j++)
             if (!initialize(c, f, j, 0))
@@ -1178,14 +1710,17 @@ bool mo_compile(const struct mo_core *core, struct mo_buffer *out, struct mo_dia
     MO_ASSERT(core != NULL && out != NULL && out->length == 0 && diags != NULL);
     if (!mo_core_check(core, diags))
         return false;
-    struct compiler c = {.core = core};
+    struct compiler c = {.core = core, .range_int = MO_NO_INDEX};
     mo_arena_init(&c.arena, MO_LIMIT_CODEGEN_SCRATCH_SIZE);
     mo_types_init(&c.types, &c.arena);
     c.strings.width = sizeof(struct mo_bytecode_string);
     c.constants.width = sizeof(struct mo_bytecode_constant);
     c.modules.width = sizeof(struct mo_bytecode_module);
     c.constructors.width = sizeof(struct mo_codegen_index *);
-    bool ok = entry_valid(&c) && declarations(&c) && bodies(&c) && output(&c, out);
+    c.ownership.width = sizeof(struct ownership);
+    c.edges.width = sizeof(struct edge);
+    bool ok =
+        entry_valid(&c) && declarations(&c) && bodies(&c) && borrow_infer(&c) && output(&c, out);
     if (!ok) {
         MO_ASSERT(c.error != 0 && out->length == 0);
         struct mo_buffer label;

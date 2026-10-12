@@ -806,7 +806,8 @@ crash. A tail call reuses its frame, so tail calls never grow the stack
   source and finds `<Module>.main` by full name in the function table.
   `mo_compile` requires Core's first-match ordinary entry to have that full
   name (from compiler metadata, or `module + "." + name` for `noSource`).
-  E1058 reports a lowering bug if it does not. Core's checker still permits
+  No earlier function may shadow that full name. E1058 reports a lowering
+  bug if either condition fails. Core's checker still permits
   arbitrary entry names, as the Lean model does; this is an image/tool contract.
 - **`mo test`** runs every example, every test, and every promise against
   generated inputs, or those that `--only` and `--in` choose by the names of
@@ -1051,21 +1052,26 @@ instead of giving a verdict. C must refuse these mismatches promptly; C
 regressions cover them, but they are outside the runnable differential corpus.
 No Lean rule is changed to accommodate this resource limitation.
 
-**Core code generation, first slice.** `mo_compile` rechecks the complete Core
+**Core code generation, staged slices.** `mo_compile` rechecks the complete Core
 document, then writes through `mo_bytecode_write`. Failure appends a diagnostic
 and leaves output empty; success owns its bytes independently of Core. E1055
 means an unfinished compiler form, not a source error; E1056 means scratch or
 allocation exhaustion; E1057 means compiler-produced bytecode was refused.
 Registers, instructions and format limits use E1013, E1014 and E1015.
 
-This slice compiles immediate scalar literals, variables, lets, direct calls
-(tail calls in every tail position), if, stop, and nonempty choices with empty
-or single small immediate payloads, including Option, Result, Ordering and
-EntryKind. It retains all five Core function kinds. Reference values and borrow
-inference, closures, globals/init, aggregates, primitives/host operations, fail,
-joins and reuse remain for subsequent slices. All fifteen existing sample
-fixtures are attempted in CI but still explicitly unsupported; generated
-programs within the slice must all compile, never merely refuse consistently.
+The first slice compiles immediate scalar literals, variables, lets, direct
+calls, if, stop, and choices with small immediate payloads. The second adds
+Text and Bytes literals, Text/Bytes/BigInt references, borrow inference,
+tuples of at least two elements and projections, multi-field/boxed and recursive
+choices, Range make/start/end, and spec fail. Option, Result, Ordering and
+EntryKind retain separate instantiated types. It retains all five Core
+function kinds and direct tail calls in every tail position it supports.
+Closures/application, globals/init, collections, other primitives/host operations,
+BigInt decimal literals, joins and reuse remain for subsequent slices. The
+sample fixtures and Core fuzz corpora are attempted in CI; unfinished forms,
+entry-name mismatches and invalid compiler inputs are counted separately.
+Generated programs within the slices must all compile, never merely refuse
+consistently.
 Writer structural checks apply now; its verifier applies when stream 3 lands.
 Outcome comparison with Lean waits for the VM.
 
@@ -1081,30 +1087,70 @@ names, module order/exports, file remapping, declaration and expression spans,
 original binder names/ranges, spec text/links/expectations/condition lines.
 Absent expression spans clear attribution, not inherit the previous span.
 
-The first allocator assigns distinct monotonically numbered temporaries and
-binders; it does not yet recycle registers. It initializes immediate
-temporaries before control splits so incoming definition/ownership states
-agree. Stop reasons are borrowed immortal Text constants, never owned values.
-Single-field default cases share one initialized helper per field type.
-These extra instructions/registers obey the same explicit limits. Register
-names run from the binder's write through its body (parameters through the
-function), not through temporary initialization.
+Borrow inference builds ownership dependencies between parameters, aliases,
+merge results and call arguments. Returns, constructed fields, projections
+and call results require owners. Tail calls add argument-to-parameter edges
+as well as parameter-to-argument edges. A queue propagates each owned slot
+once, including across recursive calls; non-function kinds always own their
+reference parameters. This is conservative across merged aliases. Consuming
+operands get separate duplicates, even when two operands denote the same
+variable. Temporary owners are dropped after use; binders live through their
+lexical scope, and remaining owners are dropped before returns/tail calls.
+Stop and fail abandon the frame through the outcome path, not normal cleanup.
 
-Preparation and emission visit each expression once. Ordered AVL indices for
-strings, constants, declarations, lexical names and per-type constructors
+The allocator still assigns monotonically numbered temporaries and binders;
+recycling remains for a later slice. It initializes immediate and scalar
+constant slots before control splits so incoming states agree; aggregate
+references stay undefined until written, never receive invented inhabitants.
+Tail branches support references. Reconverging branches support stable
+literal/variable results but refuse path-local owners with E1055, including
+owned nested merges or consumed reference call arguments. Dropping those
+owners alone would leave `moved` versus `undefined` states at the join.
+The allocator must normalize those states before lifting this staged refusal.
+Register names run from the binder's write through its body (parameters
+through the function), not through temporary initialization.
+
+Preparation, inference and emission take a bounded number of walks. Ordered
+AVL indices for strings, constants, declarations, lexical names and per-type constructors
 give logarithmic lookup; case emission never searches a declaration by a long
 type name. Recursion follows the checked Core depth bound; wide lists/arms
 are iterative. `MO_LIMIT_CODEGEN_SCRATCH_SIZE` is 512 bytes per permitted Core
-node (512 MiB), separate from checking and text parsing. The register-boundary
-test compiles a 65,533-case choice with a two-million-byte name at 65,535
-registers and refuses one more case with E1013.
+node (512 MiB), separate from checking and text parsing. Ownership slots/edges
+have explicit node-proportional limits in `limits.h`. Cleanup walks only live
+owners. Tail-arm owner restoration costs no more than the cleanup emitted by
+those arms; reconverging arms never copy or scan the full register table.
+Emission stops at instruction/register limits, even when cleanup expands code.
+The register-boundary test compiles a 65,533-element tuple at 65,535 registers
+and refuses one more element with E1013. Its one basic block keeps the test
+independent of verification's registers × blocks bound.
 
-Some valid Core has no direct encoding in the current bytecode contract:
-empty choices, duplicate constructor names, undeclared data types and
-zero/one-element tuples. Empty/NUL-containing names also need a naming policy.
-The first slice explicitly refuses these, rather than inventing inhabitants,
-merging identities or changing Lean rules. Their complete representation is
-still open for the later compiler slices.
+The remaining representation decisions are fixed below; their implementation
+waits for subsequent compiler slices and the noted bytecode/type-builder
+extensions. Until then each has an explicit E1055 refusal, not an altered Core
+checker or an invalid-bytecode diagnostic:
+
+- **Empty choices:** nominal types with zero cases and no inhabitants. Never
+  insert a dummy constructor. The bytecode reader/type builder must permit
+  zero cases, and a zero-target switch has no continuation.
+- **Undeclared data types:** one distinct, empty nominal choice per name,
+  used only where Core's checker permits that type. They cannot be constructed;
+  they do not alias Unit or any declared type. This uses the empty-choice extension.
+- **Duplicate constructor names:** preserve first-match construction and
+  evaluation by retaining only the first same-named constructor and its arm.
+  Check every arm by declaration position before discarding unreachable arms,
+  including bodies whose fields differ. Never overwrite a switch target with
+  the later arm. This needs compiler remapping, not a bytecode format change.
+- **Zero/one-element tuples:** retain tuple identity, arity and projection
+  behavior, not Unit or the sole element's representation. The bytecode reader
+  and type builder must permit these arities and their tuple layouts.
+- **Empty/NUL-containing names:** lexical Core keys stay byte strings; they
+  need no renaming when absent from bytecode. Emitted type, case and named-field
+  names must eventually retain exact bytes, not a lossy escape or C-string
+  truncation. This requires length-aware runtime names and relaxed bytecode
+  name checks. Empty single-field names still mean unnamed fields; empty
+  multi-field labels and duplicate field labels also need that extension.
+  Compiler metadata already requires nonempty NUL-free display/file/module
+  names, independently of Core's lexical keys. Text/Bytes payloads allow NUL now.
 
 ```c
 /* src/base/diag.h: diagnostics, rendered as text or JSON by src/tools. */
