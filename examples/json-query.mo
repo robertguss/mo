@@ -5,7 +5,7 @@
 ## places, and \u escapes for characters beyond U+FFFF.
 ##
 ##   json [PATH] < FILE.json
-module Json
+module JsonQuery
 
 enum Json
   Null

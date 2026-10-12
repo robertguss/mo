@@ -708,7 +708,7 @@ constructor makes a capability rather than using one, so `host` calls it by
 
 - `Console`: `print`, `error`, `read_line`, `printed` and `printed_errors`;
 - `Files`: `read_text`, `read_bytes`, `write_text`, `append_text`, `remove`,
-  `list`, `exists?`, `within` and `read_only`;
+  `list`, `entries`, `exists?`, `within` and `read_only`;
 - `Clock`: `now`. `Random`: `int`. `Args`: `list`. `Env`: `get`;
 - the fake constructors: `Console.fake`, `Console.fake_input`,
   `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `Args.of` and `Env.of`.

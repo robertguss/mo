@@ -66,9 +66,10 @@ static const struct type types[] = {
     {"Bytes", 0, false, false},    {"List", 1, false, false},      {"Map", 2, false, false},
     {"Set", 1, false, false},      {"Range", 0, true, false},      {"Time", 0, true, false},
     {"Duration", 0, true, false},  {"Option", 1, false, false},    {"Result", 2, false, false},
-    {"Ordering", 0, true, false},  {"FileError", 0, false, false}, {"Args", 0, false, true},
-    {"Env", 0, false, true},       {"Console", 0, false, true},    {"Files", 0, false, true},
-    {"ReadFiles", 0, false, true}, {"Clock", 0, false, true},      {"Random", 0, false, true},
+    {"Ordering", 0, true, false},  {"FileError", 0, false, false}, {"Entry", 0, false, false},
+    {"EntryKind", 0, true, false}, {"Args", 0, false, true},       {"Env", 0, false, true},
+    {"Console", 0, false, true},   {"Files", 0, false, true},      {"ReadFiles", 0, false, true},
+    {"Clock", 0, false, true},     {"Random", 0, false, true},
 };
 
 /* The five abilities (reference 9.2). */
@@ -634,12 +635,14 @@ static void test_every_capability_operation_is_there(void) {
         {"Files", "append_text"},
         {"Files", "remove"},
         {"Files", "list"},
+        {"Files", "entries"},
         {"Files", "exists?"},
         {"Files", "within"},
         {"Files", "read_only"},
         {"ReadFiles", "read_text"},
         {"ReadFiles", "read_bytes"},
         {"ReadFiles", "list"},
+        {"ReadFiles", "entries"},
         {"ReadFiles", "exists?"},
         {"ReadFiles", "within"},
         {"Clock", "now"},
