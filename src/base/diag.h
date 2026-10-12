@@ -1,10 +1,11 @@
 /* Diagnostics, and the source files they point into (architecture sections 3.1 and 3.5).
  *
- * Every stage reports into one struct mo_diags: a code from src/base/codes.h, a primary span with
- * a label, secondary spans with labels, a message in the reference's words, the section it cites,
- * and fixes as text edits. Spans hold byte offsets; lines and columns are computed only when a
- * message is shown, from the files in struct mo_sources. Showing diagnostics, as the text of
- * reference appendix A or as JSON for mo check --json, is src/tools's work. */
+ * Every stage reports into one struct mo_diags: a code from src/base/codes.h, a headline and a
+ * reason in the reference's words, the section the reason cites, a primary span with a label,
+ * secondary spans with labels, and fixes, each one or more text edits. Spans hold byte offsets;
+ * lines and columns are computed only when a message is shown, from the files in struct
+ * mo_sources. Showing diagnostics, as the text of reference appendix A or as JSON for mo check
+ * --json, is src/tools's work. */
 #ifndef MO_DIAG_H
 #define MO_DIAG_H
 
@@ -29,23 +30,37 @@ struct mo_label {
     const char *text;
 };
 
-/* A fix, as a text edit: the bytes of span are replaced with replacement, which may be empty to
- * delete them. An empty span inserts. */
-struct mo_fix {
+/* A text edit: the bytes of span are replaced with replacement, which may be empty to delete them.
+ * An empty span inserts. */
+struct mo_edit {
     struct mo_span span;
     const char *replacement;
 };
 
-/* One error. Mo has no warnings: a problem is an error, or it isn't reported (reference appendix
- * A). */
+/* A fix: edit_count edits, at least one and at most MO_LIMIT_FIX_EDITS, applied together or not
+ * at all, each against the original text. So they must not overlap: no two may change a byte in
+ * common, or insert at the same place, where their order would be unclear. An insertion may sit
+ * at either end of a span another edit replaces. */
+struct mo_fix {
+    const char *title; /* what it does, such as "pass the failure upward with try"; may be NULL */
+    const struct mo_edit *edits;
+    uint32_t edit_count;
+};
+
+/* One error, as reference appendix A shows it. Mo has no warnings: a problem is an error, or it
+ * isn't reported. */
 struct mo_diag {
     uint16_t code;                    /* such as 412 for E0412, registered in src/base/codes.h */
     struct mo_label primary;          /* where the error is */
     const struct mo_label *secondary; /* secondary_count other places it involves */
     uint32_t secondary_count;
-    const char *message; /* in the reference's words */
-    /* The reference section it cites, such as "8.3": always its code's, from src/base/codes.h.
-     * NULL for the codes of limits, which cite none. mo_diags_add fills it in. */
+    /* The headline, appendix A's first line, in the reference's words: "a failure is ignored". */
+    const char *message;
+    /* One sentence that says why, citing the rule's section, such as "Mo never drops a failure
+     * silently (reference 8.3)." NULL only for the codes of limits, which cite no section. */
+    const char *reason;
+    /* The reference section the reason cites, such as "8.3": always its code's, from
+     * src/base/codes.h, and NULL for the codes of limits. mo_diags_add fills it in. */
     const char *section;
     /* fix_count fixes, each one way to fix the error: mo fix applies the fix of a diagnostic that
      * has exactly one. */
@@ -69,8 +84,9 @@ MO_MUST_USE bool mo_diags_init(struct mo_diags *diags);
 /* Frees the diagnostics and everything they hold. */
 void mo_diags_free(struct mo_diags *diags);
 
-/* Adds a copy of diag, with copies of its strings, labels and fixes, and its code's section. Its
- * code must be registered, and its section NULL or its code's.
+/* Adds a copy of diag, with copies of its strings, labels, fixes and edits, in the order given, and
+ * its code's section. Its code must be registered, its section NULL or its code's, its reason NULL
+ * only if its code cites no section, and each fix as struct mo_fix says.
  *
  * Past MO_LIMIT_DIAGNOSTICS diagnostics or MO_LIMIT_DIAGNOSTICS_SIZE bytes, or when the system has
  * no memory, it adds nothing, takes no memory, counts the diagnostic in dropped, and returns false.

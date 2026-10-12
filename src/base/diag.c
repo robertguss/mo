@@ -32,12 +32,41 @@ static void check_span(struct mo_span span) {
     MO_ASSERT(span.start <= span.end);
 }
 
+/* Whether two edits of one fix can't both apply against the original text: they change a byte in
+ * common, one inserts inside the other's span, or both insert at the same place, where their
+ * order would be unclear. */
+static bool overlap(const struct mo_edit *a, const struct mo_edit *b) {
+    if (a->span.file != b->span.file) {
+        return false;
+    }
+    bool a_inserts = a->span.start == a->span.end;
+    bool b_inserts = b->span.start == b->span.end;
+    if (a_inserts && b_inserts) {
+        return a->span.start == b->span.start;
+    }
+    return a->span.start < b->span.end && b->span.start < a->span.end;
+}
+
+static void check_fix(const struct mo_fix *fix) {
+    MO_ASSERT(fix->edit_count >= 1 && fix->edit_count <= MO_LIMIT_FIX_EDITS);
+    MO_ASSERT(fix->edits != NULL);
+    for (uint32_t i = 0; i < fix->edit_count; i++) {
+        check_span(fix->edits[i].span);
+        MO_ASSERT(fix->edits[i].replacement != NULL);
+        /* Every pair, which MO_LIMIT_FIX_EDITS keeps to half a million. */
+        for (uint32_t j = 0; j < i; j++) {
+            MO_ASSERT(!overlap(&fix->edits[i], &fix->edits[j]));
+        }
+    }
+}
+
 /* Checks what every diagnostic must be, whether it is kept or not. */
 static void check_diag(const struct mo_diag *diag, const struct mo_code_info *code) {
     MO_ASSERT(code != NULL);
     MO_ASSERT(diag->section == NULL ||
               (code->section != NULL && strcmp(diag->section, code->section) == 0));
     MO_ASSERT(diag->message != NULL);
+    MO_ASSERT(diag->reason != NULL || code->section == NULL);
     check_span(diag->primary.span);
     MO_ASSERT(diag->secondary_count == 0 || diag->secondary != NULL);
     for (uint32_t i = 0; i < diag->secondary_count; i++) {
@@ -45,23 +74,22 @@ static void check_diag(const struct mo_diag *diag, const struct mo_code_info *co
     }
     MO_ASSERT(diag->fix_count == 0 || diag->fixes != NULL);
     for (uint32_t i = 0; i < diag->fix_count; i++) {
-        check_span(diag->fixes[i].span);
-        MO_ASSERT(diag->fixes[i].replacement != NULL);
+        check_fix(&diag->fixes[i]);
     }
 }
 
-/* Adds to *size the bytes a copy of text takes, with its NUL, and nothing for NULL. False when the
- * sum doesn't fit in a size_t. */
-static bool count_text(size_t *size, const char *text) {
-    if (text == NULL) {
-        return true;
-    }
-    size_t more = strlen(text) + 1;
+/* Adds more to *size. False when the sum doesn't fit in a size_t. */
+static bool count_size(size_t *size, size_t more) {
     if (more > SIZE_MAX - *size) {
         return false;
     }
     *size += more;
     return true;
+}
+
+/* Adds to *size the bytes a copy of text takes, with its NUL, and nothing for NULL. */
+static bool count_text(size_t *size, const char *text) {
+    return text == NULL || count_size(size, strlen(text) + 1);
 }
 
 /* Copies text to *place and moves *place past the copy. NULL stays NULL. */
@@ -76,55 +104,88 @@ static const char *place_text(char **place, const char *text) {
     return copy;
 }
 
-_Static_assert(_Alignof(struct mo_fix) <= _Alignof(struct mo_label) &&
-                   sizeof(struct mo_label) % _Alignof(struct mo_fix) == 0,
-               "a diagnostic's fixes can follow its labels in one block");
+_Static_assert(_Alignof(struct mo_fix) == _Alignof(struct mo_label) &&
+                   _Alignof(struct mo_edit) == _Alignof(struct mo_label),
+               "a diagnostic's labels, fixes and edits can follow each other in one block");
 
-/* Fills *copy with diag, with copies of its labels, its fixes and then its strings, all in one
- * block of the arena, so that a diagnostic is kept whole or takes nothing. False when the block
- * doesn't fit. */
-static bool copy_diag(struct mo_arena *arena, const struct mo_diag *diag, const char *section,
-                      struct mo_diag *copy) {
-    /* Neither count can pass UINT32_MAX, so on a 64-bit platform neither product overflows. */
-    size_t labels_size = (size_t)diag->secondary_count * sizeof(struct mo_label);
-    size_t fixes_size = (size_t)diag->fix_count * sizeof(struct mo_fix);
-    size_t size = labels_size + fixes_size;
-    bool counted = count_text(&size, diag->primary.text) && count_text(&size, diag->message);
+/* The bytes a copy of diag takes in one block: its labels, its fixes, their edits, and then its
+ * strings. False when they don't fit in a size_t. */
+static bool count_diag(const struct mo_diag *diag, size_t *size_out) {
+    /* No count passes UINT32_MAX, so on a 64-bit platform no product overflows. */
+    size_t size = (size_t)diag->secondary_count * sizeof(struct mo_label);
+    bool counted = count_size(&size, (size_t)diag->fix_count * sizeof(struct mo_fix)) &&
+                   count_text(&size, diag->primary.text) && count_text(&size, diag->message) &&
+                   count_text(&size, diag->reason);
     for (uint32_t i = 0; counted && i < diag->secondary_count; i++) {
         counted = count_text(&size, diag->secondary[i].text);
     }
     for (uint32_t i = 0; counted && i < diag->fix_count; i++) {
-        counted = count_text(&size, diag->fixes[i].replacement);
+        const struct mo_fix *fix = &diag->fixes[i];
+        counted = count_size(&size, (size_t)fix->edit_count * sizeof(struct mo_edit)) &&
+                  count_text(&size, fix->title);
+        for (uint32_t j = 0; counted && j < fix->edit_count; j++) {
+            counted = count_text(&size, fix->edits[j].replacement);
+        }
     }
-    void *block = counted ? mo_arena_allocate(arena, size, _Alignof(struct mo_label)) : NULL;
+    *size_out = size;
+    return counted;
+}
+
+/* Fills *copy with diag, its labels, fixes, edits and strings copied into one block of the arena,
+ * so that a diagnostic is kept whole or takes nothing. False when the block doesn't fit. */
+static bool copy_diag(struct mo_arena *arena, const struct mo_diag *diag, const char *section,
+                      struct mo_diag *copy) {
+    size_t size = 0;
+    void *block =
+        count_diag(diag, &size) ? mo_arena_allocate(arena, size, _Alignof(struct mo_label)) : NULL;
     if (block == NULL) {
         return false;
     }
+    /* The labels, then the fixes, then the edits of each fix in turn, then the strings. These are
+     * parts of size, so none of them overflows. */
+    size_t labels_size = (size_t)diag->secondary_count * sizeof(struct mo_label);
+    size_t fixes_size = (size_t)diag->fix_count * sizeof(struct mo_fix);
+    size_t edits_size = 0;
+    for (uint32_t i = 0; i < diag->fix_count; i++) {
+        edits_size += (size_t)diag->fixes[i].edit_count * sizeof(struct mo_edit);
+    }
     struct mo_label *labels = block;
-    void *after_labels = (char *)block + labels_size;
-    struct mo_fix *fixes = after_labels;
-    char *place = (char *)block + labels_size + fixes_size;
+    void *fixes_place = (char *)block + labels_size;
+    struct mo_fix *fixes = fixes_place;
+    void *edits_place = (char *)fixes_place + fixes_size;
+    struct mo_edit *edits = edits_place;
+    char *strings = (char *)edits_place + edits_size;
+
     *copy = (struct mo_diag){.code = diag->code, .section = section};
     copy->primary.span = diag->primary.span;
-    copy->primary.text = place_text(&place, diag->primary.text);
-    copy->message = place_text(&place, diag->message);
+    copy->primary.text = place_text(&strings, diag->primary.text);
+    copy->message = place_text(&strings, diag->message);
+    copy->reason = place_text(&strings, diag->reason);
     for (uint32_t i = 0; i < diag->secondary_count; i++) {
         labels[i].span = diag->secondary[i].span;
-        labels[i].text = place_text(&place, diag->secondary[i].text);
+        labels[i].text = place_text(&strings, diag->secondary[i].text);
     }
     if (diag->secondary_count > 0) {
         copy->secondary = labels;
         copy->secondary_count = diag->secondary_count;
     }
     for (uint32_t i = 0; i < diag->fix_count; i++) {
-        fixes[i].span = diag->fixes[i].span;
-        fixes[i].replacement = place_text(&place, diag->fixes[i].replacement);
+        const struct mo_fix *fix = &diag->fixes[i];
+        fixes[i].title = place_text(&strings, fix->title);
+        fixes[i].edits = edits;
+        fixes[i].edit_count = fix->edit_count;
+        for (uint32_t j = 0; j < fix->edit_count; j++) {
+            edits[j].span = fix->edits[j].span;
+            edits[j].replacement = place_text(&strings, fix->edits[j].replacement);
+        }
+        edits += fix->edit_count;
     }
     if (diag->fix_count > 0) {
         copy->fixes = fixes;
         copy->fix_count = diag->fix_count;
     }
-    MO_ASSERT(place == (char *)block + size);
+    MO_ASSERT((void *)edits == (char *)edits_place + edits_size);
+    MO_ASSERT(strings == (char *)block + size);
     return true;
 }
 

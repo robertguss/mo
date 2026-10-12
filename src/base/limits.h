@@ -177,6 +177,10 @@ static inline struct mo_limits mo_limits_default(void) {
  * diagnostic that doesn't fit, as it does past MO_LIMIT_DIAGNOSTICS. */
 #define MO_LIMIT_DIAGNOSTICS_SIZE (64 << 20)
 
+/* Edits in one fix. mo_diags_add checks every pair of a fix's edits for overlap, and this bounds
+ * that work. A stage gives no fix rather than one with more: mo_diags_add asserts it. */
+#define MO_LIMIT_FIX_EDITS 1024
+
 /* How the limits depend on each other and on the formats. */
 _Static_assert(MO_LIMIT_FILE_SIZE < UINT32_MAX, "spans hold byte offsets in 32 bits");
 _Static_assert(MO_LIMIT_PROGRAM_SIZE >= MO_LIMIT_FILE_SIZE, "a program can be one large file");
