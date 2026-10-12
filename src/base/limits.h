@@ -61,6 +61,11 @@
 #define MO_LIMIT_CORE_NODES (1 << 20)
 #define MO_LIMIT_CORE_SCRATCH_SIZE (128 << 20)
 
+/* Core checking keeps interned types, prepared expressions, lexical indices and memo answers.
+ * Size its two arenas from the interchange node budget, not the text codec's scratch budget.
+ * E1053 for exceeding this scratch limit or when the system cannot allocate it. */
+#define MO_LIMIT_CORE_CHECK_SCRATCH_SIZE (UINT64_C(512) * MO_LIMIT_CORE_NODES)
+
 /* How deeply interpolations may nest inside each other's text, as the executable grammar allows
  * (grammar/lexer.c uses this limit). The lexer refuses deeper ones: E1007. */
 #define MO_LIMIT_INTERPOLATION_DEPTH 16
