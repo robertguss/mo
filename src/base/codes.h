@@ -67,7 +67,14 @@
     X(1023, CORE_ARITY, NULL)                                                                      \
     X(1024, CORE_FIELD, NULL)                                                                      \
     X(1025, CORE_NUMBER, NULL)                                                                     \
-    X(1026, CORE_CHARACTER, NULL)
+    X(1026, CORE_CHARACTER, NULL)                                                                  \
+    /* Invalid compiler-produced Core, not mistakes in Mo source. */                               \
+    X(1027, CORE_CHECK_METADATA, NULL)                                                             \
+    X(1028, CORE_CHECK_CONSTANT_NAME, NULL)                                                        \
+    X(1029, CORE_CHECK_ENTRY, NULL)                                                                \
+    X(1030, CORE_CHECK_ENTRY_KIND, NULL)                                                           \
+    X(1031, CORE_CHECK_KIND, NULL)                                                                 \
+    X(1032, CORE_CHECK_PREFIX, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */
 enum mo_code {
