@@ -8,9 +8,10 @@ an executable evaluator, with proofs.
 
 Core is a **typed, monomorphic, strict functional language**:
 
-- **Types**: `Int` (64-bit, checked), `BigInt`, `Decimal` (an integer count
-  of 10⁻¹⁸ within ±(2¹²⁷ − 1)), `Float`, `Bool`, `Char`, `Text`, `Unit`,
-  `Time` and `Duration` (whole microseconds), tuples, `List`, `Map`
+- **Types**: `Int` (64-bit, checked), `BigInt`, `Byte` (0 to 255), `Decimal`
+  (an integer count of 10⁻¹⁸ within ±(2¹²⁷ − 1)), `Float`, `Bool`, `Char`,
+  `Text`, `Bytes`, `Unit`, `Range` (`a..b`, two `Int`s), `Time` and
+  `Duration` (whole microseconds), tuples, `List`, `Map`
   (insertion-ordered; `Set(T)` is `Map(T, Unit)`), declared data types
   (records and choice types share one form, looked up by name in the
   program's data table), the library's `Option` (`None`, then `Some`, as
@@ -29,10 +30,11 @@ Core is a **typed, monomorphic, strict functional language**:
 - **Effects** go through primitives on capability handles, which read and
   update one `World`: arguments, environment variables, standard input,
   standard output and error, an insertion-ordered in-memory file map, the
-  clock's time and a random seed. A `Files` or `ReadFiles` handle reaches one
-  folder; `within` a path that would leave it gives a handle that reaches
-  nothing, on which every call that returns a `Result` gives
-  `Error(NotAllowed(path))` and `exists?` gives `false`.
+  clock's time and a random seed. Files hold texts, so `read_bytes` gives a
+  file's text as UTF-8. A `Files` or `ReadFiles` handle reaches one folder;
+  `within` a path that would leave it gives a handle that reaches nothing, on
+  which every call that returns a `Result` gives `Error(NotAllowed(path))` and
+  `exists?` gives `false`.
 - **Semantics**: `eval : Nat → Program → Env → World → Expr → Outcome`, a
   big-step evaluator with fuel. An outcome is a value and the new world;
   `stopped` on a bug (overflow, division by zero, `stop`, a library call
@@ -54,7 +56,8 @@ The project uses Lean 4.34.0 (`lean-toolchain` names
 `leanprover/lean4:v4.34.0`) and nothing but Lean's bundled library. A clean
 build takes about half a minute. It checks every proof, runs the checker on
 all twelve sample programs inside the kernel, and evaluates every example and
-test with `#guard`, so a wrong result fails the build.
+test, and the checks of `MoCore/Builtins.lean`, with `#guard`, so a wrong
+result fails the build.
 
 ## Layout
 
@@ -66,6 +69,7 @@ test with `#guard`, so a wrong result fails the build.
 | `MoCore/Support/Num.lean` | Exact arithmetic: rounding (ties to even, ties away from zero), decimal multiplication and division, wrapping and saturating, decimal and whole-number text forms and parsers. |
 | `MoCore/Support/Text.lean` | The text functions of reference 14 (`lines`, `words`, `split`, `trim`, ...), over lists of characters. |
 | `MoCore/Support/Time.lean` | Calendar conversions and RFC 3339 text for times; durations' text form. |
+| `MoCore/Support/Bytes.lean` | UTF-8 over lists of bytes: encoding text (`Text.bytes`) and decoding it (`Bytes.decode_utf8`, by table 3-7 of the Unicode Standard); the order of bytes. |
 | `MoCore/Support/Equiv.lean` | Structural equality of values (maps in any order, floats by IEEE) and the built-in orders. |
 | `MoCore/Prim.lean` | What every primitive does: `Prim.eval`, with the range checks. |
 | `MoCore/Eval.lean` | The evaluator `eval`, and `run`/`holds` for running programs. |
@@ -78,8 +82,9 @@ test with `#guard`, so a wrong result fails the build.
 | `MoCore/DSL.lean` | Lean helpers for writing Core programs readably, named after the Mo constructs they lower. |
 | `MoCore/Lib.lean` | Library functions written in Core (`map`, `filter`, `sort_by_desc`, `update`, ...), as generators instantiated per type, and the order they sort by (`Lib.lt`, in which a float that is "not a number" comes last). |
 | `MoCore/Testing.lean` | `passes` and `scenario` for checking examples and tests, and `stops` for checking that an expression stops on a bug; lemmas turning a checked program into "never goes wrong" theorems. |
+| `MoCore/Builtins.lean` | Checks of `Byte`, `Bytes` and `Range`, which the samples use little, written like the samples' checks: every primitive of the three, ranges up to the largest `Int`, and UTF-8 decoding against Lean's own decoder. |
 | `MoCore/Examples/*.lean` | The twelve samples of `examples/`, each in Core, with every example line and test of the sample as a `#guard`, and theorems that the program is well typed and never goes wrong. |
-| `TRANSLATION.md` | The lowering from every v0.1 feature to Core, how the model follows the answers D227 gave to the questions writing it raised, and the three things D228 added. |
+| `TRANSLATION.md` | The lowering from every v0.1 feature to Core, how the model follows the answers D227 gave to the questions writing it raised, the three things D228 added, and what the model decided in making `Byte`, `Bytes` and `Range` types of their own. |
 
 ## The twelve programs
 
@@ -118,9 +123,10 @@ Everything below is fully proven: there is no `sorry` anywhere.
 - `eval_never_wrong`: under the same hypotheses, `eval n P ρ w e ≠ .wrong msg`.
 - `eval_ok_typed`: if `eval n P ρ w e = .ok v w'` then `ValTy P v τ`.
 - `eval_no_stray_jump`: `eval n P ρ w e ≠ .jumped j vs w'`.
-- `int_result_in_range` and `decimal_result_in_range`: an `Int` result is
-  within the 64-bit range and a `Decimal` result within ±(2¹²⁷ − 1), because
-  value typing includes the ranges: overflow can only stop.
+- `int_result_in_range`, `byte_result_in_range` and
+  `decimal_result_in_range`: an `Int` result is within the 64-bit range, a
+  `Byte` result from 0 to 255 and a `Decimal` result within ±(2¹²⁷ − 1),
+  because value typing includes the ranges: overflow can only stop.
 - `eval_deterministic`: the evaluator is a function, so equal inputs give
   equal outcomes.
 
@@ -137,15 +143,17 @@ Everything below is fully proven: there is no `sorry` anywhere.
 
 - `prims_safe : PrimsSafe P`, for every program, from one theorem per group:
   `intOp_safe` (all 32 `Int` operations, including checked, wrapping and
-  saturating arithmetic, conversions, durations and ranges), `bigOp_safe` (9),
-  `decOp_safe` (all 16 `Decimal` operations), `floatOp_safe` (13), `not_safe`,
-  `cmp_safe` (`<`, `<=`, `>`, `>=` at all nine base types), `charOp_safe` (7),
-  `textOp_safe` (all 26), `timeOp_safe` (all 13 `Time` and `Duration`
-  operations), `listOp_safe` (all 19 list operations, at every element type),
-  `mapOp_safe` (all 12, map literals included, at every key and value type),
-  `eq_safe` (structural equality at every type), and `ioOp_safe` (all 17
-  capability operations on the world, 21 counting the `Files` and `ReadFiles`
-  forms apart). So every primitive is proven safe, and `type_safety` has no
+  saturating arithmetic, conversions, `to_byte` among them, and durations),
+  `bigOp_safe` (9), `byteOp_safe` (2), `decOp_safe` (all 16 `Decimal`
+  operations), `floatOp_safe` (13), `not_safe`, `cmp_safe` (`<`, `<=`, `>`,
+  `>=` at all eleven base types), `charOp_safe` (7), `textOp_safe` (all 27,
+  `bytes` included), `bytesOp_safe` (3), `rangeOp_safe` (all 6 `Range`
+  operations), `timeOp_safe` (all 13 `Time` and `Duration` operations),
+  `listOp_safe` (all 19 list operations, at every element type), `mapOp_safe`
+  (all 12, map literals included, at every key and value type), `eq_safe`
+  (structural equality at every type), and `ioOp_safe` (all 18 capability
+  operations on the world, 23 counting the `Files` and `ReadFiles` forms
+  apart). So every primitive is proven safe, and `type_safety` has no
   hypothesis on primitives.
 
 **The checker is sound** (`MoCore/Check.lean`):
@@ -190,7 +198,9 @@ No theorem is left with `sorry`. What the proofs don't yet cover:
   proof that lowering preserves meaning.
 - **Functional correctness of primitives.** The primitives are proven to
   respect their types and ranges, not to compute what reference 14 says (for
-  example, that `decMul` rounds ties to even). The examples test that.
+  example, that `decMul` rounds ties to even). The examples test that, and
+  `MoCore/Builtins.lean` checks UTF-8 decoding against Lean's own decoder on
+  every sequence of one or two bytes and on large families of three and four.
 - **Floats** have no proofs beyond their types. Their text form writes a
   float that is not a number as `nan` and the infinities as `inf` and
   `-inf`, as reference 9.2 spells them (checked in `MoCore/Lib.lean`), but
@@ -203,17 +213,20 @@ No theorem is left with `sorry`. What the proofs don't yet cover:
 - **Progress for programs that don't terminate**: the evaluator returns
   `outOfFuel` for them; there is no coinductive semantics.
 
-Not modeled yet: `Byte` and `Bytes`, the `Unicode16` module, `Range` as a
-type of its own (a range is the pair of its ends, TRANSLATION.md 7.5), the
-text forms the lowering derives for records, choice types, tuples, lists and
-maps (`to_text[T]`, which both `"#{x}"` and `x.to_text` call, TRANSLATION.md
-3.4), the fake constructors (a test's fakes are its starting world, so two
-fakes of one kind can't be in use at the same time, TRANSLATION.md 12.4), the
-program layer of architecture section 4.1 (constants are functions without
-parameters, and nothing computes them all before `main` or the first test,
-TRANSLATION.md 10.4), and a text form (S-expressions) for Core programs and
-values, which architecture section 4.4 asks `formal/` to define for
-exchanging programs with the C toolchain.
+Not modeled yet: `Set` as a type of its own, as the VM has it (`bytecode.md`
+2.1; here a set is a map to `Unit`, TRANSLATION.md 3.8), `fail`, the failure
+of an assertion with its detail (architecture 4.1; here an `assert` stops,
+TRANSLATION.md 12.3), the `Unicode16` module, the text forms the lowering
+derives for records, choice types, tuples, lists and maps (`to_text[T]`,
+which both `"#{x}"` and `x.to_text` call, TRANSLATION.md 3.4), the fake
+constructors (a test's fakes are its starting world, so two fakes of one kind
+can't be in use at the same time, TRANSLATION.md 12.4), the program layer of
+architecture section 4.1 (constants are functions without parameters, and
+nothing computes them all before `main` or the first test, TRANSLATION.md
+10.4), and a text form (S-expressions) for Core programs and values, which
+architecture section 4.4 asks `formal/` to define for exchanging programs
+with the C toolchain. `Byte`, `Bytes` and `Range` are types of their own
+(TRANSLATION.md 3.2, 3.4 and 7.5, and the decisions in its last section).
 
 ## Axioms
 
