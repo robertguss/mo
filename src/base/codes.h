@@ -131,7 +131,13 @@
     X(1052, CORE_CHECK_LIMIT, NULL)                                                                \
     X(1053, CORE_CHECK_MEMORY, NULL)                                                               \
     /* The supplied syntax arena, or the system, has no room. */                                   \
-    X(1054, SYNTAX_NO_MEMORY, NULL)
+    X(1054, SYNTAX_NO_MEMORY, NULL)                                                                \
+    /* A valid Core form not yet implemented by the staged bytecode compiler. */                   \
+    X(1055, CODEGEN_UNSUPPORTED, NULL)                                                             \
+    /* Code generation's scratch limit or system allocation failure. */                            \
+    X(1056, CODEGEN_MEMORY, NULL)                                                                  \
+    /* The bytecode writer/verifier refused compiler-produced data: a compiler bug. */             \
+    X(1057, CODEGEN_INVALID, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */
 enum mo_code {

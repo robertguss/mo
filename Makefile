@@ -121,10 +121,10 @@ fuzz-smoke: $(FUZZERS)
 			if [ "$$variant" = large ]; then \
 				name=$${base}_large; options="-max_len=134217728 -timeout=30"; fi; \
 			corpus=$(FUZZ_BUILD)/corpus/$$name; \
-			if [ "$$base" = fuzz_core_text ] || [ "$$base" = fuzz_core_check ]; then rm -rf $$corpus; fi; \
+			if [ "$$base" = fuzz_core_text ] || [ "$$base" = fuzz_core_check ] || [ "$$base" = fuzz_codegen ]; then rm -rf $$corpus; fi; \
 			mkdir -p $$corpus; \
 			if [ -d fuzz/corpus/$$name ]; then cp -R fuzz/corpus/$$name/. $$corpus/; fi; \
-			if [ "$$name" = fuzz_core_text ] || [ "$$name" = fuzz_core_check ]; then \
+			if [ "$$name" = fuzz_core_text ] || [ "$$name" = fuzz_core_check ] || [ "$$name" = fuzz_codegen ]; then \
 				cp tests/core/*.core fuzz/corpus/fuzz_core_text/*.core $$corpus/; fi; \
 			if [ "$$name" = fuzz_syntax ]; then cp grammar/tests/good/*.mo grammar/tests/bad/*.mo examples/*.mo $$corpus/; fi; \
 			if [ "$$name" = fuzz_syntax ]; then \
