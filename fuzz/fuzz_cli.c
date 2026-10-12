@@ -1,7 +1,7 @@
 /* Fuzzes the argument parser: the input's zero bytes split it into arguments.
  * Whatever arrives, the parser must return a known command without tripping
  * an assertion or a sanitizer. */
-#include "../src/cli.h"
+#include "tools/cli.h"
 
 #include <stddef.h>
 #include <stdint.h>

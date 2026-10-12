@@ -55,10 +55,14 @@ bash ci/check.sh    # everything CI runs: run it before every push
 ```
 
 Choose a compiler with `CC=gcc` or `CC=clang`. Each compiler builds into its
-own directory, and only changed files recompile; changing the Makefile
-recompiles everything. `make sanitize` stops at the first error by default;
-set `ASAN_OPTIONS` or `UBSAN_OPTIONS` in your environment to use your own
-options instead.
+own directory, and only changed files recompile; changing the Makefile, or
+adding or removing a C file in `src/`, recompiles everything. `make sanitize`
+stops at the first error by default; set `ASAN_OPTIONS` or `UBSAN_OPTIONS` in
+your environment to use your own options instead.
+
+The C sources are in `src/`, with a directory for each module of the
+architecture (section 2), and the Makefile builds every C file in them.
+Headers are included by their path in `src/`, such as `"base/base.h"`.
 
 ## The executable grammar
 
