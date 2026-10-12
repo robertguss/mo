@@ -12,6 +12,7 @@
 #ifndef MO_CODES_H
 #define MO_CODES_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "base/base.h"
