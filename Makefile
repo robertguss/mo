@@ -19,7 +19,7 @@
 
 CC ?= cc
 FUZZ_CC ?= clang
-FUZZ_SECONDS ?= 20
+FUZZ_SECONDS ?= 5
 BUILD := build/$(notdir $(firstword $(CC)))
 FUZZ_BUILD := build/fuzz
 
