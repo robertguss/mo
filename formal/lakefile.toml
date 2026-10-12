@@ -2,7 +2,11 @@
 # Plain Lean 4 with its bundled library; no dependencies.
 name = "mo-core"
 version = "0.1.0"
-defaultTargets = ["MoCore"]
+defaultTargets = ["MoCore", "mocore"]
 
 [[lean_lib]]
 name = "MoCore"
+
+[[lean_exe]]
+name = "mocore"
+root = "Main"
