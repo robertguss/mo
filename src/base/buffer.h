@@ -34,7 +34,8 @@ void mo_buffer_free(struct mo_buffer *buffer);
 /* Empties the buffer, keeping its memory for what comes next. */
 void mo_buffer_clear(struct mo_buffer *buffer);
 
-/* Appends length bytes, which may be some of the buffer's own. */
+/* Appends length bytes. They may be some of the buffer's own, within its length: the bytes past
+ * it, such as those mo_buffer_clear drops, are no longer its contents. */
 MO_MUST_USE bool mo_buffer_append(struct mo_buffer *buffer, const void *bytes, size_t length);
 
 /* Appends one byte. */
