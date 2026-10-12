@@ -441,14 +441,22 @@ struct mo_assemble_error {
 MO_MUST_USE bool mo_bytecode_write(const struct mo_bytecode *file, struct mo_buffer *out,
                                    struct mo_write_error *error_out);
 
-/* Assemble section 10's text into verified bytes. Text is at most MO_LIMIT_BYTECODE_SIZE bytes;
- * invalid text, verification refusal, either bytecode/output limit or no memory returns false.
- * Disassembly verifies the bytes before printing lossless text, retaining every table index
- * so assembling it reproduces the input bytes. Output text is also bounded by
- * MO_LIMIT_BYTECODE_SIZE so successful disassembly can be assembled again. It returns false
- * on either output limit or no memory (load error offset zero). No terminating NUL is appended. */
+/* Assemble section 10's indexed or shorthand text into verified bytes. Indexed text supplies
+ * every entry and index; shorthand appends first-use entries after optional indexed pool seeds.
+ * The two forms mix only through those seeds. Text is bounded by 8 *
+ * (size_t)MO_LIMIT_BYTECODE_SIZE; bytes by MO_LIMIT_BYTECODE_SIZE. Invalid text, verification
+ * refusal, a text/bytecode/output limit or no memory returns false. The header and checksum are
+ * regenerated. Disassembling successful output gives the unique canonical indexed text, never
+ * shorthand. */
 MO_MUST_USE bool mo_bytecode_assemble(const char *text, size_t length, struct mo_buffer *out,
                                       struct mo_assemble_error *error_out);
+
+/* Verify bytes, then print section 10's canonical indexed text without a terminating NUL.
+ * Preserve all entries, indices, array order, literal bits, exposures and debug metadata,
+ * including unused entries; assembling the text reproduces the input byte for byte.
+ * Text is bounded by 8 * (size_t)MO_LIMIT_BYTECODE_SIZE, which fits every verified file's
+ * canonical spelling and keeps text offsets within u32. Invalid bytes, an output limit or
+ * no memory returns false; offset zero denotes a failure not tied to an input byte. */
 MO_MUST_USE bool mo_bytecode_disassemble(const uint8_t *bytes, size_t length, struct mo_buffer *out,
                                          struct mo_load_error *error_out);
 
