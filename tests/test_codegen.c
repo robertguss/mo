@@ -201,6 +201,15 @@ static void test_calls_and_scopes(void) {
     if (b != NULL)
         CHECK(b->functions[0].code[0] == MO_OP_RET && b->functions[0].code[1] == 0);
     mo_arena_free(&arena);
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    b = compile(
+        &arena,
+        "(Program () ((FunDecl \"M.main\" () (unit) (lit (unit)) \"X.\" (function) 0) "
+        "(FunDecl \"main\" () (unit) (lit (unit)) \"X.M\" (function) 0)) () \"main\" (noSource))");
+    if (b != NULL)
+        CHECK(string_is(b, b->functions[0].name, "X..M.main") &&
+              string_is(b, b->functions[1].name, "X.M.main"));
+    mo_arena_free(&arena);
 }
 static void test_metadata(void) {
     struct mo_arena arena;
@@ -368,6 +377,19 @@ static void test_refusals(void) {
         struct mo_core_module_meta module = {.name = {"M", 1}, .funs = {members, 2}};
         p->metadata =
             (struct mo_core_metadata){.source = true, .modules = {&module, 1}, .funs = {meta, 2}};
+        CHECK(mo_core_check(p, &diags));
+        CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
+        CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_ENTRY &&
+              strstr(diags.items[0].primary.text, "shadows") != NULL);
+    }
+    mo_diags_free(&diags);
+    CHECK(mo_diags_init(&diags));
+    p = parse(
+        &arena,
+        "(Program () ((FunDecl \"M.main\" () (unit) (lit (unit)) \"X\" (function) 0) "
+        "(FunDecl \"main\" () (unit) (lit (unit)) \"X.M\" (function) 0)) () \"main\" (noSource))",
+        &diags);
+    if (p != NULL) {
         CHECK(mo_core_check(p, &diags));
         CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
         CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_ENTRY &&

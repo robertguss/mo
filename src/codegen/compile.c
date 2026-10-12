@@ -1345,6 +1345,25 @@ static MO_MUST_USE bool entry_valid(struct compiler *c) {
             }
         } else {
             valid = f->name.length == 4 && memcmp(f->name.bytes, "main", 4) == 0;
+            for (size_t j = 0; valid && j < i; j++) {
+                const struct mo_core_fun *earlier = &p->funs.items[j];
+                if (earlier->module.length > f->module.length ||
+                    memcmp(earlier->module.bytes, f->module.bytes, earlier->module.length) != 0)
+                    continue;
+                size_t suffix = f->module.length - earlier->module.length;
+                bool same =
+                    suffix == 0
+                        ? earlier->name.length == 4 && memcmp(earlier->name.bytes, "main", 4) == 0
+                        : earlier->name.length >= 5 && earlier->name.length - 4 == suffix &&
+                              f->module.bytes[earlier->module.length] == '.' &&
+                              memcmp(earlier->name.bytes,
+                                     f->module.bytes + earlier->module.length + 1,
+                                     suffix - 1) == 0 &&
+                              memcmp(earlier->name.bytes + suffix - 1, ".main", 5) == 0;
+                if (same)
+                    return problem(c, MO_CODE_CODEGEN_ENTRY,
+                                   "An earlier function shadows the entry's full runtime name.");
+            }
         }
         return valid || problem(c, MO_CODE_CODEGEN_ENTRY,
                                 "Core's ordinary entry must have the full name <Module>.main.");
