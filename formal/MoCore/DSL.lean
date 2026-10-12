@@ -60,6 +60,7 @@ def durE (us : Int) : Expr := .lit (.duration us)
 /-! ## Variables, bindings and functions -/
 
 def v (x : String) : Expr := .var x
+def global (name : String) : Expr := .global name
 
 /-- `x1 = e1; x2 = e2; ...; body`. -/
 def lets : List (String × Expr) → Expr → Expr
@@ -73,9 +74,14 @@ def call (f : String) (args : List Expr) : Expr := .call f args
 def lam (ps : List (String × Ty)) (body : Expr) : Expr := .lam ps body
 def app (f : Expr) (args : List Expr) : Expr := .app f args
 def fn (name : String) (ps : List (String × Ty)) (ret : Ty) (body : Expr) : FunDecl :=
-  ⟨name, ps, ret, body⟩
-/-- A constant: a function with no parameters (TRANSLATION.md, constants). -/
-def const (name : String) (ty : Ty) (body : Expr) : FunDecl := ⟨name, [], ty, body⟩
+  { name, params := ps, ret, body }
+/-- A constant declaration, computed once before the program starts. -/
+def const (name : String) (ty : Ty) (body : Expr) : ConstDecl := ⟨name, ty, body⟩
+/-- Samples conservatively let every function see the full constant prefix;
+the front end can give each function its smaller dependency prefix. -/
+def wholeProgram (module entry : String) (data : List DataDecl) (consts : List ConstDecl)
+    (funs : List FunDecl) : Program :=
+  { data, consts, entry, funs := funs.map fun fd => { fd with module, constCount := consts.length } }
 def tup (es : List Expr) : Expr := .tuple es
 def fst (e : Expr) : Expr := .proj e 0
 def snd (e : Expr) : Expr := .proj e 1
@@ -83,6 +89,21 @@ def ite (c t f : Expr) : Expr := .if_ c t f
 def stop (r : String) : Expr := .stop r
 def fail (detail : Expr) : Expr := .fail detail
 def prim (p : Prim) (args : List Expr) : Expr := .prim p args
+
+/-- One lowered assertion or example, with a detail supplied by lowering. -/
+def assertThat (condition detail : Expr) : Expr := ite condition unitE (fail detail)
+
+/-- A promise's lines, returning the first false line's one-based number. -/
+def promiseBody : List Expr → Nat → Expr
+  | [], _ => int 0
+  | line :: lines, i => ite line (promiseBody lines (i + 1)) (int i)
+
+def promiseFn (name : String) (ps : List (String × Ty)) (lines : List Expr) : FunDecl :=
+  { (fn name ps tInt (promiseBody lines 1)) with kind := .promise }
+
+/-- The Boolean form used by the samples' checks of promise answers. -/
+def promiseHolds (name : String) (args : List Expr) : Expr :=
+  prim (.eq tInt) [call name args, int 0]
 
 /-! ## Booleans and equality -/
 
@@ -264,7 +285,7 @@ def ret (e : Expr) : Expr := .jump "%return" [e]
 
 /-- `assert cond`, then the rest of a test. -/
 def assert (cond : Expr) (what : String) (rest : Expr) : Expr :=
-  ite cond rest (stop ("assertion failed: " ++ what))
+  ite cond rest (fail (str ("assertion failed: " ++ what)))
 
 end MoCore.DSL
 

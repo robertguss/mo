@@ -29,62 +29,94 @@ def bindTys (xs : List String) (fs : List (String × Ty)) : Ctx :=
 
 mutual
 /-- The typing judgment for expressions. -/
-inductive Typed (P : Program) : Ctx → JCtx → Expr → Ty → Prop
-  | lit {Γ Δ l} : l.Ok → Typed P Γ Δ (.lit l) l.ty
-  | var {Γ Δ x τ} : lookup x Γ = some τ → Typed P Γ Δ (.var x) τ
+inductive Typing (P : Program) (scope : Nat) (spec : Bool) : Ctx → JCtx → Expr → Ty → Prop
+  | lit {Γ Δ l} : l.Ok → Typing P scope spec Γ Δ (.lit l) l.ty
+  | var {Γ Δ x τ} : lookup x Γ = some τ → Typing P scope spec Γ Δ (.var x) τ
+  | global {Γ Δ x τ} : lookup x (constCtx P scope) = some τ →
+      Typing P scope spec Γ Δ (.global x) τ
   | let_ {Γ Δ x e body σ τ} :
-      Typed P Γ [] e σ → Typed P ((x, σ) :: Γ) Δ body τ → Typed P Γ Δ (.let_ x e body) τ
+      Typing P scope spec Γ [] e σ → Typing P scope spec ((x, σ) :: Γ) Δ body τ →
+      Typing P scope spec Γ Δ (.let_ x e body) τ
   | lam {Γ Δ ps body τ} :
-      Typed P (ps ++ Γ) [] body τ → Typed P Γ Δ (.lam ps body) (.fn (ps.map Prod.snd) τ)
+      Typing P scope spec (ps ++ Γ) [] body τ →
+      Typing P scope spec Γ Δ (.lam ps body) (.fn (ps.map Prod.snd) τ)
   | app {Γ Δ f args ts τ} :
-      Typed P Γ [] f (.fn ts τ) → TypedArgs P Γ args ts → Typed P Γ Δ (.app f args) τ
+      Typing P scope spec Γ [] f (.fn ts τ) → TypingArgs P scope spec Γ args ts →
+      Typing P scope spec Γ Δ (.app f args) τ
   | call {Γ Δ f fd args} :
-      lookupFun P f = some fd → TypedArgs P Γ args (fd.params.map Prod.snd) →
-      Typed P Γ Δ (.call f args) fd.ret
-  | tuple {Γ Δ es ts} : TypedArgs P Γ es ts → Typed P Γ Δ (.tuple es) (.tuple ts)
+      lookupFun P f = some fd → fd.constCount ≤ scope →
+      (fd.kind.isSpec = true → spec = true) →
+      TypingArgs P scope spec Γ args (fd.params.map Prod.snd) →
+      Typing P scope spec Γ Δ (.call f args) fd.ret
+  | tuple {Γ Δ es ts} : TypingArgs P scope spec Γ es ts → Typing P scope spec Γ Δ (.tuple es) (.tuple ts)
   | proj {Γ Δ e ts i τ} :
-      Typed P Γ [] e (.tuple ts) → ts[i]? = some τ → Typed P Γ Δ (.proj e i) τ
+      Typing P scope spec Γ [] e (.tuple ts) → ts[i]? = some τ → Typing P scope spec Γ Δ (.proj e i) τ
   | con {Γ Δ τ cs c fs args} :
       ctorsOf P τ = some cs → ctorFields c cs = some fs →
-      TypedArgs P Γ args (fs.map Prod.snd) → Typed P Γ Δ (.con τ c args) τ
+      TypingArgs P scope spec Γ args (fs.map Prod.snd) → Typing P scope spec Γ Δ (.con τ c args) τ
   | case_ {Γ Δ e σ cs arms τ} :
-      Typed P Γ [] e σ → ctorsOf P σ = some cs → TypedArms P Γ Δ arms cs τ →
-      Typed P Γ Δ (.case_ e arms) τ
+      Typing P scope spec Γ [] e σ → ctorsOf P σ = some cs → TypingArms P scope spec Γ Δ arms cs τ →
+      Typing P scope spec Γ Δ (.case_ e arms) τ
   | if_ {Γ Δ c t f τ} :
-      Typed P Γ [] c .bool → Typed P Γ Δ t τ → Typed P Γ Δ f τ → Typed P Γ Δ (.if_ c t f) τ
-  | prim {Γ Δ p args} : TypedArgs P Γ args p.sig.1 → Typed P Γ Δ (.prim p args) p.sig.2
+      Typing P scope spec Γ [] c .bool → Typing P scope spec Γ Δ t τ →
+      Typing P scope spec Γ Δ f τ → Typing P scope spec Γ Δ (.if_ c t f) τ
+  | prim {Γ Δ p args} : (p.specOnly = true → spec = true) →
+      TypingArgs P scope spec Γ args p.sig.1 → Typing P scope spec Γ Δ (.prim p args) p.sig.2
   /-- `stop` fits wherever a value is expected (reference 8.4). -/
-  | stop {Γ Δ r τ} : Typed P Γ Δ (.stop r) τ
+  | stop {Γ Δ r τ} : Typing P scope spec Γ Δ (.stop r) τ
   /-- Failure never returns, but its detail must be Text. -/
-  | fail {Γ Δ detail τ} : Typed P Γ [] detail .text → Typed P Γ Δ (.fail detail) τ
+  | fail {Γ Δ detail τ} : spec = true → Typing P scope spec Γ [] detail .text →
+      Typing P scope spec Γ Δ (.fail detail) τ
   /-- The body sees the parameters and may jump to the join point itself; both
   the body and the rest are in tail position. -/
   | join {Γ Δ j ps body rest τ} :
-      Typed P (ps ++ Γ) ((j, ps.map Prod.snd) :: Δ) body τ →
-      Typed P Γ ((j, ps.map Prod.snd) :: Δ) rest τ →
-      Typed P Γ Δ (.join j ps body rest) τ
+      Typing P scope spec (ps ++ Γ) ((j, ps.map Prod.snd) :: Δ) body τ →
+      Typing P scope spec Γ ((j, ps.map Prod.snd) :: Δ) rest τ →
+      Typing P scope spec Γ Δ (.join j ps body rest) τ
   /-- A jump never returns, so it fits any type, like `stop`. -/
   | jump {Γ Δ j ts args τ} :
-      lookup j Δ = some ts → TypedArgs P Γ args ts → Typed P Γ Δ (.jump j args) τ
+      lookup j Δ = some ts → TypingArgs P scope spec Γ args ts → Typing P scope spec Γ Δ (.jump j args) τ
 
 /-- Arguments, each typed in a non-tail position. -/
-inductive TypedArgs (P : Program) : Ctx → List Expr → List Ty → Prop
-  | nil {Γ} : TypedArgs P Γ [] []
-  | cons {Γ e es t ts} : Typed P Γ [] e t → TypedArgs P Γ es ts → TypedArgs P Γ (e :: es) (t :: ts)
+inductive TypingArgs (P : Program) (scope : Nat) (spec : Bool) : Ctx → List Expr → List Ty → Prop
+  | nil {Γ} : TypingArgs P scope spec Γ [] []
+  | cons {Γ e es t ts} : Typing P scope spec Γ [] e t → TypingArgs P scope spec Γ es ts →
+      TypingArgs P scope spec Γ (e :: es) (t :: ts)
 
 /-- One arm per constructor, in declaration order, each binding its
 constructor's fields. -/
-inductive TypedArms (P : Program) : Ctx → JCtx → List (String × List String × Expr) → List Ctor → Ty → Prop
-  | nil {Γ Δ τ} : TypedArms P Γ Δ [] [] τ
+inductive TypingArms (P : Program) (scope : Nat) (spec : Bool) :
+    Ctx → JCtx → List (String × List String × Expr) → List Ctor → Ty → Prop
+  | nil {Γ Δ τ} : TypingArms P scope spec Γ Δ [] [] τ
   | cons {Γ Δ xs k body arms ks τ} :
-      xs.length = k.fields.length → Typed P (bindTys xs k.fields ++ Γ) Δ body τ →
-      TypedArms P Γ Δ arms ks τ → TypedArms P Γ Δ ((k.name, xs, body) :: arms) (k :: ks) τ
+      xs.length = k.fields.length → Typing P scope spec (bindTys xs k.fields ++ Γ) Δ body τ →
+      TypingArms P scope spec Γ Δ arms ks τ → TypingArms P scope spec Γ Δ ((k.name, xs, body) :: arms) (k :: ks) τ
 end
 
-/-- A well-typed program: every function's body has its declared type, with
-its parameters in context and no join points in scope. -/
-def WellTyped (P : Program) : Prop :=
-  ∀ f fd, lookupFun P f = some fd → Typed P fd.params [] fd.body fd.ret
+/-- Expressions default to ordinary code with no constants available. -/
+abbrev Typed (P : Program) (Γ : Ctx) (Δ : JCtx) (e : Expr) (τ : Ty)
+    (scope : Nat := 0) (spec : Bool := false) := Typing P scope spec Γ Δ e τ
+abbrev TypedArgs (P : Program) (Γ : Ctx) (es : List Expr) (ts : List Ty)
+    (scope : Nat := 0) (spec : Bool := false) := TypingArgs P scope spec Γ es ts
+abbrev TypedArms (P : Program) (Γ : Ctx) (Δ : JCtx)
+    (arms : List (String × List String × Expr)) (cs : List Ctor) (τ : Ty)
+    (scope : Nat := 0) (spec : Bool := false) := TypingArms P scope spec Γ Δ arms cs τ
+
+/-- Constants see exactly the prefix before them. -/
+inductive TypedConsts (P : Program) : Nat → List ConstDecl → Prop
+  | nil {i} : TypedConsts P i []
+  | cons {i c cs} : Typed P [] [] c.body c.ty i false →
+      TypedConsts P (i + 1) cs → TypedConsts P i (c :: cs)
+
+/-- All bodies, kind signatures, prefixes and the designated entry are checked. -/
+structure WellTyped (P : Program) : Prop where
+  funs : ∀ f fd, lookupFun P f = some fd →
+    Typed P fd.params [] fd.body fd.ret fd.constCount fd.kind.isSpec
+  consts : TypedConsts P 0 P.consts
+  signatures : ∀ fd ∈ P.funs, fd.kind.validSig fd.params fd.ret = true
+  scopes : ∀ fd ∈ P.funs, fd.constCount ≤ P.consts.length
+  names : (P.consts.map ConstDecl.name).Nodup
+  entry : ∃ fd, lookupFun P P.entry = some fd ∧ fd.kind = .function
 
 mutual
 /-- Value typing. -/
@@ -112,8 +144,9 @@ inductive ValTy (P : Program) : Value → Ty → Prop
       ValTy P (.con c vs) τ
   /-- A closure has a function type when its captured environment fits a
   context in which its body has the result type. -/
-  | closure {ρ Γ ps body τ} :
-      EnvTy P ρ Γ → Typed P (ps ++ Γ) [] body τ → ValTy P (.closure ρ ps body) (.fn (ps.map Prod.snd) τ)
+  | closure {ρ Γ ps body τ globals scope spec} :
+      EnvTy P ρ Γ → EnvTy P globals (constCtx P scope) → Typed P (ps ++ Γ) [] body τ scope spec →
+      ValTy P (.closure ρ ps body globals) (.fn (ps.map Prod.snd) τ)
   | cap {c r} : ValTy P (.cap c r) (.cap c)
 
 /-- Pointwise value typing. -/
@@ -148,8 +181,9 @@ def PrimsSafe (P : Program) : Prop := ∀ p, PrimSafe P p
 
 /-- An evaluator (such as `eval n P`) is safe when every well-typed expression,
 in an environment that fits its context, has an outcome that is `OutcomeOk`. -/
-def EvSafe (P : Program) (ev : Env → World → Expr → Outcome) : Prop :=
-  ∀ Γ Δ e τ ρ w, Typed P Γ Δ e τ → EnvTy P ρ Γ → OutcomeOk P Δ τ (ev ρ w e)
+def EvSafe (P : Program) (ev : Env → Env → World → Expr → Outcome) : Prop :=
+  ∀ scope spec globals Γ Δ e τ ρ w, Typed P Γ Δ e τ scope spec →
+    EnvTy P ρ Γ → EnvTy P globals (constCtx P scope) → OutcomeOk P Δ τ (ev globals ρ w e)
 
 /-! ## Basic facts -/
 
@@ -201,6 +235,23 @@ theorem EnvTy.lookup : ∀ {ρ Γ x τ}, EnvTy P ρ Γ → lookup x Γ = some τ
     by_cases hxy : x = y
     · subst hxy; simp [MoCore.lookup] at h ⊢; subst h; exact hv
     · simp [MoCore.lookup, hxy] at h ⊢; exact hρ.lookup h
+
+/-- Keeping a prefix of an environment keeps the same prefix of its context. -/
+theorem EnvTy.take : ∀ {ρ Γ}, EnvTy P ρ Γ → (n : Nat) → EnvTy P (ρ.take n) (Γ.take n)
+  | _, _, .nil, _ => by simp; exact .nil
+  | _, _, .cons _ _, 0 => .nil
+  | _, _, .cons hv hs, n + 1 => .cons hv (hs.take n)
+
+theorem EnvTy.constPrefix {globals : Env} {scope n : Nat}
+    (h : EnvTy P globals (constCtx P scope)) (hn : n ≤ scope) :
+    EnvTy P (globals.take n) (constCtx P n) := by
+  simpa [constCtx, List.map_take, List.take_take, Nat.min_eq_left hn] using h.take n
+
+/-- Appending constants keeps their computation order. -/
+theorem EnvTy.append : ∀ {ρ σ Γ ctx}, EnvTy P ρ Γ → EnvTy P σ ctx →
+    EnvTy P (ρ ++ σ) (Γ ++ ctx)
+  | _, _, _, _, .nil, hs => hs
+  | _, _, _, _, .cons hv h, hs => .cons hv (h.append hs)
 
 /-- Binding parameters to values of their types extends a fitting environment. -/
 theorem EnvTy.bindParams : ∀ {ps : List (String × Ty)} {vs ρ Γ},

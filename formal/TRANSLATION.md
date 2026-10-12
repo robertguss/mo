@@ -17,6 +17,7 @@ compact text form:
 | --- | --- | --- |
 | `42`, `12.50`, `"hi"`, `'c'`, `true`, `Unit`, `bytes[0x68, 0x69]` | `.lit` | `int`, `dec`, `str`, `chr`, `bool`, `unitE`, `byteE`, `bytesE` |
 | `x` | `.var "x"` | `v` |
+| `global x` | `.global "x"` | `global` |
 | `let x = e in body` | `.let_` | `lets`, `seq` |
 | `fn(x: T, ...) => body` | `.lam` | `lam` |
 | `e(e1, ..., en)` (`e` a function value) | `.app` | `app` |
@@ -27,6 +28,7 @@ compact text form:
 | `if c then a else b` | `.if_` | `ite`, `and_`, `or_` |
 | `%op(e1, ..., en)` | `.prim` | `prim`, `iadd`, `top`, `lop`, `mop`, `sop`, `io`, ... |
 | `stop "reason"` | `.stop` | `stop` |
+| `fail detail` | `.fail` | `fail` |
 | `join j(x: T, ...) = body in rest` | `.join` | `forList`, `forSet`, `whileLoop`, `forRange` |
 | `jump j(e1, ..., en)` | `.jump` | `nextRound`, `breakLoop`, `ret` |
 
@@ -40,7 +42,9 @@ Their types are in `Prim.sig`.
 Core is explicit where Mo infers: function, anonymous-function and join-point
 parameters carry their types, and a constructor application names its type.
 Names that start with `%` are made by the lowering; Mo names never do. A
-program is a data table and a function table (`Program`); the library's
+program has data and function tables, ordered constant declarations and a
+designated entry (`Program`). Each function records its module, kind and
+required constant prefix; the library's
 choice types `Option(T)`, `Result(T, E)`, `Ordering` and `FileError` are
 built in (`ctorsOf`), with their cases in the order reference 8 and 9.2
 declare them: `None` before `Some`, `Ok` before `Error`, and `Less`, `Equal`,
@@ -48,8 +52,9 @@ declare them: `None` before `Some`, `Ok` before `Error`, and `Less`, `Equal`,
 
 ## 1. A first program
 
-The `module` line and `##` comments are not in Core; `main` is an ordinary
-function (section 11.2). The `for` loop becomes two join points (section 7.5):
+Functions keep their module as metadata; `##` comments are not in Core.
+`main` is an ordinary function (section 11.2). The `for` loop becomes two
+join points (section 7.5):
 
 ```mo
 fn main(args: Args, console: Console)
@@ -491,7 +496,8 @@ value: Int, right: Tree(Int))`. Recursive types need nothing more:
 
 ### 5.1 Definitions
 
-A function is a `FunDecl`: its name, typed parameters, result type and body.
+A function is a `FunDecl`: its name, module, kind, typed parameters, result
+type, body and required constant prefix (10.4).
 A body's statements become nested `let`s, and its value is its last line. A
 `return` with a guard, at the top of a body, is an `if` whose other branch is
 the rest of the body:
@@ -1046,24 +1052,31 @@ where `List.sort_by_desc[Product,Decimal]` compares keys with
 
 ### 10.1 to 10.3 The header, hidden insides, use
 
-Modules exist only for the front end: Core is one whole program, with every
-name resolved to a declaration. `expose`, hidden insides and `use` are
-checks and name resolution, and leave nothing in Core.
+Core is one whole program, with every name resolved to a declaration.
+Functions retain their source module as metadata. `expose`, hidden insides
+and `use` are checks and name resolution, and leave nothing in Core.
 
 ### 10.4 Constants
 
-A constant is a function with no parameters, and a use of it is a call. A
-constant's value is fixed, so calling it at each use gives the same value,
-and constants may use each other in any order. Reference 10.4 computes
-constants once, before any other code of the program runs, in the order of
-their dependencies (the constants each uses, directly or through the
-functions it calls), and a constant that stops stops the program before it
-starts; a cycle is an error before Core. So the runtime's entry point (11.2),
-and `mo test` before the first test or example, evaluate each constant once,
-in that order. The model has no list of a program's constants yet
-(architecture 4.1 leaves that layer to stream 0), so its checks compute a
-constant where it is used. That gives the same value, and differs only for a
-constant that stops, which none of the samples has.
+A constant is `ConstDecl`: `const name : T = e`. A use is `global name`,
+not a function call. Lowering resolves global names and orders declarations
+by their dependencies, including dependencies through called functions
+(reference 10.4; bytecode 3.2 breaks ties by module then source order).
+`initConsts` evaluates each once with an empty local environment and only
+the already computed globals, appends its value, then continues. A stop
+ends initialization before the entry or a test; no continuation runs.
+
+The checker types each initializer in ordinary mode at its prefix index.
+Every function declares `constCount`, the required prefix, and its body is
+checked at exactly that prefix. Calls require the callee's prefix to fit
+the caller's, so dependencies are checked transitively, including recursive
+calls. An undersized or out-of-bounds prefix is rejected. Lowering may conservatively
+overestimate it; `wholeProgram` gives the samples' functions the full prefix
+because their initializers don't call them. Closures capture the computed
+prefix where they are made. Constants' names must be distinct, and their
+namespace is separate from local bindings; local shadowing cannot alter a
+resolved global read. Cycles and forward reads, direct or through calls,
+cannot pass these rules.
 
 ```mo
 max_attempts = 3
@@ -1071,8 +1084,8 @@ t0 = Time.parse("2026-10-12T09:00:00Z") or stop "the time is written correctly"
 ```
 
 ```
-fn max_attempts() : Int = 3
-fn t0() : Time = case %time.parse("2026-10-12T09:00:00Z") of
+const max_attempts : Int = 3
+const t0 : Time = case %time.parse("2026-10-12T09:00:00Z") of
                    None -> stop "the time is written correctly"
                  | Some(%or) -> %or
                  end
@@ -1147,33 +1160,46 @@ the folder gives a handle that reaches nothing (reference 11.3, 14),
 
 ### 11.4 Rules
 
-That anonymous functions don't capture capabilities, and that fakes,
-`printed` and `printed_errors` appear only in tests, examples and promises
-(reference 12.4), are the front end's checks. Core's typing doesn't need them
-for safety.
+Anonymous functions' capability-capture restriction remains a front-end
+check. Core now checks the spec boundary: `fail`, `%io.printed` and
+`%io.printedErrors` require spec mode, and ordinary code cannot call a spec
+function. `test`, `example`, `promise` and `anchor` bodies are spec code;
+anonymous bodies inherit their enclosing mode. A named function used as a
+value lowers to a lambda calling it (5.6), so this also rejects making a
+wrapper for a spec function in ordinary code. Fake constructors will use
+this same boundary when they are added.
 
 ## 12. Examples, promises and tests
 
 ### 12.1 Examples
 
-Each line of an `examples` block is a Core expression of type `Bool`; `mo
-test` checks that it evaluates to `true`. Equality is `%eq` at the compared
-type.
+Each line of an `examples` block is a zero-argument function of kind
+`example`, returning `Unit` on success or failing with a Text detail.
+Equality is `%eq` at the compared type. Lowering computes operands once and
+supplies their text forms as failure details; sample helpers use a fixed
+detail where deriving those forms isn't modeled yet.
 
 ```mo
 count("one two\nthree\n") == Counts(lines: 2, words: 3, bytes: 14)
 ```
 
 ```
-%eq(count("one two\nthree\n"), Counts(2, 3, 14))
+example count.1() : Unit =
+  if %eq(count("one two\nthree\n"), Counts(2, 3, 14)) then Unit
+  else fail "count did not match the expected Counts"
 ```
 
 ### 12.2 Promises
 
-A promise's body becomes a Core function of the parameters and `result`,
-returning `Bool` (several lines are joined with `and`). Its anchors are calls
-of that function: each `allows` must give `true`, each `forbids` `false`. `mo
-test` then calls it on generated inputs with the function's actual result.
+A promise's body becomes a function of kind `promise`, taking the parameters
+and a final result parameter, returning `Int`: 0 when every line holds,
+otherwise the one-based number of the first false line. `promiseBody` lowers
+the lines to nested `if`s. An anchor has kind `anchor`, no parameters and an
+`Int` result: it builds its values and calls that promise. An `allows`
+anchor must return 0, a `forbids` anchor a nonzero number. `mo test` supplies
+generated inputs and the ordinary function's actual result; generation is
+outside this model. `promiseHolds` compares an answer with 0 for the samples'
+Boolean conditions.
 
 ```mo
 promise "a deposit adds exactly the amount"
@@ -1184,22 +1210,26 @@ end
 ```
 
 ```
-fn deposit.promise.1(account: Account, amount: Decimal, result: Result(Account, AccountError)) : Bool =
-  case result of
+promise deposit.promise.1(account: Account, amount: Decimal, result: Result(Account, AccountError)) : Int =
+  if (case result of
     Ok(after) -> %eq(<after.balance>, %dec.add(<account.balance>, amount))
   | Error(%_) -> true
-  end
+  end) then 0 else 1
 
--- allows:  deposit.promise.1(alice(10.00), 5.50, Ok(alice(15.50)))           is true
--- forbids: %not(deposit.promise.1(alice(10.00), 5.50, Ok(alice(10.00))))     is true
+anchor deposit.allows.1() : Int = deposit.promise.1(alice(10.00), 5.50, Ok(alice(15.50)))
+anchor deposit.forbids.1() : Int = deposit.promise.1(alice(10.00), 5.50, Ok(alice(10.00)))
 ```
 
 ### 12.3 Tests
 
-A test is a Core expression; `assert e` is
-`if e then <rest> else stop "assertion failed: ..."`, and
+A test is a zero-argument Unit function of kind `test`; `assert e` is
+`if e then <rest> else fail "assertion failed: ..."`, and
 `assert e is Pattern` is a `case` that holds the rest of the test in the
-matching arm and stops in the others. The test passes when it returns.
+matching arm and fails in the others. The test passes when it returns Unit.
+`fail e` first evaluates `e : Text`; effects survive in the failed outcome's
+world, and no continuation runs. A bug while computing the detail remains a
+stop, not a failure. The sample helpers `passes` and `scenario` lower their
+Boolean conditions to these Unit assertions in spec mode.
 
 ### 12.4 Fakes
 
@@ -1224,9 +1254,10 @@ a folder that doesn't exist is `Error(NotFound(folder))` (reference 14).
 
 `console.printed` and `console.printed_errors` are the primitives
 `%io.printed` and `%io.printedErrors`, which read what the world's standard
-output and error hold. The front end allows them only in tests, examples and
-promises, where every console is a fake (reference 12.4), so they never meet a
-real console.
+output and error hold. The checker allows them only in spec code, including
+anchors and anonymous functions inside spec code (bytecode 3.3 and 9).
+Whether a handle is real or fake remains a host/front-end contract: the
+current World model doesn't distinguish them.
 
 Each fake is a handle on its own state (reference 12.4). When a test makes a
 new fake of a kind it already has, such as a second `Args.of(...)` for a
@@ -1400,9 +1431,8 @@ section numbers after the topic are the reference's; those after "Already",
 17. **When constants are computed** (10.4): once, before any other code of
     the program runs, in the order of their dependencies; a cycle is an
     error, and a constant that stops stops the program before it starts.
-    Unchanged: a constant is a function without parameters, which gives the
-    same value wherever it is computed; computing them all first belongs to
-    the program layer that architecture 4.1 leaves to stream 0 (10.4).
+    Now modeled: ordered `ConstDecl`s, prefix checking and once-only
+    initialization before entry or tests (10.4).
 18. **`min` and `max` with equal elements** (14): the first of them. Already
     did that.
 19. **`Float`'s text form** (9.2): numbers have their shortest spelling.
@@ -1422,8 +1452,8 @@ section numbers after the topic are the reference's; those after "Already",
     `a/../b`, is now an ordinary path (11.3).
 22. **`printed` on a real console** (12.4, 14): `printed` and
     `printed_errors` can be used only in tests, examples and promises, where
-    every console is a fake. Already consistent: the front end checks it, and
-    `%io.printed` reads the world's standard output (11.4, 12.4).
+    every console is a fake. Now checked in Core too: observations require
+    spec mode; anchors are included following bytecode 3.3 (11.4, 12.4).
 23. **`Range` values** (9.2): `Equal` and `Hash`, no order, and the text form
     `0..3`. Equality and hashing already did that, on the pair of the ends;
     changed: the text form is now lowered to `0..3` rather than a tuple's
@@ -1576,3 +1606,71 @@ the end of an item this document's.
    the lowering derives for each element type, `to_text[Set(T)]`, as it is
    for lists and maps, not a primitive: an element's text form may be the
    element type's own `to_text`, which a primitive can't call. (3.4)
+
+## Failure and the program layer: decisions and mismatches
+
+1. **Failure.** `fail e` fits any expected type, like `stop`, but requires
+   spec mode and `e : Text`. It evaluates the detail strictly, retains the
+   resulting world, and propagates unchanged through sequencing, calls and
+   joins. The evaluator is unchecked, like the old evaluator; guarantees
+   apply to expressions/programs accepted by typing or the checker.
+2. **Function signatures.** The four spec kinds have bytecode 3.3's
+   signatures. A promise must have at least its final result parameter and
+   return Int; parameter names have no semantic role, and Core has no link
+   from a promise to its subject function. Lowering supplies matching input
+   and result types, the generated line-number code, and anchor expectations.
+   Ordinary `function` signatures remain unrestricted.
+3. **Spec is lexical, not a function-type effect.** Lambdas inherit the
+   body's mode. A spec caller may pass its lambda to ordinary higher-order
+   library code, such as `List.all`; applying it executes its spec body.
+   Ordinary code cannot name a spec target or construct a wrapper calling
+   one. `Ty.fn` is unchanged: it carries argument and result types, not a
+   spec flag, as bytecode 2.1 does. An arbitrary host-supplied closure can
+   therefore execute spec code even when passed to an ordinary function;
+   the claim that a runtime-created `main` cannot reach spec code relies on
+   its capability-only arguments and ordinary initialization, not merely on
+   value typing of arbitrary function arguments. Non-reachability is not
+   separately proven here.
+4. **Globals and dependencies.** Resolved globals use a separate namespace;
+   declarations must have unique names. Lowering supplies the ordered list
+   and each function's conservative `constCount`; Core checks rather than
+   computes dependency order. Calls trim globals to that checked prefix;
+   closures retain their creation prefix. Module names are metadata, not
+   additional lookup keys. Handwritten samples put their function instances
+   in their sample module; a front end can preserve each library module.
+5. **Entry and runners.** The designated entry must exist and be ordinary.
+   `runProgram` takes typed runtime argument values and returns its Core
+   outcome; it does not manufacture capabilities, convert OS exit statuses,
+   or synthesize the 11.2 wrapper. Samples with `main` designate it directly;
+   libraries designate `transfer`, `request`, `lease` or `search_notes`.
+   `runTest` accepts only a test or example and invokes it without arguments;
+   misuse of either runner is `wrong`. The safety theorems require correct
+   arguments or a valid selection.
+6. **Initialization lifetime and fuel.** `runProgram`, `runTest` and
+   `evalProgram` each initialize a fresh run. A suite or shared image uses
+   `initConsts` once and its continuation receives reusable computed globals;
+   `scenario` does this. No image cache is hidden in World. Fuel is a depth
+   bound reused for each initializer and the subsequent call, not a shared
+   instruction budget. Larger fuel preserves every finished outcome, proven
+   for initialization and both runners as well as expressions.
+7. **Details in handwritten checks.** `passes` and `scenario` wrap their
+   conditions in Unit assertions with fixed Text details; JobQueue's pattern
+   assertions now fail rather than stop. Greet's examples are actual named
+   example declarations. Generating operand text forms, all named test and
+   anchor declarations, the test-suite driver and entry-wrapper generation
+   belong to lowering, not this hand translation.
+
+Two design/reference mismatches are left unchanged, as required:
+
+- Architecture 4.1's introductory list of safe outcomes omits `failed`,
+  though its syntax and architecture 8 include it. Core includes it.
+- Reference 11.4, 12.4 and 14 list tests, examples and promises for fakes and
+  console observations, but omit anchors. Architecture 4.1 and bytecode 3.3,
+  7 and 9 include anchors as spec code; Core follows that definition.
+
+There is also an entry-wrapper question: architecture 4.3 says its wrapper
+receives the capabilities `main` declares, but an `Error(e)` must print to
+standard error even when `main` declares no Console. Section 11.2 above
+already chooses an extra runtime Console for that wrapper. This program
+layer leaves wrapper construction to lowering; no new host capability is
+silently added by `runProgram`.

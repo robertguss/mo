@@ -1,9 +1,9 @@
 /-
   Mo Core: checking the samples' examples and tests.
 
-  A Mo example line or test (reference 12) lowers to a Core expression of
-  type `Bool`. `passes` checks one: it must be well typed (by the checker,
-  so `type_safety` applies to it) and evaluate to `true`. Fakes (reference
+  A Mo example line or test (reference 12) lowers to a Core assertion of
+  type `Unit`. `passes` checks its condition and runs the assertion: it must
+  be well typed and return normally, rather than fail. Fakes (reference
   12.4) are the world the expression runs in, and capability handles bound to
   the names the test uses.
 -/
@@ -17,10 +17,13 @@ open DSL
 /-- The context of the named capability handles. -/
 def capsCtx (caps : List (String × Cap)) : Ctx := caps.map fun (x, c) => (x, .cap c)
 
-/-- An example or test: well typed at `Bool`, with the named capabilities in
-scope, and `true` when evaluated in the world. -/
+/-- An example or test condition lowered to a Unit assertion in spec code. -/
 def passes (P : Program) (e : Expr) (w : World := {}) (caps : List (String × Cap) := []) : Bool :=
-  typedAs? P (capsCtx caps) e .bool && holds P e w (handles caps)
+  let assertion := assertThat e (str "sample assertion failed")
+  typedAs? P (capsCtx caps) assertion .unit true &&
+    match run P assertion w (handles caps) with
+    | .ok .unit _ => true
+    | _ => false
 
 /-- An expression that must stop on the bug `b`: well typed at `τ`, with the
 named capabilities in scope, and stopping with `b` when evaluated in the
@@ -29,7 +32,7 @@ the model checks with it that a library call or a map literal stops where the
 reference says it does. -/
 def stops (P : Program) (e : Expr) (τ : Ty) (b : Bug) (w : World := {})
     (caps : List (String × Cap) := []) : Bool :=
-  typedAs? P (capsCtx caps) e τ &&
+  typedAs? P (capsCtx caps) e τ true &&
     match run P e w (handles caps) with
     | .stopped b' _ => b' == b
     | _ => false
@@ -38,14 +41,23 @@ def stops (P : Program) (e : Expr) (τ : Ty) (b : Bug) (w : World := {})
 shared by every call that uses them. Before each step, `set` may change the
 world, as a test does when it makes a new fake (such as a new `Args.of(...)`);
 every step must be well typed and evaluate to `true`. -/
-def scenario (P : Program) (caps : List (String × Cap)) (w : World) :
+def scenarioSteps (P : Program) (globals : Env) (caps : List (String × Cap)) (w : World) :
     List ((World → World) × Expr) → Bool
   | [] => true
   | (set, e) :: steps =>
-    typedAs? P (capsCtx caps) e .bool &&
-      match run P e (set w) (handles caps) with
-      | .ok (.bool true) w' => scenario P caps w' steps
+    let assertion := assertThat e (str "scenario assertion failed")
+    typedAs? P (capsCtx caps) assertion .unit true &&
+      match evalWithGlobals defaultFuel P globals (handles caps) (set w) assertion with
+      | .ok .unit w' => scenarioSteps P globals caps w' steps
       | _ => false
+
+/-- One initialization for the entire multi-step scenario. -/
+def scenario (P : Program) (caps : List (String × Cap)) (w : World)
+    (steps : List ((World → World) × Expr)) : Bool :=
+  match initConsts defaultFuel P P.consts [] w fun globals w' =>
+      .ok (.bool (scenarioSteps P globals caps w' steps)) w' with
+  | .ok (.bool true) _ => true
+  | _ => false
 
 /-- A fresh `Args.of(list)`. -/
 def withArgs (args : List String) (w : World) : World := { w with args := args }
@@ -66,7 +78,7 @@ theorem handles_typed {P : Program} : ∀ caps : List (String × Cap), EnvTy P (
 
 /-- What the checker accepts at a type is well typed at it. -/
 theorem typedAs_sound {P : Program} {Γ : Ctx} {e : Expr} {τ : Ty} (h : typedAs? P Γ e τ = true) :
-    Typed P Γ [] e τ := by
+    Typed P Γ [] e τ P.consts.length := by
   unfold typedAs? at h
   split at h
   · rename_i τ' hτ'
@@ -78,15 +90,18 @@ wrong in an environment that fits the expression's context, with any fuel and
 in any world. -/
 theorem never_wrong {P : Program} {Γ : Ctx} {e : Expr} {τ : Ty} (hP : wellTyped? P = true)
     (he : typedAs? P Γ e τ = true) {ρ : Env} (hρ : EnvTy P ρ Γ) (n : Nat) (w : World) (msg : String) :
-    eval n P ρ w e ≠ .wrong msg :=
-  eval_never_wrong (checkProgram_sound hP) (typedAs_sound he) hρ n w msg
+    evalProgram n P ρ w e ≠ .wrong msg := by
+  intro h
+  have hs := program_type_safety (checkProgram_sound hP) (typedAs_sound he) hρ n w
+  rw [h] at hs
+  exact hs
 
 /-- The same, for an expression run with capability handles, such as a call
 of `main`: whatever the world holds (arguments, input, files, time), it never
 goes wrong. -/
 theorem never_wrong_with_handles {P : Program} {e : Expr} {τ : Ty} {caps : List (String × Cap)}
     (hP : wellTyped? P = true) (he : typedAs? P (capsCtx caps) e τ = true) (n : Nat) (w : World)
-    (msg : String) : eval n P (handles caps) w e ≠ .wrong msg :=
+    (msg : String) : evalProgram n P (handles caps) w e ≠ .wrong msg :=
   never_wrong hP he (handles_typed caps) n w msg
 
 end MoCore

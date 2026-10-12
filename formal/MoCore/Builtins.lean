@@ -15,10 +15,10 @@ open MoCore DSL Lib
 /-- The library functions the checks call, and the text forms the lowering
 derives for the sets they write. -/
 def program : Program :=
-  { data := [],
-    funs := sortBy tByte tByte ++ sortBy tBytes tBytes ++
-      [setText tInt intText, setText (tSet tInt) (setTextL tInt),
-       setText tRange fun r => prim (.range .toText) [r]] }
+  wholeProgram "Builtins" "main" [] [] <|
+    sortBy tByte tByte ++ sortBy tBytes tBytes ++
+      [fn "main" [] tUnit unitE, setText tInt intText, setText (tSet tInt) (setTextL tInt),
+       setText tRange fun r => prim (.range .toText) [r]]
 
 #guard wellTyped? program
 
@@ -475,8 +475,8 @@ def setLoop : Expr :=
 
 /-! ## Failure is not a stop -/
 
-#guard typedAs? program [] (DSL.fail (cat [str "left: ", intText (int 7)])) tUnit
-#guard !typedAs? program [] (DSL.fail (int 7)) tUnit
+#guard typedAs? program [] (DSL.fail (cat [str "left: ", intText (int 7)])) tUnit true
+#guard !typedAs? program [] (DSL.fail (int 7)) tUnit true
 #guard match run program (DSL.fail (cat [str "left: ", intText (int 7)])) with
   | .failed "left: 7" _ => true
   | _ => false
@@ -490,5 +490,108 @@ def setLoop : Expr :=
 
 -- A bug while computing the detail stays a bug, not an assertion failure.
 #guard stops program (DSL.fail (stop "detail stopped")) tUnit (.stop "detail stopped")
+
+/-! ## Program initialization and the spec boundary -/
+
+def layered : Program :=
+  { data := []
+    consts := [const "seed" tInt (int 7),
+      const "twice" tInt (iadd (call "first" []) (global "seed")),
+      const "saved" (tFn [] tInt) (lam [] (global "twice")),
+      const "last" tInt (int 99)]
+    entry := "start"
+    funs := [
+      { (fn "first" [] tInt (global "seed")) with module := "Library", constCount := 1 },
+      { (fn "start" [("console", tCap .console)] tInt
+          (seq (print (v "console") (intText (global "twice")))
+            (lets [("twice", int 999)] (app (global "saved") [])))) with
+          module := "Cli", constCount := 4 },
+      { (fn "bad assertion" [] tUnit (app (lam [] (assertThat ff (str "expected 14"))) [])) with
+          module := "Spec", kind := .test, constCount := 4 },
+      { (fn "good example" [] tUnit (assertThat (ieq (global "twice") (int 14)) (str "twice"))) with
+          module := "Spec", kind := .example, constCount := 4 },
+      { (promiseFn "bounded" [("result", tInt)] [igt (v "result") (int 0), ilt (v "result") (int 10)]) with
+          module := "Spec", constCount := 4 },
+      { (fn "forbids" [] tInt (call "bounded" [int 20])) with
+          module := "Spec", kind := .anchor, constCount := 4 }] }
+
+#guard wellTyped? layered
+#guard match runProgram 30 layered [.cap .console (some "")] with
+  | .ok (.int 14) w => w.stdout == ["14"]
+  | _ => false
+#guard match runTest 30 layered "bad assertion" with
+  | .failed "expected 14" _ => true
+  | _ => false
+#guard match runTest 30 layered "good example" with
+  | .ok .unit _ => true
+  | _ => false
+#guard passes layered (ieq (call "forbids" []) (int 2))
+#guard passes layered (ieq (call "bounded" [int (-1)]) (int 1))
+#guard passes layered (ieq (call "bounded" [int 5]) (int 0))
+#guard match runTest 30 layered "forbids" with
+  | .wrong _ => true
+  | _ => false
+#guard match runTest 30 layered "missing" with
+  | .wrong _ => true
+  | _ => false
+#guard match runProgram 0 layered [.cap .console (some "")] with
+  | .outOfFuel => true
+  | _ => false
+
+-- Checking is lexical: anonymous bodies inherit their enclosing spec flag,
+-- including named functions used as values (a lambda calling the name).
+#guard !typedAs? layered [] (DSL.fail (str "no")) tUnit
+#guard !typedAs? layered [] (call "bad assertion" []) tUnit
+#guard !typedAs? layered [] (lam [] (call "bad assertion" [])) (tFn [] tUnit)
+#guard !typedAs? layered [] (lam [] (DSL.fail (str "no"))) (tFn [] tUnit)
+#guard typedAs? layered [] (lam [] (call "bad assertion" [])) (tFn [] tUnit) true
+#guard !typedAs? layered [("c", tCap .console)] (io .printed [v "c"]) (tList tText)
+#guard !typedAs? layered [("c", tCap .console)] (lam [] (io .printedErrors [v "c"]))
+  (tFn [] (tList tText))
+#guard typedAs? layered [("c", tCap .console)] (io .printedErrors [v "c"]) (tList tText) true
+
+-- Reject an ordinary function that tries to delegate to spec code, bad kind
+-- signatures, a spec entry, and a missing entry.
+#guard !wellTyped? { layered with funs := layered.funs ++
+  [{ (fn "ordinary" [] tUnit (call "bad assertion" [])) with constCount := 4 }] }
+#guard !wellTyped? { layered with entry := "good example" }
+#guard !wellTyped? { layered with entry := "missing" }
+#guard [FunKind.test, .example, .anchor, .promise].all fun kind =>
+  !wellTyped? { layered with funs := layered.funs ++ [{ (fn "invalid" [] tBool tt) with kind }] }
+#guard !wellTyped? { layered with funs := layered.funs ++
+  [{ (fn "invalid" [("x", tInt)] tUnit unitE) with kind := .test }] }
+#guard !wellTyped? { layered with funs := layered.funs ++
+  [{ (fn "invalid" [] tInt (int 0)) with kind := .promise }] }
+
+-- Initializers are ordinary code. Direct and transitive forward reads, self
+-- reads, duplicate constant names and falsely small function prefixes fail.
+#guard !wellTyped? { layered with consts := [const "seed" tInt (global "twice")] ++ layered.consts.tail }
+#guard !wellTyped? { layered with consts := [const "seed" tInt (call "first" [])] ++ layered.consts.tail }
+#guard !wellTyped? { layered with consts := [const "seed" tInt (global "seed")] ++ layered.consts.tail }
+#guard !wellTyped? { layered with consts := layered.consts.take 3 ++ [const "seed" tInt (int 8)] }
+#guard !wellTyped? { layered with consts := [const "seed" tInt (str "wrong type")] ++ layered.consts.tail }
+#guard !wellTyped? { layered with funs :=
+  [{ (fn "first" [] tInt (global "seed")) with constCount := 0 }] ++ layered.funs.tail }
+#guard !wellTyped? { layered with consts := [const "seed" tInt (DSL.fail (str "no"))] ++ layered.consts.tail }
+
+def stoppedInit : Program :=
+  { layered with consts := [const "seed" tInt (stop "initialization stopped")] ++ layered.consts.tail }
+#guard wellTyped? stoppedInit
+#guard match runProgram 30 stoppedInit [.cap .console (some "")] with
+  | .stopped (.stop "initialization stopped") w => w.stdout.isEmpty
+  | _ => false
+#guard match runTest 30 stoppedInit "bad assertion" with
+  | .stopped (.stop "initialization stopped") _ => true
+  | _ => false
+
+-- The initializer API can reuse one computed prefix across several calls.
+-- A supplied console prefix makes its once-only effect observable without
+-- adding fake constructors to the language.
+#guard match initConsts 30 layered [const "message" tText
+    (seq (print (global "console") (str "once")) (str "cached"))]
+    [("console", .cap .console (some ""))] {} fun gs w =>
+      evalWithGlobals 30 layered gs [] w (tup [global "message", global "message"]) with
+  | .ok (.tuple [.text "cached", .text "cached"]) w => w.stdout == ["once"]
+  | _ => false
 
 end MoCore.Builtins

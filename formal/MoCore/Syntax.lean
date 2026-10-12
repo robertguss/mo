@@ -557,6 +557,8 @@ def Prim.sig : Prim → List Ty × Ty
 inductive Expr where
   | lit (l : Lit)
   | var (x : String)
+  /-- A module constant; separate from local variables, so it cannot be shadowed. -/
+  | global (name : String)
   | let_ (x : String) (e : Expr) (body : Expr)
   /-- An anonymous function; it captures its environment when evaluated. -/
   | lam (params : List (String × Ty)) (body : Expr)
@@ -596,20 +598,58 @@ structure DataDecl where
   ctors : List Ctor
   deriving Repr, Inhabited
 
-/-- A top-level function. Its body sees only its parameters (and, through
-`call`, the program's other functions). -/
+/-- The four specification kinds and ordinary program code. -/
+inductive FunKind where
+  | function | test | example | promise | anchor
+  deriving Repr, Inhabited, DecidableEq
+
+def FunKind.isSpec : FunKind → Bool
+  | .function => false
+  | _ => true
+
+/-- The signatures required by bytecode 3.3. A promise has a final result parameter. -/
+def FunKind.validSig (kind : FunKind) (ps : List (String × Ty)) (ret : Ty) : Bool :=
+  match kind with
+  | .function => true
+  | .test | .example => ps.isEmpty && ret == .unit
+  | .promise => !ps.isEmpty && ret == .int
+  | .anchor => ps.isEmpty && ret == .int
+
+/-- A top-level function. `constCount` is the prefix of constants its body
+needs, including through calls; lowering's dependency analysis supplies it. -/
 structure FunDecl where
   name : String
   params : List (String × Ty)
   ret : Ty
   body : Expr
+  module : String := "Main"
+  kind : FunKind := .function
+  constCount : Nat := 0
   deriving Repr, Inhabited
 
-/-- A Core program: its data table and its function table. -/
+/-- A module constant, already ordered by lowering's dependency analysis. -/
+structure ConstDecl where
+  name : String
+  ty : Ty
+  body : Expr
+  deriving Repr, Inhabited
+
+/-- A whole Core program, with one designated entry function. -/
 structure Program where
   data : List DataDecl
   funs : List FunDecl
+  consts : List ConstDecl := []
+  entry : String := "main"
   deriving Repr, Inhabited
+
+/-- The types of the first `n` constants, in computation order. -/
+def constCtx (P : Program) (n : Nat) : List (String × Ty) :=
+  (P.consts.take n).map fun c => (c.name, c.ty)
+
+/-- Console observations, like failures, belong only to spec code. -/
+def Prim.specOnly : Prim → Bool
+  | .io .printed | .io .printedErrors => true
+  | _ => false
 
 /-! ## Lookups -/
 
@@ -635,6 +675,18 @@ where
   go : List FunDecl → Option FunDecl
     | [] => none
     | fd :: fds => if f = fd.name then some fd else go fds
+
+theorem lookupFun_go_mem {f : String} : ∀ {fds : List FunDecl} {fd : FunDecl},
+    lookupFun.go f fds = some fd → fd ∈ fds
+  | [], _, h => by simp [lookupFun.go] at h
+  | g :: gs, fd, h => by
+    simp only [lookupFun.go] at h
+    split at h
+    · simp only [Option.some.injEq] at h; subst h; simp
+    · exact List.mem_cons_of_mem _ (lookupFun_go_mem h)
+
+theorem lookupFun_mem {P : Program} {f : String} {fd : FunDecl}
+    (h : lookupFun P f = some fd) : fd ∈ P.funs := lookupFun_go_mem h
 
 /-- The constructors of `Option(T)`: `None` then `Some(T)`, in the order
 reference 8 declares them, which is also their order (reference 9.2). -/

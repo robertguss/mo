@@ -23,10 +23,20 @@ Core is a **typed, monomorphic, strict functional language**:
   application of a function value, calls of top-level functions, tuples and
   projection, constructor application, `case` on one level of constructors
   (one arm per constructor), `if`, primitive operations (`Prim`, each with a
-  typing signature), `stop "reason"`, and join points: `join j(params) = body
+  typing signature), `stop "reason"`, `fail e` with a `Text` detail, reads of
+  module constants, and join points: `join j(params) = body
   in rest` and `jump j(args)`, jumps only in tail position, a join body may
   jump to its own join point. Loops, `break`, `continue`, `return` and `try`
   lower to join points.
+- **Programs** have ordered `const name : T = e` declarations, functions
+  with a module and kind (`function`, `test`, `example`, `promise`, `anchor`),
+  and one designated ordinary entry. Constants are computed once before
+  execution, each seeing only its preceding prefix, including through calls.
+  The last four function kinds and anonymous functions inside them are spec
+  code: only they may use `fail`, `printed` and `printedErrors`. Ordinary code
+  cannot call a spec function, including through a named-function wrapper.
+  The typing rules and executable checker enforce these restrictions and the
+  kind signatures of bytecode 3.3.
 - **Effects** go through primitives on capability handles, which read and
   update one `World`: arguments, environment variables, standard input,
   standard output and error, an insertion-ordered in-memory file map, the
@@ -39,8 +49,17 @@ Core is a **typed, monomorphic, strict functional language**:
   big-step evaluator with fuel. An outcome is a value and the new world;
   `stopped` on a bug (overflow, division by zero, `stop`, a library call
   outside what it accepts, a map literal whose keys turn out equal; with the
-  world so far); an internal `jumped` to a join point; `wrong` (stuck, only
+  world so far); `failed` with its Text detail and world, distinct from a
+  stop; an internal `jumped` to a join point; `wrong` (stuck, only
   for ill-typed programs); or `outOfFuel`. Overflow stops; it never wraps.
+
+`eval` evaluates an expression without constants; `evalWithGlobals` takes
+their computed values. `evalProgram` initializes constants before evaluating
+an expression, `runProgram` before calling the designated entry with supplied
+runtime arguments, and `runTest` before calling a test or example. These are
+fresh runs. `initConsts`'s continuation can run several calls with one computed
+prefix; `scenario` uses that for a multi-step test. Runners return Core
+outcomes, not OS exit statuses; lowering supplies any entry wrapper (11.2).
 
 How each Mo feature lowers to Core is written down in
 [TRANSLATION.md](TRANSLATION.md), section by section, with worked examples.
@@ -72,17 +91,17 @@ result fails the build.
 | `MoCore/Support/Bytes.lean` | UTF-8 over lists of bytes: encoding text (`Text.bytes`) and decoding it (`Bytes.decode_utf8`, by table 3-7 of the Unicode Standard); the order of bytes. |
 | `MoCore/Support/Equiv.lean` | Structural equality of values (maps and sets in any order, floats by IEEE), `Distinct` (no element of a list equals one after it, as in a set), and the built-in orders. |
 | `MoCore/Prim.lean` | What every primitive does: `Prim.eval`, with the range checks. |
-| `MoCore/Eval.lean` | The evaluator `eval`, and `run`/`holds` for running programs. |
+| `MoCore/Eval.lean` | Expression evaluators, `initConsts`, `evalProgram`, `runProgram`, `runTest`, and `run`/`holds`. |
 | `MoCore/Typing.lean` | The typing judgment `Typed`, well-typed programs `WellTyped`, value typing `ValTy`, `OutcomeOk`, `PrimSafe`. |
 | `MoCore/Safety.lean` | Type safety of the calculus, given safe primitives: `eval_safe`. |
 | `MoCore/PrimSafety.lean` | Every primitive respects its signature: `prims_safe`. |
-| `MoCore/Theorems.lean` | The unconditional theorems: `type_safety` and its corollaries, determinism. |
+| `MoCore/Theorems.lean` | The unconditional theorems: expression, initialization and runner safety, the corollaries, determinism. |
 | `MoCore/Check.lean` | An executable type checker, `tc`, and its soundness: `tc_sound`, `checkProgram_sound`. |
-| `MoCore/Fuel.lean` | Fuel is only a bound: `eval_fuel_mono`. |
+| `MoCore/Fuel.lean` | Fuel is only a bound, for expressions, initialization and both runners. |
 | `MoCore/DSL.lean` | Lean helpers for writing Core programs readably, named after the Mo constructs they lower. |
 | `MoCore/Lib.lean` | Library functions written in Core (`map`, `filter`, `sort_by_desc`, `update`, ...), as generators instantiated per type, the order they sort by (`Lib.lt`, in which a float that is "not a number" comes last), and a set's text form (`setText`, `[1, 2].to_set`). |
 | `MoCore/Testing.lean` | `passes` and `scenario` for checking examples and tests, and `stops` for checking that an expression stops on a bug; lemmas turning a checked program into "never goes wrong" theorems. |
-| `MoCore/Builtins.lean` | Checks of `Byte`, `Bytes`, `Range` and `Set`, which the samples use little, written like the samples' checks: every primitive of the four, ranges up to the largest `Int`, UTF-8 decoding against Lean's own decoder, the order each set operation keeps, and a set's text form. |
+| `MoCore/Builtins.lean` | Checks of `Byte`, `Bytes`, `Range`, `Set`, failure, initialization, kind signatures, spec-only operations/calls, closures and runners. |
 | `MoCore/Examples/*.lean` | The twelve samples of `examples/`, each in Core, with every example line and test of the sample as a `#guard`, and theorems that the program is well typed and never goes wrong. |
 | `TRANSLATION.md` | The lowering from every v0.1 feature to Core, how the model follows the answers D227 gave to the questions writing it raised, the three things D228 added, and what the model decided in making `Byte`, `Bytes`, `Range` and `Set` types of their own. |
 
@@ -91,8 +110,11 @@ result fails the build.
 Each file in `MoCore/Examples/` translates its sample by hand, following
 TRANSLATION.md; each Core function's comment shows the Mo source it comes
 from. Every example line (reference 12.1) and test (12.3) of the sample is a
-Core expression of type `Bool` that `#guard` checks is well typed and
-evaluates to `true`; promise anchors (12.2) are checked too.
+condition lowered to a Unit assertion that `#guard` checks is well typed in
+spec code and returns normally; promise anchors (12.2) are checked too.
+Greet's examples use named example functions and `runTest`; its entry also
+runs through `runProgram`. Promises have kind `promise` and return 0 on
+success or the first false line's one-based number, as bytecode 3.3 requires.
 
 | Program | What its checks cover |
 | --- | --- |
@@ -115,11 +137,18 @@ Everything below is fully proven: there is no `sorry` anywhere.
 
 **Type safety** (`MoCore/Theorems.lean`):
 
-- `type_safety`: `WellTyped P → Typed P Γ [] e τ → EnvTy P ρ Γ →
+- `type_safety`: `WellTyped P → Typed P Γ [] e τ 0 spec → EnvTy P ρ Γ →
   OutcomeOk P [] τ (eval n P ρ w e)`, for every fuel `n` and world `w`. In
   words: in a well-typed program, a well-typed expression evaluated in an
   environment whose values have the context's types never goes `wrong`; a
-  value it returns has its type; and it never ends with a stray jump.
+  value it returns has its type; and it never ends with a stray jump. Stopping,
+  assertion failure and exhaustion of fuel are safe terminal outcomes.
+- `initConsts_safe`: initialization preserves a typed prefix, including
+  captured prefixes in closures, and any safe continuation.
+- `program_type_safety`: the same safety guarantee for `evalProgram`, with
+  expressions typed at the full constant prefix and either spec flag.
+- `runProgram_safe`, `runTest_safe`: the entry with typed runtime arguments,
+  and a selected test or example, have safe outcomes after initialization.
 - `eval_never_wrong`: under the same hypotheses, `eval n P ρ w e ≠ .wrong msg`.
 - `eval_ok_typed`: if `eval n P ρ w e = .ok v w'` then `ValTy P v τ`.
 - `eval_no_stray_jump`: `eval n P ρ w e ≠ .jumped j vs w'`.
@@ -135,7 +164,7 @@ Everything below is fully proven: there is no `sorry` anywhere.
 
 **The calculus, from a hypothesis on primitives** (`MoCore/Safety.lean`):
 
-- `eval_safe`: `WellTyped P → PrimsSafe P → ∀ n, EvSafe P (eval n P)`, where
+- `eval_safe`: `WellTyped P → PrimsSafe P → ∀ n, EvSafe P (evalWithGlobals n P)`, where
   `PrimsSafe P` says every primitive, given arguments of its argument types,
   returns a value of its result type or stops. The proof is by induction on
   the fuel, with one lemma per helper of the evaluator: `evalArgs_safe`,
@@ -174,6 +203,10 @@ Everything below is fully proven: there is no `sorry` anywhere.
   eval m P ρ w e = eval n P ρ w e`. An answer the evaluator gives doesn't
   depend on how much fuel it was given, so differential tests of the VM
   against this model are sound.
+- `evalWithGlobals_fuel_mono`, `initConsts_fuel_mono`,
+  `evalProgram_fuel_mono`, `runProgram_fuel_mono`, `runTest_fuel_mono`:
+  the same guarantee with computed globals, across initialization, and for
+  whole runs, including failed or stopped ones.
 
 **The twelve programs are well typed and never go wrong**
 (`MoCore/Examples/*.lean`), each by the kernel running the checker
@@ -217,21 +250,19 @@ No theorem is left with `sorry`. What the proofs don't yet cover:
 - **Progress for programs that don't terminate**: the evaluator returns
   `outOfFuel` for them; there is no coinductive semantics.
 
-Not modeled yet: `fail`, the failure of an assertion with its detail
-(architecture 4.1; here an `assert` stops, TRANSLATION.md 12.3), the
-`Unicode16` module, the text forms the lowering derives for records, choice
+Not modeled yet: the `Unicode16` module, the text forms the lowering derives for records, choice
 types, tuples, lists and maps, and the quoted form of a text or a character
 inside another value (`to_text[T]`, which both `"#{x}"` and `x.to_text` call,
 TRANSLATION.md 3.4; a set's is `Lib.setText`, given how its elements are
 written), the fake constructors (a test's fakes are its starting world, so
 two fakes of one kind can't be in use at the same time, TRANSLATION.md 12.4),
-the program layer of architecture section 4.1 (constants are functions
-without parameters, and nothing computes them all before `main` or the first
-test, TRANSLATION.md 10.4), and a text form (S-expressions) for Core programs
+and a text form (S-expressions) for Core programs
 and values, which architecture section 4.4 asks `formal/` to define for
 exchanging programs with the C toolchain. `Byte`, `Bytes`, `Range` and `Set`
 are types of their own (TRANSLATION.md 3.2, 3.4, 7.5 and 3.8, and the
-decisions in its last two sections).
+decisions in TRANSLATION.md). Failure and the program layer are now modeled;
+their decisions and the remaining design/reference mismatches are recorded
+in TRANSLATION.md's final section.
 
 ## Axioms
 

@@ -552,11 +552,11 @@ def showFn : FunDecl :=
       (seq (printError (v "console") (str "json: nothing is at that path")) (int 1))
 
 def program : Program :=
-  { data := [Json, JsonError]
-    funs := [toText, parse, valueAt, wordAt, stringAt, hexValue, hexDigitValue, unescape, numberAt,
+  wholeProgram "Json" "main" [Json, JsonError] []
+    [toText, parse, valueAt, wordAt, stringAt, hexValue, hexDigitValue, unescape, numberAt,
              numberEnd, arrayAt, objectAt, expect, skipSpace, pretty, quoted, escapeChar, hexDigit,
              atPath, readInput, mainFn, showFn,
-             Lib.map J tText, Lib.map (tTup [tText, J]) tText, Lib.map tChar tText] }
+             Lib.map J tText, Lib.map (tTup [tText, J]) tText, Lib.map tChar tText]
 
 /-- The checker accepts the program; `decide +kernel` has the kernel run it. -/
 theorem checked : wellTyped? program = true := by decide +kernel
@@ -648,14 +648,14 @@ assert console.printed == ["\"pen\""]
 
 /-- Running `main` never goes wrong, whatever the arguments and the input. -/
 theorem main_never_wrong (n : Nat) (w : World) (msg : String) :
-    eval n program (handles [("args", .args), ("console", .console)]) w
+    evalProgram n program (handles [("args", .args), ("console", .console)]) w
       (call "main" [v "args", v "console"]) ≠ .wrong msg :=
   never_wrong_with_handles (τ := tInt) checked (by decide +kernel) n w msg
 
 /-- Parsing any text never goes wrong: it gives a `Json`, a `JsonError`, or a
 bug report (such as running out of fuel on deep input). -/
 theorem parse_never_wrong {ρ : Env} (hρ : EnvTy program ρ [("text", tText)]) (n : Nat) (w : World)
-    (msg : String) : eval n program ρ w (call "parse" [v "text"]) ≠ .wrong msg :=
+    (msg : String) : evalProgram n program ρ w (call "parse" [v "text"]) ≠ .wrong msg :=
   never_wrong (τ := tRes J JE) checked (by decide +kernel) hρ n w msg
 
 end MoCore.Examples.Json

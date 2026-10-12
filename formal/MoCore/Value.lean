@@ -88,6 +88,7 @@ inductive Value where
   | set (vs : List Value)
   | con (c : String) (fields : List Value)
   | closure (env : List (String × Value)) (params : List (String × Ty)) (body : Expr)
+      (globals : List (String × Value))
   | cap (c : Cap) (root : Option String)
   deriving Repr, Inhabited
 

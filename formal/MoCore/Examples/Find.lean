@@ -184,8 +184,8 @@ def run : FunDecl :=
         (ite (v "failed?") (int 2) (ite (v "matched?") (int 0) (int 1)))
 
 def program : Program :=
-  { data := [Search, UsageError]
-    funs := [toText, parseArgs, searchFor, matchesFn, folded, mainFn, run, Lib.fileErrorText] }
+  wholeProgram "Find" "main" [Search, UsageError] []
+    [toText, parseArgs, searchFor, matchesFn, folded, mainFn, run, Lib.fileErrorText]
 
 /-- The checker accepts the program; `decide +kernel` has the kernel run it. -/
 theorem checked : wellTyped? program = true := by decide +kernel
@@ -272,7 +272,7 @@ assert main(Args.of(["cat", "gone.txt"]), Console.fake(), files) == 2
 
 /-- Running `main` never goes wrong, whatever the arguments and files. -/
 theorem main_never_wrong (n : Nat) (w : World) (msg : String) :
-    eval n program (handles caps) w runMain ≠ .wrong msg :=
+    evalProgram n program (handles caps) w runMain ≠ .wrong msg :=
   never_wrong_with_handles (τ := tInt) checked (by decide +kernel) n w msg
 
 end MoCore.Examples.Find
