@@ -10,6 +10,43 @@ static MO_MUST_USE bool name_valid(mo_core_string s) {
 static MO_MUST_USE bool same_name(mo_core_string a, mo_core_string b) {
     return a.length == b.length && (a.length == 0 || memcmp(a.bytes, b.bytes, a.length) == 0);
 }
+static MO_MUST_USE int name_order(mo_core_string a, mo_core_string b) {
+    size_t n = a.length < b.length ? a.length : b.length;
+    int order = n == 0 ? 0 : memcmp(a.bytes, b.bytes, n);
+    return order != 0 ? order : (a.length > b.length) - (a.length < b.length);
+}
+/* Bottom-up merge sorting gives a worst-case bound even for hostile common-prefix names. */
+static MO_MUST_USE bool module_names_valid(mo_core_module_metas modules, struct mo_arena *scratch) {
+    mo_core_string *names =
+        mo_arena_allocate_array(scratch, modules.count, sizeof *names, _Alignof(mo_core_string));
+    mo_core_string *temp =
+        mo_arena_allocate_array(scratch, modules.count, sizeof *temp, _Alignof(mo_core_string));
+    if (names == NULL || temp == NULL)
+        return false;
+    for (size_t i = 0; i < modules.count; i++) {
+        names[i] = modules.items[i].name;
+        if (!name_valid(names[i]))
+            return false;
+    }
+    for (size_t width = 1; width < modules.count; width *= 2) {
+        for (size_t start = 0; start < modules.count; start += 2 * width) {
+            size_t middle = start + width < modules.count ? start + width : modules.count;
+            size_t end = start + 2 * width < modules.count ? start + 2 * width : modules.count;
+            size_t a = start, b = middle;
+            for (size_t i = start; i < end; i++)
+                temp[i] = a < middle && (b == end || name_order(names[a], names[b]) <= 0)
+                              ? names[a++]
+                              : names[b++];
+        }
+        mo_core_string *swap = names;
+        names = temp;
+        temp = swap;
+    }
+    for (size_t i = 1; i < modules.count; i++)
+        if (same_name(names[i - 1], names[i]))
+            return false;
+    return true;
+}
 static MO_MUST_USE bool span_valid(struct mo_core_span s, size_t files) {
     return !s.some || (s.value.file < files && s.value.start <= s.value.end);
 }
@@ -125,6 +162,8 @@ static MO_MUST_USE bool mark_members(mo_core_indices xs, uint8_t *seen, size_t c
 }
 static MO_MUST_USE bool modules_valid(const struct mo_core *p, struct mo_arena *scratch) {
     const struct mo_core_metadata *m = &p->metadata;
+    if (!module_names_valid(m->modules, scratch))
+        return false;
     size_t counts[] = {p->data.count, p->funs.count, p->consts.count};
     uint8_t *seen[3];
     for (size_t i = 0; i < 3; i++) {
@@ -135,26 +174,24 @@ static MO_MUST_USE bool modules_valid(const struct mo_core *p, struct mo_arena *
             return false;
         memset(seen[i], 0, counts[i] + 1);
     }
+    uint32_t *data_owner =
+        mo_arena_allocate_array(scratch, counts[0] + 1, sizeof *data_owner, _Alignof(uint32_t));
+    if (data_owner == NULL)
+        return false;
     for (size_t i = 0; i < m->modules.count; i++) {
         const struct mo_core_module_meta *mod = &m->modules.items[i];
         if (!name_valid(mod->name) || !mark_members(mod->data, seen[0], counts[0]) ||
             !mark_members(mod->funs, seen[1], counts[1]) ||
             !mark_members(mod->consts, seen[2], counts[2]))
             return false;
-        for (size_t j = 0; j < i; j++)
-            if (same_name(mod->name, m->modules.items[j].name))
-                return false;
+        for (size_t j = 0; j < mod->data.count; j++)
+            data_owner[mod->data.items[j]] = (uint32_t)i;
         for (size_t j = 0; j < mod->funs.count; j++)
             if (!same_name(p->funs.items[mod->funs.items[j]].module, mod->name))
                 return false;
         for (size_t j = 0; j < mod->exposed_types.count; j++) {
             uint32_t n = mod->exposed_types.items[j].index;
-            if (n >= counts[0] || seen[0][n] != 1)
-                return false;
-            bool member = false;
-            for (size_t k = 0; k < mod->data.count; k++)
-                member |= mod->data.items[k] == n;
-            if (!member)
+            if (n >= counts[0] || seen[0][n] != 1 || data_owner[n] != i)
                 return false;
             seen[0][n] = 3;
         }

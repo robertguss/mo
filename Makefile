@@ -119,7 +119,8 @@ fuzz-smoke: $(FUZZERS)
 				name=$${base}_large; options="-max_len=134217728 -timeout=30"; fi; \
 			corpus=$(FUZZ_BUILD)/corpus/$$name; mkdir -p $$corpus; \
 			if [ -d fuzz/corpus/$$name ]; then cp -R fuzz/corpus/$$name/. $$corpus/; fi; \
-			if [ "$$name" = fuzz_core_text ]; then cp tests/core/*.core $$corpus/; fi; \
+			if [ "$$name" = fuzz_core_text ] || [ "$$name" = fuzz_core_check ]; then \
+				cp tests/core/*.core fuzz/corpus/fuzz_core_text/*.core $$corpus/; fi; \
 			log=$(FUZZ_BUILD)/$$name.log; echo "fuzzing $$name for $(FUZZ_SECONDS)s"; \
 			$$f $$options -max_total_time=$(FUZZ_SECONDS) -print_final_stats=1 \
 				-artifact_prefix=$(FUZZ_BUILD)/artifacts/ $$corpus >$$log 2>&1; status=$$?; \

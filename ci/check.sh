@@ -72,6 +72,13 @@ if have lake; then
 	make --no-print-directory formal
 	step "Core text fixtures match the Lean reference printer"
 	sh ci/check_core_fixtures.sh
+	step "Core checker verdicts match Lean on fixtures, generated variants and fuzz corpora"
+	if have python3; then
+		python3 ci/check_core_check.py build/gcc/debug/tests/test_core_check.test \
+			build/clang/debug/tests/test_core_check.test build/clang/sanitize/tests/test_core_check.test
+	else
+		missing "python3 is not installed"
+	fi
 else
 	missing "elan (Lean's installer) is not installed"
 fi
