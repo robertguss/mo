@@ -40,4 +40,18 @@ MO_MUST_USE bool mo_bytecode_readable(const struct mo_bytecode *file, const stru
                                       uint32_t base, uint32_t pc, bool *readable, uint64_t *work,
                                       struct mo_load_error *error);
 
+/* Streaming replay for exhaustive checks without code-count separate analyses. The mask
+ * changes only in slots the instruction/DFS undo log changes. Visitors run once per boundary,
+ * in graph traversal order, and must not retain or change the mask. False stops the visit. */
+typedef bool (*mo_readable_visitor)(uint32_t pc, const bool *readable, void *context);
+MO_MUST_USE bool mo_bytecode_visit_readable(const struct mo_bytecode *file,
+                                            const struct mo_types *types,
+                                            const struct mo_verification *verified,
+                                            uint32_t function, uint32_t base, bool *readable,
+                                            mo_readable_visitor visit, void *context,
+                                            struct mo_load_error *error);
+MO_MUST_USE bool mo_image_visit_readable(const struct mo_image *image, uint32_t function,
+                                         bool *readable, mo_readable_visitor visit, void *context,
+                                         struct mo_load_error *error);
+
 #endif

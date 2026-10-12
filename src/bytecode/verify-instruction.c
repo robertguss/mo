@@ -70,7 +70,17 @@ static MO_MUST_USE bool args(const struct mo_verify_function *v, const uint32_t 
     return true;
 }
 
-static MO_MUST_USE bool types(struct mo_verify_function *v, uint32_t pc) {
+/* Each refusal names the failed contract, not a catch-all that can hide a different failure
+ * in a one-change regression fixture. Structural decoding has already bounded all operands. */
+#define REQUIRE(condition, reason)                                                                 \
+    do {                                                                                           \
+        if (!(condition)) {                                                                        \
+            *v->error = (struct mo_load_error){v->base + pc * 4, reason, MO_BYTECODE_INVALID};     \
+            return false;                                                                          \
+        }                                                                                          \
+    } while (0)
+
+bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc) {
     const struct mo_bytecode *f = v->file;
     const struct mo_bytecode_function *fn = v->fn;
     const uint32_t *a = fn->code + pc + 1;
@@ -80,79 +90,110 @@ static MO_MUST_USE bool types(struct mo_verify_function *v, uint32_t pc) {
     if (op >= MO_OP_ADD_INT && op <= MO_OP_REM_FLOAT) {
         static const enum mo_type_kind k[] = {MO_TYPE_INT, MO_TYPE_DECIMAL, MO_TYPE_FLOAT};
         enum mo_type_kind t = k[(op - MO_OP_ADD_INT) % 3];
-        return kind(v, a[0], t) && kind(v, a[1], t) && kind(v, a[2], t);
+        REQUIRE(kind(v, a[0], t), "arithmetic result type");
+        REQUIRE(kind(v, a[1], t) && kind(v, a[2], t), "arithmetic argument type");
+        return true;
     }
     if (op >= MO_OP_NEG_INT && op <= MO_OP_NEG_DURATION) {
         static const enum mo_type_kind k[] = {MO_TYPE_INT, MO_TYPE_DECIMAL, MO_TYPE_FLOAT,
                                               MO_TYPE_DURATION};
-        return kind(v, a[0], k[op - MO_OP_NEG_INT]) && kind(v, a[1], k[op - MO_OP_NEG_INT]);
+        REQUIRE(kind(v, a[0], k[op - MO_OP_NEG_INT]), "negation result type");
+        REQUIRE(kind(v, a[1], k[op - MO_OP_NEG_INT]), "negation argument type");
+        return true;
     }
     if (op >= MO_OP_EQ_INT && op <= MO_OP_LE_CHOICE) {
         static const enum mo_type_kind k[] = {MO_TYPE_INT,  MO_TYPE_DECIMAL,  MO_TYPE_FLOAT,
                                               MO_TYPE_BOOL, MO_TYPE_BYTE,     MO_TYPE_CHAR,
                                               MO_TYPE_TIME, MO_TYPE_DURATION, MO_TYPE_CHOICE};
         enum mo_type_kind t = k[(op - MO_OP_EQ_INT) % 9];
-        return kind(v, a[0], MO_TYPE_BOOL) && kind(v, a[1], t) && reg(v, a[1]) == reg(v, a[2]) &&
-               (t != MO_TYPE_CHOICE || !f->types[reg(v, a[1])].has_fields);
+        REQUIRE(kind(v, a[0], MO_TYPE_BOOL), "comparison result type");
+        REQUIRE(kind(v, a[1], t) && reg(v, a[1]) == reg(v, a[2]), "comparison argument type");
+        REQUIRE(t != MO_TYPE_CHOICE || !f->types[reg(v, a[1])].has_fields,
+                "choice comparison has fields");
+        return true;
     }
     switch (op) {
     case MO_OP_MOVE:
     case MO_OP_DUP:
-        return reg(v, a[0]) == reg(v, a[1]);
+        REQUIRE(reg(v, a[0]) == reg(v, a[1]), "move/dup type mismatch");
+        break;
     case MO_OP_DROP:
     case MO_OP_JUMP:
     case MO_OP_FREE_TOKEN:
         return true;
     case MO_OP_CONST:
-        return reg(v, a[0]) == f->constants[a[1]].type &&
-               (fn->spec_code || f->types[f->constants[a[1]].type].kind != MO_TYPE_FUNCTION ||
-                !f->functions[f->constants[a[1]].value.function].spec_code);
+        REQUIRE(reg(v, a[0]) == f->constants[a[1]].type, "constant result type");
+        REQUIRE(fn->spec_code || f->types[f->constants[a[1]].type].kind != MO_TYPE_FUNCTION ||
+                    !f->functions[f->constants[a[1]].value.function].spec_code,
+                "spec closure constant in non-spec code");
+        break;
     case MO_OP_GLOBAL:
-        return reg(v, a[0]) == f->globals[a[1]].type;
+        REQUIRE(reg(v, a[0]) == f->globals[a[1]].type, "global result type");
+        break;
     case MO_OP_SET_GLOBAL:
-        return fn->kind == MO_FUNCTION_INIT && f->globals[a[0]].type == reg(v, a[1]);
+        REQUIRE(fn->kind == MO_FUNCTION_INIT, "global store outside init");
+        REQUIRE(f->globals[a[0]].type == reg(v, a[1]), "global store type");
+        break;
     case MO_OP_ADD_DURATION:
     case MO_OP_SUB_DURATION:
-        return kind(v, a[0], MO_TYPE_DURATION) && kind(v, a[1], MO_TYPE_DURATION) &&
-               kind(v, a[2], MO_TYPE_DURATION);
+        REQUIRE(kind(v, a[0], MO_TYPE_DURATION), "duration arithmetic result type");
+        REQUIRE(kind(v, a[1], MO_TYPE_DURATION) && kind(v, a[2], MO_TYPE_DURATION),
+                "duration arithmetic argument type");
+        break;
     case MO_OP_SCALE_DURATION:
-        return kind(v, a[0], MO_TYPE_DURATION) && kind(v, a[1], MO_TYPE_DURATION) &&
-               kind(v, a[2], MO_TYPE_INT);
+        REQUIRE(kind(v, a[0], MO_TYPE_DURATION), "duration scale result type");
+        REQUIRE(kind(v, a[1], MO_TYPE_DURATION) && kind(v, a[2], MO_TYPE_INT),
+                "duration scale argument type");
+        break;
     case MO_OP_ADD_TIME:
     case MO_OP_SUB_TIME:
-        return kind(v, a[0], MO_TYPE_TIME) && kind(v, a[1], MO_TYPE_TIME) &&
-               kind(v, a[2], MO_TYPE_DURATION);
+        REQUIRE(kind(v, a[0], MO_TYPE_TIME), "time arithmetic result type");
+        REQUIRE(kind(v, a[1], MO_TYPE_TIME) && kind(v, a[2], MO_TYPE_DURATION),
+                "time arithmetic argument type");
+        break;
     case MO_OP_DIFF_TIME:
-        return kind(v, a[0], MO_TYPE_DURATION) && kind(v, a[1], MO_TYPE_TIME) &&
-               kind(v, a[2], MO_TYPE_TIME);
+        REQUIRE(kind(v, a[0], MO_TYPE_DURATION), "time difference result type");
+        REQUIRE(kind(v, a[1], MO_TYPE_TIME) && kind(v, a[2], MO_TYPE_TIME),
+                "time difference argument type");
+        break;
     case MO_OP_CMP_FLOAT:
-        return mo_bytecode_ordering(&f->types[reg(v, a[0])]) && kind(v, a[1], MO_TYPE_FLOAT) &&
-               kind(v, a[2], MO_TYPE_FLOAT);
+        REQUIRE(mo_bytecode_ordering(&f->types[reg(v, a[0])]), "float comparison needs Ordering");
+        REQUIRE(kind(v, a[1], MO_TYPE_FLOAT) && kind(v, a[2], MO_TYPE_FLOAT),
+                "float comparison argument type");
+        break;
     case MO_OP_NOT:
-        return kind(v, a[0], MO_TYPE_BOOL) && kind(v, a[1], MO_TYPE_BOOL);
+        REQUIRE(kind(v, a[0], MO_TYPE_BOOL), "not result type");
+        REQUIRE(kind(v, a[1], MO_TYPE_BOOL), "not argument type");
+        break;
     case MO_OP_MAKE_RANGE:
-        return kind(v, a[0], MO_TYPE_RANGE) && kind(v, a[1], MO_TYPE_INT) &&
-               kind(v, a[2], MO_TYPE_INT);
+        REQUIRE(kind(v, a[0], MO_TYPE_RANGE), "range result type");
+        REQUIRE(kind(v, a[1], MO_TYPE_INT) && kind(v, a[2], MO_TYPE_INT), "range argument type");
+        break;
     case MO_OP_RANGE_START:
     case MO_OP_RANGE_END:
-        return kind(v, a[0], MO_TYPE_INT) && kind(v, a[1], MO_TYPE_RANGE);
+        REQUIRE(kind(v, a[0], MO_TYPE_INT), "range projection result type");
+        REQUIRE(kind(v, a[1], MO_TYPE_RANGE), "range projection argument type");
+        break;
     case MO_OP_BRANCH:
-        return kind(v, a[0], MO_TYPE_BOOL);
+        REQUIRE(kind(v, a[0], MO_TYPE_BOOL), "branch needs Bool");
+        break;
     case MO_OP_SWITCH:
-        return kind(v, a[0], MO_TYPE_CHOICE) && n == f->types[reg(v, a[0])].case_count;
+        REQUIRE(kind(v, a[0], MO_TYPE_CHOICE), "switch needs choice");
+        REQUIRE(n == f->types[reg(v, a[0])].case_count, "switch target count");
+        break;
     case MO_OP_CALL:
     case MO_OP_TAIL_CALL: {
         bool tail = op == MO_OP_TAIL_CALL;
         const struct mo_bytecode_function *target = &f->functions[a[tail ? 0 : 1]];
-        if (target->kind == MO_FUNCTION_CLOSURE || target->kind == MO_FUNCTION_INIT ||
-            (!fn->spec_code && target->spec_code) || n != target->parameter_count ||
-            (tail ? fn->result_type : reg(v, a[0])) != target->result_type) {
-            return false;
-        }
+        REQUIRE(target->kind != MO_FUNCTION_CLOSURE && target->kind != MO_FUNCTION_INIT,
+                "direct call target kind");
+        REQUIRE(fn->spec_code || !target->spec_code, "direct call to spec code");
+        REQUIRE(n == target->parameter_count, "direct call argument count");
+        REQUIRE((tail ? fn->result_type : reg(v, a[0])) == target->result_type,
+                "direct call result type");
         for (uint32_t i = 0; i < n; i++) {
-            if (reg(v, a[info->fixed_count + i]) != target->parameters[i].type) {
-                return false;
-            }
+            REQUIRE(reg(v, a[info->fixed_count + i]) == target->parameters[i].type,
+                    "direct call argument type");
         }
         return true;
     }
@@ -160,88 +201,111 @@ static MO_MUST_USE bool types(struct mo_verify_function *v, uint32_t pc) {
     case MO_OP_TAIL_CALL_CLOSURE: {
         bool tail = op == MO_OP_TAIL_CALL_CLOSURE;
         const struct mo_type *t = &f->types[reg(v, a[tail ? 0 : 1])];
-        return t->kind == MO_TYPE_FUNCTION &&
-               (tail ? fn->result_type : reg(v, a[0])) == t->result &&
-               args(v, a + info->fixed_count, n, t->parameters, t->parameter_count);
+        REQUIRE(t->kind == MO_TYPE_FUNCTION, "closure call needs function");
+        REQUIRE((tail ? fn->result_type : reg(v, a[0])) == t->result, "closure call result type");
+        REQUIRE(n == t->parameter_count, "closure call argument count");
+        REQUIRE(args(v, a + info->fixed_count, n, t->parameters, t->parameter_count),
+                "closure call argument type");
+        break;
     }
     case MO_OP_RET:
-        return reg(v, a[0]) == fn->result_type;
+        REQUIRE(reg(v, a[0]) == fn->result_type, "return type");
+        break;
     case MO_OP_FAIL:
-        return fn->spec_code && kind(v, a[0], MO_TYPE_TEXT);
+        REQUIRE(fn->spec_code, "fail outside spec code");
+        REQUIRE(kind(v, a[0], MO_TYPE_TEXT), "fail needs Text");
+        break;
     case MO_OP_STOP:
-        return kind(v, a[0], MO_TYPE_TEXT);
+        REQUIRE(kind(v, a[0], MO_TYPE_TEXT), "stop needs Text");
+        break;
     case MO_OP_CONSTRUCT:
     case MO_OP_REUSE: {
         uint32_t l = a[op == MO_OP_REUSE ? 2 : 1];
         const struct mo_layout *layout = &f->layouts[l];
-        return layout->kind != MO_LAYOUT_CLOSURE && reg(v, a[0]) == layout->type &&
-               args(v, a + info->fixed_count, n, layout->fields, layout->field_count);
+        REQUIRE(layout->kind != MO_LAYOUT_CLOSURE, "construct/reuse closure layout");
+        REQUIRE(reg(v, a[0]) == layout->type, "construct/reuse result type");
+        REQUIRE(n == layout->field_count, "construct/reuse field count");
+        REQUIRE(args(v, a + info->fixed_count, n, layout->fields, layout->field_count),
+                "construct/reuse field type");
+        break;
     }
     case MO_OP_MAKE_CASE: {
         const struct mo_type *t = &f->types[a[1]];
-        if (t->kind != MO_TYPE_CHOICE || a[2] >= t->case_count || reg(v, a[0]) != a[1]) {
-            return false;
-        }
+        REQUIRE(t->kind == MO_TYPE_CHOICE, "make_case needs choice");
+        REQUIRE(a[2] < t->case_count, "make_case case index");
+        REQUIRE(reg(v, a[0]) == a[1], "make_case result type");
         const struct mo_type_case *c = &t->cases[a[2]];
-        if (n != c->field_count) {
-            return false;
-        }
+        REQUIRE(n == c->field_count, "make_case field count");
         for (uint32_t i = 0; i < n; i++) {
-            if (reg(v, a[3 + i]) != c->fields[i].type) {
-                return false;
-            }
+            REQUIRE(reg(v, a[3 + i]) == c->fields[i].type, "make_case field type");
         }
         return true;
     }
     case MO_OP_FIELD:
-        return reg(v, a[0]) == field(f, reg(v, a[1]), a[2]);
+        REQUIRE(field(f, reg(v, a[1]), a[2]) != MO_NO_INDEX, "field source or index");
+        REQUIRE(reg(v, a[0]) == field(f, reg(v, a[1]), a[2]), "field result type");
+        break;
     case MO_OP_CASE_FIELD: {
         const struct mo_type *t = &f->types[reg(v, a[1])];
-        return t->kind == MO_TYPE_CHOICE && a[2] < t->case_count &&
-               a[3] < t->cases[a[2]].field_count &&
-               reg(v, a[0]) == t->cases[a[2]].fields[a[3]].type;
+        REQUIRE(t->kind == MO_TYPE_CHOICE, "case_field needs choice");
+        REQUIRE(a[2] < t->case_count, "case_field case index");
+        REQUIRE(a[3] < t->cases[a[2]].field_count, "case_field field index");
+        REQUIRE(reg(v, a[0]) == t->cases[a[2]].fields[a[3]].type, "case_field result type");
+        break;
     }
     case MO_OP_SET_FIELD:
-        return reg(v, a[0]) == reg(v, a[1]) &&
-               (kind(v, a[1], MO_TYPE_RECORD) || kind(v, a[1], MO_TYPE_TUPLE)) &&
-               reg(v, a[3]) == field(f, reg(v, a[1]), a[2]);
+        REQUIRE(kind(v, a[1], MO_TYPE_RECORD) || kind(v, a[1], MO_TYPE_TUPLE),
+                "set_field needs record or tuple");
+        REQUIRE(reg(v, a[0]) == reg(v, a[1]), "set_field result type");
+        REQUIRE(field(f, reg(v, a[1]), a[2]) != MO_NO_INDEX, "set_field field index");
+        REQUIRE(reg(v, a[3]) == field(f, reg(v, a[1]), a[2]), "set_field value type");
+        break;
     case MO_OP_MAKE_CLOSURE:
-        return closure(f, reg(v, a[0]), a[1]) && (fn->spec_code || !f->functions[a[1]].spec_code) &&
-               args(v, a + 2, n, f->functions[a[1]].capture_types,
-                    f->functions[a[1]].capture_count);
+        REQUIRE(closure(f, reg(v, a[0]), a[1]), "closure signature");
+        REQUIRE(fn->spec_code || !f->functions[a[1]].spec_code, "spec closure in non-spec code");
+        REQUIRE(
+            args(v, a + 2, n, f->functions[a[1]].capture_types, f->functions[a[1]].capture_count),
+            "closure capture types or count");
+        break;
     case MO_OP_EQUAL:
-        return kind(v, a[0], MO_TYPE_BOOL) && reg(v, a[2]) == a[1] && reg(v, a[3]) == a[1] &&
-               (v->abilities[a[1]] & MO_ABILITY_EQUAL) != 0;
+        REQUIRE(kind(v, a[0], MO_TYPE_BOOL), "equal result type");
+        REQUIRE(reg(v, a[2]) == a[1] && reg(v, a[3]) == a[1], "equal argument type");
+        REQUIRE((v->abilities[a[1]] & MO_ABILITY_EQUAL) != 0, "equal lacks Equal");
+        break;
     case MO_OP_PRIM: {
         const struct mo_type *t = &f->types[a[2]];
-        return t->kind == MO_TYPE_FUNCTION && reg(v, a[0]) == t->result &&
-               args(v, a + 3, n, t->parameters, t->parameter_count) &&
-               n == strlen(primitives[a[1]].modes) &&
-               mo_bytecode_signature(v, primitives[a[1]].signature, t->parameters, n, t->result);
+        REQUIRE(t->kind == MO_TYPE_FUNCTION, "primitive needs function type");
+        REQUIRE(reg(v, a[0]) == t->result, "primitive result type");
+        REQUIRE(args(v, a + 3, n, t->parameters, t->parameter_count),
+                "primitive argument types or count");
+        REQUIRE(n == strlen(primitives[a[1]].modes), "primitive arity");
+        const char *reason = "primitive signature or constraint";
+        REQUIRE(mo_bytecode_signature(v, primitives[a[1]].signature, t->parameters, n, t->result,
+                                      &reason),
+                reason);
+        break;
     }
     case MO_OP_HOST: {
-        if (n != strlen(hosts[a[1]].modes) || (hosts[a[1]].spec && !fn->spec_code)) {
-            return false;
-        }
+        REQUIRE(n == strlen(hosts[a[1]].modes), "host arity");
+        REQUIRE(!hosts[a[1]].spec || fn->spec_code, "spec host in non-spec code");
         uint32_t parameters[MO_LIMIT_BYTECODE_PARAMETERS];
         for (uint32_t i = 0; i < n; i++) {
             parameters[i] = reg(v, a[2 + i]);
         }
-        return mo_bytecode_signature(v, hosts[a[1]].signature, parameters, n, reg(v, a[0]));
+        const char *reason = "host signature or capability";
+        REQUIRE(
+            mo_bytecode_signature(v, hosts[a[1]].signature, parameters, n, reg(v, a[0]), &reason),
+            reason);
+        break;
     }
     case MO_OP_RESET:
-        return kind(v, a[1], MO_TYPE_RECORD) || kind(v, a[1], MO_TYPE_TUPLE) ||
-               kind(v, a[1], MO_TYPE_CHOICE);
+        REQUIRE(kind(v, a[1], MO_TYPE_RECORD) || kind(v, a[1], MO_TYPE_TUPLE) ||
+                    kind(v, a[1], MO_TYPE_CHOICE),
+                "reset source type");
+        break;
     default:
         MO_UNREACHABLE();
     }
+    return true;
 }
-
-bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc) {
-    if (types(v, pc)) {
-        return true;
-    }
-    *v->error =
-        (struct mo_load_error){v->base + pc * 4, "invalid instruction types or function kind"};
-    return false;
-}
+#undef REQUIRE

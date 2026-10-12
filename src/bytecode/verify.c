@@ -32,17 +32,21 @@ struct flow {
     uint32_t index;
     uint32_t replay;
     bool *readable;
+    mo_readable_visitor visit;
+    void *context;
     uint64_t work;
     uint64_t work_limit;
 };
 
 static MO_MUST_USE bool refuse(struct flow *f, uint32_t pc, const char *reason) {
-    *f->v.error = (struct mo_load_error){f->v.base + pc * 4, reason};
+    *f->v.error = (struct mo_load_error){f->v.base + pc * 4, reason, MO_BYTECODE_INVALID};
     return false;
 }
 static MO_MUST_USE bool charge(struct flow *f, uint32_t pc, size_t steps) {
     if (steps > f->work_limit - f->work) {
-        return refuse(f, pc, "verification work limit");
+        bool ok = refuse(f, pc, "verification work limit");
+        f->v.error->kind = MO_BYTECODE_LIMIT;
+        return ok;
     }
     f->work += steps;
     return true;
@@ -50,7 +54,7 @@ static MO_MUST_USE bool charge(struct flow *f, uint32_t pc, size_t steps) {
 static MO_MUST_USE void *array(struct flow *f, size_t count, size_t size, size_t alignment) {
     void *p = mo_arena_allocate_array(&f->arena, count, size, alignment);
     if (p == NULL) {
-        *f->v.error = (struct mo_load_error){.reason = "no memory"};
+        *f->v.error = (struct mo_load_error){.reason = "no memory", .kind = MO_BYTECODE_NO_MEMORY};
     }
     return p;
 }
@@ -120,7 +124,9 @@ static MO_MUST_USE bool graph(struct flow *f) {
         f->count += f->map[pc];
     }
     if ((uint64_t)fn->register_count * f->count > MO_LIMIT_FUNCTION_REGISTER_BLOCKS) {
-        return refuse(f, 0, "register-block limit");
+        bool ok = refuse(f, 0, "register-block limit");
+        f->v.error->kind = MO_BYTECODE_LIMIT;
+        return ok;
     }
     f->blocks = array(f, f->count, sizeof *f->blocks, _Alignof(struct block));
     f->queue = array(f, f->count, sizeof *f->queue, _Alignof(uint32_t));
@@ -378,6 +384,11 @@ static MO_MUST_USE bool ownership(struct flow *f) {
     if (fn->kind == MO_FUNCTION_CLOSURE) {
         state[fn->parameter_count] = OWNED;
     }
+    if (f->visit != NULL) {
+        for (uint32_t r = 0; r < fn->register_count; r++) {
+            f->readable[r] = state[r] == VALUE || state[r] == OWNED || state[r] == BORROWED;
+        }
+    }
     /* Depth-first traversal restores only changed slots. Full vectors survive only at joins
      * (and a loop back to entry); every block executes once, regardless of its path count. */
     uint32_t depth = 1, changes = 0;
@@ -394,7 +405,8 @@ static MO_MUST_USE bool ownership(struct flow *f) {
                 f->blocks[b].state =
                     mo_arena_copy(&f->arena, state, slots * sizeof *state, _Alignof(uint32_t));
                 if (f->blocks[b].state == NULL) {
-                    *f->v.error = (struct mo_load_error){.reason = "no memory"};
+                    *f->v.error = (struct mo_load_error){.reason = "no memory",
+                                                         .kind = MO_BYTECODE_NO_MEMORY};
                     return false;
                 }
             }
@@ -423,6 +435,9 @@ static MO_MUST_USE bool ownership(struct flow *f) {
                         f->readable[r] =
                             state[r] == VALUE || state[r] == OWNED || state[r] == BORROWED;
                     }
+                }
+                if (f->visit != NULL && !f->visit(pc, f->readable, f->context)) {
+                    return refuse(f, pc, "replay visitor stopped");
                 }
                 for (uint32_t i = 0; i < count; i++) {
                     enum mo_operand_access mode = access(f, pc, i);
@@ -476,6 +491,9 @@ static MO_MUST_USE bool ownership(struct flow *f) {
                         MO_ASSERT(changes < fn->code_count);
                         undo[changes++] = (struct undo){a[i], state[a[i]]};
                         state[a[i]] = MOVED;
+                        if (f->visit != NULL) {
+                            f->readable[a[i]] = false;
+                        }
                     }
                 }
                 for (uint32_t i = 0; i < info->fixed_count; i++) {
@@ -494,6 +512,10 @@ static MO_MUST_USE bool ownership(struct flow *f) {
                                : f->v.file->types[fn->register_types[r]].reference
                                    ? op == MO_OP_CONST || op == MO_OP_GLOBAL ? BORROWED : OWNED
                                    : VALUE;
+                    if (f->visit != NULL) {
+                        f->readable[r] =
+                            state[r] == VALUE || state[r] == OWNED || state[r] == BORROWED;
+                    }
                 }
                 if (op == MO_OP_SET_GLOBAL) {
                     if (state[fn->register_count] != 0) {
@@ -536,6 +558,10 @@ static MO_MUST_USE bool ownership(struct flow *f) {
             while (changes != frame->mark) {
                 struct undo change = undo[--changes];
                 state[change.reg] = change.state;
+                if (f->visit != NULL && change.reg < fn->register_count) {
+                    f->readable[change.reg] =
+                        change.state == VALUE || change.state == OWNED || change.state == BORROWED;
+                }
             }
             depth--;
         }
@@ -559,14 +585,14 @@ bool mo_bytecode_verify(const struct mo_bytecode *file, const struct mo_types *t
     struct layout_key *layouts = mo_arena_allocate_array(arena, file->layout_count, sizeof *layouts,
                                                          _Alignof(struct layout_key));
     if (abilities == NULL || layouts == NULL) {
-        *error = (struct mo_load_error){.reason = "no memory"};
+        *error = (struct mo_load_error){.reason = "no memory", .kind = MO_BYTECODE_NO_MEMORY};
         return false;
     }
     for (uint32_t i = 0; i < file->type_count; i++) {
         const struct mo_type *t = &file->types[i];
         if ((t->kind == MO_TYPE_SET || t->kind == MO_TYPE_MAP) &&
             (abilities[t->parameters[0]] & MO_ABILITY_HASH) == 0) {
-            *error = (struct mo_load_error){20, "map/set key lacks Hash"};
+            *error = (struct mo_load_error){20, "map/set key lacks Hash", MO_BYTECODE_INVALID};
             return false;
         }
     }
@@ -581,7 +607,8 @@ bool mo_bytecode_verify(const struct mo_bytecode *file, const struct mo_types *t
             matches = fn->parameters[j].type == subject->parameters[j].type;
         }
         if (!matches || fn->parameters[subject->parameter_count].type != subject->result_type) {
-            *error = (struct mo_load_error){20, "promise parameters differ from subject"};
+            *error = (struct mo_load_error){20, "promise parameters differ from subject",
+                                            MO_BYTECODE_INVALID};
             return false;
         }
     }
@@ -599,7 +626,8 @@ bool mo_bytecode_verify(const struct mo_bytecode *file, const struct mo_types *t
         const struct mo_bytecode_constant *c = &file->constants[i];
         if (file->types[c->type].kind == MO_TYPE_FUNCTION &&
             layout(&lookup, c->type, c->value.function) == MO_NO_INDEX) {
-            *error = (struct mo_load_error){20, "closure constant layout is missing"};
+            *error = (struct mo_load_error){20, "closure constant layout is missing",
+                                            MO_BYTECODE_INVALID};
             return false;
         }
     }
@@ -644,4 +672,21 @@ bool mo_bytecode_readable(const struct mo_bytecode *file, const struct mo_types 
     bool ok = function(&f);
     *work = f.work;
     return ok;
+}
+
+bool mo_bytecode_visit_readable(const struct mo_bytecode *file, const struct mo_types *types,
+                                const struct mo_verification *verified, uint32_t index,
+                                uint32_t base, bool *readable, mo_readable_visitor visit,
+                                void *context, struct mo_load_error *error) {
+    MO_ASSERT(file != NULL && types != NULL && index < file->function_count && readable != NULL &&
+              visit != NULL && error != NULL);
+    struct flow f = {.v = {file, &file->functions[index], verified->abilities, base, error, types,
+                           verified->layouts},
+                     .layouts = verified->layouts,
+                     .types = types,
+                     .replay = MO_NO_INDEX,
+                     .readable = readable,
+                     .visit = visit,
+                     .context = context};
+    return function(&f);
 }

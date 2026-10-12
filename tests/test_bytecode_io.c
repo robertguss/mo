@@ -436,6 +436,7 @@ static void test_empty(void) {
     mo_buffer_init(&out, 55);
     CHECK(!mo_bytecode_encode(&file, &out, &error));
     CHECK(out.length == 0 && error.reason != NULL);
+    CHECK(error.kind == MO_BYTECODE_LIMIT);
     mo_buffer_free(&out);
 }
 
@@ -922,6 +923,7 @@ static void test_wire_refusals(void) {
     mo_arena_init(&no_memory, 0);
     CHECK(mo_bytecode_decode(&no_memory, out.bytes, out.length, &load_error) == NULL);
     CHECK(load_error.offset == 0 && strcmp(load_error.reason, "no memory") == 0);
+    CHECK(load_error.kind == MO_BYTECODE_NO_MEMORY);
     mo_arena_free(&no_memory);
     refuse_bytes(out.bytes, (size_t)MO_LIMIT_BYTECODE_SIZE + 1); /* refused before reading */
     mo_buffer_free(&out);

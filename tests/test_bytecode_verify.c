@@ -32,6 +32,25 @@ struct fixture {
     struct mo_bytecode_global globals[2];
     uint32_t global_indices[2], init[2];
 };
+static const char *corpus;
+static void seed(const struct mo_buffer *wire) {
+    if (corpus == NULL) {
+        return;
+    }
+    uint64_t hash = MO_BYTECODE_FNV_OFFSET;
+    for (size_t i = 0; i < wire->length; i++) {
+        hash = (hash ^ wire->bytes[i]) * MO_BYTECODE_FNV_PRIME;
+    }
+    char path[4096];
+    int n = snprintf(path, sizeof path, "%s/fixture-%016llx.bc", corpus, (unsigned long long)hash);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof path);
+    FILE *stream = fopen(path, "wb");
+    CHECK(stream != NULL);
+    if (stream != NULL) {
+        CHECK(fwrite(wire->bytes, 1, wire->length, stream) == wire->length);
+        CHECK(fclose(stream) == 0);
+    }
+}
 static void init(struct fixture *t) {
     memset(t, 0, sizeof *t);
     for (uint32_t i = 0; i < 13; i++) {
@@ -122,7 +141,8 @@ static MO_MUST_USE uint32_t position(const struct fixture *t, size_t length, uin
     MO_ASSERT(tail <= length);
     return (uint32_t)(length - tail) + word * 4;
 }
-static void expect(struct fixture *t, const char *reason, uint32_t fn, uint32_t word) {
+static void expect_kind(struct fixture *t, const char *reason, uint32_t fn, uint32_t word,
+                        enum mo_bytecode_error_kind error_kind) {
     struct mo_buffer wire, output;
     struct mo_write_error we;
     struct mo_load_error le;
@@ -134,16 +154,22 @@ static void expect(struct fixture *t, const char *reason, uint32_t fn, uint32_t 
         CHECK(fprintf(stderr, "structural fixture refused: %s\n", we.reason) >= 0);
         goto done;
     }
+    seed(&wire);
     struct mo_image *image = mo_load(wire.bytes, wire.length, &le);
     CHECK((image == NULL) == (reason != NULL));
+    if (image == NULL && reason == NULL) {
+        CHECK(fprintf(stderr, "accepted fixture refused: %s at %u\n", le.reason, le.offset) >= 0);
+    }
     if (reason != NULL && image == NULL) {
         if (strcmp(le.reason, reason) != 0) {
             CHECK(fprintf(stderr, "expected %s, got %s\n", reason, le.reason) >= 0);
         }
         CHECK(strcmp(le.reason, reason) == 0);
+        CHECK(le.kind == error_kind);
         CHECK(le.offset == (fn == MO_NO_INDEX ? word : position(t, wire.length, fn, word)));
         CHECK(!mo_bytecode_write(&t->file, &output, &we));
         CHECK(output.length == 0 && strcmp(we.reason, reason) == 0);
+        CHECK(we.kind == error_kind);
     } else if (image != NULL) {
         CHECK(mo_bytecode_write(mo_image_bytecode(image), &output, &we));
         CHECK(output.length == wire.length && memcmp(output.bytes, wire.bytes, wire.length) == 0);
@@ -158,6 +184,9 @@ static void expect(struct fixture *t, const char *reason, uint32_t fn, uint32_t 
 done:
     mo_buffer_free(&output);
     mo_buffer_free(&wire);
+}
+static void expect(struct fixture *t, const char *reason, uint32_t fn, uint32_t word) {
+    expect_kind(t, reason, fn, word, MO_BYTECODE_INVALID);
 }
 
 static void basics(void) {
@@ -180,7 +209,7 @@ static void basics(void) {
     expect(&t, "function has no entry instruction", 0, 0);
     const uint32_t wrong[] = {MO_OP_CONST, 0, 1, MO_OP_RET, 0};
     code(&t, wrong, N(wrong));
-    expect(&t, "invalid instruction types or function kind", 0, 0);
+    expect(&t, "constant result type", 0, 0);
     const uint32_t loop[] = {MO_OP_JUMP, 0};
     code(&t, loop, N(loop));
     expect(&t, NULL, 0, 0);
@@ -281,7 +310,34 @@ static void arithmetic(void) {
         expect(&t, NULL, 0, 0);
         regs[0] = row.left == 2 ? 3U : 2U;
         parameter(&t, 0, 2, MO_PARAMETER_BORROWED);
-        expect(&t, "invalid instruction types or function kind", 0, 0);
+        const char *reason = i < 15        ? "arithmetic argument type"
+                             : i < 19      ? "negation argument type"
+                             : i < 21      ? "duration arithmetic argument type"
+                             : i == 21     ? "duration scale argument type"
+                             : i < 24      ? "time arithmetic argument type"
+                             : i == 24     ? "time difference argument type"
+                             : i == 25     ? "float comparison argument type"
+                             : i == 26     ? "not argument type"
+                             : i == 27     ? "range argument type"
+                             : i < N(rows) ? "range projection argument type"
+                                           : "comparison argument type";
+        expect(&t, reason, 0, 0);
+        regs[0] = row.left;
+        parameter(&t, 0, 2, MO_PARAMETER_BORROWED);
+        regs[2] = 2;
+        t.functions[0].result_type = 2;
+        reason = i < 15        ? "arithmetic result type"
+                 : i < 19      ? "negation result type"
+                 : i < 21      ? "duration arithmetic result type"
+                 : i == 21     ? "duration scale result type"
+                 : i < 24      ? "time arithmetic result type"
+                 : i == 24     ? "time difference result type"
+                 : i == 25     ? "float comparison needs Ordering"
+                 : i == 26     ? "not result type"
+                 : i == 27     ? "range result type"
+                 : i < N(rows) ? "range projection result type"
+                               : "comparison result type";
+        expect(&t, reason, 0, 0);
     }
 }
 
@@ -427,7 +483,7 @@ static void data(void) {
     memcpy(wrong, build, sizeof wrong);
     wrong[17] = 2;
     code(&t, wrong, N(wrong));
-    expect(&t, "invalid instruction types or function kind", 0, 14);
+    expect(&t, "field source or index", 0, 14);
     const uint32_t reuse[] = {MO_OP_CONST,
                               1,
                               1,
@@ -581,6 +637,11 @@ static void calls(void) {
                                    1,           5};
     code(&t, owned_tail, N(owned_tail));
     expect(&t, "tail borrow needs a borrowed reference", 0, 8);
+    const uint32_t leak_tail[] = {MO_OP_CONST, 4, 3, MO_OP_DUP, 5, 4, MO_OP_TAIL_CALL | (1U << 16),
+                                  1,           4};
+    code(&t, leak_tail, N(leak_tail));
+    expect(&t, "return leaves ownership or token", 0, 6);
+    code(&t, owned_tail, N(owned_tail));
     const uint32_t drop_target[] = {MO_OP_DROP, 0, MO_OP_CONST, 1, 0, MO_OP_RET, 1};
     t.functions[1].code = drop_target;
     t.functions[1].code_count = N(drop_target);
@@ -592,7 +653,7 @@ static void calls(void) {
     memcpy(wrong, borrowed, sizeof wrong);
     wrong[6] = 1;
     code(&t, wrong, N(wrong));
-    expect(&t, "invalid instruction types or function kind", 0, 3);
+    expect(&t, "direct call argument type", 0, 3);
     init(&t);
     t.file.function_count = 2;
     t.file.debug_count = 2;
@@ -603,7 +664,7 @@ static void calls(void) {
     t.functions[1].code_count = N(spec);
     const uint32_t invoke[] = {MO_OP_CALL, 0, 1, MO_OP_RET, 0};
     code(&t, invoke, N(invoke));
-    expect(&t, "invalid instruction types or function kind", 0, 0);
+    expect(&t, "direct call to spec code", 0, 0);
     t.functions[0].kind = MO_FUNCTION_TEST;
     t.functions[0].spec_code = true;
     expect(&t, NULL, 0, 0);
@@ -613,7 +674,7 @@ static void calls(void) {
     expect(&t, NULL, 0, 0);
     t.functions[0].kind = MO_FUNCTION_FUNCTION;
     t.functions[0].spec_code = false;
-    expect(&t, "invalid instruction types or function kind", 0, 3);
+    expect(&t, "fail outside spec code", 0, 3);
 }
 
 static void closures(void) {
@@ -645,11 +706,11 @@ static void closures(void) {
     const uint32_t direct[] = {
         MO_OP_CONST, 1, 1, MO_OP_CALL | (1U << 16), 2, 1, 1, MO_OP_CONST, 0, 0, MO_OP_RET, 0};
     code(&t, direct, N(direct));
-    expect(&t, "invalid instruction types or function kind", 0, 3);
+    expect(&t, "direct call target kind", 0, 3);
     const uint32_t construct[] = {MO_OP_CONSTRUCT, 13, 3, MO_OP_DROP, 13,
                                   MO_OP_CONST,     0,  0, MO_OP_RET,  0};
     code(&t, construct, N(construct));
-    expect(&t, "invalid instruction types or function kind", 0, 0);
+    expect(&t, "construct/reuse closure layout", 0, 0);
     const uint32_t tail[] = {MO_OP_CONST, 13,
                              4,           MO_OP_DUP,
                              13,          13,
@@ -660,7 +721,7 @@ static void closures(void) {
     code(&t, tail, N(tail));
     expect(&t, NULL, 0, 0);
     t.functions[1].spec_code = true;
-    expect(&t, "invalid instruction types or function kind", 0, 0);
+    expect(&t, "spec closure constant in non-spec code", 0, 0);
     t.functions[1].spec_code = false;
     t.functions[0].result_type = 0;
     const uint32_t capture[] = {10};
@@ -697,11 +758,26 @@ static void closures(void) {
                               0};
     code(&t, build, N(build));
     expect(&t, NULL, 0, 0);
+    uint32_t bad_closure[N(build)];
+    memcpy(bad_closure, build, sizeof bad_closure);
+    bad_closure[8] = 0;
+    code(&t, bad_closure, N(bad_closure));
+    expect(&t, "closure signature", 0, 6);
+    bad_closure[8] = 1;
+    bad_closure[9] = 1;
+    expect(&t, "closure capture types or count", 0, 6);
+    code(&t, build, N(build));
+    const uint32_t set_env[] = {MO_OP_SET_FIELD, 1, 1, 0, 2, MO_OP_STOP, 2};
+    t.functions[1].code = set_env;
+    t.functions[1].code_count = N(set_env);
+    expect(&t, "set_field needs record or tuple", 1, 0);
+    t.functions[1].code = captured_body;
+    t.functions[1].code_count = N(captured_body);
     t.file.layout_count = 3;
     expect(&t, "closure layout is missing", 0, 6);
     t.file.layout_count = 4;
     t.functions[1].spec_code = true;
-    expect(&t, "invalid instruction types or function kind", 0, 6);
+    expect(&t, "spec closure in non-spec code", 0, 6);
 }
 
 static void primitives(void) {
@@ -715,11 +791,17 @@ static void primitives(void) {
     uint32_t append[] = {MO_OP_PRIM | (2U << 16), 0, MO_PRIM_LIST_APPEND, 18, 0, 1, MO_OP_RET, 0};
     code(&t, append, N(append));
     expect(&t, NULL, 0, 0);
+    append[1] = 1;
+    expect(&t, "primitive result type", 0, 0);
+    append[1] = 0;
+    append[4] = 1;
+    expect(&t, "primitive argument types or count", 0, 0);
+    append[4] = 0;
     parameter(&t, 0, 2, MO_PARAMETER_BORROWED);
     expect(&t, "consume needs an owned reference", 0, 4);
     parameter(&t, 0, 2, MO_PARAMETER_OWNED);
     append[2] = MO_PRIM_LIST_SET;
-    expect(&t, "invalid instruction types or function kind", 0, 0);
+    expect(&t, "primitive arity", 0, 0);
     init(&t);
     const uint32_t text_args[] = {10, 10};
     t.types[19] = (struct mo_type){
@@ -734,6 +816,32 @@ static void primitives(void) {
         MO_OP_PRIM | (2U << 16), 0, MO_PRIM_TEXT_CONCAT, 19, 0, 0, MO_OP_RET, 0};
     code(&t, repeat, N(repeat));
     expect(&t, "consumed register is repeated", 0, 5);
+    t.file.function_count = 2;
+    t.file.debug_count = 2;
+    const uint32_t alias_regs[] = {10, 10, 10}, alias_body[] = {MO_OP_RET, 1};
+    t.functions[1].register_types = alias_regs;
+    t.functions[1].register_count = N(alias_regs);
+    t.functions[1].result_type = 10;
+    t.functions[1].code = alias_body;
+    t.functions[1].code_count = N(alias_body);
+    parameter(&t, 1, 2, MO_PARAMETER_OWNED);
+    t.parameters[1][0].ownership = MO_PARAMETER_BORROWED;
+    t.functions[0].register_types = alias_regs;
+    t.functions[0].register_count = N(alias_regs);
+    parameter(&t, 0, 2, MO_PARAMETER_OWNED);
+    uint32_t distinct[] = {MO_OP_CALL | (2U << 16), 2, 1, 0, 1, MO_OP_DROP, 0, MO_OP_RET, 2};
+    code(&t, distinct, N(distinct));
+    expect(&t, NULL, 0, 0);
+    distinct[4] = 0;
+    expect(&t, "consumed register is repeated", 0, 4);
+    t.functions[0].register_types = text_regs;
+    t.functions[0].register_count = N(text_regs);
+    parameter(&t, 0, 1, MO_PARAMETER_OWNED);
+    const uint32_t read_then_consume[] = {MO_OP_CALL | (2U << 16), 0, 1, 0, 0, MO_OP_RET, 0};
+    code(&t, read_then_consume, N(read_then_consume));
+    expect(&t, "consumed register is repeated", 0, 4);
+    t.file.function_count = 1;
+    t.file.debug_count = 1;
     const uint32_t concat[] = {
         MO_OP_CONST, 1, 3, MO_OP_PRIM | (2U << 16), 0, MO_PRIM_TEXT_CONCAT, 19, 0, 1, MO_OP_RET, 0};
     code(&t, concat, N(concat));
@@ -748,11 +856,14 @@ static void primitives(void) {
     const uint32_t host[] = {MO_OP_HOST | (2U << 16), 2, MO_HOST_CONSOLE_PRINT, 0, 1, MO_OP_RET, 2};
     code(&t, host, N(host));
     expect(&t, NULL, 0, 0);
+    t.types[19].capability = MO_CAP_FILES;
+    expect(&t, "host signature or capability", 0, 0);
+    t.types[19].capability = MO_CAP_CONSOLE;
     const uint32_t fake[] = {MO_OP_HOST, 0, MO_HOST_CONSOLE_FAKE, MO_OP_DROP, 0, MO_OP_CONST, 2, 0,
                              MO_OP_RET,  2};
     parameter(&t, 0, 0, MO_PARAMETER_OWNED);
     code(&t, fake, N(fake));
-    expect(&t, "invalid instruction types or function kind", 0, 0);
+    expect(&t, "spec host in non-spec code", 0, 0);
     t.functions[0].kind = MO_FUNCTION_TEST;
     t.functions[0].spec_code = true;
     expect(&t, NULL, 0, 0);
@@ -778,11 +889,19 @@ static void abi_shapes(void) {
     code(&t, get, N(get));
     expect(&t, NULL, 0, 0);
     payload.type = 4;
-    expect(&t, "invalid instruction types or function kind", 0, 0);
+    expect(&t, "primitive signature or constraint", 0, 0);
     payload.type = 3;
     option[0].name = "Error";
-    expect(&t, "invalid instruction types or function kind", 0, 0);
+    expect(&t, "primitive signature or constraint", 0, 0);
     option[0].name = "None";
+    payload.name = "left";
+    expect(&t, "primitive signature or constraint", 0, 0);
+    payload.name = NULL;
+    option[0].fields = &payload;
+    option[0].field_count = 1;
+    expect(&t, "primitive signature or constraint", 0, 0);
+    option[0].fields = NULL;
+    option[0].field_count = 0;
     payload.type = 8;
     const uint32_t text_arg[] = {10}, decimal_regs[] = {10, 19}, decimal_fields[] = {8};
     t.types[20].parameters = text_arg;
@@ -793,7 +912,7 @@ static void abi_shapes(void) {
     const uint32_t decimal[] = {
         MO_OP_PRIM | (1U << 16), 1, MO_PRIM_TEXT_TO_DECIMAL, 20, 0, MO_OP_RET, 1};
     code(&t, decimal, N(decimal));
-    expect(&t, "invalid instruction types or function kind", 0, 0);
+    expect(&t, "primitive signature or constraint", 0, 0);
     t.layouts[3] = (struct mo_layout){.kind = MO_LAYOUT_CASE,
                                       .type = 19,
                                       .case_index = 1,
@@ -819,10 +938,10 @@ static void abi_shapes(void) {
     code(&t, enumerate, N(enumerate));
     expect(&t, NULL, 0, 0);
     t.file.layout_count = 0;
-    expect(&t, "invalid instruction types or function kind", 0, 0);
+    expect(&t, "primitive signature or constraint", 0, 0);
 
     init(&t);
-    const struct mo_type_field error_fields[] = {{"path", 10}, {"reason", 10}};
+    struct mo_type_field error_fields[] = {{"path", 10}, {"reason", 10}};
     struct mo_type_case errors[] = {
         {.name = "NotFound", .fields = error_fields, .field_count = 1},
         {.name = "NotAllowed", .fields = error_fields, .field_count = 1},
@@ -838,7 +957,8 @@ static void abi_shapes(void) {
     t.types[21] = (struct mo_type){
         .kind = MO_TYPE_CHOICE, .name = "Pair", .cases = result, .case_count = 2, .defined = true};
     t.file.type_count = 22;
-    const uint32_t failed_types[] = {10, 10}, result_error[] = {20}, host_regs[] = {19, 10, 21};
+    uint32_t failed_types[] = {10, 10};
+    const uint32_t result_error[] = {20}, host_regs[] = {19, 10, 21};
     t.layouts[3] = (struct mo_layout){.kind = MO_LAYOUT_CASE,
                                       .type = 20,
                                       .case_index = 3,
@@ -858,15 +978,36 @@ static void abi_shapes(void) {
     code(&t, host, N(host));
     expect(&t, NULL, 0, 0);
     t.file.layout_count = 4;
-    expect(&t, "invalid instruction types or function kind", 0, 0);
+    expect(&t, "host signature or capability", 0, 0);
     t.file.layout_count = 5;
     errors[3].name = "Some";
-    expect(&t, "invalid instruction types or function kind", 0, 0);
+    expect(&t, "host signature or capability", 0, 0);
     errors[3].name = "Failed";
-    const struct mo_type_case entry_kinds[] = {
+    error_fields[0].name = "name";
+    expect(&t, "host signature or capability", 0, 0);
+    error_fields[0].name = "path";
+    error_fields[1].name = "left";
+    expect(&t, "host signature or capability", 0, 0);
+    error_fields[1].name = "reason";
+    errors[0].field_count = 2;
+    t.layouts[5] = t.layouts[3];
+    t.layouts[5].case_index = 0;
+    t.file.layout_count = 6;
+    expect(&t, "host signature or capability", 0, 0);
+    errors[0].field_count = 1;
+    t.file.layout_count = 5;
+    for (uint32_t i = 0; i < 2; i++) {
+        error_fields[i].type = 3;
+        failed_types[i] = 3;
+        expect(&t, "host signature or capability", 0, 0);
+        error_fields[i].type = 10;
+        failed_types[i] = 10;
+    }
+    struct mo_type_case entry_kinds[] = {
         {.name = "File"}, {.name = "Folder"}, {.name = "Link"}, {.name = "Other"}};
     struct mo_type_field entry_fields[] = {{"name", 10}, {"kind", 22}};
-    const uint32_t entry_layout[] = {10, 22}, entries[] = {23};
+    uint32_t entry_layout[] = {10, 22};
+    const uint32_t entries[] = {23};
     t.types[22] = (struct mo_type){.kind = MO_TYPE_CHOICE,
                                    .name = "Ordering",
                                    .cases = entry_kinds,
@@ -887,10 +1028,35 @@ static void abi_shapes(void) {
     host[2] = MO_HOST_FILES_ENTRIES;
     expect(&t, NULL, 0, 0);
     entry_fields[0].name = "path";
-    expect(&t, "invalid instruction types or function kind", 0, 0);
+    expect(&t, "host signature or capability", 0, 0);
     entry_fields[0].name = "name";
+    entry_fields[1].name = "right";
+    expect(&t, "host signature or capability", 0, 0);
+    entry_fields[1].name = "kind";
+    entry_fields[0].type = 3;
+    entry_layout[0] = 3;
+    expect(&t, "host signature or capability", 0, 0);
+    entry_fields[0].type = 10;
+    entry_layout[0] = 10;
+    entry_fields[1].type = 3;
+    entry_layout[1] = 3;
+    expect(&t, "host signature or capability", 0, 0);
+    entry_fields[1].type = 22;
+    entry_layout[1] = 22;
+    t.types[22].case_count = 3;
+    expect(&t, "host signature or capability", 0, 0);
+    t.types[22].case_count = 4;
+    entry_kinds[0].name = "Less";
+    expect(&t, "host signature or capability", 0, 0);
+    entry_kinds[0].name = "File";
+    entry_kinds[0].fields = &payload;
+    entry_kinds[0].field_count = 1;
+    payload.type = 3;
+    expect(&t, "host signature or capability", 0, 0);
+    entry_kinds[0].fields = NULL;
+    entry_kinds[0].field_count = 0;
     t.file.layout_count = 5;
-    expect(&t, "invalid instruction types or function kind", 0, 0);
+    expect(&t, "host signature or capability", 0, 0);
 }
 
 static void globals(void) {
@@ -930,6 +1096,17 @@ static void globals(void) {
     t.functions[3].code = recursive;
     t.functions[3].code_count = N(recursive);
     expect(&t, NULL, 0, 0);
+    uint32_t bad_store[N(first)], bad_read[N(recursive)];
+    memcpy(bad_store, first, sizeof bad_store);
+    bad_store[5] = 3;
+    code(&t, bad_store, N(bad_store));
+    expect(&t, "global store type", 0, 3);
+    code(&t, first, N(first));
+    memcpy(bad_read, recursive, sizeof bad_read);
+    bad_read[8] = 3;
+    t.functions[3].code = bad_read;
+    expect(&t, "global result type", 3, 7);
+    t.functions[3].code = recursive;
     t.init[0] = 1;
     t.init[1] = 0;
     expect(&t, "init reads an unset global", 1, 0);
@@ -966,7 +1143,11 @@ static void globals(void) {
     code(&t, first, N(first));
     t.functions[2].code = call_init;
     t.functions[2].code_count = N(call_init);
-    expect(&t, "invalid instruction types or function kind", 2, 0);
+    expect(&t, "direct call target kind", 2, 0);
+    const uint32_t store_outside[] = {MO_OP_CONST, 1, 1, MO_OP_SET_GLOBAL, 0, 1, MO_OP_RET, 1};
+    t.functions[2].code = store_outside;
+    t.functions[2].code_count = N(store_outside);
+    expect(&t, "global store outside init", 2, 3);
 }
 
 static void closure_initialization(void) {
@@ -1073,7 +1254,7 @@ static void abilities(void) {
     parameter(&t, 0, 1, MO_PARAMETER_BORROWED);
     const uint32_t bad[] = {MO_OP_EQUAL, 1, 17, 0, 0, MO_OP_CONST, 2, 0, MO_OP_RET, 2};
     code(&t, bad, N(bad));
-    expect(&t, "invalid instruction types or function kind", 0, 0);
+    expect(&t, "equal lacks Equal", 0, 0);
     init(&t);
     const uint32_t float_list[] = {4};
     t.types[19] =
@@ -1097,7 +1278,7 @@ static void abilities(void) {
     const uint32_t contains[] = {
         MO_OP_PRIM | (2U << 16), 2, MO_PRIM_LIST_CONTAINS, 20, 0, 1, MO_OP_RET, 2};
     code(&t, contains, N(contains));
-    expect(&t, "invalid instruction types or function kind", 0, 0);
+    expect(&t, "library Equal constraint", 0, 0);
     t.types[19].parameters = float_list;
     const uint32_t float_contains_args[] = {19, 4}, float_contains_regs[] = {19, 4, 1};
     t.types[20].parameters = float_contains_args;
@@ -1120,7 +1301,7 @@ static void abilities(void) {
     t.functions[0].register_types = bool_sum_regs;
     t.functions[0].result_type = 1;
     parameter(&t, 0, 1, MO_PARAMETER_BORROWED);
-    expect(&t, "invalid instruction types or function kind", 0, 0);
+    expect(&t, "library Number constraint", 0, 0);
 }
 
 static void linked_promise(void) {
@@ -1438,6 +1619,404 @@ static void work_bound(void) {
     }
 }
 
+static void instruction_refusals(void) {
+    /* Each row starts from an accepted, structurally valid file and changes exactly one
+     * operand. The stop deliberately avoids unrelated exit/leak checks masking a type rule. */
+    const struct {
+        uint32_t regs[6], words[13], count, edit, value, pc;
+        const char *reason;
+    } rows[] = {
+        {{3, 10, 15, 10, 14, 13},
+         {MO_OP_CONSTRUCT | (2U << 16), 4, 1, 0, 1, MO_OP_STOP, 3},
+         7,
+         1,
+         5,
+         0,
+         "construct/reuse result type"},
+        {{3, 10, 15, 10, 14, 13},
+         {MO_OP_CONSTRUCT | (2U << 16), 4, 1, 0, 1, MO_OP_STOP, 3},
+         7,
+         3,
+         2,
+         0,
+         "construct/reuse field type"},
+        {{3, 10, 15, 10, 15, 14},
+         {MO_OP_MAKE_CASE | (2U << 16), 4, 15, 1, 0, 1, MO_OP_STOP, 3},
+         8,
+         1,
+         5,
+         0,
+         "make_case result type"},
+        {{3, 10, 15, 10, 15, 14},
+         {MO_OP_MAKE_CASE | (2U << 16), 4, 15, 1, 0, 1, MO_OP_STOP, 3},
+         8,
+         4,
+         2,
+         0,
+         "make_case field type"},
+        {{3, 10, 15, 10, 15, 14},
+         {MO_OP_MAKE_CASE | (2U << 16), 4, 15, 1, 0, 1, MO_OP_STOP, 3},
+         8,
+         3,
+         2,
+         0,
+         "make_case case index"},
+        {{3, 10, 15, 10, 15, 14},
+         {MO_OP_MAKE_CASE | (2U << 16), 4, 15, 1, 0, 1, MO_OP_STOP, 3},
+         8,
+         2,
+         14,
+         0,
+         "make_case needs choice"},
+        {{14, 10, 3, 10, 3, 10},
+         {MO_OP_FIELD, 4, 0, 0, MO_OP_STOP, 3},
+         6,
+         1,
+         5,
+         0,
+         "field result type"},
+        {{14, 10, 3, 10, 3, 10},
+         {MO_OP_FIELD, 4, 0, 0, MO_OP_STOP, 3},
+         6,
+         3,
+         2,
+         0,
+         "field source or index"},
+        {{15, 10, 3, 10, 3, 10},
+         {MO_OP_SWITCH | (2U << 16), 0, 11, 4, MO_OP_CASE_FIELD, 4, 0, 1, 0, MO_OP_STOP, 3,
+          MO_OP_STOP, 3},
+         13,
+         5,
+         5,
+         4,
+         "case_field result type"},
+        {{15, 10, 3, 10, 3, 10},
+         {MO_OP_SWITCH | (2U << 16), 0, 11, 4, MO_OP_CASE_FIELD, 4, 0, 1, 0, MO_OP_STOP, 3,
+          MO_OP_STOP, 3},
+         13,
+         8,
+         2,
+         4,
+         "case_field field index"},
+        {{15, 10, 3, 10, 3, 10},
+         {MO_OP_SWITCH | (2U << 16), 0, 11, 4, MO_OP_CASE_FIELD, 4, 0, 1, 0, MO_OP_STOP, 3,
+          MO_OP_STOP, 3},
+         13,
+         7,
+         2,
+         4,
+         "case_field case index"},
+        {{15, 10, 3, 10, 3, 10},
+         {MO_OP_SWITCH | (2U << 16), 0, 11, 4, MO_OP_CASE_FIELD, 4, 0, 1, 0, MO_OP_STOP, 3,
+          MO_OP_STOP, 3},
+         13,
+         6,
+         2,
+         4,
+         "case_field needs choice"},
+        {{14, 3, 15, 10, 14, 13},
+         {MO_OP_SET_FIELD, 4, 0, 0, 1, MO_OP_STOP, 3},
+         7,
+         1,
+         5,
+         0,
+         "set_field result type"},
+        {{14, 3, 15, 10, 14, 13},
+         {MO_OP_SET_FIELD, 4, 0, 0, 1, MO_OP_STOP, 3},
+         7,
+         4,
+         2,
+         0,
+         "set_field value type"},
+        {{14, 3, 15, 10, 14, 13},
+         {MO_OP_SET_FIELD, 4, 0, 0, 1, MO_OP_STOP, 3},
+         7,
+         3,
+         2,
+         0,
+         "set_field field index"},
+        {{14, 3, 15, 10, 14, 13},
+         {MO_OP_SET_FIELD, 4, 0, 0, 1, MO_OP_STOP, 3},
+         7,
+         2,
+         2,
+         0,
+         "set_field needs record or tuple"},
+        {{14, 3, 15, 10, 0, 13},
+         {MO_OP_RESET, 4, 0, MO_OP_FREE_TOKEN, 4, MO_OP_STOP, 3},
+         7,
+         2,
+         1,
+         0,
+         "reset source type"},
+        {{3, 3, 1, 10, 3, 10},
+         {MO_OP_CALL | (1U << 16), 4, 1, 0, MO_OP_STOP, 3},
+         6,
+         1,
+         5,
+         0,
+         "direct call result type"},
+        {{3, 3, 1, 10, 3, 10},
+         {MO_OP_CALL | (1U << 16), 4, 1, 0, MO_OP_STOP, 3},
+         6,
+         3,
+         2,
+         0,
+         "direct call argument type"},
+        {{3, 3, 1, 10, 3, 10},
+         {MO_OP_CALL_CLOSURE | (1U << 16), 4, 0, 1, MO_OP_STOP, 3},
+         6,
+         1,
+         5,
+         0,
+         "closure call result type"},
+        {{3, 3, 1, 10, 3, 10},
+         {MO_OP_CALL_CLOSURE | (1U << 16), 4, 0, 1, MO_OP_STOP, 3},
+         6,
+         3,
+         2,
+         0,
+         "closure call argument type"},
+        {{3, 3, 1, 10, 3, 10}, {MO_OP_RET, 0}, 2, 1, 2, 0, "return type"},
+        {{4, 4, 1, 10, 20, 3},
+         {MO_OP_CMP_FLOAT, 4, 0, 1, MO_OP_STOP, 3},
+         6,
+         1,
+         5,
+         0,
+         "float comparison needs Ordering"},
+        {{20, 20, 1, 10, 1, 15},
+         {MO_OP_EQ_CHOICE, 4, 0, 1, MO_OP_STOP, 3},
+         6,
+         3,
+         2,
+         0,
+         "comparison argument type"},
+        {{3, 3, 1, 10, 3, 10},
+         {MO_OP_MOVE, 4, 0, MO_OP_STOP, 3},
+         5,
+         1,
+         5,
+         0,
+         "move/dup type mismatch"},
+        {{3, 3, 1, 10, 3, 10},
+         {MO_OP_DUP, 4, 0, MO_OP_STOP, 3},
+         5,
+         1,
+         5,
+         0,
+         "move/dup type mismatch"},
+        {{3, 3, 1, 10, 3, 10},
+         {MO_OP_BRANCH, 2, 4, 4, MO_OP_STOP, 3},
+         6,
+         1,
+         0,
+         0,
+         "branch needs Bool"},
+        {{15, 3, 1, 10, 3, 10},
+         {MO_OP_SWITCH | (2U << 16), 0, 4, 4, MO_OP_STOP, 3},
+         6,
+         1,
+         1,
+         0,
+         "switch needs choice"},
+        {{3, 3, 1, 10, 3, 10}, {MO_OP_STOP, 3}, 2, 1, 0, 0, "stop needs Text"},
+        {{3, 3, 1, 10, 3, 10}, {MO_OP_CONST, 3, 3, MO_OP_FAIL, 3}, 5, 4, 0, 3, "fail needs Text"},
+        {{3, 3, 1, 10, 1, 10},
+         {MO_OP_EQUAL, 4, 3, 0, 1, MO_OP_STOP, 3},
+         7,
+         1,
+         5,
+         0,
+         "equal result type"},
+        {{3, 3, 1, 10, 1, 10},
+         {MO_OP_EQUAL, 4, 3, 0, 1, MO_OP_STOP, 3},
+         7,
+         3,
+         2,
+         0,
+         "equal argument type"},
+        {{16, 3, 1, 10, 16, 10},
+         {MO_OP_PRIM | (2U << 16), 4, MO_PRIM_LIST_APPEND, 18, 0, 1, MO_OP_STOP, 3},
+         8,
+         3,
+         13,
+         0,
+         "primitive needs function type"},
+        {{19, 10, 1, 10, 0, 10},
+         {MO_OP_HOST | (2U << 16), 4, MO_HOST_CONSOLE_PRINT, 0, 1, MO_OP_STOP, 3},
+         7,
+         2,
+         MO_HOST_CONSOLE_FAKE,
+         0,
+         "host arity"},
+        {{3, 3, 1, 10, 3, 10},
+         {MO_OP_CALL_CLOSURE | (1U << 16), 4, 0, 1, MO_OP_STOP, 3},
+         6,
+         2,
+         1,
+         0,
+         "closure call needs function"},
+    };
+    for (uint32_t i = 0; i < N(rows); i++) {
+        struct fixture t;
+        init(&t);
+        uint32_t regs[6], words[13];
+        memcpy(regs, rows[i].regs, sizeof regs);
+        memcpy(words, rows[i].words, sizeof words);
+        t.functions[0].register_types = regs;
+        t.functions[0].register_count = N(regs);
+        parameter(&t, 0, 4, MO_PARAMETER_OWNED);
+        uint32_t op = words[0] & MO_OPCODE_MASK;
+        if (op == MO_OP_RET) {
+            t.functions[0].result_type = 3;
+            parameter(&t, 0, 4, MO_PARAMETER_BORROWED);
+        }
+        if (op == MO_OP_CMP_FLOAT || op == MO_OP_EQ_CHOICE) {
+            t.file.type_count = 21;
+            t.types[19] = (struct mo_type){.kind = MO_TYPE_CAPABILITY, .capability = MO_CAP_FILES};
+        }
+        if (op == MO_OP_CALL) {
+            t.file.function_count = 2;
+            t.file.debug_count = 2;
+            t.functions[1].register_types = int_arg;
+            t.functions[1].register_count = 1;
+            t.functions[1].result_type = 3;
+            parameter(&t, 1, 1, MO_PARAMETER_OWNED);
+            static const uint32_t ret[] = {MO_OP_RET, 0};
+            t.functions[1].code = ret;
+            t.functions[1].code_count = N(ret);
+        }
+        if (op == MO_OP_CALL_CLOSURE) {
+            regs[0] = 17;
+            parameter(&t, 0, 4, MO_PARAMETER_OWNED);
+        }
+        if (op == MO_OP_HOST) {
+            t.file.type_count = 20;
+            t.types[19] =
+                (struct mo_type){.kind = MO_TYPE_CAPABILITY, .capability = MO_CAP_CONSOLE};
+        }
+        if (op == MO_OP_CONST) {
+            t.functions[0].kind = MO_FUNCTION_TEST;
+            t.functions[0].spec_code = true;
+            parameter(&t, 0, 0, MO_PARAMETER_OWNED);
+        }
+        code(&t, words, rows[i].count);
+        expect(&t, NULL, 0, 0);
+        words[rows[i].edit] = rows[i].value;
+        expect(&t, rows[i].reason, 0, rows[i].pc);
+        /* Shorten exactly one argument list without breaking the following instruction. */
+        bool first = true;
+        for (uint32_t j = 0; j < i; j++) {
+            first &= rows[j].words[0] != rows[i].words[0];
+        }
+        if (first && (op == MO_OP_CALL || op == MO_OP_CALL_CLOSURE || op == MO_OP_CONSTRUCT ||
+                      op == MO_OP_MAKE_CASE)) {
+            memcpy(words, rows[i].words, sizeof words);
+            const struct mo_opcode_info *info = mo_opcode_find(op);
+            MO_ASSERT(info != NULL);
+            uint32_t end = 1U + info->fixed_count + (words[0] >> 16);
+            memmove(words + end - 1, words + end, (rows[i].count - end) * sizeof *words);
+            words[0] -= 1U << 16;
+            code(&t, words, rows[i].count - 1);
+            const char *reason = op == MO_OP_CALL           ? "direct call argument count"
+                                 : op == MO_OP_CALL_CLOSURE ? "closure call argument count"
+                                 : op == MO_OP_CONSTRUCT    ? "construct/reuse field count"
+                                                            : "make_case field count";
+            expect(&t, reason, 0, 0);
+        }
+    }
+}
+
+static void refinement_and_constraints(void) {
+    struct fixture t;
+    init(&t);
+    const uint32_t regs[] = {15, 10, 3, 15};
+    t.functions[0].register_types = regs;
+    t.functions[0].register_count = N(regs);
+    parameter(&t, 0, 2, MO_PARAMETER_BORROWED);
+    const uint32_t good[] = {MO_OP_SWITCH | (2U << 16),
+                             0,
+                             11,
+                             4,
+                             MO_OP_CASE_FIELD,
+                             2,
+                             0,
+                             1,
+                             0,
+                             MO_OP_STOP,
+                             1,
+                             MO_OP_STOP,
+                             1};
+    code(&t, good, N(good));
+    expect(&t, NULL, 0, 0);
+    const uint32_t same_block[] = {MO_OP_SWITCH | (2U << 16),
+                                   0,
+                                   14,
+                                   4,
+                                   MO_OP_MOVE,
+                                   0,
+                                   0,
+                                   MO_OP_CASE_FIELD,
+                                   2,
+                                   0,
+                                   1,
+                                   0,
+                                   MO_OP_STOP,
+                                   1,
+                                   MO_OP_STOP,
+                                   1};
+    code(&t, same_block, N(same_block));
+    expect(&t, "case is not known", 0, 7);
+    const uint32_t predecessor[] = {
+        MO_OP_SWITCH | (2U << 16), 0, 16, 4, MO_OP_MOVE, 0,          0, MO_OP_JUMP, 9,
+        MO_OP_CASE_FIELD,          2, 0,  1, 0,          MO_OP_STOP, 1, MO_OP_STOP, 1};
+    code(&t, predecessor, N(predecessor));
+    expect(&t, "case is not known", 0, 9);
+    const uint32_t switches[] = {MO_OP_SWITCH | (2U << 16), 0, 4, 4, MO_OP_STOP, 1};
+    code(&t, switches, N(switches));
+    expect(&t, NULL, 0, 0);
+    const uint32_t missing[] = {MO_OP_SWITCH | (1U << 16), 0, 3, MO_OP_STOP, 1};
+    code(&t, missing, N(missing));
+    expect(&t, "switch target count", 0, 0);
+
+    init(&t);
+    t.types[19] = (struct mo_type){.kind = MO_TYPE_CAPABILITY, .capability = MO_CAP_FILES};
+    t.file.type_count = 21;
+    const uint32_t cmp_regs[] = {20, 1}, compare[] = {MO_OP_EQ_CHOICE, 1, 0, 0, MO_OP_RET, 1};
+    t.functions[0].register_types = cmp_regs;
+    t.functions[0].register_count = N(cmp_regs);
+    t.functions[0].result_type = 1;
+    parameter(&t, 0, 1, MO_PARAMETER_OWNED);
+    code(&t, compare, N(compare));
+    expect(&t, NULL, 0, 0);
+    struct mo_type_case cases[N(ordering)];
+    memcpy(cases, ordering, sizeof cases);
+    struct mo_type_field payload = {NULL, 3};
+    cases[0].fields = &payload;
+    cases[0].field_count = 1;
+    t.types[20].cases = cases;
+    expect(&t, "choice comparison has fields", 0, 0);
+
+    init(&t);
+    uint32_t element[] = {3};
+    const uint32_t parameters[] = {16}, unique_regs[] = {16};
+    t.types[16].parameters = element;
+    t.types[19] = (struct mo_type){
+        .kind = MO_TYPE_FUNCTION, .parameters = parameters, .parameter_count = 1, .result = 16};
+    t.file.type_count = 20;
+    t.functions[0].register_types = unique_regs;
+    t.functions[0].register_count = N(unique_regs);
+    t.functions[0].result_type = 16;
+    parameter(&t, 0, 1, MO_PARAMETER_OWNED);
+    const uint32_t unique[] = {
+        MO_OP_PRIM | (1U << 16), 0, MO_PRIM_LIST_UNIQUE, 19, 0, MO_OP_RET, 0};
+    code(&t, unique, N(unique));
+    expect(&t, NULL, 0, 0);
+    element[0] = 4;
+    expect(&t, "library Hash constraint", 0, 0);
+}
+
 static void hostile_work(void) {
     struct fixture t;
     init(&t);
@@ -1501,12 +2080,96 @@ static void hostile_work(void) {
         words[pc++] = MO_OP_RET;
         words[pc++] = 0;
         code(&t, words, pc);
-        expect(&t, blocks == 2048 ? NULL : "register-block limit", 0, 0);
+        expect_kind(&t, blocks == 2048 ? NULL : "register-block limit", 0, 0, MO_BYTECODE_LIMIT);
     }
+    /* Repeated two-edge joins fit the product ceiling but exhaust the wire-sized work budget.
+     * The forward walk costs 264,710 steps; two 1,025-slot comparisons fit the 266,880-step
+     * budget. The third, at word 1019, must fail before comparing or allocating more. */
+    for (uint32_t r = 0; r < 1024; r++) {
+        regs[r] = r == 0 ? 15U : 0U;
+    }
+    t.functions[0].register_count = 1024;
+    parameter(&t, 0, 1, MO_PARAMETER_BORROWED);
+    pc = 0;
+    words[pc++] = MO_OP_CONST;
+    words[pc++] = 1;
+    words[pc++] = 0;
+    for (uint32_t b = 0; b < 256; b++) {
+        words[pc++] = MO_OP_SWITCH | (2U << 16);
+        words[pc++] = 0;
+        words[pc] = pc + 2;
+        words[pc + 1] = pc + 2;
+        pc += 2;
+    }
+    words[pc++] = MO_OP_RET;
+    words[pc++] = 1;
+    code(&t, words, pc);
+    expect_kind(&t, "verification work limit", 0, 1019, MO_BYTECODE_LIMIT);
     mo_arena_free(&arena);
 }
 
-int main(void) {
+static void failure_kinds(void) {
+    struct fixture t;
+    init(&t);
+    struct mo_buffer wire;
+    struct mo_write_error we;
+    struct mo_load_error le;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    CHECK(mo_bytecode_write(&t.file, &wire, &we));
+    const struct {
+        uint32_t at, value;
+        const char *reason;
+    } ceilings[] = {{20, MO_LIMIT_STRINGS + 1U, "count past limit or remaining bytes"},
+                    {24, MO_LIMIT_STRING_SIZE + 1U, "byte length past limit or remaining bytes"},
+                    {position(&t, wire.length, 0, 0),
+                     MO_OP_CALL | ((MO_LIMIT_BYTECODE_PARAMETERS + 1U) << 16),
+                     "invalid instruction shape or instruction limit"}};
+    for (uint32_t i = 0; i < N(ceilings); i++) {
+        mo_buffer_clear(&wire);
+        CHECK(mo_bytecode_write(&t.file, &wire, &we));
+        for (unsigned j = 0; j < 4; j++) {
+            wire.bytes[ceilings[i].at + j] = (uint8_t)(ceilings[i].value >> (j * 8));
+        }
+        uint64_t checksum = MO_BYTECODE_FNV_OFFSET;
+        for (size_t j = MO_BYTECODE_HEADER_SIZE; j < wire.length; j++) {
+            checksum = (checksum ^ wire.bytes[j]) * MO_BYTECODE_FNV_PRIME;
+        }
+        for (unsigned j = 0; j < 8; j++) {
+            wire.bytes[12 + j] = (uint8_t)(checksum >> (j * 8));
+        }
+        CHECK(mo_load(wire.bytes, wire.length, &le) == NULL);
+        CHECK(le.kind == MO_BYTECODE_LIMIT && le.offset == ceilings[i].at);
+        CHECK(strcmp(le.reason, ceilings[i].reason) == 0);
+    }
+    wire.bytes[0] = 0;
+    CHECK(mo_load(wire.bytes, wire.length, &le) == NULL);
+    CHECK(le.kind == MO_BYTECODE_INVALID && le.offset == 0);
+    CHECK(mo_load(wire.bytes, (size_t)MO_LIMIT_BYTECODE_SIZE + 1, &le) == NULL);
+    CHECK(le.kind == MO_BYTECODE_LIMIT && le.offset == 0);
+    mo_buffer_free(&wire);
+    mo_buffer_init(&wire, 0);
+    CHECK(!mo_bytecode_write(&t.file, &wire, &we));
+    CHECK(we.kind == MO_BYTECODE_LIMIT && wire.length == 0);
+    mo_buffer_free(&wire);
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    t.file.function_count = MO_LIMIT_FUNCTIONS + 1;
+    CHECK(!mo_bytecode_write(&t.file, &wire, &we));
+    CHECK(we.kind == MO_BYTECODE_LIMIT && wire.length == 0);
+    t.file.function_count = 1;
+    /* Inject allocation failure through the buffer's arena, not the output byte ceiling. */
+    mo_buffer_free(&wire);
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    mo_arena_init(&wire.arena, 0);
+    CHECK(!mo_bytecode_write(&t.file, &wire, &we));
+    CHECK(we.kind == MO_BYTECODE_NO_MEMORY && wire.length == 0);
+    mo_buffer_free(&wire);
+}
+
+int main(int argc, char **argv) {
+    MO_ASSERT(argc == 1 || (argc == 3 && strcmp(argv[1], "--corpus") == 0));
+    if (argc == 3) {
+        corpus = argv[2];
+    }
     basics();
     memory();
     arithmetic();
@@ -1521,7 +2184,10 @@ int main(void) {
     abilities();
     linked_promise();
     worked_examples();
+    instruction_refusals();
+    refinement_and_constraints();
     work_bound();
     hostile_work();
+    failure_kinds();
     return mo_test_report("bytecode verifier");
 }

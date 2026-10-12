@@ -431,13 +431,19 @@ struct mo_bytecode {
 };
 
 struct mo_image;
+/* Stable failure categories; callers branch on kind, never on diagnostic reason text.
+ * INVALID includes malformed input and verification refusals; LIMIT is a named format,
+ * verification-work or output-buffer ceiling; NO_MEMORY is allocation failure. */
+enum mo_bytecode_error_kind { MO_BYTECODE_INVALID, MO_BYTECODE_LIMIT, MO_BYTECODE_NO_MEMORY };
 struct mo_load_error {
     uint32_t offset;    /* byte offset in the input */
     const char *reason; /* static text */
+    enum mo_bytecode_error_kind kind;
 };
 
 struct mo_write_error {
     const char *reason; /* static text: invalid decoded data, a limit, or no memory */
+    enum mo_bytecode_error_kind kind;
 };
 
 struct mo_assemble_error {

@@ -24,7 +24,7 @@ struct mo_image *mo_load(const uint8_t *bytes, size_t length, struct mo_load_err
     }
     struct mo_image *image = mo_arena_allocate(&arena, sizeof *image, _Alignof(struct mo_image));
     if (image == NULL) {
-        *error_out = (struct mo_load_error){.reason = "no memory"};
+        *error_out = (struct mo_load_error){.reason = "no memory", .kind = MO_BYTECODE_NO_MEMORY};
         mo_arena_free(&arena);
         return NULL;
     }
@@ -47,6 +47,19 @@ bool mo_image_registers_readable(const struct mo_image *image, uint32_t function
     uint64_t work = 0;
     return mo_bytecode_readable(image->file, &image->types, &image->verified, function,
                                 image->code_offsets[function], pc, readable, &work, error);
+}
+
+bool mo_image_visit_readable(const struct mo_image *image, uint32_t function, bool *readable,
+                             mo_readable_visitor visit, void *context,
+                             struct mo_load_error *error) {
+    MO_ASSERT(image != NULL && readable != NULL && visit != NULL && error != NULL);
+    if (function >= image->file->function_count) {
+        *error = (struct mo_load_error){.reason = "invalid replay function"};
+        return false;
+    }
+    return mo_bytecode_visit_readable(image->file, &image->types, &image->verified, function,
+                                      image->code_offsets[function], readable, visit, context,
+                                      error);
 }
 
 void mo_image_free(struct mo_image *image) {

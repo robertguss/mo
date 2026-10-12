@@ -26,7 +26,7 @@ static MO_MUST_USE bool refuse_at(struct validation *v, uint32_t offset, const c
 static MO_MUST_USE void *allocate(struct validation *v, size_t n, size_t size, size_t alignment) {
     void *p = mo_arena_allocate_array(&v->arena, n, size, alignment);
     if (p == NULL) {
-        *v->error = (struct mo_load_error){.reason = "no memory"};
+        *v->error = (struct mo_load_error){.reason = "no memory", .kind = MO_BYTECODE_NO_MEMORY};
     }
     return p;
 }
@@ -560,9 +560,17 @@ static MO_MUST_USE bool code_debug(struct validation *v, uint32_t index) {
         const struct mo_opcode_info *op = mo_opcode_find(fn->code[pc] & MO_OPCODE_MASK);
         uint32_t n = fn->code[pc] >> MO_OPCODE_VARIABLE_SHIFT;
         if (op == NULL || n > op->variable_limit ||
-            1U + op->fixed_count + n > fn->code_count - pc ||
-            ++instructions > MO_LIMIT_FUNCTION_INSTRUCTIONS) {
-            return refuse_at(v, code + pc * 4, "invalid instruction shape or instruction limit");
+            1U + op->fixed_count + n > fn->code_count - pc) {
+            bool ok = refuse_at(v, code + pc * 4, "invalid instruction shape or instruction limit");
+            if (op != NULL && op->variable_limit != 0 && n > op->variable_limit) {
+                v->error->kind = MO_BYTECODE_LIMIT;
+            }
+            return ok;
+        }
+        if (++instructions > MO_LIMIT_FUNCTION_INSTRUCTIONS) {
+            bool ok = refuse_at(v, code + pc * 4, "invalid instruction shape or instruction limit");
+            v->error->kind = MO_BYTECODE_LIMIT;
+            return ok;
         }
         pc += 1U + op->fixed_count + n;
     }

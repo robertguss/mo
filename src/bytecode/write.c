@@ -11,11 +11,15 @@ struct writer {
     struct mo_arena scratch;
     struct mo_bytecode_names names;
     const char *reason;
+    enum mo_bytecode_error_kind kind;
 };
 
 static MO_MUST_USE bool word(struct writer *w, uint32_t value) {
     if (w->out->length > MO_LIMIT_BYTECODE_SIZE - 4 || !mo_buffer_append_le32(w->out, value)) {
         w->reason = "bytecode/output limit or no memory";
+        w->kind = w->out->length > MO_LIMIT_BYTECODE_SIZE - 4 || w->out->limit - w->out->length < 4
+                      ? MO_BYTECODE_LIMIT
+                      : MO_BYTECODE_NO_MEMORY;
         return false;
     }
     return true;
@@ -25,6 +29,11 @@ static MO_MUST_USE bool raw(struct writer *w, const uint8_t *bytes, size_t lengt
     if ((length != 0 && bytes == NULL) || length > MO_LIMIT_BYTECODE_SIZE - w->out->length ||
         !mo_buffer_append(w->out, bytes, length)) {
         w->reason = "invalid bytes, bytecode/output limit or no memory";
+        w->kind = length != 0 && bytes == NULL ? MO_BYTECODE_INVALID
+                  : length > MO_LIMIT_BYTECODE_SIZE - w->out->length ||
+                          length > w->out->limit - w->out->length
+                      ? MO_BYTECODE_LIMIT
+                      : MO_BYTECODE_NO_MEMORY;
         return false;
     }
     return true;
@@ -33,6 +42,7 @@ static MO_MUST_USE bool raw(struct writer *w, const uint8_t *bytes, size_t lengt
 static MO_MUST_USE bool count(struct writer *w, uint32_t n, uint32_t limit, const void *items) {
     if (n > limit || (n != 0 && items == NULL)) {
         w->reason = "invalid array or count past limit";
+        w->kind = n > limit ? MO_BYTECODE_LIMIT : MO_BYTECODE_INVALID;
         return false;
     }
     return word(w, n);
@@ -77,6 +87,7 @@ static MO_MUST_USE bool name(struct writer *w, const char *text, bool optional) 
         }
     }
     w->reason = "name missing from strings or past limit";
+    w->kind = length > MO_LIMIT_STRING_SIZE ? MO_BYTECODE_LIMIT : MO_BYTECODE_INVALID;
     return false;
 }
 
@@ -201,6 +212,7 @@ static MO_MUST_USE bool sections(struct writer *w) {
     }
     if (!mo_bytecode_names_init(&w->names, &w->scratch, f)) {
         w->reason = "no memory";
+        w->kind = MO_BYTECODE_NO_MEMORY;
         return false;
     }
     WRITE(types(w));
@@ -303,6 +315,7 @@ bool mo_bytecode_encode(const struct mo_bytecode *file, struct mo_buffer *out,
     if (!encoded) {
         mo_buffer_clear(out);
         error_out->reason = w.reason;
+        error_out->kind = w.kind;
         return false;
     }
     uint64_t checksum = MO_BYTECODE_FNV_OFFSET;
@@ -321,6 +334,7 @@ bool mo_bytecode_encode(const struct mo_bytecode *file, struct mo_buffer *out,
     if (!ok) {
         mo_buffer_clear(out);
         error_out->reason = error.reason;
+        error_out->kind = error.kind;
     }
     return ok;
 }
@@ -335,6 +349,7 @@ bool mo_bytecode_write(const struct mo_bytecode *file, struct mo_buffer *out,
     if (image == NULL) {
         mo_buffer_clear(out);
         error_out->reason = error.reason;
+        error_out->kind = error.kind;
         return false;
     }
     mo_image_free(image);

@@ -196,15 +196,16 @@ the operand's type is a verifier check. Passing decoding alone never permits
 execution.
 `mo_load` decodes and verifies before publishing an image. The writer performs
 both checks by loading its encoded output.
-Working-storage ceilings derive from wire size and native entry sizes, including
-arena overhead. Tables and scratch
-arrays are allocated to their counts, and names are shared with the strings
-table. Private decoder callers choose their arena budget; `mo_load` bounds its
+Working-storage ceilings derive from wire size and native entry sizes,
+including arena overhead. Tables and scratch arrays are allocated to their
+counts, and names are shared with the strings table. Private decoder callers
+choose their arena budget; `mo_load` bounds its
 image and whole-program scratch arenas by `mo_bytecode_work_budget(wire_size)`.
 Function verification has the additional work and register-block ceilings in
-section 9. Allocation failure
-reports zero with a no-memory reason. A decoded file is independent of the input
-bytes.
+section 9. Allocation failure reports zero with a no-memory reason. A decoded
+file is independent of the input bytes. Writer and loader errors carry a stable
+kind (`INVALID`, `LIMIT`, `NO_MEMORY` in `bytecode.h`); callers do not classify
+failures by their human-readable reason text.
 
 Error offsets are byte offsets. Local wire checks report the start of the bad
 word (including a count or an index checked while reading); malformed UTF-8
@@ -1024,6 +1025,9 @@ whole-file type checks. Replay uses the same per-function ceilings. The VM,
 primitives and host must preserve the pre-instruction operand state on a stop,
 as section 6 requires, or supply a saved state to the report. Pre-instruction
 readability alone does not make a partially consumed or mutated operand safe.
+The private streaming replay visits every instruction boundary in one analysis,
+updating the readable mask only for changed registers. It lets fuzzing compare
+all boundaries without repeating a whole-function analysis at each instruction.
 
 ## 10. The text form
 

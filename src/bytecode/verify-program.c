@@ -21,7 +21,7 @@ static MO_MUST_USE uint32_t next(const struct mo_bytecode_function *fn, uint32_t
     return pc + 1U + op->fixed_count + (fn->code[pc] >> 16);
 }
 static MO_MUST_USE bool refuse(struct mo_load_error *error, uint32_t offset, const char *reason) {
-    *error = (struct mo_load_error){offset, reason};
+    *error = (struct mo_load_error){offset, reason, MO_BYTECODE_INVALID};
     return false;
 }
 
@@ -138,7 +138,8 @@ bool mo_verify_program_init(struct mo_arena *arena, const struct mo_bytecode *f,
     g.reverse = mo_arena_allocate_array(arena, nodes, sizeof(uint32_t), _Alignof(uint32_t));
     if (out->global_rank == NULL || out->init_rank == NULL || out->required == NULL ||
         g.edges == NULL || g.heads == NULL || g.reverse == NULL) {
-        return refuse(error, 0, "no memory");
+        *error = (struct mo_load_error){0, "no memory", MO_BYTECODE_NO_MEMORY};
+        return false;
     }
     memset(out->global_rank, 0, f->global_count * sizeof(uint32_t));
     memset(out->init_rank, 0, f->function_count * sizeof(uint32_t));
@@ -191,7 +192,8 @@ bool mo_verify_program_init(struct mo_arena *arena, const struct mo_bytecode *f,
         }
     }
     if (!summaries(arena, &g, nodes, out->required)) {
-        return refuse(error, 0, "no memory");
+        *error = (struct mo_load_error){0, "no memory", MO_BYTECODE_NO_MEMORY};
+        return false;
     }
     return true;
 }

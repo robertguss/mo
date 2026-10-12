@@ -257,7 +257,9 @@ static MO_MUST_USE bool type(struct match *m, uint32_t index, unsigned depth) {
 }
 
 bool mo_bytecode_signature(const struct mo_verify_function *context, const char *signature,
-                           const uint32_t *parameters, uint32_t count, uint32_t result) {
+                           const uint32_t *parameters, uint32_t count, uint32_t result,
+                           const char **reason) {
+    MO_ASSERT(reason != NULL);
     const struct mo_bytecode *f = context->file;
     struct match m = {.file = f,
                       .v = context,
@@ -294,11 +296,14 @@ bool mo_bytecode_signature(const struct mo_verify_function *context, const char 
         spaces(&m);
         uint32_t t = m.variables[v];
         if (strcmp(m.cursor, "Equal") == 0) {
+            *reason = "library Equal constraint";
             return (m.v->abilities[t] & MO_ABILITY_EQUAL) != 0;
         }
         if (strcmp(m.cursor, "Hash") == 0) {
+            *reason = "library Hash constraint";
             return (m.v->abilities[t] & MO_ABILITY_HASH) != 0;
         }
+        *reason = "library Number constraint";
         enum mo_type_kind k = f->types[t].kind;
         return strcmp(m.cursor, "Number") == 0 && (k == MO_TYPE_INT || k == MO_TYPE_BIGINT ||
                                                    k == MO_TYPE_DECIMAL || k == MO_TYPE_FLOAT);
