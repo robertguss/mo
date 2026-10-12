@@ -604,6 +604,10 @@ and an arm may have a guard, as in `Some(n) if n > 10: "many"`.
 | `(p, q)` | a tuple |
 | `[]`, `[p, q]`, `[first, ..rest]`, `[first, .._]` | an empty list, a list of exactly two, and a list of at least one, with or without a name for the rest |
 
+A case with named fields is matched by naming them, even when it has only
+one: `NotFound(path: p)`, or `NotFound(path: _)` to ignore the path. The form
+`Circle(p)` is only for a case's one unnamed value.
+
 ### 7.4 is
 
 `value is Pattern` tests a pattern, giving a `Bool`. The names the pattern
@@ -1257,9 +1261,9 @@ a folder, each subfolder once. **ReadFiles** has `read_text`, `read_bytes`, `lis
 and `within`. Paths are relative and use `/`; `"."` is the capability's own
 folder, and no path can leave it. Given a path that would leave the folder,
 such as `"../a.txt"`, reading, writing, removing and listing give
-`Error(NotAllowed(path))`, and `exists?` gives `false`. Calling `within` with
+`Error(NotAllowed(path: path))`, and `exists?` gives `false`. Calling `within` with
 such a path gives a capability that reaches nothing: every call on it that
-returns a `Result` gives `Error(NotAllowed(path))`, and `exists?` on it gives
+returns a `Result` gives `Error(NotAllowed(path: path))`, and `exists?` on it gives
 `false`.
 
 **FileError**: `NotFound(path: Text)`, `NotAllowed(path: Text)`,
