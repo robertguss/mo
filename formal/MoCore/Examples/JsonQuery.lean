@@ -1,5 +1,5 @@
 /-
-  examples/json.mo in Core.
+  examples/json-query.mo in Core.
 
   Exercises: a recursive choice type (`Json` holds lists and maps of itself),
   recursion, patterns on characters (lowered to chains of `==`), `try` on
@@ -8,7 +8,7 @@
 -/
 import MoCore.Testing
 
-namespace MoCore.Examples.Json
+namespace MoCore.Examples.JsonQuery
 
 open MoCore DSL Lib
 
@@ -552,7 +552,7 @@ def showFn : FunDecl :=
       (seq (printError (v "console") (str "json: nothing is at that path")) (int 1))
 
 def program : Program :=
-  wholeProgram "Json" "main" [Json, JsonError] []
+  wholeProgram "JsonQuery" "main" [Json, JsonError] []
     [toText, parse, valueAt, wordAt, stringAt, hexValue, hexDigitValue, unescape, numberAt,
              numberEnd, arrayAt, objectAt, expect, skipSpace, pretty, quoted, escapeChar, hexDigit,
              atPath, readInput, mainFn, showFn,
@@ -658,4 +658,4 @@ theorem parse_never_wrong {ρ : Env} (hρ : EnvTy program ρ [("text", tText)]) 
     (msg : String) : evalProgram n program ρ w (call "parse" [v "text"]) ≠ .wrong msg :=
   never_wrong (τ := tRes J JE) checked (by decide +kernel) hρ n w msg
 
-end MoCore.Examples.Json
+end MoCore.Examples.JsonQuery

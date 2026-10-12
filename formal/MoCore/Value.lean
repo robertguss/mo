@@ -2,6 +2,7 @@
   Mo Core: values, the world, and outcomes.
 -/
 import MoCore.Syntax
+import MoCore.Support.Random
 
 namespace MoCore
 
@@ -153,7 +154,7 @@ structure CapState where
   /-- The clock's time, in microseconds since 1970-01-01T00:00:00Z. -/
   now : Int := 0
   /-- The random number generator's state. -/
-  seed : Nat := 0
+  random : RandomState := RandomState.seeded 0
   deriving Repr, Inhabited
 
 /-- Real capabilities use the inherited state. Fake handles index the

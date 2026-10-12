@@ -19,7 +19,7 @@ def tyAtoms : List (String × Ty) :=
   [("int", .int), ("bigInt", .bigInt), ("byte", .byte), ("decimal", .decimal),
    ("float", .float), ("bool", .bool), ("char", .char), ("text", .text), ("bytes", .bytes),
    ("unit", .unit), ("range", .range), ("time", .time), ("duration", .duration),
-   ("ordering", .ordering), ("fileError", .fileError)]
+   ("ordering", .ordering), ("fileError", .fileError), ("entry", .entry), ("entryKind", .entryKind)]
 
 partial def tyOut : Ty → Sexp
   | .tuple ts => tag "tuple" [seq (ts.map tyOut)]

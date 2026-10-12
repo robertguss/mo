@@ -29,7 +29,7 @@ import MoCore.Examples.Greet
 import MoCore.Examples.Wc
 import MoCore.Examples.Find
 import MoCore.Examples.Expenses
-import MoCore.Examples.Json
+import MoCore.Examples.JsonQuery
 import MoCore.Examples.Todo
 import MoCore.Examples.Account
 import MoCore.Examples.RateLimit

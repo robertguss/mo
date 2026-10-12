@@ -5,9 +5,9 @@ set -eu
 tree=$(mktemp -d)
 trap 'rm -rf "$tree"' EXIT
 trap 'exit 1' HUP INT TERM
-(cd formal && lake env lean --run ExportSamples.lean "$tree")
-if ! diff -ru tests/core "$tree"; then
+(cd formal && lake env lean --run ExportSamples.lean "$tree/runs" "$tree/fuzz")
+if ! diff -ru tests/core "$tree/runs" || ! diff -ru fuzz/corpus/fuzz_core_text "$tree/fuzz"; then
     echo 'error: Core fixtures differ from Lean; regenerate with formal/ExportSamples.lean' >&2
     exit 1
 fi
-echo 'Core fixtures: all 13 sample runs match the Lean exporter byte for byte'
+echo 'Core fixtures: all 14 runs and 13 fuzz seeds match the Lean exporter byte for byte'

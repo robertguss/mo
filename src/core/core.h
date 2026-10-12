@@ -75,6 +75,8 @@ enum mo_core_ty_tag {
     MO_CORE_TY_RESULT,
     MO_CORE_TY_ORDERING,
     MO_CORE_TY_FILE_ERROR,
+    MO_CORE_TY_ENTRY,
+    MO_CORE_TY_ENTRY_KIND,
     MO_CORE_TY_FN,
     MO_CORE_TY_CAP
 };
@@ -158,6 +160,9 @@ enum mo_core_text_op { MO_CORE_TEXT_OPS(MO_CORE_OP) };
 #define MO_CORE_OP(tag, text) MO_CORE_BYTES_OP_##tag,
 enum mo_core_bytes_op { MO_CORE_BYTES_OPS(MO_CORE_OP) };
 #undef MO_CORE_OP
+#define MO_CORE_OP(tag, text) MO_CORE_UNICODE_OP_##tag,
+enum mo_core_unicode_op { MO_CORE_UNICODE_OPS(MO_CORE_OP) };
+#undef MO_CORE_OP
 #define MO_CORE_OP(tag, text) MO_CORE_RANGE_OP_##tag,
 enum mo_core_range_op { MO_CORE_RANGE_OPS(MO_CORE_OP) };
 #undef MO_CORE_OP
@@ -189,6 +194,7 @@ enum mo_core_io_op_tag {
     MO_CORE_IO_OPS(MO_CORE_OP) MO_CORE_IO_OP_READ_TEXT,
     MO_CORE_IO_OP_READ_BYTES,
     MO_CORE_IO_OP_LIST,
+    MO_CORE_IO_OP_ENTRIES,
     MO_CORE_IO_OP_EXISTS,
     MO_CORE_IO_OP_WITHIN
 };
@@ -209,6 +215,7 @@ enum mo_core_prim_tag {
     MO_CORE_PRIM_CHAR,
     MO_CORE_PRIM_TEXT,
     MO_CORE_PRIM_BYTES,
+    MO_CORE_PRIM_UNICODE16,
     MO_CORE_PRIM_RANGE,
     MO_CORE_PRIM_TIME,
     MO_CORE_PRIM_LIST,
@@ -232,6 +239,7 @@ struct mo_core_prim {
         enum mo_core_char_op char_;
         enum mo_core_text_op text;
         enum mo_core_bytes_op bytes;
+        enum mo_core_unicode_op unicode16;
         enum mo_core_range_op range;
         enum mo_core_time_op time;
         struct {
@@ -495,6 +503,10 @@ typedef struct {
     struct mo_core_string_pair *items;
     size_t count;
 } mo_core_string_pairs;
+/* xoshiro256** words in reference s[0..3] order, not a seed or byte array. */
+struct mo_core_random_state {
+    mo_core_bits s0, s1, s2, s3;
+};
 /* A fake state has no kind or nested store. List and pair order is retained. */
 struct mo_core_cap_state {
     mo_core_string_list args;
@@ -502,7 +514,7 @@ struct mo_core_cap_state {
     mo_core_string_list stdin_, stdout_, stderr_;
     mo_core_string_pairs files;
     mo_core_integer now;
-    mo_core_natural seed;
+    struct mo_core_random_state random;
 };
 typedef struct {
     struct mo_core_cap_state *items;
@@ -514,7 +526,7 @@ struct mo_core_world {
     mo_core_string_list stdin_, stdout_, stderr_;
     mo_core_string_pairs files;
     mo_core_integer now;
-    mo_core_natural seed;
+    struct mo_core_random_state random;
     mo_core_cap_states fakes;
 };
 enum mo_core_bug_tag {
@@ -627,9 +639,10 @@ enum mo_core_text_kind {
     MO_CORE_TEXT_REPORT,
     MO_CORE_TEXT_SELECTION,
     MO_CORE_TEXT_RUN,
-    MO_CORE_TEXT_CAP_STATE
+    MO_CORE_TEXT_CAP_STATE,
+    MO_CORE_TEXT_RANDOM_STATE
 };
-#define MO_CORE_TEXT_VERSION "0.2"
+#define MO_CORE_TEXT_VERSION "0.3"
 MO_MUST_USE void *mo_core_text_parse(struct mo_arena *arena, enum mo_core_text_kind kind,
                                      const char *text, size_t length, struct mo_diags *diags);
 MO_MUST_USE bool mo_core_text_print(enum mo_core_text_kind kind, const void *value,

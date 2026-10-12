@@ -1,7 +1,7 @@
-# Core text, version 0.2
+# Core text, version 0.3
 
 The Lean implementation in `MoCore/Text/` is the reference codec. Every file
-is `(core 0.2 PAYLOAD)` followed by LF. Constructors are case-sensitive and
+is `(core 0.3 PAYLOAD)` followed by LF. Constructors are case-sensitive and
 named after Lean. A nullary constructor is still a list: `(unit)`.
 
 This is an interchange format, not Mo source or the informal notation in
@@ -10,17 +10,18 @@ transport (`Outcome`, including closures), and observable reports (`Report`,
 the protocol `mocore` writes). The latter uses reference 9.2's structural
 value spelling inside a string. C differential tests compare **reports**.
 
-## Changes from 0.1
+## Changes from 0.2
 
-Version 0.2 adds the seven spec-only `IoOp` constructors listed below.
-`Value.cap` gains a mandatory third field, `fake`, independent of its folder
-root: `(none)` means real; `(some N)` means fake state index N. `World` gains
-a mandatory ninth field, a list of `CapState` records. `effects` gains a
-mandatory fourth field with the final list of those same states. Capability
-structural observations now include the third field. All other shapes,
-operation names, report tags and exit codes are unchanged. Only envelope
-version **0.2** is accepted; 0.1 and unknown versions are rejected, not
-upgraded. There are no omitted/default fields on the wire.
+Version 0.3 adds types `(entry)` and `(entryKind)`, `IoOp.entries` with its
+read-only Boolean, and the five `Prim.unicode16` operations. The eighth
+field of World/CapState changes from a natural seed to a mandatory
+`RandomState` record of four explicit 64-bit words. Seeded and real Random
+now use xoshiro256**/SplitMix64/Lemire, not the placeholder reduction.
+Reached Unicode16 calls stop at the trusted-oracle boundary described below.
+Report tags, exit codes, real/fake handle provenance and the fake-state
+store added in 0.2 are unchanged. Only envelope version **0.3** is accepted;
+0.1, 0.2 and unknown versions are rejected, not upgraded. There are no
+omitted/default fields on the wire or silent conversions of old seeds.
 
 ## Lexing and canonical layout
 
@@ -36,7 +37,7 @@ act as whitespace outside strings. Atoms end at whitespace, parentheses,
 double quote or semicolon. Decimal whole numbers have arbitrary precision,
 optional minus, and at least one ASCII digit; no plus or separators. Input
 allows leading zeros and negative zero; printing removes them. Naturals must
-be nonnegative. Float bits are `0x` and exactly 16 hex digits; input allows
+be nonnegative. Float bits and random words are `0x` and exactly 16 hex digits; input allows
 either case, printing uses lowercase and preserves every bit, including NaN
 payloads and negative zero. Names are always strings, never symbols.
 
@@ -44,13 +45,14 @@ Parsing is not type checking: an out-of-range integer/byte literal can be
 parsed, then refused by the checker.
 
 ```ebnf
-file = "(", "core", "0.2", payload, ")" ;
+file = "(", "core", "0.3", payload, ")" ;
 sexp = atom | string | "(", { sexp }, ")" ;
 integer = [ "-" ], digit, { digit } ;
 bits = "0x", hex-digit (* exactly sixteen *) ;
 type = "(int)" | "(bigInt)" | "(byte)" | "(decimal)" | "(float)"
      | "(bool)" | "(char)" | "(text)" | "(bytes)" | "(unit)"
      | "(range)" | "(time)" | "(duration)" | "(ordering)" | "(fileError)"
+     | "(entry)" | "(entryKind)"
      | "(tuple (", { type }, "))" | "(list ", type, ")"
      | "(map ", type, type, ")" | "(set ", type, ")"
      | "(data ", string, ")" | "(option ", type, ")"
@@ -68,14 +70,14 @@ Decimal integers count 10⁻¹⁸ units; Time and Duration integers count
 microseconds. Char strings contain exactly one Unicode scalar.
 
 ```text
-(core 0.2 (map (text) (list (byte))))
-(core 0.2 (float 0x8000000000000000))
-(core 0.2 (text "hello\nβ"))
+(core 0.3 (map (text) (list (byte))))
+(core 0.3 (float 0x8000000000000000))
+(core 0.3 (text "hello\nβ"))
 ```
 
 Files are UTF-8 without a BOM; invalid UTF-8 is a parse error. An atom is a
 nonempty run of scalars other than the delimiters defined above. Symbols
-are atoms used as constructor names, `core`, `0.2`, `true` and `false`;
+are atoms used as constructor names, `core`, `0.3`, `true` and `false`;
 only the exact symbols listed in this document are accepted in those
 positions. There is no symbol escaping. Empty lists are `()`. Parsing
 accepts any layout using those delimiters, including adjacent lists,
@@ -157,6 +159,7 @@ field/arm lists are still present. No source locations are transported.
 P := (int IntOp) | (big BigOp) | (byte ByteOp) | (dec DecOp)
    | (float FloatOp) | (not) | (cmp Base CmpOp) | (char CharOp)
    | (text TextOp) | (bytes BytesOp) | (range RangeOp) | (time TimeOp)
+   | (unicode16 UnicodeOp)
    | (list T ListOp) | (map T T MapOp) | (set T SetOp) | (eq T) | (io IoOp)
 ```
 
@@ -175,6 +178,7 @@ Each name in the following table means a **nullary S-expression**, e.g.
 | `CharOp` | `code isDigit isLetter isWhiteSpace lower upper toText` |
 | `TextOp` | `concat byteCount charCount isEmpty chars fromChars lines words split trim trimStart trimEnd startsWith endsWith contains dropPrefix dropSuffix replace repeat padLeft padRight lower upper toInt toDecimal join bytes` |
 | `BytesOp` | `size get decodeUtf8` |
+| `UnicodeOp` | `graphemes displayWidth normalizeNfc lowercase uppercase` |
 | `RangeOp` | `make start end toList contains toText` |
 | `TimeOp` | `sub add subDur checkedAdd toText parse durAdd durSub durMul durNeg inMilliseconds inSeconds durToText` |
 | `ListOp` | `size isEmpty get first last append prepend concat reverse take drop set removeAt uncons enumerate contains unique` |
@@ -187,7 +191,7 @@ The non-nullary operation constructors are exactly:
 ```text
 ListOp additionally := (lit N) | (zip T)
 MapOp  additionally := (lit N)
-IoOp   additionally := (readText B) | (readBytes B) | (list B) | (exists B) | (within B)
+IoOp   additionally := (readText B) | (readBytes B) | (list B) | (entries B) | (exists B) | (within B)
 ```
 
 `ListOp.lit` counts values; `MapOp.lit` counts entries (twice that many
@@ -201,6 +205,46 @@ when false. The guillemets around Lean's reserved identifiers `repeat`,
 (prim (io (readBytes true)) ((var "files") (lit (text "a.txt"))))
 (prim (list (byte) (zip (text))) ((var "bytes") (var "names")))
 ```
+
+### Unicode16 and folder entries
+
+`(unicode16 (graphemes))` has signature Text → List(Text),
+`(unicode16 (displayWidth))` Text → Int; `(normalizeNfc)`, `(lowercase)`
+and `(uppercase)` under `unicode16` each have Text → Text. They are pure
+ordinary operations, not spec-only calls or the ASCII Text operations.
+Core specifies types and safety, not Unicode tables. After evaluating
+arguments, a **reached** call stops with the exact report below (exit 1),
+where effects are everything produced so far:
+
+```text
+(core 0.3 (stopped (outside "Unicode16 is a trusted primitive unavailable in mocore") (effects () () () ())))
+```
+
+An unchosen branch or unused function containing such a call still runs.
+Do not compare this boundary stop to VM behavior: runtime Unicode16 must
+instead be checked against the Unicode Character Database 16.0's own test
+files (architecture 4). No fallback Unicode results are invented here.
+
+`(io (entries false))` takes Files, Text; `true` takes ReadFiles, Text.
+Both return Result(List(Entry), FileError), using `list`'s paths, errors
+and Unicode-scalar sorted order. `Entry` has constructor `Entry` with
+fields `name: Text`, `kind: EntryKind`; the kind constructors, in case-arm
+order, are `File`, `Folder`, `Link`, `Other`, all nullary. No DataDecl is
+needed. A construction and its lossless value are:
+
+```text
+(con (entry) "Entry" ((lit (text "notes")) (con (entryKind) "Folder" ())))
+(con "Entry" ((text "notes") (con "Folder" ())))
+```
+
+The text-file maps used for both real modeled handles and in-memory fakes
+imply folders from descendants and cannot represent links or special files.
+Those kind values still type-check and transport; the OS host must classify
+them without following links. The top folder always exists, other folders
+only while a descendant exists. If a malformed map has both a file and
+descendants, Folder wins. Names are immediate names, not relative paths;
+old lists remain snapshots after a shared/narrowed/read-only handle changes
+the map. `walk` is Mo library code in `lib/`, not a Core operation.
 
 ### Fake construction and dispatch
 
@@ -216,11 +260,12 @@ lexically inside spec code may use them, as for `fail`, `printed` and
 | `Console.fake_input(lines)` | `consoleFakeInput` | List(Text) | Console | stdin = lines |
 | `Files.in_memory(files)` | `filesInMemory` | Map(Text, Text) | Files | files = map entries |
 | `Clock.fixed(t)` | `clockFixed` | Time | Clock | now = t |
-| `Random.seeded(n)` | `randomSeeded` | Int | Random | seed = n modulo 2⁶⁴, nonnegative |
+| `Random.seeded(n)` | `randomSeeded` | Int | Random | random = four SplitMix64 outputs from n modulo 2⁶⁴ |
 | `Args.of(list)` | `argsOf` | List(Text) | Args | args = list |
 | `Env.of(map)` | `envOf` | Map(Text, Text) | Env | env = map entries |
 
-Default list/map fields are empty, now and seed are zero. Every construction
+Default list/map fields are empty, now is zero, and random is seed 0's state
+(listed below). Every construction
 appends one state at index equal to the previous store length, regardless of
 kind; the returned root is `(some "")`. Indices are zero-based, never reused
 or garbage-collected within a run, and preexisting states count. Two handles
@@ -250,11 +295,15 @@ UTF-8 texts, and readBytes returns their encoding. Folder existence/listing
 rules are unchanged. Fake input lines are verbatim texts, including any
 embedded CR/LF; they are not split or decoded again.
 
-**Random is still a placeholder.** Seeded fakes and real Random use today's
-SplitMix64 draw followed by remainder reduction, not architecture 7's
-xoshiro256** seeded through SplitMix64 with Lemire reduction. This sequence
-does not certify VM randomness. Negative Int seeds are interpreted modulo
-2⁶⁴; replacing the generator/state later requires another minor version.
+Seeded fakes and real modeled Random use `xoshiro256** 1.0`, seeded
+through four consecutive SplitMix64 outputs, starting after its first
+increment. Negative seeds are interpreted modulo 2⁶⁴. Raw draws and the
+128-bit multiply-high/rejection of Lemire are specified exactly in
+TRANSLATION.md's library decisions, with independently compiled reference
+vectors in Builtins. `int(low, high)` has exclusive high, supporting spans
+1 through 2⁶⁴−1 without signed overflow. Rejected draws advance the state;
+an invalid interval stops. The total rejection bound is the full nonzero
+state period, 2²⁵⁶−1, not evaluator fuel or a heuristic retry cap.
 
 ## Lossless values, worlds and internal outcomes
 
@@ -269,8 +318,9 @@ V additionally := (range I I)
    | (cap capability root fake)
 root := (none) | (some S)
 fake := (none) | (some N)
-CapState := (CapState (S*) ((S S)*) (S*) (S*) (S*) ((S S)*) I N)
-World := (World (S*) ((S S)*) (S*) (S*) (S*) ((S S)*) I N (CapState*))
+RandomState := (RandomState bits bits bits bits)
+CapState := (CapState (S*) ((S S)*) (S*) (S*) (S*) ((S S)*) I RandomState)
+World := (World (S*) ((S S)*) (S*) (S*) (S*) ((S S)*) I RandomState (CapState*))
 Bug := (overflow S) | (divByZero) | (stop S) | (outside S) | (repeatedKey)
 Outcome := (ok V World) | (stopped Bug World) | (failed S World)
          | (jumped S (V*) World) | (wrong S) | (outOfFuel)
@@ -285,7 +335,7 @@ Constructor values carry no type: their expected type supplies it.
 
 World fields, in order: **arguments, environment, remaining standard input
 lines, standard output lines, standard error lines, files, clock
-microseconds since Unix epoch, random seed, fake states**. Each `CapState`
+microseconds since Unix epoch, random state, fake states**. Each `CapState`
 has the world's first eight fields in exactly the same order, without a
 nested store. Fake state contains only texts, ordered text pairs and numbers,
 never values holding handles or closures. Environment and files are
@@ -294,9 +344,21 @@ finds the first). Files hold UTF-8 texts, not arbitrary bytes. Input lines
 are already split: the codec does not remove CR/LF or replace invalid
 UTF-8 inside a line. Print calls contribute one list element, even when
 that element contains newlines. Initial output/error can be nonempty and
-are preserved. Worlds deliberately accept any clock integer and natural
-seed; they are host state, not checked literals. The existing primitives
-apply their own rules to that state.
+are preserved. Worlds deliberately accept any clock integer and four random
+words; they are host state, not checked literals. The words are `s0..s3`
+in reference order, never host-endian bytes or a retained seed. The default
+state is exactly:
+
+```text
+(RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec)
+```
+
+There are no wire defaults: this record is required even for states of
+non-Random fakes. All-zero words decode losslessly, but a Random.int using
+them stops with `outside "Random has an all-zero state"`. An exhausted
+period stops with `outside "Random exhausted its period"`; reference
+period/coverage correctness, not proved here, excludes this for nonzero
+states. Real entropy acquisition is runtime work, never oracle I/O.
 
 Lossless codecs can inspect malformed values and internal outcomes. They
 do not certify value typing. `jumped` and `wrong` are provided for debugging;
@@ -329,6 +391,7 @@ must see the fields. Its exact forms follow reference 9.2:
 | Map | `{"a": 1, "b": 2}`, empty `{}`, insertion order |
 | Set | `[2, 1].to_set`, empty `[].to_set`, insertion order |
 | Declared data / FileError | `Point(x: 1, y: 2)` / `NotFound(path: "a")`: constructor and field names in declaration order |
+| Entry / EntryKind | `Entry(name: "notes", kind: Folder)` / `File`, `Folder`, `Link`, `Other` |
 | Option / Result / Ordering | positional fields: `None`, `Some(3)`, `Ok(Unit)`, `Error(e)`, `Less`, `Equal`, `Greater` |
 | Closure (no Text ability) | `<function>`; apply it to compare its behavior |
 | Capability (no Text ability) | its lossless S-expression, e.g. `(cap (readFiles) (some "notes") (some 2))` |
@@ -345,7 +408,7 @@ Separators are `, ` and `: `, with no spaces just inside delimiters.
 returned list of texts contains two levels of quoting:
 
 ```text
-(core 0.2 (returned "[\"a\", \"b\\n\"]" (effects () () () ())))
+(core 0.3 (returned "[\"a\", \"b\\n\"]" (effects () () () ())))
 ```
 
 This avoids confusing a top-level Text with a constructor/number, and
@@ -365,8 +428,8 @@ Report := (returned S effects) | (stopped Bug effects) | (failed S effects)
 Effects are real standard output, real standard error, real final files and
 all final fake states in allocation order, including states with no remaining
 handles. Each fake state's full eight fields are compared, including unread
-input and the placeholder seed. Real remaining stdin, args, environment,
-clock and seed are still not compared. Files include unchanged entries.
+input and all four random words. Real remaining stdin, args, environment,
+clock and random state are still not compared. Files include unchanged entries.
 A stop or failure retains both real and fake effects up to that point.
 Fuel exhaustion and diagnostic reports cannot provide effects. Diagnostic
 details explain errors but are not stable cross-toolchain comparison keys;
@@ -435,44 +498,46 @@ A complete one-file program returning a Float's negative zero, with a
 preexisting file and one input line (layout expanded for reading):
 
 ```text
-(core 0.2
+(core 0.3
   (Run
     (Program ()
       ((FunDecl "main" () (float) (lit (float 0x8000000000000000))
         "Main" (function) 0))
       () "main")
-    (World ("argument") (("MODE" "test")) ("input") () () (("a" "hi\n")) 0 42 ())
+    (World ("argument") (("MODE" "test")) ("input") () () (("a" "hi\n")) 0
+      (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec) ())
     (entry ()) 30))
 ```
 
 The exact canonical report (exit 0):
 
 ```text
-(core 0.2 (returned "0x8000000000000000" (effects () () (("a" "hi\n")) ())))
+(core 0.3 (returned "0x8000000000000000" (effects () () (("a" "hi\n")) ())))
 ```
 
 A named test demonstrating failure without a bug:
 
 ```text
-(core 0.2
+(core 0.3
   (Run
     (Program ()
       ((FunDecl "main" () (unit) (lit (unit)) "Main" (function) 0)
        (FunDecl "expected seven" () (unit) (fail (lit (text "got six"))) "Spec" (test) 0))
       () "main")
-    (World () () () () () () 0 0 ())
+    (World () () () () () () 0
+      (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec) ())
     (test "expected seven") 30))
 ```
 
-Its report is `(core 0.2 (failed "got six" (effects () () () ())))` (exit 2).
-Changing fuel to 0 gives `(core 0.2 (outOfFuel))` (exit 3). An ordinary
+Its report is `(core 0.3 (failed "got six" (effects () () () ())))` (exit 2).
+Changing fuel to 0 gives `(core 0.3 (outOfFuel))` (exit 3). An ordinary
 function with `fail` instead is `illTyped` (exit 5), never evaluated.
 
 A test constructs a console and passes it to ordinary `main`. Observing the
 same handle after the call reads its output; real output stays empty:
 
 ```text
-(core 0.2
+(core 0.3
   (Run
     (Program ()
       ((FunDecl "main" (("c" (cap (console)))) (unit)
@@ -487,20 +552,24 @@ same handle after the call reads its output; real output stays empty:
               (lit (unit)) (fail (lit (text "unexpected output"))))))
         "Spec" (test) 0))
       () "main")
-    (World () () () () () () 0 0 ())
+    (World () () () () () () 0
+      (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec) ())
     (test "fake") 50))
 ```
 
 Its exact report (exit 0) includes the allocated state's full eight fields:
 
 ```text
-(core 0.2 (returned "Unit" (effects () () () ((CapState () () () ("hello") () () 0 0)))))
+(core 0.3 (returned "Unit" (effects () () () ((CapState () () () ("hello") () () 0 (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec))))))
 ```
 
 The exporter below writes all twelve real programs with their timing worlds
 and argument values, plus `Fakes.core`, a named spec exercising all seven
 constructors, independent states, snapshots, shared random handles in closures
-and shared file writes through an ordinary function.
+and shared file writes through an ordinary function. `Library.core` tests
+Lemire results, maximum-span Int intervals and entries; its five Unicode16
+functions are present and checked but not called by that test. `JsonQuery.core`
+is the renamed `examples/json-query.mo` translation, module JsonQuery.
 Wc's run returns the **Core value** `1` but the oracle
 process exits 0, with the three counted rows and missing-file error in its
 effects. Account's returns
@@ -515,11 +584,22 @@ inputs. Equality checks compare the original and decoded Lean `Repr` as
 well as canonical output; NaNs are checked by bits, not IEEE equality.
 Existing Builtins expression cases also round-trip before execution.
 No inversion theorem is claimed. `ci/test_mocore.sh`, run by `make formal`,
-tests actual file input, UTF-8 rejection, exits and retained stop effects.
+tests actual file input, UTF-8 rejection, exits, retained stop effects and
+all five reached Unicode16 operations versus a skipped one.
+Regenerate **both** corpora from `formal/`:
+
+```sh
+lake env lean --run ExportSamples.lean ../tests/core ../fuzz/corpus/fuzz_core_text
+```
+
+`ci/check_core_fixtures.sh` compares all 14 run fixtures and 13 canonical
+fuzz seeds with fresh Lean output. C's schema-driven codec round-trips
+every fixture and all new types/operations/state records; the fuzzer tries
+all 16 caller-supplied categories, including standalone RandomState.
 
 Historical **version 0.1** measurements, 2026-10-12 in a Linux x86-64 orb,
 Lean 4.34.0 native executable; sizes/timings below predate fake state. Use
-the command below for today's 0.2 corpus, which also includes Fakes.
+the command below for today's 0.3 corpus, which includes Fakes and Library.
 One warm-up, then **21 fresh processes per sample**; wall time includes
 process startup, input I/O, parse, checker, initialization, entry evaluation,
 structural rendering and captured stdout. Fuel 10000. These are the inputs
@@ -531,7 +611,7 @@ in `TextChecks.samples`, not the entire Mo test suite or a VM benchmark.
 | Wc | 4644 | 3.951 | 3.632 | 4.833 |
 | Find | 8694 | 3.911 | 3.473 | 4.586 |
 | Expenses | 14229 | 4.461 | 4.171 | 4.996 |
-| Json | 25000 | 5.094 | 4.532 | 5.846 |
+| JsonQuery (then Json) | 25000 | 5.094 | 4.532 | 5.846 |
 | Todo | 12178 | 4.210 | 3.812 | 4.913 |
 | Account | 6004 | 3.832 | 3.509 | 4.461 |
 | RateLimit | 5414 | 3.768 | 3.350 | 4.382 |
@@ -553,7 +633,7 @@ for path in sorted(pathlib.Path('/tmp/mocore-samples').glob('*.core')):
     for _ in range(21):
         start = time.perf_counter_ns()
         result = subprocess.run([exe, str(path)], check=True, capture_output=True)
-        assert result.stdout.startswith(b'(core 0.2 (returned ')
+        assert result.stdout.startswith(b'(core 0.3 (returned ')
         times.append((time.perf_counter_ns() - start) / 1e6)
     print(path.stem, path.stat().st_size, statistics.median(times), min(times), max(times))
 PY
@@ -562,21 +642,20 @@ PY
 ## Extending the contract
 
 The codec describes today's Lean constructors, not primitives planned for
-later streams. `Unicode16` and the actual PRNG are still deferred. The seven
-fake constructors and their states are included in 0.2 as specified above.
+later streams. Unicode16's interface and trusted boundary, the actual PRNG,
+folder entries and the seven fake constructors are included in 0.3.
 
 To add a primitive, first add its Lean operation constructor, signature,
 evaluator and safety proof. Add its exact constructor-named S-expression
 with explicit fields to both codec directions, the table/schema here and
-the guards (including a case not already covered by samples). Actual PRNG
-state will require explicit Value/World changes and new run/report examples.
-Do not silently reinterpret the existing natural
-seed, Boolean `ro`, root, or a constructor's field order.
+the guards (including a case not already covered by samples). State changes
+need new run/report examples too. Do not silently reinterpret RandomState,
+Boolean `ro`, root, fake index, or a constructor's field order.
 
 Any added constructor or changed shape/meaning advances the minor wire
-version (next `0.3`), updates both Lean and C and their differential corpus,
+version (next `0.4`), updates both Lean and C and their differential corpus,
 and adds tests for rejecting unsupported versions. The current parser
-accepts **only `0.2`** and rejects unknown constructors; there are no ignored
+accepts **only `0.3`** and rejects unknown constructors; there are no ignored
 extension fields or fallback operation names. Support for older versions,
 if wanted, must be explicit. This document, not the informal lowering
 notation or Lean's `Repr`, specifies what the C implementation must write.

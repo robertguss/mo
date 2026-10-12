@@ -9,10 +9,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
  * The real sample runs are seeds too, supplied by make fuzz-smoke without duplicate fixtures. */
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     const enum mo_core_text_kind kinds[] = {
-        MO_CORE_TEXT_TYPE,      MO_CORE_TEXT_CAP,     MO_CORE_TEXT_LITERAL,  MO_CORE_TEXT_PRIMITIVE,
-        MO_CORE_TEXT_EXPR,      MO_CORE_TEXT_PROGRAM, MO_CORE_TEXT_VALUE,    MO_CORE_TEXT_WORLD,
-        MO_CORE_TEXT_BUG,       MO_CORE_TEXT_OUTCOME, MO_CORE_TEXT_EFFECTS,  MO_CORE_TEXT_REPORT,
-        MO_CORE_TEXT_SELECTION, MO_CORE_TEXT_RUN,     MO_CORE_TEXT_CAP_STATE};
+        MO_CORE_TEXT_TYPE,        MO_CORE_TEXT_CAP,     MO_CORE_TEXT_LITERAL,
+        MO_CORE_TEXT_PRIMITIVE,   MO_CORE_TEXT_EXPR,    MO_CORE_TEXT_PROGRAM,
+        MO_CORE_TEXT_VALUE,       MO_CORE_TEXT_WORLD,   MO_CORE_TEXT_BUG,
+        MO_CORE_TEXT_OUTCOME,     MO_CORE_TEXT_EFFECTS, MO_CORE_TEXT_REPORT,
+        MO_CORE_TEXT_SELECTION,   MO_CORE_TEXT_RUN,     MO_CORE_TEXT_CAP_STATE,
+        MO_CORE_TEXT_RANDOM_STATE};
     for (size_t i = 0; i < sizeof kinds / sizeof kinds[0]; i++) {
         struct mo_arena arena;
         struct mo_diags diags;

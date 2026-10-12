@@ -1,1 +1,1 @@
-(core 0.2 (CapState ("arg") (("K" "first") ("K" "second")) ("in\r\n") ("out\n") ("err") (("z" "2") ("a" "1")) -999999999999999999999999999999 888888888888888888888888888888))
+(core 0.3 (CapState ("a" "") (("Z" "last") ("A" "first")) ("one" "two") ("old") ("err") (("b" "β\n") ("a" "")) -1 (RandomState 0x0000000000000000 0xffffffffffffffff 0x8000000000000000 0x000000000000002a)))

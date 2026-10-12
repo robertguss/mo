@@ -15,7 +15,9 @@ Core is a **typed, monomorphic, strict functional language**:
   insertion-ordered; a set holds no element twice), declared data types
   (records and choice types share one form, looked up by name in the
   program's data table), the library's `Option` (`None`, then `Some`, as
-  reference 8 declares it), `Result`, `Ordering` and `FileError`, function
+  reference 8 declares it), `Result`, `Ordering`, `FileError`, `Entry`
+  (`name: Text`, `kind: EntryKind`) and `EntryKind` (`File`, `Folder`,
+  `Link`, `Other`, in that order), function
   types, and the capability types `Console`, `Files`, `ReadFiles`, `Clock`,
   `Random`, `Args` and `Env`. There are no type variables and no abilities:
   generic Mo code is instantiated per type first.
@@ -41,7 +43,7 @@ Core is a **typed, monomorphic, strict functional language**:
 - **Effects** go through primitives on capability handles, which read and
   update one `World`: arguments, environment variables, standard input,
   standard output and error, an insertion-ordered in-memory file map, the
-  clock's time and a random seed. Real handles use these fields; each fake
+  clock's time and xoshiro256**'s four-word state. Real handles use these fields; each fake
   constructor allocates an independent state in `World.fakes`. Handles
   derived by `within` or `read_only` share the same fake state. Observing
   `printed` or `printed_errors` returns that fake console's snapshot, not
@@ -50,6 +52,10 @@ Core is a **typed, monomorphic, strict functional language**:
   `within` a path that would leave it gives a handle that reaches nothing, on
   which every call that returns a `Result` gives `Error(NotAllowed(path))` and
   `exists?` gives `false`.
+  `entries` returns sorted immediate names and kinds, with folders implied
+  by file paths, on both real and fake Files/ReadFiles. Seeded Random uses
+  four SplitMix64 outputs and Lemire's unbiased reduction, including the
+  widest expressible half-open Int interval.
 - **Semantics**: `eval : Nat → Program → Env → World → Expr → Outcome`, a
   big-step evaluator with fuel. An outcome is a value and the new world;
   `stopped` on a bug (overflow, division by zero, `stop`, a library call
@@ -57,6 +63,9 @@ Core is a **typed, monomorphic, strict functional language**:
   world so far); `failed` with its Text detail and world, distinct from a
   stop; an internal `jumped` to a join point; `wrong` (stuck, only
   for ill-typed programs); or `outOfFuel`. Overflow stops; it never wraps.
+  Unicode16's five functions have trusted primitive signatures and safety,
+  but reached calls stop at an explicit oracle boundary. Runtime Unicode
+  tables are checked against UCD 16.0's tests, not against Lean.
 
 `eval` evaluates an expression without constants; `evalWithGlobals` takes
 their computed values. `evalProgram` initializes constants before evaluating
@@ -100,6 +109,7 @@ canonical printing, result protocol, extension rules and sample timings.
 | `MoCore/Support/Num.lean` | Exact arithmetic: rounding (ties to even, ties away from zero), decimal multiplication and division, wrapping and saturating, decimal and whole-number text forms and parsers. |
 | `MoCore/Support/Text.lean` | The text functions of reference 14 (`lines`, `words`, `split`, `trim`, ...), over lists of characters. |
 | `MoCore/Support/Time.lean` | Calendar conversions and RFC 3339 text for times; durations' text form. |
+| `MoCore/Support/Random.lean` | SplitMix64 seeding, xoshiro256** 1.0 draws and Lemire's full-width multiply-high rejection. |
 | `MoCore/Support/Bytes.lean` | UTF-8 over lists of bytes: encoding text (`Text.bytes`) and decoding it (`Bytes.decode_utf8`, by table 3-7 of the Unicode Standard); the order of bytes. |
 | `MoCore/Support/Equiv.lean` | Structural equality of values (maps and sets in any order, floats by IEEE), `Distinct` (no element of a list equals one after it, as in a set), and the built-in orders. |
 | `MoCore/Prim.lean` | What every primitive does: `Prim.eval`, with the range checks. |
@@ -113,13 +123,13 @@ canonical printing, result protocol, extension rules and sample timings.
 | `MoCore/DSL.lean` | Lean helpers for writing Core programs readably, named after the Mo constructs they lower. |
 | `MoCore/Lib.lean` | Library functions written in Core (`map`, `filter`, `sort_by_desc`, `update`, ...), as generators instantiated per type, the order they sort by (`Lib.lt`, in which a float that is "not a number" comes last), and a set's text form (`setText`, `[1, 2].to_set`). |
 | `MoCore/Testing.lean` | `passes` for checking examples and tests, and `stops` for checking that an expression stops on a bug; lemmas turning a checked program into "never goes wrong" theorems. |
-| `MoCore/Builtins.lean` | Checks of `Byte`, `Bytes`, `Range`, `Set`, failure, initialization, kind signatures, spec-only operations/calls, closures, runners and all seven fake constructors (isolation, aliasing, snapshots). |
+| `MoCore/Builtins.lean` | Checks of built-in types, Unicode scalar boundaries, failure, programs and fakes; independent Blackman/Vigna random vectors, Lemire rejection/full-width intervals, Unicode16 interfaces and real/fake folder entries. |
 | `MoCore/Examples/*.lean` | The twelve samples of `examples/`, each in Core, with every example line and test of the sample as a `#guard`, and theorems that the program is well typed and never goes wrong. |
 | `MoCore/Text/*.lean` | The reference text codec: S-expressions, types/literals, primitives, programs, lossless values/worlds/outcomes, structural observations and checked run requests. |
 | `MoCore/TextChecks.lean` | Round trips for all twelve programs, every primitive/value, Builtins programs, reproducible runs and report/lexical checks. |
 | `Main.lean` | The `mocore` file/CLI protocol, with distinct diagnostic and outcome exit codes. |
-| `ExportSamples.lean` | Writes the twelve entry Run fixtures and the fake-state spec fixture, in Core text 0.2 (`lake env lean --run ExportSamples.lean DIR`). |
-| `TEXT.md` | Complete Core text contract for Lean and the later C implementation, worked runs and measurements. |
+| `ExportSamples.lean` | Writes twelve entry runs plus Fakes and Library, in Core text 0.3; optional second directory exports all thirteen fuzz seeds (`lake env lean --run ExportSamples.lean DIR FUZZ_DIR`). |
+| `TEXT.md` | Complete Core text 0.3 contract shared by Lean and C, worked runs and measurements. |
 | `TRANSLATION.md` | The lowering from every v0.1 feature to Core, how the model follows the answers D227 gave to the questions writing it raised, the three things D228 added, and what the model decided in making `Byte`, `Bytes`, `Range` and `Set` types of their own. |
 
 ## The twelve programs
@@ -139,7 +149,7 @@ success or the first false line's one-based number, as bytecode 3.3 requires.
 | `Wc` | `count` (including `count("one two\nthree\n") == Counts(lines: 2, words: 3, bytes: 14)`), `row`; `main` over three files, one missing: status 1, the three printed rows, and `wc: gone.txt: no such file`. |
 | `Find` | `parse_args` (five examples), `matches`; `main` with `-i`, with no match (status 1) and a missing file (status 2); also `--count`, an unknown option, and lines that end in `\r\n` or keep a lone `\r`. |
 | `Expenses` | `parse_line` (five), `totals` (`[food(1.50), rent(4), food(3)]` gives `[("food", 4.50), ("rent", 4)]`), `layout`; `main` on a CSV with a malformed line. |
-| `Json` | the whole parser: `parse` (five examples, including `é`), `hex_value`, `pretty`, `quoted`, `at_path` (three); `main` answering `items.0.name`; a pretty-printed document and a parse error through `main`. |
+| `JsonQuery` | the whole parser of `examples/json-query.mo`, module JsonQuery: `parse` (five examples, including `é`), `hex_value`, `pretty`, `quoted`, `at_path` (three); `main` answering `items.0.name`; a pretty-printed document and a parse error through `main`. |
 | `Todo` | `parse_command` (five), `parse_items`, `format`, `apply` (three); the promise's anchors; `main` run four times against one in-memory file system, then `files.read_text` and the listing. |
 | `Account` | `deposit` and `withdraw` (four each, including `withdraw(alice(100.00), 100.01) == Error(InsufficientFunds(short_by: 0.01))`), `transfer` (two); all four promises' anchors, and the promises on more inputs; both tests. |
 | `RateLimit` | `new_limiter` (three); the request sequence of both tests, at `t0`, then `t0 + 500.milliseconds` (500000 µs); the promise's anchors; a longer sequence with a slow refill; also a time minus a duration: a bucket refilled from `t0 - 1.hours`, the bug before the year 1, and `checked_add` with a negative duration. |
@@ -201,8 +211,9 @@ Everything below is fully proven: there is no `sorry` anywhere.
   `listOp_safe` (all 19 list operations, at every element type), `mapOp_safe`
   (all 12, map literals included, at every key and value type), `setOp_safe`
   (all 11 set operations, at every element type), `eq_safe` (structural
-  equality at every type), and `ioOp_safe` (all 25 capability operations,
-  30 counting the `Files` and `ReadFiles` forms apart), with dispatch to real
+  equality at every type), the trusted stop for all five Unicode16 operations,
+  and `ioOp_safe` (all 26 capability operations,
+  32 counting the `Files` and `ReadFiles` forms apart), with dispatch to real
   or fake state and value typing for both kinds of handles. So every
   primitive is proven safe, and `type_safety` has no hypothesis on
   primitives.
@@ -232,13 +243,13 @@ Everything below is fully proven: there is no `sorry` anywhere.
 
 - `checked : wellTyped? program = true` and `wellTyped : WellTyped program`
   in every sample.
-- `main_never_wrong` for `Greet`, `Wc`, `Find`, `Expenses`, `Json`, `Todo`,
+- `main_never_wrong` for `Greet`, `Wc`, `Find`, `Expenses`, `JsonQuery`, `Todo`,
   `Kv` and `Inventory`: running `main` with its capability handles, in any
   world (any arguments, input, files, time) and with any fuel, never goes
   `wrong`. For the samples without a `main`: `transfer_never_wrong`
   (`Account`), `request_never_wrong` (`RateLimit`), `lease_never_wrong`
   (`JobQueue`), `search_never_wrong` (`NotesTool`), each for all well-typed
-  arguments, and `parse_never_wrong` (`Json`) for every text.
+  arguments, and `parse_never_wrong` (`JsonQuery`) for every text.
 
 Supporting lemmas include `Ty.eq_of_beq` and `Ty.beq_refl` (decidable
 equality of types), `EnvTy.lookup`, `EnvTy.bindParams`, `EnvTy.bindVars`,
@@ -256,6 +267,10 @@ No theorem is left with `sorry`. What the proofs don't yet cover:
   example, that `decMul` rounds ties to even). The examples test that, and
   `MoCore/Builtins.lean` checks UTF-8 decoding against Lean's own decoder on
   every sequence of one or two bytes and on large families of three and four.
+  It also checks seeded words and draws against the compiled published
+  SplitMix64/xoshiro256** reference code and bounded results against Lemire's
+  C sample. Period, statistical properties and functional correctness are
+  not proved; Unicode16 conformance belongs to runtime UCD testing.
 - **Floats** have no proofs beyond their types. Their text form writes a
   float that is not a number as `nan` and the infinities as `inf` and
   `-inf`, as reference 9.2 spells them (checked in `MoCore/Lib.lean`), but
@@ -268,19 +283,21 @@ No theorem is left with `sorry`. What the proofs don't yet cover:
 - **Progress for programs that don't terminate**: the evaluator returns
   `outOfFuel` for them; there is no coinductive semantics.
 
-Not modeled yet: the `Unicode16` module, the text forms the lowering derives for records, choice
+Not modeled yet: Unicode16's tables, the text forms the lowering derives for records, choice
 types, tuples, lists and maps, and the quoted form of a text or a character
 inside another value (`to_text[T]`, which both `"#{x}"` and `x.to_text` call,
 TRANSLATION.md 3.4; a set's is `Lib.setText`, given how its elements are
-written), and the architecture's actual random generator (the model's
-`randomInt` is a placeholder). The interchange text and structural oracle observations
+written). Random now implements architecture 7's actual generator and range
+reduction. Real OS links/special files cannot appear in the model's text-file
+map; their EntryKind values are typed and transportable. `walk` remains Mo
+library code, not a Core primitive. The interchange text and structural oracle observations
 are now defined in TEXT.md; they do not implement the Mo `to_text[T]`
 functions inside the calculus. `Byte`, `Bytes`, `Range` and `Set`
 are types of their own (TRANSLATION.md 3.2, 3.4, 7.5 and 3.8, and the
 decisions in TRANSLATION.md). Failure, the program layer and independent
-fake capabilities are now modeled; their decisions and the remaining
-design/reference mismatches are recorded
-in TRANSLATION.md's final section.
+fake capabilities, folder entries and Unicode16's interface are now modeled;
+their decisions and the remaining design/reference mismatches are recorded
+in TRANSLATION.md's final sections.
 
 ## Axioms
 

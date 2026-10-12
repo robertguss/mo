@@ -1,1 +1,1 @@
-(core 0.2 (io (consoleFakeInput)))
+(core 0.3 (io (consoleFakeInput)))

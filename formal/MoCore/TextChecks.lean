@@ -4,7 +4,7 @@ import MoCore.Examples.Greet
 import MoCore.Examples.Wc
 import MoCore.Examples.Find
 import MoCore.Examples.Expenses
-import MoCore.Examples.Json
+import MoCore.Examples.JsonQuery
 import MoCore.Examples.Todo
 import MoCore.Examples.Account
 import MoCore.Examples.RateLimit
@@ -17,7 +17,7 @@ namespace MoCore.TextChecks
 open Text Examples
 
 def programs : List Program :=
-  [Greet.program, Wc.program, Find.program, Expenses.program, Json.program, Todo.program,
+  [Greet.program, Wc.program, Find.program, Expenses.program, JsonQuery.program, Todo.program,
    Account.program, RateLimit.program, JobQueue.program, Kv.program, NotesTool.program, Inventory.program]
 
 #guard programs.all programRoundTrip
@@ -38,6 +38,7 @@ def primitives : List Prim :=
   (byteOps.map fun (_, o) => .byte o) ++ (decOps.map fun (_, o) => .dec o) ++
   (floatOps.map fun (_, o) => .float o) ++ (charOps.map fun (_, o) => .char o) ++
   (textOps.map fun (_, o) => .text o) ++ (bytesOps.map fun (_, o) => .bytes o) ++
+  (unicodeOps.map fun (_, o) => .unicode16 o) ++
   (rangeOps.map fun (_, o) => .range o) ++ (timeOps.map fun (_, o) => .time o) ++
   (bases.flatMap fun (_, b) => cmpOps.map fun (_, o) => .cmp b o) ++
   (setOps.map fun (_, o) => .set (.option .float) o) ++
@@ -46,7 +47,7 @@ def primitives : List Prim :=
     .take, .drop, .set, .removeAt, .uncons, .enumerate, .contains, .unique, .zip .char].map fun o => .list .byte o) ++
   (ioOps.map fun (_, o) => .io o) ++
   ([false, true].flatMap fun ro => [Prim.io (.readText ro), .io (.readBytes ro), .io (.list ro),
-    .io (.«exists» ro), .io (.within ro)]) ++ [.not, .eq (.tuple [.int, .char]), .map .int .text (.lit 2)]
+    .io (.entries ro), .io (.«exists» ro), .io (.within ro)]) ++ [.not, .eq (.tuple [.int, .char]), .map .int .text (.lit 2)]
 
 #guard primitives.all fun p =>
   match parseDocument (document (primOut p)) >>= primIn with
@@ -65,9 +66,10 @@ def values : List Value :=
    .cap .readFiles (some "notes") (some 1)]
 def world : World :=
   { args := ["a", ""], env := [("Z", "last"), ("A", "first")], stdin := ["one", "two"],
-    stdout := ["old"], stderr := ["err"], files := [("b", "β\n"), ("a", "")], now := -1, seed := 10^40,
+    stdout := ["old"], stderr := ["err"], files := [("b", "β\n"), ("a", "")], now := -1,
+    random := ⟨0, 0xffffffffffffffff, 0x8000000000000000, 42⟩,
     fakes := [{ stdin := ["fake input"], stdout := ["fake output"] },
-      { files := [("notes/a", "first"), ("z", "last")], seed := 123 }] }
+      { files := [("notes/a", "first"), ("z", "last")], random := RandomState.seeded 123 }] }
 
 #guard values.all fun v =>
   match parseDocument (document (valueOut v)) >>= valueIn with
@@ -90,7 +92,7 @@ def world : World :=
 #guard (structural Account.program (.data "Account")
   (.con "Account" [.text "alice", .decimal (1500000000000000000)])).toOption ==
   some "Account(owner: \"alice\", balance: 1.5)"
-#guard (structural Json.program Json.J (.con "String" [.text "é"])).toOption == some "String(\"é\")"
+#guard (structural JsonQuery.program JsonQuery.J (.con "String" [.text "é"])).toOption == some "String(\"é\")"
 #guard (structural Greet.program (.cap .readFiles) (.cap .readFiles (some "notes") (some 1))).toOption ==
   some "(cap (readFiles) (some \"notes\") (some 1))"
 #guard (parseSexp "(cap (console) (some \"\"))" >>= valueIn).toOption.isNone
@@ -100,11 +102,12 @@ def world : World :=
   (.tuple [.char '\'', .text "\n", .duration 1500000, .time 0, .range (-2) 3, .bytes [0, 255]])).toOption ==
   some "('\\'', \"\\n\", 1.5s, 1970-01-01T00:00:00Z, -2..3, bytes[0, 255])"
 
-#guard (["", "(core 0.1 (unit))", "(core 0.3 (unit))", "(core 0.2 (unit)) extra", "(core 0.2 (unit)",
-  "(core 0.2 \"\\q\")", "(core 0.2 \"\\u{d800}\")", "(core 0.2 \"\\u{110000}\")",
-  "(core 0.2 \"\\u{}\")", "(core 0.2 \"unterminated)"]).all fun s => (parseDocument s).toOption.isNone
-#guard (parseDocument ";before\n(core ;version\n0.2 (int -00012));after" >>= litIn).toOption == some (.int (-12))
-#guard (parseDocument "(core 0.2 (float 0xFFFFFFFFFFFFFFFF))" >>= litIn).toOption == some (.float 0xffffffffffffffff)
+#guard (["", "(core 0.1 (unit))", "(core 0.2 (unit))", "(core 0.4 (unit))",
+  "(core 0.3 (unit)) extra", "(core 0.3 (unit)",
+  "(core 0.3 \"\\q\")", "(core 0.3 \"\\u{d800}\")", "(core 0.3 \"\\u{110000}\")",
+  "(core 0.3 \"\\u{}\")", "(core 0.3 \"unterminated)"]).all fun s => (parseDocument s).toOption.isNone
+#guard (parseDocument ";before\n(core ;version\n0.3 (int -00012));after" >>= litIn).toOption == some (.int (-12))
+#guard (parseDocument "(core 0.3 (float 0xFFFFFFFFFFFFFFFF))" >>= litIn).toOption == some (.float 0xffffffffffffffff)
 #guard (["(float 0x123)", "(float 0x10000000000000000)", "(char \"ab\")", "(unit extra)",
   "(int +1)", "(int 1_0)"]).all fun s => (parseSexp s >>= litIn).toOption.isNone
 
@@ -121,7 +124,7 @@ def samples : List (String × Run) :=
      { args := ["-i", "needle", "a.txt"], files := [("a.txt", "Needle\nother\n")] }),
    ("Expenses", cliRun Expenses.program { args := ["october.csv"], files := [("october.csv",
      "date,category,amount\n2026-10-01,food,12.50\n2026-10-02,food,x\n2026-10-03,rent,900\n")] }),
-   ("Json", cliRun Json.program { args := ["items.0.name"], stdin := ["{\"items\": [{\"name\": \"pen\"}]}"] }),
+   ("JsonQuery", cliRun JsonQuery.program { args := ["items.0.name"], stdin := ["{\"items\": [{\"name\": \"pen\"}]}"] }),
    ("Todo", cliRun Todo.program { args := ["add", "write the codec"] }),
    ("Account", ⟨Account.program, {}, .entry [.con "Account" [.text "alice", .decimal (100*decScale)],
      .con "Account" [.text "bob", .decimal (20*decScale)], .decimal (5*decScale)], 10000⟩),
@@ -132,7 +135,8 @@ def samples : List (String × Run) :=
    ("NotesTool", ⟨NotesTool.program, { files := [("a.md", "Needle\n"), ("b.txt", "needle\n")] },
      .entry [cap .readFiles, .con "SearchInput" [.text "needle", .int 10]], 10000⟩),
    ("Inventory", cliRun Inventory.program {}),
-   ("Fakes", ⟨Builtins.fakeProgram, {}, .test "fakes", 10000⟩)]
+   ("Fakes", ⟨Builtins.fakeProgram, {}, .test "fakes", 10000⟩),
+   ("Library", ⟨Builtins.libraryProgram, {}, .test "library", 10000⟩)]
 
 #guard samples.all fun (_, r) =>
   match parseDocument (document (runOut r)) >>= runIn with
@@ -172,5 +176,34 @@ def samples : List (String × Run) :=
   | .returned "Unit" e => e.stdout.isEmpty && (e.fakes[1]?.map (·.stdout)) == some ["Hello, Ada!"]
   | _ => false
 #guard !valueFits Greet.program {} (.list (.cap .console)) (.list [.cap .console none (some 0)])
+
+/-- Canonical fuzz documents are generated by Lean too, rather than edited by hand. -/
+def fuzzSeeds : List (String × Sexp) :=
+  [("type", tyOut (.tuple [.entry, .entryKind, .fn [.int, .text] .bool,
+    .map .text (.list .byte), .cap .readFiles])),
+   ("literal", litOut (.text "\x00\x1f\x7f\n\r\t\"\\β😀")),
+   ("value", valueOut (.tuple values)),
+   ("primitive", primOut (.list .byte (.zip .text))),
+   ("io", primOut (.io (.readBytes true))),
+   ("fake_io", primOut (.io .consoleFakeInput)),
+   ("program", programOut Builtins.libraryProgram),
+   ("outcome", outcomeOut (.jumped "loop" [.int 2, .text "next"] world)),
+   ("report", reportOut (.returned "[\"a\", \"b\\n\"]" (effects world))),
+   ("cap_state", stateOut world.toCapState),
+   ("random_state", randomOut ⟨0, 0x8000000000000000, 0xffffffffffffffff, 0x0123456789abcdef⟩),
+   ("unicode16", primOut (.unicode16 .normalizeNfc)),
+   ("entries", primOut (.io (.entries true)))]
+
+#guard (structural Greet.program (.list .entry)
+  (.list [.con "Entry" [.text "é", .con "Folder" []]])).toOption ==
+  some "[Entry(name: \"é\", kind: Folder)]"
+#guard ["File", "Folder", "Link", "Other"].all fun c =>
+  valueFits Greet.program {} .entryKind (.con c []) &&
+  !valueFits Greet.program {} .entryKind (.con c [.text "extra"])
+#guard !(valueFits Greet.program {} .entry (.con "Entry" [.text "name", .con "Unknown" []]))
+#guard (["(RandomState 0 1 2 3)", "(RandomState 0x0000000000000000)",
+  "(RandomState 0x0000000000000000 0x0000000000000000 0x0000000000000000 0x10000000000000000)"]).all
+  fun s => (parseSexp s >>= randomIn).toOption.isNone
+#guard (parseSexp "(CapState () () () () () () 0 42)" >>= stateIn).toOption.isNone
 
 end MoCore.TextChecks
