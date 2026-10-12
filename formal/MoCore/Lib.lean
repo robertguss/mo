@@ -215,4 +215,22 @@ def fileErrorTextL (e : Expr) : Expr := call "FileError.to_text" [e]
       and_ (eq (tList tFloat) (lop tFloat .take [v "s", int 2]) (listOf tFloat [fl 1, fl 2]))
         (caseOpt (lop tFloat .last [v "s"]) "x" (prim (.float .isNan) [v "x"]) ff)
 
+/-! ## A check: `nan`, `inf` and `-inf` as text (reference 9.2)
+
+`x.to_text` and `"#{x}"` both lower to `%float.toText(x)` (TRANSLATION.md
+3.4). With `zero = 0.to_float` and `one = 1.to_float`:
+`(zero / zero).to_text == "nan"`, and so is `(-(zero / zero)).to_text`;
+`(one / zero).to_text == "inf"`; and `(-one / zero).to_text == "-inf"`. -/
+
+#guard
+  let text (e : Expr) : Expr := prim (.float .toText) [e]
+  let div (a b : Expr) : Expr := prim (.float .div) [a, b]
+  let P : Program := { data := [], funs := [] }
+  holds P <|
+    lets [("zero", iop .toFloat [int 0]), ("one", iop .toFloat [int 1])] <|
+      and_ (teq (text (div (v "zero") (v "zero"))) (str "nan")) <|
+      and_ (teq (text (prim (.float .neg) [div (v "zero") (v "zero")])) (str "nan")) <|
+      and_ (teq (text (div (v "one") (v "zero"))) (str "inf"))
+        (teq (text (div (prim (.float .neg) [v "one"]) (v "zero"))) (str "-inf"))
+
 end MoCore.Lib

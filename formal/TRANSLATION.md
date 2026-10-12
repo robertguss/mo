@@ -184,7 +184,7 @@ converted to its text form:
 | `Int` | `%int.toText(n)` |
 | `BigInt` | `%big.toText(n)` |
 | `Decimal` | `%dec.toText(d)`, the shortest exact spelling |
-| `Float` | `%float.toText(x)`; reference 9.2 asks for the shortest spelling, which the model doesn't give yet (item 19 of the last section) |
+| `Float` | `%float.toText(x)`: `nan` for a float that is not a number, `inf` and `-inf` for the infinities (reference 9.2); for any other float, reference 9.2 asks for the shortest spelling, which the model doesn't give yet (item 19 of the section on D227) |
 | `Bool` | `if b then "true" else "false"` |
 | `Time`, `Duration` | `%time.toText(t)`, RFC 3339 in UTC with `Z` and the shortest fraction of a second; `%time.durToText(d)`, in seconds, as `1.5s` |
 | `Range` | `%text.concat(%int.toText(r.0), %text.concat("..", %int.toText(r.1)))`, as in `0..3` (reference 9.2); a range is the pair of its ends (7.5), so the lowering writes this, not a tuple's form |
@@ -203,6 +203,14 @@ let greeting =
       %text.concat("! You have ",
         %text.concat(%int.toText(count), " new messages.")))) in ...
 ```
+
+`x.to_text` (reference 9.2, 14) is the same text as `"#{x}"`, so it lowers to
+the same Core as the part `#{x}` in the table above: `count.to_text` is
+`%int.toText(count)`, `name.to_text` for a `Text` is `name` itself,
+`problem.to_text` is `LineError.to_text(problem)`, and at a type whose text
+form the lowering derives, it calls the one `to_text[T]` derived for that type,
+which interpolation calls too. So the two never differ. The Lean model doesn't
+generate `to_text[T]` yet, and none of the samples needs it.
 
 The text functions of section 14 are primitives (`%text.lines`,
 `%text.split`, ...); see section 14 below.
@@ -295,18 +303,25 @@ in jump m.loop(%map.entries(more))
 ### 3.9 Time and Duration
 
 Both count whole microseconds. `5.seconds` and the other conversions check
-for overflow; adding a duration to a time stops outside the years 1 to 9999,
-and `checked_add` returns an `Option` instead.
+for overflow; adding a duration to a time, or subtracting one from it, stops
+outside the years 1 to 9999, and `checked_add` returns an `Option` instead,
+`None` outside them (a negative duration goes back in time).
 
 ```mo
 expires = now + 30.minutes
+an_hour_ago = now - 1.hours
 late? = now - order.placed > 2.days
 ```
 
 ```
 let expires = %time.add(now, %int.minutes(30)) in
+let an_hour_ago = %time.subDur(now, %int.hours(1)) in
 let late? = %cmp.duration.gt(%time.sub(now, <order.placed>), %int.days(2)) in ...
 ```
+
+`-` with a `Time` on the left is `%time.subDur` when the right side is a
+`Duration`, giving a time, and `%time.sub` when it is a `Time`, giving a
+duration, which never overflows.
 
 ## 4. Records and choice types
 
@@ -892,7 +907,7 @@ type it is used at:
 | `Equal` (`==`, `!=`) | `%eq` at the type: structural equality, maps and sets by their entries in any order, floats by IEEE, ranges by their ends. `a != b` is `%not(%eq(a, b))`. |
 | `Hash` | nothing to call: map and set primitives compare keys with the same structural equality. Floats have none, so they are never keys. |
 | `Order` | for `Int`, `BigInt`, `Decimal`, `Float`, `Bool` (`false` first), `Char` and `Text` (by character code), `Time` and `Duration`, the primitives `%cmp.b.lt`, `le`, `gt`, `ge`, which follow IEEE for `Float`, as the bytecode's `lt` and `le` do (`bytecode.md` 4.4). For a tuple, a list, a record or a choice type, a Core function `compare[T]`: the module's own `compare`, or one the lowering derives (tuples part by part from the left; lists element by element, a list before a longer one it starts; records field by field and choice types case by case, in declaration order, so `None` before `Some`, `Ok` before `Error`, and `Less`, `Equal`, `Greater`). `Unit` has one value, which never comes before itself: `a < b` is `false` once both sides are computed. `sort`, `min`, `max`, `sort_by` and `sort_by_desc` are Core functions instantiated with it (`Lib.lt`), in which a `Float` that is "not a number" comes after every other float, as in the bytecode's `cmp_float`. Maps, sets and ranges have no order (reference 9.2). |
-| `Text` | the type's text form, as in 3.4. |
+| `Text` | the type's text form, as in 3.4, for `"#{x}"` and `x.to_text` alike. |
 | `Number` | the arithmetic primitives of the type; `sum` is the Core function `List.sum[T]`. |
 
 A derived order, for `Point` of 4.1:
@@ -1206,6 +1221,7 @@ place; *not modeled* ones are not in this model yet.
 | `Args.list`, `Env.get`, `Console.print`, `error`, `read_line`, `printed`, `printed_errors`, `Files.read_text`, `write_text`, `append_text`, `remove`, `list`, `exists?`, `within`, `read_only`, `Clock.now`, `Random.int` | prim (`%io.*`) |
 | `Files.read_bytes` | not modeled |
 | `FileError`'s text form | Core (`FileError.to_text`) |
+| `to_text`, at every type with `Text` | lowered as the part `#{x}` of a text is (3.4), so the two give the same text; the `to_text[T]` the lowering derives for records, choice types, tuples, lists and maps without their own `to_text` is not modeled |
 | `Console.fake`, `fake_input`, `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `Args.of`, `Env.of` | the test's world (12.4) |
 | `Unicode16` | not modeled |
 
@@ -1279,9 +1295,10 @@ section numbers after the topic are the reference's; those after "Already",
     did that.
 19. **`Float`'s text form** (9.2): numbers have their shortest spelling.
     Unchanged: `%float.toText` prints Lean's `Float.toString`, which is not
-    the shortest. Architecture 4.5 makes it a trusted primitive checked
-    against Ryu, and the reference doesn't say how "not a number",
-    infinities, or very large and very small floats are spelled.
+    the shortest (`1.5` is `1.500000`). Architecture 4.5 makes it a trusted
+    primitive checked against Ryu, and the reference doesn't say how very
+    large and very small floats are spelled. "Not a number" and the
+    infinities have their spellings since D228 (item 3 of the next section).
 20. **A `var` read by an anonymous function and assigned afterwards** (5.6):
     an error. Already consistent: a closure captures values when it is made,
     and the front end rejects the programs in which a later value could
@@ -1310,3 +1327,32 @@ and `max` use (section 9.2 here). Polymorphic recursion is an error
 (reference 5.5, section 5.5 here). Standard input's line endings and invalid
 UTF-8 are the runtime's (reference 14, section 12.4 here). The `mo` command's
 exit status (reference 13.4) is outside Core.
+
+## Additions in D228
+
+D228 approved the reference as v0.1 with three additions, and the model
+follows them. As above, the section numbers after the topic are the
+reference's, and the others this document's.
+
+1. **A time minus a duration** (3.9): `now - 1.hours` is a `Time`, a bug
+   outside the years 1 to 9999 as adding is, and `checked_add` with a
+   negative duration goes back in time. Already did that: `%time.subDur`
+   (`TimeOp.subDur`), whose signature takes a `Time` and a `Duration` and
+   gives a `Time`, has been in Core from the start, proven safe by
+   `timeOp_safe` with the other time primitives (3.9). Nothing checked it
+   before; `MoCore/Examples/RateLimit.lean` now does: a bucket refilled from
+   `t0 - 1.hours`, the bug before the year 1, and `checked_add` with negative
+   durations.
+2. **`x.to_text`** (9.2, 14): the text form of any value whose type has
+   `Text`, the same text as `"#{x}"`. It lowers to the same Core as the part
+   `#{x}` of a text, and at a type whose text form the lowering derives, to a
+   call of the same `to_text[T]`, so the two never differ (3.4, 14).
+   Unchanged: the model doesn't generate `to_text[T]` for any type yet, so it
+   has `x.to_text` where it has `#{x}`: at the built-in types, and at types
+   with their own `to_text`, `FileError` included.
+3. **`nan`, `inf` and `-inf`** (9.2): a `Float` that is not a number is
+   written `nan`, and the infinities `inf` and `-inf`. Changed:
+   `%float.toText` writes them so (`floatToText` in `MoCore/Prim.lean`);
+   Lean's own `Float.toString` writes "not a number" as `NaN`.
+   `MoCore/Lib.lean` checks all three. Any other float is still written as
+   item 19 above says (3.4).

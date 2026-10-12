@@ -255,7 +255,10 @@ inductive TextOp where
   | toInt | toDecimal | join
   deriving DecidableEq, Repr, Inhabited
 
-/-- Operations on `Time` and `Duration`. -/
+/-- Operations on `Time` and `Duration` (reference 3.9). `sub` is `Time - Time`,
+a `Duration`; `add` and `subDur` are `Time + Duration` and `Time - Duration`,
+each a bug outside the years 1 to 9999; `checkedAdd` is `checked_add`, which
+gives `None` there instead. -/
 inductive TimeOp where
   | sub | add | subDur | checkedAdd | toText | parse
   | durAdd | durSub | durMul | durNeg | inMilliseconds | inSeconds | durToText

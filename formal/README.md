@@ -79,7 +79,7 @@ test with `#guard`, so a wrong result fails the build.
 | `MoCore/Lib.lean` | Library functions written in Core (`map`, `filter`, `sort_by_desc`, `update`, ...), as generators instantiated per type, and the order they sort by (`Lib.lt`, in which a float that is "not a number" comes last). |
 | `MoCore/Testing.lean` | `passes` and `scenario` for checking examples and tests, and `stops` for checking that an expression stops on a bug; lemmas turning a checked program into "never goes wrong" theorems. |
 | `MoCore/Examples/*.lean` | The twelve samples of `examples/`, each in Core, with every example line and test of the sample as a `#guard`, and theorems that the program is well typed and never goes wrong. |
-| `TRANSLATION.md` | The lowering from every v0.1 feature to Core, and how the model follows the answers D227 gave to the questions writing it raised. |
+| `TRANSLATION.md` | The lowering from every v0.1 feature to Core, how the model follows the answers D227 gave to the questions writing it raised, and the three things D228 added. |
 
 ## The twelve programs
 
@@ -98,7 +98,7 @@ evaluates to `true`; promise anchors (12.2) are checked too.
 | `Json` | the whole parser: `parse` (five examples, including `é`), `hex_value`, `pretty`, `quoted`, `at_path` (three); `main` answering `items.0.name`; a pretty-printed document and a parse error through `main`. |
 | `Todo` | `parse_command` (five), `parse_items`, `format`, `apply` (three); the promise's anchors; `main` run four times against one in-memory file system, then `files.read_text` and the listing. |
 | `Account` | `deposit` and `withdraw` (four each, including `withdraw(alice(100.00), 100.01) == Error(InsufficientFunds(short_by: 0.01))`), `transfer` (two); all four promises' anchors, and the promises on more inputs; both tests. |
-| `RateLimit` | `new_limiter` (three); the request sequence of both tests, at `t0`, then `t0 + 500.milliseconds` (500000 µs); the promise's anchors; a longer sequence with a slow refill. |
+| `RateLimit` | `new_limiter` (three); the request sequence of both tests, at `t0`, then `t0 + 500.milliseconds` (500000 µs); the promise's anchors; a longer sequence with a slow refill; also a time minus a duration: a bucket refilled from `t0 - 1.hours`, the bug before the year 1, and `checked_add` with a negative duration. |
 | `JobQueue` | `lease` (two), `fail` (four), `expire` (two); two promises' anchors; the three-attempts test with a range loop and assertions. |
 | `Kv` | `parse` (seven), `increment` (four, including the overflow at `9223372036854775807`), `expire` (four); the promise's anchors; key expiry; the console session. |
 | `NotesTool` | `search_notes` over in-memory files: only `.md` notes, case ignored; the limit and `truncated?`; typed errors; the promise's anchors; a `within("notes")` capability that sees only its folder, a `within("..")` one that reaches nothing, and paths with `..` inside and outside the folder. |
@@ -191,9 +191,13 @@ No theorem is left with `sorry`. What the proofs don't yet cover:
 - **Functional correctness of primitives.** The primitives are proven to
   respect their types and ranges, not to compute what reference 14 says (for
   example, that `decMul` rounds ties to even). The examples test that.
-- **Floats** have no proofs beyond their types, and their text form is
-  Lean's, not the shortest spelling that reference 9.2 asks for
-  (TRANSLATION.md, item 19 of the last section).
+- **Floats** have no proofs beyond their types. Their text form writes a
+  float that is not a number as `nan` and the infinities as `inf` and
+  `-inf`, as reference 9.2 spells them (checked in `MoCore/Lib.lean`), but
+  any other float is Lean's `Float.toString`, not the shortest spelling that
+  reference 9.2 asks for (TRANSLATION.md, item 19 of the section on D227).
+  The VM's float text form is a trusted primitive, checked against Ryu
+  (architecture 4.5).
 - **Completeness of the checker** (that it accepts every well-typed
   expression) is not proven; it is sound, and accepts all twelve programs.
 - **Progress for programs that don't terminate**: the evaluator returns
@@ -201,9 +205,11 @@ No theorem is left with `sorry`. What the proofs don't yet cover:
 
 Not modeled yet: `Byte` and `Bytes`, the `Unicode16` module, `Range` as a
 type of its own (a range is the pair of its ends, TRANSLATION.md 7.5), the
-fake constructors (a test's fakes are its starting world, so two fakes of one
-kind can't be in use at the same time, TRANSLATION.md 12.4), the program
-layer of architecture section 4.1 (constants are functions without
+text forms the lowering derives for records, choice types, tuples, lists and
+maps (`to_text[T]`, which both `"#{x}"` and `x.to_text` call, TRANSLATION.md
+3.4), the fake constructors (a test's fakes are its starting world, so two
+fakes of one kind can't be in use at the same time, TRANSLATION.md 12.4), the
+program layer of architecture section 4.1 (constants are functions without
 parameters, and nothing computes them all before `main` or the first test,
 TRANSLATION.md 10.4), and a text form (S-expressions) for Core programs and
 values, which architecture section 4.4 asks `formal/` to define for

@@ -214,6 +214,43 @@ assert for_ben == Allowed(remaining: 0)
         eq Decision.ty (snd (v "%5")) (mkC Decision "Refused" [iop .milliseconds [int 1000]]))
     ff)
 
+/-! ### More: a time minus a duration (reference 3.9)
+
+`t0 - 1.hours` is a `Time`, an hour before `t0`, as `t0.checked_add(-1.hours)`
+is: a negative duration goes back in time. A time before the year 1 is a bug,
+for `-` as for `+`; `checked_add` gives `None` there instead. -/
+
+/-- `t0 - 1.hours` -/
+def hourAgo : Expr := prim (.time .subDur) [t0E, iop .hours [int 1]]
+
+-- refill(Bucket(tokens: 0, updated: t0 - 1.hours), limiter_of(2), t0) == Bucket(tokens: 2, updated: t0)
+#guard passes program
+  (eq Bucket.ty (call "refill" [mk Bucket [dec "0", hourAgo], call "limiter_of" [dec "2"], t0E])
+    (mk Bucket [dec "2", t0E]))
+-- (t0 - 1.hours).to_text == "2026-10-12T08:00:00Z"
+#guard passes program (teq (prim (.time .toText) [hourAgo]) (str "2026-10-12T08:00:00Z"))
+-- t0 + 500.milliseconds - 500.milliseconds == t0
+#guard passes program
+  (eq tTime (prim (.time .subDur) [prim (.time .add) [t0E, iop .milliseconds [int 500]], iop .milliseconds [int 500]])
+    t0E)
+-- t0.checked_add(-1.hours) == Some(t0 - 1.hours)
+#guard passes program
+  (eq (tOpt tTime) (prim (.time .checkedAdd) [t0E, prim (.time .durNeg) [iop .hours [int 1]]])
+    (some_ tTime hourAgo))
+
+/-- `year_one = Time.parse("0001-01-01T00:00:00Z") or stop "the time is written correctly"`,
+the first instant a `Time` holds. -/
+def yearOne : Expr :=
+  orElse (prim (.time .parse) [str "0001-01-01T00:00:00Z"]) (stop "the time is written correctly")
+
+-- year_one - 1.milliseconds stops: a time outside the years 1 to 9999
+#guard stops program (prim (.time .subDur) [yearOne, iop .milliseconds [int 1]]) tTime
+  (.overflow "a time outside the years 1 to 9999")
+-- year_one.checked_add(-1.milliseconds) == None
+#guard passes program
+  (eq (tOpt tTime) (prim (.time .checkedAdd) [yearOne, prim (.time .durNeg) [iop .milliseconds [int 1]]])
+    (none_ tTime))
+
 /-! ### Never wrong -/
 
 /-- `request` never goes wrong, for any limiter, client and time. -/

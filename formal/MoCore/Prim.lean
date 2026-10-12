@@ -158,6 +158,13 @@ def evalDecOp (op : DecOp) (vs : List Value) (w : World) : Outcome :=
   | .toFloat, [.decimal a] => .ok (.float (decToFloat a).toBits) w
   | _, _ => wrongArgs "Decimal primitive"
 
+/-- A float's text form. A float that is not a number is `nan`, and the
+infinities are `inf` and `-inf` (reference 9.2). Any other float is Lean's
+`toString`, not the shortest spelling the reference asks for: the VM's is a
+trusted primitive, checked against Ryu (architecture 4.5). -/
+def floatToText (x : Float) : String :=
+  if x.isNaN then "nan" else if x.isInf then (if x < 0 then "-inf" else "inf") else toString x
+
 def evalFloatOp (op : FloatOp) (vs : List Value) (w : World) : Outcome :=
   let f := Float.ofBits
   let ret (x : Float) : Outcome := .ok (.float x.toBits) w
@@ -174,7 +181,7 @@ def evalFloatOp (op : FloatOp) (vs : List Value) (w : World) : Outcome :=
   | .round, [.float a] => ret (f a).round
   | .isNan, [.float a] => .ok (.bool (f a).isNaN) w
   | .isInfinite, [.float a] => .ok (.bool (f a).isInf) w
-  | .toText, [.float a] => .ok (.text (toString (f a))) w
+  | .toText, [.float a] => .ok (.text (floatToText (f a))) w
   | _, _ => wrongArgs "Float primitive"
 
 /-- `<`, `<=`, `>` and `>=` at a base type. -/
