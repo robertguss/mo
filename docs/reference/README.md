@@ -1,6 +1,6 @@
 # Mo Language Reference, v0.1
 
-**Draft for review, 12 October 2026.** This is core Mo, the language that later
+**Version 0.1, approved on 12 October 2026.** This is core Mo, the language that later
 versions build services, live upgrades and approved intent on. It is written to
 be read in full, by people and by agents, before writing Mo.
 
@@ -298,13 +298,15 @@ A `Time` is an instant between the years 1 and 9999, read from a `Clock`
 (section 11). A `Duration` is a length of time, made from an `Int`:
 `5.seconds`, `200.milliseconds`, `3.minutes`, `2.hours`, `7.days`. Both count
 whole microseconds. Subtracting two times gives a `Duration`, and never
-overflows; adding a `Duration` to a `Time` gives a `Time`; durations add,
-subtract and multiply by an `Int`. A time outside the years 1 to 9999 is a
-bug, so `time.checked_add(duration)` returns an `Option`, `None` outside them,
-for code that can't rule it out. Times and durations compare with `<` and the other comparisons.
+overflows; adding a `Duration` to a `Time`, or subtracting one from it, gives
+a `Time`; durations add, subtract and multiply by an `Int`. A time outside the
+years 1 to 9999 is a bug, so `time.checked_add(duration)` returns an `Option`,
+`None` outside them, for code that can't rule it out; a negative duration goes
+back in time. Times and durations compare with `<` and the other comparisons.
 
 ```mo
 expires = now + 30.minutes
+an_hour_ago = now - 1.hours
 late? = now - order.placed > 2.days
 ```
 
@@ -812,9 +814,11 @@ last, and floats have no `Hash`, so they can't be map keys.
 A value's text form looks like the code that builds it: `Point(x: 1.5, y: 2)`,
 `Some(3)`, `[1, 2]`, `{"a": 1}`, `(1, true)`, `[1, 2].to_set`. A `Text` or
 `Char` value's text form is itself; inside another value's, it is quoted and
-escaped as in code. Numbers have their shortest
-spelling, a `Bool` is `true` or `false`, a `Time` is RFC 3339 text, and a
-`Duration` is in seconds, as `1.5s`.
+escaped as in code. Numbers have their shortest spelling, and a `Float` that is
+not a number is `nan` and the infinities `inf` and `-inf`. A `Bool` is `true`
+or `false`, a `Time` is RFC 3339 text, and a `Duration` is in seconds, as
+`1.5s`. `x.to_text` gives the text form of any value whose type has `Text`:
+the same text as `"#{x}"`.
 
 A type customizes `Order` or `Text` with one ordinary function in its own
 module, which applies wherever the type goes, exposed or not:
@@ -1127,6 +1131,8 @@ is called with a dot: under **Text**, `split(separator: Text) : List(Text)` is
 called as `text.split(",")`. A function written `Type.name(...)` is called
 through the type's module. `pred` is a function returning a `Bool`. Calling a
 function outside what it accepts, such as `take(-1)`, is a bug (section 13.2).
+Every type with the `Text` ability also has `to_text : Text`, its text form
+(section 9.2).
 
 **Int**: `abs`, `min(b: Int)`, `max(b: Int)`, `pow(n: Int)` (`n` at least 0),
 `floor_div(b: Int)`, `floor_mod(b: Int)`, and `wrapping_add`, `wrapping_sub`,
@@ -1401,6 +1407,7 @@ chain; the others do, left to right.
 | `print(x)`, `console.log(x)` | `console.print("#{x}")`, with a `Console` from `main` | 11, 14 |
 | `"a" + b` | `"a#{b}"` | 3.4 |
 | `x.f()` with no arguments | `x.f` | 5.4 |
+| `str(x)`, `x.toString()` | `x.to_text`, or `"#{x}"` inside text | 9.2 |
 | `def`, `function`, `func` | `fn name(x: T) : R ... end` | 5.1 |
 | `class`, methods, `self` | `struct` or `enum`, with functions in its module | 4, 5.4 |
 | `import x`, `export` | `use A.B{x}`, and the `expose` line | 10 |

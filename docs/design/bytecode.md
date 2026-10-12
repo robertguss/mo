@@ -574,7 +574,8 @@ The VM implements a few operations for every type, driven by the type table:
   introspection. It follows reference 9.2 without anyone's own `to_text`, so
   printing a value can never stop: names from the type table; `Some(3)` for a
   case's unnamed field; sets as `[1, 2].to_set`; floats in their shortest
-  round-trip spelling (Ryu); decimals in their shortest exact spelling; times
+  round-trip spelling (Ryu), with not-a-number as `nan` and the infinities as
+  `inf` and `-inf`; decimals in their shortest exact spelling; times
   in RFC 3339; durations in seconds, as `1.5s`; texts and characters quoted and
   escaped inside other values.
 

@@ -60,7 +60,14 @@ else
 fi
 
 step "Mo Core in Lean: the model builds and every proof checks"
-export PATH="$HOME/.elan/bin:$PATH"
+# elan lives in /opt/elan where .agents/setup puts it, since CI runs with a
+# fresh HOME, or else in the usual ~/.elan.
+for elan_home in "${ELAN_HOME:-}" /opt/elan "$HOME/.elan"; do
+	if [[ -n "$elan_home" && -x "$elan_home/bin/lake" ]]; then
+		export ELAN_HOME="$elan_home" PATH="$elan_home/bin:$PATH"
+		break
+	fi
+done
 if have lake; then make --no-print-directory formal; else missing "elan (Lean's installer) is not installed"; fi
 
 step "Formatting"
