@@ -384,10 +384,10 @@ static void test_counts_and_name_limits(void) {
     uint32_t tuple = intern(&types, key);
     key = (struct mo_type){.kind = MO_TYPE_FUNCTION,
                            .parameters = indices,
-                           .parameter_count = MO_LIMIT_PARAMETERS + 1,
+                           .parameter_count = MO_LIMIT_BYTECODE_PARAMETERS + 1,
                            .result = unit};
     CHECK(mo_types_intern(&types, &key, &out) == MO_TYPES_PARAMETER_LIMIT);
-    key.parameter_count = MO_LIMIT_PARAMETERS;
+    key.parameter_count = MO_LIMIT_BYTECODE_PARAMETERS;
     uint32_t function = intern(&types, key);
     uint32_t record = declare(&types, MO_TYPE_RECORD, "LargeRecord");
     CHECK(mo_types_define_record(&types, record, NULL, MO_LIMIT_FIELDS + 1) ==

@@ -58,8 +58,8 @@
 /* Names a module declares: its functions, types and constants. The checker refuses more: E1008. */
 #define MO_LIMIT_MODULE_NAMES 65535
 
-/* Parameters of one function, and so arguments of one call. The checker refuses more: E1009. The
- * loader refuses a function with more. */
+/* Parameters of one source function, and arguments of one source call. The checker refuses
+ * more: E1009. Generated promise results and closure environments are not source parameters. */
 #define MO_LIMIT_PARAMETERS 255
 
 /* Fields of one record or case, elements of one tuple, and values one closure captures.
@@ -91,6 +91,11 @@
 
 /* Bytes in one bytecode file. */
 #define MO_LIMIT_BYTECODE_SIZE (256 << 20)
+
+/* Parameters of one bytecode function, including a closure's implicit env. One extra slot
+ * holds a promise's result or a closure's env after the largest source signature. Runtime
+ * function types may also have this many parameters, for generated promise signatures. */
+#define MO_LIMIT_BYTECODE_PARAMETERS (MO_LIMIT_PARAMETERS + 1)
 
 /* Entries in the strings section. */
 #define MO_LIMIT_STRINGS (1 << 22)
@@ -188,9 +193,10 @@ _Static_assert(MO_LIMIT_FILE_SIZE < UINT32_MAX, "spans hold byte offsets in 32 b
 _Static_assert(MO_LIMIT_PROGRAM_SIZE >= MO_LIMIT_FILE_SIZE, "a program can be one large file");
 _Static_assert(MO_LIMIT_FIELDS <= MO_LIMIT_OPERANDS, "construct takes every field as an operand");
 _Static_assert(MO_LIMIT_CHOICE_CASES <= MO_LIMIT_OPERANDS, "switch takes a target per case");
-_Static_assert(MO_LIMIT_PARAMETERS <= MO_LIMIT_OPERANDS,
+_Static_assert(MO_LIMIT_BYTECODE_PARAMETERS <= MO_LIMIT_OPERANDS,
                "a call takes each argument as an operand");
-_Static_assert(MO_LIMIT_PARAMETERS <= MO_LIMIT_FUNCTION_REGISTERS, "parameters are registers");
+_Static_assert(MO_LIMIT_BYTECODE_PARAMETERS <= MO_LIMIT_FUNCTION_REGISTERS,
+               "parameters, including env, are registers");
 _Static_assert(MO_LIMIT_OPERANDS <= UINT16_MAX, "the head word holds the operand count in 16 bits");
 _Static_assert(MO_LIMIT_FUNCTION_CODE_WORDS >= 2 + MO_LIMIT_CHOICE_CASES,
                "the largest switch fits in a function");
