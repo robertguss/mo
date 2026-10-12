@@ -68,7 +68,13 @@ for elan_home in "${ELAN_HOME:-}" /opt/elan "$HOME/.elan"; do
 		break
 	fi
 done
-if have lake; then make --no-print-directory formal; else missing "elan (Lean's installer) is not installed"; fi
+if have lake; then
+	make --no-print-directory formal
+	step "Core text fixtures match the Lean reference printer"
+	sh ci/check_core_fixtures.sh
+else
+	missing "elan (Lean's installer) is not installed"
+fi
 
 step "Module dependencies: each module includes only what architecture section 2 allows"
 make --no-print-directory deps

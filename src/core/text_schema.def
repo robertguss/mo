@@ -1,0 +1,330 @@
+/* Wire shapes in Lean field order. F checks the C field's size when walking it. END terminates
+ * fields; it is also the sole field of a nullary constructor. No typing rules live here. */
+static const struct schema s_ty, s_lit, s_cap, s_expr, s_value;
+static const struct schema s_ty_object, s_lit_object, s_cap_object, s_expr_object, s_value_object;
+static const struct schema s_integer, s_natural, s_bits, s_boolean, s_character, s_string;
+static const struct schema s_ty_list, s_integer_list, s_expr_list, s_string_list, s_params, s_arms;
+static const struct schema s_param, s_arm, s_ctor, s_ctors, s_data, s_data_list, s_fun, s_funs;
+static const struct schema s_const, s_consts, s_program, s_kind, s_prim;
+static const struct schema s_int_op, s_big_op, s_byte_op, s_dec_op, s_float_op, s_base, s_cmp_op;
+static const struct schema s_char_op, s_text_op, s_bytes_op, s_range_op, s_time_op;
+static const struct schema s_list_op, s_map_op, s_set_op, s_io_op;
+static const struct schema s_values, s_value_pair, s_value_pairs, s_binding, s_env, s_root;
+static const struct schema s_string_pair, s_string_pairs, s_world, s_bug, s_outcome;
+static const struct schema s_effects, s_report, s_selection, s_run;
+
+#define END                                                                                        \
+    { NULL, 0, 0 }
+#define F(type, member, name)                                                                      \
+    { &s_##name, offsetof(type, member), sizeof(((type *)0)->member) }
+#define V(type, tag, wire, ...)                                                                    \
+    {                                                                                              \
+        wire, &(const type){tag}, (const struct field[]) {                                         \
+            __VA_ARGS__                                                                            \
+        }                                                                                          \
+    }
+#define NODE(name, type, tag_type, ...)                                                            \
+    static const struct schema s_##name = {                                                        \
+        .kind = SH_NODE,                                                                           \
+        .size = sizeof(type),                                                                      \
+        .tag_offset = offsetof(type, tag),                                                         \
+        .tag_size = sizeof(tag_type),                                                              \
+        .variants = (const struct variant[]){__VA_ARGS__, {NULL, NULL, NULL}}}
+#define ENUM(name, type, ...)                                                                      \
+    static const struct schema s_##name = {                                                        \
+        .kind = SH_NODE,                                                                           \
+        .size = sizeof(type),                                                                      \
+        .tag_size = sizeof(type),                                                                  \
+        .variants = (const struct variant[]){__VA_ARGS__{NULL, NULL, NULL}}}
+#define RECORD(name, type, wire, ...)                                                              \
+    static const struct schema s_##name = {                                                        \
+        .kind = SH_NODE,                                                                           \
+        .size = sizeof(type),                                                                      \
+        .variants = (const struct variant[]){{wire, NULL, (const struct field[]){__VA_ARGS__}},    \
+                                             {NULL, NULL, NULL}}}
+#define POINTER(name, type)                                                                        \
+    static const struct schema s_##name = {                                                        \
+        .kind = SH_POINTER, .size = sizeof(type), .element = &s_##name##_object}
+#define LIST(name, type, elem)                                                                     \
+    static const struct schema s_##name = {.kind = SH_LIST,                                        \
+                                           .size = sizeof(type),                                   \
+                                           .element = &s_##elem,                                   \
+                                           .items_offset = offsetof(type, items),                  \
+                                           .count_offset = offsetof(type, count)}
+#define SCALAR(name, type, shape)                                                                  \
+    static const struct schema s_##name = {.kind = shape, .size = sizeof(type)}
+
+SCALAR(integer, mo_core_integer, SH_INTEGER);
+SCALAR(natural, mo_core_natural, SH_NATURAL);
+SCALAR(bits, mo_core_bits, SH_BITS);
+SCALAR(boolean, mo_core_boolean, SH_BOOLEAN);
+SCALAR(character, mo_core_character, SH_CHARACTER);
+SCALAR(string, mo_core_string, SH_STRING);
+POINTER(ty, mo_core_ty);
+POINTER(lit, mo_core_lit);
+POINTER(cap, mo_core_cap);
+POINTER(expr, mo_core_expr);
+POINTER(value, mo_core_value);
+
+#define T(tag, wire, ...) V(enum mo_core_ty_tag, MO_CORE_TY_##tag, wire, __VA_ARGS__)
+NODE(ty_object, struct mo_core_ty, enum mo_core_ty_tag, T(INT, "int", END),
+     T(BIG_INT, "bigInt", END), T(BYTE, "byte", END), T(DECIMAL, "decimal", END),
+     T(FLOAT, "float", END), T(BOOL, "bool", END), T(CHAR, "char", END), T(TEXT, "text", END),
+     T(BYTES, "bytes", END), T(UNIT, "unit", END), T(RANGE, "range", END), T(TIME, "time", END),
+     T(DURATION, "duration", END), T(TUPLE, "tuple", F(struct mo_core_ty, as.tuple, ty_list), END),
+     T(LIST, "list", F(struct mo_core_ty, as.list, ty), END),
+     T(MAP, "map", F(struct mo_core_ty, as.map.k, ty), F(struct mo_core_ty, as.map.v, ty), END),
+     T(SET, "set", F(struct mo_core_ty, as.set, ty), END),
+     T(DATA, "data", F(struct mo_core_ty, as.data, string), END),
+     T(OPTION, "option", F(struct mo_core_ty, as.option, ty), END),
+     T(RESULT, "result", F(struct mo_core_ty, as.result.t, ty),
+       F(struct mo_core_ty, as.result.e, ty), END),
+     T(ORDERING, "ordering", END), T(FILE_ERROR, "fileError", END),
+     T(FN, "fn", F(struct mo_core_ty, as.fn.params, ty_list), F(struct mo_core_ty, as.fn.ret, ty),
+       END),
+     T(CAP, "cap", F(struct mo_core_ty, as.cap, cap), END));
+#undef T
+#define C(tag, wire) V(enum mo_core_cap_tag, MO_CORE_CAP_##tag, wire, END)
+NODE(cap_object, struct mo_core_cap, enum mo_core_cap_tag, C(CONSOLE, "console"), C(FILES, "files"),
+     C(READ_FILES, "readFiles"), C(CLOCK, "clock"), C(RANDOM, "random"), C(ARGS, "args"),
+     C(ENV, "env"));
+#undef C
+
+/* The literal subset of Value has the same payloads, but distinct tags and C layouts. */
+#define LITERALS(type, prefix, X)                                                                  \
+    X(INT, "int", F(type, as.int_, integer), END),                                                 \
+        X(BIG_INT, "bigInt", F(type, as.big_int, integer), END),                                   \
+        X(BYTE, "byte", F(type, as.byte, integer), END),                                           \
+        X(DECIMAL, "decimal", F(type, as.decimal, integer), END),                                  \
+        X(FLOAT, "float", F(type, as.float_, bits), END),                                          \
+        X(BOOL, "bool", F(type, as.bool_, boolean), END),                                          \
+        X(CHAR, "char", F(type, as.char_, character), END),                                        \
+        X(TEXT, "text", F(type, as.text, string), END),                                            \
+        X(BYTES, "bytes", F(type, as.bytes, integer_list), END), X(UNIT, "unit", END),             \
+        X(TIME, "time", F(type, as.time, integer), END),                                           \
+        X(DURATION, "duration", F(type, as.duration, integer), END)
+#define L(tag, wire, ...) V(enum mo_core_lit_tag, MO_CORE_LIT_##tag, wire, __VA_ARGS__)
+NODE(lit_object, struct mo_core_lit, enum mo_core_lit_tag, LITERALS(struct mo_core_lit, LIT, L));
+#undef L
+
+#define OP(tag, wire) V(enum mo_core_int_op, MO_CORE_INT_OP_##tag, wire, END),
+ENUM(int_op, enum mo_core_int_op, MO_CORE_INT_OPS(OP));
+#undef OP
+#define OP(tag, wire) V(enum mo_core_big_op, MO_CORE_BIG_OP_##tag, wire, END),
+ENUM(big_op, enum mo_core_big_op, MO_CORE_BIG_OPS(OP));
+#undef OP
+#define OP(tag, wire) V(enum mo_core_byte_op, MO_CORE_BYTE_OP_##tag, wire, END),
+ENUM(byte_op, enum mo_core_byte_op, MO_CORE_BYTE_OPS(OP));
+#undef OP
+#define OP(tag, wire) V(enum mo_core_dec_op, MO_CORE_DEC_OP_##tag, wire, END),
+ENUM(dec_op, enum mo_core_dec_op, MO_CORE_DEC_OPS(OP));
+#undef OP
+#define OP(tag, wire) V(enum mo_core_float_op, MO_CORE_FLOAT_OP_##tag, wire, END),
+ENUM(float_op, enum mo_core_float_op, MO_CORE_FLOAT_OPS(OP));
+#undef OP
+#define OP(tag, wire) V(enum mo_core_base, MO_CORE_BASE_##tag, wire, END),
+ENUM(base, enum mo_core_base, MO_CORE_BASES(OP));
+#undef OP
+#define OP(tag, wire) V(enum mo_core_cmp_op, MO_CORE_CMP_OP_##tag, wire, END),
+ENUM(cmp_op, enum mo_core_cmp_op, MO_CORE_CMP_OPS(OP));
+#undef OP
+#define OP(tag, wire) V(enum mo_core_char_op, MO_CORE_CHAR_OP_##tag, wire, END),
+ENUM(char_op, enum mo_core_char_op, MO_CORE_CHAR_OPS(OP));
+#undef OP
+#define OP(tag, wire) V(enum mo_core_text_op, MO_CORE_TEXT_OP_##tag, wire, END),
+ENUM(text_op, enum mo_core_text_op, MO_CORE_TEXT_OPS(OP));
+#undef OP
+#define OP(tag, wire) V(enum mo_core_bytes_op, MO_CORE_BYTES_OP_##tag, wire, END),
+ENUM(bytes_op, enum mo_core_bytes_op, MO_CORE_BYTES_OPS(OP));
+#undef OP
+#define OP(tag, wire) V(enum mo_core_range_op, MO_CORE_RANGE_OP_##tag, wire, END),
+ENUM(range_op, enum mo_core_range_op, MO_CORE_RANGE_OPS(OP));
+#undef OP
+#define OP(tag, wire) V(enum mo_core_time_op, MO_CORE_TIME_OP_##tag, wire, END),
+ENUM(time_op, enum mo_core_time_op, MO_CORE_TIME_OPS(OP));
+#undef OP
+#define OP(tag, wire) V(enum mo_core_list_op_tag, MO_CORE_LIST_OP_##tag, wire, END),
+NODE(list_op, struct mo_core_list_op, enum mo_core_list_op_tag,
+     V(enum mo_core_list_op_tag, MO_CORE_LIST_OP_LIT, "lit",
+       F(struct mo_core_list_op, as.lit, natural), END),
+     MO_CORE_LIST_OPS(OP) V(enum mo_core_list_op_tag, MO_CORE_LIST_OP_ZIP, "zip",
+                            F(struct mo_core_list_op, as.zip, ty), END));
+#undef OP
+#define OP(tag, wire) V(enum mo_core_map_op_tag, MO_CORE_MAP_OP_##tag, wire, END),
+NODE(map_op, struct mo_core_map_op, enum mo_core_map_op_tag,
+     MO_CORE_MAP_OPS(OP) V(enum mo_core_map_op_tag, MO_CORE_MAP_OP_LIT, "lit",
+                           F(struct mo_core_map_op, lit, natural), END));
+#undef OP
+#define OP(tag, wire) V(enum mo_core_set_op, MO_CORE_SET_OP_##tag, wire, END),
+ENUM(set_op, enum mo_core_set_op, MO_CORE_SET_OPS(OP));
+#undef OP
+#define OP(tag, wire) V(enum mo_core_io_op_tag, MO_CORE_IO_OP_##tag, wire, END),
+#define RO(tag, wire)                                                                              \
+    V(enum mo_core_io_op_tag, MO_CORE_IO_OP_##tag, wire, F(struct mo_core_io_op, ro, boolean), END)
+NODE(io_op, struct mo_core_io_op, enum mo_core_io_op_tag,
+     MO_CORE_IO_OPS(OP) RO(READ_TEXT, "readText"), RO(READ_BYTES, "readBytes"), RO(LIST, "list"),
+     RO(EXISTS, "exists"), RO(WITHIN, "within"));
+#undef OP
+#undef RO
+
+#define P(tag, wire, ...) V(enum mo_core_prim_tag, MO_CORE_PRIM_##tag, wire, __VA_ARGS__)
+#define PF(member, name) F(struct mo_core_prim, as.member, name)
+NODE(prim, struct mo_core_prim, enum mo_core_prim_tag, P(INT, "int", PF(int_, int_op), END),
+     P(BIG, "big", PF(big, big_op), END), P(BYTE, "byte", PF(byte, byte_op), END),
+     P(DEC, "dec", PF(dec, dec_op), END), P(FLOAT, "float", PF(float_, float_op), END),
+     P(NOT, "not", END), P(CMP, "cmp", PF(cmp.base, base), PF(cmp.op, cmp_op), END),
+     P(CHAR, "char", PF(char_, char_op), END), P(TEXT, "text", PF(text, text_op), END),
+     P(BYTES, "bytes", PF(bytes, bytes_op), END), P(RANGE, "range", PF(range, range_op), END),
+     P(TIME, "time", PF(time, time_op), END),
+     P(LIST, "list", PF(list.t, ty), PF(list.op, list_op), END),
+     P(MAP, "map", PF(map.k, ty), PF(map.v, ty), PF(map.op, map_op), END),
+     P(SET, "set", PF(set.t, ty), PF(set.op, set_op), END), P(EQ, "eq", PF(eq, ty), END),
+     P(IO, "io", PF(io, io_op), END));
+#undef P
+#undef PF
+
+#define E(tag, wire, ...) V(enum mo_core_expr_tag, MO_CORE_EXPR_##tag, wire, __VA_ARGS__)
+#define EF(member, name) F(struct mo_core_expr, as.member, name)
+NODE(expr_object, struct mo_core_expr, enum mo_core_expr_tag, E(LIT, "lit", EF(lit, lit), END),
+     E(VAR, "var", EF(var, string), END), E(GLOBAL, "global", EF(global, string), END),
+     E(LET, "let_", EF(let_.name, string), EF(let_.bound, expr), EF(let_.body, expr), END),
+     E(LAM, "lam", EF(lam.params, params), EF(lam.body, expr), END),
+     E(APP, "app", EF(app.f, expr), EF(app.args, expr_list), END),
+     E(CALL, "call", EF(call.name, string), EF(call.args, expr_list), END),
+     E(TUPLE, "tuple", EF(tuple, expr_list), END),
+     E(PROJ, "proj", EF(proj.expr, expr), EF(proj.index, natural), END),
+     E(CON, "con", EF(con.ty, ty), EF(con.ctor, string), EF(con.args, expr_list), END),
+     E(CASE, "case_", EF(case_.expr, expr), EF(case_.arms, arms), END),
+     E(IF, "if_", EF(if_.cond, expr), EF(if_.then_, expr), EF(if_.else_, expr), END),
+     E(PRIM, "prim", EF(prim.prim, prim), EF(prim.args, expr_list), END),
+     E(STOP, "stop", EF(stop, string), END), E(FAIL, "fail", EF(fail, expr), END),
+     E(JOIN, "join", EF(join.name, string), EF(join.params, params), EF(join.body, expr),
+       EF(join.rest, expr), END),
+     E(JUMP, "jump", EF(jump.name, string), EF(jump.args, expr_list), END));
+#undef E
+#undef EF
+
+RECORD(param, struct mo_core_param, "", F(struct mo_core_param, name, string),
+       F(struct mo_core_param, ty, ty), END);
+RECORD(arm, struct mo_core_arm, "", F(struct mo_core_arm, ctor, string),
+       F(struct mo_core_arm, names, string_list), F(struct mo_core_arm, body, expr), END);
+RECORD(ctor, struct mo_core_ctor, "Ctor", F(struct mo_core_ctor, name, string),
+       F(struct mo_core_ctor, fields, params), END);
+RECORD(data, struct mo_core_data, "DataDecl", F(struct mo_core_data, name, string),
+       F(struct mo_core_data, ctors, ctors), END);
+ENUM(kind, enum mo_core_fun_kind, V(enum mo_core_fun_kind, MO_CORE_FUNCTION, "function", END),
+     V(enum mo_core_fun_kind, MO_CORE_TEST, "test", END),
+     V(enum mo_core_fun_kind, MO_CORE_EXAMPLE, "example", END),
+     V(enum mo_core_fun_kind, MO_CORE_PROMISE, "promise", END),
+     V(enum mo_core_fun_kind, MO_CORE_ANCHOR, "anchor", END), );
+RECORD(fun, struct mo_core_fun, "FunDecl", F(struct mo_core_fun, name, string),
+       F(struct mo_core_fun, params, params), F(struct mo_core_fun, ret, ty),
+       F(struct mo_core_fun, body, expr), F(struct mo_core_fun, module, string),
+       F(struct mo_core_fun, kind, kind), F(struct mo_core_fun, const_count, natural), END);
+RECORD(const, struct mo_core_const, "ConstDecl", F(struct mo_core_const, name, string),
+       F(struct mo_core_const, ty, ty), F(struct mo_core_const, body, expr), END);
+RECORD(program, struct mo_core, "Program", F(struct mo_core, data, data_list),
+       F(struct mo_core, funs, funs), F(struct mo_core, consts, consts),
+       F(struct mo_core, entry, string), END);
+
+#define W(tag, wire, ...) V(enum mo_core_value_tag, MO_CORE_VALUE_##tag, wire, __VA_ARGS__)
+#define WF(member, name) F(struct mo_core_value, as.member, name)
+NODE(value_object, struct mo_core_value, enum mo_core_value_tag,
+     LITERALS(struct mo_core_value, VALUE, W),
+     W(RANGE, "range", WF(range.start, integer), WF(range.end, integer), END),
+     W(TUPLE, "tuple", WF(tuple, values), END), W(LIST, "list", WF(list, values), END),
+     W(MAP, "map", WF(map, value_pairs), END), W(SET, "set", WF(set, values), END),
+     W(CON, "con", WF(con.ctor, string), WF(con.fields, values), END),
+     W(CLOSURE, "closure", WF(closure.env, env), WF(closure.params, params), WF(closure.body, expr),
+       WF(closure.consts, env), END),
+     W(CAP, "cap", WF(cap.cap, cap), WF(cap.root, root), END));
+#undef W
+#undef WF
+#undef LITERALS
+RECORD(value_pair, struct mo_core_value_pair, "", F(struct mo_core_value_pair, key, value),
+       F(struct mo_core_value_pair, value, value), END);
+RECORD(binding, struct mo_core_binding, "", F(struct mo_core_binding, name, string),
+       F(struct mo_core_binding, value, value), END);
+static const struct schema s_root = {
+    .kind = SH_NODE,
+    .size = sizeof(struct mo_core_root),
+    .tag_offset = offsetof(struct mo_core_root, some),
+    .tag_size = sizeof(bool),
+    .variants =
+        (const struct variant[]){V(bool, false, "none", END),
+                                 V(bool, true, "some", F(struct mo_core_root, text, string), END),
+                                 {NULL, NULL, NULL}}};
+RECORD(string_pair, struct mo_core_string_pair, "", F(struct mo_core_string_pair, key, string),
+       F(struct mo_core_string_pair, value, string), END);
+RECORD(world, struct mo_core_world, "World", F(struct mo_core_world, args, string_list),
+       F(struct mo_core_world, env, string_pairs), F(struct mo_core_world, stdin_, string_list),
+       F(struct mo_core_world, stdout_, string_list), F(struct mo_core_world, stderr_, string_list),
+       F(struct mo_core_world, files, string_pairs), F(struct mo_core_world, now, integer),
+       F(struct mo_core_world, seed, natural), END);
+#define B(tag, wire, ...) V(enum mo_core_bug_tag, MO_CORE_BUG_##tag, wire, __VA_ARGS__)
+NODE(bug, struct mo_core_bug, enum mo_core_bug_tag,
+     B(OVERFLOW, "overflow", F(struct mo_core_bug, detail, string), END),
+     B(DIV_BY_ZERO, "divByZero", END), B(STOP, "stop", F(struct mo_core_bug, detail, string), END),
+     B(OUTSIDE, "outside", F(struct mo_core_bug, detail, string), END),
+     B(REPEATED_KEY, "repeatedKey", END));
+#undef B
+#define O(tag, wire, ...) V(enum mo_core_outcome_tag, MO_CORE_OUTCOME_##tag, wire, __VA_ARGS__)
+#define OF(member, name) F(struct mo_core_outcome, as.member, name)
+NODE(outcome, struct mo_core_outcome, enum mo_core_outcome_tag,
+     O(OK, "ok", OF(ok.value, value), OF(ok.world, world), END),
+     O(STOPPED, "stopped", OF(stopped.bug, bug), OF(stopped.world, world), END),
+     O(FAILED, "failed", OF(failed.detail, string), OF(failed.world, world), END),
+     O(JUMPED, "jumped", OF(jumped.name, string), OF(jumped.values, values),
+       OF(jumped.world, world), END),
+     O(WRONG, "wrong", OF(wrong, string), END), O(OUT_OF_FUEL, "outOfFuel", END));
+#undef O
+#undef OF
+RECORD(effects, struct mo_core_effects, "effects", F(struct mo_core_effects, stdout_, string_list),
+       F(struct mo_core_effects, stderr_, string_list),
+       F(struct mo_core_effects, files, string_pairs), END);
+#define R(tag, wire, ...) V(enum mo_core_report_tag, MO_CORE_REPORT_##tag, wire, __VA_ARGS__)
+#define RF(member, name) F(struct mo_core_report, as.member, name)
+NODE(report, struct mo_core_report, enum mo_core_report_tag,
+     R(RETURNED, "returned", RF(returned.value, string), RF(returned.effects, effects), END),
+     R(STOPPED, "stopped", RF(stopped.bug, bug), RF(stopped.effects, effects), END),
+     R(FAILED, "failed", RF(failed.detail, string), RF(failed.effects, effects), END),
+     R(OUT_OF_FUEL, "outOfFuel", END), R(WRONG, "wrong", RF(detail, string), END),
+     R(PARSE_ERROR, "parseError", RF(detail, string), END),
+     R(ILL_TYPED, "illTyped", RF(detail, string), END),
+     R(INVALID_RUN, "invalidRun", RF(detail, string), END),
+     R(IO_ERROR, "ioError", RF(detail, string), END));
+#undef R
+#undef RF
+NODE(selection, struct mo_core_selection, enum mo_core_selection_tag,
+     V(enum mo_core_selection_tag, MO_CORE_SELECTION_ENTRY, "entry",
+       F(struct mo_core_selection, as.args, values), END),
+     V(enum mo_core_selection_tag, MO_CORE_SELECTION_TEST, "test",
+       F(struct mo_core_selection, as.name, string), END));
+RECORD(run, struct mo_core_run, "Run", F(struct mo_core_run, program, program),
+       F(struct mo_core_run, world, world), F(struct mo_core_run, selection, selection),
+       F(struct mo_core_run, fuel, natural), END);
+
+LIST(ty_list, mo_core_ty_list, ty);
+LIST(integer_list, mo_core_integer_list, integer);
+LIST(expr_list, mo_core_expr_list, expr);
+LIST(string_list, mo_core_string_list, string);
+LIST(params, mo_core_params, param);
+LIST(arms, mo_core_arms, arm);
+LIST(ctors, mo_core_ctors, ctor);
+LIST(data_list, mo_core_data_list, data);
+LIST(funs, mo_core_funs, fun);
+LIST(consts, mo_core_consts, const);
+LIST(values, mo_core_values, value);
+LIST(value_pairs, mo_core_value_pairs, value_pair);
+LIST(env, mo_core_env, binding);
+LIST(string_pairs, mo_core_string_pairs, string_pair);
+
+#undef END
+#undef F
+#undef V
+#undef NODE
+#undef ENUM
+#undef RECORD
+#undef POINTER
+#undef LIST
+#undef SCALAR

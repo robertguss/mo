@@ -45,7 +45,7 @@ BASE_SOURCES := $(filter src/base/%,$(LIB_SOURCES))
 SOURCE_LIST := build/sources
 TEST_SOURCES := $(wildcard tests/test_*.c)
 FUZZ_SOURCES := $(wildcard fuzz/fuzz_*.c)
-C_FILES := $(wildcard src/*/*.c src/*/*.h tests/*.c tests/*.h fuzz/*.c grammar/*.c grammar/*.h)
+C_FILES := $(wildcard src/*/*.c src/*/*.h src/core/*.def tests/*.c tests/*.h fuzz/*.c grammar/*.c grammar/*.h)
 TIDY_FILES := $(wildcard src/*/*.c tests/*.c fuzz/*.c grammar/*.c)
 
 # The executable grammar (grammar/): Bison builds its parser from grammar/mo.y. The code Bison
@@ -112,6 +112,7 @@ fuzz-smoke: $(FUZZERS)
 	@for f in $(FUZZERS); do \
 		name=$$(basename $$f); corpus=$(FUZZ_BUILD)/corpus/$$name; mkdir -p $$corpus; \
 		if [ -d fuzz/corpus/$$name ]; then cp -R fuzz/corpus/$$name/. $$corpus/; fi; \
+		if [ "$$name" = fuzz_core_text ]; then cp tests/core/*.core $$corpus/; fi; \
 		log=$(FUZZ_BUILD)/$$name.log; echo "fuzzing $$name for $(FUZZ_SECONDS)s"; \
 		$$f -max_total_time=$(FUZZ_SECONDS) -print_final_stats=1 \
 			-artifact_prefix=$(FUZZ_BUILD)/artifacts/ $$corpus >$$log 2>&1; status=$$?; \

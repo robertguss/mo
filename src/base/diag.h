@@ -57,10 +57,10 @@ struct mo_diag {
     /* The headline, appendix A's first line, in the reference's words: "a failure is ignored". */
     const char *message;
     /* One sentence that says why, citing the rule's section, such as "Mo never drops a failure
-     * silently (reference 8.3)." NULL only for the codes of limits, which cite no section. */
+     * silently (reference 8.3)." NULL only for implementation codes, which cite no section. */
     const char *reason;
     /* The reference section the reason cites, such as "8.3": always its code's, from
-     * src/base/codes.h, and NULL for the codes of limits. mo_diags_add fills it in. */
+     * src/base/codes.h, and NULL for implementation codes. mo_diags_add fills it in. */
     const char *section;
     /* fix_count fixes, each one way to fix the error: mo fix applies the fix of a diagnostic that
      * has exactly one. */
