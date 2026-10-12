@@ -71,11 +71,69 @@ def funIn : Sexp → Parse FunDecl
   | .node [.atom "FunDecl", n, ps, t, b, m, k, count] => do
       return ⟨← asString n, ← paramsIn ps, ← tyIn t, ← exprIn b, ← asString m, ← enumIn kinds k, ← asNat count⟩
   | _ => throw "invalid FunDecl"
+
+def optionOut (f : α → Sexp) : Option α → Sexp
+  | none => tag "none"
+  | some a => tag "some" [f a]
+def optionIn (f : Sexp → Parse α) : Sexp → Parse (Option α)
+  | .node [.atom "none"] => pure none
+  | .node [.atom "some", a] => return some (← f a)
+  | _ => throw "invalid metadata option"
+def spanOut (s : SourceSpan) := tag "SourceSpan" [natural s.file, natural s.start, natural s.end]
+def spanIn : Sexp → Parse SourceSpan
+  | .node [.atom "SourceSpan", f, s, e] => return ⟨← asNat f, ← asNat s, ← asNat e⟩
+  | _ => throw "invalid SourceSpan"
+def bindingOut (b : BindingMeta) := tag "BindingMeta" [natural b.node, natural b.slot, .str b.name]
+def bindingIn : Sexp → Parse BindingMeta
+  | .node [.atom "BindingMeta", n, s, name] => return ⟨← asNat n, ← asNat s, ← asString name⟩
+  | _ => throw "invalid BindingMeta"
+def bodyMetaOut (b : BodyMeta) := tag "BodyMeta"
+  [seq (b.spans.map (optionOut spanOut)), seq (b.params.map (optionOut Sexp.str)),
+   seq (b.bindings.map bindingOut), seq (b.closures.map fun (n, s) => seq [natural n, .str s])]
+def bodyMetaIn : Sexp → Parse BodyMeta
+  | .node [.atom "BodyMeta", ss, ps, bs, cs] => return
+      ⟨← asList (optionIn spanIn) ss, ← asList (optionIn asString) ps,
+       ← asList bindingIn bs, ← asList (asPair asNat asString) cs⟩
+  | _ => throw "invalid BodyMeta"
+def lineOut (l : SpecLine) := tag "SpecLine" [optionOut spanOut l.span, .str l.text]
+def lineIn : Sexp → Parse SpecLine
+  | .node [.atom "SpecLine", s, t] => return ⟨← optionIn spanIn s, ← asString t⟩
+  | _ => throw "invalid SpecLine"
+def funMetaOut (f : FunMeta) := tag "FunMeta"
+  [.str f.name, optionOut spanOut f.span, optionOut Sexp.str f.text, bodyMetaOut f.body,
+   optionOut natural f.subject, optionOut boolean f.allows, seq (f.lines.map lineOut)]
+def funMetaIn : Sexp → Parse FunMeta
+  | .node [.atom "FunMeta", n, s, t, b, subject, allows, ls] => return
+      ⟨← asString n, ← optionIn spanIn s, ← optionIn asString t, ← bodyMetaIn b,
+       ← optionIn asNat subject, ← optionIn asBool allows, ← asList lineIn ls⟩
+  | _ => throw "invalid FunMeta"
+def constMetaOut (c : ConstMeta) := tag "ConstMeta" [.str c.name, optionOut spanOut c.span, bodyMetaOut c.body]
+def constMetaIn : Sexp → Parse ConstMeta
+  | .node [.atom "ConstMeta", n, s, b] => return ⟨← asString n, ← optionIn spanIn s, ← bodyMetaIn b⟩
+  | _ => throw "invalid ConstMeta"
+def moduleMetaOut (m : ModuleMeta) := tag "ModuleMeta"
+  [.str m.name, seq (m.data.map natural), seq (m.funs.map natural), seq (m.consts.map natural),
+   seq (m.exposedTypes.map fun (n, b) => seq [natural n, boolean b]), seq (m.exposedFuns.map natural)]
+def moduleMetaIn : Sexp → Parse ModuleMeta
+  | .node [.atom "ModuleMeta", n, ds, fs, cs, ts, es] => return
+      ⟨← asString n, ← asList asNat ds, ← asList asNat fs, ← asList asNat cs,
+       ← asList (asPair asNat asBool) ts, ← asList asNat es⟩
+  | _ => throw "invalid ModuleMeta"
+def metadataOut : CompilerMeta → Sexp
+  | .noSource => tag "noSource"
+  | .source files ms fs cs => tag "Metadata" [seq (files.map Sexp.str),
+      seq (ms.map moduleMetaOut), seq (fs.map funMetaOut), seq (cs.map constMetaOut)]
+def metadataIn : Sexp → Parse CompilerMeta
+  | .node [.atom "noSource"] => pure .noSource
+  | .node [.atom "Metadata", files, ms, fs, cs] => return .source
+      (← asList asString files) (← asList moduleMetaIn ms) (← asList funMetaIn fs) (← asList constMetaIn cs)
+  | _ => throw "invalid compiler metadata"
+
 def programOut (p : Program) : Sexp := tag "Program"
-  [seq (p.data.map dataOut), seq (p.funs.map funOut), seq (p.consts.map constOut), .str p.entry]
+  [seq (p.data.map dataOut), seq (p.funs.map funOut), seq (p.consts.map constOut), .str p.entry, metadataOut p.metadata]
 def programIn : Sexp → Parse Program
-  | .node [.atom "Program", ds, fs, cs, entry] => do
-      return ⟨← asList dataIn ds, ← asList funIn fs, ← asList constIn cs, ← asString entry⟩
+  | .node [.atom "Program", ds, fs, cs, entry, metadata] => do
+      return ⟨← asList dataIn ds, ← asList funIn fs, ← asList constIn cs, ← asString entry, ← metadataIn metadata⟩
   | _ => throw "invalid Program"
 
 def printProgram (p : Program) : String := document (programOut p)
