@@ -352,7 +352,7 @@ opcode per type it accepts:
 | `div`, `rem` | `float` | none |
 | `neg` | `int`, `decimal`, `float`, `duration` | overflow (the minimum) |
 | `add`, `sub` | `duration` | overflow |
-| `mul_int` | `duration` by `int` | overflow |
+| `scale` | `duration` by `int` | overflow |
 | `add_time`, `sub_time` | `time` and `duration` | a result outside the years 1 to 9999 |
 | `diff_time` | two `time`s, giving a `duration` | none: it can't overflow |
 | `eq`, `lt`, `le` | `int`, `decimal`, `float`, `bool`, `byte`, `char`, `time`, `duration`, field-less choice | none |
@@ -365,7 +365,9 @@ Decimal `mul` and `div` compute exactly in 256 bits and round to the nearest
 not-a-number is unequal to everything. `cmp_float` gives an `Ordering` in which
 it sorts last (reference 9.2). `gt` and `ge` are `lt` and `le` with their
 operands swapped. Everything else on numbers, such as `pow` and `floor_div`,
-is a primitive (section 6).
+is a primitive (section 6). In a family with one opcode per type, each opcode
+is named by the family and its type, as `add_int`, `lt_decimal` and
+`scale_duration`; the others, such as `add_time`, are single opcodes.
 
 ### 4.5 Control
 
@@ -396,8 +398,8 @@ None runs off the end of the code.
 | `set_field r_d, r_s, i, r_v` | consumes `r_s` and `r_v`; `r_d` is `r_s` with field `i` replaced (below) |
 | `make_closure r_d, f, r_1, …, r_n` | consumes the captured values; `f` is a `closure` function, and `r_d`'s type is the function type of its parameters (5.3) |
 | `equal r_d, t, r_a, r_b` | reads both; structural equality for a type with `Equal` (reference 9.2), `r_d` a `bool` |
-| `prim r_d, p, t, r_1, …, r_n` | a primitive (section 6). `t` is the type it is instantiated at, such as the list type for `List.get`, so the VM knows which elements are references |
-| `host r_d, h, r_c, r_1, …, r_n` | a capability operation (section 7). `r_c` is the capability, which it reads |
+| `prim r_d, p, t, r_1, …, r_n` | a primitive (section 6). `t` is the function type of its signature at its instantiation, such as `fn(List(Int), Int) : Option(Int)` for `List.get`, so the verifier and the VM know the type of every argument and of the result, even for a primitive with no parameters, such as `Set.empty` |
+| `host r_d, h, r_c, r_1, …, r_n` | a capability operation (section 7). `r_c` is the capability, which it reads. A fake constructor has no capability to call through, so it is `host r_d, h, r_1, …, r_n`, and only spec code may use it (section 9) |
 
 `set_field`, and every primitive that "changes" a collection, work the same
 way:
@@ -527,7 +529,9 @@ A capability is a heap object that carries its own operations. It has:
   a path prefix for a fake one;
 - and whether it is read-only.
 
-`host r_d, h, r_c, …` calls operation `h` of `r_c`'s table.
+`host r_d, h, r_c, …` calls operation `h` of `r_c`'s table. A fake
+constructor makes a capability rather than using one, so `host` calls it by
+`h` alone.
 `src/base/hostops.def` lists the operations, with the same columns as
 `prims.def`:
 
@@ -546,9 +550,10 @@ spec code can't call, tail-call or make a closure of a spec function or an
 neither make a fake nor run a test's code, even in an image that contains
 tests.
 
-**A fake's state** is the one mutable object in the heap, and only its slots
-change. What they hold are ordinary counted values: texts, bytes, and lists
-and maps of them, never a capability or a closure, so the heap stays acyclic.
+**A fake's state** and a `Random`'s generator state are the only mutable
+objects in the heap, and only their slots change. What they hold are numbers,
+or ordinary counted values: texts, bytes, and lists and maps of them, never a
+capability or a closure, so the heap stays acyclic.
 They change only the way programs change values: `Files.in_memory(files)`
 consumes its map, so if the test still holds the map, the first write copies
 it; `printed` returns a duplicate of the state's list, so printing more later
