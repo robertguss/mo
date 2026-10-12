@@ -582,8 +582,40 @@ theorem mapOfPairs_ty {K V : Ty} : ∀ {kvs : List (Value × Value)} {m : List (
     obtain ⟨h1', h2'⟩ := mapSet_ty h1 h2 (hK kv (by simp)) (hV kv (by simp))
     exact mapOfPairs_ty (fun e he => hK e (by simp [he])) (fun e he => hV e (by simp [he])) h1' h2'
 
+/-- A map literal's arguments, keys and values in turn, are its entries. -/
+theorem litEntries_some {K V : Ty} : ∀ {n : Nat} {vs : List Value}, ValsTy P vs (mapLitTys K V n) →
+    ∃ es, litEntries vs = some es ∧ (∀ e ∈ es, ValTy P e.1 K) ∧ (∀ e ∈ es, ValTy P e.2 V)
+  | 0, vs, h => by
+    simp only [mapLitTys, valsTy_nil_iff] at h
+    subst h
+    exact ⟨[], rfl, by simp, by simp⟩
+  | n + 1, vs, h => by
+    simp only [mapLitTys] at h
+    obtain ⟨a, rest, rfl, ha, hrest⟩ := valsTy_cons_iff.mp h
+    obtain ⟨b, rest', rfl, hb, hrest'⟩ := valsTy_cons_iff.mp hrest
+    obtain ⟨es, hes, hK, hV⟩ := litEntries_some hrest'
+    refine ⟨(a, b) :: es, by simp [litEntries, hes], ?_, ?_⟩
+    · intro e he
+      simp only [List.mem_cons] at he
+      rcases he with rfl | he
+      · exact ha
+      · exact hK e he
+    · intro e he
+      simp only [List.mem_cons] at he
+      rcases he with rfl | he
+      · exact hb
+      · exact hV e he
+
 theorem mapOp_safe (k t : Ty) (op : MapOp) : PrimSafe P (.map k t op) := by
   cases op
+  case lit n =>
+    intro vs w h
+    simp only [Prim.sig, MapOp.sig] at h
+    obtain ⟨es, hes, hK, hV⟩ := litEntries_some h
+    simp only [Prim.eval, evalMapOp, hes]
+    split
+    · exact .map hK hV
+    · trivial
   case ofList =>
     invert_args
     obtain ⟨kvs, hkvs, hK, hV⟩ := pairsOf_some ‹_›

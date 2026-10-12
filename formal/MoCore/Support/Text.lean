@@ -45,15 +45,21 @@ def splitOnSep (sep : List Char) : Nat → List Char → List Char → List (Lis
 def textSplit (s sep : String) : List String :=
   (splitOnSep sep.toList (s.length + 1) [] s.toList).map String.ofList
 
-/-- `text.lines`: the lines, without their line endings (`\n`, or `\r\n`).
-`""` has none, and a final line break doesn't start another line. -/
+/-- `text.lines`: split where `\n` or `\r\n` ends a line, without the line
+endings. `""` has none, a final line break doesn't start another line, and a
+`\r` alone stays in its line (reference 14). -/
 def textLines (s : String) : List String :=
   let cs := s.toList
   if cs.isEmpty then []
   else
     let pieces := splitWhen (· = '\n') cs
-    let pieces := if cs.getLast? = some '\n' then pieces.dropLast else pieces
-    pieces.map fun p => String.ofList (if p.getLast? = some '\r' then p.dropLast else p)
+    -- Every piece but the last ended at a `\n`, so a `\r` at its end was part
+    -- of a `\r\n`.
+    let ended := pieces.dropLast.map fun p => if p.getLast? = some '\r' then p.dropLast else p
+    -- The last piece ran to the end of the text: a line, unless the text ended
+    -- with a line break. A `\r` at its end is alone, so it stays.
+    let last := if cs.getLast? = some '\n' then [] else pieces.getLast?.toList
+    (ended ++ last).map String.ofList
 
 /-- `text.words`: split at ASCII white space, which alone gives none. -/
 def textWords (s : String) : List String :=

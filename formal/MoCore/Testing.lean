@@ -22,6 +22,18 @@ scope, and `true` when evaluated in the world. -/
 def passes (P : Program) (e : Expr) (w : World := {}) (caps : List (String × Cap) := []) : Bool :=
   typedAs? P (capsCtx caps) e .bool && holds P e w (handles caps)
 
+/-- An expression that must stop on the bug `b`: well typed at `τ`, with the
+named capabilities in scope, and stopping with `b` when evaluated in the
+world. Mo can't catch a bug (reference 13.2), so no sample's test says this;
+the model checks with it that a library call or a map literal stops where the
+reference says it does. -/
+def stops (P : Program) (e : Expr) (τ : Ty) (b : Bug) (w : World := {})
+    (caps : List (String × Cap) := []) : Bool :=
+  typedAs? P (capsCtx caps) e τ &&
+    match run P e w (handles caps) with
+    | .stopped b' _ => b' == b
+    | _ => false
+
 /-- A test that runs code in steps sharing one world, as a test's fakes are
 shared by every call that uses them. Before each step, `set` may change the
 world, as a test does when it makes a new fake (such as a new `Args.of(...)`);

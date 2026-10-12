@@ -26,14 +26,25 @@ def baseOf? : Ty → Option Base
   | .text => some .text | .time => some .time | .duration => some .duration
   | _ => none
 
-/-- `a < b` at type `t`: the primitive for a type with a built-in order;
-otherwise the type's `compare` function, `compare[T]`, which the lowering
-derives (fields, then cases, in declaration order) or takes from the type's
-module (reference 9.2). -/
+/-- Whether `a` comes before `b` in the order of type `t` (reference 9.2), as
+`sort`, `sort_by`, `min` and `max` use it. For a type with a built-in order it
+is the `<` primitive, except that a `Float` that is "not a number" sorts last,
+where IEEE's `<` would leave it unordered; `Unit`'s one value never comes
+before itself. Otherwise it is the type's `compare` function, `compare[T]`,
+which the lowering derives (tuples part by part from the left, lists element
+by element, records field by field and choice types case by case, in
+declaration order) or takes from the type's module. -/
 def lt (t : Ty) (a b : Expr) : Expr :=
-  match baseOf? t with
-  | some bt => cmp bt .lt a b
-  | none => eq .ordering (call (inst "compare" [t]) [a, b]) (.con .ordering "Less" [])
+  match t with
+  | .unit => lets [("%lt.a", a), ("%lt.b", b)] ff
+  | .float =>
+    lets [("%lt.a", a), ("%lt.b", b)] <|
+      ite (prim (.float .isNan) [v "%lt.a"]) ff <|
+        ite (prim (.float .isNan) [v "%lt.b"]) tt (cmp .float .lt (v "%lt.a") (v "%lt.b"))
+  | _ =>
+    match baseOf? t with
+    | some bt => cmp bt .lt a b
+    | none => eq .ordering (call (inst "compare" [t]) [a, b]) (.con .ordering "Less" [])
 
 /-! ## Lists -/
 
@@ -190,5 +201,18 @@ def sortByL (a k : Ty) (xs key : Expr) : Expr := call (inst "List.sort_by" [a, k
 def updateL (k val : Ty) (m key default f : Expr) : Expr :=
   call (inst "Map.update" [k, val]) [m, key, default, f]
 def fileErrorTextL (e : Expr) : Expr := call "FileError.to_text" [e]
+
+/-! ## A check: "not a number" sorts last (reference 9.2)
+
+`[NaN, 2.0, 1.0].sort_by(fn(x) x end)` is `[1.0, 2.0, NaN]`. -/
+
+#guard
+  let nan : Expr := .lit (.float 0x7FF8000000000000)
+  let fl (x : Float) : Expr := .lit (.float x.toBits)
+  let P : Program := { data := [], funs := sortBy tFloat tFloat }
+  holds P <|
+    lets [("s", sortByL tFloat tFloat (listOf tFloat [nan, fl 2, fl 1]) (lam [("x", tFloat)] (v "x")))] <|
+      and_ (eq (tList tFloat) (lop tFloat .take [v "s", int 2]) (listOf tFloat [fl 1, fl 2]))
+        (caseOpt (lop tFloat .last [v "s"]) "x" (prim (.float .isNan) [v "x"]) ff)
 
 end MoCore.Lib

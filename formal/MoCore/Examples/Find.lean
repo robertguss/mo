@@ -261,6 +261,13 @@ assert main(Args.of(["cat", "gone.txt"]), Console.fake(), files) == 2
       (strs ["find: unknown option --fast", "usage: find [--ignore-case] [--count] PHRASE FILE..."])))
   { args := ["--fast", "cat", "pets.txt"] } caps
 
+/-! ### More: `\n` and `\r\n` end a line, and a `\r` alone stays in its line (reference 14) -/
+
+-- matches("one cat\r\ntwo cats\r", search_for("cat", [])) == [(1, "one cat"), (2, "two cats\r")]
+#guard passes program
+  (eq (tList hitTy) (call "matches" [str "one cat\r\ntwo cats\r", call "search_for" [str "cat", nil tText]])
+    (listOf hitTy [tup [int 1, str "one cat"], tup [int 2, str "two cats\r"]]))
+
 /-! ### Never wrong -/
 
 /-- Running `main` never goes wrong, whatever the arguments and files. -/

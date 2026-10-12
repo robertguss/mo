@@ -344,12 +344,27 @@ def pairsOf : List Value → Option (List (Value × Value))
   | _ => none
 
 /-- A map from key-value pairs, set in order: a later duplicate key replaces
-the value and keeps the first one's place. -/
+the value and keeps the first one's place (`List.to_map`, reference 14). -/
 def mapOfPairs (ps : List (Value × Value)) : List (Value × Value) :=
   ps.foldl (fun m kv => mapSet m kv.1 kv.2) []
 
+/-- The entries of a map literal's arguments: key, value, key, value, ... -/
+def litEntries : List Value → Option (List (Value × Value))
+  | [] => some []
+  | k :: x :: rest => (litEntries rest).map ((k, x) :: ·)
+  | [_] => none
+
+/-- Whether no two keys of a list of entries are equal. -/
+def distinctKeys : List (Value × Value) → Bool
+  | [] => true
+  | (k, _) :: es => !(es.any fun e => Value.equiv k e.1) && distinctKeys es
+
 def evalMapOp (op : MapOp) (vs : List Value) (w : World) : Outcome :=
   match op, vs with
+  | .lit _, args =>
+    match litEntries args with
+    | some es => if distinctKeys es then .ok (.map es) w else .stopped .repeatedKey w
+    | none => wrongArgs "a map literal"
   | .empty, [] => .ok (.map []) w
   | .size, [.map es] => okInt es.length w
   | .isEmpty, [.map es] => .ok (.bool es.isEmpty) w
@@ -371,14 +386,27 @@ def evalMapOp (op : MapOp) (vs : List Value) (w : World) : Outcome :=
 /-- A file error value. -/
 def fileErrorV (ctor path : String) : Value := .con ctor [.text path]
 
-/-- A path inside a folder: relative, with `/`, and never leaving the folder
-(no `..`, no empty part). `"."` parts are dropped, so `"."` is the folder. -/
-def resolvePath (root path : String) : Option String :=
-  let parts := (textSplit path "/").filter (· ≠ ".")
-  if parts.any (fun s => s = ".." || s = "") then none
-  else
-    let rootParts := if root = "" then [] else textSplit root "/"
-    some ("/".intercalate (rootParts ++ parts))
+/-- The parts of a path inside a folder: `.` parts are dropped, so `"."` is the
+folder itself, and a `..` takes back the part before it. `none` for a path
+that would leave the folder (a `..` with nothing before it to take back), and
+for one that isn't relative and written with `/`, which has an empty part, as
+in `""`, `/a`, `a//b` and `a/`. -/
+def pathParts (path : String) : Option (List String) :=
+  (textSplit path "/").foldl (fun acc part => acc.bind fun ps =>
+    if part = "" then none
+    else if part = "." then some ps
+    else if part = ".." then (if ps.isEmpty then none else some ps.dropLast)
+    else some (ps ++ [part])) (some [])
+
+/-- A path of a handle whose folder is `root`, as a path from the folder the
+program started in. `none` when the path would leave the handle's folder, or
+when the handle reaches nothing (`root = none`); reading or writing such a
+path is `Error(NotAllowed(path))` (reference 14). -/
+def resolvePath : Option String → String → Option String
+  | none, _ => none
+  | some root, path =>
+    (pathParts path).map fun parts =>
+      "/".intercalate ((if root = "" then [] else textSplit root "/") ++ parts)
 
 /-- The names directly inside a folder, sorted, without duplicates. -/
 def folderNames (dir : String) (files : List (String × String)) : List String :=
@@ -401,7 +429,7 @@ def nextRandom (s : Nat) : Nat × Nat :=
   (z ^^^ (z >>> 31), s')
 
 /-- The root of a capability value of the expected kind. -/
-def capRoot (expected : Cap) : Value → Option String
+def capRoot (expected : Cap) : Value → Option (Option String)
   | .cap c root => if c = expected then some root else none
   | _ => none
 
@@ -489,14 +517,16 @@ def evalIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
     | some root =>
       match resolvePath root path with
       | none => .ok (.bool false) w
-      | some p => .ok (.bool (w.files.any (·.1 = p) || !(folderNames p w.files).isEmpty)) w
+      | some p =>
+        -- The top folder, the one the program started in or a fake stands
+        -- for, always exists; any other folder exists when a file is inside it.
+        .ok (.bool (p == "" || w.files.any (·.1 = p) || !(folderNames p w.files).isEmpty)) w
     | none => wrongArgs "Files.exists?"
   | .within ro, [h, .text folder] =>
+    -- `within` a path that would leave the folder gives a handle that reaches
+    -- nothing (reference 11.3, 14).
     match capRoot (filesKind ro) h with
-    | some root =>
-      match resolvePath root folder with
-      | none => outside "Files.within a folder outside the capability's own" w
-      | some dir => .ok (.cap (filesKind ro) dir) w
+    | some root => .ok (.cap (filesKind ro) (resolvePath root folder)) w
     | none => wrongArgs "Files.within"
   | .readOnly, [h] =>
     match capRoot .files h with

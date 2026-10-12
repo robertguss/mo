@@ -168,6 +168,30 @@ assert search_notes(no_notes, SearchInput(query: "x", limit: 0)) == Error(BadLim
         (mk SearchOutput [listOf Hit.ty [mk Hit [str "plans.md", int 1, str "# Plans"]], ff])))
   { files := [("notes/plans.md", "# Plans\n"), ("other/plans.md", "# Plans elsewhere\n")] } caps
 
+/-! ### More: `within` a path that would leave the folder reaches nothing
+
+`notes.within("..")` is a capability that reaches nothing (reference 11.3,
+14): listing its folder gives `Error(NotAllowed("."))`, which the search wraps
+in `Unreadable`, and `exists?` is `false` even for its own folder. A path whose
+`..` stays inside the folder is an ordinary path; one that would leave it is
+`NotAllowed`. -/
+
+def notAllowed (path : String) : Expr := .con tFileError "NotAllowed" [str path]
+
+#guard passes program
+  (lets [("outside", io (.within true) [v "notes", str ".."])] <|
+    and_ (eq outRes (call "search_notes" [v "outside", input "plan" 10])
+           (err_ SearchOutput.ty ToolError.ty (unreadable (notAllowed "."))))
+      (not_ (io (.exists true) [v "outside", str "."])))
+  { files := [("notes/plans.md", "# Plans\n")] } caps
+
+#guard passes program
+  (and_ (eq (tRes tText tFileError) (io (.readText true) [v "notes", str "notes/../plans.md"])
+          (ok_ tText tFileError (str "# Plans\n")))
+    (eq (tRes tText tFileError) (io (.readText true) [v "notes", str "../plans.md"])
+      (err_ tText tFileError (notAllowed "../plans.md"))))
+  { files := [("plans.md", "# Plans\n")] } caps
+
 /-! ### Never wrong -/
 
 /-- `search_notes` never goes wrong, for any notes folder and any input. -/

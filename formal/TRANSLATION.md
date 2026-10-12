@@ -41,7 +41,9 @@ parameters carry their types, and a constructor application names its type.
 Names that start with `%` are made by the lowering; Mo names never do. A
 program is a data table and a function table (`Program`); the library's
 choice types `Option(T)`, `Result(T, E)`, `Ordering` and `FileError` are
-built in (`ctorsOf`), with `Some` before `None` and `Ok` before `Error`.
+built in (`ctorsOf`), with their cases in the order reference 8 and 9.2
+declare them: `None` before `Some`, `Ok` before `Error`, and `Less`, `Equal`,
+`Greater`. A `case` lists its arms in that order.
 
 ## 1. A first program
 
@@ -61,11 +63,11 @@ fn main(args: Args, console: Console) : Unit =
   join w.done() = Unit in
   join w.loop(w.rest: List(Text)) =
     case %list.uncons(w.rest) of
-      Some(w.p) -> let word = w.p.0 in
+      None -> jump w.done()
+    | Some(w.p) -> let word = w.p.0 in
                    let w.rest = w.p.1 in
                    let %_ = %io.print(console, %text.upper(word)) in
                    jump w.loop(w.rest)
-    | None -> jump w.done()
     end
   in jump w.loop(%io.argsList(args))
 ```
@@ -180,12 +182,15 @@ converted to its text form:
 | `Text` | itself |
 | `Char` | `%char.toText(c)` |
 | `Int` | `%int.toText(n)` |
+| `BigInt` | `%big.toText(n)` |
 | `Decimal` | `%dec.toText(d)`, the shortest exact spelling |
+| `Float` | `%float.toText(x)`; reference 9.2 asks for the shortest spelling, which the model doesn't give yet (item 19 of the last section) |
 | `Bool` | `if b then "true" else "false"` |
-| `Time`, `Duration` | `%time.toText(t)`, `%time.durToText(d)` |
+| `Time`, `Duration` | `%time.toText(t)`, RFC 3339 in UTC with `Z` and the shortest fraction of a second; `%time.durToText(d)`, in seconds, as `1.5s` |
+| `Range` | `%text.concat(%int.toText(r.0), %text.concat("..", %int.toText(r.1)))`, as in `0..3` (reference 9.2); a range is the pair of its ends (7.5), so the lowering writes this, not a tuple's form |
 | a type with its own `to_text` | a call of it, such as `LineError.to_text(problem)` |
 | `FileError` | `FileError.to_text(e)` (`MoCore/Lib.lean`) |
-| any other record, choice type, tuple, list or map | a call of `to_text[T]`, a Core function the lowering derives per type, which quotes texts and characters inside |
+| any other record, choice type, tuple, list or map | a call of `to_text[T]`, a Core function the lowering derives per type, which quotes texts and characters inside, and writes ranges inside as `0..3` |
 
 ```mo
 greeting = "Hello, #{name or "you"}! You have #{count} new messages."
@@ -194,7 +199,7 @@ greeting = "Hello, #{name or "you"}! You have #{count} new messages."
 ```
 let greeting =
   %text.concat("Hello, ",
-    %text.concat(case name of Some(%or) -> %or | None -> "you" end,
+    %text.concat(case name of None -> "you" | Some(%or) -> %or end,
       %text.concat("! You have ",
         %text.concat(%int.toText(count), " new messages.")))) in ...
 ```
@@ -245,8 +250,17 @@ let longer = %list.append(items, 4) in ...
 
 A map is an association list in insertion order: `%map.set` replaces the
 value of an existing key in place and adds a new key at the end, and `%map.remove`
-keeps the others' order. A map literal sets its keys in turn, starting from
-`%map.empty()`. Equality (`%eq`) compares entries in any order.
+keeps the others' order. Equality (`%eq`) compares entries in any order.
+
+A map literal with `n` entries is `%map.lit n` applied to its keys and values
+in source order, `k1, v1, k2, v2, ...`. It computes all of them, left to
+right, builds the map in that order, and stops with the bug `repeatedKey` if
+two keys turn out equal (reference 3.8, 13.2). Keys the front end can see are
+equal, such as two equal literals or the same name twice, are an error before
+Core. `{}` is
+`%map.empty()`. `List.to_map` is a different primitive, `%map.ofList`: for a
+key given twice it keeps the later value, in the key's first place
+(reference 14).
 
 ```mo
 stock = {"apples": 3}
@@ -258,17 +272,17 @@ end
 ```
 
 ```
-let stock = %map.set(%map.empty(), "apples", 3) in
+let stock = %map.lit1("apples", 3) in
 let more = %map.set(stock, "pears", 5) in
-let count = case %map.get(more, "apples") of Some(%or) -> %or | None -> 0 end in
+let count = case %map.get(more, "apples") of None -> 0 | Some(%or) -> %or end in
 join m.done() = ... in
 join m.loop(m.rest: List((Text, Int))) =
   case %list.uncons(m.rest) of
-    Some(m.p) -> let %e = m.p.0 in let m.rest = m.p.1 in
+    None -> jump m.done()
+  | Some(m.p) -> let %e = m.p.0 in let m.rest = m.p.1 in
                  let fruit = %e.0 in let n = %e.1 in
                  let %_ = %io.print(console, %text.concat(fruit, %text.concat(": ", %int.toText(n)))) in
                  jump m.loop(m.rest)
-  | None -> jump m.done()
   end
 in jump m.loop(%map.entries(more))
 ```
@@ -321,8 +335,9 @@ let sum = %dec.add(case origin of Point(%x, %y) -> %x end,
                    case origin of Point(%x, %y) -> %y end) in ...
 ```
 
-Fields named out of declaration order are first bound in source order, so the
-evaluation order stays the source's (section 13.1):
+Fields are computed in the order they are written, whatever the order of
+their declaration (reference 4.1), so fields named out of declaration order
+are first bound in source order:
 `Point(y: f(), x: g())` is `let %y = f() in let %x = g() in Point(%x, %y)`.
 
 ### 4.2 Choice types
@@ -453,6 +468,11 @@ used at `Int`, is
 fn largest[Int](items: List(Int)) : Option(Int) = %list.last(List.sort_by[Int,Int](items, fn(x: Int) => x))
 ```
 
+A generic function can't call itself, directly or through other functions,
+with a type parameter standing for a bigger type built from that parameter,
+such as `depth` on a `Tree(T)` calling `depth` on a `Tree(List(T))`
+(reference 5.5). So instantiation always ends.
+
 ### 5.6 Functions as values
 
 An anonymous function is a closure; its parameter types are the ones the
@@ -473,6 +493,16 @@ let cells = List.map[T,Text](rows, case column of Column(T)(%title, %cell, %nume
 
 Anonymous functions never capture capabilities and never assign a `var`
 (reference 5.6); the front end checks that, so Core needs no rule for it.
+A closure captures the values of the names it reads when it is made. An
+anonymous function may read a `var` only if nothing assigns the `var` after
+the function is made, including in a later round of a loop around it; the
+front end rejects the rest (reference 5.6), so a closure never has to choose
+between the value it was made with and a later one.
+
+`return` and `try` inside an anonymous function leave that anonymous function
+(reference 5.6). The lowering puts its `%return` join point (5.1) inside the
+anonymous function's body, and Core couldn't do otherwise: `lam`'s body is
+typed with no join points in scope, so no jump leaves it.
 
 ## 6. Names, bindings and variables
 
@@ -606,20 +636,20 @@ end
 let fields = List.map[Text,Text](%text.split(line, ","), fn(field: Text) => %text.trim(field)) in
 join %other() = Error(WrongFieldCount(%list.size(fields))) in
 case %list.uncons(fields) of
-  Some(%m0) -> let _ = %m0.0 in
+  None -> jump %other()
+| Some(%m0) -> let _ = %m0.0 in
     case %list.uncons(%m0.1) of
-      Some(%m1) -> let category = %m1.0 in
+      None -> jump %other()
+    | Some(%m1) -> let category = %m1.0 in
         case %list.uncons(%m1.1) of
-          Some(%m2) -> let amount = %m2.0 in
+          None -> jump %other()
+        | Some(%m2) -> let amount = %m2.0 in
             case %list.uncons(%m2.1) of
-              Some(%_) -> jump %other()
-            | None -> <arm>
+              None -> <arm>
+            | Some(%_) -> jump %other()
             end
-        | None -> jump %other()
         end
-    | None -> jump %other()
     end
-| None -> jump %other()
 end
 ```
 
@@ -651,7 +681,7 @@ end
 ```
 
 `while console.read_line is Some(line)` is a loop whose body begins with
-`case %io.readLine(console) of Some(line) -> ... | None -> <leave the loop>`
+`case %io.readLine(console) of None -> <leave the loop> | Some(line) -> ...`
 (`MoCore/Examples/Json.lean`, `read_input`).
 
 ### 7.5 Loops
@@ -707,7 +737,10 @@ in jump w.loop(remaining, halvings)
 A range kept in a variable is the pair of its ends: `r = 0..10` is
 `let r = (0, 10) in`, and `for i in r` counts from `r.0` up to `r.1`;
 `r.to_list` is `%int.range(r.0, r.1)` and `r.contains?(n)` is
-`r.0 <= n and n < r.1`.
+`r.0 <= n and n < r.1`. Reference 9.2 gives `Range` `Equal`, `Hash` and a
+text form but no order: two ranges are equal when their ends are (`%eq` on
+the pair), a range can be a map key or a set member, and its text form,
+`0..3`, is written by the lowering (3.4).
 
 `break` is `jump l.done(vars)`, `continue` is `jump l.loop(next position,
 vars)`, and `return e` inside a loop is `jump %return(e)` (section 5.1), or
@@ -723,9 +756,9 @@ correct: a jump never has to come back.
 
 ### 8.1 Options
 
-`x or default` is a `case` that evaluates `default` only for `None` (like the
-Bool `or`, reference 13.1). `x.or_fail(e)` is a library call, so `x` and `e`
-are both evaluated first:
+`x or default` is a `case` that evaluates `default` only for `None`, as
+reference 8.1 and 13.1 say (like the Bool `or`). `x.or_fail(e)` is a library
+call, so `x` and `e` are both evaluated first:
 
 ```mo
 city = address.city or "unknown"
@@ -733,10 +766,10 @@ found = users.get(id).or_fail(NoUser(id: id))
 ```
 
 ```
-let city = case <address.city> of Some(%or) -> %or | None -> "unknown" end in
+let city = case <address.city> of None -> "unknown" | Some(%or) -> %or end in
 let found = let %opt = %map.get(users, id) in
             let %fail = NoUser(id) in
-            case %opt of Some(%x) -> Ok(%x) | None -> Error(%fail) end in ...
+            case %opt of None -> Error(%fail) | Some(%x) -> Ok(%x) end in ...
 ```
 
 ### 8.2 Results and declared failures
@@ -760,8 +793,8 @@ fn parse_quantity(text: Text) : Result(Int, QuantityError) =
   let trimmed = %text.trim(text) in
   if %text.isEmpty(trimmed) then Error(Empty) else
   case %text.toInt(trimmed) of
-    Some(n) -> if %cmp.int.lt(n, 0) then Error(Negative(n)) else Ok(n)
-  | None -> Error(NotANumber(trimmed))
+    None -> Error(NotANumber(trimmed))
+  | Some(n) -> if %cmp.int.lt(n, 0) then Error(Negative(n)) else Ok(n)
   end
 ```
 
@@ -791,7 +824,7 @@ fn parse_line(line: Text, catalog: Map(Text, Item)) : Result(OrderLine, OrderErr
   let parts = %text.split(line, ",") in
   case <%list.get(parts, 0).or_fail(UnknownItem(line))> of
     Ok(name) ->
-      case parse_quantity(case %list.get(parts, 1) of Some(%or) -> %or | None -> "" end) of
+      case parse_quantity(case %list.get(parts, 1) of None -> "" | Some(%or) -> %or end) of
         Ok(quantity) ->
           case <%map.get(catalog, name).or_fail(UnknownItem(name))> of
             Ok(item) -> Ok(OrderLine(item, quantity))
@@ -809,8 +842,8 @@ A `try` inside an expression keeps the order of evaluation; from `json.mo`:
 ```
 let %left = %int.mul(value, 16) in
 case hex_digit_value(digit) of
-  Some(%digit) -> jump d.loop(d.rest, %int.add(%left, %digit))
-| None -> None
+  None -> None
+| Some(%digit) -> jump d.loop(d.rest, %int.add(%left, %digit))
 end
 ```
 
@@ -833,8 +866,8 @@ end
 
 ```
 let rate = case %map.get(rates, currency) of
-             Some(r) -> r
-           | None -> stop "every currency was checked against the rate table at startup"
+             None -> stop "every currency was checked against the rate table at startup"
+           | Some(r) -> r
            end in ...
 ```
 
@@ -856,9 +889,9 @@ type it is used at:
 
 | Ability | In Core |
 | --- | --- |
-| `Equal` (`==`, `!=`) | `%eq` at the type: structural equality, maps and sets by their entries in any order, floats by IEEE. `a != b` is `%not(%eq(a, b))`. |
-| `Hash` | nothing to call: map and set primitives compare keys with the same structural equality. |
-| `Order` | for `Int`, `BigInt`, `Decimal`, `Float`, `Bool`, `Char`, `Text`, `Time` and `Duration`, the primitives `%cmp.b.lt`, `le`, `gt`, `ge`; for a record or choice type, a Core function `compare[T]`, the module's own `compare` or one the lowering derives (fields in order, then cases in order); `sort`, `min`, `max`, `sort_by` are Core functions instantiated with it. |
+| `Equal` (`==`, `!=`) | `%eq` at the type: structural equality, maps and sets by their entries in any order, floats by IEEE, ranges by their ends. `a != b` is `%not(%eq(a, b))`. |
+| `Hash` | nothing to call: map and set primitives compare keys with the same structural equality. Floats have none, so they are never keys. |
+| `Order` | for `Int`, `BigInt`, `Decimal`, `Float`, `Bool` (`false` first), `Char` and `Text` (by character code), `Time` and `Duration`, the primitives `%cmp.b.lt`, `le`, `gt`, `ge`, which follow IEEE for `Float`, as the bytecode's `lt` and `le` do (`bytecode.md` 4.4). For a tuple, a list, a record or a choice type, a Core function `compare[T]`: the module's own `compare`, or one the lowering derives (tuples part by part from the left; lists element by element, a list before a longer one it starts; records field by field and choice types case by case, in declaration order, so `None` before `Some`, `Ok` before `Error`, and `Less`, `Equal`, `Greater`). `Unit` has one value, which never comes before itself: `a < b` is `false` once both sides are computed. `sort`, `min`, `max`, `sort_by` and `sort_by_desc` are Core functions instantiated with it (`Lib.lt`), in which a `Float` that is "not a number" comes after every other float, as in the bytecode's `cmp_float`. Maps, sets and ranges have no order (reference 9.2). |
 | `Text` | the type's text form, as in 3.4. |
 | `Number` | the arithmetic primitives of the type; `sum` is the Core function `List.sum[T]`. |
 
@@ -902,10 +935,17 @@ checks and name resolution, and leave nothing in Core.
 ### 10.4 Constants
 
 A constant is a function with no parameters, and a use of it is a call. A
-constant's value is fixed, so calling it at each use gives the same value. To
-compute constants "once, before `main` starts" and stop before `main` when one
-stops, the runtime's entry point evaluates each constant once before calling
-`main` (11.2).
+constant's value is fixed, so calling it at each use gives the same value,
+and constants may use each other in any order. Reference 10.4 computes
+constants once, before any other code of the program runs, in the order of
+their dependencies (the constants each uses, directly or through the
+functions it calls), and a constant that stops stops the program before it
+starts; a cycle is an error before Core. So the runtime's entry point (11.2),
+and `mo test` before the first test or example, evaluate each constant once,
+in that order. The model has no list of a program's constants yet
+(architecture 4.1 leaves that layer to stream 0), so its checks compute a
+constant where it is used. That gives the same value, and differs only for a
+constant that stops, which none of the samples has.
 
 ```mo
 max_attempts = 3
@@ -915,8 +955,8 @@ t0 = Time.parse("2026-10-12T09:00:00Z") or stop "the time is written correctly"
 ```
 fn max_attempts() : Int = 3
 fn t0() : Time = case %time.parse("2026-10-12T09:00:00Z") of
-                   Some(%or) -> %or
-                 | None -> stop "the time is written correctly"
+                   None -> stop "the time is written correctly"
+                 | Some(%or) -> %or
                  end
 ```
 
@@ -930,12 +970,13 @@ functions are primitives or library functions.
 
 ### 11.1 What a function can touch
 
-A capability is a value of type `cap c`: a handle, `cap c folder`, where
-`folder` is what a `Files` or `ReadFiles` handle is narrowed to. Every effect
-is a primitive on a handle (`%io.print`, `%io.readText`, `%io.now`, ...),
-which reads and updates the one `World`: arguments, environment variables,
-standard input, standard output and error, the files, the clock's time and
-the random seed. A function without a capability parameter can't reach them.
+A capability is a value of type `cap c`: a handle, `cap c root`, where `root`
+is the folder a `Files` or `ReadFiles` handle is narrowed to, or nothing for a
+handle that reaches nothing (11.3). Every effect is a primitive on a handle
+(`%io.print`, `%io.readText`, `%io.now`, ...), which reads and updates the
+one `World`: arguments, environment variables, standard input, standard
+output and error, the files, the clock's time and the random seed. A function
+without a capability parameter can't reach them.
 
 ### 11.2 main
 
@@ -964,14 +1005,25 @@ fn %start(args: Args, console: Console, files: Files) : Int =
 
 `files.within("reports")` is `%io.within(files, "reports")`, a handle on the
 folder `reports` inside the handle's own; `files.read_only` is
-`%io.readOnly(files)`, a `ReadFiles` handle on the same folder. A path is
-relative, uses `/`, and can't leave the handle's folder (no `..`).
+`%io.readOnly(files)`, a `ReadFiles` handle on the same folder.
+
+A path is relative and uses `/`. Its `.` parts are dropped and a `..` takes
+back the part before it, so `a/../b` is `b`. Given a path that would leave
+the handle's folder, such as `..` or `../b`, reading, writing, removing and
+listing give `Error(NotAllowed(path))`, and `exists?` gives `false`
+(reference 14). The model treats a path with an empty part (`""`, `/a`,
+`a//b`, `a/`) the same way, as not relative. `within` a path that would leave
+the folder gives a handle that reaches nothing (reference 11.3, 14),
+`cap c none`: every call on it that returns a `Result` gives
+`Error(NotAllowed(path))`, `exists?` gives `false`, and its `within` and
+`read_only` reach nothing too.
 
 ### 11.4 Rules
 
-That anonymous functions don't capture capabilities, and that fakes appear
-only in tests, examples and promises, are the front end's checks. Core's
-typing doesn't need them for safety.
+That anonymous functions don't capture capabilities, and that fakes,
+`printed` and `printed_errors` appear only in tests, examples and promises
+(reference 12.4), are the front end's checks. Core's typing doesn't need them
+for safety.
 
 ## 12. Examples, promises and tests
 
@@ -1029,15 +1081,35 @@ handles bound to the test's names: `Console.fake()` and
 `Console.fake_input(lines)` set standard input; `Files.in_memory(files)` sets
 the files (`.read_only` gives a `ReadFiles` handle); `Clock.fixed(t)` sets the
 time; `Random.seeded(n)` the seed; `Args.of(list)` and `Env.of(map)` the
-arguments and environment. `console.printed` and `console.printed_errors` are
-the primitives `%io.printed` and `%io.printedErrors`, which read what the
-world's standard output and error hold. Every use of a fake sees the same
-world, as reference 12.4 requires.
+arguments and environment. Every use of a fake sees the same world, as
+reference 12.4 requires.
 
-When a test makes a new fake of a kind it already has, such as a second
-`Args.of(...)` for a second call of `main`, the test is run in steps that
-share the world, and the new fake is set between steps (`scenario` in
-`MoCore/Testing.lean`; `todo.mo` and `find.mo` need it).
+The world's standard input is a list of lines, each without its line ending,
+which `%io.readLine` returns in turn. The runtime splits what it reads where
+`\n` or `\r\n` ends a line, and turns each sequence of bytes that isn't valid
+UTF-8 into one U+FFFD, the replacement character (reference 14);
+`Console.fake_input(lines)` gives the lines themselves.
+
+In `Files.in_memory`, a folder exists when a file is inside it, and the
+folder the fake stands for, `"."` of its handle, always exists; `list` gives
+the names directly inside a folder, each subfolder once, sorted, and listing
+a folder that doesn't exist is `Error(NotFound(folder))` (reference 14).
+
+`console.printed` and `console.printed_errors` are the primitives
+`%io.printed` and `%io.printedErrors`, which read what the world's standard
+output and error hold. The front end allows them only in tests, examples and
+promises, where every console is a fake (reference 12.4), so they never meet a
+real console.
+
+Each fake is a handle on its own state (reference 12.4). When a test makes a
+new fake of a kind it already has, such as a second `Args.of(...)` for a
+second call of `main`, the test is run in steps that share the world, and
+the new fake is set between steps (`scenario` in `MoCore/Testing.lean`;
+`todo.mo` and `find.mo` need it). Two fakes of one kind in use at the same
+time, such as two consoles that both print before either is read, would need
+a world per fake. The model doesn't have the fake constructors yet
+(architecture 4.1 leaves them to stream 0), and none of the samples needs
+them.
 
 `wc.mo`'s test:
 
@@ -1069,10 +1141,11 @@ else false
 
 Core evaluates strictly and left to right: a `let`'s bound expression before
 its body, the arguments of a call, a primitive or a constructor from left to
-right, then the call. `and`, `or`, `implies` and the Option `or` lower to
-`if` and `case`, which evaluate only the branch taken. The lowering keeps Mo's
-order wherever it reorders anything (record fields named out of order, 4.1;
-`try` inside an expression, 8.3).
+right, then the call. `and`, `or`, `implies` and the Option `or` (reference
+13.1) lower to `if` and `case`, which evaluate only the branch taken. The
+lowering keeps Mo's order wherever it reorders anything (record fields named
+out of order, 4.1; `try` inside an expression, 8.3). A map literal computes
+its keys and values in source order, then checks its keys (3.8).
 
 ### 13.2 Bugs
 
@@ -1083,7 +1156,8 @@ A bug ends evaluation with `stopped`, its reason, and the world so far:
 | overflow in `Int`, `Decimal` or `Duration` arithmetic; a time outside the years 1 to 9999 | `overflow what` |
 | dividing by zero | `divByZero` |
 | reaching a `stop` | `stop reason` |
-| calling a library function outside what it accepts (`take(-1)`, `random.int(5, 5)`, `split("")`, ...) | `outside call` |
+| calling a library function outside what it accepts (`take(-1)`, `random.int(5, 5)`, `split("")`, `repeat(-1)`, `replace("", new)`, `round(19)`, ...) | `outside call` |
+| two keys of a map literal that turn out equal as the program runs (reference 3.8) | `repeatedKey` |
 
 Running out of stack, running out of memory, an exit status outside 0 to 255,
 and printing to an output that is gone are the runtime's, outside this model.
@@ -1118,11 +1192,11 @@ place; *not modeled* ones are not in this model yet.
 | `Char`: `code`, `ascii_digit?`, `ascii_letter?`, `ascii_white_space?`, `ascii_lowercase`, `ascii_uppercase`, `to_text` | prim (`%char.*`) |
 | `List`: literals, `size`, `empty?`, `get`, `first`, `last`, `append`, `prepend`, `concat`, `reverse`, `take`, `drop`, `set`, `remove_at`, `enumerate`, `zip`, `contains?`, `unique` | prim (`%list.*`) |
 | `List`: `join` | prim (`%text.join`) |
-| `List`: `to_map` | prim (`%map.ofList`) |
-| `List`: `map`, `filter`, `filter_map`, `find`, `any?`, `all?`, `count`, `reduce`, `max`, `sum`, `sort_by`, `sort_by_desc` | Core (`List.map[A,B]`, ...) |
-| `List`: `sort`, `min` | lowered: `sort` is `sort_by` with the element itself as key, `min` is `max` with the order reversed (not written out in `Lib.lean`) |
+| `List`: `to_map` | prim (`%map.ofList`): for a key given twice, the later value, in the key's first place |
+| `List`: `map`, `filter`, `filter_map`, `find`, `any?`, `all?`, `count`, `reduce`, `max`, `sum`, `sort_by`, `sort_by_desc` | Core (`List.map[A,B]`, ...); `max` gives the first of equal elements |
+| `List`: `sort`, `min` | lowered: `sort` is `sort_by` with the element itself as key, `min` is `max` with the order reversed, so it too gives the first of equal elements (not written out in `Lib.lean`) |
 | `List`: `flat_map`, `group_by`, `to_set` | lowered the same way as `map` (a loop with join points), not written out in `Lib.lean` |
-| `Map`: literals, `size`, `empty?`, `get`, `has?`, `set`, `remove`, `keys`, `values`, `entries` | prim (`%map.*`) |
+| `Map`: literals (`%map.lit n`, which stops on a repeated key, 3.8), `size`, `empty?`, `get`, `has?`, `set`, `remove`, `keys`, `values`, `entries` | prim (`%map.*`) |
 | `Map`: `update` | Core (`Map.update[K,V]`) |
 | `Set`: `Set.empty`, `size`, `empty?`, `has?`, `add`, `remove`, `to_list` | prim, on `Map(T, Unit)` |
 | `Set`: `union`, `intersection`, `difference` | lowered as loops over keys, not written out |
@@ -1135,90 +1209,104 @@ place; *not modeled* ones are not in this model yet.
 | `Console.fake`, `fake_input`, `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `Args.of`, `Env.of` | the test's world (12.4) |
 | `Unicode16` | not modeled |
 
-## Ambiguities found while translating
+## Ambiguities settled by D227
 
-These places in the reference left a choice open; the model's choice is
-given, and each is worth settling in the reference.
+The first version of this document listed 23 places where the reference left
+a choice open. Robert settled them on 12 October 2026 (D227), and the
+reference now gives every answer. For each: the answer, the reference section
+that gives it, and whether the model already did that or was changed. The
+section numbers after the topic are the reference's; those after "Already",
+"Changed" or "Unchanged" are this document's.
 
-1. **Map literals with a repeated key** (3.8). "A literal that gives the same
-   key twice is an error", but keys are expressions (`{fruit: 3}`), so two
-   keys can turn out equal only at run time. The model sets keys in order:
-   the later value wins and the key keeps its first place. `List.to_map` with
-   a repeated key is the same question (14).
-2. **`x or default` and `or_fail`** (8.1, 13.1). 13.1 says `and`, `or` and
-   `implies` skip their right side; it doesn't say whether this includes the
-   `Option` `or`. The samples need it to (`t0 = Time.parse(...) or stop
-   "..."` would always stop otherwise), so the model's `or` is lazy.
-   `or_fail(e)` is a function, so `e` is evaluated even for `Some`.
-3. **Evaluation order of named fields** (4.1, 13.1). Fields may be named in
-   any order, and evaluation is "left to right", but left to right in the
-   source or in the declaration? It matters when two fields have effects or
-   can stop. The model keeps source order.
-4. **`try` and `return` inside an anonymous function** (5.6, 8.3). "Returns
-   the Error from the function it is in": the anonymous function, or the
-   named function around it? The model takes the innermost function.
-5. **`lines` and line endings** (3.4, 14). "Without their line endings":
-   is `\r\n` a line ending? The model drops a `\r` before each `\n`.
-6. **ASCII white space** (14, for `words`, `trim` and `ascii_white_space?`).
-   Which characters? The model uses space, tab, line feed, vertical tab, form
-   feed and carriage return.
-7. **`"".split(",")`** (14). `[""]` or `[]`? Empty pieces are kept, so the
-   model gives `[""]`.
-8. **`Text.to_decimal`** (14). Is `"1."` or `".5"` accepted ("an optional `.`
-   followed by up to 18 digits": may there be zero digits)? The model
-   requires a digit before and after the point. `to_int` accepts leading
-   zeros and `-0`, as the letter of 14 allows.
-9. **Decimal `%`** (3.2, 9.2). `Number` gives `%` to `Decimal`, but only the
-   whole-number `%` is described. The model's remainder has the sign of the
-   left side, like `Int`'s.
-10. **`round(places)` and `to_fixed(places)` outside 0 to 18** (3.3, 14).
-    Negative places (rounding to tens) or more than 18 places: allowed? The
-    model treats them as calls outside what the function accepts (a bug).
-11. **Other calls "outside what it accepts"** (13.2, 14). Section 14 says
-    which arguments `take`, `drop`, `pow`, `split` and `Random.int` accept;
-    for others it doesn't. The model stops on `repeat(-1)` and
-    `replace("", new)` (an empty text occurs everywhere), and leaves text
-    unchanged for `pad_left` and `pad_right` with a negative width.
-12. **`FileError`'s text form** (14). Only `NotFound` is given (`notes/a.md:
-    no such file`). The model writes `path: not allowed`, `path: not text`
-    and `path: reason` for the others.
-13. **Folders in `Files.in_memory`** (12.4, 14). A map of paths to texts has
-    no folders of its own. The model says a folder exists when a file is
-    inside it (the capability's own folder always exists); `list` gives the
-    names directly inside, subfolders once each, sorted; listing a missing
-    folder is `Error(NotFound(folder))`.
-14. **`within` a folder that leaves the capability's** (11.3, 14). `within`
-    returns a `Files`, not a `Result`, so `files.within("..")` can't fail
-    politely. The model makes it a bug.
-15. **A time's text form and `Time.parse`** (3.9, 14). RFC 3339 allows
-    `Z` or `+00:00`, any number of fraction digits, lowercase `t` and `z`,
-    and leap seconds. The model prints `Z` and fractions only when there are
-    some; it parses `T` or `t`, `Z`, `z` or an offset, and one to six fraction
-    digits, and rejects second 60.
-16. **Several fakes of one kind in a test** (12.4). `find.mo` makes two
-    `Console.fake()`s and `todo.mo` four `Args.of(...)`s. Core's one world
-    handles this by running the test in steps; two fakes of one kind used
-    at the same time would need a world per fake.
-17. **When constants are computed** (10.4). "Once, before `main` starts":
-    tests and examples have no `main`. The model computes a constant where
-    it is used (it is pure, so the value is the same); the runtime's entry
-    point computes them all first, so a stopping constant stops before
-    `main`.
-18. **`List.max` with equal largest elements** (14). Which one? It matters
-    only for a customized `Order` whose equal values differ. The model
-    returns the first.
-19. **`Float`'s text form** (9.2). "Numbers have their shortest spelling";
-    the model prints Lean's `Float.toString` instead, which is not that.
-20. **A `var` read by an anonymous function and assigned afterwards** (5.6,
-    6.2). An anonymous function "can read names in scope where it is made";
-    does it see the value then, or the `var`'s later value? The model's
-    closures capture the value when the function is made.
-21. **`exists?` for a path that would leave the folder** (11.3, 14). The
-    model answers `false` (reading such a path is `Error(NotAllowed(path))`).
-22. **`printed` on a real console** (12.4, 14). The reference gives
-    `printed` and `printed_errors` to fakes, but a real console has the same
-    type `Console`. The model's `%io.printed` reads what the world's standard
-    output holds, for any console handle.
-23. **`Range` values** (3, 7.5). `Range` is in the table of types, but only
-    `for`, `to_list` and `contains?` are said of its values. The model makes a
-    range the pair of its ends.
+1. **A map literal with a repeated key** (3.8, 13.2, 14): an error when the
+   compiler can see the keys are equal, a bug when they turn out equal as the
+   program runs; `to_map` keeps the later value, in the key's first place.
+   Changed: a literal is now `%map.lit n`, which stops with `repeatedKey`
+   (3.8); `to_map` already did that.
+2. **`x or default` and `or_fail`** (8.1, 13.1): `or` on an `Option` computes
+   `default` only for `None`; `or_fail(e)` is a function, so `e` is always
+   computed. Already did that.
+3. **Order of named fields** (4.1): fields are computed in the order they are
+   written. Already did that.
+4. **`try` and `return` in an anonymous function** (5.6): they leave that
+   anonymous function. Already did that.
+5. **`lines` and line endings** (14): `\n` and `\r\n` end a line, and a `\r`
+   alone stays in its line. Changed: a lone `\r` at the very end of a text was
+   dropped; now only a `\r` before a `\n` is.
+6. **ASCII white space** (14): space, tab, line feed, vertical tab, form feed
+   and carriage return. Already did that.
+7. **`"".split(",")`** (14): `[""]`. Already did that.
+8. **`Text.to_decimal`** (14): digits on both sides of a point, 1 to 18 after
+   it, so `"1."` and `".5"` give `None`; `to_int` takes leading zeros and
+   `-0`, as its letter allows. Already did that.
+9. **Decimal `%`** (3.3): the remainder has the sign of the left side. Already
+   did that.
+10. **`round` and `to_fixed` places** (14): 0 to 18; anything else is a bug.
+    Already did that.
+11. **Other limits** (14): `repeat` takes a count of at least 0 and `replace` a
+    non-empty text to replace, or the call is a bug; padding to a width the
+    text already has or exceeds, negative ones included, changes nothing.
+    Already did that.
+12. **`FileError`'s text forms** (14): `PATH: no such file`,
+    `PATH: not allowed`, `PATH: not text` and `PATH: REASON`. Already did
+    that.
+13. **Folders in `Files.in_memory`** (14): a folder exists when a file is
+    inside it, and `list` gives the names directly inside, each subfolder
+    once, sorted. Already did that; `exists?(".")` now also answers `true`
+    for the fake's own folder, as `list(".")` already treated it (12.4).
+14. **`within` a path that would leave the folder** (11.3, 14): a capability
+    that reaches nothing, on which every call that returns a `Result` gives
+    `Error(NotAllowed(path))` and `exists?` gives `false`. Changed: it was a
+    bug; now it is a handle with no root (11.3).
+15. **Times as text** (14): `to_text` writes UTC with `Z`, and the shortest
+    fraction of a second only when there is one; `Time.parse` reads `T` or
+    `t`, then `Z`, `z` or an offset it converts to UTC, and at most 6 fraction
+    digits, and gives `None` for anything else, second 60 included. Already
+    did that.
+16. **Several fakes of one kind in a test** (12.4): each fake is a handle on
+    its own state, and every use of one fake sees the same state. Unchanged:
+    the model runs such a test in steps, setting each new fake between them,
+    which gives the reference's answer for every sample; two fakes of one kind
+    in use at the same time wait for the fake constructors, which
+    architecture 4.1 leaves to stream 0 (12.4).
+17. **When constants are computed** (10.4): once, before any other code of
+    the program runs, in the order of their dependencies; a cycle is an
+    error, and a constant that stops stops the program before it starts.
+    Unchanged: a constant is a function without parameters, which gives the
+    same value wherever it is computed; computing them all first belongs to
+    the program layer that architecture 4.1 leaves to stream 0 (10.4).
+18. **`min` and `max` with equal elements** (14): the first of them. Already
+    did that.
+19. **`Float`'s text form** (9.2): numbers have their shortest spelling.
+    Unchanged: `%float.toText` prints Lean's `Float.toString`, which is not
+    the shortest. Architecture 4.5 makes it a trusted primitive checked
+    against Ryu, and the reference doesn't say how "not a number",
+    infinities, or very large and very small floats are spelled.
+20. **A `var` read by an anonymous function and assigned afterwards** (5.6):
+    an error. Already consistent: a closure captures values when it is made,
+    and the front end rejects the programs in which a later value could
+    differ (5.6).
+21. **`exists?` for a path that would leave the folder** (14): `false`, and
+    reading, writing, removing and listing such a path give
+    `Error(NotAllowed(path))`. Already did that; changed so that only a path
+    that would leave counts: a `..` that stays inside the folder, as in
+    `a/../b`, is now an ordinary path (11.3).
+22. **`printed` on a real console** (12.4, 14): `printed` and
+    `printed_errors` can be used only in tests, examples and promises, where
+    every console is a fake. Already consistent: the front end checks it, and
+    `%io.printed` reads the world's standard output (11.4, 12.4).
+23. **`Range` values** (9.2): `Equal` and `Hash`, no order, and the text form
+    `0..3`. Equality and hashing already did that, on the pair of the ends;
+    changed: the text form is now lowered to `0..3` rather than a tuple's
+    (3.4, 7.5).
+
+D227 settled a few more questions, and the model follows them too. `Option`'s
+cases are declared and ordered `None`, `Some` (reference 8, 9.2): changed in
+`ctorsOf`, and so in every `case` on an `Option` (section 0 here); nothing in
+the model sorts or compares `Option` values by their order. A `Float` that is
+"not a number" sorts after every other float, and `Unit` has an order
+(reference 9.2's table): changed in `Lib.lt`, which `sort`, `sort_by`, `min`
+and `max` use (section 9.2 here). Polymorphic recursion is an error
+(reference 5.5, section 5.5 here). Standard input's line endings and invalid
+UTF-8 are the runtime's (reference 14, section 12.4 here). The `mo` command's
+exit status (reference 13.4) is outside Core.

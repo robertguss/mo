@@ -13,10 +13,11 @@ Core is a **typed, monomorphic, strict functional language**:
   `Time` and `Duration` (whole microseconds), tuples, `List`, `Map`
   (insertion-ordered; `Set(T)` is `Map(T, Unit)`), declared data types
   (records and choice types share one form, looked up by name in the
-  program's data table), the library's `Option`, `Result`, `Ordering` and
-  `FileError`, function types, and the capability types `Console`, `Files`,
-  `ReadFiles`, `Clock`, `Random`, `Args` and `Env`. There are no type
-  variables and no abilities: generic Mo code is instantiated per type first.
+  program's data table), the library's `Option` (`None`, then `Some`, as
+  reference 8 declares it), `Result`, `Ordering` and `FileError`, function
+  types, and the capability types `Console`, `Files`, `ReadFiles`, `Clock`,
+  `Random`, `Args` and `Env`. There are no type variables and no abilities:
+  generic Mo code is instantiated per type first.
 - **Expressions**: literals, variables, `let`, anonymous functions (closures),
   application of a function value, calls of top-level functions, tuples and
   projection, constructor application, `case` on one level of constructors
@@ -28,13 +29,16 @@ Core is a **typed, monomorphic, strict functional language**:
 - **Effects** go through primitives on capability handles, which read and
   update one `World`: arguments, environment variables, standard input,
   standard output and error, an insertion-ordered in-memory file map, the
-  clock's time and a random seed.
+  clock's time and a random seed. A `Files` or `ReadFiles` handle reaches one
+  folder; `within` a path that would leave it gives a handle that reaches
+  nothing, on which every call that returns a `Result` gives
+  `Error(NotAllowed(path))` and `exists?` gives `false`.
 - **Semantics**: `eval : Nat → Program → Env → World → Expr → Outcome`, a
   big-step evaluator with fuel. An outcome is a value and the new world;
   `stopped` on a bug (overflow, division by zero, `stop`, a library call
-  outside what it accepts; with the world so far); an internal `jumped` to a
-  join point; `wrong` (stuck, only for ill-typed programs); or `outOfFuel`.
-  Overflow stops; it never wraps.
+  outside what it accepts, a map literal whose keys turn out equal; with the
+  world so far); an internal `jumped` to a join point; `wrong` (stuck, only
+  for ill-typed programs); or `outOfFuel`. Overflow stops; it never wraps.
 
 How each Mo feature lowers to Core is written down in
 [TRANSLATION.md](TRANSLATION.md), section by section, with worked examples.
@@ -72,10 +76,10 @@ test with `#guard`, so a wrong result fails the build.
 | `MoCore/Check.lean` | An executable type checker, `tc`, and its soundness: `tc_sound`, `checkProgram_sound`. |
 | `MoCore/Fuel.lean` | Fuel is only a bound: `eval_fuel_mono`. |
 | `MoCore/DSL.lean` | Lean helpers for writing Core programs readably, named after the Mo constructs they lower. |
-| `MoCore/Lib.lean` | Library functions written in Core (`map`, `filter`, `sort_by_desc`, `update`, ...), as generators instantiated per type. |
-| `MoCore/Testing.lean` | `passes` and `scenario` for checking examples and tests; lemmas turning a checked program into "never goes wrong" theorems. |
+| `MoCore/Lib.lean` | Library functions written in Core (`map`, `filter`, `sort_by_desc`, `update`, ...), as generators instantiated per type, and the order they sort by (`Lib.lt`, in which a float that is "not a number" comes last). |
+| `MoCore/Testing.lean` | `passes` and `scenario` for checking examples and tests, and `stops` for checking that an expression stops on a bug; lemmas turning a checked program into "never goes wrong" theorems. |
 | `MoCore/Examples/*.lean` | The twelve samples of `examples/`, each in Core, with every example line and test of the sample as a `#guard`, and theorems that the program is well typed and never goes wrong. |
-| `TRANSLATION.md` | The lowering from every v0.1 feature to Core. |
+| `TRANSLATION.md` | The lowering from every v0.1 feature to Core, and how the model follows the answers D227 gave to the questions writing it raised. |
 
 ## The twelve programs
 
@@ -89,7 +93,7 @@ evaluates to `true`; promise anchors (12.2) are checked too.
 | --- | --- |
 | `Greet` | `greeting` with `Some`/`None`; `main` with `Args.of(["Ada", "Grace"])` and a fake console prints `["Hello, Ada!"]`. |
 | `Wc` | `count` (including `count("one two\nthree\n") == Counts(lines: 2, words: 3, bytes: 14)`), `row`; `main` over three files, one missing: status 1, the three printed rows, and `wc: gone.txt: no such file`. |
-| `Find` | `parse_args` (five examples), `matches`; `main` with `-i`, with no match (status 1) and a missing file (status 2); also `--count` and an unknown option. |
+| `Find` | `parse_args` (five examples), `matches`; `main` with `-i`, with no match (status 1) and a missing file (status 2); also `--count`, an unknown option, and lines that end in `\r\n` or keep a lone `\r`. |
 | `Expenses` | `parse_line` (five), `totals` (`[food(1.50), rent(4), food(3)]` gives `[("food", 4.50), ("rent", 4)]`), `layout`; `main` on a CSV with a malformed line. |
 | `Json` | the whole parser: `parse` (five examples, including `é`), `hex_value`, `pretty`, `quoted`, `at_path` (three); `main` answering `items.0.name`; a pretty-printed document and a parse error through `main`. |
 | `Todo` | `parse_command` (five), `parse_items`, `format`, `apply` (three); the promise's anchors; `main` run four times against one in-memory file system, then `files.read_text` and the listing. |
@@ -97,8 +101,8 @@ evaluates to `true`; promise anchors (12.2) are checked too.
 | `RateLimit` | `new_limiter` (three); the request sequence of both tests, at `t0`, then `t0 + 500.milliseconds` (500000 µs); the promise's anchors; a longer sequence with a slow refill. |
 | `JobQueue` | `lease` (two), `fail` (four), `expire` (two); two promises' anchors; the three-attempts test with a range loop and assertions. |
 | `Kv` | `parse` (seven), `increment` (four, including the overflow at `9223372036854775807`), `expire` (four); the promise's anchors; key expiry; the console session. |
-| `NotesTool` | `search_notes` over in-memory files: only `.md` notes, case ignored; the limit and `truncated?`; typed errors; the promise's anchors; a `within("notes")` capability that sees only its folder. |
-| `Inventory` | the generic `top_by`, `count_by`, `first_by` and `table`, instantiated at the types the sample uses (`top_by[Int,Int]`, `first_by[Text,Option(Char)]`, ...): their nine examples and two tests, and `main`'s whole output. |
+| `NotesTool` | `search_notes` over in-memory files: only `.md` notes, case ignored; the limit and `truncated?`; typed errors; the promise's anchors; a `within("notes")` capability that sees only its folder, a `within("..")` one that reaches nothing, and paths with `..` inside and outside the folder. |
+| `Inventory` | the generic `top_by`, `count_by`, `first_by` and `table`, instantiated at the types the sample uses (`top_by[Int,Int]`, `first_by[Text,Option(Char)]`, ...): their nine examples and two tests, and `main`'s whole output; also a map literal whose keys turn out equal (a bug), and `to_map` with a repeated key. |
 
 ## What is proven
 
@@ -138,11 +142,11 @@ Everything below is fully proven: there is no `sorry` anywhere.
   `cmp_safe` (`<`, `<=`, `>`, `>=` at all nine base types), `charOp_safe` (7),
   `textOp_safe` (all 26), `timeOp_safe` (all 13 `Time` and `Duration`
   operations), `listOp_safe` (all 19 list operations, at every element type),
-  `mapOp_safe` (all 11, at every key and value type), `eq_safe` (structural
-  equality at every type), and `ioOp_safe` (all 17 capability operations on
-  the world, 21 counting the `Files` and `ReadFiles` forms apart). So every
-  primitive is proven safe, and `type_safety` has no hypothesis on
-  primitives.
+  `mapOp_safe` (all 12, map literals included, at every key and value type),
+  `eq_safe` (structural equality at every type), and `ioOp_safe` (all 17
+  capability operations on the world, 21 counting the `Files` and `ReadFiles`
+  forms apart). So every primitive is proven safe, and `type_safety` has no
+  hypothesis on primitives.
 
 **The checker is sound** (`MoCore/Check.lean`):
 
@@ -188,17 +192,22 @@ No theorem is left with `sorry`. What the proofs don't yet cover:
   respect their types and ranges, not to compute what reference 14 says (for
   example, that `decMul` rounds ties to even). The examples test that.
 - **Floats** have no proofs beyond their types, and their text form is
-  Lean's, not the shortest spelling.
+  Lean's, not the shortest spelling that reference 9.2 asks for
+  (TRANSLATION.md, item 19 of the last section).
 - **Completeness of the checker** (that it accepts every well-typed
   expression) is not proven; it is sound, and accepts all twelve programs.
 - **Progress for programs that don't terminate**: the evaluator returns
   `outOfFuel` for them; there is no coinductive semantics.
 
 Not modeled yet: `Byte` and `Bytes`, the `Unicode16` module, `Range` as a
-type of its own (a range is the pair of its ends, TRANSLATION.md 7.5), and a
-text form (S-expressions) for Core programs and values, which architecture
-section 4.4 asks `formal/` to define for exchanging programs with the C
-toolchain.
+type of its own (a range is the pair of its ends, TRANSLATION.md 7.5), the
+fake constructors (a test's fakes are its starting world, so two fakes of one
+kind can't be in use at the same time, TRANSLATION.md 12.4), the program
+layer of architecture section 4.1 (constants are functions without
+parameters, and nothing computes them all before `main` or the first test,
+TRANSLATION.md 10.4), and a text form (S-expressions) for Core programs and
+values, which architecture section 4.4 asks `formal/` to define for
+exchanging programs with the C toolchain.
 
 ## Axioms
 

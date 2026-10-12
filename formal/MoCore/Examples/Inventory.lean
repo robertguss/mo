@@ -278,6 +278,22 @@ assert top_by(products, 2, stock_value) == [lamp, notebook]
              "One from each category: Kettle, Desk lamp, Doormat"]))
   {} [("console", .console)]
 
+/-! ### More: map literals and `to_map` (reference 3.8, 14)
+
+A map literal whose keys turn out equal as the program runs is a bug; `to_map`
+keeps the later value of a repeated key, in the key's first place. -/
+
+def pairTy : Ty := tTup [tInt, tInt]
+def pairs (ps : List (Int × Int)) : Expr := listOf pairTy (ps.map fun (a, b) => tup [int a, int b])
+
+-- a = 1, b = 1, {a: 1, b: 2} stops
+#guard stops program (lets [("a", int 1), ("b", int 1)] (mapOf tInt tInt [(v "a", int 1), (v "b", int 2)]))
+  (tMap tInt tInt) .repeatedKey
+-- [(1, 1), (2, 2), (1, 3)].to_map.entries == [(1, 3), (2, 2)]
+#guard passes program
+  (eq (tList pairTy) (mop tInt tInt .entries [mop tInt tInt .ofList [pairs [(1, 1), (2, 2), (1, 3)]]])
+    (pairs [(1, 3), (2, 2)]))
+
 /-! ### Never wrong -/
 
 /-- Running `main` never goes wrong. -/

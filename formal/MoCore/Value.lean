@@ -53,8 +53,10 @@ instance (t : Int) : Decidable (InTime t) := inferInstanceAs (Decidable (_ ∧ _
 * `map` is an association list in insertion order, with distinct keys.
 * A `closure` captures the environment it was made in.
 * A capability value `cap c root` is a handle: what it reaches is in the
-  `World`; `root` is the folder a `Files` or `ReadFiles` handle is narrowed to
-  (`""` for the folder the program started in). -/
+  `World`. `root` is the folder a `Files` or `ReadFiles` handle is narrowed to
+  (`some ""` for the folder the program started in), or `none` for a handle
+  that reaches nothing, which `within` a path that would leave the folder
+  gives (reference 11.3, 14). Other capabilities ignore it. -/
 inductive Value where
   | int (n : Int)
   | bigInt (n : Int)
@@ -71,7 +73,7 @@ inductive Value where
   | map (es : List (Value × Value))
   | con (c : String) (fields : List Value)
   | closure (env : List (String × Value)) (params : List (String × Ty)) (body : Expr)
-  | cap (c : Cap) (root : String)
+  | cap (c : Cap) (root : Option String)
   deriving Repr, Inhabited
 
 /-- An environment: variables and their values, innermost first. -/
@@ -144,6 +146,9 @@ inductive Bug where
   | stop (reason : String)
   /-- Calling a library function outside what it accepts, such as `take(-1)`. -/
   | outside (call : String)
+  /-- Two keys of a map literal that turn out equal as the program runs, as
+  in `{a: 1, b: 2}` when `a == b` (reference 3.8, 13.2). -/
+  | repeatedKey
   deriving Repr, Inhabited, DecidableEq
 
 /-- The outcome of evaluating an expression. -/

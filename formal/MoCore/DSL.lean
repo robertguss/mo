@@ -135,9 +135,14 @@ def listOf (t : Ty) (es : List Expr) : Expr := lop t (.lit es.length) es
 def nil (t : Ty) : Expr := listOf t []
 def mop (k val : Ty) (op : MapOp) (args : List Expr) : Expr := prim (.map k val op) args
 def emptyMap (k val : Ty) : Expr := mop k val .empty []
-/-- A map literal `{k1: v1, ...}`: each key set in turn. -/
+/-- The arguments of a map literal: key, value, key, value, ... -/
+def mapLitArgs : List (Expr × Expr) → List Expr
+  | [] => []
+  | (key, x) :: kvs => key :: x :: mapLitArgs kvs
+/-- A map literal `{k1: v1, ...}`: `%map.lit n`, which computes the keys and
+values in source order and stops if two keys turn out equal (reference 3.8). -/
 def mapOf (k val : Ty) (kvs : List (Expr × Expr)) : Expr :=
-  kvs.foldl (fun m kv => mop k val .set [m, kv.1, kv.2]) (emptyMap k val)
+  mop k val (.lit kvs.length) (mapLitArgs kvs)
 /-- `Set.empty`. -/
 def emptySet (t : Ty) : Expr := emptyMap t .unit
 /-- A list of texts: `["a", "b"]`. -/
@@ -156,9 +161,10 @@ def some_ (t : Ty) (e : Expr) : Expr := .con (.option t) "Some" [e]
 def none_ (t : Ty) : Expr := .con (.option t) "None" []
 def ok_ (t err : Ty) (e : Expr) : Expr := .con (.result t err) "Ok" [e]
 def err_ (t err : Ty) (e : Expr) : Expr := .con (.result t err) "Error" [e]
-/-- `case e  Some(x): someB  None: noneB  end`. -/
+/-- `case e  Some(x): someB  None: noneB  end`. Core's arms follow the
+declaration order, `None` then `Some` (reference 8). -/
 def caseOpt (e : Expr) (x : String) (someB noneB : Expr) : Expr :=
-  .case_ e [("Some", [x], someB), ("None", [], noneB)]
+  .case_ e [("None", [], noneB), ("Some", [x], someB)]
 /-- `case e  Ok(x): okB  Error(y): errB  end`. -/
 def caseRes (e : Expr) (x : String) (okB : Expr) (y : String) (errB : Expr) : Expr :=
   .case_ e [("Ok", [x], okB), ("Error", [y], errB)]
@@ -215,8 +221,8 @@ def forList (lbl : String) (t : Ty) (x : String) (xs : Expr) (st : List (String 
   .join (lbl ++ ".done") st after <|
     .join (lbl ++ ".loop") ((rest, .list t) :: st)
       (.case_ (lop t .uncons [v rest])
-        [("Some", [p], lets [(x, fst (v p)), (rest, snd (v p))] body),
-         ("None", [], .jump (lbl ++ ".done") (st.map fun s => v s.1))])
+        [("None", [], .jump (lbl ++ ".done") (st.map fun s => v s.1)),
+         ("Some", [p], lets [(x, fst (v p)), (rest, snd (v p))] body)])
       (.jump (lbl ++ ".loop") (xs :: init))
 
 /-- The next round of a `for` loop, with the new state. -/
@@ -249,7 +255,7 @@ namespace MoCore.DSL
 
 /-- The capability handles the runtime (or a test's fakes) hands over: each
 variable bound to a handle on the folder the program started in. -/
-def handles (caps : List (String × Cap)) : Env := caps.map fun (x, c) => (x, .cap c "")
+def handles (caps : List (String × Cap)) : Env := caps.map fun (x, c) => (x, .cap c (some ""))
 
 end MoCore.DSL
 

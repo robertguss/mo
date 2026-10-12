@@ -270,8 +270,12 @@ inductive ListOp where
   | zip (u : Ty)
   deriving Repr, Inhabited
 
-/-- Operations on `Map(K, V)`, which keeps insertion order. -/
+/-- Operations on `Map(K, V)`, which keeps insertion order. `lit n` is a map
+literal with `n` entries, given as key, value, key, value, ... in source
+order; it stops if two keys turn out equal (reference 3.8). `ofList` is
+`List.to_map`, in which the later value of a repeated key wins (reference 14). -/
 inductive MapOp where
+  | lit (n : Nat)
   | empty | size | isEmpty | get | has | set | remove | keys | values | entries | ofList
   deriving DecidableEq, Repr, Inhabited
 
@@ -399,7 +403,14 @@ def ListOp.sig (t : Ty) : ListOp → List Ty × Ty
   | .contains => ([.list t, t], .bool)
   | .zip u => ([.list t, .list u], .list (.tuple [t, u]))
 
+/-- The argument types of a map literal with `n` entries: a key and its value
+for each entry. -/
+def mapLitTys (k v : Ty) : Nat → List Ty
+  | 0 => []
+  | n + 1 => k :: v :: mapLitTys k v n
+
 def MapOp.sig (k v : Ty) : MapOp → List Ty × Ty
+  | .lit n => (mapLitTys k v n, .map k v)
   | .empty => ([], .map k v)
   | .size => ([.map k v], .int)
   | .isEmpty => ([.map k v], .bool)
@@ -536,8 +547,9 @@ where
     | [] => none
     | fd :: fds => if f = fd.name then some fd else go fds
 
-/-- The constructors of `Option(T)`: `Some(T)` then `None` (reference 8). -/
-def optionCtors (t : Ty) : List Ctor := [⟨"Some", [("value", t)]⟩, ⟨"None", []⟩]
+/-- The constructors of `Option(T)`: `None` then `Some(T)`, in the order
+reference 8 declares them, which is also their order (reference 9.2). -/
+def optionCtors (t : Ty) : List Ctor := [⟨"None", []⟩, ⟨"Some", [("value", t)]⟩]
 
 /-- The constructors of `Result(T, E)`: `Ok(T)` then `Error(E)`. -/
 def resultCtors (t e : Ty) : List Ctor := [⟨"Ok", [("value", t)]⟩, ⟨"Error", [("error", e)]⟩]
