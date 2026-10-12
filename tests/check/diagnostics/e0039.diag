@@ -1,0 +1,6 @@
+E0039 10.1
+0:19..25
+expose lists the module's public names
+A module's expose line lists its public names (reference 10.1).
+expose lists the module's public names
+fixes 0

@@ -1,0 +1,2 @@
+module Main
+use Other

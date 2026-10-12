@@ -1,0 +1,7 @@
+E0040 10.2
+0:19..28
+expose a type with (..) to expose its cases
+Exposing a type without (..) hides its fields or cases (reference 10.2).
+expose a type with (..) to expose its cases
+secondary 0:35..41 declared here
+fixes 0

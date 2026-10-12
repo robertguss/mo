@@ -1,0 +1,7 @@
+E0041 10.1
+0:22..28
+everything not on expose is private to the module
+Everything not on expose is private to the module (reference 10.1).
+everything not on expose is private to the module
+secondary 1:141..147 declared here
+fixes 0

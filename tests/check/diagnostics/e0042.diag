@@ -1,0 +1,6 @@
+E0042 5.1
+0:16..21
+functions share a name only for different types in their module
+Two functions share a name only when their first parameters are different types declared in that module (reference 5.1).
+functions share a name only for different types in their module
+fixes 0

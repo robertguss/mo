@@ -1,0 +1,6 @@
+E0036 10.3
+1:17..21
+modules use each other in a cycle
+A cycle of modules that use each other is an error (reference 10.3).
+Main
+fixes 0

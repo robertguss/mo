@@ -1,0 +1,10 @@
+E0038 10.3
+0:29..34
+a clash between names
+A clash between names is an error; use the qualified form (reference 10.3).
+a clash between names
+secondary 0:22..27 declared here
+fixes 1
+remove the repeated import
+0:27..34
+""

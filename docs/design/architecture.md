@@ -248,7 +248,69 @@ parsing the rest. It follows `use` lines to the files they name, and builds
 the module graph, refusing cycles. The library's modules (`lib/`) are found
 in the toolchain's own folder, and are always available.
 
+**The loading boundary.** `mo_load` takes an explicit library folder from
+the caller, rather than locating the running executable. The tools supply
+the installed library's path; `NULL` permits a library-free fixture while
+`lib/` is being built. A supplied folder must exist. All its `.mo` files,
+including unused modules, are included. Discovery does not enter symlinked
+folders, but ordinary source-file symlinks are followed by the source reader.
+Library files are sorted by path before their headers are read. The entry
+is always module zero, followed by library files and uses in discovery
+order; a separate dependency-first order names every module once.
+
+The root is derived from the entry path's spelling, not its `realpath`:
+the path must end at a folder boundary in the declared name's file path.
+This preserves a caller's chosen module root through source-file links.
+CapCase words are split before an uppercase letter following a lowercase
+letter or digit, or beginning a lowercase word after an acronym:
+`XMLReader` becomes `xml-reader`, and `Unicode16` becomes `unicode16`.
+Other module paths use the same conversion. Names and paths must agree.
+`Json` and `Unicode16` are reserved even in library-free fixtures; every
+discovered library name is reserved too.
+
+An AVL name index shares diamond dependencies without repeated file reads.
+An explicit DFS stack bounds graph traversal by `MO_LIMIT_FILES`, not the
+C stack. The loader stops at the first loading error, and never hands a
+partial graph or erroneous syntax to checking. A header read that adds a
+diagnostic fails loading even if it returned a usable header. Full parsing
+starts only after the complete graph passes. All stage storage, including
+discovery scratch, belongs to the caller's arena; source storage and
+diagnostics retain their base-module budgets. E1058 reports allocation
+failure. `MO_LIMIT_LIBRARY_ENTRIES` (65,536, E1059) bounds discovery even
+when no source files are present. Source bytes, file count and path lengths
+use the existing base limits and their codes.
+
 ### 3.3 Names and types
+
+**Module interfaces precede bodies.** `mo_resolve_modules` indexes complete
+loaded syntax, checks top-level name clashes and overload ownership, marks
+exposure, and resolves explicit imports. Its result is not a checked
+program: body checking still owns lexical names, signature types, uses of
+hidden insides, unused imports and every flow rule below. Tests, which have
+textual labels rather than callable names, are not module symbols.
+
+Symbols are sorted by name and source position; lookup is binary search.
+All overloads travel together in one import. Their first parameter must
+have a distinct locally declared record or choice constructor; two
+applications of the same generic constructor do not distinguish overloads.
+Module prefixes live separately from value/type names, so importing module
+`Money` and its type `Money` does not clash. This is not a user-defined alias.
+Exposing `T(..)` exposes its cases; importing `T` brings those exposed
+cases. Directly exposing a case is refused: cases are exported through
+their owning type's `(..)`, not independently. Repeated expose entries
+merge, with `(..)` taking precedence. Repeated explicit imports are
+clashes, detected before case expansion; a repeated name in one use list
+has a deletion fix. Other clashes suggest qualification without rewriting
+uses whose intended binding is unknown.
+
+Interface work is bounded by source declarations and imported names, not
+pairwise name scans. `MO_LIMIT_MODULE_IMPORTS` (1,048,576, E1060) counts
+one per imported name group plus the choice cases it brings, before
+expansion. Temporary request indices and all interfaces use the caller's
+arena, not unaccounted scratch. Interface declaration and origin pointers
+borrow the loaded syntax, which must outlive them. Loading and interface
+checking are the first independently usable slice; `mo_check` and its
+typed program follow.
 
 Type checking is **bidirectional**, one function body at a time. A signature
 is given, and the body is checked against it: an expression is either
@@ -1017,7 +1079,14 @@ MO_MUST_USE struct mo_module_syntax *mo_parse(struct mo_arena *arena, const stru
 MO_MUST_USE bool mo_read_header(struct mo_arena *arena, const struct mo_sources *sources, uint32_t file,
                                 struct mo_header *header_out, struct mo_diags *diags);
 
-/* src/check/check.h: the whole program, checked, or NULL with diagnostics. */
+/* src/check/check.h: implemented loading and module interfaces; NULL with diagnostics. */
+MO_MUST_USE struct mo_module_set *mo_load(struct mo_arena *arena, struct mo_sources *sources,
+                                          const char *entry, const char *library,
+                                          struct mo_diags *diags);
+MO_MUST_USE struct mo_module_interfaces *mo_resolve_modules(struct mo_arena *arena,
+                                                            const struct mo_module_set *set,
+                                                            struct mo_diags *diags);
+/* Planned next: the whole program, checked, or NULL with diagnostics. */
 MO_MUST_USE struct mo_program *mo_check(struct mo_arena *arena, struct mo_module_syntax *const *modules,
                                         uint32_t count, struct mo_diags *diags);
 

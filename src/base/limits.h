@@ -36,6 +36,15 @@
  * refuses one more: E1003. */
 #define MO_LIMIT_FILES 4096
 
+/* Directory entries inspected while finding the toolchain's library modules, including
+ * non-source files and folders but not . and ..: E1059. This bounds a source-free directory tree.
+ */
+#define MO_LIMIT_LIBRARY_ENTRIES 65536
+
+/* Unqualified names imported by one module, including exposed choice cases: E1060. This
+ * bounds expansion when a short use line brings in a large choice interface. */
+#define MO_LIMIT_MODULE_IMPORTS (1 << 20)
+
 /* Bytes in a source file's path, as the toolchain names it to the system. mo_sources_add refuses a
  * longer one: E1004. */
 #define MO_LIMIT_PATH_SIZE 4096

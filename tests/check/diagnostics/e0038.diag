@@ -1,0 +1,7 @@
+E0038 10.3
+0:23..28
+a clash between names
+A clash between names is an error (reference 10.3).
+a clash between names
+secondary 0:13..18 declared here
+fixes 0
