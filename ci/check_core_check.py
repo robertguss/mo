@@ -621,7 +621,8 @@ def main():
             try:
                 doc = parse(raw.decode("utf-8"))
                 payload = doc[2] if doc[:2] == [Atom("core"), Atom(VERSION)] else None
-            except (ValueError, IndexError, RecursionError, UnicodeError):
+            # A fuzzer-made escape such as \u{fffffffffff} overflows chr(): unparseable, like the rest.
+            except (ValueError, IndexError, RecursionError, UnicodeError, OverflowError):
                 payload = None
             if payload and payload[0] in ("Run", "Program"):
                 p = payload[1] if payload[0] == "Run" and len(payload) > 1 else payload
