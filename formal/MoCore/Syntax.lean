@@ -29,7 +29,8 @@ inductive Cap where
   that are always in scope (reference 10.5). They are ordinary choice types, but
   their instances are named structurally, so that primitives can return them
   without the program declaring them; `ctorsOf` gives their constructors.
-* `Set(T)` is lowered to `Map(T, Unit)`, so there is no set type. -/
+* `map k v` and `set t` are `Map(K, V)` and `Set(T)`, whose values keep
+  insertion order (reference 3.8). -/
 inductive Ty where
   | int        -- 64-bit, checked
   | bigInt
@@ -47,6 +48,7 @@ inductive Ty where
   | tuple (ts : List Ty)
   | list (t : Ty)
   | map (k v : Ty)
+  | set (t : Ty)
   | data (name : String)
   | option (t : Ty)
   | result (t e : Ty)
@@ -71,6 +73,7 @@ def Ty.beq : Ty → Ty → Bool
   | .tuple as, .tuple bs => Ty.beqList as bs
   | .list a, .list b => Ty.beq a b
   | .map k v, .map k' v' => Ty.beq k k' && Ty.beq v v'
+  | .set a, .set b => Ty.beq a b
   | .data s, .data s' => s == s'
   | .option a, .option b => Ty.beq a b
   | .result a e, .result b e' => Ty.beq a b && Ty.beq e e'
@@ -91,6 +94,7 @@ theorem Ty.beq_refl : ∀ (a : Ty), Ty.beq a a = true
   | .tuple as => by simp only [Ty.beq]; exact Ty.beqList_refl as
   | .list a => by simp only [Ty.beq]; exact Ty.beq_refl a
   | .map k v => by simp only [Ty.beq, Ty.beq_refl k, Ty.beq_refl v, Bool.and_self]
+  | .set a => by simp only [Ty.beq]; exact Ty.beq_refl a
   | .data s => by simp [Ty.beq]
   | .option a => by simp only [Ty.beq]; exact Ty.beq_refl a
   | .result a e => by simp only [Ty.beq, Ty.beq_refl a, Ty.beq_refl e, Bool.and_self]
@@ -116,6 +120,9 @@ theorem Ty.eq_of_beq : ∀ (a b : Ty), Ty.beq a b = true → a = b
   | .map k v, b, h => by
       cases b <;> simp only [Ty.beq, Bool.false_eq_true, Bool.and_eq_true] at h
       rw [Ty.eq_of_beq k _ h.1, Ty.eq_of_beq v _ h.2]
+  | .set a, b, h => by
+      cases b <;> simp only [Ty.beq, Bool.false_eq_true] at h
+      rw [Ty.eq_of_beq a _ h]
   | .option a, b, h => by
       cases b <;> simp only [Ty.beq, Bool.false_eq_true] at h
       rw [Ty.eq_of_beq a _ h]
@@ -152,6 +159,7 @@ def Ty.render : Ty → String
   | .tuple ts => "(" ++ Ty.renderList ts ++ ")"
   | .list t => "List(" ++ Ty.render t ++ ")"
   | .map k v => "Map(" ++ Ty.render k ++ ", " ++ Ty.render v ++ ")"
+  | .set t => "Set(" ++ Ty.render t ++ ")"
   | .data s => s
   | .option t => "Option(" ++ Ty.render t ++ ")"
   | .result t e => "Result(" ++ Ty.render t ++ ", " ++ Ty.render e ++ ")"
@@ -308,6 +316,14 @@ inductive MapOp where
   | empty | size | isEmpty | get | has | set | remove | keys | values | entries | ofList
   deriving DecidableEq, Repr, Inhabited
 
+/-- Operations on `Set(T)`, which keeps insertion order and holds no element
+twice (reference 3.8). `empty` is the constant `Set.empty`; `ofList` is
+`List.to_set`; `toList` is `to_list`, which a `for` loop takes apart as it
+takes a list apart. -/
+inductive SetOp where
+  | empty | size | isEmpty | has | add | remove | toList | ofList
+  deriving DecidableEq, Repr, Inhabited
+
 /-- Operations on capabilities: the only way a program touches the world.
 `ro` selects `ReadFiles` (true) or `Files` (false). -/
 inductive IoOp where
@@ -342,8 +358,10 @@ inductive Prim where
   | time (op : TimeOp)
   | list (t : Ty) (op : ListOp)
   | map (k v : Ty) (op : MapOp)
+  | set (t : Ty) (op : SetOp)
   /-- Structural equality at a type with the `Equal` ability (reference 9.2):
-  fields compared in turn, maps by their entries in any order, floats by IEEE. -/
+  fields compared in turn, maps by their entries and sets by their elements in
+  any order, floats by IEEE. -/
   | eq (t : Ty)
   | io (op : IoOp)
   deriving Repr, Inhabited
@@ -476,6 +494,15 @@ def MapOp.sig (k v : Ty) : MapOp → List Ty × Ty
   | .entries => ([.map k v], .list (.tuple [k, v]))
   | .ofList => ([.list (.tuple [k, v])], .map k v)
 
+def SetOp.sig (t : Ty) : SetOp → List Ty × Ty
+  | .empty => ([], .set t)
+  | .size => ([.set t], .int)
+  | .isEmpty => ([.set t], .bool)
+  | .has => ([.set t, t], .bool)
+  | .add | .remove => ([.set t, t], .set t)
+  | .toList => ([.set t], .list t)
+  | .ofList => ([.list t], .set t)
+
 def IoOp.sig : IoOp → List Ty × Ty
   | .argsList => ([.cap .args], .list .text)
   | .envGet => ([.cap .env, .text], .option .text)
@@ -509,6 +536,7 @@ def Prim.sig : Prim → List Ty × Ty
   | .time op => op.sig
   | .list t op => op.sig t
   | .map k v op => op.sig k v
+  | .set t op => op.sig t
   | .eq t => ([t, t], .bool)
   | .io op => op.sig
 

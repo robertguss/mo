@@ -30,8 +30,7 @@ abbrev tDur : Ty := .duration
 abbrev tFileError : Ty := .fileError
 def tList (t : Ty) : Ty := .list t
 def tMap (k v : Ty) : Ty := .map k v
-/-- `Set(T)` lowers to `Map(T, Unit)`. -/
-def tSet (t : Ty) : Ty := .map t .unit
+def tSet (t : Ty) : Ty := .set t
 def tOpt (t : Ty) : Ty := .option t
 def tRes (t e : Ty) : Ty := .result t e
 def tTup (ts : List Ty) : Ty := .tuple ts
@@ -136,7 +135,7 @@ def cat : List Expr → Expr
   | e :: es => top .concat [e, cat es]
 def teq (a b : Expr) : Expr := eq .text a b
 
-/-! ## Lists and maps -/
+/-! ## Lists, maps and sets -/
 
 def lop (t : Ty) (op : ListOp) (args : List Expr) : Expr := prim (.list t op) args
 /-- A list literal `[e1, ..., en]`. -/
@@ -152,8 +151,9 @@ def mapLitArgs : List (Expr × Expr) → List Expr
 values in source order and stops if two keys turn out equal (reference 3.8). -/
 def mapOf (k val : Ty) (kvs : List (Expr × Expr)) : Expr :=
   mop k val (.lit kvs.length) (mapLitArgs kvs)
+def sop (t : Ty) (op : SetOp) (args : List Expr) : Expr := prim (.set t op) args
 /-- `Set.empty`. -/
-def emptySet (t : Ty) : Expr := emptyMap t .unit
+def emptySet (t : Ty) : Expr := sop t .empty []
 /-- A list of texts: `["a", "b"]`. -/
 def strs (xs : List String) : Expr := listOf .text (xs.map str)
 

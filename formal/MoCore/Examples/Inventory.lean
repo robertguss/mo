@@ -5,7 +5,7 @@
   before Core (monomorphization: `top_by[Int,Int]`, `Column(Product)`, ...),
   abilities becoming specific primitives (`Order` on `Int` and `Decimal`,
   `Hash` and `Equal` on map keys and set members), functions as values (a
-  record field holding a function), `Set` as a map to `Unit`, and ranges.
+  record field holding a function), sets, and ranges.
 -/
 import MoCore.Testing
 
@@ -65,8 +65,8 @@ def firstBy (t k : Ty) : FunDecl :=
     lets [("seen", emptySet k), ("kept", nil t)] <|
       forList "l" t "item" (v "items") [("seen", tSet k), ("kept", tList t)] [v "seen", v "kept"]
         (lets [("k", app (v "key") [v "item"])] <|
-          ite (mop k tUnit .has [v "seen", v "k"]) (nextRound "l" [v "seen", v "kept"]) <|
-            lets [("seen", mop k tUnit .set [v "seen", v "k", unitE]),
+          ite (sop k .has [v "seen", v "k"]) (nextRound "l" [v "seen", v "kept"]) <|
+            lets [("seen", sop k .add [v "seen", v "k"]),
                   ("kept", lop t .append [v "kept", v "item"])] <|
               nextRound "l" [v "seen", v "kept"])
         (v "kept")

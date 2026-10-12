@@ -9,7 +9,7 @@
   * `WellTyped P`: every function's body has its declared result type.
   * `ValTy P v τ`: value `v` has type `τ`. It includes the number ranges, so
     `Int` values are 64-bit, `Byte` values from 0 to 255 and `Decimal` values
-    within `±(2^127 - 1)`.
+    within `±(2^127 - 1)`, and a set holds no element twice.
   * `OutcomeOk P Δ τ o`: what type safety promises of an outcome.
   * `PrimSafe P p`: primitive `p` respects its signature.
 -/
@@ -103,6 +103,8 @@ inductive ValTy (P : Program) : Value → Ty → Prop
   | tuple {vs ts} : ValsTy P vs ts → ValTy P (.tuple vs) (.tuple ts)
   | list {vs t} : (∀ x ∈ vs, ValTy P x t) → ValTy P (.list vs) (.list t)
   | map {es k t} : (∀ e ∈ es, ValTy P e.1 k) → (∀ e ∈ es, ValTy P e.2 t) → ValTy P (.map es) (.map k t)
+  /-- A set's elements have its element type, and none equals another. -/
+  | set {vs t} : (∀ x ∈ vs, ValTy P x t) → Distinct vs → ValTy P (.set vs) (.set t)
   | con {τ cs c fs vs} :
       ctorsOf P τ = some cs → ctorFields c cs = some fs → ValsTy P vs (fs.map Prod.snd) →
       ValTy P (.con c vs) τ

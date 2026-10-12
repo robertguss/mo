@@ -125,6 +125,14 @@ theorem valTy_map_iff : ValTy P v (.map k t) ↔
     | con hcs => simp [ctorsOf] at hcs
   · rintro ⟨es, rfl, hk, hv⟩; exact .map hk hv
 
+theorem valTy_set_iff : ValTy P v (.set t) ↔
+    ∃ vs, v = .set vs ∧ (∀ x ∈ vs, ValTy P x t) ∧ Distinct vs := by
+  constructor
+  · intro h; cases h with
+    | set h hd => exact ⟨_, rfl, h, hd⟩
+    | con hcs => simp [ctorsOf] at hcs
+  · rintro ⟨vs, rfl, h, hd⟩; exact .set h hd
+
 theorem valTy_tuple_iff : ValTy P v (.tuple ts) ↔ ∃ vs, v = .tuple vs ∧ ValsTy P vs ts := by
   constructor
   · intro h; cases h with
@@ -270,11 +278,12 @@ macro "invert_args" : tactic => `(tactic| (
   intro vs w h
   revert h
   simp only [Prim.sig, IntOp.sig, BigOp.sig, ByteOp.sig, DecOp.sig, FloatOp.sig, CharOp.sig,
-    TextOp.sig, BytesOp.sig, RangeOp.sig, TimeOp.sig, ListOp.sig, MapOp.sig, IoOp.sig, Base.ty,
-    filesCap, valsTy_cons_iff, valsTy_nil_iff, valTy_int_iff, valTy_bigInt_iff, valTy_byte_iff,
-    valTy_decimal_iff, valTy_float_iff, valTy_bool_iff, valTy_char_iff, valTy_text_iff,
-    valTy_bytes_iff, valTy_range_iff, valTy_time_iff, valTy_duration_iff, valTy_list_iff,
-    valTy_map_iff, valTy_cap_iff, forall_exists_index, and_imp]
+    TextOp.sig, BytesOp.sig, RangeOp.sig, TimeOp.sig, ListOp.sig, MapOp.sig, SetOp.sig,
+    IoOp.sig, Base.ty, filesCap, valsTy_cons_iff, valsTy_nil_iff, valTy_int_iff,
+    valTy_bigInt_iff, valTy_byte_iff, valTy_decimal_iff, valTy_float_iff, valTy_bool_iff,
+    valTy_char_iff, valTy_text_iff, valTy_bytes_iff, valTy_range_iff, valTy_time_iff,
+    valTy_duration_iff, valTy_list_iff, valTy_map_iff, valTy_set_iff, valTy_cap_iff,
+    forall_exists_index, and_imp]
   intros
   subst_vars))
 
@@ -486,27 +495,38 @@ theorem enumerateVals_mem : ∀ {k : Nat} {xs : List Value} {y : Value}, y ∈ e
     · obtain ⟨i, x', rfl, hi, hx'⟩ := enumerateVals_mem h
       exact ⟨i, x', rfl, by simp at hi ⊢; omega, by simp [hx']⟩
 
-theorem uniqueVals_mem {xs : List Value} {y : Value} (h : y ∈ uniqueVals xs) : y ∈ xs := by
-  have key : ∀ (acc : List Value) (ys : List Value), y ∈ ys.foldl
-      (fun acc x => if acc.any (fun z => Value.equiv z x) then acc else acc ++ [x]) acc →
-      y ∈ acc ∨ y ∈ ys := by
-    intro acc ys
-    induction ys generalizing acc with
-    | nil => intro h; exact .inl h
-    | cons x ys ih =>
-      intro h
-      rcases ih _ h with h | h
-      · dsimp only at h
-        split at h
-        · exact .inl h
-        · simp only [List.mem_append, List.mem_singleton] at h
-          rcases h with h | rfl
-          · exact .inl h
-          · exact .inr (by simp)
-      · exact .inr (by simp [h])
-  rcases key [] xs h with h | h
-  · simp at h
-  · exact h
+/-- Adding an element to a set's elements keeps them typed, and none equal to
+another. -/
+theorem setAdd_ok {xs : List Value} {x : Value} {t : Ty} (hxs : ∀ y ∈ xs, ValTy P y t)
+    (hd : Distinct xs) (hx : ValTy P x t) :
+    (∀ y ∈ setAdd xs x, ValTy P y t) ∧ Distinct (setAdd xs x) := by
+  unfold setAdd
+  split
+  · exact ⟨hxs, hd⟩
+  · rename_i hnew
+    simp only [setHas, List.any_eq_true, not_exists, not_and, Bool.not_eq_true] at hnew
+    refine ⟨fun y hy => ?_, List.pairwise_append.mpr ⟨hd, by simp, fun a ha b hb => ?_⟩⟩
+    · simp only [List.mem_append, List.mem_singleton] at hy
+      rcases hy with hy | rfl
+      · exact hxs y hy
+      · exact hx
+    · simp only [List.mem_singleton] at hb
+      subst hb
+      exact hnew a ha
+
+/-- Adding elements in turn, as `List.unique`, `List.to_set` and `union` do. -/
+theorem foldl_setAdd_ok {t : Ty} : ∀ {ys xs : List Value}, (∀ y ∈ xs, ValTy P y t) →
+    Distinct xs → (∀ y ∈ ys, ValTy P y t) →
+    (∀ y ∈ ys.foldl setAdd xs, ValTy P y t) ∧ Distinct (ys.foldl setAdd xs)
+  | [], _, hxs, hd, _ => ⟨hxs, hd⟩
+  | y :: ys, _, hxs, hd, hys => by
+    simp only [List.foldl_cons]
+    obtain ⟨h1, h2⟩ := setAdd_ok hxs hd (hys y (by simp))
+    exact foldl_setAdd_ok h1 h2 fun z hz => hys z (by simp [hz])
+
+theorem uniqueVals_ok {xs : List Value} {t : Ty} (h : ∀ x ∈ xs, ValTy P x t) :
+    (∀ y ∈ uniqueVals xs, ValTy P y t) ∧ Distinct (uniqueVals xs) :=
+  foldl_setAdd_ok (by simp) List.Pairwise.nil h
 
 theorem zipWith_mem : ∀ {xs ys : List Value} {y : Value},
     y ∈ List.zipWith (fun a b => Value.tuple [a, b]) xs ys → ∃ a ∈ xs, ∃ b ∈ ys, y = .tuple [a, b]
@@ -582,7 +602,7 @@ theorem listOp_safe (t : Ty) (op : ListOp) : PrimSafe P (.list t op) := by
     exact ‹∀ x ∈ _, ValTy P x t› y (List.mem_of_mem_eraseIdx hy)
   case uncons => exact unconsV_ty ‹_›
   case contains => exact .bool
-  case unique => exact .list fun y hy => ‹∀ x ∈ _, ValTy P x t› y (uniqueVals_mem hy)
+  case unique => exact .list (uniqueVals_ok ‹_›).1
 
 /-! ## Maps -/
 
@@ -734,6 +754,29 @@ theorem mapOp_safe (k t : Ty) (op : MapOp) : PrimSafe P (.map k t op) := by
     obtain ⟨e, he, rfl⟩ := hx
     exact .tuple (.cons (‹∀ e ∈ _, ValTy P e.1 k› e he) (.cons (‹∀ e ∈ _, ValTy P e.2 t› e he) .nil))
 
+/-! ## Sets -/
+
+/-- Some of a set's elements, as `remove` keeps them: still typed, and none
+equal to another. -/
+theorem setFilter_ty {xs : List Value} {t : Ty} (p : Value → Bool) (hxs : ∀ y ∈ xs, ValTy P y t)
+    (hd : Distinct xs) : ValTy P (.set (xs.filter p)) (.set t) :=
+  .set (fun y hy => hxs y (List.mem_filter.mp hy).1) (List.Pairwise.filter p hd)
+
+theorem setOp_safe (t : Ty) (op : SetOp) : PrimSafe P (.set t op) := by
+  cases op <;> invert_args <;> simp only [Prim.eval, evalSetOp, outcomeOk_ok]
+  case empty => exact .set (by simp) List.Pairwise.nil
+  case size => exact okInt_safe
+  case isEmpty => exact .bool
+  case has => exact .bool
+  case add =>
+    obtain ⟨h1, h2⟩ := setAdd_ok ‹_› ‹_› ‹_›
+    exact .set h1 h2
+  case remove => exact setFilter_ty _ ‹_› ‹_›
+  case toList => exact .list ‹_›
+  case ofList =>
+    obtain ⟨h1, h2⟩ := uniqueVals_ok ‹_›
+    exact .set h1 h2
+
 theorem eq_safe (t : Ty) : PrimSafe P (.eq t) := by
   invert_args
   exact .bool
@@ -782,6 +825,7 @@ theorem prims_safe : PrimsSafe P := by
   | time op => exact timeOp_safe op
   | list t op => exact listOp_safe t op
   | map k t op => exact mapOp_safe k t op
+  | set t op => exact setOp_safe t op
   | eq t => exact eq_safe t
   | io op => exact ioOp_safe op
 
