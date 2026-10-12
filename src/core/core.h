@@ -642,7 +642,7 @@ enum mo_core_text_kind {
     MO_CORE_TEXT_CAP_STATE,
     MO_CORE_TEXT_RANDOM_STATE
 };
-#define MO_CORE_TEXT_VERSION "0.3"
+#define MO_CORE_TEXT_VERSION "0.4"
 MO_MUST_USE void *mo_core_text_parse(struct mo_arena *arena, enum mo_core_text_kind kind,
                                      const char *text, size_t length, struct mo_diags *diags);
 MO_MUST_USE bool mo_core_text_print(enum mo_core_text_kind kind, const void *value,

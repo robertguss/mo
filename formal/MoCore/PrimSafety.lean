@@ -228,6 +228,11 @@ theorem ValTy.optChar {o : Option Char} : ValTy P (optChar o) (.option .char) :=
   · exact .noneV
   · exact .someV .char
 
+theorem ValTy.optFloat {o : Option UInt64} : ValTy P (optFloat o) (.option .float) := by
+  cases o
+  · exact .noneV
+  · exact .someV .float
+
 theorem ValTy.decToIntV {a : Int} : ValTy P (decToIntV a) (.option .int) := by
   unfold MoCore.decToIntV; split
   · exact .optInt
@@ -313,6 +318,7 @@ theorem bigOp_safe (op : BigOp) : PrimSafe P (.big op) := by
     | exact .optInt
     | exact .text
     | exact ⟨fun _ => trivial, fun _ => .bigInt⟩
+    | exact ⟨fun _ => outside_safe, fun _ => .bigInt⟩
 
 theorem byteOp_safe (op : ByteOp) : PrimSafe P (.byte op) := by
   cases op <;> invert_args <;> simp only [Prim.eval, evalByteOp, outcomeOk_ok] <;>
@@ -338,6 +344,7 @@ theorem floatOp_safe (op : FloatOp) : PrimSafe P (.float op) := by
     | exact .float
     | exact .bool
     | exact .text
+    | exact .optDecOf
 
 theorem not_safe : PrimSafe P .not := by
   invert_args
@@ -422,6 +429,7 @@ theorem textOp_safe (op : TextOp) : PrimSafe P (.text op) := by
     | exact .optText
     | exact .optIntOf
     | exact .optDecOf
+    | exact .optFloat
     | exact .textBytes
     | exact ⟨fun _ => trivial, fun _ => .texts⟩
     | exact ⟨fun _ => trivial, fun _ => .text⟩

@@ -128,8 +128,8 @@ canonical printing, result protocol, extension rules and sample timings.
 | `MoCore/Text/*.lean` | The reference text codec: S-expressions, types/literals, primitives, programs, lossless values/worlds/outcomes, structural observations and checked run requests. |
 | `MoCore/TextChecks.lean` | Round trips for all twelve programs, every primitive/value, Builtins programs, reproducible runs and report/lexical checks. |
 | `Main.lean` | The `mocore` file/CLI protocol, with distinct diagnostic and outcome exit codes. |
-| `ExportSamples.lean` | Writes twelve entry runs plus Fakes and Library, in Core text 0.3; optional second directory exports all thirteen fuzz seeds (`lake env lean --run ExportSamples.lean DIR FUZZ_DIR`). |
-| `TEXT.md` | Complete Core text 0.3 contract shared by Lean and C, worked runs and measurements. |
+| `ExportSamples.lean` | Writes twelve entry runs plus Fakes and Library, in Core text 0.4; optional second directory exports all thirteen fuzz seeds (`lake env lean --run ExportSamples.lean DIR FUZZ_DIR`). |
+| `TEXT.md` | Complete Core text 0.4 contract shared by Lean and C, worked runs and measurements. |
 | `TRANSLATION.md` | The lowering from every v0.1 feature to Core, how the model follows the answers D227 gave to the questions writing it raised, the three things D228 added, and what the model decided in making `Byte`, `Bytes`, `Range` and `Set` types of their own. |
 
 ## The twelve programs
@@ -203,9 +203,9 @@ Everything below is fully proven: there is no `sorry` anywhere.
 - `prims_safe : PrimsSafe P`, for every program, from one theorem per group:
   `intOp_safe` (all 32 `Int` operations, including checked, wrapping and
   saturating arithmetic, conversions, `to_byte` among them, and durations),
-  `bigOp_safe` (9), `byteOp_safe` (2), `decOp_safe` (all 16 `Decimal`
-  operations), `floatOp_safe` (13), `not_safe`, `cmp_safe` (`<`, `<=`, `>`,
-  `>=` at all eleven base types), `charOp_safe` (7), `textOp_safe` (all 27,
+  `bigOp_safe` (14), `byteOp_safe` (2), `decOp_safe` (all 16 `Decimal`
+  operations), `floatOp_safe` (15), `not_safe`, `cmp_safe` (`<`, `<=`, `>`,
+  `>=` at all eleven base types), `charOp_safe` (7), `textOp_safe` (all 28,
   `bytes` included), `bytesOp_safe` (3), `rangeOp_safe` (all 6 `Range`
   operations), `timeOp_safe` (all 13 `Time` and `Duration` operations),
   `listOp_safe` (all 19 list operations, at every element type), `mapOp_safe`
@@ -274,8 +274,10 @@ No theorem is left with `sorry`. What the proofs don't yet cover:
 - **Floats** have no proofs beyond their types. Their text form writes a
   float that is not a number as `nan` and the infinities as `inf` and
   `-inf`, as reference 9.2 spells them (checked in `MoCore/Lib.lean`), but
-  any other float is Lean's `Float.toString`, not the shortest spelling that
-  reference 9.2 asks for (TRANSLATION.md, item 19 of the section on D227).
+  finite floats now use the shortest round-tripping decimal shared with
+  `to_decimal`. Exact rational-to-binary64 conversion rounds once, ties to
+  even, including subnormals and overflow; midpoint and double-rounding
+  regressions are checked by bits. Functional correctness is not proved.
   The VM's float text form is a trusted primitive, checked against Ryu
   (architecture 4.5).
 - **Completeness of the checker** (that it accepts every well-typed

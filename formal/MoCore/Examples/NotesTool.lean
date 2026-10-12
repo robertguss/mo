@@ -188,10 +188,13 @@ def notAllowed (path : String) : Expr := .con tFileError "NotAllowed" [str path]
 
 #guard passes program
   (lets [("notes", io .readOnly [io .filesInMemory [mapOf tText tText [(str "plans.md", str "# Plans\n")]]])] <|
-   and_ (eq (tRes tText tFileError) (io (.readText true) [v "notes", str "notes/../plans.md"])
-          (ok_ tText tFileError (str "# Plans\n")))
-    (eq (tRes tText tFileError) (io (.readText true) [v "notes", str "../plans.md"])
-      (err_ tText tFileError (notAllowed "../plans.md"))))
+    eq (tRes tText tFileError) (io (.readText true) [v "notes", str "notes/../plans.md"])
+      (ok_ tText tFileError (str "# Plans\n")))
+
+#guard passes program
+  (lets [("notes", io .readOnly [io .filesInMemory [mapOf tText tText [(str "plans.md", str "# Plans\n")]]])] <|
+    eq (tRes tText tFileError) (io (.readText true) [v "notes", str "../plans.md"])
+      (err_ tText tFileError (notAllowed "../plans.md")))
 
 /-! ### Never wrong -/
 

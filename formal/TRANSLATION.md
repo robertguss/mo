@@ -215,7 +215,7 @@ converted to its text form:
 | `BigInt` | `%big.toText(n)` |
 | `Byte` | `%byte.toText(b)`, its decimal digits |
 | `Decimal` | `%dec.toText(d)`, the shortest exact spelling |
-| `Float` | `%float.toText(x)`: `nan` for a float that is not a number, `inf` and `-inf` for the infinities (reference 9.2); for any other float, reference 9.2 asks for the shortest spelling, which the model doesn't give yet (item 19 of the section on D227) |
+| `Float` | `%float.toText(x)`: `nan`, `inf`, `-inf`, or the shortest round-tripping decimal (numeric decisions below) |
 | `Bool` | `if b then "true" else "false"` |
 | `Time`, `Duration` | `%time.toText(t)`, RFC 3339 in UTC with `Z` and the shortest fraction of a second; `%time.durToText(d)`, in seconds, as `1.5s` |
 | `Range` | `%range.toText(r)`, its ends with `..` between them, as in `0..3` (reference 9.2) |
@@ -1359,14 +1359,14 @@ place; *not modeled* ones are not in this model yet.
 | `Int`: `+ - * / %`, unary `-`, `abs`, `min`, `max`, `pow`, `floor_div`, `floor_mod`, `checked_*`, `wrapping_*`, `saturating_*`, `to_decimal`, `to_float`, `to_big`, `to_char`, `to_byte`, `to_text`, `seconds` ... `days` | prim (`%int.*`) |
 | `Byte`: `to_int`, `to_text` | prim (`%byte.*`) |
 | `BigInt`: `+ - * / %`, unary `-`, `abs`, `to_int`, `to_text` | prim (`%big.*`) |
-| `BigInt`: `min`, `max`, `pow`, `floor_div`, `floor_mod` | not modeled |
+| `BigInt`: `min`, `max`, `pow`, `floor_div`, `floor_mod` | prim (`%big.min`, `%big.max`, `%big.pow`, `%big.floorDiv`, `%big.floorMod`) |
 | `Decimal`: `+ - * / %`, unary `-`, `abs`, `min`, `max`, `round`, `floor`, `ceil`, `to_int`, `to_float`, `to_fixed`, `to_text` | prim (`%dec.*`) |
-| `Float`: `+ - * /`, unary `-`, `abs`, `floor`, `ceil`, `round`, `sqrt`, `nan?`, `infinite?`, `to_text` | prim (`%float.*`) |
-| `Float`: `to_decimal` | not modeled |
+| `Float`: `+ - * / %`, unary `-`, `abs`, `floor`, `ceil`, `round`, `sqrt`, `nan?`, `infinite?`, `to_text` | prim (`%float.*`) |
+| `Float`: `to_decimal` | prim (`%float.toDecimal`) |
 | `<`, `<=`, `>`, `>=` at a built-in type | prim (`%cmp.*`) |
 | `==`, `!=` | prim (`%eq`), with `%not` |
 | `Text`: `byte_count`, `char_count`, `empty?`, `chars`, `bytes`, `lines`, `words`, `split`, `trim`, `trim_start`, `trim_end`, `starts_with?`, `ends_with?`, `contains?`, `drop_prefix`, `drop_suffix`, `replace`, `repeat`, `pad_left`, `pad_right`, `ascii_lowercase`, `ascii_uppercase`, `to_int`, `to_decimal`, `Text.from_chars`, interpolation | prim (`%text.*`) |
-| `Text`: `to_float` | not modeled |
+| `Text`: `to_float` | prim (`%text.toFloat`) |
 | `Char`: `code`, `ascii_digit?`, `ascii_letter?`, `ascii_white_space?`, `ascii_lowercase`, `ascii_uppercase`, `to_text` | prim (`%char.*`) |
 | `Bytes`: `size`, `get`, `decode_utf8` | prim (`%bytes.*`) |
 | `List`: literals, `size`, `empty?`, `get`, `first`, `last`, `append`, `prepend`, `concat`, `reverse`, `take`, `drop`, `set`, `remove_at`, `enumerate`, `zip`, `contains?`, `unique` | prim (`%list.*`) |
@@ -1455,11 +1455,10 @@ section numbers after the topic are the reference's; those after "Already",
 18. **`min` and `max` with equal elements** (14): the first of them. Already
     did that.
 19. **`Float`'s text form** (9.2): numbers have their shortest spelling.
-    Unchanged: `%float.toText` prints Lean's `Float.toString`, which is not
-    the shortest (`1.5` is `1.500000`). Architecture 4.5 makes it a trusted
-    primitive checked against Ryu, and the reference doesn't say how very
-    large and very small floats are spelled. "Not a number" and the
-    infinities have their spellings since D228 (item 3 of the next section).
+    Now modeled: `%float.toText` uses the same shortest decimal coefficient
+    as `%float.toDecimal`, with the spelling choices below. Architecture
+    4.5 still requires the runtime to be checked against Ryu independently.
+    "Not a number" and the infinities retain D228's spellings.
 20. **A `var` read by an anonymous function and assigned afterwards** (5.6):
     an error. Already consistent: a closure captures values when it is made,
     and the front end rejects the programs in which a later value could
@@ -1720,7 +1719,7 @@ silently added by `runProgram`.
    dangling host handles as `invalidRun`; lossless decoding preserves them
    for debugging. Real console observations stop with `outside "console
    observation needs a fake"`; capability types do not encode provenance.
-5. **Interchange.** Core text is 0.3 only. Every handle explicitly carries
+5. **Interchange.** Core text is 0.4 only. Every handle explicitly carries
    real/fake provenance, and World transports the full store. Reports include
    all final fake states, including unreachable states and random words, in allocation
    order, alongside the existing real effects. Fuel exhaustion still has no
@@ -1845,7 +1844,63 @@ other empty/missing folders are `NotFound`. No Core `walk` is added.
 
 Text 0.3 adds these types/operations and replaces the old natural seed
 with explicit `RandomState` words in World/CapState. It does not silently
-upgrade 0.2 or reinterpret old state. Lean and C codecs move together, with
+upgrade 0.2 or reinterpret old state. Text 0.4 adds the numeric operations
+below. Lean and C codecs move together, with
 all 14 run fixtures and 13 fuzz seeds generated by `ExportSamples.lean`;
 the freshness check compares both directories byte for byte. The next
-minor version is 0.4. TEXT.md specifies exact fields and boundary reports.
+minor version is 0.5. TEXT.md specifies exact fields and boundary reports.
+
+### Numeric completion in text 0.4
+
+1. **BigInt.** `min`/`max` keep the first equal operand. `pow` takes an Int
+   exponent, stops for a negative one, and defines 0⁰ = 1 as Int.pow does.
+   `floorDiv` uses Lean's floor quotient, including negative divisors;
+   `floorMod` is a − floorDiv(a,b) × b. Either stops on a zero divisor.
+   Arithmetic remains unbounded, not narrowed to Int.
+2. **One binary64 rounding.** `ratioToFloatBits` takes the exact magnitude
+   ratio and sign, locates the exponent with integer arithmetic, then
+   rounds the significand half to even. Subnormals round in 2⁻¹⁰⁷⁴ units;
+   a carry can cross into normal values or infinity. Negative underflow
+   keeps its sign. Decimal.to_float uses count/10¹⁸ directly, never
+   Float.ofInt followed by division. No Float.ofScientific is used.
+3. **Text.to_float.** The exact grammar is reference 14's optional minus,
+   integer digits, optional point with digits and optional e/E exponent
+   with optional sign. No surrounding space, separators, leading plus or
+   case variants of special names are accepted. `nan` becomes canonical
+   quiet NaN `0x7ff8000000000000`; `inf`/`-inf` are accepted explicitly.
+   Numeric overflow that rounds to infinity gives None; signed underflow
+   gives Some(±0). Large exponents are classified before constructing
+   their powers of ten, after full syntax validation.
+4. **Shortest decimal and Float.to_decimal.** Search 1 through 17
+   significant digits for a decimal that the exact converter rounds back
+   to the original bits. Select the nearest coefficient, ties even;
+   adjacent candidates account for asymmetric power-of-two intervals.
+   Float.to_decimal scales that exact decimal to 10⁻¹⁸ and rounds half to
+   even once. Nonfinite values or a rounded count outside Decimal's range
+   give None. This is deliberately not the exact binary-rational decimal:
+   0.1 gives 0.1, not 0.100000000000000006.
+5. **Spelling left open by the reference.** Float.to_text renders the same
+   coefficient, removes trailing zeros, and chooses the shorter fixed or
+   scientific spelling, fixed on equal lengths. Scientific `e` is lowercase,
+   with no redundant plus/leading zeros. ±0 prints `0`/`-0`; special names
+   remain `nan`, `inf`, `-inf`. This keeps to_decimal and to_text consistent.
+6. **Float remainder.** `%` truncates the exact quotient toward zero, like
+   C fmod, not IEEE remainder's nearest quotient. The result and a zero
+   keep the dividend's sign; a finite dividend with infinite divisor is
+   unchanged. NaN operands, an infinite dividend or zero divisor return
+   the canonical quiet NaN above; NaN payload propagation is not specified.
+7. **Coverage check.** `ci/core_library_map.py`, invoked by library_map.sh,
+   checks every runtime primitive and arithmetic instruction's direct or
+   composite route against both C and Lean codec tables. Aliases cover
+   existing spelling differences and List.sum/comparisons are recipes.
+   Only TEXT_QUOTED, CHAR_QUOTED and TEXT_STRUCTURAL are explicitly exempt:
+   these existing lowering-generated text helpers remain unmodeled (3.4),
+   outside this numeric completion. Unknown primitives have no exemption.
+   Regression mutations remove C-only, Lean-only and both operations.
+8. **Proof boundary.** Signatures, range checks and type safety are proved
+   for every new operation; numerical functional correctness is tested,
+   not proved. Public Core/codec checks cover halfway parity, normal and
+   subnormal boundaries, signed zero, overflow, shortest-decimal ties,
+   invalid syntax and the reported double-rounding regression. Independent
+   differential validation compared 3371 finite patterns' shortest decimal
+   values with CPython repr and 3006 decimal texts' bits with Python float.

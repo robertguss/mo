@@ -15,16 +15,17 @@ def intOps : List (String × IntOp) :=
    ("minutes", .minutes), ("hours", .hours), ("days", .days)]
 def bigOps : List (String × BigOp) :=
   [("add", .add), ("sub", .sub), ("mul", .mul), ("div", .div), ("rem", .rem),
-   ("neg", .neg), ("abs", .abs), ("toInt", .toInt), ("toText", .toText)]
+   ("neg", .neg), ("abs", .abs), ("min", .min), ("max", .max), ("pow", .pow),
+   ("floorDiv", .floorDiv), ("floorMod", .floorMod), ("toInt", .toInt), ("toText", .toText)]
 def byteOps : List (String × ByteOp) := [("toInt", .toInt), ("toText", .toText)]
 def decOps : List (String × DecOp) :=
   [("add", .add), ("sub", .sub), ("mul", .mul), ("div", .div), ("rem", .rem), ("neg", .neg),
    ("abs", .abs), ("min", .min), ("max", .max), ("floor", .floor), ("ceil", .ceil),
    ("round", .round), ("toInt", .toInt), ("toText", .toText), ("toFixed", .toFixed), ("toFloat", .toFloat)]
 def floatOps : List (String × FloatOp) :=
-  [("add", .add), ("sub", .sub), ("mul", .mul), ("div", .div), ("neg", .neg), ("abs", .abs),
+  [("add", .add), ("sub", .sub), ("mul", .mul), ("div", .div), ("rem", .rem), ("neg", .neg), ("abs", .abs),
    ("sqrt", .sqrt), ("floor", .floor), ("ceil", .ceil), ("round", .round),
-   ("isNan", .isNan), ("isInfinite", .isInfinite), ("toText", .toText)]
+   ("isNan", .isNan), ("isInfinite", .isInfinite), ("toDecimal", .toDecimal), ("toText", .toText)]
 def bases : List (String × Base) :=
   [("int", .int), ("bigInt", .bigInt), ("byte", .byte), ("decimal", .decimal),
    ("float", .float), ("bool", .bool), ("char", .char), ("text", .text),
@@ -40,7 +41,8 @@ def textOps : List (String × TextOp) :=
    ("startsWith", .startsWith), ("endsWith", .endsWith), ("contains", .contains),
    ("dropPrefix", .dropPrefix), ("dropSuffix", .dropSuffix), ("replace", .replace),
    ("repeat", .«repeat»), ("padLeft", .padLeft), ("padRight", .padRight), ("lower", .lower),
-   ("upper", .upper), ("toInt", .toInt), ("toDecimal", .toDecimal), ("join", .join), ("bytes", .bytes)]
+   ("upper", .upper), ("toInt", .toInt), ("toDecimal", .toDecimal), ("toFloat", .toFloat),
+   ("join", .join), ("bytes", .bytes)]
 def bytesOps : List (String × BytesOp) := [("size", .size), ("get", .get), ("decodeUtf8", .decodeUtf8)]
 def unicodeOps : List (String × UnicodeOp) :=
   [("graphemes", .graphemes), ("displayWidth", .displayWidth), ("normalizeNfc", .normalizeNfc),
