@@ -320,9 +320,13 @@ examples. The ones a compiler is most likely to get wrong are:
 - **Ranges** `a..b` are values of type `Range`: two `Int`s. `for i in r`
   becomes a join point that counts from `r`'s start while below its end, so
   the counter never overflows.
-- **Map literals** become a primitive that builds the map from its entries
-  and stops if two keys turn out equal (reference 3.8). `to_map` is a
-  different primitive, in which the later value wins.
+- **List and map literals** compute their elements, or every key and value,
+  in order, then build the value one entry at a time: a list from
+  `List.%empty` with `append`, and a map from `Map.%empty` with
+  `Map.%literal_insert`, which stops if its key is already there (reference
+  3.8). `to_map` is a different primitive, in which the later value wins.
+  A name that starts with `%` is a primitive only lowering emits
+  (`src/base/prims.def`).
 - **Constants** become one init function each, run in the order of 3.4.
 - **`main`** is wrapped in an entry function, which receives the capabilities
   `main` declares and turns `main`'s result into an exit status: `Unit` gives

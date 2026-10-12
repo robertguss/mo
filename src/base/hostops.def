@@ -1,0 +1,78 @@
+/* Mo's capability operations: everything a program can do to the world outside it
+ * (docs/design/bytecode.md, section 7).
+ *
+ * The checker, the code generator, the verifier, the VM and the host all read this table, and
+ * none of them keeps its own copy. docs/design/library.md has a row for every line, which make
+ * library-map checks, and tests/test_tables.c checks the lines themselves. Define HOSTOP before
+ * including the file, which undefines it at its end:
+ *
+ *     #define HOSTOP(id, module, name, signature, params, bugs, spec_only) ...
+ *     #include "base/hostops.def"
+ *
+ * The first six columns are those of base/prims.def, and its header says what they hold. An
+ * operation takes its capability as its first parameter, which is borrowed: the host
+ * instruction reads it and calls the operation in its table, real or fake (bytecode.md 4.6 and
+ * 7). ReadFiles is a capability type of its own (bytecode.md 2.1), so its operations have lines
+ * of their own, which the host runs with the same code as Files's, on a handle marked
+ * read-only. print and error return Unit, so their signatures have no result type, as a Mo
+ * function type that returns Unit has none (reference 5.6).
+ *
+ * The fake constructors take no capability, so host calls them by their id alone. A
+ * constructor consumes the contents it makes the fake from, which become the fake's state, as
+ * Files.in_memory consumes its map (bytecode.md 7). Every other argument is borrowed, and a fake
+ * that keeps one, as a fake console keeps the lines it prints, keeps a duplicate.
+ *
+ * "too many open handles" is the bug of bytecode.md 7: the number of open handles on real
+ * folders has a named limit. within and read_only each make a handle, which holds its own
+ * descriptor until it is dropped. now stops when the real clock reads a time outside the years
+ * 1 to 9999, which no Time can hold (bytecode.md 2.2).
+ *
+ * spec_only: a bool, true for the operations only spec code may use, which the verifier
+ * refuses anywhere else (bytecode.md 9, item 6): the fake constructors, and Console's printed
+ * and printed_errors (reference 12.4).
+ *
+ * The lines follow docs/design/library.md, capability by capability. */
+
+#ifndef HOSTOP
+#error "Define HOSTOP(id, module, name, signature, params, bugs, spec_only) before including base/hostops.def."
+#endif
+
+/*     id                      module       name              Mo signature                                           params bugs                                  spec only */
+HOSTOP(ARGS_LIST,              "Args",      "list",           "fn(Args) : List(Text)",                               "b",   "",                                   false)
+HOSTOP(ARGS_OF,                "Args",      "of",             "fn(List(Text)) : Args",                               "o",   "",                                   true)
+
+HOSTOP(ENV_GET,                "Env",       "get",            "fn(Env, Text) : Option(Text)",                        "bb",  "",                                   false)
+HOSTOP(ENV_OF,                 "Env",       "of",             "fn(Map(Text, Text)) : Env",                           "o",   "",                                   true)
+
+HOSTOP(CONSOLE_PRINT,          "Console",   "print",          "fn(Console, Text)",                                   "bb",  "printing to an output that is gone", false)
+HOSTOP(CONSOLE_ERROR,          "Console",   "error",          "fn(Console, Text)",                                   "bb",  "printing to an output that is gone", false)
+HOSTOP(CONSOLE_READ_LINE,      "Console",   "read_line",      "fn(Console) : Option(Text)",                          "b",   "",                                   false)
+HOSTOP(CONSOLE_PRINTED,        "Console",   "printed",        "fn(Console) : List(Text)",                            "b",   "",                                   true)
+HOSTOP(CONSOLE_PRINTED_ERRORS, "Console",   "printed_errors", "fn(Console) : List(Text)",                            "b",   "",                                   true)
+HOSTOP(CONSOLE_FAKE,           "Console",   "fake",           "fn() : Console",                                      "",    "",                                   true)
+HOSTOP(CONSOLE_FAKE_INPUT,     "Console",   "fake_input",     "fn(List(Text)) : Console",                            "o",   "",                                   true)
+
+HOSTOP(FILES_READ_TEXT,        "Files",     "read_text",      "fn(Files, Text) : Result(Text, FileError)",           "bb",  "",                                   false)
+HOSTOP(FILES_READ_BYTES,       "Files",     "read_bytes",     "fn(Files, Text) : Result(Bytes, FileError)",          "bb",  "",                                   false)
+HOSTOP(FILES_WRITE_TEXT,       "Files",     "write_text",     "fn(Files, Text, Text) : Result(Unit, FileError)",     "bbb", "",                                   false)
+HOSTOP(FILES_APPEND_TEXT,      "Files",     "append_text",    "fn(Files, Text, Text) : Result(Unit, FileError)",     "bbb", "",                                   false)
+HOSTOP(FILES_REMOVE,           "Files",     "remove",         "fn(Files, Text) : Result(Unit, FileError)",           "bb",  "",                                   false)
+HOSTOP(FILES_LIST,             "Files",     "list",           "fn(Files, Text) : Result(List(Text), FileError)",     "bb",  "",                                   false)
+HOSTOP(FILES_EXISTS,           "Files",     "exists?",        "fn(Files, Text) : Bool",                              "bb",  "",                                   false)
+HOSTOP(FILES_WITHIN,           "Files",     "within",         "fn(Files, Text) : Files",                             "bb",  "too many open handles",              false)
+HOSTOP(FILES_READ_ONLY,        "Files",     "read_only",      "fn(Files) : ReadFiles",                               "b",   "too many open handles",              false)
+HOSTOP(FILES_IN_MEMORY,        "Files",     "in_memory",      "fn(Map(Text, Text)) : Files",                         "o",   "",                                   true)
+
+HOSTOP(READFILES_READ_TEXT,    "ReadFiles", "read_text",      "fn(ReadFiles, Text) : Result(Text, FileError)",       "bb",  "",                                   false)
+HOSTOP(READFILES_READ_BYTES,   "ReadFiles", "read_bytes",     "fn(ReadFiles, Text) : Result(Bytes, FileError)",      "bb",  "",                                   false)
+HOSTOP(READFILES_LIST,         "ReadFiles", "list",           "fn(ReadFiles, Text) : Result(List(Text), FileError)", "bb",  "",                                   false)
+HOSTOP(READFILES_EXISTS,       "ReadFiles", "exists?",        "fn(ReadFiles, Text) : Bool",                          "bb",  "",                                   false)
+HOSTOP(READFILES_WITHIN,       "ReadFiles", "within",         "fn(ReadFiles, Text) : ReadFiles",                     "bb",  "too many open handles",              false)
+
+HOSTOP(CLOCK_NOW,              "Clock",     "now",            "fn(Clock) : Time",                                    "b",   "time outside the years 1 to 9999",   false)
+HOSTOP(CLOCK_FIXED,            "Clock",     "fixed",          "fn(Time) : Clock",                                    "b",   "",                                   true)
+
+HOSTOP(RANDOM_INT,             "Random",    "int",            "fn(Random, Int, Int) : Int",                          "bbb", "high not greater than low",          false)
+HOSTOP(RANDOM_SEEDED,          "Random",    "seeded",         "fn(Int) : Random",                                    "b",   "",                                   true)
+
+#undef HOSTOP

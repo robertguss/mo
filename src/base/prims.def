@@ -1,0 +1,226 @@
+/* Mo's primitives: the library functions written in C (docs/design/bytecode.md, section 6).
+ *
+ * The checker, the code generator, the verifier and the VM all read this table, and none of
+ * them keeps its own copy. docs/design/library.md says where every function and operator of
+ * the library is implemented, and make library-map checks that it has a row for every line
+ * here; tests/test_tables.c checks the lines themselves. Define PRIM before including the
+ * file, which undefines it at its end:
+ *
+ *     #define PRIM(id, module, name, signature, params, bugs) ...
+ *     #include "base/prims.def"
+ *
+ * id: the primitive's name in C: its module and its name in capitals, without the name's % or
+ * ?, as LIST_APPEND for List.append. A name ending in ? may add IS_, as LIST_IS_EMPTY does for
+ * empty?. No two lines share an id.
+ *
+ * module and name: the checker adds the primitive to the module, as if it were declared there
+ * under the name (bytecode.md 6). The module is that of the primitive's type, through which a
+ * call such as Time.parse(text) names it (reference 10.5). Reference 5.1 would let two lines
+ * of a module share a name if their first parameters were different types declared in that
+ * module, but each module of the library declares only its own type. So no two lines share a
+ * module and a name, and the bytecode's text form can write a primitive as Module.name, as in
+ * List.append. A name that starts with %, which no Mo name can (reference 2.3), marks a
+ * primitive that lowering emits and no Mo program can call: for literals, interpolation, text
+ * forms, order, BigInt's operators, and the details of a failed assertion. Core's names made by
+ * lowering start with % too (formal/TRANSLATION.md, section 0).
+ *
+ * signature: the primitive's type in Mo's syntax, with the type parameters T, U, K and V as the
+ * reference writes them, and then, after where, the abilities it needs of them, as a
+ * declaration names them (reference 5.5). A Map(K, V) or a Set(T) already needs K or T to have
+ * Hash (reference 3.8), so map and set primitives don't repeat it. A constant, such as
+ * Set.empty, has no parameters, and its signature is just its type.
+ *
+ * params: one letter for each parameter: o (owned) when the primitive consumes the argument,
+ * b (borrowed) when it only reads it (bytecode.md 6). A parameter is owned when the primitive
+ * returns that collection or text changed, built in its memory when it has one holder
+ * (bytecode.md 4.6), as append, set and trim do; or when the primitive stores the argument in
+ * its result, as append stores its element. Every other parameter is borrowed, and so is every
+ * parameter of an immediate type, for which ownership means nothing (bytecode.md 4.2).
+ *
+ * bugs: the bugs the primitive can raise (reference 13.2), in the reference's words, separated
+ * by "; ", or "" for none. Any primitive that allocates can also run out of memory, which isn't
+ * listed.
+ *
+ * The lines follow docs/design/library.md, type by type. */
+
+#ifndef PRIM
+#error "Define PRIM(id, module, name, signature, params, bugs) before including base/prims.def."
+#endif
+
+/*   id                         module       name                  Mo signature                                  params bugs */
+PRIM(INT_ABS,                   "Int",       "abs",                "fn(Int) : Int",                              "b",   "overflow")
+PRIM(INT_MIN,                   "Int",       "min",                "fn(Int, Int) : Int",                         "bb",  "")
+PRIM(INT_MAX,                   "Int",       "max",                "fn(Int, Int) : Int",                         "bb",  "")
+PRIM(INT_POW,                   "Int",       "pow",                "fn(Int, Int) : Int",                         "bb",  "overflow; negative exponent")
+PRIM(INT_FLOOR_DIV,             "Int",       "floor_div",          "fn(Int, Int) : Int",                         "bb",  "dividing by zero; overflow")
+PRIM(INT_FLOOR_MOD,             "Int",       "floor_mod",          "fn(Int, Int) : Int",                         "bb",  "dividing by zero")
+PRIM(INT_WRAPPING_ADD,          "Int",       "wrapping_add",       "fn(Int, Int) : Int",                         "bb",  "")
+PRIM(INT_WRAPPING_SUB,          "Int",       "wrapping_sub",       "fn(Int, Int) : Int",                         "bb",  "")
+PRIM(INT_WRAPPING_MUL,          "Int",       "wrapping_mul",       "fn(Int, Int) : Int",                         "bb",  "")
+PRIM(INT_SATURATING_ADD,        "Int",       "saturating_add",     "fn(Int, Int) : Int",                         "bb",  "")
+PRIM(INT_SATURATING_SUB,        "Int",       "saturating_sub",     "fn(Int, Int) : Int",                         "bb",  "")
+PRIM(INT_SATURATING_MUL,        "Int",       "saturating_mul",     "fn(Int, Int) : Int",                         "bb",  "")
+PRIM(INT_CHECKED_ADD,           "Int",       "checked_add",        "fn(Int, Int) : Option(Int)",                 "bb",  "")
+PRIM(INT_CHECKED_SUB,           "Int",       "checked_sub",        "fn(Int, Int) : Option(Int)",                 "bb",  "")
+PRIM(INT_CHECKED_MUL,           "Int",       "checked_mul",        "fn(Int, Int) : Option(Int)",                 "bb",  "")
+PRIM(INT_TO_DECIMAL,            "Int",       "to_decimal",         "fn(Int) : Decimal",                          "b",   "")
+PRIM(INT_TO_FLOAT,              "Int",       "to_float",           "fn(Int) : Float",                            "b",   "")
+PRIM(INT_TO_BIG,                "Int",       "to_big",             "fn(Int) : BigInt",                           "b",   "")
+PRIM(INT_TO_BYTE,               "Int",       "to_byte",            "fn(Int) : Option(Byte)",                     "b",   "")
+PRIM(INT_TO_CHAR,               "Int",       "to_char",            "fn(Int) : Option(Char)",                     "b",   "")
+PRIM(INT_TO_TEXT,               "Int",       "to_text",            "fn(Int) : Text",                             "b",   "")
+PRIM(INT_SECONDS,               "Int",       "seconds",            "fn(Int) : Duration",                         "b",   "overflow")
+PRIM(INT_MILLISECONDS,          "Int",       "milliseconds",       "fn(Int) : Duration",                         "b",   "overflow")
+PRIM(INT_MINUTES,               "Int",       "minutes",            "fn(Int) : Duration",                         "b",   "overflow")
+PRIM(INT_HOURS,                 "Int",       "hours",              "fn(Int) : Duration",                         "b",   "overflow")
+PRIM(INT_DAYS,                  "Int",       "days",               "fn(Int) : Duration",                         "b",   "overflow")
+
+PRIM(BIGINT_ADD,                "BigInt",    "%add",               "fn(BigInt, BigInt) : BigInt",                "bb",  "")
+PRIM(BIGINT_SUB,                "BigInt",    "%sub",               "fn(BigInt, BigInt) : BigInt",                "bb",  "")
+PRIM(BIGINT_MUL,                "BigInt",    "%mul",               "fn(BigInt, BigInt) : BigInt",                "bb",  "")
+PRIM(BIGINT_DIV,                "BigInt",    "%div",               "fn(BigInt, BigInt) : BigInt",                "bb",  "dividing by zero")
+PRIM(BIGINT_REM,                "BigInt",    "%rem",               "fn(BigInt, BigInt) : BigInt",                "bb",  "dividing by zero")
+PRIM(BIGINT_NEG,                "BigInt",    "%neg",               "fn(BigInt) : BigInt",                        "b",   "")
+PRIM(BIGINT_COMPARE,            "BigInt",    "%compare",           "fn(BigInt, BigInt) : Ordering",              "bb",  "")
+PRIM(BIGINT_ABS,                "BigInt",    "abs",                "fn(BigInt) : BigInt",                        "b",   "")
+PRIM(BIGINT_MIN,                "BigInt",    "min",                "fn(BigInt, BigInt) : BigInt",                "bb",  "")
+PRIM(BIGINT_MAX,                "BigInt",    "max",                "fn(BigInt, BigInt) : BigInt",                "bb",  "")
+PRIM(BIGINT_POW,                "BigInt",    "pow",                "fn(BigInt, Int) : BigInt",                   "bb",  "negative exponent")
+PRIM(BIGINT_FLOOR_DIV,          "BigInt",    "floor_div",          "fn(BigInt, BigInt) : BigInt",                "bb",  "dividing by zero")
+PRIM(BIGINT_FLOOR_MOD,          "BigInt",    "floor_mod",          "fn(BigInt, BigInt) : BigInt",                "bb",  "dividing by zero")
+PRIM(BIGINT_TO_INT,             "BigInt",    "to_int",             "fn(BigInt) : Option(Int)",                   "b",   "")
+PRIM(BIGINT_TO_TEXT,            "BigInt",    "to_text",            "fn(BigInt) : Text",                          "b",   "")
+
+PRIM(BYTE_TO_INT,               "Byte",      "to_int",             "fn(Byte) : Int",                             "b",   "")
+PRIM(BYTE_TO_TEXT,              "Byte",      "to_text",            "fn(Byte) : Text",                            "b",   "")
+
+PRIM(DECIMAL_ABS,               "Decimal",   "abs",                "fn(Decimal) : Decimal",                      "b",   "")
+PRIM(DECIMAL_MIN,               "Decimal",   "min",                "fn(Decimal, Decimal) : Decimal",             "bb",  "")
+PRIM(DECIMAL_MAX,               "Decimal",   "max",                "fn(Decimal, Decimal) : Decimal",             "bb",  "")
+PRIM(DECIMAL_ROUND,             "Decimal",   "round",              "fn(Decimal, Int) : Decimal",                 "bb",  "overflow; places outside 0 to 18")
+PRIM(DECIMAL_FLOOR,             "Decimal",   "floor",              "fn(Decimal) : Decimal",                      "b",   "overflow")
+PRIM(DECIMAL_CEIL,              "Decimal",   "ceil",               "fn(Decimal) : Decimal",                      "b",   "overflow")
+PRIM(DECIMAL_TO_INT,            "Decimal",   "to_int",             "fn(Decimal) : Option(Int)",                  "b",   "")
+PRIM(DECIMAL_TO_FLOAT,          "Decimal",   "to_float",           "fn(Decimal) : Float",                        "b",   "")
+PRIM(DECIMAL_TO_FIXED,          "Decimal",   "to_fixed",           "fn(Decimal, Int) : Text",                    "bb",  "places outside 0 to 18")
+PRIM(DECIMAL_TO_TEXT,           "Decimal",   "to_text",            "fn(Decimal) : Text",                         "b",   "")
+
+PRIM(FLOAT_ABS,                 "Float",     "abs",                "fn(Float) : Float",                          "b",   "")
+PRIM(FLOAT_FLOOR,               "Float",     "floor",              "fn(Float) : Float",                          "b",   "")
+PRIM(FLOAT_CEIL,                "Float",     "ceil",               "fn(Float) : Float",                          "b",   "")
+PRIM(FLOAT_ROUND,               "Float",     "round",              "fn(Float) : Float",                          "b",   "")
+PRIM(FLOAT_SQRT,                "Float",     "sqrt",               "fn(Float) : Float",                          "b",   "")
+PRIM(FLOAT_IS_NAN,              "Float",     "nan?",               "fn(Float) : Bool",                           "b",   "")
+PRIM(FLOAT_IS_INFINITE,         "Float",     "infinite?",          "fn(Float) : Bool",                           "b",   "")
+PRIM(FLOAT_TO_DECIMAL,          "Float",     "to_decimal",         "fn(Float) : Option(Decimal)",                "b",   "")
+PRIM(FLOAT_TO_TEXT,             "Float",     "to_text",            "fn(Float) : Text",                           "b",   "")
+
+PRIM(TEXT_CONCAT,               "Text",      "%concat",            "fn(Text, Text) : Text",                      "ob",  "")
+PRIM(TEXT_COMPARE,              "Text",      "%compare",           "fn(Text, Text) : Ordering",                  "bb",  "")
+PRIM(TEXT_BYTE_COUNT,           "Text",      "byte_count",         "fn(Text) : Int",                             "b",   "")
+PRIM(TEXT_CHAR_COUNT,           "Text",      "char_count",         "fn(Text) : Int",                             "b",   "")
+PRIM(TEXT_IS_EMPTY,             "Text",      "empty?",             "fn(Text) : Bool",                            "b",   "")
+PRIM(TEXT_CHARS,                "Text",      "chars",              "fn(Text) : List(Char)",                      "b",   "")
+PRIM(TEXT_BYTES,                "Text",      "bytes",              "fn(Text) : Bytes",                           "b",   "")
+PRIM(TEXT_LINES,                "Text",      "lines",              "fn(Text) : List(Text)",                      "b",   "")
+PRIM(TEXT_WORDS,                "Text",      "words",              "fn(Text) : List(Text)",                      "b",   "")
+PRIM(TEXT_SPLIT,                "Text",      "split",              "fn(Text, Text) : List(Text)",                "bb",  "empty separator")
+PRIM(TEXT_TRIM,                 "Text",      "trim",               "fn(Text) : Text",                            "o",   "")
+PRIM(TEXT_TRIM_START,           "Text",      "trim_start",         "fn(Text) : Text",                            "o",   "")
+PRIM(TEXT_TRIM_END,             "Text",      "trim_end",           "fn(Text) : Text",                            "o",   "")
+PRIM(TEXT_STARTS_WITH,          "Text",      "starts_with?",       "fn(Text, Text) : Bool",                      "bb",  "")
+PRIM(TEXT_ENDS_WITH,            "Text",      "ends_with?",         "fn(Text, Text) : Bool",                      "bb",  "")
+PRIM(TEXT_CONTAINS,             "Text",      "contains?",          "fn(Text, Text) : Bool",                      "bb",  "")
+PRIM(TEXT_DROP_PREFIX,          "Text",      "drop_prefix",        "fn(Text, Text) : Option(Text)",              "ob",  "")
+PRIM(TEXT_DROP_SUFFIX,          "Text",      "drop_suffix",        "fn(Text, Text) : Option(Text)",              "ob",  "")
+PRIM(TEXT_REPLACE,              "Text",      "replace",            "fn(Text, Text, Text) : Text",                "obb", "empty text to replace")
+PRIM(TEXT_REPEAT,               "Text",      "repeat",             "fn(Text, Int) : Text",                       "ob",  "negative count")
+PRIM(TEXT_PAD_LEFT,             "Text",      "pad_left",           "fn(Text, Int) : Text",                       "ob",  "")
+PRIM(TEXT_PAD_RIGHT,            "Text",      "pad_right",          "fn(Text, Int) : Text",                       "ob",  "")
+PRIM(TEXT_ASCII_LOWERCASE,      "Text",      "ascii_lowercase",    "fn(Text) : Text",                            "o",   "")
+PRIM(TEXT_ASCII_UPPERCASE,      "Text",      "ascii_uppercase",    "fn(Text) : Text",                            "o",   "")
+PRIM(TEXT_TO_INT,               "Text",      "to_int",             "fn(Text) : Option(Int)",                     "b",   "")
+PRIM(TEXT_TO_DECIMAL,           "Text",      "to_decimal",         "fn(Text) : Option(Decimal)",                 "b",   "")
+PRIM(TEXT_TO_FLOAT,             "Text",      "to_float",           "fn(Text) : Option(Float)",                   "b",   "")
+PRIM(TEXT_FROM_CHARS,           "Text",      "from_chars",         "fn(List(Char)) : Text",                      "b",   "")
+PRIM(TEXT_QUOTED,               "Text",      "%quoted",            "fn(Text) : Text",                            "o",   "")
+PRIM(TEXT_STRUCTURAL,           "Text",      "%structural",        "fn(T) : Text",                               "b",   "")
+
+PRIM(CHAR_CODE,                 "Char",      "code",               "fn(Char) : Int",                             "b",   "")
+PRIM(CHAR_IS_ASCII_DIGIT,       "Char",      "ascii_digit?",       "fn(Char) : Bool",                            "b",   "")
+PRIM(CHAR_IS_ASCII_LETTER,      "Char",      "ascii_letter?",      "fn(Char) : Bool",                            "b",   "")
+PRIM(CHAR_IS_ASCII_WHITE_SPACE, "Char",      "ascii_white_space?", "fn(Char) : Bool",                            "b",   "")
+PRIM(CHAR_ASCII_LOWERCASE,      "Char",      "ascii_lowercase",    "fn(Char) : Char",                            "b",   "")
+PRIM(CHAR_ASCII_UPPERCASE,      "Char",      "ascii_uppercase",    "fn(Char) : Char",                            "b",   "")
+PRIM(CHAR_TO_TEXT,              "Char",      "to_text",            "fn(Char) : Text",                            "b",   "")
+PRIM(CHAR_QUOTED,               "Char",      "%quoted",            "fn(Char) : Text",                            "b",   "")
+
+PRIM(BYTES_COMPARE,             "Bytes",     "%compare",           "fn(Bytes, Bytes) : Ordering",                "bb",  "")
+PRIM(BYTES_SIZE,                "Bytes",     "size",               "fn(Bytes) : Int",                            "b",   "")
+PRIM(BYTES_GET,                 "Bytes",     "get",                "fn(Bytes, Int) : Option(Byte)",              "bb",  "")
+PRIM(BYTES_DECODE_UTF8,         "Bytes",     "decode_utf8",        "fn(Bytes) : Option(Text)",                   "b",   "")
+
+PRIM(LIST_EMPTY,                "List",      "%empty",             "List(T)",                                    "",    "")
+PRIM(LIST_SIZE,                 "List",      "size",               "fn(List(T)) : Int",                          "b",   "")
+PRIM(LIST_IS_EMPTY,             "List",      "empty?",             "fn(List(T)) : Bool",                         "b",   "")
+PRIM(LIST_GET,                  "List",      "get",                "fn(List(T), Int) : Option(T)",               "bb",  "")
+PRIM(LIST_FIRST,                "List",      "first",              "fn(List(T)) : Option(T)",                    "b",   "")
+PRIM(LIST_LAST,                 "List",      "last",               "fn(List(T)) : Option(T)",                    "b",   "")
+PRIM(LIST_APPEND,               "List",      "append",             "fn(List(T), T) : List(T)",                   "oo",  "")
+PRIM(LIST_PREPEND,              "List",      "prepend",            "fn(List(T), T) : List(T)",                   "oo",  "")
+PRIM(LIST_CONCAT,               "List",      "concat",             "fn(List(T), List(T)) : List(T)",             "ob",  "")
+PRIM(LIST_REVERSE,              "List",      "reverse",            "fn(List(T)) : List(T)",                      "o",   "")
+PRIM(LIST_TAKE,                 "List",      "take",               "fn(List(T), Int) : List(T)",                 "ob",  "negative count")
+PRIM(LIST_DROP,                 "List",      "drop",               "fn(List(T), Int) : List(T)",                 "ob",  "negative count")
+PRIM(LIST_SET,                  "List",      "set",                "fn(List(T), Int, T) : Option(List(T))",      "obo", "")
+PRIM(LIST_REMOVE_AT,            "List",      "remove_at",          "fn(List(T), Int) : Option(List(T))",         "ob",  "")
+PRIM(LIST_ENUMERATE,            "List",      "enumerate",          "fn(List(T)) : List((Int, T))",               "b",   "")
+PRIM(LIST_ZIP,                  "List",      "zip",                "fn(List(T), List(U)) : List((T, U))",        "bb",  "")
+PRIM(LIST_CONTAINS,             "List",      "contains?",          "fn(List(T), T) : Bool where T: Equal",       "bb",  "")
+PRIM(LIST_UNIQUE,               "List",      "unique",             "fn(List(T)) : List(T) where T: Hash",        "o",   "")
+PRIM(LIST_TO_SET,               "List",      "to_set",             "fn(List(T)) : Set(T) where T: Hash",         "b",   "")
+PRIM(LIST_SUM,                  "List",      "sum",                "fn(List(T)) : T where T: Number",            "b",   "overflow")
+PRIM(LIST_JOIN,                 "List",      "join",               "fn(List(Text), Text) : Text",                "bb",  "")
+PRIM(LIST_TO_MAP,               "List",      "to_map",             "fn(List((K, V))) : Map(K, V) where K: Hash", "b",   "")
+
+PRIM(MAP_EMPTY,                 "Map",       "%empty",             "Map(K, V)",                                  "",    "")
+PRIM(MAP_LITERAL_INSERT,        "Map",       "%literal_insert",    "fn(Map(K, V), K, V) : Map(K, V)",            "ooo", "two keys of a map literal that turn out equal")
+PRIM(MAP_SIZE,                  "Map",       "size",               "fn(Map(K, V)) : Int",                        "b",   "")
+PRIM(MAP_IS_EMPTY,              "Map",       "empty?",             "fn(Map(K, V)) : Bool",                       "b",   "")
+PRIM(MAP_GET,                   "Map",       "get",                "fn(Map(K, V), K) : Option(V)",               "bb",  "")
+PRIM(MAP_HAS,                   "Map",       "has?",               "fn(Map(K, V), K) : Bool",                    "bb",  "")
+PRIM(MAP_SET,                   "Map",       "set",                "fn(Map(K, V), K, V) : Map(K, V)",            "ooo", "")
+PRIM(MAP_REMOVE,                "Map",       "remove",             "fn(Map(K, V), K) : Map(K, V)",               "ob",  "")
+PRIM(MAP_KEYS,                  "Map",       "keys",               "fn(Map(K, V)) : List(K)",                    "b",   "")
+PRIM(MAP_VALUES,                "Map",       "values",             "fn(Map(K, V)) : List(V)",                    "b",   "")
+PRIM(MAP_ENTRIES,               "Map",       "entries",            "fn(Map(K, V)) : List((K, V))",               "b",   "")
+
+PRIM(SET_EMPTY,                 "Set",       "empty",              "Set(T)",                                     "",    "")
+PRIM(SET_SIZE,                  "Set",       "size",               "fn(Set(T)) : Int",                           "b",   "")
+PRIM(SET_IS_EMPTY,              "Set",       "empty?",             "fn(Set(T)) : Bool",                          "b",   "")
+PRIM(SET_HAS,                   "Set",       "has?",               "fn(Set(T), T) : Bool",                       "bb",  "")
+PRIM(SET_ADD,                   "Set",       "add",                "fn(Set(T), T) : Set(T)",                     "oo",  "")
+PRIM(SET_REMOVE,                "Set",       "remove",             "fn(Set(T), T) : Set(T)",                     "ob",  "")
+PRIM(SET_UNION,                 "Set",       "union",              "fn(Set(T), Set(T)) : Set(T)",                "ob",  "")
+PRIM(SET_INTERSECTION,          "Set",       "intersection",       "fn(Set(T), Set(T)) : Set(T)",                "ob",  "")
+PRIM(SET_DIFFERENCE,            "Set",       "difference",         "fn(Set(T), Set(T)) : Set(T)",                "ob",  "")
+PRIM(SET_TO_LIST,               "Set",       "to_list",            "fn(Set(T)) : List(T)",                       "b",   "")
+
+PRIM(RANGE_TO_LIST,             "Range",     "to_list",            "fn(Range) : List(Int)",                      "b",   "")
+PRIM(RANGE_CONTAINS,            "Range",     "contains?",          "fn(Range, Int) : Bool",                      "bb",  "")
+
+PRIM(TIME_CHECKED_ADD,          "Time",      "checked_add",        "fn(Time, Duration) : Option(Time)",          "bb",  "")
+PRIM(TIME_TO_TEXT,              "Time",      "to_text",            "fn(Time) : Text",                            "b",   "")
+PRIM(TIME_PARSE,                "Time",      "parse",              "fn(Text) : Option(Time)",                    "b",   "")
+
+PRIM(DURATION_IN_MILLISECONDS,  "Duration",  "in_milliseconds",    "fn(Duration) : Int",                         "b",   "")
+PRIM(DURATION_IN_SECONDS,       "Duration",  "in_seconds",         "fn(Duration) : Decimal",                     "b",   "")
+PRIM(DURATION_TO_TEXT,          "Duration",  "to_text",            "fn(Duration) : Text",                        "b",   "")
+
+PRIM(UNICODE16_GRAPHEMES,       "Unicode16", "graphemes",          "fn(Text) : List(Text)",                      "b",   "")
+PRIM(UNICODE16_DISPLAY_WIDTH,   "Unicode16", "display_width",      "fn(Text) : Int",                             "b",   "")
+PRIM(UNICODE16_NORMALIZE_NFC,   "Unicode16", "normalize_nfc",      "fn(Text) : Text",                            "o",   "")
+PRIM(UNICODE16_LOWERCASE,       "Unicode16", "lowercase",          "fn(Text) : Text",                            "o",   "")
+PRIM(UNICODE16_UPPERCASE,       "Unicode16", "uppercase",          "fn(Text) : Text",                            "o",   "")
+
+#undef PRIM
