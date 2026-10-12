@@ -405,12 +405,122 @@ typedef struct {
     struct mo_core_const *items;
     size_t count;
 } mo_core_consts;
-/* Program in Lean. Constants are in dependency order; entry is a resolved lookup key. */
+
+/* Compiler-only side tables; see formal/TEXT.md for preorder and binder slot rules.
+ * Everything is arena-owned, including filenames in mo_sources index order. */
+struct mo_core_span {
+    bool some;
+    struct mo_span value;
+};
+struct mo_core_name {
+    bool some;
+    mo_core_string value;
+};
+struct mo_core_index {
+    bool some;
+    uint32_t value;
+};
+struct mo_core_expectation {
+    bool some;
+    bool value;
+};
+typedef struct {
+    uint32_t *items;
+    size_t count;
+} mo_core_indices;
+typedef struct {
+    struct mo_core_span *items;
+    size_t count;
+} mo_core_spans;
+typedef struct {
+    struct mo_core_name *items;
+    size_t count;
+} mo_core_names;
+struct mo_core_binding_meta {
+    uint32_t node, slot;
+    mo_core_string name;
+};
+typedef struct {
+    struct mo_core_binding_meta *items;
+    size_t count;
+} mo_core_binding_metas;
+struct mo_core_closure_meta {
+    uint32_t node;
+    mo_core_string name;
+};
+typedef struct {
+    struct mo_core_closure_meta *items;
+    size_t count;
+} mo_core_closure_metas;
+struct mo_core_body_meta {
+    mo_core_spans spans;
+    mo_core_names params;
+    mo_core_binding_metas bindings;
+    mo_core_closure_metas closures;
+};
+struct mo_core_spec_line {
+    struct mo_core_span span;
+    mo_core_string text;
+};
+typedef struct {
+    struct mo_core_spec_line *items;
+    size_t count;
+} mo_core_spec_lines;
+struct mo_core_fun_meta {
+    mo_core_string name;
+    struct mo_core_span span;
+    struct mo_core_name text;
+    struct mo_core_body_meta body;
+    struct mo_core_index subject;
+    struct mo_core_expectation allows;
+    mo_core_spec_lines lines;
+};
+typedef struct {
+    struct mo_core_fun_meta *items;
+    size_t count;
+} mo_core_fun_metas;
+struct mo_core_const_meta {
+    mo_core_string name;
+    struct mo_core_span span;
+    struct mo_core_body_meta body;
+};
+typedef struct {
+    struct mo_core_const_meta *items;
+    size_t count;
+} mo_core_const_metas;
+struct mo_core_exposed_type {
+    uint32_t index;
+    bool contents_exposed;
+};
+typedef struct {
+    struct mo_core_exposed_type *items;
+    size_t count;
+} mo_core_exposed_types;
+struct mo_core_module_meta {
+    mo_core_string name;
+    mo_core_indices data, funs, consts;
+    mo_core_exposed_types exposed_types;
+    mo_core_indices exposed_funs;
+};
+typedef struct {
+    struct mo_core_module_meta *items;
+    size_t count;
+} mo_core_module_metas;
+struct mo_core_metadata {
+    bool source; /* false is the explicit noSource form, never fabricated source information */
+    mo_core_string_list files;
+    mo_core_module_metas modules;
+    mo_core_fun_metas funs;
+    mo_core_const_metas consts;
+};
+/* Program in Lean. Constants are in dependency order; entry is a resolved lookup key.
+ * Metadata has no part in evaluation, typing or safety proofs. */
 struct mo_core {
     mo_core_data_list data;
     mo_core_funs funs;
     mo_core_consts consts;
     mo_core_string entry;
+    struct mo_core_metadata metadata;
 };
 
 /* Lossless transport is separate from VM values and structural observations. */
@@ -642,7 +752,7 @@ enum mo_core_text_kind {
     MO_CORE_TEXT_CAP_STATE,
     MO_CORE_TEXT_RANDOM_STATE
 };
-#define MO_CORE_TEXT_VERSION "0.4"
+#define MO_CORE_TEXT_VERSION "0.5"
 MO_MUST_USE void *mo_core_text_parse(struct mo_arena *arena, enum mo_core_text_kind kind,
                                      const char *text, size_t length, struct mo_diags *diags);
 MO_MUST_USE bool mo_core_text_print(enum mo_core_text_kind kind, const void *value,
@@ -650,6 +760,9 @@ MO_MUST_USE bool mo_core_text_print(enum mo_core_text_kind kind, const void *val
 
 /* The program-only interfaces used by lowering and code generation (architecture 12).
  * Stream 2 supplies mo_core_check; parsing deliberately does not type-check. */
+/* Shape only, not source truth or Core typing; false also on scratch allocation failure.
+ * Inputs must be complete arena trees with readable arrays, as for printing. */
+MO_MUST_USE bool mo_core_metadata_valid(const struct mo_core *core);
 MO_MUST_USE bool mo_core_check(const struct mo_core *core, struct mo_diags *diags);
 MO_MUST_USE bool mo_core_print(const struct mo_core *core, struct mo_buffer *out);
 MO_MUST_USE struct mo_core *mo_core_parse(struct mo_arena *arena, const char *text, size_t length,

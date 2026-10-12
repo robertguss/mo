@@ -664,12 +664,70 @@ structure ConstDecl where
   body : Expr
   deriving Repr, Inhabited
 
+/-- Compiler-only side tables. None of these fields is read by typing or evaluation. -/
+structure SourceSpan where
+  file : Nat
+  start : Nat
+  «end» : Nat
+  deriving Repr, Inhabited, BEq
+
+/-- A source binding at a preorder node and binder slot; parameters live in BodyMeta. -/
+structure BindingMeta where
+  node : Nat
+  slot : Nat
+  name : String
+  deriving Repr, Inhabited, BEq
+
+structure BodyMeta where
+  spans : List (Option SourceSpan)
+  params : List (Option String)
+  bindings : List BindingMeta
+  closures : List (Nat × String)
+  deriving Repr, Inhabited, BEq
+
+structure SpecLine where
+  span : Option SourceSpan
+  text : String
+  deriving Repr, Inhabited, BEq
+
+structure FunMeta where
+  name : String
+  span : Option SourceSpan
+  text : Option String
+  body : BodyMeta
+  subject : Option Nat
+  allows : Option Bool
+  lines : List SpecLine
+  deriving Repr, Inhabited, BEq
+
+structure ConstMeta where
+  name : String
+  span : Option SourceSpan
+  body : BodyMeta
+  deriving Repr, Inhabited, BEq
+
+structure ModuleMeta where
+  name : String
+  data : List Nat
+  funs : List Nat
+  consts : List Nat
+  exposedTypes : List (Nat × Bool)
+  exposedFuns : List Nat
+  deriving Repr, Inhabited, BEq
+
+inductive CompilerMeta where
+  | noSource
+  | source (files : List String) (modules : List ModuleMeta)
+      (funs : List FunMeta) (consts : List ConstMeta)
+  deriving Repr, Inhabited, BEq
+
 /-- A whole Core program, with one designated entry function. -/
 structure Program where
   data : List DataDecl
   funs : List FunDecl
   consts : List ConstDecl := []
   entry : String := "main"
+  metadata : CompilerMeta := .noSource
   deriving Repr, Inhabited
 
 /-- The types of the first `n` constants, in computation order. -/

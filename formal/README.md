@@ -105,6 +105,7 @@ canonical printing, result protocol, extension rules and sample timings.
 | --- | --- |
 | `MoCore.lean` | The root: imports everything. |
 | `MoCore/Syntax.lean` | Types (`Ty`, with decidable equality), literals, the primitive operations and their signatures (`Prim.sig`), expressions (`Expr`), declarations and programs, and the lookups (`ctorsOf`, `lookupFun`, ...). |
+| `MoCore/Metadata.lean` | Compiler side-table traversal and shape checks, separate from typing/evaluation. Program carries metadata, but no semantic rule or proof reads it. |
 | `MoCore/Value.lean` | Values (real/fake handles), environments, `CapState`, the `World` and its fake-state store, bugs, outcomes, and the number ranges. |
 | `MoCore/Support/Num.lean` | Exact arithmetic: rounding (ties to even, ties away from zero), decimal multiplication and division, wrapping and saturating, decimal and whole-number text forms and parsers. |
 | `MoCore/Support/Text.lean` | The text functions of reference 14 (`lines`, `words`, `split`, `trim`, ...), over lists of characters. |
@@ -128,8 +129,8 @@ canonical printing, result protocol, extension rules and sample timings.
 | `MoCore/Text/*.lean` | The reference text codec: S-expressions, types/literals, primitives, programs, lossless values/worlds/outcomes, structural observations and checked run requests. |
 | `MoCore/TextChecks.lean` | Round trips for all twelve programs, every primitive/value, Builtins programs, reproducible runs and report/lexical checks. |
 | `Main.lean` | The `mocore` file/CLI protocol, with distinct diagnostic and outcome exit codes. |
-| `ExportSamples.lean` | Writes twelve entry runs plus Fakes and Library, in Core text 0.4; optional second directory exports all thirteen fuzz seeds (`lake env lean --run ExportSamples.lean DIR FUZZ_DIR`). |
-| `TEXT.md` | Complete Core text 0.4 contract shared by Lean and C, worked runs and measurements. |
+| `ExportSamples.lean` | Writes twelve entry runs plus Fakes, Library and synthetic Metadata, in Core text 0.5; optional second directory exports all fourteen fuzz seeds (`lake env lean --run ExportSamples.lean DIR FUZZ_DIR`). |
+| `TEXT.md` | Complete Core text 0.5 contract shared by Lean and C, compiler metadata, worked runs and measurements. |
 | `TRANSLATION.md` | The lowering from every v0.1 feature to Core, how the model follows the answers D227 gave to the questions writing it raised, the three things D228 added, and what the model decided in making `Byte`, `Bytes`, `Range` and `Set` types of their own. |
 
 ## The twelve programs

@@ -15,7 +15,8 @@ enum shape {
     SH_NATURAL,
     SH_BITS,
     SH_BOOLEAN,
-    SH_CHARACTER
+    SH_CHARACTER,
+    SH_U32
 };
 struct schema;
 struct field {
@@ -471,6 +472,20 @@ static MO_MUST_USE bool decode(struct reader *r, const struct schema *s, const s
     case SH_INTEGER:
     case SH_NATURAL:
         return decode_integer(r, sx, s->kind == SH_NATURAL, out);
+    case SH_U32: {
+        mo_core_natural n;
+        if (!decode_integer(r, sx, true, &n))
+            return false;
+        uint32_t v = 0;
+        for (size_t i = 0; i < n.digits.length; i++) {
+            uint32_t d = (uint32_t)(n.digits.bytes[i] - '0');
+            if (v > (UINT32_MAX - d) / 10)
+                return error_node(r, MO_CODE_CORE_NUMBER, sx, "metadata index exceeds u32");
+            v = v * 10 + d;
+        }
+        memcpy(out, &v, sizeof v);
+        return true;
+    }
     case SH_BITS: {
         if (sx->kind != SX_ATOM || sx->text.length != 18 || memcmp(sx->text.bytes, "0x", 2) != 0)
             return error_node(r, MO_CODE_CORE_NUMBER, sx, "expected 0x and 16 hex digits");
@@ -550,6 +565,13 @@ void *mo_core_text_parse(struct mo_arena *arena, enum mo_core_text_kind kind, co
                 } else {
                     memset(out, 0, s->size);
                     if (!decode(&r, s, payload, out, 2)) {
+                        out = NULL;
+                    } else if ((kind == MO_CORE_TEXT_PROGRAM && !mo_core_metadata_valid(out)) ||
+                               (kind == MO_CORE_TEXT_RUN &&
+                                !mo_core_metadata_valid(&((struct mo_core_run *)out)->program))) {
+                        bool reported = error_node(&r, MO_CODE_CORE_FIELD, payload,
+                                                   "invalid compiler metadata shape");
+                        MO_ASSERT(!reported);
                         out = NULL;
                     } else {
                         /* Adjacent lists can expand when printed. Enforce the byte limit on
@@ -711,6 +733,8 @@ static MO_MUST_USE bool encode(struct writer *w, const struct schema *s, const v
     case SH_BITS:
         return mo_buffer_append_text(w->out, "0x") &&
                mo_buffer_append_hex(w->out, *(const uint64_t *)value, 16);
+    case SH_U32:
+        return mo_buffer_append_uint(w->out, *(const uint32_t *)value);
     case SH_BOOLEAN:
         return mo_buffer_append_text(w->out, *(const bool *)value ? "true" : "false");
     case SH_CHARACTER: {
@@ -734,6 +758,10 @@ bool mo_core_text_print(enum mo_core_text_kind kind, const void *value, struct m
     bool ok = mo_buffer_append_text(out, "(core " MO_CORE_TEXT_VERSION " ") &&
               encode(&w, document_schema(kind), value, 2) && mo_buffer_append_text(out, ")\n") &&
               out->length - start <= MO_LIMIT_CORE_TEXT_SIZE;
+    if (ok && kind == MO_CORE_TEXT_PROGRAM)
+        ok = mo_core_metadata_valid(value);
+    if (ok && kind == MO_CORE_TEXT_RUN)
+        ok = mo_core_metadata_valid(&((const struct mo_core_run *)value)->program);
     if (!ok)
         out->length = start;
     return ok;

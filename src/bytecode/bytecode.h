@@ -350,7 +350,8 @@ struct mo_bytecode_module {
 
 /* File is a string index, not a source-file index (the loader has no source files). Spans use
  * half-open byte ranges, like base/diag.h. Entries are in strictly increasing code-offset order,
- * at instruction boundaries; a span applies until the next entry or the code's end. */
+ * at instruction boundaries; a span applies until the next entry or the code's end.
+ * NO_INDEX with start/end zero clears attribution for source-less instructions. */
 struct mo_bytecode_span {
     uint32_t code_offset;
     uint32_t file;
@@ -368,17 +369,34 @@ struct mo_bytecode_register_name {
     uint32_t code_end;
 };
 
-/* The debug section has one entry per function, in function-table order; it doesn't encode a
- * redundant function index. text is its test sentence/spec line, or NO_INDEX for ordinary
- * functions. For anchors, section 3.5's full name identifies allows versus forbids.
- * On disk: span array, register-name array, text. Each array and their total across the section
- * are bounded by MO_LIMIT_DEBUG_ENTRIES. Debug is mandatory, including for files without specs. */
+struct mo_bytecode_spec_line {
+    uint32_t file; /* string index, or NO_INDEX with start/end zero when source-less */
+    uint32_t start, end;
+    uint32_t text; /* string index */
+};
+enum mo_bytecode_anchor_expectation {
+    MO_BYTECODE_NOT_ANCHOR,
+    MO_BYTECODE_ALLOWS,
+    MO_BYTECODE_FORBIDS
+};
+/* One entry per function, in function-table order. On disk: span array, register-name array,
+ * text, file, start, end, subject, expectation, line array. file/start/end locate the declaration;
+ * absent file is NO_INDEX with start/end zero. text is the sentence/spec header or NO_INDEX.
+ * subject links a promise to its ordinary function, an anchor to its promise, otherwise NO_INDEX.
+ * expectation is NOT_ANCHOR except for anchors. lines are a promise's conditions in source order;
+ * result n > 0 selects lines[n - 1]. Source-less Core has no links/lines, NOT_ANCHOR and no text.
+ * All arrays and their total are bounded by MO_LIMIT_DEBUG_ENTRIES. Debug is mandatory. */
 struct mo_bytecode_debug {
     uint32_t span_count;
     const struct mo_bytecode_span *spans;
     uint32_t name_count;
     const struct mo_bytecode_register_name *names;
     uint32_t text;
+    uint32_t file, start, end;
+    uint32_t subject;
+    enum mo_bytecode_anchor_expectation expectation;
+    uint32_t line_count;
+    const struct mo_bytecode_spec_line *lines;
 };
 
 /* The writer borrows these decoded tables from its caller. The loader fills its own copy,

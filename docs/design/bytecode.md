@@ -399,10 +399,52 @@ For every function there is:
   where it holds it, since a register can hold different variables at
   different times;
 - for a `test`, its sentence, and for an `example`, `promise` or `anchor`, the
-  text of its line.
+  text of its line (the header for a promise);
+- its declaration span, for `mo test --list` and result locations;
+- a promise's ordinary subject function, or an anchor's promise, by function
+  index, and an anchor's `allows`/`forbids` expectation;
+- a promise's condition lines, each with a span and verbatim text, in source
+  order. Its result n > 0 selects condition n − 1.
 
 File names are strings. The VM needs this section to report bugs, and Phase 4
 needs it to show a running program.
+
+**Provenance.** Lowering fills the compiler metadata in Core's program
+document (`formal/TEXT.md`); code generation never consults the checked
+program or reopens source. The compiler maps expression-preorder spans to
+emitted instruction offsets and binder identities/original names to register
+ranges after allocation. Lambda lifting carries these tables into closure
+code. Generated instructions use their responsible expression/declaration
+span. Constants' metadata supplies init names/spans; full function/closure
+names are supplied by lowering, numbered in source order (3.5). Core's file
+indices are `mo_sources` indices; the compiler interns each filename and
+remaps them to this file's **string** indices, not source-file indices.
+Module metadata supplies exports, `contents_exposed` and all global owners.
+Complete Core data declarations already supply structural type/field/case
+names; no second surface type table is required.
+
+**Encoding.** Each debug entry is: span array, register-name array, text
+string index, declaration file/start/end, subject function index, anchor
+expectation (`NOT_ANCHOR = 0`, `ALLOWS = 1`, `FORBIDS = 2`), condition-line
+array. Each condition entry is file/start/end/text; files and texts are string
+indices. An absent declaration/condition file is `MO_BYTECODE_NO_INDEX`, with
+start/end zero. Code-span entries use that same sentinel to clear source
+attribution until the next entry, rather than inheriting the previous source
+span for genuinely source-less instructions. All other spans have valid
+files and `start ≤ end`. Every
+array, and their total, obeys `MO_LIMIT_DEBUG_ENTRIES`. This extends the Phase
+2 draft v0.1 debug encoding before a writer/VM implements it; Core's wire
+version advances independently.
+
+Core's explicit `noSource` form has empty span/name arrays, absent text and
+declaration span, no links/conditions and `NOT_ANCHOR`; no exports are
+invented. Tools requiring subject/anchor metadata report it unavailable,
+rather than guessing from function names. They can still call selected
+tests/examples. A supplied subject must have the appropriate kind; only a
+promise may have condition lines, and only an anchor may have an expectation.
+With a subject present, a promise has at least one condition and an anchor
+has ALLOWS or FORBIDS. Metadata validity does not make a promise true.
+The assembler/disassembler preserves every new field, including absent ones.
 
 ### 3.5 Names
 
@@ -835,7 +877,9 @@ ends with a newline. `;` starts a comment outside quotes. In the grammar,
 `s`, `t`, `L`, `k`, `g`, `i`, `f`, `m` and `d` followed by a decimal index.
 `R` is `r` followed by a register number; `AT` is `@` followed by a code word
 offset, not an instruction number. `OPT_S` is `S` or `-` (absent, not an
-empty string). All counts and byte lengths are derived from the lists and
+empty string); `OPT_F` is `F` or `-`. Both absent references encode
+`MO_BYTECODE_NO_INDEX`, never an index spelled with that numeric value.
+All counts and byte lengths are derived from the lists and
 payloads. No decoded-only fields are written.
 
 ```text
@@ -872,9 +916,13 @@ modules     = "modules" { M S "types" list(export)
               "functions" list(F) "globals" list(G) } "end"
 export      = "(" T "," BOOL ")"
 debug       = "debug" { D "spans" list(span) "variables" list(variable)
-              "text" OPT_S } "end"
-span        = "(" AT "," S "," U "," U ")"
+              "text" OPT_S "declaration" location "subject" OPT_F
+              "expectation" EXPECTATION "lines" list(spec_line) } "end"
+location    = "(" OPT_S "," U "," U ")"
+span        = "(" AT "," OPT_S "," U "," U ")"
 variable    = "(" R "," S "," AT "," AT ")"
+spec_line   = "(" OPT_S "," U "," U "," S ")"
+EXPECTATION = "none" | "allows" | "forbids"
 ```
 
 `SIMPLE` is a payload-free kind from section 3 (`unit` through `bigint`).
@@ -934,11 +982,24 @@ implicit `env`. Parameters list only explicit arguments. Module type exports
 pair the type with `contents_exposed`: `0` for `T`, `1` for `T(..)`.
 Module globals list all globals, not just exposed names. Debug entry `dN`
 belongs to function `fN`; every function has one, including empty metadata.
-Span tuples are code offset, file string, start byte and end byte. Variable
-tuples are register, name string, inclusive start word and exclusive end word.
+Span tuples are code offset, optional file string, start byte and end byte.
+`(@N, -, 0, 0)` clears source attribution from word N until the next span
+entry or code end; it is retained even beside another absent/equal span.
+Variable tuples are register, name string, inclusive start word and exclusive
+end word.
 Their list order is preserved, not sorted by register. Debug `text` preserves
 the test sentence or spec line, including the distinction between absent
-and an empty string. The header's magic, version and zero flags are fixed;
+and an empty string. `declaration` gives optional file/start/end;
+`subject` links a promise to its ordinary function or an anchor to its promise.
+`expectation` encodes `NOT_ANCHOR = 0` as `none`, `ALLOWS = 1` as `allows`,
+and `FORBIDS = 2` as `forbids`, not a string reference. `lines` contains
+optional file/start/end/text tuples for promise conditions, in source order;
+duplicate text indices and absent locations are preserved. An absent file
+requires start/end zero in every location, code span and condition tuple.
+These fields are always explicit, including `declaration (-, 0, 0)`,
+`subject -`, `expectation none` and `lines []`. Section 3.4's kind/link rules
+apply; nothing is inferred from a display name or condition text.
+The header's magic, version and zero flags are fixed;
 the assembler regenerates its checksum. A verified header has no other data
 to preserve.
 
@@ -968,12 +1029,18 @@ function_decl = "function" NAME "(" [ params ] ")" ":" TYPE KIND [ "spec" ]
               "in" NAME [ "captures" list(TYPE) ]
               "registers" list(named_reg)
               [ "variables" list(named_variable) ] [ "text" Q ]
+              [ "declaration" named_location ] [ "subject" named_subject ]
+              [ "expectation" EXPECTATION ] [ "lines" list(named_spec_line) ]
               { label | source_span | named_instruction } "end"
 params      = NAME ":" TYPE OWNERSHIP { "," NAME ":" TYPE OWNERSHIP }
 named_reg   = R ":" TYPE
 named_variable = "(" R "," Q "," LABEL "," LABEL ")"
+named_file  = Q | "-"
+named_location = "(" named_file "," U "," U ")"
+named_subject = NAME | F | "-"
+named_spec_line = "(" named_file "," U "," U "," Q ")"
 label       = LABEL ":"
-source_span = "span" Q U U
+source_span = "span" named_file U U
 named_instruction = OPCODE [ named_operand { "," named_operand } ]
 named_operand = R | LABEL | AT | NAME | TYPE | LITERAL | T | L | K | G | F | P | H | U
 ```
@@ -987,8 +1054,16 @@ owned `env`; the assembler supplies those leading register types. Parameter
 names do not implicitly create debug ranges. `variables` gives those ranges;
 `span` adds an entry at the next instruction's word offset. Equal adjacent
 spans are not merged. Only one span may occur at an offset.
+`span - 0 0` explicitly clears attribution. An absent file requires zero
+start/end here and in declaration/condition locations.
 `text` supplies a test sentence or spec line. Omitted captures, variables and
-spans are empty; omitted text is absent. Omitted `spec` means `0`, not
+spans are empty; omitted text is absent. Omitted `declaration` is `(-, 0, 0)`,
+omitted `subject` is absent, omitted `expectation` is `none`, and omitted
+`lines` is empty. A supplied subject resolves to a function by full name or
+index, including forward references; it does not intern a name string.
+Conditions retain list order and text, not parsed predicates. Nothing infers
+links, expectations or conditions from function names, kind or spec text.
+Omitted `spec` means `0`, not
 inference from the kind; section 9 still checks it. For ordinary functions,
 debug text must be absent.
 
@@ -1030,7 +1105,9 @@ The assembler fills the tables in these steps:
    payload, not runtime equality. Reuse the lowest matching constant index.
 4. Intern strings at each encounter in the same walk: declaration names,
    then field/case names, function parameter names, variable names, spec text,
-   span files and text literals as they occur. Types supplied by seeds do not
+   declaration files, condition files/text, code-span files and text literals
+   as they occur, lists left to right and files before texts within a condition.
+   Absent files add no string. Types supplied by seeds do not
    create strings on symbolic lookup. Reuse the lowest byte-identical string
    index; otherwise append. Module references in `in` do not create strings;
    neither do other symbolic lookups. A module's declaration creates its name.
@@ -1043,7 +1120,8 @@ The assembler fills the tables in these steps:
    with that `in` module, in global declaration order. There is at most one
    `init` item; its list gives exactly the initializer order, or is empty when
    omitted. Emit one debug entry per function from its explicit metadata,
-   preserving variable list order. Regenerate the header and verify the file.
+   preserving variable/condition list order and explicit clearing spans;
+   resolve subjects without inventing links. Regenerate the header and verify the file.
 
 Steps 2 to 4 describe one encounter walk, not three separate passes over the
 text; layout requests wait for complete definitions, but keep that walk's
@@ -1060,7 +1138,11 @@ Both texts below assemble to the same file. `s0` is unused. The types
 mentions the tuple, then the list. Layout `L0` is for `Visible`, though the
 code constructs the tuple with `L1` first. `Hidden` is exposed without its
 contents; `Visible` with them. Variable `answer` lives in words [3, 21), and
-the test's sentence is `keeps the answer`.
+the test's sentence is `keeps the answer`. Its source attribution is cleared
+at word 3. `Demo.identity` returns its argument; its promise checks
+`result == n`, then `n >= 0`, returning 1 or 2 for the first false line and
+0 on success. The two anchors demonstrate explicit `allows` and `forbids`
+links. Declarations and conditions include both present and absent locations.
 
 This is the canonical indexed text:
 
@@ -1076,6 +1158,17 @@ strings
   s6 "answer"
   s7 "keeps the answer"
   s8 "demo.mo"
+  s9 "Demo.identity"
+  s10 "n"
+  s11 "Demo.identity.promise.1"
+  s12 "result"
+  s13 "promise \"identity\""
+  s14 "result == n"
+  s15 "n >= 0"
+  s16 "Demo.identity.promise.1.allows.1"
+  s17 "allows n: 0, result: 0"
+  s18 "Demo.identity.promise.1.forbids.1"
+  s19 "forbids n: 1, result: 0"
 end
 types
   t0 unit
@@ -1084,6 +1177,7 @@ types
   t3 tuple [t1, t1]
   t4 record s1 [(s3, t1)]
   t5 record s2 [(s3, t1)]
+  t6 bool
 end
 layouts
   L0 record t5 [t1]
@@ -1092,6 +1186,9 @@ end
 constants
   k0 t1 7
   k1 t0 ()
+  k2 t1 0
+  k3 t1 1
+  k4 t1 2
 end
 globals
 end
@@ -1113,18 +1210,75 @@ functions
       ret r4
     end
   end
+  f1 s9 m0 function spec 0
+    params [(t1, owned)]
+    result t1
+    captures []
+    registers [t1]
+    code
+      ret r0
+    end
+  end
+  f2 s11 m0 promise spec 1
+    params [(t1, owned), (t1, owned)]
+    result t1
+    captures []
+    registers [t1, t1, t6, t1]
+    code
+      eq_int r2, r1, r0
+      branch r2, @8, @24
+      const r3, k2
+      le_int r2, r3, r0
+      branch r2, @19, @29
+      const r3, k2
+      ret r3
+      const r3, k3
+      ret r3
+      const r3, k4
+      ret r3
+    end
+  end
+  f3 s16 m0 anchor spec 1
+    params []
+    result t1
+    captures []
+    registers [t1, t1]
+    code
+      const r0, k2
+      call r1, f2, r0, r0
+      ret r1
+    end
+  end
+  f4 s18 m0 anchor spec 1
+    params []
+    result t1
+    captures []
+    registers [t1, t1, t1]
+    code
+      const r0, k3
+      const r1, k2
+      call r2, f2, r0, r1
+      ret r2
+    end
+  end
 end
 modules
-  m0 s4 types [(t4, 0), (t5, 1)] functions [] globals []
+  m0 s4 types [(t4, 0), (t5, 1)] functions [f1] globals []
 end
 debug
-  d0 spans [(@0, s8, 10, 20)] variables [(r0, s6, @3, @21)] text s7
+  d0 spans [(@0, s8, 10, 20), (@3, -, 0, 0)] variables [(r0, s6, @3, @21)] text s7 declaration (s8, 0, 21) subject - expectation none lines []
+  d1 spans [] variables [] text - declaration (s8, 22, 39) subject - expectation none lines []
+  d2 spans [] variables [] text s13 declaration (s8, 40, 90) subject f1 expectation none lines [(s8, 50, 60, s14), (-, 0, 0, s15)]
+  d3 spans [] variables [] text s17 declaration (s8, 91, 110) subject f2 expectation allows lines []
+  d4 spans [] variables [] text s19 declaration (-, 0, 0) subject f2 expectation forbids lines []
 end
 ```
 
 The shorthand seeds the unused string, types and layouts. The assembler adds
 the remaining strings and constants on encounter; the seeds need not include
 them. The unused `r2` keeps a list type in the register table, not a value.
+In `Demo.identity`, `registers []` adds no registers beyond parameter `r0`.
+The shorthand spells out metadata defaults here to show their indexed form.
 
 ```text
 bytecode 0.1 shorthand
@@ -1141,19 +1295,25 @@ types
   t3 tuple [t1, t1]
   t4 record s1 [(s3, t1)]
   t5 record s2 [(s3, t1)]
+  t6 bool
 end
 layouts
   L0 record t5 [t1]
   L1 tuple t3 [t1, t1]
 end
-module Demo exposes [Hidden, Visible(..)]
+module Demo exposes [Hidden, Visible(..), Demo.identity]
 function Demo.test.1() : Unit test spec in Demo
   registers [r0: Int, r1: (Int, Int), r2: List(Int), r3: Visible, r4: Unit]
   variables [(r0, "answer", @live, @done)]
   text "keeps the answer"
+  declaration ("demo.mo", 0, 21)
+  subject -
+  expectation none
+  lines []
   span "demo.mo" 10 20
   const r0, 7
   @live:
+  span - 0 0
   construct r1, (Int, Int), r0, r0
   drop r1
   construct r3, Visible, r0
@@ -1161,6 +1321,60 @@ function Demo.test.1() : Unit test spec in Demo
   const r4, ()
   ret r4
   @done:
+end
+function Demo.identity(n: Int owned) : Int function in Demo
+  registers []
+  declaration ("demo.mo", 22, 39)
+  subject -
+  expectation none
+  lines []
+  ret r0
+end
+function Demo.identity.promise.1(n: Int owned, result: Int owned) : Int promise spec in Demo
+  registers [r2: Bool, r3: Int]
+  text "promise \"identity\""
+  declaration ("demo.mo", 40, 90)
+  subject Demo.identity
+  expectation none
+  lines [("demo.mo", 50, 60, "result == n"), (-, 0, 0, "n >= 0")]
+  eq_int r2, r1, r0
+  branch r2, @first_passed, @first_false
+  @first_passed:
+  const r3, 0
+  le_int r2, r3, r0
+  branch r2, @success, @second_false
+  @success:
+  const r3, 0
+  ret r3
+  @first_false:
+  const r3, 1
+  ret r3
+  @second_false:
+  const r3, 2
+  ret r3
+end
+function Demo.identity.promise.1.allows.1() : Int anchor spec in Demo
+  registers [r0: Int, r1: Int]
+  text "allows n: 0, result: 0"
+  declaration ("demo.mo", 91, 110)
+  subject Demo.identity.promise.1
+  expectation allows
+  lines []
+  const r0, 0
+  call r1, Demo.identity.promise.1, r0, r0
+  ret r1
+end
+function Demo.identity.promise.1.forbids.1() : Int anchor spec in Demo
+  registers [r0: Int, r1: Int, r2: Int]
+  text "forbids n: 1, result: 0"
+  declaration (-, 0, 0)
+  subject Demo.identity.promise.1
+  expectation forbids
+  lines []
+  const r0, 1
+  const r1, 0
+  call r2, Demo.identity.promise.1, r0, r1
+  ret r2
 end
 ```
 
@@ -1183,8 +1397,14 @@ Canonical text is indexed text with these printing rules:
   `\"` and `\\`. Every other byte uses `\xhh`,
   including each byte of non-ASCII UTF-8. No Unicode normalization occurs.
 - Lines end with LF, including the last line. No terminating NUL is printed.
-  Every optional array and spec flag is explicit; absence is `-`. There are
-  no aliases, symbolic operands, labels or first-use insertions.
+  Every array and spec flag is explicit; empty arrays are `[]` and absent
+  indices are `-`. There are no aliases, symbolic operands, labels or
+  first-use insertions.
+- Each debug entry is one line, with `spans`, `variables`, `text`,
+  `declaration`, `subject`, `expectation` and `lines` in that order. Locations
+  always print all three fields, even when absent. Expectation uses exactly
+  `none`, `allows` or `forbids`; clearing spans and condition order are never
+  normalized away.
 
 The assembler also accepts comments, blank lines, spaces or tabs at token
 boundaries, CRLF, a missing final newline, leading zeros in decimal numbers
@@ -1198,7 +1418,9 @@ indexed text. Disassembling that file again prints exactly the same text.
 These are format rules, subject only to available memory and the caller's
 output buffer limit, not to first-use ordering. Stream 3 tests both rules,
 including unused and duplicate strings, non-first-use types and layouts,
-float bits, exposure flags, spans, variable ranges and spec text. A fuzz
+float bits, exposure flags, spans (including clearing entries), variable ranges,
+spec text, declaration locations, subject links, all three expectations and
+ordered condition lines with present/absent locations. A fuzz
 target checks the byte round trip.
 
 The assembler and disassembler live in `src/bytecode`.
@@ -1210,7 +1432,16 @@ before writing canonical indexed text. Text input and output are bounded by
 quoting and instruction names expand bytes. The canonical spelling above
 fits within eight times the binary file's length, so every verified file's
 text fits and text byte offsets still fit `u32`. Noncanonical input past the
-text bound is refused. Their declarations are in
+text bound is refused. The expanded debug spelling preserves this bound:
+even allowing ten decimal digits per u32, its fixed entry line with empty
+arrays is at most 160 text bytes for 36 binary bytes. Each code span, variable
+range or condition line adds at most 54 text bytes (including a list separator)
+for 16 binary bytes. The newly added fixed fields alone add at most 104 text
+bytes for 24 binary bytes, so extending the earlier spelling cannot consume
+more than eight times the added binary bytes. Absent references are shorter;
+condition text remains a string index, with its bytes quoted only in the
+string section. Its at-most-fourfold byte escaping is unchanged.
+Their declarations are in
 `bytecode.h`; stream 3 implements them along with the writer. Each borrows its
 input and requires an initialized, empty caller-owned buffer, which must not
 back the input. Invalid input, an output limit or no memory returns false,

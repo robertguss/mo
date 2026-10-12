@@ -281,12 +281,21 @@ section summarizes it; `formal/README.md` lists what is proven.
 
 This program layer is what the bytecode compiler needs beyond expressions:
 kinds become the bytecode's kinds, constants become `init` functions, and the
-compiler never has to look back at the checked program. Stream 0 has given
-the model in `formal/` `Byte`, `Bytes`, `Set` and `Range` as types of their
-own. It still lacks `fail`, the fake constructors, the `Unicode16` module, and
-the program layer: its constants are functions without parameters, and it has
-no kinds. Stream 0 adds them, and the text form of 4.4 (section 12). The Lean
-evaluator reads kinds but needs none of them to run a program.
+compiler never has to look back at the checked program. The model now has
+these types, `fail`, fakes, Unicode16's trusted interface and the program layer.
+
+The program document also carries **compiler metadata beside Core's
+meaning**, defined in `formal/TEXT.md`: a source-file table in `mo_sources`
+index order; module ownership/exports and `T` versus `T(..)` exposure;
+declaration spans/full names; spec wording, subject links, anchor expectations
+and promise conditions; and body tables keyed by expression preorder and
+binder slots. Functions and constants have separate tables aligned with
+their declarations. This keeps every expression constructor and Lean's
+semantics/proofs unchanged. Lean preserves and shape-checks metadata but
+never uses it to type or evaluate Core. Changes of position, wording or
+exposure can therefore change emitted bytecode without changing an outcome.
+The explicit `noSource` mode is for handwritten fixtures; lowering from Mo
+must emit the full envelope, not silently drop source information.
 
 ### 4.2 Monomorphization
 
@@ -344,6 +353,27 @@ examples. The ones a compiler is most likely to get wrong are:
 - **`assert`** in a test, and each example line, become spec code that calls
   the `fail` instruction with the details: both sides of a failed `==`, or
   the value that didn't match a failed `is`.
+
+Lowering receives the original `mo_sources` as well as the checked program.
+It copies filenames, spans, original binding names, spec text and module
+exposure into the Core arena, including constants, wrappers, library
+instances and lifted-name provenance. Spec/anonymous-function numbers follow
+source order before rewrites. Every rewritten body gets exactly one optional
+span per Expr in preorder; synthesized nodes inherit the responsible source
+construct's span. Generated binders have no source name. Repeated SSA/loop
+binders retain their original name at distinct node/slot identities.
+Lowering supplies correct promise signatures/line correspondence and links
+anchors to promises and promises to their ordinary subjects. Module ownership
+lists preserve source order even though constants are dependency-ordered.
+
+Compilation needs **only this Core document**. It validates metadata shape,
+retains provenance through lambda lifting/optimization, maps binder identities
+to register live ranges, and maps expression spans to instruction offsets.
+It interns filenames and remaps source-file indices to bytecode string
+indices. The image keeps declaration spans, condition text/spans and spec
+links as well as exposure, so tools never reconstruct them from checked Mo
+syntax. `noSource` compiles with empty source debug tables/no exports; tools
+that need absent links report them unavailable (`formal/TEXT.md`).
 
 ### 4.4 The text form
 
@@ -773,8 +803,10 @@ MO_MUST_USE bool mo_read_header(struct mo_arena *arena, const struct mo_sources 
 MO_MUST_USE struct mo_program *mo_check(struct mo_arena *arena, struct mo_module_syntax *const *modules,
                                         uint32_t count, struct mo_diags *diags);
 
-/* src/lower/lower.h: lowering and monomorphization. */
+/* src/lower/lower.h: lowering and monomorphization. Copies complete source metadata
+ * (formal/TEXT.md) into arena; no pointer in Core borrows the program or sources. */
 MO_MUST_USE struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *program,
+                                     const struct mo_sources *sources,
                                      struct mo_diags *diags);
 
 /* src/core/core.h: Core's checker and its text form. */
@@ -783,7 +815,9 @@ MO_MUST_USE bool mo_core_print(const struct mo_core *core, struct mo_buffer *out
 MO_MUST_USE struct mo_core *mo_core_parse(struct mo_arena *arena, const char *text, size_t length,
                                           struct mo_diags *diags);
 
-/* src/codegen/codegen.h: the whole program, spec code included. */
+/* src/codegen/codegen.h: the whole Core document, spec code and metadata included.
+ * Validate metadata shape; derive debug ranges, remap file indices to filename strings,
+ * preserve module exposure and spec links/lines. Never reopen sources or consult checked Mo. */
 MO_MUST_USE bool mo_compile(const struct mo_core *core, struct mo_buffer *bytecode_out, struct mo_diags *diags);
 
 /* src/bytecode/bytecode.h: writing and text tools borrow inputs. out is an initialized,

@@ -1,1 +1,1 @@
-(core 0.4 (tuple ((entry) (entryKind) (fn ((int) (text)) (bool)) (map (text) (list (byte))) (cap (readFiles)))))
+(core 0.5 (tuple ((entry) (entryKind) (fn ((int) (text)) (bool)) (map (text) (list (byte))) (cap (readFiles)))))

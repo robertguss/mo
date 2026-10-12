@@ -44,7 +44,13 @@ parameters carry their types, and a constructor application names its type.
 Names that start with `%` are made by the lowering; Mo names never do. A
 program has data and function tables, ordered constant declarations and a
 designated entry (`Program`). Each function records its module, kind and
-required constant prefix; the library's
+required constant prefix. The program document also carries compiler-only
+side tables (`TEXT.md`): file paths/spans, source binders and stable names,
+module ownership/exposure, spec wording/links and promise condition lines.
+Lowering copies them from the checked program and `mo_sources` into the Core
+arena and reindexes them after every body rewrite. The Lean evaluator,
+typing rules and proofs ignore them; the compiler never revisits checked Mo
+or opens source to reconstruct them. The library's
 choice types `Option(T)`, `Result(T, E)`, `Ordering` and `FileError` are
 built in (`ctorsOf`), with their cases in the order reference 8 and 9.2
 declare them: `None` before `Some`, `Ok` before `Error`, and `Less`, `Equal`,
@@ -82,8 +88,11 @@ fn main(args: Args, console: Console) : Unit =
 ## 2. Source text
 
 Files, comments, names and line breaks (2.1 to 2.4) are the front end's
-business and leave no trace in Core. A Core variable is the Mo name as a
-string, `?` and all (`failed?`). Functions keep their names; where a module
+business and leave no semantic operation in Core. The compiler side tables
+retain filenames, byte spans, original binding names and spec lines (including
+their internal comments/spacing); other comments and layout are not retained.
+A Core variable is a resolved string, `?` and all (`failed?`), possibly renamed
+by lowering; its debug name stays the source spelling. Functions keep their names; where a module
 has several functions of one name (5.1), or a type customizes `to_text`, the
 lowering qualifies the name: `LineError.to_text`.
 
@@ -1056,8 +1065,15 @@ where `List.sort_by_desc[Product,Decimal]` compares keys with
 ### 10.1 to 10.3 The header, hidden insides, use
 
 Core is one whole program, with every name resolved to a declaration.
-Functions retain their source module as metadata. `expose`, hidden insides
-and `use` are checks and name resolution, and leave nothing in Core.
+Functions retain their owning module as metadata. `use` is resolved and
+leaves no semantic operation. `expose` and hidden insides likewise have no
+semantic operation, but **remain in ModuleMeta**: complete owned declaration
+lists and exposed functions/types with `contents_exposed` (`T` false,
+`T(..)` true). All types keep their full definitions for layouts/structural
+printing. The image's module table and `mo test`'s hidden-type generation
+use exposure, never infer it from those definitions. Instance ownership is
+the requesting module, as architecture 4.2 requires. Constants' module/source
+order is retained separately from their dependency-ordered declarations.
 
 ### 10.4 Constants
 
@@ -1634,9 +1650,11 @@ the end of an item this document's.
    apply to expressions/programs accepted by typing or the checker.
 2. **Function signatures.** The four spec kinds have bytecode 3.3's
    signatures. A promise must have at least its final result parameter and
-   return Int; parameter names have no semantic role, and Core has no link
-   from a promise to its subject function. Lowering supplies matching input
-   and result types, the generated line-number code, and anchor expectations.
+   return Int; parameter names have no semantic role. Compiler metadata links
+   a promise to its ordinary subject and an anchor to its promise, carrying
+   the anchor expectation and each condition's text/span in source order.
+   Lowering supplies matching input/result types and generated line-number
+   code; metadata shape checks do not establish their correspondence.
    Ordinary `function` signatures remain unrestricted.
 3. **Spec is lexical, not a function-type effect.** Lambdas inherit the
    body's mode. A spec caller may pass its lambda to ordinary higher-order
@@ -1719,7 +1737,7 @@ silently added by `runProgram`.
    dangling host handles as `invalidRun`; lossless decoding preserves them
    for debugging. Real console observations stop with `outside "console
    observation needs a fake"`; capability types do not encode provenance.
-5. **Interchange.** Core text is 0.4 only. Every handle explicitly carries
+5. **Interchange.** Core text is 0.5 only. Every handle explicitly carries
    real/fake provenance, and World transports the full store. Reports include
    all final fake states, including unreachable states and random words, in allocation
    order, alongside the existing real effects. Fuel exhaustion still has no
@@ -1845,10 +1863,10 @@ other empty/missing folders are `NotFound`. No Core `walk` is added.
 Text 0.3 adds these types/operations and replaces the old natural seed
 with explicit `RandomState` words in World/CapState. It does not silently
 upgrade 0.2 or reinterpret old state. Text 0.4 adds the numeric operations
-below. Lean and C codecs move together, with
-all 14 run fixtures and 13 fuzz seeds generated by `ExportSamples.lean`;
+below; 0.5 adds compiler metadata. Lean and C codecs move together, with
+all 15 run fixtures and 14 fuzz seeds generated by `ExportSamples.lean`;
 the freshness check compares both directories byte for byte. The next
-minor version is 0.5. TEXT.md specifies exact fields and boundary reports.
+minor version is 0.6. TEXT.md specifies exact fields and boundary reports.
 
 ### Numeric completion in text 0.4
 
@@ -1904,3 +1922,47 @@ minor version is 0.5. TEXT.md specifies exact fields and boundary reports.
    invalid syntax and the reported double-rounding regression. Independent
    differential validation compared 3371 finite patterns' shortest decimal
    values with CPython repr and 3006 decimal texts' bits with Python float.
+
+## Compiler metadata: decisions
+
+1. **Side tables, not expression fields.** Program.metadata is ignored by
+   the calculus. Function/constant tables align with declaration order; body
+   tables use preorder over Expr only, including lambda bodies, in wire
+   field/list order. Every expression has one optional span. This keeps
+   constructors, evaluator and proofs unchanged and makes the C arena/text
+   transport sufficient for compilation.
+2. **Bindings, not renamed identifiers.** Function parameters have optional
+   original names; local bindings use (node, binder slot). Case slots flatten
+   the arms; lambda/join slots follow parameter order. Repeated SSA versions
+   may share a source name. Generated slots have none. The compiler resolves
+   lexical uses and computes register ranges itself, retaining provenance
+   through lifting and optimization; lowering does not guess code offsets.
+3. **Stable image identity.** Full function/spec/closure names are independent
+   of Core lookup keys, with spec/closure numbers assigned in source order
+   before lowering changes the tree. Constants carry full names and ownership;
+   their init names append `.init`. Module lists preserve loader/source order.
+   `mo_lower` explicitly receives `mo_sources`, whose full file table it copies
+   without renumbering; codegen remaps paths to bytecode string indices.
+4. **Spec reporting.** Tests carry the decoded sentence; examples/anchors
+   carry the verbatim logical line, without outer indentation/line endings
+   but with internal spacing/comments. Promises carry their header and a
+   nonempty ordered condition-line table. Declarations have spans for listing.
+   Subject indices and anchor expectations are explicit, not recovered by
+   parsing display names. The draft bytecode debug contract retains all of
+   these for architecture 10's tools, including the one-based false-line
+   correspondence. It does not change Core evaluation.
+5. **Missing provenance.** Handwritten Lean samples use the explicit
+   `noSource` mode, not fabricated Mo positions/exposure. Full metadata may
+   still contain absent spans for genuinely source-less generated code;
+   synthesized code with a responsible source construct inherits its span.
+   Source-less images use `%Core` for data/constants and have no exports or
+   spec links; direct runs/tests work, generation/anchor checks needing links
+   report unavailable. `Metadata.core` is a synthetic full-metadata fixture,
+   not a claim about a real source translation.
+6. **Validation boundary.** Codecs check shape, indices, ordered unique
+   binder records, exact span/parameter/closure coverage, ownership partitions,
+   export membership and kind-appropriate links/text/lines. They do not
+   certify source truth, offsets against a file's bytes, canonical name
+   spelling or subject signature/body correspondence. Lowering owns those.
+   Metadata is not included in `wellTyped?` or any outcome. Only the next
+   minor text version is accepted; fixtures are regenerated by Lean.

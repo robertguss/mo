@@ -102,18 +102,111 @@ def world : World :=
   (.tuple [.char '\'', .text "\n", .duration 1500000, .time 0, .range (-2) 3, .bytes [0, 255]])).toOption ==
   some "('\\'', \"\\n\", 1.5s, 1970-01-01T00:00:00Z, -2..3, bytes[0, 255])"
 
-#guard (["", "(core 0.1 (unit))", "(core 0.2 (unit))", "(core 0.3 (unit))", "(core 0.5 (unit))",
-  "(core 0.4 (unit)) extra", "(core 0.4 (unit)",
-  "(core 0.4 \"\\q\")", "(core 0.4 \"\\u{d800}\")", "(core 0.4 \"\\u{110000}\")",
-  "(core 0.4 \"\\u{}\")", "(core 0.4 \"unterminated)"]).all fun s => (parseDocument s).toOption.isNone
-#guard (parseDocument ";before\n(core ;version\n0.4 (int -00012));after" >>= litIn).toOption == some (.int (-12))
-#guard (parseDocument "(core 0.4 (float 0xFFFFFFFFFFFFFFFF))" >>= litIn).toOption == some (.float 0xffffffffffffffff)
+#guard (["", "(core 0.1 (unit))", "(core 0.2 (unit))", "(core 0.3 (unit))", "(core 0.4 (unit))", "(core 0.6 (unit))",
+  "(core 0.5 (unit)) extra", "(core 0.5 (unit)",
+  "(core 0.5 \"\\q\")", "(core 0.5 \"\\u{d800}\")", "(core 0.5 \"\\u{110000}\")",
+  "(core 0.5 \"\\u{}\")", "(core 0.5 \"unterminated)"]).all fun s => (parseDocument s).toOption.isNone
+#guard (parseDocument ";before\n(core ;version\n0.5 (int -00012));after" >>= litIn).toOption == some (.int (-12))
+#guard (parseDocument "(core 0.5 (float 0xFFFFFFFFFFFFFFFF))" >>= litIn).toOption == some (.float 0xffffffffffffffff)
 #guard (["(float 0x123)", "(float 0x10000000000000000)", "(char \"ab\")", "(unit extra)",
   "(int +1)", "(int 1_0)"]).all fun s => (parseSexp s >>= litIn).toOption.isNone
 
 def cap (c : Cap) : Value := .cap c (some "")
 def cliRun (p : Program) (w : World) : Run :=
   ⟨p, w, (automaticEntry p).toOption.getD (.entry []), 10000⟩
+
+/-- Synthetic source provenance, not a claimed translation of a Mo file. -/
+def metadataExpr : Expr :=
+  .let_ "x#0" (.global "seed")
+    (.let_ "f#0" (.lam [("y#0", .int)] (.prim (.int .add) [.var "x#0", .var "y#0"]))
+      (.join "done" [("z#0", .int)]
+        (.case_ (.con (.option .int) "Some" [.var "z#0"])
+          [("None", [], .lit (.int 0)), ("Some", ["q#0"], .var "q#0")])
+        (.jump "done" [.app (.var "f#0") [.var "x#0"]])))
+
+def metadataMeaning : Program :=
+  { data := [⟨"Token", [⟨"Token", [("value", .int)]⟩]⟩,
+             ⟨"Visible", [⟨"Visible", []⟩]⟩],
+    funs := [
+      { name := "make", params := [("n#0", .int)], ret := .data "Token",
+        body := .con (.data "Token") "Token" [.var "n#0"], module := "Hidden", constCount := 1 },
+      { name := "entry", params := [], ret := .int, body := metadataExpr, module := "Main", constCount := 1 },
+      { name := "test", params := [], ret := .unit, body := .lit .unit, module := "Main", kind := .test },
+      { name := "example", params := [], ret := .unit, body := .lit .unit, module := "Main", kind := .example },
+      { name := "promise", params := [("n#1", .int), ("result#0", .data "Token")], ret := .int,
+        body := .lit (.int 0), module := "Hidden", kind := .promise },
+      { name := "allows", params := [], ret := .int, body := .lit (.int 0), module := "Hidden", kind := .anchor },
+      { name := "forbids", params := [], ret := .int, body := .lit (.int 1), module := "Hidden", kind := .anchor }],
+    consts := [⟨"seed", .int, .lit (.int 6)⟩], entry := "entry" }
+
+def fixtureSpan (file start finish : Nat) : Option SourceSpan := some ⟨file, start, finish⟩
+def fixtureBody (n : Nat) (ps : List (Option String) := []) : BodyMeta :=
+  ⟨(List.range n).map (fun i => fixtureSpan (i % 2) (10 + 3*i) (12 + 3*i)), ps, [], []⟩
+def metadataFixture : Program :=
+  { metadataMeaning with metadata := (.source ["fixtures/hidden.mo", "fixtures/main.mo"]
+    [⟨"Hidden", [0], [0, 4, 5, 6], [0], [(0, false)], [0]⟩,
+     ⟨"Main", [1], [1, 2, 3], [], [(1, true)], [1]⟩]
+    [⟨"Hidden.make", fixtureSpan 0 0 40, none, fixtureBody 2 [some "n"], none, none, []⟩,
+     ⟨"Main.main", fixtureSpan 1 0 90, none,
+       { (fixtureBody 17) with
+         bindings := [⟨0, 0, "x"⟩, ⟨2, 0, "f"⟩, ⟨3, 0, "y"⟩, ⟨7, 0, "z"⟩, ⟨8, 0, "q"⟩]
+         closures := [(3, "Main.main.fn.1")] }, none, none, []⟩,
+     ⟨"Main.test.1", fixtureSpan 1 100 130, some "a sentence with β and \"quotes\"", fixtureBody 1, none, none, []⟩,
+     ⟨"Main.main.example.1", fixtureSpan 1 140 160, some "main() == 12", fixtureBody 1, none, none, []⟩,
+     ⟨"Hidden.make.promise.1", fixtureSpan 0 50 90, some "promise \"keeps n\"",
+       fixtureBody 1 [some "n", some "result"], some 0, none,
+       [⟨fixtureSpan 0 60 70, "result.value == n"⟩, ⟨fixtureSpan 0 71 80, "n >= 0"⟩]⟩,
+     ⟨"Hidden.make.promise.1.allows.1", fixtureSpan 0 91 100, some "allows n: 0, result: Token(0)",
+       fixtureBody 1, some 4, some true, []⟩,
+     ⟨"Hidden.make.promise.1.forbids.1", none, some "forbids n: 1, result: Token(0)",
+       { (fixtureBody 1) with spans := [none] }, some 4, some false, []⟩]
+    [⟨"Hidden.seed", fixtureSpan 0 110 118, fixtureBody 1⟩]) }
+
+#guard metadataValid metadataFixture
+#guard programRoundTrip metadataFixture
+#guard (exprNodes metadataExpr).map binderSlots == [1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]
+#guard reprStr (execute ⟨metadataFixture, {}, .entry [], 100⟩) ==
+  reprStr (execute ⟨metadataMeaning, {}, .entry [], 100⟩)
+#guard match execute ⟨metadataFixture, {}, .entry [], 100⟩ with
+  | .returned "12" _ => true | _ => false
+
+-- Reject broken references/coverage through the public decoder, not private predicates.
+#guard ([
+  ("SourceSpan 0 0 40", "SourceSpan 2 0 40"),
+  ("SourceSpan 0 0 40", "SourceSpan 0 41 40"),
+  ("SourceSpan 0 0 40", "SourceSpan 0 0 4294967296"),
+  ("(some (SourceSpan 1 13 15))", ""),
+  ("((some \"n\"))", "()"),
+  ("BindingMeta 0 0 \"x\"", "BindingMeta 0 1 \"x\""),
+  ("BindingMeta 2 0 \"f\"", "BindingMeta 0 0 \"f\""),
+  ("BindingMeta 2 0 \"f\"", "BindingMeta 1 0 \"f\""),
+  ("((3 \"Main.main.fn.1\"))", "()"),
+  ("((3 \"Main.main.fn.1\"))", "((4 \"Main.main.fn.1\"))"),
+  ("(0 4 5 6)", "(0 4 5)"),
+  ("((0 false))", "((1 false))"),
+  ("((0 false))", "((0 false) (0 true))"),
+  ("((1 true)) (1)", "((1 true)) (2)"),
+  ("(some 0) (none)", "(some 4) (none)"),
+  ("(some 4) (some true)", "(some 0) (some true)"),
+  ("(some 4) (some false)", "(some 4) (none)"),
+  ("(some \"main() == 12\")", "(none)"),
+  ("\"fixtures/main.mo\"", "\"fixtures/main\\u{0}.mo\"")
+  ] : List (String × String)).all fun (old, replacement) =>
+    let text := (printProgram metadataFixture).replace old replacement
+    text != printProgram metadataFixture && (parseProgram text).toOption.isNone
+
+-- Source positions, wording and exposure change the document, never run results.
+#guard ([
+  ("SourceSpan 0 0 40", "SourceSpan 1 7 4294967295"),
+  ("a sentence with β", "a different sentence with γ"),
+  ("((0 false))", "((0 true))")
+  ] : List (String × String)).all fun (old, replacement) =>
+    match parseProgram ((printProgram metadataFixture).replace old replacement) with
+    | .ok p => programRoundTrip p && printProgram p != printProgram metadataFixture &&
+        [(.entry [], 100), (.test "test", 100), (.entry [], 0)].all fun (selection, fuel) =>
+          reprStr (execute ⟨p, {}, selection, fuel⟩) ==
+          reprStr (execute ⟨metadataMeaning, {}, selection, fuel⟩)
+    | _ => false
 
 /-- Reproducible timing inputs; no front-end or generated wrapper is involved. -/
 def samples : List (String × Run) :=
@@ -136,7 +229,8 @@ def samples : List (String × Run) :=
      .entry [cap .readFiles, .con "SearchInput" [.text "needle", .int 10]], 10000⟩),
    ("Inventory", cliRun Inventory.program {}),
    ("Fakes", ⟨Builtins.fakeProgram, {}, .test "fakes", 10000⟩),
-   ("Library", ⟨Builtins.libraryProgram, {}, .test "library", 10000⟩)]
+   ("Library", ⟨Builtins.libraryProgram, {}, .test "library", 10000⟩),
+   ("Metadata", ⟨metadataFixture, {}, .entry [], 100⟩)]
 
 #guard samples.all fun (_, r) =>
   match parseDocument (document (runOut r)) >>= runIn with
@@ -187,6 +281,7 @@ def fuzzSeeds : List (String × Sexp) :=
    ("io", primOut (.io (.readBytes true))),
    ("fake_io", primOut (.io .consoleFakeInput)),
    ("program", programOut Builtins.libraryProgram),
+   ("metadata", programOut metadataFixture),
    ("outcome", outcomeOut (.jumped "loop" [.int 2, .text "next"] world)),
    ("report", reportOut (.returned "[\"a\", \"b\\n\"]" (effects world))),
    ("cap_state", stateOut world.toCapState),
