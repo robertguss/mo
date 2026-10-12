@@ -338,6 +338,9 @@ static void test_refusals(void) {
 }
 
 static void test_register_limit(void) {
+    /* A case per temporary now crosses the verifier's register-block ceiling before the
+     * register ceiling. One more temporary must still diagnose register overflow earlier,
+     * during lowering, rather than reaching the writer. */
     for (uint32_t extra = 0; extra < 2; extra++) {
         uint32_t count = MO_LIMIT_FUNCTION_REGISTERS - 2u + extra;
         struct mo_buffer text, long_name, out;
@@ -372,14 +375,12 @@ static void test_register_limit(void) {
         CHECK(p != NULL);
         if (p != NULL) {
             bool ok = mo_compile(p, &out, &diags);
-            CHECK(ok == (extra == 0));
-            if (ok) {
-                struct mo_load_error error;
-                struct mo_bytecode *b = mo_bytecode_decode(&arena, out.bytes, out.length, &error);
-                CHECK(b != NULL && b->functions[0].register_count == MO_LIMIT_FUNCTION_REGISTERS);
-            } else {
-                CHECK(out.length == 0 && diags.count == 1 &&
-                      diags.items[0].code == MO_CODE_TOO_MANY_REGISTERS);
+            CHECK(!ok && out.length == 0 && diags.count == 1);
+            CHECK(diags.count == 1 &&
+                  diags.items[0].code ==
+                      (extra == 0 ? MO_CODE_BYTECODE_TOO_BIG : MO_CODE_TOO_MANY_REGISTERS));
+            if (extra == 0 && diags.count == 1) {
+                CHECK(strcmp(diags.items[0].primary.text, "many: register-block limit") == 0);
             }
         }
         mo_diags_free(&diags);

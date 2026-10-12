@@ -43,6 +43,17 @@ struct mo_bytecode_read_info {
 MO_MUST_USE struct mo_bytecode *mo_bytecode_decode(struct mo_arena *arena, const uint8_t *bytes,
                                                    size_t length, struct mo_load_error *error);
 
+/* As decode, retaining first-code-word wire positions in the caller's arena for verification. */
+MO_MUST_USE struct mo_bytecode *mo_bytecode_decode_info(struct mo_arena *arena,
+                                                        const uint8_t *bytes, size_t length,
+                                                        const uint32_t **code_offsets,
+                                                        struct mo_types *types_out,
+                                                        struct mo_load_error *error);
+
+/* Structural-only writer for decoder tests and indexed I/O internals; never execute its output. */
+MO_MUST_USE bool mo_bytecode_encode(const struct mo_bytecode *file, struct mo_buffer *out,
+                                    struct mo_write_error *error);
+
 /* For the decoder's complete, bounded tables only, not arbitrary caller-built structures.
  * Checks section 3, without ownership dataflow or execution. Relational refusals point to the
  * start of the payload; local wire/instruction/debug errors point to the offending field/item. */

@@ -161,6 +161,15 @@
  * MO_LIMIT_CHOICE_CASES cases, must fit. */
 #define MO_LIMIT_FUNCTION_CODE_WORDS (1 << 20)
 
+/* Registers times basic blocks in one function. Lowering splits a function before crossing
+ * this bound, which keeps ownership joins and defect-report replay within a small budget. */
+#define MO_LIMIT_FUNCTION_REGISTER_BLOCKS (1 << 22)
+
+/* Verification steps and scratch bytes per encoded register/code word, plus 32 header words.
+ * These are load-error ceilings, also applied to defect-report replay. */
+#define MO_LIMIT_VERIFY_WORK_PER_WORD 128
+#define MO_LIMIT_VERIFY_BYTES_PER_WORD 2048
+
 /* Variable operands of one instruction: a call's arguments, a switch's targets, the fields
  * construct takes (bytecode.md section 4.1). The head word holds their number in 16 bits. */
 #define MO_LIMIT_OPERANDS 65535

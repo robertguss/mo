@@ -109,9 +109,11 @@ fuzz: $(FUZZERS)
 
 # A crash artifact fails the run that found it. Start with none, so that one saved by an
 # earlier run does not keep failing the runs after the bug is fixed.
-fuzz-smoke: $(FUZZERS)
+fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test
 	@rm -rf $(FUZZ_BUILD)/artifacts
 	@mkdir -p $(FUZZ_BUILD)/artifacts
+	@mkdir -p $(FUZZ_BUILD)/bytecode-fixtures
+	$(BUILD)/debug/tests/test_bytecode_verify.test --corpus $(FUZZ_BUILD)/bytecode-fixtures
 	@for f in $(FUZZERS); do \
 		base=$$(basename $$f); variants=small; \
 		if [ "$$base" = fuzz_bytecode_io ]; then variants="small large"; fi; \
@@ -124,6 +126,7 @@ fuzz-smoke: $(FUZZERS)
 			if [ "$$base" = fuzz_core_text ] || [ "$$base" = fuzz_core_check ] || [ "$$base" = fuzz_codegen ]; then rm -rf $$corpus; fi; \
 			mkdir -p $$corpus; \
 			if [ -d fuzz/corpus/$$name ]; then cp -R fuzz/corpus/$$name/. $$corpus/; fi; \
+			if [ "$$base" = fuzz_bytecode_io ]; then cp $(FUZZ_BUILD)/bytecode-fixtures/*.bc $$corpus/; fi; \
 			if [ "$$name" = fuzz_core_text ] || [ "$$name" = fuzz_core_check ] || [ "$$name" = fuzz_codegen ]; then \
 				cp tests/core/*.core fuzz/corpus/fuzz_core_text/*.core $$corpus/; fi; \
 			if [ "$$name" = fuzz_syntax ]; then cp grammar/tests/good/*.mo grammar/tests/bad/*.mo examples/*.mo $$corpus/; fi; \

@@ -1,9 +1,11 @@
-#include "bytecode/io.h"
+#include "bytecode/verify.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
+size_t LLVMFuzzerMutate(uint8_t *data, size_t size, size_t maximum);
+size_t LLVMFuzzerCustomMutator(uint8_t *data, size_t size, size_t maximum, unsigned seed);
 
 static MO_MUST_USE void *allocate(struct mo_arena *arena, size_t n, size_t size, size_t align) {
     void *p = mo_arena_allocate_array(arena, n, size, align);
@@ -467,6 +469,96 @@ static void accepted_tables(const struct mo_bytecode *f, size_t size) {
     mo_arena_free(&arena);
 }
 
+struct replay_check {
+    const struct mo_image *image;
+    const struct mo_bytecode_function *fn;
+    uint32_t index, visited;
+    bool *single;
+    size_t size;
+};
+static MO_MUST_USE bool check_readable(uint32_t pc, const bool *readable, void *context) {
+    struct replay_check *check = context;
+    const struct mo_bytecode_function *fn = check->fn;
+    const struct mo_opcode_info *op = mo_opcode_find(fn->code[pc] & MO_OPCODE_MASK);
+    MO_ASSERT(op != NULL);
+    uint32_t count = op->fixed_count + (fn->code[pc] >> 16);
+    const uint32_t *a = fn->code + pc + 1;
+    check->visited++;
+    for (uint32_t j = 0; j < count; j++) {
+        struct mo_operand_info d = j < op->fixed_count ? op->fixed[j] : op->variable;
+        if (d.kind == MO_OPERAND_REGISTER && d.access != MO_ACCESS_WRITE &&
+            d.access != MO_ACCESS_TOKEN_WRITE && d.access != MO_ACCESS_TOKEN_CONSUME) {
+            MO_ASSERT(readable[a[j]]);
+        }
+    }
+    /* Compare the public one-PC API at every ordinary boundary, entry/exit for large seeds.
+     * The streaming API above checks every boundary, including large files, in one analysis. */
+    if (check->size <= 4096 || pc == 0 || pc + 1U + count == fn->code_count) {
+        struct mo_load_error error;
+        MO_ASSERT(
+            mo_image_registers_readable(check->image, check->index, pc, check->single, &error));
+        MO_ASSERT(memcmp(readable, check->single, fn->register_count * sizeof(bool)) == 0);
+    }
+    return true;
+}
+
+static void accepted_code(struct mo_arena *arena, const struct mo_image *image, size_t size) {
+    const struct mo_bytecode *f = mo_image_bytecode(image);
+    for (uint32_t i = 0; i < f->function_count; i++) {
+        const struct mo_bytecode_function *fn = &f->functions[i];
+        bool *readable = allocate(arena, fn->register_count, sizeof *readable, _Alignof(bool));
+        bool *single = allocate(arena, fn->register_count, sizeof *single, _Alignof(bool));
+        struct replay_check check = {image, fn, i, 0, single, size};
+        struct mo_load_error error;
+        MO_ASSERT(mo_image_visit_readable(image, i, readable, check_readable, &check, &error));
+        uint32_t instructions = 0;
+        for (uint32_t pc = 0; pc < fn->code_count;) {
+            const struct mo_opcode_info *op = mo_opcode_find(fn->code[pc] & MO_OPCODE_MASK);
+            MO_ASSERT(op != NULL);
+            const uint32_t *a = fn->code + pc + 1;
+            uint32_t count = op->fixed_count + (fn->code[pc] >> 16);
+            instructions++;
+            /* Independent local checks, rather than invoking the verifier's predicates. */
+            if (op->number == MO_OP_RET) {
+                MO_ASSERT(fn->register_types[a[0]] == fn->result_type);
+            }
+            if (op->number == MO_OP_SET_GLOBAL) {
+                MO_ASSERT(fn->kind == MO_FUNCTION_INIT &&
+                          f->globals[a[0]].type == fn->register_types[a[1]]);
+            }
+            if (op->number == MO_OP_SWITCH) {
+                const struct mo_type *t = &f->types[fn->register_types[a[0]]];
+                MO_ASSERT(t->kind == MO_TYPE_CHOICE && count - op->fixed_count == t->case_count);
+            }
+            if (op->number == MO_OP_CALL || op->number == MO_OP_TAIL_CALL) {
+                bool tail = op->number == MO_OP_TAIL_CALL;
+                const struct mo_bytecode_function *target = &f->functions[a[tail ? 0 : 1]];
+                MO_ASSERT(target->kind != MO_FUNCTION_INIT && target->kind != MO_FUNCTION_CLOSURE);
+                MO_ASSERT(fn->spec_code || !target->spec_code);
+                MO_ASSERT((tail ? fn->result_type : fn->register_types[a[0]]) ==
+                          target->result_type);
+                MO_ASSERT(count - op->fixed_count == target->parameter_count);
+                for (uint32_t j = 0; j < target->parameter_count; j++) {
+                    MO_ASSERT(fn->register_types[a[op->fixed_count + j]] ==
+                              target->parameters[j].type);
+                }
+            }
+            if (op->number == MO_OP_CALL_CLOSURE || op->number == MO_OP_TAIL_CALL_CLOSURE) {
+                bool tail = op->number == MO_OP_TAIL_CALL_CLOSURE;
+                const struct mo_type *t = &f->types[fn->register_types[a[tail ? 0 : 1]]];
+                MO_ASSERT(t->kind == MO_TYPE_FUNCTION &&
+                          count - op->fixed_count == t->parameter_count);
+                MO_ASSERT((tail ? fn->result_type : fn->register_types[a[0]]) == t->result);
+                for (uint32_t j = 0; j < t->parameter_count; j++) {
+                    MO_ASSERT(fn->register_types[a[op->fixed_count + j]] == t->parameters[j]);
+                }
+            }
+            pc += 1U + count;
+        }
+        MO_ASSERT(check.visited == instructions);
+    }
+}
+
 static void round_trip(const uint8_t *data, size_t size) {
     struct mo_arena arena;
     struct mo_load_error load_error;
@@ -477,8 +569,18 @@ static void round_trip(const uint8_t *data, size_t size) {
         struct mo_buffer out;
         struct mo_write_error write_error;
         mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
-        MO_ASSERT(mo_bytecode_write(file, &out, &write_error));
+        MO_ASSERT(mo_bytecode_encode(file, &out, &write_error));
         MO_ASSERT(size == out.length && memcmp(data, out.bytes, size) == 0);
+        struct mo_image *image = mo_load(data, size, &load_error);
+        if (image != NULL) {
+            accepted_code(&arena, image, size);
+            mo_buffer_clear(&out);
+            MO_ASSERT(mo_bytecode_write(mo_image_bytecode(image), &out, &write_error));
+            MO_ASSERT(size == out.length && memcmp(data, out.bytes, size) == 0);
+            mo_image_free(image);
+        } else {
+            MO_ASSERT(load_error.reason != NULL && load_error.offset <= size);
+        }
         mo_buffer_free(&out);
     } else {
         MO_ASSERT(load_error.reason != NULL && load_error.offset <= size);
@@ -506,4 +608,83 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         mo_buffer_free(&copy);
     }
     return 0;
+}
+
+static MO_MUST_USE uint32_t random_word(uint32_t *state) {
+    *state ^= *state << 13;
+    *state ^= *state >> 17;
+    *state ^= *state << 5;
+    return *state;
+}
+
+size_t LLVMFuzzerCustomMutator(uint8_t *data, size_t size, size_t maximum, unsigned seed) {
+    if (seed % 4 == 0 || size > MO_LIMIT_BYTECODE_SIZE) {
+        return LLVMFuzzerMutate(data, size, maximum);
+    }
+    struct mo_arena arena;
+    struct mo_load_error le;
+    mo_arena_init(&arena, mo_bytecode_work_budget(size));
+    struct mo_bytecode *file = mo_bytecode_decode(&arena, data, size, &le);
+    size_t result = 0;
+    if (file != NULL && file->function_count != 0) {
+        uint32_t state = seed | 1U, index = random_word(&state) % file->function_count;
+        struct mo_bytecode_function *functions = allocate(
+            &arena, file->function_count, sizeof *functions, _Alignof(struct mo_bytecode_function));
+        memcpy(functions, file->functions, (size_t)file->function_count * sizeof *functions);
+        file->functions = functions;
+        struct mo_bytecode_function *fn = &functions[index];
+        uint32_t *words = allocate(&arena, fn->code_count, sizeof *words, _Alignof(uint32_t));
+        if (fn->code_count != 0) {
+            memcpy(words, fn->code, (size_t)fn->code_count * sizeof *words);
+            fn->code = words;
+            uint32_t at = random_word(&state) % fn->code_count, pc = 0;
+            const struct mo_opcode_info *op;
+            for (;;) {
+                op = mo_opcode_find(words[pc] & MO_OPCODE_MASK);
+                MO_ASSERT(op != NULL);
+                uint32_t end = pc + 1U + op->fixed_count + (words[pc] >> 16);
+                if (at < end) {
+                    break;
+                }
+                pc = end;
+            }
+            if (at == pc) {
+                /* Keep the width so subsequent instructions stay decodable. */
+                uint32_t n = words[pc] >> 16;
+                const struct mo_opcode_info *replacement =
+                    &mo_opcodes[random_word(&state) % MO_OPCODE_COUNT];
+                if (replacement->fixed_count == op->fixed_count &&
+                    n <= replacement->variable_limit) {
+                    words[pc] = replacement->number | (n << 16);
+                }
+            } else {
+                uint32_t j = at - pc - 1;
+                enum mo_operand_kind kind =
+                    j < op->fixed_count ? op->fixed[j].kind : op->variable.kind;
+                uint32_t bound = kind == MO_OPERAND_REGISTER    ? fn->register_count
+                                 : kind == MO_OPERAND_TYPE      ? file->type_count
+                                 : kind == MO_OPERAND_LAYOUT    ? file->layout_count
+                                 : kind == MO_OPERAND_FUNCTION  ? file->function_count
+                                 : kind == MO_OPERAND_GLOBAL    ? file->global_count
+                                 : kind == MO_OPERAND_CONSTANT  ? file->constant_count
+                                 : kind == MO_OPERAND_PRIMITIVE ? MO_PRIM_COUNT
+                                 : kind == MO_OPERAND_HOST      ? MO_HOST_COUNT
+                                 : kind == MO_OPERAND_TARGET    ? fn->code_count
+                                 : kind == MO_OPERAND_CASE      ? MO_LIMIT_CHOICE_CASES
+                                                                : MO_LIMIT_FIELDS;
+                words[at] = random_word(&state) % (bound + 1U);
+            }
+            struct mo_buffer out;
+            struct mo_write_error we;
+            mo_buffer_init(&out,
+                           maximum < MO_LIMIT_BYTECODE_SIZE ? maximum : MO_LIMIT_BYTECODE_SIZE);
+            if (mo_bytecode_encode(file, &out, &we)) {
+                memcpy(data, out.bytes, out.length);
+                result = out.length;
+            }
+            mo_buffer_free(&out);
+        }
+    }
+    mo_arena_free(&arena);
+    return result != 0 ? result : LLVMFuzzerMutate(data, size, maximum);
 }

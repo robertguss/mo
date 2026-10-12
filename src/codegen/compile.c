@@ -1144,9 +1144,9 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
                                   : "Bytecode exceeds the caller's output limit.");
     }
     mo_buffer_free(&encoded);
-    uint16_t code = strstr(error.reason, "memory") != NULL  ? MO_CODE_CODEGEN_MEMORY
-                    : strstr(error.reason, "limit") != NULL ? MO_CODE_BYTECODE_TOO_BIG
-                                                            : MO_CODE_CODEGEN_INVALID;
+    uint16_t code = error.kind == MO_BYTECODE_NO_MEMORY ? MO_CODE_CODEGEN_MEMORY
+                    : error.kind == MO_BYTECODE_LIMIT   ? MO_CODE_BYTECODE_TOO_BIG
+                                                        : MO_CODE_CODEGEN_INVALID;
     return problem(c, code, error.reason);
 }
 bool mo_compile(const struct mo_core *core, struct mo_buffer *out, struct mo_diags *diags) {

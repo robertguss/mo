@@ -431,13 +431,19 @@ struct mo_bytecode {
 };
 
 struct mo_image;
+/* Stable failure categories; callers branch on kind, never on diagnostic reason text.
+ * INVALID includes malformed input and verification refusals; LIMIT is a named format,
+ * verification-work or output-buffer ceiling; NO_MEMORY is allocation failure. */
+enum mo_bytecode_error_kind { MO_BYTECODE_INVALID, MO_BYTECODE_LIMIT, MO_BYTECODE_NO_MEMORY };
 struct mo_load_error {
     uint32_t offset;    /* byte offset in the input */
     const char *reason; /* static text */
+    enum mo_bytecode_error_kind kind;
 };
 
 struct mo_write_error {
     const char *reason; /* static text: invalid decoded data, a limit, or no memory */
+    enum mo_bytecode_error_kind kind;
 };
 
 struct mo_assemble_error {
@@ -450,9 +456,7 @@ struct mo_assemble_error {
  * zero (capacity may have grown), and fills the required error_out. Inputs are borrowed and
  * unchanged; successful bytes live until the next buffer mutation or mo_buffer_free.
  *
- * The writer encodes and structurally checks section 3. Full verification joins this path when
- * the verifier is implemented; structural success alone is not permission to execute.
- * It preserves table
+ * The writer encodes, structurally checks section 3 and verifies section 9. It preserves table
  * order and indices, ignores cached type booleans/constant encoding, and regenerates the
  * header (including checksum) rather than using file->header. Names must already occur in
  * strings; use the lowest index with matching bytes. It never adds or reorders entries.
@@ -492,6 +496,12 @@ MO_MUST_USE struct mo_image *mo_load(const uint8_t *bytes, size_t length,
  * mo_image_free, including across initialization and calls. Nothing is remapped. Tools read
  * kinds, signatures, debug text and module contents_exposed here to enumerate/generate specs. */
 MO_MUST_USE const struct mo_bytecode *mo_image_bytecode(const struct mo_image *image);
+/* VM support for defect reports. Rerun this function's private dataflow and fill register_count
+ * bools with readability immediately before pc. False on no memory, a bad function index or
+ * non-boundary pc; error is required. image and readable are non-NULL. */
+MO_MUST_USE bool mo_image_registers_readable(const struct mo_image *image, uint32_t function,
+                                             uint32_t pc, bool *readable,
+                                             struct mo_load_error *error);
 void mo_image_free(struct mo_image *image);
 
 #endif

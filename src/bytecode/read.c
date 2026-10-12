@@ -23,7 +23,7 @@ struct reader {
 
 static void refuse(struct reader *r, const char *reason) {
     if (!r->failed) {
-        *r->error = (struct mo_load_error){.offset = r->field, .reason = reason};
+        *r->error = (struct mo_load_error){r->field, reason, MO_BYTECODE_INVALID};
         r->failed = true;
     }
 }
@@ -51,6 +51,7 @@ static MO_MUST_USE void *allocate(struct reader *r, size_t n, size_t size, size_
     void *p = mo_arena_allocate_array(r->arena, n, size, alignment);
     if (p == NULL) {
         refuse(r, "no memory");
+        r->error->kind = MO_BYTECODE_NO_MEMORY;
         r->error->offset = 0;
     } else {
         memset(p, 0, n * size);
@@ -65,6 +66,7 @@ static MO_MUST_USE void *scratch(struct reader *r, uint32_t n, size_t size, size
     void *p = mo_arena_allocate_array(&r->scratch, n, size, alignment);
     if (p == NULL) {
         refuse(r, "no memory");
+        r->error->kind = MO_BYTECODE_NO_MEMORY;
         r->error->offset = 0;
     }
     return p;
@@ -77,6 +79,9 @@ static MO_MUST_USE void *array(struct reader *r, uint32_t *n, uint32_t limit, si
     *n = word(r);
     if (*n > limit || *n > (r->length - r->offset) / minimum) {
         refuse(r, "count past limit or remaining bytes");
+        if (*n > limit) {
+            r->error->kind = MO_BYTECODE_LIMIT;
+        }
     }
     void *p = allocate(r, *n, size, alignment);
     if (r->failed) {
@@ -137,6 +142,9 @@ static MO_MUST_USE const uint8_t *blob(struct reader *r, uint32_t *n, bool termi
     *n = word(r);
     if (*n > MO_LIMIT_STRING_SIZE || *n > r->length - r->offset) {
         refuse(r, "byte length past limit or remaining bytes");
+        if (*n > MO_LIMIT_STRING_SIZE) {
+            r->error->kind = MO_BYTECODE_LIMIT;
+        }
     }
     if (!r->failed && terminate && !utf8(r->bytes + r->offset, *n)) {
         r->field = (uint32_t)r->offset;
@@ -378,6 +386,7 @@ static void sections(struct reader *r) {
     }
     if (!mo_bytecode_names_init(&r->names, &r->scratch, f)) {
         refuse(r, "no memory");
+        r->error->kind = MO_BYTECODE_NO_MEMORY;
         r->error->offset = 0;
         return;
     }
@@ -480,10 +489,14 @@ static void sections(struct reader *r) {
     }
 }
 
-struct mo_bytecode *mo_bytecode_decode(struct mo_arena *arena, const uint8_t *bytes, size_t length,
-                                       struct mo_load_error *error) {
+struct mo_bytecode *mo_bytecode_decode_info(struct mo_arena *arena, const uint8_t *bytes,
+                                            size_t length, const uint32_t **code_offsets,
+                                            struct mo_types *types_out,
+                                            struct mo_load_error *error) {
     MO_ASSERT(arena != NULL && error != NULL && (bytes != NULL || length == 0));
-    *error = (struct mo_load_error){.reason = "invalid header or bytecode size"};
+    *error = (struct mo_load_error){.reason = "invalid header or bytecode size",
+                                    .kind = length > MO_LIMIT_BYTECODE_SIZE ? MO_BYTECODE_LIMIT
+                                                                            : MO_BYTECODE_INVALID};
     if (length > MO_LIMIT_BYTECODE_SIZE || length < MO_BYTECODE_HEADER_SIZE ||
         memcmp(bytes, MO_BYTECODE_MAGIC, 4) != 0) {
         return NULL;
@@ -543,6 +556,15 @@ struct mo_bytecode *mo_bytecode_decode(struct mo_arena *arena, const uint8_t *by
         .debug = r.debug_positions,
         .wire_size = length};
     bool valid = mo_bytecode_validate(r.file, &info, error);
+    if (valid && code_offsets != NULL) {
+        *code_offsets =
+            mo_arena_copy(arena, r.code_positions,
+                          (size_t)r.file->function_count * sizeof(uint32_t), _Alignof(uint32_t));
+        if (*code_offsets == NULL) {
+            *error = (struct mo_load_error){.reason = "no memory", .kind = MO_BYTECODE_NO_MEMORY};
+            valid = false;
+        }
+    }
     mo_arena_free(&r.scratch);
     if (!valid) {
         return NULL;
@@ -559,5 +581,13 @@ struct mo_bytecode *mo_bytecode_decode(struct mo_arena *arena, const uint8_t *by
             }
         }
     }
+    if (types_out != NULL) {
+        *types_out = view;
+    }
     return r.file;
+}
+
+struct mo_bytecode *mo_bytecode_decode(struct mo_arena *arena, const uint8_t *bytes, size_t length,
+                                       struct mo_load_error *error) {
+    return mo_bytecode_decode_info(arena, bytes, length, NULL, NULL, error);
 }
