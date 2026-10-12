@@ -75,4 +75,20 @@ for ending in returned stopped failed; do
 	check "$status" "(core 0.3 ($report $fake_effects))" "$tree/fake"
 done
 
-echo 'mocore: file protocol, real/fake effects, returned/stopped/failed, checking, UTF-8, selection and fuel passed'
+# Trusted Unicode has no substitute implementation in the oracle. All five
+# reached calls stop with prior effects retained; an unchosen call does not.
+for op in graphemes displayWidth normalizeNfc lowercase uppercase; do
+	case "$op" in
+		graphemes) ty='(list (text))' ;;
+		displayWidth) ty='(int)' ;;
+		*) ty='(text)' ;;
+	esac
+	unicode="(Program () ((FunDecl \"main\" ((\"c\" (cap (console)))) $ty (let_ \"_\" (prim (io (print)) ((var \"c\") (lit (text \"before unicode\")))) (prim (unicode16 ($op)) ((lit (text \"éß👩‍💻\"))))) \"Main\" (function) 0)) () \"main\")"
+	printf '(core 0.3 %s)\n' "$unicode" >"$tree/unicode"
+	check 1 '(core 0.3 (stopped (outside "Unicode16 is a trusted primitive unavailable in mocore") (effects ("before unicode") () () ())))' "$tree/unicode" "$tree/world"
+done
+skipped='(Program () ((FunDecl "main" () (int) (if_ (lit (bool false)) (prim (unicode16 (displayWidth)) ((lit (text "ignored")))) (lit (int 7))) "Main" (function) 0)) () "main")'
+printf '(core 0.3 %s)\n' "$skipped" >"$tree/skipped"
+check 0 '(core 0.3 (returned "7" (effects () () () ())))' "$tree/skipped" "$tree/world"
+
+echo 'mocore: file protocol, real/fake effects, returned/stopped/failed, checking, UTF-8, selection, fuel and trusted Unicode boundaries passed'

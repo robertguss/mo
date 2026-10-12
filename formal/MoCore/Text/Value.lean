@@ -68,17 +68,17 @@ def stateFields (w : CapState) : List Sexp :=
    stringsOut w.stderr, pairsOut w.files, integer w.now, randomOut w.random]
 def stateOut (s : CapState) : Sexp := tag "CapState" (stateFields s)
 def stateIn : Sexp → Parse CapState
-  | .node [.atom "CapState", args, env, stdin, stdout, stderr, files, now, seed] => do
+  | .node [.atom "CapState", args, env, stdin, stdout, stderr, files, now, random] => do
       return ⟨← asList asString args, ← asList (asPair asString asString) env,
         ← asList asString stdin, ← asList asString stdout, ← asList asString stderr,
-        ← asList (asPair asString asString) files, ← asInt now, ← randomIn seed⟩
+        ← asList (asPair asString asString) files, ← asInt now, ← randomIn random⟩
   | _ => throw "invalid CapState"
 
 def worldOut (w : World) : Sexp := tag "World"
   (stateFields w.toCapState ++ [seq (w.fakes.map stateOut)])
 def worldIn : Sexp → Parse World
-  | .node [.atom "World", args, env, stdin, stdout, stderr, files, now, seed, fakes] => do
-      return ⟨← stateIn (tag "CapState" [args, env, stdin, stdout, stderr, files, now, seed]),
+  | .node [.atom "World", args, env, stdin, stdout, stderr, files, now, random, fakes] => do
+      return ⟨← stateIn (tag "CapState" [args, env, stdin, stdout, stderr, files, now, random]),
         ← asList stateIn fakes⟩
   | _ => throw "invalid World"
 

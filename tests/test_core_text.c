@@ -75,7 +75,7 @@ static void test_fixtures(void) {
         mo_sources_free(&sources);
     }
     CHECK(closedir(dir) == 0);
-    CHECK(count == 13);
+    CHECK(count == 14);
 }
 static void test_shapes(void) {
     /* Asymmetric fields expose swapped field order; every Ty, Lit and Value constructor appears. */
@@ -170,8 +170,8 @@ static void test_shapes(void) {
         "(RandomState 0x0000000000000001 0x0000000000000002 0x0000000000000003 0x0000000000000004) "
         "((CapState () () () () (\"before failure\") () 0 (RandomState 0x0000000000000005 "
         "0x0000000000000006 0x0000000000000007 0x0000000000000008)))))",
-        "(jumped \"loop\" ((int 1) (text \"next\")) (World () () () () () () 0 (RandomState "
-        "0x0000000000000001 0x0000000000000002 0x0000000000000003 0x0000000000000004) ()))",
+        ("(jumped \"loop\" ((int 1) (text \"next\")) (World () () () () () () 0 (RandomState "
+         "0x0000000000000001 0x0000000000000002 0x0000000000000003 0x0000000000000004) ()))"),
         "(wrong \"invariant\")",
         "(outOfFuel)"};
     for (size_t i = 0; i < sizeof outcomes / sizeof outcomes[0]; i++)

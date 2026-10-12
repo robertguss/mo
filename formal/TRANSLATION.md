@@ -48,7 +48,8 @@ required constant prefix; the library's
 choice types `Option(T)`, `Result(T, E)`, `Ordering` and `FileError` are
 built in (`ctorsOf`), with their cases in the order reference 8 and 9.2
 declare them: `None` before `Some`, `Ok` before `Error`, and `Less`, `Equal`,
-`Greater`. A `case` lists its arms in that order.
+`Greater`. `Entry` and `EntryKind` are built in too (10.5). A `case` lists
+its arms in declaration order.
 
 ## 1. A first program
 
@@ -107,10 +108,12 @@ lowering qualifies the name: `LineError.to_text`.
 | `Range` | `range` | `range a b` for `a..b`, two `Int`s |
 | a `struct` or `enum` | `data "Name"` | `con "Case" [fields]` |
 | `Option(T)`, `Result(T, E)` | `option T`, `result T E` | `con "Some" [v]`, `con "Error" [e]`, ... |
+| `Entry`, `EntryKind` | `entry`, `entryKind` | `con "Entry" [text name, con kind []]`; kind is `File`, `Folder`, `Link` or `Other` |
 | `fn(A) : B` | `fn [A] B` | a closure |
 | `Console`, `Files`, ... | `cap c` | a handle, `cap c folder` |
 
-The `Unicode16` module is not in this model of Core yet.
+`Unicode16` has trusted primitive signatures in Core, not Unicode tables
+(section 14 and the library decisions below).
 
 ### 3.1 Bool
 
@@ -489,7 +492,7 @@ fn area(shape: Shape) : Decimal =
 A generic type is declared once for each type it is used at (section 9.1):
 `Tree(Int)` is the declaration `Tree(Int) = Leaf | Node(left: Tree(Int),
 value: Int, right: Tree(Int))`. Recursive types need nothing more:
-`MoCore/Examples/Json.lean` declares `Json` with fields `List(Json)` and
+`MoCore/Examples/JsonQuery.lean` declares `Json` with fields `List(Json)` and
 `Map(Text, Json)`.
 
 ## 5. Functions
@@ -796,7 +799,7 @@ end
 
 `while console.read_line is Some(line)` is a loop whose body begins with
 `case %io.readLine(console) of None -> <leave the loop> | Some(line) -> ...`
-(`MoCore/Examples/Json.lean`, `read_input`).
+(`MoCore/Examples/JsonQuery.lean`, `read_input`).
 
 ### 7.5 Loops
 
@@ -960,7 +963,7 @@ fn parse_line(line: Text, catalog: Map(Text, Item)) : Result(OrderLine, OrderErr
   end
 ```
 
-A `try` inside an expression keeps the order of evaluation; from `json.mo`:
+A `try` inside an expression keeps the order of evaluation; from `json-query.mo`:
 `value = value * 16 + try hex_digit_value(digit)` inside a loop is
 
 ```
@@ -1093,9 +1096,12 @@ const t0 : Time = case %time.parse("2026-10-12T09:00:00Z") of
 
 ### 10.5 Always in scope
 
-`Option`, `Result`, `Ordering` and `FileError` are built into Core's data
-table (`ctorsOf`); the capability types are Core types; the section 14
-functions are primitives or library functions.
+`Option`, `Result`, `Ordering`, `FileError`, `Entry` and `EntryKind` are built
+into Core's data table (`ctorsOf`); the capability types are Core types;
+the section 14 functions are primitives or library functions. `Entry` has
+one constructor, `Entry(name: Text, kind: EntryKind)`. `EntryKind` has
+`File`, `Folder`, `Link`, `Other`, in that order, each without fields.
+These are distinct built-in types, not user declarations named `Entry`.
 
 ## 11. Capabilities and effects
 
@@ -1106,7 +1112,7 @@ is the folder a `Files` or `ReadFiles` handle is narrowed to, or nothing for a
 handle that reaches nothing (11.3). Every effect is a primitive on a handle
 (`%io.print`, `%io.readText`, `%io.now`, ...), which reads and updates the
 one `World`: arguments, environment variables, standard input, standard
-output and error, the files, the clock's time and the random seed. A function
+output and error, the files, the clock's time and the four-word random state. A function
 without a capability parameter can't reach them.
 
 The world's files are texts, as `Files.in_memory` makes them (reference 14),
@@ -1274,6 +1280,10 @@ In `Files.in_memory`, a folder exists when a file is inside it, and the
 folder the fake stands for, `"."` of its handle, always exists; `list` gives
 the names directly inside a folder, each subfolder once, sorted, and listing
 a folder that doesn't exist is `Error(NotFound(folder))` (reference 14).
+`entries` has the same paths, errors and ordering, with `Entry` values:
+implied subfolders have kind `Folder`, other names have kind `File`.
+Removing the last descendant removes an implied folder. `within` and
+`read_only` retain the shared store, and earlier lists are snapshots.
 
 Todo's and Find's multi-call tests are now single Core expressions that
 construct fresh Args/Console handles as their Mo source does. No host step
@@ -1372,11 +1382,12 @@ place; *not modeled* ones are not in this model yet.
 | `Range`: `a..b`, `for`, `to_list`, `contains?`, `to_text` | `%range.make`; a counting loop over `%range.start` and `%range.end` (7.5); `%range.toList`; `%range.contains`; `%range.toText` |
 | `Option`: `or`, `or_fail`, `map`; `Result`: `map`, `map_error` | lowered: a `case` |
 | `Time`: `+ -` with durations, `-` of two times, `checked_add`, `to_text`, `Time.parse`; `Duration`: `+ - *`, `in_milliseconds`, `in_seconds`, `to_text` | prim (`%time.*`) |
-| `Args.list`, `Env.get`, `Console.print`, `error`, `read_line`, `printed`, `printed_errors`, `Files.read_text`, `read_bytes`, `write_text`, `append_text`, `remove`, `list`, `exists?`, `within`, `read_only`, `Clock.now`, `Random.int` | prim (`%io.*`); `read_bytes` gives a file's text as UTF-8 (11.1) |
+| `Args.list`, `Env.get`, `Console.print`, `error`, `read_line`, `printed`, `printed_errors`, `Files.read_text`, `read_bytes`, `write_text`, `append_text`, `remove`, `list`, `entries`, `exists?`, `within`, `read_only`, `Clock.now`, `Random.int` | prim (`%io.*`); `ReadFiles` has the read-only forms; `read_bytes` gives a file's text as UTF-8 (11.1); Random uses xoshiro256**/SplitMix64/Lemire |
+| `Files.walk`, `ReadFiles.walk` | Mo library code in `lib/`, not a Core primitive; lowering supplies recursive calls to `entries` |
 | `FileError`'s text form | Core (`FileError.to_text`) |
 | `to_text`, at every type with `Text` | lowered as the part `#{x}` of a text is (3.4), so the two give the same text; a set's is `Lib.setText` (3.4), and the `to_text[T]` the lowering derives for records, choice types, tuples, lists and maps without their own `to_text` is not modeled |
 | `Console.fake`, `fake_input`, `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `Args.of`, `Env.of` | spec-only primitives (`%io.consoleFake`, `consoleFakeInput`, `filesInMemory`, `clockFixed`, `randomSeeded`, `argsOf`, `envOf`), with independent shared states (12.4) |
-| `Unicode16` | not modeled |
+| `Unicode16.graphemes`, `display_width`, `normalize_nfc`, `lowercase`, `uppercase` | trusted prim (`%unicode16.graphemes`, `displayWidth`, `normalizeNfc`, `lowercase`, `uppercase`), with the signatures below; reached calls stop in the executable oracle |
 
 ## Ambiguities settled by D227
 
@@ -1695,8 +1706,8 @@ silently added by `runProgram`.
    are only Files/ReadFiles. Host-supplied cross-kind aliases can select
    different fields of the same record, as TEXT.md specifies.
 2. **Seeds.** `Random.seeded` takes Int, including negative numbers, interpreted
-   modulo 2⁶⁴. Its current SplitMix64/remainder sequence remains a placeholder;
-   architecture 7's xoshiro256**/SplitMix64/Lemire generator is deferred.
+   modulo 2⁶⁴. It now initializes architecture 7's generator, precisely as
+   specified below. Real and fake handles execute the same algorithm.
 3. **Constructor inputs.** Args/input lists and file/environment maps keep
    their values and order. No input splitting or path normalization occurs
    on construction; the existing file rules resolve paths on use. Source map
@@ -1709,9 +1720,132 @@ silently added by `runProgram`.
    dangling host handles as `invalidRun`; lossless decoding preserves them
    for debugging. Real console observations stop with `outside "console
    observation needs a fake"`; capability types do not encode provenance.
-5. **Interchange.** Core text is 0.2 only. Every handle explicitly carries
+5. **Interchange.** Core text is 0.3 only. Every handle explicitly carries
    real/fake provenance, and World transports the full store. Reports include
-   all final fake states, including unreachable states and seeds, in allocation
+   all final fake states, including unreachable states and random words, in allocation
    order, alongside the existing real effects. Fuel exhaustion still has no
    world. Twelve real-entry exports remain controls; the Fakes spec export
-   exercises constructor allocation, sharing, isolation and snapshots.
+   exercises constructor allocation, sharing, isolation and snapshots, and
+   Library exercises the random vectors and folder entries. The sample
+   translation and fixture are `JsonQuery`, matching `examples/json-query.mo`
+   and `module JsonQuery`; its locally declared recursive type remains `Json`.
+
+## Library surface: decisions and trusted boundaries
+
+### Stable seeded Random
+
+`Support/Random.lean` implements xoshiro256** 1.0. All words are unsigned
+64-bit integers; addition, multiplication and left shift discard bits above
+bit 63. Right shifts are logical and rotations are left rotations. Seeding
+is **exactly**:
+
+1. Set SplitMix's state `x` to the Int seed modulo 2⁶⁴ (so −1 becomes
+   `0xffffffffffffffff`), not its absolute value or a byte encoding.
+2. Repeat four times: increment `x` by `0x9e3779b97f4a7c15`; set
+   `z = (x xor (x >> 30)) * 0xbf58476d1ce4e5b9`, then
+   `z = (z xor (z >> 27)) * 0x94d049bb133111eb`; output `z xor (z >> 31)`.
+3. Assign those outputs to `s0`, `s1`, `s2`, `s3` in order. The first word
+   is produced **after** incrementing the seed. Do not retain SplitMix's
+   final `x`, or reverse words according to machine endianness.
+
+Each raw draw returns `rotl(s1 * 5, 7) * 9`. Then, in reference order,
+`t = s1 << 17; s2 ^= s0; s3 ^= s1; s1 ^= s2; s0 ^= s3; s2 ^= t;
+s3 = rotl(s3, 45)`. No jump or warm-up occurs.
+
+`int(low, high)` requires `low < high`, with **exclusive high**. Calculate
+`span = high - low` exactly, without signed 64-bit overflow. Thus spans
+from 1 through 2⁶⁴−1 work, including `int(Int.min, Int.max)`; span 2⁶⁴
+cannot be expressed by two Int endpoints. For each raw draw `r`, calculate
+the full 128-bit product `m = r * span`, its low word `l`, and high word `h`.
+Reject while `l < (2⁶⁴ - span) % span`; return `low + h`. Rejected draws
+advance the same state and are never reused. Lean's Nat product retains
+all 128 bits, including for spans above 2⁶³. This is Lemire's multiply-high
+rejection, not remainder reduction or floating-point scaling.
+
+To keep evaluation total without an arbitrary retry limit, rejection has
+a bound of 2²⁵⁶−1 draws, the reference generator's nonzero-state period.
+The published period and coverage guarantee an accepted draw; that
+functional property is trusted, not proven here. An all-zero host state
+stops with `outside "Random has an all-zero state"`; exhausting the bound
+stops with `outside "Random exhausted its period"`. Neither state arises
+from the specified seeding. Lossless text decoding preserves even the zero
+state for debugging. Default real/fake records use the four words of seed
+0; real-world entropy acquisition remains runtime work, not oracle I/O.
+
+Fixed vectors in `Builtins.randomVectors` were obtained by compiling the
+published [SplitMix64](https://prng.di.unimi.it/splitmix64.c) and
+[xoshiro256**](https://prng.di.unimi.it/xoshiro256starstar.c) C reference
+code. An adapter renames their `next` functions to `sm_next` and `xo_next`,
+sets SplitMix's `x` to each seed, and assigns `s[i] = sm_next()` for i=0..3.
+Only the xoshiro source prefix through `next`, before the jump routines, is
+needed. Compile with `gcc -std=c17 -O2 -Wall -Wextra -Werror`. For seeds
+0, 1, −1, Int.min and Int.max, guards compare all four seeded words and
+the first six raw draws to independent fixed constants. For example seed 0
+starts with `e220a8397b1dcdaf 6e789e6aa1b965f4 06c45d188009454f
+f88bb8a8724c81ec`, and draws `99ec5f36cb75f2b4 bf6e1f784956452a
+1a5f849d4933e6e0 6aa594f1262d2d2c bba5ad4a1f842e59 ffef8375d9ebcaca`.
+
+Public `Random.seeded`/`Random.int` checks also compare signed intervals
+and singleton intervals at both Int extremes. The independent unbatched
+Lemire C sample in [Appendix A, arXiv:2408.06213v2](https://arxiv.org/html/2408.06213v2)
+gives offsets `4800180567299270261, 5295190459760845450,
+3609369285294772691, 3515805966490203214` for seed 1 and span 2⁶³+1,
+consuming 2, 1, 1 and 4 raw draws. These discriminate rejection from biased
+multiply-high without rejection. The maximum-span case checks signed
+overflow and both high/low product halves. No generator correctness or
+statistical randomness theorem is claimed; type/range safety stays proven.
+
+### Unicode16's interface, not its tables
+
+| Mo function | Core operation | Signature |
+| --- | --- | --- |
+| `graphemes` | `UnicodeOp.graphemes` | Text → List(Text) |
+| `display_width` | `UnicodeOp.displayWidth` | Text → Int |
+| `normalize_nfc` | `UnicodeOp.normalizeNfc` | Text → Text |
+| `lowercase` | `UnicodeOp.lowercase` | Text → Text |
+| `uppercase` | `UnicodeOp.uppercase` | Text → Text |
+
+These are ordinary, pure `Prim.unicode16` operations, with checker support
+and type safety. The evaluator remains executable: **when a call is reached**,
+after evaluating its arguments, it stops with
+`outside "Unicode16 is a trusted primitive unavailable in mocore"`
+and retains the world so far. `mocore` emits that stopped report, exit 1;
+a call in an unchosen branch or an unused function does not prevent
+execution. This is an oracle boundary, not the runtime meaning of Unicode16.
+Differential runs reaching it must be classified as unavailable, not used
+to demand that the VM also stop.
+
+Architecture 4 requires runtime conformance against UCD 16.0's own files,
+not agreement with Lean: GraphemeBreakTest.txt, NormalizationTest.txt,
+UnicodeData.txt, SpecialCasing.txt and the relevant width/property data.
+No Unicode tables, ASCII fallback, UCD conformance claim, or extra logical
+axiom is added here. A future runtime must specify display-width policy
+where UCD data alone does not settle it; this interface does not choose one.
+The existing ASCII Text/Char primitives are unchanged. `Int.to_char` already
+rejects surrogates and code points above U+10FFFF; public guards now check
+−1, both sides and both ends of the surrogate gap, U+10FFFF, U+110000 and
+Int.max. No conversion fix was needed.
+
+### Entries and the text contract
+
+`IoOp.entries false/true` correspond to `FILES_ENTRIES`/`READFILES_ENTRIES`
+in `src/base/hostops.def`, returning `Result(List(Entry), FileError)`.
+`Entry`/`EntryKind` are D232's built-ins, usable in constructors, cases,
+equality, host validation and structural reports without user declarations.
+Entries contain immediate **names**, not paths or file contents; order is
+the existing `list` order (Unicode scalar order, no normalization).
+
+Both real handles in the modeled world and `Files.in_memory` use the same
+text-file map: implied folders are deduplicated, and links/special files
+cannot be represented by that map. `Link` and `Other` remain constructible
+and transportable; classifying real OS links without following them belongs
+to the C host implementation. If a malformed map has both a file and its
+descendants at a name, `Folder` wins. The top folder exists even when empty;
+other empty/missing folders are `NotFound`. No Core `walk` is added.
+
+Text 0.3 adds these types/operations and replaces the old natural seed
+with explicit `RandomState` words in World/CapState. It does not silently
+upgrade 0.2 or reinterpret old state. Lean and C codecs move together, with
+all 14 run fixtures and 13 fuzz seeds generated by `ExportSamples.lean`;
+the freshness check compares both directories byte for byte. The next
+minor version is 0.4. TEXT.md specifies exact fields and boundary reports.
