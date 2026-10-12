@@ -3,7 +3,8 @@
  *
  * The checker, the code generator, the verifier, the VM and the host all read this table, and
  * none of them keeps its own copy. docs/design/library.md has a row for every line, which make
- * library-map checks. Define HOSTOP before including the file, which undefines it at its end:
+ * library-map checks, and tests/test_tables.c checks the lines themselves. Define HOSTOP before
+ * including the file, which undefines it at its end:
  *
  *     #define HOSTOP(id, module, name, signature, params, bugs, spec_only) ...
  *     #include "base/hostops.def"
@@ -23,11 +24,12 @@
  *
  * "too many open handles" is the bug of bytecode.md 7: the number of open handles on real
  * folders has a named limit. within and read_only each make a handle, which holds its own
- * descriptor until it is dropped.
+ * descriptor until it is dropped. now stops when the real clock reads a time outside the years
+ * 1 to 9999, which no Time can hold (bytecode.md 2.2).
  *
- * spec_only: true for the operations only spec code may use, which the verifier refuses
- * anywhere else (bytecode.md 9, item 6): the fake constructors, and Console's printed and
- * printed_errors (reference 12.4).
+ * spec_only: a bool, true for the operations only spec code may use, which the verifier
+ * refuses anywhere else (bytecode.md 9, item 6): the fake constructors, and Console's printed
+ * and printed_errors (reference 12.4).
  *
  * The lines follow docs/design/library.md, capability by capability. */
 

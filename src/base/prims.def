@@ -3,12 +3,15 @@
  * The checker, the code generator, the verifier and the VM all read this table, and none of
  * them keeps its own copy. docs/design/library.md says where every function and operator of
  * the library is implemented, and make library-map checks that it has a row for every line
- * here. Define PRIM before including the file, which undefines it at its end:
+ * here; tests/test_tables.c checks the lines themselves. Define PRIM before including the
+ * file, which undefines it at its end:
  *
  *     #define PRIM(id, module, name, signature, params, bugs) ...
  *     #include "base/prims.def"
  *
- * id: the primitive's name in C. No two lines share one.
+ * id: the primitive's name in C: its module and its name in capitals, without the name's % or
+ * ?, as LIST_APPEND for List.append. A name ending in ? may add IS_, as LIST_IS_EMPTY does for
+ * empty?. No two lines share an id.
  *
  * module and name: the checker adds the primitive to the module, as if it were declared there
  * under the name (bytecode.md 6). The module is that of the primitive's type, through which a
@@ -18,8 +21,8 @@
  * module and a name, and the bytecode's text form can write a primitive as Module.name, as in
  * List.append. A name that starts with %, which no Mo name can (reference 2.3), marks a
  * primitive that lowering emits and no Mo program can call: for literals, interpolation, text
- * forms, order, and BigInt's operators. Core's names made by lowering start with % too
- * (formal/TRANSLATION.md, section 0).
+ * forms, order, BigInt's operators, and the details of a failed assertion. Core's names made by
+ * lowering start with % too (formal/TRANSLATION.md, section 0).
  *
  * signature: the primitive's type in Mo's syntax, with the type parameters T, U, K and V as the
  * reference writes them, and then, after where, the abilities it needs of them, as a

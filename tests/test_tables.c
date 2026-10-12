@@ -403,36 +403,34 @@ static bool is_function_name(const char *name, bool lowering_may_name) {
     return *at == '\0' && at[-1] != '_';
 }
 
-/* Ids are the module's name and the function's in capitals, as LIST_APPEND for List.append,
- * without a name's % or ?; a name ending in ? may start with IS_, as LIST_IS_EMPTY does. */
-static bool follows_the_id_rule(const struct line *line) {
-    char expected[2][64];
-    size_t lengths[2] = {0, 0};
-    for (size_t form = 0; form < 2; form++) {
-        size_t length = 0;
-        for (const char *c = line->module; *c != '\0'; c++) {
-            MO_ASSERT(length + 1 < sizeof expected[form]);
-            expected[form][length++] = is_lower(*c) ? (char)(*c - 'a' + 'A') : *c;
+/* Appends text to an id being built, in capitals, leaving out % and ?. */
+static void append_capitals(char *id, size_t capacity, size_t *length, const char *text) {
+    for (const char *c = text; *c != '\0'; c++) {
+        if (*c == '%' || *c == '?') {
+            continue;
         }
-        const char *prefix = form == 0 ? "_" : "_IS_";
-        for (const char *c = prefix; *c != '\0'; c++) {
-            MO_ASSERT(length + 1 < sizeof expected[form]);
-            expected[form][length++] = *c;
-        }
-        for (const char *c = line->name; *c != '\0'; c++) {
-            if (*c == '%' || *c == '?') {
-                continue;
-            }
-            MO_ASSERT(length + 1 < sizeof expected[form]);
-            expected[form][length++] = is_lower(*c) ? (char)(*c - 'a' + 'A') : *c;
-        }
-        expected[form][length] = '\0';
-        lengths[form] = length;
+        MO_ASSERT(*length + 1 < capacity);
+        id[(*length)++] = is_lower(*c) ? (char)(*c - 'a' + 'A') : *c;
     }
-    MO_ASSERT(lengths[0] > 0 && lengths[1] > 0);
+    id[*length] = '\0';
+}
+
+/* Ids are the module's name and the function's in capitals, as LIST_APPEND for List.append,
+ * without a name's % or ?; a name ending in ? may add IS_, as LIST_IS_EMPTY does. */
+static bool follows_the_id_rule(const struct line *line) {
     size_t name_length = strlen(line->name);
     bool question = name_length > 0 && line->name[name_length - 1] == '?';
-    return strcmp(line->id, expected[0]) == 0 || (question && strcmp(line->id, expected[1]) == 0);
+    for (int form = 0; form < (question ? 2 : 1); form++) {
+        char id[64];
+        size_t length = 0;
+        append_capitals(id, sizeof id, &length, line->module);
+        append_capitals(id, sizeof id, &length, form == 0 ? "_" : "_IS_");
+        append_capitals(id, sizeof id, &length, line->name);
+        if (strcmp(line->id, id) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /* Bugs are phrases in the reference's words, separated by "; ", or nothing: each starts with
