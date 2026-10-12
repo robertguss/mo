@@ -18,7 +18,7 @@ fail() {
 
 # A tree whose map and tables agree. The map has a table the check doesn't read, rows of
 # every place, an operator implemented by a primitive, a constant, a function called through
-# its module, and a lowering row that names primitives.
+# its module, a lowering row that names primitives, and Mo rows in modules of one word and two.
 good_tree() {
 	rm -rf "$tree/docs" "$tree/src"
 	mkdir -p "$tree/docs/design" "$tree/src/base"
@@ -94,6 +94,12 @@ EOF
 | --- | --- | --- | --- |
 | `print(text)` | host | `CONSOLE_PRINT` | |
 | `Console.fake()` | host | `CONSOLE_FAKE` | |
+
+## FileError
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `to_text` | Mo | `lib/file-error.mo` | its own `to_text` |
 EOF
 }
 
@@ -137,7 +143,7 @@ if [ "$status" -ne 0 ]; then
 	fail "the check refused a tree whose map and tables agree:" "$output"
 fi
 case $output in
-*"each of the 7 primitives and 2 host operations (13 rows)"*) ;;
+*"each of the 7 primitives and 2 host operations (14 rows)"*) ;;
 *) fail "the check passed the good tree but counted wrongly:" "$output" ;;
 esac
 
@@ -173,6 +179,19 @@ refuses $prims 'PRIM(INT_ABS,     "Int",    "abs",     "fn(Int) : Int",         
 refuses $prims 'PRIM(LIST_GET,    "List",   "get",     "fn(List(T), Int) : Option(T)", "bb", "")' \
 	'PRIM(INT_ABS,     "Int",    "abs",     "fn(Int) : Int",                "b",  "overflow")' \
 	"$prims:8" 'INT_ABS is a line of both tables, or twice of one'
+
+refuses $map '| `map(f)` | Mo | `lib/list.mo` | takes a function |' \
+	'| `map(f)` | Mo | `lib/lists.mo` | takes a function |' \
+	"$map:28" 'a Mo row of section "List(T)" names lib/lists.mo, not lib/list.mo'
+refuses $map '| `to_text` | Mo | `lib/file-error.mo` | its own `to_text` |' \
+	'| `to_text` | Mo | `lib/fileerror.mo` | its own `to_text` |' \
+	"$map:58" 'names lib/fileerror.mo, not lib/file-error.mo'
+refuses $map '| `map(f)` | Mo | `lib/list.mo` | takes a function |' \
+	'| `map(f)` | Mo | Mo code | takes a function |' \
+	"$map:28" 'a Mo row names its file in lib/ in backticks, as lib/list.mo'
+refuses $map '| `map(f)` | Mo | `lib/list.mo` | takes a function |' \
+	'| `get(i)` | Mo | `lib/list.mo` | takes a function |' \
+	"$map:28" 'get has a row already in section "List(T)"'
 
 good_tree
 rm "$tree/$hostops"

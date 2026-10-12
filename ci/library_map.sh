@@ -13,8 +13,10 @@
 # names exactly one id in backticks in its third column, which must be a line of prims.def or
 # hostops.def in the section's module; when the row's Function starts with a function's name
 # in backticks, such as `pow(n)` or `Text.from_chars(chars)`, the line has that name. Other
-# rows may name ids too, which must be lines of either table. No line has two rows. Other
-# tables in the map, such as the one that lists the six places, aren't read.
+# rows may name ids too, which must be lines of either table. No line has two rows, and no
+# function has two rows in a section. A Mo row names its file in lib/, in backticks, named after
+# the section's module as reference 2.1 names a module's file: FileError's is lib/file-error.mo.
+# Other tables in the map, such as the one that lists the six places, aren't read.
 set -eu
 
 if [ $# -gt 1 ]; then
@@ -63,6 +65,32 @@ function backticked(text, tokens,    n, start, rest) {
 		rest = substr(rest, index(rest, "`") + 1)
 	}
 	return n
+}
+
+# The file of a module, as reference 2.1 names it: file-error.mo for FileError.
+function module_file(name,    file, i, c) {
+	file = ""
+	for (i = 1; i <= length(name); i++) {
+		c = substr(name, i, 1)
+		if (i > 1 && c ~ /[A-Z]/)
+			file = file "-"
+		file = file tolower(c)
+	}
+	return "lib/" file ".mo"
+}
+
+# The name of the function a row is about, from the first text in backticks in its Function
+# column, as pow for `pow(n)` and Text.from_chars for `Text.from_chars(chars)`; "" for an
+# operator, such as `a + b`.
+function function_name(cell,    tokens, n, called) {
+	n = backticked(cell, tokens)
+	if (n == 0)
+		return ""
+	called = tokens[1]
+	if (called !~ /^([A-Z][A-Za-z0-9]*[.])?%?[a-z][a-z0-9_]*[?]?([(].*[)])?$/)
+		return ""
+	sub(/[(].*$/, "", called)
+	return called
 }
 
 # An id names a line of a table: capitals, digits and underscores, with at least one
@@ -139,7 +167,26 @@ FILENAME == map {
 		problem(where, "Where is \"" place_cell "\", which isn'"'"'t instruction, primitive, host, generic, lowering or Mo")
 		next
 	}
+	called = function_name(function_cell)
+	if (called != "") {
+		if ((section "\t" called) in named)
+			problem(where, called " has a row already in section \"" section "\", at " named[section "\t" called])
+		else
+			named[section "\t" called] = where
+	}
 	n = backticked(implemented, tokens)
+	if (place_cell == "Mo") {
+		files = 0
+		for (i = 1; i <= n; i++) {
+			if (tokens[i] !~ /^lib\//)
+				continue
+			files++
+			if (tokens[i] != module_file(section_module))
+				problem(where, "a Mo row of section \"" section "\" names " tokens[i] ", not " module_file(section_module))
+		}
+		if (files != 1)
+			problem(where, "a Mo row names its file in lib/ in backticks, as " module_file(section_module))
+	}
 	found = 0
 	for (i = 1; i <= n; i++) {
 		if (!is_id(tokens[i]))
@@ -161,20 +208,16 @@ FILENAME == map {
 
 # A row that names a line: the line is in the section'"'"'s module, has the name the row gives,
 # and has no other row.
-function check_row(id, where, function_cell,    tokens, n, called, called_module) {
+function check_row(id, where, function_cell,    called, called_module) {
 	if (id in row)
 		problem(where, id " has a row already, at " row[id])
 	else
 		row[id] = where
 	if (module[id] != section_module)
 		problem(where, id " is in module " module[id] ", not " section_module ", the module of section \"" section "\"")
-	n = backticked(function_cell, tokens)
-	if (n == 0)
-		return
-	called = tokens[1]
-	if (called !~ /^([A-Z][A-Za-z0-9]*[.])?%?[a-z][a-z0-9_]*[?]?([(].*[)])?$/)
+	called = function_name(function_cell)
+	if (called == "")
 		return # an operator, such as `a + b`
-	sub(/[(].*$/, "", called)
 	called_module = ""
 	if (index(called, ".") > 0) {
 		called_module = substr(called, 1, index(called, ".") - 1)

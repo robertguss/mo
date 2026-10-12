@@ -58,16 +58,18 @@ whose module is the first word of its heading. A row whose second column is
 `primitive` or `host` names exactly one id in its third column, in backticks.
 That id must be a line of `prims.def` or `hostops.def`, in the section's module,
 and when the row's first column starts with a function's name, the line has
-that name. Every line of the two tables must have such a row. Any other id in
-backticks must be a line of one of them, and the second column must be one of
-the six places.
+that name. Every line of the two tables must have exactly one such row. A `Mo`
+row names its file, which reference 2.1 names after the module: `FileError`'s
+is `lib/file-error.mo`. Any other id in backticks must be a line of one of the
+tables, the second column must be one of the six places, and no function has
+two rows in a section.
 
 ## Every type
 
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
 | hashing, for map keys and set members | generic | the map and set primitives, with SipHash-1-3 (`bytecode.md` 8) | |
-| `compare`: the order `sort`, `min` and `max` use, and `<` on tuples, lists, records and choice types | lowering | generated for each type with `Order`: the type's own `compare` where it has one; for the immediates of `bytecode.md` 4.4, `lt` and `eq`, except for `Float`, whose order is `cmp_float`, with not-a-number last; `Text.%compare`, `BigInt.%compare` and `Bytes.%compare`; tuples part by part from the left, lists element by element, records field by field and choice types case by case, in declaration order | the text forms and the order programs see are Mo functions, not VM operations (`bytecode.md` 8) |
+| `compare`: the order `sort`, `sort_by`, `sort_by_desc`, `min` and `max` use, and `<` on tuples, lists, records and choice types | lowering | generated for each type with `Order`: the type's own `compare` where it has one; for the immediates of `bytecode.md` 4.4, `lt` and `eq`, except for `Float`, whose order is `cmp_float`, with not-a-number last; `Equal` for `Unit`; `Text.%compare`, `BigInt.%compare` and `Bytes.%compare`; tuples part by part from the left, lists element by element, records field by field and choice types case by case, in declaration order | the text forms and the order programs see are Mo functions, not VM operations (`bytecode.md` 8). Mo code in `lib/` orders with `compare`, not `<`, because `<` on floats follows IEEE 754 and leaves not-a-number unordered |
 | `to_text`, at a type without its own, and `#{x}` in a text | lowering | generated for each type with `Text`, in the form that looks like code (reference 9.2): from the built-in types' `to_text`, with `Text.%quoted` and `Char.%quoted` for texts and characters inside another value, joined with `Text.%concat` | as for `compare` |
 
 ## Bool
@@ -278,7 +280,7 @@ Every operation on text is a primitive (architecture section 7).
 
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
-| `[a, b, c]`, and `[]` | lowering | `List.%empty`, then `append` for each element, from the left | |
+| `[a, b, c]`, and `[]` | lowering | `List.%empty`, then `append` for each element, from the left | a primitive for the whole literal would take any number of parameters, which no signature in `prims.def` can say |
 | `List.%empty` | primitive | `LIST_EMPTY` | lowering's own: `[]`, and the start of every list literal. With `append` on a list with one holder, a literal costs what one allocation would |
 | `for x in items` | lowering | a join point that reads positions from 0 with `get` until it gives `None` | |
 | `a == b`, `a != b` | generic | `equal`, and `not` for `!=` | |
@@ -325,7 +327,7 @@ Every operation on text is a primitive (architecture section 7).
 
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
-| `{k: v, …}`, and `{}` | lowering | every key and value, computed from the left; then `Map.%empty`, and `Map.%literal_insert` for each entry in order | keys that the checker can see are equal are an error (architecture 3.4); keys that turn out equal as the program runs are a bug (reference 3.8) |
+| `{k: v, …}`, and `{}` | lowering | every key and value, computed from the left; then `Map.%empty`, and `Map.%literal_insert` for each entry in order | as for a list literal: architecture 4.3's one primitive that builds the map from all its entries would take any number of parameters. Building it entry by entry, after computing them all, stops on the same literals at the same point |
 | `Map.%empty` | primitive | `MAP_EMPTY` | lowering's own: `{}`, and the start of every map literal |
 | `Map.%literal_insert` | primitive | `MAP_LITERAL_INSERT` | lowering's own: unlike `set`, it stops when its key is already there |
 | `for (k, v) in m` | lowering | a loop over `entries`, as over a list | |
@@ -435,14 +437,14 @@ spec code (reference 12.4).
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
 | `list` | host | `ARGS_LIST` | |
-| `Args.of(list)` | host | `ARGS_OF` | |
+| `Args.of(list)` | host | `ARGS_OF` | a fake, for spec code only (reference 12.4) |
 
 ## Env
 
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
 | `get(name)` | host | `ENV_GET` | |
-| `Env.of(map)` | host | `ENV_OF` | |
+| `Env.of(map)` | host | `ENV_OF` | a fake, for spec code only (reference 12.4) |
 
 ## Console
 
@@ -451,10 +453,10 @@ spec code (reference 12.4).
 | `print(text)` | host | `CONSOLE_PRINT` | |
 | `error(text)` | host | `CONSOLE_ERROR` | |
 | `read_line` | host | `CONSOLE_READ_LINE` | |
-| `printed` | host | `CONSOLE_PRINTED` | |
-| `printed_errors` | host | `CONSOLE_PRINTED_ERRORS` | |
-| `Console.fake()` | host | `CONSOLE_FAKE` | |
-| `Console.fake_input(lines)` | host | `CONSOLE_FAKE_INPUT` | |
+| `printed` | host | `CONSOLE_PRINTED` | spec code only (reference 12.4) |
+| `printed_errors` | host | `CONSOLE_PRINTED_ERRORS` | spec code only (reference 12.4) |
+| `Console.fake()` | host | `CONSOLE_FAKE` | a fake, for spec code only (reference 12.4) |
+| `Console.fake_input(lines)` | host | `CONSOLE_FAKE_INPUT` | a fake, for spec code only (reference 12.4) |
 
 ## Files
 
@@ -469,7 +471,7 @@ spec code (reference 12.4).
 | `exists?(path)` | host | `FILES_EXISTS` | |
 | `within(folder)` | host | `FILES_WITHIN` | |
 | `read_only` | host | `FILES_READ_ONLY` | |
-| `Files.in_memory(files)` | host | `FILES_IN_MEMORY` | |
+| `Files.in_memory(files)` | host | `FILES_IN_MEMORY` | a fake, for spec code only (reference 12.4) |
 
 ## ReadFiles
 
@@ -498,14 +500,14 @@ the same code as `Files`'s, on a handle marked read-only (`bytecode.md` 7).
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
 | `now` | host | `CLOCK_NOW` | |
-| `Clock.fixed(time)` | host | `CLOCK_FIXED` | |
+| `Clock.fixed(time)` | host | `CLOCK_FIXED` | a fake, for spec code only (reference 12.4) |
 
 ## Random
 
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
 | `int(low, high)` | host | `RANDOM_INT` | |
-| `Random.seeded(seed)` | host | `RANDOM_SEEDED` | |
+| `Random.seeded(seed)` | host | `RANDOM_SEEDED` | a fake, for spec code only (reference 12.4) |
 
 ## Unicode16
 
