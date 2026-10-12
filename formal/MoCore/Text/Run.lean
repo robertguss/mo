@@ -47,7 +47,7 @@ partial def valueFits (p : Program) (t : Ty) (v : Value) : Bool :=
   | t, .con c vs => match ctorsOf p t >>= ctorFields c with
     | some fs => fs.length == vs.length && (fs.zip vs).all fun ((_, t), v) => valueFits p t v
     | none => false
-  | .cap c, .cap d _ => c == d
+  | .cap c, .cap d _ _ => c == d
   | _, _ => false
 
 def execute (r : Run) : Report :=

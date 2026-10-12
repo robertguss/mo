@@ -140,12 +140,12 @@ theorem valTy_tuple_iff : ValTy P v (.tuple ts) ↔ ∃ vs, v = .tuple vs ∧ Va
     | con hcs => simp [ctorsOf] at hcs
   · rintro ⟨vs, rfl, h⟩; exact .tuple h
 
-theorem valTy_cap_iff : ValTy P v (.cap c) ↔ ∃ r, v = .cap c r := by
+theorem valTy_cap_iff : ValTy P v (.cap c) ↔ ∃ r fake, v = .cap c r fake := by
   constructor
   · intro h; cases h with
-    | cap => exact ⟨_, rfl⟩
+    | cap => exact ⟨_, _, rfl⟩
     | con hcs => simp [ctorsOf] at hcs
-  · rintro ⟨r, rfl⟩; exact .cap
+  · rintro ⟨r, fake, rfl⟩; exact .cap
 
 theorem valsTy_nil_iff : ValsTy P vs [] ↔ vs = [] := by
   constructor
@@ -789,9 +789,10 @@ theorem eq_safe (t : Ty) : PrimSafe P (.eq t) := by
 
 /-! ## Capabilities -/
 
-theorem ioOp_safe (op : IoOp) : PrimSafe P (.io op) := by
+theorem hostIoOp_safe (op : IoOp) : ∀ vs w, ValsTy P vs op.sig.1 →
+    OutcomeOk P [] op.sig.2 (evalHostIoOp op vs w) := by
   cases op <;> invert_args <;>
-    simp only [Prim.eval, evalIoOp, capRoot, filesKind, ↓reduceIte] <;>
+    simp only [evalHostIoOp, newFake, capRoot, filesKind, ↓reduceIte] <;>
     (repeat' split) <;>
     first
     | exact ValTy.unit
@@ -810,6 +811,29 @@ theorem ioOp_safe (op : IoOp) : PrimSafe P (.io op) := by
     | exact okTime_safe
     | exact okInt_safe
     | trivial
+
+theorem onFake_safe {id : Nat} {w : World} (h : OutcomeOk P [] τ o) :
+    OutcomeOk P [] τ (onFake id w o) := by
+  cases o <;> simp only [onFake, OutcomeOk] at *
+  · split
+    · cases h; exact .cap
+    · exact h
+  all_goals exact h
+
+theorem capArgs_real {c : Cap} {r : Option String} {id : Nat} {vs : List Value} {ts : List Ty}
+    (h : ValsTy P (.cap c r (some id) :: vs) ts) : ValsTy P (.cap c r none :: vs) ts := by
+  cases h with
+  | cons hc hs => cases hc; exact .cons .cap hs
+
+theorem ioOp_safe (op : IoOp) : PrimSafe P (.io op) := by
+  intro vs w h
+  simp only [Prim.eval, evalIoOp]
+  split
+  · rename_i c root id rest
+    apply onFake_safe
+    apply hostIoOp_safe
+    exact capArgs_real h
+  · exact hostIoOp_safe op vs w h
 
 /-! ## Every primitive -/
 

@@ -602,4 +602,29 @@ def stoppedInit : Program :=
   | .ok (.tuple [.text "cached", .text "cached"]) w => w.stdout == ["once"]
   | _ => false
 
+/-! ## Independent fake capabilities -/
+
+def fakeChecks : Expr :=
+  lets [("a", io .consoleFake []), ("b", io .consoleFakeInput [strs ["input"]]),
+    ("files", io .filesInMemory [mop tText tText .empty []]),
+    ("other", io .filesInMemory [mop tText tText .empty []]),
+    ("sub", io (.within false) [v "files", str "a"]),
+    ("reader", io .readOnly [v "files"])] <|
+  seq (io .print [v "a", str "first"]) <|
+  lets [("snapshot", io .printed [v "a"])] <|
+  seq (io .print [v "a", str "second"]) <|
+  seq (io .printError [v "b", str "error"]) <|
+  seq (io .writeText [v "sub", str "note", str "saved"]) <|
+  and_ (eq (tList tText) (v "snapshot") (strs ["first"])) <|
+  and_ (eq (tList tText) (io .printed [v "a"]) (strs ["first", "second"])) <|
+  and_ (eq (tList tText) (io .printed [v "b"]) (strs [])) <|
+  and_ (eq (tList tText) (io .printedErrors [v "b"]) (strs ["error"])) <|
+  and_ (eq (tOpt tText) (io .readLine [v "b"]) (some_ tText (str "input"))) <|
+  and_ (eq (tOpt tText) (io .readLine [v "b"]) (none_ tText)) <|
+  and_ (eq (tRes tText tFileError) (io (.readText true) [v "reader", str "a/note"])
+    (ok_ tText tFileError (str "saved"))) <|
+  eq tBool (io (.«exists» false) [v "other", str "a/note"]) ff
+
+#guard passes program fakeChecks
+
 end MoCore.Builtins

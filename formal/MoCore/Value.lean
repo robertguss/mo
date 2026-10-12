@@ -89,7 +89,7 @@ inductive Value where
   | con (c : String) (fields : List Value)
   | closure (env : List (String × Value)) (params : List (String × Ty)) (body : Expr)
       (globals : List (String × Value))
-  | cap (c : Cap) (root : Option String)
+  | cap (c : Cap) (root : Option String) (fake : Option Nat := none)
   deriving Repr, Inhabited
 
 /-- An environment: variables and their values, innermost first. -/
@@ -136,7 +136,7 @@ Effects go through primitives on capability values, which read and update one
 `World` record. A real runtime implements the world with the operating system;
 a test's fakes (reference 12.4) are a world built for the test. -/
 
-structure World where
+structure CapState where
   /-- The command-line arguments after the program's name (`Args`). -/
   args : List String := []
   /-- The environment variables (`Env`). -/
@@ -153,6 +153,12 @@ structure World where
   now : Int := 0
   /-- The random number generator's state. -/
   seed : Nat := 0
+  deriving Repr, Inhabited
+
+/-- Real capabilities use the inherited state. Fake handles index the
+append-only store; narrowing a handle never copies its state. -/
+structure World extends CapState where
+  fakes : List CapState := []
   deriving Repr, Inhabited
 
 /-! ## Outcomes -/

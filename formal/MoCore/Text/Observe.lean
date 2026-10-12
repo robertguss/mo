@@ -42,9 +42,9 @@ partial def structural (p : Program) (t : Ty) (v : Value) (nested : Bool := fals
         pure (if tNameFields && n != "0" then n ++ ": " ++ s else s)
       pure (if fields.isEmpty then c else delimited (c ++ "(") ")" fields)
   | .fn _ _, .closure .. => pure "<function>"
-  | .cap c, .cap d root =>
+  | .cap c, .cap d root fake =>
       if c != d then throw "capability type mismatch"
-      pure ((tag "cap" [enumOut capTable c, rootOut root]).render)
+      pure (valueOut (.cap c root fake)).render
   | _, _ => throw "value does not match result type"
 where
   tNameFields := match t with | .data _ | .fileError => true | _ => false
