@@ -120,9 +120,12 @@ fuzz-smoke: $(FUZZERS)
 			if [ "$$base" = fuzz_bytecode_io ]; then options="-max_len=4096 -timeout=15"; fi; \
 			if [ "$$variant" = large ]; then \
 				name=$${base}_large; options="-max_len=134217728 -timeout=30"; fi; \
-			corpus=$(FUZZ_BUILD)/corpus/$$name; mkdir -p $$corpus; \
+			corpus=$(FUZZ_BUILD)/corpus/$$name; \
+			if [ "$$base" = fuzz_core_text ] || [ "$$base" = fuzz_core_check ]; then rm -rf $$corpus; fi; \
+			mkdir -p $$corpus; \
 			if [ -d fuzz/corpus/$$name ]; then cp -R fuzz/corpus/$$name/. $$corpus/; fi; \
-			if [ "$$name" = fuzz_core_text ]; then cp tests/core/*.core $$corpus/; fi; \
+			if [ "$$name" = fuzz_core_text ] || [ "$$name" = fuzz_core_check ]; then \
+				cp tests/core/*.core fuzz/corpus/fuzz_core_text/*.core $$corpus/; fi; \
 			if [ "$$name" = fuzz_syntax ]; then cp grammar/tests/good/*.mo grammar/tests/bad/*.mo examples/*.mo $$corpus/; fi; \
 			if [ "$$name" = fuzz_syntax ]; then \
 				awk 'BEGIN { printf "x = 0"; for (i = 0; i < 30000; i++) printf " +\n1"; print "" }' >$$corpus/flat-binary.mo; \

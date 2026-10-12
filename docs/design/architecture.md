@@ -866,6 +866,68 @@ Stream 3 implements the writer, text tools, image accessor and C value APIs
 declared below. The image retains file indices in every decoded and runtime
 table, so streams 2 and 4 use the same indices in calls and value builders.
 
+**Core's checker.** `mo_core_check` accepts complete parsed or arena-built
+Core trees, not arbitrary pointers or invalid C enum tags. Its typing contract
+is the executable `formal/MoCore/Check.lean` checker, including declaration
+kinds, constant prefixes, spec code, capability and fake signatures, and the
+ordinary entry. It also requires `mo_core_metadata_valid`; metadata has no
+typing meaning, but its shape must be safe for code generation.
+
+The executable checker is sound for the typing relation, not a complete
+decision procedure for it. In particular, tuple parts, let bounds, callees
+and scrutinees must infer their types even when the surrounding expression
+has an expected type; `stop`, `fail` and `jump` alone cannot infer one.
+Every function body is checked, including bodies hidden by a duplicate
+function name; the relation's program rule only requires lookup-visible
+bodies. C follows the checker in both cases. It preserves first-match
+lookups for duplicate data, constructor, function and parameter names,
+rejects duplicate constants, and does not add surface-language Equal or
+capability-capture restrictions absent from the Core checker.
+
+Typing refusal means a compiler bug. E1027–E1053 are registered implementation
+diagnostics with precise reasons and no reference section; E1052 and E1053
+report resource limits rather than compiler bugs. Checking appends the first
+refusal without clearing earlier diagnostics or mutating Core. Its owned label
+names the declaration, the relevant variable, call, constructor or enclosing
+let binding, and expected/found types for type mismatches. Names are escaped
+and elided at 128 bytes; types have a 16-node display budget. It uses compiler
+expression spans, falling back to the declaration span. If neither exists,
+`file` is `UINT32_MAX` and both offsets are zero, an unavailable location that
+diagnostic renderers must not index into the source table. A missing entry has
+no declaration to locate; its label names the entry instead.
+
+Work is bounded by `MO_LIMIT_CORE_DEPTH`, `MO_LIMIT_CORE_NODES` and
+`MO_LIMIT_CORE_CHECK_SCRATCH_SIZE` (512 bytes per permitted node, 512 MiB total).
+This is separate from the text codec's scratch budget. The depth bound applies
+to expression and type walks, including metadata; the node budget counts
+expression occurrences and distinct annotation nodes across the program.
+Scratch is divided equally between persistent declarations/types and one
+body's temporary state, reset after each body. Ordered AVL indices avoid
+quadratic name scans; interned types avoid repeated structural equality and
+cache their constructor declarations, including absent declarations.
+Each expression occurrence builds its binding
+indices once and keeps two inference/checking answers inline; additional
+expected types use overflow entries. Memoization avoids exponential branch
+retries. Lambda and join parameter arrays belong to the body arena. Wide case
+arms are traversed iteratively.
+Metadata module names use merge sorting and exported types use indexed
+ownership instead of nested membership scans. Literal list/map arities are
+compared with their actual arguments before allocating any signature space.
+
+`ci/check_core_check.py` compares every Core fixture and committed or smoke
+`fuzz_core_text`/`fuzz_core_check` corpus file with `mocore`, plus fixture mutations,
+type-directed trees and an independent table of all primitive/host signatures.
+The version comes from `core.h`. All syntactically valid runs use zero evaluator
+fuel: this compares acceptance, not evaluation. Oracle processes and C batches
+run in parallel. Generated arity/type refusals must have their expected code
+classes; a resource refusal never counts as typing agreement. Smoke fuzzing
+resets only the disposable Core corpora before seeding them each run.
+Lean's signature construction expands a list/map literal's declared `Nat`
+count before checking its arity; enormous counts can exhaust the oracle
+instead of giving a verdict. C must refuse these mismatches promptly; C
+regressions cover them, but they are outside the runnable differential corpus.
+No Lean rule is changed to accommodate this resource limitation.
+
 ```c
 /* src/base/diag.h: diagnostics, rendered as text or JSON by src/tools. */
 struct mo_span { uint32_t file; uint32_t start; uint32_t end; };     /* byte offsets */

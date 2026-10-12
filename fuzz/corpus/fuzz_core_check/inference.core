@@ -1,0 +1,1 @@
+(core 0.6 (Program () ((FunDecl "main" (("b" (bool)) ("x" (int)) ("x" (text))) (int) (let_ "answer" (case_ (con (option (int)) "Some" ((var "x"))) (("None" () (stop "")) ("Some" ("n") (join "done" (("v" (int))) (var "v") (jump "done" ((var "n"))))))) (var "answer")) "Main" (function) 0)) () "main" (noSource)))

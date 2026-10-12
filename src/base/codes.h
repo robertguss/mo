@@ -102,6 +102,34 @@
     X(1024, CORE_FIELD, NULL)                                                                      \
     X(1025, CORE_NUMBER, NULL)                                                                     \
     X(1026, CORE_CHARACTER, NULL)                                                                  \
+    /* Invalid compiler-produced Core, not mistakes in Mo source. */                               \
+    X(1027, CORE_CHECK_METADATA, NULL)                                                             \
+    X(1028, CORE_CHECK_CONSTANT_NAME, NULL)                                                        \
+    X(1029, CORE_CHECK_ENTRY, NULL)                                                                \
+    X(1030, CORE_CHECK_ENTRY_KIND, NULL)                                                           \
+    X(1031, CORE_CHECK_KIND, NULL)                                                                 \
+    X(1032, CORE_CHECK_PREFIX, NULL)                                                               \
+    X(1033, CORE_CHECK_LITERAL, NULL)                                                              \
+    X(1034, CORE_CHECK_VARIABLE, NULL)                                                             \
+    X(1035, CORE_CHECK_GLOBAL, NULL)                                                               \
+    X(1036, CORE_CHECK_TYPE, NULL)                                                                 \
+    X(1037, CORE_CHECK_ARGUMENTS, NULL)                                                            \
+    X(1038, CORE_CHECK_LAMBDA, NULL)                                                               \
+    X(1039, CORE_CHECK_APPLICATION, NULL)                                                          \
+    X(1040, CORE_CHECK_FUNCTION, NULL)                                                             \
+    X(1041, CORE_CHECK_CALL_PREFIX, NULL)                                                          \
+    X(1042, CORE_CHECK_SPEC_CALL, NULL)                                                            \
+    X(1043, CORE_CHECK_PROJECTION, NULL)                                                           \
+    X(1044, CORE_CHECK_CONSTRUCTORS, NULL)                                                         \
+    X(1045, CORE_CHECK_CONSTRUCTOR, NULL)                                                          \
+    X(1046, CORE_CHECK_ARMS, NULL)                                                                 \
+    X(1047, CORE_CHECK_ARM, NULL)                                                                  \
+    X(1048, CORE_CHECK_SPEC_PRIMITIVE, NULL)                                                       \
+    X(1049, CORE_CHECK_INFERENCE, NULL)                                                            \
+    X(1050, CORE_CHECK_FAIL, NULL)                                                                 \
+    X(1051, CORE_CHECK_JUMP, NULL)                                                                 \
+    X(1052, CORE_CHECK_LIMIT, NULL)                                                                \
+    X(1053, CORE_CHECK_MEMORY, NULL)                                                               \
     /* The supplied syntax arena, or the system, has no room. */                                   \
     X(1054, SYNTAX_NO_MEMORY, NULL)
 

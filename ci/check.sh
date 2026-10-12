@@ -72,6 +72,17 @@ if have lake; then
 	make --no-print-directory formal
 	step "Core text fixtures match the Lean reference printer"
 	sh ci/check_core_fixtures.sh
+	step "Core checker verdicts match Lean on fixtures, generated variants and fuzz corpora"
+	if have python3; then
+		drivers=()
+		for driver in build/{gcc,clang}/{debug,sanitize}/tests/test_core_check.test; do
+			if [[ -x "$driver" ]]; then drivers+=("$driver"); fi
+		done
+		if ((${#drivers[@]})); then python3 ci/check_core_check.py "${drivers[@]}";
+		else missing "no Core checker test executable is built"; fi
+	else
+		missing "python3 is not installed"
+	fi
 else
 	missing "elan (Lean's installer) is not installed"
 fi
