@@ -480,8 +480,9 @@ static void sections(struct reader *r) {
     }
 }
 
-struct mo_bytecode *mo_bytecode_decode(struct mo_arena *arena, const uint8_t *bytes, size_t length,
-                                       struct mo_load_error *error) {
+struct mo_bytecode *mo_bytecode_decode_info(struct mo_arena *arena, const uint8_t *bytes,
+                                            size_t length, const uint32_t **code_offsets,
+                                            struct mo_load_error *error) {
     MO_ASSERT(arena != NULL && error != NULL && (bytes != NULL || length == 0));
     *error = (struct mo_load_error){.reason = "invalid header or bytecode size"};
     if (length > MO_LIMIT_BYTECODE_SIZE || length < MO_BYTECODE_HEADER_SIZE ||
@@ -543,6 +544,15 @@ struct mo_bytecode *mo_bytecode_decode(struct mo_arena *arena, const uint8_t *by
         .debug = r.debug_positions,
         .wire_size = length};
     bool valid = mo_bytecode_validate(r.file, &info, error);
+    if (valid && code_offsets != NULL) {
+        *code_offsets =
+            mo_arena_copy(arena, r.code_positions,
+                          (size_t)r.file->function_count * sizeof(uint32_t), _Alignof(uint32_t));
+        if (*code_offsets == NULL) {
+            *error = (struct mo_load_error){.reason = "no memory"};
+            valid = false;
+        }
+    }
     mo_arena_free(&r.scratch);
     if (!valid) {
         return NULL;
@@ -560,4 +570,9 @@ struct mo_bytecode *mo_bytecode_decode(struct mo_arena *arena, const uint8_t *by
         }
     }
     return r.file;
+}
+
+struct mo_bytecode *mo_bytecode_decode(struct mo_arena *arena, const uint8_t *bytes, size_t length,
+                                       struct mo_load_error *error) {
+    return mo_bytecode_decode_info(arena, bytes, length, NULL, error);
 }
