@@ -1,0 +1,387 @@
+#include "check/check.h"
+
+#include "base/codes.h"
+#include "base/limits.h"
+
+#include <string.h>
+
+struct type_entry {
+    struct mo_source_type type;
+    struct type_entry *left;
+    struct type_entry *right;
+    uint32_t height;
+};
+
+struct preparation {
+    struct mo_arena *arena;
+    const struct mo_module_interfaces *interfaces;
+    struct mo_diags *diags;
+    const struct mo_symbol *function;
+    struct type_entry *root;
+    struct mo_span span;
+    uint32_t depth;
+    bool failed;
+};
+
+static MO_MUST_USE bool problem(struct preparation *p, uint16_t code, struct mo_span span,
+                                const char *message, const char *reason) {
+    bool kept = mo_diags_add(p->diags, &(struct mo_diag){.code = code,
+                                                         .primary = {span, message},
+                                                         .message = message,
+                                                         .reason = reason});
+    p->failed = !kept;
+    return false;
+}
+
+static MO_MUST_USE void *allocate(struct preparation *p, size_t count, size_t size,
+                                  size_t alignment) {
+    if (p->failed)
+        return NULL;
+    void *result = mo_arena_allocate_array(p->arena, count, size, alignment);
+    if (result == NULL) {
+        bool reported =
+            problem(p, MO_CODE_CHECK_NO_MEMORY, p->span, "the checking arena has no room", NULL);
+        (void)reported;
+        p->failed = true;
+    }
+    return result;
+}
+
+static MO_MUST_USE int compare_types(const struct mo_source_type *a,
+                                     const struct mo_source_type *b) {
+    if (a->kind != b->kind)
+        return a->kind < b->kind ? -1 : 1;
+    if (a->module != b->module)
+        return a->module < b->module ? -1 : 1;
+    uintptr_t x = (uintptr_t)a->declaration, y = (uintptr_t)b->declaration;
+    if (x != y)
+        return x < y ? -1 : 1;
+    int order = strcmp(a->name, b->name);
+    if (order != 0)
+        return order;
+    if (a->count != b->count)
+        return a->count < b->count ? -1 : 1;
+    for (uint32_t i = 0; i < a->count; i++) {
+        x = (uintptr_t)a->arguments[i];
+        y = (uintptr_t)b->arguments[i];
+        if (x != y)
+            return x < y ? -1 : 1;
+    }
+    return 0;
+}
+
+static MO_MUST_USE uint32_t height(const struct type_entry *entry) {
+    return entry == NULL ? 0 : entry->height;
+}
+
+static void refresh(struct type_entry *entry) {
+    uint32_t a = height(entry->left), b = height(entry->right);
+    entry->height = 1 + (a > b ? a : b);
+}
+
+static MO_MUST_USE struct type_entry *rotate(struct type_entry *entry, bool right) {
+    struct type_entry *next = right ? entry->left : entry->right;
+    if (right) {
+        entry->left = next->right;
+        next->right = entry;
+    } else {
+        entry->right = next->left;
+        next->left = entry;
+    }
+    refresh(entry);
+    refresh(next);
+    return next;
+}
+
+static MO_MUST_USE struct type_entry *insert(struct type_entry *root, struct type_entry *entry) {
+    if (root == NULL)
+        return entry;
+    int order = compare_types(&entry->type, &root->type);
+    MO_ASSERT(order != 0);
+    if (order < 0)
+        root->left = insert(root->left, entry);
+    else
+        root->right = insert(root->right, entry);
+    refresh(root);
+    if (height(root->left) > height(root->right) + 1) {
+        if (height(root->left->right) > height(root->left->left))
+            root->left = rotate(root->left, false);
+        return rotate(root, true);
+    }
+    if (height(root->right) > height(root->left) + 1) {
+        if (height(root->right->left) > height(root->right->right))
+            root->right = rotate(root->right, true);
+        return rotate(root, false);
+    }
+    return root;
+}
+
+static MO_MUST_USE const struct mo_source_type *intern(struct preparation *p,
+                                                       struct mo_source_type type) {
+    struct type_entry *at = p->root;
+    while (at != NULL) {
+        int order = compare_types(&type, &at->type);
+        if (order == 0)
+            return &at->type;
+        at = order < 0 ? at->left : at->right;
+    }
+    struct type_entry *entry = allocate(p, 1, sizeof(*entry), _Alignof(struct type_entry));
+    char *name = allocate(p, strlen(type.name) + 1, 1, 1);
+    const struct mo_source_type **arguments =
+        type.count == 0
+            ? NULL
+            : allocate(p, type.count, sizeof(*arguments), _Alignof(const struct mo_source_type *));
+    if (p->failed)
+        return NULL;
+    memcpy(name, type.name, strlen(type.name) + 1);
+    if (type.count != 0)
+        memcpy(arguments, type.arguments, (size_t)type.count * sizeof(*arguments));
+    type.name = name;
+    type.arguments = arguments;
+    *entry = (struct type_entry){.type = type, .height = 1};
+    p->root = insert(p->root, entry);
+    return &entry->type;
+}
+
+static MO_MUST_USE int compare_name(const struct mo_syntax *node, const char *name) {
+    size_t length = node->span.end - node->span.start, other = strlen(name);
+    size_t shared = length < other ? length : other;
+    int order = memcmp(node->text, name, shared);
+    return order != 0 ? order : length < other ? -1 : length > other ? 1 : 0;
+}
+
+static MO_MUST_USE const struct mo_symbol *lookup(const struct mo_module_scope *scope,
+                                                  const struct mo_syntax *name) {
+    uint32_t lo = 0, hi = scope->count;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (compare_name(name, scope->symbols[mid].name) > 0)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo < scope->count && compare_name(name, scope->symbols[lo].name) == 0
+               ? &scope->symbols[lo]
+               : NULL;
+}
+
+static MO_MUST_USE const struct mo_symbol *definition(struct preparation *p,
+                                                      const struct mo_syntax *name) {
+    const struct mo_module_scope *scope = &p->interfaces->scopes[p->function->module];
+    if (name->kind == MO_S_QUALIFIED) {
+        const struct mo_syntax *prefix = name->children[0];
+        uint32_t lo = 0, hi = scope->alias_count;
+        while (lo < hi) {
+            uint32_t mid = lo + (hi - lo) / 2;
+            if (compare_name(prefix, scope->aliases[mid].name) > 0)
+                lo = mid + 1;
+            else
+                hi = mid;
+        }
+        if (lo == scope->alias_count || compare_name(prefix, scope->aliases[lo].name) != 0)
+            return NULL;
+        const struct mo_symbol *symbol =
+            lookup(&p->interfaces->scopes[scope->aliases[lo].module], name->children[1]);
+        if (symbol != NULL && !symbol->exported) {
+            bool reported = problem(p, MO_CODE_IMPORT_PRIVATE, name->span,
+                                    "everything not on expose is private to the module",
+                                    "Everything not on expose is private to the module "
+                                    "(reference 10.1).");
+            (void)reported;
+            p->failed = true;
+            return NULL;
+        }
+        return symbol;
+    }
+    const struct mo_symbol *symbol = lookup(scope, name);
+    if (symbol != NULL)
+        return symbol;
+    uint32_t lo = 0, hi = scope->imported_count;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (compare_name(name, scope->imported[mid].name) > 0)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo < scope->imported_count && compare_name(name, scope->imported[lo].name) == 0
+               ? scope->imported[lo].symbols
+               : NULL;
+}
+
+static MO_MUST_USE const struct mo_source_type *resolve(struct preparation *p,
+                                                        const struct mo_syntax *node);
+
+static MO_MUST_USE const struct mo_source_type *unit(struct preparation *p) {
+    return intern(
+        p, (struct mo_source_type){.kind = MO_SOURCE_NAMED, .name = "Unit", .module = UINT32_MAX});
+}
+
+static MO_MUST_USE const struct mo_source_type *resolve_type(struct preparation *p,
+                                                             const struct mo_syntax *node) {
+    if (node == NULL)
+        return unit(p);
+    p->span = node->span;
+    if (node->token == MO_T_FN || node->token == MO_T_LPAREN) {
+        const struct mo_syntax *sequence = node->children[0];
+        uint32_t count = sequence->count + (node->token == MO_T_FN ? 1u : 0u);
+        const struct mo_source_type **arguments =
+            allocate(p, count, sizeof(*arguments), _Alignof(const struct mo_source_type *));
+        if (arguments == NULL)
+            return NULL;
+        for (uint32_t i = 0; i < sequence->count; i++) {
+            arguments[i] = resolve(p, sequence->children[i]);
+            if (arguments[i] == NULL)
+                return NULL;
+        }
+        if (node->token == MO_T_FN) {
+            arguments[count - 1] = resolve(p, node->children[1]);
+            if (arguments[count - 1] == NULL)
+                return NULL;
+        }
+        return intern(p, (struct mo_source_type){.kind = node->token == MO_T_FN ? MO_SOURCE_FUNCTION
+                                                                                : MO_SOURCE_TUPLE,
+                                                 .name = node->token == MO_T_FN ? "fn" : "()",
+                                                 .module = UINT32_MAX,
+                                                 .count = count,
+                                                 .arguments = arguments});
+    }
+    const struct mo_syntax *name = node->children[0], *args = node->children[1];
+    uint32_t count = args == NULL ? 0 : args->count;
+    const struct mo_symbol *symbol = definition(p, name);
+    if (p->failed)
+        return NULL;
+    struct mo_source_type type = {.kind = MO_SOURCE_NAMED, .module = UINT32_MAX, .count = count};
+    uint32_t arity = 0;
+    if (symbol != NULL && symbol->owner == UINT32_MAX &&
+        (symbol->declaration->kind == MO_S_STRUCT || symbol->declaration->kind == MO_S_ENUM)) {
+        type.name = symbol->name;
+        type.module = symbol->module;
+        type.declaration = symbol;
+        const struct mo_syntax *parameters = symbol->declaration->children[1];
+        arity = parameters == NULL ? 0 : parameters->count;
+    } else if (symbol == NULL && name->kind == MO_S_CAPNAME) {
+        static const struct {
+            const char *name;
+            uint32_t arity;
+        } natives[] = {
+            {"Bool", 0},     {"Int", 0},       {"BigInt", 0}, {"Byte", 0},      {"Decimal", 0},
+            {"Float", 0},    {"Text", 0},      {"Char", 0},   {"Bytes", 0},     {"Unit", 0},
+            {"List", 1},     {"Map", 2},       {"Set", 1},    {"Range", 0},     {"Time", 0},
+            {"Duration", 0}, {"Option", 1},    {"Result", 2}, {"Ordering", 0},  {"Args", 0},
+            {"Env", 0},      {"Console", 0},   {"Files", 0},  {"ReadFiles", 0}, {"Clock", 0},
+            {"Random", 0},   {"FileError", 0}, {"Entry", 0},  {"EntryKind", 0}};
+        for (size_t i = 0; i < sizeof(natives) / sizeof(natives[0]); i++)
+            if (compare_name(name, natives[i].name) == 0) {
+                type.name = natives[i].name;
+                arity = natives[i].arity;
+                break;
+            }
+        if (type.name == NULL && name->span.end - name->span.start == 1) {
+            if (count != 0) {
+                bool reported = problem(p, MO_CODE_TYPE_ARGUMENTS, node->span,
+                                        "give the type its type parameters",
+                                        "A type parameter is a single capital letter, not a "
+                                        "generic type constructor (reference 9.1).");
+                (void)reported;
+                return NULL;
+            }
+            char parameter[2] = {(char)name->text[0], '\0'};
+            type.kind = MO_SOURCE_PARAMETER;
+            type.name = parameter;
+            type.module = p->function->module;
+            type.declaration = p->function;
+            return intern(p, type);
+        }
+    }
+    if (type.name == NULL) {
+        bool reported = problem(p, MO_CODE_TYPE_NAME, name->span, "a type name isn't in scope",
+                                "Use brings a module's exposed type names into scope "
+                                "(reference 10.3).");
+        (void)reported;
+        return NULL;
+    }
+    if (count != arity) {
+        bool reported =
+            problem(p, MO_CODE_TYPE_ARGUMENTS, node->span, "give the type its type parameters",
+                    "List(T), Map(K, V) and declared generic types take type "
+                    "parameters (reference 9.1).");
+        (void)reported;
+        return NULL;
+    }
+    const struct mo_source_type **arguments =
+        count == 0
+            ? NULL
+            : allocate(p, count, sizeof(*arguments), _Alignof(const struct mo_source_type *));
+    if (p->failed)
+        return NULL;
+    for (uint32_t i = 0; i < count; i++) {
+        arguments[i] = resolve(p, args->children[i]);
+        if (arguments[i] == NULL)
+            return NULL;
+    }
+    type.arguments = arguments;
+    return intern(p, type);
+}
+
+static MO_MUST_USE const struct mo_source_type *resolve(struct preparation *p,
+                                                        const struct mo_syntax *node) {
+    MO_ASSERT(p->depth < MO_LIMIT_NESTING_DEPTH);
+    p->depth++;
+    const struct mo_source_type *type = resolve_type(p, node);
+    p->depth--;
+    return type;
+}
+
+struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct mo_module_set *set,
+                                            const struct mo_module_interfaces *interfaces,
+                                            struct mo_diags *diags) {
+    MO_ASSERT(arena != NULL && set != NULL && interfaces != NULL && diags != NULL);
+    MO_ASSERT(interfaces->count == set->count && set->count <= MO_LIMIT_FILES);
+    struct preparation p = {
+        .arena = arena, .interfaces = interfaces, .diags = diags, .span = {UINT32_MAX, 0, 0}};
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < interfaces->count; i++)
+        for (uint32_t j = 0; j < interfaces->scopes[i].count; j++)
+            if (interfaces->scopes[i].symbols[j].declaration->kind == MO_S_FN)
+                count++;
+    struct mo_signatures *out = allocate(&p, 1, sizeof(*out), _Alignof(struct mo_signatures));
+    struct mo_function_signature *items =
+        allocate(&p, count, sizeof(*items), _Alignof(struct mo_function_signature));
+    if (p.failed)
+        return NULL;
+    *out = (struct mo_signatures){.items = items};
+    for (uint32_t i = 0; i < interfaces->count; i++)
+        for (uint32_t j = 0; j < interfaces->scopes[i].count; j++) {
+            const struct mo_symbol *function = &interfaces->scopes[i].symbols[j];
+            if (function->declaration->kind != MO_S_FN)
+                continue;
+            p.function = function;
+            p.span = function->declaration->span;
+            const struct mo_syntax *parameters = function->declaration->children[1];
+            const struct mo_source_type *arguments[MO_LIMIT_PARAMETERS + 1];
+            MO_ASSERT(parameters->count <= MO_LIMIT_PARAMETERS);
+            for (uint32_t k = 0; k < parameters->count; k++) {
+                arguments[k] = resolve(&p, parameters->children[k]->children[1]);
+                if (arguments[k] == NULL)
+                    goto failed;
+            }
+            arguments[parameters->count] = resolve(&p, function->declaration->children[2]);
+            if (arguments[parameters->count] == NULL)
+                goto failed;
+            const struct mo_source_type *type =
+                intern(&p, (struct mo_source_type){.kind = MO_SOURCE_FUNCTION,
+                                                   .name = "fn",
+                                                   .module = UINT32_MAX,
+                                                   .count = parameters->count + 1,
+                                                   .arguments = arguments});
+            if (type == NULL)
+                goto failed;
+            out->items[out->count++] = (struct mo_function_signature){function, type};
+        }
+    MO_ASSERT(out->count == count);
+    return out;
+failed:
+    mo_diags_sort(diags);
+    return NULL;
+}

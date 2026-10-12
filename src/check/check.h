@@ -82,4 +82,42 @@ MO_MUST_USE const struct mo_symbol *mo_find_symbol(const struct mo_module_scope 
 MO_MUST_USE struct mo_module_interfaces *
 mo_resolve_modules(struct mo_arena *arena, const struct mo_module_set *set, struct mo_diags *diags);
 
+enum mo_source_type_kind {
+    MO_SOURCE_NAMED,
+    MO_SOURCE_PARAMETER,
+    MO_SOURCE_FUNCTION,
+    MO_SOURCE_TUPLE,
+};
+
+/* Canonical annotation types: equal types have the same pointer within one
+ * preparation. Named types use module UINT32_MAX for built-ins; type parameters
+ * belong to their declaring function. Function arguments include the result in
+ * the last slot. Declaration pointers borrow the module interfaces. */
+struct mo_source_type {
+    enum mo_source_type_kind kind;
+    const char *name;
+    uint32_t module;
+    const struct mo_symbol *declaration;
+    uint32_t count;
+    const struct mo_source_type *const *arguments;
+};
+
+struct mo_function_signature {
+    const struct mo_symbol *function;
+    const struct mo_source_type *type;
+};
+
+struct mo_signatures {
+    uint32_t count;
+    struct mo_function_signature *items; /* module order, then interface symbol order */
+};
+
+/* Prepares all named function signatures, including abstract generic parameters
+ * and default Unit results. NULL with diagnostics on failure. This does not
+ * check function bodies, abilities or fields; it is not a checked program.
+ * Result types belong to arena and borrow interfaces, which must outlive them. */
+MO_MUST_USE struct mo_signatures *
+mo_prepare_signatures(struct mo_arena *arena, const struct mo_module_set *set,
+                      const struct mo_module_interfaces *interfaces, struct mo_diags *diags);
+
 #endif

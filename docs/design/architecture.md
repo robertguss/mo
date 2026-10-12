@@ -347,6 +347,19 @@ borrow the loaded syntax, which must outlive them. Loading and interface
 checking are the first independently usable slice; `mo_check` and its
 typed program follow.
 
+**Signatures.** `mo_prepare_signatures` resolves the parameter and result
+annotations of every named function before its body is visited. Omitted
+results are `Unit`. Tuples and function types keep ordered arguments; a
+function type's last argument is its result. An AVL index interns types,
+so repeated annotation types have one identity within a preparation.
+Nominal types retain their module symbol, not just their printable name.
+Locally declared and explicitly imported types take precedence over implicit
+single-letter parameters; qualification always selects a nominal type.
+Implicit parameters belong to their function, and are abstract there, not
+shared with another function's same-spelled parameter. All storage uses the
+caller arena, with E1058 on exhaustion. This intermediate result checks no
+bodies, data fields or abilities and is not a checked program.
+
 Type checking is **bidirectional**, one function body at a time. A signature
 is given, and the body is checked against it: an expression is either
 checked against an expected type or has its type inferred, and inferred types

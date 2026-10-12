@@ -1,0 +1,6 @@
+E0049 9.1
+0:28..34
+give the type its type parameters
+A type parameter is a single capital letter, not a generic type constructor (reference 9.1).
+give the type its type parameters
+fixes 0

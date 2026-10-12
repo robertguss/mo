@@ -73,6 +73,8 @@
     X(45, ALWAYS_IN_SCOPE, "10.3")                                                                 \
     X(46, IMPORT_MISSING, "10.3")                                                                  \
     X(47, IMPORT_HIDDEN_CASE, "10.2")                                                              \
+    X(48, TYPE_NAME, "10.3")                                                                       \
+    X(49, TYPE_ARGUMENTS, "9.1")                                                                   \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \
