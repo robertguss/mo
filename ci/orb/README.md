@@ -43,6 +43,17 @@ reviewer agent has approved it (Working Agreement).
 
 Runs share one clone, so a second run waits for the first.
 
+## Nightly fuzzing
+
+A pull request's check fuzzes each target for five seconds (`FUZZ_SECONDS` in
+the `Makefile`), which keeps a run to a few minutes. Once a night the CI orb runs
+`bash ci/orb/nightly.sh`: the same `ci/check.sh` on `main`'s latest commit, with
+each target fuzzed for five minutes (`MO_CI_FUZZ_SECONDS`, 300 by default). It
+keeps the log, and any crashing inputs, under `~/mo-ci/logs`, and sends the
+coordinating thread one line with the result, or the end of the log on a
+failure. A failure there is a bug on `main`; fix it in a pull request, and add
+the crashing input to the target's corpus.
+
 ## The CI orb itself
 
 - It needs the toolchain from `.agents/setup`; re-run that when it changes,
