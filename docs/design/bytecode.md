@@ -743,8 +743,8 @@ The VM implements a few operations for every type, driven by the type table:
 
 - **Equality and hashing** of any type with `Equal` or `Hash`, as `equal` and
   inside the map and set primitives. They are always structural (reference
-  9.2), so they never run Mo code. Maps and sets compare their entries in any
-  order, and hash their entries in a way that doesn't depend on order.
+  9.2), so they never run Mo code. Maps and sets compare their entries or
+  elements in any order, and hash them in a way that doesn't depend on order.
 - **Dropping** any value (4.3).
 - **The structural text form** of any value, for defect reports and Phase 4's
   introspection. It follows reference 9.2 without anyone's own `to_text`, so
