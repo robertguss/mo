@@ -13,9 +13,10 @@
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 
 static void check(const uint8_t *data, size_t size, bool fragment) {
-    struct arena *arena = mo_arena_new();
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_GRAMMAR_ARENA_LIMIT);
     struct lexer lx;
-    mo_lexer_init(&lx, "fuzz.mo", data, size, 1, fragment, arena);
+    mo_lexer_init(&lx, "fuzz.mo", data, size, 1, fragment, &arena);
     lx.quiet = true;
     struct node *root = NULL;
     int status = yyparse(&lx, &root);
@@ -26,7 +27,7 @@ static void check(const uint8_t *data, size_t size, bool fragment) {
     } else {
         MO_ASSERT(lx.errors > 0); // every refusal comes with a message
     }
-    mo_arena_free(arena);
+    mo_arena_free(&arena);
 }
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {

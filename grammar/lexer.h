@@ -6,12 +6,11 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "base/arena.h"
 #include "base/base.h"
+#include "base/limits.h"
 
 struct node;
-struct arena;
-
-enum { MO_LEXER_MAX_INTERPOLATION = 16 };
 
 // One open `#{` inside a text literal. While one is open, braces are counted so
 // that the `}` closing it can be told from a map literal's.
@@ -40,19 +39,19 @@ struct lexer {
     struct node *pending_value;
     int pending_line, pending_col;
     size_t pending_start, pending_length;
-    struct mo_interpolation interpolations[MO_LEXER_MAX_INTERPOLATION];
-    int depth; // open interpolations
-    struct arena *arena;
-    int errors;            // errors reported for this source
-    bool quiet;            // report nothing (used by --expect-error)
-    char first_error[512]; // the first message, kept for --expect-error
+    struct mo_interpolation interpolations[MO_LIMIT_INTERPOLATION_DEPTH];
+    int depth;              // open interpolations
+    struct mo_arena *arena; // holds the syntax tree
+    int errors;             // errors reported for this source
+    bool quiet;             // report nothing (used by --expect-error)
+    char first_error[512];  // the first message, kept for --expect-error
 };
 
 // Prepares a lexer over src, which need not end with a NUL. Lines are reported
 // counting from first_line. fragment selects the grammar's fragment mode, which
 // accepts declarations and statements in any order, as examples show them.
 void mo_lexer_init(struct lexer *lx, const char *path, const unsigned char *src, size_t len,
-                   int first_line, bool fragment, struct arena *arena);
+                   int first_line, bool fragment, struct mo_arena *arena);
 
 // Advice for a word other languages use where Mo has another spelling, such as
 // def or elif, or NULL. These words stay usable as names; the advice is added

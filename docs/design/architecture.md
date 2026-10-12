@@ -89,7 +89,8 @@ Every module uses `base`. Beyond that, each uses only the modules listed here:
 The VM never sees source, syntax trees or Core. Each module has one public
 header, named after it, such as `src/check/check.h`. There are two
 exceptions. `base`'s headers are each a separate facility: `base.h`,
-`limits.h`, `diag.h`, `codes.h`, `prims.def` and `hostops.def`. And `heap` has
+`arena.h`, `buffer.h`, `limits.h`, `diag.h`, `codes.h`, `prims.def` and
+`hostops.def`. And `heap` has
 a second header, `types.h`, with the runtime type table, the layouts and
 `mo_case_shape`; the compiler, the bytecode format, the primitives and the
 host use it without the rest of the heap. Nothing else is included across
@@ -129,10 +130,13 @@ offsets. Lines and columns are computed when a message is printed. Columns
 count characters, as the executable grammar does.
 
 The executable grammar (`grammar/mo.y`) is the specification. The parser and
-the grammar must agree on every input: they accept the same inputs and reject
-the same ones. A fuzz target checks this continuously by running both on the
-same bytes. After an error, the parser resumes at the next line that can start
-a declaration or a statement, so one mistake gives one error.
+the grammar must agree on every input within the limits of
+`src/base/limits.h`: they accept the same inputs and reject the same ones. The
+grammar enforces none of those limits but the depth of interpolations, so the
+fuzz target that checks this continuously, by running both on the same bytes,
+compares them only on inputs within the limits. After an error, the parser
+resumes at the next line that can start a declaration or a statement, so one
+mistake gives one error.
 
 `mo format` prints the syntax tree back. The tree keeps every comment: a
 comment on its own line is attached to the next node at its indentation, or
@@ -231,9 +235,14 @@ some names by type:
 
 ### 3.5 Diagnostics
 
-Every stage reports into one structure: a stable code (`E0412`), a primary span
-with a label, secondary spans with labels, a message in the reference's words,
-the section it cites, and fixes as text edits (D223). `src/tools` renders it
+Every stage reports into one structure: a stable code (`E0412`), a headline in
+the reference's words, a reason, the section the reason cites, a primary span
+with a label, secondary spans with labels, and fixes (D223). The reason is one
+sentence that says why, citing the rule's section, as appendix A's "Mo never
+drops a failure silently (reference 8.3)." Only the codes of limits, which cite
+no section, may have none. A fix is one or more text edits, applied together or
+not at all, each against the original text, so they don't overlap; a
+diagnostic's fixes are alternatives. `src/tools` renders it
 as the text of reference appendix A, or as JSON for `mo check --json`. Codes
 are registered in one table, `src/base/codes.h`, with the reference section
 each cites. A code is never reused for a different meaning. Diagnostics are
@@ -641,22 +650,29 @@ returns belongs to the arena it was given, unless its comment says otherwise.
 /* src/base/diag.h: diagnostics, rendered as text or JSON by src/tools. */
 struct mo_span { uint32_t file; uint32_t start; uint32_t end; };     /* byte offsets */
 struct mo_label { struct mo_span span; const char *text; };
-struct mo_fix { struct mo_span span; const char *replacement; };
+struct mo_edit { struct mo_span span; const char *replacement; };   /* an empty span inserts */
+/* Edits apply together or not at all, each against the original text, and don't overlap. */
+struct mo_fix { const char *title; const struct mo_edit *edits; uint32_t edit_count; };
 struct mo_diag {
     uint16_t code;                      /* E0412, registered in src/base/codes.h */
     struct mo_label primary;
     const struct mo_label *secondary;   /* secondary_count of them */
     uint32_t secondary_count;
-    const char *message;                /* in the reference's words */
+    const char *message;                /* the headline, in the reference's words */
+    const char *reason;                 /* why, citing the section; NULL only for a limit's code */
     const char *section;                /* the reference section it cites, such as "8.3" */
-    const struct mo_fix *fixes;         /* fix_count of them */
+    const struct mo_fix *fixes;         /* fix_count alternatives */
     uint32_t fix_count;
 };
 /* Diagnostics own their strings, in their own arena. */
 MO_MUST_USE bool mo_diags_init(struct mo_diags *diags);
 void mo_diags_free(struct mo_diags *diags);
-/* Source files, indexed by mo_span.file, for printing snippets. */
-MO_MUST_USE bool mo_sources_add(struct mo_sources *sources, const char *path, uint32_t *file_out);
+/* Source files, indexed by mo_span.file, for printing snippets. A file that can't be added
+ * adds nothing, and error_out says why: unreadable, past a limit, or no memory. */
+MO_MUST_USE bool mo_sources_init(struct mo_sources *sources);
+void mo_sources_free(struct mo_sources *sources);
+MO_MUST_USE bool mo_sources_add(struct mo_sources *sources, const char *path, uint32_t *file_out,
+                                struct mo_source_error *error_out);
 
 /* src/syntax/syntax.h: on an error, a partial tree for the rest of the file, and diagnostics. */
 MO_MUST_USE struct mo_module_syntax *mo_parse(struct mo_arena *arena, const struct mo_sources *sources,

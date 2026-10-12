@@ -11,7 +11,7 @@
 #include "mo.tab.h"
 
 void mo_lexer_init(struct lexer *lx, const char *path, const unsigned char *src, size_t len,
-                   int first_line, bool fragment, struct arena *arena) {
+                   int first_line, bool fragment, struct mo_arena *arena) {
     MO_ASSERT(lx != NULL && path != NULL && (src != NULL || len == 0) && arena != NULL);
     memset(lx, 0, sizeof *lx);
     lx->path = path;
@@ -492,7 +492,7 @@ static int text_body(struct lexer *lx, struct node **value, int line, int col, b
             advance(lx);
             advance(lx);
             if (start) {
-                if (lx->depth == MO_LEXER_MAX_INTERPOLATION) {
+                if (lx->depth == MO_LIMIT_INTERPOLATION_DEPTH) {
                     mo_lexer_error(lx, line, col, "interpolations are nested too deeply");
                     return YYerror;
                 }

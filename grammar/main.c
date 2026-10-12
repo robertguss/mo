@@ -119,9 +119,10 @@ static char *expectation(const unsigned char *data, size_t length) {
 
 static bool check_source(const char *path, const unsigned char *data, size_t length, int first_line,
                          bool fragment, enum mode mode) {
-    struct arena *arena = mo_arena_new();
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_GRAMMAR_ARENA_LIMIT);
     struct lexer lx;
-    mo_lexer_init(&lx, path, data, length, first_line, fragment, arena);
+    mo_lexer_init(&lx, path, data, length, first_line, fragment, &arena);
     bool ok;
     if (mode == TOKENS) {
         print_tokens(&lx);
@@ -148,7 +149,7 @@ static bool check_source(const char *path, const unsigned char *data, size_t len
     } else {
         ok = parse(&lx);
     }
-    mo_arena_free(arena);
+    mo_arena_free(&arena);
     return ok;
 }
 
