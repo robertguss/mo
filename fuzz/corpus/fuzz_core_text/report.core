@@ -1,0 +1,1 @@
+(core 0.1 (returned "[\"a\", \"b\\n\"]" (effects ("out\n") ("err") (("z" "1") ("a" "2")))))

@@ -7,8 +7,8 @@
  *
  * Each row gives the code's number, a short identifier, and the section of the reference it cites,
  * as a string such as "8.3". Codes up to E0999 are the language's errors, and each cites the rule
- * it enforces. Codes from E1000 are the implementation's limits (src/base/limits.h), which the
- * reference doesn't state, so they cite no section: NULL. */
+ * it enforces. Codes from E1000 are implementation errors: limits (src/base/limits.h) and
+ * interchange formats, which the reference doesn't state, so they cite no section: NULL. */
 #ifndef MO_CODES_H
 #define MO_CODES_H
 
@@ -53,7 +53,21 @@
     X(1014, FUNCTION_TOO_LONG, NULL)                                                               \
     /* The compiled program passes a limit of the bytecode format: a section's count, or the       \
      * file's size (src/base/limits.h). */                                                         \
-    X(1015, BYTECODE_TOO_BIG, NULL)
+    X(1015, BYTECODE_TOO_BIG, NULL)                                                                \
+    /* Core text exceeds its byte, node or scratch memory limit. */                                \
+    X(1016, CORE_TEXT_LIMIT, NULL)                                                                 \
+    /* The supplied Core arena, or the system, has no room. */                                     \
+    X(1017, CORE_NO_MEMORY, NULL)                                                                  \
+    /* Core text errors, specified by formal/TEXT.md rather than the language reference. */        \
+    X(1018, CORE_UTF8, NULL)                                                                       \
+    X(1019, CORE_SYNTAX, NULL)                                                                     \
+    X(1020, CORE_ESCAPE, NULL)                                                                     \
+    X(1021, CORE_VERSION, NULL)                                                                    \
+    X(1022, CORE_CONSTRUCTOR, NULL)                                                                \
+    X(1023, CORE_ARITY, NULL)                                                                      \
+    X(1024, CORE_FIELD, NULL)                                                                      \
+    X(1025, CORE_NUMBER, NULL)                                                                     \
+    X(1026, CORE_CHARACTER, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */
 enum mo_code {

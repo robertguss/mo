@@ -51,6 +51,16 @@
  * refuses deeper code: E1006. */
 #define MO_LIMIT_NESTING_DEPTH 256
 
+/* Core interchange, independent of the surface parser. Nesting counts every wire list,
+ * including list wrappers and the document. The lexer uses an explicit stack; codec walks
+ * recurse only up to this bound. E1006 for depth, E1016 for bytes/nodes/scratch, E1017 for arena
+ * exhaustion. The byte limit covers both input and canonical output. Nodes also bound wide
+ * lists and the printer's work on caller-built trees. */
+#define MO_LIMIT_CORE_DEPTH 256
+#define MO_LIMIT_CORE_TEXT_SIZE (8 << 20)
+#define MO_LIMIT_CORE_NODES (1 << 20)
+#define MO_LIMIT_CORE_SCRATCH_SIZE (128 << 20)
+
 /* How deeply interpolations may nest inside each other's text, as the executable grammar allows
  * (grammar/lexer.c uses this limit). The lexer refuses deeper ones: E1007. */
 #define MO_LIMIT_INTERPOLATION_DEPTH 16

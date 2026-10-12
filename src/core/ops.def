@@ -1,0 +1,70 @@
+/* Nullary operation constructors, in Lean order. The text is the wire spelling.
+ * Keep this table laid out explicitly: clang-format repeatedly reindents adjacent X calls. */
+// clang-format off
+#define MO_CORE_INT_OPS(X) \
+    X(ADD, "add") X(SUB, "sub") X(MUL, "mul") X(DIV, "div") X(REM, "rem") X(NEG, "neg") \
+    X(ABS, "abs") X(MIN, "min") X(MAX, "max") X(POW, "pow") X(FLOOR_DIV, "floorDiv") \
+    X(FLOOR_MOD, "floorMod") X(CHECKED_ADD, "checkedAdd") X(CHECKED_SUB, "checkedSub") \
+    X(CHECKED_MUL, "checkedMul") X(WRAPPING_ADD, "wrappingAdd") X(WRAPPING_SUB, "wrappingSub") \
+    X(WRAPPING_MUL, "wrappingMul") X(SATURATING_ADD, "saturatingAdd") \
+    X(SATURATING_SUB, "saturatingSub") X(SATURATING_MUL, "saturatingMul") X(TO_TEXT, "toText") \
+    X(TO_DECIMAL, "toDecimal") X(TO_BIG, "toBig") X(TO_FLOAT, "toFloat") X(TO_CHAR, "toChar") \
+    X(TO_BYTE, "toByte") X(SECONDS, "seconds") X(MILLISECONDS, "milliseconds") \
+    X(MINUTES, "minutes") X(HOURS, "hours") X(DAYS, "days")
+#define MO_CORE_BIG_OPS(X) \
+    X(ADD, "add") X(SUB, "sub") X(MUL, "mul") X(DIV, "div") X(REM, "rem") X(NEG, "neg") \
+    X(ABS, "abs") X(TO_INT, "toInt") X(TO_TEXT, "toText")
+#define MO_CORE_BYTE_OPS(X) X(TO_INT, "toInt") X(TO_TEXT, "toText")
+#define MO_CORE_DEC_OPS(X) \
+    X(ADD, "add") X(SUB, "sub") X(MUL, "mul") X(DIV, "div") X(REM, "rem") X(NEG, "neg") \
+    X(ABS, "abs") X(MIN, "min") X(MAX, "max") X(FLOOR, "floor") X(CEIL, "ceil") \
+    X(ROUND, "round") X(TO_INT, "toInt") X(TO_TEXT, "toText") X(TO_FIXED, "toFixed") \
+    X(TO_FLOAT, "toFloat")
+#define MO_CORE_FLOAT_OPS(X) \
+    X(ADD, "add") X(SUB, "sub") X(MUL, "mul") X(DIV, "div") X(NEG, "neg") X(ABS, "abs") \
+    X(SQRT, "sqrt") X(FLOOR, "floor") X(CEIL, "ceil") X(ROUND, "round") X(IS_NAN, "isNan") \
+    X(IS_INFINITE, "isInfinite") X(TO_TEXT, "toText")
+#define MO_CORE_BASES(X) \
+    X(INT, "int") X(BIG_INT, "bigInt") X(BYTE, "byte") X(DECIMAL, "decimal") X(FLOAT, "float") \
+    X(BOOL, "bool") X(CHAR, "char") X(TEXT, "text") X(BYTES, "bytes") X(TIME, "time") \
+    X(DURATION, "duration")
+#define MO_CORE_CMP_OPS(X) X(LT, "lt") X(LE, "le") X(GT, "gt") X(GE, "ge")
+#define MO_CORE_CHAR_OPS(X) \
+    X(CODE, "code") X(IS_DIGIT, "isDigit") X(IS_LETTER, "isLetter") \
+    X(IS_WHITE_SPACE, "isWhiteSpace") X(LOWER, "lower") X(UPPER, "upper") X(TO_TEXT, "toText")
+#define MO_CORE_TEXT_OPS(X) \
+    X(CONCAT, "concat") X(BYTE_COUNT, "byteCount") X(CHAR_COUNT, "charCount") X(IS_EMPTY, "isEmpty") \
+    X(CHARS, "chars") X(FROM_CHARS, "fromChars") X(LINES, "lines") X(WORDS, "words") \
+    X(SPLIT, "split") X(TRIM, "trim") X(TRIM_START, "trimStart") X(TRIM_END, "trimEnd") \
+    X(STARTS_WITH, "startsWith") X(ENDS_WITH, "endsWith") X(CONTAINS, "contains") \
+    X(DROP_PREFIX, "dropPrefix") X(DROP_SUFFIX, "dropSuffix") X(REPLACE, "replace") \
+    X(REPEAT, "repeat") X(PAD_LEFT, "padLeft") X(PAD_RIGHT, "padRight") X(LOWER, "lower") \
+    X(UPPER, "upper") X(TO_INT, "toInt") X(TO_DECIMAL, "toDecimal") X(JOIN, "join") X(BYTES, "bytes")
+#define MO_CORE_BYTES_OPS(X) X(SIZE, "size") X(GET, "get") X(DECODE_UTF8, "decodeUtf8")
+#define MO_CORE_RANGE_OPS(X) \
+    X(MAKE, "make") X(START, "start") X(END, "end") X(TO_LIST, "toList") X(CONTAINS, "contains") \
+    X(TO_TEXT, "toText")
+#define MO_CORE_TIME_OPS(X) \
+    X(SUB, "sub") X(ADD, "add") X(SUB_DUR, "subDur") X(CHECKED_ADD, "checkedAdd") \
+    X(TO_TEXT, "toText") X(PARSE, "parse") X(DUR_ADD, "durAdd") X(DUR_SUB, "durSub") \
+    X(DUR_MUL, "durMul") X(DUR_NEG, "durNeg") X(IN_MILLISECONDS, "inMilliseconds") \
+    X(IN_SECONDS, "inSeconds") X(DUR_TO_TEXT, "durToText")
+#define MO_CORE_LIST_OPS(X) \
+    X(SIZE, "size") X(IS_EMPTY, "isEmpty") X(GET, "get") X(FIRST, "first") X(LAST, "last") \
+    X(APPEND, "append") X(PREPEND, "prepend") X(CONCAT, "concat") X(REVERSE, "reverse") \
+    X(TAKE, "take") X(DROP, "drop") X(SET, "set") X(REMOVE_AT, "removeAt") X(UNCONS, "uncons") \
+    X(ENUMERATE, "enumerate") X(CONTAINS, "contains") X(UNIQUE, "unique")
+#define MO_CORE_MAP_OPS(X) \
+    X(EMPTY, "empty") X(SIZE, "size") X(IS_EMPTY, "isEmpty") X(GET, "get") X(HAS, "has") \
+    X(SET, "set") X(REMOVE, "remove") X(KEYS, "keys") X(VALUES, "values") X(ENTRIES, "entries") \
+    X(OF_LIST, "ofList")
+#define MO_CORE_SET_OPS(X) \
+    X(EMPTY, "empty") X(SIZE, "size") X(IS_EMPTY, "isEmpty") X(HAS, "has") X(ADD, "add") \
+    X(REMOVE, "remove") X(UNION, "union") X(INTERSECTION, "intersection") \
+    X(DIFFERENCE, "difference") X(TO_LIST, "toList") X(OF_LIST, "ofList")
+#define MO_CORE_IO_OPS(X) \
+    X(ARGS_LIST, "argsList") X(ENV_GET, "envGet") X(PRINT, "print") X(PRINT_ERROR, "printError") \
+    X(READ_LINE, "readLine") X(PRINTED, "printed") X(PRINTED_ERRORS, "printedErrors") \
+    X(WRITE_TEXT, "writeText") X(APPEND_TEXT, "appendText") X(REMOVE, "remove") \
+    X(READ_ONLY, "readOnly") X(NOW, "now") X(RANDOM_INT, "randomInt")
+// clang-format on
