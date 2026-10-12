@@ -88,12 +88,14 @@ def bugOut : Bug → Sexp
   | .stop s => tag "stop" [.str s]
   | .outside s => tag "outside" [.str s]
   | .repeatedKey => tag "repeatedKey"
+  | .fileFolderConflict path => tag "fileFolderConflict" [.str path]
 def bugIn : Sexp → Parse Bug
   | .node [.atom "overflow", s] => return .overflow (← asString s)
   | .node [.atom "divByZero"] => pure .divByZero
   | .node [.atom "stop", s] => return .stop (← asString s)
   | .node [.atom "outside", s] => return .outside (← asString s)
   | .node [.atom "repeatedKey"] => pure .repeatedKey
+  | .node [.atom "fileFolderConflict", path] => return .fileFolderConflict (← asString path)
   | _ => throw "invalid Bug"
 def outcomeOut : Outcome → Sexp
   | .ok v w => tag "ok" [valueOut v, worldOut w]

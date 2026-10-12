@@ -80,7 +80,8 @@ def world : World :=
   | _ => false
 #guard ([Outcome.ok (.list values) world, .stopped (.overflow "Int") world,
   .stopped .divByZero world, .stopped (.stop "reason") world, .stopped (.outside "call") world,
-  .stopped .repeatedKey world, .failed "detail" world, .jumped "j" values world, .wrong "internal", .outOfFuel]).all fun o =>
+  .stopped .repeatedKey world, .stopped (.fileFolderConflict "a/β") world,
+  .failed "detail" world, .jumped "j" values world, .wrong "internal", .outOfFuel]).all fun o =>
   match parseDocument (document (outcomeOut o)) >>= outcomeIn with
   | .ok u => reprStr o == reprStr u && document (outcomeOut o) == document (outcomeOut u)
   | _ => false
@@ -102,12 +103,12 @@ def world : World :=
   (.tuple [.char '\'', .text "\n", .duration 1500000, .time 0, .range (-2) 3, .bytes [0, 255]])).toOption ==
   some "('\\'', \"\\n\", 1.5s, 1970-01-01T00:00:00Z, -2..3, bytes[0, 255])"
 
-#guard (["", "(core 0.1 (unit))", "(core 0.2 (unit))", "(core 0.3 (unit))", "(core 0.4 (unit))", "(core 0.6 (unit))",
-  "(core 0.5 (unit)) extra", "(core 0.5 (unit)",
-  "(core 0.5 \"\\q\")", "(core 0.5 \"\\u{d800}\")", "(core 0.5 \"\\u{110000}\")",
-  "(core 0.5 \"\\u{}\")", "(core 0.5 \"unterminated)"]).all fun s => (parseDocument s).toOption.isNone
-#guard (parseDocument ";before\n(core ;version\n0.5 (int -00012));after" >>= litIn).toOption == some (.int (-12))
-#guard (parseDocument "(core 0.5 (float 0xFFFFFFFFFFFFFFFF))" >>= litIn).toOption == some (.float 0xffffffffffffffff)
+#guard (["", "(core 0.1 (unit))", "(core 0.2 (unit))", "(core 0.3 (unit))", "(core 0.4 (unit))",
+  "(core 0.5 (unit))", "(core 0.7 (unit))", "(core 0.6 (unit)) extra", "(core 0.6 (unit)",
+  "(core 0.6 \"\\q\")", "(core 0.6 \"\\u{d800}\")", "(core 0.6 \"\\u{110000}\")",
+  "(core 0.6 \"\\u{}\")", "(core 0.6 \"unterminated)"]).all fun s => (parseDocument s).toOption.isNone
+#guard (parseDocument ";before\n(core ;version\n0.6 (int -00012));after" >>= litIn).toOption == some (.int (-12))
+#guard (parseDocument "(core 0.6 (float 0xFFFFFFFFFFFFFFFF))" >>= litIn).toOption == some (.float 0xffffffffffffffff)
 #guard (["(float 0x123)", "(float 0x10000000000000000)", "(char \"ab\")", "(unit extra)",
   "(int +1)", "(int 1_0)"]).all fun s => (parseSexp s >>= litIn).toOption.isNone
 
@@ -245,6 +246,7 @@ def samples : List (String × Run) :=
   | _ => false
 
 #guard [Report.returned "raw\ntext" (effects world), .stopped .repeatedKey (effects world),
+  .stopped (.fileFolderConflict "a/β") (effects world),
   .failed "detail" (effects world), .outOfFuel, .wrong "internal", .parseError "syntax",
   .illTyped "type", .invalidRun "selection", .ioError "host"].all fun r =>
   match parseDocument (document (reportOut r)) >>= reportIn with

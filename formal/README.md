@@ -53,13 +53,18 @@ Core is a **typed, monomorphic, strict functional language**:
   which every call that returns a `Result` gives `Error(NotAllowed(path))` and
   `exists?` gives `false`.
   `entries` returns sorted immediate names and kinds, with folders implied
-  by file paths, on both real and fake Files/ReadFiles. Seeded Random uses
+  by file paths, on both real and fake Files/ReadFiles. D236 rejects a fake
+  whose key is also a folder, naming the path; kind mismatches give
+  `Failed(path, "not a folder")` or `Failed(path, "is a folder")`.
+  A file used as a `within` root fails subsequent Result calls with
+  `"not a folder"`; `exists?` there is false. Seeded Random uses
   four SplitMix64 outputs and Lemire's unbiased reduction, including the
   widest expressible half-open Int interval.
 - **Semantics**: `eval : Nat → Program → Env → World → Expr → Outcome`, a
   big-step evaluator with fuel. An outcome is a value and the new world;
   `stopped` on a bug (overflow, division by zero, `stop`, a library call
-  outside what it accepts, a map literal whose keys turn out equal; with the
+  outside what it accepts, a map literal whose keys turn out equal, a fake
+  file/folder collision; with the
   world so far); `failed` with its Text detail and world, distinct from a
   stop; an internal `jumped` to a join point; `wrong` (stuck, only
   for ill-typed programs); or `outOfFuel`. Overflow stops; it never wraps.
@@ -129,8 +134,8 @@ canonical printing, result protocol, extension rules and sample timings.
 | `MoCore/Text/*.lean` | The reference text codec: S-expressions, types/literals, primitives, programs, lossless values/worlds/outcomes, structural observations and checked run requests. |
 | `MoCore/TextChecks.lean` | Round trips for all twelve programs, every primitive/value, Builtins programs, reproducible runs and report/lexical checks. |
 | `Main.lean` | The `mocore` file/CLI protocol, with distinct diagnostic and outcome exit codes. |
-| `ExportSamples.lean` | Writes twelve entry runs plus Fakes, Library and synthetic Metadata, in Core text 0.5; optional second directory exports all fourteen fuzz seeds (`lake env lean --run ExportSamples.lean DIR FUZZ_DIR`). |
-| `TEXT.md` | Complete Core text 0.5 contract shared by Lean and C, compiler metadata, worked runs and measurements. |
+| `ExportSamples.lean` | Writes twelve entry runs plus Fakes, Library (including D236 kind checks) and synthetic Metadata, in Core text 0.6; optional second directory exports all fourteen fuzz seeds (`lake env lean --run ExportSamples.lean DIR FUZZ_DIR`). |
+| `TEXT.md` | Complete Core text 0.6 contract shared by Lean and C, compiler metadata, worked runs and measurements. |
 | `TRANSLATION.md` | The lowering from every v0.1 feature to Core, how the model follows the answers D227 gave to the questions writing it raised, the three things D228 added, and what the model decided in making `Byte`, `Bytes`, `Range` and `Set` types of their own. |
 
 ## The twelve programs
@@ -276,7 +281,10 @@ No theorem is left with `sorry`. What the proofs don't yet cover:
   float that is not a number as `nan` and the infinities as `inf` and
   `-inf`, as reference 9.2 spells them (checked in `MoCore/Lib.lean`), but
   finite floats now use the shortest round-tripping decimal shared with
-  `to_decimal`. Exact rational-to-binary64 conversion rounds once, ties to
+  `to_decimal`, with D236's fixed notation for decimal exponents -6 through
+  20, scientific otherwise; whole floats omit `.0`, zeros print `0`/`-0`.
+  Both signs and the immediate predecessors of 1e-6 and 1e21 are checked.
+  Exact rational-to-binary64 conversion rounds once, ties to
   even, including subnormals and overflow; midpoint and double-rounding
   regressions are checked by bits. Functional correctness is not proved.
   The VM's float text form is a trusted primitive, checked against Ryu
@@ -293,7 +301,10 @@ TRANSLATION.md 3.4; a set's is `Lib.setText`, given how its elements are
 written). Random now implements architecture 7's actual generator and range
 reduction. Real OS links/special files cannot appear in the model's text-file
 map; their EntryKind values are typed and transportable. `walk` remains Mo
-library code, not a Core primitive. The interchange text and structural oracle observations
+library code, not a Core primitive. D236's confined relative-link following,
+absolute/escaping-link refusal and unlinking the link itself belong to
+real-folder VM/host tests, not `mocore`; TRANSLATION.md records that boundary
+and the exhaustive file-operation outcomes. The interchange text and structural oracle observations
 are now defined in TEXT.md; they do not implement the Mo `to_text[T]`
 functions inside the calculus. `Byte`, `Bytes`, `Range` and `Set`
 are types of their own (TRANSLATION.md 3.2, 3.4, 7.5 and 3.8, and the

@@ -354,7 +354,8 @@ NODE(bug, struct mo_core_bug, enum mo_core_bug_tag,
      B(OVERFLOW, "overflow", F(struct mo_core_bug, detail, string), END),
      B(DIV_BY_ZERO, "divByZero", END), B(STOP, "stop", F(struct mo_core_bug, detail, string), END),
      B(OUTSIDE, "outside", F(struct mo_core_bug, detail, string), END),
-     B(REPEATED_KEY, "repeatedKey", END));
+     B(REPEATED_KEY, "repeatedKey", END),
+     B(FILE_FOLDER_CONFLICT, "fileFolderConflict", F(struct mo_core_bug, detail, string), END));
 #undef B
 #define O(tag, wire, ...) V(enum mo_core_outcome_tag, MO_CORE_OUTCOME_##tag, wire, __VA_ARGS__)
 #define OF(member, name) F(struct mo_core_outcome, as.member, name)
