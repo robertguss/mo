@@ -15,7 +15,9 @@ step for anything a Mo user would notice.
 | 7. Fast | Fast enough for serious services | v0.4 |
 | 8. Ecosystem | Others build and share | 1.0 |
 
-**Current phase: 1, Design the core.** Phase 0 (Reset) finished on 11 Oct 2026.
+**Current phase: 2, Agents can write it.** Phase 0 (Reset) finished on 11 Oct
+2026, and Phase 1 (Design the core) on 12 Oct 2026, with the Language Reference
+v0.1, Architecture v0.1 and Mo Core in Lean.
 
 Four tracks run alongside every phase:
 
