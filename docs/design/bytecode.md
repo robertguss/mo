@@ -538,8 +538,9 @@ A capability is a heap object that carries its own operations. It has:
 - the fake constructors: `Console.fake`, `Console.fake_input`,
   `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `Args.of` and `Env.of`.
 
-The verifier allows the fake constructors only in spec code (3.3), which is
-where the reference allows fakes to be made (reference 12.4). Code that isn't
+The verifier allows the fake constructors, `printed` and `printed_errors` only
+in spec code (3.3), which is where the reference allows them (reference
+12.4). Code that isn't
 spec code can't call, tail-call or make a closure of a spec function or an
 `init` function (section 9, item 6). So `main`, and everything it reaches, can
 neither make a fake nor run a test's code, even in an image that contains
@@ -616,7 +617,8 @@ checks:
    freed all at once (Architecture section 8).
 6. **Kinds of function.** `set_global` only in `init` functions, and every
    global set by exactly one of them, listed once in the `init` section.
-   `fail` and the fake constructors only in spec code. Code that isn't spec
+   `fail`, the fake constructors, and `Console`'s `printed` and
+   `printed_errors` only in spec code (reference 12.4). Code that isn't spec
    code doesn't call, tail-call or make a closure of a spec function or an
    `init` function. No function of a kind other than `function` has a
    borrowed parameter. Each kind has its signature (3.3).

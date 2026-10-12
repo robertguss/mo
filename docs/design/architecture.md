@@ -1,13 +1,12 @@
 # Mo Architecture v0.1
 
-**Draft, 12 October 2026, revised after an independent review.** This is how
+**Draft, 12 October 2026, revised after two independent reviews.** This is how
 Phase 2 builds the `mo` toolchain in C (decision D207): the compiler, the
 virtual machine, and the contracts between them. It is written against the
 Language Reference v0.1 (`docs/reference/`), whose rules win wherever the two
 disagree. It also builds on Mo Core (`formal/`) and the bytecode
 specification (`bytecode.md`). It fixes what Phase 2's work streams build
-against, so they can work in parallel. Section 13 lists what is still open,
-including the questions that need Robert's decision.
+against, so they can work in parallel. Section 13 lists what is still open.
 
 ## 1. The shape of the system
 
@@ -198,26 +197,32 @@ some names by type:
   through other functions, or through anonymous functions. Within such a group, every
   call to a member must pass type arguments that are the caller's own type
   parameters, never types built from them, such as `List(T)`. Breaking it is
-  an error whose message names the calls in the cycle (open question 6). As a
+  an error whose message names the calls in the cycle (reference 5.5). As a
   second line of defense, lowering stops with a diagnostic if instantiation
   ever nests deeper than a limit.
 
 ### 3.4 Abilities, capabilities and the other rules
 
 - **Abilities** are constraints on type parameters, checked at each call. The
-  checker knows which built-in types have each of the five abilities (open
-  question 2 of section 13.2), how records and choice types derive them, and
-  the customizing functions `compare` and `to_text`.
+  checker knows which built-in types have each of the five abilities (the
+  table in reference 9.2), how records and choice types derive them, and the
+  customizing functions `compare` and `to_text`.
+- **Anonymous functions** may read a `var` only if nothing assigns it after
+  the function is made, on any path, including a later turn of a loop around
+  the function (reference 5.6). The checker finds the assignments that can
+  follow the function's creation in the function's control flow.
 - **Capabilities.** A type *holds a capability* when it is a capability or
   contains one. The checker refuses anonymous functions that capture such
-  values, and fakes outside tests, examples and promises (reference 11.4,
-  12.4).
+  values, and fakes, `printed` and `printed_errors` outside tests, examples
+  and promises (reference 11.4, 12.4).
+- **Map literals** whose keys the checker can see are equal, such as two equal
+  literals or the same constant twice, are refused (reference 3.8).
 - **Exhaustiveness** uses the pattern-matrix method (Maranget, "Warnings for
   pattern matching", 2007). Reference 7.2's rule against whole-arm catch-alls
   over a choice type is checked on top of it.
 - **Constants** may refer to each other in any order within the program, and
-  are computed in the order of their dependencies. A cycle is an error (open
-  question 5).
+  are computed in the order of their dependencies. A cycle is an error
+  (reference 10.4).
 - **Promises and examples** are checked like functions returning `Bool`. An
   example line or a promise body becomes a spec function (`bytecode.md`
   section 3.3). `mo check` evaluates the anchors by compiling them and calling
@@ -315,6 +320,9 @@ examples. The ones a compiler is most likely to get wrong are:
 - **Ranges** `a..b` are values of type `Range`: two `Int`s. `for i in r`
   becomes a join point that counts from `r`'s start while below its end, so
   the counter never overflows.
+- **Map literals** become a primitive that builds the map from its entries
+  and stops if two keys turn out equal (reference 3.8). `to_map` is a
+  different primitive, in which the later value wins.
 - **Constants** become one init function each, run in the order of 3.4.
 - **`main`** is wrapped in an entry function, which receives the capabilities
   `main` declares and turns `main`'s result into an exit status: `Unit` gives
@@ -537,7 +545,7 @@ crash. A tail call reuses its frame, so tail calls never grow the stack
 **The `mo` command's own exit status** is 0 when everything passed, 1 when
 the program has errors or a test failed, and 2 for a mistake in the command
 itself. `mo run` exits with the program's own status once the program runs
-(open question 7).
+(reference 13.4).
 
 ### 10.1 Generating inputs for promises
 
@@ -745,24 +753,13 @@ the CBMC proofs, within a time budget for the CI orb.
 - **The bytecode format's stability.** It is internal in Phase 2. Phase 5's
   upgrades need a versioned format; decide then whether it is public.
 
-### 13.2 For Robert: gaps in the reference
+### 13.2 Settled with Robert
 
-Writing this architecture found places where the reference doesn't say what a
-program means. Each needs a rule a user would notice, so each goes to Robert
-with a recommendation, and is added to the reference once decided:
-
-1. **Reading a `var` in an anonymous function** when the `var` is assigned
-   after the function is made: does the function see the old value, the new
-   one, or is it an error?
-2. **The abilities of built-in types**: which have `Order` (lists? tuples?
-   `Bytes`?) and `Hash` (maps? sets?), as a table in reference 9.2.
-3. **`printed` on a real console**: the reference gives `printed` to fakes,
-   but a real console has the same type.
-4. **Edge cases of the library**: `read_line` on invalid UTF-8; whether
-   `\r\n` ends a line for `lines` and `read_line`; `exists?` for a path
-   that would leave the folder; offsets and leap seconds in `Time.parse`;
-   fractional digits in `Time.to_text`.
-5. **Constants' order**: computed in the order of their dependencies, so they
-   may be written in any order (3.4)?
-6. **Polymorphic recursion** is an error, whether a function reaches itself directly or through other functions (3.3).
-7. **The `mo` command's exit statuses** (section 10).
+Writing this architecture and Mo Core found places where the reference didn't
+say what a program means. Robert decided all of them on 12 October 2026 (D227),
+and the reference now says: when an anonymous function may read a `var`
+(5.6); which built-in types have which abilities (9.2); where `printed` can be
+used (12.4); repeated keys in map literals (3.8); paths that leave a folder,
+line endings, invalid UTF-8 on standard input, and times as text (14); the
+order of constants (10.4); polymorphic recursion (5.5); the limits of a few
+library functions (14); and the `mo` command's exit status (13.4).

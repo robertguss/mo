@@ -1,6 +1,6 @@
 # Mo Language Reference, v0.1
 
-**Draft for review, 11 October 2026.** This is core Mo, the language that later
+**Draft for review, 12 October 2026.** This is core Mo, the language that later
 versions build services, live upgrades and approved intent on. It is written to
 be read in full, by people and by agents, before writing Mo.
 
@@ -166,7 +166,8 @@ capped = level.saturating_add(10)  # caps at the largest Int
 
 `BigInt` holds whole numbers of any size, with the same arithmetic: `n.to_big`
 converts to one, and `big.to_int` returns `None` when the value doesn't fit. `Byte` holds 0 to 255,
-for binary data; `n.to_byte` returns an `Option(Byte)`.
+for binary data; `n.to_byte` returns an `Option(Byte)`. `Byte` has no
+arithmetic (section 9.2): convert it with `to_int` first.
 
 ### 3.3 Decimal and Float
 
@@ -175,7 +176,8 @@ fraction with 18 decimal places, up to about ±1.7 × 10²⁰. Decimal arithmeti
 exact while results fit in 18 places, so `0.1 + 0.2 == 0.3`. A result that
 needs more places, such as `1.00 / 3`, is rounded to the nearest 18th place,
 with an exact tie rounded to the even digit. Overflow and dividing by zero stop
-the program, as with `Int`. A decimal's text form is its shortest exact
+the program, as with `Int`, and `%` gives the remainder with the sign of the
+left side, as it does for `Int`. A decimal's text form is its shortest exact
 spelling: `15.5`, `3`, `0.001`.
 
 `Float` is a 64-bit IEEE 754 binary floating-point number, for science and
@@ -270,7 +272,9 @@ mutable array (section 13.3).
 
 `Map(K, V)` maps keys to values: `{"apples": 3, "pears": 5}`, or `{}` when
 empty. Keys are expressions, so `{fruit: 3}` uses the value of `fruit`. A
-literal that gives the same key twice is an error. `Set(T)` holds
+literal that gives the same key twice is an error when the compiler can see
+it, as with two equal literals or the same name twice, and a bug when two keys
+turn out equal as the program runs. `Set(T)` holds
 distinct values: `Set.empty`, a constant, or `items.to_set`. Keys and set members need
 equality and hashing, which most types have (section 9.2).
 
@@ -321,9 +325,10 @@ origin = Point(x: 0, y: 0)
 sum = origin.x + origin.y
 ```
 
-There are no optional fields; a field that may be missing has an `Option`
-type. Records have no methods: functions in the record's module work on it
-(section 5.4).
+When a record is built, its fields are computed in the order they are written
+there, whatever their order in the declaration. There are no optional fields; a
+field that may be missing has an `Option` type. Records have no methods:
+functions in the record's module work on it (section 5.4).
 
 ### 4.2 Choice types
 
@@ -437,6 +442,14 @@ fn largest(items: List(T)) : Option(T) where T: Order
 end
 ```
 
+A generic function can't call itself, directly or through other functions,
+with a type parameter standing for a bigger type built from that parameter. If
+`depth(t: Tree(T))` leads to a call of `depth` on a `Tree(List(T))`, `T` stands
+for `List(T)` there, and that is an error. Calling `depth` on a node's `left`,
+another `Tree(T)`, is fine. Each type a generic function is used with gets its
+own copy of the function, and such a call would need copies without end: for
+`Tree(List(T))`, `Tree(List(List(T)))`, and so on.
+
 ### 5.6 Functions as values
 
 A named function is a value: `prices.map(with_tax)`. An anonymous function is
@@ -456,6 +469,26 @@ An anonymous function can read names in scope where it is made, but it can't
 assign a `var` and can't capture a capability (section 11.4), so it can do only
 what its parameters allow; it may take a capability as a parameter. So
 printing each item works in a `for` loop, not inside `map`.
+
+An anonymous function may read a `var` from the function around it only if
+nothing assigns that `var` after the anonymous function is made, including in
+a later round of a loop around it. Reading any other `var` is an error, since
+it would be unclear whether the function sees the value it was made with or a
+later one. Copy the value into a name first, and read the name:
+
+```mo
+var count = 0
+current = count
+show = fn() "#{current}" end      # fn() "#{count}" end would be an error
+count += 1
+console.print(show())             # prints 0
+```
+
+To use a later value, make the function after the last assignment, or pass
+the value as a parameter.
+
+`return` and `try` inside an anonymous function leave that anonymous function,
+not the function around it.
 
 ## 6. Names, bindings and variables
 
@@ -617,8 +650,8 @@ function that can fail returns a `Result`; and a bug stops the program
 
 ```mo
 enum Option(T)
-  Some(T)
   None
+  Some(T)
 end
 
 enum Result(T, E)
@@ -629,8 +662,10 @@ end
 
 ### 8.1 Options
 
-`x or default` gives the value inside a `Some`, or the default for `None`.
-`x.or_fail(e)` turns `None` into `Error(e)`. `case` and `is` handle both cases:
+`x or default` gives the value inside a `Some`, or the default for `None`, and
+computes `default` only for `None`. `x.or_fail(e)` turns `None` into
+`Error(e)`; it is a function, so `e` is computed even when `x` is a `Some`.
+`case` and `is` handle both cases:
 
 ```mo
 city = address.city or "unknown"
@@ -748,7 +783,27 @@ A type with `Hash` or `Order` also has `Equal`. Ability names appear only after
 have them. Equality compares field by field, and maps and sets compare their
 entries in any order. Order compares fields in the order they are declared, and
 cases in the order they are declared. Functions and capabilities have no
-abilities.
+abilities. The built-in types have these:
+
+| Type | `Equal` | `Hash` | `Order` | `Text` | `Number` |
+| --- | --- | --- | --- | --- | --- |
+| `Bool` | yes | yes | `false` first | yes | no |
+| `Int`, `BigInt`, `Decimal` | yes | yes | yes | yes | yes |
+| `Byte` | yes | yes | yes | yes | no |
+| `Float` | IEEE: "not a number" equals nothing | no | yes, with "not a number" last | yes | yes |
+| `Text`, `Char` | yes | yes | by character code | yes | no |
+| `Bytes` | yes | yes | byte by byte | no | no |
+| `Unit` | yes | yes | yes | yes | no |
+| `Time`, `Duration` | yes | yes | yes | yes | no (but they add and subtract, 3.9) |
+| `Range` | yes | yes | no | yes: `0..3` | no |
+| tuples | when every part has it | same | same, part by part from the left | same | no |
+| `List(T)` | when `T` has it | same | same, element by element; a list comes before any longer list that begins with it: `[1, 2] < [1, 2, 0]` | same | no |
+| `Map(K, V)`, `Set(T)` | when their keys and values have it, comparing entries in any order | same | no | same | no |
+
+`Option`, `Result` and `Ordering` are choice types, so their cases are ordered
+as they are declared: `None`, `Some`; `Ok`, `Error`; `Less`, `Equal`,
+`Greater`. `Float` follows IEEE rules: "not a number" equals nothing and sorts
+last, and floats have no `Hash`, so they can't be map keys.
 
 A value's text form looks like the code that builds it: `Point(x: 1.5, y: 2)`,
 `Some(3)`, `[1, 2]`, `{"a": 1}`, `(1, true)`, `[1, 2].to_set`. A `Text` or
@@ -770,9 +825,6 @@ fn to_text(money: Money) : Text
   "#{(money.cents.to_decimal / 100).to_fixed(2)} #{money.currency}"
 end
 ```
-
-`Float` follows IEEE rules instead: "not a number" equals nothing and sorts
-last, and floats have no `Hash`, so they can't be map keys.
 
 There are no user-defined abilities in v0.1. Code that needs something other
 than these five takes a function as a parameter.
@@ -824,8 +876,12 @@ default_currency = "EUR"
 
 A constant's type comes from its value, which must decide it; for anything
 else, such as a list of anonymous functions, write a function with a
-signature. Constants are computed once, before `main` starts, and one that
-stops stops the program before it starts. There is no module-level state:
+signature. Constants are computed once, before any other code of the program
+runs, in the order of their dependencies. A constant depends on the constants
+it uses, directly or through the functions it calls. So a constant may use one
+written below it, or one in another module, but constants that depend on each
+other in a cycle are an error. A constant that stops stops the program before
+it starts. There is no module-level state:
 values that last and change belong to processes, which come in a later
 version.
 
@@ -887,7 +943,9 @@ end
 
 A capability can be narrowed before it is passed on. `files.within("reports")`
 reaches only that folder, and `files.read_only` returns a `ReadFiles`, which
-can only read. Pass each function the least it needs:
+can only read. Calling `within` with a path that would leave the folder, such
+as `".."`, gives a capability that reaches nothing (section 14). Pass each
+function the least it needs:
 
 ```mo
 summary = try summarize(files.within("reports").read_only)
@@ -989,7 +1047,9 @@ the lines written to standard output and standard error;
 `Console.fake_input(lines)`, which also has those lines to read;
 `Files.in_memory(files)`, from a map of paths to texts; `Clock.fixed(time)`;
 `Random.seeded(n)`; `Args.of(list)`; and `Env.of(map)`. Fakes are made only
-there, never in a module's constants or its functions.
+there, never in a module's constants or its functions. `printed` and
+`printed_errors` can be used only there too, where every console is a fake,
+and using them anywhere else is an error.
 
 A capability is a handle on something outside the program, and a fake is a
 handle on something kept for the test. Every use of one fake sees the same
@@ -1012,8 +1072,9 @@ end
 
 Mo evaluates eagerly, left to right: a call's arguments, then the call; an
 operator's left side, then its right. `and`, `or` and `implies` skip their right
-side when the left decides the answer. `try` returns early, and `stop` stops the
-program.
+side when the left decides the answer, and `x or default` on an `Option`
+computes `default` only when `x` is `None`. `try` returns early, and `stop`
+stops the program.
 
 ### 13.2 Bugs
 
@@ -1022,8 +1083,9 @@ exit status 70. These are bugs: overflow in `Int`, `Decimal` or `Duration`
 arithmetic, or a time outside the years 1 to 9999; dividing by zero; reaching a `stop`;
 running out of stack in calls that aren't in tail position; running out of
 memory; calling a library function outside what it accepts, such as `take(-1)`
-or `random.int(5, 5)`; an exit status outside 0 to 255; and printing to an
-output that is gone. Bugs are never caught.
+or `random.int(5, 5)`; two keys of a map literal that turn out equal (section
+3.8); an exit status outside 0 to 255; and printing to an output that is gone.
+Bugs are never caught.
 
 ### 13.3 Costs
 
@@ -1042,6 +1104,17 @@ Mo promises what operations cost, not how values are stored:
 A value is shared when two names, fields or collections hold it. Changing a
 value with one holder reuses its memory; changing a shared value copies it
 first, and its other holders keep the old value.
+
+### 13.4 The `mo` command
+
+Each command is given the file of the program's main module. `mo check FILE`
+reports the program's errors, `mo run FILE [ARGS...]` runs it with the
+arguments after the file's name, and `mo test FILE` checks its examples,
+promises and tests. `mo format` and `mo fix` rewrite the files they are given.
+`mo` exits with status 0 when everything passed, 1 when the program has errors
+or an example, promise or test fails, and 2 for a mistake in the command
+itself. Once the program runs, `mo run` exits with the program's own status
+(section 11.2), or 70 after a bug (section 13.2).
 
 ## 14. The core library
 
@@ -1069,26 +1142,32 @@ to the nearest float), `to_big : BigInt`, `to_byte : Option(Byte)`,
 (ties away from zero), `floor` and `ceil`, all `: Decimal`.
 `to_int : Option(Int)` (`None` unless whole and in range), `to_float : Float`
 (rounded to the nearest float), `to_fixed(places: Int) : Text` (rounded as
-`round` does), `to_text : Text`.
+`round` does), `to_text : Text`. `places` is from 0 to 18.
 
 **Float**: `abs`, `floor`, `ceil`, `round` and `sqrt`, all `: Float`; `nan?` and
 `infinite? : Bool`; `to_decimal : Option(Decimal)`, `to_text : Text`.
 
 **Text**: `byte_count : Int`, `char_count : Int`, `empty? : Bool`,
-`chars : List(Char)`, `bytes : Bytes`. `lines : List(Text)`: without their line
-endings; `""` has none, and a final line break doesn't start another line.
+`chars : List(Char)`, `bytes : Bytes`. `lines : List(Text)`: split where `\n`
+or `\r\n` ends a line, without the line endings; `""` has none, a final line
+break doesn't start another line, and a `\r` alone stays in its line.
 `words : List(Text)`: split at ASCII white space, which alone gives none.
-`split(separator: Text) : List(Text)`: the separator isn't empty, and empty
-pieces are kept. `trim`, `trim_start` and `trim_end : Text` (ASCII white space).
+ASCII white space is space, tab, line feed, vertical tab, form feed and
+carriage return. `split(separator: Text) : List(Text)`: the separator isn't
+empty, and empty pieces are kept, so `"".split(",")` is `[""]`. `trim`,
+`trim_start` and `trim_end : Text` (ASCII white space).
 `starts_with?(prefix: Text)`, `ends_with?(suffix: Text)` and
 `contains?(part: Text) : Bool`. `drop_prefix(prefix: Text)` and
 `drop_suffix(suffix: Text) : Option(Text)`: `None` when the text doesn't have
-it. `replace(old: Text, new: Text)`, `repeat(n: Int)`, `pad_left(width: Int)`
-and `pad_right(width: Int)`, all `: Text`; padding adds spaces, counting
-characters, and leaves text already as wide unchanged. `ascii_lowercase` and
-`ascii_uppercase : Text`. `to_int : Option(Int)`: an optional `-` and ASCII
-digits, in the `Int` range, and nothing else. `to_decimal : Option(Decimal)`:
-the same, with an optional `.` followed by up to 18 digits.
+it. `replace(old: Text, new: Text)` (`old` isn't empty), `repeat(n: Int)` (`n`
+is at least 0), `pad_left(width: Int)` and `pad_right(width: Int)`, all
+`: Text`; padding adds spaces, counting characters, and leaves text that is
+already as wide, or wider, unchanged, even for a width below 0.
+`ascii_lowercase` and `ascii_uppercase : Text`. `to_int : Option(Int)`: an
+optional `-` and ASCII digits, in the `Int` range, and nothing else.
+`to_decimal : Option(Decimal)`: an optional `-`, one or more ASCII digits, then
+optionally `.` and 1 to 18 digits, in the `Decimal` range, and nothing else, so
+`"1."` and `".5"` give `None`.
 `to_float : Option(Float)`. `Text.from_chars(chars: List(Char)) : Text`.
 
 **Char**: `code : Int`, `ascii_digit?`, `ascii_letter?` and
@@ -1112,11 +1191,14 @@ past the end they take or drop everything. `set(i: Int, x: T)` and
 `zip(other: List(U)) : List((T, U))` (as long as the shorter list).
 `sort_by(key: fn(T) : K)` and `sort_by_desc(key: fn(T) : K) : List(T)` where
 `K: Order`. `contains?(x: T) : Bool` where `T: Equal`. `sort : List(T)`, and
-`min` and `max : Option(T)`, where `T: Order`. `unique : List(T)`,
-`to_set : Set(T)` and `group_by(key: fn(T) : K) : Map(K, List(T))` (keys in
-the order they first appear), where `T` or `K` has `Hash`. `sum : T` where
-`T: Number` (`0` for an empty list). On a `List(Text)`,
-`join(separator: Text) : Text`; on a `List((K, V))`, `to_map : Map(K, V)`.
+`min` and `max : Option(T)` (the first of equal elements), where `T: Order`.
+`unique : List(T)`, `to_set : Set(T)` and
+`group_by(key: fn(T) : K) : Map(K, List(T))` (keys in the order they first
+appear), where `T` or `K` has `Hash`. `sum : T` where `T: Number` (`0` for an
+empty list). On a `List(Text)`,
+`join(separator: Text) : Text`; on a `List((K, V))`, `to_map : Map(K, V)`, in
+which a key given more than once gets its last value and keeps its first
+place, as with `set`.
 
 **Map(K, V)**: `size : Int`, `empty? : Bool`, `get(key: K) : Option(V)`,
 `has?(key: K) : Bool`, `set(key: K, value: V)`, `remove(key: K)` and
@@ -1138,9 +1220,15 @@ is a constant: the empty set.
 **Result(T, E)**: `map(f: fn(T) : U) : Result(U, E)`,
 `map_error(f: fn(E) : F) : Result(T, F)`.
 
-**Time**: `checked_add(d: Duration) : Option(Time)`, `to_text : Text` (RFC
-3339), and the operators of section 3.9. `Time.parse(text: Text) : Option(Time)`
-reads RFC 3339 text. **Duration**: `in_milliseconds : Int` (rounded toward
+**Time**: `checked_add(d: Duration) : Option(Time)`, `to_text : Text`, and the
+operators of section 3.9. `to_text` writes RFC 3339 in UTC, with `Z`, and a
+fraction of a second only when there is one, as short as it can be:
+`2026-10-12T02:15:00Z`, `2026-10-12T02:15:00.5Z`.
+`Time.parse(text: Text) : Option(Time)` reads RFC 3339 text, such as
+`2026-10-12T04:15:00.5+02:00`: `T` or `t` between the date and the time, at
+most 6 digits of a fraction of a second, then `Z`, `z` or an offset, which it
+converts to UTC. Anything else, including a 7th fraction digit or a leap
+second (second 60), gives `None`. **Duration**: `in_milliseconds : Int` (rounded toward
 zero), `in_seconds : Decimal` (exact), `to_text : Text`.
 
 **Args**: `list : List(Text)`, the arguments after the program's name.
@@ -1149,8 +1237,11 @@ zero), `in_seconds : Decimal` (exact), `to_text : Text`.
 **Console**: `print(text: Text)` and `error(text: Text)` write a line to
 standard output or standard error; print other values with interpolation, as
 in `console.print("#{count}")`. `read_line : Option(Text)` reads a line from
-standard input, `None` at its end. A fake also has `printed` and
-`printed_errors : List(Text)`, one entry for each line written.
+standard input, without its line ending, `\n` or `\r\n`, and gives `None` at
+the input's end. Each sequence of bytes in it that isn't valid UTF-8 becomes
+one U+FFFD, the replacement character. A fake also has `printed` and
+`printed_errors : List(Text)`, with one entry for each line written. Using them
+outside tests, examples and promises is an error (section 12.4).
 `Console.fake() : Console`, `Console.fake_input(lines: List(Text)) : Console`.
 
 **Files**: `read_text(path: Text) : Result(Text, FileError)`,
@@ -1160,13 +1251,21 @@ standard input, `None` at its end. A fake also has `printed` and
 `: Result(Unit, FileError)`; `list(folder: Text) : Result(List(Text), FileError)`,
 the names in the folder, sorted; `exists?(path: Text) : Bool`;
 `within(folder: Text) : Files`; `read_only : ReadFiles`.
-`Files.in_memory(files: Map(Text, Text)) : Files`. **ReadFiles** has
-`read_text`, `read_bytes`, `list`, `exists?` and `within`. Paths are relative
-and use `/`; `"."` is the capability's own folder, and no path can leave it.
+`Files.in_memory(files: Map(Text, Text)) : Files`. In such a fake, a folder
+exists when some file is inside it, and `list` gives the names directly inside
+a folder, each subfolder once. **ReadFiles** has `read_text`, `read_bytes`, `list`, `exists?`
+and `within`. Paths are relative and use `/`; `"."` is the capability's own
+folder, and no path can leave it. Given a path that would leave the folder,
+such as `"../a.txt"`, reading, writing, removing and listing give
+`Error(NotAllowed(path))`, and `exists?` gives `false`. Calling `within` with
+such a path gives a capability that reaches nothing: every call on it that
+returns a `Result` gives `Error(NotAllowed(path))`, and `exists?` on it gives
+`false`.
 
 **FileError**: `NotFound(path: Text)`, `NotAllowed(path: Text)`,
-`NotText(path: Text)`, `Failed(path: Text, reason: Text)`. Its text form reads
-like `notes/a.md: no such file`.
+`NotText(path: Text)`, `Failed(path: Text, reason: Text)`. Its text forms are
+`PATH: no such file`, `PATH: not allowed`, `PATH: not text` and
+`PATH: REASON`, as in `notes/a.md: no such file`.
 
 **Clock**: `now : Time`; `Clock.fixed(time: Time) : Clock`. **Random**:
 `int(low: Int, high: Int) : Int`, from `low` up to, but not including, `high`,
@@ -1291,6 +1390,7 @@ chain; the others do, left to right.
 | `cond ? a : b` | `if cond: a else: b` | 7.1 |
 | `match`, `switch`, `=>` | `case`, with arms written `Pattern: ...` | 7.2 |
 | `x => ...`, `\|x\| ...`, `lambda x: ...` | `fn(x) ... end` | 5.6 |
+| a closure that reads a variable assigned later | copy the value into a name first, `current = count`, or pass it as a parameter | 5.6 |
 | `let x`, `const x`, `x := ...` | `x = ...`, or `var x = ...` to assign it again | 6 |
 | `list.push(x)`, changing a list in place | `items = items.append(x)`, with `var items` | 3.7, 6.2 |
 | `x = x.trim()` on a fixed name | `trimmed = x.trim` | 6.1 |
