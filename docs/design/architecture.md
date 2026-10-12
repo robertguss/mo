@@ -555,6 +555,11 @@ crash. A tail call reuses its frame, so tail calls never grow the stack
   `bytecode.md` section 3.5. `--list` prints the names, and `--json` gives
   the results as 10.2 says.
 - **`mo format`** and **`mo fix`** rewrite files in place (3.1, 3.5).
+- **`mo guide`** prints `docs/agent-guide.md`, and `mo guide --reference`
+  prints `docs/reference/README.md`, both built into the toolchain so their
+  text matches its version (D235). The guide is short, about 2,000 tokens:
+  what the reference can't say, such as the commands, the loop of checking,
+  fixing and testing, and one small complete program with its tests.
 
 **Limits.** `mo run` and `mo test` give each process the limits of
 `struct mo_limits` in `src/base/limits.h`, whose defaults are the defaults of
@@ -604,7 +609,12 @@ itself. `mo run` exits with the program's own status once the program runs
   collections toward fewer elements, records field by field, for at most 200
   more calls. The report shows the smallest failing input, the result, and
   which line of the body was false. A call that stops is reported as a bug,
-  with its input (reference 12.2).
+  with its input (reference 12.2). When the input holds one of its type's
+  extremes, the report names the parameter and the extreme, as in "stops with
+  overflow when `amount` is `Decimal`'s largest value", and shows the two
+  fixes in words, since only the program's author knows which is right:
+  return a failure for such inputs, or take a type whose module keeps its
+  values in range (D234).
 
 ### 10.2 JSON output
 
@@ -638,7 +648,9 @@ records may be added, and readers ignore what they don't know.
   body that was false; and `calls`, how many calls were tried. A stopped one
   adds `defect`, the defect report of section 8: `reason`, `span`, `stack`,
   each frame's `function` and `span`, and `variables`, each a `name` and
-  `value`; and for a promise, the `input` it stopped on.
+  `value`; and for a promise, the `input` it stopped on, and `extreme`, when
+  that input holds one of its type's extremes: the parameter's `name` and the
+  extreme's `description`, such as `"Decimal's largest value"`.
 - **`totals`**, always last: `errors`, the diagnostics written, and
   `dropped`, those found past the limits a run keeps
   (`MO_LIMIT_DIAGNOSTICS`); for `mo test`, `passed`, `failed` and `stopped`;
