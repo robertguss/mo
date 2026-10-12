@@ -61,11 +61,11 @@ HOSTOP(FILES_WITHIN,           "Files",     "within",         "fn(Files, Text) :
 HOSTOP(FILES_READ_ONLY,        "Files",     "read_only",      "fn(Files) : ReadFiles",                               "b",   "too many open handles",              false)
 HOSTOP(FILES_IN_MEMORY,        "Files",     "in_memory",      "fn(Map(Text, Text)) : Files",                         "o",   "",                                   true)
 
-HOSTOP(READ_FILES_READ_TEXT,   "ReadFiles", "read_text",      "fn(ReadFiles, Text) : Result(Text, FileError)",       "bb",  "",                                   false)
-HOSTOP(READ_FILES_READ_BYTES,  "ReadFiles", "read_bytes",     "fn(ReadFiles, Text) : Result(Bytes, FileError)",      "bb",  "",                                   false)
-HOSTOP(READ_FILES_LIST,        "ReadFiles", "list",           "fn(ReadFiles, Text) : Result(List(Text), FileError)", "bb",  "",                                   false)
-HOSTOP(READ_FILES_EXISTS,      "ReadFiles", "exists?",        "fn(ReadFiles, Text) : Bool",                          "bb",  "",                                   false)
-HOSTOP(READ_FILES_WITHIN,      "ReadFiles", "within",         "fn(ReadFiles, Text) : ReadFiles",                     "bb",  "too many open handles",              false)
+HOSTOP(READFILES_READ_TEXT,    "ReadFiles", "read_text",      "fn(ReadFiles, Text) : Result(Text, FileError)",       "bb",  "",                                   false)
+HOSTOP(READFILES_READ_BYTES,   "ReadFiles", "read_bytes",     "fn(ReadFiles, Text) : Result(Bytes, FileError)",      "bb",  "",                                   false)
+HOSTOP(READFILES_LIST,         "ReadFiles", "list",           "fn(ReadFiles, Text) : Result(List(Text), FileError)", "bb",  "",                                   false)
+HOSTOP(READFILES_EXISTS,       "ReadFiles", "exists?",        "fn(ReadFiles, Text) : Bool",                          "bb",  "",                                   false)
+HOSTOP(READFILES_WITHIN,       "ReadFiles", "within",         "fn(ReadFiles, Text) : ReadFiles",                     "bb",  "too many open handles",              false)
 
 HOSTOP(CLOCK_NOW,              "Clock",     "now",            "fn(Clock) : Time",                                    "b",   "time outside the years 1 to 9999",   false)
 HOSTOP(CLOCK_FIXED,            "Clock",     "fixed",          "fn(Time) : Clock",                                    "b",   "",                                   true)

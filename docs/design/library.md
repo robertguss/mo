@@ -479,11 +479,11 @@ the same code as `Files`'s, on a handle marked read-only (`bytecode.md` 7).
 
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
-| `read_text(path)` | host | `READ_FILES_READ_TEXT` | |
-| `read_bytes(path)` | host | `READ_FILES_READ_BYTES` | |
-| `list(folder)` | host | `READ_FILES_LIST` | |
-| `exists?(path)` | host | `READ_FILES_EXISTS` | |
-| `within(folder)` | host | `READ_FILES_WITHIN` | |
+| `read_text(path)` | host | `READFILES_READ_TEXT` | |
+| `read_bytes(path)` | host | `READFILES_READ_BYTES` | |
+| `list(folder)` | host | `READFILES_LIST` | |
+| `exists?(path)` | host | `READFILES_EXISTS` | |
+| `within(folder)` | host | `READFILES_WITHIN` | |
 
 ## FileError
 
