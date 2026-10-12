@@ -3,7 +3,7 @@
 #ifndef MO_CLI_H
 #define MO_CLI_H
 
-#include "base.h"
+#include "base/base.h"
 
 /* What the command line asks for. */
 typedef enum {

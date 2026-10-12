@@ -5,6 +5,7 @@
 #   make sanitize     run the tests under AddressSanitizer and UndefinedBehaviorSanitizer
 #   make fuzz-smoke   run every fuzz target briefly (needs clang with libFuzzer)
 #   make format       format the C sources with clang-format
+#   make deps         check that each module includes only what architecture section 2 allows
 #   make tidy         check that results of standard-library calls are used (needs clang-tidy)
 #   make grammar      check that Mo code parses with the executable grammar (needs bison):
 #                     the grammar's own tests, examples/ and the reference's examples
@@ -21,29 +22,39 @@ BUILD := build/$(notdir $(firstword $(CC)))
 FUZZ_BUILD := build/fuzz
 
 CSTD := -std=c17
+# Headers are included by their path in src/, which starts with their module, such as
+# "base/base.h".
+INCLUDES := -Isrc
 WARNINGS := -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion \
 	-Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla \
 	-Wformat=2 -Wcast-qual -Wundef -Wnull-dereference
-COMMON := $(CSTD) $(WARNINGS) -MMD -MP
+COMMON := $(CSTD) $(INCLUDES) $(WARNINGS) -MMD -MP
 DEBUG := -O0 -g
 SANITIZE := -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all
 FUZZ := -O1 -g -fno-omit-frame-pointer -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all
 
-LIB_SOURCES := src/base.c src/cli.c
-MAIN_SOURCE := src/main.c
+# Each directory in src/ is a module (architecture section 2), and every C file in it is built.
+# src/tools/main.c is the mo command's main function, so only mo links it.
+MAIN_SOURCE := src/tools/main.c
+LIB_SOURCES := $(filter-out $(MAIN_SOURCE),$(sort $(wildcard src/*/*.c)))
+BASE_SOURCES := $(filter src/base/%,$(LIB_SOURCES))
+# build/sources lists the C files of src/, and is rewritten only when one is added or removed:
+# removing a file changes no other prerequisite of the programs that linked it.
+SOURCE_LIST := build/sources
 TEST_SOURCES := $(wildcard tests/test_*.c)
 FUZZ_SOURCES := $(wildcard fuzz/fuzz_*.c)
-C_FILES := $(wildcard src/*.c src/*.h tests/*.c tests/*.h fuzz/*.c grammar/*.c grammar/*.h)
-TIDY_FILES := $(wildcard src/*.c tests/*.c fuzz/*.c grammar/*.c)
+C_FILES := $(wildcard src/*/*.c src/*/*.h tests/*.c tests/*.h fuzz/*.c grammar/*.c grammar/*.h)
+TIDY_FILES := $(wildcard src/*/*.c tests/*.c fuzz/*.c grammar/*.c)
 
 # The executable grammar (grammar/): Bison builds its parser from grammar/mo.y. The code Bison
-# writes doesn't meet Mo's own warning flags, so it gets the plain ones.
+# writes doesn't meet Mo's own warning flags, so it gets the plain ones. Of src/, the grammar
+# uses only base.
 GRAMMAR_GENERATED := build/grammar
 GRAMMAR_SOURCES := grammar/lexer.c grammar/ast.c
 GRAMMAR_INCLUDES := -Igrammar -I$(GRAMMAR_GENERATED)
-GRAMMAR_PARSER_WARNINGS := $(CSTD) -Wall -Wextra -Werror -MMD -MP
+GRAMMAR_PARSER_WARNINGS := $(CSTD) $(INCLUDES) -Wall -Wextra -Werror -MMD -MP
 grammar_objects = $(patsubst grammar/%.c,$(1)/grammar/%.o,$(GRAMMAR_SOURCES)) \
-	$(1)/grammar/mo.tab.o $(1)/src/base.o
+	$(1)/grammar/mo.tab.o $(call objects,$(1),$(BASE_SOURCES))
 GRAMMAR_CHECK = $(1) --fragment grammar/tests/good/*.mo && \
 	$(1) --fragment --expect-error grammar/tests/bad/*.mo && \
 	$(1) --expect-error grammar/tests/bad-files/*.mo && \
@@ -64,7 +75,7 @@ ASAN_OPTIONS ?= abort_on_error=1
 UBSAN_OPTIONS ?= halt_on_error=1:print_stacktrace=1
 export ASAN_OPTIONS UBSAN_OPTIONS
 
-.PHONY: all test sanitize fuzz fuzz-smoke format format-check tidy grammar formal clean
+.PHONY: all test sanitize fuzz fuzz-smoke format format-check deps tidy grammar formal clean FORCE
 
 all: $(BUILD)/debug/mo
 
@@ -110,6 +121,12 @@ format:
 format-check:
 	clang-format --dry-run --Werror $(C_FILES)
 
+# The module rules of architecture section 2, which ci/deps.sh keeps in a table. Its test runs
+# first, to show that the check catches each kind of include it must refuse.
+deps:
+	sh ci/test_deps.sh
+	sh ci/deps.sh src
+
 # cert-err33-c flags a call to a standard-library function whose result is ignored, such as
 # fflush or fprintf: the functions on CERT rule ERR33-C's list, which does not include printf,
 # puts or putchar. Casting the call to (void) ignores the result on purpose. Mo's own functions
@@ -122,19 +139,24 @@ tidy: $(GRAMMAR_GENERATED)/mo.tab.h
 clean:
 	rm -rf build
 
-# Object files also depend on this Makefile, so a change to the flags rebuilds them. It comes
-# after the source file because $< is the first prerequisite.
-$(BUILD)/debug/%.o: %.c Makefile
+# Object files also depend on this Makefile, so a change to the flags rebuilds them, and on the
+# list of C files in src/, so adding or removing one rebuilds everything, and no program keeps a
+# file that is gone. They come after the source file because $< is the first prerequisite.
+$(BUILD)/debug/%.o: %.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) -c $< -o $@
 
-$(BUILD)/sanitize/%.o: %.c Makefile
+$(BUILD)/sanitize/%.o: %.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(SANITIZE) -c $< -o $@
 
-$(FUZZ_BUILD)/%.o: %.c Makefile
+$(FUZZ_BUILD)/%.o: %.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(FUZZ_CC) $(COMMON) $(FUZZ) -c $< -o $@
+
+$(SOURCE_LIST): FORCE
+	@mkdir -p $(dir $@)
+	@echo '$(LIB_SOURCES)' | cmp -s - $@ || echo '$(LIB_SOURCES)' >$@
 
 $(BUILD)/debug/mo: $(call objects,$(BUILD)/debug,$(LIB_SOURCES) $(MAIN_SOURCE))
 	$(CC) $(DEBUG) $^ -o $@

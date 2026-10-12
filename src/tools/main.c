@@ -1,5 +1,5 @@
 /* The mo command. A placeholder until Phase 2 builds the real toolchain. */
-#include "cli.h"
+#include "tools/cli.h"
 
 #include <stdio.h>
 

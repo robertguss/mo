@@ -1,5 +1,5 @@
-#include "../src/cli.h"
 #include "test.h"
+#include "tools/cli.h"
 
 #include <stddef.h>
 #include <string.h>

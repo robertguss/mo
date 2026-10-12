@@ -6,7 +6,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#include "../src/base.h"
+#include "base/base.h"
 
 struct node;
 struct arena;
