@@ -116,7 +116,7 @@ and every part of the toolchain calls that one function:
 | --- | --- | --- |
 | `empty` | the case has no fields | zero |
 | `inline` | one field, of an immediate type of 8 bytes or fewer (`unit` to `duration`, or a choice type with no fields) | the field's value |
-| `ref` | one field, of a reference type | the field's pointer |
+| `ref` | one field, of a reference type other than a choice type | the field's pointer |
 | `boxed` | any other case: several fields, or one field of `decimal`, `range` or a choice type with fields | a pointer to a **case block**, a heap object holding the fields |
 
 So `None`, `Some(3)`, `Some("x")` and `Leased(until: t)` allocate nothing.
