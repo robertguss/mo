@@ -1094,11 +1094,12 @@ stops the program.
 A bug stops the program at once, with a report of what happened and where, and
 exit status 70. These are bugs: overflow in `Int`, `Decimal` or `Duration`
 arithmetic, or a time outside the years 1 to 9999; dividing by zero; reaching a `stop`;
-running out of stack in calls that aren't in tail position; running out of
-memory; calling a library function outside what it accepts, such as `take(-1)`
-or `random.int(5, 5)`; two keys of a map literal that turn out equal (section
-3.8); an exit status outside 0 to 255; printing to an output that is gone; and
-having too many folders open at once (section 14). Bugs are never caught.
+using more stack, call depth or memory than section 13.4's limits allow, or
+more memory than the machine has; calling a library function outside what it
+accepts, such as `take(-1)` or `random.int(5, 5)`; two keys of a map literal
+that turn out equal (section 3.8); an exit status outside 0 to 255; printing to
+an output that is gone; and having too many folders open at once (section 14).
+Bugs are never caught.
 
 ### 13.3 Costs
 
@@ -1128,6 +1129,30 @@ promises and tests. `mo format` and `mo fix` rewrite the files they are given.
 or an example, promise or test fails, and 2 for a mistake in the command
 itself. Once the program runs, `mo run` exits with the program's own status
 (section 11.2), or 70 after a bug (section 13.2).
+
+`mo test` runs every example, promise and test unless it's told which. Each has
+a full name: its function's name, or a test's module's, then its kind and a
+number counted from 1 in source order, such as `Wc.count.example.3` for the
+third example of `Wc.count`, `Account.transfer.promise.1`, or `Wc.test.2` for
+the second test in `Wc`. `--only NAME` runs the one with that full name, and can be given more
+than once; `--in MODULE` runs one module's, still checking the whole program;
+and `--list` prints the full names without running anything. A selection that
+matches nothing is a mistake in the command.
+
+`mo run` and `mo test` limit what a program uses: `--max-stack` sets the bytes
+of stack, by default 8 MiB; `--max-depth` the calls in progress at once, by
+default 10,000; and `--max-heap` the bytes of memory, by default 1 GiB. Going
+past one is a bug whose report names the limit (section 13.2). A call in tail
+position uses no stack and doesn't count toward the depth (section 5.3). A
+program can't set its own limits.
+
+`mo check --json` and `mo test --json` write one JSON object per line to
+standard output: first the format's version, then one for each error and for
+each example, promise and test run, and last the totals and the exit status.
+Within a major version of the format, every field keeps its name, type and
+meaning, and an error's code keeps its meaning; new fields and new kinds of
+object may be added, so a reader skips what it doesn't know. A message's
+wording may change.
 
 ## 14. The core library
 
@@ -1365,10 +1390,12 @@ Fix:
 ```
 
 A code such as `E0412` never changes its meaning. `mo check --json` gives each
-error as JSON, with its code, positions, message, and fixes as text edits, and
-`mo fix` applies a fix when there is only one. Errors are reported in source
-order, without the follow-on errors one mistake causes. There are no warnings:
-a problem is an error, or it isn't reported.
+error as JSON (section 13.4): its code, headline and reason, the section the
+reason cites, the places it marks, as byte offsets and as lines and columns
+counted in characters, and its fixes, each one or more text edits applied
+together. `mo fix` applies a fix when there is only one. Errors are reported in
+source order, without the follow-on errors one mistake causes. There are no
+warnings: a problem is an error, or it isn't reported.
 
 ## Appendix B. Grammar
 

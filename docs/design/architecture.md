@@ -543,16 +543,26 @@ crash. A tail call reuses its frame, so tail calls never grow the stack
 ## 10. The tools
 
 - **`mo check`** loads, checks and lowers the program, and evaluates the
-  promises' anchors. It prints diagnostics as text, or as JSON with `--json`.
-  `--emit=core` and `--emit=bytecode` print the program's Core or bytecode in
-  their text forms.
+  promises' anchors. It prints diagnostics as text, or as JSON with `--json`
+  (10.2). `--emit=core` and `--emit=bytecode` print the program's Core or
+  bytecode in their text forms.
 - **`mo run FILE [ARGS...]`** checks the program whose entry module is
   `FILE`, including the anchors, as `mo check` does, then runs its `main`
   with the arguments after the file name. The image it runs is the one the
   anchors ran in. Its spec code is there, but `main` can't reach it.
 - **`mo test`** runs every example, every test, and every promise against
-  generated inputs.
+  generated inputs, or those that `--only` and `--in` choose by the names of
+  `bytecode.md` section 3.5. `--list` prints the names, and `--json` gives
+  the results as 10.2 says.
 - **`mo format`** and **`mo fix`** rewrite files in place (3.1, 3.5).
+
+**Limits.** `mo run` and `mo test` give each process the limits of
+`struct mo_limits` in `src/base/limits.h`, whose defaults are the defaults of
+`--max-stack`, `--max-depth` and `--max-heap` (reference 13.4). The VM counts
+frames for the depth, so a tail call, which reuses its frame, never counts.
+Going past a limit stops the process with a defect report that names the
+limit and its value. A program can't set its own limits until Phase 3's
+budgets subsume them.
 
 **The `mo` command's own exit status** is 0 when everything passed, 1 when
 the program has errors or a test failed, and 2 for a mistake in the command
@@ -595,6 +605,61 @@ itself. `mo run` exits with the program's own status once the program runs
   more calls. The report shows the smallest failing input, the result, and
   which line of the body was false. A call that stops is reported as a bug,
   with its input (reference 12.2).
+
+### 10.2 JSON output
+
+`mo check --json` and `mo test --json` write JSON Lines to standard output:
+one object per line, written as soon as it is complete, so a run cut short
+leaves what it found. Each object's `record` field says what it is. Nothing
+else goes to standard output: anything else, such as progress, goes to
+standard error. A mistake in the command writes only its message, to standard
+error, and exits with status 2. The format keeps reference 13.4's promise: within a major version, fields
+keep their names, types and meanings, and codes their meanings; fields and
+records may be added, and readers ignore what they don't know.
+
+- **`version`**, always first: `format`, the format's version, `"1.0"`; `mo`,
+  Mo's version; and `command`, `"check"` or `"test"`.
+- **`diagnostic`**, one per error, sorted by position (3.5): `code`, such as
+  `"E0412"`; `headline`; `reason`, and `section`, such as `"8.3"`, both
+  `null` for the codes of limits, which cite no section; `primary`, a labeled
+  span; `secondary`, a list of them; and `fixes`, the alternatives, each a
+  `title` and its `edits`, applied together, each edit a `span` and the `text`
+  that replaces it.
+- **`test`**, one per example, promise and test, written by `--list`: `name`,
+  `kind` and `span`, as in `result`.
+- **`result`**, one per example, promise and test run: `name`, its full name
+  (`bytecode.md` section 3.5); `kind`, `"example"`, `"promise"` or `"test"`;
+  `span`; `outcome`, `"passed"`, `"failed"` or `"stopped"`; and
+  `microseconds`, how long it took. A failed example, or a failed test whose
+  `assert` compares with `==`, adds `left` and `right`, its two sides' values;
+  a failed test adds `line`, the span of the `assert`. A failed promise adds
+  `input`, the smallest failing input, as each parameter's `name` and
+  `value`; `result`, the call's result; `line`, the span of the line of the
+  body that was false; and `calls`, how many calls were tried. A stopped one
+  adds `defect`, the defect report of section 8: `reason`, `span`, `stack`,
+  each frame's `function` and `span`, and `variables`, each a `name` and
+  `value`; and for a promise, the `input` it stopped on.
+- **`totals`**, always last: `errors`, the diagnostics written, and
+  `dropped`, those found past the limits a run keeps
+  (`MO_LIMIT_DIAGNOSTICS`); for `mo test`, `passed`, `failed` and `stopped`;
+  and `status`, the status `mo` exits with.
+
+A **span** is `file`, the path of the file; `start` and `end`, byte offsets
+into it, `end` excluded; and `line` and `column` where it starts, and
+`end_line` and `end_column` where it ends, counted from 1, a column counting
+characters as messages do (`src/base/diag.h`). A labeled span adds `label`. A
+**value** is a string holding its structural text form (`bytecode.md` section
+8), since JSON's numbers can't hold every `Int`, `Decimal` or `Time` exactly.
+
+If `count` in `examples/wc.mo` miscounted words, `mo test --json
+examples/wc.mo` would write these lines, with the four results that pass
+among them:
+
+```json
+{"record":"version","format":"1.0","mo":"0.1.0","command":"test"}
+{"record":"result","name":"Wc.count.example.3","kind":"example","span":{"file":"examples/wc.mo","start":453,"end":513,"line":16,"column":5,"end_line":16,"end_column":65},"outcome":"failed","microseconds":41,"left":"Counts(lines: 0, words: 1, bytes: 10)","right":"Counts(lines: 0, words: 2, bytes: 10)"}
+{"record":"totals","errors":0,"dropped":0,"passed":4,"failed":1,"stopped":0,"status":1}
+```
 
 ## 11. Testing strategy
 
@@ -800,8 +865,6 @@ the CBMC proofs, within a time budget for the CI orb.
   with the benchmark.
 - **Text's character count** is computed on each call. Caching it costs a word
   per text; decide with the benchmark.
-- **Limits' defaults** for the stack, the call depth and the heap, and how a
-  program sets them. Phase 3's budgets will subsume them.
 - **Unicode16** needs tables generated from the Unicode Character Database
   16.0, kept in the repository with the generator and the source files'
   hashes.
@@ -817,4 +880,7 @@ and the reference now says: when an anonymous function may read a `var`
 used (12.4); repeated keys in map literals (3.8); paths that leave a folder,
 line endings, invalid UTF-8 on standard input, and times as text (14); the
 order of constants (10.4); polymorphic recursion (5.5); the limits of a few
-library functions (14); and the `mo` command's exit status (13.4).
+library functions (14); and the `mo` command's exit status (13.4). The same
+day he settled the `mo` command for agents (D233): JSON output with a written
+promise, choosing tests by exact name or module, and limits as flags, with
+`src/base/limits.h`'s defaults (reference 13.4; sections 10 and 10.2).
