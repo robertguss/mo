@@ -192,10 +192,10 @@ def food : FunDecl := fn "food" [("amount", tDec)] Expense.ty <| mk Expense [str
 def rent : FunDecl := fn "rent" [("amount", tDec)] Expense.ty <| mk Expense [str "rent", v "amount"]
 
 def program : Program :=
-  { data := [Expense, LineError]
-    funs := [toText, parseLine, totals, layout, mainFn, report, food, rent,
+  wholeProgram "Expenses" "main" [Expense, LineError] [] <|
+    [toText, parseLine, totals, layout, mainFn, report, food, rent,
              Lib.map tText tText, Lib.map entryTy tText, Lib.map tText tInt, Lib.max tInt,
-             Lib.update tText tDec, Lib.fileErrorText] ++ Lib.sortByDesc entryTy tDec }
+             Lib.update tText tDec, Lib.fileErrorText] ++ Lib.sortByDesc entryTy tDec
 
 /-- The checker accepts the program; `decide +kernel` has the kernel run it. -/
 theorem checked : wellTyped? program = true := by decide +kernel
@@ -261,7 +261,7 @@ assert console.printed_errors == ["line 3: the amount \"x\" is not a number"]
 
 /-- Running `main` never goes wrong, whatever the arguments and files. -/
 theorem main_never_wrong (n : Nat) (w : World) (msg : String) :
-    eval n program (handles [("args", .args), ("console", .console), ("files", .readFiles)]) w
+    evalProgram n program (handles [("args", .args), ("console", .console), ("files", .readFiles)]) w
       (call "main" [v "args", v "console", v "files"]) ≠ .wrong msg :=
   never_wrong_with_handles (τ := tInt) checked (by decide +kernel) n w msg
 

@@ -30,7 +30,7 @@ def itemsRes : Ty := tRes items TodoError.ty
 def noSuchItem (n : Expr) : Expr := mkC TodoError "NoSuchItem" [n]
 
 /-- `file = "todo.txt"` -/
-def fileC : FunDecl := const "file" tText (str "todo.txt")
+def fileC : ConstDecl := const "file" tText (str "todo.txt")
 
 /-- ```
 fn to_text(problem: TodoError) : Text
@@ -46,7 +46,7 @@ def toText : FunDecl :=
   fn "TodoError.to_text" [("problem", TodoError.ty)] tText <|
     .case_ (v "problem")
       [("Usage", [], str "usage: todo add TEXT | list | done N | remove N"),
-       ("BadLine", ["n"], cat [str "line ", intText (v "n"), str " of ", call "file" [], str " isn't an item"]),
+       ("BadLine", ["n"], cat [str "line ", intText (v "n"), str " of ", global "file", str " isn't an item"]),
        ("NoSuchItem", ["n"], cat [str "there is no item ", intText (v "n")]),
        ("Storage", ["failure"], fileErrorTextL (v "failure"))]
 
@@ -203,10 +203,10 @@ def mainFn : FunDecl :=
                      call "box" [v "item"], str " ", get Item "text" (v "item")])) <|
                  nextRound "show" [])
              (.jump "%after" []))
-           (tryWrap tUnit TodoError.ty (io .writeText [v "files", call "file" [], call "format" [v "items"]])
+           (tryWrap tUnit TodoError.ty (io .writeText [v "files", global "file", call "format" [v "items"]])
              "_" (fun e => mkC TodoError "Storage" [e]) <|
              .jump "%after" []))
-      (caseRes (io (.readText false) [v "files", call "file" []])
+      (caseRes (io (.readText false) [v "files", global "file"])
         "text" (.jump "%saved" [v "text"])
         "failure"
           (.case_ (v "failure")
@@ -216,26 +216,26 @@ def mainFn : FunDecl :=
              ("Failed", ["_", "_"], err_ tUnit TodoError.ty (mkC TodoError "Storage" [v "failure"]))]))
 
 /-- `milk = Item(text: "milk", done?: false)` -/
-def milk : FunDecl := const "milk" Item.ty (mk Item [str "milk", ff])
+def milk : ConstDecl := const "milk" Item.ty (mk Item [str "milk", ff])
 
 /-- `milk_done = Item(text: "milk", done?: true)` -/
-def milkDone : FunDecl := const "milk_done" Item.ty (mk Item [str "milk", tt])
+def milkDone : ConstDecl := const "milk_done" Item.ty (mk Item [str "milk", tt])
 
 /-- apply: "marking an item done keeps every item"
 `command is Done(number: _) and result is Ok(after) implies after.size == items.size` -/
 def applyKeepsItems : FunDecl :=
-  fn "apply.promise.1" [("items", items), ("command", Command.ty), ("result", itemsRes)] tBool <|
-    .case_ (v "command")
+  promiseFn "apply.promise.1" [("items", items), ("command", Command.ty), ("result", itemsRes)]
+    [.case_ (v "command")
       [("Add", ["_"], tt), ("Show", [], tt),
        ("Done", ["_"],
          caseRes (v "result") "after" (ieq (lop Item.ty .size [v "after"]) (lop Item.ty .size [v "items"]))
            "_" tt),
-       ("Remove", ["_"], tt)]
+       ("Remove", ["_"], tt)]]
 
 def program : Program :=
-  { data := [Item, Command, TodoError]
-    funs := [fileC, toText, parseCommand, parseItems, format, box, apply, mainFn, milk, milkDone,
-             applyKeepsItems, Lib.map Item.ty tText, Lib.fileErrorText] }
+  wholeProgram "Todo" "main" [Item, Command, TodoError] [fileC, milk, milkDone]
+    [toText, parseCommand, parseItems, format, box, apply, mainFn,
+     applyKeepsItems, Lib.map Item.ty tText, Lib.fileErrorText]
 
 /-- The checker accepts the program; `decide +kernel` has the kernel run it. -/
 theorem checked : wellTyped? program = true := by decide +kernel
@@ -273,25 +273,25 @@ def okItems (es : List Expr) : Expr := ok_ items TodoError.ty (listOf Item.ty es
   (teq (call "format" [listOf Item.ty [item "milk" false, item "eggs" true]]) (str "[ ] milk\n[x] eggs\n"))
 -- apply([milk], Done(number: 1)) == Ok([milk_done])
 #guard passes program
-  (eq itemsRes (call "apply" [listOf Item.ty [call "milk" []], mkC Command "Done" [int 1]])
-    (okItems [call "milk_done" []]))
+  (eq itemsRes (call "apply" [listOf Item.ty [global "milk"], mkC Command "Done" [int 1]])
+    (okItems [global "milk_done"]))
 -- apply([milk], Remove(number: 0)) == Error(NoSuchItem(number: 0))
 #guard passes program
-  (eq itemsRes (call "apply" [listOf Item.ty [call "milk" []], mkC Command "Remove" [int 0]])
+  (eq itemsRes (call "apply" [listOf Item.ty [global "milk"], mkC Command "Remove" [int 0]])
     (err_ items TodoError.ty (noSuchItem (int 0))))
 -- apply([milk], Remove(number: 2)) == Error(NoSuchItem(number: 2))
 #guard passes program
-  (eq itemsRes (call "apply" [listOf Item.ty [call "milk" []], mkC Command "Remove" [int 2]])
+  (eq itemsRes (call "apply" [listOf Item.ty [global "milk"], mkC Command "Remove" [int 2]])
     (err_ items TodoError.ty (noSuchItem (int 2))))
 
 /-! ### The promise's anchors -/
 
 -- allows items: [milk], command: Done(number: 1), result: Ok([milk_done])
 #guard passes program
-  (call "apply.promise.1" [listOf Item.ty [call "milk" []], mkC Command "Done" [int 1], okItems [call "milk_done" []]])
+  (promiseHolds "apply.promise.1" [listOf Item.ty [global "milk"], mkC Command "Done" [int 1], okItems [global "milk_done"]])
 -- forbids items: [milk], command: Done(number: 1), result: Ok([])
 #guard passes program
-  (not_ (call "apply.promise.1" [listOf Item.ty [call "milk" []], mkC Command "Done" [int 1], okItems []]))
+  (not_ (promiseHolds "apply.promise.1" [listOf Item.ty [global "milk"], mkC Command "Done" [int 1], okItems []]))
 
 /-! ### Test "items added and marked done are saved, and listed by number"
 
@@ -315,7 +315,7 @@ def caps : List (String × Cap) := [("args", .args), ("console", .console), ("fi
   [(withArgs ["add", "buy", "milk"], eq (tRes tUnit TodoError.ty) runMain okUnit),
    (withArgs ["add", "call", "Ana"], eq (tRes tUnit TodoError.ty) runMain okUnit),
    (withArgs ["done", "1"], eq (tRes tUnit TodoError.ty) runMain okUnit),
-   (same, eq (tRes tText tFileError) (io (.readText false) [v "files", call "file" []])
+   (same, eq (tRes tText tFileError) (io (.readText false) [v "files", global "file"])
             (ok_ tText tFileError (str "[x] buy milk\n[ ] call Ana\n"))),
    (withArgs ["list"], eq (tRes tUnit TodoError.ty) runMain okUnit),
    (same, eq (tList tText) (io .printed [v "console"]) (strs ["1. [x] buy milk", "2. [ ] call Ana"]))]
@@ -334,7 +334,7 @@ assert main(Args.of(["remove", "3"]), Console.fake(), files) == Error(NoSuchItem
 
 /-- Running `main` never goes wrong, whatever the arguments and the file. -/
 theorem main_never_wrong (n : Nat) (w : World) (msg : String) :
-    eval n program (handles caps) w runMain ≠ .wrong msg :=
+    evalProgram n program (handles caps) w runMain ≠ .wrong msg :=
   never_wrong_with_handles (τ := tRes tUnit TodoError.ty) checked (by decide +kernel) n w msg
 
 end MoCore.Examples.Todo

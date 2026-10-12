@@ -29,7 +29,7 @@ def limitOf (e : Expr) : Expr := get SearchInput "limit" e
 def unreadable (e : Expr) : Expr := mkC ToolError "Unreadable" [e]
 
 /-- `max_limit = 100` -/
-def maxLimit : FunDecl := const "max_limit" tInt (int 100)
+def maxLimit : ConstDecl := const "max_limit" tInt (int 100)
 
 /-- ```
 fn search_notes(notes: ReadFiles, input: SearchInput) : Result(SearchOutput, ToolError)
@@ -55,7 +55,7 @@ def searchNotes : FunDecl :=
   fn "search_notes" [("notes", tCap .readFiles), ("input", SearchInput.ty)] outRes <|
     lets [("query", top .lower [top .trim [get SearchInput "query" (v "input")]])] <|
     ite (top .isEmpty [v "query"]) (err_ SearchOutput.ty ToolError.ty (mkC ToolError "EmptyQuery" [])) <|
-    ite (or_ (ilt (limitOf (v "input")) (int 1)) (igt (limitOf (v "input")) (call "max_limit" [])))
+    ite (or_ (ilt (limitOf (v "input")) (int 1)) (igt (limitOf (v "input")) (global "max_limit")))
       (err_ SearchOutput.ty ToolError.ty (mkC ToolError "BadLimit" [limitOf (v "input")])) <|
     lets [("hits", nil Hit.ty)] <|
     tryWrap SearchOutput.ty ToolError.ty (io (.list true) [v "notes", str "."]) "%names" unreadable <|
@@ -75,19 +75,19 @@ def searchNotes : FunDecl :=
                             igt (lop Hit.ty .size [v "hits"]) (limitOf (v "input"))]))
 
 /-- `hit = Hit(file: "a.md", line: 1, text: "x")` -/
-def hit : FunDecl := const "hit" Hit.ty (mk Hit [str "a.md", int 1, str "x"])
+def hit : ConstDecl := const "hit" Hit.ty (mk Hit [str "a.md", int 1, str "x"])
 
 /-- search_notes: "a search never returns more hits than its limit"
 `result is Ok(output) implies output.hits.size <= input.limit` -/
 def searchBounded : FunDecl :=
-  fn "search_notes.promise.1" [("notes", tCap .readFiles), ("input", SearchInput.ty), ("result", outRes)] tBool <|
-    caseRes (v "result")
+  promiseFn "search_notes.promise.1" [("notes", tCap .readFiles), ("input", SearchInput.ty), ("result", outRes)]
+    [caseRes (v "result")
       "output" (ile (lop Hit.ty .size [get SearchOutput "hits" (v "output")]) (limitOf (v "input")))
-      "_" tt
+      "_" tt]
 
 def program : Program :=
-  { data := [SearchInput, Hit, SearchOutput, ToolError]
-    funs := [maxLimit, searchNotes, hit, searchBounded] }
+  wholeProgram "NotesTool" "search_notes" [SearchInput, Hit, SearchOutput, ToolError] [maxLimit, hit]
+    [searchNotes, searchBounded]
 
 /-- The checker accepts the program; `decide +kernel` has the kernel run it. -/
 theorem checked : wellTyped? program = true := by decide +kernel
@@ -103,12 +103,12 @@ def caps : List (String × Cap) := [("notes", .readFiles)]
 
 -- allows ..., input: SearchInput(query: "x", limit: 1), result: Ok(SearchOutput(hits: [], truncated?: false))
 #guard passes program
-  (call "search_notes.promise.1" [v "notes", input "x" 1,
+  (promiseHolds "search_notes.promise.1" [v "notes", input "x" 1,
     ok_ SearchOutput.ty ToolError.ty (mk SearchOutput [nil Hit.ty, ff])]) {} caps
 -- forbids ..., result: Ok(SearchOutput(hits: [hit, hit], truncated?: false))
 #guard passes program
-  (not_ (call "search_notes.promise.1" [v "notes", input "x" 1,
-    ok_ SearchOutput.ty ToolError.ty (mk SearchOutput [listOf Hit.ty [call "hit" [], call "hit" []], ff])]))
+  (not_ (promiseHolds "search_notes.promise.1" [v "notes", input "x" 1,
+    ok_ SearchOutput.ty ToolError.ty (mk SearchOutput [listOf Hit.ty [global "hit", global "hit"], ff])]))
   {} caps
 
 /-! ### Test "only Markdown notes are searched, and case doesn't matter"
@@ -198,7 +198,7 @@ def notAllowed (path : String) : Expr := .con tFileError "NotAllowed" [str path]
 theorem search_never_wrong {ρ : Env}
     (hρ : EnvTy program ρ [("notes", .cap .readFiles), ("input", SearchInput.ty)])
     (n : Nat) (w : World) (msg : String) :
-    eval n program ρ w (call "search_notes" [v "notes", v "input"]) ≠ .wrong msg :=
+    evalProgram n program ρ w (call "search_notes" [v "notes", v "input"]) ≠ .wrong msg :=
   never_wrong (τ := outRes) checked (by decide +kernel) hρ n w msg
 
 end MoCore.Examples.NotesTool

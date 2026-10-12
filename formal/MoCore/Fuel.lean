@@ -22,6 +22,7 @@ theorem bind_agrees {o o' : Outcome} {k k' : Value → World → Outcome}
     rw [ho (by simp)]
     exact hk v w h
   | stopped b w => rw [ho (by simp)]; rfl
+  | failed detail w => rw [ho (by simp)]; rfl
   | jumped j vs w => rw [ho (by simp)]; rfl
   | wrong m => rw [ho (by simp)]; rfl
   | outOfFuel => exact absurd rfl h
@@ -41,20 +42,26 @@ theorem evalArgs_agrees {ρ : Env} :
     exact bind_agrees (hev ρ w e)
       (fun v w' h' => evalArgs_agrees (fun vs w'' h'' => hk _ _ h'') h') h
 
-theorem applyClosure_agrees {fv : Value} {vs : List Value} {w : World}
-    (h : applyClosure ev fv vs w ≠ .outOfFuel) : applyClosure ev' fv vs w = applyClosure ev fv vs w := by
+omit hev in
+theorem applyClosure_agrees {evG evG' : Env → Env → World → Expr → Outcome}
+    (hevG : ∀ globals, Agrees (evG globals) (evG' globals)) {fv : Value} {vs : List Value} {w : World}
+    (h : applyClosure evG fv vs w ≠ .outOfFuel) : applyClosure evG' fv vs w = applyClosure evG fv vs w := by
   cases fv with
-  | closure ρc ps body =>
+  | closure ρc ps body globals =>
     simp only [applyClosure] at h ⊢
     split
     · rename_i hl
       simp only [hl, ite_true] at h
-      exact hev _ _ _ h
+      exact hevG _ _ _ _ h
     · rfl
   | _ => rfl
 
-theorem callFun_agrees {P : Program} {f : String} {vs : List Value} {w : World}
-    (h : callFun ev P f vs w ≠ .outOfFuel) : callFun ev' P f vs w = callFun ev P f vs w := by
+omit hev in
+theorem callFun_agrees {evG evG' : Env → Env → World → Expr → Outcome}
+    (hevG : ∀ globals, Agrees (evG globals) (evG' globals))
+    {P : Program} {globals : Env} {f : String} {vs : List Value} {w : World}
+    (h : callFun evG P globals f vs w ≠ .outOfFuel) :
+    callFun evG' P globals f vs w = callFun evG P globals f vs w := by
   simp only [callFun] at h ⊢
   split
   · rename_i fd hfd
@@ -62,7 +69,7 @@ theorem callFun_agrees {P : Program} {f : String} {vs : List Value} {w : World}
     split
     · rename_i hl
       simp only [hl, ite_true] at h
-      exact hev _ _ _ h
+      exact hevG _ _ _ _ h
     · rfl
   · rfl
 
@@ -126,56 +133,71 @@ theorem catchJump_agrees {ρ : Env} {j : String} {ps : List (String × Ty)} {bod
 end Helpers
 
 /-- One more unit of fuel never changes an outcome that isn't `outOfFuel`. -/
-theorem eval_agrees_succ {P : Program} : ∀ n, Agrees (eval n P) (eval (n + 1) P)
-  | 0 => fun _ _ _ h => absurd rfl h
-  | n + 1 => by
-    have ih := eval_agrees_succ (P := P) n
+theorem evalWithGlobals_agrees_succ {P : Program} :
+    ∀ n globals, Agrees (evalWithGlobals n P globals) (evalWithGlobals (n + 1) P globals)
+  | 0, _ => fun _ _ _ h => absurd rfl h
+  | n + 1, globals => by
+    have ih := evalWithGlobals_agrees_succ (P := P) n
     intro ρ w e h
     cases e with
     | lit l => rfl
     | var x => rfl
+    | global x => rfl
     | lam ps body => rfl
     | stop r => rfl
     | let_ x e body =>
-      simp only [eval] at h ⊢
-      exact bind_agrees (ih ρ w e) (fun v w' h' => ih _ _ body h') h
+      simp only [evalWithGlobals] at h ⊢
+      exact bind_agrees (ih globals ρ w e) (fun v w' h' => ih globals _ _ body h') h
     | app f args =>
-      simp only [eval] at h ⊢
-      exact bind_agrees (ih ρ w f)
-        (fun fv w1 h1 => evalArgs_agrees ih (fun vs w2 h2 => applyClosure_agrees ih h2) h1) h
+      simp only [evalWithGlobals] at h ⊢
+      exact bind_agrees (ih globals ρ w f)
+        (fun fv w1 h1 => evalArgs_agrees (ih globals) (fun vs w2 h2 => applyClosure_agrees ih h2) h1) h
     | call f args =>
-      simp only [eval] at h ⊢
-      exact evalArgs_agrees ih (fun vs w' h' => callFun_agrees ih h') h
+      simp only [evalWithGlobals] at h ⊢
+      exact evalArgs_agrees (ih globals) (fun vs w' h' => callFun_agrees ih h') h
     | tuple es =>
-      simp only [eval] at h ⊢
-      exact evalArgs_agrees ih (fun _ _ _ => rfl) h
+      simp only [evalWithGlobals] at h ⊢
+      exact evalArgs_agrees (ih globals) (fun _ _ _ => rfl) h
     | proj e i =>
-      simp only [eval] at h ⊢
-      exact bind_agrees (ih ρ w e) (fun _ _ _ => rfl) h
+      simp only [evalWithGlobals] at h ⊢
+      exact bind_agrees (ih globals ρ w e) (fun _ _ _ => rfl) h
     | con τ c args =>
-      simp only [eval] at h ⊢
-      exact evalArgs_agrees ih (fun _ _ _ => rfl) h
+      simp only [evalWithGlobals] at h ⊢
+      exact evalArgs_agrees (ih globals) (fun _ _ _ => rfl) h
     | case_ e arms =>
-      simp only [eval] at h ⊢
-      exact bind_agrees (ih ρ w e) (fun v w' h' => selectArm_agrees ih h') h
+      simp only [evalWithGlobals] at h ⊢
+      exact bind_agrees (ih globals ρ w e) (fun v w' h' => selectArm_agrees (ih globals) h') h
     | if_ c t f =>
-      simp only [eval] at h ⊢
-      refine bind_agrees (ih ρ w c) (fun v w' h' => ?_) h
+      simp only [evalWithGlobals] at h ⊢
+      refine bind_agrees (ih globals ρ w c) (fun v w' h' => ?_) h
       cases v with
       | bool b =>
         cases b
-        · exact ih _ _ _ h'
-        · exact ih _ _ _ h'
+        · exact ih globals _ _ _ h'
+        · exact ih globals _ _ _ h'
       | _ => rfl
     | prim p args =>
-      simp only [eval] at h ⊢
-      exact evalArgs_agrees ih (fun _ _ _ => rfl) h
+      simp only [evalWithGlobals] at h ⊢
+      exact evalArgs_agrees (ih globals) (fun _ _ _ => rfl) h
+    | fail detail =>
+      simp only [evalWithGlobals] at h ⊢
+      exact bind_agrees (ih globals ρ w detail) (fun _ _ _ => rfl) h
     | join j ps body rest =>
-      simp only [eval] at h ⊢
-      exact catchJump_agrees ih (ih ρ w rest) h
+      simp only [evalWithGlobals] at h ⊢
+      exact catchJump_agrees (ih globals) (ih globals ρ w rest) h
     | jump j args =>
-      simp only [eval] at h ⊢
-      exact evalArgs_agrees ih (fun _ _ _ => rfl) h
+      simp only [evalWithGlobals] at h ⊢
+      exact evalArgs_agrees (ih globals) (fun _ _ _ => rfl) h
+
+theorem eval_agrees_succ {P : Program} (n : Nat) : Agrees (eval n P) (eval (n + 1) P) :=
+  evalWithGlobals_agrees_succ n []
+
+theorem evalWithGlobals_fuel_mono {P : Program} {globals ρ : Env} {w : World} {e : Expr} {n m : Nat}
+    (h : evalWithGlobals n P globals ρ w e ≠ .outOfFuel) (hm : n ≤ m) :
+    evalWithGlobals m P globals ρ w e = evalWithGlobals n P globals ρ w e := by
+  induction hm with
+  | refl => rfl
+  | step _ ih => rw [evalWithGlobals_agrees_succ _ _ _ _ _ (by rw [ih]; exact h), ih]
 
 /-- **Fuel is only a bound.** If evaluating with fuel `n` finishes (it doesn't
 run out of fuel), evaluating with any fuel `m ≥ n` gives the same outcome. -/
@@ -184,5 +206,43 @@ theorem eval_fuel_mono {P : Program} {ρ : Env} {w : World} {e : Expr} {n m : Na
   induction hm with
   | refl => rfl
   | step _ ih => rw [eval_agrees_succ _ _ _ _ (by rw [ih]; exact h), ih]
+
+/-- More evaluator fuel preserves initialization and its continuation. -/
+theorem initConsts_fuel_mono {P : Program} {n m : Nat} (hm : n ≤ m) :
+    ∀ (cs : List ConstDecl) (globals : Env) (w : World) (k k' : Env → World → Outcome),
+    (∀ gs w', k gs w' ≠ .outOfFuel → k' gs w' = k gs w') →
+    initConsts n P cs globals w k ≠ .outOfFuel →
+    initConsts m P cs globals w k' = initConsts n P cs globals w k
+  | [], _, _, _, _, hk, h => hk _ _ h
+  | c :: cs, globals, w, k, k', hk, h => by
+    simp only [initConsts] at h ⊢
+    exact bind_agrees (fun he => evalWithGlobals_fuel_mono he hm)
+      (fun v w' h' => initConsts_fuel_mono hm cs (globals ++ [(c.name, v)]) w' k k' hk h') h
+
+theorem evalProgram_fuel_mono {P : Program} {ρ : Env} {w : World} {e : Expr} {n m : Nat}
+    (h : evalProgram n P ρ w e ≠ .outOfFuel) (hm : n ≤ m) :
+    evalProgram m P ρ w e = evalProgram n P ρ w e :=
+  initConsts_fuel_mono hm _ _ _ _ _ (fun _ _ he => evalWithGlobals_fuel_mono he hm) h
+
+theorem runProgram_fuel_mono {P : Program} {args : List Value} {w : World} {n m : Nat}
+    (h : runProgram n P args w ≠ .outOfFuel) (hm : n ≤ m) :
+    runProgram m P args w = runProgram n P args w :=
+  initConsts_fuel_mono hm _ _ _ _ _
+    (fun _ _ he => callFun_agrees (fun _ _ _ _ hx => evalWithGlobals_fuel_mono hx hm) he) h
+
+theorem runTest_fuel_mono {P : Program} {name : String} {w : World} {n m : Nat}
+    (h : runTest n P name w ≠ .outOfFuel) (hm : n ≤ m) :
+    runTest m P name w = runTest n P name w := by
+  simp only [runTest] at h ⊢
+  split
+  · rename_i fd hf
+    simp only [hf] at h
+    split
+    · rename_i hk
+      simp only [hk, ↓reduceIte] at h
+      exact initConsts_fuel_mono hm _ _ _ _ _
+        (fun _ _ he => callFun_agrees (fun _ _ _ _ hx => evalWithGlobals_fuel_mono hx hm) he) h
+    · rfl
+  · rfl
 
 end MoCore

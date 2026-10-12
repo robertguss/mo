@@ -26,7 +26,7 @@ def invalidAmount : Expr := mkC AccountError "InvalidAmount" []
 def bal (e : Expr) : Expr := get Account "balance" e
 
 /-- `max_amount = 1_000_000_000.00` -/
-def maxAmount : FunDecl := const "max_amount" tDec (dec "1000000000.00")
+def maxAmount : ConstDecl := const "max_amount" tDec (dec "1000000000.00")
 
 /-- `fn open(owner: Text) : Account  Account(owner: owner, balance: 0)  end` -/
 def openFn : FunDecl := fn "open" [("owner", tText)] Account.ty <| mk Account [v "owner", dec "0"]
@@ -47,7 +47,7 @@ end
 ``` -/
 def deposit : FunDecl :=
   fn "deposit" [("account", Account.ty), ("amount", tDec)] resTy <|
-    ite (or_ (dle (v "amount") (dec "0")) (dgt (v "amount") (call "max_amount" [])))
+    ite (or_ (dle (v "amount") (dec "0")) (dgt (v "amount") (global "max_amount")))
       (err_ Account.ty AccountError.ty invalidAmount)
       (lets [("after", v "account"),
              ("after", setField Account "balance" (v "after") (dadd (bal (v "after")) (v "amount")))] <|
@@ -64,7 +64,7 @@ end
 ``` -/
 def withdraw : FunDecl :=
   fn "withdraw" [("account", Account.ty), ("amount", tDec)] resTy <|
-    ite (or_ (dle (v "amount") (dec "0")) (dgt (v "amount") (call "max_amount" [])))
+    ite (or_ (dle (v "amount") (dec "0")) (dgt (v "amount") (global "max_amount")))
       (err_ Account.ty AccountError.ty invalidAmount) <|
     ite (dgt (v "amount") (bal (v "account")))
       (err_ Account.ty AccountError.ty
@@ -93,42 +93,42 @@ def alice : FunDecl := fn "alice" [("balance", tDec)] Account.ty <| mk Account [
 /-- `fn bob(balance: Decimal) : Account  Account(owner: "bob", balance: balance)  end` -/
 def bob : FunDecl := fn "bob" [("balance", tDec)] Account.ty <| mk Account [str "bob", v "balance"]
 
-/-! ### Promises, as Bool functions of the parameters and `result` -/
+/-! ### Promises, returning zero or the first false line's number -/
 
 /-- deposit: "a deposit adds exactly the amount"
 `result is Ok(after) implies after.balance == account.balance + amount` -/
 def depositAddsAmount : FunDecl :=
-  fn "deposit.promise.1" [("account", Account.ty), ("amount", tDec), ("result", resTy)] tBool <|
-    caseRes (v "result") "after" (eq tDec (bal (v "after")) (dadd (bal (v "account")) (v "amount")))
-      "_" tt
+  promiseFn "deposit.promise.1" [("account", Account.ty), ("amount", tDec), ("result", resTy)]
+    [caseRes (v "result") "after" (eq tDec (bal (v "after")) (dadd (bal (v "account")) (v "amount")))
+      "_" tt]
 
 /-- withdraw: "a withdrawal never leaves a negative balance"
 `result is Ok(after) implies after.balance >= 0` -/
 def withdrawNeverNegative : FunDecl :=
-  fn "withdraw.promise.1" [("account", Account.ty), ("amount", tDec), ("result", resTy)] tBool <|
-    caseRes (v "result") "after" (dge (bal (v "after")) (dec "0")) "_" tt
+  promiseFn "withdraw.promise.1" [("account", Account.ty), ("amount", tDec), ("result", resTy)]
+    [caseRes (v "result") "after" (dge (bal (v "after")) (dec "0")) "_" tt]
 
 /-- withdraw: "a withdrawal takes exactly the amount asked for"
 `result is Ok(after) implies after.balance == account.balance - amount` -/
 def withdrawTakesAmount : FunDecl :=
-  fn "withdraw.promise.2" [("account", Account.ty), ("amount", tDec), ("result", resTy)] tBool <|
-    caseRes (v "result") "after" (eq tDec (bal (v "after")) (dsub (bal (v "account")) (v "amount")))
-      "_" tt
+  promiseFn "withdraw.promise.2" [("account", Account.ty), ("amount", tDec), ("result", resTy)]
+    [caseRes (v "result") "after" (eq tDec (bal (v "after")) (dsub (bal (v "account")) (v "amount")))
+      "_" tt]
 
 /-- transfer: "a transfer moves money without making or losing any"
 `result is Ok((paid, received)) implies paid.balance + received.balance == from.balance + to.balance` -/
 def transferKeepsMoney : FunDecl :=
-  fn "transfer.promise.1" [("from", Account.ty), ("to", Account.ty), ("amount", tDec),
-      ("result", tRes pairTy AccountError.ty)] tBool <|
-    caseRes (v "result") "pair"
+  promiseFn "transfer.promise.1" [("from", Account.ty), ("to", Account.ty), ("amount", tDec),
+      ("result", tRes pairTy AccountError.ty)]
+    [caseRes (v "result") "pair"
       (eq tDec (dadd (bal (fst (v "pair"))) (bal (snd (v "pair"))))
         (dadd (bal (v "from")) (bal (v "to"))))
-      "_" tt
+      "_" tt]
 
 def program : Program :=
-  { data := [Account, AccountError]
-    funs := [maxAmount, openFn, ownerFn, balanceFn, deposit, withdraw, transfer, alice, bob,
-             depositAddsAmount, withdrawNeverNegative, withdrawTakesAmount, transferKeepsMoney] }
+  wholeProgram "Account" "transfer" [Account, AccountError] [maxAmount]
+    [openFn, ownerFn, balanceFn, deposit, withdraw, transfer, alice, bob,
+     depositAddsAmount, withdrawNeverNegative, withdrawTakesAmount, transferKeepsMoney]
 
 /-- The checker accepts the program; `decide +kernel` has the kernel run it. -/
 theorem checked : wellTyped? program = true := by decide +kernel
@@ -174,37 +174,37 @@ def insufficient (s : String) : Expr := mkC AccountError "InsufficientFunds" [de
 /-! ### Promises: each body accepts its `allows` anchor and rejects its `forbids` anchor -/
 
 -- allows account: alice(10.00), amount: 5.50, result: Ok(alice(15.50))
-#guard passes program (call "deposit.promise.1" [aliceE "10.00", dec "5.50", okA (aliceE "15.50")])
+#guard passes program (promiseHolds "deposit.promise.1" [aliceE "10.00", dec "5.50", okA (aliceE "15.50")])
 -- forbids account: alice(10.00), amount: 5.50, result: Ok(alice(10.00))
 #guard passes program
-  (not_ (call "deposit.promise.1" [aliceE "10.00", dec "5.50", okA (aliceE "10.00")]))
+  (not_ (promiseHolds "deposit.promise.1" [aliceE "10.00", dec "5.50", okA (aliceE "10.00")]))
 -- allows account: alice(100.00), amount: 30.00, result: Ok(alice(70.00))
-#guard passes program (call "withdraw.promise.1" [aliceE "100.00", dec "30.00", okA (aliceE "70.00")])
+#guard passes program (promiseHolds "withdraw.promise.1" [aliceE "100.00", dec "30.00", okA (aliceE "70.00")])
 -- forbids account: alice(50.00), amount: 80.00, result: Ok(alice(-30.00))
 #guard passes program
-  (not_ (call "withdraw.promise.1" [aliceE "50.00", dec "80.00", okA (aliceE "-30.00")]))
+  (not_ (promiseHolds "withdraw.promise.1" [aliceE "50.00", dec "80.00", okA (aliceE "-30.00")]))
 -- allows account: alice(100.00), amount: 30.00, result: Ok(alice(70.00))
-#guard passes program (call "withdraw.promise.2" [aliceE "100.00", dec "30.00", okA (aliceE "70.00")])
+#guard passes program (promiseHolds "withdraw.promise.2" [aliceE "100.00", dec "30.00", okA (aliceE "70.00")])
 -- forbids account: alice(100.00), amount: 30.00, result: Ok(alice(75.00))
 #guard passes program
-  (not_ (call "withdraw.promise.2" [aliceE "100.00", dec "30.00", okA (aliceE "75.00")]))
+  (not_ (promiseHolds "withdraw.promise.2" [aliceE "100.00", dec "30.00", okA (aliceE "75.00")]))
 -- allows from: alice(100.00), to: bob(5.00), amount: 30.00, result: Ok((alice(70.00), bob(35.00)))
 #guard passes program
-  (call "transfer.promise.1" [aliceE "100.00", bobE "5.00", dec "30.00",
+  (promiseHolds "transfer.promise.1" [aliceE "100.00", bobE "5.00", dec "30.00",
     ok_ pairTy AccountError.ty (tup [aliceE "70.00", bobE "35.00"])])
 -- forbids from: alice(100.00), to: bob(5.00), amount: 30.00, result: Ok((alice(70.00), bob(5.00)))
 #guard passes program
-  (not_ (call "transfer.promise.1" [aliceE "100.00", bobE "5.00", dec "30.00",
+  (not_ (promiseHolds "transfer.promise.1" [aliceE "100.00", bobE "5.00", dec "30.00",
     ok_ pairTy AccountError.ty (tup [aliceE "70.00", bobE "5.00"])]))
 
 /-- The promises hold of the functions on some inputs, as `mo test` checks them
 on generated ones: each promise body, given the parameters and the actual
 result. -/
 def promisesHoldOn (account : Expr) (other : Expr) (amount : String) : Expr :=
-  and_ (call "deposit.promise.1" [account, dec amount, call "deposit" [account, dec amount]]) <|
-  and_ (call "withdraw.promise.1" [account, dec amount, call "withdraw" [account, dec amount]]) <|
-  and_ (call "withdraw.promise.2" [account, dec amount, call "withdraw" [account, dec amount]]) <|
-    call "transfer.promise.1" [account, other, dec amount, call "transfer" [account, other, dec amount]]
+  and_ (promiseHolds "deposit.promise.1" [account, dec amount, call "deposit" [account, dec amount]]) <|
+  and_ (promiseHolds "withdraw.promise.1" [account, dec amount, call "withdraw" [account, dec amount]]) <|
+  and_ (promiseHolds "withdraw.promise.2" [account, dec amount, call "withdraw" [account, dec amount]]) <|
+    promiseHolds "transfer.promise.1" [account, other, dec amount, call "transfer" [account, other, dec amount]]
 
 #guard passes program (promisesHoldOn (aliceE "100.00") (bobE "5.00") "30.00")
 #guard passes program (promisesHoldOn (aliceE "100.00") (bobE "5.00") "100.01")
@@ -252,7 +252,7 @@ assert ana_final.balance == 35.00 and ben_after.balance == 15.00
 theorem transfer_never_wrong {ρ : Env}
     (hρ : EnvTy program ρ [("from", Account.ty), ("to", Account.ty), ("amount", tDec)])
     (n : Nat) (w : World) (msg : String) :
-    eval n program ρ w (call "transfer" [v "from", v "to", v "amount"]) ≠ .wrong msg :=
+    evalProgram n program ρ w (call "transfer" [v "from", v "to", v "amount"]) ≠ .wrong msg :=
   never_wrong (τ := tRes pairTy AccountError.ty) checked (by decide +kernel) hρ n w msg
 
 end MoCore.Examples.Account

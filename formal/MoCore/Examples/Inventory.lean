@@ -114,16 +114,16 @@ def productE (name category price : String) (stock : Int) : Expr :=
   mk Product [str name, str category, dec price, int stock]
 
 /-- The five products of the sample, as constants. -/
-def kettle : FunDecl := const "kettle" Product.ty (productE "Kettle" "kitchen" "39.90" 12)
-def lamp : FunDecl := const "lamp" Product.ty (productE "Desk lamp" "office" "24.50" 40)
-def knife : FunDecl := const "knife" Product.ty (productE "Chef's knife" "kitchen" "89.00" 5)
-def notebook : FunDecl := const "notebook" Product.ty (productE "Notebook" "office" "3.20" 300)
-def doormat : FunDecl := const "doormat" Product.ty (productE "Doormat" "home" "19.99" 0)
+def kettle : ConstDecl := const "kettle" Product.ty (productE "Kettle" "kitchen" "39.90" 12)
+def lamp : ConstDecl := const "lamp" Product.ty (productE "Desk lamp" "office" "24.50" 40)
+def knife : ConstDecl := const "knife" Product.ty (productE "Chef's knife" "kitchen" "89.00" 5)
+def notebook : ConstDecl := const "notebook" Product.ty (productE "Notebook" "office" "3.20" 300)
+def doormat : ConstDecl := const "doormat" Product.ty (productE "Doormat" "home" "19.99" 0)
 
 /-- `products = [kettle, lamp, knife, notebook, doormat]` -/
-def products : FunDecl :=
+def products : ConstDecl :=
   const "products" (tList Product.ty) <|
-    listOf Product.ty [call "kettle" [], call "lamp" [], call "knife" [], call "notebook" [], call "doormat" []]
+    listOf Product.ty [global "kettle", global "lamp", global "knife", global "notebook", global "doormat"]
 
 /-- ```
 fn product_columns() : List(Column(Product))
@@ -168,32 +168,33 @@ def mainFn : FunDecl :=
     seq (print (v "console")
       (call (inst "table" [Product.ty])
         [call (inst "top_by" [Product.ty, tDec])
-          [call "products" [], int 3, lam [("p", Product.ty)] (call "stock_value" [v "p"])],
+          [global "products", int 3, lam [("p", Product.ty)] (call "stock_value" [v "p"])],
          call "product_columns" []])) <|
     seq (print (v "console") (str "")) <|
       forList "c" (tTup [tText, tInt]) "%e"
         (mop tText tInt .entries [call (inst "count_by" [Product.ty, tText])
-          [call "products" [], lam [("p", Product.ty)] (get Product "category" (v "p"))]]) [] []
+          [global "products", lam [("p", Product.ty)] (get Product "category" (v "p"))]]) [] []
         (lets [("category", fst (v "%e")), ("count", snd (v "%e"))] <|
           seq (print (v "console") (cat [v "category", str ": ", intText (v "count")])) (nextRound "c" []))
         (seq (print (v "console") (str "")) <|
           lets [("picks", mapL Product.ty tText
                   (call (inst "first_by" [Product.ty, tText])
-                    [call "products" [], lam [("p", Product.ty)] (get Product "category" (v "p"))])
+                    [global "products", lam [("p", Product.ty)] (get Product "category" (v "p"))])
                   (lam [("p", Product.ty)] (get Product "name" (v "p"))))] <|
             print (v "console") (cat [str "One from each category: ", top .join [v "picks", str ", "]]))
 
 def program : Program :=
-  { data := [Product, Column tInt, Column Product.ty]
-    funs := [topBy tInt tInt, topBy tText tInt, topBy Product.ty tDec,
+  wholeProgram "Inventory" "main" [Product, Column tInt, Column Product.ty]
+    [kettle, lamp, knife, notebook, doormat, products] <|
+    [topBy tInt tInt, topBy tText tInt, topBy Product.ty tDec,
              countBy tText tInt, countBy tInt tInt, countBy Product.ty tText,
              firstBy tText (tOpt tChar), firstBy tInt tInt, firstBy Product.ty tText,
              table tInt, table Product.ty, padColumn tInt, padColumn Product.ty,
-             kettle, lamp, knife, notebook, doormat, products, productColumns, stockValue, mainFn,
+             productColumns, stockValue, mainFn,
              Lib.map (Column tInt).ty (tList tText), Lib.map (Column Product.ty).ty (tList tText),
              Lib.map tInt tText, Lib.map (tList tText) tText, Lib.map tText tInt, Lib.map tText tText,
              Lib.map Product.ty tText, Lib.max tInt, Lib.update tInt tInt, Lib.update tText tInt] ++
-            Lib.sortByDesc tInt tInt ++ Lib.sortByDesc tText tInt ++ Lib.sortByDesc Product.ty tDec }
+            Lib.sortByDesc tInt tInt ++ Lib.sortByDesc tText tInt ++ Lib.sortByDesc Product.ty tDec
 
 /-- The checker accepts the program; `decide +kernel` has the kernel run it. -/
 theorem checked : wellTyped? program = true := by decide +kernel
@@ -255,7 +256,7 @@ expected = """
 assert table([kettle, notebook], product_columns()) == expected
 ``` -/
 #guard passes program
-  (teq (call (inst "table" [Product.ty]) [listOf Product.ty [call "kettle" [], call "notebook" []], call "product_columns" []])
+  (teq (call (inst "table" [Product.ty]) [listOf Product.ty [global "kettle", global "notebook"], call "product_columns" []])
     (str "product   category  price  stock\nKettle    kitchen   39.90     12\nNotebook  office     3.20    300"))
 
 /-! ### Test "the most valuable stock comes first"
@@ -265,8 +266,8 @@ assert top_by(products, 2, stock_value) == [lamp, notebook]
 ``` -/
 #guard passes program
   (eq (tList Product.ty)
-    (call (inst "top_by" [Product.ty, tDec]) [call "products" [], int 2, lam [("p", Product.ty)] (call "stock_value" [v "p"])])
-    (listOf Product.ty [call "lamp" [], call "notebook" []]))
+    (call (inst "top_by" [Product.ty, tDec]) [global "products", int 2, lam [("p", Product.ty)] (call "stock_value" [v "p"])])
+    (listOf Product.ty [global "lamp", global "notebook"]))
 
 /-! ### More: what `main` prints (worked out by hand from the sample's code) -/
 #guard passes program
@@ -298,7 +299,7 @@ def pairs (ps : List (Int × Int)) : Expr := listOf pairTy (ps.map fun (a, b) =>
 
 /-- Running `main` never goes wrong. -/
 theorem main_never_wrong (n : Nat) (w : World) (msg : String) :
-    eval n program (handles [("console", .console)]) w (call "main" [v "console"]) ≠ .wrong msg :=
+    evalProgram n program (handles [("console", .console)]) w (call "main" [v "console"]) ≠ .wrong msg :=
   never_wrong_with_handles (τ := tUnit) checked (by decide +kernel) n w msg
 
 end MoCore.Examples.Inventory

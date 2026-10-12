@@ -102,8 +102,8 @@ def mainFn : FunDecl :=
           ite (v "failed?") (int 1) (int 0))
 
 def program : Program :=
-  { data := [Counts]
-    funs := [count, add, row, column, mainFn, Lib.count tChar, Lib.fileErrorText] }
+  wholeProgram "Wc" "main" [Counts] []
+    [count, add, row, column, mainFn, Lib.count tChar, Lib.fileErrorText]
 
 /-- The checker accepts the program; `decide +kernel` has the kernel run it. -/
 theorem checked : wellTyped? program = true := by decide +kernel
@@ -153,7 +153,7 @@ assert console.printed_errors == ["wc: gone.txt: no such file"]
 
 /-- Running `main` never goes wrong, whatever the arguments and files. -/
 theorem main_never_wrong (n : Nat) (w : World) (msg : String) :
-    eval n program (handles [("args", .args), ("console", .console), ("files", .readFiles)]) w
+    evalProgram n program (handles [("args", .args), ("console", .console), ("files", .readFiles)]) w
       (call "main" [v "args", v "console", v "files"]) ≠ .wrong msg :=
   never_wrong_with_handles (τ := tInt) checked (by decide +kernel) n w msg
 

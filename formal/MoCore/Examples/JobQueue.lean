@@ -36,13 +36,13 @@ def state (c : String) (args : List Expr := []) : Expr := mkC JobState c args
 def seconds (n : Int) : Expr := iop .seconds [int n]
 
 /-- `max_attempts = 3` -/
-def maxAttempts : FunDecl := const "max_attempts" tInt (int 3)
+def maxAttempts : ConstDecl := const "max_attempts" tInt (int 3)
 
 /-- `empty = Queue(jobs: {}, next_id: 1)` -/
-def emptyQ : FunDecl := const "empty" Queue.ty (mk Queue [emptyMap tInt Job.ty, int 1])
+def emptyQ : ConstDecl := const "empty" Queue.ty (mk Queue [emptyMap tInt Job.ty, int 1])
 
 /-- `t0 = Time.parse("2026-10-12T09:00:00Z") or stop "the time is written correctly"` -/
-def t0 : FunDecl :=
+def t0 : ConstDecl :=
   const "t0" tTime <|
     orElse (prim (.time .parse) [str "2026-10-12T09:00:00Z"]) (stop "the time is written correctly")
 
@@ -174,7 +174,7 @@ def release : FunDecl :=
   fn "release" [("queue", Queue.ty), ("job", Job.ty)] Queue.ty <|
     lets [("released", v "job"),
           ("released", setField Job "state" (v "released")
-            (ite (ige (get Job "attempts" (v "job")) (call "max_attempts" [])) (state "Dead") (state "Ready")))] <|
+            (ite (ige (get Job "attempts" (v "job")) (global "max_attempts")) (state "Dead") (state "Ready")))] <|
       call "put" [v "queue", v "released"]
 
 /-- ```
@@ -208,7 +208,7 @@ def leased : FunDecl :=
   fn "leased" [("id", tInt), ("until", tTime)] Job.ty <| mk Job [v "id", str "x", int 1, state "Leased" [v "until"]]
 def tried : FunDecl :=
   fn "tried" [("id", tInt), ("attempts", tInt)] Job.ty <|
-    mk Job [v "id", str "x", v "attempts", state "Leased" [call "t0" []]]
+    mk Job [v "id", str "x", v "attempts", state "Leased" [global "t0"]]
 def retried : FunDecl :=
   fn "retried" [("id", tInt), ("attempts", tInt)] Job.ty <| mk Job [v "id", str "x", v "attempts", state "Ready"]
 def done : FunDecl := fn "done" [("id", tInt)] Job.ty <| mk Job [v "id", str "x", int 1, state "Done"]
@@ -217,27 +217,27 @@ def dead : FunDecl := fn "dead" [("id", tInt)] Job.ty <| mk Job [v "id", str "x"
 /-- submit: "a submitted job is in the queue, ready"
 `result.0.jobs.get(result.1) is Some(job) and job.state == Ready` -/
 def submitReady : FunDecl :=
-  fn "submit.promise.1" [("queue", Queue.ty), ("payload", tText), ("result", tTup [Queue.ty, tInt])] tBool <|
-    caseOpt (jmop .get [jobs (fst (v "result")), snd (v "result")]) "job"
-      (eq JobState.ty (get Job "state" (v "job")) (state "Ready")) ff
+  promiseFn "submit.promise.1" [("queue", Queue.ty), ("payload", tText), ("result", tTup [Queue.ty, tInt])]
+    [caseOpt (jmop .get [jobs (fst (v "result")), snd (v "result")]) "job"
+      (eq JobState.ty (get Job "state" (v "job")) (state "Ready")) ff]
 
 /-- fail: "a job is attempted at most three times"
 `result is Ok(after) and after.jobs.get(id) is Some(job) and job.attempts >= max_attempts implies job.state == Dead` -/
 def failAtMostThree : FunDecl :=
-  fn "fail.promise.1" [("queue", Queue.ty), ("id", tInt), ("result", queueRes)] tBool <|
-    caseRes (v "result")
+  promiseFn "fail.promise.1" [("queue", Queue.ty), ("id", tInt), ("result", queueRes)]
+    [caseRes (v "result")
       "after"
         (caseOpt (jmop .get [jobs (v "after"), v "id"]) "job"
-          (implies (ige (get Job "attempts" (v "job")) (call "max_attempts" []))
+          (implies (ige (get Job "attempts" (v "job")) (global "max_attempts"))
             (eq JobState.ty (get Job "state" (v "job")) (state "Dead")))
           tt)
-      "_" tt
+      "_" tt]
 
 def program : Program :=
-  { data := [JobState, Job, Queue, QueueError]
-    funs := [maxAttempts, emptyQ, t0, submit, lease, acknowledge, failFn, expire, leasedJob, release, put,
+  wholeProgram "JobQueue" "lease" [JobState, Job, Queue, QueueError] [maxAttempts, emptyQ, t0]
+    [submit, lease, acknowledge, failFn, expire, leasedJob, release, put,
              holding, ready, leased, tried, retried, done, dead, submitReady, failAtMostThree,
-             Lib.find Job.ty, Lib.map Job.ty (tTup [tInt, Job.ty])] }
+             Lib.find Job.ty, Lib.map Job.ty (tTup [tInt, Job.ty])]
 
 /-- The checker accepts the program; `decide +kernel` has the kernel run it. -/
 theorem checked : wellTyped? program = true := by decide +kernel
@@ -247,8 +247,8 @@ theorem wellTyped : WellTyped program := checkProgram_sound checked
 
 /-! ### Examples -/
 
-def t0E : Expr := call "t0" []
-def emptyE : Expr := call "empty" []
+def t0E : Expr := global "t0"
+def emptyE : Expr := global "empty"
 def holdingE (js : List Expr) : Expr := call "holding" [listOf Job.ty js]
 def okQ (e : Expr) : Expr := ok_ Queue.ty QueueError.ty e
 def errQ (c : String) (args : List Expr) : Expr := err_ Queue.ty QueueError.ty (mkC QueueError c args)
@@ -284,15 +284,15 @@ def errQ (c : String) (args : List Expr) : Expr := err_ Queue.ty QueueError.ty (
 
 -- allows queue: empty, payload: "x", result: (holding([ready(1)]), 1)
 #guard passes program
-  (call "submit.promise.1" [emptyE, str "x", tup [holdingE [call "ready" [int 1]], int 1]])
+  (promiseHolds "submit.promise.1" [emptyE, str "x", tup [holdingE [call "ready" [int 1]], int 1]])
 -- forbids queue: empty, payload: "x", result: (empty, 1)
-#guard passes program (not_ (call "submit.promise.1" [emptyE, str "x", tup [emptyE, int 1]]))
+#guard passes program (not_ (promiseHolds "submit.promise.1" [emptyE, str "x", tup [emptyE, int 1]]))
 -- allows queue: holding([tried(1, 3)]), id: 1, result: Ok(holding([dead(1)]))
 #guard passes program
-  (call "fail.promise.1" [holdingE [call "tried" [int 1, int 3]], int 1, okQ (holdingE [call "dead" [int 1]])])
+  (promiseHolds "fail.promise.1" [holdingE [call "tried" [int 1, int 3]], int 1, okQ (holdingE [call "dead" [int 1]])])
 -- forbids queue: holding([tried(1, 3)]), id: 1, result: Ok(holding([retried(1, 3)]))
 #guard passes program
-  (not_ (call "fail.promise.1" [holdingE [call "tried" [int 1, int 3]], int 1,
+  (not_ (promiseHolds "fail.promise.1" [holdingE [call "tried" [int 1, int 3]], int 1,
     okQ (holdingE [call "retried" [int 1, int 3]])]))
 
 /-! ### Test "a job that keeps failing is tried three times, then dead"
@@ -322,9 +322,9 @@ A failed `assert` stops the test. -/
               (assert (ieq (get Job "attempts" (v "job")) (v "attempt")) "job.attempts == attempt" <|
                 caseRes (call "fail" [v "leased_queue", v "id"])
                   "after" (nextRange "t" "attempt" [v "after"])
-                  "_" (stop "assertion failed: fail(leased_queue, id) is Ok(after)"))
-              (stop "assertion failed: lease(queue, t0, 30.seconds) is Ok((leased_queue, Some(job)))"))
-        "_" (stop "assertion failed: lease(queue, t0, 30.seconds) is Ok((leased_queue, Some(job)))"))
+                  "_" (DSL.fail (str "assertion failed: fail(leased_queue, id) is Ok(after)")))
+              (DSL.fail (str "assertion failed: lease(queue, t0, 30.seconds) is Ok((leased_queue, Some(job)))")))
+        "_" (DSL.fail (str "assertion failed: lease(queue, t0, 30.seconds) is Ok((leased_queue, Some(job)))")))
       (caseOpt (jmop .get [jobs (v "queue"), v "id"]) "final"
         (and_ (eq JobState.ty (get Job "state" (v "final")) (state "Dead"))
           (eq leaseRes (call "lease" [v "queue", t0E, seconds 30])
@@ -337,7 +337,7 @@ A failed `assert` stops the test. -/
 theorem lease_never_wrong {ρ : Env}
     (hρ : EnvTy program ρ [("queue", Queue.ty), ("now", tTime), ("length", tDur)])
     (n : Nat) (w : World) (msg : String) :
-    eval n program ρ w (call "lease" [v "queue", v "now", v "length"]) ≠ .wrong msg :=
+    evalProgram n program ρ w (call "lease" [v "queue", v "now", v "length"]) ≠ .wrong msg :=
   never_wrong (τ := leaseRes) checked (by decide +kernel) hρ n w msg
 
 end MoCore.Examples.JobQueue

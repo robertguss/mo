@@ -57,13 +57,13 @@ def okC (e : Expr) : Expr := ok_ Command.ty ParseError.ty e
 def failure (m : String) : Expr := mkC Reply "Failure" [str m]
 
 /-- `max_expiry = 3_153_600_000` -/
-def maxExpiry : FunDecl := const "max_expiry" tInt (int 3153600000)
+def maxExpiry : ConstDecl := const "max_expiry" tInt (int 3153600000)
 
 /-- `empty_store = Store(entries: {})` -/
-def emptyStore : FunDecl := const "empty_store" Store.ty (mk Store [emptyMap tText Entry.ty])
+def emptyStore : ConstDecl := const "empty_store" Store.ty (mk Store [emptyMap tText Entry.ty])
 
 /-- `t0 = Time.parse("2026-10-12T09:00:00Z") or stop "the time is written correctly"` -/
-def t0 : FunDecl :=
+def t0 : ConstDecl :=
   const "t0" tTime <|
     orElse (prim (.time .parse) [str "2026-10-12T09:00:00Z"]) (stop "the time is written correctly")
 
@@ -228,7 +228,7 @@ end
 ``` -/
 def expire : FunDecl :=
   fn "expire" [("store", Store.ty), ("key", tText), ("ttl", tInt), ("now", tTime)] stepTy <|
-    ite (igt (v "ttl") (call "max_expiry" [])) (tup [v "store", failure "invalid expire time"]) <|
+    ite (igt (v "ttl") (global "max_expiry")) (tup [v "store", failure "invalid expire time"]) <|
       caseOpt (emop .get [entries (v "store"), v "key"]) "entry"
         (ite (ile (v "ttl") (int 0))
           (tup [mk Store [emop .remove [entries (v "store"), v "key"]], mkC Reply "Count" [int 1]])
@@ -292,7 +292,7 @@ end
 of the loop body takes both `reply` and `store`. -/
 def mainFn : FunDecl :=
   fn "main" [("console", tCap .console), ("clock", tCap .clock)] tUnit <|
-    lets [("store", call "empty_store" [])] <|
+    lets [("store", global "empty_store")] <|
       whileLoop "serve" [("store", Store.ty)] [v "store"]
         (caseOpt (io .readLine [v "console"]) "line"
           (.join "%reply" [("reply", Reply.ty), ("store", Store.ty)]
@@ -336,16 +336,15 @@ def holding : FunDecl :=
 /-- apply: "a store never holds a key past its expiry"
 `result.0.entries.values.all?(fn(entry) entry.expires is Some(at) implies at > now end)` -/
 def applyKeepsLive : FunDecl :=
-  fn "apply.promise.1" [("store", Store.ty), ("command", Command.ty), ("now", tTime), ("result", stepTy)]
-    tBool <|
-    allL Entry.ty (emop .values [entries (fst (v "result"))])
+  promiseFn "apply.promise.1" [("store", Store.ty), ("command", Command.ty), ("now", tTime), ("result", stepTy)]
+    [allL Entry.ty (emop .values [entries (fst (v "result"))])
       (lam [("entry", Entry.ty)]
-        (caseOpt (get Entry "expires" (v "entry")) "at" (cmp .time .gt (v "at") (v "now")) tt))
+        (caseOpt (get Entry "expires" (v "entry")) "at" (cmp .time .gt (v "at") (v "now")) tt))]
 
 def program : Program :=
-  { data := [Entry, Store, Command, Reply, ParseError]
-    funs := [maxExpiry, emptyStore, t0, replyText, parse, buildCommand, apply, increment, expire,
-             withoutExpired, put, mainFn, describe, holding, applyKeepsLive, Lib.all Entry.ty] }
+  wholeProgram "Kv" "main" [Entry, Store, Command, Reply, ParseError] [maxExpiry, emptyStore, t0]
+    [replyText, parse, buildCommand, apply, increment, expire,
+     withoutExpired, put, mainFn, describe, holding, applyKeepsLive, Lib.all Entry.ty]
 
 /-- The checker accepts the program; `decide +kernel` has the kernel run it. -/
 theorem checked : wellTyped? program = true := by decide +kernel
@@ -358,7 +357,7 @@ theorem wellTyped : WellTyped program := checkProgram_sound checked
 def parsed (s : String) : Expr := call "parse" [str s]
 def errP (c : String) (args : List Expr) : Expr := err_ Command.ty ParseError.ty (mkC ParseError c args)
 def holdingE (k val : String) : Expr := call "holding" [str k, str val, none_ tTime]
-def t0E : Expr := call "t0" []
+def t0E : Expr := global "t0"
 
 -- parse("SET name ada") == Ok(Put(key: "name", value: "ada"))
 #guard passes program (eq cmdRes (parsed "SET name ada") (okC (mkC Command "Put" [str "name", str "ada"])))
@@ -379,7 +378,7 @@ def t0E : Expr := call "t0" []
   (eq Reply.ty (snd (call "increment" [holdingE "n" "41", str "n"])) (mkC Reply "Count" [int 42]))
 -- increment(empty_store, "n").1 == Count(1)
 #guard passes program
-  (eq Reply.ty (snd (call "increment" [call "empty_store" [], str "n"])) (mkC Reply "Count" [int 1]))
+  (eq Reply.ty (snd (call "increment" [global "empty_store", str "n"])) (mkC Reply "Count" [int 1]))
 -- increment(holding("n", "x", None), "n").1 == Failure(message: "the value is not an integer")
 #guard passes program
   (eq Reply.ty (snd (call "increment" [holdingE "n" "x", str "n"])) (failure "the value is not an integer"))
@@ -389,14 +388,14 @@ def t0E : Expr := call "t0" []
     (failure "the increment would overflow"))
 -- expire(empty_store, "a", 10, t0).1 == Count(0)
 #guard passes program
-  (eq Reply.ty (snd (call "expire" [call "empty_store" [], str "a", int 10, t0E])) (mkC Reply "Count" [int 0]))
+  (eq Reply.ty (snd (call "expire" [global "empty_store", str "a", int 10, t0E])) (mkC Reply "Count" [int 0]))
 -- expire(holding("a", "1", None), "a", 10, t0).1 == Count(1)
 #guard passes program
   (eq Reply.ty (snd (call "expire" [holdingE "a" "1", str "a", int 10, t0E])) (mkC Reply "Count" [int 1]))
 -- expire(holding("a", "1", None), "a", -1, t0) == (empty_store, Count(1))
 #guard passes program
   (eq stepTy (call "expire" [holdingE "a" "1", str "a", int (-1), t0E])
-    (tup [call "empty_store" [], mkC Reply "Count" [int 1]]))
+    (tup [global "empty_store", mkC Reply "Count" [int 1]]))
 -- expire(holding("a", "1", None), "a", 4_000_000_000, t0).1 == Failure(message: "invalid expire time")
 #guard passes program
   (eq Reply.ty (snd (call "expire" [holdingE "a" "1", str "a", int 4000000000, t0E]))
@@ -407,10 +406,10 @@ def t0E : Expr := call "t0" []
 def putA : Expr := mkC Command "Put" [str "a", str "1"]
 -- allows store: empty_store, command: Put(key: "a", value: "1"), now: t0, result: (holding("a", "1", None), Okay)
 #guard passes program
-  (call "apply.promise.1" [call "empty_store" [], putA, t0E, tup [holdingE "a" "1", mkC Reply "Okay" []]])
+  (promiseHolds "apply.promise.1" [global "empty_store", putA, t0E, tup [holdingE "a" "1", mkC Reply "Okay" []]])
 -- forbids ... result: (holding("a", "1", Some(t0)), Okay)
 #guard passes program
-  (not_ (call "apply.promise.1" [call "empty_store" [], putA, t0E,
+  (not_ (promiseHolds "apply.promise.1" [global "empty_store", putA, t0E,
     tup [call "holding" [str "a", str "1", some_ tTime t0E], mkC Reply "Okay" []]]))
 
 /-! ### Test "a key expires after its time"
@@ -425,7 +424,7 @@ assert before == Value("abc")
 assert after == NoValue
 ``` -/
 #guard passes program
-  (lets [("with_key", fst (call "apply" [call "empty_store" [], mkC Command "Put" [str "session", str "abc"], t0E])),
+  (lets [("with_key", fst (call "apply" [global "empty_store", mkC Command "Put" [str "session", str "abc"], t0E])),
          ("%r", call "apply" [v "with_key", mkC Command "Expire" [str "session", int 10], t0E]),
          ("timed", fst (v "%r")), ("set", snd (v "%r"))] <|
     and_ (eq Reply.ty (v "set") (mkC Reply "Count" [int 1])) <|
@@ -453,7 +452,7 @@ assert console.printed == ["OK", "(integer) 2", "\"2\"", "(error) unknown comman
 
 /-- Running `main` never goes wrong, whatever the commands on its input. -/
 theorem main_never_wrong (n : Nat) (w : World) (msg : String) :
-    eval n program (handles [("console", .console), ("clock", .clock)]) w
+    evalProgram n program (handles [("console", .console), ("clock", .clock)]) w
       (call "main" [v "console", v "clock"]) ≠ .wrong msg :=
   never_wrong_with_handles (τ := tUnit) checked (by decide +kernel) n w msg
 

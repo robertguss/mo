@@ -41,6 +41,7 @@ theorem OutcomeOk.bind {o : Outcome} {k : Value → World → Outcome} {σ τ : 
   cases o with
   | ok v w => exact hk v w ho
   | stopped => trivial
+  | failed => trivial
   | jumped j vs w => obtain ⟨ts, h, _⟩ := ho; simp [lookup] at h
   | wrong => exact absurd ho id
   | outOfFuel => trivial
@@ -49,42 +50,45 @@ theorem OutcomeOk.bind {o : Outcome} {k : Value → World → Outcome} {σ τ : 
 
 section Helpers
 
-variable {ev : Env → World → Expr → Outcome} (hev : EvSafe P ev)
+variable {ev : Env → Env → World → Expr → Outcome} (hev : EvSafe P ev)
+variable {scope : Nat} {spec : Bool} {globals : Env}
 include hev
 
 /-- Arguments evaluated left to right, then a safe continuation. -/
-theorem evalArgs_safe {Γ : Ctx} {ρ : Env} (hρ : EnvTy P ρ Γ) {Δ : JCtx} {τ : Ty} :
+theorem evalArgs_safe {Γ : Ctx} {ρ : Env} (hρ : EnvTy P ρ Γ)
+    (hg : EnvTy P globals (constCtx P scope)) {Δ : JCtx} {τ : Ty} :
     ∀ {es : List Expr} {ts : List Ty} {w : World} {k : List Value → World → Outcome},
-    TypedArgs P Γ es ts → (∀ vs w', ValsTy P vs ts → OutcomeOk P Δ τ (k vs w')) →
-    OutcomeOk P Δ τ (evalArgs ev ρ w es k)
+    TypedArgs P Γ es ts scope spec → (∀ vs w', ValsTy P vs ts → OutcomeOk P Δ τ (k vs w')) →
+    OutcomeOk P Δ τ (evalArgs (ev globals) ρ w es k)
   | [], _, w, _, h, hk => by cases h; exact hk [] w .nil
   | _ :: _, _, w, _, h, hk => by
     cases h with
     | cons he hes =>
       simp only [evalArgs]
-      exact OutcomeOk.bind (hev _ _ _ _ _ w he hρ) fun v w' hv =>
-        evalArgs_safe hρ hes fun vs w'' hvs => hk _ _ (.cons hv hvs)
+      exact OutcomeOk.bind (hev _ _ _ _ _ _ _ _ w he hρ hg) fun v w' hv =>
+        evalArgs_safe hρ hg hes fun vs w'' hvs => hk _ _ (.cons hv hvs)
 
 /-- Applying a function value to arguments of its parameter types. -/
 theorem applyClosure_safe {fv : Value} {ts : List Ty} {τ : Ty} {vs : List Value} {w : World}
     {Δ : JCtx} (hf : ValTy P fv (.fn ts τ)) (hvs : ValsTy P vs ts) :
     OutcomeOk P Δ τ (applyClosure ev fv vs w) := by
   cases hf with
-  | closure hρ hbody =>
+  | closure hρ hg hbody =>
     simp only [applyClosure]
     rw [ite_eq_left (by rw [hvs.length_eq, List.length_map])]
-    exact (hev _ _ _ _ _ w hbody (EnvTy.bindParams hvs hρ)).weaken
+    exact (hev _ _ _ _ _ _ _ _ w hbody (EnvTy.bindParams hvs hρ) hg).weaken
   | con hcs => simp [ctorsOf] at hcs
 
 /-- Calling a top-level function of a well-typed program. -/
 theorem callFun_safe (hP : WellTyped P) {f : String} {fd : FunDecl} {vs : List Value} {w : World}
-    {Δ : JCtx} (hf : lookupFun P f = some fd) (hvs : ValsTy P vs (fd.params.map Prod.snd)) :
-    OutcomeOk P Δ fd.ret (callFun ev P f vs w) := by
+    {Δ : JCtx} (hf : lookupFun P f = some fd) (hn : fd.constCount ≤ scope)
+    (hg : EnvTy P globals (constCtx P scope)) (hvs : ValsTy P vs (fd.params.map Prod.snd)) :
+    OutcomeOk P Δ fd.ret (callFun ev P globals f vs w) := by
   simp only [callFun, hf]
   rw [ite_eq_left (by rw [hvs.length_eq, List.length_map])]
   have hρ : EnvTy P (MoCore.bindParams fd.params vs) fd.params := by
     simpa using EnvTy.bindParams hvs .nil
-  exact (hev _ _ _ _ _ w (hP f fd hf) hρ).weaken
+  exact (hev _ _ _ _ _ _ _ _ w (hP.funs f fd hf) hρ (hg.constPrefix hn)).weaken
 
 omit hev in
 /-- Projecting part `i` of a tuple. -/
@@ -102,9 +106,9 @@ omit hev in
 theorem findArm_typed {Γ : Ctx} {Δ : JCtx} {τ : Ty} :
     ∀ {arms : List (String × List String × Expr)} {cs : List Ctor} {c : String}
       {fs : List (String × Ty)},
-    TypedArms P Γ Δ arms cs τ → ctorFields c cs = some fs →
+    TypedArms P Γ Δ arms cs τ scope spec → ctorFields c cs = some fs →
     ∃ xs body, findArm c arms = some (xs, body) ∧ xs.length = fs.length ∧
-      Typed P (bindTys xs fs ++ Γ) Δ body τ
+      Typed P (bindTys xs fs ++ Γ) Δ body τ scope spec
   | [], [], _, _, .nil, h => by simp [ctorFields] at h
   | _ :: _, k :: _, c, _, .cons hl hb ha, h => by
     by_cases hc : c = k.name
@@ -118,8 +122,9 @@ theorem findArm_typed {Γ : Ctx} {Δ : JCtx} {τ : Ty} :
 /-- Running the arm of a well-typed `case` for a value of the scrutinee's type. -/
 theorem selectArm_safe {Γ : Ctx} {Δ : JCtx} {ρ : Env} {arms : List (String × List String × Expr)}
     {cs : List Ctor} {τ σ : Ty} {v : Value} {w : World} (hρ : EnvTy P ρ Γ)
-    (harms : TypedArms P Γ Δ arms cs τ) (hcs : ctorsOf P σ = some cs) (hv : ValTy P v σ) :
-    OutcomeOk P Δ τ (selectArm ev ρ arms v w) := by
+    (hg : EnvTy P globals (constCtx P scope))
+    (harms : TypedArms P Γ Δ arms cs τ scope spec) (hcs : ctorsOf P σ = some cs) (hv : ValTy P v σ) :
+    OutcomeOk P Δ τ (selectArm (ev globals) ρ arms v w) := by
   cases hv with
   | con hcs' hfs hvs =>
     rw [hcs] at hcs'
@@ -127,21 +132,22 @@ theorem selectArm_safe {Γ : Ctx} {Δ : JCtx} {ρ : Env} {arms : List (String ×
     obtain ⟨xs, body, hfind, hl, hb⟩ := findArm_typed harms hfs
     simp only [selectArm, hfind]
     rw [ite_eq_left (by rw [hl, hvs.length_eq, List.length_map])]
-    exact hev _ _ _ _ _ w hb (EnvTy.bindVars hl hvs hρ)
+    exact hev _ _ _ _ _ _ _ _ w hb (EnvTy.bindVars hl hvs hρ) hg
   | _ => simp [ctorsOf] at hcs
 
 /-- A join point's loop: each jump to it runs its body again. -/
 theorem joinLoop_safe {Γ : Ctx} {Δ : JCtx} {ρ : Env} {j : String} {ps : List (String × Ty)}
     {body : Expr} {τ : Ty} (hρ : EnvTy P ρ Γ)
-    (hbody : Typed P (ps ++ Γ) ((j, ps.map Prod.snd) :: Δ) body τ) :
+    (hg : EnvTy P globals (constCtx P scope))
+    (hbody : Typed P (ps ++ Γ) ((j, ps.map Prod.snd) :: Δ) body τ scope spec) :
     ∀ (fuel : Nat) (vs : List Value) (w : World), ValsTy P vs (ps.map Prod.snd) →
-    OutcomeOk P Δ τ (joinLoop ev ρ j ps body fuel vs w)
+    OutcomeOk P Δ τ (joinLoop (ev globals) ρ j ps body fuel vs w)
   | 0, _, _, _ => trivial
   | fuel + 1, vs, w, hvs => by
     simp only [joinLoop]
     rw [ite_eq_left (by rw [hvs.length_eq, List.length_map])]
-    have h := hev _ _ _ _ _ w hbody (EnvTy.bindParams hvs hρ)
-    generalize ev (MoCore.bindParams ps vs ++ ρ) w body = o at h ⊢
+    have h := hev _ _ _ _ _ _ _ _ w hbody (EnvTy.bindParams hvs hρ) hg
+    generalize ev globals (MoCore.bindParams ps vs ++ ρ) w body = o at h ⊢
     cases o with
     | jumped j' vs' w' =>
       obtain ⟨ts, hts, hvs'⟩ := h
@@ -151,21 +157,23 @@ theorem joinLoop_safe {Γ : Ctx} {Δ : JCtx} {ρ : Env} {j : String} {ps : List 
         simp only [lookup, ite_true, Option.some.injEq] at hts
         subst hts
         simp only [ite_true]
-        exact joinLoop_safe hρ hbody fuel vs' w' hvs'
+        exact joinLoop_safe hρ hg hbody fuel vs' w' hvs'
       · simp only [lookup, hj, ite_false] at hts
         simp only [hj, ite_false]
         exact ⟨ts, hts, hvs'⟩
     | ok v w' => exact h
     | stopped => trivial
+    | failed => trivial
     | wrong => exact absurd h id
     | outOfFuel => trivial
 
 /-- A `join`: a jump to it from its `rest` runs its body. -/
 theorem catchJump_safe {Γ : Ctx} {Δ : JCtx} {ρ : Env} {j : String} {ps : List (String × Ty)}
     {body : Expr} {τ : Ty} {fuel : Nat} {o : Outcome} (hρ : EnvTy P ρ Γ)
-    (hbody : Typed P (ps ++ Γ) ((j, ps.map Prod.snd) :: Δ) body τ)
+    (hg : EnvTy P globals (constCtx P scope))
+    (hbody : Typed P (ps ++ Γ) ((j, ps.map Prod.snd) :: Δ) body τ scope spec)
     (hrest : OutcomeOk P ((j, ps.map Prod.snd) :: Δ) τ o) :
-    OutcomeOk P Δ τ (catchJump ev ρ j ps body fuel o) := by
+    OutcomeOk P Δ τ (catchJump (ev globals) ρ j ps body fuel o) := by
   cases o with
   | jumped j' vs w' =>
     obtain ⟨ts, hts, hvs⟩ := hrest
@@ -175,12 +183,13 @@ theorem catchJump_safe {Γ : Ctx} {Δ : JCtx} {ρ : Env} {j : String} {ps : List
       simp only [lookup, ite_true, Option.some.injEq] at hts
       subst hts
       simp only [ite_true]
-      exact joinLoop_safe hev hρ hbody fuel vs w' hvs
+      exact joinLoop_safe hev hρ hg hbody fuel vs w' hvs
     · simp only [lookup, hj, ite_false] at hts
       simp only [hj, ite_false]
       exact ⟨ts, hts, hvs⟩
   | ok v w' => exact hrest
   | stopped => trivial
+  | failed => trivial
   | wrong => exact absurd hrest id
   | outOfFuel => trivial
 
@@ -193,56 +202,67 @@ primitives respect their signatures, `eval n P` is safe for every fuel `n`:
 a well-typed expression, evaluated in an environment that fits its context,
 never goes `wrong`; a value it returns has its type; and a jump it ends with
 goes to a join point in scope, with values of its parameter types. -/
-theorem eval_safe (hP : WellTyped P) (hprims : PrimsSafe P) : ∀ n, EvSafe P (eval n P)
-  | 0 => fun _ _ _ _ _ _ _ _ => trivial
+theorem eval_safe (hP : WellTyped P) (hprims : PrimsSafe P) : ∀ n, EvSafe P (evalWithGlobals n P)
+  | 0 => fun _ _ _ _ _ _ _ _ _ _ _ _ => trivial
   | n + 1 => by
     have ih := eval_safe hP hprims n
-    intro Γ Δ e τ ρ w he hρ
+    intro scope spec globals Γ Δ e τ ρ w he hρ hg
     cases he with
     | lit hl => exact Lit.value_ty hl
     | var hx =>
       obtain ⟨v, hv, hvt⟩ := hρ.lookup hx
-      simp only [eval, hv]
+      simp only [evalWithGlobals, hv]
+      exact hvt
+    | global hx =>
+      obtain ⟨v, hv, hvt⟩ := hg.lookup hx
+      simp only [evalWithGlobals, hv]
       exact hvt
     | let_ he hb =>
-      simp only [eval]
-      exact (ih _ _ _ _ _ w he hρ).bind fun v w' hv => ih _ _ _ _ _ w' hb (.cons hv hρ)
-    | lam hb => exact .closure hρ hb
+      simp only [evalWithGlobals]
+      exact (ih _ _ _ _ _ _ _ _ w he hρ hg).bind fun v w' hv =>
+        ih _ _ _ _ _ _ _ _ w' hb (.cons hv hρ) hg
+    | lam hb => exact .closure hρ hg hb
     | app hf hargs =>
-      simp only [eval]
-      exact (ih _ _ _ _ _ w hf hρ).bind fun fv w1 hfv =>
-        evalArgs_safe ih hρ hargs fun vs w2 hvs => applyClosure_safe ih hfv hvs
-    | call hf hargs =>
-      simp only [eval]
-      exact evalArgs_safe ih hρ hargs fun vs w' hvs => callFun_safe ih hP hf hvs
+      simp only [evalWithGlobals]
+      exact (ih _ _ _ _ _ _ _ _ w hf hρ hg).bind fun fv w1 hfv =>
+        evalArgs_safe ih hρ hg hargs fun vs w2 hvs => applyClosure_safe ih hfv hvs
+    | call hf hn _ hargs =>
+      simp only [evalWithGlobals]
+      exact evalArgs_safe ih hρ hg hargs fun vs w' hvs => callFun_safe ih hP hf hn hg hvs
     | tuple hes =>
-      simp only [eval]
-      exact evalArgs_safe ih hρ hes fun vs w' hvs => ValTy.tuple hvs
+      simp only [evalWithGlobals]
+      exact evalArgs_safe ih hρ hg hes fun vs w' hvs => ValTy.tuple hvs
     | proj he hi =>
-      simp only [eval]
-      exact (ih _ _ _ _ _ w he hρ).bind fun v w' hv => project_safe hv hi
+      simp only [evalWithGlobals]
+      exact (ih _ _ _ _ _ _ _ _ w he hρ hg).bind fun v w' hv => project_safe hv hi
     | con hcs hfs hargs =>
-      simp only [eval]
-      exact evalArgs_safe ih hρ hargs fun vs w' hvs => ValTy.con hcs hfs hvs
+      simp only [evalWithGlobals]
+      exact evalArgs_safe ih hρ hg hargs fun vs w' hvs => ValTy.con hcs hfs hvs
     | case_ he hcs harms =>
-      simp only [eval]
-      exact (ih _ _ _ _ _ w he hρ).bind fun v w' hv => selectArm_safe ih hρ harms hcs hv
+      simp only [evalWithGlobals]
+      exact (ih _ _ _ _ _ _ _ _ w he hρ hg).bind fun v w' hv => selectArm_safe ih hρ hg harms hcs hv
     | if_ hc ht hf =>
-      simp only [eval]
-      refine (ih _ _ _ _ _ w hc hρ).bind fun v w' hv => ?_
+      simp only [evalWithGlobals]
+      refine (ih _ _ _ _ _ _ _ _ w hc hρ hg).bind fun v w' hv => ?_
       obtain ⟨b, rfl⟩ := hv.bool_inv
       cases b
-      · exact ih _ _ _ _ _ w' hf hρ
-      · exact ih _ _ _ _ _ w' ht hρ
-    | prim hargs =>
-      simp only [eval]
-      exact evalArgs_safe ih hρ hargs fun vs w' hvs => (hprims _ vs w' hvs).weaken
+      · exact ih _ _ _ _ _ _ _ _ w' hf hρ hg
+      · exact ih _ _ _ _ _ _ _ _ w' ht hρ hg
+    | prim _ hargs =>
+      simp only [evalWithGlobals]
+      exact evalArgs_safe ih hρ hg hargs fun vs w' hvs => (hprims _ vs w' hvs).weaken
     | stop => trivial
+    | fail _ hd =>
+      simp only [evalWithGlobals]
+      refine (ih _ _ _ _ _ _ _ _ w hd hρ hg).bind fun v w' hv => ?_
+      cases hv with
+      | text => trivial
+      | con hcs => simp [ctorsOf] at hcs
     | join hb hr =>
-      simp only [eval]
-      exact catchJump_safe ih hρ hb (ih _ _ _ _ _ w hr hρ)
+      simp only [evalWithGlobals]
+      exact catchJump_safe ih hρ hg hb (ih _ _ _ _ _ _ _ _ w hr hρ hg)
     | jump hj hargs =>
-      simp only [eval]
-      exact evalArgs_safe ih hρ hargs fun vs w' hvs => ⟨_, hj, hvs⟩
+      simp only [evalWithGlobals]
+      exact evalArgs_safe ih hρ hg hargs fun vs w' hvs => ⟨_, hj, hvs⟩
 
 end MoCore

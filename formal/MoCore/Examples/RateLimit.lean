@@ -27,7 +27,7 @@ def stepTy : Ty := tTup [Limiter.ty, Decision.ty]
 def tokens (e : Expr) : Expr := get Bucket "tokens" e
 
 /-- `t0 = Time.parse("2026-10-12T09:00:00Z") or stop "the time is written correctly"` -/
-def t0 : FunDecl :=
+def t0 : ConstDecl :=
   const "t0" tTime <|
     orElse (prim (.time .parse) [str "2026-10-12T09:00:00Z"]) (stop "the time is written correctly")
 
@@ -115,16 +115,16 @@ def limiterOf : FunDecl :=
 /-- request: "a client is never allowed more tokens than its bucket holds"
 `result.1 is Allowed(remaining: left) implies left >= 0 and left <= limiter.capacity - 1` -/
 def requestBounded : FunDecl :=
-  fn "request.promise.1" [("limiter", Limiter.ty), ("client", tText), ("now", tTime), ("result", stepTy)] tBool <|
-    .case_ (snd (v "result"))
+  promiseFn "request.promise.1" [("limiter", Limiter.ty), ("client", tText), ("now", tTime), ("result", stepTy)]
+    [.case_ (snd (v "result"))
       [("Allowed", ["left"],
          and_ (dge (v "left") (dec "0"))
            (dle (v "left") (dsub (get Limiter "capacity" (v "limiter")) (dec "1")))),
-       ("Refused", ["_"], tt)]
+       ("Refused", ["_"], tt)]]
 
 def program : Program :=
-  { data := [Bucket, Limiter, Decision]
-    funs := [t0, newLimiter, request, refill, waitForOne, limiterOf, requestBounded] }
+  wholeProgram "RateLimit" "request" [Bucket, Limiter, Decision] [t0]
+    [newLimiter, request, refill, waitForOne, limiterOf, requestBounded]
 
 /-- The checker accepts the program; `decide +kernel` has the kernel run it. -/
 theorem checked : wellTyped? program = true := by decide +kernel
@@ -143,14 +143,14 @@ theorem wellTyped : WellTyped program := checkProgram_sound checked
 
 /-! ### The promise's anchors -/
 
-def t0E : Expr := call "t0" []
+def t0E : Expr := global "t0"
 def allowed (s : String) : Expr := mkC Decision "Allowed" [dec s]
 -- allows limiter: limiter_of(2), client: "a", now: t0, result: (limiter_of(2), Allowed(remaining: 1))
 #guard passes program
-  (call "request.promise.1" [call "limiter_of" [dec "2"], str "a", t0E, tup [call "limiter_of" [dec "2"], allowed "1"]])
+  (promiseHolds "request.promise.1" [call "limiter_of" [dec "2"], str "a", t0E, tup [call "limiter_of" [dec "2"], allowed "1"]])
 -- forbids ... result: (limiter_of(2), Allowed(remaining: 2))
 #guard passes program
-  (not_ (call "request.promise.1" [call "limiter_of" [dec "2"], str "a", t0E,
+  (not_ (promiseHolds "request.promise.1" [call "limiter_of" [dec "2"], str "a", t0E,
     tup [call "limiter_of" [dec "2"], allowed "2"]]))
 
 /-! ### Test "a bucket of two allows two requests, then refills in half a second"
@@ -206,7 +206,7 @@ assert for_ben == Allowed(remaining: 0)
            ("%3", call "request" [fst (v "%2"), str "ana", t0E]),
            ("%4", call "request" [fst (v "%3"), str "ana", t0E]),
            ("%5", call "request" [fst (v "%4"), str "ana", prim (.time .add) [t0E, iop .seconds [int 1]]])] <|
-      and_ (call "request.promise.1" [v "limiter", str "ana", t0E, v "%1"]) <|
+      and_ (promiseHolds "request.promise.1" [v "limiter", str "ana", t0E, v "%1"]) <|
       and_ (eq Decision.ty (snd (v "%3")) (allowed "0")) <|
       -- with no token left and 0.5 tokens a second, the next one comes in 2 seconds
       and_ (eq Decision.ty (snd (v "%4")) (mkC Decision "Refused" [iop .milliseconds [int 2000]])) <|
@@ -257,7 +257,7 @@ def yearOne : Expr :=
 theorem request_never_wrong {ρ : Env}
     (hρ : EnvTy program ρ [("limiter", Limiter.ty), ("client", tText), ("now", tTime)])
     (n : Nat) (w : World) (msg : String) :
-    eval n program ρ w (call "request" [v "limiter", v "client", v "now"]) ≠ .wrong msg :=
+    evalProgram n program ρ w (call "request" [v "limiter", v "client", v "now"]) ≠ .wrong msg :=
   never_wrong (τ := stepTy) checked (by decide +kernel) hρ n w msg
 
 end MoCore.Examples.RateLimit

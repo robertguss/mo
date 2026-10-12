@@ -88,6 +88,7 @@ inductive Value where
   | set (vs : List Value)
   | con (c : String) (fields : List Value)
   | closure (env : List (String × Value)) (params : List (String × Ty)) (body : Expr)
+      (globals : List (String × Value))
   | cap (c : Cap) (root : Option String)
   deriving Repr, Inhabited
 
@@ -178,6 +179,8 @@ inductive Outcome where
   /-- The program stopped on a bug; the world is as it was at the stop, so what
   was printed before it stays visible. -/
   | stopped (b : Bug) (w : World)
+  /-- An assertion or example failed; this is not a bug. -/
+  | failed (detail : String) (w : World)
   /-- A jump to a join point, on its way to the `join` that declared it.
   Internal: a well-typed expression never ends this way at top level. -/
   | jumped (j : String) (vs : List Value) (w : World)
@@ -192,12 +195,14 @@ def Outcome.bind (o : Outcome) (k : Value → World → Outcome) : Outcome :=
   match o with
   | .ok v w => k v w
   | .stopped b w => .stopped b w
+  | .failed detail w => .failed detail w
   | .jumped j vs w => .jumped j vs w
   | .wrong m => .wrong m
   | .outOfFuel => .outOfFuel
 
 @[simp] theorem Outcome.bind_ok : (Outcome.ok v w).bind k = k v w := rfl
 @[simp] theorem Outcome.bind_stopped : (Outcome.stopped b w).bind k = .stopped b w := rfl
+@[simp] theorem Outcome.bind_failed : (Outcome.failed detail w).bind k = .failed detail w := rfl
 @[simp] theorem Outcome.bind_jumped : (Outcome.jumped j vs w).bind k = .jumped j vs w := rfl
 @[simp] theorem Outcome.bind_wrong : (Outcome.wrong m).bind k = .wrong m := rfl
 @[simp] theorem Outcome.bind_outOfFuel : Outcome.outOfFuel.bind k = .outOfFuel := rfl
