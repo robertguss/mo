@@ -6,14 +6,21 @@ wrapped as Run; non-program seeds remain negative run inputs. Generated signatur
 an independent contract table, not C's implementation. All storage is disposable.
 """
 
-import copy
+import concurrent.futures
 import json
+import os
 import pathlib
 import random
 import re
 import subprocess
 import sys
 import tempfile
+import time
+
+VERSION = re.search(
+    r'#define MO_CORE_TEXT_VERSION "([^"]+)"',
+    pathlib.Path("src/core/core.h").read_text(),
+)[1]
 
 
 class Atom(str):
@@ -74,7 +81,7 @@ WORLD = (
 
 
 def run(program):
-    return f"(core 0.5 (Run {program} {WORLD} (entry ()) 0))\n".encode()
+    return f"(core {VERSION} (Run {program} {WORLD} (entry ()) 0))\n".encode()
 
 
 def fun(name, params, ret, body, kind="function", prefix=0):
@@ -520,6 +527,14 @@ def paths(tree, prefix=()):
             yield from paths(value, prefix + (i,))
 
 
+def replace(tree, path, value):
+    if not path:
+        return value
+    result = list(tree)
+    result[path[0]] = replace(tree[path[0]], path[1:], value)
+    return result
+
+
 def mutate(program_tree):
     # Fuzz seeds can be valid S-expressions without being codec-valid programs.
     if (
@@ -530,11 +545,9 @@ def mutate(program_tree):
         or any(not isinstance(f, list) or len(f) != 8 for f in program_tree[2])
     ):
         return
-    p = copy.deepcopy(program_tree)
-    p[-1] = [Atom("noSource")]
+    p = replace(program_tree, (-1,), [Atom("noSource")])
     yield "no-source", p
-    q = copy.deepcopy(p)
-    q[4] = "missing-entry"
+    q = replace(p, (4,), "missing-entry")
     yield "entry", q
     for i, f in enumerate(p[2]):
         for field, value, label in [
@@ -542,8 +555,7 @@ def mutate(program_tree):
             (6, [Atom("promise")], "kind"),
             (7, Atom("9999999999999999999999999"), "prefix"),
         ]:
-            q = copy.deepcopy(p)
-            q[2][i][field] = value
+            q = replace(p, (2, i, field), value)
             yield f"function-{i}-{label}", q
     expr_tags = set(
         "lit var global let_ lam app call tuple proj con case_ if_ prim stop fail join jump".split()
@@ -571,23 +583,18 @@ def mutate(program_tree):
         if e[0] == "lit":
             changes.append([Atom("lit"), [Atom("int"), Atom("9223372036854775808")]])
         for j, replacement in enumerate(changes):
-            q = copy.deepcopy(p)
-            parent = q
-            for step in path[:-1]:
-                parent = parent[step]
-            parent[path[-1]] = replacement
+            q = replace(p, path, replacement)
             yield f"expr-{i}-{j}", q
     metadata = program_tree[-1]
     if isinstance(metadata, list) and len(metadata) == 5 and metadata[0] == "Metadata":
-        q = copy.deepcopy(program_tree)
-        q[-1][1] = []
+        q = replace(program_tree, (-1, 1), [])
         yield "metadata-files", q
-        q = copy.deepcopy(program_tree)
-        q[-1][3] = []
+        q = replace(program_tree, (-1, 3), [])
         yield "metadata-functions", q
 
 
 def main():
+    started = time.monotonic()
     drivers = sys.argv[1:]
     if not drivers:
         raise AssertionError("at least one C driver is required")
@@ -595,8 +602,10 @@ def main():
     cases = list(generated()) + list(typed_trees()) + list(rule_cases())
     roots = [
         pathlib.Path("tests/core"),
-        pathlib.Path("fuzz/corpus"),
-        pathlib.Path("build/fuzz/corpus"),
+        pathlib.Path("fuzz/corpus/fuzz_core_text"),
+        pathlib.Path("fuzz/corpus/fuzz_core_check"),
+        pathlib.Path("build/fuzz/corpus/fuzz_core_text"),
+        pathlib.Path("build/fuzz/corpus/fuzz_core_check"),
     ]
     originals = programs = 0
     for root in roots:
@@ -611,23 +620,31 @@ def main():
                 raise AssertionError(f"oversize corpus input: {path}")
             try:
                 doc = parse(raw.decode("utf-8"))
-                payload = doc[2] if doc[:2] == [Atom("core"), Atom("0.5")] else None
+                payload = doc[2] if doc[:2] == [Atom("core"), Atom(VERSION)] else None
             except (ValueError, IndexError, RecursionError, UnicodeError):
                 payload = None
             if payload and payload[0] in ("Run", "Program"):
                 p = payload[1] if payload[0] == "Run" and len(payload) > 1 else payload
+                tokens = [
+                    m
+                    for m in re.finditer(
+                        rb';[^\n]*|"(?:\\.|[^"\\])*"|[()]|[^\s();"]+', raw
+                    )
+                    if not m[0].startswith(b";")
+                ]
                 if payload[0] == "Run":
+                    # Change only a syntactically valid fuel atom, preserving all other bytes.
+                    if (
+                        len(payload) == 5
+                        and isinstance(payload[-1], Atom)
+                        and re.fullmatch(r"0|[1-9][0-9]*", payload[-1])
+                    ):
+                        fuel = tokens[-3]
+                        raw = raw[: fuel.start()] + b"0" + raw[fuel.end() :]
                     cases.append((str(path), raw, None))
                 else:
                     # Preserve original bytes, including lexical errors; do not turn a Python
                     # decoding success into an assertion that either reference codec accepts.
-                    tokens = [
-                        m
-                        for m in re.finditer(
-                            rb';[^\n]*|"(?:\\.|[^"\\])*"|[()]|[^\s();"]+', raw
-                        )
-                        if not m[0].startswith(b";")
-                    ]
                     cases.append(
                         (
                             str(path),
@@ -640,7 +657,7 @@ def main():
                         )
                     )
                 # Corpus mutations include parser fuzz discoveries, not only golden fixtures.
-                if root != pathlib.Path("build/fuzz/corpus"):
+                if "build" not in root.parts:
                     for label, q in mutate(p):
                         cases.append((str(path) + "/" + label, run(wire(q)), None))
                 programs += 1
@@ -653,6 +670,9 @@ def main():
             path = pathlib.Path(tmp) / f"{i}.core"
             path.write_bytes(raw)
             files.append(str(path))
+
+        def lean_verdict(item):
+            path, (label, raw, want) = item
             lean = subprocess.run(
                 [str(oracle), str(path)], capture_output=True, timeout=20
             )
@@ -665,19 +685,32 @@ def main():
                 raise AssertionError(
                     f"{label}: generator expected {want}, Lean gave {verdict}: {raw!r} {lean.stdout!r}"
                 )
-            expected.append(verdict)
-        for driver in drivers:
-            # Bound argv length, including macOS's smaller ARG_MAX.
-            lines = []
-            for start in range(0, len(files), 128):
-                result = subprocess.run(
-                    [driver] + files[start : start + 128],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                    timeout=30,
-                )
-                lines += result.stdout.splitlines()
+            return verdict
+
+        def c_verdict(item):
+            driver, start = item
+            result = subprocess.run(
+                [driver] + files[start : start + 128],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+            )
+            return driver, result.stdout.splitlines()
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(8, os.cpu_count() or 2)
+        ) as pool:
+            expected = list(pool.map(lean_verdict, zip(files, cases)))
+            jobs = [
+                (driver, start)
+                for driver in drivers
+                for start in range(0, len(files), 128)
+            ]
+            results = {driver: [] for driver in drivers}
+            for driver, lines in pool.map(c_verdict, jobs):
+                results[driver].extend(lines)
+        for driver, lines in results.items():
             if len(lines) != len(cases):
                 raise AssertionError(f"{driver}: missing verdicts")
             for (label, raw, _), want, line in zip(cases, expected, lines):
@@ -685,9 +718,28 @@ def main():
                     raise AssertionError(
                         f"{driver}: {label}: Lean {want}, C {line}\n{raw.decode(errors='replace')}"
                     )
+                if want == 5:
+                    code = int(line.split()[1][1:])
+                    if code in (1052, 1053):
+                        raise AssertionError(
+                            f"{driver}: {label}: resource refusal is not a typing verdict: {line}"
+                        )
+                    required = None
+                    if label.startswith("signature-"):
+                        if label.endswith("-arity"):
+                            required = {1037}
+                        elif "-arg-" in label or label.endswith("-result"):
+                            required = {1036}
+                    elif label.startswith("typed-tree-") and label.endswith("-result"):
+                        required = {1036, 1038}
+                    if required is not None and code not in required:
+                        raise AssertionError(
+                            f"{driver}: {label}: expected codes {required}, found {line}"
+                        )
     print(
         f"Core checker differential: {len(cases)} cases agree in {len(drivers)} C builds; "
-        f"{originals} corpus files ({programs} programs), all signatures and fixture mutations"
+        f"{originals} Core corpus files ({programs} programs), all signatures and fixture mutations; "
+        f"{time.monotonic() - started:.2f}s"
     )
 
 

@@ -20,12 +20,19 @@ struct type {
     struct type **parts;
     mo_core_string name;
     enum mo_core_cap_tag cap;
+    struct data *constructors;
+    bool resolved;
 };
 struct expr;
 struct answer {
-    struct type *ty;
+    struct type *ty, *expected;
     uint16_t code;
     const struct expr *at;
+};
+struct memo {
+    size_t expected;
+    struct answer answer;
+    struct memo *next;
 };
 struct expr {
     mo_core_expr source;
@@ -34,7 +41,12 @@ struct expr {
     struct type *annotation;
     struct type **params;
     struct signature *signature;
-    struct index *memo;
+    struct expr *parent;
+    struct index *bindings, *arm_bindings, *joins;
+    bool bound, arm_bound;
+    unsigned memo_count;
+    struct memo memo[2];
+    struct memo *extra;
 };
 struct function {
     const struct mo_core_fun *source;
@@ -57,10 +69,12 @@ struct constant {
 };
 struct checker {
     struct mo_arena arena, body;
-    struct index *types, *nominals, *annotations, *funs, *data, *consts, *constructors;
+    struct index *types, *nominals, *annotations, *funs, *data, *consts;
     size_t nodes, type_count, scope;
     bool spec;
     uint16_t fatal;
+    mo_core_string declaration;
+    struct mo_core_span declaration_span;
 };
 struct context {
     struct index *names;
@@ -170,7 +184,8 @@ static MO_MUST_USE struct type *intern(struct checker *c, enum mo_core_ty_tag ta
                                        struct type **parts, size_t count, mo_core_string name,
                                        enum mo_core_cap_tag cap) {
     /* Child IDs have no padding; byte order is private to this invocation. */
-    size_t *key = allocate(c, &c->body, count + 2, sizeof *key);
+    size_t small[5];
+    size_t *key = count <= 3 ? small : allocate(c, &c->body, count + 2, sizeof *key);
     if (key == NULL)
         return NULL;
     key[0] = (size_t)tag;
@@ -188,8 +203,8 @@ static MO_MUST_USE struct type *intern(struct checker *c, enum mo_core_ty_tag ta
     t = allocate(c, &c->arena, 1, sizeof *t);
     if (t == NULL)
         return NULL;
-    struct type **saved = allocate(c, &c->arena, count, sizeof *saved);
-    if (saved == NULL)
+    struct type **saved = count == 0 ? NULL : allocate(c, &c->arena, count, sizeof *saved);
+    if (count != 0 && saved == NULL)
         return NULL;
     if (count != 0)
         memcpy(saved, parts, count * sizeof *saved);
@@ -199,7 +214,7 @@ static MO_MUST_USE struct type *intern(struct checker *c, enum mo_core_ty_tag ta
                        .parts = saved,
                        .cap = cap,
                        .name = name};
-    if (!put(c, &c->arena, table, k, t, true))
+    if (!put(c, &c->arena, table, k, t, tag != MO_CORE_TY_DATA))
         return NULL;
     return t;
 }
@@ -293,8 +308,9 @@ static MO_MUST_USE struct type *annotation(struct checker *c, mo_core_ty t, size
         return NULL;
     return r;
 }
-static MO_MUST_USE struct type **parameter_types(struct checker *c, mo_core_params ps) {
-    struct type **ts = allocate(c, &c->arena, ps.count, sizeof *ts);
+static MO_MUST_USE struct type **parameter_types(struct checker *c, struct mo_arena *arena,
+                                                 mo_core_params ps) {
+    struct type **ts = allocate(c, arena, ps.count, sizeof *ts);
     if (ts == NULL)
         return NULL;
     for (size_t i = 0; i < ps.count; i++) {
@@ -854,6 +870,7 @@ static MO_MUST_USE bool prepare_list(struct checker *c, struct expr *p, size_t o
         p->children[offset + i] = prepare(c, xs.items[i], depth, node);
         if (p->children[offset + i] == NULL)
             return false;
+        p->children[offset + i]->parent = p;
     }
     return true;
 }
@@ -884,7 +901,7 @@ static MO_MUST_USE struct expr *prepare(struct checker *c, mo_core_expr e, size_
         small[n++] = e->as.let_.body;
         break;
     case MO_CORE_EXPR_LAM:
-        p->params = parameter_types(c, e->as.lam.params);
+        p->params = parameter_types(c, &c->body, e->as.lam.params);
         small[n++] = e->as.lam.body;
         break;
     case MO_CORE_EXPR_APP:
@@ -923,7 +940,7 @@ static MO_MUST_USE struct expr *prepare(struct checker *c, mo_core_expr e, size_
         small[n++] = e->as.fail;
         break;
     case MO_CORE_EXPR_JOIN:
-        p->params = parameter_types(c, e->as.join.params);
+        p->params = parameter_types(c, &c->body, e->as.join.params);
         small[n++] = e->as.join.body;
         small[n++] = e->as.join.rest;
         break;
@@ -935,8 +952,8 @@ static MO_MUST_USE struct expr *prepare(struct checker *c, mo_core_expr e, size_
         return NULL;
     size_t arms = e->tag == MO_CORE_EXPR_CASE ? e->as.case_.arms.count : 0;
     p->count = n + xs.count + arms;
-    p->children = allocate(c, &c->body, p->count, sizeof *p->children);
-    if (p->children == NULL)
+    p->children = p->count == 0 ? NULL : allocate(c, &c->body, p->count, sizeof *p->children);
+    if (p->count != 0 && p->children == NULL)
         return NULL;
     if (!prepare_list(c, p, 0, (mo_core_expr_list){small, n}, depth + 1, node) ||
         !prepare_list(c, p, n, xs, depth + 1, node))
@@ -945,6 +962,7 @@ static MO_MUST_USE struct expr *prepare(struct checker *c, mo_core_expr e, size_
         p->children[n + i] = prepare(c, e->as.case_.arms.items[i].body, depth + 1, node);
         if (p->children[n + i] == NULL)
             return NULL;
+        p->children[n + i]->parent = p;
     }
     return p;
 }
@@ -952,12 +970,14 @@ static MO_MUST_USE mo_core_string text(const char *s) {
     return (mo_core_string){s, strlen(s)};
 }
 static MO_MUST_USE struct data *constructors(struct checker *c, struct type *t) {
-    if (t->tag == MO_CORE_TY_DATA)
-        return find(c->data, t->name);
-    mo_core_string key = bytes_key(&t->id, sizeof t->id);
-    struct data *d = find(c->constructors, key);
-    if (d != NULL)
-        return d;
+    if (t->resolved)
+        return t->constructors;
+    t->resolved = true;
+    if (t->tag == MO_CORE_TY_DATA) {
+        t->constructors = find(c->data, t->name);
+        return t->constructors;
+    }
+    struct data *d;
     const char *names[4] = {0};
     struct type *fields[4][2] = {{0}};
     size_t counts[4] = {0}, n = 0;
@@ -1028,8 +1048,7 @@ static MO_MUST_USE struct data *constructors(struct checker *c, struct type *t) 
         if (!put(c, &c->arena, &d->names, k->name, k, false))
             return NULL;
     }
-    if (!put(c, &c->arena, &c->constructors, key, d, true))
-        return NULL;
+    t->constructors = d;
     return d;
 }
 static MO_MUST_USE void *lookup(const struct context *ctx, mo_core_string name) {
@@ -1054,7 +1073,7 @@ static MO_MUST_USE struct answer expect(const struct expr *e, struct type *exp, 
     if (t == NULL)
         return bad(e, MO_CODE_CORE_CHECK_INFERENCE);
     if (exp != NULL && exp != t)
-        return bad(e, MO_CODE_CORE_CHECK_TYPE);
+        return (struct answer){.ty = t, .expected = exp, .at = e, .code = MO_CODE_CORE_CHECK_TYPE};
     return (struct answer){.ty = t};
 }
 static MO_MUST_USE struct answer tc(struct checker *c, struct expr *e, const struct context *ctx,
@@ -1076,11 +1095,15 @@ static MO_MUST_USE struct answer arm(struct checker *c, struct expr *e, size_t i
     struct mo_core_arm *a = &e->source->as.case_.arms.items[i];
     if (compare(a->ctor, k->name) != 0 || a->names.count != k->count)
         return bad(e, MO_CODE_CORE_CHECK_ARM);
-    struct context local = {.outer = ctx};
-    for (size_t j = 0; j < k->count; j++)
-        if (!put(c, &c->body, &local.names, a->names.items[j], k->fields[j], false))
-            return bad(e, c->fatal);
-    return tc(c, e->children[i + 1], &local, joins, exp);
+    struct expr *body = e->children[i + 1];
+    if (!body->arm_bound) {
+        for (size_t j = 0; j < k->count; j++)
+            if (!put(c, &c->body, &body->arm_bindings, a->names.items[j], k->fields[j], false))
+                return bad(e, c->fatal);
+        body->arm_bound = true;
+    }
+    struct context local = {.names = body->arm_bindings, .outer = ctx};
+    return tc(c, body, &local, joins, exp);
 }
 static MO_MUST_USE struct answer branches(struct checker *c, struct expr *e,
                                           const struct context *ctx, const struct context *joins,
@@ -1117,9 +1140,12 @@ static MO_MUST_USE struct answer tc_uncached(struct checker *c, struct expr *e,
         a = tc(c, e->children[0], ctx, NULL, NULL);
         if (a.code != 0)
             return a;
-        struct context local = {.outer = ctx};
-        if (!put(c, &c->body, &local.names, s->as.let_.name, a.ty, false))
-            return bad(e, c->fatal);
+        if (!e->bound) {
+            if (!put(c, &c->body, &e->bindings, s->as.let_.name, a.ty, false))
+                return bad(e, c->fatal);
+            e->bound = true;
+        }
+        struct context local = {.names = e->bindings, .outer = ctx};
         return tc(c, e->children[1], &local, joins, exp);
     }
     case MO_CORE_EXPR_LAM: {
@@ -1131,9 +1157,13 @@ static MO_MUST_USE struct answer tc_uncached(struct checker *c, struct expr *e,
                 if (e->params[i] != exp->parts[i])
                     return bad(e, MO_CODE_CORE_CHECK_LAMBDA);
         }
-        struct context local = {.outer = ctx};
-        if (!bind_params(c, &local, s->as.lam.params, e->params))
-            return bad(e, c->fatal);
+        struct context local = {.names = e->bindings, .outer = ctx};
+        if (!e->bound) {
+            if (!bind_params(c, &local, s->as.lam.params, e->params))
+                return bad(e, c->fatal);
+            e->bindings = local.names;
+            e->bound = true;
+        }
         a = tc(c, e->children[0], &local, NULL, exp == NULL ? NULL : exp->parts[n]);
         if (a.code != 0)
             return a;
@@ -1263,10 +1293,15 @@ static MO_MUST_USE struct answer tc_uncached(struct checker *c, struct expr *e,
         a = tc(c, e->children[0], ctx, NULL, scalar(c, MO_CORE_TY_TEXT));
         return a.code != 0 ? a : expect(e, exp, exp);
     case MO_CORE_EXPR_JOIN: {
-        struct context local = {.outer = ctx}, j = {.outer = joins};
-        if (!bind_params(c, &local, s->as.join.params, e->params) ||
-            !put(c, &c->body, &j.names, s->as.join.name, e, false))
-            return bad(e, c->fatal);
+        struct context local = {.names = e->bindings, .outer = ctx};
+        if (!e->bound) {
+            if (!bind_params(c, &local, s->as.join.params, e->params) ||
+                !put(c, &c->body, &e->joins, s->as.join.name, e, false))
+                return bad(e, c->fatal);
+            e->bindings = local.names;
+            e->bound = true;
+        }
+        struct context j = {.names = e->joins, .outer = joins};
         if (exp != NULL) {
             a = tc(c, e->children[0], &local, &j, exp);
             return a.code != 0 ? a : tc(c, e->children[1], ctx, &j, exp);
@@ -1294,19 +1329,24 @@ static MO_MUST_USE struct answer tc(struct checker *c, struct expr *e, const str
     /* Each prepared occurrence has fixed bindings, joins, spec mode and constant prefix.
      * Only its expected type varies when inference retries an if, case or join. */
     size_t id = exp == NULL ? 0 : exp->id;
-    mo_core_string key = bytes_key(&id, sizeof id);
-    struct answer *cached = find(e->memo, key);
-    if (cached != NULL)
-        return *cached;
+    for (unsigned i = 0; i < e->memo_count; i++)
+        if (e->memo[i].expected == id)
+            return e->memo[i].answer;
+    for (struct memo *m = e->extra; m != NULL; m = m->next)
+        if (m->expected == id)
+            return m->answer;
     struct answer a = tc_uncached(c, e, ctx, joins, exp);
     if (c->fatal != 0)
         return bad(e, c->fatal);
-    struct answer *saved = allocate(c, &c->body, 1, sizeof *saved);
+    struct memo *saved =
+        e->memo_count < 2 ? &e->memo[e->memo_count++] : allocate(c, &c->body, 1, sizeof *saved);
     if (saved == NULL)
         return bad(e, c->fatal);
-    *saved = a;
-    if (!put(c, &c->body, &e->memo, key, saved, true))
-        return bad(e, c->fatal);
+    *saved = (struct memo){.expected = id, .answer = a};
+    if (saved != &e->memo[0] && saved != &e->memo[1]) {
+        saved->next = e->extra;
+        e->extra = saved;
+    }
     return a;
 }
 
@@ -1333,7 +1373,8 @@ static MO_MUST_USE const char *reason(uint16_t code) {
     case MO_CODE_CORE_CHECK_TYPE:
         return "The Core expression's type differs from its expected type.";
     case MO_CODE_CORE_CHECK_ARGUMENTS:
-        return "A Core call, jump, constructor or primitive has the wrong argument count.";
+        return "A Core application, call, jump, constructor or primitive has the wrong argument "
+               "count.";
     case MO_CODE_CORE_CHECK_LAMBDA:
         return "A Core lambda's parameter signature differs from the expected function type.";
     case MO_CODE_CORE_CHECK_APPLICATION:
@@ -1347,7 +1388,7 @@ static MO_MUST_USE const char *reason(uint16_t code) {
     case MO_CODE_CORE_CHECK_PROJECTION:
         return "Core projects from a non-tuple or beyond the tuple's parts.";
     case MO_CODE_CORE_CHECK_CONSTRUCTORS:
-        return "Core constructs or cases on a type without constructors.";
+        return "Core constructs or cases on a non-choice type or an undeclared data type.";
     case MO_CODE_CORE_CHECK_CONSTRUCTOR:
         return "The Core type has no constructor with this name.";
     case MO_CODE_CORE_CHECK_ARMS:
@@ -1371,13 +1412,119 @@ static MO_MUST_USE const char *reason(uint16_t code) {
         MO_UNREACHABLE();
     }
 }
-static MO_MUST_USE bool report(struct mo_diags *diags, uint16_t code, struct mo_core_span span) {
-    struct mo_diag d = {
-        .code = code, .message = "invalid compiler Core (bug in Mo)", .reason = reason(code)};
+/* Names and type trees in labels are elided, not allowed to amplify hostile input. */
+static MO_MUST_USE bool label_name(struct mo_buffer *b, mo_core_string name) {
+    size_t n = name.length < 128 ? name.length : 128;
+    while (n < name.length && n != 0 && ((uint8_t)name.bytes[n] & 0xc0u) == 0x80u)
+        n--;
+    if (!mo_buffer_append_byte(b, '"'))
+        return false;
+    for (size_t i = 0; i < n; i++) {
+        uint8_t ch = (uint8_t)name.bytes[i];
+        if (ch < 32 || ch == 127) {
+            if (!mo_buffer_append_text(b, "\\x") || !mo_buffer_append_hex(b, ch, 2))
+                return false;
+        } else {
+            if ((ch == '"' || ch == '\\') && !mo_buffer_append_byte(b, '\\'))
+                return false;
+            if (!mo_buffer_append_byte(b, ch))
+                return false;
+        }
+    }
+    return (n == name.length || mo_buffer_append_text(b, "...")) && mo_buffer_append_byte(b, '"');
+}
+static MO_MUST_USE bool label_type(struct mo_buffer *b, const struct type *t, size_t *remaining) {
+    static const char *const names[] = {
+        "Int",    "BigInt", "Byte",     "Decimal",   "Float", "Bool",      "Char", "Text", "Bytes",
+        "Unit",   "Range",  "Time",     "Duration",  "Tuple", "List",      "Map",  "Set",  "Data",
+        "Option", "Result", "Ordering", "FileError", "Entry", "EntryKind", "Fn",   "Cap"};
+    static const char *const caps[] = {"Console", "Files", "ReadFiles", "Clock",
+                                       "Random",  "Args",  "Env"};
+    if (*remaining == 0)
+        return mo_buffer_append_text(b, "...");
+    (*remaining)--;
+    if (!mo_buffer_append_text(b, names[t->tag]))
+        return false;
+    if (t->tag == MO_CORE_TY_DATA)
+        return mo_buffer_append_byte(b, '(') && label_name(b, t->name) &&
+               mo_buffer_append_byte(b, ')');
+    if (t->tag == MO_CORE_TY_CAP)
+        return mo_buffer_append_byte(b, '(') && mo_buffer_append_text(b, caps[t->cap]) &&
+               mo_buffer_append_byte(b, ')');
+    if (t->count == 0)
+        return true;
+    if (!mo_buffer_append_byte(b, '('))
+        return false;
+    for (size_t i = 0; i < t->count; i++) {
+        if (i != 0 && !mo_buffer_append_text(b, ", "))
+            return false;
+        if (!label_type(b, t->parts[i], remaining))
+            return false;
+        if (*remaining == 0) {
+            if (i + 1 < t->count && !mo_buffer_append_text(b, ", ..."))
+                return false;
+            break;
+        }
+    }
+    return mo_buffer_append_byte(b, ')');
+}
+static MO_MUST_USE bool label(struct mo_buffer *b, const struct checker *c, struct answer a) {
+    if (!mo_buffer_append_text(b, "in declaration ") || !label_name(b, c->declaration))
+        return false;
+    if (a.at != NULL) {
+        mo_core_expr s = a.at->source;
+        mo_core_string name = {0};
+        const char *what = NULL;
+        if (s->tag == MO_CORE_EXPR_VAR) {
+            what = ", variable ";
+            name = s->as.var;
+        } else if (s->tag == MO_CORE_EXPR_GLOBAL) {
+            what = ", constant ";
+            name = s->as.global;
+        } else if (s->tag == MO_CORE_EXPR_CALL) {
+            what = ", call ";
+            name = s->as.call.name;
+        } else if (s->tag == MO_CORE_EXPR_CON) {
+            what = ", constructor ";
+            name = s->as.con.ctor;
+        } else if (s->tag == MO_CORE_EXPR_JUMP) {
+            what = ", jump ";
+            name = s->as.jump.name;
+        }
+        if (what != NULL && (!mo_buffer_append_text(b, what) || !label_name(b, name)))
+            return false;
+        for (const struct expr *at = a.at->parent; at != NULL; at = at->parent) {
+            s = at->source;
+            if (s->tag == MO_CORE_EXPR_LET) {
+                if (!mo_buffer_append_text(b, ", in binding ") || !label_name(b, s->as.let_.name))
+                    return false;
+                break;
+            }
+        }
+    }
+    return a.expected == NULL ||
+           (mo_buffer_append_text(b, ": expected ") && label_type(b, a.expected, &(size_t){16}) &&
+            mo_buffer_append_text(b, ", found ") && label_type(b, a.ty, &(size_t){16}));
+}
+static MO_MUST_USE bool report(const struct checker *c, struct mo_diags *diags, uint16_t code,
+                               struct mo_core_span span, struct answer a) {
+    bool resource = code == MO_CODE_CORE_CHECK_LIMIT || code == MO_CODE_CORE_CHECK_MEMORY;
+    struct mo_diag d = {.code = code,
+                        .message = resource ? "Core checker resource limit exceeded"
+                                            : "invalid compiler Core (bug in Mo)",
+                        .reason = reason(code)};
     /* With no source, file UINT32_MAX is deliberately unavailable, never fabricated file zero. */
+    if (!span.some)
+        span = c->declaration_span;
     d.primary.span = span.some ? span.value : (struct mo_span){.file = UINT32_MAX};
-    d.primary.text = "compiler-produced Core refused here";
-    if (!mo_diags_add(diags, &d))
+    struct mo_buffer b;
+    mo_buffer_init(&b, MO_LIMIT_DIAGNOSTICS_SIZE);
+    d.primary.text = label(&b, c, a) && mo_buffer_append_byte(&b, 0)
+                         ? (const char *)b.bytes
+                         : "Core refused; diagnostic context could not be allocated";
+    bool added = mo_diags_add(diags, &d);
+    mo_buffer_free(&b);
+    if (!added)
         return false;
     return false;
 }
@@ -1402,7 +1549,7 @@ static MO_MUST_USE bool declarations(struct checker *c, const struct mo_core *p,
             struct constructor *k = &d->ctors[j];
             k->name = source->ctors.items[j].name;
             k->count = source->ctors.items[j].fields.count;
-            k->fields = parameter_types(c, source->ctors.items[j].fields);
+            k->fields = parameter_types(c, &c->arena, source->ctors.items[j].fields);
             if (k->fields == NULL || !put(c, &c->arena, &d->names, k->name, k, false))
                 return false;
         }
@@ -1410,6 +1557,9 @@ static MO_MUST_USE bool declarations(struct checker *c, const struct mo_core *p,
             return false;
     }
     for (size_t i = 0; i < p->consts.count; i++) {
+        c->declaration = p->consts.items[i].name;
+        c->declaration_span =
+            p->metadata.source ? p->metadata.consts.items[i].span : (struct mo_core_span){0};
         if (find(c->consts, p->consts.items[i].name) != NULL) {
             c->fatal = MO_CODE_CORE_CHECK_CONSTANT_NAME;
             return false;
@@ -1422,8 +1572,11 @@ static MO_MUST_USE bool declarations(struct checker *c, const struct mo_core *p,
     }
     for (size_t i = 0; i < p->funs.count; i++) {
         const struct mo_core_fun *f = &p->funs.items[i];
+        c->declaration = f->name;
+        c->declaration_span =
+            p->metadata.source ? p->metadata.funs.items[i].span : (struct mo_core_span){0};
         fs[i].source = f;
-        fs[i].params = parameter_types(c, f->params);
+        fs[i].params = parameter_types(c, &c->arena, f->params);
         fs[i].ret = annotation(c, f->ret, 0);
         if (fs[i].params == NULL || fs[i].ret == NULL)
             return false;
@@ -1449,32 +1602,43 @@ static MO_MUST_USE struct answer check_body(struct checker *c, mo_core_expr body
 }
 bool mo_core_check(const struct mo_core *p, struct mo_diags *diags) {
     MO_ASSERT(p != NULL && diags != NULL);
+    struct checker c = {.declaration = p->entry};
     if (!mo_core_metadata_valid(p))
-        return report(diags, MO_CODE_CORE_CHECK_METADATA, (struct mo_core_span){0});
-    struct checker c = {0};
-    mo_arena_init(&c.arena, MO_LIMIT_CORE_SCRATCH_SIZE / 2);
-    mo_arena_init(&c.body, MO_LIMIT_CORE_SCRATCH_SIZE / 2);
+        return report(&c, diags, MO_CODE_CORE_CHECK_METADATA, (struct mo_core_span){0},
+                      (struct answer){0});
+    mo_arena_init(&c.arena, MO_LIMIT_CORE_CHECK_SCRATCH_SIZE / 2);
+    mo_arena_init(&c.body, MO_LIMIT_CORE_CHECK_SCRATCH_SIZE / 2);
     struct function *fs = NULL;
     struct constant *ks = NULL;
     uint16_t code = 0;
     struct mo_core_span span = {0};
+    struct answer failure = {0};
+    bool result;
     if (!declarations(&c, p, &fs, &ks)) {
         code = c.fatal;
         goto done;
     }
     const struct function *entry = find(c.funs, p->entry);
+    c.declaration = p->entry;
+    c.declaration_span = p->metadata.source && entry != NULL
+                             ? p->metadata.funs.items[(size_t)(entry->source - p->funs.items)].span
+                             : (struct mo_core_span){0};
     if (entry == NULL || entry->source->kind != MO_CORE_FUNCTION) {
         code = entry == NULL ? MO_CODE_CORE_CHECK_ENTRY : MO_CODE_CORE_CHECK_ENTRY_KIND;
         goto done;
     }
     mo_arena_free(&c.body);
     for (size_t i = 0; i < p->consts.count; i++) {
+        c.declaration = p->consts.items[i].name;
+        c.declaration_span =
+            p->metadata.source ? p->metadata.consts.items[i].span : (struct mo_core_span){0};
         c.scope = i;
         c.spec = false;
         struct answer a =
             check_body(&c, p->consts.items[i].body, (mo_core_params){0}, NULL, ks[i].ty);
         if (a.code != 0) {
             code = a.code;
+            failure = a;
             if (p->metadata.source)
                 span = a.at == NULL ? p->metadata.consts.items[i].span
                                     : p->metadata.consts.items[i].body.spans.items[a.at->node];
@@ -1484,6 +1648,9 @@ bool mo_core_check(const struct mo_core *p, struct mo_diags *diags) {
     }
     for (size_t i = 0; i < p->funs.count; i++) {
         const struct mo_core_fun *f = fs[i].source;
+        c.declaration = f->name;
+        c.declaration_span =
+            p->metadata.source ? p->metadata.funs.items[i].span : (struct mo_core_span){0};
         bool valid =
             f->kind == MO_CORE_FUNCTION ||
             ((f->kind == MO_CORE_TEST || f->kind == MO_CORE_EXAMPLE) && f->params.count == 0 &&
@@ -1502,6 +1669,7 @@ bool mo_core_check(const struct mo_core *p, struct mo_diags *diags) {
         struct answer a = check_body(&c, f->body, f->params, fs[i].params, fs[i].ret);
         if (a.code != 0) {
             code = a.code;
+            failure = a;
             if (p->metadata.source)
                 span = a.at == NULL ? p->metadata.funs.items[i].span
                                     : p->metadata.funs.items[i].body.spans.items[a.at->node];
@@ -1510,7 +1678,8 @@ bool mo_core_check(const struct mo_core *p, struct mo_diags *diags) {
         mo_arena_free(&c.body);
     }
 done:
+    result = code == 0 || report(&c, diags, code, span, failure);
     mo_arena_free(&c.body);
     mo_arena_free(&c.arena);
-    return code == 0 || report(diags, code, span);
+    return result;
 }
