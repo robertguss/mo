@@ -70,6 +70,9 @@ for elan_home in "${ELAN_HOME:-}" /opt/elan "$HOME/.elan"; do
 done
 if have lake; then make --no-print-directory formal; else missing "elan (Lean's installer) is not installed"; fi
 
+step "Module dependencies: each module includes only what architecture section 2 allows"
+make --no-print-directory deps
+
 step "Formatting"
 if have clang-format; then make --no-print-directory format-check; else missing "clang-format is not installed"; fi
 

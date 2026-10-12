@@ -5,6 +5,7 @@
 #   make sanitize     run the tests under AddressSanitizer and UndefinedBehaviorSanitizer
 #   make fuzz-smoke   run every fuzz target briefly (needs clang with libFuzzer)
 #   make format       format the C sources with clang-format
+#   make deps         check that each module includes only what architecture section 2 allows
 #   make tidy         check that results of standard-library calls are used (needs clang-tidy)
 #   make grammar      check that Mo code parses with the executable grammar (needs bison):
 #                     the grammar's own tests, examples/ and the reference's examples
@@ -74,7 +75,7 @@ ASAN_OPTIONS ?= abort_on_error=1
 UBSAN_OPTIONS ?= halt_on_error=1:print_stacktrace=1
 export ASAN_OPTIONS UBSAN_OPTIONS
 
-.PHONY: all test sanitize fuzz fuzz-smoke format format-check tidy grammar formal clean FORCE
+.PHONY: all test sanitize fuzz fuzz-smoke format format-check deps tidy grammar formal clean FORCE
 
 all: $(BUILD)/debug/mo
 
@@ -119,6 +120,12 @@ format:
 
 format-check:
 	clang-format --dry-run --Werror $(C_FILES)
+
+# The module rules of architecture section 2, which ci/deps.sh keeps in a table. Its test runs
+# first, to show that the check catches each kind of include it must refuse.
+deps:
+	sh ci/test_deps.sh
+	sh ci/deps.sh src
 
 # cert-err33-c flags a call to a standard-library function whose result is ignored, such as
 # fflush or fprintf: the functions on CERT rule ERR33-C's list, which does not include printf,

@@ -48,6 +48,7 @@ make test           # unit tests
 make sanitize       # the tests under AddressSanitizer and UndefinedBehaviorSanitizer
 make fuzz-smoke     # every fuzz target for 20 seconds (needs clang with libFuzzer)
 make format         # format the C sources with clang-format
+make deps           # each module includes only what the architecture allows
 make tidy           # standard-library results are used (needs clang-tidy)
 make grammar        # Mo code parses with the executable grammar (needs bison)
 make formal         # Mo Core in Lean builds and every proof checks (needs elan)
@@ -63,6 +64,8 @@ your environment to use your own options instead.
 The C sources are in `src/`, with a directory for each module of the
 architecture (section 2), and the Makefile builds every C file in them.
 Headers are included by their path in `src/`, such as `"base/base.h"`.
+`make deps` checks that each module includes only the headers that section
+allows it. The rules are a table at the top of `ci/deps.sh`.
 
 ## The executable grammar
 
