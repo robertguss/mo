@@ -617,9 +617,6 @@ static void test_representation_refusals(void) {
 }
 
 static void test_register_limit(void) {
-    /* A case per temporary now crosses the verifier's register-block ceiling before the
-     * register ceiling. One more temporary must still diagnose register overflow earlier,
-     * during lowering, rather than reaching the writer. */
     for (uint32_t extra = 0; extra < 2; extra++) {
         /* One basic block keeps this register boundary independent of verification's
          * registers × blocks limit. Tuple fields, result and return duplicate fill the frame. */
@@ -643,12 +640,105 @@ static void test_register_limit(void) {
         CHECK(p != NULL);
         if (p != NULL) {
             bool ok = mo_compile(p, &out, &diags);
-            CHECK(!ok && out.length == 0 && diags.count == 1);
-            CHECK(diags.count == 1 &&
-                  diags.items[0].code ==
-                      (extra == 0 ? MO_CODE_BYTECODE_TOO_BIG : MO_CODE_TOO_MANY_REGISTERS));
-            if (extra == 0 && diags.count == 1) {
-                CHECK(strcmp(diags.items[0].primary.text, "many: register-block limit") == 0);
+            CHECK(ok == (extra == 0));
+            if (ok) {
+                struct mo_load_error error;
+                struct mo_image *image = mo_load(out.bytes, out.length, &error);
+                CHECK(image != NULL);
+                if (image != NULL) {
+                    CHECK(mo_image_bytecode(image)->functions[0].register_count ==
+                          MO_LIMIT_FUNCTION_REGISTERS);
+                    mo_image_free(image);
+                }
+            } else {
+                CHECK(out.length == 0 && diags.count == 1 &&
+                      diags.items[0].code == MO_CODE_TOO_MANY_REGISTERS);
+            }
+        }
+        mo_diags_free(&diags);
+        mo_arena_free(&arena);
+        mo_buffer_free(&out);
+        mo_buffer_free(&text);
+    }
+}
+
+static void test_register_block_limit(void) {
+    /* This allocator needs count+3 registers and count+1 blocks. Wide tail-call operands
+     * give the verifier enough code words for its separate work budget at the product bound. */
+    uint32_t boundary = 1;
+    while ((uint64_t)(boundary + 4u) * (boundary + 2u) <= MO_LIMIT_FUNCTION_REGISTER_BLOCKS)
+        boundary++;
+    for (uint32_t extra = 0; extra < 3; extra++) {
+        bool late_register = extra == 2;
+        uint32_t count = boundary + extra;
+        if (late_register) {
+            /* The last tail argument's dup crosses the bound within an existing block. */
+            count = 1;
+            while (UINT64_C(2) * (count + 2u) * (count + 2u) <= MO_LIMIT_FUNCTION_REGISTER_BLOCKS)
+                count++;
+        }
+        const char *value_type = late_register ? "(text)" : "(unit)";
+        uint32_t arity = late_register ? 1u : 100u;
+        struct mo_buffer text, out;
+        struct mo_arena arena;
+        struct mo_diags diags;
+        mo_buffer_init(&text, MO_LIMIT_CORE_TEXT_SIZE);
+        mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+        mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+        CHECK(mo_diags_init(&diags));
+        CHECK(mo_buffer_append_text(&text,
+                                    "(core " MO_CORE_TEXT_VERSION " (Program ((DataDecl \"D\" ("));
+        for (uint32_t i = 0; i < count; i++) {
+            CHECK(mo_buffer_append_text(&text, "(Ctor \"C"));
+            CHECK(mo_buffer_append_uint(&text, i));
+            CHECK(mo_buffer_append_text(&text, "\" ())"));
+        }
+        CHECK(mo_buffer_append_text(&text, ")))((FunDecl \"main\" ((\"d\" (data \"D\")) "
+                                           "(\"u\" "));
+        CHECK(mo_buffer_append_text(&text, value_type));
+        CHECK(mo_buffer_append_text(&text, ")) "));
+        CHECK(mo_buffer_append_text(&text, value_type));
+        CHECK(mo_buffer_append_text(&text, " (case_ (var \"d\") ("));
+        for (uint32_t i = 0; i < count; i++) {
+            CHECK(mo_buffer_append_text(&text, "(\"C"));
+            CHECK(mo_buffer_append_uint(&text, i));
+            CHECK(mo_buffer_append_text(&text, "\" () (call \"sink\" ("));
+            for (uint32_t j = 0; j < arity; j++)
+                CHECK(mo_buffer_append_text(&text, "(var \"u\")"));
+            CHECK(mo_buffer_append_text(&text, ")))"));
+        }
+        CHECK(mo_buffer_append_text(&text, ")) \"M\" (function) 0)(FunDecl \"sink\" ("));
+        for (uint32_t j = 0; j < arity; j++) {
+            CHECK(mo_buffer_append_text(&text, "(\"p\" "));
+            CHECK(mo_buffer_append_text(&text, value_type));
+            CHECK(mo_buffer_append_byte(&text, ')'));
+        }
+        CHECK(mo_buffer_append_text(&text, ") "));
+        CHECK(mo_buffer_append_text(&text, value_type));
+        CHECK(mo_buffer_append_text(&text, late_register ? " (var \"p\")" : " (lit (unit))"));
+        CHECK(mo_buffer_append_text(&text, " \"M\" (function) 0)) () \"main\" (noSource)))"));
+        struct mo_core *p = mo_core_parse(&arena, (const char *)text.bytes, text.length, &diags);
+        CHECK(p != NULL);
+        if (p != NULL) {
+            CHECK(mo_core_check(p, &diags));
+            bool ok = mo_compile(p, &out, &diags);
+            CHECK(ok || extra != 0);
+            if (ok) {
+                struct mo_load_error error;
+                struct mo_image *image = mo_load(out.bytes, out.length, &error);
+                CHECK(image != NULL && diags.count == 0);
+                if (image != NULL) {
+                    CHECK((uint64_t)mo_image_bytecode(image)->functions[0].register_count *
+                              (count + 1u) <=
+                          MO_LIMIT_FUNCTION_REGISTER_BLOCKS);
+                    mo_image_free(image);
+                }
+            } else {
+                CHECK(out.length == 0 && diags.count == 1 &&
+                      diags.items[0].code == MO_CODE_BYTECODE_TOO_BIG);
+                if (diags.count == 1)
+                    CHECK(strstr(diags.items[0].primary.text,
+                                 "MO_LIMIT_FUNCTION_REGISTER_BLOCKS") != NULL);
             }
         }
         mo_diags_free(&diags);
@@ -743,5 +833,6 @@ int main(int argc, char **argv) {
     test_range_and_fail();
     test_representation_refusals();
     test_register_limit();
+    test_register_block_limit();
     return mo_test_report("test_codegen");
 }

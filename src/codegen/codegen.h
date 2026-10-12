@@ -8,7 +8,7 @@
 /* Borrows complete checked Core. out must be initialized, empty and independent of Core.
  * Refusal appends a diagnostic and leaves out empty; capacity may have grown.
  * The staged compiler reports unimplemented Core forms explicitly, never omits their code.
- * Success goes through the bytecode writer's checks (and verifier when implemented). */
+ * Success goes through the bytecode writer's structural checks and full verification. */
 MO_MUST_USE bool mo_compile(const struct mo_core *core, struct mo_buffer *out,
                             struct mo_diags *diags);
 

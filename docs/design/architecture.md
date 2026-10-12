@@ -1072,7 +1072,8 @@ sample fixtures and Core fuzz corpora are attempted in CI; unfinished forms,
 entry-name mismatches and invalid compiler inputs are counted separately.
 Generated programs within the slices must all compile, never merely refuse
 consistently.
-Writer structural checks apply now; its verifier applies when stream 3 lands.
+The writer structurally checks and fully verifies every compiled file.
+Writer refusals are classified by their error kind, never by reason text.
 Outcome comparison with Lean waits for the VM.
 
 Core declaration order is bytecode function order, preserving call and spec
@@ -1120,9 +1121,16 @@ have explicit node-proportional limits in `limits.h`. Cleanup walks only live
 owners. Tail-arm owner restoration costs no more than the cleanup emitted by
 those arms; reconverging arms never copy or scan the full register table.
 Emission stops at instruction/register limits, even when cleanup expands code.
+The allocator counts basic blocks as it emits transfers and checks
+`MO_LIMIT_FUNCTION_REGISTER_BLOCKS` both when starting a block and when adding
+a register. E1015 names that limit before the writer runs. Register recycling
+and function splitting are not implemented yet, so this slice refuses a
+function that would cross the bound rather than emitting it for verification.
 The register-boundary test compiles a 65,533-element tuple at 65,535 registers
 and refuses one more element with E1013. Its one basic block keeps the test
-independent of verification's registers × blocks bound.
+independent of verification's registers × blocks bound. A separate case/tail-call
+test loads a file one slot below that product bound and checks the compiler's
+own E1015 refusal just above it.
 
 The remaining representation decisions are fixed below; their implementation
 waits for subsequent compiler slices and the noted bytecode/type-builder

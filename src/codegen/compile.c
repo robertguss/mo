@@ -39,7 +39,8 @@ struct function {
     struct node *body;
     struct mo_codegen_index *locals, *bindings, *zeros;
     const struct mo_core_fun_meta *meta;
-    uint32_t preorder, instructions, owned;
+    uint32_t preorder, instructions, blocks, owned;
+    bool next_block;
 };
 struct compiler {
     const struct mo_core *core;
@@ -487,6 +488,11 @@ static MO_MUST_USE uint32_t register_add(struct compiler *c, struct function *f,
     struct reg *r = append(c, &f->regs, 1, MO_LIMIT_FUNCTION_REGISTERS, MO_CODE_TOO_MANY_REGISTERS);
     if (r == NULL)
         return MO_NO_INDEX;
+    if ((uint64_t)f->regs.count * f->blocks > MO_LIMIT_FUNCTION_REGISTER_BLOCKS) {
+        if (!problem(c, MO_CODE_BYTECODE_TOO_BIG,
+                     "Function exceeds MO_LIMIT_FUNCTION_REGISTER_BLOCKS."))
+            return MO_NO_INDEX;
+    }
     uint32_t flow = c->ownership.count;
     struct ownership *o =
         append(c, &c->ownership, 1, MO_LIMIT_CODEGEN_OWNERSHIP_SLOTS, MO_CODE_CODEGEN_MEMORY);
@@ -931,6 +937,17 @@ static MO_MUST_USE uint32_t emit(struct compiler *c, struct function *f, struct 
                      "Function exceeds MO_LIMIT_FUNCTION_INSTRUCTIONS."))
             return MO_NO_INDEX;
     }
+    /* Every target this allocator emits begins just after a transfer instruction. */
+    if (f->instructions == 0 || f->next_block) {
+        f->blocks++;
+        if ((uint64_t)f->regs.count * f->blocks > MO_LIMIT_FUNCTION_REGISTER_BLOCKS) {
+            if (!problem(c, MO_CODE_BYTECODE_TOO_BIG,
+                         "Function exceeds MO_LIMIT_FUNCTION_REGISTER_BLOCKS."))
+                return MO_NO_INDEX;
+        }
+    }
+    f->next_block = op == MO_OP_JUMP || op == MO_OP_BRANCH || op == MO_OP_SWITCH ||
+                    (op >= MO_OP_TAIL_CALL && op <= MO_OP_FAIL);
     uint32_t offset = f->code.count;
     uint32_t *words =
         append(c, &f->code, 1 + n + count, MO_LIMIT_FUNCTION_CODE_WORDS, MO_CODE_FUNCTION_TOO_LONG);
