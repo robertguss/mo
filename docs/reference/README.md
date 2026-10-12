@@ -1033,7 +1033,8 @@ Mo promises what operations cost, not how values are stored:
 | --- | --- |
 | `get`, `size`, `first` and `last` on a list | constant |
 | `append` on a list, and assigning a `var`'s field | constant when the value has one holder; a copy when it's shared |
-| `get`, `set`, `remove` and `has?` on a map, and the same on a set | constant on average |
+| `get` and `has?` on a map or a set | constant on average |
+| `set` and `remove` on a map, and `add` and `remove` on a set | constant on average when the value has one holder; a copy when it's shared |
 | `byte_count` | constant |
 | `char_count`, `split`, `lines`, `contains?` | proportional to the text's length |
 | `sort`, `sort_by` and `sort_by_desc` | n log n, and stable: equal keys keep their order |
