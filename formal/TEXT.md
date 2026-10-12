@@ -1,7 +1,7 @@
-# Core text, version 0.1
+# Core text, version 0.2
 
 The Lean implementation in `MoCore/Text/` is the reference codec. Every file
-is `(core 0.1 PAYLOAD)` followed by LF. Constructors are case-sensitive and
+is `(core 0.2 PAYLOAD)` followed by LF. Constructors are case-sensitive and
 named after Lean. A nullary constructor is still a list: `(unit)`.
 
 This is an interchange format, not Mo source or the informal notation in
@@ -9,6 +9,18 @@ TRANSLATION.md. There are two result representations: lossless constructor
 transport (`Outcome`, including closures), and observable reports (`Report`,
 the protocol `mocore` writes). The latter uses reference 9.2's structural
 value spelling inside a string. C differential tests compare **reports**.
+
+## Changes from 0.1
+
+Version 0.2 adds the seven spec-only `IoOp` constructors listed below.
+`Value.cap` gains a mandatory third field, `fake`, independent of its folder
+root: `(none)` means real; `(some N)` means fake state index N. `World` gains
+a mandatory ninth field, a list of `CapState` records. `effects` gains a
+mandatory fourth field with the final list of those same states. Capability
+structural observations now include the third field. All other shapes,
+operation names, report tags and exit codes are unchanged. Only envelope
+version **0.2** is accepted; 0.1 and unknown versions are rejected, not
+upgraded. There are no omitted/default fields on the wire.
 
 ## Lexing and canonical layout
 
@@ -32,7 +44,7 @@ Parsing is not type checking: an out-of-range integer/byte literal can be
 parsed, then refused by the checker.
 
 ```ebnf
-file = "(", "core", "0.1", payload, ")" ;
+file = "(", "core", "0.2", payload, ")" ;
 sexp = atom | string | "(", { sexp }, ")" ;
 integer = [ "-" ], digit, { digit } ;
 bits = "0x", hex-digit (* exactly sixteen *) ;
@@ -56,14 +68,14 @@ Decimal integers count 10⁻¹⁸ units; Time and Duration integers count
 microseconds. Char strings contain exactly one Unicode scalar.
 
 ```text
-(core 0.1 (map (text) (list (byte))))
-(core 0.1 (float 0x8000000000000000))
-(core 0.1 (text "hello\nβ"))
+(core 0.2 (map (text) (list (byte))))
+(core 0.2 (float 0x8000000000000000))
+(core 0.2 (text "hello\nβ"))
 ```
 
 Files are UTF-8 without a BOM; invalid UTF-8 is a parse error. An atom is a
 nonempty run of scalars other than the delimiters defined above. Symbols
-are atoms used as constructor names, `core`, `0.1`, `true` and `false`;
+are atoms used as constructor names, `core`, `0.2`, `true` and `false`;
 only the exact symbols listed in this document are accepted in those
 positions. There is no symbol escaping. Empty lists are `()`. Parsing
 accepts any layout using those delimiters, including adjacent lists,
@@ -168,7 +180,7 @@ Each name in the following table means a **nullary S-expression**, e.g.
 | `ListOp` | `size isEmpty get first last append prepend concat reverse take drop set removeAt uncons enumerate contains unique` |
 | `MapOp` | `empty size isEmpty get has set remove keys values entries ofList` |
 | `SetOp` | `empty size isEmpty has add remove union intersection difference toList ofList` |
-| `IoOp` | `argsList envGet print printError readLine printed printedErrors writeText appendText remove readOnly now randomInt` |
+| `IoOp` | `argsList envGet print printError readLine printed printedErrors writeText appendText remove readOnly now randomInt consoleFake consoleFakeInput filesInMemory clockFixed randomSeeded argsOf envOf` |
 
 The non-nullary operation constructors are exactly:
 
@@ -190,6 +202,60 @@ when false. The guillemets around Lean's reserved identifiers `repeat`,
 (prim (list (byte) (zip (text))) ((var "bytes") (var "names")))
 ```
 
+### Fake construction and dispatch
+
+These operation constructors are nullary; their **expression arguments**
+have the signatures below. Arguments evaluate strictly, left to right,
+before allocation. Only tests, examples, promises, anchors and lambdas
+lexically inside spec code may use them, as for `fail`, `printed` and
+`printedErrors`. Ordinary callees may use a fake passed by spec code.
+
+| Mo | IoOp | Argument types | Result | Initial state field |
+| --- | --- | --- | --- | --- |
+| `Console.fake()` | `consoleFake` | none | Console | all defaults |
+| `Console.fake_input(lines)` | `consoleFakeInput` | List(Text) | Console | stdin = lines |
+| `Files.in_memory(files)` | `filesInMemory` | Map(Text, Text) | Files | files = map entries |
+| `Clock.fixed(t)` | `clockFixed` | Time | Clock | now = t |
+| `Random.seeded(n)` | `randomSeeded` | Int | Random | seed = n modulo 2⁶⁴, nonnegative |
+| `Args.of(list)` | `argsOf` | List(Text) | Args | args = list |
+| `Env.of(map)` | `envOf` | Map(Text, Text) | Env | env = map entries |
+
+Default list/map fields are empty, now and seed are zero. Every construction
+appends one state at index equal to the previous store length, regardless of
+kind; the returned root is `(some "")`. Indices are zero-based, never reused
+or garbage-collected within a run, and preexisting states count. Two handles
+with the same fake index share state; different indices stay separate.
+The capability kind selects the relevant fields; `CapState` has no kind tag.
+Host-supplied aliases of different kinds therefore address different fields
+of the same record. Source constructors cannot create such cross-kind aliases
+except Files/ReadFiles, which intentionally share files.
+
+`within` resolves the root as before and preserves the fake index;
+`readOnly` changes Files to ReadFiles, preserving root and index. Ordinary
+file/console/clock/random/args/env operations read or update only the chosen
+state. Real handles use the world's first eight fields. No fake operation
+changes those real fields, and no real operation changes a fake state.
+`printed`/`printedErrors` return snapshots of that fake console's output/
+error list; later printing does not change an earlier result. Input lists and
+maps retained by the caller similarly remain unchanged after reads/writes.
+
+A real console observation stops with `outside "console observation needs a fake"`.
+A dangling index in unchecked evaluation stops with `outside "invalid fake handle"`;
+`mocore` rejects it in host arguments as `invalidRun`, including inside
+composites. Lossless codecs still transport such values.
+
+File maps retain their paths and insertion order without constructor-time
+normalization. Paths are resolved on use with the existing rules; files hold
+UTF-8 texts, and readBytes returns their encoding. Folder existence/listing
+rules are unchanged. Fake input lines are verbatim texts, including any
+embedded CR/LF; they are not split or decoded again.
+
+**Random is still a placeholder.** Seeded fakes and real Random use today's
+SplitMix64 draw followed by remainder reduction, not architecture 7's
+xoshiro256** seeded through SplitMix64 with Lemire reduction. This sequence
+does not certify VM randomness. Negative Int seeds are interpreted modulo
+2⁶⁴; replacing the generator/state later requires another minor version.
+
 ## Lossless values, worlds and internal outcomes
 
 Lossless values have **all** `Value` constructors. The twelve literal
@@ -200,9 +266,11 @@ V additionally := (range I I)
    | (tuple (V*)) | (list (V*)) | (map ((V V)*)) | (set (V*))
    | (con S (V*))
    | (closure ((S V)*) ((S T)*) E ((S V)*))
-   | (cap capability root)
+   | (cap capability root fake)
 root := (none) | (some S)
-World := (World (S*) ((S S)*) (S*) (S*) (S*) ((S S)*) I N)
+fake := (none) | (some N)
+CapState := (CapState (S*) ((S S)*) (S*) (S*) (S*) ((S S)*) I N)
+World := (World (S*) ((S S)*) (S*) (S*) (S*) ((S S)*) I N (CapState*))
 Bug := (overflow S) | (divByZero) | (stop S) | (outside S) | (repeatedKey)
 Outcome := (ok V World) | (stopped Bug World) | (failed S World)
          | (jumped S (V*) World) | (wrong S) | (outOfFuel)
@@ -217,7 +285,10 @@ Constructor values carry no type: their expected type supplies it.
 
 World fields, in order: **arguments, environment, remaining standard input
 lines, standard output lines, standard error lines, files, clock
-microseconds since Unix epoch, random seed**. Environment and files are
+microseconds since Unix epoch, random seed, fake states**. Each `CapState`
+has the world's first eight fields in exactly the same order, without a
+nested store. Fake state contains only texts, ordered text pairs and numbers,
+never values holding handles or closures. Environment and files are
 ordered string pairs; duplicate keys are preserved (the model's lookup
 finds the first). Files hold UTF-8 texts, not arbitrary bytes. Input lines
 are already split: the codec does not remove CR/LF or replace invalid
@@ -260,7 +331,7 @@ must see the fields. Its exact forms follow reference 9.2:
 | Declared data / FileError | `Point(x: 1, y: 2)` / `NotFound(path: "a")`: constructor and field names in declaration order |
 | Option / Result / Ordering | positional fields: `None`, `Some(3)`, `Ok(Unit)`, `Error(e)`, `Less`, `Equal`, `Greater` |
 | Closure (no Text ability) | `<function>`; apply it to compare its behavior |
-| Capability (no Text ability) | its lossless S-expression, e.g. `(cap (readFiles) (some "notes"))` |
+| Capability (no Text ability) | its lossless S-expression, e.g. `(cap (readFiles) (some "notes") (some 2))` |
 
 Nullary data cases print the constructor alone. Constructors/field names
 are copied verbatim from their declarations, including instantiated names;
@@ -274,7 +345,7 @@ Separators are `, ` and `: `, with no spaces just inside delimiters.
 returned list of texts contains two levels of quoting:
 
 ```text
-(core 0.1 (returned "[\"a\", \"b\\n\"]" (effects () () ())))
+(core 0.2 (returned "[\"a\", \"b\\n\"]" (effects () () () ())))
 ```
 
 This avoids confusing a top-level Text with a constructor/number, and
@@ -285,15 +356,18 @@ and `<function>` loses captures; use `valueIn`/`valueOut` for reconstruction.
 The full report grammar (not the internal Outcome grammar) is:
 
 ```text
-effects := (effects (S*) (S*) ((S S)*))
+effects := (effects (S*) (S*) ((S S)*) (CapState*))
 Report := (returned S effects) | (stopped Bug effects) | (failed S effects)
         | (outOfFuel) | (wrong S) | (parseError S) | (illTyped S)
         | (invalidRun S) | (ioError S)
 ```
 
-Effects are standard output, standard error and final files, each in model
-order; no remaining stdin, environment, clock or seed is compared. Output
-includes unchanged files. A stop or failure retains effects up to that point.
+Effects are real standard output, real standard error, real final files and
+all final fake states in allocation order, including states with no remaining
+handles. Each fake state's full eight fields are compared, including unread
+input and the placeholder seed. Real remaining stdin, args, environment,
+clock and seed are still not compared. Files include unchanged entries.
+A stop or failure retains both real and fake effects up to that point.
 Fuel exhaustion and diagnostic reports cannot provide effects. Diagnostic
 details explain errors but are not stable cross-toolchain comparison keys;
 compare the diagnostic tag, not Lean's checker wording or OS error wording.
@@ -314,7 +388,10 @@ run, retaining their effects. Entry wrapper generation and interpreting a
 Mo return value as an OS exit status remain lowering/runtime work.
 
 Host argument validation checks scalar ranges, constructor and tuple arity,
-recursive types and map/set distinctness. Closures, also nested ones, are
+recursive types, map/set distinctness and that each fake index exists in
+the supplied World. Valid fake host arguments are allowed for differential
+testing of ordinary entry functions; this does not give ordinary code a fake
+constructor. Closures, also nested ones, are
 refused as host arguments: their environments have no type annotations from
 which the runner could certify lexical spec mode. They can still be
 transported and programs can create and apply them. Invalid arguments or
@@ -358,41 +435,73 @@ A complete one-file program returning a Float's negative zero, with a
 preexisting file and one input line (layout expanded for reading):
 
 ```text
-(core 0.1
+(core 0.2
   (Run
     (Program ()
       ((FunDecl "main" () (float) (lit (float 0x8000000000000000))
         "Main" (function) 0))
       () "main")
-    (World ("argument") (("MODE" "test")) ("input") () () (("a" "hi\n")) 0 42)
+    (World ("argument") (("MODE" "test")) ("input") () () (("a" "hi\n")) 0 42 ())
     (entry ()) 30))
 ```
 
 The exact canonical report (exit 0):
 
 ```text
-(core 0.1 (returned "0x8000000000000000" (effects () () (("a" "hi\n")))))
+(core 0.2 (returned "0x8000000000000000" (effects () () (("a" "hi\n")) ())))
 ```
 
 A named test demonstrating failure without a bug:
 
 ```text
-(core 0.1
+(core 0.2
   (Run
     (Program ()
       ((FunDecl "main" () (unit) (lit (unit)) "Main" (function) 0)
        (FunDecl "expected seven" () (unit) (fail (lit (text "got six"))) "Spec" (test) 0))
       () "main")
-    (World () () () () () () 0 0)
+    (World () () () () () () 0 0 ())
     (test "expected seven") 30))
 ```
 
-Its report is `(core 0.1 (failed "got six" (effects () () ())))` (exit 2).
-Changing fuel to 0 gives `(core 0.1 (outOfFuel))` (exit 3). An ordinary
+Its report is `(core 0.2 (failed "got six" (effects () () () ())))` (exit 2).
+Changing fuel to 0 gives `(core 0.2 (outOfFuel))` (exit 3). An ordinary
 function with `fail` instead is `illTyped` (exit 5), never evaluated.
 
+A test constructs a console and passes it to ordinary `main`. Observing the
+same handle after the call reads its output; real output stays empty:
+
+```text
+(core 0.2
+  (Run
+    (Program ()
+      ((FunDecl "main" (("c" (cap (console)))) (unit)
+        (prim (io (print)) ((var "c") (lit (text "hello"))))
+        "Main" (function) 0)
+       (FunDecl "fake" () (unit)
+        (let_ "c" (prim (io (consoleFake)) ())
+          (let_ "_" (call "main" ((var "c")))
+            (if_ (prim (eq (list (text)))
+                   ((prim (io (printed)) ((var "c")))
+                    (prim (list (text) (lit 1)) ((lit (text "hello"))))))
+              (lit (unit)) (fail (lit (text "unexpected output"))))))
+        "Spec" (test) 0))
+      () "main")
+    (World () () () () () () 0 0 ())
+    (test "fake") 50))
+```
+
+Its exact report (exit 0) includes the allocated state's full eight fields:
+
+```text
+(core 0.2 (returned "Unit" (effects () () () ((CapState () () () ("hello") () () 0 0)))))
+```
+
 The exporter below writes all twelve real programs with their timing worlds
-and argument values. Wc's run returns the **Core value** `1` but the oracle
+and argument values, plus `Fakes.core`, a named spec exercising all seven
+constructors, independent states, snapshots, shared random handles in closures
+and shared file writes through an ordinary function.
+Wc's run returns the **Core value** `1` but the oracle
 process exits 0, with the three counted rows and missing-file error in its
 effects. Account's returns
 `Ok((Account(owner: "alice", balance: 95), Account(owner: "bob", balance: 25)))`.
@@ -408,7 +517,9 @@ Existing Builtins expression cases also round-trip before execution.
 No inversion theorem is claimed. `ci/test_mocore.sh`, run by `make formal`,
 tests actual file input, UTF-8 rejection, exits and retained stop effects.
 
-Measured 2026-10-12 in this Linux x86-64 orb, Lean 4.34.0 native executable.
+Historical **version 0.1** measurements, 2026-10-12 in a Linux x86-64 orb,
+Lean 4.34.0 native executable; sizes/timings below predate fake state. Use
+the command below for today's 0.2 corpus, which also includes Fakes.
 One warm-up, then **21 fresh processes per sample**; wall time includes
 process startup, input I/O, parse, checker, initialization, entry evaluation,
 structural rendering and captured stdout. Fuel 10000. These are the inputs
@@ -442,7 +553,7 @@ for path in sorted(pathlib.Path('/tmp/mocore-samples').glob('*.core')):
     for _ in range(21):
         start = time.perf_counter_ns()
         result = subprocess.run([exe, str(path)], check=True, capture_output=True)
-        assert result.stdout.startswith(b'(core 0.1 (returned ')
+        assert result.stdout.startswith(b'(core 0.2 (returned ')
         times.append((time.perf_counter_ns() - start) / 1e6)
     print(path.stem, path.stat().st_size, statistics.median(times), min(times), max(times))
 PY
@@ -451,23 +562,21 @@ PY
 ## Extending the contract
 
 The codec describes today's Lean constructors, not primitives planned for
-later streams. Fake capability constructors and `Unicode16` are not added
-here. The existing `randomInt` and world's natural seed are transported,
-but the current model uses a placeholder generator, **not** the architecture's
-xoshiro256**/SplitMix64/Lemire oracle; don't use it to certify VM randomness.
+later streams. `Unicode16` and the actual PRNG are still deferred. The seven
+fake constructors and their states are included in 0.2 as specified above.
 
 To add a primitive, first add its Lean operation constructor, signature,
 evaluator and safety proof. Add its exact constructor-named S-expression
 with explicit fields to both codec directions, the table/schema here and
-the guards (including a case not already covered by samples). Fake worlds
-or actual PRNG state will also require explicit Value/World changes and
-new run/report examples. Do not silently reinterpret the existing natural
+the guards (including a case not already covered by samples). Actual PRNG
+state will require explicit Value/World changes and new run/report examples.
+Do not silently reinterpret the existing natural
 seed, Boolean `ro`, root, or a constructor's field order.
 
 Any added constructor or changed shape/meaning advances the minor wire
-version (next `0.2`), updates both Lean and C and their differential corpus,
+version (next `0.3`), updates both Lean and C and their differential corpus,
 and adds tests for rejecting unsupported versions. The current parser
-accepts **only `0.1`** and rejects unknown constructors; there are no ignored
+accepts **only `0.2`** and rejects unknown constructors; there are no ignored
 extension fields or fallback operation names. Support for older versions,
 if wanted, must be explicit. This document, not the informal lowering
 notation or Lean's `Repr`, specifies what the C implementation must write.

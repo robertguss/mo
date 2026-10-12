@@ -38,7 +38,8 @@ in-place updates) and Elm (helpful error messages).
   [the bytecode specification](docs/design/bytecode.md): how the toolchain and
   virtual machine are built.
 - [Mo Core](formal/README.md): the small language every feature lowers to,
-  defined in Lean, with its type safety proven.
+  defined in Lean, with its type safety proven, independent fake capabilities
+  for specs, and the [Core text 0.2 `mocore` oracle](formal/TEXT.md).
 - [Twelve sample programs](examples/), and the
   [executable grammar](grammar/README.md) every example parses with.
 - [The learnability test](learnability/): fresh models from two families

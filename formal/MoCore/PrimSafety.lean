@@ -830,10 +830,14 @@ theorem ioOp_safe (op : IoOp) : PrimSafe P (.io op) := by
   simp only [Prim.eval, evalIoOp]
   split
   · rename_i c root id rest
-    apply onFake_safe
-    apply hostIoOp_safe
-    exact capArgs_real h
-  · exact hostIoOp_safe op vs w h
+    split
+    · apply onFake_safe
+      apply hostIoOp_safe
+      exact capArgs_real h
+    · trivial
+  · split
+    · trivial
+    · exact hostIoOp_safe op vs w h
 
 /-! ## Every primitive -/
 

@@ -97,19 +97,19 @@ theorem wellTyped : WellTyped program := checkProgram_sound checked
 
 def input (q : String) (limit : Int) : Expr := mk SearchInput [str q, int limit]
 def search (q : String) (limit : Int) : Expr := call "search_notes" [v "notes", input q limit]
-def caps : List (String × Cap) := [("notes", .readFiles)]
 
 /-! ### The promise's anchors (with `notes: Files.in_memory({}).read_only`) -/
 
 -- allows ..., input: SearchInput(query: "x", limit: 1), result: Ok(SearchOutput(hits: [], truncated?: false))
 #guard passes program
-  (promiseHolds "search_notes.promise.1" [v "notes", input "x" 1,
-    ok_ SearchOutput.ty ToolError.ty (mk SearchOutput [nil Hit.ty, ff])]) {} caps
+  (lets [("notes", io .readOnly [io .filesInMemory [mapOf tText tText []]])] <|
+   promiseHolds "search_notes.promise.1" [v "notes", input "x" 1,
+    ok_ SearchOutput.ty ToolError.ty (mk SearchOutput [nil Hit.ty, ff])])
 -- forbids ..., result: Ok(SearchOutput(hits: [hit, hit], truncated?: false))
 #guard passes program
-  (not_ (promiseHolds "search_notes.promise.1" [v "notes", input "x" 1,
+  (lets [("notes", io .readOnly [io .filesInMemory [mapOf tText tText []]])] <|
+   not_ (promiseHolds "search_notes.promise.1" [v "notes", input "x" 1,
     ok_ SearchOutput.ty ToolError.ty (mk SearchOutput [listOf Hit.ty [global "hit", global "hit"], ff])]))
-  {} caps
 
 /-! ### Test "only Markdown notes are searched, and case doesn't matter"
 
@@ -125,12 +125,12 @@ assert search_notes(notes, SearchInput(query: "bakery", limit: 10)) == Ok(Search
 ))
 ``` -/
 #guard passes program
-  (eq outRes (search "bakery" 10)
+  (lets [("notes", io .readOnly [io .filesInMemory [mapOf tText tText
+    [(str "plans.md", str "# Plans\nCall the Bakery on Monday\n"),
+     (str "recipes.md", str "bread: flour, water, salt\n"), (str "bakery.txt", str "not a note\n")]]])] <|
+   eq outRes (search "bakery" 10)
     (ok_ SearchOutput.ty ToolError.ty
       (mk SearchOutput [listOf Hit.ty [mk Hit [str "plans.md", int 2, str "Call the Bakery on Monday"]], ff])))
-  { files := [("plans.md", "# Plans\nCall the Bakery on Monday\n"), ("recipes.md", "bread: flour, water, salt\n"),
-              ("bakery.txt", "not a note\n")] }
-  caps
 
 /-! ### Test "too many hits are cut at the limit, and the output says so"
 
@@ -140,12 +140,12 @@ assert search_notes(notes, SearchInput(query: "x", limit: 2)) is Ok(output)
 assert output.hits.size == 2 and output.truncated?
 ``` -/
 #guard passes program
-  (caseRes (search "x" 2)
+  (lets [("notes", io .readOnly [io .filesInMemory [mapOf tText tText [(str "a.md", str "x\nx\nx\n")]]])] <|
+   caseRes (search "x" 2)
     "output"
       (and_ (ieq (lop Hit.ty .size [get SearchOutput "hits" (v "output")]) (int 2))
         (get SearchOutput "truncated?" (v "output")))
     "_" ff)
-  { files := [("a.md", "x\nx\nx\n")] } caps
 
 /-! ### Test "bad input is a typed error"
 
@@ -155,18 +155,19 @@ assert search_notes(no_notes, SearchInput(query: "  ", limit: 5)) == Error(Empty
 assert search_notes(no_notes, SearchInput(query: "x", limit: 0)) == Error(BadLimit(limit: 0))
 ``` -/
 #guard passes program
-  (and_ (eq outRes (search "  " 5) (err_ SearchOutput.ty ToolError.ty (mkC ToolError "EmptyQuery" [])))
+  (lets [("notes", io .readOnly [io .filesInMemory [mapOf tText tText []]])] <|
+   and_ (eq outRes (search "  " 5) (err_ SearchOutput.ty ToolError.ty (mkC ToolError "EmptyQuery" [])))
     (eq outRes (search "x" 0) (err_ SearchOutput.ty ToolError.ty (mkC ToolError "BadLimit" [int 0]))))
-  {} caps
 
 /-! ### More: a narrowed capability (`files.within("notes").read_only`) sees only its folder -/
 
 #guard passes program
-  (lets [("narrow", io (.within true) [v "notes", str "notes"])] <|
+  (lets [("notes", io .readOnly [io .filesInMemory [mapOf tText tText
+           [(str "notes/plans.md", str "# Plans\n"), (str "other/plans.md", str "# Plans elsewhere\n")]]]),
+         ("narrow", io (.within true) [v "notes", str "notes"])] <|
     eq outRes (call "search_notes" [v "narrow", input "plan" 10])
       (ok_ SearchOutput.ty ToolError.ty
         (mk SearchOutput [listOf Hit.ty [mk Hit [str "plans.md", int 1, str "# Plans"]], ff])))
-  { files := [("notes/plans.md", "# Plans\n"), ("other/plans.md", "# Plans elsewhere\n")] } caps
 
 /-! ### More: `within` a path that would leave the folder reaches nothing
 
@@ -179,18 +180,18 @@ in `Unreadable`, and `exists?` is `false` even for its own folder. A path whose
 def notAllowed (path : String) : Expr := .con tFileError "NotAllowed" [str path]
 
 #guard passes program
-  (lets [("outside", io (.within true) [v "notes", str ".."])] <|
+  (lets [("notes", io .readOnly [io .filesInMemory [mapOf tText tText [(str "notes/plans.md", str "# Plans\n")]]]),
+         ("outside", io (.within true) [v "notes", str ".."])] <|
     and_ (eq outRes (call "search_notes" [v "outside", input "plan" 10])
            (err_ SearchOutput.ty ToolError.ty (unreadable (notAllowed "."))))
       (not_ (io (.exists true) [v "outside", str "."])))
-  { files := [("notes/plans.md", "# Plans\n")] } caps
 
 #guard passes program
-  (and_ (eq (tRes tText tFileError) (io (.readText true) [v "notes", str "notes/../plans.md"])
+  (lets [("notes", io .readOnly [io .filesInMemory [mapOf tText tText [(str "plans.md", str "# Plans\n")]]])] <|
+   and_ (eq (tRes tText tFileError) (io (.readText true) [v "notes", str "notes/../plans.md"])
           (ok_ tText tFileError (str "# Plans\n")))
     (eq (tRes tText tFileError) (io (.readText true) [v "notes", str "../plans.md"])
       (err_ tText tFileError (notAllowed "../plans.md"))))
-  { files := [("plans.md", "# Plans\n")] } caps
 
 /-! ### Never wrong -/
 

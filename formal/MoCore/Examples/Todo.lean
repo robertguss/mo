@@ -305,20 +305,25 @@ assert files.read_text(file) == Ok("[x] buy milk\n[ ] call Ana\n")
 assert main(Args.of(["list"]), console, files) == Ok(Unit)
 assert console.printed == ["1. [x] buy milk", "2. [ ] call Ana"]
 ```
-One world holds the shared files and console; each `Args.of(...)` is a new
-fake, set before the step that uses it. -/
+The files and console stay shared across the four calls; each call constructs
+its own Args fake. -/
 def runMain : Expr := call "main" [v "args", v "console", v "files"]
 def okUnit : Expr := ok_ tUnit TodoError.ty unitE
 def caps : List (String × Cap) := [("args", .args), ("console", .console), ("files", .files)]
 
-#guard scenario program caps {}
-  [(withArgs ["add", "buy", "milk"], eq (tRes tUnit TodoError.ty) runMain okUnit),
-   (withArgs ["add", "call", "Ana"], eq (tRes tUnit TodoError.ty) runMain okUnit),
-   (withArgs ["done", "1"], eq (tRes tUnit TodoError.ty) runMain okUnit),
-   (same, eq (tRes tText tFileError) (io (.readText false) [v "files", global "file"])
-            (ok_ tText tFileError (str "[x] buy milk\n[ ] call Ana\n"))),
-   (withArgs ["list"], eq (tRes tUnit TodoError.ty) runMain okUnit),
-   (same, eq (tList tText) (io .printed [v "console"]) (strs ["1. [x] buy milk", "2. [ ] call Ana"]))]
+#guard passes program
+  (lets [("files", io .filesInMemory [mapOf tText tText []]), ("console", io .consoleFake [])] <|
+   and_ (eq (tRes tUnit TodoError.ty)
+     (call "main" [io .argsOf [strs ["add", "buy", "milk"]], v "console", v "files"]) okUnit) <|
+   and_ (eq (tRes tUnit TodoError.ty)
+     (call "main" [io .argsOf [strs ["add", "call", "Ana"]], v "console", v "files"]) okUnit) <|
+   and_ (eq (tRes tUnit TodoError.ty)
+     (call "main" [io .argsOf [strs ["done", "1"]], v "console", v "files"]) okUnit) <|
+   and_ (eq (tRes tText tFileError) (io (.readText false) [v "files", global "file"])
+     (ok_ tText tFileError (str "[x] buy milk\n[ ] call Ana\n"))) <|
+   and_ (eq (tRes tUnit TodoError.ty)
+     (call "main" [io .argsOf [strs ["list"]], v "console", v "files"]) okUnit) <|
+   eq (tList tText) (io .printed [v "console"]) (strs ["1. [x] buy milk", "2. [ ] call Ana"]))
 
 /-! ### Test "an item that isn't there is reported"
 
@@ -327,8 +332,10 @@ files = Files.in_memory({file: "[ ] milk\n"})
 assert main(Args.of(["remove", "3"]), Console.fake(), files) == Error(NoSuchItem(number: 3))
 ``` -/
 #guard passes program
-  (eq (tRes tUnit TodoError.ty) runMain (err_ tUnit TodoError.ty (noSuchItem (int 3))))
-  { args := ["remove", "3"], files := [("todo.txt", "[ ] milk\n")] } caps
+  (eq (tRes tUnit TodoError.ty)
+    (call "main" [io .argsOf [strs ["remove", "3"]], io .consoleFake [],
+      io .filesInMemory [mapOf tText tText [(global "file", str "[ ] milk\n")]]])
+    (err_ tUnit TodoError.ty (noSuchItem (int 3))))
 
 /-! ### Never wrong -/
 

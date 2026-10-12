@@ -682,9 +682,13 @@ def onFake (id : Nat) (w : World) : Outcome → Outcome
 def evalIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
   match vs with
   | .cap c root (some id) :: rest =>
-    onFake id w (evalHostIoOp op (.cap c root :: rest)
-      { toCapState := w.fakes[id]?.getD {}, fakes := [] })
-  | _ => evalHostIoOp op vs w
+    match w.fakes[id]? with
+    | some state => onFake id w (evalHostIoOp op (.cap c root :: rest)
+        { toCapState := state, fakes := [] })
+    | none => outside "invalid fake handle" w
+  | _ =>
+    if op = .printed ∨ op = .printedErrors then outside "console observation needs a fake" w
+    else evalHostIoOp op vs w
 
 /-! ## Dispatch -/
 

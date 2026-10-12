@@ -21,7 +21,7 @@ def programs : List Program :=
    Account.program, RateLimit.program, JobQueue.program, Kv.program, NotesTool.program, Inventory.program]
 
 #guard programs.all programRoundTrip
-#guard [Builtins.program, Builtins.layered, Builtins.stoppedInit].all programRoundTrip
+#guard [Builtins.program, Builtins.layered, Builtins.stoppedInit, Builtins.fakeProgram].all programRoundTrip
 
 #guard
   let ts : List Ty := (tyAtoms.map Prod.snd) ++ (capTable.map fun (_, c) => Ty.cap c) ++
@@ -60,10 +60,14 @@ def values : List Value :=
    .tuple [.int 3, .char 'a'], .list [.bool true], .map [(.text "k", .byte 2)],
    .set [.int 2, .int 1], .con "C" [.text "f"],
    .closure [("x", .float 0x8000000000000000)] [("p", .byte)] (.global "g") [("g", .byte 7)],
-   .cap .files none, .cap .readFiles (some "notes")]
+   .cap .files none, .cap .readFiles (some "notes"),
+   .cap .console (some "") (some 0), .cap .files none (some 1),
+   .cap .readFiles (some "notes") (some 1)]
 def world : World :=
   { args := ["a", ""], env := [("Z", "last"), ("A", "first")], stdin := ["one", "two"],
-    stdout := ["old"], stderr := ["err"], files := [("b", "β\n"), ("a", "")], now := -1, seed := 10^40 }
+    stdout := ["old"], stderr := ["err"], files := [("b", "β\n"), ("a", "")], now := -1, seed := 10^40,
+    fakes := [{ stdin := ["fake input"], stdout := ["fake output"] },
+      { files := [("notes/a", "first"), ("z", "last")], seed := 123 }] }
 
 #guard values.all fun v =>
   match parseDocument (document (valueOut v)) >>= valueIn with
@@ -87,6 +91,11 @@ def world : World :=
   (.con "Account" [.text "alice", .decimal (1500000000000000000)])).toOption ==
   some "Account(owner: \"alice\", balance: 1.5)"
 #guard (structural Json.program Json.J (.con "String" [.text "é"])).toOption == some "String(\"é\")"
+#guard (structural Greet.program (.cap .readFiles) (.cap .readFiles (some "notes") (some 1))).toOption ==
+  some "(cap (readFiles) (some \"notes\") (some 1))"
+#guard (parseSexp "(cap (console) (some \"\"))" >>= valueIn).toOption.isNone
+#guard (parseSexp "(World () () () () () () 0 0)" >>= worldIn).toOption.isNone
+#guard (parseSexp "(effects () () ())" >>= effectsIn).toOption.isNone
 #guard (structural Greet.program (.tuple [.char, .text, .duration, .time, .range, .bytes])
   (.tuple [.char '\'', .text "\n", .duration 1500000, .time 0, .range (-2) 3, .bytes [0, 255]])).toOption ==
   some "('\\'', \"\\n\", 1.5s, 1970-01-01T00:00:00Z, -2..3, bytes[0, 255])"
@@ -122,7 +131,8 @@ def samples : List (String × Run) :=
    ("Kv", cliRun Kv.program { stdin := ["SET a 1", "INCR a", "GET a", "FLY"] }),
    ("NotesTool", ⟨NotesTool.program, { files := [("a.md", "Needle\n"), ("b.txt", "needle\n")] },
      .entry [cap .readFiles, .con "SearchInput" [.text "needle", .int 10]], 10000⟩),
-   ("Inventory", cliRun Inventory.program {})]
+   ("Inventory", cliRun Inventory.program {}),
+   ("Fakes", ⟨Builtins.fakeProgram, {}, .test "fakes", 10000⟩)]
 
 #guard samples.all fun (_, r) =>
   match parseDocument (document (runOut r)) >>= runIn with
@@ -155,5 +165,12 @@ def samples : List (String × Run) :=
   | .illTyped _ => true | _ => false
 #guard match execute ⟨Greet.program, {}, .entry [.int 0, cap .console], 10⟩ with
   | .invalidRun _ => true | _ => false
+#guard match execute ⟨Greet.program, {}, .entry [cap .args, .cap .console (some "") (some 0)], 30⟩ with
+  | .invalidRun _ => true | _ => false
+#guard match execute ⟨Greet.program, { fakes := [{ args := ["Ada"] }, {}] },
+    .entry [.cap .args (some "") (some 0), .cap .console (some "") (some 1)], 30⟩ with
+  | .returned "Unit" e => e.stdout.isEmpty && (e.fakes[1]?.map (·.stdout)) == some ["Hello, Ada!"]
+  | _ => false
+#guard !valueFits Greet.program {} (.list (.cap .console)) (.list [.cap .console none (some 0)])
 
 end MoCore.TextChecks

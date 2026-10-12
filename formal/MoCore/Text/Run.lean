@@ -29,7 +29,7 @@ def runIn : Sexp → Parse Run
 
 /-- Host arguments are first-order. Closures can be transported, but cannot be
 injected into a checked run: their type and lexical mode cannot be inferred. -/
-partial def valueFits (p : Program) (t : Ty) (v : Value) : Bool :=
+partial def valueFits (p : Program) (w : World) (t : Ty) (v : Value) : Bool :=
   match t, v with
   | .int, .int n | .duration, .duration n => decide (InInt64 n)
   | .bigInt, .bigInt _ | .float, .float _ | .bool, .bool _ | .char, .char _
@@ -39,15 +39,15 @@ partial def valueFits (p : Program) (t : Ty) (v : Value) : Bool :=
   | .time, .time n => decide (InTime n)
   | .range, .range a b => decide (InInt64 a ∧ InInt64 b)
   | .bytes, .bytes bs => bs.all fun n => decide (InByte n)
-  | .tuple ts, .tuple vs => ts.length == vs.length && (ts.zip vs).all fun (t, v) => valueFits p t v
-  | .list t, .list vs => vs.all (valueFits p t)
-  | .set t, .set vs => vs.all (valueFits p t) && decide (vs.Pairwise fun a b => Value.equiv a b = false)
-  | .map k t, .map es => es.all (fun (a, b) => valueFits p k a && valueFits p t b) &&
+  | .tuple ts, .tuple vs => ts.length == vs.length && (ts.zip vs).all fun (t, v) => valueFits p w t v
+  | .list t, .list vs => vs.all (valueFits p w t)
+  | .set t, .set vs => vs.all (valueFits p w t) && decide (vs.Pairwise fun a b => Value.equiv a b = false)
+  | .map k t, .map es => es.all (fun (a, b) => valueFits p w k a && valueFits p w t b) &&
       decide ((es.map Prod.fst).Pairwise fun a b => Value.equiv a b = false)
   | t, .con c vs => match ctorsOf p t >>= ctorFields c with
-    | some fs => fs.length == vs.length && (fs.zip vs).all fun ((_, t), v) => valueFits p t v
+    | some fs => fs.length == vs.length && (fs.zip vs).all fun ((_, t), v) => valueFits p w t v
     | none => false
-  | .cap c, .cap d _ _ => c == d
+  | .cap c, .cap d _ fake => c == d && (fake.all fun id => id < w.fakes.length)
   | _, _ => false
 
 def execute (r : Run) : Report :=
@@ -58,7 +58,7 @@ def execute (r : Run) : Report :=
       | none => .invalidRun "entry not found"
       | some f =>
         if f.params.length != args.length ||
-            !(f.params.zip args).all (fun ((_, t), v) => valueFits r.program t v) then
+            !(f.params.zip args).all (fun ((_, t), v) => valueFits r.program r.world t v) then
           .invalidRun "entry arguments do not have the parameter types (closures are not host arguments)"
         else observe r.program f.ret (runProgram r.fuel r.program args r.world)
     | .test n => match lookupFun r.program n with

@@ -248,14 +248,14 @@ assert console.printed == ["rent  900.00", "food   12.50"]
 assert console.printed_errors == ["line 3: the amount \"x\" is not a number"]
 ``` -/
 #guard passes program
-  (and_ (ieq (call "main" [v "args", v "console", v "files"]) (int 1)) <|
+  (lets [("args", io .argsOf [strs ["october.csv"]]), ("console", io .consoleFake []),
+         ("files", io .readOnly [io .filesInMemory [mapOf tText tText
+           [(str "october.csv", str
+             "date,category,amount\n2026-10-01,food,12.50\n2026-10-02,food,x\n2026-10-03,rent,900\n")]]])] <|
+   and_ (ieq (call "main" [v "args", v "console", v "files"]) (int 1)) <|
     and_ (eq (tList tText) (io .printed [v "console"]) (strs ["rent  900.00", "food   12.50"])) <|
       eq (tList tText) (io .printedErrors [v "console"])
         (strs ["line 3: the amount \"x\" is not a number"]))
-  { args := ["october.csv"],
-    files := [("october.csv",
-      "date,category,amount\n2026-10-01,food,12.50\n2026-10-02,food,x\n2026-10-03,rent,900\n")] }
-  [("args", .args), ("console", .console), ("files", .readFiles)]
 
 /-! ### Never wrong -/
 

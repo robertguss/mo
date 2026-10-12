@@ -24,8 +24,8 @@ check() {
 	fi
 }
 
-check 0 '(core 0.2 (returned "7" (effects () () ())))' "$tree/run"
-check 0 '(core 0.2 (returned "7" (effects () () ())))' "$tree/program" "$tree/world"
+check 0 '(core 0.2 (returned "7" (effects () () () ())))' "$tree/run"
+check 0 '(core 0.2 (returned "7" (effects () () () ())))' "$tree/program" "$tree/world"
 check 3 '(core 0.2 (outOfFuel))' "$tree/program" "$tree/world" --fuel 0
 check 6 '(core 0.2 (invalidRun "test not found: missing"))' "$tree/program" "$tree/world" --test missing
 
@@ -42,16 +42,34 @@ actual=$("$bin" "$tree/bad-run") || status=$?
 
 printf '(core 9.9 (unit))\n' >"$tree/parse"
 check 4 '(core 0.2 (parseError "expected (core 0.2 payload)"))' "$tree/parse"
+printf '(core 0.1 (unit))\n' >"$tree/old"
+check 4 '(core 0.2 (parseError "expected (core 0.2 payload)"))' "$tree/old"
 printf '\377' >"$tree/utf8"
 check 4 '(core 0.2 (parseError "input is not valid UTF-8"))' "$tree/utf8"
 
 spec='(Program () ((FunDecl "main" () (unit) (lit (unit)) "Main" (function) 0) (FunDecl "failure" () (unit) (fail (lit (text "detail"))) "Spec" (test) 0) (FunDecl "example" () (unit) (lit (unit)) "Spec" (example) 0)) () "main")'
 printf '(core 0.2 %s)\n' "$spec" >"$tree/spec"
-check 2 '(core 0.2 (failed "detail" (effects () () ())))' "$tree/spec" "$tree/world" --test failure
-check 0 '(core 0.2 (returned "Unit" (effects () () ())))' "$tree/spec" "$tree/world" --test example
+check 2 '(core 0.2 (failed "detail" (effects () () () ())))' "$tree/spec" "$tree/world" --test failure
+check 0 '(core 0.2 (returned "Unit" (effects () () () ())))' "$tree/spec" "$tree/world" --test example
 
 stopped='(Program () ((FunDecl "main" (("c" (cap (console)))) (unit) (let_ "_" (prim (io (print)) ((var "c") (lit (text "before")))) (stop "bug")) "Main" (function) 0)) () "main")'
 printf '(core 0.2 %s)\n' "$stopped" >"$tree/stopped"
-check 1 '(core 0.2 (stopped (stop "bug") (effects ("before") () ())))' "$tree/stopped" "$tree/world"
+check 1 '(core 0.2 (stopped (stop "bug") (effects ("before") () () ())))' "$tree/stopped" "$tree/world"
 
-echo 'mocore: file protocol, returned/stopped/failed, checking, UTF-8, selection and fuel passed'
+# A spec constructs a fake and passes it to an ordinary function. Every
+# terminal outcome retains the fake's output without leaking into real stdout.
+fake='(Program () ((FunDecl "main" (("c" (cap (console)))) (unit) (prim (io (print)) ((var "c") (lit (text "hello")))) "Main" (function) 0) (FunDecl "fake" () (unit) (let_ "c" (prim (io (consoleFake)) ()) (let_ "_" (call "main" ((var "c"))) %s)) "Spec" (test) 0)) () "main")'
+fake_effects='(effects () () () ((CapState () () () ("hello") () () 0 0)))'
+for ending in returned stopped failed; do
+	case "$ending" in
+		returned) tail='(lit (unit))'; status=0; report='returned "Unit"' ;;
+		stopped) tail='(stop "bug")'; status=1; report='stopped (stop "bug")' ;;
+		failed) tail='(fail (lit (text "detail")))'; status=2; report='failed "detail"' ;;
+	esac
+	# The format is fixed above; only the final expression is substituted.
+	printf "$fake\n" "$tail" >"$tree/fake-payload"
+	printf '(core 0.2 (Run %s %s (test "fake") 50))\n' "$(cat "$tree/fake-payload")" "$world" >"$tree/fake"
+	check "$status" "(core 0.2 ($report $fake_effects))" "$tree/fake"
+done
+
+echo 'mocore: file protocol, real/fake effects, returned/stopped/failed, checking, UTF-8, selection and fuel passed'
