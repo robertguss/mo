@@ -1,0 +1,109 @@
+/* Every opcode of bytecode.md 4.3 to 4.7. Numbers are assigned here in specification order,
+ * from 1; zero is invalid, so zero-filled code cannot decode as a valid instruction.
+ *
+ * Define OPCODE(id, number, name, count, limit, tail, a, b, c, d) before including this file.
+ * It undefines OPCODE afterward. count is the fixed operand count; a through d describe those
+ * operands, with NONE padding. limit is the most variable operands (zero for fixed code).
+ * tail describes every variable operand. W/R/C mean write/read/consume a register, M means
+ * move's conditional consume, TW/TC write/consume a token, and CALL/PRIM/HOST get parameter
+ * ownership from their signature. Other descriptors are indices or word-offset TARGETs.
+ *
+ * For host, the tail is ALL hostops.def parameters: the first is the borrowed capability for
+ * an operation, but fake constructors have none. This makes zero-argument fakes unambiguous
+ * without a sentinel register or a second opcode. The high head bits count this whole tail.
+ * stop and fail read their reason; process teardown reclaims any remaining owned registers. */
+#ifndef OPCODE
+#error "Define OPCODE(id, number, name, count, limit, tail, a, b, c, d) before including bytecode/opcodes.def."
+#endif
+
+OPCODE(MOVE, 1, "move", 2, 0, NONE, W, M, NONE, NONE)
+OPCODE(DUP, 2, "dup", 2, 0, NONE, W, R, NONE, NONE)
+OPCODE(DROP, 3, "drop", 1, 0, NONE, C, NONE, NONE, NONE)
+OPCODE(CONST, 4, "const", 2, 0, NONE, W, CONSTANT, NONE, NONE)
+OPCODE(GLOBAL, 5, "global", 2, 0, NONE, W, GLOBAL, NONE, NONE)
+OPCODE(SET_GLOBAL, 6, "set_global", 2, 0, NONE, GLOBAL, C, NONE, NONE)
+
+OPCODE(ADD_INT, 7, "add_int", 3, 0, NONE, W, R, R, NONE)
+OPCODE(ADD_DECIMAL, 8, "add_decimal", 3, 0, NONE, W, R, R, NONE)
+OPCODE(ADD_FLOAT, 9, "add_float", 3, 0, NONE, W, R, R, NONE)
+OPCODE(SUB_INT, 10, "sub_int", 3, 0, NONE, W, R, R, NONE)
+OPCODE(SUB_DECIMAL, 11, "sub_decimal", 3, 0, NONE, W, R, R, NONE)
+OPCODE(SUB_FLOAT, 12, "sub_float", 3, 0, NONE, W, R, R, NONE)
+OPCODE(MUL_INT, 13, "mul_int", 3, 0, NONE, W, R, R, NONE)
+OPCODE(MUL_DECIMAL, 14, "mul_decimal", 3, 0, NONE, W, R, R, NONE)
+OPCODE(MUL_FLOAT, 15, "mul_float", 3, 0, NONE, W, R, R, NONE)
+OPCODE(DIV_INT, 16, "div_int", 3, 0, NONE, W, R, R, NONE)
+OPCODE(DIV_DECIMAL, 17, "div_decimal", 3, 0, NONE, W, R, R, NONE)
+OPCODE(DIV_FLOAT, 18, "div_float", 3, 0, NONE, W, R, R, NONE)
+OPCODE(REM_INT, 19, "rem_int", 3, 0, NONE, W, R, R, NONE)
+OPCODE(REM_DECIMAL, 20, "rem_decimal", 3, 0, NONE, W, R, R, NONE)
+OPCODE(REM_FLOAT, 21, "rem_float", 3, 0, NONE, W, R, R, NONE)
+OPCODE(NEG_INT, 22, "neg_int", 2, 0, NONE, W, R, NONE, NONE)
+OPCODE(NEG_DECIMAL, 23, "neg_decimal", 2, 0, NONE, W, R, NONE, NONE)
+OPCODE(NEG_FLOAT, 24, "neg_float", 2, 0, NONE, W, R, NONE, NONE)
+OPCODE(NEG_DURATION, 25, "neg_duration", 2, 0, NONE, W, R, NONE, NONE)
+OPCODE(ADD_DURATION, 26, "add_duration", 3, 0, NONE, W, R, R, NONE)
+OPCODE(SUB_DURATION, 27, "sub_duration", 3, 0, NONE, W, R, R, NONE)
+OPCODE(SCALE_DURATION, 28, "scale_duration", 3, 0, NONE, W, R, R, NONE)
+OPCODE(ADD_TIME, 29, "add_time", 3, 0, NONE, W, R, R, NONE)
+OPCODE(SUB_TIME, 30, "sub_time", 3, 0, NONE, W, R, R, NONE)
+OPCODE(DIFF_TIME, 31, "diff_time", 3, 0, NONE, W, R, R, NONE)
+OPCODE(EQ_INT, 32, "eq_int", 3, 0, NONE, W, R, R, NONE)
+OPCODE(EQ_DECIMAL, 33, "eq_decimal", 3, 0, NONE, W, R, R, NONE)
+OPCODE(EQ_FLOAT, 34, "eq_float", 3, 0, NONE, W, R, R, NONE)
+OPCODE(EQ_BOOL, 35, "eq_bool", 3, 0, NONE, W, R, R, NONE)
+OPCODE(EQ_BYTE, 36, "eq_byte", 3, 0, NONE, W, R, R, NONE)
+OPCODE(EQ_CHAR, 37, "eq_char", 3, 0, NONE, W, R, R, NONE)
+OPCODE(EQ_TIME, 38, "eq_time", 3, 0, NONE, W, R, R, NONE)
+OPCODE(EQ_DURATION, 39, "eq_duration", 3, 0, NONE, W, R, R, NONE)
+OPCODE(EQ_CHOICE, 40, "eq_choice", 3, 0, NONE, W, R, R, NONE)
+OPCODE(LT_INT, 41, "lt_int", 3, 0, NONE, W, R, R, NONE)
+OPCODE(LT_DECIMAL, 42, "lt_decimal", 3, 0, NONE, W, R, R, NONE)
+OPCODE(LT_FLOAT, 43, "lt_float", 3, 0, NONE, W, R, R, NONE)
+OPCODE(LT_BOOL, 44, "lt_bool", 3, 0, NONE, W, R, R, NONE)
+OPCODE(LT_BYTE, 45, "lt_byte", 3, 0, NONE, W, R, R, NONE)
+OPCODE(LT_CHAR, 46, "lt_char", 3, 0, NONE, W, R, R, NONE)
+OPCODE(LT_TIME, 47, "lt_time", 3, 0, NONE, W, R, R, NONE)
+OPCODE(LT_DURATION, 48, "lt_duration", 3, 0, NONE, W, R, R, NONE)
+OPCODE(LT_CHOICE, 49, "lt_choice", 3, 0, NONE, W, R, R, NONE)
+OPCODE(LE_INT, 50, "le_int", 3, 0, NONE, W, R, R, NONE)
+OPCODE(LE_DECIMAL, 51, "le_decimal", 3, 0, NONE, W, R, R, NONE)
+OPCODE(LE_FLOAT, 52, "le_float", 3, 0, NONE, W, R, R, NONE)
+OPCODE(LE_BOOL, 53, "le_bool", 3, 0, NONE, W, R, R, NONE)
+OPCODE(LE_BYTE, 54, "le_byte", 3, 0, NONE, W, R, R, NONE)
+OPCODE(LE_CHAR, 55, "le_char", 3, 0, NONE, W, R, R, NONE)
+OPCODE(LE_TIME, 56, "le_time", 3, 0, NONE, W, R, R, NONE)
+OPCODE(LE_DURATION, 57, "le_duration", 3, 0, NONE, W, R, R, NONE)
+OPCODE(LE_CHOICE, 58, "le_choice", 3, 0, NONE, W, R, R, NONE)
+OPCODE(CMP_FLOAT, 59, "cmp_float", 3, 0, NONE, W, R, R, NONE)
+OPCODE(NOT, 60, "not", 2, 0, NONE, W, R, NONE, NONE)
+OPCODE(MAKE_RANGE, 61, "make_range", 3, 0, NONE, W, R, R, NONE)
+OPCODE(RANGE_START, 62, "range_start", 2, 0, NONE, W, R, NONE, NONE)
+OPCODE(RANGE_END, 63, "range_end", 2, 0, NONE, W, R, NONE, NONE)
+
+OPCODE(JUMP, 64, "jump", 1, 0, NONE, TARGET, NONE, NONE, NONE)
+OPCODE(BRANCH, 65, "branch", 3, 0, NONE, R, TARGET, TARGET, NONE)
+OPCODE(SWITCH, 66, "switch", 1, MO_LIMIT_CHOICE_CASES, TARGET, R, NONE, NONE, NONE)
+OPCODE(CALL, 67, "call", 2, MO_LIMIT_PARAMETERS, CALL, W, FUNCTION, NONE, NONE)
+OPCODE(CALL_CLOSURE, 68, "call_closure", 2, MO_LIMIT_PARAMETERS, C, W, C, NONE, NONE)
+OPCODE(TAIL_CALL, 69, "tail_call", 1, MO_LIMIT_PARAMETERS, CALL, FUNCTION, NONE, NONE, NONE)
+OPCODE(TAIL_CALL_CLOSURE, 70, "tail_call_closure", 1, MO_LIMIT_PARAMETERS, C, C, NONE, NONE, NONE)
+OPCODE(RET, 71, "ret", 1, 0, NONE, C, NONE, NONE, NONE)
+OPCODE(STOP, 72, "stop", 1, 0, NONE, R, NONE, NONE, NONE)
+OPCODE(FAIL, 73, "fail", 1, 0, NONE, R, NONE, NONE, NONE)
+
+OPCODE(CONSTRUCT, 74, "construct", 2, MO_LIMIT_FIELDS, C, W, LAYOUT, NONE, NONE)
+OPCODE(MAKE_CASE, 75, "make_case", 3, MO_LIMIT_FIELDS, C, W, TYPE, CASE, NONE)
+OPCODE(FIELD, 76, "field", 3, 0, NONE, W, R, FIELD, NONE)
+OPCODE(CASE_FIELD, 77, "case_field", 4, 0, NONE, W, R, CASE, FIELD)
+OPCODE(SET_FIELD, 78, "set_field", 4, 0, NONE, W, C, FIELD, C)
+OPCODE(MAKE_CLOSURE, 79, "make_closure", 2, MO_LIMIT_FIELDS, C, W, FUNCTION, NONE, NONE)
+OPCODE(EQUAL, 80, "equal", 4, 0, NONE, W, TYPE, R, R)
+OPCODE(PRIM, 81, "prim", 3, MO_LIMIT_PARAMETERS, PRIM, W, PRIMITIVE, TYPE, NONE)
+OPCODE(HOST, 82, "host", 2, MO_LIMIT_PARAMETERS, HOST, W, HOSTOP, NONE, NONE)
+
+OPCODE(RESET, 83, "reset", 2, 0, NONE, TW, C, NONE, NONE)
+OPCODE(REUSE, 84, "reuse", 3, MO_LIMIT_FIELDS, C, W, TC, LAYOUT, NONE)
+OPCODE(FREE_TOKEN, 85, "free_token", 1, 0, NONE, TC, NONE, NONE, NONE)
+
+#undef OPCODE
