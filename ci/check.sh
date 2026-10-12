@@ -87,6 +87,18 @@ else
 	missing "elan (Lean's installer) is not installed"
 fi
 
+step "Core code generation: deterministic writer-checked fixtures, corpora and generated programs"
+if have python3; then
+	drivers=()
+	for driver in build/{gcc,clang}/{debug,sanitize}/tests/test_codegen.test; do
+		if [[ -x "$driver" ]]; then drivers+=("$driver"); fi
+	done
+	if ((${#drivers[@]})); then python3 ci/check_codegen.py "${drivers[@]}";
+	else missing "no code generation test executable is built"; fi
+else
+	missing "python3 is not installed"
+fi
+
 step "Module dependencies: each module includes only what architecture section 2 allows"
 make --no-print-directory deps
 

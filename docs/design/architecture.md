@@ -928,6 +928,61 @@ instead of giving a verdict. C must refuse these mismatches promptly; C
 regressions cover them, but they are outside the runnable differential corpus.
 No Lean rule is changed to accommodate this resource limitation.
 
+**Core code generation, first slice.** `mo_compile` rechecks the complete Core
+document, then writes through `mo_bytecode_write`. Failure appends a diagnostic
+and leaves output empty; success owns its bytes independently of Core. E1055
+means an unfinished compiler form, not a source error; E1056 means scratch or
+allocation exhaustion; E1057 means compiler-produced bytecode was refused.
+Registers, instructions and format limits use E1013, E1014 and E1015.
+
+This slice compiles immediate scalar literals, variables, lets, direct calls
+(tail calls in every tail position), if, stop, and nonempty choices with empty
+or single small immediate payloads, including Option, Result, Ordering and
+EntryKind. It retains all five Core function kinds. Reference values and borrow
+inference, closures, globals/init, aggregates, primitives/host operations, fail,
+joins and reuse remain for subsequent slices. All fifteen existing sample
+fixtures are attempted in CI but still explicitly unsupported; generated
+programs within the slice must all compile, never merely refuse consistently.
+Writer structural checks apply now; its verifier applies when stream 3 lands.
+Outcome comparison with Lean waits for the VM.
+
+Core declaration order is bytecode function order, preserving call and spec
+link indices. First-match function/data/parameter lookup agrees with Core.
+Every data declaration uses a nominal choice, including one-constructor
+declarations; an empty name on its single field means an unnamed field.
+Builtin instantiations have separate nominal identities from user types of
+the same printable name. Names/strings and constants use deterministic first
+use. Source-less function names are module + "." + Core name; module order is
+first function use, with no invented exports. Source metadata supplies full
+names, module order/exports, file remapping, declaration and expression spans,
+original binder names/ranges, spec text/links/expectations/condition lines.
+Absent expression spans clear attribution, not inherit the previous span.
+
+The first allocator assigns distinct monotonically numbered temporaries and
+binders; it does not yet recycle registers. It initializes immediate
+temporaries before control splits so incoming definition/ownership states
+agree. Stop reasons are borrowed immortal Text constants, never owned values.
+Single-field default cases share one initialized helper per field type.
+These extra instructions/registers obey the same explicit limits. Register
+names run from the binder's write through its body (parameters through the
+function), not through temporary initialization.
+
+Preparation and emission visit each expression once. Ordered AVL indices for
+strings, constants, declarations, lexical names and per-type constructors
+give logarithmic lookup; case emission never searches a declaration by a long
+type name. Recursion follows the checked Core depth bound; wide lists/arms
+are iterative. `MO_LIMIT_CODEGEN_SCRATCH_SIZE` is 512 bytes per permitted Core
+node (512 MiB), separate from checking and text parsing. The register-boundary
+test compiles a 65,533-case choice with a two-million-byte name at 65,535
+registers and refuses one more case with E1013.
+
+Some valid Core has no direct encoding in the current bytecode contract:
+empty choices, duplicate constructor names, undeclared data types and
+zero/one-element tuples. Empty/NUL-containing names also need a naming policy.
+The first slice explicitly refuses these, rather than inventing inhabitants,
+merging identities or changing Lean rules. Their complete representation is
+still open for the later compiler slices.
+
 ```c
 /* src/base/diag.h: diagnostics, rendered as text or JSON by src/tools. */
 struct mo_span { uint32_t file; uint32_t start; uint32_t end; };     /* byte offsets */
