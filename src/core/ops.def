@@ -66,5 +66,8 @@
     X(ARGS_LIST, "argsList") X(ENV_GET, "envGet") X(PRINT, "print") X(PRINT_ERROR, "printError") \
     X(READ_LINE, "readLine") X(PRINTED, "printed") X(PRINTED_ERRORS, "printedErrors") \
     X(WRITE_TEXT, "writeText") X(APPEND_TEXT, "appendText") X(REMOVE, "remove") \
-    X(READ_ONLY, "readOnly") X(NOW, "now") X(RANDOM_INT, "randomInt")
+    X(READ_ONLY, "readOnly") X(NOW, "now") X(RANDOM_INT, "randomInt") \
+    X(CONSOLE_FAKE, "consoleFake") X(CONSOLE_FAKE_INPUT, "consoleFakeInput") \
+    X(FILES_IN_MEMORY, "filesInMemory") X(CLOCK_FIXED, "clockFixed") \
+    X(RANDOM_SEEDED, "randomSeeded") X(ARGS_OF, "argsOf") X(ENV_OF, "envOf")
 // clang-format on

@@ -1,1 +1,1 @@
-(core 0.1 (Program ((DataDecl "Point" ((Ctor "Point" (("x" (int)) ("y" (text))))))) ((FunDecl "main" () (text) (global "C") "Main" (function) 1)) ((ConstDecl "C" (text) (lit (text "constant")))) "main"))
+(core 0.2 (Program ((DataDecl "Point" ((Ctor "Point" (("x" (int)) ("y" (text))))))) ((FunDecl "main" () (text) (global "C") "Main" (function) 1)) ((ConstDecl "C" (text) (lit (text "constant")))) "main"))

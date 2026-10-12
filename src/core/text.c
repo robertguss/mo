@@ -67,6 +67,8 @@ static MO_MUST_USE const struct schema *document_schema(enum mo_core_text_kind k
         return &s_selection;
     case MO_CORE_TEXT_RUN:
         return &s_run;
+    case MO_CORE_TEXT_CAP_STATE:
+        return &s_cap_state;
     }
     MO_UNREACHABLE();
 }
