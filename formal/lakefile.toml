@@ -1,0 +1,8 @@
+# Mo Core: the Lean model of Mo's internal language.
+# Plain Lean 4 with its bundled library; no dependencies.
+name = "mo-core"
+version = "0.1.0"
+defaultTargets = ["MoCore"]
+
+[[lean_lib]]
+name = "MoCore"

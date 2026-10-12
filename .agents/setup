@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prepares an orb for robertguss/mo: C compilers with sanitizers and libFuzzer,
-# clang-format and clang-tidy, make, and Bison for the executable grammar.
-# Installs only; never builds or runs anything.
+# clang-format and clang-tidy, make, Bison for the executable grammar, and
+# Lean 4, through elan, for Mo Core. Installs only; never builds or runs anything.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
@@ -25,4 +25,13 @@ install_missing build-essential clang clang-format clang-tidy make git bison
 clang_major=$(clang --version | sed -n 's/.*clang version \([0-9][0-9]*\).*/\1/p' | head -n 1)
 install_missing "libclang-rt-${clang_major}-dev"
 
-printf 'robertguss/mo orb ready: %s, %s\n' "$(gcc --version | head -n 1)" "$(clang --version | head -n 1)"
+# Lean 4 for Mo Core (formal/), through elan with no default toolchain: the
+# version formal/lean-toolchain names is installed, and lake uses it.
+if [[ ! -x "$HOME/.elan/bin/elan" ]]; then
+	curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh |
+		sh -s -- -y --no-modify-path --default-toolchain none
+fi
+"$HOME/.elan/bin/elan" toolchain install "$(cat "$(dirname "${BASH_SOURCE[0]}")/../formal/lean-toolchain")"
+
+printf 'robertguss/mo orb ready: %s, %s, %s\n' "$(gcc --version | head -n 1)" "$(clang --version | head -n 1)" \
+	"$("$HOME/.elan/bin/elan" --version)"

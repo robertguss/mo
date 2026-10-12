@@ -59,6 +59,10 @@ else
 	missing "bison or a C compiler is not installed"
 fi
 
+step "Mo Core in Lean: the model builds and every proof checks"
+export PATH="$HOME/.elan/bin:$PATH"
+if have lake; then make --no-print-directory formal; else missing "elan (Lean's installer) is not installed"; fi
+
 step "Formatting"
 if have clang-format; then make --no-print-directory format-check; else missing "clang-format is not installed"; fi
 

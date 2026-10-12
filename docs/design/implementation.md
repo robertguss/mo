@@ -50,6 +50,7 @@ make fuzz-smoke     # every fuzz target for 20 seconds (needs clang with libFuzz
 make format         # format the C sources with clang-format
 make tidy           # standard-library results are used (needs clang-tidy)
 make grammar        # Mo code parses with the executable grammar (needs bison)
+make formal         # Mo Core in Lean builds and every proof checks (needs elan)
 bash ci/check.sh    # everything CI runs: run it before every push
 ```
 

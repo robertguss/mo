@@ -8,6 +8,7 @@
 #   make tidy         check that results of standard-library calls are used (needs clang-tidy)
 #   make grammar      check that Mo code parses with the executable grammar (needs bison):
 #                     the grammar's own tests, examples/ and the reference's examples
+#   make formal       build Mo Core in Lean (formal/) and check every proof (needs elan)
 #
 # ci/check.sh runs every check; CI runs ci/check.sh. Choose a compiler with
 # CC=gcc or CC=clang. Each compiler builds into its own directory, so switching
@@ -63,7 +64,7 @@ ASAN_OPTIONS ?= abort_on_error=1
 UBSAN_OPTIONS ?= halt_on_error=1:print_stacktrace=1
 export ASAN_OPTIONS UBSAN_OPTIONS
 
-.PHONY: all test sanitize fuzz fuzz-smoke format format-check tidy grammar clean
+.PHONY: all test sanitize fuzz fuzz-smoke format format-check tidy grammar formal clean
 
 all: $(BUILD)/debug/mo
 
@@ -79,6 +80,11 @@ sanitize: $(SANITIZE_TESTS) $(BUILD)/sanitize/mo
 grammar: $(BUILD)/debug/mo-grammar $(BUILD)/sanitize/mo-grammar
 	@$(call GRAMMAR_CHECK,$(BUILD)/debug/mo-grammar)
 	@($(call GRAMMAR_CHECK,$(BUILD)/sanitize/mo-grammar)) >/dev/null
+
+# Mo Core in Lean: lake builds the model, its twelve sample programs and their checks, and
+# every proof. formal/lean-toolchain names the Lean version, which elan fetches on first use.
+formal:
+	cd formal && lake build
 
 fuzz: $(FUZZERS)
 
