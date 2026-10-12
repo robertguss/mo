@@ -1,1 +1,1 @@
-(core 0.6 (Program () ((FunDecl "choose" (("o" (option (int)))) (int) (case_ (var "o") (("None" () (lit (int -5))) ("Some" ("x") (var "x")))) "Cases" (function) 0)) () "choose" (noSource)))
+(core 0.6 (Program () ((FunDecl "main" (("o" (option (int)))) (int) (case_ (var "o") (("None" () (lit (int -5))) ("Some" ("x") (var "x")))) "Cases" (function) 0)) () "main" (noSource)))

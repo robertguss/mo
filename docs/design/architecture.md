@@ -802,6 +802,12 @@ crash. A tail call reuses its frame, so tail calls never grow the stack
   `FILE`, including the anchors, as `mo check` does, then runs its `main`
   with the arguments after the file name. The image it runs is the one the
   anchors ran in. Its spec code is there, but `main` can't reach it.
+  Bytecode has no entry field: the tool knows the entry module from loading
+  source and finds `<Module>.main` by full name in the function table.
+  `mo_compile` requires Core's first-match ordinary entry to have that full
+  name (from compiler metadata, or `module + "." + name` for `noSource`).
+  E1058 reports a lowering bug if it does not. Core's checker still permits
+  arbitrary entry names, as the Lean model does; this is an image/tool contract.
 - **`mo test`** runs every example, every test, and every promise against
   generated inputs, or those that `--only` and `--in` choose by the names of
   `bytecode.md` section 3.5. `--list` prints the names, and `--json` gives

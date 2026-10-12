@@ -841,6 +841,31 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
     return true;
 }
 
+/* Core permits an arbitrary entry key. The image used by mo run has a stricter name contract. */
+static MO_MUST_USE bool entry_valid(struct compiler *c) {
+    const struct mo_core *p = c->core;
+    for (size_t i = 0; i < p->funs.count; i++) {
+        const struct mo_core_fun *f = &p->funs.items[i];
+        if (f->name.length != p->entry.length ||
+            memcmp(f->name.bytes, p->entry.bytes, f->name.length) != 0)
+            continue;
+        c->current = f;
+        c->declaration =
+            p->metadata.source ? p->metadata.funs.items[i].span : (struct mo_core_span){0};
+        bool valid;
+        if (p->metadata.source) {
+            mo_core_string n = p->metadata.funs.items[i].name;
+            valid = n.length >= 5 && n.length - 5 == f->module.length &&
+                    memcmp(n.bytes, f->module.bytes, f->module.length) == 0 &&
+                    memcmp(n.bytes + f->module.length, ".main", 5) == 0;
+        } else {
+            valid = f->name.length == 4 && memcmp(f->name.bytes, "main", 4) == 0;
+        }
+        return valid || problem(c, MO_CODE_CODEGEN_ENTRY,
+                                "Core's ordinary entry must have the full name <Module>.main.");
+    }
+    MO_UNREACHABLE(); /* mo_core_check established the ordinary entry. */
+}
 static MO_MUST_USE bool declarations(struct compiler *c) {
     const struct mo_core *p = c->core;
     if (p->consts.count != 0)
@@ -1160,7 +1185,7 @@ bool mo_compile(const struct mo_core *core, struct mo_buffer *out, struct mo_dia
     c.constants.width = sizeof(struct mo_bytecode_constant);
     c.modules.width = sizeof(struct mo_bytecode_module);
     c.constructors.width = sizeof(struct mo_codegen_index *);
-    bool ok = declarations(&c) && bodies(&c) && output(&c, out);
+    bool ok = entry_valid(&c) && declarations(&c) && bodies(&c) && output(&c, out);
     if (!ok) {
         MO_ASSERT(c.error != 0 && out->length == 0);
         struct mo_buffer label;
@@ -1172,7 +1197,8 @@ bool mo_compile(const struct mo_core *core, struct mo_buffer *out, struct mo_dia
             mo_buffer_append_text(&label, c.reason) && mo_buffer_append_byte(&label, 0);
         struct mo_diag d = {
             .code = c.error,
-            .message = c.error == MO_CODE_CODEGEN_INVALID
+            .message = c.error == MO_CODE_CODEGEN_ENTRY ? "invalid lowered entry name: bug in Mo"
+                       : c.error == MO_CODE_CODEGEN_INVALID
                            ? "code generation produced invalid bytecode: bug in Mo"
                        : c.error == MO_CODE_CODEGEN_UNSUPPORTED
                            ? "Core code generation is not implemented for this form yet"
