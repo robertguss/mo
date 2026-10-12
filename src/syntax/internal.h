@@ -33,12 +33,18 @@ struct mo_lex {
     struct mo_syntax_comment **comment_tail;
     bool failed;
     bool fatal;
+    bool header_only;
+    bool recovering;
 };
 
 void mo_syntax_lex_init(struct mo_lex *lx, struct mo_arena *arena, const struct mo_sources *sources,
                         uint32_t file, struct mo_diags *diags);
+MO_MUST_USE uint32_t mo_syntax_decode(const uint8_t *bytes, uint32_t length, uint32_t *cp);
 MO_MUST_USE struct mo_token mo_syntax_next(struct mo_lex *lx);
 MO_MUST_USE bool mo_syntax_error(struct mo_lex *lx, uint16_t code, struct mo_span span,
                                  const char *message, const char *reason);
+void mo_syntax_resume(struct mo_lex *lx);
+MO_MUST_USE bool mo_syntax_attach(const struct mo_sources *sources, struct mo_syntax *tree,
+                                  struct mo_syntax_comment *comments);
 
 #endif

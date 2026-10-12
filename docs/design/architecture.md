@@ -146,6 +146,49 @@ Formatting twice changes nothing, and the formatted program's tree equals the
 original's, except for the rewrites the reference names: `x = x + y` becomes
 `x += y` (reference 6.2).
 
+**The source tree contract.** `src/syntax/syntax.h` defines a tagged node
+with ordered children, an operator token, and half-open spans. Absent
+optional children are `NULL`; an empty sequence is a node with no children.
+Leaves and comments copy their raw source spellings into the caller's
+arena, including literal quotes, escapes and interpolation delimiters. The
+tree does not borrow source storage. Grouping parentheses remain nodes;
+lists, maps, tuples and argument sequences remain distinct. No typing or
+name resolution is done here.
+
+Children follow the executable grammar's production order with three
+normalizations: a function type has its argument sequence and optional
+result, with token `FN`; a tuple type has one sequence, with token `LPAREN`;
+other types have their name and optional type arguments. Interpolated text
+has alternating raw text parts and expressions in one flat sequence. A
+case has arms, each with alternatives, an optional guard, and a statement
+sequence which includes the statement on its header line. An arm's span
+extends to the next arm or the case's `end`, so comments ending an arm have
+an owner. A chained block `else if` is nested `IF` nodes.
+
+Erroneous items are omitted. Their containers have `incomplete` set, so the
+checker can inspect retained children without checking the container as a
+whole. A damaged declaration header can leave even a required child `NULL`,
+but its body is retained. Line recovery has boundaries inside declaration
+headers, statement blocks, case arms, record and choice declarations,
+specification lines and anchors. Only allocation failure or inability to
+keep a diagnostic returns `NULL`.
+`mo_read_header` stops before the body's first token and leaves its output
+unchanged on failure. `mo_parse_fragment` uses the grammar's fragment mode
+for reference snippets, fixtures and differential fuzzing.
+
+Nesting is bounded both while descending and when constructing nodes, so
+left-associative chains cannot leave an unbounded tree. Leaves have depth
+zero; sequence, file, module and expression-statement wrappers add no
+depth, and each other enclosing node adds one. The parser also checks the
+source counts already visible in syntax: module declarations, parameters
+and calls (including function types), record and case fields, tuples
+(including types and binders), and choice cases. The module-name limit
+counts declarations, not distinct spellings; overloads count separately.
+Capture counts and limits which need types, lowering or bytecode remain
+with their owning stages.
+The differential target includes Bison's lexer and AST validation, not
+just `yyparse`; only named source-limit diagnostics exclude a comparison.
+
 ### 3.2 Loading a program
 
 `mo` is given one file: the program's **entry module**, whose `main` `mo run`

@@ -10,6 +10,8 @@ bool mo_syntax_error(struct mo_lex *lx, uint16_t code, struct mo_span span, cons
     if (lx->failed || lx->fatal)
         return false;
     lx->failed = true;
+    if (lx->recovering)
+        return false;
     struct mo_diag diag = {
         .code = code, .primary = {span, NULL}, .message = message, .reason = reason};
     if (!mo_diags_add(lx->diags, &diag))
@@ -33,7 +35,7 @@ static MO_MUST_USE int peek(const struct mo_lex *lx, uint32_t ahead) {
     return ahead < lx->source->length - lx->pos ? lx->source->bytes[lx->pos + ahead] : -1;
 }
 
-static MO_MUST_USE uint32_t decode(const uint8_t *bytes, uint32_t length, uint32_t *cp) {
+uint32_t mo_syntax_decode(const uint8_t *bytes, uint32_t length, uint32_t *cp) {
     if (length == 0)
         return 0;
     uint32_t c = bytes[0];
@@ -84,7 +86,7 @@ static MO_MUST_USE bool lex_error(struct mo_lex *lx, uint16_t code, const char *
 static MO_MUST_USE bool advance(struct mo_lex *lx) {
     MO_ASSERT(lx->pos < lx->source->length);
     uint32_t c = 0;
-    uint32_t n = decode(lx->source->bytes + lx->pos, lx->source->length - lx->pos, &c);
+    uint32_t n = mo_syntax_decode(lx->source->bytes + lx->pos, lx->source->length - lx->pos, &c);
     if (n == 0) {
         bool ok = lex_error(lx, MO_CODE_SOURCE_UTF8, "source is UTF-8");
         lx->pos++;
@@ -443,7 +445,13 @@ static MO_MUST_USE enum mo_syntax_token punctuation(struct mo_lex *lx) {
             }
     }
     if (kind == MO_T_ERROR) {
-        if (!lex_error(lx, MO_CODE_SOURCE_TOKEN, "this character is not part of Mo"))
+        uint32_t start = lx->pos;
+        if (!advance(lx))
+            return MO_T_ERROR;
+        if (!mo_syntax_error(
+                lx, MO_CODE_SOURCE_TOKEN, (struct mo_span){lx->file, start, lx->pos},
+                "this character is not part of Mo",
+                "A line break ends a statement; there are no semicolons (reference 2.4)."))
             return MO_T_ERROR;
     }
     if (!advance(lx))
@@ -484,6 +492,7 @@ struct mo_token mo_syntax_next(struct mo_lex *lx) {
     }
     bool newline = false;
     struct mo_token nl = token;
+    uint32_t depth = lx->depth;
     for (;;) {
         int c = peek(lx, 0);
         if (c == ' ' || c == 9 || c == 10 || c == 13) {
@@ -493,16 +502,14 @@ struct mo_token mo_syntax_next(struct mo_lex *lx) {
                 nl.line = lx->line;
                 nl.column = lx->column;
             }
-            if (!advance(lx)) {
-                token.kind = MO_T_ERROR;
-                return token;
-            }
+            if (!advance(lx))
+                goto bad_gap;
         } else if (c == '#') {
             struct mo_syntax_comment *comment =
                 mo_arena_allocate(lx->arena, sizeof *comment, _Alignof(struct mo_syntax_comment));
             if (comment == NULL) {
-                lx->fatal = true;
                 if (!lex_error(lx, MO_CODE_SYNTAX_NO_MEMORY, "the syntax arena has no room")) {
+                    lx->fatal = true;
                     token.kind = MO_T_ERROR;
                     return token;
                 }
@@ -511,11 +518,18 @@ struct mo_token mo_syntax_next(struct mo_lex *lx) {
                                                   .indentation = lx->column - 1,
                                                   .documentation = peek(lx, 1) == '#'};
             while (peek(lx, 0) != -1 && peek(lx, 0) != 10 && peek(lx, 0) != 13)
-                if (!advance(lx)) {
-                    token.kind = MO_T_ERROR;
-                    return token;
-                }
+                if (!advance(lx))
+                    goto bad_gap;
             comment->span.end = lx->pos;
+            comment->text = mo_arena_copy(lx->arena, lx->source->bytes + comment->span.start,
+                                          comment->span.end - comment->span.start, 1);
+            if (comment->text == NULL) {
+                bool kept = lex_error(lx, MO_CODE_SYNTAX_NO_MEMORY, "the syntax arena has no room");
+                (void)kept;
+                lx->fatal = true;
+                token.kind = MO_T_ERROR;
+                return token;
+            }
             *lx->comment_tail = comment;
             lx->comment_tail = &comment->next;
         } else
@@ -524,8 +538,27 @@ struct mo_token mo_syntax_next(struct mo_lex *lx) {
     token.span.start = lx->pos;
     token.line = lx->line;
     token.column = lx->column;
-    uint32_t depth = lx->depth;
     int c = peek(lx, 0);
+    if (lx->header_only && newline && depth == 0 && lx->last != MO_T_EOF &&
+        !continues(lx->last, false) && c != '.' && c != ')' && c != ']' && c != '}' && c != '+' &&
+        c != '*' && c != '/' && c != '%' && c != '|' && c != '<' && c != '>' && c != '=') {
+        uint32_t length = 0;
+        while (lower(peek(lx, length)))
+            length++;
+        bool header_word = (length == 3 && memcmp(lx->source->bytes + lx->pos, "use", 3) == 0) ||
+                           (length == 6 && memcmp(lx->source->bytes + lx->pos, "expose", 6) == 0);
+        header_word = header_word && !alnum(peek(lx, length)) && peek(lx, length) != '_' &&
+                      peek(lx, length) != '?';
+        if (!header_word) {
+            lx->pending = token;
+            lx->pending.kind = MO_T_EOF;
+            lx->has_pending = true;
+            nl.kind = MO_T_NL;
+            nl.span.end = nl.span.start;
+            lx->last = MO_T_NL;
+            return nl;
+        }
+    }
     if (c == -1)
         token.kind = MO_T_EOF;
     else if (lower(c) || upper(c) || c == '_')
@@ -540,12 +573,13 @@ struct mo_token mo_syntax_next(struct mo_lex *lx) {
                                    lx->interpolations[depth - 1].indent, false);
     } else
         token.kind = punctuation(lx);
+scanned:
     token.span.end = lx->pos;
     if (token.kind == MO_T_EOF && depth > 0) {
         if (!lex_error(lx, MO_CODE_SOURCE_TEXT, "an interpolation is closed with }"))
             token.kind = MO_T_ERROR;
     }
-    if (token.kind != MO_T_ERROR && lx->last != MO_T_EOF && lx->last != MO_T_NL &&
+    if (lx->last != MO_T_EOF && lx->last != MO_T_NL &&
         (token.kind == MO_T_EOF ||
          (newline && depth == 0 && !continues(lx->last, false) && !continues(token.kind, true)))) {
         lx->pending = token;
@@ -557,4 +591,28 @@ struct mo_token mo_syntax_next(struct mo_lex *lx) {
     }
     lx->last = token.kind;
     return token;
+bad_gap:
+    /* A bad comment on the following physical line must not erase the
+     * statement whose newline we have already crossed. */
+    token.kind = MO_T_ERROR;
+    token.span.start = lx->pos;
+    token.line = lx->line;
+    token.column = lx->column;
+    goto scanned;
+}
+
+void mo_syntax_resume(struct mo_lex *lx) {
+    /* Skip the remainder of the erroneous physical line, even when it isn't
+     * valid UTF-8. Reset interpolations and logical-line continuation. */
+    while (lx->pos < lx->source->length && lx->source->bytes[lx->pos] != '\n')
+        lx->pos++;
+    if (lx->pos < lx->source->length) {
+        lx->pos++;
+        lx->line++;
+    }
+    lx->column = 1;
+    lx->last = MO_T_EOF;
+    lx->has_pending = false;
+    lx->depth = 0;
+    lx->failed = false;
 }

@@ -120,6 +120,7 @@ fuzz-smoke: $(FUZZERS)
 			corpus=$(FUZZ_BUILD)/corpus/$$name; mkdir -p $$corpus; \
 			if [ -d fuzz/corpus/$$name ]; then cp -R fuzz/corpus/$$name/. $$corpus/; fi; \
 			if [ "$$name" = fuzz_core_text ]; then cp tests/core/*.core $$corpus/; fi; \
+			if [ "$$name" = fuzz_syntax ]; then cp grammar/tests/good/*.mo grammar/tests/bad/*.mo examples/*.mo $$corpus/; fi; \
 			log=$(FUZZ_BUILD)/$$name.log; echo "fuzzing $$name for $(FUZZ_SECONDS)s"; \
 			$$f $$options -max_total_time=$(FUZZ_SECONDS) -print_final_stats=1 \
 				-artifact_prefix=$(FUZZ_BUILD)/artifacts/ $$corpus >$$log 2>&1; status=$$?; \
@@ -198,6 +199,14 @@ $(FUZZ_BUILD)/bin/%: $(FUZZ_BUILD)/fuzz/%.o $(call objects,$(FUZZ_BUILD),$(LIB_S
 $(FUZZ_BUILD)/bin/fuzz_grammar: $(FUZZ_BUILD)/fuzz/fuzz_grammar.o $(call grammar_objects,$(FUZZ_BUILD))
 	@mkdir -p $(dir $@)
 	$(FUZZ_CC) $(FUZZ) $^ -o $@
+
+$(FUZZ_BUILD)/bin/fuzz_syntax: $(FUZZ_BUILD)/fuzz/fuzz_syntax.o $(sort $(call grammar_objects,$(FUZZ_BUILD)) $(call objects,$(FUZZ_BUILD),$(LIB_SOURCES)))
+	@mkdir -p $(dir $@)
+	$(FUZZ_CC) $(FUZZ) $^ -o $@
+
+$(FUZZ_BUILD)/fuzz/fuzz_syntax.o: fuzz/fuzz_syntax.c $(GRAMMAR_GENERATED)/mo.tab.h Makefile
+	@mkdir -p $(dir $@)
+	$(FUZZ_CC) $(COMMON) $(FUZZ) $(GRAMMAR_INCLUDES) -c $< -o $@
 
 $(FUZZ_BUILD)/fuzz/fuzz_grammar.o: fuzz/fuzz_grammar.c $(GRAMMAR_GENERATED)/mo.tab.h Makefile
 	@mkdir -p $(dir $@)

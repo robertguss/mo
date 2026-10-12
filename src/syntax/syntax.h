@@ -1,6 +1,6 @@
-/* Source syntax. The caller owns the arena; source bytes must outlive the tree.
- * Spans are half-open byte ranges. Children have the order of grammar/mo.y's
- * productions, including NULL for an absent optional child. */
+/* Source syntax. The caller owns the arena; the tree copies token and comment text.
+ * Spans are half-open byte ranges. Children follow source order, including NULL
+ * for an absent optional child. Architecture 3.1 records the normalized shapes. */
 #ifndef MO_SYNTAX_H
 #define MO_SYNTAX_H
 
@@ -152,6 +152,7 @@ enum mo_syntax_token {
 
 struct mo_syntax_comment {
     struct mo_span span;
+    const uint8_t *text; /* span.end - span.start bytes, including # */
     uint32_t indentation;
     bool documentation;
     struct mo_syntax_comment *next;
@@ -160,12 +161,14 @@ struct mo_syntax_comment {
 struct mo_syntax {
     enum mo_syntax_kind kind;
     struct mo_span span;
+    const uint8_t *text;        /* leaves: span.end - span.start bytes, no terminating NUL */
     enum mo_syntax_token token; /* operator or literal spelling */
     uint32_t count;
     struct mo_syntax **children;
     struct mo_syntax_comment *leading;
     struct mo_syntax_comment *trailing;
     struct mo_syntax_comment *ending; /* comments at the end of a block */
+    bool incomplete; /* an erroneous child was omitted; do not check this as a whole */
 };
 
 struct mo_header {
