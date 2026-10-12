@@ -181,6 +181,16 @@
  * usually gets, leaving room for the files the program reads and writes. */
 #define MO_LIMIT_OPEN_FOLDERS 256
 
+/* Generic heap walks count nodes and bytes, including repeated DAG edges.
+ * Scratch counts against the process heap as well. Hash-table probes have a
+ * fixed bound so even collisions of the secret hash cannot become quadratic.
+ * A walk or table update past these bounds reports failure, never a partial
+ * owned result. Collection lengths also keep doubled cell indices in u32. */
+#define MO_LIMIT_HEAP_WORK (64 << 20)
+#define MO_LIMIT_HEAP_SCRATCH (64 << 20)
+#define MO_LIMIT_HEAP_PROBES 128
+#define MO_LIMIT_COLLECTION_SIZE (1 << 26)
+
 /* The limits a run sets on its processes: mo_image_init and mo_process_new take them (architecture
  * section 12). Passing one is a bug with a report: "out of stack" for the first two (bytecode.md
  * section 5.1), and running out of memory for the heap (reference 13.2). */

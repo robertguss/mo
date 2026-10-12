@@ -90,6 +90,29 @@ MO_MUST_USE bool mo_list_append(struct mo_process *process, uint32_t type, struc
 MO_MUST_USE bool mo_list_set(struct mo_process *process, uint32_t type, struct mo_cell *list,
                              uint32_t index, struct mo_cell element);
 
+/* Generic operations borrow values. false means unavailable ability, work or
+ * memory limit; result is unchanged. Structural compare ignores custom Mo
+ * compare functions. Hashes use this process's secret key and are not portable.
+ * No operation uses C recursion. */
+MO_MUST_USE bool mo_value_equal(struct mo_process *process, uint32_t type, struct mo_cell left,
+                                struct mo_cell right, bool *out);
+MO_MUST_USE bool mo_value_hash(struct mo_process *process, uint32_t type, struct mo_cell value,
+                               uint64_t *out);
+MO_MUST_USE bool mo_value_compare(struct mo_process *process, uint32_t type, struct mo_cell left,
+                                  struct mo_cell right, int *out);
+/* Lookup borrows its result; found=false leaves out unchanged. Operations
+ * return false on limits or allocation failure, leaving every input unchanged.
+ * Iteration's position is an entry cursor, not a live-element index. */
+MO_MUST_USE uint32_t mo_table_size(struct mo_cell table);
+MO_MUST_USE bool mo_table_next(struct mo_cell table, uint32_t *position, struct mo_cell *key,
+                               struct mo_cell *value);
+MO_MUST_USE bool mo_table_get(struct mo_process *process, uint32_t type, struct mo_cell table,
+                              struct mo_cell key, bool *found, struct mo_cell *out);
+MO_MUST_USE bool mo_table_set(struct mo_process *process, uint32_t type, struct mo_cell *table,
+                              struct mo_cell key, struct mo_cell value);
+MO_MUST_USE bool mo_table_remove(struct mo_process *process, uint32_t type, struct mo_cell *table,
+                                 struct mo_cell key);
+
 /* Stream 3 implements type-directed ownership for C callers. type is an index
  * in the process image's type table; value is a valid cell of that type, from
  * this process or its image, never another process. dup reads an owned or

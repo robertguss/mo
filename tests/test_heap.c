@@ -1,6 +1,7 @@
 #include "heap_fixture.h"
 #include "test.h"
 
+#include <math.h>
 #include <string.h>
 
 static void test_values(struct heap_fixture *f) {
@@ -132,11 +133,11 @@ static void test_deep_drop(struct heap_fixture *f) {
 
 static void test_limit(struct heap_fixture *f) {
     struct mo_limits limits = mo_limits_default();
-    limits.heap_size = 1024;
+    limits.heap_size = 4096;
     struct mo_process *p = mo_heap_new(&f->types, &limits);
     MO_ASSERT(p != NULL);
     struct mo_cell out = mo_cell_int(19);
-    char bytes[1024] = {0};
+    char bytes[4096] = {0};
     CHECK(!mo_value_text(p, bytes, sizeof bytes, &out));
     CHECK(mo_cell_get_int(out) == 19 && mo_heap_objects(p) == 0);
     struct mo_cell value, list;
@@ -155,6 +156,119 @@ static void test_limit(struct heap_fixture *f) {
     mo_heap_free(p);
 }
 
+static void test_tables(struct heap_fixture *f) {
+    struct mo_limits limits = mo_limits_default();
+    struct mo_process *p = mo_heap_new(&f->types, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_cell keys[3], lists[3];
+    const char *names[] = {"a", "b", "c"};
+    for (uint32_t i = 0; i < 3; i++) {
+        CHECK(mo_value_text(p, names[i], 1, &keys[i]));
+        CHECK(mo_value_list(p, f->list, keys, i + 1, &lists[i]));
+    }
+    struct mo_cell duplicates[] = {keys[1], keys[0], keys[1], keys[2]};
+    struct mo_cell values[] = {lists[0], lists[1], lists[2], lists[0]};
+    struct mo_cell map, other, set;
+    CHECK(mo_value_map(p, f->map, duplicates, values, 4, &map));
+    CHECK(mo_table_size(map) == 3);
+    bool found;
+    struct mo_cell got;
+    CHECK(mo_table_get(p, f->map, map, keys[1], &found, &got) && found);
+    CHECK(mo_cell_get_ref(got) == mo_cell_get_ref(lists[2]));
+    uint32_t pos = 0;
+    struct mo_cell key;
+    const uint32_t expected[] = {1, 0, 2};
+    for (uint32_t i = 0; i < 3; i++) {
+        CHECK(mo_table_next(map, &pos, &key, &got));
+        CHECK(mo_cell_get_ref(key) == mo_cell_get_ref(keys[expected[i]]));
+    }
+    CHECK(!mo_table_next(map, &pos, &key, &got));
+    struct mo_cell reordered_values[] = {lists[1], lists[2], lists[0]};
+    CHECK(mo_value_map(p, f->map, keys, reordered_values, 3, &other));
+    bool equal;
+    uint64_t h1, h2;
+    CHECK(mo_value_equal(p, f->map, map, other, &equal) && equal);
+    CHECK(mo_value_hash(p, f->map, map, &h1));
+    CHECK(mo_value_hash(p, f->map, other, &h2) && h1 == h2);
+    struct mo_cell outer1, outer2;
+    CHECK(mo_value_map(p, f->map_keys, &map, keys, 1, &outer1));
+    CHECK(mo_value_map(p, f->map_keys, &other, keys, 1, &outer2));
+    CHECK(mo_value_equal(p, f->map_keys, outer1, outer2, &equal) && equal);
+    mo_value_drop(p, f->map_keys, outer1);
+    mo_value_drop(p, f->map_keys, outer2);
+    struct mo_cell shared = mo_value_dup(p, f->map, map);
+    CHECK(mo_table_set(p, f->map, &map, keys[0], lists[0]));
+    CHECK(mo_cell_get_ref(map) != mo_cell_get_ref(shared));
+    CHECK(mo_table_get(p, f->map, shared, keys[0], &found, &got) && found);
+    CHECK(mo_cell_get_ref(got) == mo_cell_get_ref(lists[1]));
+    struct mo_object *unique = mo_cell_get_ref(map);
+    CHECK(mo_table_set(p, f->map, &map, keys[0], lists[1]));
+    CHECK(mo_cell_get_ref(map) == unique);
+    CHECK(mo_value_equal(p, f->map, map, other, &equal) && equal);
+    CHECK(mo_table_remove(p, f->map, &map, keys[1]));
+    CHECK(mo_table_set(p, f->map, &map, keys[1], lists[2]));
+    pos = 0;
+    const uint32_t after[] = {0, 2, 1};
+    for (uint32_t i = 0; i < 3; i++) {
+        CHECK(mo_table_next(map, &pos, &key, &got));
+        CHECK(mo_cell_get_ref(key) == mo_cell_get_ref(keys[after[i]]));
+    }
+    CHECK(mo_value_equal(p, f->map, map, other, &equal) && equal);
+    CHECK(mo_value_hash(p, f->map, map, &h2) && h1 == h2);
+    CHECK(mo_value_set(p, f->set, duplicates, 4, &set));
+    CHECK(mo_table_size(set) == 3);
+    CHECK(mo_table_remove(p, f->set, &set, keys[0]));
+    CHECK(mo_table_set(p, f->set, &set, keys[0], keys[0]));
+    mo_value_drop(p, f->set, set);
+    mo_value_drop(p, f->map, map);
+    mo_value_drop(p, f->map, shared);
+    mo_value_drop(p, f->map, other);
+    for (uint32_t i = 0; i < 3; i++) {
+        mo_value_drop(p, f->list, lists[i]);
+        mo_value_drop(p, f->builtin[MO_TYPE_TEXT], keys[i]);
+    }
+    CHECK(mo_heap_objects(p) == 0);
+    mo_heap_free(p);
+}
+
+static void test_generic(struct heap_fixture *f) {
+    struct mo_limits limits = mo_limits_default();
+    struct mo_process *p = mo_heap_new(&f->types, &limits);
+    MO_ASSERT(p != NULL);
+    bool equal;
+    int order;
+    uint64_t hash;
+    uint32_t floating = f->builtin[MO_TYPE_FLOAT];
+    CHECK(mo_value_equal(p, floating, mo_cell_float(NAN), mo_cell_float(NAN), &equal) && !equal);
+    CHECK(mo_value_compare(p, floating, mo_cell_float(NAN), mo_cell_float(1), &order) &&
+          order == 1);
+    CHECK(mo_value_compare(p, floating, mo_cell_float(NAN), mo_cell_float(NAN), &order) &&
+          order == 0);
+    CHECK(mo_value_equal(p, floating, mo_cell_float(0), mo_cell_float(-0.0), &equal) && equal);
+    CHECK(!mo_value_hash(p, floating, mo_cell_float(1), &hash));
+    struct mo_cell a, b;
+    CHECK(mo_value_case(p, f->node, 0, NULL, 0, &a));
+    b = a;
+    for (uint32_t i = 0; i < 10000; i++) {
+        struct mo_cell next;
+        CHECK(mo_value_case(p, f->node, 1, &a, 1, &next));
+        mo_value_drop(p, f->node, a);
+        a = next;
+        CHECK(mo_value_case(p, f->node, 1, &b, 1, &next));
+        mo_value_drop(p, f->node, b);
+        b = next;
+    }
+    CHECK(mo_value_equal(p, f->node, a, b, &equal) && equal);
+    uint64_t other_hash;
+    CHECK(mo_value_hash(p, f->node, a, &hash));
+    CHECK(mo_value_hash(p, f->node, b, &other_hash) && hash == other_hash);
+    CHECK(mo_value_compare(p, f->node, a, b, &order) && order == 0);
+    mo_value_drop(p, f->node, a);
+    mo_value_drop(p, f->node, b);
+    CHECK(mo_heap_objects(p) == 0);
+    mo_heap_free(p);
+}
+
 int main(void) {
     struct heap_fixture fixture;
     heap_fixture_init(&fixture);
@@ -162,6 +276,8 @@ int main(void) {
     test_lists(&fixture);
     test_deep_drop(&fixture);
     test_limit(&fixture);
+    test_tables(&fixture);
+    test_generic(&fixture);
     mo_arena_free(&fixture.arena);
     return mo_test_report("heap");
 }

@@ -8,6 +8,9 @@ struct heap_fixture {
     struct mo_types types;
     uint32_t builtin[MO_TYPE_BIGINT + 1];
     uint32_t list;
+    uint32_t map;
+    uint32_t set;
+    uint32_t map_keys;
     uint32_t node;
     uint32_t option;
     uint32_t tuple;
@@ -54,6 +57,13 @@ static void heap_fixture_init(struct heap_fixture *fixture) {
     };
     MO_ASSERT(mo_types_define_choice(types, fixture->option, options, 4) == MO_TYPES_OK);
     uint32_t pair[] = {text, fixture->list};
+    fixture->map = heap_intern(
+        types, (struct mo_type){.kind = MO_TYPE_MAP, .parameters = pair, .parameter_count = 2});
+    fixture->set = heap_intern(
+        types, (struct mo_type){.kind = MO_TYPE_SET, .parameters = &text, .parameter_count = 1});
+    uint32_t map_pair[] = {fixture->map, text};
+    fixture->map_keys = heap_intern(
+        types, (struct mo_type){.kind = MO_TYPE_MAP, .parameters = map_pair, .parameter_count = 2});
     fixture->tuple = heap_intern(
         types, (struct mo_type){.kind = MO_TYPE_TUPLE, .parameters = pair, .parameter_count = 2});
     fixture->function =

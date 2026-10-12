@@ -1,20 +1,114 @@
 #include "heap/internal.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+
+static MO_MUST_USE bool random_key(uint64_t key[2]) {
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd < 0) {
+        return false;
+    }
+    size_t offset = 0;
+    while (offset < 2 * sizeof(uint64_t)) {
+        ssize_t count = read(fd, (uint8_t *)key + offset, 2 * sizeof(uint64_t) - offset);
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+        if (count <= 0) {
+            int status = close(fd);
+            (void)status;
+            return false;
+        }
+        offset += (size_t)count;
+    }
+    return close(fd) == 0;
+}
+
+static MO_MUST_USE int compare_lookup(const void *left, const void *right) {
+    const struct mo_layout_lookup *a = left, *b = right;
+    if (a->category != b->category) {
+        return a->category < b->category ? -1 : 1;
+    }
+    if (a->first != b->first) {
+        return a->first < b->first ? -1 : 1;
+    }
+    return (a->second > b->second) - (a->second < b->second);
+}
+
+static void sift_lookup(struct mo_layout_lookup *items, uint32_t count, uint32_t root) {
+    while (root < count / 2) {
+        uint32_t child = 2 * root + 1;
+        if (child + 1 < count && compare_lookup(&items[child], &items[child + 1]) < 0) {
+            child++;
+        }
+        if (compare_lookup(&items[root], &items[child]) >= 0) {
+            return;
+        }
+        struct mo_layout_lookup temporary = items[root];
+        items[root] = items[child];
+        items[child] = temporary;
+        root = child;
+    }
+}
+
+static void sort_lookup(struct mo_layout_lookup *items, uint32_t count) {
+    for (uint32_t root = count / 2; root != 0;) {
+        sift_lookup(items, count, --root);
+    }
+    for (uint32_t end = count; end > 1;) {
+        struct mo_layout_lookup temporary = items[0];
+        items[0] = items[--end];
+        items[end] = temporary;
+        sift_lookup(items, end, 0);
+    }
+}
+
+uint32_t mo_heap_layout(const struct mo_process *process, uint32_t category, uint32_t first,
+                        uint32_t second) {
+    struct mo_layout_lookup key = {.category = category, .first = first, .second = second};
+    uint32_t low = 0, high = process->lookup_count;
+    while (low < high) {
+        uint32_t middle = low + (high - low) / 2;
+        int cmp = compare_lookup(&key, &process->lookup[middle]);
+        if (cmp == 0) {
+            return process->lookup[middle].index;
+        }
+        if (cmp < 0) {
+            high = middle;
+        } else {
+            low = middle + 1;
+        }
+    }
+    return MO_NO_INDEX;
+}
 
 struct mo_process *mo_heap_new(const struct mo_types *types, const struct mo_limits *limits) {
     MO_ASSERT(types != NULL && types->finished && limits != NULL);
-    if (limits->heap_size < sizeof(struct mo_process)) {
+    size_t baseline = sizeof(struct mo_process) +
+                      (size_t)types->layout_count * sizeof(struct mo_layout_lookup) + types->count;
+    if (limits->heap_size < baseline) {
         return NULL;
     }
-    struct mo_process *process = calloc(1, sizeof *process);
+    struct mo_process *process = calloc(1, baseline);
     if (process == NULL) {
         return NULL;
     }
+    if (!random_key(process->hash_key)) {
+        free(process);
+        return NULL;
+    }
     process->types = types;
-    process->used = sizeof *process;
+    process->used = baseline;
+    process->baseline = baseline;
     process->limit = limits->heap_size;
+    process->abilities = (uint8_t *)(process->lookup + types->layout_count);
+    if (!mo_heap_abilities(process)) {
+        free(process);
+        return NULL;
+    }
     for (uint32_t i = 0; i <= MO_TYPE_BIGINT; i++) {
         process->builtins[i] = MO_NO_INDEX;
     }
@@ -23,6 +117,18 @@ struct mo_process *mo_heap_new(const struct mo_types *types, const struct mo_lim
             process->builtins[types->items[i].kind] = i;
         }
     }
+    for (uint32_t i = 0; i < types->layout_count; i++) {
+        const struct mo_layout *layout = &types->layouts[i];
+        if (layout->kind == MO_LAYOUT_CASE || layout->kind == MO_LAYOUT_CLOSURE) {
+            bool closure = layout->kind == MO_LAYOUT_CLOSURE;
+            process->lookup[process->lookup_count++] =
+                (struct mo_layout_lookup){.category = closure ? 1 : 0,
+                                          .first = closure ? layout->function : layout->type,
+                                          .second = closure ? 0 : layout->case_index,
+                                          .index = i};
+        }
+    }
+    sort_lookup(process->lookup, process->lookup_count);
     return process;
 }
 
@@ -92,7 +198,7 @@ void mo_heap_free(struct mo_process *process) {
     while (process->allocations != NULL) {
         mo_heap_release(process, process->allocations);
     }
-    MO_ASSERT(process->used == sizeof *process && process->objects == 0);
+    MO_ASSERT(process->used == process->baseline && process->objects == 0);
     free(process);
 }
 
@@ -152,19 +258,48 @@ void mo_value_drop(struct mo_process *process, uint32_t type, struct mo_cell val
             }
         } else {
             const struct mo_type *kind = &process->types->items[allocation->type];
-            if (kind->kind == MO_TYPE_LIST || kind->kind == MO_TYPE_SET) {
+            if (kind->kind == MO_TYPE_LIST) {
                 for (uint32_t i = 0; i < allocation->length; i++) {
                     enqueue(process->types, kind->parameters[0], allocation->cells[i], &pending);
                 }
-            } else if (kind->kind == MO_TYPE_MAP) {
+            } else if (kind->kind == MO_TYPE_MAP || kind->kind == MO_TYPE_SET) {
+                uint32_t stride = mo_table_stride(allocation);
                 for (uint32_t i = 0; i < allocation->length; i++) {
-                    enqueue(process->types, kind->parameters[0], allocation->cells[2 * i],
+                    if (mo_table_live(allocation)[i] == 0) {
+                        continue;
+                    }
+                    enqueue(process->types, kind->parameters[0], allocation->cells[stride * i],
                             &pending);
-                    enqueue(process->types, kind->parameters[1], allocation->cells[2 * i + 1],
-                            &pending);
+                    if (stride == 2) {
+                        enqueue(process->types, kind->parameters[1],
+                                allocation->cells[stride * i + 1], &pending);
+                    }
                 }
             }
         }
         mo_heap_release(process, allocation);
     }
+}
+
+void mo_scratch_init(struct mo_scratch *scratch, struct mo_process *process) {
+    MO_ASSERT(scratch != NULL && process != NULL);
+    size_t available = process->limit - process->used;
+    mo_arena_init(&scratch->arena,
+                  available < MO_LIMIT_HEAP_SCRATCH ? available : MO_LIMIT_HEAP_SCRATCH);
+    scratch->process = process;
+}
+
+void mo_scratch_free(struct mo_scratch *scratch) {
+    MO_ASSERT(scratch->process->used >= scratch->arena.used);
+    scratch->process->used -= scratch->arena.used;
+    mo_arena_free(&scratch->arena);
+}
+
+void *mo_scratch_resize(struct mo_scratch *scratch, void *bytes, size_t old_size, size_t new_size) {
+    size_t before = scratch->arena.used;
+    void *result =
+        mo_arena_resize(&scratch->arena, bytes, old_size, new_size, _Alignof(max_align_t));
+    scratch->process->used = scratch->process->used - before + scratch->arena.used;
+    MO_ASSERT(scratch->process->used <= scratch->process->limit);
+    return result;
 }
