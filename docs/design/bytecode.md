@@ -815,62 +815,402 @@ never reads a register whose reference was consumed.
 ## 10. The text form
 
 Every file has a text form. It is used to write the VM's tests by hand, and
-`mo check --emit=bytecode` prints it. It is line-based, with `;` starting a
-comment:
+`mo check --emit=bytecode` prints it. There are two forms: **indexed**, which
+the disassembler always prints, and **shorthand**, for hand-written tests.
+Both assemble to the file of section 3, without changing that format.
+
+### 10.1 Indexed form
+
+Every section occurs once, even when empty, in file order. Entries have
+consecutive zero-based indices in their section; forward references are
+allowed. Nothing is added, interned, sorted or removed. Arrays retain their
+order, including unused entries and repeated strings, constants or layouts
+where section 9 permits them. Type names still obey section 3's lowest-string-
+index rule; other string references retain the index written.
+
+The grammar below is line-based. Each entry, instruction and keyword line
+ends with a newline. `;` starts a comment outside quotes. In the grammar,
+`list(X)` means `"[" [ X { "," X } ] "]"`; it is not a text keyword.
+`U` is a decimal `u32`. `S`, `T`, `L`, `K`, `G`, `I`, `F`, `M` and `D` are
+`s`, `t`, `L`, `k`, `g`, `i`, `f`, `m` and `d` followed by a decimal index.
+`R` is `r` followed by a register number; `AT` is `@` followed by a code word
+offset, not an instruction number. `OPT_S` is `S` or `-` (absent, not an
+empty string). All counts and byte lengths are derived from the lists and
+payloads. No decoded-only fields are written.
 
 ```text
-file        = { item }
-item        = type | global | init | function | module
-type        = "record" NAME { field } "end"
-            | "choice" NAME { "case" NAME [ "(" fields ")" ] } "end"
-field       = NAME ":" TYPE
-global      = "global" NAME ":" TYPE
-init        = "init" NAME { "," NAME }                 ; the init functions in order
-module      = "module" NAME "exposes" NAME { "," NAME }
-function    = "function" NAME "(" [ params ] ")" ":" TYPE KIND [ "spec" ]
-              [ "captures" TYPE { "," TYPE } ]
-              "registers" REG ":" TYPE { "," REG ":" TYPE }
-              { [ LABEL ":" ] [ "span" FILE START END ] instruction }
-              "end"
-params      = NAME ":" TYPE ( "owned" | "borrowed" ) { "," ... }
-instruction = OPCODE operand { "," operand }
-operand     = REG | LABEL | NAME | TYPE | LITERAL
+file        = indexed | shorthand
+indexed     = "bytecode 0.1 indexed"
+              strings types layouts constants globals init functions modules debug
+strings     = "strings" { S Q } "end"
+types       = "types" { T type_body } "end"
+type_body   = SIMPLE
+            | "tuple" list(T) | ( "list" | "set" ) T | "map" T T
+            | "record" S list(field) | "choice" S list(case)
+            | "function" list(T) T | "env" F | "capability" CAP
+field       = "(" OPT_S "," T ")"
+case        = "(" S "," list(field) ")"
+layouts     = "layouts" { L layout_body } "end"
+layout_body = ( "record" | "tuple" ) T list(T)
+            | "case" T U list(T) | "closure" T F list(T)
+constants   = "constants" { K T payload } "end"
+payload     = scalar | "text" S | "bytes" HEX
+            | "bigint" SIGN HEX | "closure" F
+scalar      = "()" | "true" | "false" | NUMBER | CODEPOINT | "bits" HEX
+NUMBER      = [ "-" ] DIGITS [ "." DIGITS ]
+CODEPOINT   = "U+" HEXDIGITS
+globals     = "globals" { G T S M } "end"
+init        = "init" { I F } "end"
+functions   = "functions" { indexed_fn } "end"
+indexed_fn  = F S M KIND "spec" BOOL
+              "params" list(param) "result" T "captures" list(T)
+              "registers" list(T) "code" { instruction } "end" "end"
+param       = "(" T "," OWNERSHIP ")"
+instruction = OPCODE [ operand { "," operand } ]
+operand     = R | T | L | K | G | F | P | H | AT | U
+modules     = "modules" { M S "types" list(export)
+              "functions" list(F) "globals" list(G) } "end"
+export      = "(" T "," BOOL ")"
+debug       = "debug" { D "spans" list(span) "variables" list(variable)
+              "text" OPT_S } "end"
+span        = "(" AT "," S "," U "," U ")"
+variable    = "(" R "," S "," AT "," AT ")"
 ```
 
-Types are written in Mo's syntax. Functions, globals, primitives and host
-operations are written by name, and layouts by their type's name (a case
-block as `Type.Case`). Constants are written as Mo literals where they are
-used, such as `const r1, "total"`; the assembler builds the constant pool,
-in order of first use. Structural types and layouts are added to their tables
-in order of first use, too, which makes the bytes depend only on the text.
+`SIMPLE` is a payload-free kind from section 3 (`unit` through `bigint`).
+`CAP` is one of its seven capability names. `KIND` is one of section 3.3's
+seven function kinds; `OWNERSHIP` is `owned` or `borrowed`; `BOOL` is `0` or
+`1`; `SIGN` is `zero`, `positive` or `negative`. These names encode the enum
+values in the headers, not extra strings. `P` and `H` are `p` and `h` followed
+by the row index in `prims.def` and `hostops.def`. Each opcode's operand
+kinds and counts are those in `opcodes.def`; field and case operands use `U`.
+Jump targets use numeric word offsets. The assembler derives instruction
+heads, including variable operand counts, without changing the code words.
+
+`Q` is a double-quoted byte string. It accepts printable ASCII other than
+`"` and `\`, raw UTF-8, and only the escapes `\"`, `\\` and `\xhh` (exactly
+two hex digits for one byte). Raw control bytes are not allowed; the decoded
+string must be valid UTF-8. `HEX` is `hex"` followed by an even number of
+hex digits and `"`, with no spaces inside; each pair is one byte in file
+order. `DIGITS` and `HEXDIGITS` are one or more decimal and hex digits,
+respectively. The constant's type selects exactly one payload form:
+
+| Type | Payload | Canonical spelling |
+| --- | --- | --- |
+| `unit` | `()` | `()` |
+| `bool` | `true` or `false` | the word for its value |
+| `byte` | unsigned decimal integer | `0` to `255`, without leading zeros |
+| `char` | `U+` and its Unicode scalar value in hex | `U+0`, `U+41`, `U+1f600`; lowercase hex without leading zeros |
+| `int` | signed decimal integer | `0`, `7`, `-7`; no leading zeros, `+` or negative zero |
+| `time` | signed decimal integer, microseconds since the epoch of 2.2 | as `int`, not a date string |
+| `duration` | signed decimal integer, microseconds | as `int`, without a unit suffix |
+| `decimal` | exact decimal number | `0`, `7`, `-0.125`; the rules below |
+| `float` | `bits HEX`, exactly 8 bytes | lowercase hex in file byte order |
+| `text` | `text S` | the string index |
+| `bytes` | `bytes HEX` | lowercase hex in file byte order |
+| `bigint` | `bigint SIGN HEX` | canonical sign and little-endian magnitude (3.1) |
+| `function` | `closure F` | the capture-less closure's function index |
+
+Integer payloads have no fraction; unsigned ones have no sign. `NUMBER`
+accepts no `+` sign, exponent, separators or type suffix. A decimal
+has an integer part and at most 18 fractional digits. Its numeric value
+times 10¹⁸ is the signed coefficient in 3.1; parsing never rounds or goes
+through `float`.
+Canonical decimals have no integer leading zeros except `0`; a fraction is
+printed only when nonzero, without trailing zeros. Fractional leading zeros
+are significant and remain. A minus sign is printed only for a negative,
+nonzero value, so decimal zero is `0`. The assembler accepts integer leading
+zeros, fractional trailing zeros and signed negative zero as noncanonical
+spellings, within these rules. Every value must satisfy 3.1's type bounds.
+
+`bits` is valid only for `float`: it retains negative zero and every accepted
+NaN payload. No other scalar accepts raw bits, and a float accepts no natural
+number spelling in indexed text. All other scalar encodings are uniquely
+determined by their exact value. A mismatched payload is an error. Byte
+strings may contain any bytes.
+
+Registers list **all** register types, including parameters and a closure's
+implicit `env`. Parameters list only explicit arguments. Module type exports
+pair the type with `contents_exposed`: `0` for `T`, `1` for `T(..)`.
+Module globals list all globals, not just exposed names. Debug entry `dN`
+belongs to function `fN`; every function has one, including empty metadata.
+Span tuples are code offset, file string, start byte and end byte. Variable
+tuples are register, name string, inclusive start word and exclusive end word.
+Their list order is preserved, not sorted by register. Debug `text` preserves
+the test sentence or spec line, including the distinction between absent
+and an empty string. The header's magic, version and zero flags are fixed;
+the assembler regenerates its checksum. A verified header has no other data
+to preserve.
+
+### 10.2 Shorthand
+
+Shorthand uses Mo type syntax, symbolic instruction operands and literals.
+It may start with **pool seeds**: indexed strings, types, layouts and
+constants sections, in that order, each optional. Seeds are complete prefixes
+with consecutive indices; they may refer forward to later seeds or named
+declarations through their eventual indices. They are retained unchanged.
+No indexed globals, init, functions, modules or debug sections occur in
+shorthand, and no shorthand items occur in indexed text.
 
 ```text
-function Wc.add(a: Counts borrowed, b: Counts borrowed) : Counts function
-  registers r2: Int, r3: Int, r4: Int, r5: Int, r6: Int, r7: Int, r8: Int, r9: Int, r10: Int, r11: Counts
-  field r2, r0, 0
-  field r3, r1, 0
-  add_int r4, r2, r3
-  field r5, r0, 1
-  field r6, r1, 1
-  add_int r7, r5, r6
-  field r8, r0, 2
-  field r9, r1, 2
-  add_int r10, r8, r9
-  construct r11, Counts, r4, r7, r10
-  ret r11
+shorthand   = "bytecode 0.1 shorthand"
+              [ strings ] [ types ] [ layouts ] [ constants ] { item }
+item        = nominal | global_decl | init_decl | function_decl | module_decl
+nominal     = "record" NAME { named_field } "end"
+            | "choice" NAME { "case" NAME [ "(" named_fields ")" ] } "end"
+named_field = NAME ":" TYPE
+named_fields = TYPE | named_field { "," named_field }
+global_decl = "global" NAME ":" TYPE "in" NAME
+init_decl   = "init" list(NAME)
+module_decl = "module" NAME "exposes" list(exposure)
+exposure    = NAME [ "(..)" ]
+function_decl = "function" NAME "(" [ params ] ")" ":" TYPE KIND [ "spec" ]
+              "in" NAME [ "captures" list(TYPE) ]
+              "registers" list(named_reg)
+              [ "variables" list(named_variable) ] [ "text" Q ]
+              { label | source_span | named_instruction } "end"
+params      = NAME ":" TYPE OWNERSHIP { "," NAME ":" TYPE OWNERSHIP }
+named_reg   = R ":" TYPE
+named_variable = "(" R "," Q "," LABEL "," LABEL ")"
+label       = LABEL ":"
+source_span = "span" Q U U
+named_instruction = OPCODE [ named_operand { "," named_operand } ]
+named_operand = R | LABEL | AT | NAME | TYPE | LITERAL | T | L | K | G | F | P | H | U
+```
+
+`NAME` is a Mo qualified name, including type arguments for instantiations;
+`TYPE` is a Mo type or an indexed `T`, with `env(NAME)` for a closure's env.
+A label is `@` followed by a name; a final label may mark the code's end for
+a variable range, but not a jump target. `registers` lists only additional
+registers, consecutively after explicit parameters and a closure's implicit
+owned `env`; the assembler supplies those leading register types. Parameter
+names do not implicitly create debug ranges. `variables` gives those ranges;
+`span` adds an entry at the next instruction's word offset. Equal adjacent
+spans are not merged. Only one span may occur at an offset.
+`text` supplies a test sentence or spec line. Omitted captures, variables and
+spans are empty; omitted text is absent. Omitted `spec` means `0`, not
+inference from the kind; section 9 still checks it. For ordinary functions,
+debug text must be absent.
+
+Functions, globals, primitives and host operations are written by full name,
+and layouts by their type (`Type.Case` for a case block, `closure(NAME)` for
+a closure). Index-shaped tokens are reserved for indexed references. An
+indexed operand refers directly to a final table entry and does not create
+it; numeric `AT` targets are also allowed. A constant operand may be a Mo
+scalar, text, bytes or bigint literal, or `closure(NAME)` for a capture-less
+closure. Its type is the destination register's type, without
+conversion. Numeric literals are encoded as in 3.1; a float literal uses its
+binary64 value, `nan` the bits `0x7ff8000000000000`. Other NaN payloads need a
+seed. A `range` or choice literal is not a constant (3.1).
+
+The assembler fills the tables in these steps:
+
+1. Copy the seeds. Reserve a fresh nominal type for each record or choice
+   declaration, then indices for globals, functions and modules, each in its
+   own declaration order. Seeded nominal types are already declared: do not
+   declare them again. Resolve names, including forward references. Ambiguous
+   or duplicate symbolic declarations are errors; use indexed text for files
+   with equal nominal names. Every global and function names its module with
+   `in`; modules are declared exactly once. No implicit module is added.
+2. Walk items in text order, headers before bodies, lists and instruction
+   operands left to right. Visit a type's parameters before interning the
+   enclosing type. Named nominal references use their reserved indices, not
+   a recursive walk of their fields. Intern other types on first encounter,
+   reusing a matching seed or earlier entry. Function headers visit explicit
+   parameter types, result, captures, implicit env, then additional registers.
+   A closure also interns its function type after its result type. Define the
+   reserved nominal entries from their fields and cases.
+3. Record requests for symbolic layout operands in encounter order.
+   `make_case` also requests its case layout if boxed; `make_closure` requests
+   its closure layout. After all types are defined, process requests in that
+   order: append the layout with its definition's fields or captures if
+   absent, or reuse the lowest matching index. Nothing else adds layouts.
+   A layout request does not visit its definition's types again. On a literal,
+   append a constant if absent; equality is its type index and exact encoded
+   payload, not runtime equality. Reuse the lowest matching constant index.
+4. Intern strings at each encounter in the same walk: declaration names,
+   then field/case names, function parameter names, variable names, spec text,
+   span files and text literals as they occur. Types supplied by seeds do not
+   create strings on symbolic lookup. Reuse the lowest byte-identical string
+   index; otherwise append. Module references in `in` do not create strings;
+   neither do other symbolic lookups. A module's declaration creates its name.
+   Unused parameter-name strings are retained. Names in type entries obey
+   section 3's lowest-index rule.
+5. Encode instructions and resolve labels. Build each module's exposed-type
+   and exposed-function arrays from its exposure list, in list order; a bare
+   type hides its contents, `(..)` exposes them and is invalid on a function.
+   A global in the list is an error: module globals include all declarations
+   with that `in` module, in global declaration order. There is at most one
+   `init` item; its list gives exactly the initializer order, or is empty when
+   omitted. Emit one debug entry per function from its explicit metadata,
+   preserving variable list order. Regenerate the header and verify the file.
+
+Steps 2 to 4 describe one encounter walk, not three separate passes over the
+text; layout requests wait for complete definitions, but keep that walk's
+order. Only index reservation in step 1 precedes it. A seed prevents automatic
+insertion of its matching entry and so can set order independently of use.
+Without seeds, constants, non-nominal types and layouts follow first use.
+Shorthand and seeds therefore describe the same file as indexed text, not a
+second binary format.
+
+### 10.3 A worked text
+
+Both texts below assemble to the same file. `s0` is unused. The types
+`List(Int)` and `(Int, Int)` occupy `t2` and `t3`, though the function first
+mentions the tuple, then the list. Layout `L0` is for `Visible`, though the
+code constructs the tuple with `L1` first. `Hidden` is exposed without its
+contents; `Visible` with them. Variable `answer` lives in words [3, 21), and
+the test's sentence is `keeps the answer`.
+
+This is the canonical indexed text:
+
+```text
+bytecode 0.1 indexed
+strings
+  s0 "unused"
+  s1 "Hidden"
+  s2 "Visible"
+  s3 "value"
+  s4 "Demo"
+  s5 "Demo.test.1"
+  s6 "answer"
+  s7 "keeps the answer"
+  s8 "demo.mo"
+end
+types
+  t0 unit
+  t1 int
+  t2 list t1
+  t3 tuple [t1, t1]
+  t4 record s1 [(s3, t1)]
+  t5 record s2 [(s3, t1)]
+end
+layouts
+  L0 record t5 [t1]
+  L1 tuple t3 [t1, t1]
+end
+constants
+  k0 t1 7
+  k1 t0 ()
+end
+globals
+end
+init
+end
+functions
+  f0 s5 m0 test spec 1
+    params []
+    result t0
+    captures []
+    registers [t1, t3, t2, t5, t0]
+    code
+      const r0, k0
+      construct r1, L1, r0, r0
+      drop r1
+      construct r3, L0, r0
+      drop r3
+      const r4, k1
+      ret r4
+    end
+  end
+end
+modules
+  m0 s4 types [(t4, 0), (t5, 1)] functions [] globals []
+end
+debug
+  d0 spans [(@0, s8, 10, 20)] variables [(r0, s6, @3, @21)] text s7
 end
 ```
 
-The assembler and disassembler live in `src/bytecode`. Assembling a text,
-disassembling the bytes and assembling the result gives the same bytes. A fuzz
-target checks this.
+The shorthand seeds the unused string, types and layouts. The assembler adds
+the remaining strings and constants on encounter; the seeds need not include
+them. The unused `r2` keeps a list type in the register table, not a value.
 
-`mo_bytecode_assemble(text, length, out, error_out)` accepts at most
-`MO_LIMIT_BYTECODE_SIZE` text bytes and writes verified bytecode.
+```text
+bytecode 0.1 shorthand
+strings
+  s0 "unused"
+  s1 "Hidden"
+  s2 "Visible"
+  s3 "value"
+end
+types
+  t0 unit
+  t1 int
+  t2 list t1
+  t3 tuple [t1, t1]
+  t4 record s1 [(s3, t1)]
+  t5 record s2 [(s3, t1)]
+end
+layouts
+  L0 record t5 [t1]
+  L1 tuple t3 [t1, t1]
+end
+module Demo exposes [Hidden, Visible(..)]
+function Demo.test.1() : Unit test spec in Demo
+  registers [r0: Int, r1: (Int, Int), r2: List(Int), r3: Visible, r4: Unit]
+  variables [(r0, "answer", @live, @done)]
+  text "keeps the answer"
+  span "demo.mo" 10 20
+  const r0, 7
+  @live:
+  construct r1, (Int, Int), r0, r0
+  drop r1
+  construct r3, Visible, r0
+  drop r3
+  const r4, ()
+  ret r4
+  @done:
+end
+```
+
+### 10.4 Canonical text and round trips
+
+Canonical text is indexed text with these printing rules:
+
+- Sections and entries follow file order, without comments or blank lines.
+  Section names and their `end` are unindented. Entries have two spaces;
+  function properties and their `end` have four; instructions have six.
+  A function has separate `end` lines for code and for the entry, as above.
+- Each grammar entry occupies one line, except a function's prescribed lines.
+  Tokens have one space between them except beside punctuation. Every comma
+  is followed by one space and preceded by none. Tuples have no space after
+  `(` or before `)`, nor lists just inside brackets. There are no trailing
+  spaces. Each function property (`params` through `code`) has its own line.
+- Indices and offsets use decimal without leading zeros, except `0`;
+  scalar payloads follow 10.1. Hex digits are lowercase. Quoted strings
+  print ASCII bytes 0x20 to 0x7e literally except `"` and `\`, which use
+  `\"` and `\\`. Every other byte uses `\xhh`,
+  including each byte of non-ASCII UTF-8. No Unicode normalization occurs.
+- Lines end with LF, including the last line. No terminating NUL is printed.
+  Every optional array and spec flag is explicit; absence is `-`. There are
+  no aliases, symbolic operands, labels or first-use insertions.
+
+The assembler also accepts comments, blank lines, spaces or tabs at token
+boundaries, CRLF, a missing final newline, leading zeros in decimal numbers
+and uppercase hex digits. These do not make text canonical. Indexed sections,
+entries and property lines must still occur in grammar order. All references
+and metadata are checked by section 9, just as for a binary file.
+
+For every verified file `b`, `assemble(disassemble(b))` is `b` byte for byte.
+For every accepted text `x`, `disassemble(assemble(x))` is its canonical
+indexed text. Disassembling that file again prints exactly the same text.
+These are format rules, subject only to available memory and the caller's
+output buffer limit, not to first-use ordering. Stream 3 tests both rules,
+including unused and duplicate strings, non-first-use types and layouts,
+float bits, exposure flags, spans, variable ranges and spec text. A fuzz
+target checks the byte round trip.
+
+The assembler and disassembler live in `src/bytecode`.
+`mo_bytecode_assemble(text, length, out, error_out)` writes verified bytecode,
+bounded by `MO_LIMIT_BYTECODE_SIZE`.
 `mo_bytecode_disassemble(bytes, length, out, error_out)` verifies its input
-before writing text, without a terminating NUL. Its text output has the same
-`MO_LIMIT_BYTECODE_SIZE` bound so successful output can be assembled again;
-expansion past that bound returns false. Their declarations are in
+before writing canonical indexed text. Text input and output are bounded by
+`MO_LIMIT_BYTECODE_TEXT_SIZE` (2 GiB in v0.1), eight times the binary limit:
+quoting and instruction names expand bytes. The canonical spelling above
+fits within eight times the binary file's length, so every verified file's
+text fits and text byte offsets still fit `u32`. Noncanonical input past the
+text bound is refused. Their declarations are in
 `bytecode.h`; stream 3 implements them along with the writer. Each borrows its
 input and requires an initialized, empty caller-owned buffer, which must not
 back the input. Invalid input, an output limit or no memory returns false,
@@ -878,9 +1218,8 @@ leaves the buffer empty (capacity may have grown), and fills the required
 error structure with static reason text. Assembly errors have a text byte
 offset; disassembly uses `mo_load_error` with an input byte offset. Offset zero
 denotes a failure not tied to an input byte, such as no memory or an output
-limit. Disassembly must preserve all table indices and unused entries,
-including debug metadata and exposure flags; first-use table construction is
-for hand-written text, not permission to renumber an existing file.
+limit. First-use table construction is only for shorthand; it never
+renumbers a seed or an indexed file.
 
 ## 11. Versions
 

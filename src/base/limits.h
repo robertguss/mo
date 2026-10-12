@@ -102,6 +102,12 @@
 /* Bytes in one bytecode file. */
 #define MO_LIMIT_BYTECODE_SIZE (256 << 20)
 
+/* Bytes of bytecode text input or output (bytecode.md section 10). The text tools refuse more;
+ * this does not change the binary file limit. Canonical text fits within eight times its file's
+ * bytes, including quoting and instruction names. Use wide unsigned arithmetic: 2 GiB exceeds
+ * a signed 32-bit int, but text error offsets must still fit u32. */
+#define MO_LIMIT_BYTECODE_TEXT_SIZE (UINT64_C(8) * MO_LIMIT_BYTECODE_SIZE)
+
 /* Parameters of one bytecode function, including a closure's implicit env. One extra slot
  * holds a promise's result or a closure's env after the largest source signature. Runtime
  * function types may also have this many parameters, for generated promise signatures. */
@@ -215,5 +221,8 @@ _Static_assert(MO_LIMIT_FUNCTION_INSTRUCTIONS <= MO_LIMIT_FUNCTION_CODE_WORDS,
 _Static_assert(MO_LIMIT_STRING_SIZE >= MO_LIMIT_FILE_SIZE, "a text literal can fill its file");
 _Static_assert(MO_LIMIT_MODULES >= MO_LIMIT_FILES, "every source file is a module");
 _Static_assert(MO_LIMIT_BYTECODE_SIZE >= MO_LIMIT_STRING_SIZE, "the longest string fits in a file");
+_Static_assert(MO_LIMIT_BYTECODE_TEXT_SIZE == UINT64_C(8) * MO_LIMIT_BYTECODE_SIZE,
+               "canonical bytecode text fits within eight times the binary limit");
+_Static_assert(MO_LIMIT_BYTECODE_TEXT_SIZE <= UINT32_MAX, "bytecode text offsets fit u32");
 
 #endif
