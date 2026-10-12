@@ -6,6 +6,8 @@
 #   make fuzz-smoke   run every fuzz target briefly (needs clang with libFuzzer)
 #   make format       format the C sources with clang-format
 #   make deps         check that each module includes only what architecture section 2 allows
+#   make library-map  check that docs/design/library.md has a row for every line of the tables
+#                     prims.def and hostops.def, and names only their lines
 #   make tidy         check that results of standard-library calls are used (needs clang-tidy)
 #   make grammar      check that Mo code parses with the executable grammar (needs bison):
 #                     the grammar's own tests, examples/ and the reference's examples
@@ -75,7 +77,8 @@ ASAN_OPTIONS ?= abort_on_error=1
 UBSAN_OPTIONS ?= halt_on_error=1:print_stacktrace=1
 export ASAN_OPTIONS UBSAN_OPTIONS
 
-.PHONY: all test sanitize fuzz fuzz-smoke format format-check deps tidy grammar formal clean FORCE
+.PHONY: all test sanitize fuzz fuzz-smoke format format-check deps library-map tidy grammar formal \
+	clean FORCE
 
 all: $(BUILD)/debug/mo
 
@@ -126,6 +129,13 @@ format-check:
 deps:
 	sh ci/test_deps.sh
 	sh ci/deps.sh src
+
+# docs/design/library.md against the tables it maps, src/base/prims.def and src/base/hostops.def,
+# which ci/library_map.sh reads. Its test runs first, to show that the check catches each kind of
+# disagreement it must refuse.
+library-map:
+	sh ci/test_library_map.sh
+	sh ci/library_map.sh
 
 # cert-err33-c flags a call to a standard-library function whose result is ignored, such as
 # fflush or fprintf: the functions on CERT rule ERR33-C's list, which does not include printf,

@@ -49,6 +49,7 @@ make sanitize       # the tests under AddressSanitizer and UndefinedBehaviorSani
 make fuzz-smoke     # every fuzz target for 20 seconds (needs clang with libFuzzer)
 make format         # format the C sources with clang-format
 make deps           # each module includes only what the architecture allows
+make library-map    # docs/design/library.md and the tables of primitives agree
 make tidy           # standard-library results are used (needs clang-tidy)
 make grammar        # Mo code parses with the executable grammar (needs bison)
 make formal         # Mo Core in Lean builds and every proof checks (needs elan)

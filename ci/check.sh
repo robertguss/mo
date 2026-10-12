@@ -73,6 +73,9 @@ if have lake; then make --no-print-directory formal; else missing "elan (Lean's 
 step "Module dependencies: each module includes only what architecture section 2 allows"
 make --no-print-directory deps
 
+step "The library map: docs/design/library.md has a row for every primitive and host operation"
+make --no-print-directory library-map
+
 step "Formatting"
 if have clang-format; then make --no-print-directory format-check; else missing "clang-format is not installed"; fi
 
