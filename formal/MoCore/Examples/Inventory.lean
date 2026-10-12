@@ -271,13 +271,13 @@ assert top_by(products, 2, stock_value) == [lamp, notebook]
 
 /-! ### More: what `main` prints (worked out by hand from the sample's code) -/
 #guard passes program
-  (seq (call "main" [v "console"]) <|
+  (lets [("console", io .consoleFake [])] <|
+   seq (call "main" [v "console"]) <|
     eq (tList tText) (io .printed [v "console"])
       (strs ["The three most valuable stocks:",
              "product    category  price  stock\nDesk lamp  office    24.50     40\nNotebook   office     3.20    300\nKettle     kitchen   39.90     12",
              "", "kitchen: 2", "office: 2", "home: 1", "",
              "One from each category: Kettle, Desk lamp, Doormat"]))
-  {} [("console", .console)]
 
 /-! ### More: map literals and `to_map` (reference 3.8, 14)
 

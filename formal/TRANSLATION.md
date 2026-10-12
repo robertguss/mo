@@ -1228,18 +1228,41 @@ A test is a zero-argument Unit function of kind `test`; `assert e` is
 matching arm and fails in the others. The test passes when it returns Unit.
 `fail e` first evaluates `e : Text`; effects survive in the failed outcome's
 world, and no continuation runs. A bug while computing the detail remains a
-stop, not a failure. The sample helpers `passes` and `scenario` lower their
-Boolean conditions to these Unit assertions in spec mode.
+stop, not a failure. The sample helper `passes` lowers its Boolean condition
+to a Unit assertion in spec mode.
 
 ### 12.4 Fakes
 
-Core has one `World`. A test's fakes are that world's starting state and the
-handles bound to the test's names: `Console.fake()` and
-`Console.fake_input(lines)` set standard input; `Files.in_memory(files)` sets
-the files (`.read_only` gives a `ReadFiles` handle); `Clock.fixed(t)` sets the
-time; `Random.seeded(n)` the seed; `Args.of(list)` and `Env.of(map)` the
-arguments and environment. Every use of a fake sees the same world, as
-reference 12.4 requires.
+Fakes are Core primitive constructors, not the test's starting world:
+
+| Mo | Core | Result |
+| --- | --- | --- |
+| `Console.fake()` | `%io.consoleFake()` | Console |
+| `Console.fake_input(lines)` | `%io.consoleFakeInput(lines)` | Console |
+| `Files.in_memory(files)` | `%io.filesInMemory(files)` | Files |
+| `Clock.fixed(time)` | `%io.clockFixed(time)` | Clock |
+| `Random.seeded(n)` | `%io.randomSeeded(n)` | Random |
+| `Args.of(list)` | `%io.argsOf(list)` | Args |
+| `Env.of(map)` | `%io.envOf(map)` | Env |
+
+Each appends its own `CapState` to `World.fakes` and returns `cap kind root
+(some index)`. A real handle has `none` for its state index and uses the
+world's real fields as before. The index and folder root are independent:
+`within` and `readOnly` preserve the index, so a root, narrowed handle and
+read-only handle share every write. Two constructions of the same kind
+receive different indices, so both may be used in one expression. Calls and
+captured environments carry handles, not copies of state; an ordinary
+`main` can write to a test's files and console, and the test sees that state
+after the call. Inputs and observations are ordinary immutable values:
+retaining the original map, or a previous `printed` list, keeps a snapshot.
+
+The typing rule and checker permit all seven constructors, `printed` and
+`printedErrors` only in spec code, including anchors and anonymous functions
+inside spec code (bytecode 3.3 and 9), as for `fail`. Constants and ordinary
+functions cannot allocate fakes. A real console observation stops with
+`outside "console observation needs a fake"`; it never reads real output.
+The kind type does not record whether a handle is fake, so this is a runtime
+check, not a fake-vs-real typing distinction.
 
 The world's standard input is a list of lines, each without its line ending,
 which `%io.readLine` returns in turn. The runtime splits what it reads where
@@ -1252,22 +1275,9 @@ folder the fake stands for, `"."` of its handle, always exists; `list` gives
 the names directly inside a folder, each subfolder once, sorted, and listing
 a folder that doesn't exist is `Error(NotFound(folder))` (reference 14).
 
-`console.printed` and `console.printed_errors` are the primitives
-`%io.printed` and `%io.printedErrors`, which read what the world's standard
-output and error hold. The checker allows them only in spec code, including
-anchors and anonymous functions inside spec code (bytecode 3.3 and 9).
-Whether a handle is real or fake remains a host/front-end contract: the
-current World model doesn't distinguish them.
-
-Each fake is a handle on its own state (reference 12.4). When a test makes a
-new fake of a kind it already has, such as a second `Args.of(...)` for a
-second call of `main`, the test is run in steps that share the world, and
-the new fake is set between steps (`scenario` in `MoCore/Testing.lean`;
-`todo.mo` and `find.mo` need it). Two fakes of one kind in use at the same
-time, such as two consoles that both print before either is read, would need
-a world per fake. The model doesn't have the fake constructors yet
-(architecture 4.1 leaves them to stream 0), and none of the samples needs
-them.
+Todo's and Find's multi-call tests are now single Core expressions that
+construct fresh Args/Console handles as their Mo source does. No host step
+replaces world fields between calls; the old `scenario` workaround is gone.
 
 `wc.mo`'s test:
 
@@ -1280,12 +1290,12 @@ assert console.printed == ["      1       2       8 a.txt", "      1       1    
 assert console.printed_errors == ["wc: gone.txt: no such file"]
 ```
 
-runs, in the world `{ args := ["a.txt", "gone.txt", "b.txt"], files := [("a.txt",
-"one two\n"), ("b.txt", "three\n")] }` with `args`, `console` and `files`
-bound to handles,
+lowers to the following expression in an empty real world:
 
 ```
-let status = main(args, console, files) in
+let console = %io.consoleFake() in
+let files = %io.readOnly(%io.filesInMemory({"a.txt": "one two\n", "b.txt": "three\n"})) in
+let status = main(%io.argsOf(["a.txt", "gone.txt", "b.txt"]), console, files) in
 if %eq(status, 1) then
   if %eq(%io.printed(console), ["      1       2       8 a.txt", ...]) then
     %eq(%io.printedErrors(console), ["wc: gone.txt: no such file"])
@@ -1365,7 +1375,7 @@ place; *not modeled* ones are not in this model yet.
 | `Args.list`, `Env.get`, `Console.print`, `error`, `read_line`, `printed`, `printed_errors`, `Files.read_text`, `read_bytes`, `write_text`, `append_text`, `remove`, `list`, `exists?`, `within`, `read_only`, `Clock.now`, `Random.int` | prim (`%io.*`); `read_bytes` gives a file's text as UTF-8 (11.1) |
 | `FileError`'s text form | Core (`FileError.to_text`) |
 | `to_text`, at every type with `Text` | lowered as the part `#{x}` of a text is (3.4), so the two give the same text; a set's is `Lib.setText` (3.4), and the `to_text[T]` the lowering derives for records, choice types, tuples, lists and maps without their own `to_text` is not modeled |
-| `Console.fake`, `fake_input`, `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `Args.of`, `Env.of` | the test's world (12.4) |
+| `Console.fake`, `fake_input`, `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `Args.of`, `Env.of` | spec-only primitives (`%io.consoleFake`, `consoleFakeInput`, `filesInMemory`, `clockFixed`, `randomSeeded`, `argsOf`, `envOf`), with independent shared states (12.4) |
 | `Unicode16` | not modeled |
 
 ## Ambiguities settled by D227
@@ -1423,11 +1433,9 @@ section numbers after the topic are the reference's; those after "Already",
     digits, and gives `None` for anything else, second 60 included. Already
     did that.
 16. **Several fakes of one kind in a test** (12.4): each fake is a handle on
-    its own state, and every use of one fake sees the same state. Unchanged:
-    the model runs such a test in steps, setting each new fake between them,
-    which gives the reference's answer for every sample; two fakes of one kind
-    in use at the same time wait for the fake constructors, which
-    architecture 4.1 leaves to stream 0 (12.4).
+    its own state, and every use of one fake sees the same state. Now modeled:
+    constructors allocate independent states and derived handles retain their
+    index, including when several fakes of one kind are used together (12.4).
 17. **When constants are computed** (10.4): once, before any other code of
     the program runs, in the order of their dependencies; a cycle is an
     error, and a constant that stops stops the program before it starts.
@@ -1649,11 +1657,12 @@ the end of an item this document's.
 6. **Initialization lifetime and fuel.** `runProgram`, `runTest` and
    `evalProgram` each initialize a fresh run. A suite or shared image uses
    `initConsts` once and its continuation receives reusable computed globals;
-   `scenario` does this. No image cache is hidden in World. Fuel is a depth
+   a multi-call test keeps its handles in one expression. No image cache is
+   hidden in World. Fuel is a depth
    bound reused for each initializer and the subsequent call, not a shared
    instruction budget. Larger fuel preserves every finished outcome, proven
    for initialization and both runners as well as expressions.
-7. **Details in handwritten checks.** `passes` and `scenario` wrap their
+7. **Details in handwritten checks.** `passes` wraps its
    conditions in Unit assertions with fixed Text details; JobQueue's pattern
    assertions now fail rather than stop. Greet's examples are actual named
    example declarations. Generating operand text forms, all named test and
@@ -1674,3 +1683,35 @@ standard error even when `main` declares no Console. Section 11.2 above
 already chooses an extra runtime Console for that wrapper. This program
 layer leaves wrapper construction to lowering; no new host capability is
 silently added by `runProgram`.
+
+## Fake capabilities: model decisions
+
+1. **Identity and lifetime.** Each fake gets a zero-based, append-only index
+   in `World.fakes`. Dropping all handles does not remove/reuse its state in
+   this executable model; heap reclamation and reference counts are VM work.
+   Folder roots and identity are independent. `CapState` uses the existing
+   eight real-state fields, with no kind tag or nested fake store; kind
+   chooses the fields an operation uses. Source-created cross-kind aliases
+   are only Files/ReadFiles. Host-supplied cross-kind aliases can select
+   different fields of the same record, as TEXT.md specifies.
+2. **Seeds.** `Random.seeded` takes Int, including negative numbers, interpreted
+   modulo 2⁶⁴. Its current SplitMix64/remainder sequence remains a placeholder;
+   architecture 7's xoshiro256**/SplitMix64/Lemire generator is deferred.
+3. **Constructor inputs.** Args/input lists and file/environment maps keep
+   their values and order. No input splitting or path normalization occurs
+   on construction; the existing file rules resolve paths on use. Source map
+   constructors and oracle host validation enforce distinct keys; `ValTy.map`
+   alone does not. Retained maps and observations are snapshots.
+4. **Malformed handles and observations.** Value typing covers both real
+   and fake handles without a state-store invariant. A dangling fake index
+   stops with `outside "invalid fake handle"`, even in an arbitrary host
+   world, keeping unconditional type safety. `mocore` recursively rejects
+   dangling host handles as `invalidRun`; lossless decoding preserves them
+   for debugging. Real console observations stop with `outside "console
+   observation needs a fake"`; capability types do not encode provenance.
+5. **Interchange.** Core text is 0.2 only. Every handle explicitly carries
+   real/fake provenance, and World transports the full store. Reports include
+   all final fake states, including unreachable states and seeds, in allocation
+   order, alongside the existing real effects. Fuel exhaustion still has no
+   world. Twelve real-entry exports remain controls; the Fakes spec export
+   exercises constructor allocation, sharing, isolation and snapshots.

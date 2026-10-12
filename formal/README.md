@@ -33,14 +33,19 @@ Core is a **typed, monomorphic, strict functional language**:
   and one designated ordinary entry. Constants are computed once before
   execution, each seeing only its preceding prefix, including through calls.
   The last four function kinds and anonymous functions inside them are spec
-  code: only they may use `fail`, `printed` and `printedErrors`. Ordinary code
+  code: only they may use `fail`, `printed`, `printedErrors` and the seven
+  fake constructors of reference 12.4. Ordinary code
   cannot call a spec function, including through a named-function wrapper.
   The typing rules and executable checker enforce these restrictions and the
   kind signatures of bytecode 3.3.
 - **Effects** go through primitives on capability handles, which read and
   update one `World`: arguments, environment variables, standard input,
   standard output and error, an insertion-ordered in-memory file map, the
-  clock's time and a random seed. Files hold texts, so `read_bytes` gives a
+  clock's time and a random seed. Real handles use these fields; each fake
+  constructor allocates an independent state in `World.fakes`. Handles
+  derived by `within` or `read_only` share the same fake state. Observing
+  `printed` or `printed_errors` returns that fake console's snapshot, not
+  real output. Files hold texts, so `read_bytes` gives a
   file's text as UTF-8. A `Files` or `ReadFiles` handle reaches one folder;
   `within` a path that would leave it gives a handle that reaches nothing, on
   which every call that returns a `Result` gives `Error(NotAllowed(path))` and
@@ -58,8 +63,8 @@ their computed values. `evalProgram` initializes constants before evaluating
 an expression, `runProgram` before calling the designated entry with supplied
 runtime arguments, and `runTest` before calling a test or example. These are
 fresh runs. `initConsts`'s continuation can run several calls with one computed
-prefix; `scenario` uses that for a multi-step test. Runners return Core
-outcomes, not OS exit statuses; lowering supplies any entry wrapper (11.2).
+prefix; multi-call tests retain fake handles in one Core expression. Runners
+return Core outcomes, not OS exit statuses; lowering supplies any entry wrapper (11.2).
 
 How each Mo feature lowers to Core is written down in
 [TRANSLATION.md](TRANSLATION.md), section by section, with worked examples.
@@ -91,7 +96,7 @@ canonical printing, result protocol, extension rules and sample timings.
 | --- | --- |
 | `MoCore.lean` | The root: imports everything. |
 | `MoCore/Syntax.lean` | Types (`Ty`, with decidable equality), literals, the primitive operations and their signatures (`Prim.sig`), expressions (`Expr`), declarations and programs, and the lookups (`ctorsOf`, `lookupFun`, ...). |
-| `MoCore/Value.lean` | Values, environments, the `World`, bugs, outcomes, and the number ranges. |
+| `MoCore/Value.lean` | Values (real/fake handles), environments, `CapState`, the `World` and its fake-state store, bugs, outcomes, and the number ranges. |
 | `MoCore/Support/Num.lean` | Exact arithmetic: rounding (ties to even, ties away from zero), decimal multiplication and division, wrapping and saturating, decimal and whole-number text forms and parsers. |
 | `MoCore/Support/Text.lean` | The text functions of reference 14 (`lines`, `words`, `split`, `trim`, ...), over lists of characters. |
 | `MoCore/Support/Time.lean` | Calendar conversions and RFC 3339 text for times; durations' text form. |
@@ -107,13 +112,13 @@ canonical printing, result protocol, extension rules and sample timings.
 | `MoCore/Fuel.lean` | Fuel is only a bound, for expressions, initialization and both runners. |
 | `MoCore/DSL.lean` | Lean helpers for writing Core programs readably, named after the Mo constructs they lower. |
 | `MoCore/Lib.lean` | Library functions written in Core (`map`, `filter`, `sort_by_desc`, `update`, ...), as generators instantiated per type, the order they sort by (`Lib.lt`, in which a float that is "not a number" comes last), and a set's text form (`setText`, `[1, 2].to_set`). |
-| `MoCore/Testing.lean` | `passes` and `scenario` for checking examples and tests, and `stops` for checking that an expression stops on a bug; lemmas turning a checked program into "never goes wrong" theorems. |
-| `MoCore/Builtins.lean` | Checks of `Byte`, `Bytes`, `Range`, `Set`, failure, initialization, kind signatures, spec-only operations/calls, closures and runners. |
+| `MoCore/Testing.lean` | `passes` for checking examples and tests, and `stops` for checking that an expression stops on a bug; lemmas turning a checked program into "never goes wrong" theorems. |
+| `MoCore/Builtins.lean` | Checks of `Byte`, `Bytes`, `Range`, `Set`, failure, initialization, kind signatures, spec-only operations/calls, closures, runners and all seven fake constructors (isolation, aliasing, snapshots). |
 | `MoCore/Examples/*.lean` | The twelve samples of `examples/`, each in Core, with every example line and test of the sample as a `#guard`, and theorems that the program is well typed and never goes wrong. |
 | `MoCore/Text/*.lean` | The reference text codec: S-expressions, types/literals, primitives, programs, lossless values/worlds/outcomes, structural observations and checked run requests. |
 | `MoCore/TextChecks.lean` | Round trips for all twelve programs, every primitive/value, Builtins programs, reproducible runs and report/lexical checks. |
 | `Main.lean` | The `mocore` file/CLI protocol, with distinct diagnostic and outcome exit codes. |
-| `ExportSamples.lean` | Writes the twelve timing Run fixtures (`lake env lean --run ExportSamples.lean DIR`). |
+| `ExportSamples.lean` | Writes the twelve entry Run fixtures and the fake-state spec fixture, in Core text 0.2 (`lake env lean --run ExportSamples.lean DIR`). |
 | `TEXT.md` | Complete Core text contract for Lean and the later C implementation, worked runs and measurements. |
 | `TRANSLATION.md` | The lowering from every v0.1 feature to Core, how the model follows the answers D227 gave to the questions writing it raised, the three things D228 added, and what the model decided in making `Byte`, `Bytes`, `Range` and `Set` types of their own. |
 
@@ -196,8 +201,9 @@ Everything below is fully proven: there is no `sorry` anywhere.
   `listOp_safe` (all 19 list operations, at every element type), `mapOp_safe`
   (all 12, map literals included, at every key and value type), `setOp_safe`
   (all 11 set operations, at every element type), `eq_safe` (structural
-  equality at every type), and `ioOp_safe` (all 18 capability operations on
-  the world, 23 counting the `Files` and `ReadFiles` forms apart). So every
+  equality at every type), and `ioOp_safe` (all 25 capability operations,
+  30 counting the `Files` and `ReadFiles` forms apart), with dispatch to real
+  or fake state and value typing for both kinds of handles. So every
   primitive is proven safe, and `type_safety` has no hypothesis on
   primitives.
 
@@ -266,15 +272,14 @@ Not modeled yet: the `Unicode16` module, the text forms the lowering derives for
 types, tuples, lists and maps, and the quoted form of a text or a character
 inside another value (`to_text[T]`, which both `"#{x}"` and `x.to_text` call,
 TRANSLATION.md 3.4; a set's is `Lib.setText`, given how its elements are
-written), the fake constructors (a test's fakes are its starting world, so
-two fakes of one kind can't be in use at the same time, TRANSLATION.md 12.4),
-and the architecture's actual random generator (the model's `randomInt` is
-a placeholder). The interchange text and structural oracle observations
+written), and the architecture's actual random generator (the model's
+`randomInt` is a placeholder). The interchange text and structural oracle observations
 are now defined in TEXT.md; they do not implement the Mo `to_text[T]`
 functions inside the calculus. `Byte`, `Bytes`, `Range` and `Set`
 are types of their own (TRANSLATION.md 3.2, 3.4, 7.5 and 3.8, and the
-decisions in TRANSLATION.md). Failure and the program layer are now modeled;
-their decisions and the remaining design/reference mismatches are recorded
+decisions in TRANSLATION.md). Failure, the program layer and independent
+fake capabilities are now modeled; their decisions and the remaining
+design/reference mismatches are recorded
 in TRANSLATION.md's final section.
 
 ## Axioms

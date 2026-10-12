@@ -1,1 +1,1 @@
-(core 0.1 (jumped "loop" ((int 2) (text "next")) (World ("arg") (("K" "first") ("K" "second")) ("input\r\n") ("output") ("error") (("a" "file")) -7 42)))
+(core 0.2 (jumped "loop" ((int 2) (text "next")) (World ("arg") (("K" "first") ("K" "second")) ("input\r\n") ("output") ("error") (("a" "file")) -7 42 ((CapState ("fake arg") (("K" "fake env")) ("fake input") ("fake out") ("fake err") (("a" "fake file")) -11 53)))))

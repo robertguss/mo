@@ -594,12 +594,94 @@ def stoppedInit : Program :=
 
 -- The initializer API can reuse one computed prefix across several calls.
 -- A supplied console prefix makes its once-only effect observable without
--- adding fake constructors to the language.
+-- putting spec-only constructors in constants.
 #guard match initConsts 30 layered [const "message" tText
     (seq (print (global "console") (str "once")) (str "cached"))]
     [("console", .cap .console (some ""))] {} fun gs w =>
       evalWithGlobals 30 layered gs [] w (tup [global "message", global "message"]) with
   | .ok (.tuple [.text "cached", .text "cached"]) w => w.stdout == ["once"]
   | _ => false
+
+/-! ## Independent fake capabilities -/
+
+def fakeChecks : Expr :=
+  lets [("a", io .consoleFake []), ("b", io .consoleFakeInput [strs ["input"]]),
+    ("initial", mapOf tText tText [(str "a/note", str "old")]),
+    ("files", io .filesInMemory [v "initial"]),
+    ("other", io .filesInMemory [mop tText tText .empty []]),
+    ("sub", io (.within false) [v "files", str "a"]),
+    ("reader", io .readOnly [v "files"]),
+    ("args1", io .argsOf [strs ["a", ""]]), ("args2", io .argsOf [strs ["b"]]),
+    ("env1", io .envOf [mapOf tText tText [(str "K", str "left")]]),
+    ("env2", io .envOf [mapOf tText tText [(str "K", str "right")]]),
+    ("clock1", io .clockFixed [timeE "1970-01-01T00:00:00Z"]),
+    ("clock2", io .clockFixed [timeE "1970-01-01T00:00:00.000123Z"]),
+    ("rng1", io .randomSeeded [int (-1)]), ("rng2", io .randomSeeded [int (-1)]),
+    ("draw", lam [] (io .randomInt [v "rng1", int 0, int 9223372036854775807])),
+    ("first", app (v "draw") []), ("second", app (v "draw") [])] <|
+  seq (io .print [v "a", str "first"]) <|
+  lets [("snapshot", io .printed [v "a"])] <|
+  seq (io .print [v "a", str "second"]) <|
+  seq (io .printError [v "b", str "error"]) <|
+  seq (call "fake.write" [v "sub"]) <|
+  and_ (eq (tMap tText tText) (v "initial") (mapOf tText tText [(str "a/note", str "old")])) <|
+  and_ (eq (tList tText) (v "snapshot") (strs ["first"])) <|
+  and_ (eq (tList tText) (io .printed [v "a"]) (strs ["first", "second"])) <|
+  and_ (eq (tList tText) (io .printed [v "b"]) (strs [])) <|
+  and_ (eq (tList tText) (io .printedErrors [v "b"]) (strs ["error"])) <|
+  and_ (eq (tOpt tText) (io .readLine [v "b"]) (some_ tText (str "input"))) <|
+  and_ (eq (tOpt tText) (io .readLine [v "b"]) (none_ tText)) <|
+  and_ (eq (tRes tText tFileError) (io (.readText true) [v "reader", str "a/note"])
+    (ok_ tText tFileError (str "saved"))) <|
+  and_ (eq tBool (io (.«exists» false) [v "other", str "a/note"]) ff) <|
+  and_ (eq (tList tText) (argsList (v "args1")) (strs ["a", ""])) <|
+  and_ (eq (tList tText) (argsList (v "args2")) (strs ["b"])) <|
+  and_ (eq (tOpt tText) (io .envGet [v "env1", str "K"]) (some_ tText (str "left"))) <|
+  and_ (eq (tOpt tText) (io .envGet [v "env2", str "K"]) (some_ tText (str "right"))) <|
+  and_ (eq tTime (io .now [v "clock1"]) (timeE "1970-01-01T00:00:00Z")) <|
+  and_ (eq tTime (io .now [v "clock2"]) (timeE "1970-01-01T00:00:00.000123Z")) <|
+  and_ (not_ (ieq (v "first") (v "second"))) <|
+  and_ (ieq (v "first") (io .randomInt [v "rng2", int 0, int 9223372036854775807])) <|
+  ieq (v "second") (io .randomInt [v "rng2", int 0, int 9223372036854775807])
+
+def fakeProgram : Program :=
+  { program with funs := program.funs ++
+    [fn "fake.write" [("files", tCap .files)] (tRes tUnit tFileError)
+       (io .writeText [v "files", str "note", str "saved"]),
+     { (fn "fakes" [] tUnit (assertThat fakeChecks (str "fake isolation failed"))) with kind := .test }] }
+
+#guard wellTyped? fakeProgram
+#guard passes fakeProgram fakeChecks
+
+-- All constructors are lexical spec operations, including inside lambdas.
+def fakeExpressions : List (Expr × Ty) :=
+  [(io .consoleFake [], tCap .console), (io .consoleFakeInput [strs []], tCap .console),
+   (io .filesInMemory [mapOf tText tText []], tCap .files),
+   (io .clockFixed [timeE "2026-10-12T09:00:00Z"], tCap .clock),
+   (io .randomSeeded [int (-1)], tCap .random),
+   (io .argsOf [strs []], tCap .args), (io .envOf [mapOf tText tText []], tCap .env)]
+#guard fakeExpressions.all fun (e, t) =>
+  typedAs? program [] e t true && !typedAs? program [] e t &&
+  typedAs? program [] (lam [] e) (tFn [] t) true && !typedAs? program [] (lam [] e) (tFn [] t) &&
+  !wellTyped? { program with consts := [const "fake" t e] } &&
+  !wellTyped? { program with funs := program.funs ++ [fn "ordinary.fake" [] t e] } &&
+  [FunKind.test, .example, .promise, .anchor].all fun kind =>
+    wellTyped? { program with funs := program.funs ++
+      [{ (fn "spec.fake" (if kind = .promise then [("result", tUnit)] else [])
+           (if kind = .test || kind = .example then tUnit else tInt)
+           (seq e (if kind = .test || kind = .example then unitE else int 0))) with kind }] }
+
+-- Allocation respects existing states; none of the fakes changes real fields.
+#guard
+  let host : World :=
+    { args := ["host"], env := [("K", "host")], stdin := ["host"],
+      stdout := ["real"], stderr := ["real error"], files := [("a/note", "real file")],
+      now := 999, seed := 123, fakes := [{ stdout := ["existing"] }] }
+  match run fakeProgram fakeChecks host with
+  | .ok (.bool true) w => reprStr w.toCapState == reprStr host.toCapState &&
+      w.fakes.length == 13 && reprStr w.fakes.head? == reprStr host.fakes.head?
+  | _ => false
+#guard stops program (io .printed [v "c"]) (tList tText)
+  (.outside "console observation needs a fake") {} [("c", .console)]
 
 end MoCore.Builtins

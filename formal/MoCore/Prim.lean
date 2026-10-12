@@ -520,13 +520,32 @@ def nextRandom (s : Nat) : Nat × Nat :=
 
 /-- The root of a capability value of the expected kind. -/
 def capRoot (expected : Cap) : Value → Option (Option String)
-  | .cap c root => if c = expected then some root else none
+  | .cap c root _ => if c = expected then some root else none
   | _ => none
 
 def filesKind (ro : Bool) : Cap := if ro then .readFiles else .files
 
-def evalIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
+/-- Allocation never reuses an index, even after the last handle is dropped. -/
+def newFake (c : Cap) (state : CapState) (w : World) : Outcome :=
+  .ok (.cap c (some "") (some w.fakes.length)) { w with fakes := w.fakes ++ [state] }
+
+def valueText : Value → String
+  | .text s => s
+  | _ => ""
+
+def statePairs (es : List (Value × Value)) : List (String × String) :=
+  es.map fun (k, v) => (valueText k, valueText v)
+
+/-- Operations on one state. The dispatcher below selects real or fake state. -/
+def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
   match op, vs with
+  | .consoleFake, [] => newFake .console {} w
+  | .consoleFakeInput, [.list lines] => newFake .console { stdin := lines.map valueText } w
+  | .filesInMemory, [.map files] => newFake .files { files := statePairs files } w
+  | .clockFixed, [.time t] => newFake .clock { now := t } w
+  | .randomSeeded, [.int n] => newFake .random { seed := (n % 18446744073709551616).toNat } w
+  | .argsOf, [.list args] => newFake .args { args := args.map valueText } w
+  | .envOf, [.map env] => newFake .env { env := statePairs env } w
   | .argsList, [h] =>
     match capRoot .args h with
     | some _ => .ok (texts w.args) w
@@ -647,6 +666,29 @@ def evalIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
       else outside "Random.int needs low below high" w
     | none => wrongArgs "Random.int"
   | _, _ => wrongArgs "capability primitive"
+
+/-- A derived handle retains the selected fake's identity. Ordinary returned
+values are snapshots; they do not contain references back into its state. -/
+def onFake (id : Nat) (w : World) : Outcome → Outcome
+  | .ok v state =>
+    let v := match v with
+      | .cap c root _ => .cap c root (some id)
+      | v => v
+    .ok v { w with fakes := w.fakes.set id state.toCapState }
+  | .stopped b state => .stopped b { w with fakes := w.fakes.set id state.toCapState }
+  | .failed s state => .failed s { w with fakes := w.fakes.set id state.toCapState }
+  | o => o
+
+def evalIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
+  match vs with
+  | .cap c root (some id) :: rest =>
+    match w.fakes[id]? with
+    | some state => onFake id w (evalHostIoOp op (.cap c root :: rest)
+        { toCapState := state, fakes := [] })
+    | none => outside "invalid fake handle" w
+  | _ =>
+    if op = .printed ∨ op = .printedErrors then outside "console observation needs a fake" w
+    else evalHostIoOp op vs w
 
 /-! ## Dispatch -/
 

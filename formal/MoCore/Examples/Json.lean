@@ -623,26 +623,26 @@ assert main(Args.of(["items.0.name"]), console) == 0
 assert console.printed == ["\"pen\""]
 ``` -/
 #guard passes program
-  (and_ (ieq (call "main" [v "args", v "console"]) (int 0))
+  (lets [("args", io .argsOf [strs ["items.0.name"]]),
+         ("console", io .consoleFakeInput [strs ["{\"items\": [{\"name\": \"pen\"}]}"]])] <|
+   and_ (ieq (call "main" [v "args", v "console"]) (int 0))
     (eq (tList tText) (io .printed [v "console"]) (strs ["\"pen\""])))
-  { args := ["items.0.name"], stdin := ["{\"items\": [{\"name\": \"pen\"}]}"] }
-  [("args", .args), ("console", .console)]
 
 /-! ### More: a whole document laid out, and a parse failure reported by `main` -/
 
 #guard passes program
-  (and_ (ieq (call "main" [v "args", v "console"]) (int 0))
+  (lets [("args", io .argsOf [strs []]),
+         ("console", io .consoleFakeInput [strs
+           ["{\"name\": \"pen\",", " \"tags\": [true, null, -0.250], \"empty\": {}}"]])] <|
+   and_ (ieq (call "main" [v "args", v "console"]) (int 0))
     (eq (tList tText) (io .printed [v "console"])
       (strs ["{\n  \"name\": \"pen\",\n  \"tags\": [\n    true,\n    null,\n    -0.25\n  ],\n  \"empty\": {}\n}"])))
-  { stdin := ["{\"name\": \"pen\",", " \"tags\": [true, null, -0.250], \"empty\": {}}"] }
-  [("args", .args), ("console", .console)]
 
 #guard passes program
-  (and_ (ieq (call "main" [v "args", v "console"]) (int 1))
+  (lets [("args", io .argsOf [strs []]), ("console", io .consoleFakeInput [strs ["[1, 2 3]"]])] <|
+   and_ (ieq (call "main" [v "args", v "console"]) (int 1))
     (eq (tList tText) (io .printedErrors [v "console"])
       (strs ["json: unexpected character at position 6"])))
-  { stdin := ["[1, 2 3]"] }
-  [("args", .args), ("console", .console)]
 
 /-! ### Never wrong -/
 

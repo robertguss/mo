@@ -340,6 +340,8 @@ inductive IoOp where
   | writeText | appendText | remove
   | list (ro : Bool) | «exists» (ro : Bool) | within (ro : Bool) | readOnly
   | now | randomInt
+  /-- Fake constructors: only spec code may allocate these handles. -/
+  | consoleFake | consoleFakeInput | filesInMemory | clockFixed | randomSeeded | argsOf | envOf
   deriving DecidableEq, Repr, Inhabited
 
 /-- The primitive operations. -/
@@ -521,6 +523,13 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .readOnly => ([.cap .files], .cap .readFiles)
   | .now => ([.cap .clock], .time)
   | .randomInt => ([.cap .random, .int, .int], .int)
+  | .consoleFake => ([], .cap .console)
+  | .consoleFakeInput => ([.list .text], .cap .console)
+  | .filesInMemory => ([.map .text .text], .cap .files)
+  | .clockFixed => ([.time], .cap .clock)
+  | .randomSeeded => ([.int], .cap .random)
+  | .argsOf => ([.list .text], .cap .args)
+  | .envOf => ([.map .text .text], .cap .env)
 
 /-- The typing signature of every primitive: argument types and result type. -/
 def Prim.sig : Prim → List Ty × Ty
@@ -646,9 +655,11 @@ structure Program where
 def constCtx (P : Program) (n : Nat) : List (String × Ty) :=
   (P.consts.take n).map fun c => (c.name, c.ty)
 
-/-- Console observations, like failures, belong only to spec code. -/
+/-- Fake construction and console observations belong only to spec code. -/
 def Prim.specOnly : Prim → Bool
   | .io .printed | .io .printedErrors => true
+  | .io .consoleFake | .io .consoleFakeInput | .io .filesInMemory | .io .clockFixed
+  | .io .randomSeeded | .io .argsOf | .io .envOf => true
   | _ => false
 
 /-! ## Lookups -/

@@ -1,1 +1,1 @@
-(core 0.1 (returned "[\"a\", \"b\\n\"]" (effects ("out\n") ("err") (("z" "1") ("a" "2")))))
+(core 0.2 (returned "[\"a\", \"b\\n\"]" (effects ("out\n") ("err") (("z" "1") ("a" "2")) ((CapState () () ("unread") ("fake out") ("fake err") (("fake" "file")) -19 71) (CapState () () () () () () 0 0)))))

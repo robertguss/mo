@@ -140,14 +140,16 @@ assert console.printed == [
 assert console.printed_errors == ["wc: gone.txt: no such file"]
 ``` -/
 #guard passes program
-  (lets [("status", call "main" [v "args", v "console", v "files"])] <|
+  (lets [("console", io .consoleFake []),
+         ("files", io .readOnly [io .filesInMemory [mapOf tText tText
+           [(str "a.txt", str "one two\n"), (str "b.txt", str "three\n")]]]),
+         ("status", call "main" [io .argsOf [strs ["a.txt", "gone.txt", "b.txt"]],
+           v "console", v "files"])] <|
     and_ (ieq (v "status") (int 1)) <|
     and_ (eq (tList tText) (io .printed [v "console"])
             (strs ["      1       2       8 a.txt", "      1       1       6 b.txt",
                     "      2       3      14 total"])) <|
     eq (tList tText) (io .printedErrors [v "console"]) (strs ["wc: gone.txt: no such file"]))
-  { args := ["a.txt", "gone.txt", "b.txt"], files := [("a.txt", "one two\n"), ("b.txt", "three\n")] }
-  [("args", .args), ("console", .console), ("files", .readFiles)]
 
 /-! ### Never wrong -/
 

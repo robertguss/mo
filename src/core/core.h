@@ -430,6 +430,11 @@ struct mo_core_root {
     bool some;
     mo_core_string text;
 };
+/* Independent of the folder root: none is real, some selects World.fakes. */
+struct mo_core_fake {
+    bool some;
+    mo_core_natural index;
+};
 enum mo_core_value_tag {
     MO_CORE_VALUE_INT,
     MO_CORE_VALUE_BIG_INT,
@@ -479,6 +484,7 @@ struct mo_core_value {
         struct {
             mo_core_cap cap;
             struct mo_core_root root;
+            struct mo_core_fake fake;
         } cap;
     } as;
 };
@@ -489,6 +495,19 @@ typedef struct {
     struct mo_core_string_pair *items;
     size_t count;
 } mo_core_string_pairs;
+/* A fake state has no kind or nested store. List and pair order is retained. */
+struct mo_core_cap_state {
+    mo_core_string_list args;
+    mo_core_string_pairs env;
+    mo_core_string_list stdin_, stdout_, stderr_;
+    mo_core_string_pairs files;
+    mo_core_integer now;
+    mo_core_natural seed;
+};
+typedef struct {
+    struct mo_core_cap_state *items;
+    size_t count;
+} mo_core_cap_states;
 struct mo_core_world {
     mo_core_string_list args;
     mo_core_string_pairs env;
@@ -496,6 +515,7 @@ struct mo_core_world {
     mo_core_string_pairs files;
     mo_core_integer now;
     mo_core_natural seed;
+    mo_core_cap_states fakes;
 };
 enum mo_core_bug_tag {
     MO_CORE_BUG_OVERFLOW,
@@ -542,6 +562,7 @@ struct mo_core_outcome {
 struct mo_core_effects {
     mo_core_string_list stdout_, stderr_;
     mo_core_string_pairs files;
+    mo_core_cap_states fakes;
 };
 enum mo_core_report_tag {
     MO_CORE_REPORT_RETURNED,
@@ -605,9 +626,10 @@ enum mo_core_text_kind {
     MO_CORE_TEXT_EFFECTS,
     MO_CORE_TEXT_REPORT,
     MO_CORE_TEXT_SELECTION,
-    MO_CORE_TEXT_RUN
+    MO_CORE_TEXT_RUN,
+    MO_CORE_TEXT_CAP_STATE
 };
-#define MO_CORE_TEXT_VERSION "0.1"
+#define MO_CORE_TEXT_VERSION "0.2"
 MO_MUST_USE void *mo_core_text_parse(struct mo_arena *arena, enum mo_core_text_kind kind,
                                      const char *text, size_t length, struct mo_diags *diags);
 MO_MUST_USE bool mo_core_text_print(enum mo_core_text_kind kind, const void *value,

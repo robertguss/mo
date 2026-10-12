@@ -232,9 +232,11 @@ assert main(Args.of(["-i", "cat", "pets.txt"]), console, files) == 0
 assert console.printed == ["pets.txt:1: a cat", "pets.txt:2: Cats!"]
 ``` -/
 #guard passes program
-  (and_ (ieq runMain (int 0))
+  (lets [("args", io .argsOf [strs ["-i", "cat", "pets.txt"]]), ("console", io .consoleFake []),
+         ("files", io .readOnly [io .filesInMemory [mapOf tText tText
+           [(str "pets.txt", str "a cat\nCats!\ndog\n")]]])] <|
+   and_ (ieq runMain (int 0))
     (eq (tList tText) (io .printed [v "console"]) (strs ["pets.txt:1: a cat", "pets.txt:2: Cats!"])))
-  { args := ["-i", "cat", "pets.txt"], files := [("pets.txt", "a cat\nCats!\ndog\n")] } caps
 
 /-! ### Test "no match gives status 1, and a missing file status 2"
 
@@ -243,23 +245,28 @@ files = Files.in_memory({"pets.txt": "dog\n"}).read_only
 assert main(Args.of(["cat", "pets.txt"]), Console.fake(), files) == 1
 assert main(Args.of(["cat", "gone.txt"]), Console.fake(), files) == 2
 ``` -/
-#guard scenario program caps { files := [("pets.txt", "dog\n")] }
-  [(withArgs ["cat", "pets.txt"], ieq runMain (int 1)),
-   (withArgs ["cat", "gone.txt"], ieq runMain (int 2))]
+#guard passes program
+  (lets [("files", io .readOnly [io .filesInMemory [mapOf tText tText
+    [(str "pets.txt", str "dog\n")]]])] <|
+   and_ (ieq (call "main" [io .argsOf [strs ["cat", "pets.txt"]], io .consoleFake [], v "files"]) (int 1))
+     (ieq (call "main" [io .argsOf [strs ["cat", "gone.txt"]], io .consoleFake [], v "files"]) (int 2)))
 
 /-! ### More: `--count`, and an unknown option reported on standard error -/
 
 #guard passes program
-  (and_ (ieq runMain (int 0))
+  (lets [("args", io .argsOf [strs ["-c", "-i", "CAT", "pets.txt", "none.txt"]]),
+         ("console", io .consoleFake []),
+         ("files", io .readOnly [io .filesInMemory [mapOf tText tText
+           [(str "pets.txt", str "a cat\nCats!\ndog\n"), (str "none.txt", str "dog\n")]]])] <|
+   and_ (ieq runMain (int 0))
     (eq (tList tText) (io .printed [v "console"]) (strs ["pets.txt: 2", "none.txt: 0"])))
-  { args := ["-c", "-i", "CAT", "pets.txt", "none.txt"],
-    files := [("pets.txt", "a cat\nCats!\ndog\n"), ("none.txt", "dog\n")] } caps
 
 #guard passes program
-  (and_ (ieq runMain (int 2))
+  (lets [("args", io .argsOf [strs ["--fast", "cat", "pets.txt"]]),
+         ("console", io .consoleFake []), ("files", io .readOnly [io .filesInMemory [mapOf tText tText []]])] <|
+   and_ (ieq runMain (int 2))
     (eq (tList tText) (io .printedErrors [v "console"])
       (strs ["find: unknown option --fast", "usage: find [--ignore-case] [--count] PHRASE FILE..."])))
-  { args := ["--fast", "cat", "pets.txt"] } caps
 
 /-! ### More: `\n` and `\r\n` end a line, and a `\r` alone stays in its line (reference 14) -/
 

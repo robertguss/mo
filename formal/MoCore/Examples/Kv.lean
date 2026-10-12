@@ -443,10 +443,9 @@ main(console, Clock.fixed(t0))
 assert console.printed == ["OK", "(integer) 2", "\"2\"", "(error) unknown command FLY"]
 ``` -/
 #guard passes program
-  (seq (call "main" [v "console", v "clock"]) <|
+  (lets [("console", io .consoleFakeInput [strs ["SET a 1", "INCR a", "GET a", "FLY"]])] <|
+   seq (call "main" [v "console", io .clockFixed [t0E]]) <|
     eq (tList tText) (io .printed [v "console"]) (strs ["OK", "(integer) 2", "\"2\"", "(error) unknown command FLY"]))
-  { stdin := ["SET a 1", "INCR a", "GET a", "FLY"], now := timeLit "2026-10-12T09:00:00Z" }
-  [("console", .console), ("clock", .clock)]
 
 /-! ### Never wrong -/
 

@@ -147,7 +147,7 @@ inductive ValTy (P : Program) : Value → Ty → Prop
   | closure {ρ Γ ps body τ globals scope spec} :
       EnvTy P ρ Γ → EnvTy P globals (constCtx P scope) → Typed P (ps ++ Γ) [] body τ scope spec →
       ValTy P (.closure ρ ps body globals) (.fn (ps.map Prod.snd) τ)
-  | cap {c r} : ValTy P (.cap c r) (.cap c)
+  | cap {c r fake} : ValTy P (.cap c r fake) (.cap c)
 
 /-- Pointwise value typing. -/
 inductive ValsTy (P : Program) : List Value → List Ty → Prop

@@ -63,9 +63,9 @@ main(Args.of(["Ada", "Grace"]), console)
 assert console.printed == ["Hello, Ada!"]
 ``` -/
 #guard passes program
-  (seq (call "main" [v "args", v "console"]) <|
+  (lets [("console", io .consoleFake [])] <|
+   seq (call "main" [io .argsOf [strs ["Ada", "Grace"]], v "console"]) <|
     eq (tList tText) (io .printed [v "console"]) (strs ["Hello, Ada!"]))
-  { args := ["Ada", "Grace"] } [("args", .args), ("console", .console)]
 
 -- The designated entry uses supplied runtime handles, after initialization.
 #guard match runProgram defaultFuel program (handles [("args", .args), ("console", .console)] |>.map Prod.snd)

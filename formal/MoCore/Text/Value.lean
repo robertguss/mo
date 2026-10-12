@@ -10,6 +10,14 @@ def rootIn : Sexp → Parse (Option String)
   | .node [.atom "some", s] => return some (← asString s)
   | _ => throw "expected (none) or (some string)"
 
+def fakeOut : Option Nat → Sexp
+  | none => tag "none"
+  | some n => tag "some" [natural n]
+def fakeIn : Sexp → Parse (Option Nat)
+  | .node [.atom "none"] => pure none
+  | .node [.atom "some", n] => return some (← asNat n)
+  | _ => throw "expected (none) or (some natural)"
+
 partial def valueOut : Value → Sexp
   | .int n => litOut (.int n)
   | .bigInt n => litOut (.bigInt n)
@@ -30,7 +38,7 @@ partial def valueOut : Value → Sexp
   | .set vs => tag "set" [seq (vs.map valueOut)]
   | .con c fs => tag "con" [.str c, seq (fs.map valueOut)]
   | .closure env ps b gs => tag "closure" [envOut env, paramsOut ps, exprOut b, envOut gs]
-  | .cap c root => tag "cap" [enumOut capTable c, rootOut root]
+  | .cap c root fake => tag "cap" [enumOut capTable c, rootOut root, fakeOut fake]
 where
   envOut (env : Env) : Sexp := seq (env.map fun (n, v) => seq [.str n, valueOut v])
 
@@ -44,20 +52,29 @@ partial def valueIn : Sexp → Parse Value
   | .node [.atom "closure", env, ps, b, gs] => do
       return .closure (← asList (asPair asString valueIn) env) (← paramsIn ps) (← exprIn b)
         (← asList (asPair asString valueIn) gs)
-  | .node [.atom "cap", c, root] => return .cap (← enumIn capTable c) (← rootIn root)
+  | .node [.atom "cap", c, root, fake] => return .cap (← enumIn capTable c) (← rootIn root) (← fakeIn fake)
   | s => return (← litIn s).value
 
 def stringsOut (ss : List String) : Sexp := seq (ss.map Sexp.str)
 def pairsOut (ss : List (String × String)) : Sexp := seq (ss.map fun (k, v) => seq [.str k, .str v])
 
-def worldOut (w : World) : Sexp := tag "World"
+def stateFields (w : CapState) : List Sexp :=
   [stringsOut w.args, pairsOut w.env, stringsOut w.stdin, stringsOut w.stdout,
    stringsOut w.stderr, pairsOut w.files, integer w.now, natural w.seed]
-def worldIn : Sexp → Parse World
-  | .node [.atom "World", args, env, stdin, stdout, stderr, files, now, seed] => do
+def stateOut (s : CapState) : Sexp := tag "CapState" (stateFields s)
+def stateIn : Sexp → Parse CapState
+  | .node [.atom "CapState", args, env, stdin, stdout, stderr, files, now, seed] => do
       return ⟨← asList asString args, ← asList (asPair asString asString) env,
         ← asList asString stdin, ← asList asString stdout, ← asList asString stderr,
         ← asList (asPair asString asString) files, ← asInt now, ← asNat seed⟩
+  | _ => throw "invalid CapState"
+
+def worldOut (w : World) : Sexp := tag "World"
+  (stateFields w.toCapState ++ [seq (w.fakes.map stateOut)])
+def worldIn : Sexp → Parse World
+  | .node [.atom "World", args, env, stdin, stdout, stderr, files, now, seed, fakes] => do
+      return ⟨← stateIn (tag "CapState" [args, env, stdin, stdout, stderr, files, now, seed]),
+        ← asList stateIn fakes⟩
   | _ => throw "invalid World"
 
 def bugOut : Bug → Sexp

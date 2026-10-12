@@ -291,7 +291,7 @@ end MoCore.DSL
 
 namespace MoCore.DSL
 
-/-- The capability handles the runtime (or a test's fakes) hands over: each
+/-- The real capability handles the runtime hands over: each
 variable bound to a handle on the folder the program started in. -/
 def handles (caps : List (String × Cap)) : Env := caps.map fun (x, c) => (x, .cap c (some ""))
 

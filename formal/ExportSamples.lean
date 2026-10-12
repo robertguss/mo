@@ -1,6 +1,6 @@
 import MoCore.TextChecks
 
-/-- Export the exact native-oracle timing inputs; this is a fixture writer, not a runner. -/
+/-- Export the twelve entry runs and the fake-state spec run in Core 0.2. -/
 def main (args : List String) : IO Unit := do
   let dir := args.headD "/tmp/mocore-samples"
   IO.FS.createDirAll dir

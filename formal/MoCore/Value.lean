@@ -63,8 +63,9 @@ instance (t : Int) : Decidable (InTime t) := inferInstanceAs (Decidable (_ ∧ _
 * `set` is a list of elements in insertion order, none equal to another
   (value typing requires it: `ValTy.set`).
 * A `closure` captures the environment it was made in.
-* A capability value `cap c root` is a handle: what it reaches is in the
-  `World`. `root` is the folder a `Files` or `ReadFiles` handle is narrowed to
+* A capability value `cap c root fake` is a handle: `none` uses the real
+  state; `some index` selects `World.fakes`. `root` is the folder a `Files`
+  or `ReadFiles` handle is narrowed to
   (`some ""` for the folder the program started in), or `none` for a handle
   that reaches nothing, which `within` a path that would leave the folder
   gives (reference 11.3, 14). Other capabilities ignore it. -/
@@ -89,7 +90,7 @@ inductive Value where
   | con (c : String) (fields : List Value)
   | closure (env : List (String × Value)) (params : List (String × Ty)) (body : Expr)
       (globals : List (String × Value))
-  | cap (c : Cap) (root : Option String)
+  | cap (c : Cap) (root : Option String) (fake : Option Nat := none)
   deriving Repr, Inhabited
 
 /-- An environment: variables and their values, innermost first. -/
@@ -133,10 +134,10 @@ def errorV (v : Value) : Value := .con "Error" [v]
 /-! ## The world
 
 Effects go through primitives on capability values, which read and update one
-`World` record. A real runtime implements the world with the operating system;
-a test's fakes (reference 12.4) are a world built for the test. -/
+`World` record. A real runtime implements real state with the operating system;
+fake constructors allocate independent states kept inside the run. -/
 
-structure World where
+structure CapState where
   /-- The command-line arguments after the program's name (`Args`). -/
   args : List String := []
   /-- The environment variables (`Env`). -/
@@ -153,6 +154,12 @@ structure World where
   now : Int := 0
   /-- The random number generator's state. -/
   seed : Nat := 0
+  deriving Repr, Inhabited
+
+/-- Real capabilities use the inherited state. Fake handles index the
+append-only store; narrowing a handle never copies its state. -/
+structure World extends CapState where
+  fakes : List CapState := []
   deriving Repr, Inhabited
 
 /-! ## Outcomes -/

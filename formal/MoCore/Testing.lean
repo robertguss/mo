@@ -3,9 +3,8 @@
 
   A Mo example line or test (reference 12) lowers to a Core assertion of
   type `Unit`. `passes` checks its condition and runs the assertion: it must
-  be well typed and return normally, rather than fail. Fakes (reference
-  12.4) are the world the expression runs in, and capability handles bound to
-  the names the test uses.
+  be well typed and return normally, rather than fail. Tests construct their
+  own fake handles; the optional world and handles exercise real capabilities.
 -/
 import MoCore.Check
 import MoCore.Lib
@@ -36,34 +35,6 @@ def stops (P : Program) (e : Expr) (τ : Ty) (b : Bug) (w : World := {})
     match run P e w (handles caps) with
     | .stopped b' _ => b' == b
     | _ => false
-
-/-- A test that runs code in steps sharing one world, as a test's fakes are
-shared by every call that uses them. Before each step, `set` may change the
-world, as a test does when it makes a new fake (such as a new `Args.of(...)`);
-every step must be well typed and evaluate to `true`. -/
-def scenarioSteps (P : Program) (globals : Env) (caps : List (String × Cap)) (w : World) :
-    List ((World → World) × Expr) → Bool
-  | [] => true
-  | (set, e) :: steps =>
-    let assertion := assertThat e (str "scenario assertion failed")
-    typedAs? P (capsCtx caps) assertion .unit true &&
-      match evalWithGlobals defaultFuel P globals (handles caps) (set w) assertion with
-      | .ok .unit w' => scenarioSteps P globals caps w' steps
-      | _ => false
-
-/-- One initialization for the entire multi-step scenario. -/
-def scenario (P : Program) (caps : List (String × Cap)) (w : World)
-    (steps : List ((World → World) × Expr)) : Bool :=
-  match initConsts defaultFuel P P.consts [] w fun globals w' =>
-      .ok (.bool (scenarioSteps P globals caps w' steps)) w' with
-  | .ok (.bool true) _ => true
-  | _ => false
-
-/-- A fresh `Args.of(list)`. -/
-def withArgs (args : List String) (w : World) : World := { w with args := args }
-
-/-- A step that keeps the world as it is. -/
-def same (w : World) : World := w
 
 /-! ## From checked programs to theorems
 
