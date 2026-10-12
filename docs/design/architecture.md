@@ -461,9 +461,10 @@ it is given. It never calls the operating system itself.
   components and paths whose `..` would leave the capability's root are
   refused; `a/../b` resolves to `b`. The normalized path is still opened
   beneath the root without following links, so symbolic links and races can't
-  lead outside the folder. System errors map to `FileError`: a missing file to `NotFound`, a
-  refused path or permission to `NotAllowed`, invalid UTF-8 in `read_text` to
-  `NotText`, and anything else to `Failed`, with the system's message.
+  lead outside the folder. System errors map to `FileError`: a missing file
+  to `NotFound`, a refused path or permission to `NotAllowed`, invalid UTF-8
+  in `read_text` to `NotText`, and anything else to `Failed`, with the
+  system's message.
   `list` sorts names by their bytes, which is the order of their characters.
 - **Console.** The runtime ignores `SIGPIPE`. Writing to a closed output
   returns `EPIPE`, which is a bug with status 70: "printing to an output that

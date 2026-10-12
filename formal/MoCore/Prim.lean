@@ -69,6 +69,11 @@ def optChar : Option Char → Value
   | some c => someV (.char c)
   | none => noneV
 
+/-- An optional Float preserves its bits, including signed zero and NaN. -/
+def optFloat : Option UInt64 → Value
+  | some bits => someV (.float bits)
+  | none => noneV
+
 /-- A bug: a library call outside what it accepts. -/
 def outside (what : String) (w : World) : Outcome := .stopped (.outside what) w
 
@@ -123,6 +128,12 @@ def evalBigOp (op : BigOp) (vs : List Value) (w : World) : Outcome :=
   | .rem, [.bigInt a, .bigInt b] => if b = 0 then .stopped .divByZero w else .ok (.bigInt (a.tmod b)) w
   | .neg, [.bigInt a] => .ok (.bigInt (-a)) w
   | .abs, [.bigInt a] => .ok (.bigInt a.natAbs) w
+  | .min, [.bigInt a, .bigInt b] => .ok (.bigInt (min a b)) w
+  | .max, [.bigInt a, .bigInt b] => .ok (.bigInt (max a b)) w
+  | .pow, [.bigInt a, .int n] =>
+    if n < 0 then outside "BigInt.pow with a negative exponent" w else .ok (.bigInt (a ^ n.toNat)) w
+  | .floorDiv, [.bigInt a, .bigInt b] => if b = 0 then .stopped .divByZero w else .ok (.bigInt (a.fdiv b)) w
+  | .floorMod, [.bigInt a, .bigInt b] => if b = 0 then .stopped .divByZero w else .ok (.bigInt (a.fmod b)) w
   | .toInt, [.bigInt a] => .ok (optInt a) w
   | .toText, [.bigInt a] => .ok (.text (toString a)) w
   | _, _ => wrongArgs "BigInt primitive"
@@ -166,11 +177,11 @@ def evalDecOp (op : DecOp) (vs : List Value) (w : World) : Outcome :=
   | _, _ => wrongArgs "Decimal primitive"
 
 /-- A float's text form. A float that is not a number is `nan`, and the
-infinities are `inf` and `-inf` (reference 9.2). Any other float is Lean's
-`toString`, not the shortest spelling the reference asks for: the VM's is a
-trusted primitive, checked against Ryu (architecture 4.5). -/
+infinities are `inf` and `-inf` (reference 9.2). Finite values use the same
+shortest decimal as `to_decimal`, with exact round-trip checks. -/
 def floatToText (x : Float) : String :=
-  if x.isNaN then "nan" else if x.isInf then (if x < 0 then "-inf" else "inf") else toString x
+  if x.isNaN then "nan" else if x.isInf then (if x < 0 then "-inf" else "inf")
+  else shortestFloatText x.toBits
 
 def evalFloatOp (op : FloatOp) (vs : List Value) (w : World) : Outcome :=
   let f := Float.ofBits
@@ -180,6 +191,7 @@ def evalFloatOp (op : FloatOp) (vs : List Value) (w : World) : Outcome :=
   | .sub, [.float a, .float b] => ret (f a - f b)
   | .mul, [.float a, .float b] => ret (f a * f b)
   | .div, [.float a, .float b] => ret (f a / f b)
+  | .rem, [.float a, .float b] => .ok (.float (floatRem a b)) w
   | .neg, [.float a] => ret (-(f a))
   | .abs, [.float a] => ret (f a).abs
   | .sqrt, [.float a] => ret (f a).sqrt
@@ -188,6 +200,7 @@ def evalFloatOp (op : FloatOp) (vs : List Value) (w : World) : Outcome :=
   | .round, [.float a] => ret (f a).round
   | .isNan, [.float a] => .ok (.bool (f a).isNaN) w
   | .isInfinite, [.float a] => .ok (.bool (f a).isInf) w
+  | .toDecimal, [.float a] => .ok (optDecOf (floatToDecimal a)) w
   | .toText, [.float a] => .ok (.text (floatToText (f a))) w
   | _, _ => wrongArgs "Float primitive"
 
@@ -264,6 +277,7 @@ def evalTextOp (op : TextOp) (vs : List Value) (w : World) : Outcome :=
   | .upper, [.text a] => .ok (.text (textUpper a)) w
   | .toInt, [.text a] => .ok (optIntOf (parseIntText a)) w
   | .toDecimal, [.text a] => .ok (optDecOf (parseDecimalText a)) w
+  | .toFloat, [.text a] => .ok (optFloat (parseFloatText a)) w
   | .join, [.list xs, .text sep] =>
     match textsOf xs with
     | some ts => .ok (.text (String.intercalate sep ts)) w

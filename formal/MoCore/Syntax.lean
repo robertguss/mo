@@ -227,7 +227,8 @@ inductive IntOp where
 
 /-- Operations on `BigInt`. -/
 inductive BigOp where
-  | add | sub | mul | div | rem | neg | abs | toInt | toText
+  | add | sub | mul | div | rem | neg | abs | min | max | pow | floorDiv | floorMod
+  | toInt | toText
   deriving DecidableEq, Repr, Inhabited
 
 /-- Operations on `Byte`, which has no arithmetic (reference 3.2): a program
@@ -245,8 +246,8 @@ inductive DecOp where
 /-- Operations on `Float` (IEEE 754; not part of the safety proofs' interest,
 but typed like every other primitive). -/
 inductive FloatOp where
-  | add | sub | mul | div | neg | abs | sqrt | floor | ceil | round
-  | isNan | isInfinite | toText
+  | add | sub | mul | div | rem | neg | abs | sqrt | floor | ceil | round
+  | isNan | isInfinite | toDecimal | toText
   deriving DecidableEq, Repr, Inhabited
 
 /-- The types whose order is built in. -/
@@ -275,7 +276,7 @@ inductive TextOp where
   | concat | byteCount | charCount | isEmpty | chars | fromChars | lines | words
   | split | trim | trimStart | trimEnd | startsWith | endsWith | contains
   | dropPrefix | dropSuffix | replace | «repeat» | padLeft | padRight | lower | upper
-  | toInt | toDecimal | join
+  | toInt | toDecimal | toFloat | join
   /-- `text.bytes`: the text's UTF-8 encoding. -/
   | bytes
   deriving DecidableEq, Repr, Inhabited
@@ -397,7 +398,8 @@ def IntOp.sig : IntOp → List Ty × Ty
   | .seconds | .milliseconds | .minutes | .hours | .days => ([.int], .duration)
 
 def BigOp.sig : BigOp → List Ty × Ty
-  | .add | .sub | .mul | .div | .rem => ([.bigInt, .bigInt], .bigInt)
+  | .add | .sub | .mul | .div | .rem | .min | .max | .floorDiv | .floorMod => ([.bigInt, .bigInt], .bigInt)
+  | .pow => ([.bigInt, .int], .bigInt)
   | .neg | .abs => ([.bigInt], .bigInt)
   | .toInt => ([.bigInt], .option .int)
   | .toText => ([.bigInt], .text)
@@ -416,9 +418,10 @@ def DecOp.sig : DecOp → List Ty × Ty
   | .toFloat => ([.decimal], .float)
 
 def FloatOp.sig : FloatOp → List Ty × Ty
-  | .add | .sub | .mul | .div => ([.float, .float], .float)
+  | .add | .sub | .mul | .div | .rem => ([.float, .float], .float)
   | .neg | .abs | .sqrt | .floor | .ceil | .round => ([.float], .float)
   | .isNan | .isInfinite => ([.float], .bool)
+  | .toDecimal => ([.float], .option .decimal)
   | .toText => ([.float], .text)
 
 def CharOp.sig : CharOp → List Ty × Ty
@@ -442,6 +445,7 @@ def TextOp.sig : TextOp → List Ty × Ty
   | .repeat | .padLeft | .padRight => ([.text, .int], .text)
   | .toInt => ([.text], .option .int)
   | .toDecimal => ([.text], .option .decimal)
+  | .toFloat => ([.text], .option .float)
   | .join => ([.list .text, .text], .text)
   | .bytes => ([.text], .bytes)
 

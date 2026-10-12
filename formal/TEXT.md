@@ -1,7 +1,7 @@
-# Core text, version 0.3
+# Core text, version 0.4
 
 The Lean implementation in `MoCore/Text/` is the reference codec. Every file
-is `(core 0.3 PAYLOAD)` followed by LF. Constructors are case-sensitive and
+is `(core 0.4 PAYLOAD)` followed by LF. Constructors are case-sensitive and
 named after Lean. A nullary constructor is still a list: `(unit)`.
 
 This is an interchange format, not Mo source or the informal notation in
@@ -10,7 +10,17 @@ transport (`Outcome`, including closures), and observable reports (`Report`,
 the protocol `mocore` writes). The latter uses reference 9.2's structural
 value spelling inside a string. C differential tests compare **reports**.
 
-## Changes from 0.2
+## Changes from 0.3
+
+Version 0.4 adds BigOp `min`, `max`, `pow`, `floorDiv`, `floorMod`, FloatOp
+`rem`, `toDecimal`, and TextOp `toFloat`. Decimal-to-Float and decimal text
+parsing round an exact rational once to binary64, including ties, subnormals
+and overflow; Float-to-Decimal rounds its shortest decimal to 18 places.
+Numeric signatures and choices are recorded below and in TRANSLATION.md.
+Only envelope version **0.4** is accepted; 0.1, 0.2, 0.3 and unknown versions
+are rejected, not upgraded. Report tags and record layouts are unchanged.
+
+### Earlier changes from 0.2
 
 Version 0.3 adds types `(entry)` and `(entryKind)`, `IoOp.entries` with its
 read-only Boolean, and the five `Prim.unicode16` operations. The eighth
@@ -19,8 +29,7 @@ field of World/CapState changes from a natural seed to a mandatory
 now use xoshiro256**/SplitMix64/Lemire, not the placeholder reduction.
 Reached Unicode16 calls stop at the trusted-oracle boundary described below.
 Report tags, exit codes, real/fake handle provenance and the fake-state
-store added in 0.2 are unchanged. Only envelope version **0.3** is accepted;
-0.1, 0.2 and unknown versions are rejected, not upgraded. There are no
+store added in 0.2 are unchanged. There are no
 omitted/default fields on the wire or silent conversions of old seeds.
 
 ## Lexing and canonical layout
@@ -44,8 +53,15 @@ payloads and negative zero. Names are always strings, never symbols.
 Parsing is not type checking: an out-of-range integer/byte literal can be
 parsed, then refused by the checker.
 
+C limits each input and each appended canonical document to 8 MiB
+(`MO_LIMIT_CORE_TEXT_SIZE`), including envelope, escaped strings and final
+LF. Printing is append-and-rollback: failure restores the earlier buffer
+length. Earlier contents do not count toward this document's limit; the
+buffer's own limit is an independent constraint. Lean's codec does not
+impose the C resource limits.
+
 ```ebnf
-file = "(", "core", "0.3", payload, ")" ;
+file = "(", "core", "0.4", payload, ")" ;
 sexp = atom | string | "(", { sexp }, ")" ;
 integer = [ "-" ], digit, { digit } ;
 bits = "0x", hex-digit (* exactly sixteen *) ;
@@ -70,14 +86,14 @@ Decimal integers count 10⁻¹⁸ units; Time and Duration integers count
 microseconds. Char strings contain exactly one Unicode scalar.
 
 ```text
-(core 0.3 (map (text) (list (byte))))
-(core 0.3 (float 0x8000000000000000))
-(core 0.3 (text "hello\nβ"))
+(core 0.4 (map (text) (list (byte))))
+(core 0.4 (float 0x8000000000000000))
+(core 0.4 (text "hello\nβ"))
 ```
 
 Files are UTF-8 without a BOM; invalid UTF-8 is a parse error. An atom is a
 nonempty run of scalars other than the delimiters defined above. Symbols
-are atoms used as constructor names, `core`, `0.3`, `true` and `false`;
+are atoms used as constructor names, `core`, `0.4`, `true` and `false`;
 only the exact symbols listed in this document are accepted in those
 positions. There is no symbol escaping. Empty lists are `()`. Parsing
 accepts any layout using those delimiters, including adjacent lists,
@@ -169,14 +185,14 @@ Each name in the following table means a **nullary S-expression**, e.g.
 | Family | Nullary constructors |
 | --- | --- |
 | `IntOp` | `add sub mul div rem neg abs min max pow floorDiv floorMod checkedAdd checkedSub checkedMul wrappingAdd wrappingSub wrappingMul saturatingAdd saturatingSub saturatingMul toText toDecimal toBig toFloat toChar toByte seconds milliseconds minutes hours days` |
-| `BigOp` | `add sub mul div rem neg abs toInt toText` |
+| `BigOp` | `add sub mul div rem neg abs min max pow floorDiv floorMod toInt toText` |
 | `ByteOp` | `toInt toText` |
 | `DecOp` | `add sub mul div rem neg abs min max floor ceil round toInt toText toFixed toFloat` |
-| `FloatOp` | `add sub mul div neg abs sqrt floor ceil round isNan isInfinite toText` |
+| `FloatOp` | `add sub mul div rem neg abs sqrt floor ceil round isNan isInfinite toDecimal toText` |
 | `Base` | `int bigInt byte decimal float bool char text bytes time duration` |
 | `CmpOp` | `lt le gt ge` |
 | `CharOp` | `code isDigit isLetter isWhiteSpace lower upper toText` |
-| `TextOp` | `concat byteCount charCount isEmpty chars fromChars lines words split trim trimStart trimEnd startsWith endsWith contains dropPrefix dropSuffix replace repeat padLeft padRight lower upper toInt toDecimal join bytes` |
+| `TextOp` | `concat byteCount charCount isEmpty chars fromChars lines words split trim trimStart trimEnd startsWith endsWith contains dropPrefix dropSuffix replace repeat padLeft padRight lower upper toInt toDecimal toFloat join bytes` |
 | `BytesOp` | `size get decodeUtf8` |
 | `UnicodeOp` | `graphemes displayWidth normalizeNfc lowercase uppercase` |
 | `RangeOp` | `make start end toList contains toText` |
@@ -206,6 +222,29 @@ when false. The guillemets around Lean's reserved identifiers `repeat`,
 (prim (list (byte) (zip (text))) ((var "bytes") (var "names")))
 ```
 
+### Numeric operations added in 0.4
+
+| Operation | Signature | Meaning |
+| --- | --- | --- |
+| `(big (min))`, `(big (max))` | BigInt, BigInt → BigInt | smaller/larger operand, first on equality |
+| `(big (pow))` | BigInt, Int → BigInt | exact integral power; negative exponent stops; 0⁰ = 1 |
+| `(big (floorDiv))`, `(big (floorMod))` | BigInt, BigInt → BigInt | quotient rounds toward −∞; remainder a − floorDiv(a,b) × b; zero divisor stops |
+| `(float (rem))` | Float, Float → Float | truncating remainder with dividend sign, including zero; NaN/infinite dividend/zero divisor gives canonical NaN bits `0x7ff8000000000000`; finite dividend with infinite divisor unchanged |
+| `(float (toDecimal))` | Float → Option(Decimal) | shortest round-tripping decimal rounded to 18 places, ties to even; nonfinite or out of range gives None |
+| `(text (toFloat))` | Text → Option(Float) | reference 14 grammar; nearest binary64, ties to even once; signed underflow zero; numeric overflow gives None; exact `nan`, `inf`, `-inf` accepted |
+
+`(dec (toFloat))` uses the same exact converter on its count divided by
+10¹⁸. In particular count 1000000000000000065 returns bits
+`0x3ff0000000000000`, not the next float. The shortest decimal coefficient
+is the nearest among those with the fewest significant digits that round
+back to the original bits, ties to an even coefficient. `%float.toText`
+renders it in fixed or scientific form, whichever is shorter, fixed on a
+tie; exponent `e` is lowercase with no redundant plus or leading zeros.
+Negative zero prints `-0`. `%float.toDecimal` uses that same decimal's exact
+rational value, not the float's exact binary rational (so 0.1 gives 0.1).
+These algorithms are executable definitions with type-safety proofs and
+regression checks, not proofs of numerical functional correctness.
+
 ### Unicode16 and folder entries
 
 `(unicode16 (graphemes))` has signature Text → List(Text),
@@ -217,7 +256,7 @@ arguments, a **reached** call stops with the exact report below (exit 1),
 where effects are everything produced so far:
 
 ```text
-(core 0.3 (stopped (outside "Unicode16 is a trusted primitive unavailable in mocore") (effects () () () ())))
+(core 0.4 (stopped (outside "Unicode16 is a trusted primitive unavailable in mocore") (effects () () () ())))
 ```
 
 An unchosen branch or unused function containing such a call still runs.
@@ -408,7 +447,7 @@ Separators are `, ` and `: `, with no spaces just inside delimiters.
 returned list of texts contains two levels of quoting:
 
 ```text
-(core 0.3 (returned "[\"a\", \"b\\n\"]" (effects () () () ())))
+(core 0.4 (returned "[\"a\", \"b\\n\"]" (effects () () () ())))
 ```
 
 This avoids confusing a top-level Text with a constructor/number, and
@@ -498,7 +537,7 @@ A complete one-file program returning a Float's negative zero, with a
 preexisting file and one input line (layout expanded for reading):
 
 ```text
-(core 0.3
+(core 0.4
   (Run
     (Program ()
       ((FunDecl "main" () (float) (lit (float 0x8000000000000000))
@@ -512,13 +551,13 @@ preexisting file and one input line (layout expanded for reading):
 The exact canonical report (exit 0):
 
 ```text
-(core 0.3 (returned "0x8000000000000000" (effects () () (("a" "hi\n")) ())))
+(core 0.4 (returned "0x8000000000000000" (effects () () (("a" "hi\n")) ())))
 ```
 
 A named test demonstrating failure without a bug:
 
 ```text
-(core 0.3
+(core 0.4
   (Run
     (Program ()
       ((FunDecl "main" () (unit) (lit (unit)) "Main" (function) 0)
@@ -529,15 +568,15 @@ A named test demonstrating failure without a bug:
     (test "expected seven") 30))
 ```
 
-Its report is `(core 0.3 (failed "got six" (effects () () () ())))` (exit 2).
-Changing fuel to 0 gives `(core 0.3 (outOfFuel))` (exit 3). An ordinary
+Its report is `(core 0.4 (failed "got six" (effects () () () ())))` (exit 2).
+Changing fuel to 0 gives `(core 0.4 (outOfFuel))` (exit 3). An ordinary
 function with `fail` instead is `illTyped` (exit 5), never evaluated.
 
 A test constructs a console and passes it to ordinary `main`. Observing the
 same handle after the call reads its output; real output stays empty:
 
 ```text
-(core 0.3
+(core 0.4
   (Run
     (Program ()
       ((FunDecl "main" (("c" (cap (console)))) (unit)
@@ -560,7 +599,7 @@ same handle after the call reads its output; real output stays empty:
 Its exact report (exit 0) includes the allocated state's full eight fields:
 
 ```text
-(core 0.3 (returned "Unit" (effects () () () ((CapState () () () ("hello") () () 0 (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec))))))
+(core 0.4 (returned "Unit" (effects () () () ((CapState () () () ("hello") () () 0 (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec))))))
 ```
 
 The exporter below writes all twelve real programs with their timing worlds
@@ -599,7 +638,7 @@ all 16 caller-supplied categories, including standalone RandomState.
 
 Historical **version 0.1** measurements, 2026-10-12 in a Linux x86-64 orb,
 Lean 4.34.0 native executable; sizes/timings below predate fake state. Use
-the command below for today's 0.3 corpus, which includes Fakes and Library.
+the command below for today's 0.4 corpus, which includes Fakes and Library.
 One warm-up, then **21 fresh processes per sample**; wall time includes
 process startup, input I/O, parse, checker, initialization, entry evaluation,
 structural rendering and captured stdout. Fuel 10000. These are the inputs
@@ -633,7 +672,7 @@ for path in sorted(pathlib.Path('/tmp/mocore-samples').glob('*.core')):
     for _ in range(21):
         start = time.perf_counter_ns()
         result = subprocess.run([exe, str(path)], check=True, capture_output=True)
-        assert result.stdout.startswith(b'(core 0.3 (returned ')
+        assert result.stdout.startswith(b'(core 0.4 (returned ')
         times.append((time.perf_counter_ns() - start) / 1e6)
     print(path.stem, path.stat().st_size, statistics.median(times), min(times), max(times))
 PY
@@ -643,7 +682,8 @@ PY
 
 The codec describes today's Lean constructors, not primitives planned for
 later streams. Unicode16's interface and trusted boundary, the actual PRNG,
-folder entries and the seven fake constructors are included in 0.3.
+folder entries, the seven fake constructors and the numeric operations
+listed above are included in 0.4.
 
 To add a primitive, first add its Lean operation constructor, signature,
 evaluator and safety proof. Add its exact constructor-named S-expression
@@ -653,9 +693,9 @@ need new run/report examples too. Do not silently reinterpret RandomState,
 Boolean `ro`, root, fake index, or a constructor's field order.
 
 Any added constructor or changed shape/meaning advances the minor wire
-version (next `0.4`), updates both Lean and C and their differential corpus,
+version (next `0.5`), updates both Lean and C and their differential corpus,
 and adds tests for rejecting unsupported versions. The current parser
-accepts **only `0.3`** and rejects unknown constructors; there are no ignored
+accepts **only `0.4`** and rejects unknown constructors; there are no ignored
 extension fields or fallback operation names. Support for older versions,
 if wanted, must be explicit. This document, not the informal lowering
 notation or Lean's `Repr`, specifies what the C implementation must write.

@@ -30,6 +30,104 @@ def program : Program :=
 
 #guard wellTyped? program
 
+/-! ## Numeric primitives and single rounding
+
+Use the checked run protocol and structural Float bits, rather than IEEE
+equality, so signed zero, subnormal endpoints and one-ulp errors stay visible. -/
+
+def numericReturns (t : Ty) (e : Expr) (expected : String) : Bool :=
+  let p := wholeProgram "Numbers" "main" [] [] [fn "main" [] t e]
+  Text.programRoundTrip p &&
+    match Text.execute ⟨p, {}, .entry [], 100⟩ with
+    | .returned s _ => s == expected
+    | _ => false
+
+-- This Decimal lies below 1 + 2^-53, despite its integer count rounding upward.
+#guard numericReturns .float (prim (.dec .toFloat) [dec "1.000000000000000065"]) "0x3ff0000000000000"
+#guard numericReturns .float (prim (.dec .toFloat) [dec "-1.000000000000000065"]) "0xbff0000000000000"
+
+-- Both even/odd midpoint endpoints, tiny signed values, the normal/subnormal
+-- transition, maximum finite and finite overflow. Expected bits are fixed.
+#guard ([
+  ("1.000000000000000065", "Some(0x3ff0000000000000)"),
+  ("1.00000000000000011102230246251565404236316680908203125", "Some(0x3ff0000000000000)"),
+  ("1.00000000000000033306690738754696212708950042724609375", "Some(0x3ff0000000000002)"),
+  ("-0", "Some(0x8000000000000000)"),
+  ("-1e-999999", "Some(0x8000000000000000)"),
+  ("2.4703282292062327e-324", "Some(0x0000000000000000)"),
+  ("2.4703282292062328e-324", "Some(0x0000000000000001)"),
+  ("4.9406564584124654e-324", "Some(0x0000000000000001)"),
+  ("2.225073858507201e-308", "Some(0x000fffffffffffff)"),
+  ("2.2250738585072014e-308", "Some(0x0010000000000000)"),
+  ("1.7976931348623157e308", "Some(0x7fefffffffffffff)"),
+  ("1.7976931348623159e308", "None"), ("1e999999", "None"),
+  ("0e999999", "Some(0x0000000000000000)"),
+  ("12.5E+1", "Some(0x405f400000000000)"),
+  ("nan", "Some(0x7ff8000000000000)"), ("inf", "Some(0x7ff0000000000000)"),
+  ("-inf", "Some(0xfff0000000000000)")]).all fun (s, want) =>
+    numericReturns (.option .float) (top .toFloat [str s]) want
+#guard (["", " 1", "1 ", "+1", "1.", ".5", "1e", "1e+", "1e--2", "1_0", "NaN", "-nan", "0x1p0", "１２"]).all
+  fun s => numericReturns (.option .float) (top .toFloat [str s]) "None"
+
+-- Shortest-text conversion differs from rounding the exact binary 0.1.
+-- The last decimal digit in the two half-place cases must round to even.
+#guard ([
+  (0x3fb999999999999a, "Some(0.1)"), (0x3fd5555555555555, "Some(0.3333333333333333)"),
+  (0x3c3bab8cbabb6581, "Some(0.000000000000000002)"),
+  (0x3c470ef54646d497, "Some(0.000000000000000002)"),
+  (0x8000000000000000, "Some(0)"), (0x0000000000000001, "Some(0)"),
+  (0x7ff8000000000001, "None"), (0x7ff0000000000000, "None"),
+  (0xfff0000000000000, "None"), (0x7fefffffffffffff, "None")] : List (UInt64 × String)).all
+  fun (bits, want) => numericReturns (.option .decimal)
+    (prim (.float .toDecimal) [.lit (.float bits)]) want
+
+-- The reference leaves fixed/scientific layout open; keep the chosen spelling
+-- and its shared shortest coefficient observable through the Core operation.
+#guard ([
+  (0x3fb999999999999a, "0.1"), (0x3ff8000000000000, "1.5"),
+  (0x408f400000000000, "1e3"), (0x8000000000000000, "-0"),
+  (0x0000000000000001, "5e-324"), (0x7fefffffffffffff, "1.7976931348623157e308")]
+  : List (UInt64 × String)).all fun (bits, want) =>
+    numericReturns .text (prim (.float .toText) [.lit (.float bits)]) want
+
+-- Truncation differs from IEEE remainder's nearest quotient; exceptional
+-- inputs distinguish dividend/divisor handling and canonical NaN behavior.
+#guard ([
+  (0xc017000000000000, 0x4000000000000000, "0xbffc000000000000"),
+  (0xc010000000000000, 0x4000000000000000, "0x8000000000000000"),
+  (0x4017000000000000, 0xc000000000000000, "0x3ffc000000000000"),
+  (0x3ff0000000000000, 0, "0x7ff8000000000000"),
+  (0x7ff0000000000000, 0x4000000000000000, "0x7ff8000000000000"),
+  (0xbff0000000000000, 0x7ff0000000000000, "0xbff0000000000000"),
+  (0x3ff0000000000000, 0x7ff8000000000001, "0x7ff8000000000000")]
+  : List (UInt64 × UInt64 × String)).all fun (a, b, want) =>
+    numericReturns .float (prim (.float .rem) [.lit (.float a), .lit (.float b)]) want
+
+def numberChecks : Expr :=
+  let big (n : Int) := Expr.lit (.bigInt n)
+  let bop (o : BigOp) (xs : List Expr) := prim (.big o) xs
+  and_ (eq .bigInt (bop .min [big (-7), big 13]) (big (-7))) <|
+  and_ (eq .bigInt (bop .max [big (-7), big 13]) (big 13)) <|
+  and_ (eq .bigInt (bop .pow [big (-3), int 41]) (big (-36472996377170786403))) <|
+  and_ (eq .bigInt (bop .pow [big 0, int 0]) (big 1)) <|
+  and_ (eq .bigInt (bop .floorDiv [big (-7), big 3]) (big (-3))) <|
+  and_ (eq .bigInt (bop .floorMod [big (-7), big 3]) (big 2)) <|
+  and_ (eq .bigInt (bop .floorDiv [big 7, big (-3)]) (big (-3))) <|
+  and_ (eq .bigInt (bop .floorMod [big 7, big (-3)]) (big (-2))) <|
+  and_ (eq (tOpt .float) (top .toFloat [str "1.000000000000000065"])
+    (some_ .float (.lit (.float 0x3ff0000000000000)))) <|
+  and_ (eq (tOpt .decimal) (prim (.float .toDecimal) [.lit (.float 0x3fb999999999999a)])
+    (some_ .decimal (dec "0.1"))) <|
+  eq .float (prim (.float .rem) [.lit (.float 0x4017000000000000), .lit (.float 0x4000000000000000)])
+    (.lit (.float 0x3ffc000000000000))
+
+#guard passes program numberChecks
+#guard stops program (prim (.big .pow) [.lit (.bigInt 2), int (-1)]) .bigInt
+  (.outside "BigInt.pow with a negative exponent")
+#guard [BigOp.floorDiv, .floorMod].all fun op =>
+  stops program (prim (.big op) [.lit (.bigInt 7), .lit (.bigInt 0)]) .bigInt .divByZero
+#guard !typedAs? program [] (prim (.big .pow) [.lit (.bigInt 2), .lit (.bigInt 3)]) .bigInt
+
 /-- `x.to_byte`. -/
 def toByte (x : Expr) : Expr := iop .toByte [x]
 
@@ -770,7 +868,7 @@ def entryChecks : Expr :=
   eq result (io (.entries false) [v "files", str "."])
     (ok_ (tList .entry) tFileError (listOf .entry [entryE "a" "Folder"]))
 
-def libraryChecks : Expr := and_ randomChecks entryChecks
+def libraryChecks : Expr := and_ numberChecks (and_ randomChecks entryChecks)
 def libraryProgram : Program :=
   { program with funs := program.funs ++
     [{ (fn "library" [] tUnit (assertThat libraryChecks (str "library check failed"))) with kind := .test }] ++

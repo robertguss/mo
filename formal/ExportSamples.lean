@@ -1,6 +1,6 @@
 import MoCore.TextChecks
 
-/-- Export the twelve entry runs, Fakes and Library in Core 0.3; an optional
+/-- Export the twelve entry runs, Fakes and Library in Core 0.4; an optional
 second directory receives every canonical fuzz seed from the same codec. -/
 def main (args : List String) : IO Unit := do
   let dir := args.headD "/tmp/mocore-samples"

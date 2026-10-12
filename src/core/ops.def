@@ -13,7 +13,8 @@
     X(MINUTES, "minutes") X(HOURS, "hours") X(DAYS, "days")
 #define MO_CORE_BIG_OPS(X) \
     X(ADD, "add") X(SUB, "sub") X(MUL, "mul") X(DIV, "div") X(REM, "rem") X(NEG, "neg") \
-    X(ABS, "abs") X(TO_INT, "toInt") X(TO_TEXT, "toText")
+    X(ABS, "abs") X(MIN, "min") X(MAX, "max") X(POW, "pow") X(FLOOR_DIV, "floorDiv") \
+    X(FLOOR_MOD, "floorMod") X(TO_INT, "toInt") X(TO_TEXT, "toText")
 #define MO_CORE_BYTE_OPS(X) X(TO_INT, "toInt") X(TO_TEXT, "toText")
 #define MO_CORE_DEC_OPS(X) \
     X(ADD, "add") X(SUB, "sub") X(MUL, "mul") X(DIV, "div") X(REM, "rem") X(NEG, "neg") \
@@ -21,9 +22,9 @@
     X(ROUND, "round") X(TO_INT, "toInt") X(TO_TEXT, "toText") X(TO_FIXED, "toFixed") \
     X(TO_FLOAT, "toFloat")
 #define MO_CORE_FLOAT_OPS(X) \
-    X(ADD, "add") X(SUB, "sub") X(MUL, "mul") X(DIV, "div") X(NEG, "neg") X(ABS, "abs") \
+    X(ADD, "add") X(SUB, "sub") X(MUL, "mul") X(DIV, "div") X(REM, "rem") X(NEG, "neg") X(ABS, "abs") \
     X(SQRT, "sqrt") X(FLOOR, "floor") X(CEIL, "ceil") X(ROUND, "round") X(IS_NAN, "isNan") \
-    X(IS_INFINITE, "isInfinite") X(TO_TEXT, "toText")
+    X(IS_INFINITE, "isInfinite") X(TO_DECIMAL, "toDecimal") X(TO_TEXT, "toText")
 #define MO_CORE_BASES(X) \
     X(INT, "int") X(BIG_INT, "bigInt") X(BYTE, "byte") X(DECIMAL, "decimal") X(FLOAT, "float") \
     X(BOOL, "bool") X(CHAR, "char") X(TEXT, "text") X(BYTES, "bytes") X(TIME, "time") \
@@ -39,7 +40,8 @@
     X(STARTS_WITH, "startsWith") X(ENDS_WITH, "endsWith") X(CONTAINS, "contains") \
     X(DROP_PREFIX, "dropPrefix") X(DROP_SUFFIX, "dropSuffix") X(REPLACE, "replace") \
     X(REPEAT, "repeat") X(PAD_LEFT, "padLeft") X(PAD_RIGHT, "padRight") X(LOWER, "lower") \
-    X(UPPER, "upper") X(TO_INT, "toInt") X(TO_DECIMAL, "toDecimal") X(JOIN, "join") X(BYTES, "bytes")
+    X(UPPER, "upper") X(TO_INT, "toInt") X(TO_DECIMAL, "toDecimal") X(TO_FLOAT, "toFloat") \
+    X(JOIN, "join") X(BYTES, "bytes")
 #define MO_CORE_BYTES_OPS(X) X(SIZE, "size") X(GET, "get") X(DECODE_UTF8, "decodeUtf8")
 #define MO_CORE_UNICODE_OPS(X) \
     X(GRAPHEMES, "graphemes") X(DISPLAY_WIDTH, "displayWidth") X(NORMALIZE_NFC, "normalizeNfc") \

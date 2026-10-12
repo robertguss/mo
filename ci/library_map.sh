@@ -246,3 +246,7 @@ END {
 	print "ci/library_map.sh: " map " has a row for each of the " primitives + 0 " primitives and " operations + 0 " host operations (" rows + 0 " rows)"
 }
 ' "$prims" "$hostops" "$map"
+
+# Check the Core route as well; checking only runtime ids cannot find a missing
+# Lean/C Core operation. This also checks immediate arithmetic such as REM_FLOAT.
+python3 "$(dirname "$0")/core_library_map.py" "$root"

@@ -102,12 +102,12 @@ def world : World :=
   (.tuple [.char '\'', .text "\n", .duration 1500000, .time 0, .range (-2) 3, .bytes [0, 255]])).toOption ==
   some "('\\'', \"\\n\", 1.5s, 1970-01-01T00:00:00Z, -2..3, bytes[0, 255])"
 
-#guard (["", "(core 0.1 (unit))", "(core 0.2 (unit))", "(core 0.4 (unit))",
-  "(core 0.3 (unit)) extra", "(core 0.3 (unit)",
-  "(core 0.3 \"\\q\")", "(core 0.3 \"\\u{d800}\")", "(core 0.3 \"\\u{110000}\")",
-  "(core 0.3 \"\\u{}\")", "(core 0.3 \"unterminated)"]).all fun s => (parseDocument s).toOption.isNone
-#guard (parseDocument ";before\n(core ;version\n0.3 (int -00012));after" >>= litIn).toOption == some (.int (-12))
-#guard (parseDocument "(core 0.3 (float 0xFFFFFFFFFFFFFFFF))" >>= litIn).toOption == some (.float 0xffffffffffffffff)
+#guard (["", "(core 0.1 (unit))", "(core 0.2 (unit))", "(core 0.3 (unit))", "(core 0.5 (unit))",
+  "(core 0.4 (unit)) extra", "(core 0.4 (unit)",
+  "(core 0.4 \"\\q\")", "(core 0.4 \"\\u{d800}\")", "(core 0.4 \"\\u{110000}\")",
+  "(core 0.4 \"\\u{}\")", "(core 0.4 \"unterminated)"]).all fun s => (parseDocument s).toOption.isNone
+#guard (parseDocument ";before\n(core ;version\n0.4 (int -00012));after" >>= litIn).toOption == some (.int (-12))
+#guard (parseDocument "(core 0.4 (float 0xFFFFFFFFFFFFFFFF))" >>= litIn).toOption == some (.float 0xffffffffffffffff)
 #guard (["(float 0x123)", "(float 0x10000000000000000)", "(char \"ab\")", "(unit extra)",
   "(int +1)", "(int 1_0)"]).all fun s => (parseSexp s >>= litIn).toOption.isNone
 

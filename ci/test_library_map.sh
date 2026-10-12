@@ -21,7 +21,14 @@ fail() {
 # its module, a lowering row that names primitives, and Mo rows in modules of one word and two.
 good_tree() {
 	rm -rf "$tree/docs" "$tree/src"
-	mkdir -p "$tree/docs/design" "$tree/src/base"
+	mkdir -p "$tree/docs/design" "$tree/src/base" "$tree/src/core" "$tree/src/bytecode" \
+		"$tree/formal/MoCore/Text"
+	# The small runtime map below still uses the actual Core contract. Each case
+	# gets fresh copies, including cases that remove an operation from a codec.
+	repo="$(dirname "$check")/.."
+	cp "$repo/src/core/ops.def" "$repo/src/core/text_schema.def" "$tree/src/core/"
+	cp "$repo/src/bytecode/opcodes.def" "$tree/src/bytecode/"
+	cp "$repo/formal/MoCore/Text/Prim.lean" "$tree/formal/MoCore/Text/"
 	cat >"$tree/src/base/prims.def" <<'EOF'
 /* PRIM(id, module, name, signature, params, bugs) */
 #ifndef PRIM
@@ -192,6 +199,31 @@ refuses $map '| `map(f)` | Mo | `lib/list.mo` | takes a function |' \
 refuses $map '| `map(f)` | Mo | `lib/list.mo` | takes a function |' \
 	'| `get(i)` | Mo | `lib/list.mo` | takes a function |' \
 	"$map:28" 'get has a row already in section "List(T)"'
+
+# A library/runtime agreement must not conceal a missing Core operation.
+good_tree
+sed 's/X(ABS, "abs")//g' "$tree/src/core/ops.def" >"$tree/replaced"
+mv "$tree/replaced" "$tree/src/core/ops.def"
+expect_refusal "$tree/$prims:5:" 'INT_ABS has no Core operation'
+
+good_tree
+sed 's/("trim", .trim), //g' "$tree/formal/MoCore/Text/Prim.lean" >"$tree/replaced"
+mv "$tree/replaced" "$tree/formal/MoCore/Text/Prim.lean"
+expect_refusal "$tree/$prims:10:" 'TEXT_TRIM has no Core operation'
+
+# Removing an operation from both codecs must fail too, not merely their drift.
+good_tree
+sed 's/X(ABS, "abs")//g' "$tree/src/core/ops.def" >"$tree/replaced"
+mv "$tree/replaced" "$tree/src/core/ops.def"
+sed 's/("abs", .abs), //g' "$tree/formal/MoCore/Text/Prim.lean" >"$tree/replaced"
+mv "$tree/replaced" "$tree/formal/MoCore/Text/Prim.lean"
+expect_refusal "$tree/$prims:5:" 'INT_ABS has no Core operation'
+
+# Arithmetic instructions are covered independently of prims.def.
+good_tree
+sed 's/X(REM, "rem")//g' "$tree/src/core/ops.def" >"$tree/replaced"
+mv "$tree/replaced" "$tree/src/core/ops.def"
+expect_refusal "$tree/src/bytecode/opcodes.def:40:" 'REM_FLOAT has no Core operation'
 
 good_tree
 rm "$tree/$hostops"
