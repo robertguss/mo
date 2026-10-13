@@ -61,4 +61,7 @@ MO_MUST_USE bool mo_bytecode_validate(const struct mo_bytecode *file,
                                       const struct mo_bytecode_read_info *info,
                                       struct mo_load_error *error);
 
+/* The binary and text readers accept the same Unicode scalar encodings. */
+MO_MUST_USE bool mo_bytecode_utf8(const uint8_t *bytes, uint32_t length);
+
 #endif

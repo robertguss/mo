@@ -98,7 +98,7 @@ static MO_MUST_USE const uint32_t *indices(struct reader *r, uint32_t *n, uint32
     return p;
 }
 
-static MO_MUST_USE bool utf8(const uint8_t *bytes, uint32_t length) {
+bool mo_bytecode_utf8(const uint8_t *bytes, uint32_t length) {
     for (uint32_t i = 0; i < length;) {
         uint32_t scalar = bytes[i++];
         unsigned n = 0;
@@ -146,7 +146,7 @@ static MO_MUST_USE const uint8_t *blob(struct reader *r, uint32_t *n, bool termi
             r->error->kind = MO_BYTECODE_LIMIT;
         }
     }
-    if (!r->failed && terminate && !utf8(r->bytes + r->offset, *n)) {
+    if (!r->failed && terminate && !mo_bytecode_utf8(r->bytes + r->offset, *n)) {
         r->field = (uint32_t)r->offset;
         refuse(r, "invalid UTF-8 string");
     }

@@ -1,4 +1,5 @@
 #include "bytecode/verify.h"
+#include "bytecode_text.h"
 #include "test.h"
 
 #include <string.h>
@@ -171,6 +172,7 @@ static void expect_kind(struct fixture *t, const char *reason, uint32_t fn, uint
         CHECK(output.length == 0 && strcmp(we.reason, reason) == 0);
         CHECK(we.kind == error_kind);
     } else if (image != NULL) {
+        text_roundtrip(&wire);
         CHECK(mo_bytecode_write(mo_image_bytecode(image), &output, &we));
         CHECK(output.length == wire.length && memcmp(output.bytes, wire.bytes, wire.length) == 0);
         memset(wire.bytes, 0xa5, wire.length); /* image must not borrow any input */
