@@ -778,6 +778,12 @@ struct Page(T)
 end
 ```
 
+A generic type can't hold itself at a bigger type built from its parameter, as
+a `Tree(T)` with a field `children: List(Tree(List(T)))` would. Each type a
+generic type is used with becomes a type of its own, and that one would need
+types without end, as such a call would for a generic function (section 5.5).
+`children: List(Tree(T))` is fine.
+
 ### 9.2 The five abilities
 
 An ability is something a type can do. There are five, all built in:
