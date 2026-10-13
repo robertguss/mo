@@ -127,7 +127,7 @@ def evalWithGlobals : Nat → Program → Env → Env → World → Expr → Out
         | .bool true => evalWithGlobals n P globals ρ w' t
         | .bool false => evalWithGlobals n P globals ρ w' f
         | _ => .wrong "if on a value that isn't a Bool"
-    | .prim p args => evalArgs (evalWithGlobals n P globals) ρ w args fun vs w' => Prim.eval p vs w'
+    | .prim p args => evalArgs (evalWithGlobals n P globals) ρ w args fun vs w' => Prim.eval p vs w' P
     | .stop r => .stopped (.stop r) w
     | .fail detail =>
       (evalWithGlobals n P globals ρ w detail).bind fun v w' =>

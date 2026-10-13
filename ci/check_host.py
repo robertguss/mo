@@ -90,10 +90,13 @@ def expected(root, commands):
                 (FunDecl "entry" () (unit) (lit (unit)) "M" (function) 0)
                 (FunDecl "test" () (unit) {body} "M" (test) 0)) () "entry" (noSource))'''
             previous_count = len(world[10])
+            before = wire(world)
             got = oracle(root, program, world, '(test "test")')
             if got[0] == "stopped":
-                assert got[1][0] == "fileFolderConflict", got
-                outcomes.append(["stopped", "fake has a file that is also a folder: " + got[1][1]])
+                reasons = {"fileFolderConflict": "fake has a file that is also a folder",
+                           "filePathInvalid": "fake has a key that is not a plain relative path"}
+                assert got[1][0] in reasons and wire(world) == before, got
+                outcomes.append(["stopped", reasons[got[1][0]] + ": " + got[1][1]])
                 continue
             assert len(world[10]) == previous_count + 1
             handles[destination] = parse(f'(cap ({cap}) (some "") (some {previous_count}))')
@@ -173,6 +176,15 @@ def cases():
         for low, high in [(0, 100), (-2**63, 2**63 - 1), (-7, 2), (0, 2**62 + 1), (4, 5)] * 8:
             add("RANDOM_INT", source=10, low=low, high=high)
         add("RANDOM_INT", source=10, low=3, high=3)
+    for key in ["/a", "", ".", "..", "./a", "../a", "a/", "a//b", "a/./b",
+                "a/../b", "a/.", "a/..", "a\0/../b"]:
+        add("FILES_IN_MEMORY", destination=11, path=key, value="text", low=1)
+    # Validate every key before conflicts; report the first malformed key.
+    for first, second in [("a", "a/"), ("a//b", "/bad"), ("valid", "../bad")]:
+        add("FILES_IN_MEMORY", destination=11, path=first, value=second, low=2)
+    for key in ["a", ".hidden", "...", "..name", "a/.b", "a/..b", "β/é", "a\0b"]:
+        add("FILES_IN_MEMORY", destination=11, path=key, value="kept", low=1)
+        add("FILES_READ_TEXT", source=11, path=key)
     rng = random.Random(237)
     for _ in range(100):
         add(rng.choice(["FILES_WRITE_TEXT", "FILES_APPEND_TEXT", "FILES_MAKE_FOLDER",

@@ -1,1 +1,1 @@
-(core 0.7 (Program ((DataDecl "Empty" ())) ((FunDecl "entry" () (unit) (lit (unit)) "Representations" (function) 0)) () "entry" (noSource)))
+(core 0.8 (Program ((DataDecl "Empty" ())) ((FunDecl "entry" () (unit) (lit (unit)) "Representations" (function) 0)) () "entry" (noSource)))

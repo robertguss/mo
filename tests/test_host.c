@@ -170,6 +170,47 @@ static void test_fake_files(void) {
     host_fixture_free(&f);
 }
 
+static void test_fake_file_keys(void) {
+    struct host_fixture f;
+    host_fixture_init(&f, mo_limits_default().heap_size);
+    const struct {
+        const char *bytes;
+        size_t length;
+    } invalid[] = {{"/a", 2},   {"", 0},     {".", 1},       {"..", 2},    {"./a", 3},
+                   {"../a", 4}, {"a/", 2},   {"a//b", 4},    {"a/./b", 5}, {"a/../b", 6},
+                   {"a/.", 3},  {"a/..", 4}, {"a\0/../b", 7}};
+    struct mo_cell value = host_text(&f, "old");
+    for (size_t i = 0; i < sizeof invalid / sizeof invalid[0]; i++) {
+        struct mo_cell key, map;
+        MO_ASSERT(mo_value_text(f.heap, invalid[i].bytes, invalid[i].length, &key) &&
+                  mo_value_map(f.heap, f.types.files, &key, &value, 1, &map));
+        struct mo_cell out = mo_cell_int(99);
+        struct mo_host_error error;
+        size_t used = mo_heap_used(f.heap);
+        enum mo_host_outcome outcome =
+            mo_host_call(&f.host, f.heap, MO_HOST_FILES_IN_MEMORY, f.capabilities[MO_CAP_FILES],
+                         &map, &out, &error);
+        CHECK(outcome == MO_HOST_BUG);
+        if (outcome == MO_HOST_RETURNED)
+            mo_value_drop(f.heap, f.capabilities[MO_CAP_FILES], out);
+        else {
+            CHECK(mo_cell_get_int(out) == 99 && mo_heap_used(f.heap) == used);
+            CHECK(strcmp(error.reason, "fake has a key that is not a plain relative path") == 0 &&
+                  error.has_detail);
+            bool same, found;
+            struct mo_cell kept;
+            CHECK(mo_value_equal(f.heap, f.types.text, error.detail, key, &same) && same);
+            CHECK(mo_table_get(f.heap, f.types.files, map, key, &found, &kept) && found);
+            CHECK(mo_value_equal(f.heap, f.types.text, kept, value, &same) && same);
+            mo_value_drop(f.heap, f.types.files, map);
+        }
+        mo_value_drop(f.heap, f.types.text, key);
+    }
+    mo_value_drop(f.heap, f.types.text, value);
+    CHECK(mo_heap_objects(f.heap) == 0);
+    host_fixture_free(&f);
+}
+
 static void test_fake_folder_exhaustion(void) {
     unsigned refusals = 0, successes = 0;
     for (size_t remaining = 128; remaining <= 12288; remaining += 128) {
@@ -1166,6 +1207,7 @@ int main(int argc, char **argv) {
     test_console(&fixture);
     test_fake_restore();
     test_fake_files();
+    test_fake_file_keys();
     test_fake_folder_exhaustion();
     test_real_files(false);
     test_real_files(true);

@@ -22,6 +22,17 @@ errors = []
 for family, body in re.findall(
     r"#define MO_CORE_(\w+)_OPS\(X\)(.*?)(?=\n#define|\n//|\Z)", c, re.S
 ):
+    if family == "TYPED":
+        pairs = re.findall(r'X\((\w+), \w+, "(\w+)"\)', body)
+        encoder = re.search(r"def primOut\b.*?(?=\ndef primIn)", lean, re.S)[0]
+        decoder = re.search(r"def primIn\b.*", lean, re.S)[0]
+        spellings = {wire for _, wire in pairs
+                     if f'tag "{wire}" [tyOut t]' in encoder and
+                     f'.node [.atom "{wire}", t]' in decoder}
+        if {wire for _, wire in pairs} != spellings:
+            errors.append(f"{c_path}: TYPED differs from {lean_path}")
+        operations.update({(family, tag): wire for tag, wire in pairs if wire in spellings})
+        continue
     pairs = re.findall(r'X\((\w+), "(\w+)"\)', body)
     lean_family = family.lower()
     table = re.search(rf"def {lean_family}Ops\b.*?(?=\ndef |\Z)", lean, re.S)
@@ -58,10 +69,11 @@ aliases = {
     "LIST_JOIN": ("TEXT", "JOIN"),
     "MAP_LITERAL_INSERT": ("MAP", "LIT"),
     "DURATION_TO_TEXT": ("TIME", "DUR_TO_TEXT"),
+    "TEXT_STRUCTURAL": ("TYPED", "STRUCTURAL"),
 }
 # These helpers have no direct primitive route in the current Lean model.
 # They must remain explicit: adding a new unmodeled id fails, not silently skips.
-unmodeled = {"TEXT_QUOTED", "CHAR_QUOTED", "TEXT_STRUCTURAL"}
+unmodeled = {"TEXT_QUOTED", "CHAR_QUOTED"}
 recipes = {
     "LIST_SUM": [(f, "ADD") for f in ["INT", "BIG", "DEC", "FLOAT"]],
     "BIGINT_COMPARE": [("CMP", "LT"), ("CMP", "GT")],
@@ -95,4 +107,4 @@ if errors:
     print("\n".join(errors), file=sys.stderr)
     sys.exit(1)
 print(f"Core library map: {count} runtime primitives have routes in both codecs; arithmetic instructions covered; "
-      "3 explicit text-form helpers remain unmodeled")
+      f"{len(unmodeled)} explicit text-form helpers remain unmodeled")

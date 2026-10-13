@@ -58,10 +58,10 @@ Core is a **typed, monomorphic, strict functional language**:
   fake is made and keeps folders after file removal. Writes/appends into
   missing parents give `NotFound(path)`; Files-only `make_folder` creates
   folders and missing ancestors, succeeding when already present. The
-  folder list follows `random` in World/CapState; Core 0.7 transports it
+  folder list follows `random` in World/CapState; Core 0.8 transports it
   explicitly and reports real folders alongside files and full fake states.
-  D236 rejects a fake
-  whose key is also a folder, naming the path; kind mismatches give
+  D236 rejects a fake whose key is also a folder or isn't a plain relative
+  path, naming the path; kind mismatches give
   `Failed(path, "not a folder")` or `Failed(path, "is a folder")`.
   A file used as a `within` root fails subsequent Result calls with
   `"not a folder"`; `exists?` there is false. Seeded Random uses
@@ -141,8 +141,8 @@ canonical printing, result protocol, extension rules and sample timings.
 | `MoCore/Text/*.lean` | The reference text codec: S-expressions, types/literals, primitives, programs, lossless values/worlds/outcomes, structural observations and checked run requests. |
 | `MoCore/TextChecks.lean` | Round trips for all twelve programs, every primitive/value, Builtins programs, reproducible runs and report/lexical checks. |
 | `Main.lean` | The `mocore` file/CLI protocol, with distinct diagnostic and outcome exit codes. |
-| `ExportSamples.lean` | Writes twelve entry runs plus Fakes, Library (including D236/D237 file checks) and synthetic Metadata, in Core text 0.7; optional second directory exports all fourteen fuzz seeds (`lake env lean --run ExportSamples.lean DIR FUZZ_DIR`). |
-| `TEXT.md` | Complete Core text 0.7 contract shared by Lean and C, compiler metadata, file-operation outcomes, worked runs and measurements. |
+| `ExportSamples.lean` | Writes twelve entry runs plus Fakes, Library (including D236/D237 file checks) and synthetic Metadata, in Core text 0.8; optional second directory exports all fourteen fuzz seeds (`lake env lean --run ExportSamples.lean DIR FUZZ_DIR`). |
+| `TEXT.md` | Complete Core text 0.8 contract shared by Lean and C, compiler metadata, file-operation outcomes, worked runs and measurements. |
 | `TRANSLATION.md` | The lowering from every v0.1 feature to Core, how the model follows the answers D227 gave to the questions writing it raised, the three things D228 added, and what the model decided in making `Byte`, `Bytes`, `Range` and `Set` types of their own. |
 
 ## The twelve programs

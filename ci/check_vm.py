@@ -463,6 +463,101 @@ def structures(drivers, root, world):
         print(f"vm structures: {driver}: {len(expected)} outcomes match mocore for equal, set_field and reset/reuse, unique/shared")
 
 
+def structural_text(drivers, root, world):
+    """Observe any type through the compiled borrowing primitive, with independent spellings.
+
+    Float bit transport and user to_text are deliberately wrong implementations here.
+    Keep the operand live after observing it to exercise borrowing under sanitizers.
+    """
+    cases = []
+
+    def add(ty, expr, want, data=""):
+        body = f'(let_ "value" {expr} (let_ "text" (prim (structural {ty}) ((var "value"))) ' \
+               f'(prim (text (concat)) ((var "text") (prim (structural {ty}) ((var "value")))))))'
+        cases.append((program(body, "(text)", data=data), None,
+                      None if want is None else ["returned", want + want]))
+
+    for ty, value, want in [
+            ("unit", "unit", "Unit"), ("bool", "bool false", "false"),
+            ("byte", "byte 255", "255"), ("int", "int -9223372036854775808", "-9223372036854775808"),
+            ("bigInt", "bigInt 123456789012345678901234567890", "123456789012345678901234567890"),
+            ("decimal", "decimal -1000000000000000001", "-1.000000000000000001"),
+            ("text", 'text "raw\\n#{x}\\u{0}"', "raw\n#{x}\0"),
+            ("text", 'text ""', ""), ("char", 'char "\\u{85}"', "\x85"),
+            ("bytes", "bytes (0 128 255)", "bytes[0, 128, 255]"),
+            ("time", "time -1", "1969-12-31T23:59:59.999999Z"),
+            ("duration", "duration -1", "-0.000001s")]:
+        add(f"({ty})", f"(lit ({value}))", want)
+    for bits, want in [(0, "0"), (0x8000000000000000, "-0"),
+                       (0x3ff0000000000000, "1"), (0x7ff0000000000000, "inf"),
+                       (0xfff0000000000000, "-inf"), (0x7ff8000000000000, "nan"),
+                       (0xfff8000000000001, "nan"), (1, "5e-324")]:
+        add("(float)", f"(lit (float 0x{bits:016x}))", want)
+    for number in [1e-7, 1e-6, 1e20, 1e21, -1e-6, -1e21]:
+        for value in [math.nextafter(number, -math.inf), number, math.nextafter(number, math.inf)]:
+            bits = struct.unpack(">Q", struct.pack(">d", value))[0]
+            add("(float)", f"(lit (float 0x{bits:016x}))", None)
+    rng = random.Random(236)
+    for _ in range(128):
+        add("(float)", f"(lit (float 0x{rng.getrandbits(64):016x}))", None)
+    for ty, expr, want in [
+            ("(tuple ((char) (char) (text)))",
+             '''(tuple ((lit (char "'")) (lit (char "\\\"")) (lit (text "\\n\\u{0}\\u{85}#{x}\\\\\\\""))))''',
+             '''('\\'', '"', "\\n\\u{0}\\u{85}\\#{x}\\\\\\\"")'''),
+            ("(range)", "(prim (range (make)) ((lit (int 7)) (lit (int -9))))", "7..-9"),
+            ("(option (text))", '(con (option (text)) "None" ())', "None"),
+            ("(option (text))", '(con (option (text)) "Some" ((lit (text "x"))))', 'Some("x")'),
+            ("(result (text) (int))", '(con (result (text) (int)) "Error" ((lit (int -7))))', "Error(-7)"),
+            ("(ordering)", '(con (ordering) "Greater" ())', "Greater"),
+            ("(fileError)", '(con (fileError) "Failed" ((lit (text "a")) (lit (text "b"))))',
+             'Failed(path: "a", reason: "b")'),
+            ("(entry)", '(con (entry) "Entry" ((lit (text "a")) (con (entryKind) "Link" ())))',
+             'Entry(name: "a", kind: Link)'),
+            ("(list (text))", '(prim (list (text) (lit 2)) ((lit (text "z")) (lit (text "a"))))',
+             '["z", "a"]'),
+            ("(map (text) (int))", '(prim (map (text) (int) (lit 2)) ((lit (text "z")) (lit (int 7)) (lit (text "a")) (lit (int -9))))',
+             '{"z": 7, "a": -9}'),
+            ("(set (int))", '(prim (set (int) (ofList)) ((prim (list (int) (lit 3)) ((lit (int 7)) (lit (int -9)) (lit (int 7))))))',
+             '[7, -9].to_set'),
+            ("(fn () (text))", '(let_ "capture" (lit (text "secret")) (lam () (var "capture")))', "<function>")]:
+        add(ty, expr, want)
+    data = '(DataDecl "Record" ((Ctor "Record" (("text" (text)) ("value" (float)))))) ' \
+           '(DataDecl "Choice" ((Ctor "Empty" ()) (Ctor "With" (("record" (data "Record"))))))'
+    record = '(con (data "Record") "Record" ((lit (text "field")) (lit (float 0x8000000000000000))))'
+    add('(data "Record")', record, 'Record(text: "field", value: -0)', data)
+    add('(data "Choice")', f'(con (data "Choice") "With" ({record}))',
+        'With(record: Record(text: "field", value: -0))', data)
+    for kind, constructor in [
+            ("args", '(io (argsOf)) ((prim (list (text) (lit 0)) ()))'),
+            ("env", '(io (envOf)) ((prim (map (text) (text) (empty)) ()))'),
+            ("console", '(io (consoleFake)) ()'),
+            ("files", '(io (filesInMemory)) ((prim (map (text) (text) (empty)) ()))'),
+            ("readFiles", '(io (readOnly)) ((prim (io (filesInMemory)) ((prim (map (text) (text) (empty)) ()))))'),
+            ("clock", '(io (clockFixed)) ((lit (time 17)))'),
+            ("random", '(io (randomSeeded)) ((lit (int 31)))')]:
+        ty, want = f"(cap ({kind}))", f"<{kind[0].upper() + kind[1:]}>",
+        observation = f'(prim (structural {ty}) ((var "cap")))'
+        condition = f'(prim (eq (text)) ({observation} (lit (text {wire(want)}))))'
+        # A selected spec may create a fake. Observe it twice, and through a container too.
+        nested = f'(prim (structural (tuple ({ty} (int)))) ((tuple ((var "cap") (lit (int -7))))))'
+        body = f'(let_ "cap" (prim {constructor}) (if_ {condition} ' \
+               f'(if_ {condition} (if_ (prim (eq (text)) ({nested} (lit (text {wire("(" + want + ", -7)")})))) ' \
+               f'(lit (unit)) (stop "nested structural {kind}")) (stop "borrowed structural {kind}")) ' \
+               f'(stop "structural {kind}")))'
+        cases.append((program(body, "(unit)", kind="test"), "main", ["returned", "Unit"]))
+    for i, (payload, test, spelling) in enumerate(cases):
+        path = root / f"structural-text-{i}.core"
+        path.write_text(f"(core {VERSION} {payload})\n")
+        expected = oracle(path, world, test)
+        if spelling is not None:
+            assert expected == spelling, (path.read_text(), spelling, expected)
+        assert expected[0] == "returned", (path, expected)
+        for driver in drivers:
+            actual = run(driver, path, test)
+            assert actual == expected, (driver, path.read_text(), expected, actual)
+    print(f"vm structural text: {len(cases)} cases per driver match mocore; all value kinds, D236 Float and borrowing")
+
+
 def decimals(drivers):
     maximum, scale = 2**127 - 1, 10**18
     edges = [-maximum, -maximum + 1, -2 * scale - 1, -scale, -3, -1, 0,
@@ -510,6 +605,7 @@ def main():
         world.write_text(f"(core {VERSION} {WORLD})\n")
         operations(drivers, root, world)
         structures(drivers, root, world)
+        structural_text(drivers, root, world)
         fixtures, tests, capability_runs = [], {}, set()
         for path in sorted(pathlib.Path("tests/core").glob("*.core")):
             payload = parse(path.read_text())[2]

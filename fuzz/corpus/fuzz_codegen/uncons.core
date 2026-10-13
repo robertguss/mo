@@ -1,1 +1,1 @@
-(core 0.7 (Program () ((FunDecl "start" (("xs" (list (text)))) (tuple ((option (tuple ((text) (list (text))))) (list (text)))) (tuple ((prim (list (text) (uncons)) ((var "xs"))) (var "xs"))) "Lists" (function) 0)) () "start" (noSource)))
+(core 0.8 (Program () ((FunDecl "start" (("xs" (list (text)))) (tuple ((option (tuple ((text) (list (text))))) (list (text)))) (tuple ((prim (list (text) (uncons)) ((var "xs"))) (var "xs"))) "Lists" (function) 0)) () "start" (noSource)))

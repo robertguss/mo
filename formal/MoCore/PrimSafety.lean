@@ -798,6 +798,17 @@ theorem eq_safe (t : Ty) : PrimSafe P (.eq t) := by
   invert_args
   exact .bool
 
+theorem structural_safe (t : Ty) : PrimSafe P (.structural t) := by
+  intro vs w h
+  change ValsTy P vs [t] at h
+  cases h with
+  | cons hv ht =>
+    cases ht
+    simp only [Prim.eval]
+    cases Text.structural P t _ false true with
+    | ok s => exact .text
+    | error s => trivial
+
 /-! ## Capabilities -/
 
 theorem folderEntries_safe : ValTy P (folderEntries dir files folders) (.list .entry) := by
@@ -886,6 +897,7 @@ theorem prims_safe : PrimsSafe P := by
   | map k t op => exact mapOp_safe k t op
   | set t op => exact setOp_safe t op
   | eq t => exact eq_safe t
+  | structural t => exact structural_safe t
   | io op => exact ioOp_safe op
 
 end MoCore

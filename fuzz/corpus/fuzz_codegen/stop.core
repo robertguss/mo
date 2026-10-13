@@ -1,1 +1,1 @@
-(core 0.7 (Program () ((FunDecl "start" (("b" (bool))) (int) (let_ "x" (if_ (var "b") (stop "no result") (lit (int 9))) (var "x")) "Stop" (function) 0)) () "start" (noSource)))
+(core 0.8 (Program () ((FunDecl "start" (("b" (bool))) (int) (let_ "x" (if_ (var "b") (stop "no result") (lit (int 9))) (var "x")) "Stop" (function) 0)) () "start" (noSource)))

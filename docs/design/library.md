@@ -8,7 +8,7 @@ and `src/base/hostops.def` (`bytecode.md` sections 6 and 7). `make
 library-map` checks that this map and those two tables agree, and that each
 primitive's Core route exists in both C and Lean's codec tables. Arithmetic
 instruction routes are checked too. The explicit lowering recipes and the
-three existing unmodeled text-form helpers are listed in
+two existing unmodeled quoted-text helpers are listed in
 `formal/TRANSLATION.md`; a new primitive without a Core route fails the check.
 
 ## The rule

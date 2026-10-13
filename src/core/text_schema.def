@@ -180,6 +180,7 @@ NODE(io_op, struct mo_core_io_op, enum mo_core_io_op_tag,
 
 #define P(tag, wire, ...) V(enum mo_core_prim_tag, MO_CORE_PRIM_##tag, wire, __VA_ARGS__)
 #define PF(member, name) F(struct mo_core_prim, as.member, name)
+#define TYPED(tag, member, wire) P(tag, wire, PF(member, ty), END),
 NODE(prim, struct mo_core_prim, enum mo_core_prim_tag, P(INT, "int", PF(int_, int_op), END),
      P(BIG, "big", PF(big, big_op), END), P(BYTE, "byte", PF(byte, byte_op), END),
      P(DEC, "dec", PF(dec, dec_op), END), P(FLOAT, "float", PF(float_, float_op), END),
@@ -190,8 +191,9 @@ NODE(prim, struct mo_core_prim, enum mo_core_prim_tag, P(INT, "int", PF(int_, in
      P(TIME, "time", PF(time, time_op), END),
      P(LIST, "list", PF(list.t, ty), PF(list.op, list_op), END),
      P(MAP, "map", PF(map.k, ty), PF(map.v, ty), PF(map.op, map_op), END),
-     P(SET, "set", PF(set.t, ty), PF(set.op, set_op), END), P(EQ, "eq", PF(eq, ty), END),
-     P(IO, "io", PF(io, io_op), END));
+     P(SET, "set", PF(set.t, ty), PF(set.op, set_op), END),
+     MO_CORE_TYPED_OPS(TYPED) P(IO, "io", PF(io, io_op), END));
+#undef TYPED
 #undef P
 #undef PF
 
@@ -356,7 +358,8 @@ NODE(bug, struct mo_core_bug, enum mo_core_bug_tag,
      B(DIV_BY_ZERO, "divByZero", END), B(STOP, "stop", F(struct mo_core_bug, detail, string), END),
      B(OUTSIDE, "outside", F(struct mo_core_bug, detail, string), END),
      B(REPEATED_KEY, "repeatedKey", END),
-     B(FILE_FOLDER_CONFLICT, "fileFolderConflict", F(struct mo_core_bug, detail, string), END));
+     B(FILE_FOLDER_CONFLICT, "fileFolderConflict", F(struct mo_core_bug, detail, string), END),
+     B(FILE_PATH_INVALID, "filePathInvalid", F(struct mo_core_bug, detail, string), END));
 #undef B
 #define O(tag, wire, ...) V(enum mo_core_outcome_tag, MO_CORE_OUTCOME_##tag, wire, __VA_ARGS__)
 #define OF(member, name) F(struct mo_core_outcome, as.member, name)

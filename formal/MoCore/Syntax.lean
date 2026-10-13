@@ -377,6 +377,8 @@ inductive Prim where
   fields compared in turn, maps by their entries and sets by their elements in
   any order, floats by IEEE. -/
   | eq (t : Ty)
+  /-- Reference structural text at any type, without invoking user `to_text`. -/
+  | structural (t : Ty)
   | io (op : IoOp)
   deriving Repr, Inhabited
 
@@ -570,6 +572,7 @@ def Prim.sig : Prim → List Ty × Ty
   | .map k v op => op.sig k v
   | .set t op => op.sig t
   | .eq t => ([t, t], .bool)
+  | .structural t => ([t], .text)
   | .io op => op.sig
 
 /-! ## Expressions -/

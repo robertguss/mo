@@ -330,6 +330,9 @@ bool mo_codegen_operation(const struct mo_core_prim *p, struct mo_codegen_operat
     case MO_CORE_PRIM_EQ:
         *out = native(MO_OP_EQUAL, "fn(T, T) : Bool", "bb");
         return true;
+    case MO_CORE_PRIM_STRUCTURAL:
+        row = MO_PRIM_TEXT_STRUCTURAL;
+        break;
     case MO_CORE_PRIM_IO: {
         static const enum mo_host_id rows[] = {MO_HOST_ARGS_LIST,
                                                MO_HOST_ENV_GET,

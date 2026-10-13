@@ -1,1 +1,1 @@
-(core 0.7 (Program () ((FunDecl "start" (("text" (text)) ("n" (int))) (text) (prim (text (concat)) ((prim (text (trim)) ((var "text"))) (prim (int (toText)) ((prim (int (wrappingAdd)) ((var "n") (lit (int 17)))))))) "M" (function) 0)) () "start" (noSource)))
+(core 0.8 (Program () ((FunDecl "start" (("text" (text)) ("n" (int))) (text) (prim (text (concat)) ((prim (text (trim)) ((var "text"))) (prim (int (toText)) ((prim (int (wrappingAdd)) ((var "n") (lit (int 17)))))))) "M" (function) 0)) () "start" (noSource)))

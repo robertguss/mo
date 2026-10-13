@@ -1,1 +1,1 @@
-(core 0.7 (Program () ((FunDecl "start" (("b" (bool))) (tuple ((text) (int))) (let_ "pair" (if_ (var "b") (global "pair") (global "pair")) (var "pair")) "Globals" (function) 1)) ((ConstDecl "pair" (tuple ((text) (int))) (tuple ((lit (text "seed")) (lit (int -31)))))) "start" (noSource)))
+(core 0.8 (Program () ((FunDecl "start" (("b" (bool))) (tuple ((text) (int))) (let_ "pair" (if_ (var "b") (global "pair") (global "pair")) (var "pair")) "Globals" (function) 1)) ((ConstDecl "pair" (tuple ((text) (int))) (tuple ((lit (text "seed")) (lit (int -31)))))) "start" (noSource)))

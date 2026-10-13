@@ -788,6 +788,9 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
     case MO_CORE_PRIM_EQ:
         t = annotation(c, p->as.eq, 0);
         return sig(S(BOOL), 2, t, t, NULL);
+    case MO_CORE_PRIM_STRUCTURAL:
+        t = annotation(c, p->as.structural, 0);
+        return sig(S(TEXT), 1, t, NULL, NULL);
     case MO_CORE_PRIM_IO: {
         struct type *files = p->as.io.ro ? C(READ_FILES) : C(FILES);
         struct type *error = S(FILE_ERROR);
