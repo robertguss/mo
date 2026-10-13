@@ -974,7 +974,8 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
         e->as.call.args = args;
         return e;
     }
-    if (r->symbol != NULL || (r->native != NULL && strchr(r->native, '.') == NULL)) {
+    if ((r->symbol != NULL && r->symbol->declaration->kind != MO_S_CONST) ||
+        (r->native != NULL && strchr(r->native, '.') == NULL)) {
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CON);
         e->as.con.ty = result;
         e->as.con.ctor = lower_text(p, r->symbol != NULL ? r->symbol->name : r->native);
@@ -1559,7 +1560,8 @@ static void row_task(struct body *b, struct task t) {
         finish(b, e, t.state, t.continuation, t.out);
         return;
     }
-    if (r->symbol != NULL && r->symbol->declaration->kind == MO_S_CONST) {
+    if (r->operand_count == 0 && r->symbol != NULL &&
+        r->symbol->declaration->kind == MO_S_CONST) {
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_GLOBAL);
         e->as.global = lower_global_name(p, r->symbol);
         finish(b, e, t.state, t.continuation, t.out);

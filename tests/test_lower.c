@@ -1853,6 +1853,28 @@ static void test_source_specs(void *unused) {
     mo_buffer_free(&source);
 }
 
+static void test_source_constants(void *unused) {
+    (void)unused;
+    struct mo_arena output;
+    struct mo_diags diags;
+    struct mo_buffer source;
+    mo_arena_init(&output, MO_LIMIT_LOWER_WORK);
+    MO_ASSERT(mo_diags_init(&diags));
+    mo_buffer_init(&source, MO_LIMIT_FILE_SIZE);
+    MO_ASSERT(mo_buffer_append_text(
+        &source, "module Main\nbase = 13\nhandler = first\nanswer = handler()\n"
+                 "reader = fn() Some(try Some(1)) end\n"
+                 "fn first() : Int\nbase\nend\n"
+                 "fn main() : Int\nanswer + (reader() or 7)\nend\n"));
+    struct mo_core *core = source_core(&output, &source, &diags);
+    CHECK(core != NULL && !mo_diags_any(&diags));
+    if (core != NULL)
+        run(core, 14);
+    mo_arena_free(&output);
+    mo_diags_free(&diags);
+    mo_buffer_free(&source);
+}
+
 static void test_source(void *unused) {
     (void)unused;
     struct mo_arena output;
@@ -1985,6 +2007,7 @@ int main(int argc, char **argv) {
     test_ignored_parameters();
     test_substituted_depth();
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_specs, NULL) == 0);
+    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_constants, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source, NULL) == 0);
     return mo_test_report("lower");
 }
