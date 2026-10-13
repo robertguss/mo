@@ -10,6 +10,7 @@
 #include "codegen/control.h"
 #include "codegen/index.h"
 #include "codegen/operations.h"
+#include "codegen/registers.h"
 #include "heap/types.h"
 
 /* Arrays grow geometrically. Retained arena blocks cost less than twice the final capacity. */
@@ -3488,6 +3489,23 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
         if (!mo_codegen_prune(&c->arena, fun, d))
             return problem(c, MO_CODE_CODEGEN_MEMORY,
                            "No memory for code generation's reachability pass.");
+        const struct mo_bytecode context = {.type_count = c->types.count,
+                                            .types = c->types.items,
+                                            .function_count = c->function_count,
+                                            .functions = c->funs};
+        uint16_t allocation = mo_codegen_registers(&c->arena, &context, fun, d, capture_start);
+        if (allocation != 0)
+            return problem(
+                c, allocation,
+                allocation == MO_CODE_TOO_MANY_REGISTERS
+                    ? "Function exceeds MO_LIMIT_FUNCTION_REGISTERS after recycling."
+                : allocation == MO_CODE_BYTECODE_TOO_BIG
+                    ? "Function exceeds MO_LIMIT_FUNCTION_REGISTER_BLOCKS after recycling."
+                : allocation == MO_CODE_FUNCTION_TOO_LONG
+                    ? "Recycled code exceeds MO_LIMIT_FUNCTION_CODE_WORDS."
+                : allocation == MO_CODE_CODEGEN_REGISTER_WORK
+                    ? "Register recycling exceeds MO_LIMIT_CODEGEN_REGISTER_WORK."
+                    : "No memory for code generation's register recycling pass.");
     }
     const struct mo_bytecode file = {.string_count = c->strings.count,
                                      .strings = c->strings.items,

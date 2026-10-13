@@ -92,6 +92,9 @@
 /* Sparse reference-set storage, including retained growth blocks, per function. E1203. */
 #define MO_LIMIT_CODEGEN_LIVE_CELLS (1u << 22)
 
+/* Register recycling scans and relocates bounded emitted code; E1204 on exhaustion. */
+#define MO_LIMIT_CODEGEN_REGISTER_WORK (1u << 26)
+
 /* Borrow inference slots and dependency edges, also E1056. They grow with prepared registers
  * and Core operands; each owned slot is propagated once, never by rescanning the call graph. */
 #define MO_LIMIT_CODEGEN_OWNERSHIP_SLOTS (4u * MO_LIMIT_CORE_NODES)
