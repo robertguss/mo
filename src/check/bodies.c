@@ -1420,44 +1420,31 @@ static MO_MUST_USE struct value construct(struct inference *p, const struct mo_d
 static MO_MUST_USE struct value call(struct inference *p, struct value callee,
                                      const struct mo_syntax *args, const struct value *receiver);
 
-static MO_MUST_USE struct value ability_call(struct inference *p, struct value receiver,
-                                             const struct mo_syntax *name,
-                                             const struct mo_syntax *args) {
+static MO_MUST_USE struct value ability_function(struct inference *p, struct value receiver,
+                                                 const struct mo_syntax *name) {
     bool text = compare_text(name, "to_text") == 0;
-    uint32_t count = text ? 0u : 1u;
-    if ((args == NULL ? 0 : args->count) != count ||
-        (count != 0 && args->children[0]->kind == MO_S_NAMED_ARG)) {
-        bool reported = problem(p, MO_CODE_CALL_ARGUMENTS, args == NULL ? name->span : args->span,
-                                "a call's arguments don't match its parameters",
-                                "Use x.to_text or x.compare(y) (reference 9.2).", NULL);
-        (void)reported;
+    struct term *type = make_type(p, (struct mo_source_type){.kind = MO_SOURCE_FUNCTION,
+                                                             .name = "fn",
+                                                             .module = UINT32_MAX,
+                                                             .count = text ? 2u : 3u});
+    if (type == NULL)
         return (struct value){0};
-    }
-    struct value out = graph(
-        p,
-        (struct value){.type = native(p, text ? "Text" : "Ordering", 0), .never = receiver.never},
-        count + 1);
-    if (out.type == NULL)
-        return out;
-    if (p->checked) {
+    type->arguments[0] = receiver.type;
+    if (!text)
+        type->arguments[1] = receiver.type;
+    type->arguments[type->shape.count - 1] = native(p, text ? "Text" : "Ordering", 0);
+    if (p->failed)
+        return (struct value){0};
+    struct value out = graph(p, (struct value){.type = type}, 0);
+    if (p->checked && out.type != NULL)
         out.graph->output.native = text ? "to_text" : "compare";
-        out.graph->output.receiver = 0;
-        out.graph->operands[0] = receiver.note;
-    }
-    if (count != 0) {
-        struct value right = infer_as(p, args->children[0], receiver.type, MO_CODE_ARGUMENT_TYPE);
-        if (right.type == NULL)
-            return (struct value){0};
-        if (p->checked)
-            out.graph->operands[1] = right.note;
-        out.never = out.never || right.never;
-    }
     return out;
 }
 
-static MO_MUST_USE struct value field_value(struct inference *p, struct value v,
-                                            const struct mo_syntax *name,
-                                            const struct mo_syntax *args, bool *called) {
+/* Resolve a member without walking its explicit arguments. A method returns
+ * its function type; a visible field returns its projection. */
+static MO_MUST_USE struct value member(struct inference *p, struct value v,
+                                       const struct mo_syntax *name, bool *called) {
     *called = true;
     if (v.type == NULL)
         return v;
@@ -1481,7 +1468,7 @@ static MO_MUST_USE struct value field_value(struct inference *p, struct value v,
         }
         const struct mo_native_signature *signature = native_definition(p, type->shape.name, name);
         if (signature != NULL)
-            return call(p, native_identifier(p, signature), args, &v);
+            return native_identifier(p, signature);
     }
     const struct mo_data_signature *data = type->variable || type->shape.declaration == NULL
                                                ? NULL
@@ -1491,7 +1478,7 @@ static MO_MUST_USE struct value field_value(struct inference *p, struct value v,
                                     type->shape.declaration->insides);
     if ((field == NULL || !visible) &&
         (compare_text(name, "to_text") == 0 || compare_text(name, "compare") == 0))
-        return ability_call(p, v, name, args);
+        return ability_function(p, v, name);
     if (type->variable) {
         bool reported = unfinished(p);
         (void)reported;
@@ -1513,15 +1500,7 @@ static MO_MUST_USE struct value field_value(struct inference *p, struct value v,
             method = select_overload(p, method, count, type);
             if (method == NULL)
                 return (struct value){0};
-            struct value callee = declared_function(p, method);
-            if (callee.type == NULL)
-                return callee;
-            if (p->checked) {
-                if (!record(p, name, callee))
-                    return (struct value){0};
-                callee.note = p->last;
-            }
-            return call(p, callee, args, &v);
+            return declared_function(p, method);
         }
     }
     if (type->shape.declaration == NULL) {
@@ -1563,6 +1542,20 @@ static MO_MUST_USE struct value field_value(struct inference *p, struct value v,
         out.graph->instantiated = type;
     }
     return out;
+}
+
+static MO_MUST_USE struct value field_value(struct inference *p, struct value receiver,
+                                            const struct mo_syntax *name,
+                                            const struct mo_syntax *args, bool *called) {
+    struct value resolved = member(p, receiver, name, called);
+    if (resolved.type == NULL || !*called)
+        return resolved;
+    if (p->checked && resolved.symbol != NULL) {
+        if (!record(p, name, resolved))
+            return (struct value){0};
+        resolved.note = p->last;
+    }
+    return call(p, resolved, args, &receiver);
 }
 
 static MO_MUST_USE struct value sequence(struct inference *p, const struct mo_syntax *node,
