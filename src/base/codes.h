@@ -229,7 +229,11 @@
     /* The command requests a toolchain stage not implemented by this build. */                    \
     X(1400, TOOL_UNAVAILABLE, NULL)                                                                \
     /* The OS cannot prepare the explicit source-stage checking stack. */                          \
-    X(1401, TOOL_SOURCE_STACK, NULL)
+    X(1401, TOOL_SOURCE_STACK, NULL)                                                               \
+    /* Formatting cannot read or atomically replace a regular source file. */                      \
+    X(1402, TOOL_FORMAT_IO, NULL)                                                                  \
+    /* The formatter's source stack, document, or output budget is unavailable. */                 \
+    X(1403, TOOL_FORMAT_LIMIT, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */
 enum mo_code {

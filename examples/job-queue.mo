@@ -54,7 +54,10 @@ end
 fn lease(queue: Queue, now: Time, length: Duration) : Result((Queue, Option(Job)), QueueError)
   promise "a lease never loses a job"
     result is Ok((after, _)) implies queue.jobs.keys.all?(fn(id) after.jobs.has?(id) end)
-    allows queue: holding([ready(1)]), now: t0, length: 30.seconds, result: Ok((holding([leased(1, t0 + 30.seconds)]), Some(leased(1, t0 + 30.seconds))))
+    allows queue: holding([ready(1)]), now: t0, length: 30.seconds, result: Ok((
+      holding([leased(1, t0 + 30.seconds)]),
+      Some(leased(1, t0 + 30.seconds))
+    ))
     forbids queue: holding([ready(1)]), now: t0, length: 30.seconds, result: Ok((empty, None))
   end
 
@@ -79,7 +82,9 @@ fn acknowledge(queue: Queue, id: Int) : Result(Queue, QueueError)
   promise "acknowledging finishes the job and keeps every job"
     result is Ok(after) implies queue.jobs.keys.all?(fn(other) after.jobs.has?(other) end)
     result is Ok(after) implies after.jobs.get(id) is Some(job) and job.state == Done
-    allows queue: holding([leased(1, t0), ready(2)]), id: 1, result: Ok(holding([done(1), ready(2)]))
+    allows queue: holding([leased(1, t0), ready(2)]), id: 1, result: Ok(
+      holding([done(1), ready(2)])
+    )
     forbids queue: holding([leased(1, t0), ready(2)]), id: 1, result: Ok(holding([done(1)]))
   end
 
@@ -93,7 +98,8 @@ end
 ## its last attempt.
 fn fail(queue: Queue, id: Int) : Result(Queue, QueueError)
   promise "a job is attempted at most three times"
-    result is Ok(after) and after.jobs.get(id) is Some(job) and job.attempts >= max_attempts implies job.state == Dead
+    result is Ok(after) and after.jobs.get(id) is Some(job) and job.attempts >= max_attempts implies
+      job.state == Dead
     allows queue: holding([tried(1, 3)]), id: 1, result: Ok(holding([dead(1)]))
     forbids queue: holding([tried(1, 3)]), id: 1, result: Ok(holding([retried(1, 3)]))
   end

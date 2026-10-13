@@ -33,7 +33,8 @@ end
 fn parse_args(args: List(Text)) : Result(Search, UsageError)
   examples
     parse_args(["cat", "a.txt"]) == Ok(search_for("cat", ["a.txt"]))
-    parse_args(["-i", "--count", "cat", "a.txt"]) is Ok(Search(ignore_case?: true, count_only?: true))
+    parse_args(["-i", "--count", "cat", "a.txt"]) is
+      Ok(Search(ignore_case?: true, count_only?: true))
     parse_args(["--fast", "cat", "a.txt"]) == Error(UnknownOption(option: "--fast"))
     parse_args(["cat"]) == Error(NoFiles)
     parse_args([]) == Error(NoPhrase)

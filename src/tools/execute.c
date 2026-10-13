@@ -5,11 +5,20 @@
 #include "base/codes.h"
 #include "base/stack.h"
 #include "check/check.h"
+#include "prim/prim.h"
 #include "tools/embedded.h"
+#include "tools/format.h"
 
 #include <errno.h>
 #include <string.h>
 #include <sys/stat.h>
+
+static uint32_t display_width(const uint8_t *bytes, size_t length) {
+    uint64_t width;
+    MO_ASSERT(mo_unicode16_display_width(bytes, length, &width));
+    MO_ASSERT(width <= UINT32_MAX);
+    return (uint32_t)width;
+}
 
 static void tool_error(struct mo_diags *diags, uint16_t code, const char *message,
                        const char *detail) {
@@ -122,6 +131,10 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
         if (!ok)
             (void)fputs("mo: could not write guide\n", errors);
         return ok ? 0 : 1;
+    }
+    if (cli->command == MO_COMMAND_FORMAT) {
+        struct mo_format_options options = {100, display_width};
+        return mo_format_files(cli, options, errors);
     }
     if (cli->json && !mo_write_version(output, cli->command)) {
         (void)fputs("mo: could not write version record\n", errors);

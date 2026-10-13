@@ -203,11 +203,11 @@ gives an `Int`, so convert first to get a fraction:
 `total.to_decimal / count.to_decimal`. Converting is explicit:
 
 ```mo
-share = cents.to_decimal / 100      # Int to Decimal
-ratio = share.to_float              # Decimal to Float, rounded to the nearest float
-back = ratio.to_decimal             # an Option: a float may be infinite or not a number
-rounded = share.round(2)            # 2 places, ties away from zero, as people round by hand
-label = rounded.to_fixed(2)         # the text "0.10": exactly 2 places, rounded as round does
+share = cents.to_decimal / 100  # Int to Decimal
+ratio = share.to_float          # Decimal to Float, rounded to the nearest float
+back = ratio.to_decimal         # an Option: a float may be infinite or not a number
+rounded = share.round(2)        # 2 places, ties away from zero, as people round by hand
+label = rounded.to_fixed(2)     # the text "0.10": exactly 2 places, rounded as round does
 ```
 
 ### 3.4 Text, Char and Bytes
@@ -272,9 +272,9 @@ the same type. Reading by position returns an `Option`, because the position
 may be past the end:
 
 ```mo
-first = items.first          # an Option
-third = items.get(2)         # positions start at 0
-longer = items.append(4)     # a new list; items itself is unchanged
+first = items.first       # an Option
+third = items.get(2)      # positions start at 0
+longer = items.append(4)  # a new list; items itself is unchanged
 ```
 
 Functions that "change" a list return a new one, so `items.append(4)` on a line
@@ -301,7 +301,7 @@ Iterating a map gives `(key, value)` tuples.
 ```mo
 stock = {"apples": 3}
 more = stock.set("pears", 5)
-count = more.get("apples") or 0   # get returns an Option
+count = more.get("apples") or 0  # get returns an Option
 for (fruit, n) in more
   console.print("#{fruit}: #{n}")
 end
@@ -439,9 +439,9 @@ end
 among the names in scope. Chains read left to right: `text.trim.lines.size`.
 
 ```mo
-words = sentence.split(" ")      # Text's split
-loud = shout(words)              # a function in this module
-same = words.shout               # the same call
+words = sentence.split(" ")  # Text's split
+loud = shout(words)          # a function in this module
+same = words.shout           # the same call
 ```
 
 Where a record's field and a function share a name, `x.name` is the field
@@ -496,9 +496,9 @@ later one. Copy the value into a name first, and read the name:
 ```mo
 var count = 0
 current = count
-show = fn() "#{current}" end      # fn() "#{count}" end would be an error
+show = fn() "#{current}" end  # fn() "#{count}" end would be an error
 count += 1
-console.print(show())             # prints 0
+console.print(show())  # prints 0
 ```
 
 To use a later value, make the function after the last assignment, or pass
@@ -738,7 +738,7 @@ end
 fn parse_line(line: Text, catalog: Map(Text, Item)) : Result(OrderLine, OrderError)
   parts = line.split(",")
   name = try parts.get(0).or_fail(UnknownItem(name: line))
-  quantity = try parse_quantity(parts.get(1) or "")   # a QuantityError becomes BadQuantity(...)
+  quantity = try parse_quantity(parts.get(1) or "")  # a QuantityError becomes BadQuantity(...)
   item = try catalog.get(name).or_fail(UnknownItem(name: name))
   Ok(OrderLine(item: item, quantity: quantity))
 end

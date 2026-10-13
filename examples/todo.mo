@@ -57,7 +57,8 @@ end
 ## The items in the file's text: one a line, "[ ] text" or "[x] text".
 fn parse_items(text: Text) : Result(List(Item), TodoError)
   examples
-    parse_items("[ ] milk\n[x] eggs\n") == Ok([Item(text: "milk", done?: false), Item(text: "eggs", done?: true)])
+    parse_items("[ ] milk\n[x] eggs\n") ==
+      Ok([Item(text: "milk", done?: false), Item(text: "eggs", done?: true)])
     parse_items("") == Ok([])
     parse_items("milk\n") == Error(BadLine(number: 1))
   end
@@ -77,7 +78,8 @@ end
 
 fn format(items: List(Item)) : Text
   examples
-    format([Item(text: "milk", done?: false), Item(text: "eggs", done?: true)]) == "[ ] milk\n[x] eggs\n"
+    format([Item(text: "milk", done?: false), Item(text: "eggs", done?: true)]) ==
+      "[ ] milk\n[x] eggs\n"
   end
 
   items.map(fn(item) "#{box(item)} #{item.text}\n" end).join("")
