@@ -275,7 +275,7 @@ static MO_MUST_USE uint32_t type(struct compiler *c, mo_core_ty t, unsigned dept
     return id;
 }
 static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsigned depth) {
-    enum mo_type_kind kind;
+    enum mo_type_kind kind = MO_TYPE_UNIT;
     switch (t->tag) {
     case MO_CORE_TY_UNIT:
         kind = MO_TYPE_UNIT;
@@ -527,6 +527,7 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
         return type_result(c, status, id);
     }
     }
+    MO_ASSERT((uint32_t)t->tag < MO_CORE_TY_TUPLE);
     return scalar(c, kind);
 }
 static MO_MUST_USE bool signature_take(const char **cursor, char ch) {

@@ -71,7 +71,7 @@ static MO_MUST_USE struct mo_codegen_operation comparison(const struct mo_core_p
 
 /* These arrays map names, not signatures or ownership: those come only from the .def rows. */
 bool mo_codegen_operation(const struct mo_core_prim *p, struct mo_codegen_operation *out) {
-    enum mo_primitive_id row;
+    enum mo_primitive_id row = MO_PRIM_COUNT;
     switch (p->tag) {
     case MO_CORE_PRIM_INT: {
         if (p->as.int_ <= MO_CORE_INT_OP_NEG) {
@@ -358,6 +358,6 @@ bool mo_codegen_operation(const struct mo_core_prim *p, struct mo_codegen_operat
         return true;
     }
     }
-    *out = primitives[row];
+    *out = mo_codegen_primitive(row);
     return true;
 }
