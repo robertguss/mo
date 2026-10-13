@@ -393,7 +393,7 @@ def main():
         directory.mkdir(parents=True, exist_ok=True)
         ids = re.findall(r'^PRIM\((\w+),', pathlib.Path("src/base/prims.def").read_text(), re.M)
         rng = random.Random(1300)
-        for i, name in enumerate(ids[:ids.index("RANGE_CONTAINS") + 1]):
+        for i, name in enumerate(ids):
             for variant in range(6):
                 operands = bytes(512) if variant == 0 else rng.randbytes(512)
                 (directory / f"{name}-{variant}").write_bytes(

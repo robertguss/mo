@@ -547,6 +547,38 @@ new for it: it parses and prints with text and list primitives.
 | `Unicode16.lowercase(text)` | primitive | `UNICODE16_LOWERCASE` | |
 | `Unicode16.uppercase(text)` | primitive | `UNICODE16_UPPERCASE` | |
 
+These trusted primitives use Unicode **16.0.0**, independent of the host's
+locale or Unicode library. `graphemes` returns the default extended grapheme
+clusters of UAX #29 revision 45, without tailoring or changing their bytes.
+`normalize_nfc` implements canonical decomposition, ordering and composition,
+not compatibility normalization. Case conversion uses full mappings from
+`UnicodeData` and `SpecialCasing`, including language-insensitive final sigma
+on the original text; Turkish, Azeri and Lithuanian rules are excluded. It
+does not normalize its result.
+
+`display_width` is a deterministic column estimate, **not a terminal or font
+measurement**. Split the original text into the same extended graphemes and
+sum their widths. A grapheme's width is the maximum of its scalar widths:
+
+- General categories `Mn`, `Mc`, `Me` and `Default_Ignorable_Code_Point` have
+  width 0; this takes precedence over East Asian Width.
+- East Asian Width `W` and `F` have width 2; all other scalars have width 1.
+  Ambiguous width stays 1. Controls, including tabs and line endings, have
+  width 1, unless default-ignorable. CRLF is one grapheme of width 1. There
+  are no tab stops, cursor movements or line resets in this calculation.
+- Emoji presentation gives width 2 to the whole grapheme: a scalar with
+  `Emoji_Presentation` (unless immediately followed by a registered text
+  selector U+FE0E), a registered base plus emoji selector U+FE0F, or a keycap
+  `#`, `*`, `0`–`9` plus optional U+FE0F and U+20E3. Regional-indicator pairs,
+  modifier, tag and ZWJ sequences with emoji-presenting components therefore
+  have width 2, not the sum of their components. A text selector does not
+  override a scalar's `W`/`F` width.
+
+An empty text or a grapheme consisting only of zero-width scalars has width
+0. This policy deliberately gives width 1 to multi-letter Indic conjuncts
+and width 2 to conjoining wide Hangul. It is versioned with `Unicode16`, not
+with the environment's rendering conventions.
+
 ## Functions
 
 Functions have no abilities (reference 9.2).

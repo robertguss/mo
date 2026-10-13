@@ -1117,11 +1117,13 @@ private result before committing ownership. Native walk/build storage is
 charged to the process through `mo_scratch`; structural formatting uses the
 heap printer's separately bounded caller-owned output buffer.
 
-Primitive part 1 implements every numeric, Text, Char, Bytes, List, Map, Set
-and Range row. Time/Duration's own operations and all five Unicode16 rows
-still return the staged `NOT_IMPLEMENTED` refusal. Unicode16 will use generated
-UCD 16.0 tables and its conformance data, not an approximate implementation.
-The C/Lean differential gate covers each implemented row, exact Float bits,
+Primitive parts 1 and 2 implement every row. Time/Duration use microseconds,
+the heap's formatter and the UTC instant's inclusive years 1 through 9999.
+The parser follows `Support/Time.lean`, including offsets, lowercase `t`/`z`
+and one to six fractional digits; an offset may move local year `0000` into
+valid UTC year 1. `checked_add` returns `None` outside the time range; Time
+arithmetic instructions stop with the bug required by reference 3.9.
+The C/Lean differential gate covers every non-Unicode row, exact Float bits,
 all four Number instances of sum, and exact stop details, with shared and unique
 operands and multi-step collection updates. `%structural` uses the reference's
 text form, including shortest decimal Float spellings and escaped nested
@@ -1133,6 +1135,22 @@ Long text matching uses KMP. BigInt multiplication uses explicit-stack
 Karatsuba; division uses normalized base-2^32 long division (a single pass for
 a one-limb divisor), with scratch bounded by operand/result sizes and the heap.
 Reference 13.3 promises no constant or linear cost for BigInt arithmetic.
+
+Unicode16 is trusted, not reimplemented in Lean. `ci/unicode16/` holds the
+compressed unmodified UCD 16.0.0 sources, their SHA-256 hashes and license;
+`ci/generate_unicode16.py` generates the compact range/mapping tables.
+CI checks reproducibility and every grapheme/NFC test vector, full case data
+and final-sigma contexts. Graphemes use the untailored extended rules of
+UAX #29 revision 45. The width policy is explicit in `library.md`.
+Property, mapping and composition lookups are logarithmic in their table
+counts, with direct ASCII properties and algorithmic Hangul handling. Each
+scalar is visited a bounded number of times: segmentation keeps suffix
+states, sigma lookahead runs do not overlap, and canonical ordering uses
+stable counting sort on long combining runs (insertion sort only up to 32
+scalars). Decompositions expand to at most four scalars, case mappings to
+three. Scratch derives from input/output sizes and shares the process heap
+budget. Output also respects `MO_LIMIT_STRING_SIZE` and collection limits;
+any refusal preserves operands and output just like part 1.
 
 **Core's checker.** `mo_core_check` accepts complete parsed or arena-built
 Core trees, not arbitrary pointers or invalid C enum tags. Its typing contract

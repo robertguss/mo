@@ -264,8 +264,7 @@ enum mo_prim_status mo_prim_call(struct mo_heap *heap, const struct mo_types *ty
     case MO_PRIM_UNICODE16_NORMALIZE_NFC:
     case MO_PRIM_UNICODE16_LOWERCASE:
     case MO_PRIM_UNICODE16_UPPERCASE:
-        call.reason = "primitive not implemented";
-        status = MO_PRIM_NOT_IMPLEMENTED;
+        status = mo_prim_unicode(&call, &result);
         break;
     case MO_PRIM_COUNT:
     default:

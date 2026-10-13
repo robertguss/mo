@@ -57,6 +57,19 @@ else
 	missing "python3 is not installed"
 fi
 
+step "Unicode 16: pinned tables, UCD conformance and long-text work bounds"
+if have python3; then
+	python3 ci/generate_unicode16.py --check
+	drivers=()
+	for driver in build/{gcc,clang}/{debug,sanitize}/tests/test_unicode16.test; do
+		if [[ -x "$driver" ]]; then drivers+=("$driver"); fi
+	done
+	if ((${#drivers[@]})); then python3 ci/check_unicode16.py "${drivers[@]}";
+	else missing "no Unicode primitive test executable is built"; fi
+else
+	missing "python3 is not installed"
+fi
+
 step "Fuzz every target briefly"
 if have clang && has_libfuzzer; then
 	make --no-print-directory fuzz-smoke
