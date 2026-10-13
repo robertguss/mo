@@ -66,13 +66,15 @@ static void execute_pipeline(void *argument) {
     struct mo_program *program = mo_check(arena, set, diags);
     if (program == NULL || mo_diags_any(diags))
         return;
-    /* Never certify unchecked anchors or fabricate test results. These paths
-     * wait for the checked-spec producer and the lowering/runner contract. */
-    if (cli->command == MO_COMMAND_TEST || program->spec_count != 0) {
+    /* Test observations are separate from the compiler's anchor checks. */
+    if (cli->command == MO_COMMAND_TEST) {
         tool_error(diags, MO_CODE_TOOL_UNAVAILABLE,
                    "this build cannot execute specification code yet", NULL);
         return;
     }
+    bool anchors = false;
+    for (uint32_t i = 0; i < program->spec_count; i++)
+        anchors |= program->specs[i].kind == MO_SPEC_ANCHOR;
     struct mo_arena lowered;
     mo_arena_init(&lowered, MO_LIMIT_LOWER_WORK);
     struct mo_core *core = mo_lower(&lowered, program, sources, diags);
@@ -83,21 +85,25 @@ static void execute_pipeline(void *argument) {
     if (core == NULL || mo_diags_any(diags) || !mo_core_check(core, diags))
         goto done;
     /* Plain check validates lowering too, but never executes the user's main. */
-    if (cli->command == MO_COMMAND_CHECK && cli->emit == MO_EMIT_NONE)
+    if (cli->command == MO_COMMAND_CHECK && cli->emit == MO_EMIT_NONE && !anchors)
         goto done;
+    if (anchors || cli->command == MO_COMMAND_RUN || cli->emit == MO_EMIT_BYTECODE) {
+        if (!mo_compile(core, &wire, diags))
+            goto done;
+    }
+    if (anchors || cli->command == MO_COMMAND_RUN) {
+        work->status = mo_run_program(cli, core, &wire, sources, work->output, work->errors, diags);
+        if (work->status != 0 || mo_diags_any(diags))
+            goto done;
+    }
     if (cli->emit == MO_EMIT_CORE) {
         if (!mo_core_print(core, &printed))
             tool_error(diags, MO_CODE_TOOL_PIPELINE, "Core text exceeds its output budget", NULL);
-    } else {
-        if (!mo_compile(core, &wire, diags))
-            goto done;
-        if (cli->emit == MO_EMIT_BYTECODE) {
-            struct mo_load_error error;
-            if (!mo_bytecode_disassemble(wire.bytes, wire.length, &printed, &error))
-                tool_error(diags, MO_CODE_TOOL_PIPELINE, "bytecode text could not be emitted",
-                           error.reason);
-        } else
-            work->status = mo_run_program(cli, core, &wire, work->output, work->errors, diags);
+    } else if (cli->emit == MO_EMIT_BYTECODE) {
+        struct mo_load_error error;
+        if (!mo_bytecode_disassemble(wire.bytes, wire.length, &printed, &error))
+            tool_error(diags, MO_CODE_TOOL_PIPELINE, "bytecode text could not be emitted",
+                       error.reason);
     }
     if (cli->emit != MO_EMIT_NONE && !mo_diags_any(diags) &&
         (fwrite(printed.bytes, 1, printed.length, work->output) != printed.length ||
