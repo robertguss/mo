@@ -25,6 +25,237 @@ static void unchanged_trim(void) {
     prim_fixture_free(&f);
 }
 
+static void unique_reverse_without_space(void) {
+    struct prim_fixture f;
+    prim_fixture_init(&f, 1 << 20);
+    uint32_t type = f.types.items[f.signature[MO_PRIM_LIST_REVERSE]].result;
+    struct mo_cell elements[] = {mo_cell_int(3), mo_cell_int(-7), mo_cell_int(11)};
+    struct mo_cell arg, out = mo_cell_int(41);
+    MO_ASSERT(mo_value_list(f.heap, type, elements, 3, &arg));
+    struct mo_scratch full;
+    mo_scratch_init(&full, f.heap);
+    MO_ASSERT(mo_scratch_resize(&full, NULL, 0, full.arena.limit - MO_ARENA_CHUNK_HEADER) != NULL);
+    const char *reason;
+    enum mo_prim_status status =
+        mo_prim_call(f.heap, &f.types, MO_PRIM_LIST_REVERSE, f.signature[MO_PRIM_LIST_REVERSE],
+                     &arg, &out, &reason);
+    CHECK(status == MO_PRIM_RETURNED);
+    if (status == MO_PRIM_RETURNED) {
+        struct mo_cell first, last;
+        MO_ASSERT(mo_list_get(out, 0, &first) && mo_list_get(out, 2, &last));
+        CHECK(mo_cell_get_int(first) == 11 && mo_cell_get_int(last) == 3);
+        mo_value_drop(f.heap, type, out);
+    } else
+        mo_value_drop(f.heap, type, arg);
+    mo_scratch_free(&full);
+    prim_fixture_free(&f);
+}
+
+static void unique_union_without_space(void) {
+    struct prim_fixture f;
+    prim_fixture_init(&f, 1 << 20);
+    uint32_t type = f.types.items[f.signature[MO_PRIM_SET_UNION]].result;
+    struct mo_cell keys[] = {mo_cell_int(11), mo_cell_int(-7), mo_cell_int(3)};
+    struct mo_cell args[2], out = mo_cell_int(41);
+    MO_ASSERT(mo_value_set(f.heap, type, keys, 2, &args[0]));
+    MO_ASSERT(mo_value_set(f.heap, type, keys + 2, 1, &args[1]));
+    struct mo_scratch full;
+    mo_scratch_init(&full, f.heap);
+    MO_ASSERT(mo_scratch_resize(&full, NULL, 0, full.arena.limit - MO_ARENA_CHUNK_HEADER) != NULL);
+    const char *reason;
+    enum mo_prim_status status = mo_prim_call(f.heap, &f.types, MO_PRIM_SET_UNION,
+                                              f.signature[MO_PRIM_SET_UNION], args, &out, &reason);
+    CHECK(status == MO_PRIM_RETURNED);
+    if (status == MO_PRIM_RETURNED) {
+        uint32_t cursor = 0;
+        struct mo_cell key, value;
+        CHECK(mo_table_size(out) == 3);
+        for (unsigned i = 0; i < 3; i++) {
+            MO_ASSERT(mo_table_next(out, &cursor, &key, &value));
+            CHECK(mo_cell_get_int(key) == mo_cell_get_int(keys[i]));
+        }
+        mo_value_drop(f.heap, type, out);
+    } else
+        mo_value_drop(f.heap, type, args[0]);
+    mo_value_drop(f.heap, type, args[1]);
+    mo_scratch_free(&full);
+    prim_fixture_free(&f);
+}
+
+/* Sweep available heap space across planning/copy boundaries. No duplicate is
+ * kept in the unique mode: serialization retains observations, not ownership. */
+static void reuse_refusals(void) {
+    const enum mo_primitive_id ids[] = {
+        MO_PRIM_TEXT_CONCAT,   MO_PRIM_TEXT_TRIM,        MO_PRIM_TEXT_TRIM_START,
+        MO_PRIM_TEXT_TRIM_END, MO_PRIM_TEXT_DROP_PREFIX, MO_PRIM_TEXT_DROP_SUFFIX,
+        MO_PRIM_LIST_PREPEND,  MO_PRIM_LIST_CONCAT,      MO_PRIM_LIST_REVERSE,
+        MO_PRIM_LIST_TAKE,     MO_PRIM_LIST_DROP,        MO_PRIM_LIST_REMOVE_AT,
+        MO_PRIM_SET_UNION};
+    static const char *const ownership[] = {
+#define PRIM(id, module, name, signature, params, bugs) params,
+#include "base/prims.def"
+    };
+    unsigned refusals = 0, successes = 0;
+    for (size_t operation = 0; operation < sizeof ids / sizeof ids[0]; operation++) {
+        enum mo_primitive_id id = ids[operation];
+        for (unsigned holders = 0; holders < 3; holders++) {
+            for (size_t room = 0; room <= 1536; room += 32) {
+                struct prim_fixture f;
+                prim_fixture_init_type(&f, 1 << 20, MO_TYPE_TEXT);
+                const struct mo_type *fn = &f.types.items[f.signature[id]];
+                size_t count = fn->parameter_count;
+                struct mo_cell args[3], held[3], out = mo_cell_int(41);
+                struct mo_cell elements[4];
+                const char *const words[] = {"β", "🙂", "x", "z"};
+                for (unsigned i = 0; i < 4; i++)
+                    MO_ASSERT(mo_value_text(f.heap, words[i], strlen(words[i]), &elements[i]));
+                for (size_t i = 0; i < count; i++) {
+                    uint32_t type = fn->parameters[i];
+                    enum mo_type_kind kind = f.types.items[type].kind;
+                    if (kind == MO_TYPE_TEXT) {
+                        const char *s = i == 0                           ? " \tβ🙂 \n"
+                                        : id == MO_PRIM_TEXT_DROP_PREFIX ? " \t"
+                                        : id == MO_PRIM_TEXT_DROP_SUFFIX ? " \n"
+                                                                         : "β";
+                        MO_ASSERT(mo_value_text(f.heap, s, strlen(s), &args[i]));
+                    } else if (kind == MO_TYPE_INT)
+                        args[i] = mo_cell_int(1);
+                    else if (kind == MO_TYPE_LIST)
+                        MO_ASSERT(
+                            mo_value_list(f.heap, type, elements + i, i == 0 ? 3U : 2U, &args[i]));
+                    else {
+                        MO_ASSERT(kind == MO_TYPE_SET);
+                        MO_ASSERT(mo_value_set(f.heap, type, elements + i, 3, &args[i]));
+                    }
+                    if (holders == 1)
+                        held[i] = mo_value_dup(f.heap, type, args[i]);
+                    else if (holders == 2)
+                        MO_ASSERT(mo_value_make_immortal(f.heap, type, args[i]));
+                }
+                struct mo_buffer before[3];
+                uint32_t counts[3] = {0};
+                for (size_t i = 0; i < count; i++) {
+                    mo_buffer_init(&before[i], 4096);
+                    MO_ASSERT(mo_value_print(f.heap, fn->parameters[i], args[i], &before[i]));
+                    if (mo_type_is_reference(&f.types, fn->parameters[i]))
+                        counts[i] = mo_cell_get_ref(args[i])->count;
+                }
+                struct mo_scratch full;
+                mo_scratch_init(&full, f.heap);
+                MO_ASSERT(mo_scratch_resize(&full, NULL, 0,
+                                            full.arena.limit - MO_ARENA_CHUNK_HEADER - room) !=
+                          NULL);
+                size_t used = mo_heap_used(f.heap), objects = mo_heap_objects(f.heap);
+                const char *reason;
+                enum mo_prim_status status =
+                    mo_prim_call(f.heap, &f.types, id, f.signature[id], args, &out, &reason);
+                CHECK(status == MO_PRIM_RETURNED || status == MO_PRIM_OUT_OF_MEMORY);
+                if (status == MO_PRIM_OUT_OF_MEMORY) {
+                    refusals++;
+                    CHECK(mo_cell_get_int(out) == 41 && reason != NULL);
+                    CHECK(mo_heap_used(f.heap) == used && mo_heap_objects(f.heap) == objects);
+                } else
+                    successes++;
+                mo_scratch_free(&full);
+                for (size_t i = 0; i < count; i++) {
+                    uint32_t type = fn->parameters[i];
+                    bool unchanged = status != MO_PRIM_RETURNED || ownership[id][i] == 'b';
+                    if (unchanged || holders != 0) {
+                        struct mo_cell original = holders == 1 ? held[i] : args[i];
+                        struct mo_buffer after;
+                        mo_buffer_init(&after, 4096);
+                        MO_ASSERT(mo_value_print(f.heap, type, original, &after));
+                        CHECK(before[i].length == after.length &&
+                              memcmp(before[i].bytes, after.bytes, after.length) == 0);
+                        if (status != MO_PRIM_RETURNED && mo_type_is_reference(&f.types, type))
+                            CHECK(mo_cell_get_ref(original)->count == counts[i]);
+                        mo_buffer_free(&after);
+                    }
+                    if (unchanged)
+                        mo_value_drop(f.heap, type, args[i]);
+                    if (holders == 1)
+                        mo_value_drop(f.heap, type, held[i]);
+                    mo_buffer_free(&before[i]);
+                }
+                if (status == MO_PRIM_RETURNED)
+                    mo_value_drop(f.heap, fn->result, out);
+                for (unsigned i = 0; i < 4; i++)
+                    mo_value_drop(f.heap, f.builtin[MO_TYPE_TEXT], elements[i]);
+                CHECK(holders == 2 || mo_heap_objects(f.heap) == 0);
+                prim_fixture_free(&f);
+            }
+        }
+    }
+    CHECK(refusals != 0 && successes != 0);
+}
+
+static void reuse_aliases(void) {
+    for (unsigned kind = 0; kind < 3; kind++) {
+        for (unsigned holders = 0; holders < 3; holders++) {
+            struct prim_fixture f;
+            prim_fixture_init_type(&f, 1 << 20, MO_TYPE_TEXT);
+            uint32_t text = f.builtin[MO_TYPE_TEXT];
+            uint32_t type =
+                kind == 0
+                    ? text
+                    : f.types
+                          .items[f.signature[kind == 1 ? MO_PRIM_LIST_CONCAT : MO_PRIM_SET_UNION]]
+                          .result;
+            struct mo_cell a, b, value, expected;
+            MO_ASSERT(mo_value_text(f.heap, "β", 2, &a) && mo_value_text(f.heap, "🙂", 4, &b));
+            struct mo_cell elements[] = {a, b, a, b};
+            if (kind == 0) {
+                value = mo_value_dup(f.heap, text, a);
+                MO_ASSERT(mo_text_concat(f.heap, &value, b));
+                MO_ASSERT(mo_value_text(f.heap, "β🙂β🙂", 12, &expected));
+            } else if (kind == 1) {
+                MO_ASSERT(mo_value_list(f.heap, type, elements, 2, &value));
+                /* Leave enough capacity for an in-place self-concatenation. */
+                MO_ASSERT(mo_list_append(f.heap, type, &value, a) &&
+                          mo_list_slice(f.heap, type, &value, 0, 2));
+                MO_ASSERT(mo_value_list(f.heap, type, elements, 4, &expected));
+            } else {
+                MO_ASSERT(mo_value_set(f.heap, type, elements, 2, &value) &&
+                          mo_value_set(f.heap, type, elements, 2, &expected));
+            }
+            uint64_t hash;
+            MO_ASSERT(mo_value_hash(f.heap, type, value, &hash));
+            struct mo_cell held = mo_cell_unit();
+            if (holders == 1)
+                held = mo_value_dup(f.heap, type, value);
+            else if (holders == 2)
+                MO_ASSERT(mo_value_make_immortal(f.heap, type, value));
+            struct mo_cell original = value;
+            bool ok = kind == 0   ? mo_text_concat(f.heap, &value, value)
+                      : kind == 1 ? mo_list_concat(f.heap, type, &value, value)
+                                  : mo_set_union(f.heap, type, &value, value);
+            MO_ASSERT(ok);
+            bool equal;
+            uint64_t expected_hash;
+            MO_ASSERT(mo_value_equal(f.heap, type, value, expected, &equal) &&
+                      mo_value_hash(f.heap, type, value, &hash) &&
+                      mo_value_hash(f.heap, type, expected, &expected_hash));
+            CHECK(equal && hash == expected_hash);
+            if (holders != 0) {
+                if (kind == 0) {
+                    size_t length;
+                    const uint8_t *bytes = mo_value_data(original, &length);
+                    CHECK(length == 6 && memcmp(bytes, "β🙂", 6) == 0);
+                } else
+                    CHECK(kind == 1 ? mo_list_size(original) == 2 : mo_table_size(original) == 2);
+            }
+            if (holders == 1)
+                mo_value_drop(f.heap, type, held);
+            mo_value_drop(f.heap, type, value);
+            mo_value_drop(f.heap, type, expected);
+            mo_value_drop(f.heap, text, a);
+            mo_value_drop(f.heap, text, b);
+            CHECK(holders == 2 || mo_heap_objects(f.heap) == 0);
+            prim_fixture_free(&f);
+        }
+    }
+}
+
 static void runtime_sizes(void) {
     struct prim_fixture f;
     prim_fixture_init(&f, MO_DEFAULT_HEAP_SIZE);
@@ -317,6 +548,76 @@ static void refusal_preserves_operands(void) {
 
 /* These sizes distinguish constant-amortized updates and KMP from repeated
  * copies or rescanning long equal prefixes. ci/check_primitives.py times them. */
+static void reuse_work(void) {
+    const enum mo_primitive_id ids[] = {MO_PRIM_TEXT_CONCAT, MO_PRIM_LIST_CONCAT,
+                                        MO_PRIM_SET_UNION};
+    for (unsigned kind = 0; kind < 3; kind++) {
+        struct prim_fixture f;
+        prim_fixture_init(&f, MO_DEFAULT_HEAP_SIZE);
+        enum mo_primitive_id id = ids[kind];
+        uint32_t type = f.types.items[f.signature[id]].result;
+        struct mo_cell args[2], out;
+        const char *reason;
+        if (kind == 0) {
+            MO_ASSERT(mo_value_text(f.heap, "", 0, &args[0]));
+            MO_ASSERT(mo_value_text(f.heap, "β🙂abcd", 10, &args[1]));
+        } else if (kind == 1)
+            MO_ASSERT(mo_value_list(f.heap, type, NULL, 0, &args[0]));
+        else
+            MO_ASSERT(mo_value_set(f.heap, type, NULL, 0, &args[0]));
+        struct timespec start, end;
+        MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+        for (uint32_t i = 0; i < 100000; i++) {
+            struct mo_cell keys[] = {mo_cell_int(i), mo_cell_int((int64_t)i + 1)};
+            if (kind == 1)
+                MO_ASSERT(mo_value_list(f.heap, type, keys, 1, &args[1]));
+            else if (kind == 2)
+                /* Alternate singleton and batch union; batches overlap. */
+                MO_ASSERT(mo_value_set(f.heap, type, keys, i % 2 == 0 ? 1U : 2U, &args[1]));
+            MO_ASSERT(mo_prim_call(f.heap, &f.types, id, f.signature[id], args, &out, &reason) ==
+                      MO_PRIM_RETURNED);
+            args[0] = out;
+            if (kind != 0)
+                mo_value_drop(f.heap, type, args[1]);
+        }
+        MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &end) == 0);
+        double seconds =
+            (double)(end.tv_sec - start.tv_sec) + (double)(end.tv_nsec - start.tv_nsec) / 1e9;
+        MO_ASSERT(printf("%s incremental build: %.6f s\n",
+                         kind == 0   ? "Text"
+                         : kind == 1 ? "List"
+                                     : "Set",
+                         seconds) > 0 &&
+                  fflush(stdout) == 0);
+        if (kind == 0) {
+            size_t length;
+            const uint8_t *bytes = mo_value_data(out, &length);
+            CHECK(length == 1000000);
+            for (size_t i = 0; i < length; i += 10)
+                CHECK(memcmp(bytes + i, "β🙂abcd", 10) == 0);
+            mo_value_drop(f.heap, type, args[1]);
+        } else if (kind == 1) {
+            CHECK(mo_list_size(out) == 100000);
+            for (uint32_t i = 0; i < 100000; i++) {
+                struct mo_cell value;
+                MO_ASSERT(mo_list_get(out, i, &value));
+                CHECK(mo_cell_get_int(value) == i);
+            }
+        } else {
+            CHECK(mo_table_size(out) == 100001);
+            uint32_t cursor = 0;
+            struct mo_cell key, value;
+            for (uint32_t i = 0; i < 100001; i++) {
+                MO_ASSERT(mo_table_next(out, &cursor, &key, &value));
+                CHECK(mo_cell_get_int(key) == i);
+            }
+        }
+        mo_value_drop(f.heap, type, out);
+        CHECK(mo_heap_objects(f.heap) == 0);
+        prim_fixture_free(&f);
+    }
+}
+
 static void primitive_work(void) {
     struct prim_fixture f;
     prim_fixture_init(&f, MO_DEFAULT_HEAP_SIZE);
@@ -467,8 +768,13 @@ int main(int argc, char **argv) {
         return 0;
     }
     if (argc == 2 && strcmp(argv[1], "--work") == 0) {
+        reuse_work();
         primitive_work();
         return mo_test_report("primitive work");
+    }
+    if (argc == 2 && strcmp(argv[1], "--reuse-work") == 0) {
+        reuse_work();
+        return mo_test_report("owned reuse work");
     }
     MO_ASSERT(argc == 1);
     empty_constants_and_rounding();
@@ -480,6 +786,10 @@ int main(int argc, char **argv) {
     collection_ownership();
     refusal_preserves_operands();
     unchanged_trim();
+    unique_reverse_without_space();
+    unique_union_without_space();
+    reuse_refusals();
+    reuse_aliases();
     time_boundary();
     return mo_test_report("primitives");
 }

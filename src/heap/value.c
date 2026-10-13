@@ -412,6 +412,123 @@ static MO_MUST_USE struct mo_allocation *list_room(struct mo_heap *process, uint
     return copy;
 }
 
+static void list_commit(struct mo_heap *process, uint32_t type, struct mo_cell *list,
+                        struct mo_allocation *old, struct mo_allocation *result) {
+    result->hash_valid = false;
+    if (result != old) {
+        mo_value_drop(process, type, *list);
+        *list = mo_cell_ref(&result->object);
+    }
+}
+
+bool mo_list_prepend(struct mo_heap *process, uint32_t type, struct mo_cell *list,
+                     struct mo_cell element) {
+    MO_ASSERT(process != NULL && list != NULL && type < process->types->count);
+    struct mo_allocation *old = mo_heap_allocation(mo_cell_get_ref(*list));
+    MO_ASSERT(old->type == type && old->object.layout == MO_BUILTIN_LAYOUT(MO_TYPE_LIST));
+    if (old->length == MO_LIMIT_COLLECTION_SIZE)
+        return false;
+    struct mo_allocation *result = list_room(process, type, old, old->length + 1);
+    if (result == NULL)
+        return false;
+    memmove(result->cells + 1, result->cells, (size_t)result->length * sizeof(struct mo_cell));
+    result->cells[0] = mo_value_dup(process, process->types->items[type].parameters[0], element);
+    result->length++;
+    list_commit(process, type, list, old, result);
+    return true;
+}
+
+bool mo_list_concat(struct mo_heap *process, uint32_t type, struct mo_cell *list,
+                    struct mo_cell right) {
+    MO_ASSERT(process != NULL && list != NULL && type < process->types->count);
+    struct mo_allocation *old = mo_heap_allocation(mo_cell_get_ref(*list));
+    struct mo_allocation *other = mo_heap_allocation(mo_cell_get_ref(right));
+    MO_ASSERT(old->type == type && other->type == type &&
+              old->object.layout == MO_BUILTIN_LAYOUT(MO_TYPE_LIST));
+    if (other->length == 0)
+        return true;
+    if (other->length > MO_LIMIT_COLLECTION_SIZE - old->length)
+        return false;
+    uint32_t length = old->length + other->length;
+    struct mo_allocation *result = list_room(process, type, old, length);
+    if (result == NULL)
+        return false;
+    uint32_t element_type = process->types->items[type].parameters[0];
+    /* Keep both lengths fixed until all elements are copied: right may be left. */
+    for (uint32_t i = 0; i < other->length; i++)
+        result->cells[old->length + i] = mo_value_dup(process, element_type, other->cells[i]);
+    result->length = length;
+    list_commit(process, type, list, old, result);
+    return true;
+}
+
+bool mo_list_slice(struct mo_heap *process, uint32_t type, struct mo_cell *list, uint32_t start,
+                   uint32_t count) {
+    MO_ASSERT(process != NULL && list != NULL && type < process->types->count);
+    struct mo_allocation *old = mo_heap_allocation(mo_cell_get_ref(*list));
+    MO_ASSERT(old->type == type && old->object.layout == MO_BUILTIN_LAYOUT(MO_TYPE_LIST) &&
+              start <= old->length && count <= old->length - start);
+    if (count == old->length)
+        return true;
+    uint32_t element_type = process->types->items[type].parameters[0];
+    struct mo_allocation *result = old;
+    if (old->object.count != 1) {
+        result = mo_heap_allocate(process, type, old->object.layout,
+                                  (size_t)count * sizeof(struct mo_cell));
+        if (result == NULL)
+            return false;
+        for (uint32_t i = 0; i < count; i++)
+            result->cells[i] = mo_value_dup(process, element_type, old->cells[start + i]);
+    } else {
+        for (uint32_t i = 0; i < start; i++)
+            mo_value_drop(process, element_type, old->cells[i]);
+        for (uint32_t i = start + count; i < old->length; i++)
+            mo_value_drop(process, element_type, old->cells[i]);
+        memmove(result->cells, old->cells + start, (size_t)count * sizeof(struct mo_cell));
+        memset(result->cells + count, 0, (size_t)(old->length - count) * sizeof(struct mo_cell));
+    }
+    result->length = count;
+    list_commit(process, type, list, old, result);
+    return true;
+}
+
+bool mo_list_reverse(struct mo_heap *process, uint32_t type, struct mo_cell *list) {
+    MO_ASSERT(process != NULL && list != NULL && type < process->types->count);
+    struct mo_allocation *old = mo_heap_allocation(mo_cell_get_ref(*list));
+    MO_ASSERT(old->type == type && old->object.layout == MO_BUILTIN_LAYOUT(MO_TYPE_LIST));
+    if (old->length < 2)
+        return true;
+    struct mo_allocation *result = list_room(process, type, old, old->length);
+    if (result == NULL)
+        return false;
+    for (uint32_t i = 0; i < result->length / 2; i++) {
+        uint32_t j = result->length - i - 1;
+        struct mo_cell temporary = result->cells[i];
+        result->cells[i] = result->cells[j];
+        result->cells[j] = temporary;
+    }
+    list_commit(process, type, list, old, result);
+    return true;
+}
+
+bool mo_list_remove_at(struct mo_heap *process, uint32_t type, struct mo_cell *list,
+                       uint32_t index) {
+    MO_ASSERT(process != NULL && list != NULL && type < process->types->count);
+    struct mo_allocation *old = mo_heap_allocation(mo_cell_get_ref(*list));
+    MO_ASSERT(old->type == type && old->object.layout == MO_BUILTIN_LAYOUT(MO_TYPE_LIST) &&
+              index < old->length);
+    struct mo_allocation *result = list_room(process, type, old, old->length);
+    if (result == NULL)
+        return false;
+    mo_value_drop(process, process->types->items[type].parameters[0], result->cells[index]);
+    memmove(result->cells + index, result->cells + index + 1,
+            (size_t)(result->length - index - 1) * sizeof(struct mo_cell));
+    result->length--;
+    result->cells[result->length] = mo_cell_unit();
+    list_commit(process, type, list, old, result);
+    return true;
+}
+
 bool mo_list_append(struct mo_heap *process, uint32_t type, struct mo_cell *list,
                     struct mo_cell element) {
     MO_ASSERT(process != NULL && list != NULL && type < process->types->count);

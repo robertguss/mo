@@ -116,6 +116,18 @@ MO_MUST_USE bool mo_list_append(struct mo_heap *process, uint32_t type, struct m
                                 struct mo_cell element);
 MO_MUST_USE bool mo_list_set(struct mo_heap *process, uint32_t type, struct mo_cell *list,
                              uint32_t index, struct mo_cell element);
+MO_MUST_USE bool mo_list_prepend(struct mo_heap *process, uint32_t type, struct mo_cell *list,
+                                 struct mo_cell element);
+MO_MUST_USE bool mo_list_concat(struct mo_heap *process, uint32_t type, struct mo_cell *list,
+                                struct mo_cell right);
+/* Valid ranges/indices are required. These consume *list only on success and
+ * keep unchanged lists even when shared. Unique shrinking/reordering does not
+ * allocate. concat's right operand may alias *list. */
+MO_MUST_USE bool mo_list_slice(struct mo_heap *process, uint32_t type, struct mo_cell *list,
+                               uint32_t start, uint32_t count);
+MO_MUST_USE bool mo_list_reverse(struct mo_heap *process, uint32_t type, struct mo_cell *list);
+MO_MUST_USE bool mo_list_remove_at(struct mo_heap *process, uint32_t type, struct mo_cell *list,
+                                   uint32_t index);
 
 /* Consume the left Text on success; the right Text is borrowed and may alias
  * it. Unique storage grows geometrically. slice's byte range must end at UTF-8
@@ -155,6 +167,11 @@ MO_MUST_USE bool mo_table_set(struct mo_heap *process, uint32_t type, struct mo_
                               struct mo_cell key, struct mo_cell value);
 MO_MUST_USE bool mo_table_remove(struct mo_heap *process, uint32_t type, struct mo_cell *table,
                                  struct mo_cell key);
+/* Set union consumes *left on success and borrows right (which may alias it).
+ * Hash/equality, capacity and index planning precede ownership or mutation, so
+ * a refusal preserves both sets. Unique left storage is reused when it fits. */
+MO_MUST_USE bool mo_set_union(struct mo_heap *process, uint32_t type, struct mo_cell *left,
+                              struct mo_cell right);
 
 /* Stream 3 implements type-directed ownership for C callers. type is an index
  * in the process image's type table; value is a valid cell of that type, from

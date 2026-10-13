@@ -262,53 +262,66 @@ static MO_MUST_USE enum mo_prim_status list(struct mo_prim_call *c, struct mo_ce
             start = n;
     }
     uint32_t type = option ? c->types->items[c->result].cases[1].fields[0].type : c->result;
-    if (c->id == MO_PRIM_LIST_SET) {
-        /* Some(List) has a reference payload and cannot allocate after the update. */
-        MO_ASSERT(mo_case_shape(c->types, c->result, 1) == MO_CASE_REF);
-        struct mo_cell value = c->args[0];
-        if (!mo_list_set(c->heap, type, &value, (uint32_t)index, c->args[2]))
-            return MO_PRIM_OUT_OF_MEMORY;
-        *out = mo_cell_case(1, value);
-        c->moved = 1;
-        return MO_PRIM_RETURNED;
+    struct mo_cell value = c->args[0];
+    bool ok;
+    switch ((unsigned)c->id) {
+    case MO_PRIM_LIST_PREPEND:
+        ok = mo_list_prepend(c->heap, type, &value, c->args[1]);
+        break;
+    case MO_PRIM_LIST_CONCAT:
+        ok = mo_list_concat(c->heap, type, &value, c->args[1]);
+        break;
+    case MO_PRIM_LIST_TAKE:
+    case MO_PRIM_LIST_DROP:
+        ok = mo_list_slice(c->heap, type, &value, start, end - start);
+        break;
+    case MO_PRIM_LIST_REVERSE:
+        ok = mo_list_reverse(c->heap, type, &value);
+        break;
+    case MO_PRIM_LIST_SET:
+        ok = mo_list_set(c->heap, type, &value, (uint32_t)index, c->args[2]);
+        break;
+    case MO_PRIM_LIST_REMOVE_AT:
+        ok = mo_list_remove_at(c->heap, type, &value, (uint32_t)index);
+        break;
+    case MO_PRIM_LIST_ENUMERATE:
+    case MO_PRIM_LIST_ZIP:
+        goto build_pairs;
+    default:
+        MO_UNREACHABLE();
     }
+    if (!ok)
+        return MO_PRIM_OUT_OF_MEMORY;
+    /* Some(List) has a reference payload: no allocation after an update. */
+    MO_ASSERT(!option || mo_case_shape(c->types, c->result, 1) == MO_CASE_REF);
+    *out = option ? mo_cell_case(1, value) : value;
+    c->moved = 1;
+    return MO_PRIM_RETURNED;
+
+build_pairs:;
     struct mo_cell result;
     if (!mo_value_list(c->heap, type, NULL, 0, &result))
         return MO_PRIM_OUT_OF_MEMORY;
-    bool ok = true;
-    uint32_t layout = MO_NO_INDEX;
-    if (c->id == MO_PRIM_LIST_ENUMERATE || c->id == MO_PRIM_LIST_ZIP)
-        layout = tuple_layout(c->types, c->types->items[type].parameters[0]);
-    if (c->id == MO_PRIM_LIST_PREPEND)
-        ok = append(c, type, &result, c->args[1]);
+    ok = true;
+    MO_ASSERT(c->id == MO_PRIM_LIST_ENUMERATE || c->id == MO_PRIM_LIST_ZIP);
+    uint32_t layout = tuple_layout(c->types, c->types->items[type].parameters[0]);
     if (c->id == MO_PRIM_LIST_ZIP && end > mo_list_size(c->args[1]))
         end = mo_list_size(c->args[1]);
     for (uint32_t i = start; ok && i < end; i++) {
-        if (c->id == MO_PRIM_LIST_REMOVE_AT && i == (uint64_t)index)
-            continue;
-        struct mo_cell value;
-        MO_ASSERT(
-            mo_list_get(c->args[0], c->id == MO_PRIM_LIST_REVERSE ? count - i - 1 : i, &value));
+        MO_ASSERT(mo_list_get(c->args[0], i, &value));
         if (c->id == MO_PRIM_LIST_ENUMERATE)
             ok = pair(c, type, layout, &result, mo_cell_int(i), value);
-        else if (c->id == MO_PRIM_LIST_ZIP) {
+        else {
             struct mo_cell other;
             MO_ASSERT(mo_list_get(c->args[1], i, &other));
             ok = pair(c, type, layout, &result, value, other);
-        } else
-            ok = append(c, type, &result, value);
-    }
-    if (c->id == MO_PRIM_LIST_CONCAT)
-        for (uint32_t i = 0; ok && i < mo_list_size(c->args[1]); i++) {
-            struct mo_cell value;
-            MO_ASSERT(mo_list_get(c->args[1], i, &value));
-            ok = append(c, type, &result, value);
         }
+    }
     if (!ok) {
         mo_value_drop(c->heap, type, result);
         return MO_PRIM_OUT_OF_MEMORY;
     }
-    *out = option ? mo_cell_case(1, result) : result;
+    *out = result;
     return MO_PRIM_RETURNED;
 }
 
@@ -358,11 +371,18 @@ static MO_MUST_USE enum mo_prim_status table(struct mo_prim_call *c, struct mo_c
         *out = value;
         return MO_PRIM_RETURNED;
     }
+    if (c->id == MO_PRIM_SET_UNION) {
+        struct mo_cell value = c->args[0];
+        if (!mo_set_union(c->heap, type, &value, c->args[1]))
+            return MO_PRIM_OUT_OF_MEMORY;
+        c->moved = 1;
+        *out = value;
+        return MO_PRIM_RETURNED;
+    }
     switch ((unsigned)c->id) {
     case MO_PRIM_MAP_KEYS:
     case MO_PRIM_MAP_VALUES:
     case MO_PRIM_MAP_ENTRIES:
-    case MO_PRIM_SET_UNION:
     case MO_PRIM_SET_INTERSECTION:
     case MO_PRIM_SET_DIFFERENCE:
     case MO_PRIM_SET_TO_LIST:
@@ -370,20 +390,19 @@ static MO_MUST_USE enum mo_prim_status table(struct mo_prim_call *c, struct mo_c
     default:
         MO_UNREACHABLE();
     }
-    bool union_ = c->id == MO_PRIM_SET_UNION;
     bool filter = c->id == MO_PRIM_SET_INTERSECTION || c->id == MO_PRIM_SET_DIFFERENCE;
     struct mo_cell result;
-    bool ok = union_ || filter ? mo_value_set(c->heap, c->result, NULL, 0, &result)
-                               : mo_value_list(c->heap, c->result, NULL, 0, &result);
+    bool ok = filter ? mo_value_set(c->heap, c->result, NULL, 0, &result)
+                     : mo_value_list(c->heap, c->result, NULL, 0, &result);
     if (!ok)
         return MO_PRIM_OUT_OF_MEMORY;
     uint32_t layout = c->id == MO_PRIM_MAP_ENTRIES
                           ? tuple_layout(c->types, c->types->items[c->result].parameters[0])
                           : MO_NO_INDEX;
-    for (unsigned pass = 0; ok && pass < (union_ ? 2U : 1U); pass++) {
+    {
         uint32_t position = 0;
         struct mo_cell key, value;
-        while (ok && mo_table_next(c->args[pass], &position, &key, &value)) {
+        while (ok && mo_table_next(c->args[0], &position, &key, &value)) {
             bool include = true;
             if (filter) {
                 if (!mo_table_get(c->heap, type, c->args[1], key, &include, &value)) {
@@ -395,7 +414,7 @@ static MO_MUST_USE enum mo_prim_status table(struct mo_prim_call *c, struct mo_c
             }
             if (!include)
                 continue;
-            if (union_ || filter)
+            if (filter)
                 ok = mo_table_set(c->heap, c->result, &result, key, mo_cell_unit());
             else if (c->id == MO_PRIM_MAP_ENTRIES)
                 ok = pair(c, c->result, layout, &result, key, value);

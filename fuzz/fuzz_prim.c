@@ -298,16 +298,19 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             MO_ASSERT(reason != NULL && memcmp(&result, &unchanged, sizeof result) == 0);
     }
     for (size_t i = 0; i < built; i++) {
-        if (status != MO_PRIM_RETURNED || ownership[id][i] == 'b') {
+        bool preserved = status != MO_PRIM_RETURNED || ownership[id][i] == 'b';
+        if (preserved || holders != 0) {
+            struct mo_cell original = holders == 1 ? held[i] : args[i];
             struct mo_buffer after;
             mo_buffer_init(&after, 262144);
-            MO_ASSERT(mo_value_print(f.heap, signature->parameters[i], args[i], &after));
+            MO_ASSERT(mo_value_print(f.heap, signature->parameters[i], original, &after));
             MO_ASSERT(
                 before[i].length == after.length &&
                 (after.length == 0 || memcmp(before[i].bytes, after.bytes, after.length) == 0));
             mo_buffer_free(&after);
-            mo_value_drop(f.heap, signature->parameters[i], args[i]);
         }
+        if (preserved)
+            mo_value_drop(f.heap, signature->parameters[i], args[i]);
         if (holders == 1)
             mo_value_drop(f.heap, signature->parameters[i], held[i]);
         mo_buffer_free(&before[i]);

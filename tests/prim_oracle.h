@@ -351,7 +351,7 @@ static MO_MUST_USE uint32_t oracle_type(struct prim_fixture *f, mo_core_ty t) {
 }
 
 static MO_MUST_USE struct mo_cell oracle_sequence(struct prim_fixture *f, mo_core_value initial,
-                                                  mo_core_value steps, uint32_t type) {
+                                                  mo_core_value steps, uint32_t type, bool shared) {
     struct mo_cell acc = oracle_cell(f, type, initial);
     static const char *const ownership[] = {
 #define PRIM(id, module, name, signature, params, bugs) params,
@@ -366,6 +366,7 @@ static MO_MUST_USE struct mo_cell oracle_sequence(struct prim_fixture *f, mo_cor
         struct mo_cell args[3] = {acc}, out;
         for (size_t j = 1; j < count; j++)
             args[j] = oracle_cell(f, fn->parameters[j], step.items[j + 1]);
+        struct mo_cell held = shared ? mo_value_dup(f->heap, type, acc) : mo_cell_unit();
         const char *reason;
         MO_ASSERT(mo_prim_call(f->heap, &f->types, (enum mo_primitive_id)id, f->signature[id], args,
                                &out, &reason) == MO_PRIM_RETURNED);
@@ -377,6 +378,8 @@ static MO_MUST_USE struct mo_cell oracle_sequence(struct prim_fixture *f, mo_cor
         for (size_t j = 0; j < count; j++)
             if (ownership[id][j] == 'b')
                 mo_value_drop(f->heap, fn->parameters[j], args[j]);
+        if (shared)
+            mo_value_drop(f->heap, type, held);
         acc = out;
     }
     return acc;
@@ -401,10 +404,21 @@ static void oracle_query(struct prim_fixture *fixtures, const struct mo_buffer *
             f = &fixtures[i];
     mo_core_string name = query->as.tuple.items[0]->as.text;
     unsigned id = oracle_id(name);
-    if (primitive.length == 10 && memcmp(primitive.bytes, "(sequence)", 10) == 0) {
+    bool sequence = primitive.length == 10 && memcmp(primitive.bytes, "(sequence)", 10) == 0;
+    mo_core_string descriptor = primitive;
+    if (sequence) {
+        mo_core_values steps = query->as.tuple.items[3]->as.list;
+        MO_ASSERT(steps.count != 0);
+        descriptor = steps.items[0]->as.tuple.items[1]->as.text;
+    }
+    /* Text-element collection queries use the fifth sealed image. */
+    if ((descriptor.length >= 13 && memcmp(descriptor.bytes, "(list (text) ", 13) == 0) ||
+        (descriptor.length >= 12 && memcmp(descriptor.bytes, "(set (text) ", 12) == 0))
+        f = &fixtures[4];
+    if (sequence) {
         uint32_t type = f->types.items[f->signature[id]].parameters[0];
         struct mo_cell result =
-            oracle_sequence(f, query->as.tuple.items[2], query->as.tuple.items[3], type);
+            oracle_sequence(f, query->as.tuple.items[2], query->as.tuple.items[3], type, shared);
         struct mo_buffer text;
         mo_buffer_init(&text, MO_LIMIT_CORE_TEXT_SIZE);
         mo_core_value value = oracle_value(f, &arena, type, result);
@@ -417,10 +431,6 @@ static void oracle_query(struct prim_fixture *fixtures, const struct mo_buffer *
         mo_arena_free(&arena);
         return;
     }
-    /* Text-element collection queries use the fifth sealed image. */
-    if ((primitive.length >= 13 && memcmp(primitive.bytes, "(list (text) ", 13) == 0) ||
-        (primitive.length >= 12 && memcmp(primitive.bytes, "(set (text) ", 12) == 0))
-        f = &fixtures[4];
     uint32_t instantiation = f->signature[id];
     if (id == MO_PRIM_TEXT_STRUCTURAL) {
         struct mo_buffer type_text;

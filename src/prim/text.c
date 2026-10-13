@@ -452,8 +452,15 @@ enum mo_prim_status mo_prim_text(struct mo_prim_call *c, struct mo_cell *out) {
             *out = mo_cell_bool(found);
             return MO_PRIM_RETURNED;
         }
-        return found ? some_text(c, t.bytes + (prefix ? p.length : 0), t.length - p.length, out)
-                     : mo_prim_option(c, false, mo_cell_unit(), out);
+        if (!found)
+            return mo_prim_option(c, false, mo_cell_unit(), out);
+        MO_ASSERT(mo_case_shape(c->types, c->result, 1) == MO_CASE_REF);
+        struct mo_cell value = c->args[0];
+        if (!mo_text_slice(c->heap, &value, prefix ? p.length : 0, t.length - p.length))
+            return MO_PRIM_OUT_OF_MEMORY;
+        c->moved = 1;
+        *out = mo_cell_case(1, value);
+        return MO_PRIM_RETURNED;
     }
     case MO_PRIM_TEXT_QUOTED:
         return quoted(c, t, '"', out);
