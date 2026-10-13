@@ -1,1 +1,1 @@
-(core 0.6 (Program () ((FunDecl "start" () (tuple ((text) (int))) (global "pair") "Globals" (function) 2)) ((ConstDecl "seed" (text) (stop "do not publish")) (ConstDecl "pair" (tuple ((text) (int))) (tuple ((global "seed") (lit (int -31)))))) "start" (noSource)))
+(core 0.7 (Program () ((FunDecl "start" () (tuple ((text) (int))) (global "pair") "Globals" (function) 2)) ((ConstDecl "seed" (text) (stop "do not publish")) (ConstDecl "pair" (tuple ((text) (int))) (tuple ((global "seed") (lit (int -31)))))) "start" (noSource)))

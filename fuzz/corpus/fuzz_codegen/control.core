@@ -1,1 +1,1 @@
-(core 0.6 (Program () ((FunDecl "main" (("b" (bool))) (int) (if_ (var "b") (lit (int 17)) (call "main" ((lit (bool false))))) "Control" (function) 0)) () "main" (noSource)))
+(core 0.7 (Program () ((FunDecl "main" (("b" (bool))) (int) (if_ (var "b") (lit (int 17)) (call "main" ((lit (bool false))))) "Control" (function) 0)) () "main" (noSource)))
