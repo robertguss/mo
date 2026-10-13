@@ -1,6 +1,6 @@
 E0043 4.2
 0:28..32
-a case reuses a type or case that is always in scope
+a choice case clashes with another name
 No case reuses a type or case that is always in scope (reference 4.2).
-a case reuses a type or case that is always in scope
+Some
 fixes 0

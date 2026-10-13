@@ -1,0 +1,6 @@
+E0045 10.3
+0:19..25
+a name clashes with a name always in scope
+A clash between names is an error (reference 10.3); these names are always in scope (reference 10.5).
+Option
+fixes 0

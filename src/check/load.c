@@ -1,12 +1,14 @@
-#define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
 
 #include "check/check.h"
 
 #include "base/codes.h"
 #include "base/limits.h"
+#include "base/path.h"
 
 #include <dirent.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -27,6 +29,8 @@ struct loader {
     struct mo_diags *diags;
     struct loaded *items;
     struct mo_module_set *out;
+    const char *real_root;
+    const char *real_library;
     uint32_t index; /* AVL root, one-based; zero is absent */
     bool failed;
 };
@@ -90,42 +94,34 @@ static MO_MUST_USE bool source_error(struct loader *l, struct mo_source_error er
     return report(l, code, span, message, reason, path);
 }
 
-/* CapCase words, with an acronym kept together: XMLReader -> xml-reader. */
 static MO_MUST_USE char *path_text(struct loader *l, const struct mo_syntax *path, bool filename) {
     char bytes[MO_LIMIT_PATH_SIZE + 1];
+    char converted[MO_LIMIT_PATH_SIZE + 1];
     size_t length = 0;
     for (uint32_t i = 0; i < path->count; i++) {
         const struct mo_syntax *part = path->children[i];
         uint32_t n = part->span.end - part->span.start;
-        for (uint32_t j = 0; j < n; j++) {
-            uint8_t c = part->text[j];
-            bool capital = c >= 'A' && c <= 'Z';
-            bool word = j != 0 && capital &&
-                        ((part->text[j - 1] >= 'a' && part->text[j - 1] <= 'z') ||
-                         (part->text[j - 1] >= '0' && part->text[j - 1] <= '9') ||
-                         (j + 1 < n && part->text[j + 1] >= 'a' && part->text[j + 1] <= 'z'));
-            if (length + (word && filename ? 2u : 1u) > MO_LIMIT_PATH_SIZE)
-                goto too_long;
-            if (word && filename)
-                bytes[length++] = '-';
-            bytes[length++] = (char)(capital && filename ? c + ('a' - 'A') : c);
-        }
+        if (n > MO_LIMIT_PATH_SIZE - length)
+            goto too_long;
+        memcpy(bytes + length, part->text, n);
+        length += n;
         if (i + 1 < path->count) {
             if (length == MO_LIMIT_PATH_SIZE)
                 goto too_long;
-            bytes[length++] = filename ? '/' : '.';
+            bytes[length++] = '.';
         }
     }
-    if (filename) {
-        if (length + 3 > MO_LIMIT_PATH_SIZE)
-            goto too_long;
-        memcpy(bytes + length, ".mo", 3);
-        length += 3;
-    }
     bytes[length] = '\0';
+    const char *text = bytes;
+    if (filename) {
+        if (!mo_module_path((const uint8_t *)bytes, length, converted))
+            goto too_long;
+        text = converted;
+        length = strlen(converted);
+    }
     char *result = allocate(l, length + 1, 1, 1);
     if (result != NULL)
-        memcpy(result, bytes, length + 1);
+        memcpy(result, text, length + 1);
     return result;
 too_long : {
     bool kept =
@@ -133,6 +129,64 @@ too_long : {
     (void)kept;
     return NULL;
 }
+}
+
+static MO_MUST_USE char *normal_path(struct loader *l, const char *path) {
+    char text[MO_LIMIT_PATH_SIZE + 1];
+    size_t length = 0;
+    if (*path == '/')
+        text[length++] = '/';
+    while (*path != '\0') {
+        if (*path == '/') {
+            path++;
+            continue;
+        }
+        const char *part = path;
+        while (*path != '\0' && *path != '/')
+            path++;
+        size_t n = (size_t)(path - part);
+        if (n == 1 && *part == '.')
+            continue;
+        if (length != 0 && text[length - 1] != '/') {
+            if (length == MO_LIMIT_PATH_SIZE)
+                goto too_long;
+            text[length++] = '/';
+        }
+        if (n > MO_LIMIT_PATH_SIZE - length)
+            goto too_long;
+        memcpy(text + length, part, n);
+        length += n;
+    }
+    text[length] = '\0';
+    char *result = allocate(l, length + 1, 1, 1);
+    if (result != NULL)
+        memcpy(result, text, length + 1);
+    return result;
+too_long : {
+    bool kept = report(l, MO_CODE_PATH_TOO_LONG, (struct mo_span){UINT32_MAX, 0, 0},
+                       "a source file's path is too long", NULL, NULL);
+    (void)kept;
+    return NULL;
+}
+}
+
+static MO_MUST_USE char *real_path(struct loader *l, const char *path, struct mo_span origin,
+                                   bool folder) {
+    char resolved[MO_LIMIT_PATH_SIZE + 1];
+    _Static_assert(sizeof(resolved) >= PATH_MAX, "realpath's buffer holds a system path");
+    if (realpath(*path == '\0' ? "." : path, resolved) == NULL) {
+        bool kept = folder ? report(l, MO_CODE_LIBRARY_UNREADABLE, origin,
+                                    "the library folder can't be inspected", NULL, path)
+                           : source_error(l, (struct mo_source_error){MO_SOURCE_UNREADABLE, errno},
+                                          path, origin);
+        (void)kept;
+        return NULL;
+    }
+    size_t n = strlen(resolved);
+    char *result = allocate(l, n + 1, 1, 1);
+    if (result != NULL)
+        memcpy(result, resolved, n + 1);
+    return result;
 }
 
 static MO_MUST_USE uint32_t height(const struct loader *l, uint32_t id) {
@@ -201,6 +255,20 @@ static MO_MUST_USE uint32_t find(const struct loader *l, const char *name) {
 
 static MO_MUST_USE uint32_t read_module(struct loader *l, const char *file_path,
                                         const char *expected, struct mo_span origin, bool library) {
+    if (expected != NULL || library) {
+        const char *root = library ? l->real_library : l->real_root;
+        MO_ASSERT(root != NULL);
+        char *real = real_path(l, file_path, origin, false);
+        if (real == NULL)
+            return 0;
+        size_t n = strlen(root);
+        if (strncmp(root, real, n) != 0 || (n != 1 && real[n] != '/')) {
+            bool kept = report(l, MO_CODE_MODULE_OUTSIDE_ROOT, origin,
+                               "a module's file is outside its root folder", NULL, file_path);
+            (void)kept;
+            return 0;
+        }
+    }
     uint32_t file;
     struct mo_source_error error;
     if (!mo_sources_add(l->sources, file_path, &file, &error)) {
@@ -217,11 +285,17 @@ static MO_MUST_USE uint32_t read_module(struct loader *l, const char *file_path,
     if (name == NULL)
         return 0;
     if (expected != NULL && strcmp(name, expected) != 0) {
-        bool kept = report(l, MO_CODE_MODULE_NAME, header.path->span,
-                           "the module's name doesn't match its file",
-                           "Each part of a module's name becomes a lowercase folder or file name "
-                           "with hyphens between words (reference 2.1).",
-                           expected);
+        struct mo_label secondary = {header.path->span, "the module declares this name"};
+        bool kept = mo_diags_add(
+            l->diags,
+            &(struct mo_diag){
+                .code = MO_CODE_MODULE_NAME,
+                .primary = {origin, expected},
+                .message = "the module's name doesn't match its file",
+                .reason = "Each part of a module's name becomes a lowercase folder or file name "
+                          "with hyphens between words (reference 2.1).",
+                .secondary = &secondary,
+                .secondary_count = 1});
         (void)kept;
         return 0;
     }
@@ -299,8 +373,8 @@ static MO_MUST_USE bool library_files(struct loader *l, const char *root) {
             return false;
         DIR *directory = opendir(path);
         if (directory == NULL) {
-            bool kept = source_error(l, (struct mo_source_error){MO_SOURCE_UNREADABLE, errno}, path,
-                                     unavailable);
+            bool kept = report(l, MO_CODE_LIBRARY_UNREADABLE, unavailable,
+                               "the library folder can't be inspected", NULL, path);
             (void)kept;
             return false;
         }
@@ -310,9 +384,8 @@ static MO_MUST_USE bool library_files(struct loader *l, const char *root) {
             struct dirent *entry = readdir(directory);
             if (entry == NULL) {
                 if (errno != 0) {
-                    bool kept =
-                        source_error(l, (struct mo_source_error){MO_SOURCE_UNREADABLE, errno}, path,
-                                     unavailable);
+                    bool kept = report(l, MO_CODE_LIBRARY_UNREADABLE, unavailable,
+                                       "the library folder can't be inspected", NULL, path);
                     (void)kept;
                     ok = false;
                 }
@@ -334,8 +407,8 @@ static MO_MUST_USE bool library_files(struct loader *l, const char *root) {
             }
             struct stat status;
             if (lstat(full, &status) != 0) {
-                bool kept = source_error(l, (struct mo_source_error){MO_SOURCE_UNREADABLE, errno},
-                                         full, unavailable);
+                bool kept = report(l, MO_CODE_LIBRARY_UNREADABLE, unavailable,
+                                   "the library folder can't be inspected", NULL, full);
                 (void)kept;
                 ok = false;
                 break;
@@ -365,8 +438,8 @@ static MO_MUST_USE bool library_files(struct loader *l, const char *root) {
         }
         if (closedir(directory) != 0) {
             if (ok) {
-                bool kept = source_error(l, (struct mo_source_error){MO_SOURCE_UNREADABLE, errno},
-                                         path, unavailable);
+                bool kept = report(l, MO_CODE_LIBRARY_UNREADABLE, unavailable,
+                                   "the library folder can't be inspected", NULL, path);
                 (void)kept;
             }
             ok = false;
@@ -425,6 +498,22 @@ static MO_MUST_USE bool graph(struct loader *l) {
             if (name == NULL)
                 return false;
             uint32_t target = find(l, name);
+            if (l->out->library[frame->id - 1] && (target == 0 || !l->out->library[target - 1])) {
+                char *relative = path_text(l, path, true);
+                char *prefix = join(l, l->real_library, "/", path->span);
+                char *full = relative == NULL || prefix == NULL
+                                 ? NULL
+                                 : join(l, prefix, relative, path->span);
+                if (full == NULL)
+                    return false;
+                bool kept = report(l, MO_CODE_MODULE_MISSING, path->span,
+                                   "a library module's file can't be found",
+                                   "Every module is found under its root folder (reference 2.1); "
+                                   "the toolchain library has its own root.",
+                                   full);
+                (void)kept;
+                return false;
+            }
             if (target == 0) {
                 char *relative = path_text(l, path, true);
                 char *full = relative == NULL ? NULL : join(l, l->out->root, relative, path->span);
@@ -436,11 +525,33 @@ static MO_MUST_USE bool graph(struct loader *l) {
             }
             l->out->uses[frame->id - 1][frame->use - 1] = target - 1;
             if (l->items[target - 1].state == 1) {
-                bool kept =
-                    report(l, MO_CODE_MODULE_CYCLE, path->span, "modules use each other in a cycle",
-                           "A cycle of modules that use each other is an error (reference "
-                           "10.3).",
-                           name);
+                uint32_t start = 0;
+                while (stack[start].id != target) {
+                    start++;
+                    MO_ASSERT(start < depth);
+                }
+                uint32_t count = depth - start - 1;
+                struct mo_label *edges =
+                    allocate(l, count, sizeof(*edges), _Alignof(struct mo_label));
+                if (edges == NULL)
+                    return false;
+                for (uint32_t i = 0; i < count; i++) {
+                    const struct frame *from = &stack[start + i];
+                    const struct mo_syntax *edge =
+                        l->items[from->id - 1].header.uses->children[from->use - 1];
+                    edges[i] = (struct mo_label){edge->children[0]->span,
+                                                 l->items[stack[start + i + 1].id - 1].name};
+                }
+                bool kept = mo_diags_add(
+                    l->diags,
+                    &(struct mo_diag){
+                        .code = MO_CODE_MODULE_CYCLE,
+                        .primary = {path->span, name},
+                        .message = "modules use each other in a cycle",
+                        .reason =
+                            "A cycle of modules that use each other is an error (reference 10.3).",
+                        .secondary = edges,
+                        .secondary_count = count});
                 (void)kept;
                 return false;
             }
@@ -474,6 +585,9 @@ static MO_MUST_USE struct mo_module_set *load(struct mo_arena *arena, struct mo_
     l.out->uses = allocate(&l, MO_LIMIT_FILES, sizeof(*l.out->uses), _Alignof(uint32_t *));
     if (l.failed)
         return NULL;
+    entry = normal_path(&l, entry);
+    if (entry == NULL)
+        return NULL;
     if (read_module(&l, entry, NULL, (struct mo_span){UINT32_MAX, 0, 0}, false) == 0)
         return NULL;
     char *relative = path_text(&l, l.items[0].header.path, true);
@@ -495,8 +609,17 @@ static MO_MUST_USE struct mo_module_set *load(struct mo_arena *arena, struct mo_
     memcpy(root, entry, a - b);
     root[a - b] = '\0';
     l.out->root = root;
-    if (library != NULL && !library_files(&l, library))
+    l.real_root = real_path(&l, root, l.items[0].header.path->span, false);
+    if (l.real_root == NULL)
         return NULL;
+    if (library != NULL) {
+        library = normal_path(&l, library);
+        if (library == NULL)
+            return NULL;
+        l.real_library = real_path(&l, library, (struct mo_span){UINT32_MAX, 0, 0}, true);
+        if (l.real_library == NULL || !library_files(&l, library))
+            return NULL;
+    }
     if (!graph(&l))
         return NULL;
     uint32_t before = diags->count;

@@ -89,7 +89,7 @@ Every module uses `base`. Beyond that, each uses only the modules listed here:
 The VM never sees source, syntax trees or Core. Each module has one public
 header, named after it, such as `src/check/check.h`. There are two
 exceptions. `base`'s headers are each a separate facility: `base.h`,
-`arena.h`, `buffer.h`, `limits.h`, `diag.h`, `codes.h`, `prims.def` and
+`arena.h`, `buffer.h`, `limits.h`, `diag.h`, `codes.h`, `path.h`, `prims.def` and
 `hostops.def`. And `heap` has
 a second header, `types.h`, with the runtime type table, the layouts and
 `mo_case_shape`; the compiler, the bytecode format, the primitives and the
@@ -253,20 +253,32 @@ the caller, rather than locating the running executable. The tools supply
 the installed library's path; `NULL` permits a library-free fixture while
 `lib/` is being built. A supplied folder must exist. All its `.mo` files,
 including unused modules, are included. Discovery does not enter symlinked
-folders, but ordinary source-file symlinks are followed by the source reader.
+folders. A dependency or library source file may be a link only when its
+resolved path stays under the resolved path of its own root folder (D236).
+This is checked before its bytes enter source storage or diagnostics; the
+entry file may itself be a link outside the root. Source reading opens files
+nonblocking and requires a regular file, so FIFOs and device links cannot
+hang it. These checks assume the filesystem is not concurrently replaced.
 Library files are sorted by path before their headers are read. The entry
 is always module zero, followed by library files and uses in discovery
 order; a separate dependency-first order names every module once.
 
-The root is derived from the entry path's spelling, not its `realpath`:
+The root is derived from the entry path's spelling, after collapsing `.`
+components and repeated slashes, not its `realpath`:
 the path must end at a folder boundary in the declared name's file path.
 This preserves a caller's chosen module root through source-file links.
 CapCase words are split before an uppercase letter following a lowercase
-letter or digit, or beginning a lowercase word after an acronym:
-`XMLReader` becomes `xml-reader`, and `Unicode16` becomes `unicode16`.
-Other module paths use the same conversion. Names and paths must agree.
+letter or digit, or at the last uppercase letter of a run followed by a
+lowercase letter (D237). Digits stay with what comes before: `XMLReader`
+becomes `xml-reader.mo`, `HTTP2Server` becomes `http2-server.mo`, and
+`Unicode16Tool` becomes `unicode16-tool.mo`. `mo_module_path` in `base/path.h`
+owns this conversion; the loader and library-map check use it, tested against
+the same name/path table. Names and paths must agree. A missing module's
+diagnostic names the file looked for; a mismatched header labels both the
+requesting use and the declaration. A cycle labels every use in the cycle.
 `Json` and `Unicode16` are reserved even in library-free fixtures; every
-discovered library name is reserved too.
+discovered library name is reserved too. A library use resolves only inside
+the library, never by falling back to the program's root.
 
 An AVL name index shares diamond dependencies without repeated file reads.
 An explicit DFS stack bounds graph traversal by `MO_LIMIT_FILES`, not the
@@ -278,7 +290,9 @@ discovery scratch, belongs to the caller's arena; source storage and
 diagnostics retain their base-module budgets. E1058 reports allocation
 failure. `MO_LIMIT_LIBRARY_ENTRIES` (65,536, E1059) bounds discovery even
 when no source files are present. Source bytes, file count and path lengths
-use the existing base limits and their codes.
+use the existing base limits and their codes. E1101 refuses a module outside
+its root; E1102 reports an unreadable library folder without a language
+section citation.
 
 ### 3.3 Names and types
 
@@ -290,24 +304,40 @@ hidden insides, unused imports and every flow rule below. Tests, which have
 textual labels rather than callable names, are not module symbols.
 
 Symbols are sorted by name and source position; lookup is binary search.
+`mo_find_symbol` accepts bytes and length, without copying syntax spellings.
+Each case retains its owning type's symbol index. Each overloaded function
+retains its first parameter's local nominal type index for call resolution.
 All overloads travel together in one import. Their first parameter must
 have a distinct locally declared record or choice constructor; two
 applications of the same generic constructor do not distinguish overloads.
 Module prefixes live separately from value/type names, so importing module
 `Money` and its type `Money` does not clash. This is not a user-defined alias.
+Names always in scope (reference 10.5) cannot be declared, imported, or used
+as a module prefix's last segment, by D224's one meaning per name and
+reference 10.3's clash rule.
 Exposing `T(..)` exposes its cases; importing `T` brings those exposed
-cases. Directly exposing a case is refused: cases are exported through
-their owning type's `(..)`, not independently. Repeated expose entries
-merge, with `(..)` taking precedence. Repeated explicit imports are
+cases. Directly exposing or importing a case is refused: cases travel
+through their owning type, not independently. A direct case import has a
+fix to import its exposed type, or to remove the redundant case when the
+type is already listed. No fix is offered for hidden cases. Repeated expose
+entries merge, with `(..)` taking precedence. Repeated explicit imports are
 clashes, detected before case expansion; a repeated name in one use list
 has a deletion fix. Other clashes suggest qualification without rewriting
 uses whose intended binding is unknown.
 
 Interface work is bounded by source declarations and imported names, not
-pairwise name scans. `MO_LIMIT_MODULE_IMPORTS` (1,048,576, E1060) counts
+pairwise name scans. Each choice's case indices are computed once in its
+declaring module, in declaration order. Imports borrow the existing names
+and symbols rather than re-spelling, looking up and copying cases.
+`MO_LIMIT_MODULE_IMPORTS` (1,048,576, E1060) counts
 one per imported name group plus the choice cases it brings, before
-expansion. Temporary request indices and all interfaces use the caller's
-arena, not unaccounted scratch. Interface declaration and origin pointers
+expansion; `MO_LIMIT_PROGRAM_IMPORTS` (4,194,304, E1100) caps their sum across
+all modules, reported once. Independent errors across modules and name
+groups are retained and sorted by source position before returning `NULL`.
+An invalid interface suppresses dependent import errors, not independent
+errors in other modules. Allocation or diagnostic-storage failure stops
+checking immediately. Temporary request indices and all interfaces use the
+caller's arena, not unaccounted scratch. Interface declaration and origin pointers
 borrow the loaded syntax, which must outlive them. Loading and interface
 checking are the first independently usable slice; `mo_check` and its
 typed program follow.
@@ -1087,8 +1117,8 @@ MO_MUST_USE struct mo_module_interfaces *mo_resolve_modules(struct mo_arena *are
                                                             const struct mo_module_set *set,
                                                             struct mo_diags *diags);
 /* Planned next: the whole program, checked, or NULL with diagnostics. */
-MO_MUST_USE struct mo_program *mo_check(struct mo_arena *arena, struct mo_module_syntax *const *modules,
-                                        uint32_t count, struct mo_diags *diags);
+MO_MUST_USE struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *set,
+                                        struct mo_diags *diags);
 
 /* src/lower/lower.h: lowering and monomorphization. Copies complete source metadata
  * (formal/TEXT.md) into arena; no pointer in Core borrows the program or sources. */

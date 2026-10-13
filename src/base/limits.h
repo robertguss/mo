@@ -45,6 +45,10 @@
  * bounds expansion when a short use line brings in a large choice interface. */
 #define MO_LIMIT_MODULE_IMPORTS (1 << 20)
 
+/* All imported name groups and exposed choice cases across the program: E1100. Cases and
+ * names borrow their declaring module's storage; this bounds the per-import index entries. */
+#define MO_LIMIT_PROGRAM_IMPORTS (4 << 20)
+
 /* Bytes in a source file's path, as the toolchain names it to the system. mo_sources_add refuses a
  * longer one: E1004. */
 #define MO_LIMIT_PATH_SIZE 4096

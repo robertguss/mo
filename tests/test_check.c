@@ -8,6 +8,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static void load_graph(void) {
@@ -58,10 +59,24 @@ static void interfaces(void) {
                 CHECK(strcmp(scope->imported[i].name, expected[i]) == 0);
             CHECK(scope->imported[2].symbols->exported && !scope->imported[2].symbols->insides);
             CHECK(scope->imported[0].symbols->insides);
-            CHECK(scope->imported[1].symbols->owner->kind == MO_S_ENUM);
+            const struct mo_symbol *member = scope->imported[1].symbols;
+            const struct mo_module_scope *owner_scope = &names->scopes[member->module];
+            CHECK(owner_scope->symbols[member->owner].declaration->kind == MO_S_ENUM);
             CHECK(scope->imported[4].count == 2);
             CHECK(scope->imported[4].symbols[0].declaration->kind == MO_S_FN);
             CHECK(scope->imported[4].symbols[1].declaration->kind == MO_S_FN);
+            CHECK(strcmp(owner_scope->symbols[scope->imported[4].symbols[0].receiver].name,
+                         "Money") == 0);
+            CHECK(strcmp(owner_scope->symbols[scope->imported[4].symbols[1].receiver].name,
+                         "Line") == 0);
+            const struct mo_symbol *choice = scope->imported[0].symbols;
+            CHECK(choice->case_count == 2);
+            CHECK(strcmp(owner_scope->symbols[choice->cases[0]].name, "Ready") == 0);
+            CHECK(strcmp(owner_scope->symbols[choice->cases[1]].name, "Done") == 0);
+            const uint8_t not_terminated[] = {'M', 'o', 'n', 'e', 'y', 'X'};
+            CHECK(mo_find_symbol(owner_scope, not_terminated, 5) == scope->imported[2].symbols);
+            CHECK(mo_find_symbol(owner_scope, not_terminated, 6) == NULL);
+            CHECK(mo_find_symbol(owner_scope, not_terminated, 3) == NULL);
         }
     }
     mo_arena_free(&arena);
@@ -161,6 +176,10 @@ static void corpus(void) {
         {"e0041.mo", "e0041.diag", false},
         {"e0042.mo", "e0042.diag", false},
         {"e0043.mo", "e0043.diag", false},
+        {"e0044.mo", "e0044.diag", false},
+        {"e0045.mo", "e0045.diag", false},
+        {"e0046.mo", "e0046.diag", false},
+        {"e0047.mo", "e0047.diag", false},
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         struct fixture f;
@@ -172,8 +191,16 @@ static void corpus(void) {
             CHECK(mo_load(&f.arena, &f.sources, path, NULL, &f.diags) == NULL);
         else {
             struct mo_module_syntax *modules[] = {
-                parse_file(&f, path), parse_file(&f, "tests/check/interfaces/money.mo")};
-            uint32_t targets[] = {1}, *uses[] = {targets, NULL};
+                parse_file(&f, path), parse_file(&f, strcmp(cases[i].input, "e0047.mo") == 0
+                                                         ? "tests/check/interfaces/hidden.mo"
+                                                         : "tests/check/interfaces/money.mo")};
+            uint32_t count = modules[0]->header.uses->count;
+            uint32_t *targets =
+                mo_arena_allocate_array(&f.syntax, count, sizeof(*targets), _Alignof(uint32_t));
+            MO_ASSERT(targets != NULL);
+            for (uint32_t j = 0; j < count; j++)
+                targets[j] = 1;
+            uint32_t *uses[] = {targets, NULL};
             struct mo_module_set set = {.count = 2, .modules = modules, .uses = uses};
             CHECK(mo_resolve_modules(&f.arena, &set, &f.diags) == NULL);
         }
@@ -311,9 +338,207 @@ static void path_policy(void) {
         CHECK(set->count == 2 && strcmp(set->names[1], "Unicode16Tool") == 0);
     }
     finish(&f);
+    /* A library source link is confined to the library, not the program root. */
+    MO_ASSERT(unlink(support) == 0 && symlink(target, support) == 0);
+    init(&f, 16 << 20);
+    CHECK(mo_load(&f.arena, &f.sources, entry, library, &f.diags) == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_OUTSIDE_ROOT);
+    CHECK(f.sources.count == 1);
+    finish(&f);
     MO_ASSERT(unlink(entry) == 0 && unlink(target) == 0);
     MO_ASSERT(unlink(support) == 0 && unlink(loop) == 0);
     MO_ASSERT(rmdir(folder) == 0 && rmdir(library) == 0);
+}
+
+static void confined_files(void) {
+    char root[] = "/tmp/mo-check-confined-XXXXXX";
+    MO_ASSERT(mkdtemp(root) != NULL);
+    char outside[256], entry[256], linked[256], target[256], normalized[256];
+    int a = snprintf(outside, sizeof(outside), "%s-outside", root);
+    int b = snprintf(entry, sizeof(entry), "%s/main.mo", root);
+    int c = snprintf(linked, sizeof(linked), "%s/linked.mo", root);
+    int d = snprintf(target, sizeof(target), "%s/linked.mo", outside);
+    int e = snprintf(normalized, sizeof(normalized), "%s//./main.mo", root);
+    MO_ASSERT(a > 0 && (size_t)a < sizeof(outside));
+    MO_ASSERT(b > 0 && (size_t)b < sizeof(entry));
+    MO_ASSERT(c > 0 && (size_t)c < sizeof(linked));
+    MO_ASSERT(d > 0 && (size_t)d < sizeof(target));
+    MO_ASSERT(e > 0 && (size_t)e < sizeof(normalized));
+    MO_ASSERT(mkdir(outside, 0700) == 0);
+    const uint8_t main_source[] = "module Main\nuse Linked\n";
+    const uint8_t linked_source[] = "module Linked\n";
+    write_file(entry, main_source, sizeof(main_source) - 1);
+    write_file(target, linked_source, sizeof(linked_source) - 1);
+    MO_ASSERT(symlink(target, linked) == 0);
+    struct fixture f;
+    init(&f, 16 << 20);
+    CHECK(mo_load(&f.arena, &f.sources, normalized, NULL, &f.diags) == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_OUTSIDE_ROOT);
+    CHECK(f.sources.count == 1 && strcmp(f.sources.files[0].path, entry) == 0);
+    finish(&f);
+    MO_ASSERT(unlink(linked) == 0);
+    MO_ASSERT(symlink("/dev/stdin", linked) == 0);
+    init(&f, 16 << 20);
+    CHECK(mo_load(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_OUTSIDE_ROOT);
+    CHECK(f.sources.count == 1);
+    finish(&f);
+    MO_ASSERT(unlink(linked) == 0);
+    MO_ASSERT(mkfifo(linked, 0600) == 0);
+    init(&f, 16 << 20);
+    CHECK(mo_load(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_MISSING);
+    CHECK(f.sources.count == 1);
+    finish(&f);
+    MO_ASSERT(unlink(linked) == 0);
+    write_file(linked, linked_source, sizeof(linked_source) - 1);
+    init(&f, 16 << 20);
+    struct mo_module_set *set = mo_load(&f.arena, &f.sources, normalized, NULL, &f.diags);
+    CHECK(set != NULL && f.diags.count == 0);
+    if (set != NULL)
+        CHECK(strcmp(f.sources.files[0].path, entry) == 0 && set->count == 2);
+    finish(&f);
+    MO_ASSERT(unlink(entry) == 0);
+    write_file(target, main_source, sizeof(main_source) - 1);
+    MO_ASSERT(symlink(target, entry) == 0);
+    init(&f, 16 << 20);
+    CHECK(mo_load(&f.arena, &f.sources, entry, NULL, &f.diags) != NULL);
+    CHECK(f.diags.count == 0);
+    finish(&f);
+    MO_ASSERT(unlink(entry) == 0 && unlink(linked) == 0 && unlink(target) == 0);
+    MO_ASSERT(rmdir(root) == 0 && rmdir(outside) == 0);
+}
+
+static void library_roots(void) {
+    char root[] = "/tmp/mo-check-roots-XXXXXX";
+    MO_ASSERT(mkdtemp(root) != NULL);
+    char entry[256], helper[256], library[256], support[256], lib_helper[256];
+    int a = snprintf(entry, sizeof(entry), "%s/main.mo", root);
+    int b = snprintf(helper, sizeof(helper), "%s/helper.mo", root);
+    int c = snprintf(library, sizeof(library), "%s/lib", root);
+    int d = snprintf(support, sizeof(support), "%s/support.mo", library);
+    int e = snprintf(lib_helper, sizeof(lib_helper), "%s/helper.mo", library);
+    MO_ASSERT(a > 0 && (size_t)a < sizeof(entry));
+    MO_ASSERT(b > 0 && (size_t)b < sizeof(helper));
+    MO_ASSERT(c > 0 && (size_t)c < sizeof(library));
+    MO_ASSERT(d > 0 && (size_t)d < sizeof(support));
+    MO_ASSERT(e > 0 && (size_t)e < sizeof(lib_helper));
+    const uint8_t main_source[] = "module Main\nuse Helper\n";
+    const uint8_t support_source[] = "module Support\nuse Helper\n";
+    const uint8_t program_source[] = "module Helper\nanswer = 1\n";
+    const uint8_t library_source[] = "module Helper\nanswer = 2\n";
+    write_file(entry, main_source, sizeof(main_source) - 1);
+    write_file(helper, program_source, sizeof(program_source) - 1);
+    struct fixture f;
+    init(&f, 16 << 20);
+    CHECK(mo_load(&f.arena, &f.sources, entry, library, &f.diags) == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_LIBRARY_UNREADABLE);
+    finish(&f);
+    MO_ASSERT(mkdir(library, 0700) == 0);
+    write_file(support, support_source, sizeof(support_source) - 1);
+    init(&f, 16 << 20);
+    CHECK(mo_load(&f.arena, &f.sources, entry, library, &f.diags) == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_MISSING);
+    CHECK(f.diags.items[0].primary.span.file == 1);
+    CHECK(strcmp(f.diags.items[0].primary.text, lib_helper) == 0);
+    finish(&f);
+    write_file(lib_helper, library_source, sizeof(library_source) - 1);
+    init(&f, 16 << 20);
+    struct mo_module_set *set = mo_load(&f.arena, &f.sources, entry, library, &f.diags);
+    CHECK(set != NULL && f.diags.count == 0);
+    if (set != NULL) {
+        CHECK(set->library[set->uses[0][0]]);
+        CHECK(set->uses[2][0] == set->uses[0][0]);
+        CHECK(f.sources.files[1].length == sizeof(library_source) - 1 &&
+              memcmp(f.sources.files[1].bytes, library_source, sizeof(library_source) - 1) == 0);
+    }
+    finish(&f);
+    write_file(lib_helper, (const uint8_t *)"module Wrong\n", 13);
+    init(&f, 16 << 20);
+    CHECK(mo_load(&f.arena, &f.sources, entry, library, &f.diags) == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_NAME);
+    CHECK(f.diags.items[0].primary.span.file == 1);
+    finish(&f);
+    const uint8_t json_source[] = "module Main\nuse Json\n";
+    write_file(entry, json_source, sizeof(json_source) - 1);
+    init(&f, 16 << 20);
+    CHECK(mo_load(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_MISSING);
+    finish(&f);
+    MO_ASSERT(unlink(entry) == 0 && unlink(helper) == 0 && unlink(support) == 0 &&
+              unlink(lib_helper) == 0);
+    MO_ASSERT(rmdir(library) == 0 && rmdir(root) == 0);
+}
+
+static void loading_labels(void) {
+    char root[] = "/tmp/mo-check-labels-XXXXXX";
+    MO_ASSERT(mkdtemp(root) != NULL);
+    char entry[256], second[256], third[256], xml[256];
+    int a = snprintf(entry, sizeof(entry), "%s/main.mo", root);
+    int b = snprintf(second, sizeof(second), "%s/second.mo", root);
+    int c = snprintf(third, sizeof(third), "%s/third.mo", root);
+    int d = snprintf(xml, sizeof(xml), "%s/xml-reader.mo", root);
+    MO_ASSERT(a > 0 && (size_t)a < sizeof(entry));
+    MO_ASSERT(b > 0 && (size_t)b < sizeof(second));
+    MO_ASSERT(c > 0 && (size_t)c < sizeof(third));
+    MO_ASSERT(d > 0 && (size_t)d < sizeof(xml));
+    const char main_source[] = "module Main\nuse Second\n";
+    const char second_source[] = "module Second\nuse Third\n";
+    const char third_source[] = "module Third\nuse Main\n";
+    write_file(entry, (const uint8_t *)main_source, sizeof(main_source) - 1);
+    write_file(second, (const uint8_t *)second_source, sizeof(second_source) - 1);
+    write_file(third, (const uint8_t *)third_source, sizeof(third_source) - 1);
+    struct fixture f;
+    init(&f, 16 << 20);
+    CHECK(mo_load(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_CYCLE);
+    if (f.diags.count == 1) {
+        const struct mo_diag *diag = &f.diags.items[0];
+        CHECK(diag->primary.span.file == 2 && diag->primary.span.start == 17);
+        CHECK(strcmp(diag->primary.text, "Main") == 0 && diag->secondary_count == 2);
+        if (diag->secondary_count == 2) {
+            CHECK(diag->secondary[0].span.file == 0 && diag->secondary[0].span.start == 16);
+            CHECK(diag->secondary[1].span.file == 1 && diag->secondary[1].span.start == 18);
+            CHECK(strcmp(diag->secondary[0].text, "Second") == 0);
+            CHECK(strcmp(diag->secondary[1].text, "Third") == 0);
+        }
+    }
+    finish(&f);
+    const char mismatch[] = "module Main\nuse XmlReader\n";
+    write_file(entry, (const uint8_t *)mismatch, sizeof(mismatch) - 1);
+    write_file(xml, (const uint8_t *)"module XMLReader\n", 17);
+    init(&f, 16 << 20);
+    CHECK(mo_load(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_NAME);
+    if (f.diags.count == 1) {
+        const struct mo_diag *diag = &f.diags.items[0];
+        CHECK(diag->primary.span.file == 0 && diag->primary.span.start == 16);
+        CHECK(strcmp(diag->primary.text, "XmlReader") == 0 && diag->secondary_count == 1);
+        if (diag->secondary_count == 1)
+            CHECK(diag->secondary[0].span.file == 1 && diag->secondary[0].span.start == 7);
+    }
+    finish(&f);
+    MO_ASSERT(unlink(xml) == 0);
+    init(&f, 16 << 20);
+    CHECK(mo_load(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_MISSING);
+    CHECK(strcmp(f.diags.items[0].primary.text, xml) == 0);
+    finish(&f);
+    /* Conversion overflows even though the source line is within its limit. */
+    struct mo_buffer long_use;
+    mo_buffer_init(&long_use, 8192);
+    MO_ASSERT(mo_buffer_append_text(&long_use, "module Main\nuse "));
+    for (uint32_t i = 0; i < MO_LIMIT_PATH_SIZE - 2; i++)
+        MO_ASSERT(mo_buffer_append_byte(&long_use, 'A'));
+    MO_ASSERT(mo_buffer_append_byte(&long_use, '\n'));
+    write_file(entry, long_use.bytes, long_use.length);
+    mo_buffer_free(&long_use);
+    init(&f, 16 << 20);
+    CHECK(mo_load(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_PATH_TOO_LONG);
+    CHECK(f.diags.items[0].primary.span.file == 0 && f.diags.items[0].primary.span.start == 16);
+    finish(&f);
+    MO_ASSERT(unlink(entry) == 0 && unlink(second) == 0 && unlink(third) == 0 && rmdir(root) == 0);
 }
 
 static void module_limit(void) {
@@ -400,6 +625,114 @@ static MO_MUST_USE struct mo_module_syntax *parse_bytes(struct fixture *f, const
     return module;
 }
 
+static void independent_errors(void) {
+    struct fixture f;
+    init(&f, 16 << 20);
+    const char first[] = "module Main\nzeta = 1\nzeta = 2\nalpha = 1\nalpha = 2\n";
+    const char second[] = "module Elsewhere\nexpose missing\n";
+    struct mo_module_syntax *modules[] = {
+        parse_bytes(&f, "main.mo", (const uint8_t *)first, sizeof(first) - 1),
+        parse_bytes(&f, "elsewhere.mo", (const uint8_t *)second, sizeof(second) - 1)};
+    uint32_t *uses[] = {NULL, NULL};
+    struct mo_module_set set = {.count = 2, .modules = modules, .uses = uses};
+    CHECK(mo_resolve_modules(&f.arena, &set, &f.diags) == NULL);
+    CHECK(f.diags.count == 3);
+    if (f.diags.count == 3) {
+        CHECK(f.diags.items[0].code == MO_CODE_NAME_CLASH);
+        CHECK(f.diags.items[0].primary.span.start == (uint32_t)(strstr(first, "zeta = 2") - first));
+        CHECK(f.diags.items[1].primary.span.start ==
+              (uint32_t)(strstr(first, "alpha = 2") - first));
+        CHECK(f.diags.items[2].code == MO_CODE_EXPOSE_NAME);
+        CHECK(f.diags.items[2].primary.span.file == 1);
+    }
+    finish(&f);
+}
+
+static void name_rules(void) {
+    const char money[] = "module Money\nexpose Choice(..), Money\n"
+                         "enum Choice\n Ready\n Done\nend\nstruct Money\n value: Int\nend\n";
+    const char opaque[] = "module Money\nexpose Choice\nenum Choice\n Ready\n Done\nend\n";
+    const char another[] = "module Another\nexpose Status(..)\nenum Status\n Ready\n Quit\nend\n";
+    const struct {
+        const char *main;
+        const char *other;
+        uint16_t code;
+        uint32_t imported;
+        const char *label;
+    } cases[] = {
+        {"module Main\nuse Money{Choice}\n", opaque, 0, 1, NULL},
+        {"module Main\nuse Money{Money}\nstruct Money\n value: Int\nend\n", money,
+         MO_CODE_NAME_CLASH, 0, "Money"},
+        {"module Main\nuse Money{Choice}\nuse Another{Status}\n", money, MO_CODE_NAME_CLASH, 0,
+         "Ready"},
+        {"module Main\nuse Money\nuse Shop.Money\n", money, MO_CODE_NAME_CLASH, 0, "Money"},
+        {"module Main\nstruct Text\n value: Int\nend\n", money, MO_CODE_ALWAYS_IN_SCOPE, 0, "Text"},
+        {"module Main\nenum Result\n Fine\n Bad\nend\n", money, MO_CODE_ALWAYS_IN_SCOPE, 0,
+         "Result"},
+        {"module Main\nuse Shop.Set\n", "module Shop.Set\n", MO_CODE_ALWAYS_IN_SCOPE, 0, "Set"},
+        {"module Main\nuse Money{Time}\n", money, MO_CODE_ALWAYS_IN_SCOPE, 0, "Time"},
+        {"module Main\nstruct Choice\n value: Int\nend\nenum State\n Choice\nend\n", money,
+         MO_CODE_NAME_CLASH, 0, "Choice"},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        struct fixture f;
+        init(&f, 16 << 20);
+        struct mo_module_syntax *modules[] = {
+            parse_bytes(&f, "main.mo", (const uint8_t *)cases[i].main, strlen(cases[i].main)),
+            parse_bytes(&f, "money.mo", (const uint8_t *)cases[i].other, strlen(cases[i].other)),
+            parse_bytes(&f, "another.mo",
+                        (const uint8_t *)(i == 3 ? "module Shop.Money\n" : another),
+                        i == 3 ? strlen("module Shop.Money\n") : sizeof(another) - 1)};
+        uint32_t targets[] = {1, 2}, *uses[] = {targets, NULL, NULL};
+        struct mo_module_set set = {.count = 3, .modules = modules, .uses = uses};
+        struct mo_module_interfaces *names = mo_resolve_modules(&f.arena, &set, &f.diags);
+        CHECK((names != NULL) == (cases[i].code == 0));
+        if (cases[i].code == 0 && names != NULL) {
+            CHECK(f.diags.count == 0 && names->scopes[0].imported_count == cases[i].imported);
+            CHECK(strcmp(names->scopes[0].imported[0].name, "Choice") == 0);
+        } else {
+            CHECK(f.diags.count == 1);
+            if (f.diags.count == 1) {
+                CHECK(f.diags.items[0].code == cases[i].code);
+                CHECK(strcmp(f.diags.items[0].primary.text, cases[i].label) == 0);
+            }
+        }
+        finish(&f);
+    }
+    const char *imports[] = {"Ready", "Ready, Choice", "Choice, Ready"};
+    for (size_t i = 0; i < sizeof(imports) / sizeof(imports[0]); i++) {
+        char input[128];
+        int n = snprintf(input, sizeof(input), "module Main\nuse Money{%s}\n", imports[i]);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(input));
+        struct fixture f;
+        init(&f, 16 << 20);
+        struct mo_module_syntax *modules[] = {
+            parse_bytes(&f, "main.mo", (const uint8_t *)input, (size_t)n),
+            parse_bytes(&f, "money.mo", (const uint8_t *)money, sizeof(money) - 1)};
+        uint32_t targets[] = {1}, *uses[] = {targets, NULL};
+        struct mo_module_set set = {.count = 2, .modules = modules, .uses = uses};
+        CHECK(mo_resolve_modules(&f.arena, &set, &f.diags) == NULL);
+        CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_IMPORT_CASE);
+        if (f.diags.count == 1 && f.diags.items[0].fix_count == 1) {
+            const struct mo_edit *edit = f.diags.items[0].fixes[0].edits;
+            struct mo_buffer fixed;
+            mo_buffer_init(&fixed, 1024);
+            MO_ASSERT(mo_buffer_append(&fixed, (const uint8_t *)input, edit->span.start));
+            MO_ASSERT(mo_buffer_append_text(&fixed, edit->replacement));
+            MO_ASSERT(mo_buffer_append(&fixed, (const uint8_t *)input + edit->span.end,
+                                       (size_t)n - edit->span.end));
+            mo_diags_free(&f.diags);
+            MO_ASSERT(mo_diags_init(&f.diags));
+            modules[0] = parse_bytes(&f, "fixed.mo", fixed.bytes, fixed.length);
+            CHECK(mo_resolve_modules(&f.arena, &set, &f.diags) != NULL);
+            CHECK(f.diags.count == 0);
+            mo_buffer_free(&fixed);
+        } else
+            CHECK(false);
+        finish(&f);
+    }
+}
+
 static void import_limit(void) {
     struct mo_buffer source;
     mo_buffer_init(&source, MO_LIMIT_FILE_SIZE);
@@ -447,6 +780,42 @@ static void import_limit(void) {
         CHECK(strcmp(names->scopes[0].imported[MO_LIMIT_MODULE_IMPORTS - 1].name, "E9") == 0);
     }
     mo_arena_free(&f.arena);
+    /* Four maximum-sized imports exactly fill the program budget. A fifth
+     * must be refused before allocating or walking another million entries. */
+    struct mo_module_syntax *many[6] = {modules[0]};
+    uint32_t destination = 4;
+    uint32_t *many_uses[6] = {&destination, &destination, &destination, &destination, NULL, NULL};
+    for (uint32_t i = 1; i < 5; i++) {
+        struct mo_buffer input;
+        mo_buffer_init(&input, 1024);
+        MO_ASSERT(mo_buffer_append_text(&input, "module M"));
+        MO_ASSERT(mo_buffer_append_uint(&input, i));
+        MO_ASSERT(mo_buffer_append_byte(&input, '\n'));
+        MO_ASSERT(mo_buffer_append(&input, source.bytes + 12, source.length - 12));
+        many[i] = parse_bytes(&f, "importer.mo", input.bytes, input.length);
+        mo_buffer_free(&input);
+    }
+    struct mo_module_syntax *fifth = many[4];
+    many[4] = other;
+    struct mo_module_set batch = {.count = 5, .modules = many, .uses = many_uses};
+    names = mo_resolve_modules(&f.arena, &batch, &f.diags);
+    CHECK(names != NULL && f.diags.count == 0);
+    if (names != NULL) {
+        CHECK(names->scopes[3].imported_count == MO_LIMIT_MODULE_IMPORTS);
+        CHECK(names->scopes[0].imported[0].symbols == names->scopes[3].imported[0].symbols);
+        CHECK(names->scopes[0].imported[0].name == names->scopes[3].imported[0].name);
+    }
+    mo_arena_free(&f.arena);
+    many[4] = fifth;
+    many[5] = other;
+    many_uses[4] = &destination;
+    destination = 5;
+    batch.count = 6;
+    CHECK(mo_resolve_modules(&f.arena, &batch, &f.diags) == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_TOO_MANY_PROGRAM_IMPORTS);
+    mo_arena_free(&f.arena);
+    mo_diags_free(&f.diags);
+    MO_ASSERT(mo_diags_init(&f.diags));
     struct mo_buffer more;
     mo_buffer_init(&more, MO_LIMIT_FILE_SIZE);
     MO_ASSERT(mo_buffer_append(&more, source.bytes, end));
@@ -457,6 +826,52 @@ static void import_limit(void) {
     finish(&f);
     mo_buffer_free(&more);
     mo_buffer_free(&source);
+}
+
+static void import_scaling(void) {
+    struct fixture f;
+    init(&f, 64 << 20);
+    struct mo_buffer source;
+    mo_buffer_init(&source, MO_LIMIT_FILE_SIZE);
+    MO_ASSERT(mo_buffer_append_text(&source, "module Library\nexpose Choice(..)\nenum Choice\n"));
+    uint8_t prefix[512];
+    memset(prefix, 'a', sizeof(prefix));
+    prefix[0] = 'C';
+    for (uint32_t i = 0; i < 4095; i++) {
+        MO_ASSERT(mo_buffer_append(&source, prefix, sizeof(prefix)));
+        MO_ASSERT(mo_buffer_append_uint(&source, i));
+        MO_ASSERT(mo_buffer_append_byte(&source, '\n'));
+    }
+    MO_ASSERT(mo_buffer_append_text(&source, "end\n"));
+    struct mo_module_syntax *modules[129];
+    modules[0] = parse_bytes(&f, "library.mo", source.bytes, source.length);
+    mo_buffer_free(&source);
+    uint32_t destination = 0, *uses[129] = {NULL};
+    for (uint32_t i = 1; i < 129; i++) {
+        char input[128];
+        int n = snprintf(input, sizeof(input), "module M%u\nuse Library{Choice}\n", i);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(input));
+        modules[i] = parse_bytes(&f, "importer.mo", (const uint8_t *)input, (size_t)n);
+        uses[i] = &destination;
+    }
+    const uint32_t sizes[] = {1, 32, 128};
+    for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+        mo_arena_free(&f.arena);
+        size_t budget = (8 << 20) + (size_t)sizes[i] * 4096 * sizeof(struct mo_imported_name);
+        mo_arena_init(&f.arena, budget);
+        struct mo_module_set set = {.count = sizes[i] + 1, .modules = modules, .uses = uses};
+        struct mo_module_interfaces *names = mo_resolve_modules(&f.arena, &set, &f.diags);
+        CHECK(names != NULL && f.diags.count == 0);
+        if (names != NULL) {
+            CHECK(names->scopes[sizes[i]].imported_count == 4096);
+            CHECK(names->scopes[1].imported[0].symbols ==
+                  names->scopes[sizes[i]].imported[0].symbols);
+            CHECK(names->scopes[1].imported[0].name == names->scopes[sizes[i]].imported[0].name);
+            MO_ASSERT(printf("check import scaling: %u importers, %zu checking arena bytes\n",
+                             sizes[i], f.arena.used) >= 0);
+        }
+    }
+    finish(&f);
 }
 
 static void source_limits(void) {
@@ -528,9 +943,15 @@ int main(void) {
     header_lookahead();
     library_collision();
     path_policy();
+    confined_files();
+    library_roots();
+    loading_labels();
     module_limit();
     library_limit();
+    independent_errors();
+    name_rules();
     import_limit();
+    import_scaling();
     source_limits();
     return mo_test_report("check");
 }

@@ -69,6 +69,10 @@
     X(41, IMPORT_PRIVATE, "10.1")                                                                  \
     X(42, OVERLOAD, "5.1")                                                                         \
     X(43, CASE_CLASH, "4.2")                                                                       \
+    X(44, IMPORT_CASE, "10.3")                                                                     \
+    X(45, ALWAYS_IN_SCOPE, "10.3")                                                                 \
+    X(46, IMPORT_MISSING, "10.3")                                                                  \
+    X(47, IMPORT_HIDDEN_CASE, "10.2")                                                              \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \
@@ -159,7 +163,13 @@
     /* Library discovery exceeds MO_LIMIT_LIBRARY_ENTRIES. */                                      \
     X(1059, LIBRARY_TOO_BIG, NULL)                                                                 \
     /* One module's imported names exceed MO_LIMIT_MODULE_IMPORTS. */                              \
-    X(1060, TOO_MANY_IMPORTS, NULL)
+    X(1060, TOO_MANY_IMPORTS, NULL)                                                                \
+    /* All expanded imports exceed MO_LIMIT_PROGRAM_IMPORTS. */                                    \
+    X(1100, TOO_MANY_PROGRAM_IMPORTS, NULL)                                                        \
+    /* A dependency's resolved path escapes its module root. */                                    \
+    X(1101, MODULE_OUTSIDE_ROOT, NULL)                                                             \
+    /* The toolchain's library folder cannot be inspected. */                                      \
+    X(1102, LIBRARY_UNREADABLE, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */
 enum mo_code {

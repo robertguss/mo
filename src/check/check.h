@@ -1,6 +1,6 @@
 /* Loading and module interfaces, before body checking. These results are not a
  * checked program and cannot be lowered. Result arrays and names belong to
- * arena; interface declaration, owner and origin pointers borrow the loaded
+ * arena; interface declaration and origin pointers borrow the loaded
  * syntax, which must outlive the interfaces. Syntax owns its token text
  * independently of sources. */
 #ifndef MO_CHECK_H
@@ -31,7 +31,12 @@ MO_MUST_USE struct mo_module_set *mo_load(struct mo_arena *arena, struct mo_sour
 struct mo_symbol {
     const char *name;
     const struct mo_syntax *declaration;
-    const struct mo_syntax *owner; /* choice declaration for a case, otherwise NULL */
+    uint32_t owner;    /* owning choice's symbol index, otherwise UINT32_MAX */
+    uint32_t receiver; /* first parameter's local nominal type, otherwise UINT32_MAX */
+    uint32_t case_count;
+    uint32_t overload_count; /* name-group size on its first member; one on later members */
+    uint32_t name_length;
+    const uint32_t *cases; /* choice's symbol indices in declaration order; shared by imports */
     uint32_t module;
     bool exported;
     bool insides; /* type fields/cases are exposed */
@@ -63,6 +68,11 @@ struct mo_module_interfaces {
     uint32_t count;
     struct mo_module_scope *scopes; /* same indices as the loaded set */
 };
+
+/* Looks up a declaration without copying or requiring a terminating NUL. The
+ * first overload is returned; later overloads are adjacent in symbols. */
+MO_MUST_USE const struct mo_symbol *mo_find_symbol(const struct mo_module_scope *scope,
+                                                   const uint8_t *name, size_t length);
 
 /* Indexes declarations, validates overload ownership, exposes public interfaces
  * and resolves explicit imports and their choice cases. NULL on error. Does not

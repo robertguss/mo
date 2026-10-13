@@ -1,0 +1,10 @@
+XMLReader	xml-reader.mo
+HTTP2Server	http2-server.mo
+IOError	io-error.mo
+ABTest	ab-test.mo
+IPv6Address	i-pv6-address.mo
+OAuth	o-auth.mo
+ABCd	ab-cd.mo
+AbCd	ab-cd.mo
+Unicode16Tool	unicode16-tool.mo
+Shop.OrderBook	shop/order-book.mo
