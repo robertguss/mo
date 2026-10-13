@@ -138,6 +138,8 @@ struct mo_signatures {
     uint64_t *work; /* shared program budget, initialized by preparation; single-threaded */
     uint32_t data_count;
     struct mo_data_signature *data; /* module order, then interface symbol order */
+    uint32_t native_count;
+    struct mo_native_signature *native; /* private prepared table interfaces */
 };
 
 /* Prepares all named function signatures, including abstract generic parameters

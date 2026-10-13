@@ -161,6 +161,43 @@ static void console_graph(void) {
     free_fixture(&f);
 }
 
+static void native_graph(void) {
+    struct fixture f;
+    init(
+        &f,
+        "module Main\nfn main() : Int\n"
+        "text = \" abc \".trim\nnumber = Int.abs(-4)\nInt.min(text.byte_count, number.abs)\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        bool trim = false, count = false, abs = false, min = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->native == NULL)
+                continue;
+            if (strcmp(row->native, "Text.trim") == 0) {
+                CHECK(row->operand_count == 1 && row->receiver == row->operands[0]);
+                CHECK(strcmp(row->type->name, "Text") == 0);
+                trim = true;
+            } else if (strcmp(row->native, "Text.byte_count") == 0) {
+                CHECK(row->operand_count == 1 && row->receiver == row->operands[0]);
+                count = true;
+            } else if (strcmp(row->native, "Int.abs") == 0) {
+                if (row->receiver != UINT32_MAX) {
+                    CHECK(row->operand_count == 1 && row->receiver == row->operands[0]);
+                    abs = true;
+                }
+            } else if (strcmp(row->native, "Int.min") == 0 &&
+                       row->type->kind != MO_SOURCE_FUNCTION) {
+                CHECK(row->operand_count == 3 && row->receiver == UINT32_MAX);
+                min = true;
+            }
+        }
+        CHECK(trim && count && abs && min);
+    }
+    free_fixture(&f);
+}
+
 static void lambda_graph(void) {
     struct fixture f;
     init(&f, "module Main\n"
@@ -641,7 +678,7 @@ static void rejected_stages(void) {
         {"fn main() : Int\nm = {\"a\": 1}\ncase m\n_: 1\nend\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Int\ntry Some(1)\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Int\nSome(1) or 0\nend\n", MO_CODE_CHECK_UNFINISHED},
-        {"fn main(console: Console)\nconsole.error(\"x\")\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn main(console: Console)\nconsole.printed\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"value = 1\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Int\nexamples\n1 == 1\nend\n1\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn helper() : Int\nmissing\nend\nfn main() : Int\n0\nend\n", MO_CODE_NAME_UNKNOWN},
@@ -739,6 +776,7 @@ static void run(void *argument) {
     (void)argument;
     entry_graph();
     console_graph();
+    native_graph();
     lambda_graph();
     branch_graph();
     record_graph();

@@ -433,6 +433,16 @@ Record/case construction and field reads check the owning type's `(..)`
 exposure before revealing its layout. Field metadata borrows syntax and is
 stored once in the declaring module, not copied into every importing module.
 
+Native signatures are prepared once per checking run from `prims.def` and
+`hostops.def`. The checker adds positional parameter names to each table's Mo
+signature and sends it through the source parser and annotation resolver,
+including nested function and collection types. Its syntax and parameter
+owners live in the checking arena; temporary source bytes are released after
+parsing. Native identities remain qualified table spellings, not fake source
+module symbols. Static native calls retain a callee row; dot calls retain
+their receiver and arguments without a callee row. Spec-only host operations
+remain refused until the spec/capability stage exists.
+
 **Local inference is a second intermediate result.** `mo_infer_function`
 checks one named body against prepared signatures, returning postorder
 expression metadata: types, local binder or module symbol, and whether all

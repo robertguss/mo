@@ -1,6 +1,8 @@
 #include "check/check.h"
 #include "check/data.h"
+#include "check/native.h"
 
+#include "base/buffer.h"
 #include "base/codes.h"
 #include "base/limits.h"
 
@@ -24,6 +26,18 @@ static const struct mo_builtin_case builtin_cases[] = {
     {"NotAllowed", "FileError", 20, 19, 4, 0, 1, 0, {"path", NULL}},
     {"NotText", "FileError", 21, 19, 4, 0, 1, 0, {"path", NULL}},
     {"Failed", "FileError", 22, 19, 4, 0, 2, 0, {"path", "reason"}},
+};
+
+static const struct native_text {
+    const char *module, *name, *qualified, *type;
+    bool spec_only;
+} native_texts[] = {
+#define PRIM(id, module, name, signature, params, bugs)                                            \
+    {module, name, module "." name, signature, false},
+#include "base/prims.def"
+#define HOSTOP(id, module, name, signature, params, bugs, spec_only)                               \
+    {module, name, module "." name, signature, spec_only},
+#include "base/hostops.def"
 };
 
 static const struct mo_symbol option_owner = {.name = "Option", .module = UINT32_MAX};
@@ -258,6 +272,8 @@ static MO_MUST_USE const struct mo_symbol *lookup(const struct mo_module_scope *
 
 static MO_MUST_USE const struct mo_symbol *definition(struct preparation *p,
                                                       const struct mo_syntax *name) {
+    if (p->function->module == UINT32_MAX)
+        return NULL;
     const struct mo_module_scope *scope = &p->interfaces->scopes[p->function->module];
     if (name->kind == MO_S_QUALIFIED) {
         const struct mo_syntax *prefix = name->children[0];
@@ -459,6 +475,87 @@ static MO_MUST_USE int compare_fields(const void *a, const void *b) {
     return order != 0 ? order : x->index < y->index ? -1 : x->index > y->index ? 1 : 0;
 }
 
+/* The table spells types in Mo. Add positional parameter names, then use the
+ * real parser and annotation resolver; do not maintain a second type grammar.
+ * Parsed token text belongs to the caller arena, not the temporary sources. */
+static MO_MUST_USE bool native_signature(struct preparation *p, const struct native_text *text,
+                                         struct mo_native_signature *out) {
+    struct mo_buffer source;
+    mo_buffer_init(&source, MO_LIMIT_FILE_SIZE);
+    bool ok = mo_buffer_append_text(&source, "module Native\nfn interface(");
+    const char *at = text->type;
+    bool function = strncmp(at, "fn(", 3) == 0;
+    if (function) {
+        at += 3;
+        unsigned parameter = 0;
+        while (ok && *at != ')') {
+            if (parameter != 0)
+                ok = mo_buffer_append_text(&source, ", ");
+            ok = ok && mo_buffer_append_text(&source, "_p") &&
+                 mo_buffer_append_uint(&source, parameter++) &&
+                 mo_buffer_append_text(&source, ": ");
+            const char *first = at;
+            uint32_t depth = 0;
+            while (*at != '\0' && !(depth == 0 && (*at == ',' || *at == ')'))) {
+                if (*at == '(')
+                    depth++;
+                else if (*at == ')')
+                    depth--;
+                at++;
+            }
+            MO_ASSERT(*at != '\0');
+            ok = ok && mo_buffer_append(&source, first, (size_t)(at - first));
+            if (*at == ',') {
+                at++;
+                while (*at == ' ')
+                    at++;
+            }
+        }
+        at++;
+    }
+    ok = ok && mo_buffer_append_text(&source, function ? ")" : ") : ") &&
+         mo_buffer_append_text(&source, at) && mo_buffer_append_text(&source, "\nend\n");
+    struct mo_sources sources = {0};
+    struct mo_diags diags = {0};
+    ok = ok && mo_sources_init(&sources) && mo_diags_init(&diags);
+    uint32_t file = 0;
+    struct mo_source_error error;
+    ok = ok &&
+         mo_sources_add_bytes(&sources, "native.mo", source.bytes, source.length, &file, &error);
+    struct mo_module_syntax *module = ok ? mo_parse(p->arena, &sources, file, &diags) : NULL;
+    if (module != NULL)
+        MO_ASSERT(!mo_diags_any(&diags));
+    mo_sources_free(&sources);
+    mo_diags_free(&diags);
+    mo_buffer_free(&source);
+    if (module == NULL)
+        return problem(p, MO_CODE_CHECK_NO_MEMORY, p->span, "the checking arena has no room", NULL);
+    const struct mo_syntax *fn = module->tree->children[1]->children[0];
+    *out = (struct mo_native_signature){
+        .module = text->module,
+        .name = text->name,
+        .qualified = text->qualified,
+        .spec_only = text->spec_only,
+        .owner = {.name = text->qualified, .module = UINT32_MAX, .declaration = fn}};
+    p->function = &out->owner;
+    const struct mo_syntax *parameters = fn->children[1];
+    const struct mo_source_type *arguments[MO_LIMIT_PARAMETERS + 1];
+    for (uint32_t i = 0; i < parameters->count; i++) {
+        arguments[i] = resolve(p, parameters->children[i]->children[1]);
+        if (arguments[i] == NULL)
+            return false;
+    }
+    arguments[parameters->count] = resolve(p, fn->children[2]);
+    if (arguments[parameters->count] == NULL)
+        return false;
+    out->type = intern(p, (struct mo_source_type){.kind = MO_SOURCE_FUNCTION,
+                                                  .name = "fn",
+                                                  .module = UINT32_MAX,
+                                                  .count = parameters->count + 1,
+                                                  .arguments = arguments});
+    return out->type != NULL;
+}
+
 static MO_MUST_USE bool data_signature(struct preparation *p, const struct mo_symbol *symbol,
                                        struct mo_data_signature *out) {
     const struct mo_symbol *owner =
@@ -605,6 +702,14 @@ struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct
             out->items[out->count++] = (struct mo_function_signature){function, type};
         }
     MO_ASSERT(out->count == count);
+    out->native_count = (uint32_t)(sizeof(native_texts) / sizeof(native_texts[0]));
+    out->native =
+        allocate(&p, out->native_count, sizeof(*out->native), _Alignof(struct mo_native_signature));
+    if (p.failed)
+        goto failed;
+    for (uint32_t i = 0; i < out->native_count; i++)
+        if (!native_signature(&p, &native_texts[i], &out->native[i]))
+            goto failed;
     return out;
 failed:
     mo_diags_sort(diags);
