@@ -169,6 +169,9 @@ struct dispatch {
     struct term *type;
     struct emitted *graph;
     struct note *note;
+    const struct mo_syntax *syntax, *arguments;
+    struct value receiver;
+    struct value *inputs;
     bool solved;
 };
 
@@ -1450,6 +1453,7 @@ static MO_MUST_USE struct value member(struct inference *p, struct value v,
         return v;
     p->span = name->span;
     struct term *type = root(v.type);
+    MO_ASSERT(!type->variable);
     if (!type->variable && type->shape.kind == MO_SOURCE_NAMED &&
         type->shape.module == UINT32_MAX) {
         if (named(type, "Entry") &&
@@ -1479,11 +1483,6 @@ static MO_MUST_USE struct value member(struct inference *p, struct value v,
     if ((field == NULL || !visible) &&
         (compare_text(name, "to_text") == 0 || compare_text(name, "compare") == 0))
         return ability_function(p, v, name);
-    if (type->variable) {
-        bool reported = unfinished(p);
-        (void)reported;
-        return (struct value){0};
-    }
     if (field == NULL || !visible) {
         uint32_t count = 0;
         const struct mo_module_scope *owner = type_scope(p, type);
@@ -1546,7 +1545,39 @@ static MO_MUST_USE struct value member(struct inference *p, struct value v,
 
 static MO_MUST_USE struct value field_value(struct inference *p, struct value receiver,
                                             const struct mo_syntax *name,
+                                            const struct mo_syntax *syntax,
                                             const struct mo_syntax *args, bool *called) {
+    if (receiver.type == NULL)
+        return receiver;
+    if (root(receiver.type)->variable) {
+        *called = true;
+        uint32_t count = args == NULL ? 0u : args->count;
+        struct value out = deferred_function(p, name, NULL, count);
+        if (out.type == NULL)
+            return out;
+        struct dispatch *pending = out.dispatch;
+        pending->syntax = syntax;
+        pending->arguments = args;
+        pending->receiver = receiver;
+        pending->inputs = allocate(p, count, sizeof(*pending->inputs), _Alignof(struct value));
+        if (pending->inputs == NULL)
+            return (struct value){0};
+        out.never = receiver.never;
+        for (uint32_t i = 0; i < count; i++) {
+            if (args->children[i]->kind == MO_S_NAMED_ARG) {
+                bool reported = problem(p, MO_CODE_CALL_ARGUMENTS, args->children[i]->span,
+                                        "a function is called with named fields",
+                                        "Arguments are passed by position (reference 5.2).", NULL);
+                (void)reported;
+                return (struct value){0};
+            }
+            pending->inputs[i] = infer(p, args->children[i], NULL);
+            if (pending->inputs[i].type == NULL)
+                return (struct value){0};
+            out.never = out.never || pending->inputs[i].never;
+        }
+        return out;
+    }
     struct value resolved = member(p, receiver, name, called);
     if (resolved.type == NULL || !*called)
         return resolved;
@@ -2321,7 +2352,8 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         if (node->children[0]->kind == MO_S_CAPNAME)
             return identifier(p, node->children[1], node->children[0]);
         bool called;
-        return field_value(p, infer(p, node->children[0], NULL), node->children[1], NULL, &called);
+        return field_value(p, infer(p, node->children[0], NULL), node->children[1], node, NULL,
+                           &called);
     }
     case MO_S_INT:
         return (struct value){.type = fresh(p, INT | BIG | BYTE | DECIMAL | FLOAT)};
@@ -2559,7 +2591,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                 if (i + 1 < node->count && node->children[i + 1]->kind == MO_S_CALL)
                     args = node->children[i + 1]->children[0];
                 bool called;
-                v = field_value(p, v, step->children[0], args, &called);
+                v = field_value(p, v, step->children[0], step, args, &called);
                 if (called && args != NULL)
                     i++;
             } else {
@@ -3702,8 +3734,89 @@ checked_pattern(struct inference *p, const struct mo_syntax *syntax,
     return out;
 }
 
+/* The receiver was walked in its live lexical scope. Insert the selected
+ * function or callable-field projection after it, before the saved arguments. */
+static MO_MUST_USE struct note *dispatch_callee(struct inference *p, struct dispatch *at,
+                                                struct value selected, bool method) {
+    struct note *last = p->last;
+    if (!record(p, method ? at->name : at->syntax, selected))
+        return NULL;
+    struct note *callee = p->last;
+    last->next = NULL;
+    p->last = last;
+    callee->next = at->receiver.note->next;
+    at->receiver.note->next = callee;
+    return callee;
+}
+
+static MO_MUST_USE bool finish_dot(struct inference *p, struct dispatch *at) {
+    bool method;
+    struct value selected = member(p, at->receiver, at->name, &method);
+    if (selected.type == NULL)
+        return false;
+    if (!method && at->arguments == NULL) {
+        if (!unify(p, at->type, selected.type, 0))
+            return false;
+        at->note->output.field = selected.field;
+        if (p->checked)
+            *at->graph = *selected.graph;
+        return true;
+    }
+    struct term *fn = root(selected.type);
+    if (fn->shape.kind != MO_SOURCE_FUNCTION) {
+        struct term function = {.shape = {.kind = MO_SOURCE_FUNCTION, .name = "fn"}};
+        return unify_as(p, fn, &function, MO_CODE_NOT_FUNCTION);
+    }
+    uint32_t offset = method ? 1u : 0u;
+    if (fn->shape.count != at->count + offset + 1)
+        return problem(p, MO_CODE_CALL_ARGUMENTS, p->span,
+                       "a call's arguments don't match its parameters",
+                       "Pass every argument by position (reference 5.2).", NULL);
+    if (method && !unify_as(p, at->receiver.type, argument(p, fn, 0), MO_CODE_ARGUMENT_TYPE))
+        return false;
+    for (uint32_t i = 0; i < at->count; i++) {
+        p->span = at->arguments->children[i]->span;
+        if (!at->inputs[i].never &&
+            !unify_as(p, at->inputs[i].type, argument(p, fn, i + offset), MO_CODE_ARGUMENT_TYPE))
+            return false;
+    }
+    p->span = at->name->span;
+    if (!unify(p, at->type, argument(p, fn, fn->shape.count - 1), 0))
+        return false;
+    if (!p->checked)
+        return true;
+    bool callee = !method || selected.symbol != NULL;
+    struct note *function = callee ? dispatch_callee(p, at, selected, method) : NULL;
+    if (callee && function == NULL)
+        return false;
+    uint32_t receiver = method && callee ? 1u : 0u;
+    struct note **operands =
+        allocate(p, at->count + 1 + receiver, sizeof(*operands), _Alignof(struct note *));
+    if (operands == NULL)
+        return false;
+    operands[0] = callee ? function : at->receiver.note;
+    if (receiver != 0)
+        operands[1] = at->receiver.note;
+    for (uint32_t i = 0; i < at->count; i++)
+        operands[i + 1 + receiver] = at->inputs[i].note;
+    *at->graph =
+        (struct emitted){.output = {.operand_count = at->count + 1 + receiver,
+                                    .symbol = selected.symbol,
+                                    .native = method ? selected.graph->output.native : NULL,
+                                    .field = UINT32_MAX,
+                                    .receiver = method ? receiver : UINT32_MAX},
+                         .operands = operands,
+                         .function_type = method ? selected.graph->function_type : NULL,
+                         .requirements = method ? selected.graph->requirements : NULL,
+                         .parameters = method ? selected.graph->parameters : NULL};
+    at->note->callee = method ? function : NULL;
+    at->note->output.symbol = selected.symbol;
+    return true;
+}
+
 static MO_MUST_USE bool finish_dispatches(struct inference *p) {
     bool progress;
+    bool defaults = false;
     do {
         progress = false;
         for (struct dispatch *at = p->dispatches; at != NULL; at = at->next) {
@@ -3712,6 +3825,19 @@ static MO_MUST_USE bool finish_dispatches(struct inference *p) {
             if (at->solved)
                 continue;
             p->span = at->name->span;
+            if (at->group == NULL) {
+                struct term *receiver = root(at->receiver.type);
+                if (receiver->variable && defaults && receiver->numeric != 0 &&
+                    finish_type(p, receiver, 0) == NULL)
+                    return false;
+                if (receiver->variable)
+                    continue;
+                if (!finish_dot(p, at))
+                    return false;
+                at->solved = true;
+                progress = true;
+                continue;
+            }
             struct term *type = root(at->type);
             if (type->variable)
                 continue;
@@ -3745,12 +3871,16 @@ static MO_MUST_USE bool finish_dispatches(struct inference *p) {
             at->solved = true;
             progress = true;
         }
+        if (!progress && !defaults) {
+            defaults = true;
+            progress = true;
+        }
     } while (progress);
     for (struct dispatch *at = p->dispatches; at != NULL; at = at->next)
         if (!at->solved)
             return problem(p, MO_CODE_CANNOT_INFER, at->name->span,
-                           "no use decides this overload's first argument type",
-                           "Give the value a type, or write the call another way (reference 5.1).",
+                           "no use decides this dispatch's receiver type",
+                           "Give the value a type, or write the call another way (reference 5.4).",
                            NULL);
     return true;
 }
