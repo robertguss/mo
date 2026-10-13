@@ -49,7 +49,7 @@ struct lowering {
     struct mo_span span;
     jmp_buf escape;
     uint64_t work;
-    uint32_t nodes, serial, function_count, data_count;
+    uint32_t nodes, type_count, serial, function_count, data_count;
     struct instance *functions, **function_tail;
     struct data_instance *data, **data_tail;
     struct type_cache *cache;

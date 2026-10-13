@@ -119,8 +119,12 @@ void lower_metadata(struct lowering *p, struct mo_core *core) {
     m->funs.count = core->funs.count;
     m->funs.items = LOWER_NEW(p, struct mo_core_fun_meta, m->funs.count);
     size_t i = 0;
+    size_t nodes = p->type_count;
     for (struct instance *f = p->functions; f != NULL; f = f->next) {
         body(p, f->fun.body, &f->meta.body);
+        if (f->meta.body.spans.count > MO_LIMIT_CORE_NODES - nodes)
+            lower_refuse(p, MO_CODE_LOWER_WORK, "lowered document exceeds the Core node limit");
+        nodes += f->meta.body.spans.count;
         m->funs.items[i++] = f->meta;
     }
     m->modules.count = p->program->set->count;

@@ -164,6 +164,9 @@ static mo_core_ty make_type(struct lowering *p, const struct mo_source_type *sou
         }
     if (height >= MO_LIMIT_CORE_DEPTH)
         lower_refuse(p, MO_CODE_LOWER_DEPTH, "substituted type exceeds the Core path limit");
+    if (p->type_count == MO_LIMIT_CORE_NODES)
+        lower_refuse(p, MO_CODE_LOWER_WORK, "lowering exceeds its Core type node limit");
+    p->type_count++;
     struct canonical_type *c = LOWER_NEW(p, struct canonical_type, 1);
     *c = (struct canonical_type){p->types, name, t, height};
     p->types = c;

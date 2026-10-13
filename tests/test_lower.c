@@ -518,18 +518,20 @@ static void test_limits(void) {
 
 static void test_ignored_parameters(void) {
     struct lower_fixture f;
-    lower_fixture_init(&f, "module Main\nfn identity(_: Int) : Int\n"
+    lower_fixture_init(&f, "module Main\nfn identity(_unused: Int) : Int\n"
                            "f = fn(_)\n17\nend\nf(41)\nend\n"
                            "fn main() : Int\nidentity(9)\nend\n");
     f.program.function_count = f.declarations.count = 2;
     f.function_types[1].count = 2;
     f.signature_parts[1][0] = f.signature_parts[1][1] = &f.int_;
-    const struct mo_checked_binding *parameters[] = {NULL};
+    f.bindings[0] = (struct mo_checked_binding){.name = "_unused", .type = &f.int_};
+    const struct mo_checked_binding *parameters[] = {&f.bindings[0]};
     f.functions[1].parameter_count = 1;
+    f.functions[1].body.binding_count = 1;
     f.functions[1].parameters = parameters;
     uint32_t body = lower_fixture_row(&f, MO_S_INT, &f.int_, "17", 0, NULL);
-    struct mo_checked_lambda lambda = {
-        .parameter_count = 1, .parameters = parameters, .body = body};
+    const struct mo_checked_binding *ignored[] = {NULL};
+    struct mo_checked_lambda lambda = {.parameter_count = 1, .parameters = ignored, .body = body};
     uint32_t value = lower_fixture_row(&f, MO_S_LAMBDA, &f.function_types[1], NULL, 1, &body);
     f.rows[value].lambda = &lambda;
     uint32_t forty_one = lower_fixture_row(&f, MO_S_INT, &f.int_, "41", 0, NULL);
@@ -544,7 +546,7 @@ static void test_ignored_parameters(void) {
     f.rows[call].symbol = &f.symbols[1];
     struct mo_core *core = checked(&f, "ignored-parameters", "returned\n17\n");
     if (core != NULL) {
-        CHECK(!core->metadata.funs.items[1].body.params.items[0].some);
+        CHECK(core->metadata.funs.items[1].body.params.items[0].some);
         run(core, 17);
     }
     lower_fixture_free(&f);

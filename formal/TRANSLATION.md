@@ -1062,6 +1062,8 @@ code across modules is accepted in Phase 2; later sharing must retain meaning.
 The C lowerer checks structural Core type height after substitution as well as
 source-template depth. `T` becoming a deep list can push `List(T)` over Core's
 path bound; that instantiation refuses with E1153 rather than returning invalid Core.
+The E1152 document bound counts canonical types and every unfolded expression
+occurrence across all function bodies, not just allocated expressions per body.
 
 ### 9.2 The five abilities
 
@@ -2105,9 +2107,9 @@ minor version is 0.8. TEXT.md specifies exact fields and boundary reports.
 2. **Bindings, not renamed identifiers.** Function parameters have optional
    original names; local bindings use (node, binder slot). Case slots flatten
    the arms; lambda/join slots follow parameter order. Repeated SSA versions
-   may share a source name. Generated slots have none. Ignored `_` parameters
+   may share a source name. Generated slots have none. Ignored `_` lambda parameters
    keep their signature type and position with a generated Core name, but no
-   source binding/name; NULL checked parameter slots do not remove arguments.
+   source binding/name; NULL checked lambda slots do not remove arguments.
    The compiler resolves
    lexical uses and computes register ranges itself, retaining provenance
    through lifting and optimization; lowering does not guess code offsets.

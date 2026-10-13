@@ -749,6 +749,8 @@ instantiation or generated Core path bound. `MO_LIMIT_LOWER_WORK` bounds all
 allocation bytes and work independently of the caller's arena allowance.
 Structural Core type heights are checked after generic substitution, not only
 at the template's source depth; an over-deep concrete result refuses with E1153.
+E1152 also bounds canonical types plus unfolded expression occurrences across
+all bodies together, matching Core's whole-document node allowance.
 Numeric immediates fold unary minus before building Core scalars, including
 Int's minimum. Float literals convert in a private C numeric locale with
 nearest-even rounding, then restore the caller's rounding state. Text literals
@@ -788,7 +790,7 @@ exposure into the Core arena, including constants, wrappers, library
 instances and lifted-name provenance. Spec/anonymous-function numbers follow
 source order before rewrites. Every rewritten body gets exactly one optional
 span per Expr in preorder; synthesized nodes inherit the responsible source
-construct's span. Generated binders have no source name. Ignored `_` parameter
+construct's span. Generated binders have no source name. Ignored `_` lambda parameter
 slots retain their signature type and argument position but have no source
 binding or binder name. Repeated SSA/loop
 binders retain their original name at distinct node/slot identities.
