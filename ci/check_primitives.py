@@ -78,8 +78,10 @@ def text_cases(rng, rows):
             else:
                 values = [[f"(text {quote(s)})"] for s in texts]
         elif module == "Char":
-            scalars = [0, 9, 10, 11, 12, 13, 32, 39, 48, 57, 58, 65, 90, 91, 97, 122, 123,
+            scalars = [0, 9, 10, 11, 12, 13, 32, 34, 39, 48, 57, 58, 65, 90, 91, 97, 122, 123,
                        127, 128, 0xA0, 0xD7FF, 0xE000, 0x1F642, 0x10FFFF]
+            scalars += [n for n in [rng.randrange(0x110000) for _ in range(48)]
+                        if not 0xD800 <= n <= 0xDFFF]
             values = [[f"(char {quote(chr(n))})"] for n in scalars]
         else:
             byte_sequences = [b"", b"\0", b"abc", b"\xff", b"\xc0\x80", b"\xed\xa0\x80",
@@ -109,9 +111,16 @@ def big_cases(rng, rows):
         op = camel(name.lstrip("%"))
         primitive = f"(big ({op}))" if name != "%compare" else "(order (bigInt))"
         if name == "pow":
-            args = [[encode(a), f"(int {n})"] for a in samples[:12] for n in [-1, 0, 1, 2, 3, 7, 32]]
+            bases = samples[:12] + [rng.randrange(-10000, 10001) for _ in range(16)]
+            args = [[encode(a), f"(int {n})"] for a in bases for n in [-1, 0, 1, 2, 3, 7, 32]]
         elif len(params) == 2:
             args = [[encode(a), encode(b)] for a in samples for b in samples]
+            # Same leading limbs but a smaller low limb forces the division
+            # estimator's add-back path, which uniform random limbs rarely hit.
+            divisors = [(high << 64) + low for high in [1 << 31, (1 << 32)-1]
+                        for low in [1, (1 << 32)-1]]
+            args += [[encode((b * (1 << 32) - 1) * sign), encode(b * other)]
+                     for b in divisors for sign in [-1, 1] for other in [-1, 1]]
         else:
             args = [[encode(a)] for a in samples]
         for i, values in enumerate(args):
@@ -126,12 +135,17 @@ def collection_cases(rng, rows):
     lists = [[], [1], [3, 1, 3, -2, 1, 4], [-(1 << 63), -1], [(1 << 63)-1, 1, -1]]
     lists += [[rng.randrange(-10, 11) for _ in range(rng.randrange(32))] for _ in range(24)]
     text_lists = [[], [""], ["a", "β", "", "a"], ["🙂", "x\0y"]]
+    text_lists += [["".join(rng.choice("aβ🙂\0") for _ in range(rng.randrange(8)))
+                    for _ in range(rng.randrange(8))] for _ in range(16)]
     int_lists = [seq("list", list(map(enc_int, xs))) for xs in lists]
     sets = [seq("set", list(map(enc_int, dict.fromkeys(xs)))) for xs in lists]
     pairs = [[], [(3, "a"), (1, "β"), (3, "last")], [(-1, ""), (5, "🙂")]]
+    pairs += [[(rng.randrange(-4, 5), "".join(rng.choice("abβ🙂") for _ in range(rng.randrange(8))))
+               for _ in range(rng.randrange(16))] for _ in range(24)]
     entries = lambda xs: [seq("tuple", [enc_int(k), enc_text(v)]) for k, v in xs]
     maps = ["(map (" + " ".join(f"({enc_int(k)} {enc_text(v)})" for k, v in xs) + "))"
-            for xs in [[], [(3, "a"), (1, "β")], [(-1, ""), (5, "🙂")]]]
+            for xs in [[], [(3, "a"), (1, "β")], [(-1, ""), (5, "🙂")]] +
+            [list(dict(ps).items()) for ps in pairs[3:]]]
     for _, module, name, _, params in rows:
         if module not in {"List", "Map", "Set", "Range"}:
             continue
@@ -187,6 +201,8 @@ def collection_cases(rng, rows):
                 values = [[s, enc_int(n)] for s in sets for n in [-1, 0, 1, 3, 10]]
         else:
             ranges = [(0, 0), (3, 1), (-3, 4), ((1 << 63)-3, (1 << 63)-1), (-(1 << 63), -(1 << 63)+3)]
+            ranges += [(a, a + rng.randrange(-5, 17)) for a in
+                       [rng.randrange(-(1 << 63) + 32, (1 << 63) - 32) for _ in range(24)]]
             if name == "to_list":
                 values = [[f"(range {a} {b})"] for a, b in ranges]
             else:
@@ -237,7 +253,8 @@ def cases():
                 samples = [(a,) for a in values]
             values = [[f"(int {n})" for n in sample] for sample in samples]
         elif module == "Byte":
-            values = [[f"(byte {n})"] for n in [0, 1, 127, 128, 254, 255]]
+            values = [[f"(byte {n})"] for n in [0, 1, 127, 128, 254, 255] +
+                      [rng.randrange(256) for _ in range(24)]]
         elif module == "Decimal":
             if name in {"round", "to_fixed"}:
                 samples = [(a, p) for a in decimals for p in [-1, 0, 1, 17, 18, 19]]
@@ -285,6 +302,13 @@ def main():
                 (directory / f"{name}-{variant}").write_bytes(bytes([i, variant & 1]) + operands)
         return
     generated = list(cases())
+    rows = re.findall(r'^PRIM\(\w+,\s*"([^"]+)",\s*"([^"]+)"',
+                      pathlib.Path("src/base/prims.def").read_text(), re.M)
+    expected_rows = {f"{module}.{name}" for module, name in rows
+                     if module not in {"Time", "Duration", "Unicode16"}}
+    covered = {re.search(r'\(text "([^"]+)"\)', raw)[1] for _, raw in generated}
+    if covered != expected_rows:
+        raise AssertionError(f"primitive oracle coverage differs: {covered ^ expected_rows}")
     data = "".join(raw for _, raw in generated)
     expected = run(["formal/.lake/build/bin/mocore", "--primitives"], data)
     if len(expected) != len(generated):

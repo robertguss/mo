@@ -149,7 +149,8 @@ static MO_MUST_USE enum mo_prim_status join(struct mo_prim_call *c, struct mo_ce
         struct mo_cell value;
         size_t n;
         MO_ASSERT(mo_list_get(c->args[0], i, &value));
-        (void)mo_value_data(value, &n);
+        const uint8_t *text = mo_value_data(value, &n);
+        MO_ASSERT(text != NULL);
         if (n > MO_LIMIT_STRING_SIZE - length)
             return MO_PRIM_OUT_OF_MEMORY;
         length += n;
