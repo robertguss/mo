@@ -7,12 +7,13 @@
 #
 # Checks out origin/main in a fresh worktree, runs that commit's ci/check.sh with
 # CI=1, a minimal environment and FUZZ_SECONDS (300 by default), keeps the full
-# log and any crashing inputs, and exits with the check's status.
+# log and any crashing inputs, and exits with the check's status. It has its own
+# clone, so pull requests' runs (run.sh) go on while it fuzzes.
 set -uo pipefail
 
 repo="robertguss/mo"
 ci_home="${MO_CI_HOME:-$HOME/mo-ci}"
-work="$ci_home/work"
+work="$ci_home/nightly"
 logs="$ci_home/logs"
 timeout_seconds="${MO_CI_NIGHTLY_TIMEOUT_SECONDS:-14400}"
 fuzz_seconds="${MO_CI_FUZZ_SECONDS:-300}"
@@ -25,8 +26,8 @@ if [[ $# -ne 0 || ! "$fuzz_seconds" =~ ^[1-9][0-9]*$ ]]; then
 fi
 mkdir -p "$work" "$logs"
 
-# One run at a time, shared with run.sh: runs share a clone.
-exec 9>"$ci_home/lock" || exit 69
+# One nightly run at a time. It doesn't take run.sh's lock: its clone is its own.
+exec 9>"$ci_home/nightly.lock" || exit 69
 flock 9 || exit 69
 
 check_pid=""
@@ -56,7 +57,7 @@ if ! git -C "$clone" fetch --quiet origin main; then
 	exit 69
 fi
 sha=$(git -C "$clone" rev-parse FETCH_HEAD) || exit 69
-rm -rf "$work"/home.* "$work"/pr[0-9]*-[0-9a-f]* "$work"/nightly-*
+rm -rf "$work"/home.* "$work"/nightly-*
 git -C "$clone" worktree prune
 tree="$work/nightly-$sha"
 if ! git -C "$clone" worktree add --quiet --detach "$tree" "$sha"; then
