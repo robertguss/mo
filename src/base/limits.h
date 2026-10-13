@@ -223,8 +223,8 @@
  * usually gets, leaving room for the files the program reads and writes. */
 #define MO_LIMIT_OPEN_FOLDERS 256
 
-/* Printing counts nodes and bytes, including repeated DAG edges. Equality,
- * ordering and hashing have no work cap; scratch uses the remaining heap.
+/* Type-ability preparation has a work cap. Runtime printing uses its caller's
+ * output budget; equality, ordering and hashing have no work cap. Scratch uses the remaining heap.
  * Insertion grows its index after this probe bound; searches probe to empty.
  * Collection lengths keep doubled cell indices in u32. */
 #define MO_LIMIT_HEAP_WORK (64 << 20)
@@ -232,10 +232,9 @@
 #define MO_LIMIT_HEAP_INDEX_SLOTS (1U << 30)
 #define MO_LIMIT_COLLECTION_SIZE (1 << 26)
 
-/* Balanced BigInt decimal conversion has its own budget, independent of the
- * structural printer's nodes/bytes. Larger magnitudes remain valid values. */
-#define MO_LIMIT_BIGINT_TEXT_BYTES (1 << 18)
-#define MO_LIMIT_BIGINT_TEXT_WORK (1U << 31)
+/* Runtime Text, Bytes and BigInt lengths are u32. This is a representation
+ * ceiling, not the source/constant size limit; allocation uses --max-heap. */
+#define MO_LIMIT_VALUE_BYTES UINT32_MAX
 
 /* Best-effort diagnostic output, outside an exhausted process heap. */
 #define MO_LIMIT_DEFECT_TEXT_SIZE (64 << 10)

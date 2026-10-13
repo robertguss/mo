@@ -428,8 +428,7 @@ void *mo_scratch_resize(struct mo_scratch *scratch, void *bytes, size_t old_size
     scratch->arena.limit = before + scratch->process->limit - scratch->process->used;
     /* Arena limit refusals don't set errno; POSIX malloc/realloc failures do. */
     errno = ENOSPC;
-    void *result =
-        mo_arena_resize(&scratch->arena, bytes, old_size, new_size, _Alignof(max_align_t));
+    void *result = mo_arena_resize(&scratch->arena, bytes, old_size, new_size, 16);
     scratch->process->used = scratch->process->used - before + scratch->arena.used;
     MO_ASSERT(scratch->process->used <= scratch->process->limit);
     return result;

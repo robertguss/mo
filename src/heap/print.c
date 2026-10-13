@@ -141,8 +141,7 @@ static MO_MUST_USE unsigned char_bytes(uint32_t code, uint8_t bytes[4]) {
 }
 
 static MO_MUST_USE bool scalar_text(struct mo_heap *process, enum mo_type_kind kind,
-                                    struct mo_cell value, bool nested, struct mo_buffer *out,
-                                    size_t *work) {
+                                    struct mo_cell value, bool nested, struct mo_buffer *out) {
     switch (kind) {
     case MO_TYPE_UNIT:
         return mo_buffer_append_text(out, "Unit");
@@ -179,10 +178,6 @@ static MO_MUST_USE bool scalar_text(struct mo_heap *process, enum mo_type_kind k
     case MO_TYPE_BYTES: {
         size_t length;
         const uint8_t *bytes = mo_value_data(value, &length);
-        if (length > MO_LIMIT_HEAP_WORK - *work) {
-            return false;
-        }
-        *work += length;
         if (kind == MO_TYPE_TEXT) {
             return nested ? quote(out, bytes, length, '"') : mo_buffer_append(out, bytes, length);
         }
@@ -231,7 +226,7 @@ struct print_frame {
 bool mo_value_print(struct mo_heap *process, uint32_t type, struct mo_cell value,
                     struct mo_buffer *out) {
     MO_ASSERT(process != NULL && type < process->types->count && out != NULL);
-    size_t before = out->length, work = 0, capacity = 16, depth = 1;
+    size_t before = out->length, capacity = 16, depth = 1;
     struct mo_scratch scratch;
     mo_scratch_init(&scratch, process);
     struct print_frame local[16];
@@ -239,11 +234,6 @@ bool mo_value_print(struct mo_heap *process, uint32_t type, struct mo_cell value
     bool ok = true;
     stack[0] = (struct print_frame){.type = type, .value = value};
     while (ok && depth != 0) {
-        if (work == MO_LIMIT_HEAP_WORK || out->length - before > MO_LIMIT_HEAP_WORK) {
-            ok = false;
-            break;
-        }
-        work++;
         struct print_frame *f = &stack[depth - 1];
         const struct mo_type *t = &process->types->items[f->type];
         enum mo_type_kind kind = t->kind;
@@ -252,7 +242,7 @@ bool mo_value_print(struct mo_heap *process, uint32_t type, struct mo_cell value
         if (!f->entered) {
             f->entered = true;
             if (!compound) {
-                ok = scalar_text(process, kind, f->value, depth != 1, out, &work);
+                ok = scalar_text(process, kind, f->value, depth != 1, out);
                 depth--;
                 continue;
             }
@@ -262,11 +252,6 @@ bool mo_value_print(struct mo_heap *process, uint32_t type, struct mo_cell value
                                                         : NULL;
             if (name != NULL) {
                 size_t length = strlen(name);
-                if (length > MO_LIMIT_HEAP_WORK - work) {
-                    ok = false;
-                    break;
-                }
-                work += length;
                 ok = quote(out, (const uint8_t *)name, length, 0);
                 if (f->count == 0) {
                     depth--;
@@ -307,11 +292,6 @@ bool mo_value_print(struct mo_heap *process, uint32_t type, struct mo_cell value
         }
         if (name != NULL) {
             size_t length = strlen(name);
-            if (length > MO_LIMIT_HEAP_WORK - work) {
-                ok = false;
-                break;
-            }
-            work += length;
             ok = ok && quote(out, (const uint8_t *)name, length, 0) &&
                  mo_buffer_append_text(out, ": ");
         }
@@ -340,7 +320,6 @@ bool mo_value_print(struct mo_heap *process, uint32_t type, struct mo_cell value
         stack[depth++] = (struct print_frame){.type = child_type, .value = item};
     }
     mo_scratch_free(&scratch);
-    ok = ok && out->length - before <= MO_LIMIT_HEAP_WORK;
     if (!ok) {
         out->length = before;
     }

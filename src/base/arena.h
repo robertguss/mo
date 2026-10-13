@@ -56,7 +56,8 @@ MO_MUST_USE void *mo_arena_allocate_array(struct mo_arena *arena, size_t count, 
  * which allocates.
  *
  * The newest block of an arena changes size in place while its chunk has room. When it is alone in
- * its chunk, with an alignment no larger than max_align_t's, the chunk itself grows, and may move.
+ * its chunk, with an alignment no larger than the chunk's (at least 16), the chunk itself grows,
+ * and may move.
  * Other blocks move to a new block and leave the old one unused until mo_arena_free. So a buffer
  * that grows by doubling, and is the only thing its arena holds, wastes nothing.
  *

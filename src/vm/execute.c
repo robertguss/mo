@@ -1,6 +1,8 @@
+#include "prim/prim.h"
 #include "vm/internal.h"
 
 #include <errno.h>
+#include <fenv.h>
 #include <string.h>
 
 static MO_MUST_USE struct mo_cell read(const struct mo_process *p, struct mo_vm_frame *f,
@@ -45,14 +47,34 @@ static MO_MUST_USE enum mo_outcome memory(struct mo_process *p) {
                       mo_cell_unit(), MO_STOPPED);
 }
 
-/* The single primitive/host dispatch seam. Implementations added in the next
- * slices must preserve operands on refusal; no ownership changes precede it. */
-static MO_MUST_USE const char *dispatch(uint32_t opcode) {
-    return opcode == MO_OP_PRIM ? "internal error: primitive dispatch unavailable"
-                                : "internal error: host dispatch unavailable";
+static MO_MUST_USE enum mo_outcome primitive_stop(struct mo_process *p, enum mo_prim_status status,
+                                                  const char *reason) {
+    switch (status) {
+    case MO_PRIM_OVERFLOW:
+        MO_ASSERT(reason != NULL);
+        reason = strcmp(reason, "Int") == 0       ? "overflow: Int"
+                 : strcmp(reason, "Decimal") == 0 ? "overflow: Decimal"
+                                                  : "overflow: Duration";
+        break;
+    case MO_PRIM_DIV_BY_ZERO:
+    case MO_PRIM_OUTSIDE:
+    case MO_PRIM_REPEATED_KEY:
+        break;
+    case MO_PRIM_OUT_OF_MEMORY:
+        if (strstr(reason, "MO_LIMIT_VALUE_BYTES") == NULL)
+            return memory(p);
+        break;
+    case MO_PRIM_NOT_IMPLEMENTED:
+        reason = "internal error: primitive dispatch unavailable";
+        break;
+    case MO_PRIM_RETURNED:
+        MO_UNREACHABLE();
+    }
+    return mo_vm_stop(p, reason, NULL, false, mo_cell_unit(), MO_STOPPED);
 }
 
 enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
+    MO_ASSERT(fesetround(FE_TONEAREST) == 0 && fegetround() == FE_TONEAREST);
     for (;;) {
         struct mo_vm_frame *f = mo_vm_frame(p);
         const struct mo_bytecode_function *fn = &p->file->functions[f->function];
@@ -298,9 +320,30 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             mo_vm_states(p, f)[a[0]] = VM_MOVED;
             break;
         }
-        case MO_OP_PRIM:
+        case MO_OP_PRIM: {
+            static const char *const ownership[] = {
+#define PRIM(id, module, name, signature, params, bugs) params,
+#include "base/prims.def"
+            };
+            MO_ASSERT(a[1] < MO_PRIM_COUNT && count == strlen(ownership[a[1]]));
+            struct mo_cell arguments[MO_LIMIT_BYTECODE_PARAMETERS];
+            for (uint32_t i = 0; i < count; i++)
+                arguments[i] = read(p, f, a[3 + i]);
+            const char *reason;
+            enum mo_prim_status status = mo_prim_call(p->heap, p->types, (enum mo_primitive_id)a[1],
+                                                      a[2], arguments, &value, &reason);
+            if (status != MO_PRIM_RETURNED)
+                return primitive_stop(p, status, reason);
+            /* The primitive transferred owned cells only after success. */
+            for (uint32_t i = 0; i < count; i++)
+                if (ownership[a[1]][i] == 'o')
+                    consume(p, f, a[3 + i]);
+            write(p, f, a[0], value, false);
+            break;
+        }
         case MO_OP_HOST:
-            return mo_vm_stop(p, dispatch(op), NULL, false, mo_cell_unit(), MO_STOPPED);
+            return mo_vm_stop(p, "internal error: host dispatch unavailable", NULL, false,
+                              mo_cell_unit(), MO_STOPPED);
         default:
             MO_UNREACHABLE();
         }

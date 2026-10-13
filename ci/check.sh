@@ -106,6 +106,13 @@ if have lake; then
 		done
 		if ((${#vm_drivers[@]})); then PYTHONDONTWRITEBYTECODE=1 python3 ci/check_vm.py "${vm_drivers[@]}";
 		else missing "no VM test executable is built"; fi
+		step "Primitive results and stops match Lean; large inputs keep their work bounds"
+		prim_drivers=()
+		for driver in build/{gcc,clang}/{debug,sanitize}/tests/test_prim.test; do
+			if [[ -x "$driver" ]]; then prim_drivers+=("$driver"); fi
+		done
+		if ((${#prim_drivers[@]})); then python3 ci/check_primitives.py "${prim_drivers[@]}";
+		else missing "no primitive test executable is built"; fi
 	else
 		missing "python3 is not installed"
 	fi

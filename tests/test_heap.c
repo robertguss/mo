@@ -465,15 +465,15 @@ static void test_adversarial(struct heap_fixture *f) {
     CHECK(!mo_value_equal(p, f->no_equal_list, b, b, &equal) && equal);
     mo_value_drop(p, f->no_equal_list, b);
     struct mo_buffer output;
-    mo_buffer_init(&output, 2 * MO_LIMIT_HEAP_WORK);
+    mo_buffer_init(&output, 4096);
     CHECK(mo_buffer_append_text(&output, "kept"));
     CHECK(!mo_value_print(p, f->tree, a, &output));
     CHECK(output.length == 4 && memcmp(output.bytes, "kept", 4) == 0);
-    uint8_t *magnitude = calloc(1, MO_LIMIT_BIGINT_TEXT_BYTES + 1);
+    enum { MAGNITUDE_BYTES = (1 << 18) + 1 };
+    uint8_t *magnitude = calloc(1, MAGNITUDE_BYTES);
     MO_ASSERT(magnitude != NULL);
-    magnitude[MO_LIMIT_BIGINT_TEXT_BYTES] = 1;
-    MO_ASSERT(
-        mo_value_bigint(p, MO_BIGINT_POSITIVE, magnitude, MO_LIMIT_BIGINT_TEXT_BYTES + 1, &b));
+    magnitude[MAGNITUDE_BYTES - 1] = 1;
+    MO_ASSERT(mo_value_bigint(p, MO_BIGINT_POSITIVE, magnitude, MAGNITUDE_BYTES, &b));
     CHECK(!mo_value_print(p, f->builtin[MO_TYPE_BIGINT], b, &output));
     CHECK(output.length == 4 && memcmp(output.bytes, "kept", 4) == 0);
     mo_value_drop(p, f->builtin[MO_TYPE_BIGINT], b);
@@ -577,9 +577,12 @@ static void test_print(struct heap_fixture *f) {
     expect_text(p, f->builtin[MO_TYPE_TIME], mo_cell_time(INT64_C(253402300799999999)),
                 "9999-12-31T23:59:59.999999Z");
     expect_text(p, f->builtin[MO_TYPE_DURATION], mo_cell_duration(-1500000), "-1.5s");
+    expect_text(p, f->builtin[MO_TYPE_DURATION], mo_cell_duration(500000), "0.5s");
     expect_text(p, f->builtin[MO_TYPE_DURATION], mo_cell_duration(INT64_MIN),
                 "-9223372036854.775808s");
     expect_text(p, f->builtin[MO_TYPE_DECIMAL], mo_cell_decimal(1), "0.000000000000000001");
+    expect_text(p, f->builtin[MO_TYPE_DECIMAL], mo_cell_decimal(INT64_C(-500000000000000000)),
+                "-0.5");
     expect_text(p, f->builtin[MO_TYPE_DECIMAL],
                 mo_cell_decimal((mo_i128)3 * INT64_C(1000000000000000000)), "3");
     expect_text(p, f->builtin[MO_TYPE_RANGE], mo_cell_range(-2, 13), "-2..13");
@@ -971,8 +974,9 @@ static MO_MUST_USE int number_driver(struct heap_fixture *f, bool bigint) {
     MO_ASSERT(p != NULL);
     struct mo_buffer out;
     mo_buffer_init(&out, MO_LIMIT_HEAP_WORK);
-    char line[2 * MO_LIMIT_BIGINT_TEXT_BYTES + 2];
-    uint8_t magnitude[MO_LIMIT_BIGINT_TEXT_BYTES];
+    enum { INPUT_BYTES = 1 << 18 };
+    char line[2 * INPUT_BYTES + 2];
+    uint8_t magnitude[INPUT_BYTES];
     while (fgets(line, sizeof line, stdin) != NULL) {
         struct mo_cell value;
         uint32_t type = f->builtin[bigint ? MO_TYPE_BIGINT : MO_TYPE_FLOAT];

@@ -10,6 +10,7 @@
 #include "base/base.h"
 #include "base/buffer.h"
 #include "base/limits.h"
+#include "base/prims.h"
 
 enum mo_operand_kind {
     MO_OPERAND_NONE,
@@ -157,12 +158,6 @@ enum { MO_OPCODE_VARIABLE_SHIFT = 16 };
 /* p and h are zero-based row indices in the base tables. The spec gives symbolic ids but no
  * numbers; deriving these enums from table order keeps every consumer on the same numbering.
  * Phase 2 reads and writes with the same build, so the numbers need not survive table edits. */
-enum mo_primitive_id {
-#define PRIM(id, module, name, signature, params, bugs) MO_PRIM_##id,
-#include "base/prims.def"
-    MO_PRIM_COUNT,
-};
-
 enum mo_host_id {
 #define HOSTOP(id, module, name, signature, params, bugs, spec_only) MO_HOST_##id,
 #include "base/hostops.def"

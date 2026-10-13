@@ -6,19 +6,21 @@
 #include <string.h>
 
 /* A chunk: its header, then capacity bytes, of which the first used have been handed out. The
- * data starts aligned for any type: malloc's memory is (C17 7.22.3), and the header's size is a
- * multiple of max_align_t's alignment, the alignment of data. */
+ * data starts aligned for max_align_t and the 16-byte wide integers, including on Apple
+ * arm64 where max_align_t's alignment is only 8. malloc/realloc align to 16 on our targets. */
 struct mo_arena_chunk {
     struct mo_arena_chunk *previous;
     size_t capacity;
     size_t used;
-    max_align_t data[];
+    _Alignas(16) max_align_t data[];
 };
 
 _Static_assert(sizeof(struct mo_arena_chunk) <= MO_ARENA_CHUNK_HEADER,
                "MO_ARENA_CHUNK_HEADER covers a chunk's header");
 _Static_assert(sizeof(struct mo_arena_chunk) % _Alignof(max_align_t) == 0,
                "a chunk's data is aligned for any type");
+_Static_assert(offsetof(struct mo_arena_chunk, data) % 16 == 0,
+               "a chunk's data is aligned for wide integers");
 
 /* Chunks start small, so a small arena takes little, and double up to the largest size, so a large
  * one makes few calls to malloc. A request that needs more gets a chunk of its own size. */
@@ -50,8 +52,9 @@ static bool fits(struct mo_arena_chunk *chunk, size_t size, size_t alignment) {
 static bool add_chunk(struct mo_arena *arena, size_t size, size_t alignment) {
     MO_ASSERT(arena->used <= arena->limit);
     size_t header = sizeof(struct mo_arena_chunk);
-    /* The data is aligned for max_align_t, so only a larger alignment can need padding. */
-    size_t padding = alignment > _Alignof(max_align_t) ? alignment - _Alignof(max_align_t) : 0;
+    /* Only an alignment above the chunk's alignment can need padding. */
+    size_t base_alignment = _Alignof(struct mo_arena_chunk);
+    size_t padding = alignment > base_alignment ? alignment - base_alignment : 0;
     size_t remaining = arena->limit - arena->used;
     if (size > remaining || header + padding > remaining - size) {
         return false;
@@ -161,7 +164,7 @@ void *mo_arena_resize(struct mo_arena *arena, void *block, size_t old_size, size
             chunk->used = offset + new_size;
             return block;
         }
-        if (offset == 0 && alignment <= _Alignof(max_align_t)) {
+        if (offset == 0 && alignment <= _Alignof(struct mo_arena_chunk)) {
             if (!grow_alone(arena, new_size)) {
                 return NULL;
             }

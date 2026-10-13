@@ -23,8 +23,87 @@ def options (args : List String) (fuel : Nat) (test : Option String) : Parse (Na
   | "--test" :: n :: rest => options rest fuel (some n)
   | _ => throw "expected --fuel N or --test NAME"
 
+/-- Library sum is a left fold with a checked addition at every step. -/
+def primitiveSum (b : Base) (acc : Value) : List Value → Outcome
+  | [] => .ok acc {}
+  | x :: xs =>
+      let step := match b with
+        | .int => evalIntOp .add [acc, x] {}
+        | .bigInt => evalBigOp .add [acc, x] {}
+        | .decimal => evalDecOp .add [acc, x] {}
+        | .float => evalFloatOp .add [acc, x] {}
+        | _ => .wrong "sum requires Number"
+      match step with
+      | .ok next _ => primitiveSum b next xs
+      | other => other
+
+/-- Lowering's three-way comparison uses the model's base order, not its
+boolean comparison instruction. Keep this bridge outside the primitive model. -/
+def primitiveSequence (acc : Value) : List Value → Parse Outcome
+  | [] => pure (.ok acc {})
+  | .tuple (.text _ :: .text op :: args) :: rest => do
+      let step := (← primIn (← parseSexp op)).eval (acc :: args) {}
+      match step with
+      | .ok (.con "Some" [next]) _ => primitiveSequence next rest
+      | .ok next _ => primitiveSequence next rest
+      | other => pure other
+  | _ => throw "expected sequence step name, primitive and arguments"
+
+def primitiveEval (p : Sexp) (vs : List Value) : Parse Outcome := do
+  match p, vs with
+  | .node [.atom "sequence"], [initial, .list steps] => primitiveSequence initial steps
+  | .node [.atom "order", b], [x, y] =>
+      let b ← enumIn bases b
+      let o ← match baseOrder b x y with
+        | some o => pure o | none => throw "invalid comparison operands"
+      let ctor := match o with | .lt => "Less" | .eq => "Same" | .gt => "More"
+      pure (.ok (.con ctor []) {})
+  | .node [.atom "sum", b], [.list xs] =>
+      let b ← enumIn bases b
+      let zero ← match b with
+        | .int => pure (.int 0) | .bigInt => pure (.bigInt 0)
+        | .decimal => pure (.decimal 0) | .float => pure (.float 0)
+        | _ => throw "sum requires Number"
+      pure (primitiveSum b zero xs)
+  | .node [.atom "literalInsert"], [.map es, k, v] =>
+      if (mapGet k es).isSome then pure (.stopped .repeatedKey {})
+      else pure (evalMapOp .set [.map es, k, v] {})
+  | .node [.atom "quotedText"], [.text s] =>
+      pure (.ok (.text ((quote s).replace "#{" "\\#{")) {})
+  | .node [.atom "quotedChar"], [.char c] =>
+      let body := if c == '\'' then "\\'" else if c == '"' then "\"" else
+        (quote (String.singleton c)).drop 1 |>.toString |>.dropEnd 1 |>.toString
+      pure (.ok (.text ("'" ++ body ++ "'")) {})
+  | .node [.atom "structural", t], [v] =>
+      let s ← structural {data := [], funs := []} (← tyIn t) v false true
+      pure (.ok (.text s) {})
+  | _, _ => pure ((← primIn p).eval vs {})
+
+/-- A test-only batch protocol: a Value tuple holds the table name, the Core
+primitive's text, then its arguments. Evaluate the unchanged primitive model. -/
+def primitiveQueries : IO UInt32 := do
+  let input ← IO.getStdin
+  let output ← IO.getStdout
+  repeat
+    let line ← input.getLine
+    if line.isEmpty then break
+    let query : Parse Outcome := do
+      let v ← parseDocument line >>= valueIn
+      match v with
+      | .tuple (.text _ :: .text p :: vs) => primitiveEval (← parseSexp p) vs
+      | _ => throw "expected primitive name, Core primitive and arguments"
+    match query with
+    | .error why => throw (IO.userError why)
+    | .ok result =>
+      match result with
+      | .ok v _ => output.putStr ("ok " ++ document (valueOut v))
+      | .stopped b _ => output.putStr ("stopped " ++ document (bugOut b))
+      | _ => throw (IO.userError "primitive did not return or stop")
+  pure 0
+
 def main (args : List String) : IO UInt32 := do
   try
+    if args == ["--primitives"] then return ← primitiveQueries
     let request : Except Report Run ← match args with
       | [path] => do pure (((← readCore path) >>= runIn).mapError Report.parseError)
       | p :: w :: opts => do
