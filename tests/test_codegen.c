@@ -310,11 +310,12 @@ static void test_metadata(void) {
         }
         mo_buffer_free(&out);
         mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
-        meta[0].name = (mo_core_string){"Other.main", 10};
+        meta[0].name = (mo_core_string){"Other.start", 11};
         CHECK(mo_core_check(p, &diags));
-        CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
-        CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_ENTRY &&
-              diags.items[0].primary.span.file == 1 && diags.items[0].primary.span.start == 1);
+        ok = mo_compile(p, &out, &diags);
+        CHECK(ok && !mo_diags_any(&diags));
+        b = ok ? mo_bytecode_decode(&arena, out.bytes, out.length, &error) : NULL;
+        CHECK(b != NULL && string_is(b, b->functions[0].name, "Other.start"));
     }
     mo_buffer_free(&out);
     mo_diags_free(&diags);
@@ -357,9 +358,15 @@ static void test_refusals(void) {
               &diags);
     if (p != NULL) {
         CHECK(mo_core_check(p, &diags));
-        CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
-        CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_ENTRY);
+        bool ok = mo_compile(p, &out, &diags);
+        CHECK(ok && !mo_diags_any(&diags));
+        struct mo_load_error error;
+        struct mo_bytecode *b =
+            ok ? mo_bytecode_decode(&arena, out.bytes, out.length, &error) : NULL;
+        CHECK(b != NULL && string_is(b, b->functions[0].name, "M.other"));
     }
+    mo_buffer_free(&out);
+    mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
     mo_diags_free(&diags);
     CHECK(mo_diags_init(&diags));
     p = parse(
@@ -370,17 +377,26 @@ static void test_refusals(void) {
     if (p != NULL) {
         uint32_t members[] = {0, 1};
         struct mo_core_span absent = {0};
+        mo_core_string file = {"absent.mo", 9};
         struct mo_core_fun_meta meta[2] = {
-            {.name = {"M.main", 6}, .body = {.spans = {&absent, 1}}},
-            {.name = {"M.main", 6}, .body = {.spans = {&absent, 1}}},
+            {.name = {"M.main", 6}, .span = {true, {0, 1, 2}}, .body = {.spans = {&absent, 1}}},
+            {.name = {"M.main", 6}, .span = {true, {0, 7, 9}}, .body = {.spans = {&absent, 1}}},
         };
         struct mo_core_module_meta module = {.name = {"M", 1}, .funs = {members, 2}};
-        p->metadata =
-            (struct mo_core_metadata){.source = true, .modules = {&module, 1}, .funs = {meta, 2}};
+        p->metadata = (struct mo_core_metadata){
+            .source = true, .files = {&file, 1}, .modules = {&module, 1}, .funs = {meta, 2}};
         CHECK(mo_core_check(p, &diags));
         CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
         CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_ENTRY &&
-              strstr(diags.items[0].primary.text, "shadows") != NULL);
+              diags.items[0].primary.span.start == 7 &&
+              strstr(diags.items[0].primary.text, "not unique") != NULL);
+        mo_diags_free(&diags);
+        CHECK(mo_diags_init(&diags));
+        p->entry = (mo_core_string){"other", 5};
+        CHECK(mo_core_check(p, &diags));
+        CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
+        CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_ENTRY &&
+              diags.items[0].primary.span.start == 1);
     }
     mo_diags_free(&diags);
     CHECK(mo_diags_init(&diags));
@@ -393,7 +409,13 @@ static void test_refusals(void) {
         CHECK(mo_core_check(p, &diags));
         CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
         CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_ENTRY &&
-              strstr(diags.items[0].primary.text, "shadows") != NULL);
+              strstr(diags.items[0].primary.text, "not unique") != NULL);
+        mo_diags_free(&diags);
+        CHECK(mo_diags_init(&diags));
+        p->entry = (mo_core_string){"M.main", 6};
+        CHECK(mo_core_check(p, &diags));
+        CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
+        CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_ENTRY);
     }
     mo_buffer_free(&out);
     mo_diags_free(&diags);
@@ -575,28 +597,43 @@ static void test_range_and_fail(void) {
 static void test_representation_refusals(void) {
     const struct {
         const char *data, *params, *result, *body, *reason;
+        uint16_t code;
     } cases[] = {
-        {"((DataDecl \"Empty\" ()))", "()", "(unit)", "(lit (unit))", "Empty data"},
+        {"((DataDecl \"Empty\" ()))", "()", "(unit)", "(lit (unit))", "Empty data",
+         MO_CODE_CODEGEN_REPRESENTATION},
         {"((DataDecl \"D\" ((Ctor \"Same\" ()) (Ctor \"Same\" ()))))", "()", "(unit)",
-         "(lit (unit))", "Duplicate Core constructor"},
-        {"()", "((\"x\" (data \"Missing\")))", "(unit)", "(lit (unit))", "Undeclared data"},
-        {"()", "()", "(tuple ())", "(tuple ())", "Zero/one-element tuples"},
-        {"()", "()", "(tuple ((int)))", "(tuple ((lit (int 2))))", "Zero/one-element tuples"},
+         "(lit (unit))", "Duplicate Core constructor", MO_CODE_CODEGEN_REPRESENTATION},
+        {"()", "((\"x\" (data \"Missing\")))", "(unit)", "(lit (unit))", "Undeclared data",
+         MO_CODE_CODEGEN_REPRESENTATION},
+        {"()", "()", "(tuple ())", "(tuple ())", "Zero/one-element tuples",
+         MO_CODE_CODEGEN_REPRESENTATION},
+        {"()", "()", "(tuple ((int)))", "(tuple ((lit (int 2))))", "Zero/one-element tuples",
+         MO_CODE_CODEGEN_REPRESENTATION},
+        {"()", "()", "(unit)", "(let_ \"unused\" (tuple ()) (lit (unit)))",
+         "Zero/one-element tuples", MO_CODE_CODEGEN_REPRESENTATION},
         {"((DataDecl \"D\" ((Ctor \"\\u{0}\" ()))))", "()", "(unit)", "(lit (unit))",
-         "NUL-containing"},
-        {"((DataDecl \"\" ((Ctor \"C\" ()))))", "()", "(unit)", "(lit (unit))", "Empty or NUL"},
+         "NUL-containing", MO_CODE_CODEGEN_REPRESENTATION},
+        {"((DataDecl \"\" ((Ctor \"C\" ()))))", "()", "(unit)", "(lit (unit))", "Empty or NUL",
+         MO_CODE_CODEGEN_REPRESENTATION},
+        {"()", "((\"\" (int)))", "(int)", "(var \"\")", "Empty or NUL",
+         MO_CODE_CODEGEN_REPRESENTATION},
+        {"()", "()", "(int)", "(let_ \"x\\u{0}\" (lit (int 2)) (var \"x\\u{0}\"))", "Empty or NUL",
+         MO_CODE_CODEGEN_REPRESENTATION},
+        {"()", "((\"o\" (option (int))))", "(int)",
+         "(case_ (var \"o\") ((\"None\" () (lit (int 1))) (\"Some\" (\"\") (var \"\"))))",
+         "Empty or NUL", MO_CODE_CODEGEN_REPRESENTATION},
         {"((DataDecl \"D\" ((Ctor \"C\" ((\"x\" (int)) (\"x\" (text)))))))", "()", "(unit)",
-         "(lit (unit))", "duplicate named fields"},
+         "(lit (unit))", "duplicate named fields", MO_CODE_CODEGEN_REPRESENTATION},
         {"((DataDecl \"D\" ((Ctor \"C\" ((\"\" (int)) (\"x\" (text)))))))", "()", "(unit)",
-         "(lit (unit))", "Empty or duplicate"},
+         "(lit (unit))", "Empty or duplicate", MO_CODE_CODEGEN_REPRESENTATION},
         {"()", "((\"b\" (bool)) (\"x\" (text)))", "(text)",
          "(let_ \"y\" (if_ (var \"b\") (proj (tuple ((var \"x\") (lit (int 1)))) 0) (var \"x\")) "
          "(var \"y\"))",
-         "Reconverging branches"},
+         "Reconverging branches", MO_CODE_CODEGEN_UNSUPPORTED},
         {"()", "((\"b\" (bool)) (\"x\" (text)))", "(text)",
          "(let_ \"y\" (if_ (var \"b\") (if_ (var \"b\") (var \"x\") (lit (text \"z\"))) (var "
          "\"x\")) (var \"y\"))",
-         "Reconverging branches"},
+         "Reconverging branches", MO_CODE_CODEGEN_UNSUPPORTED},
     };
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
         struct mo_arena arena;
@@ -620,7 +657,7 @@ static void test_representation_refusals(void) {
         if (p != NULL) {
             CHECK(mo_core_check(p, &diags));
             CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
-            CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_UNSUPPORTED &&
+            CHECK(diags.count == 1 && diags.items[0].code == cases[i].code &&
                   strstr(diags.items[0].primary.text, cases[i].reason) != NULL);
         }
         mo_buffer_free(&out);
@@ -628,6 +665,50 @@ static void test_representation_refusals(void) {
         mo_diags_free(&diags);
         mo_arena_free(&arena);
     }
+}
+
+static void test_lowered_names(void) {
+    const mo_core_string invalid[] = {{"", 0}, {"bad\0name", 8}};
+    for (size_t i = 0; i < 4; i++) {
+        struct mo_arena arena;
+        struct mo_diags diags;
+        struct mo_buffer out;
+        mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+        CHECK(mo_diags_init(&diags));
+        mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+        struct mo_core *p =
+            parse(&arena,
+                  "(Program () ((FunDecl \"entry\" () (unit) (lit (unit)) \"M\" (function) 0)) () "
+                  "\"entry\" (noSource))",
+                  &diags);
+        if (p != NULL) {
+            if (i < 2)
+                p->entry = p->funs.items[0].name = invalid[i];
+            else
+                p->funs.items[0].module = invalid[i - 2];
+            CHECK(mo_core_check(p, &diags));
+            CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
+            CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_REPRESENTATION &&
+                  strstr(diags.items[0].reason, "Empty or NUL") != NULL);
+        }
+        mo_buffer_free(&out);
+        mo_diags_free(&diags);
+        mo_arena_free(&arena);
+    }
+    /* The empty label of a single field means unnamed, not an invalid named field. */
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b = compile(
+        &arena,
+        "(Program ((DataDecl \"Box\" ((Ctor \"Box\" ((\"\" (int))))))) "
+        "((FunDecl \"entry\" () (data \"Box\") (con (data \"Box\") \"Box\" ((lit (int 19)))) "
+        "\"M\" (function) 0)) () \"entry\" (noSource))");
+    if (b != NULL) {
+        const struct mo_type *t = &b->types[b->functions[0].result_type];
+        CHECK(t->kind == MO_TYPE_CHOICE && t->case_count == 1 && t->cases[0].unnamed &&
+              t->cases[0].field_count == 1 && t->cases[0].fields[0].name == NULL);
+    }
+    mo_arena_free(&arena);
 }
 
 static void test_register_limit(void) {
@@ -763,9 +844,9 @@ static void test_register_block_limit(void) {
 }
 
 /* Batch corpus driver: malformed documents and ill-typed programs are not compiler inputs.
- * Partial implementation refusals are counted distinctly, never passed off as compilation. */
+ * Lowering-impossible forms are excluded; unfinished forms are not passed off as compilation. */
 static MO_MUST_USE int corpus(int argc, char **argv) {
-    unsigned compiled = 0, unsupported = 0, entry = 0, limited = 0, rejected = 0;
+    unsigned compiled = 0, unsupported = 0, excluded = 0, entry = 0, limited = 0, rejected = 0;
     for (int i = 1; i < argc; i++) {
         struct mo_sources sources;
         struct mo_source_error source_error;
@@ -810,6 +891,8 @@ static MO_MUST_USE int corpus(int argc, char **argv) {
                                      code == MO_CODE_CODEGEN_MEMORY;
                         if (code == MO_CODE_CODEGEN_ENTRY)
                             entry++;
+                        else if (code == MO_CODE_CODEGEN_REPRESENTATION)
+                            excluded++;
                         else if (limit)
                             limited++;
                         else
@@ -817,9 +900,10 @@ static MO_MUST_USE int corpus(int argc, char **argv) {
                         CHECK(first.length == 0 && diags.count == 2 &&
                               diags.items[1].code == code &&
                               (limit || code == MO_CODE_CODEGEN_UNSUPPORTED ||
-                               code == MO_CODE_CODEGEN_ENTRY));
+                               code == MO_CODE_CODEGEN_ENTRY ||
+                               code == MO_CODE_CODEGEN_REPRESENTATION));
                         if (diags.count != 0 && !limit && code != MO_CODE_CODEGEN_UNSUPPORTED &&
-                            code != MO_CODE_CODEGEN_ENTRY)
+                            code != MO_CODE_CODEGEN_ENTRY && code != MO_CODE_CODEGEN_REPRESENTATION)
                             (void)fprintf(stderr, "%s: %s\n", argv[i], diags.items[0].primary.text);
                     }
                     mo_buffer_free(&first);
@@ -834,10 +918,11 @@ static MO_MUST_USE int corpus(int argc, char **argv) {
             rejected++;
         mo_sources_free(&sources);
     }
-    (void)printf("codegen corpus: %u compiled deterministically; %u explicitly unsupported; %u "
-                 "entry mismatches; %u resource limits; %u not "
-                 "checked programs\n",
-                 compiled, unsupported, entry, limited, rejected);
+    (void)printf(
+        "codegen corpus: %u compiled deterministically; %u explicitly unsupported; %u "
+        "lowering-impossible inputs skipped; %u entry-name collisions; %u resource limits; %u not "
+        "checked programs\n",
+        compiled, unsupported, excluded, entry, limited, rejected);
     return mo_test_report("test_codegen corpus");
 }
 int main(int argc, char **argv) {
@@ -853,6 +938,7 @@ int main(int argc, char **argv) {
     test_aggregate_values();
     test_range_and_fail();
     test_representation_refusals();
+    test_lowered_names();
     test_register_limit();
     test_register_block_limit();
     return mo_test_report("test_codegen");

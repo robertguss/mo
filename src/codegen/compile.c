@@ -150,12 +150,14 @@ static MO_MUST_USE uint32_t string(struct compiler *c, mo_core_string s) {
     *item = (struct mo_bytecode_string){(uint32_t)s.length, (const uint8_t *)entry->key.bytes};
     return id;
 }
+static MO_MUST_USE bool name_valid(struct compiler *c, mo_core_string s) {
+    return (s.length != 0 && memchr(s.bytes, 0, s.length) == NULL) ||
+           problem(c, MO_CODE_CODEGEN_REPRESENTATION,
+                   "Empty or NUL-containing Core names cannot come from lowering.");
+}
 static MO_MUST_USE const char *name(struct compiler *c, mo_core_string s) {
-    if (s.length == 0 || memchr(s.bytes, 0, s.length) != NULL) {
-        if (!unsupported(
-                c, "Empty or NUL-containing Core names are not implemented by code generation."))
-            return NULL;
-    }
+    if (!name_valid(c, s))
+        return NULL;
     uint32_t id = string(c, s);
     if (id == MO_NO_INDEX)
         return NULL;
@@ -259,7 +261,8 @@ static MO_MUST_USE uint32_t type(struct compiler *c, mo_core_ty t, unsigned dept
         break;
     case MO_CORE_TY_TUPLE: {
         if (t->as.tuple.count < 2) {
-            if (!unsupported(c, "Zero/one-element tuples need the bytecode tuple arity extension."))
+            if (!problem(c, MO_CODE_CODEGEN_REPRESENTATION,
+                         "Zero/one-element tuples cannot come from lowering."))
                 return MO_NO_INDEX;
         }
         if (t->as.tuple.count > MO_LIMIT_FIELDS) {
@@ -287,7 +290,8 @@ static MO_MUST_USE uint32_t type(struct compiler *c, mo_core_ty t, unsigned dept
         struct mo_codegen_index *entry = mo_codegen_find(c->data_index, t->as.data);
         if (entry != NULL)
             return entry->value;
-        if (!unsupported(c, "Undeclared data types have no bytecode representation."))
+        if (!problem(c, MO_CODE_CODEGEN_REPRESENTATION,
+                     "Undeclared data types cannot come from lowering."))
             return MO_NO_INDEX;
         return MO_NO_INDEX;
     }
@@ -590,6 +594,8 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         return n;
     }
     case MO_CORE_EXPR_LET: {
+        if (!name_valid(c, expr->as.let_.name))
+            return NULL;
         n->children = allocate(c, 2, sizeof *n->children);
         n->binds = allocate(c, 1, sizeof *n->binds);
         if (n->children == NULL || n->binds == NULL)
@@ -665,6 +671,9 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
             if (entries == NULL || saved == NULL || regs == NULL)
                 return NULL;
             for (uint32_t j = 0; j < ctor->field_count; j++) {
+                c->span = n->span;
+                if (!name_valid(c, arm->names.items[j]))
+                    return NULL;
                 regs[j] =
                     register_add(c, f, ctor->fields[j].type, binding_name(f, preorder, slot++));
                 entries[j] = index_add(c, &f->locals, arm->names.items[j], MO_NO_INDEX, false);
@@ -708,12 +717,13 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         return c->error == 0 ? n : NULL;
     }
     case MO_CORE_EXPR_TUPLE: {
-        if (!children(c, f, n, expr->as.tuple, depth))
-            return NULL;
-        if (n->count < 2) {
-            if (!unsupported(c, "Zero/one-element tuples need the bytecode tuple arity extension."))
+        if (expr->as.tuple.count < 2) {
+            if (!problem(c, MO_CODE_CODEGEN_REPRESENTATION,
+                         "Zero/one-element tuples cannot come from lowering."))
                 return NULL;
         }
+        if (!children(c, f, n, expr->as.tuple, depth))
+            return NULL;
         uint32_t *params = allocate(c, n->count, sizeof *params);
         if (params == NULL)
             return NULL;
@@ -1350,55 +1360,22 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
     return true;
 }
 
-/* Core permits an arbitrary entry key. The image used by mo run has a stricter name contract. */
+/* Core established the first-match ordinary entry. Tools must find it by full name. */
 static MO_MUST_USE bool entry_valid(struct compiler *c) {
     const struct mo_core *p = c->core;
+    struct mo_codegen_index *entry = mo_codegen_find(c->fun_index, p->entry);
+    MO_ASSERT(entry != NULL);
+    c->current = &p->funs.items[entry->value];
+    c->declaration =
+        p->metadata.source ? p->metadata.funs.items[entry->value].span : (struct mo_core_span){0};
+    c->span = c->declaration;
+    uint32_t full_name = c->funs[entry->value].name;
     for (size_t i = 0; i < p->funs.count; i++) {
-        const struct mo_core_fun *f = &p->funs.items[i];
-        if (f->name.length != p->entry.length ||
-            memcmp(f->name.bytes, p->entry.bytes, f->name.length) != 0)
-            continue;
-        c->current = f;
-        c->declaration =
-            p->metadata.source ? p->metadata.funs.items[i].span : (struct mo_core_span){0};
-        bool valid;
-        if (p->metadata.source) {
-            mo_core_string n = p->metadata.funs.items[i].name;
-            valid = n.length >= 5 && n.length - 5 == f->module.length &&
-                    memcmp(n.bytes, f->module.bytes, f->module.length) == 0 &&
-                    memcmp(n.bytes + f->module.length, ".main", 5) == 0;
-            for (size_t j = 0; valid && j < i; j++) {
-                mo_core_string earlier = p->metadata.funs.items[j].name;
-                if (earlier.length == n.length && memcmp(earlier.bytes, n.bytes, n.length) == 0)
-                    return problem(c, MO_CODE_CODEGEN_ENTRY,
-                                   "An earlier function shadows the entry's full runtime name.");
-            }
-        } else {
-            valid = f->name.length == 4 && memcmp(f->name.bytes, "main", 4) == 0;
-            for (size_t j = 0; valid && j < i; j++) {
-                const struct mo_core_fun *earlier = &p->funs.items[j];
-                if (earlier->module.length > f->module.length ||
-                    memcmp(earlier->module.bytes, f->module.bytes, earlier->module.length) != 0)
-                    continue;
-                size_t suffix = f->module.length - earlier->module.length;
-                bool same =
-                    suffix == 0
-                        ? earlier->name.length == 4 && memcmp(earlier->name.bytes, "main", 4) == 0
-                        : earlier->name.length >= 5 && earlier->name.length - 4 == suffix &&
-                              f->module.bytes[earlier->module.length] == '.' &&
-                              memcmp(earlier->name.bytes,
-                                     f->module.bytes + earlier->module.length + 1,
-                                     suffix - 1) == 0 &&
-                              memcmp(earlier->name.bytes + suffix - 1, ".main", 5) == 0;
-                if (same)
-                    return problem(c, MO_CODE_CODEGEN_ENTRY,
-                                   "An earlier function shadows the entry's full runtime name.");
-            }
-        }
-        return valid || problem(c, MO_CODE_CODEGEN_ENTRY,
-                                "Core's ordinary entry must have the full name <Module>.main.");
+        if (i != entry->value && c->funs[i].name == full_name)
+            return problem(c, MO_CODE_CODEGEN_ENTRY,
+                           "The entry's full runtime name is not unique in the image.");
     }
-    MO_UNREACHABLE(); /* mo_core_check established the ordinary entry. */
+    return true;
 }
 static MO_MUST_USE bool declarations(struct compiler *c) {
     const struct mo_core *p = c->core;
@@ -1438,8 +1415,8 @@ static MO_MUST_USE bool declarations(struct compiler *c) {
     for (size_t i = 0; i < p->data.count; i++) {
         const struct mo_core_data *d = &p->data.items[i];
         if (d->ctors.count == 0)
-            return unsupported(
-                c, "Empty data declarations have no bytecode choice representation yet.");
+            return problem(c, MO_CODE_CODEGEN_REPRESENTATION,
+                           "Empty data declarations cannot come from lowering.");
         struct mo_type_case *cases = allocate(c, d->ctors.count, sizeof *cases);
         struct mo_codegen_index *seen = NULL;
         if (cases == NULL)
@@ -1447,8 +1424,8 @@ static MO_MUST_USE bool declarations(struct compiler *c) {
         for (size_t j = 0; j < d->ctors.count; j++) {
             const struct mo_core_ctor *ctor = &d->ctors.items[j];
             if (mo_codegen_find(seen, ctor->name) != NULL)
-                return unsupported(c,
-                                   "Duplicate Core constructor remapping is not implemented yet.");
+                return problem(c, MO_CODE_CODEGEN_REPRESENTATION,
+                               "Duplicate Core constructor names cannot come from lowering.");
             if (index_add(c, &seen, ctor->name, 0, false) == NULL)
                 return false;
             if (ctor->fields.count > MO_LIMIT_FIELDS)
@@ -1462,8 +1439,8 @@ static MO_MUST_USE bool declarations(struct compiler *c) {
                 mo_core_string key = ctor->fields.items[k].name;
                 if ((key.length == 0 && ctor->fields.count != 1) ||
                     mo_codegen_find(field_names, key) != NULL)
-                    return unsupported(
-                        c, "Empty or duplicate named fields need the bytecode naming extension.");
+                    return problem(c, MO_CODE_CODEGEN_REPRESENTATION,
+                                   "Empty or duplicate named fields cannot come from lowering.");
                 if (index_add(c, &field_names, key, 0, false) == NULL)
                     return false;
                 field[k].name = ctor->fields.items[k].name.length == 0
@@ -1513,6 +1490,8 @@ static MO_MUST_USE bool declarations(struct compiler *c) {
             p->metadata.source ? &p->metadata.funs.items[i] : NULL;
         c->declaration = meta == NULL ? (struct mo_core_span){0} : meta->span;
         c->span = c->declaration;
+        if (!name_valid(c, fun->name) || !name_valid(c, fun->module))
+            return false;
         if (fun->params.count > MO_LIMIT_BYTECODE_PARAMETERS)
             return problem(c, MO_CODE_BYTECODE_TOO_BIG,
                            "Function exceeds MO_LIMIT_BYTECODE_PARAMETERS.");
@@ -1549,6 +1528,8 @@ static MO_MUST_USE bool declarations(struct compiler *c) {
             return false;
         c->parameters[i] = params;
         for (size_t j = 0; j < fun->params.count; j++) {
+            if (!name_valid(c, fun->params.items[j].name))
+                return false;
             params[j] =
                 (struct mo_parameter){type(c, fun->params.items[j].ty, 0), MO_PARAMETER_OWNED};
             if (params[j].type == MO_NO_INDEX)
@@ -1769,7 +1750,7 @@ bool mo_compile(const struct mo_core *core, struct mo_buffer *out, struct mo_dia
     c.ownership.width = sizeof(struct ownership);
     c.edges.width = sizeof(struct edge);
     bool ok =
-        entry_valid(&c) && declarations(&c) && bodies(&c) && borrow_infer(&c) && output(&c, out);
+        declarations(&c) && entry_valid(&c) && bodies(&c) && borrow_infer(&c) && output(&c, out);
     if (!ok) {
         MO_ASSERT(c.error != 0 && out->length == 0);
         struct mo_buffer label;
@@ -1782,6 +1763,8 @@ bool mo_compile(const struct mo_core *core, struct mo_buffer *out, struct mo_dia
         struct mo_diag d = {
             .code = c.error,
             .message = c.error == MO_CODE_CODEGEN_ENTRY ? "invalid lowered entry name: bug in Mo"
+                       : c.error == MO_CODE_CODEGEN_REPRESENTATION
+                           ? "invalid lowered representation: bug in Mo"
                        : c.error == MO_CODE_CODEGEN_INVALID
                            ? "code generation produced invalid bytecode: bug in Mo"
                        : c.error == MO_CODE_CODEGEN_UNSUPPORTED

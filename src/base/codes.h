@@ -170,8 +170,10 @@
     X(1101, MODULE_OUTSIDE_ROOT, NULL)                                                             \
     /* The toolchain's library folder cannot be inspected. */                                      \
     X(1102, LIBRARY_UNREADABLE, NULL)                                                              \
-    /* Lowering did not give the ordinary entry its runtime lookup name. */                        \
-    X(1200, CODEGEN_ENTRY, NULL)
+    /* The ordinary entry's full runtime name is not unique in the image. */                       \
+    X(1200, CODEGEN_ENTRY, NULL)                                                                   \
+    /* Core uses a representation that source lowering never produces: a lowering bug. */          \
+    X(1201, CODEGEN_REPRESENTATION, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */
 enum mo_code {

@@ -422,9 +422,10 @@ Every stage reports into one structure: a stable code (`E0412`), a headline in
 the reference's words, a reason, the section the reason cites, a primary span
 with a label, secondary spans with labels, and fixes (D223). The reason is one
 sentence that says why, citing the rule's section, as appendix A's "Mo never
-drops a failure silently (reference 8.3)." Only the codes of limits, which cite
-no section, may have none. A fix is one or more text edits, applied together or
-not at all, each against the original text, so they don't overlap; a
+drops a failure silently (reference 8.3)." Implementation codes for compiler
+bugs, resource limits and unfinished forms may cite no section. A fix is one
+or more text edits, applied together or not at all, each against the original
+text, so they don't overlap; a
 diagnostic's fixes are alternatives. `src/tools` renders it
 as the text of reference appendix A, or as JSON for `mo check --json`. Codes
 are registered in one table, `src/base/codes.h`, with the reference section
@@ -432,6 +433,10 @@ each cites. A code is never reused for a different meaning. Diagnostics are
 sorted by position. A stage that reports an error passes nothing it can't
 vouch for to the next, so one mistake doesn't cascade. `mo fix` applies a
 diagnostic's fix when it has exactly one (reference appendix A).
+
+New implementation codes use blocks per stream: front end (check/lower)
+E1100–E1199, code generation E1200–E1299, bytecode/heap/VM E1300–E1399,
+and tools E1400–E1499. Existing codes keep their numbers.
 
 ## 4. Mo Core
 
@@ -804,11 +809,12 @@ crash. A tail call reuses its frame, so tail calls never grow the stack
   anchors ran in. Its spec code is there, but `main` can't reach it.
   Bytecode has no entry field: the tool knows the entry module from loading
   source and finds `<Module>.main` by full name in the function table.
-  `mo_compile` requires Core's first-match ordinary entry to have that full
-  name (from compiler metadata, or `module + "." + name` for `noSource`).
-  No earlier function may shadow that full name. E1058 reports a lowering
-  bug if either condition fails. Core's checker still permits
-  arbitrary entry names, as the Lean model does; this is an image/tool contract.
+  Lowering always produces that name. `mo_compile` requires Core's entry to
+  exist, be an ordinary function, and have a unique full name in the image
+  (from compiler metadata, or `module + "." + name` for `noSource`).
+  It accepts other entry names for Core tools and differential tests.
+  Core's checker establishes the first-match ordinary entry; E1200 reports a
+  lowering bug if any other function, before or after it, has the same full name.
 - **`mo test`** runs every example, every test, and every promise against
   generated inputs, or those that `--only` and `--in` choose by the names of
   `bytecode.md` section 3.5. `--list` prints the names, and `--json` gives
@@ -1058,6 +1064,9 @@ and leaves output empty; success owns its bytes independently of Core. E1055
 means an unfinished compiler form, not a source error; E1056 means scratch or
 allocation exhaustion; E1057 means compiler-produced bytecode was refused.
 Registers, instructions and format limits use E1013, E1014 and E1015.
+E1200 means the ordinary entry's full runtime name is not unique; arbitrary
+entry names are otherwise accepted. E1201 means a permanent representation
+exclusion from source lowering, not an unfinished feature or a resource limit.
 
 The first slice compiles immediate scalar literals, variables, lets, direct
 calls, if, stop, and choices with small immediate payloads. The second adds
@@ -1069,8 +1078,11 @@ function kinds and direct tail calls in every tail position it supports.
 Closures/application, globals/init, collections, other primitives/host operations,
 BigInt decimal literals, joins and reuse remain for subsequent slices. The
 sample fixtures and Core fuzz corpora are attempted in CI; unfinished forms,
-entry-name mismatches, resource limits and invalid compiler inputs are counted
-separately. Compiler-produced invalid bytecode still fails the corpus check.
+permanently excluded representations, entry-name collisions, resource limits
+and invalid compiler inputs are counted separately. E1201 inputs are skipped
+from compiler outcome comparisons, not passed off as compilations. Core's
+checker differential continues testing them against Lean's broader language.
+Compiler-produced invalid bytecode still fails the corpus check.
 Generated programs within the slices must all compile, never merely refuse
 consistently.
 The writer structurally checks and fully verifies every compiled file.
@@ -1135,33 +1147,27 @@ independent of verification's registers × blocks bound. A separate case/tail-ca
 test loads a file one slot below that product bound and checks the compiler's
 own E1015 refusal just above it.
 
-The remaining representation decisions are fixed below; their implementation
-waits for subsequent compiler slices and the noted bytecode/type-builder
-extensions. Until then each has an explicit E1055 refusal, not an altered Core
-checker or an invalid-bytecode diagnostic:
+Source lowering has a narrower representation contract than Lean's typed
+Core. The following forms are permanently refused with E1201 and a precise
+reason, including in unused declarations or discarded tuple expressions.
+They require no bytecode or type-builder extension. Mo's grammar prevents
+empty enums and tuples with fewer than two elements; source checking and
+lowering prevent the other forms. The Core checker still follows Lean and
+does not reject a well-typed program merely for using one of these forms:
 
-- **Empty choices:** nominal types with zero cases and no inhabitants. Never
-  insert a dummy constructor. The bytecode reader/type builder must permit
-  zero cases, and a zero-target switch has no continuation.
-- **Undeclared data types:** one distinct, empty nominal choice per name,
-  used only where Core's checker permits that type. They cannot be constructed;
-  they do not alias Unit or any declared type. This uses the empty-choice extension.
-- **Duplicate constructor names:** preserve first-match construction and
-  evaluation by retaining only the first same-named constructor and its arm.
-  Check every arm by declaration position before discarding unreachable arms,
-  including bodies whose fields differ. Never overwrite a switch target with
-  the later arm. This needs compiler remapping, not a bytecode format change.
-- **Zero/one-element tuples:** retain tuple identity, arity and projection
-  behavior, not Unit or the sole element's representation. The bytecode reader
-  and type builder must permit these arities and their tuple layouts.
-- **Empty/NUL-containing names:** lexical Core keys stay byte strings; they
-  need no renaming when absent from bytecode. Emitted type, case, named-field,
-  function and module names must eventually retain exact bytes, not a lossy
-  escape or C-string truncation. This requires length-aware runtime names and
-  relaxed bytecode name checks. Empty single-field names still mean unnamed
-  fields; empty multi-field labels and duplicate field labels also need that extension.
-  Compiler metadata already requires nonempty NUL-free display/file/module
-  names, independently of Core's lexical keys. Text/Bytes payloads allow NUL now.
+- **Empty choices and undeclared data types:** neither is produced by lowering.
+  Do not insert dummy constructors, invent nominal declarations or alias Unit.
+- **Duplicate constructor names:** never discard later constructors or remap
+  their arms. Source checking requires unique labels within each declaration.
+- **Zero/one-element tuples:** never erase tuple identity into Unit or the sole
+  element. Tuples of at least two elements keep their arity and projections.
+- **Empty/NUL-containing names:** declarations and lexical binders require
+  nonempty, NUL-free names. Do not escape, rename or truncate them to fit the
+  runtime. Compiler metadata already requires nonempty NUL-free display/file/module
+  names. Text/Bytes payloads and stop messages still permit empty strings and NUL.
+- **Empty or duplicate field labels:** named fields must have nonempty,
+  NUL-free, unique labels. The one empty label on a single field denotes an
+  unnamed field and remains valid; it is not a named-field exception.
 
 ```c
 /* src/base/diag.h: diagnostics, rendered as text or JSON by src/tools. */
