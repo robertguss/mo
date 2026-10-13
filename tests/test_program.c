@@ -348,6 +348,45 @@ static void overload_graph(void) {
     free_fixture(&f);
 }
 
+static void delayed_dot_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nstruct P\nto_text: Int\napply: fn(Int) : Int\nend\n"
+             "fn main() : Int\n"
+             "field = fn(value) value.to_text end\n"
+             "invoke = fn(value) value.apply(4) end\n"
+             "method = fn(value) value.abs end\n"
+             "p = P(to_text: 7, apply: fn(x) x + 1 end)\n"
+             "field(p) + invoke(p) + method(-3)\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        uint32_t projections = 0;
+        bool abs = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            for (uint32_t j = 0; j < row->operand_count; j++)
+                CHECK(row->operands[j] < i);
+            if (row->field != UINT32_MAX && row->operand_count == 1 &&
+                row->syntax->kind != MO_S_NAMED_ARG && row->symbol == NULL) {
+                projections++;
+                CHECK(row->native == NULL);
+                CHECK(row->syntax->kind == MO_S_FIELD_ACCESS || row->syntax->kind == MO_S_POSTFIX);
+                CHECK(strcmp(body->items[row->operands[0]].type->name, "P") == 0);
+                if (row->field == 0)
+                    CHECK(strcmp(row->type->name, "Int") == 0);
+                else
+                    CHECK(row->field == 1 && row->type->kind == MO_SOURCE_FUNCTION);
+            }
+            if (row->native != NULL && strcmp(row->native, "Int.abs") == 0) {
+                abs = true;
+                CHECK(row->operand_count == 1 && row->receiver == row->operands[0]);
+            }
+        }
+        CHECK(projections == 2 && abs);
+    }
+    free_fixture(&f);
+}
+
 static void library_graph(void) {
     struct fixture f = {0};
     mo_arena_init(&f.syntax, 1 << 20);
@@ -1188,6 +1227,7 @@ static void run(void *argument) {
     ability_dot_graph();
     method_graph();
     overload_graph();
+    delayed_dot_graph();
     library_graph();
     entry_record();
     ability_graph();
