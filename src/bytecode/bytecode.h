@@ -185,7 +185,7 @@ struct mo_parameter {
 /* The header is exactly 20 bytes on disk: magic at 0, major at 4, minor at 6, flags at 8,
  * checksum at 12. No padding. Integers are little-endian throughout the file. */
 #define MO_BYTECODE_MAGIC "MOBC"
-enum { MO_BYTECODE_MAJOR = 0, MO_BYTECODE_MINOR = 1, MO_BYTECODE_HEADER_SIZE = 20 };
+enum { MO_BYTECODE_MAJOR = 0, MO_BYTECODE_MINOR = 2, MO_BYTECODE_HEADER_SIZE = 20 };
 #define MO_BYTECODE_FLAGS UINT32_C(0)
 #define MO_BYTECODE_FNV_OFFSET UINT64_C(14695981039346656037)
 #define MO_BYTECODE_FNV_PRIME UINT64_C(1099511628211)
@@ -207,8 +207,9 @@ enum mo_bytecode_section {
     MO_SECTION_INIT = 5,
     MO_SECTION_FUNCTIONS = 6,
     MO_SECTION_MODULES = 7,
-    MO_SECTION_DEBUG = 8,
-    MO_SECTION_COUNT = 9,
+    MO_SECTION_FILES = 8,
+    MO_SECTION_DEBUG = 9,
+    MO_SECTION_COUNT = 10,
 };
 
 /* Section 3 uses u32 for every count, index, enum and boolean after
@@ -340,7 +341,7 @@ struct mo_bytecode_module {
     const uint32_t *globals;
 };
 
-/* File is a string index, not a source-file index (the loader has no source files). Spans use
+/* File indexes the filename-byte table, not ordinary UTF-8 strings. Spans use
  * half-open byte ranges, like base/diag.h. Entries are in strictly increasing code-offset order,
  * at instruction boundaries; a span applies until the next entry or the code's end.
  * NO_INDEX with start/end zero clears attribution for source-less instructions. */
@@ -362,7 +363,7 @@ struct mo_bytecode_register_name {
 };
 
 struct mo_bytecode_spec_line {
-    uint32_t file; /* string index, or NO_INDEX with start/end zero when source-less */
+    uint32_t file; /* filename index, or NO_INDEX with start/end zero when source-less */
     uint32_t start, end;
     uint32_t text; /* string index */
 };
@@ -418,6 +419,9 @@ struct mo_bytecode {
     const struct mo_bytecode_function *functions;
     uint32_t module_count;
     const struct mo_bytecode_module *modules;
+    uint32_t file_count; /* at most MO_LIMIT_FILES; original source order, including unused rows */
+    const struct mo_bytecode_bytes *files; /* nonempty/non-NUL bytes, not necessarily UTF-8;
+                                            * length then bytes on disk, copied into the image */
     uint32_t debug_count;
     const struct mo_bytecode_debug *debug;
 };

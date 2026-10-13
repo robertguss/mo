@@ -33,7 +33,7 @@ int mo_vm_fault_entropy(void *bytes, size_t length) {
 
 int main(void) {
     const char *source =
-        "bytecode 0.1 shorthand\nrecord Box\n value: Int\nend\nmodule M exposes [M.box]\n"
+        "bytecode 0.2 shorthand\nrecord Box\n value: Int\nend\nmodule M exposes [M.box]\n"
         "function M.box(x: Int owned) : Box function in M\n registers [r1: Box]\n"
         " construct r1, Box, r0\n ret r1\nend\n";
     struct mo_buffer wire;

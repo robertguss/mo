@@ -347,6 +347,7 @@ static void fixture_init(struct fixture *f) {
         {1, (const uint8_t *)"b"}, {3, (const uint8_t *)"Box"},    {1, (const uint8_t *)"A"},
         {1, (const uint8_t *)"B"}, {1, (const uint8_t *)"C"},      {1, (const uint8_t *)"D"},
         {1, (const uint8_t *)"x"}, {6, (const uint8_t *)"hidden"}, {4, (const uint8_t *)"M.mo"}};
+    static const struct mo_bytecode_bytes files[] = {{4, (const uint8_t *)"M.mo"}};
     static const uint32_t pair[] = {0, 1}, integers[] = {0, 0}, text[] = {1}, integer[] = {0};
     static const struct mo_type_field fields[] = {{"a", 0}, {"b", 1}}, one_int[] = {{NULL, 0}},
                                       one_text[] = {{NULL, 1}};
@@ -416,6 +417,8 @@ static void fixture_init(struct fixture *f) {
                                                     .code_count = 4};
     f->file = (struct mo_bytecode){.strings = strings,
                                    .string_count = 12,
+                                   .files = files,
+                                   .file_count = 1,
                                    .types = f->types,
                                    .type_count = 11,
                                    .layouts = layouts,
@@ -1065,7 +1068,7 @@ static void test_initialization(void) {
     const uint32_t closure[] = {MO_OP_GLOBAL, 2, 0, MO_OP_DROP, 1, MO_OP_RET, 2};
     program(&f, 1, indirect_types, 6, indirect, sizeof indirect / sizeof indirect[0], 3);
     program(&f, 3, closure_types, 3, closure, 7, 0);
-    const struct mo_bytecode_span caller_span = {13, 11, 20, 30}, callee_span = {0, 11, 40, 50};
+    const struct mo_bytecode_span caller_span = {13, 0, 20, 30}, callee_span = {0, 0, 40, 50};
     f.debug[1].spans = &caller_span;
     f.debug[1].span_count = 1;
     f.debug[3].spans = &callee_span;
@@ -1076,7 +1079,7 @@ static void test_initialization(void) {
     CHECK(mo_image_init(image, &limits, &defect) == MO_STOPPED);
     CHECK(strcmp(defect.reason, "internal error: unset global") == 0);
     CHECK(defect.frames->function == 3 && defect.frames->previous->function == 1);
-    CHECK(defect.span.file == 11 && defect.span.start == 40 && defect.span.end == 50);
+    CHECK(defect.span.file == 0 && defect.span.start == 40 && defect.span.end == 50);
     CHECK(defect.frames->previous->pc == 13 && defect.frames->previous->span.start == 20 &&
           defect.frames->previous->span.end == 30);
     struct mo_defect again;
@@ -1169,7 +1172,7 @@ static void test_defects(void) {
             continue;
         }
         program(&f, 0, types, 7, code, 22, 3);
-        const struct mo_bytecode_span spans[] = {{0, 11, 10, 20}, {20, MO_NO_INDEX, 0, 0}};
+        const struct mo_bytecode_span spans[] = {{0, 0, 10, 20}, {20, MO_NO_INDEX, 0, 0}};
         const struct mo_bytecode_register_name names[] = {
             {0, 9, 0, 22}, {1, 10, 0, 22}, {3, 10, 0, 22}, {4, 10, 0, 22}, {6, 10, 0, 22}};
         f.debug[0].spans = spans;
@@ -1425,7 +1428,7 @@ static MO_MUST_USE struct mo_image *assemble(const char *source) {
 
 static void test_clear(void) {
     struct mo_image *image =
-        assemble("bytecode 0.1 shorthand\nmodule M exposes [M.clear]\n"
+        assemble("bytecode 0.2 shorthand\nmodule M exposes [M.clear]\n"
                  "function M.clear(x: Text borrowed, n: Int owned) : Unit function in M\n"
                  " registers [r2: Text, r3: Int, r4: Text, r5: Text]\n"
                  " variables [(r0, \"cleared\", @start, @end),"
@@ -1467,7 +1470,7 @@ static void test_clear(void) {
 
 static void test_bounded_report(void) {
     struct mo_image *image =
-        assemble("bytecode 0.1 shorthand\nmodule M exposes [M.loop]\n"
+        assemble("bytecode 0.2 shorthand\nmodule M exposes [M.loop]\n"
                  "function M.loop() : Unit function in M\n registers [r0: Unit]\n"
                  " call r0, M.loop\n ret r0\nend\n");
     if (image == NULL)
@@ -1508,9 +1511,11 @@ static void test_bounded_report(void) {
     memset(function_name, 'N', sizeof function_name);
     memset(file_name, 'F', sizeof file_name);
     strings[0] = (struct mo_bytecode_string){sizeof function_name, function_name};
-    strings[11] = (struct mo_bytecode_string){sizeof file_name, file_name};
+    const struct mo_bytecode_bytes path = {sizeof file_name, file_name};
+    f.file.files = &path;
+    f.file.file_count = 1;
     f.file.strings = strings;
-    const struct mo_bytecode_span span = {.file = 11, .start = 7, .end = 19};
+    const struct mo_bytecode_span span = {.file = 0, .start = 7, .end = 19};
     f.debug[0].spans = &span;
     f.debug[0].span_count = 1;
     image = initialized(&f);
@@ -1561,9 +1566,11 @@ static void test_report_buffers(void) {
     struct mo_bytecode_string strings[12];
     memcpy(strings, f.file.strings, sizeof strings);
     strings[0] = (struct mo_bytecode_string){3, (const uint8_t *)"M.f"};
-    strings[11] = (struct mo_bytecode_string){4, (const uint8_t *)"m.mo"};
+    const struct mo_bytecode_bytes path = {4, (const uint8_t *)"m.mo"};
+    f.file.files = &path;
+    f.file.file_count = 1;
     f.file.strings = strings;
-    const struct mo_bytecode_span span = {.file = 11, .start = 1, .end = 2};
+    const struct mo_bytecode_span span = {.file = 0, .start = 1, .end = 2};
     f.debug[0].spans = &span;
     f.debug[0].span_count = 1;
     struct mo_image *image = initialized(&f);
@@ -1728,7 +1735,7 @@ static void test_report_names(void) {
 
 static void test_tail_growth_and_later_stop(void) {
     struct mo_image *image =
-        assemble("bytecode 0.1 shorthand\nmodule M exposes [M.start]\n"
+        assemble("bytecode 0.2 shorthand\nmodule M exposes [M.start]\n"
                  "function M.start(x: Int owned) : Int function in M\n registers []\n"
                  " tail_call M.larger, r0\nend\n"
                  "function M.larger(x: Int owned) : Int function in M\n"
@@ -1756,7 +1763,7 @@ static void test_tail_growth_and_later_stop(void) {
     }
     mo_image_free(image);
     image = assemble(
-        "bytecode 0.1 shorthand\nmodule M exposes [M.later]\n"
+        "bytecode 0.2 shorthand\nmodule M exposes [M.later]\n"
         "function M.later(ok: Bool owned) : Unit function in M\n registers [r1: Unit, r2: Text]\n"
         " branch r0, @ok, @bad\n@ok:\n const r1, ()\n ret r1\n"
         "@bad:\n const r2, \"later\"\n stop r2\nend\n");

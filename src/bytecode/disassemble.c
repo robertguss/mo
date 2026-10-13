@@ -387,7 +387,7 @@ static MO_MUST_USE bool modules(struct printer *p, const struct mo_bytecode *fil
 }
 
 static MO_MUST_USE bool location(struct printer *p, uint32_t file, uint32_t start, uint32_t end) {
-    return optional(p, "s", file) && number(p, ", ", start) && number(p, ", ", end);
+    return optional(p, "P", file) && number(p, ", ", start) && number(p, ", ", end);
 }
 
 static MO_MUST_USE bool debug(struct printer *p, const struct mo_bytecode *file) {
@@ -431,7 +431,7 @@ static MO_MUST_USE bool debug(struct printer *p, const struct mo_bytecode *file)
 }
 
 static MO_MUST_USE bool print(struct printer *p, const struct mo_bytecode *f) {
-    if (!text(p, "bytecode 0.1 indexed\nstrings\n"))
+    if (!text(p, "bytecode 0.2 indexed\nstrings\n"))
         return false;
     for (uint32_t i = 0; i < f->string_count; i++) {
         if (!number(p, "  s", i) || !text(p, " ") || !quoted(p, &f->strings[i]) || !text(p, "\n"))
@@ -452,7 +452,14 @@ static MO_MUST_USE bool print(struct printer *p, const struct mo_bytecode *f) {
         if (!number(p, "  i", i) || !number(p, " f", f->init[i]) || !text(p, "\n"))
             return false;
     }
-    return text(p, "end\n") && functions(p, f) && modules(p, f) && debug(p, f);
+    if (!text(p, "end\n") || !functions(p, f) || !modules(p, f) || !text(p, "files\n"))
+        return false;
+    for (uint32_t i = 0; i < f->file_count; i++) {
+        if (!number(p, "  P", i) || !text(p, " ") ||
+            !hexadecimal(p, f->files[i].bytes, f->files[i].length) || !text(p, "\n"))
+            return false;
+    }
+    return text(p, "end\n") && debug(p, f);
 }
 
 bool mo_bytecode_disassemble(const uint8_t *bytes, size_t length, struct mo_buffer *out,

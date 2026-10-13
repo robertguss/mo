@@ -1,3 +1,4 @@
+#include "bytecode/io.h"
 #include "vm/internal.h"
 
 #include <stdio.h>
@@ -135,6 +136,64 @@ static MO_MUST_USE bool string(const struct mo_bytecode *file, uint32_t index,
     return text(out, s->bytes, s->length, 0, budget);
 }
 
+/* Paths are bytes, not Text. Preserve valid scalars, and escape each invalid byte separately.
+ * In particular a literal backslash is escaped, so FF and ASCII backslash-xff stay distinct. */
+static MO_MUST_USE size_t filename_part(const uint8_t *bytes, size_t length, char escape[16],
+                                        const uint8_t **part, size_t *size) {
+    uint8_t c = bytes[0];
+    uint32_t count = c < 0x80 ? 1 : c < 0xe0 ? 2 : c < 0xf0 ? 3 : 4;
+    if (count <= length && mo_bytecode_utf8(bytes, count))
+        return text_part(bytes, length, 0, escape, part, size);
+    static const char hex[] = "0123456789abcdef";
+    escape[0] = '\\';
+    escape[1] = 'x';
+    escape[2] = hex[c >> 4];
+    escape[3] = hex[c & 15];
+    *part = (const uint8_t *)escape;
+    *size = 4;
+    return 1;
+}
+
+static MO_MUST_USE size_t filename_size(const struct mo_bytecode_bytes *path, size_t budget) {
+    size_t total = 0;
+    for (size_t i = 0; i < path->length;) {
+        char escape[16];
+        const uint8_t *part;
+        size_t size;
+        i += filename_part(path->bytes + i, path->length - i, escape, &part, &size);
+        if (size > budget - total)
+            return budget + 1;
+        total += size;
+    }
+    return total;
+}
+
+static MO_MUST_USE bool filename(const struct mo_bytecode_bytes *path, struct mo_buffer *out,
+                                 size_t budget) {
+    static const char marker[] = "… <truncated>";
+    size_t available = out->limit - out->length;
+    if (budget > available)
+        budget = available;
+    bool clipped = filename_size(path, budget) > budget;
+    size_t reserve = clipped ? sizeof marker - 1 : 0;
+    if (budget < reserve)
+        return false;
+    size_t end = out->length + budget - reserve;
+    size_t i = 0;
+    while (i < path->length) {
+        char escape[16];
+        const uint8_t *part;
+        size_t size;
+        size_t count = filename_part(path->bytes + i, path->length - i, escape, &part, &size);
+        if (size > end - out->length)
+            break;
+        if (!mo_buffer_append(out, part, size))
+            return false;
+        i += count;
+    }
+    return i == path->length || mo_buffer_append_text(out, marker);
+}
+
 static MO_MUST_USE bool frame_text(const struct mo_bytecode *file,
                                    const struct mo_defect_frame *frame, struct mo_buffer *out) {
     char position[64];
@@ -159,9 +218,9 @@ static MO_MUST_USE bool frame_text(const struct mo_bytecode *file,
     size_t file_budget = budget;
     if (frame->span.file != MO_NO_INDEX) {
         const struct mo_bytecode_string *fn = &file->strings[file->functions[frame->function].name];
-        const struct mo_bytecode_string *path = &file->strings[frame->span.file];
+        const struct mo_bytecode_bytes *path = &file->files[frame->span.file];
         size_t fn_size = text_size(fn->bytes, fn->length, 0, 512);
-        size_t path_size = text_size(path->bytes, path->length, 0, 512);
+        size_t path_size = filename_size(path, 512);
         if (fn_size <= budget) {
             budget = fn_size;
             file_budget = space - budget;
@@ -180,7 +239,7 @@ static MO_MUST_USE bool frame_text(const struct mo_bytecode *file,
         return false;
     if (frame->span.file != MO_NO_INDEX) {
         if (!mo_buffer_append_text(out, " (") ||
-            !string(file, frame->span.file, out, file_budget) ||
+            !filename(&file->files[frame->span.file], out, file_budget) ||
             !mo_buffer_append(out, position, (size_t)n) || !mo_buffer_append_byte(out, ')'))
             return false;
     }

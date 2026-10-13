@@ -57,6 +57,10 @@ static MO_MUST_USE bool string_is(const struct mo_bytecode *b, uint32_t id, cons
     return id < b->string_count && b->strings[id].length == strlen(s) &&
            memcmp(b->strings[id].bytes, s, strlen(s)) == 0;
 }
+static MO_MUST_USE bool file_is(const struct mo_bytecode *b, uint32_t id, const char *s) {
+    return id < b->file_count && b->files[id].length == strlen(s) &&
+           memcmp(b->files[id].bytes, s, strlen(s)) == 0;
+}
 static void test_literals(void) {
     const struct {
         const char *type, *literal;
@@ -230,7 +234,8 @@ static void test_metadata(void) {
         "(FunDecl \"example\" () (unit) (lit (unit)) \"M\" (example) 0)) () \"main\" (noSource))",
         &diags);
     if (p != NULL) {
-        mo_core_string files[] = {{"absent-A.mo", 11}, {"absent-B.mo", 11}};
+        mo_core_string files[] = {
+            {"absent-\xff.mo", 11}, {"absent-B.mo", 11}, {"absent-\\xff.mo", 14}};
         uint32_t owned[] = {0, 1, 2, 3, 4}, data[] = {0}, exposed[] = {0};
         struct mo_core_exposed_type hidden[] = {{0, false}};
         struct mo_core_module_meta module = {.name = {"M", 1},
@@ -273,7 +278,7 @@ static void test_metadata(void) {
         for (size_t i = 0; i < 5; i++)
             meta[i].name.length = strlen(meta[i].name.bytes);
         p->metadata = (struct mo_core_metadata){
-            .source = true, .files = {files, 2}, .modules = {&module, 1}, .funs = {meta, 5}};
+            .source = true, .files = {files, 3}, .modules = {&module, 1}, .funs = {meta, 5}};
         bool ok = mo_compile(p, &out, &diags);
         CHECK(ok && !mo_diags_any(&diags));
         if (!ok && diags.count != 0)
@@ -283,9 +288,12 @@ static void test_metadata(void) {
             ok ? mo_bytecode_decode(&arena, out.bytes, out.length, &error) : NULL;
         CHECK(b != NULL);
         if (b != NULL) {
+            CHECK(b->file_count == 3);
+            for (uint32_t i = 0; i < b->file_count; i++)
+                CHECK(b->files[i].length == files[i].length &&
+                      memcmp(b->files[i].bytes, files[i].bytes, files[i].length) == 0);
             CHECK(string_is(b, b->functions[0].name, "M.main"));
-            CHECK(string_is(b, b->debug[0].file, "absent-B.mo") && b->debug[0].start == 1 &&
-                  b->debug[0].end == 99);
+            CHECK(b->debug[0].file == 1 && b->debug[0].start == 1 && b->debug[0].end == 99);
             CHECK(b->debug[0].name_count == 1 &&
                   string_is(b, b->debug[0].names[0].name, "sourceLocal"));
             CHECK(b->debug[0].names[0].code_start < b->debug[0].names[0].code_end);
@@ -293,14 +301,14 @@ static void test_metadata(void) {
             for (uint32_t i = 0; i < b->debug[0].span_count; i++) {
                 const struct mo_bytecode_span *s = &b->debug[0].spans[i];
                 if (s->file == MO_NO_INDEX)
-                    cleared = true;
+                    cleared = s->start == 0 && s->end == 0;
                 if (s->start == 30)
-                    remapped = string_is(b, s->file, "absent-A.mo");
+                    remapped = s->file == 0;
             }
             CHECK(cleared && remapped);
             CHECK(b->debug[1].subject == 0 && b->debug[1].line_count == 1 &&
                   string_is(b, b->debug[1].lines[0].text, "result >= 0") &&
-                  b->debug[1].lines[0].start == 70);
+                  b->debug[1].lines[0].file == 1 && b->debug[1].lines[0].start == 70);
             CHECK(b->debug[2].subject == 1 && b->debug[2].expectation == MO_BYTECODE_ALLOWS);
             CHECK(b->functions[1].kind == MO_FUNCTION_PROMISE &&
                   b->functions[2].kind == MO_FUNCTION_ANCHOR &&
@@ -308,6 +316,7 @@ static void test_metadata(void) {
                   b->functions[4].kind == MO_FUNCTION_EXAMPLE);
             CHECK(b->modules[0].type_count == 1 && !b->modules[0].types[0].contents_exposed &&
                   b->modules[0].function_count == 1 && b->modules[0].functions[0] == 0);
+            text_roundtrip(&out);
         }
         mo_buffer_free(&out);
         mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
@@ -680,19 +689,19 @@ static void test_global_metadata(void) {
             CHECK(string_is(b, b->functions[init].name, "Hidden.first.init"));
             CHECK(string_is(b, b->functions[value].name, "Hidden.first.init.%value"));
             const struct mo_bytecode_debug *d = &b->debug[value], *wrapper = &b->debug[init];
-            CHECK(string_is(b, d->file, "main.mo") && d->start == 5 && d->end == 10);
+            CHECK(file_is(b, d->file, "main.mo") && d->start == 5 && d->end == 10);
             CHECK(wrapper->file == d->file && wrapper->start == 5 && wrapper->end == 10);
             CHECK(d->name_count == 1 && string_is(b, d->names[0].name, "sourceName") &&
                   d->names[0].code_start < d->names[0].code_end && wrapper->name_count == 0);
             CHECK(wrapper->span_count == 2 && wrapper->spans[0].code_offset == 0 &&
                   wrapper->spans[0].start == 20 &&
-                  string_is(b, wrapper->spans[0].file, "hidden.mo") &&
+                  file_is(b, wrapper->spans[0].file, "hidden.mo") &&
                   wrapper->spans[1].code_offset == 3 && wrapper->spans[1].start == 5 &&
-                  string_is(b, wrapper->spans[1].file, "main.mo"));
+                  file_is(b, wrapper->spans[1].file, "main.mo"));
             bool cleared = false, remapped = false;
             for (uint32_t i = 0; i < d->span_count; i++) {
                 cleared |= d->spans[i].file == MO_NO_INDEX;
-                remapped |= d->spans[i].start == 30 && string_is(b, d->spans[i].file, "main.mo");
+                remapped |= d->spans[i].start == 30 && file_is(b, d->spans[i].file, "main.mo");
             }
             CHECK(cleared && remapped);
         }
@@ -1461,8 +1470,7 @@ static void test_closure_metadata(void) {
         if (b != NULL) {
             CHECK(string_is(b, b->functions[1].name, "M.start.fn.7"));
             const struct mo_bytecode_debug *debug = &b->debug[1];
-            CHECK(string_is(b, debug->file, "inner.mo") && debug->start == 100 &&
-                  debug->end == 130);
+            CHECK(file_is(b, debug->file, "inner.mo") && debug->start == 100 && debug->end == 130);
             const uint32_t *field = instruction(&b->functions[1], MO_OP_FIELD, 0);
             bool argument_name = false, capture_name = false;
             for (uint32_t i = 0; i < debug->name_count; i++) {
@@ -1477,7 +1485,7 @@ static void test_closure_metadata(void) {
             bool body_span = false;
             for (uint32_t i = 0; i < debug->span_count; i++)
                 body_span |=
-                    debug->spans[i].start == 108 && string_is(b, debug->spans[i].file, "inner.mo");
+                    debug->spans[i].start == 108 && file_is(b, debug->spans[i].file, "inner.mo");
             CHECK(body_span);
         }
         mo_buffer_free(&out);
@@ -2270,7 +2278,7 @@ static void test_join_metadata(void) {
             if (ret != NULL && d->span_count == 3) {
                 const struct mo_bytecode_span *s = &d->spans[2];
                 CHECK(s->code_offset == (uint32_t)(ret - 3 - f->code) &&
-                      string_is(b, s->file, "absent.mo") && s->start == 30 && s->end == 35);
+                      file_is(b, s->file, "absent.mo") && s->start == 30 && s->end == 35);
                 CHECK(b->constants[ret[-1]].value.immediate[0] == 23);
             }
         }

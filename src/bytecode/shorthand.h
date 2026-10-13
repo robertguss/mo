@@ -19,6 +19,7 @@ struct mo_text_request {
 struct mo_shorthand {
     struct mo_text_reader *r;
     struct mo_text_index *pools[4], *symbols[MO_SECTION_COUNT];
+    struct mo_text_index *files;
     struct mo_text_decl *first, **last;
     struct mo_text_request *requests, **last_request;
     uint32_t *function_types;
@@ -32,6 +33,8 @@ MO_MUST_USE bool mo_short_reference(struct mo_shorthand *s, enum mo_bytecode_sec
                                     char prefix, uint32_t *out);
 MO_MUST_USE bool mo_short_string(struct mo_shorthand *s, struct mo_bytecode_string bytes,
                                  uint32_t source, uint32_t *out);
+MO_MUST_USE bool mo_short_file(struct mo_shorthand *s, struct mo_bytecode_string bytes,
+                               uint32_t source, uint32_t *out);
 MO_MUST_USE bool mo_short_pool(struct mo_shorthand *s, enum mo_bytecode_section section,
                                uint32_t source, uint32_t *out);
 MO_MUST_USE bool mo_short_type(struct mo_shorthand *s, unsigned depth, uint32_t *out);
