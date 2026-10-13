@@ -720,6 +720,70 @@ static void test_derived_text(void) {
     lower_fixture_free(&f);
 }
 
+static void test_record_text(void) {
+    struct lower_fixture f;
+    lower_fixture_init(&f, "module Main\nstruct Point\nx: Int\nlabel: Text\nend\n"
+                           "fn main() : Int\n"
+                           "if Point(label: \"v\", x: 7).to_text == \"Point(x: 7, label: "
+                           "\\\"v\\\")\": 29 else: 1\nend\n");
+    struct mo_syntax declaration = {.kind = MO_S_STRUCT, .span = f.function_syntax[0].span};
+    struct mo_symbol symbol = {.name = "Point", .declaration = &declaration};
+    struct mo_source_type type = {.kind = MO_SOURCE_NAMED, .name = "Point", .declaration = &symbol};
+    const char *field_names[] = {"x", "label"};
+    struct mo_syntax names[2];
+    struct mo_field_signature fields[2];
+    const struct mo_field_signature *indices[2];
+    const struct mo_source_type *types[] = {&f.int_, &f.text_};
+    struct mo_ability_implementation parts[2];
+    const struct mo_ability_implementation *proofs[2];
+    for (uint32_t i = 0; i < 2; i++) {
+        const char *at = strstr(f.source, field_names[i]);
+        names[i] = (struct mo_syntax){
+            .text = (const uint8_t *)field_names[i],
+            .span = {0, (uint32_t)(at - f.source),
+                     (uint32_t)(at - f.source) + (uint32_t)strlen(field_names[i])}};
+        fields[i] = (struct mo_field_signature){.name = &names[i], .type = types[i], .index = i};
+        indices[i] = &fields[i];
+        parts[i] = (struct mo_ability_implementation){
+            .ability = MO_SOURCE_TEXT, .kind = MO_ABILITY_NATIVE, .type = types[i]};
+        proofs[i] = &parts[i];
+    }
+    struct mo_data_signature data = {
+        .symbol = &symbol, .type = &type, .count = 2, .by_index = indices};
+    struct mo_signatures signatures = {.data_count = 1, .data = &data};
+    f.program.signatures = &signatures;
+    uint32_t label = lower_fixture_row(&f, MO_S_TEXT, &f.text_, "\"v\"", 0, NULL);
+    uint32_t label_arg = lower_fixture_row(&f, MO_S_NAMED_ARG, &f.text_, NULL, 1, &label);
+    f.rows[label_arg].field = 1;
+    uint32_t x = lower_fixture_row(&f, MO_S_INT, &f.int_, "7", 0, NULL);
+    uint32_t x_arg = lower_fixture_row(&f, MO_S_NAMED_ARG, &f.int_, NULL, 1, &x);
+    f.rows[x_arg].field = 0;
+    uint32_t payload[] = {label_arg, x_arg};
+    uint32_t value = lower_fixture_row(&f, MO_S_CALL, &type, NULL, 2, payload);
+    f.rows[value].symbol = &symbol;
+    struct mo_ability_implementation proof = {.ability = MO_SOURCE_TEXT,
+                                              .kind = MO_ABILITY_DERIVED,
+                                              .type = &type,
+                                              .part_count = 2,
+                                              .parts = proofs};
+    struct mo_checked_ability_use use = {value, &proof};
+    uint32_t text = lower_fixture_row(&f, MO_S_FIELD_ACCESS, &f.text_, NULL, 1, &value);
+    f.rows[text].native = "to_text";
+    f.rows[text].ability_count = 1;
+    f.rows[text].abilities = &use;
+    uint32_t want =
+        lower_fixture_row(&f, MO_S_TEXT, &f.text_, "\"Point(x: 7, label: \\\"v\\\")\"", 0, NULL);
+    uint32_t equal = lower_fixture_op(&f, MO_T_EQ, &f.bool_, text, want);
+    uint32_t yes = lower_fixture_row(&f, MO_S_INT, &f.int_, "29", 0, NULL);
+    uint32_t no = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+    uint32_t arms[] = {equal, yes, no};
+    (void)lower_fixture_row(&f, MO_S_IF, &f.int_, NULL, 3, arms);
+    struct mo_core *core = checked(&f, "record-text", "returned\n29\n");
+    if (core != NULL)
+        run(core, 29);
+    lower_fixture_free(&f);
+}
+
 static void test_text(void) {
     struct lower_fixture f;
     lower_fixture_init(
@@ -1061,6 +1125,7 @@ int main(int argc, char **argv) {
     test_try_result();
     test_interpolation();
     test_derived_text();
+    test_record_text();
     test_text();
     test_result_entry();
     test_limits();

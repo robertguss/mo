@@ -1126,6 +1126,13 @@ type it is used at:
 | `Text` | the type's text form, as in 3.4, for `"#{x}"` and `x.to_text` alike. |
 | `Number` | the arithmetic primitives of the type; `sum` is the Core function `List.sum[T]`. |
 
+Derived record/choice text uses one-level constructor cases. Its proof parts are
+flattened in case/field declaration order, including zero parts for an empty case.
+Each field converts once in declaration order; argument spelling order only
+controls the earlier construction. Empty constructors print their bare names,
+others use `Name(field: value, ...)`, omitting labels for positional fields.
+Nested native Text and Char use source quoting, unlike top-level `to_text`.
+
 A derived order, for `Point` of 4.1:
 
 ```

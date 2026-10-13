@@ -161,31 +161,95 @@ mo_core_expr lower_derived_text(struct lowering *p, const struct mo_ability_impl
     return call;
 }
 
-static void derive_text(struct lowering *p, struct derived *d) {
-    p->span = d->span;
-    struct instance *f = d->function;
-    if (d->type->tag != MO_CORE_TY_TUPLE)
-        lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "this derived text shape is not lowered yet");
-    size_t count = d->type->as.tuple.count;
-    MO_ASSERT(count == d->proof->part_count);
+static void fields_text(struct lowering *p, struct derived *d, uint32_t first,
+                        mo_core_expr_list values, const struct mo_core_param *fields,
+                        mo_core_string opening, mo_core_string closing, mo_core_expr *out) {
+    size_t count = values.count;
+    if (count == 0) {
+        *out = text(p, lower_concat(p, opening, "", closing));
+        return;
+    }
     mo_core_expr_list pieces = args(p, 2 * count + 1);
-    pieces.items[0] = text(p, lower_text(p, "("));
-    mo_core_expr *out = &f->fun.body;
+    pieces.items[0] = text(p, opening);
     for (uint32_t i = 0; i < count; i++) {
         lower_work(p, 1);
         mo_core_expr bound = lower_expr(p, MO_CORE_EXPR_LET);
         bound->as.let_.name = lower_fresh(p);
-        bound->as.let_.bound =
-            part_text(p, d, i, projection(p, lower_var(p, f->fun.params.items[0].name), i));
+        bound->as.let_.bound = part_text(p, d, first + i, values.items[i]);
         *out = bound;
         out = &bound->as.let_.body;
         pieces.items[2 * i + 1] = lower_var(p, bound->as.let_.name);
-        pieces.items[2 * i + 2] = text(p, lower_text(p, i + 1 == count ? ")" : ", "));
+        if (fields != NULL && !lower_same(fields[i].name, lower_text(p, "0")))
+            pieces.items[2 * i + 1] =
+                concat(p, text(p, lower_concat(p, fields[i].name, ": ", lower_text(p, ""))),
+                       pieces.items[2 * i + 1]);
+        pieces.items[2 * i + 2] = text(p, i + 1 == count ? closing : lower_text(p, ", "));
     }
     mo_core_expr result = pieces.items[pieces.count - 1];
     for (size_t i = pieces.count - 1; i != 0; i--)
         result = concat(p, pieces.items[i - 1], result);
     *out = result;
+}
+
+static void derive_text(struct lowering *p, struct derived *d) {
+    p->span = d->span;
+    struct instance *f = d->function;
+    if (d->type->tag == MO_CORE_TY_TUPLE) {
+        size_t count = d->type->as.tuple.count;
+        MO_ASSERT(count == d->proof->part_count);
+        mo_core_expr_list values = args(p, count);
+        for (size_t i = 0; i < count; i++)
+            values.items[i] = projection(p, lower_var(p, f->fun.params.items[0].name), i);
+        fields_text(p, d, 0, values, NULL, lower_text(p, "("), lower_text(p, ")"), &f->fun.body);
+        return;
+    }
+    if (d->type->tag != MO_CORE_TY_DATA && d->type->tag != MO_CORE_TY_OPTION &&
+        d->type->tag != MO_CORE_TY_RESULT && d->type->tag != MO_CORE_TY_ORDERING &&
+        d->type->tag != MO_CORE_TY_FILE_ERROR && d->type->tag != MO_CORE_TY_ENTRY &&
+        d->type->tag != MO_CORE_TY_ENTRY_KIND)
+        lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "this derived text shape is not lowered yet");
+    mo_core_ctors ctors = lower_ctors(p, d->type);
+    mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CASE);
+    e->as.case_.expr = lower_var(p, f->fun.params.items[0].name);
+    e->as.case_.arms.count = ctors.count;
+    e->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, ctors.count);
+    f->fun.body = e;
+    uint32_t first = 0;
+    for (size_t i = 0; i < ctors.count; i++) {
+        lower_work(p, 1);
+        struct mo_core_ctor *ctor = &ctors.items[i];
+        struct mo_core_arm *arm = &e->as.case_.arms.items[i];
+        arm->ctor = ctor->name;
+        size_t count = ctor->fields.count;
+        arm->names.count = count;
+        arm->names.items = LOWER_NEW(p, mo_core_string, count);
+        mo_core_expr_list values = args(p, count);
+        for (size_t j = 0; j < count; j++) {
+            arm->names.items[j] = lower_fresh(p);
+            values.items[j] = lower_var(p, arm->names.items[j]);
+        }
+        if (count == 0)
+            arm->body = text(p, ctor->name);
+        else {
+            const struct mo_core_param *fields = NULL;
+            if (d->type->tag == MO_CORE_TY_DATA)
+                fields = ctor->fields.items;
+            else if (d->type->tag == MO_CORE_TY_FILE_ERROR || d->type->tag == MO_CORE_TY_ENTRY) {
+                struct mo_core_param *named = LOWER_NEW(p, struct mo_core_param, count);
+                for (size_t j = 0; j < count; j++)
+                    named[j].name = lower_text(p, j == 0                             ? "path"
+                                                  : d->type->tag == MO_CORE_TY_ENTRY ? "kind"
+                                                                                     : "reason");
+                fields = named;
+            }
+            fields_text(p, d, first, values, fields,
+                        lower_concat(p, ctor->name, "(", lower_text(p, "")), lower_text(p, ")"),
+                        &arm->body);
+        }
+        MO_ASSERT(count <= UINT32_MAX - first);
+        first += (uint32_t)count;
+    }
+    MO_ASSERT(first == d->proof->part_count);
 }
 
 void lower_derived_functions(struct lowering *p) {

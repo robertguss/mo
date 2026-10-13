@@ -861,7 +861,12 @@ selected Text proof before the next hole is evaluated. The same conversion emits
 E1150 until the checker publishes scoped requirement keys.
 Derived text helpers reserve a typed function before following the proof's
 parts, memoize concrete type/module pairs with a bounded hash index and drain
-a FIFO body queue. Tuple fields convert in declaration order; nested native
+a FIFO body queue. Tuple and record fields convert in declaration order; choice
+helpers use a one-level case, indexing proofs by flattened case/field order.
+Empty constructors print their bare name; other constructors print their name
+and fields, retaining declared field labels but not the positional `0` sentinel.
+Native FileError and Entry display their path/reason and path/kind labels.
+Nested native
 Text/Char fields are quoted and escape slashes before newly inserted escapes,
 including controls and interpolation markers. Generated parameter metadata
 retains arity with absent source names.
