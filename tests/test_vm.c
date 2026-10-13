@@ -34,9 +34,11 @@ static MO_MUST_USE struct mo_image *load(const struct mo_bytecode *file) {
     return image;
 }
 
-static MO_MUST_USE enum mo_outcome number(uint32_t op, uint32_t left_type, uint32_t right_type,
-                                          uint32_t result_type, struct mo_cell left,
-                                          struct mo_cell right, struct mo_cell *out) {
+static MO_MUST_USE enum mo_outcome number_report(uint32_t op, uint32_t left_type,
+                                                 uint32_t right_type, uint32_t result_type,
+                                                 struct mo_cell left, struct mo_cell right,
+                                                 struct mo_cell *out, struct mo_buffer *text,
+                                                 const char **reason) {
     struct mo_type types[14] = {0};
     for (unsigned i = 0; i < 13; i++)
         types[i].kind = (enum mo_type_kind)i;
@@ -93,9 +95,25 @@ static MO_MUST_USE enum mo_outcome number(uint32_t op, uint32_t left_type, uint3
     MO_ASSERT(p != NULL);
     struct mo_cell arguments[] = {left, right};
     enum mo_outcome outcome = mo_call(p, 0, arguments, 2, out, &defect);
+    if (outcome != MO_RETURNED && reason != NULL)
+        *reason = defect.reason;
+    if (outcome == MO_RETURNED && text != NULL) {
+        if (result_type == MO_TYPE_FLOAT) {
+            uint64_t bits;
+            memcpy(&bits, out->bytes, sizeof bits);
+            MO_ASSERT(mo_buffer_append_text(text, "0x") && mo_buffer_append_hex(text, bits, 16));
+        } else
+            MO_ASSERT(mo_value_print(mo_process_heap(p), result_type, *out, text));
+    }
     mo_process_free(p);
     mo_image_free(image);
     return outcome;
+}
+
+static MO_MUST_USE enum mo_outcome number(uint32_t op, uint32_t left_type, uint32_t right_type,
+                                          uint32_t result_type, struct mo_cell left,
+                                          struct mo_cell right, struct mo_cell *out) {
+    return number_report(op, left_type, right_type, result_type, left, right, out, NULL, NULL);
 }
 
 static void test_numbers(void) {
@@ -777,9 +795,9 @@ static void test_calls(void) {
     struct mo_limits limits = mo_limits_default();
     struct mo_defect defect;
     const struct mo_cell args[] = {mo_cell_int(100000), mo_cell_int(7)};
-    /* 64-byte frame header + 17 bytes/register, rounded to 8 bytes. */
+    /* 72-byte frame header + 17 bytes/register, rounded to 8 bytes. */
     for (unsigned scenario = 0; scenario < 5; scenario++) {
-        limits.stack_size = scenario < 2 ? 152 : scenario == 2 ? 271 : 272;
+        limits.stack_size = scenario < 2 ? 160 : scenario == 2 ? 287 : 288;
         limits.call_depth = scenario == 0 || scenario == 4 ? 1 : 2;
         if (scenario == 1)
             limits.stack_size--;
@@ -1075,7 +1093,7 @@ static void test_defects(void) {
         mo_buffer_init(&text, 1024);
         CHECK(mo_render_defect(p, &defect, &text));
         CHECK(mo_buffer_append_byte(&text, 0));
-        CHECK(strstr((const char *)text.bytes, "x = stop\n") != NULL);
+        CHECK(strstr((const char *)text.bytes, "x = \"stop\"\n") != NULL);
         CHECK(strstr((const char *)text.bytes, "hidden") == NULL);
         CHECK(strstr((const char *)text.bytes, "M.mo") == NULL);
         mo_buffer_free(&text);
@@ -1128,9 +1146,10 @@ static void test_defects(void) {
     CHECK(mo_cell_get_ref(value)->count == 2 && mo_cell_get_int(out) == 99 &&
           defect.frames->pc == 6);
     struct mo_buffer text;
-    mo_buffer_init(&text, 128);
+    mo_buffer_init(&text, 1024);
     CHECK(mo_render_defect(p, &defect, &text) && mo_buffer_append_byte(&text, 0));
-    CHECK(strstr((const char *)text.bytes, "x = <value unavailable>") != NULL);
+    CHECK(strstr((const char *)text.bytes, "x = \"aaaa") != NULL &&
+          strstr((const char *)text.bytes, "<truncated>") != NULL);
     CHECK(strstr((const char *)text.bytes, "hidden") == NULL);
     mo_buffer_free(&text);
     mo_value_drop(heap, 1, value);
@@ -1274,6 +1293,339 @@ static void test_scratch_and_fuel(void) {
     mo_image_free(image);
 }
 
+static MO_MUST_USE struct mo_image *assemble(const char *source) {
+    struct mo_buffer wire;
+    struct mo_assemble_error error;
+    struct mo_load_error load_error;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    bool ok = mo_bytecode_assemble(source, strlen(source), &wire, &error);
+    CHECK(ok);
+    if (!ok)
+        CHECK(fprintf(stderr, "assembly: %s at %u\n", error.reason, error.offset) > 0);
+    struct mo_image *image = ok ? mo_load(wire.bytes, wire.length, &load_error) : NULL;
+    CHECK(image != NULL);
+    mo_buffer_free(&wire);
+    if (image != NULL && corpus != NULL) {
+        struct mo_image *copy = load(mo_image_bytecode(image));
+        mo_image_free(image);
+        image = copy;
+    }
+    return image;
+}
+
+static void test_bounded_report(void) {
+    struct mo_image *image =
+        assemble("bytecode 0.1 shorthand\nmodule M exposes [M.loop]\n"
+                 "function M.loop() : Unit function in M\n registers [r0: Unit]\n"
+                 " call r0, M.loop\n ret r0\nend\n");
+    if (image == NULL)
+        return;
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    CHECK(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    struct mo_process *p = mo_process_new(image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_cell out;
+    CHECK(mo_call(p, 0, NULL, 0, &out, &defect) == MO_STOPPED);
+    for (unsigned size = 0; size < 2; size++) {
+        struct mo_buffer text;
+        mo_buffer_init(&text, size == 0 ? 65536 : 256);
+        CHECK(mo_render_defect(p, &defect, &text));
+        CHECK(mo_buffer_append_byte(&text, 0));
+        CHECK(strstr((const char *)text.bytes,
+                     "out of stack (--max-depth = 10000)\n  at M.loop\n") != NULL);
+        CHECK(strstr((const char *)text.bytes, size == 0 ? "9992 frames" : "<truncated>") != NULL);
+        mo_buffer_free(&text);
+    }
+    mo_process_free(p);
+    mo_image_free(image);
+
+    struct fixture f;
+    fixture_init(&f);
+    struct mo_parameter parameter = {1, MO_PARAMETER_BORROWED};
+    const uint32_t type = 1, stop[] = {MO_OP_STOP, 0};
+    program(&f, 0, &type, 1, stop, 2, 3);
+    f.functions[0].parameters = &parameter;
+    f.functions[0].parameter_count = 1;
+    const struct mo_bytecode_register_name name = {0, 9, 0, 2};
+    f.debug[0].names = &name;
+    f.debug[0].name_count = 1;
+    struct mo_bytecode_string strings[12];
+    memcpy(strings, f.file.strings, sizeof strings);
+    uint8_t function_name[1000], file_name[1000];
+    memset(function_name, 'N', sizeof function_name);
+    memset(file_name, 'F', sizeof file_name);
+    strings[0] = (struct mo_bytecode_string){sizeof function_name, function_name};
+    strings[11] = (struct mo_bytecode_string){sizeof file_name, file_name};
+    f.file.strings = strings;
+    const struct mo_bytecode_span span = {.file = 11, .start = 7, .end = 19};
+    f.debug[0].spans = &span;
+    f.debug[0].span_count = 1;
+    image = initialized(&f);
+    if (image == NULL)
+        return;
+    p = mo_process_new(image, &limits);
+    MO_ASSERT(p != NULL);
+    char message[100000];
+    memset(message, 'a', sizeof message);
+    memcpy(message, "\n  at forged\033\0", 15);
+    struct mo_cell detail;
+    CHECK(mo_value_text(mo_process_heap(p), message, sizeof message, &detail));
+    CHECK(mo_call(p, 0, &detail, 1, &out, &defect) == MO_STOPPED);
+    struct mo_buffer text;
+    mo_buffer_init(&text, SIZE_MAX);
+    CHECK(mo_render_defect(p, &defect, &text));
+    CHECK(text.length < MO_LIMIT_DEFECT_TEXT_SIZE && mo_buffer_append_byte(&text, 0));
+    CHECK(strstr((const char *)text.bytes, "\n  at forged") == NULL);
+    CHECK(strstr((const char *)text.bytes, "\\n  at forged\\u{1b}\\u{0}") != NULL);
+    CHECK(strstr((const char *)text.bytes, "x = \"\\n") != NULL);
+    CHECK(strstr((const char *)text.bytes, "<truncated>") != NULL);
+    mo_buffer_free(&text);
+    mo_buffer_init(&text, 256);
+    CHECK(mo_render_defect(p, &defect, &text));
+    CHECK(mo_buffer_append_byte(&text, 0));
+    CHECK(strstr((const char *)text.bytes, "stop\n  at N") != NULL &&
+          strstr((const char *)text.bytes, " (F") != NULL &&
+          strstr((const char *)text.bytes, ":7..19)\n") != NULL &&
+          strstr((const char *)text.bytes, "<truncated>") != NULL);
+    mo_buffer_free(&text);
+    mo_value_drop(mo_process_heap(p), 1, detail);
+    mo_process_free(p);
+    mo_image_free(image);
+}
+
+static void test_tail_growth_and_later_stop(void) {
+    struct mo_image *image =
+        assemble("bytecode 0.1 shorthand\nmodule M exposes [M.start]\n"
+                 "function M.start(x: Int owned) : Int function in M\n registers []\n"
+                 " tail_call M.larger, r0\nend\n"
+                 "function M.larger(x: Int owned) : Int function in M\n"
+                 " registers [r1: Int, r2: Int, r3: Int, r4: Int, r5: Int, r6: Int, r7: Int]\n"
+                 " ret r0\nend\n");
+    if (image == NULL)
+        return;
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    CHECK(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    limits.call_depth = 1;
+    for (unsigned boundary = 0; boundary < 2; boundary++) {
+        limits.stack_size = boundary == 0 ? 207 : 208;
+        struct mo_process *p = mo_process_new(image, &limits);
+        MO_ASSERT(p != NULL);
+        struct mo_cell input = mo_cell_int(37), out = mo_cell_int(99);
+        enum mo_outcome outcome = mo_call(p, 0, &input, 1, &out, &defect);
+        CHECK(outcome == (boundary == 0 ? MO_STOPPED : MO_RETURNED));
+        if (boundary == 0)
+            CHECK(strcmp(defect.limit_name, "--max-stack") == 0 && defect.frames->function == 0 &&
+                  defect.frames->pc == 0 && defect.frames->previous == NULL);
+        else
+            CHECK(mo_cell_get_int(out) == 37 && mo_process_stack_used(p) == 0);
+        mo_process_free(p);
+    }
+    mo_image_free(image);
+    image = assemble(
+        "bytecode 0.1 shorthand\nmodule M exposes [M.later]\n"
+        "function M.later(ok: Bool owned) : Unit function in M\n registers [r1: Unit, r2: Text]\n"
+        " branch r0, @ok, @bad\n@ok:\n const r1, ()\n ret r1\n"
+        "@bad:\n const r2, \"later\"\n stop r2\nend\n");
+    if (image == NULL)
+        return;
+    limits = mo_limits_default();
+    CHECK(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    struct mo_process *p = mo_process_new(image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_cell input = mo_cell_bool(true), out;
+    CHECK(mo_call(p, 0, &input, 1, &out, &defect) == MO_RETURNED);
+    input = mo_cell_bool(false);
+    CHECK(mo_call(p, 0, &input, 1, &out, &defect) == MO_STOPPED);
+    size_t length;
+    CHECK(memcmp(mo_value_data(defect.detail, &length), "later", 5) == 0 && length == 5);
+    CHECK(defect.frames->previous == NULL);
+    mo_process_free(p);
+    mo_image_free(image);
+}
+
+/* Fill the remaining heap exactly, rather than pinning private object sizes. */
+static MO_MUST_USE struct mo_cell fill(struct mo_heap *heap) {
+    char bytes[8192];
+    memset(bytes, 'f', sizeof bytes);
+    size_t low = 0, high = sizeof bytes;
+    struct mo_cell value;
+    while (low < high) {
+        size_t middle = low + (high - low + 1) / 2;
+        if (mo_value_text(heap, bytes, middle, &value)) {
+            mo_value_drop(heap, 1, value);
+            low = middle;
+        } else
+            high = middle - 1;
+    }
+    MO_ASSERT(mo_value_text(heap, bytes, low, &value));
+    return value;
+}
+
+static void test_allocation_stops(void) {
+    /* Boxed case, captured closure, shared reset's empty token, COW field
+     * update and nonidentical compound equality. Every stop is transactional. */
+    for (unsigned operation = 0; operation < 5; operation++) {
+        struct fixture f;
+        fixture_init(&f);
+        const struct mo_parameter parameter = {4, MO_PARAMETER_BORROWED};
+        const struct mo_parameter params[] = {{0, MO_PARAMETER_OWNED}, {1, MO_PARAMETER_BORROWED}};
+        const uint32_t constructors[] = {0, 1, 1, 5, 6};
+        const uint32_t boxed[] = {MO_OP_DUP, 2,         1, MO_OP_MAKE_CASE | (2u << 16), 3, 5, 1, 0,
+                                  2,         MO_OP_RET, 3};
+        const uint32_t closure[] = {MO_OP_DUP, 2,         1, MO_OP_MAKE_CLOSURE | (1u << 16), 4, 3,
+                                    2,         MO_OP_RET, 4};
+        const uint32_t registers[] = {4, 4, 4, 0, 1, 2};
+        const uint32_t reuse[] = {MO_OP_DUP,
+                                  1,
+                                  0,
+                                  MO_OP_RESET,
+                                  2,
+                                  1,
+                                  MO_OP_FIELD,
+                                  3,
+                                  0,
+                                  0,
+                                  MO_OP_FIELD,
+                                  4,
+                                  0,
+                                  1,
+                                  MO_OP_REUSE | (2u << 16),
+                                  1,
+                                  2,
+                                  0,
+                                  3,
+                                  4,
+                                  MO_OP_RET,
+                                  1};
+        const uint32_t update[] = {MO_OP_DUP,       1, 0, MO_OP_FIELD, 3, 0,         0,
+                                   MO_OP_SET_FIELD, 1, 1, 0,           3, MO_OP_RET, 1};
+        const uint32_t equals[] = {MO_OP_EQUAL, 5, 4, 0, 1, MO_OP_RET, 5};
+        const struct mo_parameter pairs[] = {{4, MO_PARAMETER_BORROWED},
+                                             {4, MO_PARAMETER_BORROWED}};
+        const uint32_t *code = operation == 0   ? boxed
+                               : operation == 1 ? closure
+                               : operation == 2 ? reuse
+                               : operation == 3 ? update
+                                                : equals;
+        uint32_t words = operation == 0   ? 11
+                         : operation == 1 ? 9
+                         : operation == 2 ? 22
+                         : operation == 3 ? 14
+                                          : 7;
+        program(&f, 0, operation < 2 ? constructors : registers, operation < 2 ? 5 : 6, code, words,
+                operation == 0   ? 5
+                : operation == 1 ? 6
+                : operation == 4 ? 2
+                                 : 4);
+        f.functions[0].parameters = operation < 2 ? params : operation == 4 ? pairs : &parameter;
+        f.functions[0].parameter_count = operation < 2 || operation == 4 ? 2 : 1;
+        struct mo_image *image = initialized(&f);
+        if (image == NULL)
+            continue;
+        struct mo_limits limits = mo_limits_default();
+        limits.heap_size = 8192;
+        struct mo_process *p = mo_process_new(image, &limits);
+        MO_ASSERT(p != NULL);
+        struct mo_heap *heap = mo_process_heap(p);
+        struct mo_cell text, args[2];
+        CHECK(mo_value_text(heap, "original", 8, &text));
+        if (operation < 2) {
+            args[0] = mo_cell_int(17);
+            args[1] = text;
+        } else {
+            const struct mo_cell fields[] = {mo_cell_int(17), text};
+            CHECK(mo_value_construct(heap, 0, fields, 2, &args[0]));
+            if (operation == 4)
+                CHECK(mo_value_construct(heap, 0, fields, 2, &args[1]));
+        }
+        struct mo_cell filler = fill(heap), out = mo_cell_int(99);
+        struct mo_defect defect;
+        CHECK(mo_call(p, 0, args, f.functions[0].parameter_count, &out, &defect) == MO_STOPPED);
+        CHECK(strcmp(defect.reason, "running out of memory") == 0 &&
+              strcmp(defect.limit_name, "--max-heap") == 0);
+        CHECK(defect.frames->pc == (operation < 2    ? 3u
+                                    : operation == 2 ? 14u
+                                    : operation == 3 ? 7u
+                                                     : 0u));
+        CHECK(mo_cell_get_int(out) == 99);
+        if (operation >= 2) {
+            CHECK(mo_cell_get_int(mo_value_field(args[0], 0)) == 17);
+            mo_value_drop(heap, 4, args[0]);
+            if (operation == 4)
+                mo_value_drop(heap, 4, args[1]);
+        }
+        mo_value_drop(heap, 1, text);
+        mo_value_drop(heap, 1, filler);
+        mo_process_free(p);
+        mo_image_free(image);
+    }
+}
+
+static void test_initialization_memory(void) {
+    struct fixture f;
+    fixture_init(&f);
+    const uint32_t init = 0, registers[] = {0, 0, 10, 3};
+    const uint32_t code[] = {MO_OP_CONST,
+                             0,
+                             0,
+                             MO_OP_CONST,
+                             1,
+                             0,
+                             MO_OP_CONSTRUCT | (2u << 16),
+                             2,
+                             3,
+                             0,
+                             1,
+                             MO_OP_SET_GLOBAL,
+                             0,
+                             2,
+                             MO_OP_CONST,
+                             3,
+                             2,
+                             MO_OP_RET,
+                             3};
+    program(&f, 0, registers, 4, code, 19, 3);
+    f.functions[0].kind = MO_FUNCTION_INIT;
+    f.file.init = &init;
+    f.file.init_count = 1;
+    f.globals[0] = (struct mo_bytecode_global){.type = 10, .name = 2};
+    f.file.globals = f.globals;
+    f.file.global_count = 1;
+    const struct mo_bytecode_module module = {.name = 0, .globals = &init, .global_count = 1};
+    f.file.modules = &module;
+    bool retry = false, permanent = false, freeze = false, success = false;
+    for (size_t size = 1; size <= 8192; size += 16) {
+        struct mo_image *image = load(&f.file);
+        if (image == NULL)
+            return;
+        struct mo_limits small = mo_limits_default(), large = small;
+        small.heap_size = size;
+        struct mo_defect defect, again;
+        enum mo_outcome outcome = mo_image_init(image, &small, &defect);
+        if (outcome == MO_RETURNED) {
+            success = true;
+            mo_image_free(image);
+            break;
+        }
+        CHECK(strcmp(defect.reason, "running out of memory") == 0 &&
+              strcmp(defect.limit_name, "--max-heap") == 0);
+        if (mo_image_runtime(image) == NULL) {
+            retry = true;
+            CHECK(mo_image_init(image, &large, &again) == MO_RETURNED);
+        } else {
+            permanent = true;
+            if (defect.frames != NULL && defect.frames->pc == 11)
+                freeze = true;
+            CHECK(mo_image_init(image, &large, &again) == MO_STOPPED &&
+                  again.frames == defect.frames && again.limit == size);
+        }
+        mo_image_free(image);
+    }
+    CHECK(retry && permanent && freeze && success);
+}
+
 /* Differential driver: execute compiler output, with no interpreter internals.
  * Input is a checked zero-argument Program; the Python runner supplies wrappers
  * for fixture entries. A staged compiler refusal is distinct from an outcome. */
@@ -1393,11 +1745,120 @@ static MO_MUST_USE int decimal_driver(void) {
     return mo_test_failures != 0;
 }
 
+static MO_MUST_USE struct mo_cell cell_input(const char *text) {
+    struct mo_cell value;
+    MO_ASSERT(strlen(text) == 32);
+    for (unsigned i = 0; i < 16; i++) {
+        unsigned byte;
+        MO_ASSERT(sscanf(text + 2 * i, "%2x", &byte) == 1);
+        value.bytes[i] = (uint8_t)byte;
+    }
+    return value;
+}
+
+static MO_MUST_USE int operation_driver(void) {
+    char line[256], left[33], right[33];
+    unsigned op, a, b, result;
+    while (fgets(line, sizeof line, stdin) != NULL) {
+        MO_ASSERT(sscanf(line, "%u %u %u %u %32s %32s", &op, &a, &b, &result, left, right) == 6);
+        struct mo_cell value;
+        struct mo_buffer text;
+        mo_buffer_init(&text, 256);
+        const char *reason = NULL;
+        enum mo_outcome outcome = number_report(op, a, b, result, cell_input(left),
+                                                cell_input(right), &value, &text, &reason);
+        if (outcome == MO_RETURNED) {
+            MO_ASSERT(printf("returned %.*s\n", (int)text.length, (const char *)text.bytes) > 0);
+        } else
+            MO_ASSERT(printf("stopped %s\n", reason) > 0);
+        mo_buffer_free(&text);
+    }
+    MO_ASSERT(!ferror(stdin));
+    return mo_test_failures != 0;
+}
+
+static MO_MUST_USE int structure_driver(void) {
+    char line[160];
+    unsigned kind;
+    long long a, b, c;
+    while (fgets(line, sizeof line, stdin) != NULL) {
+        MO_ASSERT(sscanf(line, "%u %lld %lld %lld", &kind, &a, &b, &c) == 4 && kind < 4);
+        struct fixture f;
+        fixture_init(&f);
+        struct mo_type types[12];
+        memcpy(types, f.types, sizeof f.types);
+        const uint32_t fields[] = {10, 10, 2};
+        types[11] =
+            (struct mo_type){.kind = MO_TYPE_TUPLE, .parameters = fields, .parameter_count = 3};
+        struct mo_layout layouts[5];
+        memcpy(layouts, f.file.layouts, 4 * sizeof *layouts);
+        layouts[4] = (struct mo_layout){
+            .kind = MO_LAYOUT_TUPLE, .type = 11, .fields = fields, .field_count = 3};
+        f.file.types = types;
+        f.file.type_count = 12;
+        f.file.layouts = layouts;
+        f.file.layout_count = 5;
+        const struct mo_parameter params[] = {
+            {10, MO_PARAMETER_OWNED}, {10, MO_PARAMETER_BORROWED}, {0, MO_PARAMETER_OWNED}};
+        const uint32_t registers[] = {10, 10, 0, 0, 10, 2, 11, 10};
+        uint32_t code[32] = {MO_OP_DUP, 7, kind % 2 == 0 ? 1u : 0u};
+        uint32_t n = 3;
+        if (kind < 2) {
+            const uint32_t update[] = {MO_OP_SET_FIELD, 0, 0, 0, 2};
+            memcpy(code + n, update, sizeof update);
+            n += 5;
+        } else {
+            const uint32_t rebuild[] = {
+                MO_OP_FIELD, 3, 0, 1, MO_OP_RESET, 4, 0, MO_OP_REUSE | (2u << 16), 0, 4, 3, 2, 3};
+            memcpy(code + n, rebuild, sizeof rebuild);
+            n += 13;
+        }
+        const uint32_t finish[] = {
+            MO_OP_EQUAL, 5, 10, 0, 1, MO_OP_CONSTRUCT | (3u << 16), 6, 4, 7, 0, 5, MO_OP_RET, 6};
+        memcpy(code + n, finish, sizeof finish);
+        n += 13;
+        program(&f, 0, registers, 8, code, n, 11);
+        f.functions[0].parameters = params;
+        f.functions[0].parameter_count = 3;
+        struct mo_image *image = initialized(&f);
+        MO_ASSERT(image != NULL);
+        struct mo_limits limits = mo_limits_default();
+        struct mo_process *p = mo_process_new(image, &limits);
+        MO_ASSERT(p != NULL);
+        struct mo_heap *heap = mo_process_heap(p);
+        const struct mo_cell pair[] = {mo_cell_int((int64_t)a), mo_cell_int((int64_t)b)};
+        struct mo_cell args[3], result;
+        MO_ASSERT(mo_value_construct(heap, 3, pair, 2, &args[0]) &&
+                  mo_value_construct(heap, 3, pair, 2, &args[1]));
+        args[2] = mo_cell_int((int64_t)c);
+        uint64_t hash;
+        MO_ASSERT(mo_value_hash(heap, 10, args[0], &hash));
+        struct mo_defect defect;
+        MO_ASSERT(mo_call(p, 0, args, 3, &result, &defect) == MO_RETURNED);
+        struct mo_buffer text;
+        mo_buffer_init(&text, 512);
+        MO_ASSERT(mo_value_print(heap, 11, result, &text));
+        MO_ASSERT(printf("returned %.*s\n", (int)text.length, (const char *)text.bytes) > 0);
+        mo_buffer_free(&text);
+        mo_value_drop(heap, 11, result);
+        mo_value_drop(heap, 10, args[1]);
+        MO_ASSERT(mo_heap_objects(heap) == 0);
+        mo_process_free(p);
+        mo_image_free(image);
+    }
+    MO_ASSERT(!ferror(stdin));
+    return mo_test_failures != 0;
+}
+
 int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "--core") == 0)
         return core_run(argv[2]);
     if (argc == 2 && strcmp(argv[1], "--decimal") == 0)
         return decimal_driver();
+    if (argc == 2 && strcmp(argv[1], "--operations") == 0)
+        return operation_driver();
+    if (argc == 2 && strcmp(argv[1], "--structures") == 0)
+        return structure_driver();
     if (argc == 3 && strcmp(argv[1], "--corpus") == 0)
         corpus = argv[2];
     test_return();
@@ -1409,5 +1870,9 @@ int main(int argc, char **argv) {
     test_defects();
     test_borrowing();
     test_scratch_and_fuel();
+    test_bounded_report();
+    test_tail_growth_and_later_stop();
+    test_allocation_stops();
+    test_initialization_memory();
     return mo_test_report("vm");
 }

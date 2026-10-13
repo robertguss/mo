@@ -156,10 +156,12 @@ static MO_MUST_USE bool construct(struct mo_heap *process, uint32_t layout,
                                   struct mo_cell *out) {
     MO_ASSERT(process != NULL && out != NULL);
     if (layout >= process->types->layout_count || (count != 0 && fields == NULL)) {
+        MO_ASSERT(!owned);
         return false;
     }
     const struct mo_layout *fixed = &process->types->layouts[layout];
     if (fixed->kind == MO_LAYOUT_CLOSURE || count != fixed->field_count) {
+        MO_ASSERT(!owned);
         return false;
     }
     struct mo_allocation *allocation =
@@ -194,11 +196,15 @@ static MO_MUST_USE bool case_value(struct mo_heap *process, uint32_t type, uint3
     if (type >= process->types->count || process->types->items[type].kind != MO_TYPE_CHOICE ||
         tag >= process->types->items[type].case_count || (count != 0 && fields == NULL) ||
         count != process->types->items[type].cases[tag].field_count) {
+        MO_ASSERT(!owned);
         return false;
     }
     enum mo_case_shape shape = mo_case_shape(process->types, type, tag);
     if (shape == MO_CASE_BOXED) {
+        if (!mo_heap_image_refresh(process->image))
+            return false;
         struct mo_layout_lookup *layout = mo_heap_layout(process, 0, type, tag);
+        MO_ASSERT(!owned || layout != NULL);
         return layout != NULL && construct(process, layout->index, fields, count, owned, out);
     }
     struct mo_cell payload = mo_cell_unit();
@@ -227,15 +233,20 @@ static MO_MUST_USE bool closure(struct mo_heap *process, uint32_t function,
                                 struct mo_cell *out) {
     MO_ASSERT(process != NULL && out != NULL);
     if (count != 0 && captures == NULL) {
+        MO_ASSERT(!owned);
         return false;
     }
+    if (!mo_heap_image_refresh(process->image))
+        return false;
     struct mo_layout_lookup *entry = mo_heap_layout(process, 1, function, 0);
     if (entry == NULL) {
+        MO_ASSERT(!owned);
         return false;
     }
     uint32_t index = entry->index;
     const struct mo_layout *layout = &process->types->layouts[index];
     if (count != layout->field_count) {
+        MO_ASSERT(!owned);
         return false;
     }
     if (entry->constant != NULL) {

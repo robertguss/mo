@@ -28,10 +28,12 @@ static MO_MUST_USE bool reuse(struct mo_heap *process, struct mo_token *token,
                               struct mo_cell *out) {
     MO_ASSERT(process != NULL && token != NULL && out != NULL);
     if (token->layout >= process->types->layout_count || (count != 0 && fields == NULL)) {
+        MO_ASSERT(!owned);
         return false;
     }
     const struct mo_layout *layout = &process->types->layouts[token->layout];
     if (layout->kind == MO_LAYOUT_CLOSURE || count != layout->field_count) {
+        MO_ASSERT(!owned);
         return false;
     }
     if (token->memory == NULL) {

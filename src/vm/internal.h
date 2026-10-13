@@ -8,6 +8,7 @@ struct mo_vm_frame {
     size_t previous, extent;
     uint32_t function, pc, destination, next;
     struct mo_defect_frame trace;
+    uint32_t owners;
 };
 struct mo_vm_image;
 struct mo_process {

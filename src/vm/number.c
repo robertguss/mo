@@ -53,10 +53,12 @@ static MO_MUST_USE bool integer(unsigned family, int64_t a, int64_t b, int64_t *
 
 bool mo_vm_number(uint32_t opcode, struct mo_cell a, struct mo_cell b, struct mo_cell *out,
                   const char **reason) {
-    *reason = "overflow";
+    *reason = "overflow: Int";
     if (opcode <= MO_OP_REM_FLOAT) {
         unsigned family = (opcode - MO_OP_ADD_INT) / 3;
         unsigned kind = (opcode - MO_OP_ADD_INT) % 3;
+        if (kind == 1)
+            *reason = "overflow: Decimal";
         if (kind == 2) {
             double x = mo_cell_get_float(a), y = mo_cell_get_float(b), value;
             switch (family) {
@@ -99,6 +101,8 @@ bool mo_vm_number(uint32_t opcode, struct mo_cell a, struct mo_cell b, struct mo
         return true;
     }
     if (opcode >= MO_OP_NEG_INT && opcode <= MO_OP_NEG_DURATION) {
+        if (opcode == MO_OP_NEG_DURATION)
+            *reason = "overflow: Duration";
         if (opcode == MO_OP_NEG_FLOAT)
             *out = mo_cell_float(-mo_cell_get_float(a));
         else if (opcode == MO_OP_NEG_DECIMAL)
@@ -112,6 +116,7 @@ bool mo_vm_number(uint32_t opcode, struct mo_cell a, struct mo_cell b, struct mo
         return true;
     }
     if (opcode >= MO_OP_ADD_DURATION && opcode <= MO_OP_DIFF_TIME) {
+        *reason = "overflow: Duration";
         mo_i128 x = mo_cell_get_int(a), y = mo_cell_get_int(b), value;
         if (opcode == MO_OP_SCALE_DURATION)
             value = x * y;

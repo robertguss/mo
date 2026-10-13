@@ -237,12 +237,16 @@
 #define MO_LIMIT_BIGINT_TEXT_BYTES (1 << 18)
 #define MO_LIMIT_BIGINT_TEXT_WORK (1U << 31)
 
+/* Best-effort diagnostic output, outside an exhausted process heap. */
+#define MO_LIMIT_DEFECT_TEXT_SIZE (64 << 10)
+
 /* The limits a run sets on its processes: mo_image_init and mo_process_new take them (architecture
  * section 12). Passing one is a bug with a report: "out of stack" for the first two (bytecode.md
  * section 5.1), and running out of memory for the heap (reference 13.2). */
 struct mo_limits {
-    /* Bytes of the VM's stack, which holds the frames: each frame's registers, 16 bytes each. A
-     * tail call reuses its frame (bytecode.md section 5.2). */
+    /* Bytes of the VM's stack: frame headers, 16-byte cells, one state byte per
+     * register and alignment. A tail call replaces its frame, possibly growing
+     * it within this limit (bytecode.md section 5.2). */
     size_t stack_size;
     /* Frames on the stack at once. */
     uint32_t call_depth;

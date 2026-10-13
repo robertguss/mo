@@ -1,5 +1,6 @@
 #include "vm/internal.h"
 
+#include <errno.h>
 #include <string.h>
 
 static MO_MUST_USE struct mo_cell read(const struct mo_process *p, struct mo_vm_frame *f,
@@ -11,10 +12,12 @@ static MO_MUST_USE struct mo_cell read(const struct mo_process *p, struct mo_vm_
 }
 
 static void consume(const struct mo_process *p, struct mo_vm_frame *f, uint32_t reg) {
+    MO_ASSERT(reg < p->file->functions[f->function].register_count);
     uint32_t type = p->file->functions[f->function].register_types[reg];
     uint8_t *states = mo_vm_states(p, f);
     if (p->types->items[type].reference) {
-        MO_ASSERT(states[reg] == VM_OWNED);
+        MO_ASSERT(states[reg] == VM_OWNED && f->owners != 0);
+        f->owners--;
         states[reg] = VM_MOVED;
     } else
         MO_ASSERT(states[reg] == VM_VALUE);
@@ -30,16 +33,16 @@ static void write(const struct mo_process *p, struct mo_vm_frame *f, uint32_t re
     states[reg] = p->types->items[fn->register_types[reg]].reference
                       ? (borrowed ? VM_BORROWED : VM_OWNED)
                       : VM_VALUE;
+    f->owners += states[reg] == VM_OWNED ? 1u : 0u;
 }
 
-static void clean(const struct mo_process *p, struct mo_vm_frame *f) {
-    uint8_t *states = mo_vm_states(p, f);
-    for (uint32_t i = 0; i < p->file->functions[f->function].register_count; i++)
-        MO_ASSERT(states[i] != VM_OWNED && states[i] != VM_TOKEN);
+static void clean(const struct mo_vm_frame *f) {
+    MO_ASSERT(f->owners == 0);
 }
 
 static MO_MUST_USE enum mo_outcome memory(struct mo_process *p) {
-    return mo_vm_stop(p, "running out of memory", "--max-heap", false, mo_cell_unit(), MO_STOPPED);
+    return mo_vm_stop(p, "running out of memory", errno == ENOMEM ? NULL : "--max-heap", false,
+                      mo_cell_unit(), MO_STOPPED);
 }
 
 /* The single primitive/host dispatch seam. Implementations added in the next
@@ -119,9 +122,12 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
         case MO_OP_BRANCH:
             f->pc = mo_cell_get_bool(read(p, f, a[0])) ? a[1] : a[2];
             continue;
-        case MO_OP_SWITCH:
-            f->pc = a[1 + mo_cell_get_tag(read(p, f, a[0]))];
+        case MO_OP_SWITCH: {
+            uint32_t tag = mo_cell_get_tag(read(p, f, a[0]));
+            MO_ASSERT(tag < count);
+            f->pc = a[1 + tag];
             continue;
+        }
         case MO_OP_CALL:
         case MO_OP_CALL_CLOSURE:
         case MO_OP_TAIL_CALL:
@@ -134,8 +140,10 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
                 environment = read(p, f, target);
                 uint32_t layout = mo_cell_get_ref(environment)->layout;
                 MO_ASSERT(layout < p->file->layout_count);
+                MO_ASSERT(p->file->layouts[layout].kind == MO_LAYOUT_CLOSURE);
                 target = p->file->layouts[layout].function;
             }
+            MO_ASSERT(target < p->file->function_count);
             const struct mo_bytecode_function *callee = &p->file->functions[target];
             size_t offset = tail ? p->top : p->used;
             size_t bytes = mo_vm_frame_size(callee->register_count);
@@ -159,14 +167,14 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             if (closure)
                 consume(p, f, a[tail ? 0 : 1]);
             if (tail)
-                clean(p, f);
+                clean(f);
             mo_vm_enter(p, target, arguments, environment, closure, tail, tail ? 0 : a[0], next);
             continue;
         }
         case MO_OP_RET: {
             value = read(p, f, a[0]);
             consume(p, f, a[0]);
-            clean(p, f);
+            clean(f);
             size_t previous = f->previous;
             uint32_t destination = f->destination, resume = f->next;
             p->used = p->top;
@@ -206,8 +214,10 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             struct mo_token token = {0};
             bool ok;
             if (op == MO_OP_REUSE) {
+                MO_ASSERT(a[1] < fn->register_count);
                 MO_ASSERT(mo_vm_states(p, f)[a[1]] == VM_TOKEN);
                 memcpy(&token, &mo_vm_cells(f)[a[1]], sizeof token);
+                MO_ASSERT(token.layout == a[2]);
                 ok = mo_value_reuse_owned(p->heap, &token, fields, count, &value);
             } else if (op == MO_OP_MAKE_CASE)
                 ok = mo_value_case_owned(p->heap, a[1], a[2], fields, count, &value);
@@ -215,13 +225,19 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
                 ok = mo_value_closure_owned(p->heap, a[1], fields, count, &value);
             else
                 ok = mo_value_construct_owned(p->heap, a[1], fields, count, &value);
+            int failure = errno;
             mo_scratch_free(&scratch);
-            if (!ok)
+            if (!ok) {
+                errno = failure;
                 return memory(p);
+            }
             for (uint32_t i = 0; i < count; i++)
                 consume(p, f, regs[i]);
-            if (op == MO_OP_REUSE)
+            if (op == MO_OP_REUSE) {
+                MO_ASSERT(f->owners != 0);
+                f->owners--;
                 mo_vm_states(p, f)[a[1]] = VM_MOVED;
+            }
             write(p, f, a[0], value, false);
             break;
         }
@@ -229,6 +245,7 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
         case MO_OP_CASE_FIELD: {
             struct mo_cell object = read(p, f, a[1]);
             if (op == MO_OP_CASE_FIELD) {
+                MO_ASSERT(mo_cell_get_tag(object) == a[2]);
                 uint32_t type = fn->register_types[a[1]];
                 enum mo_case_shape shape = mo_case_shape(p->types, type, a[2]);
                 struct mo_cell payload = mo_cell_get_payload(object);
@@ -258,16 +275,21 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             value = read(p, f, a[1]);
             struct mo_token token = mo_value_reset(p->heap, fn->register_types[a[1]], value);
             consume(p, f, a[1]);
+            MO_ASSERT(a[0] < fn->register_count);
             MO_ASSERT(mo_vm_states(p, f)[a[0]] != VM_OWNED && mo_vm_states(p, f)[a[0]] != VM_TOKEN);
             memcpy(&mo_vm_cells(f)[a[0]], &token, sizeof token);
             mo_vm_states(p, f)[a[0]] = VM_TOKEN;
+            f->owners++;
             break;
         }
         case MO_OP_FREE_TOKEN: {
+            MO_ASSERT(a[0] < fn->register_count);
             MO_ASSERT(mo_vm_states(p, f)[a[0]] == VM_TOKEN);
             struct mo_token token;
             memcpy(&token, &mo_vm_cells(f)[a[0]], sizeof token);
             mo_token_free(p->heap, &token);
+            MO_ASSERT(f->owners != 0);
+            f->owners--;
             mo_vm_states(p, f)[a[0]] = VM_MOVED;
             break;
         }

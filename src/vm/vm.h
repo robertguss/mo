@@ -57,8 +57,11 @@ MO_MUST_USE enum mo_outcome mo_call(struct mo_process *process, uint32_t functio
  * produces an internal stop before the next instruction (for bounded fuzzing). */
 void mo_process_instruction_limit(struct mo_process *process, uint64_t instructions);
 /* NULL process selects defect->process, including an initialization defect.
- * Append transactionally. Replay/printing exhaustion never reads a register
- * whose readability could not be established. */
+ * Append at most MO_LIMIT_DEFECT_TEXT_SIZE bytes, reason and top frame first.
+ * Long stacks elide middle frames; details truncate; variables are best-effort
+ * and Text is quoted. false means even the reason/top frame could not fit or
+ * native output allocation failed; any partial text is kept. Replay/printing
+ * exhaustion never reads a register whose readability could not be established. */
 MO_MUST_USE bool mo_render_defect(const struct mo_process *process, const struct mo_defect *defect,
                                   struct mo_buffer *out);
 

@@ -830,7 +830,11 @@ belongs to the image and lasts until `mo_image_free`; a failed image cannot
 create processes. Initialization is serial, and its attached runtime owns the
 literal cells, global cells, set flags and initializer process. Once attached,
 repeated initialization returns the recorded outcome. A failure allocating
-that initial runtime has no attached state and may be retried.
+that initial runtime or preparing its heap image has no attached state and
+may be retried. System entropy failure is a separate internal stop, not a
+heap-limit report. Attachment precedes building literals and running init
+functions; a later failure remains permanent. Successful initialization frees
+its native VM stack; failed initialization retains it for the defect report.
 
 `heap` supplies a separate `struct mo_heap` owned by the VM's process, created
 with `mo_heap_new(image, limits)`. Execution frames, loading and outcomes

@@ -71,7 +71,8 @@ struct mo_heap;
 struct mo_heap_image;
 /* One context per VM run: borrowed sealed types, shared abilities/layout index,
  * derived secret hash/index domains and an owned initialization heap. NULL on
- * randomness or memory failure. The context and types outlive all its heaps.
+ * randomness or memory failure: errno is EIO for entropy, ENOSPC for the
+ * heap limit, ENOMEM for native allocation. The context and types outlive all its heaps.
  * Layouts may be appended during initialization, before parallel execution;
  * refresh updates the index only when its layout count changes. */
 MO_MUST_USE struct mo_heap_image *mo_heap_image_new(const struct mo_types *types,
@@ -207,7 +208,9 @@ MO_MUST_USE bool mo_value_closure(struct mo_heap *process, uint32_t function,
                                   struct mo_cell *out);
 
 /* VM variants transfer field ownership on success, with no dup/drop pair.
- * On failure fields and outputs are unchanged. */
+ * Invalid layout/count invariants assert. On memory failure fields and outputs
+ * are unchanged, with errno ENOSPC for the heap limit or ENOMEM for native
+ * allocation, as for scratch and generic walks with a verified ability. */
 MO_MUST_USE bool mo_value_construct_owned(struct mo_heap *process, uint32_t layout,
                                           const struct mo_cell *fields, uint32_t count,
                                           struct mo_cell *out);

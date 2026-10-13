@@ -832,6 +832,25 @@ static void test_order_and_owned(struct heap_fixture *f) {
             struct mo_token token = mo_value_reset(p, type, left);
             MO_ASSERT(mo_value_reuse_owned(p, &token, fields, 2, &left));
             CHECK(mo_cell_get_ref(a)->count == 1 && mo_cell_get_ref(b)->count == 1);
+            uint64_t hash;
+            CHECK(mo_value_hash(p, type, left, &hash));
+            struct mo_object *original = mo_cell_get_ref(left);
+            struct mo_cell retained = mo_value_dup(p, text, a), replacement;
+            MO_ASSERT(mo_value_text(p, "changed", 7, &replacement));
+            CHECK(mo_value_set_field_owned(p, type, left, 0, replacement, &left));
+            CHECK(mo_cell_get_ref(left) == original && mo_cell_get_ref(retained)->count == 1 &&
+                  mo_cell_get_ref(replacement)->count == 1);
+            fields[0] = replacement;
+            fields[1] = b;
+            MO_ASSERT(mo_value_construct(p, kind == 0 ? f->tuple_layout : f->record_layout, fields,
+                                         2, &right));
+            uint64_t expected;
+            CHECK(mo_value_hash(p, type, right, &expected));
+            CHECK(mo_value_hash(p, type, left, &hash) && hash == expected);
+            bool equal;
+            CHECK(mo_value_equal(p, type, left, right, &equal) && equal);
+            mo_value_drop(p, type, right);
+            mo_value_drop(p, text, retained);
         }
         mo_value_drop(p, type, left);
     }

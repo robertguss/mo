@@ -29,7 +29,7 @@ static MO_MUST_USE bool scaled_number(struct mo_buffer *out, mo_i128 value, unsi
         }
     }
     for (unsigned i = 0; i < length; i++) {
-        if ((int)i == point && !mo_buffer_append_byte(out, '.')) {
+        if (point > 0 && (int)i == point && !mo_buffer_append_byte(out, '.')) {
             return false;
         }
         if (!mo_buffer_append_byte(out, (uint8_t)digits[start + i])) {

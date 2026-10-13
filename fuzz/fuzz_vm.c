@@ -1,12 +1,12 @@
-#include "vm/vm.h"
+#include "vm/internal.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 
-static MO_MUST_USE bool argument(struct mo_heap *heap, const struct mo_types *types, uint32_t type,
-                                 uint64_t bits, struct mo_cell *out) {
+static MO_MUST_USE bool leaf(struct mo_heap *heap, const struct mo_types *types, uint32_t type,
+                             uint64_t bits, struct mo_cell *out) {
     enum mo_type_kind kind = types->items[type].kind;
     if (kind <= MO_TYPE_RANGE) {
         switch (kind) {
@@ -79,6 +79,89 @@ static MO_MUST_USE bool argument(struct mo_heap *heap, const struct mo_types *ty
     return false;
 }
 
+/* One compound layer reaches distinct-pair equality and field-update/reuse
+ * seeds without recursive generation or unbounded temporary storage. */
+static MO_MUST_USE bool argument(struct mo_heap *heap, const struct mo_types *types, uint32_t type,
+                                 uint64_t bits, struct mo_cell *out) {
+    if (leaf(heap, types, type, bits, out))
+        return true;
+    const struct mo_type *t = &types->items[type];
+    uint32_t field_types[16], count = 0, layout = MO_NO_INDEX, tag = 0;
+    if (t->kind == MO_TYPE_CHOICE) {
+        if (t->case_count == 0 || t->cases[0].field_count > 16)
+            return false;
+        count = t->cases[0].field_count;
+        for (uint32_t i = 0; i < count; i++)
+            field_types[i] = t->cases[tag].fields[i].type;
+    } else if (t->kind == MO_TYPE_TUPLE || t->kind == MO_TYPE_RECORD) {
+        for (uint32_t i = 0; i < types->layout_count; i++) {
+            const struct mo_layout *l = &types->layouts[i];
+            if (l->type == type && (l->kind == MO_LAYOUT_TUPLE || l->kind == MO_LAYOUT_RECORD)) {
+                if (l->field_count > 16)
+                    return false;
+                layout = i;
+                count = l->field_count;
+                for (uint32_t j = 0; j < count; j++)
+                    field_types[j] = l->fields[j];
+                break;
+            }
+        }
+        if (layout == MO_NO_INDEX)
+            return false;
+    } else
+        return false;
+    struct mo_cell fields[16];
+    uint32_t n = 0;
+    while (n < count && leaf(heap, types, field_types[n], bits, &fields[n]))
+        n++;
+    bool ok = false;
+    if (n == count)
+        ok = t->kind == MO_TYPE_CHOICE ? mo_value_case(heap, type, tag, fields, count, out)
+                                       : mo_value_construct(heap, layout, fields, count, out);
+    for (uint32_t i = 0; i < n; i++)
+        mo_value_drop(heap, field_types[i], fields[i]);
+    return ok;
+}
+
+/* Hold charged C scratch after making arguments so allocation stops reach
+ * execution, not only initialization or the argument builders. */
+static void pressure(struct mo_scratch *scratch, struct mo_heap *heap, size_t remaining) {
+    size_t low = 0, high = remaining;
+    while (low < high) {
+        size_t middle = low + (high - low + 1) / 2;
+        mo_scratch_init(scratch, heap);
+        bool ok = mo_scratch_resize(scratch, NULL, 0, middle) != NULL;
+        mo_scratch_free(scratch);
+        if (ok)
+            low = middle;
+        else
+            high = middle - 1;
+    }
+    mo_scratch_init(scratch, heap);
+    if (low != 0)
+        MO_ASSERT(mo_scratch_resize(scratch, NULL, 0, low) != NULL);
+}
+
+/* Validation may inspect private state, but derives the expectation from the
+ * independent verifier. Never read cells whose state is not readable. */
+static void replay(const struct mo_defect *defect) {
+    const struct mo_process *p = defect->process;
+    if (p == NULL || p->depth == 0)
+        return;
+    struct mo_vm_frame *f = (struct mo_vm_frame *)(p->stack + p->top);
+    uint32_t count = p->file->functions[f->function].register_count;
+    bool *readable = malloc(count == 0 ? 1 : count);
+    if (readable == NULL)
+        return;
+    struct mo_load_error error;
+    MO_ASSERT(mo_image_registers_readable(p->image, f->function, f->pc, readable, &error));
+    uint8_t *states = mo_vm_states(p, f);
+    for (uint32_t i = 0; i < count; i++)
+        MO_ASSERT(readable[i] ==
+                  (states[i] == VM_VALUE || states[i] == VM_OWNED || states[i] == VM_BORROWED));
+    free(readable);
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (size < MO_BYTECODE_HEADER_SIZE || size > (64 << 10))
         return 0;
@@ -101,11 +184,17 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     uint64_t bits = 0;
     memcpy(&bits, data + 12, 8);
     struct mo_limits limits = mo_limits_default();
-    limits.heap_size = 4096 + (size_t)(bits % (60 << 10));
+    limits.heap_size = sizeof(struct mo_process) + (size_t)(bits % (60 << 10));
     limits.stack_size = 64 + (size_t)((bits >> 16) % 8192);
     limits.call_depth = 1 + (uint32_t)((bits >> 32) % 8);
     struct mo_defect defect;
-    if (mo_image_init_bounded(image, &limits, 512, &defect) != MO_RETURNED) {
+    struct mo_limits init_limits = limits;
+    if ((bits & 1) != 0)
+        init_limits.heap_size = mo_limits_default().heap_size;
+    else
+        init_limits.heap_size = sizeof(struct mo_process) + (size_t)(bits % 4096);
+    if (mo_image_init_bounded(image, &init_limits, 512, &defect) != MO_RETURNED) {
+        replay(&defect);
         struct mo_buffer text;
         mo_buffer_init(&text, 1024);
         bool rendered = mo_render_defect(NULL, &defect, &text);
@@ -126,36 +215,46 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             break;
         struct mo_heap *heap = mo_process_heap(p);
         size_t baseline = mo_heap_used(heap);
-        struct mo_cell args[MO_LIMIT_BYTECODE_PARAMETERS];
-        uint32_t n = 0;
-        while (n < fn->parameter_count &&
-               argument(heap, types, fn->parameters[n].type, bits, &args[n]))
-            n++;
-        if (n != fn->parameter_count) {
+        for (unsigned call = 0; call < 2; call++) {
+            struct mo_cell args[MO_LIMIT_BYTECODE_PARAMETERS];
+            uint32_t n = 0;
+            while (n < fn->parameter_count &&
+                   argument(heap, types, fn->parameters[n].type, bits, &args[n]))
+                n++;
+            if (n != fn->parameter_count) {
+                for (uint32_t i = 0; i < n; i++)
+                    mo_value_drop(heap, fn->parameters[i].type, args[i]);
+                break;
+            }
+            struct mo_scratch held;
+            mo_scratch_init(&held, heap);
+            if (call == 1)
+                pressure(&held, heap,
+                         limits.heap_size - sizeof(struct mo_process) - mo_heap_used(heap));
+            mo_process_instruction_limit(p, 512);
+            struct mo_cell result = mo_cell_int(99), unchanged = result;
+            enum mo_outcome outcome = mo_call(p, f, args, n, &result, &defect);
+            if (outcome == MO_RETURNED) {
+                mo_value_drop(heap, fn->result_type, result);
+            } else {
+                replay(&defect);
+                MO_ASSERT(memcmp(&result, &unchanged, sizeof result) == 0);
+                struct mo_buffer text;
+                mo_buffer_init(&text, 1024);
+                bool rendered = mo_render_defect(p, &defect, &text);
+                (void)rendered;
+                mo_buffer_free(&text);
+            }
+            mo_scratch_free(&held);
             for (uint32_t i = 0; i < n; i++)
-                mo_value_drop(heap, fn->parameters[i].type, args[i]);
-            mo_process_free(p);
-            continue;
+                if (fn->parameters[i].ownership == MO_PARAMETER_BORROWED)
+                    mo_value_drop(heap, fn->parameters[i].type, args[i]);
+            if (outcome == MO_RETURNED)
+                MO_ASSERT(mo_process_stack_used(p) == 0 && mo_heap_objects(heap) == 0 &&
+                          mo_heap_used(heap) == baseline);
+            else
+                break;
         }
-        mo_process_instruction_limit(p, 512);
-        struct mo_cell result = mo_cell_int(99), unchanged = result;
-        enum mo_outcome outcome = mo_call(p, f, args, n, &result, &defect);
-        if (outcome == MO_RETURNED) {
-            mo_value_drop(heap, fn->result_type, result);
-        } else {
-            MO_ASSERT(memcmp(&result, &unchanged, sizeof result) == 0);
-            struct mo_buffer text;
-            mo_buffer_init(&text, 1024);
-            bool rendered = mo_render_defect(p, &defect, &text);
-            (void)rendered;
-            mo_buffer_free(&text);
-        }
-        for (uint32_t i = 0; i < n; i++)
-            if (fn->parameters[i].ownership == MO_PARAMETER_BORROWED)
-                mo_value_drop(heap, fn->parameters[i].type, args[i]);
-        if (outcome == MO_RETURNED)
-            MO_ASSERT(mo_process_stack_used(p) == 0 && mo_heap_objects(heap) == 0 &&
-                      mo_heap_used(heap) == baseline);
         mo_process_free(p);
     }
     mo_image_free(image);

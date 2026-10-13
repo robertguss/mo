@@ -223,6 +223,24 @@ $(BUILD)/debug/tests/%.test: $(BUILD)/debug/tests/%.o $(call objects,$(BUILD)/de
 $(BUILD)/sanitize/tests/%.test: $(BUILD)/sanitize/tests/%.o $(call objects,$(BUILD)/sanitize,$(LIB_SOURCES))
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
+# Fault injection only in the two translation units owning VM initialization
+# and heap allocation. Compile-time renaming also works with Apple's linker.
+VM_FAULT_SOURCES := src/heap/heap.c src/vm/image.c
+VM_FAULT_RENAMES := -Dcalloc=mo_vm_fault_calloc -Dgetentropy=mo_vm_fault_entropy
+$(BUILD)/debug/vm-faults/%.o: src/%.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) $(VM_FAULT_RENAMES) -c $< -o $@
+
+$(BUILD)/sanitize/vm-faults/%.o: src/%.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) $(VM_FAULT_RENAMES) -c $< -o $@
+
+$(BUILD)/debug/tests/test_vm_faults.test: $(BUILD)/debug/tests/test_vm_faults.o $(call objects,$(BUILD)/debug,$(filter-out $(VM_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/debug/vm-faults/%.o,$(VM_FAULT_SOURCES))
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/tests/test_vm_faults.test: $(BUILD)/sanitize/tests/test_vm_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out $(VM_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/vm-faults/%.o,$(VM_FAULT_SOURCES))
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
 $(FUZZ_BUILD)/bin/%: $(FUZZ_BUILD)/fuzz/%.o $(call objects,$(FUZZ_BUILD),$(LIB_SOURCES))
 	@mkdir -p $(dir $@)
 	$(FUZZ_CC) $(FUZZ) $^ -o $@ $(LDLIBS)

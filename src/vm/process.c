@@ -67,7 +67,6 @@ void mo_vm_enter(struct mo_process *process, uint32_t function, const struct mo_
     size_t extent = mo_vm_frame_size(fn->register_count);
     MO_ASSERT(offset <= process->capacity && extent <= process->capacity - offset);
     struct mo_vm_frame *frame = (struct mo_vm_frame *)(process->stack + offset);
-    memset(frame, 0, extent);
     *frame = (struct mo_vm_frame){.previous = previous,
                                   .extent = extent,
                                   .function = function,
@@ -77,16 +76,19 @@ void mo_vm_enter(struct mo_process *process, uint32_t function, const struct mo_
     process->used = offset + extent;
     struct mo_cell *cells = mo_vm_cells(frame);
     uint8_t *states = mo_vm_states(process, frame);
+    memset(states, VM_UNDEFINED, fn->register_count);
     for (uint32_t i = 0; i < fn->parameter_count; i++) {
         cells[i] = arguments[i];
         states[i] =
             process->types->items[fn->parameters[i].type].reference
                 ? (fn->parameters[i].ownership == MO_PARAMETER_OWNED ? VM_OWNED : VM_BORROWED)
                 : VM_VALUE;
+        frame->owners += states[i] == VM_OWNED ? 1u : 0u;
     }
     if (closure) {
         cells[fn->parameter_count] = environment;
         states[fn->parameter_count] = VM_OWNED;
+        frame->owners++;
     }
 }
 

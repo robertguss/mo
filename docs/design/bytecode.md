@@ -749,7 +749,8 @@ in Perceus and Lean 4:
 The C token API has the builders' borrowed-field convention: `reset` consumes
 the old value, while `reuse` duplicates the supplied fields and consumes its
 token only on success. A failed reuse leaves the token and fields unchanged.
-The interpreter drops its owned field inputs after a successful builder.
+The interpreter uses the owned-field variants, transferring fields without
+dup/drop pairs; a broken layout/count invariant asserts, not an allocation stop.
 Tokens cannot be read as values; their fields are cleared and own nothing.
 
 ## 5. Calls and frames
@@ -764,8 +765,10 @@ has a size limit and the call depth a count limit. Exceeding either is the bug
 
 The C implementation charges each frame's native header, 16-byte register
 cells and one ownership-state byte per register, rounded up to 8-byte
-alignment. On the supported 64-bit platforms the header is 64 bytes: three
-registers take 120 bytes, five take 152. Reserved stack capacity, including
+alignment. On the supported 64-bit platforms the header is 72 bytes: three
+registers take 128 bytes, five take 160. A frame counts owned cells and tokens
+so return/tail-call ownership checks are constant-time. Entry zeroes only the
+state bytes, never unreadable cells. Reserved stack capacity, including
 growth slack, never exceeds `--max-stack`; metadata and value storage instead
 count against `--max-heap`. The root call counts as depth one. Calls reserve
 space and depth before transferring any register. Native allocation failure
@@ -776,17 +779,23 @@ is "running out of memory", not a fictitious stack/depth limit violation.
 A tail call replaces the current frame. The arguments are copied to a scratch
 area first, since they come from the frame being replaced. If the callee
 needs more registers, the frame grows in place, since it is at the top of the
-stack. So a tail call never grows the stack beyond the larger of the two
-frames, and loops written as recursion run in constant space (reference 5.3).
+stack. It adds no frame and no call depth, but a larger callee can increase
+stack bytes: earlier frames plus the new top frame must fit `--max-stack`.
+Reservation failure leaves the caller and operands untouched. A fixed-size
+tail loop uses constant space (reference 5.3).
 Every call in tail position is compiled as a tail call, including calls to
 closures.
 
 The scratch argument array is a fixed C-stack buffer for at most 256 cells
-(255 explicit closure arguments plus env). It is not recursive and is
+(256 direct arguments or 255 explicit closure arguments). The environment
+travels separately. The buffer is not recursive and is
 independent of call depth. Construction gathers up to 16 fields locally;
 larger field arrays use checked scratch charged to the remaining heap. A
 constructor, field update, reuse or equality refusal stops with "running out
-of memory" and preserves every operand, token and destination. `reset` and
+of memory" and preserves every operand, token and destination. The
+heap-limit report names `--max-heap`; a native allocator refusal names no
+Mo limit. Arithmetic overflow names `Int`, `Decimal` or `Duration`; a Time
+outside years 1 to 9999 has its own reason. `reset` and
 `free_token` do not allocate. Minimum Int remainder by −1 returns zero,
 as in the Lean model; the VM avoids evaluating C's undefined signed `%` for
 that pair. Division by that pair still overflows.
@@ -1133,7 +1142,14 @@ all boundaries without repeating a whole-function analysis at each instruction.
 
 Stopping records frame views without allocating, top frame first. A caller's
 PC stays at the call until its callee returns, so its span names the call site.
-Rendering appends transactionally into the caller's bounded output buffer.
+Rendering appends at most 64 KiB to the caller's bounded output buffer. It
+writes the reason and top frame before optional details. Stacks longer than
+eight frames show the top four and bottom four with `… N frames …` between.
+Detail text and each variable's output use at most 4096 bytes; truncation has
+a marker. Terminal controls in details and names are escaped, and Text
+variables use the quoted, nested structural form. Optional rendering failure
+keeps the reason/top frame and marks omitted output; even a caller's smaller
+buffer gets a partial report, never a rollback of its useful prefix.
 The replay mask and verifier scratch are diagnostic storage outside the
 exhausted process heap; their own verifier limits still apply. Replay refusal
 prints `<variables unavailable>` without reading any cell. A value-printing
