@@ -100,6 +100,8 @@ static MO_MUST_USE enum mo_host_outcome input(struct mo_host *host, struct mo_he
     mo_scratch_init(&scratch, heap);
     uint8_t *bytes = NULL;
     size_t length = 0, capacity = 0;
+    /* Allow the CR of CRLF before enforcing the decoded Text length. */
+    size_t limit = (size_t)MO_LIMIT_VALUE_BYTES + (MO_LIMIT_VALUE_BYTES < SIZE_MAX ? 1u : 0u);
     enum mo_host_outcome outcome = MO_HOST_OUT_OF_MEMORY;
     int number;
     bool newline = false;
@@ -133,15 +135,14 @@ static MO_MUST_USE enum mo_host_outcome input(struct mo_host *host, struct mo_he
         size_t available = in->length - in->position;
         const uint8_t *end = memchr(start, '\n', available);
         size_t count = end == NULL ? available : (size_t)(end - start);
-        if (count > MO_LIMIT_VALUE_BYTES - length) {
+        if (count > limit - length) {
             errno = EOVERFLOW;
             goto done;
         }
         if (length + count > capacity) {
-            size_t next = capacity == 0 ? (MO_LIMIT_VALUE_BYTES < 256 ? MO_LIMIT_VALUE_BYTES : 256)
-                                        : capacity;
+            size_t next = capacity == 0 ? (limit < 256 ? limit : 256) : capacity;
             while (next < length + count)
-                next = next > MO_LIMIT_VALUE_BYTES / 2 ? MO_LIMIT_VALUE_BYTES : next * 2;
+                next = next > limit / 2 ? limit : next * 2;
             void *grown = mo_scratch_resize(&scratch, bytes, capacity, next);
             if (grown == NULL)
                 goto done;

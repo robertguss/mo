@@ -190,7 +190,7 @@ int main(void) {
     MO_ASSERT(close(current) == 0);
     int large = openat(root, "large", O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
     MO_ASSERT(large >= 0);
-    char bytes[128];
+    char bytes[65]; /* One byte past the native copies' representation limit. */
     memset(bytes, 'x', sizeof bytes);
     MO_ASSERT(write(large, bytes, sizeof bytes) == (ssize_t)sizeof bytes &&
               lseek(large, 0, SEEK_SET) == 0);
@@ -207,6 +207,22 @@ int main(void) {
     CHECK(mo_host_call(&f.host, f.heap, MO_HOST_CONSOLE_READ_LINE, f.option, &console, &out,
                        &error) == MO_HOST_OUT_OF_MEMORY &&
           errno == EOVERFLOW && mo_cell_get_int(out) == 99);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_CONSOLE], console);
+    /* CRLF is a terminator, not part of the Text's representation length. */
+    MO_ASSERT(ftruncate(large, 64) == 0 && pwrite(large, "\r\n", 2, 64) == 2 &&
+              lseek(large, 0, SEEK_SET) == 0 &&
+              mo_host_real(&f.host, f.heap, f.capabilities[MO_CAP_CONSOLE], NULL, -1, &console,
+                           &error) == MO_HOST_RETURNED);
+    enum mo_host_outcome outcome =
+        mo_host_call(&f.host, f.heap, MO_HOST_CONSOLE_READ_LINE, f.option, &console, &out, &error);
+    CHECK(outcome == MO_HOST_RETURNED);
+    if (outcome == MO_HOST_RETURNED) {
+        CHECK(mo_cell_get_tag(out) == 1);
+        size_t length;
+        const uint8_t *text = mo_value_data(mo_cell_get_payload(out), &length);
+        CHECK(length == 64 && memcmp(text, bytes, 64) == 0);
+        mo_value_drop(f.heap, f.option, out);
+    }
     mo_value_drop(f.heap, f.capabilities[MO_CAP_CONSOLE], console);
     mo_value_drop(f.heap, f.capabilities[MO_CAP_FILES], files);
     CHECK(mo_heap_objects(f.heap) == 0);
