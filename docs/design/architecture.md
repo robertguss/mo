@@ -554,7 +554,7 @@ bytes are elided so the omitted count remains visible. Previews also have a
 coverage, listing the choice's cases or the missing domain. Qualified constructor
 patterns use the same resolution and binding rules as unqualified patterns.
 The literal fallback accepts only literals and negated numbers, never construction
-expressions. `Entry` patterns report E1103 until native record interfaces arrive.
+expressions. `Entry` uses its native record fields, in name/kind order.
 Byte patterns normalize numeric spelling after contextual typing and range
 checks, so all 256 values establish coverage.
 Matrix cells, partitions, sorting and witness rendering charge the existing
@@ -2282,15 +2282,35 @@ certifies generic functions and their keyed requirement proofs, scalar
 expressions and native/derived/custom operator proofs, direct/indirect calls,
 prepared native calls, record/choice construction and fields, normalized
 patterns, tuples/lists, conditionals, loops, early exits/asserts and noncapturing
-lambdas, ability dot calls and interpolation. `main` returns Unit or Int and
-takes no parameters or one Console. Direct `Console.print` reads its operation
+lambdas, dot/overload dispatch, Mo-library calls, ability dots and interpolation.
+`main` returns Unit or Int and takes no parameters or one Console.
+Direct `Console.print` reads its operation
 and named input type from `base/hostops.def`, with the receiver explicit.
-Unresolved dot dispatch, overload selection, Mo library calls, map expressions,
-imports and constants/specs still report E1103. `where` validates scoped
-parameters and the five abilities; customizers must have their declaring
+Map expressions, imports and constants/specs still report E1103. `where`
+validates scoped parameters and the five abilities; customizers must have their declaring
 type's Text/Ordering signature. Written Map/Set types check Hash in every
 annotation, including unused declarations and nested fields. `Set.empty` is
 a polymorphic constant, not a zero-argument function.
+Native signatures use the real syntax/type pipeline on the shared tables'
+Mo spellings, with arena-owned synthetic declarations for scoped parameters.
+Resource diagnostics for that preparation mark the real entry module, never
+the synthetic text. Native dots retain receiver-first operands; source methods
+have callee/receiver/explicit arguments. A visible function-valued field is
+projected and called without an inserted receiver. Visible fields take
+precedence over methods and abilities. Unresolved lambda receivers and overload
+values wait for constraints from all their uses, then numeric defaults; selected
+functions and callable projections are inserted before their saved arguments.
+Mo-library functions use their loaded module's actual symbols, signatures and
+checked bodies, whether called with a dot or qualified name. Public lookup still
+requires expose; ability customizers need not be exposed. Entry's structural
+proof parts are Text then EntryKind; FileError's structural parts flatten its
+five Text fields in case order. FileError's Text instead selects the trusted
+library module's to_text (design library); a missing implementation is E1103,
+not an invented native callback or structural fallback.
+Polymorphic recursion uses an explicit-stack SCC walk of scoped parameter
+dependencies from generic uses, including function values and ability callbacks.
+A growing edge within a cycle is E0083; permutations and concrete resets do not
+grow the cycle. Proof traversal memoizes recursive nominal graphs.
 Invalid entry signatures report E0079: parameters must be capabilities without
 duplicate types, and the result must be Unit, Int or Result(Unit, E). Valid
 unfinished entry conventions still report E1103. Checking stops at the first
@@ -2320,7 +2340,10 @@ keys. FUNCTION proof parts carry customizer requirements with parallel scoped
 choice parts flatten fields in case/field declaration order; empty cases add
 none. Hash/Order signatures include implied Equal requirements explicitly.
 
-Ability dot calls use `native = "to_text"` or `"compare"`, no callee row, and
+Source dot operands are selected callee, receiver, then explicit arguments;
+receiver names operand one's row. Callable fields are ordinary calls with a
+projection callee. Ability dots use `native = "to_text"` or `"compare"`,
+no callee row, and
 receiver-first operands with a Text/Order proof keyed by the receiver row.
 Interpolation emits only its hole expressions, in written order, each with
 its selected Text proof. Conversion runs immediately after each hole, before

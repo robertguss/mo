@@ -1,4 +1,5 @@
 #include "check/abilities.h"
+#include "check/data.h"
 #include "check/native.h"
 
 #include "base/codes.h"
@@ -152,16 +153,25 @@ static MO_MUST_USE unsigned parameter_requirements(struct mo_ability_context *p,
                                                    const struct mo_source_type *type) {
     unsigned letter = (unsigned)(type->name[0] - 'A');
     MO_ASSERT(letter < 26 && type->declaration != NULL);
-    for (uint32_t i = 0; i < p->signatures->count; i++)
+    for (uint32_t i = 0; i < p->signatures->count; i++) {
+        if (!work(p, 0))
+            return 0;
         if (p->signatures->items[i].function == type->declaration)
             return p->signatures->items[i].requirements[letter];
-    for (uint32_t i = 0; i < p->signatures->native_count; i++)
+    }
+    for (uint32_t i = 0; i < p->signatures->native_count; i++) {
+        if (!work(p, 0))
+            return 0;
         if (&p->signatures->native[i].owner == type->declaration)
             return p->signatures->native[i].requirements[letter];
-    for (uint32_t i = 0; i < p->signatures->data_count; i++)
+    }
+    for (uint32_t i = 0; i < p->signatures->data_count; i++) {
+        if (!work(p, 0))
+            return 0;
         if (p->signatures->data[i].type->declaration == type->declaration &&
             (p->signatures->data[i].key_parameters & type->parameters) != 0)
             return (1u << MO_SOURCE_HASH) | (1u << MO_SOURCE_EQUAL);
+    }
     return 0;
 }
 
@@ -169,9 +179,12 @@ static MO_MUST_USE bool derive_data(struct mo_ability_context *p,
                                     struct mo_ability_implementation *out, uint32_t depth) {
     const struct mo_source_type *type = out->type;
     uint32_t count = 0;
-    for (uint32_t i = 0; i < p->signatures->data_count; i++)
+    for (uint32_t i = 0; i < p->signatures->data_count; i++) {
+        if (!work(p, depth))
+            return false;
         if (p->signatures->data[i].type->declaration == type->declaration)
             count += p->signatures->data[i].count;
+    }
     const struct mo_ability_implementation **parts =
         allocate(p, count, sizeof(*parts), _Alignof(const struct mo_ability_implementation *));
     if (parts == NULL)
@@ -187,6 +200,8 @@ static MO_MUST_USE bool derive_data(struct mo_ability_context *p,
                 ? &p->interfaces->scopes[owner->module].symbols[owner->cases[i]]
                 : owner;
         for (uint32_t j = 0; j < p->signatures->data_count; j++) {
+            if (!work(p, depth))
+                return false;
             const struct mo_data_signature *data = &p->signatures->data[j];
             if (data->symbol != symbol)
                 continue;
@@ -206,17 +221,22 @@ static MO_MUST_USE bool derive_data(struct mo_ability_context *p,
 static MO_MUST_USE bool customizer(struct mo_ability_context *p,
                                    struct mo_ability_implementation *out) {
     const struct mo_source_type *type = out->type;
-    if (type->declaration == NULL ||
+    bool file_error = named(type, "FileError") && out->ability == MO_SOURCE_TEXT;
+    if ((type->declaration == NULL && !file_error) ||
         (out->ability != MO_SOURCE_TEXT && out->ability != MO_SOURCE_ORDER))
         return true;
     const char *name = out->ability == MO_SOURCE_TEXT ? "to_text" : "compare";
     for (uint32_t i = 0; i < p->signatures->count; i++) {
+        if (!work(p, 0))
+            return false;
         const struct mo_function_signature *fn = &p->signatures->items[i];
-        if (fn->function->module != type->module || strcmp(fn->function->name, name) != 0 ||
-            fn->type->count < 2)
+        const struct mo_module_scope *scope = &p->interfaces->scopes[fn->function->module];
+        bool owner = file_error ? scope->library && strcmp(scope->name, "FileError") == 0
+                                : fn->function->module == type->module;
+        if (!owner || strcmp(fn->function->name, name) != 0 || fn->type->count < 2)
             continue;
         const struct mo_source_type *receiver = fn->type->arguments[0];
-        if (receiver->declaration != type->declaration)
+        if (file_error ? !named(receiver, "FileError") : receiver->declaration != type->declaration)
             continue;
         out->kind = MO_ABILITY_FUNCTION;
         out->function = fn->function;
@@ -256,6 +276,45 @@ static MO_MUST_USE bool customizer(struct mo_ability_context *p,
         }
         return true;
     }
+    if (file_error)
+        return fail(p, MO_CODE_CHECK_UNFINISHED, "FileError's library text function is unavailable",
+                    "FileError.to_text is Mo code in the library (design library FileError).");
+    return true;
+}
+
+static MO_MUST_USE bool derive_native(struct mo_ability_context *p,
+                                      struct mo_ability_implementation *out, uint32_t depth) {
+    static const struct mo_source_type text = {
+        .kind = MO_SOURCE_NAMED, .module = UINT32_MAX, .name = "Text"};
+    static const struct mo_source_type kind = {
+        .kind = MO_SOURCE_NAMED, .module = UINT32_MAX, .name = "EntryKind"};
+    const struct mo_builtin_case *first = mo_builtin_case_by_type(out->type->name);
+    MO_ASSERT(first != NULL);
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < first->cases; i++) {
+        const struct mo_builtin_case *data = mo_builtin_case_by_key(first->first_key + i);
+        MO_ASSERT(data != NULL);
+        count += data->count;
+    }
+    const struct mo_ability_implementation **parts =
+        allocate(p, count, sizeof(*parts), _Alignof(const struct mo_ability_implementation *));
+    if (parts == NULL)
+        return false;
+    out->kind = MO_ABILITY_DERIVED;
+    out->parts = parts;
+    out->part_count = count;
+    uint32_t at = 0;
+    for (uint32_t i = 0; i < first->cases; i++) {
+        const struct mo_builtin_case *data = mo_builtin_case_by_key(first->first_key + i);
+        for (uint32_t j = 0; j < data->count; j++) {
+            const struct mo_source_type *field =
+                named(out->type, "Entry") && j == 1 ? &kind : &text;
+            parts[at] = prove(p, field, out->ability, depth + 1);
+            if (parts[at++] == NULL)
+                return false;
+        }
+    }
+    MO_ASSERT(at == count);
     return true;
 }
 
@@ -278,6 +337,8 @@ static MO_MUST_USE const struct mo_ability_implementation *prove(struct mo_abili
         .ability = ability, .type = type, .kind = MO_ABILITY_NATIVE};
     if (type->kind == MO_SOURCE_PARAMETER) {
         unsigned mask = parameter_requirements(p, type);
+        if (p->error != 0)
+            return NULL;
         if (ability == MO_SOURCE_EQUAL &&
             (mask & ((1u << MO_SOURCE_HASH) | (1u << MO_SOURCE_ORDER))) != 0)
             mask |= 1u << MO_SOURCE_EQUAL;
@@ -321,6 +382,8 @@ static MO_MUST_USE const struct mo_ability_implementation *prove(struct mo_abili
         out->kind = MO_ABILITY_DERIVED;
         return derive_data(p, out, depth) ? out : NULL;
     }
+    if (named(type, "Entry") || named(type, "FileError"))
+        return derive_native(p, out, depth) ? out : NULL;
     if (type->kind == MO_SOURCE_TUPLE || type->count != 0) {
         out->kind = MO_ABILITY_DERIVED;
         const struct mo_ability_implementation **parts = allocate(

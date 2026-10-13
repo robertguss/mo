@@ -104,6 +104,13 @@ const struct mo_builtin_case *mo_builtin_case_by_key(uintptr_t key) {
     return NULL;
 }
 
+const struct mo_builtin_case *mo_builtin_case_by_type(const char *name) {
+    for (size_t i = 0; i < sizeof(builtin_cases) / sizeof(builtin_cases[0]); i++)
+        if (strcmp(builtin_cases[i].type, name) == 0)
+            return &builtin_cases[i];
+    return NULL;
+}
+
 struct type_entry {
     struct mo_source_type type;
     struct type_entry *left;
@@ -119,13 +126,15 @@ struct preparation {
     const struct mo_source_type *parameters[26];
     struct type_entry *root;
     struct mo_signatures *signatures;
-    struct mo_span span;
+    struct mo_span span, native_span;
     uint32_t depth;
-    bool failed;
+    bool failed, native;
 };
 
 static MO_MUST_USE bool problem(struct preparation *p, uint16_t code, struct mo_span span,
                                 const char *message, const char *reason) {
+    if (p->native)
+        span = p->native_span;
     const char *label = code == MO_CODE_TYPE_NAME        ? "not a type in scope"
                         : code == MO_CODE_TYPE_ARGUMENTS ? "type parameters don't match"
                         : code == MO_CODE_BOOL_NAME ? "must be Bool or a function returning Bool"
@@ -593,8 +602,13 @@ static MO_MUST_USE bool customizer(struct preparation *p, const struct mo_source
     bool valid = type->count == (compare ? 3u : 2u);
     const struct mo_source_type *receiver = valid ? type->arguments[0] : NULL;
     const struct mo_source_type *result = type->arguments[type->count - 1];
-    valid = valid && receiver->kind == MO_SOURCE_NAMED && receiver->declaration != NULL &&
-            receiver->module == p->function->module &&
+    const struct mo_module_scope *scope = &p->interfaces->scopes[p->function->module];
+    bool library = receiver != NULL && receiver->module == UINT32_MAX &&
+                   strcmp(receiver->name, "FileError") == 0 && scope->library &&
+                   strcmp(scope->name, "FileError") == 0 && !compare;
+    bool owned = receiver != NULL && receiver->declaration != NULL &&
+                 receiver->module == p->function->module;
+    valid = valid && receiver->kind == MO_SOURCE_NAMED && (owned || library) &&
             (!compare || type->arguments[1] == receiver) && result->kind == MO_SOURCE_NAMED &&
             result->module == UINT32_MAX &&
             strcmp(result->name, compare ? "Ordering" : "Text") == 0;
@@ -855,6 +869,8 @@ struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct
         allocate(&p, out->native_count, sizeof(*out->native), _Alignof(struct mo_native_signature));
     if (p.failed)
         goto failed;
+    p.native = true;
+    p.native_span = set->modules[0]->span;
     for (uint32_t i = 0; i < out->native_count; i++)
         if (!native_signature(&p, &native_texts[i], &out->native[i]))
             goto failed;
