@@ -182,6 +182,9 @@ inductive Bug where
   | repeatedKey
   /-- `Files.in_memory` gives one path both file and folder roles (D236). -/
   | fileFolderConflict (path : String)
+  /-- A stored key is not a plain relative path: empty, absolute, or with
+  empty, `.` or `..` components (reference 14). -/
+  | filePathInvalid (path : String)
   deriving Repr, Inhabited, DecidableEq
 
 /-- The outcome of evaluating an expression. -/

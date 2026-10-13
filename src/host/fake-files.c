@@ -41,14 +41,40 @@ static MO_MUST_USE bool add_prefixes(struct mo_host *host, struct mo_heap *heap,
     return true;
 }
 
+/* Constructor keys are stored verbatim, not normalized like operation paths. */
+static MO_MUST_USE bool plain_relative(const uint8_t *bytes, size_t length) {
+    size_t start = 0;
+    for (size_t end = 0; end <= length; end++) {
+        if (end < length && bytes[end] != '/')
+            continue;
+        size_t n = end - start;
+        if (n == 0 || (bytes[start] == '.' && (n == 1 || (n == 2 && bytes[start + 1] == '.'))))
+            return false;
+        start = end + 1;
+    }
+    return true;
+}
+
 enum mo_host_outcome mo_host_files_fake(struct mo_host *host, struct mo_heap *heap, uint32_t type,
                                         struct mo_cell files, struct mo_cell *out,
                                         struct mo_host_error *error) {
+    uint32_t position = 0;
+    struct mo_cell key, value;
+    while (mo_table_next(files, &position, &key, &value)) {
+        size_t length;
+        const uint8_t *bytes = mo_value_data(key, &length);
+        if (!plain_relative(bytes, length)) {
+            *error =
+                (struct mo_host_error){.reason = "fake has a key that is not a plain relative path",
+                                       .has_detail = true,
+                                       .detail = key};
+            return MO_HOST_BUG;
+        }
+    }
     struct mo_cell folders;
     if (!mo_value_set(heap, host->types->folders, NULL, 0, &folders))
         return MO_HOST_OUT_OF_MEMORY;
-    uint32_t position = 0;
-    struct mo_cell key, value;
+    position = 0;
     while (mo_table_next(files, &position, &key, &value)) {
         size_t length;
         const uint8_t *bytes = mo_value_data(key, &length);
@@ -59,11 +85,8 @@ enum mo_host_outcome mo_host_files_fake(struct mo_host *host, struct mo_heap *he
     }
     position = 0;
     while (mo_table_next(files, &position, &key, &value)) {
-        size_t length;
-        const uint8_t *bytes = mo_value_data(key, &length);
-        (void)bytes;
-        bool found = length == 0;
-        if (!found && !mo_table_get(heap, host->types->folders, folders, key, &found, &value)) {
+        bool found;
+        if (!mo_table_get(heap, host->types->folders, folders, key, &found, &value)) {
             mo_value_drop(heap, host->types->folders, folders);
             return MO_HOST_OUT_OF_MEMORY;
         }

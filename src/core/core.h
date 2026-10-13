@@ -647,7 +647,8 @@ enum mo_core_bug_tag {
     MO_CORE_BUG_STOP,
     MO_CORE_BUG_OUTSIDE,
     MO_CORE_BUG_REPEATED_KEY,
-    MO_CORE_BUG_FILE_FOLDER_CONFLICT
+    MO_CORE_BUG_FILE_FOLDER_CONFLICT,
+    MO_CORE_BUG_FILE_PATH_INVALID
 };
 struct mo_core_bug {
     enum mo_core_bug_tag tag;
@@ -756,7 +757,7 @@ enum mo_core_text_kind {
     MO_CORE_TEXT_CAP_STATE,
     MO_CORE_TEXT_RANDOM_STATE
 };
-#define MO_CORE_TEXT_VERSION "0.7"
+#define MO_CORE_TEXT_VERSION "0.8"
 /* Core parsing, printing, metadata validation and checking use bounded recursion.
  * Callers must run Core work on MO_SOURCE_STACK_SIZE via mo_with_stack (base/stack.h),
  * rather than relying on platform thread-stack defaults; see architecture section 12. */

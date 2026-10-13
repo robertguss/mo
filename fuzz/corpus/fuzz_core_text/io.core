@@ -1,1 +1,1 @@
-(core 0.7 (io (readBytes true)))
+(core 0.8 (io (readBytes true)))

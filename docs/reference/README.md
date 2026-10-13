@@ -1348,7 +1348,9 @@ many open at once is a bug (13.2).
 folders are those its files are in, those `make_folder` made, and those whose
 last file was removed, as on a disk, and `list` and `entries` give the names
 directly inside a folder, each subfolder once. Files that make one path both a
-file and a folder, as `{"a": "x", "a/b": "y"}` do, are a bug (13.2). **ReadFiles** has `read_text`,
+file and a folder, as `{"a": "x", "a/b": "y"}` do, are a bug (13.2).
+So are keys that aren't plain relative paths, such as `"/a"`, `"./a"`, `"a/"` or `"a//b"`.
+**ReadFiles** has `read_text`,
 `read_bytes`, `list`, `entries`, `walk`, `exists?` and `within`. Paths are relative and use `/`; `"."` is the capability's own
 folder, and no path can leave it. Given a path that would leave the folder,
 such as `"../a.txt"`, reading, writing, removing and listing give

@@ -493,6 +493,11 @@ def fileErrorV (ctor path : String) : Value := .con ctor [.text path]
 /-- Kind mismatches have stable reasons, independent of the host's OS. -/
 def fileFailedV (path reason : String) : Value := .con "Failed" [.text path, .text reason]
 
+/-- Constructor keys are stored verbatim: nonempty slash-separated components,
+none of which is `.` or `..`. Operation paths have different rules below. -/
+def plainRelativePath (path : String) : Bool :=
+  (textSplit path "/").all fun part => part != "" && part != "." && part != ".."
+
 /-- The parts of a path inside a folder: `.` parts are dropped, so `"."` is the
 folder itself, and a `..` takes back the part before it. `none` for a path
 that would leave the folder (a `..` with nothing before it to take back), and
@@ -580,10 +585,13 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
   | .consoleFakeInput, [.list lines] => newFake .console { stdin := lines.map valueText } w
   | .filesInMemory, [.map files] =>
     let files := statePairs files
-    let folders := fileFolders files
-    match files.find? (fun e => isFolder e.1 folders) with
-    | some (path, _) => .stopped (.fileFolderConflict path) w
-    | none => newFake .files { files := files, folders := folders } w
+    match files.find? (fun e => !plainRelativePath e.1) with
+    | some (path, _) => .stopped (.filePathInvalid path) w
+    | none =>
+      let folders := fileFolders files
+      match files.find? (fun e => isFolder e.1 folders) with
+      | some (path, _) => .stopped (.fileFolderConflict path) w
+      | none => newFake .files { files := files, folders := folders } w
   | .clockFixed, [.time t] => newFake .clock { now := t } w
   | .randomSeeded, [.int n] => newFake .random { random := RandomState.seeded n } w
   | .argsOf, [.list args] => newFake .args { args := args.map valueText } w

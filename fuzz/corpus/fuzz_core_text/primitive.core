@@ -1,1 +1,1 @@
-(core 0.7 (list (byte) (zip (text))))
+(core 0.8 (list (byte) (zip (text))))

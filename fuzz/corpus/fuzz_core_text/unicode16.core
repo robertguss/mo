@@ -1,1 +1,1 @@
-(core 0.7 (unicode16 (normalizeNfc)))
+(core 0.8 (unicode16 (normalizeNfc)))
