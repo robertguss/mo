@@ -1,6 +1,6 @@
-/* Loading, module interfaces, signatures and staged local body inference.
- * These results are not a checked program and cannot be lowered. Arrays and names belong to
- * arena; interface declaration and origin pointers borrow the loaded
+/* Loading, intermediate checks and the checked-program contract.
+ * The implemented stages are not mo_check and cannot certify a program for lowering.
+ * Arrays and names belong to arena; interface declaration and origin pointers borrow the loaded
  * syntax, which must outlive the interfaces. Syntax owns its token text
  * independently of sources. */
 #ifndef MO_CHECK_H
@@ -94,7 +94,7 @@ enum mo_source_type_kind {
 
 /* Canonical annotation types: equal types have the same pointer within one
  * preparation. Named types use module UINT32_MAX for built-ins; type parameters
- * belong to their declaring function. Function arguments include the result in
+ * belong to their declaring function or data type. Function arguments include the result in
  * the last slot. Declaration pointers borrow the module interfaces. */
 struct mo_source_type {
     enum mo_source_type_kind kind;
@@ -189,5 +189,280 @@ MO_MUST_USE struct mo_inferred_body *
 mo_infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
                   const struct mo_signatures *signatures, uint32_t function,
                   struct mo_diags *diags);
+
+/* Checked-program contract for lower. PROVISIONAL layout: declared here so
+ * lowering can be built against it; mo_check is not implemented yet. None of
+ * the intermediate APIs above fills or certifies these records. The invariants
+ * below describe a successful future mo_check, not the current staged checker.
+ * This is an in-memory compiler interface, not a serialized or stable ABI. */
+
+struct mo_type_argument {
+    const struct mo_source_type *parameter; /* scoped MO_SOURCE_PARAMETER, not just its letter */
+    const struct mo_source_type *type;      /* may use the enclosing generic's rigid parameters */
+};
+
+/* Function uses list implicit parameters in A–Z order; data uses list explicit
+ * parameters in declaration order. Empty for a nongeneric use. Every generic
+ * function value, call, constructor and pattern retains its substitution. */
+struct mo_type_arguments {
+    uint32_t count;
+    const struct mo_type_argument *items;
+};
+
+enum mo_source_ability {
+    MO_SOURCE_EQUAL,
+    MO_SOURCE_HASH,
+    MO_SOURCE_ORDER,
+    MO_SOURCE_TEXT,
+    MO_SOURCE_NUMBER,
+};
+
+enum mo_ability_implementation_kind {
+    MO_ABILITY_NATIVE,
+    MO_ABILITY_DERIVED,
+    MO_ABILITY_FUNCTION,
+    MO_ABILITY_PARAMETER,
+};
+
+/* A shared graph, possibly recursive for nominal data; lower memoizes it.
+ * FUNCTION is the selected declaring-module to_text/compare, even if hidden.
+ * PARAMETER is an abstract requirement of a generic body; substitution selects
+ * its concrete implementation before emitting Core. DERIVED parts follow
+ * tuple/field/case declaration order. NATIVE is determined by ability and type.
+ * Equal/Hash never select a user function. */
+struct mo_ability_implementation {
+    enum mo_source_ability ability;
+    enum mo_ability_implementation_kind kind;
+    const struct mo_source_type *type;
+    const struct mo_symbol *function; /* non-NULL only for FUNCTION */
+    struct mo_type_arguments arguments;
+    uint32_t part_count;
+    const struct mo_ability_implementation *const *parts;
+};
+
+struct mo_checked_binding {
+    const struct mo_syntax *syntax; /* canonical name; NULL only for promise's implicit result */
+    const char *name;
+    struct mo_span span;
+    const struct mo_source_type *type;
+    bool variable;
+};
+
+/* Exactly one member for a resolved constructor; both NULL means absent. A
+ * native constructor uses its reference spelling, e.g. Some, Error or Entry.
+ * Its instantiated nominal type supplies its arguments. */
+struct mo_constructor_ref {
+    const struct mo_symbol *symbol;
+    const char *builtin;
+};
+
+enum mo_checked_pattern_kind {
+    MO_PATTERN_ANY,
+    MO_PATTERN_BIND,
+    MO_PATTERN_LITERAL,
+    MO_PATTERN_TUPLE,
+    MO_PATTERN_LIST,
+    MO_PATTERN_CONSTRUCTOR,
+};
+
+struct mo_checked_pattern;
+struct mo_checked_pattern_part {
+    uint32_t index; /* tuple slot or declared field; list cons: 0=head, 1=tail */
+    const struct mo_checked_pattern *pattern;
+};
+
+/* Named fields are in declaration order; omitted fields become ANY. A list is
+ * normalized to empty (zero parts) or cons (two parts), including its rest.
+ * Alternatives share canonical binding pointers, not just matching spellings.
+ * LITERAL retains its source spelling and already range-checked contextual type. */
+struct mo_checked_pattern {
+    enum mo_checked_pattern_kind kind;
+    const struct mo_syntax *syntax;
+    const struct mo_source_type *type;
+    const struct mo_checked_binding *binding; /* BIND only */
+    struct mo_constructor_ref constructor;
+    struct mo_type_arguments arguments;
+    uint32_t part_count;
+    const struct mo_checked_pattern_part *parts;
+};
+
+struct mo_checked_arm {
+    const struct mo_syntax *syntax;
+    uint32_t pattern_count;
+    const struct mo_checked_pattern *const *patterns; /* alternatives in written order */
+    uint32_t guard; /* body expression index, UINT32_MAX when absent */
+    uint32_t body;  /* body expression index */
+};
+
+struct mo_checked_match {
+    uint32_t scrutinee; /* body expression index */
+    uint32_t arm_count;
+    const struct mo_checked_arm *arms; /* written order; coverage already proved */
+};
+
+enum mo_checked_or { MO_CHECK_OR_ABSENT, MO_CHECK_OR_BOOL, MO_CHECK_OR_OPTION };
+
+/* The source type decides Option versus Result. failure is None or Error in
+ * the enclosing result; wrapper is absent for a direct propagation, or the
+ * unique single-unnamed-field case selected by reference 8.3. Neither lower nor
+ * codegen searches for a wrapper or chooses among candidates. */
+struct mo_checked_try {
+    const struct mo_source_type *result; /* enclosing function/lambda result */
+    struct mo_constructor_ref failure;
+    struct mo_constructor_ref wrapper;
+    struct mo_type_arguments arguments; /* wrapper substitution */
+};
+
+struct mo_checked_lambda {
+    uint32_t number; /* one-based source order within the containing function/constant/spec */
+    uint32_t parameter_count;
+    const struct mo_checked_binding *const *parameters;
+    uint32_t body; /* expression index in the containing checked body */
+    uint32_t capture_count;
+    const struct mo_checked_binding *const *captures; /* first-use order, capture by value */
+};
+
+struct mo_checked_ability_use {
+    uint32_t operand; /* body row, or UINT32_MAX for a type-only generic-use requirement */
+    const struct mo_ability_implementation *implementation;
+};
+
+/* Typed expression graph in written postorder. operands refer to earlier rows
+ * of this body, including separate rows for every normalized operator/postfix
+ * step. The syntax supplies its kind, literals, text and responsible span;
+ * operation is the resolved operator token, or MO_T_EOF for a non-operator.
+ * Operands retain source evaluation order, including guards/branches/lambda
+ * bodies, which lower must keep lazy according to their syntax kind.
+ * No name lookup, overload choice, field lookup or inference remains for lower.
+ * All types contain only concrete types and scoped rigid parameters, never
+ * inference variables. Bound names, including parameters/patterns, have types
+ * in the binding table even when they need no expression row. Generic uses
+ * include every required ability implementation, including function values;
+ * lower substitutes those proofs for PARAMETER uses in the generic body. */
+struct mo_checked_expression {
+    const struct mo_syntax *syntax;
+    const struct mo_source_type *type;
+    uint32_t operand_count;
+    const uint32_t *operands;
+    enum mo_syntax_token operation;
+    const struct mo_checked_binding *binding; /* read, new binding, or assignment target */
+    const struct mo_symbol *symbol; /* selected function, constant or declared constructor */
+    const char *native; /* native case spelling, or qualified native function/field spelling */
+    uint32_t field;     /* declaration-order index, UINT32_MAX unless selecting/supplying a field */
+    uint32_t receiver;  /* operand row inserted by dot dispatch, UINT32_MAX otherwise */
+    struct mo_type_arguments arguments;
+    uint32_t ability_count;
+    const struct mo_checked_ability_use *abilities;
+    enum mo_checked_or or_kind;
+    const struct mo_checked_try *try_;
+    const struct mo_checked_pattern *pattern; /* is; case uses match instead */
+    const struct mo_checked_match *match;
+    const struct mo_checked_lambda *lambda;
+    bool assignment; /* writes binding's original var; false for a new binding */
+    bool never;      /* every path leaves the current function/loop or stops */
+};
+
+struct mo_checked_body {
+    uint32_t count;
+    const struct mo_checked_expression *items;
+    uint32_t root; /* index in items; UINT32_MAX only for an anchor's argument-only body */
+    uint32_t binding_count;
+    const struct mo_checked_binding *bindings; /* includes lambdas and canonical alternatives */
+};
+
+struct mo_checked_function {
+    const struct mo_function_signature *signature;
+    uint32_t parameter_count;
+    const struct mo_checked_binding *const *parameters; /* signature order, in body.bindings */
+    struct mo_checked_body body; /* includes typed nested anonymous functions */
+};
+
+struct mo_checked_constant {
+    const struct mo_symbol *symbol;
+    const struct mo_source_type *type;
+    struct mo_checked_body initializer;
+};
+
+/* Exact original source bytes, not decoded/unescaped wording. May contain NUL;
+ * length is authoritative. span names those bytes in the original sources. */
+struct mo_spec_text {
+    const uint8_t *bytes;
+    size_t length;
+    struct mo_span span;
+};
+
+struct mo_checked_condition {
+    struct mo_spec_text text;
+    uint32_t expression; /* Bool row in the spec body */
+};
+
+enum mo_checked_spec_kind { MO_SPEC_EXAMPLE, MO_SPEC_TEST, MO_SPEC_PROMISE, MO_SPEC_ANCHOR };
+
+struct mo_checked_spec {
+    enum mo_checked_spec_kind kind;
+    const struct mo_syntax *syntax;
+    uint32_t module;
+    /* One-based source ordinal before rewrites: tests per module, examples/promises
+     * per subject, anchors per promise and allows/forbids expectation. */
+    uint32_t number;
+    uint32_t subject;         /* index in program.functions, UINT32_MAX for test */
+    uint32_t promise;         /* index in program.specs for anchor, UINT32_MAX otherwise */
+    struct mo_spec_text text; /* original header/line */
+    const uint8_t *wording;   /* decoded test/promise sentence, otherwise NULL */
+    size_t wording_length;    /* may contain NUL; do not use strlen */
+    uint32_t parameter_count;
+    const struct mo_checked_binding *const *parameters; /* promise: subject params then result */
+    struct mo_checked_body body; /* example/promise: Bool; test: Unit; anchor: value rows only */
+    struct mo_type_arguments arguments; /* anchor's generic promise instantiation */
+    uint32_t value_count;
+    const uint32_t *values; /* anchor value rows in promise-parameter order; empty otherwise */
+    uint32_t condition_count;
+    const struct mo_checked_condition *conditions; /* promise lines/assertions, written order */
+    bool allows; /* anchor expectation only: true=allows, false=forbids */
+};
+
+enum mo_checked_entry_result { MO_ENTRY_UNIT, MO_ENTRY_STATUS, MO_ENTRY_RESULT };
+
+struct mo_checked_entry {
+    uint32_t function; /* index in program.functions; main in set.modules[0] */
+    enum mo_checked_entry_result result;
+    uint32_t capability_count;
+    const struct mo_checked_binding *const *capabilities; /* main parameters in written order */
+    const struct mo_ability_implementation *error_text;   /* Text for returned error, else NULL */
+};
+
+/* Only a successful mo_check certifies these invariants. interfaces and
+ * signatures are prepared in the result arena and belong to this program;
+ * set and syntax are borrowed and must outlive it. Names, type DAGs, typed
+ * bodies, substitutions, ability graphs and spec byte copies belong to arena.
+ * It borrows no mo_sources bytes: lower takes the original sources separately
+ * to copy filenames/provenance into its own Core arena. All spans retain the
+ * original file indices. Do not mutate syntax, interfaces or signatures after
+ * checking. The current inference work counter isn't a lowering input.
+ * Functions/specs follow module discovery order, then declaration/source order.
+ * Constants alone are dependency-ordered (3.4); independent ties follow source
+ * order. Module ownership/exposure remains in set/interfaces, not that order. */
+struct mo_program {
+    const struct mo_module_set *set;
+    const struct mo_module_interfaces *interfaces;
+    const struct mo_signatures *signatures;
+    uint32_t function_count;
+    const struct mo_checked_function *functions;
+    uint32_t constant_count;
+    const struct mo_checked_constant *constants;
+    uint32_t spec_count;
+    const struct mo_checked_spec *specs;
+    struct mo_checked_entry entry;
+};
+
+/* DECLARATION ONLY, not implemented in this slice. Eventually composes all
+ * checks, returning a lowering-ready program or NULL with diagnostics, never
+ * a partially certified result. set must satisfy mo_resolve_modules' input
+ * contract. Use the explicit source-stage stack. This checks anchor typing,
+ * completeness and links but executes no source code: tools compile/run
+ * anchors to verify their allows/forbids expectations before accepting a
+ * command-line mo check. Unfinished stages must report E1103, not succeed. */
+MO_MUST_USE struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *set,
+                                        struct mo_diags *diags);
 
 #endif
