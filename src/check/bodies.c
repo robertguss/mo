@@ -863,9 +863,9 @@ static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
             uint32_t meanings = 0;
             const struct mo_symbol *type = definition(p, prefix, NULL, &meanings);
             size_t length = prefix->span.end - prefix->span.start;
-            bool parameter =
-                length == 1 && (p->function->type->parameters &
-                                (UINT32_C(1) << (unsigned)(prefix->text[0] - 'A'))) != 0;
+            bool parameter = length == 1 && prefix->text[0] >= 'A' && prefix->text[0] <= 'Z' &&
+                             (p->function->type->parameters &
+                              (UINT32_C(1) << (unsigned)(prefix->text[0] - 'A'))) != 0;
             if (type != NULL || mo_source_builtin(prefix->text, length) || parameter)
                 return NULL; /* static type/builtin dispatch is a later stage */
             bool reported =
