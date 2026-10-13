@@ -31,9 +31,7 @@ static bool check_bytes(const char *path, const uint8_t *source, size_t size, co
     accepted_inputs++;
     struct mo_buffer output;
     mo_buffer_init(&output, MO_LIMIT_FILE_SIZE);
-    CHECK(mo_format(module, NULL,
-                    (struct mo_format_options){MO_FORMAT_WIDTH, 100, format_display_width},
-                    &output));
+    CHECK(mo_format(module, (struct mo_format_options){100, format_display_width}, &output));
     if (fixed_points && fixed)
         CHECK(size == output.length && (size == 0 || memcmp(source, output.bytes, size) == 0));
     if (expected != NULL) {
@@ -53,9 +51,7 @@ static bool check_bytes(const char *path, const uint8_t *source, size_t size, co
         format_tree(&before, module->tree);
         format_tree(&after, formatted->tree);
         CHECK(format_buffer_equal(&before, &after));
-        CHECK(mo_format(formatted, NULL,
-                        (struct mo_format_options){MO_FORMAT_WIDTH, 100, format_display_width},
-                        &twice));
+        CHECK(mo_format(formatted, (struct mo_format_options){100, format_display_width}, &twice));
         CHECK(format_buffer_equal(&output, &twice));
         mo_buffer_free(&before);
         mo_buffer_free(&after);

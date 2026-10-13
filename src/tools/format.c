@@ -93,7 +93,7 @@ static void print_source(void *argument) {
     mo_arena_init(&arena, MO_CLI_CHECK_SIZE);
     struct mo_module_syntax *module = mo_parse(&arena, work->sources, 0, work->diags);
     if (module != NULL && !mo_diags_any(work->diags)) {
-        work->rendered = mo_format(module, work->sources, work->options, work->output);
+        work->rendered = mo_format(module, work->options, work->output);
         if (!work->rendered)
             problem(work->diags, 0, MO_CODE_TOOL_FORMAT_LIMIT, work->sources->files[0].path,
                     "source printing exceeds this build's memory, depth, output or line limit");

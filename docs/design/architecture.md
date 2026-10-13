@@ -181,24 +181,24 @@ The first statement of a block has no initial blank line; specification
 blocks and the ordinary function body form one statement sequence for this
 purpose. A module header can precede the first declaration's blank line.
 No end-of-block blank lines are retained. No intra-statement break bits are
-recorded while the width-versus-source layout decision remains pending.
+recorded: D238 chooses those breaks from the tree at 100 display columns.
 
 Formatting is a function of the tree.
 Formatting twice changes nothing, and the formatted program's tree equals the
 original's, except for the rewrites the reference names: `x = x + y` becomes
 `x += y` (reference 6.2).
 
-**The printer (provisional layout).** `syntax/format.h` prints a successful
+**The printer (D238).** `syntax/format.h` prints a successful
 tree through an arena-owned Wadler-style document: text, groups, nesting,
 optional breaks and mandatory lines. Flat group widths are cached; rendering
 does not repeatedly scan document suffixes. Syntax takes a display-width
 callback; tools supply `mo_unicode16_display_width` from prim, without adding
 a syntax-to-prim dependency or copying Unicode tables.
 
-Pending Robert's width-versus-source decision, tools select width-based
-layout at 100 display columns. The width policy ignores source storage,
-including source spans used only for locations; an internal source-break
-prototype reads span gaps but is not a command option. Indivisible names,
+Tools select width-based layout at 100 display columns. A statement that fits
+stays on one line; longer statements break at outer brackets, dots or operators
+before their nested groups. Layout ignores source storage, including source
+spans used only for locations. Indivisible names,
 literals and comments can exceed the target width. The document budget is
 128 MiB, with 8,224 nested groups or alignment scopes; the CLI's output is
 bounded by the 16 MiB source-file limit and 65,536 scalars per physical line.
@@ -238,12 +238,11 @@ and good grammar fixtures except four named syntax tests:
 `declarations.mo` includes a trailing comma; `lambda-list.mo` uses short
 authored parameter breaks; `literals.mo` varies interpolation and unary
 spacing. All four remain in the parse, tree-equality and idempotence gates.
-There are no exemptions for reference blocks, examples or library samples.
-Their fixed-point differences remain failures, not updated snapshots; width
-layout and two-space inline comment padding currently conflict with some
-existing examples. Passing the CI gate awaits Robert's line-breaking and
-end-of-line comment-alignment decisions; either the printer or the reference
-and examples will then change in the formatter PR, with every change listed.
+Reference section 2.4 alone is exempt from byte equality: its three continuation
+examples demonstrate allowed breaks that the formatter would join. The gate
+identifies that section by its heading and verifies those exact three examples;
+they still pass the parse, tree-equality and idempotence gates. No other reference
+blocks, examples or library samples are exempt.
 
 **The source tree contract.** `src/syntax/syntax.h` defines a tagged node
 with ordered children, an operator token, and half-open spans. Absent

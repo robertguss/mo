@@ -17,8 +17,8 @@ static uint32_t add_width(uint32_t a, uint32_t b) {
     return a > UINT32_MAX - b ? UINT32_MAX : a + b;
 }
 
-void mo_doc_add(struct mo_document *doc, enum mo_doc_kind kind, const uint8_t *bytes, size_t length,
-                bool source_break) {
+void mo_doc_add(struct mo_document *doc, enum mo_doc_kind kind, const uint8_t *bytes,
+                size_t length) {
     if (!doc->ok)
         return;
     struct mo_doc *d = mo_arena_allocate(&doc->arena, sizeof *d, _Alignof(struct mo_doc));
@@ -26,8 +26,7 @@ void mo_doc_add(struct mo_document *doc, enum mo_doc_kind kind, const uint8_t *b
         doc->ok = false;
         return;
     }
-    *d = (struct mo_doc){
-        .kind = kind, .bytes = bytes, .length = length, .source_break = source_break};
+    *d = (struct mo_doc){.kind = kind, .bytes = bytes, .length = length};
     if (doc->last != NULL)
         doc->last->next = d;
     else
@@ -39,7 +38,6 @@ void mo_doc_add(struct mo_document *doc, enum mo_doc_kind kind, const uint8_t *b
             memchr(bytes, '\n', length) != NULL ? UINT32_MAX : doc->display_width(bytes, length);
         break;
     case MO_DOC_BREAK:
-    case MO_DOC_SOURCE_BREAK:
     case MO_DOC_SPACE:
         d->flat_width = (uint32_t)length;
         break;
@@ -246,17 +244,7 @@ bool mo_doc_render(struct mo_document *doc, struct mo_format_options options,
             w.pending_last = d;
             break;
         case MO_DOC_BREAK:
-            if (w.pending != NULL ||
-                (options.policy == MO_FORMAT_SOURCE_PROTOTYPE ? d->source_break
-                                                              : w.group != NULL && !w.group->flat))
-                ok = newline(&w, false);
-            else if (d->length != 0 && w.column != 0)
-                ok = bytes(&w, (const uint8_t *)" ", 1);
-            break;
-        case MO_DOC_SOURCE_BREAK:
-            /* Before an operator, a queued comment must wait until the
-             * operator has been written: a leading '-' changes the tree. */
-            if (options.policy == MO_FORMAT_SOURCE_PROTOTYPE && d->source_break)
+            if (w.pending != NULL || (w.group != NULL && !w.group->flat))
                 ok = newline(&w, false);
             else if (d->length != 0 && w.column != 0)
                 ok = bytes(&w, (const uint8_t *)" ", 1);
@@ -278,8 +266,7 @@ bool mo_doc_render(struct mo_document *doc, struct mo_format_options options,
         case MO_DOC_GROUP: {
             /* Indentation is emitted lazily, but already consumes width. */
             uint32_t column = w.column != 0 ? w.column : w.indent;
-            d->flat = options.policy == MO_FORMAT_SOURCE_PROTOTYPE ||
-                      (w.group != NULL && w.group->flat) ||
+            d->flat = (w.group != NULL && w.group->flat) ||
                       (column <= options.width && d->flat_width <= options.width - column);
             w.group = d;
             break;

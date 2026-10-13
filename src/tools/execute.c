@@ -133,8 +133,7 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
         return ok ? 0 : 1;
     }
     if (cli->command == MO_COMMAND_FORMAT) {
-        /* Provisional A: Robert's width-versus-source decision is pending. */
-        struct mo_format_options options = {MO_FORMAT_WIDTH, 100, display_width};
+        struct mo_format_options options = {100, display_width};
         return mo_format_files(cli, options, errors);
     }
     if (cli->json && !mo_write_version(output, cli->command)) {

@@ -30,9 +30,9 @@ static void check(void *argument) {
     mo_buffer_init(&before, 1 << 27);
     mo_buffer_init(&after, 1 << 27);
     if (original != NULL && !mo_diags_any(&diags)) {
-        struct mo_format_options options = {
-            MO_FORMAT_WIDTH, size == 0 ? 100 : 20u + data[size - 1] % 81u, format_display_width};
-        bool rendered = mo_format(original, NULL, options, &output);
+        struct mo_format_options options = {size == 0 ? 100 : 20u + data[size - 1] % 81u,
+                                            format_display_width};
+        bool rendered = mo_format(original, options, &output);
         /* Small accepted inputs cannot fill the document/output/line budgets.
          * Do not let an unhandled comment anchor masquerade as resource refusal. */
         MO_ASSERT(rendered || size > 4096);
@@ -44,7 +44,7 @@ static void check(void *argument) {
             format_tree(&before, original->tree);
             format_tree(&after, formatted->tree);
             MO_ASSERT(format_buffer_equal(&before, &after));
-            MO_ASSERT(mo_format(formatted, NULL, options, &twice));
+            MO_ASSERT(mo_format(formatted, options, &twice));
             MO_ASSERT(format_buffer_equal(&output, &twice));
         } else
             MO_ASSERT(output.length == 0);
