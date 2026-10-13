@@ -1116,13 +1116,14 @@ static void test_register_block_limit(void) {
         bool late_register = extra == 2;
         uint32_t count = boundary + extra;
         if (late_register) {
-            /* The last tail argument's dup crosses the bound within an existing block. */
+            /* Repeated owned tail operands still need one duplicate per arm. The last
+             * duplicate crosses the bound within an existing block. */
             count = 1;
             while (UINT64_C(2) * (count + 2u) * (count + 2u) <= MO_LIMIT_FUNCTION_REGISTER_BLOCKS)
                 count++;
         }
         const char *value_type = late_register ? "(text)" : "(unit)";
-        uint32_t arity = late_register ? 1u : 100u;
+        uint32_t arity = late_register ? 2u : 100u;
         struct mo_buffer text, out;
         struct mo_arena arena;
         struct mo_diags diags;
@@ -1180,6 +1181,9 @@ static void test_register_block_limit(void) {
             } else {
                 CHECK(out.length == 0 && diags.count == 1 &&
                       diags.items[0].code == MO_CODE_BYTECODE_TOO_BIG);
+                if (diags.count == 1)
+                    CHECK(strstr(diags.items[0].primary.text,
+                                 "MO_LIMIT_FUNCTION_REGISTER_BLOCKS") != NULL);
             }
         }
         mo_diags_free(&diags);
@@ -1254,7 +1258,8 @@ static MO_MUST_USE int corpus(int argc, char **argv, bool bigints) {
                         bool limit =
                             code == MO_CODE_TOO_MANY_REGISTERS ||
                             code == MO_CODE_FUNCTION_TOO_LONG || code == MO_CODE_BYTECODE_TOO_BIG ||
-                            code == MO_CODE_CODEGEN_MEMORY || code == MO_CODE_CODEGEN_BIGINT_WORK;
+                            code == MO_CODE_CODEGEN_MEMORY || code == MO_CODE_CODEGEN_BIGINT_WORK ||
+                            code == MO_CODE_CODEGEN_LIVE_WORK;
                         if (code == MO_CODE_CODEGEN_ENTRY)
                             entry++;
                         else if (code == MO_CODE_CODEGEN_REPRESENTATION)
@@ -1638,20 +1643,53 @@ static void test_primitive_ownership(void) {
     }
     mo_arena_free(&arena);
     mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
-    b = compile(&arena, "(Program () ((FunDecl \"go\" ((\"acc\" (text))) (text) "
-                        "(prim (text (concat)) ((var \"acc\") (lit (text \"ab\")))) "
+    b = compile(&arena, "(Program () ((FunDecl \"go\" ((\"acc\" (text)) (\"n\" (int))) (text) "
+                        "(if_ (prim (eq (int)) ((var \"n\") (lit (int 0)))) (var \"acc\") "
+                        "(call \"go\" ((prim (text (concat)) ((var \"acc\") (lit (text \"ab\")))) "
+                        "(prim (int (sub)) ((var \"n\") (lit (int 1))))))) "
                         "\"M\" (function) 0)) () \"go\" (noSource))");
     if (b != NULL) {
         const struct mo_bytecode_function *f = &b->functions[0];
         const uint32_t *call = instruction(f, MO_OP_PRIM, 0);
-        CHECK(call != NULL && call[4] == 0);
-        for (uint32_t pc = 0; pc < f->code_count;) {
-            const struct mo_opcode_info *op = mo_opcode_find(f->code[pc] & MO_OPCODE_MASK);
-            CHECK(op != NULL && op->number != MO_OP_DUP && op->number != MO_OP_DROP);
-            if (op == NULL)
-                break;
-            pc += 1u + op->fixed_count + (f->code[pc] >> MO_OPCODE_VARIABLE_SHIFT);
+        CHECK(call != NULL && call[4] == 0 && opcode_count(f, MO_OP_DUP) == 0 &&
+              opcode_count(f, MO_OP_DROP) == 0);
+        struct mo_buffer wire;
+        mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+        struct mo_write_error write_error;
+        bool written = mo_bytecode_write(b, &wire, &write_error);
+        CHECK(written);
+        struct mo_load_error load_error;
+        struct mo_image *image = written ? mo_load(wire.bytes, wire.length, &load_error) : NULL;
+        CHECK(image != NULL);
+        if (image != NULL) {
+            struct mo_limits limits = mo_limits_default();
+            struct mo_defect defect;
+            bool initialized = mo_image_init(image, &limits, &defect) == MO_RETURNED;
+            CHECK(initialized);
+            struct mo_process *p = initialized ? mo_process_new(image, &limits) : NULL;
+            CHECK(p != NULL);
+            if (p != NULL) {
+                struct mo_cell args[2], result;
+                bool value = mo_value_text(mo_process_heap(p), "z", 1, &args[0]);
+                CHECK(value);
+                args[1] = mo_cell_int(100);
+                if (value) {
+                    enum mo_outcome outcome = mo_call(p, 0, args, 2, &result, &defect);
+                    CHECK(outcome == MO_RETURNED);
+                    if (outcome == MO_RETURNED) {
+                        size_t length;
+                        const uint8_t *bytes = mo_value_data(result, &length);
+                        CHECK(length == 201 && bytes[0] == 'z');
+                        for (size_t i = 1; i + 1 < length; i += 2)
+                            CHECK(bytes[i] == 'a' && bytes[i + 1] == 'b');
+                        mo_value_drop(mo_process_heap(p), f->result_type, result);
+                    }
+                }
+                mo_process_free(p);
+            }
+            mo_image_free(image);
         }
+        mo_buffer_free(&wire);
     }
     mo_arena_free(&arena);
 }
