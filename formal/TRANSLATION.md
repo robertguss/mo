@@ -1144,6 +1144,9 @@ Different constructors order by declaration position without comparing fields;
 matching constructors compare fields using the same flattened proof offsets as
 derived Text. All generated cases and their field slots charge the lowerer's
 whole-program work budget; there is no recursive C proof or value walk.
+List Order emits a recursive join with the two remaining lists as parameters.
+One-level `uncons` cases decide exhaustion; matching heads compare once and an
+Equal result jumps with both tails. A proper prefix sorts before its extension.
 
 A derived order, for `Point` of 4.1:
 

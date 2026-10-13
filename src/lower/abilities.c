@@ -241,32 +241,99 @@ mo_core_expr lower_compare(struct lowering *p, const struct mo_ability_implement
     return less;
 }
 
+static mo_core_expr order_case(struct lowering *p, mo_core_expr value) {
+    mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CASE);
+    e->as.case_.expr = value;
+    e->as.case_.arms.count = 3;
+    e->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 3);
+    e->as.case_.arms.items[0] =
+        (struct mo_core_arm){.ctor = lower_text(p, "Less"), .body = ordering(p, "Less")};
+    e->as.case_.arms.items[1].ctor = lower_text(p, "Equal");
+    e->as.case_.arms.items[2] =
+        (struct mo_core_arm){.ctor = lower_text(p, "Greater"), .body = ordering(p, "Greater")};
+    return e;
+}
+
 static void fields_order(struct lowering *p, struct derived *d, uint32_t first,
                          mo_core_expr_list left, mo_core_expr_list right, mo_core_expr *out) {
     MO_ASSERT(left.count == right.count);
     for (uint32_t i = 0; i < left.count; i++) {
         lower_work(p, 1);
         MO_ASSERT(first + i < d->proof->part_count);
-        mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CASE);
-        e->as.case_.expr =
-            lower_compare(p, d->proof->parts[first + i], d->substitution, d->function->owner,
-                          d->function->depth, left.items[i], right.items[i]);
-        e->as.case_.arms.count = 3;
-        e->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 3);
-        e->as.case_.arms.items[0] =
-            (struct mo_core_arm){.ctor = lower_text(p, "Less"), .body = ordering(p, "Less")};
-        e->as.case_.arms.items[1].ctor = lower_text(p, "Equal");
-        e->as.case_.arms.items[2] =
-            (struct mo_core_arm){.ctor = lower_text(p, "Greater"), .body = ordering(p, "Greater")};
+        mo_core_expr e = order_case(p, lower_compare(p, d->proof->parts[first + i], d->substitution,
+                                                     d->function->owner, d->function->depth,
+                                                     left.items[i], right.items[i]));
         *out = e;
         out = &e->as.case_.arms.items[1].body;
     }
     *out = ordering(p, "Equal");
 }
 
+static mo_core_expr list_case(struct lowering *p, mo_core_ty element, mo_core_expr value) {
+    mo_core_expr_list values = args(p, 1);
+    values.items[0] = value;
+    mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CASE);
+    e->as.case_.expr = lower_prim(
+        p,
+        (struct mo_core_prim){.tag = MO_CORE_PRIM_LIST,
+                              .as.list = {.t = element, .op.tag = MO_CORE_LIST_OP_UNCONS}},
+        values);
+    e->as.case_.arms.count = 2;
+    e->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+    e->as.case_.arms.items[0].ctor = lower_text(p, "None");
+    e->as.case_.arms.items[1].ctor = lower_text(p, "Some");
+    e->as.case_.arms.items[1].names.count = 1;
+    e->as.case_.arms.items[1].names.items = LOWER_NEW(p, mo_core_string, 1);
+    e->as.case_.arms.items[1].names.items[0] = lower_fresh(p);
+    return e;
+}
+
+static void list_order(struct lowering *p, struct derived *d) {
+    MO_ASSERT(d->proof->part_count == 1);
+    struct instance *f = d->function;
+    mo_core_expr join = lower_expr(p, MO_CORE_EXPR_JOIN);
+    join->as.join.name = lower_fresh(p);
+    join->as.join.params = f->fun.params;
+    mo_core_expr start = lower_expr(p, MO_CORE_EXPR_JUMP);
+    start->as.jump.name = join->as.join.name;
+    start->as.jump.args = args(p, 2);
+    for (uint32_t i = 0; i < 2; i++)
+        start->as.jump.args.items[i] = lower_var(p, f->fun.params.items[i].name);
+    join->as.join.rest = start;
+    f->fun.body = join;
+    mo_core_expr left = list_case(p, d->type->as.list, start->as.jump.args.items[0]);
+    join->as.join.body = left;
+    for (uint32_t i = 0; i < 2; i++) {
+        mo_core_expr right = list_case(p, d->type->as.list, start->as.jump.args.items[1]);
+        left->as.case_.arms.items[i].body = right;
+        right->as.case_.arms.items[0].body = ordering(p, i == 0 ? "Equal" : "Greater");
+        if (i == 0)
+            right->as.case_.arms.items[1].body = ordering(p, "Less");
+        else {
+            mo_core_string a = left->as.case_.arms.items[1].names.items[0];
+            mo_core_string b = right->as.case_.arms.items[1].names.items[0];
+            mo_core_expr compare =
+                order_case(p, lower_compare(p, d->proof->parts[0], d->substitution, f->owner,
+                                            f->depth, projection(p, lower_var(p, a), 0),
+                                            projection(p, lower_var(p, b), 0)));
+            right->as.case_.arms.items[1].body = compare;
+            mo_core_expr again = lower_expr(p, MO_CORE_EXPR_JUMP);
+            again->as.jump.name = join->as.join.name;
+            again->as.jump.args = args(p, 2);
+            again->as.jump.args.items[0] = projection(p, lower_var(p, a), 1);
+            again->as.jump.args.items[1] = projection(p, lower_var(p, b), 1);
+            compare->as.case_.arms.items[1].body = again;
+        }
+    }
+}
+
 static void derive_order(struct lowering *p, struct derived *d) {
     p->span = d->span;
     struct instance *f = d->function;
+    if (d->type->tag == MO_CORE_TY_LIST) {
+        list_order(p, d);
+        return;
+    }
     if (d->type->tag == MO_CORE_TY_TUPLE) {
         size_t count = d->type->as.tuple.count;
         MO_ASSERT(count == d->proof->part_count);

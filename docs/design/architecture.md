@@ -874,7 +874,9 @@ Derived Order uses the same reservation queue, keyed additionally by ability.
 Tuple/record comparisons inspect parts left to right and continue only on Equal;
 choice comparisons dispatch on both constructors, with different cases ordered
 by declaration position and matching cases comparing their flattened fields.
-selected custom compare functions replace structural ordering, not equality.
+Selected custom compare functions replace structural ordering, not equality.
+List Order uses a join over the remaining two lists: compare heads once, advance
+both tails only on Equal, and order an exhausted list before a nonempty one.
 Native Float `compare` orders NaNs after numbers and returns Equal for two NaNs,
 while direct scalar comparison operators retain IEEE behavior.
 

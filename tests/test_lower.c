@@ -848,6 +848,56 @@ static void test_choice_order(void) {
     }
 }
 
+static void test_list_order(void) {
+    for (uint32_t probe = 0; probe < 4; probe++) {
+        struct lower_fixture f;
+        lower_fixture_init(&f, "module Main\nfn main() : Int\n"
+                               "if [2, 7] < [2, 7, 0]: 47 else: 1\nend\n");
+        const struct mo_source_type *part = &f.int_;
+        struct mo_source_type list = {.kind = MO_SOURCE_NAMED,
+                                      .name = "List",
+                                      .module = UINT32_MAX,
+                                      .count = 1,
+                                      .arguments = &part};
+        uint32_t operands[2];
+        for (uint32_t i = 0; i < 2; i++) {
+            uint32_t count = probe == 0 ? (i == 0 ? 2u : 3u) : probe == 1 ? 2u : probe == 2 ? i : 0;
+            uint32_t values[3];
+            for (uint32_t j = 0; j < count; j++)
+                values[j] = lower_fixture_row(&f, MO_S_INT, &f.int_,
+                                              probe == 1 && j == 0   ? (i == 0 ? "2" : "7")
+                                              : probe == 1 && j == 1 ? (i == 0 ? "7" : "0")
+                                              : j == 0               ? "2"
+                                              : j == 1               ? "7"
+                                                                     : "0",
+                                              0, NULL);
+            operands[i] = lower_fixture_row(&f, MO_S_LIST, &list, NULL, count, values);
+        }
+        struct mo_ability_implementation integer = {
+            .ability = MO_SOURCE_ORDER, .kind = MO_ABILITY_NATIVE, .type = &f.int_};
+        const struct mo_ability_implementation *parts[] = {&integer};
+        struct mo_ability_implementation proof = {.ability = MO_SOURCE_ORDER,
+                                                  .kind = MO_ABILITY_DERIVED,
+                                                  .type = &list,
+                                                  .part_count = 1,
+                                                  .parts = parts};
+        struct mo_checked_ability_use use = {operands[0], &proof};
+        uint32_t compare = lower_fixture_op(&f, probe == 3 ? MO_T_LE : MO_T_LT, &f.bool_,
+                                            operands[0], operands[1]);
+        f.rows[compare].ability_count = 1;
+        f.rows[compare].abilities = &use;
+        uint32_t yes = lower_fixture_row(&f, MO_S_INT, &f.int_, "47", 0, NULL);
+        uint32_t no = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+        uint32_t arms[] = {compare, yes, no};
+        (void)lower_fixture_row(&f, MO_S_IF, &f.int_, NULL, 3, arms);
+        const char *names[] = {"list-prefix", "list-first-part", "list-empty", "list-empty-equal"};
+        struct mo_core *core = checked(&f, names[probe], "returned\n47\n");
+        if (core != NULL)
+            run(core, 47);
+        lower_fixture_free(&f);
+    }
+}
+
 static void test_record_text(void) {
     struct lower_fixture f;
     lower_fixture_init(&f, "module Main\nstruct Point\nx: Int\nlabel: Text\nend\n"
@@ -1256,6 +1306,7 @@ int main(int argc, char **argv) {
     test_tuple_order();
     test_float_compare();
     test_choice_order();
+    test_list_order();
     test_record_text();
     test_text();
     test_result_entry();
