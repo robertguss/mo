@@ -1263,7 +1263,8 @@ static MO_MUST_USE int corpus(int argc, char **argv, bool bigints) {
                             code == MO_CODE_TOO_MANY_REGISTERS ||
                             code == MO_CODE_FUNCTION_TOO_LONG || code == MO_CODE_BYTECODE_TOO_BIG ||
                             code == MO_CODE_CODEGEN_MEMORY || code == MO_CODE_CODEGEN_BIGINT_WORK ||
-                            code == MO_CODE_CODEGEN_LIVE_WORK || code == MO_CODE_CODEGEN_REGISTER_WORK;
+                            code == MO_CODE_CODEGEN_LIVE_WORK ||
+                            code == MO_CODE_CODEGEN_REGISTER_WORK;
                         if (code == MO_CODE_CODEGEN_ENTRY)
                             entry++;
                         else if (code == MO_CODE_CODEGEN_REPRESENTATION)
