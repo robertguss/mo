@@ -162,7 +162,7 @@ static MO_MUST_USE enum mo_prim_status segment(struct mo_prim_call *c, const uin
             unsigned w = (p & MO_UCD_ZERO) != 0 ? 0U : (p & MO_UCD_WIDE) != 0 ? 2U : 1U;
             size_t peek = at;
             uint32_t next = at < length ? scalar(bytes, length, &peek) : 0;
-            bool emoji = (p & MO_UCD_EMOJI) != 0 && !(next == 0xfe0e && (p & MO_UCD_VARIANT) != 0);
+            bool emoji = (p & MO_UCD_EMOJI) != 0;
             emoji = emoji || (next == 0xfe0f && (p & MO_UCD_VARIANT) != 0) ||
                     (cp == 0x20e3 &&
                      (keycap(previous) || (previous == 0xfe0f && keycap(before_previous))));
@@ -224,7 +224,7 @@ static MO_MUST_USE enum mo_prim_status casing(struct mo_prim_call *c, const uint
             const uint32_t *values = m == NULL ? &one : &mo_unicode_scalars[m->offset];
             for (uint32_t i = 0; i < count; i++) {
                 unsigned n = encode(values[i], NULL);
-                if (n > MO_LIMIT_STRING_SIZE - wrote)
+                if (n > SIZE_MAX - wrote || !mo_prim_bytes_fit(c, wrote + n))
                     goto done;
                 if (pass != 0)
                     MO_ASSERT(encode(values[i], result + wrote) == n);
@@ -380,7 +380,7 @@ static MO_MUST_USE enum mo_prim_status normalize(struct mo_prim_call *c, const u
     size_t needed = 0;
     for (size_t i = 0; i < wrote; i++) {
         unsigned n = encode(values[i] & SCALAR_MASK, NULL);
-        if (n > MO_LIMIT_STRING_SIZE - needed)
+        if (n > SIZE_MAX - needed || !mo_prim_bytes_fit(c, needed + n))
             goto done;
         needed += n;
     }
@@ -401,10 +401,16 @@ done:
 enum mo_prim_status mo_prim_unicode(struct mo_prim_call *c, struct mo_cell *out) {
     size_t length;
     const uint8_t *bytes = mo_value_data(c->args[0], &length);
-    if (c->id == MO_PRIM_UNICODE16_GRAPHEMES || c->id == MO_PRIM_UNICODE16_DISPLAY_WIDTH)
+    switch ((unsigned)c->id) {
+    case MO_PRIM_UNICODE16_GRAPHEMES:
+    case MO_PRIM_UNICODE16_DISPLAY_WIDTH:
         return segment(c, bytes, length, out);
-    if (c->id == MO_PRIM_UNICODE16_NORMALIZE_NFC)
+    case MO_PRIM_UNICODE16_NORMALIZE_NFC:
         return normalize(c, bytes, length, out);
-    MO_ASSERT(c->id == MO_PRIM_UNICODE16_LOWERCASE || c->id == MO_PRIM_UNICODE16_UPPERCASE);
-    return casing(c, bytes, length, out);
+    case MO_PRIM_UNICODE16_LOWERCASE:
+    case MO_PRIM_UNICODE16_UPPERCASE:
+        return casing(c, bytes, length, out);
+    default:
+        MO_UNREACHABLE();
+    }
 }

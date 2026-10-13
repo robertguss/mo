@@ -124,6 +124,7 @@ static void mappings(void) {
         {'l', "ΟΣ'Α", "οσ'α"},
         {'l', "ΟΣ'", "ος'"},
         {'l', "Σ", "σ"},
+        {'l', "ʰΣ", "ʰσ"},
         {'l', "İI", "i\xcc\x87i"},
         {'n', "a\xcc\x95\xcc\x80", "à\xcc\x95"},
         {'n', "\xcc\x95\xcc\x80", "\xcc\x80\xcc\x95"},
@@ -171,6 +172,7 @@ static void widths(void) {
         {"©\ufe0e", 1},
         {"1\u20e3", 2},
         {"1\ufe0f\u20e3", 2},
+        {"का", 1},
         {"🇺🇸", 2},
         {"🇺🇸🇨", 4},
         {"👩‍👩‍👧‍👦", 2},
@@ -208,7 +210,7 @@ static void refusal(void) {
         const char *reason;
         CHECK(mo_prim_call(f.heap, &f.types, (enum mo_primitive_id)i, f.signature[i], &input, &out,
                            &reason) == MO_PRIM_OUT_OF_MEMORY);
-        CHECK(reason != NULL && strcmp(reason, "out of memory") == 0);
+        CHECK(reason != NULL && strstr(reason, "--max-heap") != NULL);
         CHECK(mo_cell_get_int(out) == 41 && memcmp(&input, &before, sizeof input) == 0);
         size_t length;
         const uint8_t *bytes = mo_value_data(input, &length);
@@ -220,46 +222,39 @@ static void refusal(void) {
     prim_fixture_free(&f);
 }
 
-static void output_limit(void) {
+static void large_results(void) {
     struct prim_fixture f;
-    prim_fixture_init(&f, 64 << 20);
+    prim_fixture_init(&f, 128 << 20);
     size_t baseline = mo_heap_used(f.heap);
     struct mo_buffer text;
     mo_buffer_init(&text, MO_LIMIT_STRING_SIZE);
-    /* U+0149 uppercases to U+02BC, N: two input bytes become three output bytes. */
-    const size_t count = MO_LIMIT_STRING_SIZE / 3;
-    for (size_t i = 0; i < count; i++)
-        MO_ASSERT(mo_buffer_append(&text, "\xc5\x89", 2));
-    for (size_t i = 0; i < MO_LIMIT_STRING_SIZE % 3; i++)
-        MO_ASSERT(mo_buffer_append_byte(&text, 'a'));
-    for (unsigned extra = 0; extra < 2; extra++) {
+    /* U+0149 expands under casing; U+0344 expands under NFC. Neither result
+     * is bounded by the compiler's source-file limit. Check every output byte. */
+    for (unsigned operation_index = 0; operation_index < 2; operation_index++) {
+        enum mo_primitive_id id =
+            operation_index == 0 ? MO_PRIM_UNICODE16_UPPERCASE : MO_PRIM_UNICODE16_NORMALIZE_NFC;
+        const char *source = operation_index == 0 ? "\xc5\x89" : "\xcd\x84";
+        const char *want = operation_index == 0 ? "\xca\xbcN" : "\xcc\x88\xcc\x81";
+        size_t width = strlen(want), count = MO_LIMIT_STRING_SIZE / width + 1;
+        text.length = 0;
+        for (size_t i = 0; i < count; i++)
+            MO_ASSERT(mo_buffer_append(&text, source, 2));
         struct mo_cell input, out = mo_cell_int(41);
         MO_ASSERT(mo_value_text(f.heap, (const char *)text.bytes, text.length, &input));
-        struct mo_cell before = input;
-        size_t used = mo_heap_used(f.heap);
         const char *reason;
         enum mo_prim_status status =
-            mo_prim_call(f.heap, &f.types, MO_PRIM_UNICODE16_UPPERCASE,
-                         f.signature[MO_PRIM_UNICODE16_UPPERCASE], &input, &out, &reason);
-        size_t length;
-        if (extra == 0) {
-            CHECK(status == MO_PRIM_RETURNED && reason == NULL);
+            mo_prim_call(f.heap, &f.types, id, f.signature[id], &input, &out, &reason);
+        CHECK(status == MO_PRIM_RETURNED && reason == NULL);
+        if (status == MO_PRIM_RETURNED) {
+            size_t length;
             const uint8_t *bytes = mo_value_data(out, &length);
-            CHECK(length == MO_LIMIT_STRING_SIZE);
+            CHECK(length == count * width);
             for (size_t i = 0; i < count; i++)
-                CHECK(memcmp(bytes + i * 3, "\xca\xbcN", 3) == 0);
-            for (size_t i = count * 3; i < length; i++)
-                CHECK(bytes[i] == 'A');
+                CHECK(memcmp(bytes + i * width, want, width) == 0);
             mo_value_drop(f.heap, f.builtin[MO_TYPE_TEXT], out);
         } else {
-            CHECK(status == MO_PRIM_OUT_OF_MEMORY && strcmp(reason, "out of memory") == 0);
-            CHECK(mo_cell_get_int(out) == 41 && memcmp(&input, &before, sizeof input) == 0);
-            const uint8_t *bytes = mo_value_data(input, &length);
-            CHECK(length == text.length && memcmp(bytes, text.bytes, length) == 0);
-            CHECK(mo_heap_used(f.heap) == used && mo_cell_get_ref(input)->count == 1);
             mo_value_drop(f.heap, f.builtin[MO_TYPE_TEXT], input);
         }
-        MO_ASSERT(mo_buffer_append_byte(&text, 'a'));
     }
     mo_buffer_free(&text);
     CHECK(mo_heap_objects(f.heap) == 0 && mo_heap_used(f.heap) == baseline);
@@ -342,6 +337,6 @@ int main(int argc, char **argv) {
     mappings();
     widths();
     refusal();
-    output_limit();
+    large_results();
     return mo_test_report("Unicode16");
 }

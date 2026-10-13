@@ -1106,8 +1106,9 @@ index, including `fn() : T` for a zero-argument constant. Entry sets and checks
 unchanged zero-based row of `base/prims.def`, declared in `base/prims.h` so
 `prim` need not depend on `bytecode`. A typed status distinguishes a result,
 overflow, division by zero, an outside-domain call, a repeated map-literal key,
-allocation/size refusal, and a primitive not implemented in the current stage.
-The static reason is detail for a defect, never something dispatch parses.
+and allocation/size refusal. All primitive rows are implemented. The static
+reason records the arithmetic type, outside-domain operation or representation
+limit for the VM's defect report.
 Only a returned result transfers ownership: the result is owned, the `o`
 parameters are consumed, and the `b` parameters stay readable. All refusals
 preserve every operand, its object and ownership, and the output cell, so the
@@ -1149,8 +1150,9 @@ states, sigma lookahead runs do not overlap, and canonical ordering uses
 stable counting sort on long combining runs (insertion sort only up to 32
 scalars). Decompositions expand to at most four scalars, case mappings to
 three. Scratch derives from input/output sizes and shares the process heap
-budget. Output also respects `MO_LIMIT_STRING_SIZE` and collection limits;
-any refusal preserves operands and output just like part 1.
+budget. Output respects the runtime `MO_LIMIT_VALUE_BYTES` representation
+ceiling and collection limits, not the source-file limit. Allocation refusals
+name `--max-heap`; any refusal preserves operands and output just like part 1.
 
 **Core's checker.** `mo_core_check` accepts complete parsed or arena-built
 Core trees, not arbitrary pointers or invalid C enum tags. Its typing contract

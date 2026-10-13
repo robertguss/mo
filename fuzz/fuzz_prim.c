@@ -81,8 +81,8 @@ static MO_MUST_USE bool cell(struct prim_fixture *f, uint32_t type, struct input
             0,       'A',     'a',    '\'',   0x3a3,  0x345,  0x130,  0xdf,    0x301,
             0x315,   0x915,   0x94d,  0x924,  0x200d, 0xfe0e, 0xfe0f, 0x1f469, 0x1f1e6,
             0x1f1fa, 0x1f3fb, 0x2764, 0x20e3, 0x1100, 0x1161, 0x11a8, 0x16d63, 0x16d67};
-        uint8_t bytes[256];
-        size_t count = byte(in) % 65, length = 0;
+        uint8_t bytes[1024];
+        size_t count = byte(in), length = 0;
         for (size_t i = 0; i < count; i++) {
             uint64_t raw = word(in);
             uint32_t cp = (raw & 1) != 0
@@ -241,7 +241,6 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (built == count) {
         const char *reason;
         status = mo_prim_call(f.heap, &f.types, id, f.signature[id], args, &result, &reason);
-        MO_ASSERT(status != MO_PRIM_NOT_IMPLEMENTED);
         if (status == MO_PRIM_RETURNED) {
             MO_ASSERT(reason == NULL);
             unicode_laws(&f, id, args, result);

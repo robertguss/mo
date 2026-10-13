@@ -81,7 +81,7 @@ def fixtures(sources):
             cp = ord(ch)
             w = 0 if cp in zero else 2 if cp in wide else 1
             following = cluster[i+1:i+2]
-            presentation = cp in emoji and not (following == "\ufe0e" and cp in variants)
+            presentation = cp in emoji
             presentation |= cp in variants and following == "\ufe0f"
             presentation |= ch == "\u20e3" and (cluster[i-1:i] in "#*0123456789" and i > 0 or
                             i > 1 and cluster[i-1] == "\ufe0f" and cluster[i-2] in "#*0123456789")
@@ -157,6 +157,7 @@ def fixtures(sources):
                 "I\u0307", "AΣ\U000e0100", "AΣ\U000e0100B"]
     # Both overlapping Cased/Case_Ignorable and ordinary ignorable context.
     examples += ["AΣ" + chr(cp) + suffix for cp in sorted(ignorable) for suffix in ["", "A"]]
+    examples += [prefix + chr(cp) + "Σ" for cp in sorted(cased & ignorable) for prefix in ["", "A"]]
     examples += ["".join(rng.choice("ΣAαßİıﬃ .'\u0345\u0307") for _ in range(rng.randrange(128)))
                  for _ in range(256)]
     for i, text in enumerate(examples):
@@ -178,6 +179,17 @@ def fixtures(sources):
     for _, row in rows(sources["emoji/emoji-variation-sequences.txt"]):
         text = string(row.split(";", 1)[0])
         add("emoji variation:" + row.split(";", 1)[0], "w", text, str(width(text)))
+    # Keycaps are sequences, not Emoji_Presentation scalar properties or
+    # variation-sequence rows. Exercise every base, both valid spellings and
+    # nearby non-keycap forms with independent expected widths.
+    for base in "#*0123456789":
+        for selector in ["", "\ufe0f"]:
+            text = base + selector + "\u20e3"
+            add(f"keycap:{base}:{selector!r}", "w", text, "2")
+            add(f"keycap grapheme:{base}:{selector!r}", "g", text, hex_text(text))
+        add(f"keycap text selector:{base}", "w", base + "\ufe0e\u20e3", "1")
+    add("keycap mark alone", "w", "\u20e3", "0")
+    add("spacing mark width policy", "w", "का", "1")
     return cases, f"{grapheme_count} grapheme vectors, {normalized} NFC rows (all five columns), full case/width data"
 
 
@@ -186,7 +198,7 @@ def corpus(sources, directory):
     ids = re.findall(r'^PRIM\((\w+),', pathlib.Path("src/base/prims.def").read_text(), re.M)
     def save(name, id_name, text):
         assert len(text) <= 64
-        raw = bytes([ids.index(id_name), 1, len(text)])
+        raw = bytes([ids.index(id_name), 1, 0, 0, len(text)])
         raw += b"".join(struct.pack("<Q", ord(c) << 1) for c in text)
         (directory / name).write_bytes(raw)
     for number, row in rows(sources["auxiliary/GraphemeBreakTest.txt"]):
@@ -205,6 +217,9 @@ def corpus(sources, directory):
         cp = chr(int(row.split(";")[0], 16))
         save(f"ucd-upper-{number}", "UNICODE16_UPPERCASE", "A" + cp + "Σ")
         save(f"ucd-lower-{number}", "UNICODE16_LOWERCASE", "AΣ" + cp)
+    for i, base in enumerate("#*0123456789"):
+        for j, selector in enumerate(["", "\ufe0f"]):
+            save(f"ucd-keycap-{i}-{j}", "UNICODE16_DISPLAY_WIDTH", base + selector + "\u20e3")
     for i, text in enumerate(["0001-01-01T00:00:00Z", "9999-12-31T23:59:59.999999Z",
                               "2026-10-12T04:15:00.5+02:00", "1970-01-01T00:00:60Z"]):
         save(f"time-parse-{i}", "TIME_PARSE", text)

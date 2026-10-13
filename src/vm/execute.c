@@ -64,9 +64,6 @@ static MO_MUST_USE enum mo_outcome primitive_stop(struct mo_process *p, enum mo_
         if (strstr(reason, "MO_LIMIT_VALUE_BYTES") == NULL)
             return memory(p);
         break;
-    case MO_PRIM_NOT_IMPLEMENTED:
-        reason = "internal error: primitive dispatch unavailable";
-        break;
     case MO_PRIM_RETURNED:
         MO_UNREACHABLE();
     }

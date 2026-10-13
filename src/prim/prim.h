@@ -12,7 +12,6 @@ enum mo_prim_status {
     MO_PRIM_OUTSIDE,
     MO_PRIM_REPEATED_KEY,
     MO_PRIM_OUT_OF_MEMORY,
-    MO_PRIM_NOT_IMPLEMENTED,
 };
 
 /* types is sealed and belongs to heap's image. id and instantiation are verified: a
@@ -22,8 +21,7 @@ enum mo_prim_status {
  * consumes exactly prims.def's owned parameters; borrowed parameters stay readable.
  * All other outcomes leave operands, their objects/ownership and out unchanged.
  * reason_out is required, gives static detail on refusal and is NULL on success.
- * Entry sets FE_TONEAREST; the VM's arithmetic and subsequent primitive calls use it.
- * NOT_IMPLEMENTED is the explicit staged-library refusal, never a language failure. */
+ * Entry sets FE_TONEAREST; the VM's arithmetic and subsequent primitive calls use it. */
 MO_MUST_USE enum mo_prim_status mo_prim_call(struct mo_heap *heap, const struct mo_types *types,
                                              enum mo_primitive_id id, uint32_t instantiation,
                                              const struct mo_cell *arguments, struct mo_cell *out,

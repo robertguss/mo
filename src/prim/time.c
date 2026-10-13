@@ -76,26 +76,29 @@ static MO_MUST_USE bool parse(const uint8_t *s, size_t n, int64_t *out) {
 }
 
 enum mo_prim_status mo_prim_time(struct mo_prim_call *c, struct mo_cell *out) {
-    if (c->id == MO_PRIM_TIME_TO_TEXT || c->id == MO_PRIM_DURATION_TO_TEXT)
+    switch ((unsigned)c->id) {
+    case MO_PRIM_TIME_TO_TEXT:
+    case MO_PRIM_DURATION_TO_TEXT:
         return mo_prim_print(c, c->params[0], c->args[0], out);
-    if (c->id == MO_PRIM_TIME_CHECKED_ADD) {
+    case MO_PRIM_TIME_CHECKED_ADD: {
         mo_i128 t = (mo_i128)mo_cell_get_time(c->args[0]) + mo_cell_get_duration(c->args[1]);
         bool valid = in_time(t);
         return mo_prim_option(c, valid, valid ? mo_cell_time((int64_t)t) : mo_cell_unit(), out);
     }
-    if (c->id == MO_PRIM_TIME_PARSE) {
+    case MO_PRIM_TIME_PARSE: {
         size_t length;
         const uint8_t *s = mo_value_data(c->args[0], &length);
         int64_t t;
         bool valid = parse(s, length, &t);
         return mo_prim_option(c, valid, valid ? mo_cell_time(t) : mo_cell_unit(), out);
     }
-    int64_t micros = mo_cell_get_duration(c->args[0]);
-    if (c->id == MO_PRIM_DURATION_IN_MILLISECONDS)
-        *out = mo_cell_int(micros / 1000);
-    else {
-        MO_ASSERT(c->id == MO_PRIM_DURATION_IN_SECONDS);
-        *out = mo_cell_decimal((mo_i128)micros * INT64_C(1000000000000));
+    case MO_PRIM_DURATION_IN_MILLISECONDS:
+        *out = mo_cell_int(mo_cell_get_duration(c->args[0]) / 1000);
+        return MO_PRIM_RETURNED;
+    case MO_PRIM_DURATION_IN_SECONDS:
+        *out = mo_cell_decimal((mo_i128)mo_cell_get_duration(c->args[0]) * INT64_C(1000000000000));
+        return MO_PRIM_RETURNED;
+    default:
+        MO_UNREACHABLE();
     }
-    return MO_PRIM_RETURNED;
 }

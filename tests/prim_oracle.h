@@ -480,7 +480,6 @@ static void oracle_query(struct prim_fixture *fixtures, const struct mo_buffer *
             break;
         case MO_PRIM_RETURNED:
         case MO_PRIM_OUT_OF_MEMORY:
-        case MO_PRIM_NOT_IMPLEMENTED:
             MO_UNREACHABLE();
         }
         MO_ASSERT(mo_cell_get_int(result) == 41);

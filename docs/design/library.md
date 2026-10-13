@@ -556,6 +556,12 @@ not compatibility normalization. Case conversion uses full mappings from
 on the original text; Turkish, Azeri and Lithuanian rules are excluded. It
 does not normalize its result.
 
+Final sigma skips `Case_Ignorable` scalars before testing `Cased`, following
+ICU, CPython and Rust. This also skips the 267 Unicode 16.0 scalars with both
+properties; they do not establish or terminate the cased context. In
+particular, `lowercase("ʰΣ")` is `"ʰσ"`, not `"ʰς"`. This resolves the
+overlap in the literal wording of Unicode Table 3-17.
+
 `display_width` is a deterministic column estimate, **not a terminal or font
 measurement**. Split the original text into the same extended graphemes and
 sum their widths. A grapheme's width is the maximum of its scalar widths:
@@ -567,8 +573,7 @@ sum their widths. A grapheme's width is the maximum of its scalar widths:
   width 1, unless default-ignorable. CRLF is one grapheme of width 1. There
   are no tab stops, cursor movements or line resets in this calculation.
 - Emoji presentation gives width 2 to the whole grapheme: a scalar with
-  `Emoji_Presentation` (unless immediately followed by a registered text
-  selector U+FE0E), a registered base plus emoji selector U+FE0F, or a keycap
+  `Emoji_Presentation`, a registered base plus emoji selector U+FE0F, or a keycap
   `#`, `*`, `0`–`9` plus optional U+FE0F and U+20E3. Regional-indicator pairs,
   modifier, tag and ZWJ sequences with emoji-presenting components therefore
   have width 2, not the sum of their components. A text selector does not
@@ -576,8 +581,12 @@ sum their widths. A grapheme's width is the maximum of its scalar widths:
 
 An empty text or a grapheme consisting only of zero-width scalars has width
 0. This policy deliberately gives width 1 to multi-letter Indic conjuncts
-and width 2 to conjoining wide Hangul. It is versioned with `Unicode16`, not
-with the environment's rendering conventions.
+and width 2 to conjoining wide Hangul. Unlike Rust's `unicode-width` 0.2,
+Mo takes a maximum per grapheme instead of summing scalar widths with
+ligature rules, and treats spacing combining marks (`Mc`) as zero. For
+example, `का` has width 1 in Mo and 2 there. Single scalars and complex
+clusters can therefore differ; neither policy specifies a font's rendering.
+Mo's policy is versioned with `Unicode16`, not the environment.
 
 ## Functions
 
