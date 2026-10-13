@@ -7,6 +7,7 @@
 #include "base/limits.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum host_operation {
@@ -61,9 +62,15 @@ struct local {
     bool used;
 };
 
+struct emitted_lambda {
+    struct mo_checked_lambda output;
+    struct note **parameters;
+};
+
 struct emitted {
     struct mo_checked_expression output;
     struct note **operands;
+    struct emitted_lambda *lambda;
 };
 
 struct note {
@@ -122,7 +129,7 @@ struct inference {
     const char *type_label;
     uint16_t expectation, node_expectation;
     uint32_t count, binding_count, depth, loops, lambda, work, epoch;
-    uint32_t pattern_group, pattern_depth;
+    uint32_t pattern_group, pattern_depth, lambda_count;
     bool checked;
     bool keep_patterns;
     bool failed, fatal, partial;
@@ -608,6 +615,13 @@ static MO_MUST_USE bool record(struct inference *p, const struct mo_syntax *node
     p->last = n;
     p->count++;
     return true;
+}
+
+static MO_MUST_USE int source_note_order(const void *a, const void *b) {
+    const struct note *x = *(const struct note *const *)a;
+    const struct note *y = *(const struct note *const *)b;
+    uint32_t left = x->output.syntax->span.start, right = y->output.syntax->span.start;
+    return left < right ? -1 : left > right ? 1 : 0;
 }
 
 static MO_MUST_USE int compare_text(const struct mo_syntax *a, const char *b) {
@@ -2195,15 +2209,33 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         }
         if (expected != NULL && !unify_as(p, fn, expected, p->node_expectation))
             return (struct value){0};
+        struct value emitted = graph(p, (struct value){.type = fn}, 1);
+        if (emitted.type == NULL)
+            return emitted;
+        if (p->checked) {
+            struct emitted_lambda *lambda =
+                allocate(p, 1, sizeof(*lambda), _Alignof(struct emitted_lambda));
+            struct note **notes =
+                allocate(p, parameters->count, sizeof(*notes), _Alignof(struct note *));
+            if (p->failed)
+                return (struct value){0};
+            *lambda = (struct emitted_lambda){.output = {.parameter_count = parameters->count},
+                                              .parameters = notes};
+            emitted.graph->lambda = lambda;
+            p->lambda_count++;
+        }
         struct local *mark = p->locals;
         struct term *old_result = p->result;
         uint32_t old_loops = p->loops;
         p->loops = 0;
         p->lambda++;
         p->result = fn->arguments[parameters->count];
-        for (uint32_t i = 0; i < parameters->count; i++)
+        for (uint32_t i = 0; i < parameters->count; i++) {
             if (!bind(p, parameters->children[i], fn->arguments[i], false))
                 return (struct value){0};
+            if (p->checked)
+                emitted.graph->lambda->parameters[i] = p->last;
+        }
         struct value body = named(p->result, "Unit")
                                 ? discard(p, node->children[1])
                                 : infer_as(p, node->children[1], p->result, MO_CODE_RESULT_TYPE);
@@ -2212,7 +2244,9 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         p->result = old_result;
         p->loops = old_loops;
         p->lambda--;
-        return (struct value){.type = fn};
+        if (p->checked)
+            emitted.graph->operands[0] = body.note;
+        return emitted;
     }
     case MO_S_IF:
     case MO_S_LINE_IF:
@@ -2470,7 +2504,8 @@ static MO_MUST_USE struct value infer(struct inference *p, const struct mo_synta
         node->kind != MO_S_FALSE && node->kind != MO_S_NAME && node->kind != MO_S_VAR &&
         node->kind != MO_S_BIND && node->kind != MO_S_BINARY && node->kind != MO_S_BINARY_CHAIN &&
         node->kind != MO_S_RANGE && node->kind != MO_S_NEGATE && node->kind != MO_S_NOT &&
-        node->kind != MO_S_PREFIX && node->kind != MO_S_CALL && node->kind != MO_S_POSTFIX) {
+        node->kind != MO_S_PREFIX && node->kind != MO_S_CALL && node->kind != MO_S_POSTFIX &&
+        node->kind != MO_S_LAMBDA) {
         bool reported = unfinished(p);
         (void)reported;
         p->depth--;
@@ -2909,12 +2944,17 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
         const struct mo_checked_binding **parameter_bindings =
             allocate(&p, parameters->count, sizeof(*parameter_bindings),
                      _Alignof(const struct mo_checked_binding *));
+        struct note **lambdas =
+            allocate(&p, p.lambda_count, sizeof(*lambdas), _Alignof(struct note *));
         if (p.failed)
             goto failed;
-        uint32_t count = 0, binding_count = 0;
+        uint32_t count = 0, binding_count = 0, lambda_count = 0;
         for (struct note *n = p.notes; n != NULL; n = n->next) {
-            if (n->graph != NULL)
+            if (n->graph != NULL) {
                 n->index = count++;
+                if (n->graph->lambda != NULL)
+                    lambdas[lambda_count++] = n;
+            }
             if (n->binding != n)
                 continue;
             const struct mo_syntax *name = n->output.syntax;
@@ -2932,6 +2972,10 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
                                                                      .variable = n->variable};
         }
         MO_ASSERT(binding_count == p.binding_count);
+        MO_ASSERT(lambda_count == p.lambda_count);
+        qsort(lambdas, lambda_count, sizeof(*lambdas), source_note_order);
+        for (uint32_t i = 0; i < lambda_count; i++)
+            lambdas[i]->graph->lambda->output.number = i + 1;
         for (uint32_t i = 0; i < parameters->count; i++) {
             MO_ASSERT(parameter_notes[i]->binding_index < binding_count);
             parameter_bindings[i] = &bindings[parameter_notes[i]->binding_index];
@@ -2950,6 +2994,21 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
             }
             if (!finish_operator(&p, n))
                 goto failed;
+            if (g->lambda != NULL) {
+                struct emitted_lambda *lambda = g->lambda;
+                const struct mo_checked_binding **bound =
+                    allocate(&p, lambda->output.parameter_count, sizeof(*bound),
+                             _Alignof(const struct mo_checked_binding *));
+                if (bound == NULL)
+                    goto failed;
+                for (uint32_t i = 0; i < lambda->output.parameter_count; i++) {
+                    MO_ASSERT(lambda->parameters[i]->binding_index < binding_count);
+                    bound[i] = &bindings[lambda->parameters[i]->binding_index];
+                }
+                lambda->output.parameters = bound;
+                lambda->output.body = operands[0];
+                g->output.lambda = &lambda->output;
+            }
             rows[n->index] = g->output;
             rows[n->index].syntax = n->output.syntax;
             rows[n->index].type = n->output.type;

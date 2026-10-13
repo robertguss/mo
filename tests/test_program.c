@@ -160,10 +160,45 @@ static void console_graph(void) {
     free_fixture(&f);
 }
 
+static void lambda_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\n"
+             "fn compose(f: fn(Int) : Int, g: fn(Int) : Int, value: Int) : Int\n"
+             "f(g(value))\nend\n"
+             "fn main() : Int\ncompose(fn(x) x + 1 end, fn(y) y * 2 end, 20)\nend\n");
+    const struct mo_program *program = f.program;
+    CHECK(program != NULL && !mo_diags_any(&f.diags));
+    if (program != NULL) {
+        const struct mo_checked_body *body = &program->functions[program->entry.function].body;
+        uint32_t count = 0;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->lambda == NULL)
+                continue;
+            const struct mo_checked_lambda *lambda = row->lambda;
+            count++;
+            CHECK(lambda->number == count && lambda->capture_count == 0);
+            MO_ASSERT(lambda->parameter_count == 1 && lambda->body < i);
+            CHECK(row->operand_count == 1 && row->operands[0] == lambda->body);
+            CHECK(strcmp(lambda->parameters[0]->name, count == 1 ? "x" : "y") == 0);
+            CHECK(strcmp(lambda->parameters[0]->type->name, "Int") == 0);
+            CHECK(row->type->kind == MO_SOURCE_FUNCTION && row->type->count == 2);
+            CHECK(strcmp(row->type->arguments[1]->name, "Int") == 0);
+            bool read = false;
+            for (uint32_t j = 0; j < lambda->body; j++)
+                read = read || body->items[j].binding == lambda->parameters[0];
+            CHECK(read);
+        }
+        CHECK(count == 2);
+    }
+    free_fixture(&f);
+}
+
 static void run(void *argument) {
     (void)argument;
     entry_graph();
     console_graph();
+    lambda_graph();
 }
 
 int main(void) {
