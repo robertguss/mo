@@ -1,5 +1,5 @@
 /* Loading, intermediate checks and the checked-program contract.
- * The implemented stages are not mo_check and cannot certify a program for lowering.
+ * Only mo_check certifies a program for lowering; intermediate stages do not.
  * Arrays and names belong to arena; interface declaration and origin pointers borrow the loaded
  * syntax, which must outlive the interfaces. Syntax owns its token text
  * independently of sources. */
@@ -95,7 +95,8 @@ enum mo_source_type_kind {
 /* Canonical annotation types: equal types have the same pointer within one
  * preparation. Named types use module UINT32_MAX for built-ins; type parameters
  * belong to their declaring function or data type. Function arguments include the result in
- * the last slot. Declaration pointers borrow the module interfaces. */
+ * the last slot. Declaration pointers borrow the module interfaces, except
+ * immutable native parameter owners, which have no source declaration. */
 struct mo_source_type {
     enum mo_source_type_kind kind;
     const char *name;
@@ -190,10 +191,10 @@ mo_infer_function(struct mo_arena *arena, const struct mo_module_interfaces *int
                   const struct mo_signatures *signatures, uint32_t function,
                   struct mo_diags *diags);
 
-/* Checked-program contract for lower. PROVISIONAL layout: declared here so
- * lowering can be built against it; mo_check is not implemented yet. None of
- * the intermediate APIs above fills or certifies these records. The invariants
- * below describe a successful future mo_check, not the current staged checker.
+/* Checked-program contract for lower. PROVISIONAL layout while checking is
+ * completed. mo_check fills these records only for its certified subset;
+ * unfinished stages return E1103. None of the intermediate APIs above
+ * certifies these records.
  * This is an in-memory compiler interface, not a serialized or stable ABI. */
 
 struct mo_type_argument {
@@ -274,7 +275,10 @@ struct mo_checked_pattern_part {
 /* Named fields are in declaration order; omitted fields become ANY. A list is
  * normalized to empty (zero parts) or cons (two parts), including its rest.
  * Alternatives share canonical binding pointers, not just matching spellings.
- * LITERAL retains its source spelling and already range-checked contextual type. */
+ * Omitted-field ANY nodes are immutable and may be shared; their syntax names
+ * the declaring field. Ignored _ has no binding entry. LITERAL retains its
+ * source spelling and already range-checked contextual type, with no expression
+ * rows emitted for its spelling or unary minus. */
 struct mo_checked_pattern {
     enum mo_checked_pattern_kind kind;
     const struct mo_syntax *syntax;
@@ -316,6 +320,7 @@ struct mo_checked_try {
 struct mo_checked_lambda {
     uint32_t number; /* one-based source order within the containing function/constant/spec */
     uint32_t parameter_count;
+    /* NULL for _; its type is in the lambda expression's function type. */
     const struct mo_checked_binding *const *parameters;
     uint32_t body; /* expression index in the containing checked body */
     uint32_t capture_count;
@@ -338,7 +343,48 @@ struct mo_checked_ability_use {
  * inference variables. Bound names, including parameters/patterns, have types
  * in the binding table even when they need no expression row. Generic uses
  * include every required ability implementation, including function values;
- * lower substitutes those proofs for PARAMETER uses in the generic body. */
+ * lower substitutes those proofs for PARAMETER uses in the generic body.
+ *
+ * SEQUENCE operands are statement roots in order; the last supplies its value,
+ * or Unit when empty. GROUP/EXPR_STMT forward their single operand. IF/LINE_IF
+ * operands are condition, body, then each else-if condition/body, then an
+ * optional else body. RETURN has an optional guard first, then an optional
+ * value; syntax distinguishes bare return from guarded bare return. Guards
+ * run before the lazy value, even though the value is written first.
+ *
+ * WHILE operands are condition/body; FOR operands are iterable/body. Both
+ * return Unit. The body is lazy, and WHILE re-evaluates its condition each
+ * round. FOR binding is its canonical element name, or NULL for _ or a tuple;
+ * pattern is the normalized element binder, including ignored/tuple slots.
+ * BREAK/CONTINUE have zero operands or one guard, and target the nearest loop
+ * in the same function/lambda. Match arms have their own binding scopes;
+ * pattern alternatives share canonical binders. IS has one scrutinee operand
+ * and its normalized pattern; its bindings follow reference 7.4's true path.
+ *
+ * A new binding or whole-var assignment has one initializer/value operand.
+ * Tuple binding has a normalized binder pattern instead of a single binding.
+ * Compound assignment's value is an explicit operator row that borrows the
+ * assignment syntax; operation is authoritative and that row is not a write.
+ * A field assignment has its target projection then its value, with binding
+ * pointing at the base var. Projection operands recursively retain the field
+ * path; do not mutate the projected value independently of that base var.
+ * For a compound field write, the same projection row is operand zero of both
+ * the write and its RHS operator. Evaluate it once, not once per reference.
+ * Constructors have payload operands only, in written order. A NAMED_ARG
+ * operand wraps its value and supplies its declaration-order field index.
+ * An unnamed payload is the sole operand, at field zero. Field/projection
+ * rows have one base operand and field's resolved index.
+ *
+ * Ordinary calls have callee first, then positional arguments. Native dot
+ * calls omit a callee row; native names the selected operation and operands
+ * begin with its explicit receiver. receiver is that row index, not a slot.
+ * Lambdas have one lazy body operand, also named by lambda->body.
+ *
+ * Intermediate flat operator rows borrow the operator TOKEN's syntax. A
+ * final chain/postfix row borrows the whole owner node; its last syntax step
+ * determines the kind, while operation/field/symbol/native resolve the use.
+ * Numeric leaves keep their spelling: lower must fold a literal's immediate
+ * unary minus before constructing a scalar, including Int's signed minimum. */
 struct mo_checked_expression {
     const struct mo_syntax *syntax;
     const struct mo_source_type *type;
@@ -355,7 +401,7 @@ struct mo_checked_expression {
     const struct mo_checked_ability_use *abilities;
     enum mo_checked_or or_kind;
     const struct mo_checked_try *try_;
-    const struct mo_checked_pattern *pattern; /* is; case uses match instead */
+    const struct mo_checked_pattern *pattern; /* is, for or tuple binder; case uses match */
     const struct mo_checked_match *match;
     const struct mo_checked_lambda *lambda;
     bool assignment; /* writes binding's original var; false for a new binding */
@@ -434,7 +480,8 @@ struct mo_checked_entry {
 /* Only a successful mo_check certifies these invariants. interfaces and
  * signatures are prepared in the result arena and belong to this program;
  * set and syntax are borrowed and must outlive it. Names, type DAGs, typed
- * bodies, substitutions, ability graphs and spec byte copies belong to arena.
+ * bodies, substitutions, ability graphs and spec byte copies belong to arena;
+ * native spellings and scoped native parameter templates may borrow immutable compiler tables.
  * It borrows no mo_sources bytes: lower takes the original sources separately
  * to copy filenames/provenance into its own Core arena. All spans retain the
  * original file indices. Do not mutate syntax, interfaces or signatures after
@@ -455,12 +502,20 @@ struct mo_program {
     struct mo_checked_entry entry;
 };
 
-/* DECLARATION ONLY, not implemented in this slice. Eventually composes all
- * checks, returning a lowering-ready program or NULL with diagnostics, never
+/* Composes the implemented checks, returning a lowering-ready program for
+ * the certified subset or NULL with diagnostics, never
  * a partially certified result. set must satisfy mo_resolve_modules' input
- * contract. Use the explicit source-stage stack. This checks anchor typing,
- * completeness and links but executes no source code: tools compile/run
- * anchors to verify their allows/forbids expectations before accepting a
+ * contract. Use the explicit source-stage stack. The current skeleton supports
+ * nongeneric functions, scalar expressions/operators, direct/indirect calls,
+ * records/choices and fields, normalized patterns, tuples/lists, conditionals,
+ * loops, early exits/asserts and noncapturing lambdas. Native support is direct Console.print; main
+ * takes no parameters or one Console and returns Unit or Int. Invalid entry
+ * signatures report E0079; valid unfinished entry forms return E1103. Imports,
+ * constants/specs, generic functions, any where clause, ability customizers,
+ * written Map/Set types (Hash unchecked), derived abilities and unfinished body
+ * forms return E1103.
+ * Future spec checking checks anchor typing, completeness and links but executes no source code:
+ * tools compile/run anchors to verify their allows/forbids expectations before accepting a
  * command-line mo check. Unfinished stages must report E1103, not succeed. */
 MO_MUST_USE struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *set,
                                         struct mo_diags *diags);

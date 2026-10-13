@@ -169,6 +169,9 @@ fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test $(BUILD)/d
 				awk 'BEGIN { print "module Main\nfn run(a: Bool, b: Bool, c: Bool, d: Range, e: Int, f: Int, g: Int, h: fn(Bool) : Int) : Bool"; for (i = 0; i < 255; i++) printf "a implies b or c and not d == e .. f + g * -h("; printf "a"; for (i = 0; i < 255; i++) printf ")"; print "\nend" }' >$$corpus/max-nesting.mo; \
 				awk 'BEGIN { print "module Main\nfn duplicate(value: T) : (T, T)\n(value, value)\nend\nfn ignore(_value: T)\nend\nfn run()\n_v0 = 1"; for (i = 1; i <= 250; i++) printf "_v%d = duplicate(_v%d)\n", i, i-1; for (i = 0; i < 40000; i++) print "ignore(_v250)"; print "end" }' >$$corpus/work-budget.mo; \
 			fi; \
+			if [ "$$name" = fuzz_program ]; then \
+				awk 'BEGIN { print "module Main\nfn run(a: Bool, b: Bool, c: Bool, d: Range, e: Int, f: Int, g: Int, h: fn(Bool) : Int) : Bool"; for (i = 0; i < 255; i++) printf "a implies b or c and not d == e .. f + g * -h("; printf "a"; for (i = 0; i < 255; i++) printf ")"; print "\nend\nfn main()\nend" }' >$$corpus/max-nesting.mo; \
+			fi; \
 			if [ "$$name" = fuzz_syntax ]; then cp grammar/tests/good/*.mo grammar/tests/bad/*.mo examples/*.mo $$corpus/; fi; \
 			if [ "$$name" = fuzz_syntax ]; then \
 				awk 'BEGIN { printf "x = 0"; for (i = 0; i < 30000; i++) printf " +\n1"; print "" }' >$$corpus/flat-binary.mo; \

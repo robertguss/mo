@@ -136,7 +136,7 @@
 
 /* Reserved POSIX stack for source-stage execution, not an input restriction.
  * Tests and fuzzing use base/stack.h; source tools will do so when connected. */
-#define MO_SOURCE_STACK_SIZE (32 << 20)
+#define MO_SOURCE_STACK_SIZE (48 << 20)
 
 /* Registers of one function, its parameters included. The code generator refuses a function that
  * needs more: E1013. The loader refuses a function with more. */

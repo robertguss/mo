@@ -162,7 +162,7 @@ static void snapshot(struct mo_buffer *b, const struct mo_diag *diag) {
 }
 
 static void corpus(void) {
-    enum phase { INTERFACES, LOADING, SIGNATURES, BODIES };
+    enum phase { INTERFACES, LOADING, SIGNATURES, BODIES, PROGRAM };
     const struct {
         const char *input;
         const char *expected;
@@ -214,6 +214,7 @@ static void corpus(void) {
         {"e0076.mo", "e0076.diag", BODIES},
         {"e0077.mo", "e0077.diag", BODIES},
         {"e0078.mo", "e0078.diag", BODIES},
+        {"e0079.mo", "e0079.diag", PROGRAM},
         {"e0412.mo", "e0412.diag", BODIES},
         {"e1103.mo", "e1103.diag", BODIES},
     };
@@ -237,23 +238,29 @@ static void corpus(void) {
             for (uint32_t j = 0; j < count; j++)
                 targets[j] = 1;
             uint32_t *uses[] = {targets, NULL};
-            struct mo_module_set set = {.count = 2, .modules = modules, .uses = uses};
-            struct mo_module_interfaces *names = mo_resolve_modules(&f.arena, &set, &f.diags);
-            if (cases[i].phase == INTERFACES)
-                CHECK(names == NULL);
-            else {
-                CHECK(names != NULL);
-                if (names != NULL) {
-                    struct mo_signatures *signatures =
-                        mo_prepare_signatures(&f.arena, &set, names, &f.diags);
-                    if (cases[i].phase == SIGNATURES)
-                        CHECK(signatures == NULL);
-                    else {
-                        MO_ASSERT(signatures != NULL);
-                        for (uint32_t j = 0; j < signatures->count; j++)
-                            if (signatures->items[j].function->module == 0 &&
-                                mo_infer_function(&f.arena, names, signatures, j, &f.diags) == NULL)
-                                break;
+            struct mo_module_set set = {
+                .count = cases[i].phase == PROGRAM ? 1u : 2u, .modules = modules, .uses = uses};
+            if (cases[i].phase == PROGRAM) {
+                CHECK(mo_check(&f.arena, &set, &f.diags) == NULL);
+            } else {
+                struct mo_module_interfaces *names = mo_resolve_modules(&f.arena, &set, &f.diags);
+                if (cases[i].phase == INTERFACES)
+                    CHECK(names == NULL);
+                else {
+                    CHECK(names != NULL);
+                    if (names != NULL) {
+                        struct mo_signatures *signatures =
+                            mo_prepare_signatures(&f.arena, &set, names, &f.diags);
+                        if (cases[i].phase == SIGNATURES)
+                            CHECK(signatures == NULL);
+                        else {
+                            MO_ASSERT(signatures != NULL);
+                            for (uint32_t j = 0; j < signatures->count; j++)
+                                if (signatures->items[j].function->module == 0 &&
+                                    mo_infer_function(&f.arena, names, signatures, j, &f.diags) ==
+                                        NULL)
+                                    break;
+                        }
                     }
                 }
             }
