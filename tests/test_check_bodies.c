@@ -86,6 +86,45 @@ static void record_fields(void) {
     if (out != NULL)
         CHECK(strcmp(out->items[out->count - 1].type->name, "Decimal") == 0);
     finish(&f);
+
+    init(&f,
+         "module Main\nstruct Box(T)\ntext: T\nindex: Int\nend\n"
+         "fn run() : Text\nbox = Box(index: 2, text: \"a\")\nbox.text\nend\n"
+         "enum Tree(T)\nLeaf\nNode(left: Tree(T), value: T, right: Tree(T))\nend\n"
+         "fn tree() : Tree(Int)\nNode(right: Leaf, value: 1, left: Leaf)\nend\n",
+         NULL);
+    out = body(&f, "run");
+    CHECK(out != NULL && f.diags.count == 0);
+    if (out != NULL) {
+        uint32_t fields = 0;
+        for (uint32_t i = 0; i < out->count; i++) {
+            const struct mo_inferred_expression *note = &out->items[i];
+            if (note->syntax->kind != MO_S_INT && note->syntax->kind != MO_S_TEXT)
+                continue;
+            CHECK(note->field != NULL);
+            if (note->field != NULL) {
+                CHECK(note->field->index == (fields == 0 ? 1u : 0u));
+                CHECK(strcmp(note->type->name, fields == 0 ? "Int" : "Text") == 0);
+            }
+            fields++;
+        }
+        CHECK(fields == 2);
+    }
+    out = body(&f, "tree");
+    CHECK(out != NULL && f.diags.count == 0);
+    if (out != NULL) {
+        const struct mo_source_type *type = out->items[out->count - 1].type;
+        CHECK(strcmp(type->name, "Tree") == 0 && type->count == 1);
+        CHECK(strcmp(type->arguments[0]->name, "Int") == 0);
+    }
+    finish(&f);
+
+    init(&f,
+         "module Main\nstruct Callback\nf: fn(Int) : Text\nend\n"
+         "fn run() : Text\nCallback(f: fn(n) if n == 1: \"a\" else: \"b\" end end).f(1)\nend\n",
+         NULL);
+    CHECK(body(&f, "run") != NULL && f.diags.count == 0);
+    finish(&f);
 }
 
 static void field_assignment(void) {
