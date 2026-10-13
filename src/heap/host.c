@@ -61,6 +61,18 @@ struct mo_cell mo_state_get(struct mo_state *state, uint32_t index) {
     return a->cells[index];
 }
 
+uint32_t mo_state_type(struct mo_state *state, uint32_t index) {
+    struct mo_allocation *a = state_allocation(state);
+    MO_ASSERT(index < a->length);
+    return ((const uint32_t *)(a->cells + a->length))[index];
+}
+
+struct mo_cell *mo_state_slot(struct mo_state *state, uint32_t index) {
+    struct mo_allocation *a = state_allocation(state);
+    MO_ASSERT(index < a->length);
+    return &a->cells[index];
+}
+
 void mo_state_set(struct mo_heap *process, struct mo_state *state, uint32_t index,
                   struct mo_cell value) {
     struct mo_allocation *a = state_allocation(state);
@@ -73,14 +85,20 @@ void mo_state_set(struct mo_heap *process, struct mo_state *state, uint32_t inde
 
 bool mo_value_capability(struct mo_heap *process, uint32_t type,
                          const struct mo_capability_info *info, struct mo_cell *out) {
+    return mo_value_capability_native(process, type, info, NULL, 0, out);
+}
+
+bool mo_value_capability_native(struct mo_heap *process, uint32_t type,
+                                const struct mo_capability_info *info, const void *native,
+                                size_t size, struct mo_cell *out) {
     MO_ASSERT(process != NULL && info != NULL && out != NULL);
     if (type >= process->types->count || process->types->items[type].kind != MO_TYPE_CAPABILITY ||
-        info->operations == NULL ||
+        info->operations == NULL || size > MO_LIMIT_STRING_SIZE || (size != 0 && native == NULL) ||
         (info->has_prefix && process->builtins[MO_TYPE_TEXT] == MO_NO_INDEX)) {
         return false;
     }
     struct mo_allocation *a = mo_heap_allocate(process, type, MO_BUILTIN_LAYOUT(MO_TYPE_CAPABILITY),
-                                               sizeof(struct mo_capability_info));
+                                               sizeof(struct mo_capability_info) + size);
     if (a == NULL) {
         return false;
     }
@@ -90,6 +108,11 @@ bool mo_value_capability(struct mo_heap *process, uint32_t type,
         copy.prefix = mo_value_dup(process, process->builtins[MO_TYPE_TEXT], info->prefix);
     } else {
         copy.prefix = mo_cell_unit();
+    }
+    if (size != 0) {
+        uint8_t *payload = (uint8_t *)a->cells + sizeof copy;
+        memcpy(payload, native, size);
+        copy.handle = (intptr_t)(void *)payload;
     }
     memcpy(a->cells, &copy, sizeof copy);
     *out = mo_cell_ref(&a->object);

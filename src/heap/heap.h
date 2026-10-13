@@ -259,6 +259,10 @@ MO_MUST_USE bool mo_state_new(struct mo_heap *process, const uint32_t *types,
 MO_MUST_USE struct mo_state *mo_state_dup(struct mo_state *state);
 void mo_state_drop(struct mo_heap *process, struct mo_state *state);
 MO_MUST_USE struct mo_cell mo_state_get(struct mo_state *state, uint32_t index);
+MO_MUST_USE uint32_t mo_state_type(struct mo_state *state, uint32_t index);
+/* Host-only owned slot access for transactional collection updates. Keep its
+ * declared type and one owned cell valid on both success and failure. */
+MO_MUST_USE struct mo_cell *mo_state_slot(struct mo_state *state, uint32_t index);
 void mo_state_set(struct mo_heap *process, struct mo_state *state, uint32_t index,
                   struct mo_cell value);
 
@@ -278,6 +282,13 @@ struct mo_capability_info {
 };
 MO_MUST_USE bool mo_value_capability(struct mo_heap *process, uint32_t type,
                                      const struct mo_capability_info *info, struct mo_cell *out);
+/* Copy optional native bytes into the same charged allocation. When size is
+ * nonzero, release receives their address as handle instead of info->handle.
+ * Bytes have pointer alignment and no heap children; release may read them.
+ * Size is at most MO_LIMIT_STRING_SIZE. Failure transfers nothing. */
+MO_MUST_USE bool mo_value_capability_native(struct mo_heap *process, uint32_t type,
+                                            const struct mo_capability_info *info,
+                                            const void *native, size_t size, struct mo_cell *out);
 MO_MUST_USE const struct mo_capability_info *mo_capability_get(struct mo_cell value);
 
 #endif
