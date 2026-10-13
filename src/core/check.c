@@ -814,6 +814,7 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
         case MO_CORE_IO_OP_APPEND_TEXT:
             return sig(binary(c, MO_CORE_TY_RESULT, S(UNIT), error), 3, C(FILES), S(TEXT), S(TEXT));
         case MO_CORE_IO_OP_REMOVE:
+        case MO_CORE_IO_OP_MAKE_FOLDER:
             return sig(binary(c, MO_CORE_TY_RESULT, S(UNIT), error), 2, C(FILES), S(TEXT), NULL);
         case MO_CORE_IO_OP_LIST:
             return sig(binary(c, MO_CORE_TY_RESULT, L(S(TEXT)), error), 2, files, S(TEXT), NULL);

@@ -54,15 +54,16 @@ structure Effects where
   stdout : List String
   stderr : List String
   files : List (String × String)
+  folders : List String
   fakes : List CapState
   deriving Repr, Inhabited
-def effects (w : World) : Effects := ⟨w.stdout, w.stderr, w.files, w.fakes⟩
+def effects (w : World) : Effects := ⟨w.stdout, w.stderr, w.files, w.folders, w.fakes⟩
 def effectsOut (e : Effects) : Sexp := tag "effects"
-  [stringsOut e.stdout, stringsOut e.stderr, pairsOut e.files, seq (e.fakes.map stateOut)]
+  [stringsOut e.stdout, stringsOut e.stderr, pairsOut e.files, stringsOut e.folders, seq (e.fakes.map stateOut)]
 def effectsIn : Sexp → Parse Effects
-  | .node [.atom "effects", out, err, files, fakes] => do
+  | .node [.atom "effects", out, err, files, folders, fakes] => do
       return ⟨← asList asString out, ← asList asString err, ← asList (asPair asString asString) files,
-        ← asList stateIn fakes⟩
+        ← asList asString folders, ← asList stateIn fakes⟩
   | _ => throw "invalid effects"
 
 /-- The wire report contains structural text as a string, avoiding delimiter ambiguity. -/

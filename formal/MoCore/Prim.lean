@@ -515,11 +515,23 @@ def resolvePath : Option String → String → Option String
     (pathParts path).map fun parts =>
       "/".intercalate ((if root = "" then [] else textSplit root "/") ++ parts)
 
+/-- Non-root prefixes, parent first. Raw constructor keys are not normalized. -/
+def pathFolders (p : String) : List String :=
+  (textSplit p "/").foldl (fun acc part =>
+    acc ++ [if acc.isEmpty then part else acc.getLast! ++ "/" ++ part]) []
+
+/-- Existing folders keep their order; newly discovered folders go last. -/
+def addFolders (folders paths : List String) : List String :=
+  paths.foldl (fun acc p => if p = "" || acc.contains p then acc else acc ++ [p]) folders
+
+def fileFolders (files : List (String × String)) : List String :=
+  files.foldl (fun acc e => addFolders acc (pathFolders e.1).dropLast) []
+
 /-- The names directly inside a folder, sorted, without duplicates. -/
-def folderNames (dir : String) (files : List (String × String)) : List String :=
+def folderNames (dir : String) (files : List (String × String)) (folders : List String) : List String :=
   let pre := if dir = "" then "" else dir ++ "/"
-  let names := files.filterMap fun e =>
-    if textStartsWith e.1 pre then (textSplit (String.ofList (e.1.toList.drop pre.length)) "/").head?
+  let names := ((files.map Prod.fst) ++ folders).filterMap fun p =>
+    if p != dir && textStartsWith p pre then (textSplit (String.ofList (p.toList.drop pre.length)) "/").head?
     else none
   sortTexts (names.foldl (fun acc n => if acc.contains n then acc else acc ++ [n]) [])
 
@@ -528,20 +540,19 @@ def setFile (files : List (String × String)) (p text : String) : List (String �
   if files.any (·.1 = p) then files.map fun e => if e.1 = p then (p, text) else e
   else files ++ [(p, text)]
 
-/-- The root always exists; descendants imply every other folder. -/
-def isFolder (p : String) (files : List (String × String)) : Bool :=
-  p == "" || files.any (fun e => textStartsWith e.1 (p ++ "/"))
+/-- The top folder is implicit; other folders are explicit and persistent. -/
+def isFolder (p : String) (folders : List String) : Bool :=
+  p == "" || folders.contains p
 
 /-- A file cannot be traversed, including the root of a `within` handle. -/
 def fileBlocks (root : Option String) (p : String) (files : List (String × String)) : Bool :=
   files.any fun e => root == some e.1 || textStartsWith p (e.1 ++ "/")
 
-/-- The file map has no links or special files; descendants imply folders.
-    Fake construction rejects a name that is both file and folder. -/
-def folderEntries (dir : String) (files : List (String × String)) : Value :=
-  .list ((folderNames dir files).map fun name =>
+/-- Text-file state has no links or special files. -/
+def folderEntries (dir : String) (files : List (String × String)) (folders : List String) : Value :=
+  .list ((folderNames dir files folders).map fun name =>
     let path := if dir = "" then name else dir ++ "/" ++ name
-    let kind := if files.any (fun e => textStartsWith e.1 (path ++ "/")) then "Folder" else "File"
+    let kind := if isFolder path folders then "Folder" else "File"
     .con "Entry" [.text name, .con kind []])
 
 /-- The root of a capability value of the expected kind. -/
@@ -569,9 +580,10 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
   | .consoleFakeInput, [.list lines] => newFake .console { stdin := lines.map valueText } w
   | .filesInMemory, [.map files] =>
     let files := statePairs files
-    match files.find? (fun e => isFolder e.1 files) with
+    let folders := fileFolders files
+    match files.find? (fun e => isFolder e.1 folders) with
     | some (path, _) => .stopped (.fileFolderConflict path) w
-    | none => newFake .files { files := files } w
+    | none => newFake .files { files := files, folders := folders } w
   | .clockFixed, [.time t] => newFake .clock { now := t } w
   | .randomSeeded, [.int n] => newFake .random { random := RandomState.seeded n } w
   | .argsOf, [.list args] => newFake .args { args := args.map valueText } w
@@ -614,7 +626,8 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
       | none => .ok (errorV (fileErrorV "NotAllowed" path)) w
       | some p =>
         if fileBlocks root p w.files then .ok (errorV (fileFailedV path "not a folder")) w
-        else if isFolder p w.files then .ok (errorV (fileFailedV path "is a folder")) w
+        else if !isFolder (root.getD "") w.folders then .ok (errorV (fileErrorV "NotFound" path)) w
+        else if isFolder p w.folders then .ok (errorV (fileFailedV path "is a folder")) w
         else
         match lookup p w.files with
         | some text => .ok (okV (.text text)) w
@@ -629,7 +642,8 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
       | none => .ok (errorV (fileErrorV "NotAllowed" path)) w
       | some p =>
         if fileBlocks root p w.files then .ok (errorV (fileFailedV path "not a folder")) w
-        else if isFolder p w.files then .ok (errorV (fileFailedV path "is a folder")) w
+        else if !isFolder (root.getD "") w.folders then .ok (errorV (fileErrorV "NotFound" path)) w
+        else if isFolder p w.folders then .ok (errorV (fileFailedV path "is a folder")) w
         else
         match lookup p w.files with
         | some text => .ok (okV (.bytes (textBytes text))) w
@@ -642,7 +656,10 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
       | none => .ok (errorV (fileErrorV "NotAllowed" path)) w
       | some p =>
         if fileBlocks root p w.files then .ok (errorV (fileFailedV path "not a folder")) w
-        else if isFolder p w.files then .ok (errorV (fileFailedV path "is a folder")) w
+        else if !isFolder (root.getD "") w.folders then .ok (errorV (fileErrorV "NotFound" path)) w
+        else if isFolder p w.folders then .ok (errorV (fileFailedV path "is a folder")) w
+        else if !isFolder ("/".intercalate (textSplit p "/").dropLast) w.folders then
+          .ok (errorV (fileErrorV "NotFound" path)) w
         else .ok (okV .unit) { w with files := setFile w.files p text }
     | none => wrongArgs "Files.write_text"
   | .appendText, [h, .text path, .text text] =>
@@ -652,7 +669,10 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
       | none => .ok (errorV (fileErrorV "NotAllowed" path)) w
       | some p =>
         if fileBlocks root p w.files then .ok (errorV (fileFailedV path "not a folder")) w
-        else if isFolder p w.files then .ok (errorV (fileFailedV path "is a folder")) w
+        else if !isFolder (root.getD "") w.folders then .ok (errorV (fileErrorV "NotFound" path)) w
+        else if isFolder p w.folders then .ok (errorV (fileFailedV path "is a folder")) w
+        else if !isFolder ("/".intercalate (textSplit p "/").dropLast) w.folders then
+          .ok (errorV (fileErrorV "NotFound" path)) w
         else .ok (okV .unit) { w with files := setFile w.files p ((lookup p w.files).getD "" ++ text) }
     | none => wrongArgs "Files.append_text"
   | .remove, [h, .text path] =>
@@ -662,10 +682,23 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
       | none => .ok (errorV (fileErrorV "NotAllowed" path)) w
       | some p =>
         if fileBlocks root p w.files then .ok (errorV (fileFailedV path "not a folder")) w
-        else if isFolder p w.files then .ok (errorV (fileFailedV path "is a folder")) w
+        else if !isFolder (root.getD "") w.folders then .ok (errorV (fileErrorV "NotFound" path)) w
+        else if isFolder p w.folders then .ok (errorV (fileFailedV path "is a folder")) w
         else if w.files.any (·.1 = p) then .ok (okV .unit) { w with files := w.files.filter (·.1 ≠ p) }
         else .ok (errorV (fileErrorV "NotFound" path)) w
     | none => wrongArgs "Files.remove"
+  | .makeFolder, [h, .text folder] =>
+    match capRoot .files h with
+    | some root =>
+      match resolvePath root folder with
+      | none => .ok (errorV (fileErrorV "NotAllowed" folder)) w
+      | some p =>
+        if fileBlocks root p w.files || w.files.any (·.1 = p) then
+          .ok (errorV (fileFailedV folder "not a folder")) w
+        else if !isFolder (root.getD "") w.folders then
+          .ok (errorV (fileErrorV "NotFound" folder)) w
+        else .ok (okV .unit) { w with folders := addFolders w.folders (pathFolders p) }
+    | none => wrongArgs "Files.make_folder"
   | .list ro, [h, .text folder] =>
     match capRoot (filesKind ro) h with
     | some root =>
@@ -675,8 +708,9 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
         if fileBlocks root dir w.files || w.files.any (·.1 = dir) then
           .ok (errorV (fileFailedV folder "not a folder")) w
         else
-        let names := folderNames dir w.files
-        if names.isEmpty && dir ≠ "" then .ok (errorV (fileErrorV "NotFound" folder)) w
+        let names := folderNames dir w.files w.folders
+        if !isFolder (root.getD "") w.folders || !isFolder dir w.folders then
+          .ok (errorV (fileErrorV "NotFound" folder)) w
         else .ok (okV (texts names)) w
     | none => wrongArgs "Files.list"
   | .entries ro, [h, .text folder] =>
@@ -687,9 +721,9 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
       | some dir =>
         if fileBlocks root dir w.files || w.files.any (·.1 = dir) then
           .ok (errorV (fileFailedV folder "not a folder")) w
-        else if (folderNames dir w.files).isEmpty && dir ≠ "" then
+        else if !isFolder (root.getD "") w.folders || !isFolder dir w.folders then
           .ok (errorV (fileErrorV "NotFound" folder)) w
-        else .ok (okV (folderEntries dir w.files)) w
+        else .ok (okV (folderEntries dir w.files w.folders)) w
     | none => wrongArgs "Files.entries"
   | .exists ro, [h, .text path] =>
     match capRoot (filesKind ro) h with
@@ -697,9 +731,8 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
       match resolvePath root path with
       | none => .ok (.bool false) w
       | some p =>
-        -- The top folder, the one the program started in or a fake stands
-        -- for, always exists; any other folder exists when a file is inside it.
-        .ok (.bool (!fileBlocks root p w.files && (isFolder p w.files || w.files.any (·.1 = p)))) w
+        .ok (.bool (!fileBlocks root p w.files && isFolder (root.getD "") w.folders &&
+          (isFolder p w.folders || w.files.any (·.1 = p)))) w
     | none => wrongArgs "Files.exists?"
   | .within ro, [h, .text folder] =>
     -- `within` a path that would leave the folder gives a handle that reaches

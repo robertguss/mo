@@ -96,6 +96,7 @@ def ioOps : List (String × IoOp) :=
   [("argsList", .argsList), ("envGet", .envGet), ("print", .print), ("printError", .printError),
    ("readLine", .readLine), ("printed", .printed), ("printedErrors", .printedErrors),
    ("writeText", .writeText), ("appendText", .appendText), ("remove", .remove),
+   ("makeFolder", .makeFolder),
    ("readOnly", .readOnly), ("now", .now), ("randomInt", .randomInt),
    ("consoleFake", .consoleFake), ("consoleFakeInput", .consoleFakeInput),
    ("filesInMemory", .filesInMemory), ("clockFixed", .clockFixed),

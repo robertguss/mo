@@ -342,12 +342,14 @@ RECORD(cap_state, struct mo_core_cap_state, "CapState",
        F(struct mo_core_cap_state, stdout_, string_list),
        F(struct mo_core_cap_state, stderr_, string_list),
        F(struct mo_core_cap_state, files, string_pairs), F(struct mo_core_cap_state, now, integer),
-       F(struct mo_core_cap_state, random, random_state), END);
+       F(struct mo_core_cap_state, random, random_state),
+       F(struct mo_core_cap_state, folders, string_list), END);
 RECORD(world, struct mo_core_world, "World", F(struct mo_core_world, args, string_list),
        F(struct mo_core_world, env, string_pairs), F(struct mo_core_world, stdin_, string_list),
        F(struct mo_core_world, stdout_, string_list), F(struct mo_core_world, stderr_, string_list),
        F(struct mo_core_world, files, string_pairs), F(struct mo_core_world, now, integer),
-       F(struct mo_core_world, random, random_state), F(struct mo_core_world, fakes, cap_states),
+       F(struct mo_core_world, random, random_state), F(struct mo_core_world, folders, string_list),
+       F(struct mo_core_world, fakes, cap_states),
        END);
 #define B(tag, wire, ...) V(enum mo_core_bug_tag, MO_CORE_BUG_##tag, wire, __VA_ARGS__)
 NODE(bug, struct mo_core_bug, enum mo_core_bug_tag,
@@ -370,7 +372,8 @@ NODE(outcome, struct mo_core_outcome, enum mo_core_outcome_tag,
 #undef OF
 RECORD(effects, struct mo_core_effects, "effects", F(struct mo_core_effects, stdout_, string_list),
        F(struct mo_core_effects, stderr_, string_list),
-       F(struct mo_core_effects, files, string_pairs), F(struct mo_core_effects, fakes, cap_states),
+       F(struct mo_core_effects, files, string_pairs), F(struct mo_core_effects, folders, string_list),
+       F(struct mo_core_effects, fakes, cap_states),
        END);
 #define R(tag, wire, ...) V(enum mo_core_report_tag, MO_CORE_REPORT_##tag, wire, __VA_ARGS__)
 #define RF(member, name) F(struct mo_core_report, as.member, name)
