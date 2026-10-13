@@ -274,6 +274,9 @@ def main():
         for driver in sys.argv[1:]:
             print(f"codegen: {driver}: {len(paths)} fixture/corpus inputs")
             run(driver, paths)
+            supported = [pathlib.Path("tests/core") / f"{name}.core"
+                         for name in ["Account", "Greet", "Metadata", "RateLimit"]]
+            assert run(driver, supported) == (len(supported), 0, 0, 0, 0, 0), "a supported fixture was not compiled"
             assert run(driver, generated) == (len(generated), 0, 0, 0, 0, 0), "a supported generated program was not compiled"
             assert run(driver, excluded) == (0, 0, len(excluded), 0, 0, 0), "a lowering-impossible operation needs E1201"
     print(f"codegen: all generated programs compiled; corpus coverage reported separately ({time.monotonic() - started:.2f}s)")
