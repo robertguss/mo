@@ -4,6 +4,8 @@
 #include "check/check.h"
 #include "test.h"
 
+#include <locale.h>
+#include <stdlib.h>
 #include <string.h>
 
 struct fixture {
@@ -14,9 +16,9 @@ struct fixture {
     struct mo_signatures *signatures;
 };
 
-static void init(struct fixture *f, const char *first, const char *second) {
-    mo_arena_init(&f->syntax, 16 << 20);
-    mo_arena_init(&f->arena, 16 << 20);
+static void init_limit(struct fixture *f, const char *first, const char *second, size_t limit) {
+    mo_arena_init(&f->syntax, limit);
+    mo_arena_init(&f->arena, limit);
     MO_ASSERT(mo_sources_init(&f->sources) && mo_diags_init(&f->diags));
     struct mo_module_syntax *modules[2];
     const char *texts[] = {first, second};
@@ -39,6 +41,10 @@ static void init(struct fixture *f, const char *first, const char *second) {
     f->interfaces = mo_resolve_modules(&f->arena, &set, &f->diags);
     MO_ASSERT(f->interfaces != NULL);
     f->signatures = mo_prepare_signatures(&f->arena, &set, f->interfaces, &f->diags);
+}
+
+static void init(struct fixture *f, const char *first, const char *second) {
+    init_limit(f, first, second, 16 << 20);
 }
 
 static void finish(struct fixture *f) {
@@ -102,6 +108,9 @@ static void inferred_uses(void) {
         {"fn run(flag: Bool) : Int\nreturn 1 if flag\n2\nend\n", "Int"},
         {"fn run(flag: Bool) : Int\nif flag\nreturn 1\nelse\nstop \"impossible\"\nend\nend\n",
          "Int"},
+        {"fn run(flag: Bool) : Int\nif flag\nreturn 1\nelse\nreturn 2\nend\n"
+         "assert true\nend\n",
+         "Unit"},
         {"fn run() : Int\nvar total = 0\nfor i in 0..10\ncontinue if i % 2 == 0\n"
          "total += i\nend\ntotal\nend\n",
          "Int"},
@@ -156,9 +165,9 @@ static void scope_errors(void) {
         {"fn run(x: Int) : Int\nf = fn(x) x end\nf(x)\nend\n", MO_CODE_BIND_REPEATED},
         {"fn run(x: Int) : Int\n1\nend\n", MO_CODE_UNUSED_NAME},
         {"fn run() : Int\n1 + true\nend\n", MO_CODE_TYPE_MISMATCH},
-        {"fn run(value: T) : T\n1\nend\n", MO_CODE_TYPE_MISMATCH},
+        {"fn run(value: T) : T\n1\nend\n", MO_CODE_RESULT_TYPE},
         {"fn run()\n_xs = []\nend\n", MO_CODE_CANNOT_INFER},
-        {"fn run() : Int\nf = fn(x) x(x) end\nf(1)\nend\n", MO_CODE_TYPE_MISMATCH},
+        {"fn run() : Int\nf = fn(x) x(x) end\nf(1)\nend\n", MO_CODE_ARGUMENT_TYPE},
         {"fn callee(x: Int) : Int\nx\nend\nfn run() : Int\ncallee()\nend\n",
          MO_CODE_CALL_ARGUMENTS},
         {"fn run()\n1\nUnit\nend\n", MO_CODE_UNUSED_VALUE},
@@ -168,7 +177,7 @@ static void scope_errors(void) {
         {"fn run(pair: (Int, Text)) : Int\npair.2\nend\n", MO_CODE_TUPLE_POSITION},
         {"fn run(pair: (Int, Text)) : Int\npair.99999999999999999999\nend\n",
          MO_CODE_TUPLE_POSITION},
-        {"fn run(flag: Bool) : Bool\nif flag\ntrue\nend\nend\n", MO_CODE_TYPE_MISMATCH},
+        {"fn run(flag: Bool) : Bool\nif flag\ntrue\nend\nend\n", MO_CODE_RESULT_TYPE},
         {"fn run()\nwhile true\nf = fn()\nbreak\nend\nf()\nend\nend\n", MO_CODE_EXIT_OUTSIDE_LOOP},
         {"fn run()\nvar x = 0\nf = fn()\nx = 1\nend\nf()\nassert x == 1\nend\n",
          MO_CODE_NOT_VARIABLE},
@@ -239,6 +248,81 @@ static void literal_ranges(void) {
     hex[259] = '\0';
     number("Float", hex, false);
     number("BigInt", hex, true);
+    /* Decimal spelling of 2^1024 - 2^970, computed independently of the checker. */
+    char boundary[] =
+        "179769313486231580793728971405303415079934132710037826936173778980444968292764750946649"
+        "017977587207096330286416692887910946555547851940402630657488671505820681908902000708383"
+        "676273854845817711531764475730270069855571366959622842914819860834936475292719074168444"
+        "365510704342711559699508093042880177904174497792";
+    number("Float", boundary, false);
+    boundary[sizeof(boundary) - 2]--;
+    number("Float", boundary, true);
+    char fraction[512];
+    int n = snprintf(fraction, sizeof(fraction), "%s.999999999999999999", boundary);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(fraction));
+    number("Float", fraction, true);
+}
+
+static void float_locale(void) {
+    /* CI needs no installed foreign locale. A caller can supply a comma locale
+     * to exercise the host's global state without changing the test inputs. */
+    const char *locale = getenv("MO_TEST_DECIMAL_LOCALE");
+    if (locale != NULL)
+        MO_ASSERT(setlocale(LC_NUMERIC, locale) != NULL);
+    number("Float", "0.5", true);
+    number("Float", "1_000.25", true);
+    if (locale != NULL)
+        MO_ASSERT(setlocale(LC_NUMERIC, "C") != NULL);
+}
+
+static void assignment_equivalence(void) {
+    const char *const signatures[] = {"a: Int, b: Int", "a: Duration, b: Duration",
+                                      "a: Time, b: Duration", "a: T, b: T"};
+    const char *const types[] = {"Int", "Duration", "Time", "T"};
+    for (size_t i = 0; i < sizeof(types) / sizeof(types[0]); i++) {
+        for (unsigned op = 0; op < 2; op++) {
+            uint16_t codes[2] = {0};
+            for (unsigned form = 0; form < 2; form++) {
+                char source[512];
+                int n = snprintf(source, sizeof(source),
+                                 "module Main\nfn run(%s) : %s\nvar x = a\nx %s %sb\nx\nend\n",
+                                 signatures[i], types[i], form == 0 ? (op == 0 ? "+=" : "-=") : "=",
+                                 form == 0 ? "" : (op == 0 ? "x + " : "x - "));
+                MO_ASSERT(n > 0 && (size_t)n < sizeof(source));
+                struct fixture f;
+                init(&f, source, NULL);
+                struct mo_inferred_body *out = body(&f, "run");
+                if (f.diags.count != 0)
+                    codes[form] = f.diags.items[0].code;
+                CHECK(i == 0 ? out != NULL : out == NULL);
+                finish(&f);
+            }
+            CHECK(codes[0] == codes[1]);
+            CHECK(codes[0] == (i == 0 ? 0 : MO_CODE_CHECK_UNFINISHED));
+        }
+    }
+}
+
+static void discarded_tails(void) {
+    const struct {
+        const char *body;
+        uint16_t code;
+    } cases[] = {
+        {"fn run()\n1\nend\n", MO_CODE_UNUSED_VALUE},
+        {"fn run(flag: Bool)\nif flag\n1\nend\nend\n", MO_CODE_UNUSED_VALUE},
+        {"fn run(f: fn(Int) : Int)\nfor i in 0..3\nf(i)\nend\nend\n", MO_CODE_UNUSED_VALUE},
+        {"fn run(f: fn() : Result(Int, Text))\nf()\nend\n", MO_CODE_FAILURE_IGNORED},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char source[512];
+        int n = snprintf(source, sizeof(source), "module Main\n%s", cases[i].body);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(source));
+        struct fixture f;
+        init(&f, source, NULL);
+        CHECK(body(&f, "run") == NULL);
+        CHECK(f.diags.count == 1 && f.diags.items[0].code == cases[i].code);
+        finish(&f);
+    }
 }
 
 static void module_calls(void) {
@@ -257,6 +341,125 @@ static void module_calls(void) {
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_IMPORT_PRIVATE);
     CHECK(f.diags.items[0].secondary_count == 1);
     finish(&f);
+}
+
+static void imported_meaning(void) {
+    const char helper[] = "module Helpers\nexpose add\nfn add(x: Int, y: Int) : Int\nx + y\nend\n";
+    const char *const orders[] = {"if true\nadd = 3\nassert add == 3\nend\nadd(1, 2)",
+                                  "_first = add(1, 2)\nif true\nadd = 3\nassert add == 3\nend\n0"};
+    for (size_t i = 0; i < sizeof(orders) / sizeof(orders[0]); i++) {
+        char source[512];
+        int n = snprintf(source, sizeof(source),
+                         "module Main\nuse Helpers{add}\nfn run() : Int\n%s\nend\n", orders[i]);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(source));
+        struct fixture f;
+        init(&f, source, helper);
+        CHECK(body(&f, "run") == NULL);
+        CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_BIND_REPEATED);
+        finish(&f);
+    }
+}
+
+static void contextual_arguments(void) {
+    const char *const functions[] = {"fn apply(f: fn(T) : U, value: T) : U\nf(value)\nend\n",
+                                     "fn apply(value: T, f: fn(T) : U) : U\nf(value)\nend\n"};
+    const char *const calls[] = {"apply(fn(p) p.0 end, (1, \"a\"))",
+                                 "apply((1, \"a\"), fn(p) p.0 end)"};
+    for (size_t i = 0; i < 2; i++) {
+        char source[512];
+        int n = snprintf(source, sizeof(source), "module Main\n%sfn run() : Int\n%s\nend\n",
+                         functions[i], calls[i]);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(source));
+        struct fixture f;
+        init(&f, source, NULL);
+        struct mo_inferred_body *out = body(&f, "run");
+        CHECK(out != NULL && f.diags.count == 0);
+        if (out != NULL)
+            CHECK(strcmp(out->items[out->count - 1].type->name, "Int") == 0);
+        finish(&f);
+    }
+}
+
+static void source_order(void) {
+    const struct {
+        const char *body, *first;
+        uint16_t code;
+    } cases[] = {
+        {"a = 1\nb = 2\n3", "a =", MO_CODE_UNUSED_NAME},
+        {"1\nmissing", "1\n", MO_CODE_UNUSED_VALUE},
+        {"_x = 9223372036854775808\nmissing", "922337", MO_CODE_LITERAL_RANGE},
+        {"ready? = 1\n_keep = ready?\nmissing", "ready? =", MO_CODE_BOOL_NAME},
+        {"if true\na = 1\nend\nmissing", "a =", MO_CODE_UNUSED_NAME},
+        {"_xs = []\nmissing", "missing", MO_CODE_NAME_UNKNOWN},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char source[512];
+        int n = snprintf(source, sizeof(source), "module Main\nfn run() : Int\n%s\nend\n",
+                         cases[i].body);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(source));
+        struct fixture f;
+        init(&f, source, NULL);
+        CHECK(body(&f, "run") == NULL);
+        CHECK(f.diags.count == 1 && f.diags.items[0].code == cases[i].code);
+        CHECK(f.diags.items[0].primary.span.start ==
+              (uint32_t)(strstr(source, cases[i].first) - source));
+        finish(&f);
+    }
+}
+
+static void diagnostic_contexts(void) {
+    const struct {
+        const char *source, *label;
+        uint16_t code;
+    } cases[] = {
+        {"fn run(count: Int)\nif count\nUnit\nend\nend\n", "expected Bool, found Int",
+         MO_CODE_CONDITION_TYPE},
+        {"fn run() : Text\n\"a\" + \"b\"\nend\n", "found Text", MO_CODE_NUMBER_ABILITY},
+        {"fn run(a: Byte, b: Byte) : Byte\na + b\nend\n", "found Byte", MO_CODE_BYTE_ARITHMETIC},
+        {"fn run(x: Text) : Int\nx()\nend\n", "found Text", MO_CODE_NOT_FUNCTION},
+        {"fn owner(_x: Text) : Int\n0\nend\nfn run(owner: Text) : Int\nowner(owner)\nend\n", NULL,
+         MO_CODE_BIND_REPEATED},
+        {"fn run()\nfor _ in 5\nend\nend\n", NULL, MO_CODE_NOT_ITERABLE},
+        {"fn run()\nfor _c in \"abc\"\nend\nend\n", NULL, MO_CODE_NOT_ITERABLE},
+        {"fn run()\nUnknown.f(1)\nend\n", NULL, MO_CODE_IMPORT_MISSING},
+        {"fn f(_x: Int)\nend\nfn run()\nf(\"text\")\nend\n", "expected Int, found Text",
+         MO_CODE_ARGUMENT_TYPE},
+        {"fn run() : Int\n\"text\"\nend\n", "expected Int, found Text", MO_CODE_RESULT_TYPE},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char source[512];
+        int n = snprintf(source, sizeof(source), "module Main\n%s", cases[i].source);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(source));
+        struct fixture f;
+        init(&f, source, NULL);
+        CHECK(body(&f, "run") == NULL);
+        CHECK(f.diags.count == 1 && f.diags.items[0].code == cases[i].code);
+        CHECK(f.diags.items[0].primary.span.start < f.diags.items[0].primary.span.end);
+        if (cases[i].label != NULL)
+            CHECK(strstr(f.diags.items[0].primary.text, cases[i].label) != NULL);
+        finish(&f);
+    }
+}
+
+static void specifications(void) {
+    const char *const specifications[] = {
+        "examples\nrun(1) == \"two\"\nend\n",
+        "promise \"twice the input\"\nresult == x + x\nallows x: 1, result: 2\n"
+        "forbids x: 1, result: 3\nend\n"};
+    for (size_t i = 0; i < sizeof(specifications) / sizeof(specifications[0]); i++) {
+        char source[512];
+        int n = snprintf(source, sizeof(source),
+                         "module Main\nfn run(x: Int) : Int\n%s\nx + x\nend\n", specifications[i]);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(source));
+        struct fixture f;
+        init(&f, source, NULL);
+        CHECK(body(&f, "run") == NULL);
+        CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CHECK_UNFINISHED);
+        if (f.diags.count == 1)
+            CHECK(f.diags.items[0].primary.span.start ==
+                  (uint32_t)(strstr(source, i == 0 ? "examples" : "promise") - source));
+        finish(&f);
+    }
 }
 
 static void allocation_limits(void) {
@@ -379,6 +582,77 @@ static void shared_types(void) {
     }
 }
 
+static void assignment_notes(void) {
+    struct fixture f;
+    init(&f,
+         "module Main\nfn run() : Int\nvar count = 0\ncount = 5\ncount += 1\n"
+         "total = count\ntotal\nend\n",
+         NULL);
+    struct mo_inferred_body *out = body(&f, "run");
+    CHECK(out != NULL && f.diags.count == 0);
+    if (out != NULL) {
+        const struct mo_syntax *count = NULL;
+        uint32_t assignments = 0, bound = 0;
+        for (uint32_t i = 0; i < out->count; i++) {
+            const struct mo_inferred_expression *item = &out->items[i];
+            if (item->syntax->kind == MO_S_VAR)
+                count = item->syntax->children[0];
+            if (item->syntax->kind == MO_S_ADD_ASSIGN || item->syntax->kind == MO_S_BIND) {
+                const struct mo_syntax *target = item->syntax->children[0];
+                bool to_count = target->span.end - target->span.start == 5 &&
+                                memcmp(target->text, "count", 5) == 0;
+                CHECK(item->binding == (to_count ? count : NULL));
+                if (to_count)
+                    assignments++;
+            }
+            if (item->syntax->kind == MO_S_NAME && item->binding == item->syntax) {
+                CHECK(strcmp(item->type->name, "Int") == 0);
+                bound++;
+            }
+        }
+        CHECK(assignments == 2 && bound == 2);
+    }
+    finish(&f);
+    init(&f, "module Main\nfn run()\nvar count = 0\ncount = 5\nend\n", NULL);
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_UNUSED_NAME);
+    CHECK(f.diags.items[0].fix_count == 0);
+    finish(&f);
+}
+
+static void repeated_signature(void) {
+    struct mo_buffer source;
+    mo_buffer_init(&source, 1 << 20);
+    MO_ASSERT(mo_buffer_append_text(&source, "module Main\nfn big(_x: (Int"));
+    for (uint32_t i = 1; i < 60000; i++)
+        MO_ASSERT(mo_buffer_append_text(&source, i % 32 == 0 ? ",\nInt" : ", Int"));
+    MO_ASSERT(mo_buffer_append_text(&source, "))\nend\nfn run()\n"));
+    for (uint32_t i = 0; i < 130; i++) {
+        MO_ASSERT(mo_buffer_append_text(&source, "_a"));
+        MO_ASSERT(mo_buffer_append_uint(&source, i));
+        MO_ASSERT(mo_buffer_append_text(&source, " = big\n"));
+    }
+    MO_ASSERT(mo_buffer_append_text(&source, "end\n"));
+    MO_ASSERT(mo_buffer_append_byte(&source, 0));
+    struct fixture f;
+    init(&f, (const char *)source.bytes, NULL);
+    size_t prepared = f.arena.used;
+    struct mo_inferred_body *out = body(&f, "run");
+    CHECK(out != NULL && f.diags.count == 0);
+    CHECK(f.arena.used - prepared < (1 << 20));
+    if (out != NULL) {
+        bool found = false;
+        for (uint32_t i = 0; i < out->count; i++)
+            if (out->items[i].symbol != NULL) {
+                CHECK(out->items[i].type->arguments[0]->count == 60000);
+                found = true;
+            }
+        CHECK(found);
+    }
+    finish(&f);
+    mo_buffer_free(&source);
+}
+
 static void syntax_depth(void) {
     const uint32_t depths[] = {110, MO_LIMIT_NESTING_DEPTH - 1};
     for (size_t d = 0; d < sizeof(depths) / sizeof(depths[0]); d++) {
@@ -406,17 +680,68 @@ static void syntax_depth(void) {
     }
 }
 
+static void work_limits(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn run() : Int\n1\nend\n", NULL);
+    CHECK(body(&f, "run") != NULL);
+    uint64_t cost = *f.signatures->work;
+    MO_ASSERT(cost > 0 && cost < MO_LIMIT_PROGRAM_CHECK_WORK);
+    *f.signatures->work = MO_LIMIT_PROGRAM_CHECK_WORK - cost;
+    CHECK(body(&f, "run") != NULL && f.diags.count == 0);
+    CHECK(*f.signatures->work == MO_LIMIT_PROGRAM_CHECK_WORK);
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CHECK_PROGRAM_WORK);
+    finish(&f);
+
+    /* A flat function repeatedly constrains a shared, unresolved type DAG.
+     * Its source and type depths fit; inference must stop at the work budget,
+     * not exhaust the larger arena or expand the DAG exponentially. */
+    struct mo_buffer source;
+    mo_buffer_init(&source, MO_LIMIT_FILE_SIZE);
+    MO_ASSERT(mo_buffer_append_text(
+        &source, "module Main\nfn duplicate(value: T) : (T, T)\n(value, value)\nend\n"
+                 "fn ignore(_value: T)\nend\nfn run()\n_v0 = 1\n"));
+    for (uint32_t i = 1; i <= 250; i++) {
+        MO_ASSERT(mo_buffer_append_text(&source, "_v"));
+        MO_ASSERT(mo_buffer_append_uint(&source, i));
+        MO_ASSERT(mo_buffer_append_text(&source, " = duplicate(_v"));
+        MO_ASSERT(mo_buffer_append_uint(&source, i - 1));
+        MO_ASSERT(mo_buffer_append_text(&source, ")\n"));
+    }
+    for (uint32_t i = 0; i < 40000; i++)
+        MO_ASSERT(mo_buffer_append_text(&source, "ignore(_v250)\n"));
+    MO_ASSERT(mo_buffer_append_text(&source, "end\n"));
+    MO_ASSERT(mo_buffer_append_byte(&source, 0));
+    init_limit(&f, (const char *)source.bytes, NULL, 256 << 20);
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CHECK_WORK);
+    CHECK(*f.signatures->work == MO_LIMIT_SOURCE_CHECK_WORK);
+    finish(&f);
+    mo_buffer_free(&source);
+}
+
 int main(void) {
     question_name();
     tuple_position();
     inferred_uses();
     scope_errors();
     literal_ranges();
+    float_locale();
+    assignment_equivalence();
+    discarded_tails();
     module_calls();
+    imported_meaning();
+    contextual_arguments();
+    source_order();
+    diagnostic_contexts();
+    specifications();
     allocation_limits();
     unused_fix();
     reference_bodies();
     shared_types();
+    assignment_notes();
+    repeated_signature();
     syntax_depth();
+    work_limits();
     return mo_test_report("check bodies");
 }

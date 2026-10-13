@@ -87,6 +87,13 @@
     X(59, BOOL_NAME, "2.3")                                                                        \
     X(60, LITERAL_RANGE, "3.3")                                                                    \
     X(61, TUPLE_POSITION, "3.6")                                                                   \
+    X(72, NOT_FUNCTION, "5.2")                                                                     \
+    X(73, NOT_ITERABLE, "7.5")                                                                     \
+    X(74, CONDITION_TYPE, "3.1")                                                                   \
+    X(75, NUMBER_ABILITY, "9.2")                                                                   \
+    X(76, BYTE_ARITHMETIC, "3.2")                                                                  \
+    X(77, ARGUMENT_TYPE, "5.2")                                                                    \
+    X(78, RESULT_TYPE, "5.1")                                                                      \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \
@@ -192,6 +199,8 @@
     X(1105, CHECK_TYPE_DEPTH, NULL)                                                                \
     /* A source inference walk exceeds MO_LIMIT_SOURCE_INFERENCE_DEPTH. */                         \
     X(1106, CHECK_SYNTAX_DEPTH, NULL)                                                              \
+    /* Inference across bodies exceeds MO_LIMIT_PROGRAM_CHECK_WORK. */                             \
+    X(1107, CHECK_PROGRAM_WORK, NULL)                                                              \
     /* The ordinary entry's full runtime name is not unique in the image. */                       \
     X(1200, CODEGEN_ENTRY, NULL)                                                                   \
     /* Core uses a representation that source lowering never produces: a lowering bug. */          \

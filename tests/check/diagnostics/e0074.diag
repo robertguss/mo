@@ -1,0 +1,6 @@
+E0074 3.1
+0:36..41
+a condition isn't a yes-or-no answer
+Bool is a yes-or-no answer; conditions need Bool (reference 3.1).
+expected Bool, found Int
+fixes 0

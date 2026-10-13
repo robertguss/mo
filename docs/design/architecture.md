@@ -371,27 +371,40 @@ own body; each reference to a generic function gets fresh parameters.
 
 This stage supports positional and module-qualified function calls, contextual
 anonymous functions, scalar/list/map/tuple expressions, tuple projections,
-bindings, variables, conditionals, loops and early exits. It stops at the
-first error in a body, so a dependent error cannot cascade. The caller can
+bindings, variables, conditionals, loops and early exits. It reports one
+independent error per body, choosing the earliest retained source span, so a
+dependent error cannot cascade. End-of-scope and final type checks retain the earliest candidate;
+after an inference failure only already-retained, earlier expressions are
+finalized, without inventing unresolved-type errors from the missing uses.
+Resource errors stop immediately and take priority. The caller can
 continue with independent bodies. Signature preparation currently stops at
 its first error too. E1103 explicitly refuses unfinished body forms; it does
 not silently accept them. Data fields, constructors and patterns, builtin/dot
 dispatch and delayed overload selection, abilities, polymorphic recursion,
 failure propagation, capture/capability flow, specs, constants, unused imports
-and the entry contract still need their stages. A successful intermediate
-body is not a `mo_program`, is not lowering-ready and does not certify those
+and the entry contract still need their stages. Compile-time duplicate map
+keys (equal literals or repeated names, reference 3.8) are also still pending.
+Nonempty examples or promises are refused with E1103, never silently skipped.
+A successful intermediate body is not a `mo_program`, is not lowering-ready and does not certify those
 rules. `mo_check` will compose the stages and collect independent errors.
 
 Inferred types are shared DAGs, not expanded trees. Consumers must memoize
-walks. Occurs checks visit each shared term once per walk; output conversion
+walks. Prepared annotations retain parameter masks and heights; monomorphic
+subterms, and rigid parameters in a function's own signature, are borrowed
+unchanged. Only generic subterms are instantiated, and frozen children are
+materialized lazily when a constraint needs them. Occurs checks skip frozen
+terms and visit each other shared term once per walk; output conversion
 caches each term and its longest leaf path. Source nesting cannot bound the
 types built by flat calls: `duplicate(T) : (T, T)` can double a type's apparent
 tree on every line. `MO_LIMIT_SOURCE_TYPE_DEPTH` caps paths at 256 nodes,
 including function values (E1105); cached subtrees retain their height when
 reused at greater depth. `MO_LIMIT_SOURCE_CHECK_WORK` caps term construction,
 unification, occurs checks, expression visits and output conversion at
-16,777,216 operations per function (E1104). Both errors are implementation
-limits, not language restrictions. All temporary and output storage is
+16,777,216 operations per function (E1104). `MO_LIMIT_PROGRAM_CHECK_WORK`
+caps their total at 268,435,456 (E1107), shared by all inference calls against
+one signature preparation. Checking is single-threaded; new preparation starts
+a new run. These errors are implementation limits, not language restrictions.
+All temporary and output storage is
 charged to the caller arena (E1058), with no additional scratch arena.
 `MO_LIMIT_SOURCE_INFERENCE_DEPTH` allows sixteen inference frames per source
 nesting level plus eight function wrappers (E1106). A source level can retain
@@ -400,6 +413,17 @@ remain iterative. The 255-call regression with every precedence level passed
 with a 6 MiB stack in clang's debug build and an 8 MiB stack under ASan/UBSan
 on Linux x86-64; 4 MiB and 6 MiB respectively failed. Callers should allow
 16 MiB under debug/sanitizers rather than relying on those measured minima.
+
+Non-lambda positional arguments constrain the callee before contextual lambdas,
+regardless of written order; output notes retain written postorder. Binder notes
+carry types, and assignment notes point to the original var binder, including
+compound assignments. `+=` and `-=` use the same operand rules as their expanded
+forms. Unit contexts infer discarded tails without imposing Unit on their
+values, so unused values and ignored Results keep their specific diagnostics.
+Unused vars have no underscore fix: changing only the declaration could turn a
+later assignment into a new binding. Float literal validation compares source
+digits with the exact nearest-even overflow boundary, independently of host
+locale and rounding state; value conversion belongs to lowering.
 
 Type checking is **bidirectional**, one function body at a time. A signature
 is given, and the body is checked against it: an expression is either

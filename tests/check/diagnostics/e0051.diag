@@ -3,5 +3,5 @@ E0051 6.1
 a visible name is bound again
 While a local name or parameter is visible it can't be bound again (reference 6.1).
 this name already has a meaning
-secondary 0:19..24 declared here
+secondary 0:19..24 the other meaning of this name
 fixes 0

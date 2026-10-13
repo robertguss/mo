@@ -1,0 +1,6 @@
+E0075 9.2
+0:30..33
+arithmetic is used on a type without Number
+Only Int, BigInt, Decimal and Float have Number; times and durations also add and subtract (reference 9.2).
+expected Int or BigInt or Decimal or Float, found Text
+fixes 0

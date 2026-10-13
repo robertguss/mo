@@ -196,6 +196,13 @@ static void corpus(void) {
         {"e0059.mo", "e0059.diag", BODIES},
         {"e0060.mo", "e0060.diag", BODIES},
         {"e0061.mo", "e0061.diag", BODIES},
+        {"e0072.mo", "e0072.diag", BODIES},
+        {"e0073.mo", "e0073.diag", BODIES},
+        {"e0074.mo", "e0074.diag", BODIES},
+        {"e0075.mo", "e0075.diag", BODIES},
+        {"e0076.mo", "e0076.diag", BODIES},
+        {"e0077.mo", "e0077.diag", BODIES},
+        {"e0078.mo", "e0078.diag", BODIES},
         {"e0412.mo", "e0412.diag", BODIES},
         {"e1103.mo", "e1103.diag", BODIES},
     };

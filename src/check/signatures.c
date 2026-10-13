@@ -142,6 +142,15 @@ static MO_MUST_USE const struct mo_source_type *intern(struct preparation *p,
         memcpy(arguments, type.arguments, (size_t)type.count * sizeof(*arguments));
     type.name = name;
     type.arguments = arguments;
+    type.height = 0;
+    type.parameters =
+        type.kind == MO_SOURCE_PARAMETER ? UINT32_C(1) << (unsigned)(type.name[0] - 'A') : 0;
+    for (uint32_t i = 0; i < type.count; i++) {
+        uint32_t path = arguments[i]->height + 1;
+        if (path > type.height)
+            type.height = path;
+        type.parameters |= arguments[i]->parameters;
+    }
     *entry = (struct type_entry){.type = type, .height = 1};
     p->root = insert(p->root, entry);
     return &entry->type;
@@ -355,9 +364,11 @@ struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct
     struct mo_signatures *out = allocate(&p, 1, sizeof(*out), _Alignof(struct mo_signatures));
     struct mo_function_signature *items =
         allocate(&p, count, sizeof(*items), _Alignof(struct mo_function_signature));
+    uint64_t *work = allocate(&p, 1, sizeof(*work), _Alignof(uint64_t));
     if (p.failed)
         return NULL;
-    *out = (struct mo_signatures){.items = items};
+    *work = 0;
+    *out = (struct mo_signatures){.items = items, .work = work};
     for (uint32_t i = 0; i < interfaces->count; i++)
         for (uint32_t j = 0; j < interfaces->scopes[i].count; j++) {
             const struct mo_symbol *function = &interfaces->scopes[i].symbols[j];

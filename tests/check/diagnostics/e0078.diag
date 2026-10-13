@@ -1,0 +1,6 @@
+E0078 5.1
+0:29..35
+a function's result doesn't match its signature
+A function's signature gives its types (reference 5.1).
+expected Int, found Text
+fixes 0

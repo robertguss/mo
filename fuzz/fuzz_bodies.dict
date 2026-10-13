@@ -27,3 +27,7 @@
 " + "
 " and "
 "not "
+"use Helpers{identity}\x0a"
+"Helpers.add(1, 2)"
+"apply(fn(p) p.0 end, (1, \"a\"))"
+"# budget\x0a"
