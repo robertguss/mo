@@ -393,7 +393,13 @@ unification, occurs checks, expression visits and output conversion at
 16,777,216 operations per function (E1104). Both errors are implementation
 limits, not language restrictions. All temporary and output storage is
 charged to the caller arena (E1058), with no additional scratch arena.
-Depth-bounded C recursion needs several MiB of stack under sanitizers.
+`MO_LIMIT_SOURCE_INFERENCE_DEPTH` allows sixteen inference frames per source
+nesting level plus eight function wrappers (E1106). A source level can retain
+the entire precedence ladder, not just a call and its argument. Flat chains
+remain iterative. The 255-call regression with every precedence level passed
+with a 6 MiB stack in clang's debug build and an 8 MiB stack under ASan/UBSan
+on Linux x86-64; 4 MiB and 6 MiB respectively failed. Callers should allow
+16 MiB under debug/sanitizers rather than relying on those measured minima.
 
 Type checking is **bidirectional**, one function body at a time. A signature
 is given, and the body is checked against it: an expression is either

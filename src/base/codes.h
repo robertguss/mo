@@ -190,6 +190,8 @@
     X(1104, CHECK_WORK, NULL)                                                                      \
     /* An inferred surface type exceeds MO_LIMIT_SOURCE_TYPE_DEPTH. */                             \
     X(1105, CHECK_TYPE_DEPTH, NULL)                                                                \
+    /* A source inference walk exceeds MO_LIMIT_SOURCE_INFERENCE_DEPTH. */                         \
+    X(1106, CHECK_SYNTAX_DEPTH, NULL)                                                              \
     /* The ordinary entry's full runtime name is not unique in the image. */                       \
     X(1200, CODEGEN_ENTRY, NULL)                                                                   \
     /* Core uses a representation that source lowering never produces: a lowering bug. */          \

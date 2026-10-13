@@ -1119,8 +1119,13 @@ static MO_MUST_USE struct value infer(struct inference *p, const struct mo_synta
     if (!work(p))
         return (struct value){0};
     MO_ASSERT(node != NULL && !node->incomplete);
-    MO_ASSERT(p->depth < 4 * MO_LIMIT_NESTING_DEPTH + 8);
     p->span = node->span;
+    if (p->depth == MO_LIMIT_SOURCE_INFERENCE_DEPTH) {
+        bool reported = problem(p, MO_CODE_CHECK_SYNTAX_DEPTH, node->span,
+                                "the body needs too many inference frames", NULL, NULL);
+        (void)reported;
+        return (struct value){0};
+    }
     p->depth++;
     struct value v = infer_node(p, node, expected);
     p->depth--;
@@ -1255,7 +1260,7 @@ static MO_MUST_USE bool literal(struct inference *p, const struct note *n) {
     else if (strcmp(name, "Byte") == 0)
         fits = fits && !n->negative && magnitude <= 255;
     else if (strcmp(name, "Decimal") == 0) {
-        mo_u128 maximum = ((mo_u128)1 << 127) - (n->negative ? 0u : 1u);
+        mo_u128 maximum = ((mo_u128)1 << 127) - 1u;
         fits = fits && places <= 18;
         for (uint32_t i = places; fits && i < 18; i++) {
             if (magnitude > maximum / 10)

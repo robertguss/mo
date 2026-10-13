@@ -221,7 +221,8 @@ static void literal_ranges(void) {
     number("Byte", "256", false);
     number("Decimal", "170141183460469231731.687303715884105727", true);
     number("Decimal", "170141183460469231731.687303715884105728", false);
-    number("Decimal", "-170141183460469231731.687303715884105728", true);
+    number("Decimal", "-170141183460469231731.687303715884105727", true);
+    number("Decimal", "-170141183460469231731.687303715884105728", false);
     number("Decimal", "0.000000000000000001", true);
     number("Decimal", "0.0000000000000000001", false);
     char binary[1027];
@@ -378,6 +379,33 @@ static void shared_types(void) {
     }
 }
 
+static void syntax_depth(void) {
+    const uint32_t depths[] = {110, MO_LIMIT_NESTING_DEPTH - 1};
+    for (size_t d = 0; d < sizeof(depths) / sizeof(depths[0]); d++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, 32768);
+        MO_ASSERT(mo_buffer_append_text(
+            &source, "module Main\nfn run(a: Bool, b: Bool, c: Bool, d: Range, e: Int, "
+                     "f: Int, g: Int, h: fn(Bool) : Int) : Bool\n"));
+        for (uint32_t i = 0; i < depths[d]; i++)
+            MO_ASSERT(
+                mo_buffer_append_text(&source, "a implies b or c and not d == e .. f + g * -h("));
+        MO_ASSERT(mo_buffer_append_text(&source, "a"));
+        for (uint32_t i = 0; i < depths[d]; i++)
+            MO_ASSERT(mo_buffer_append_text(&source, ")"));
+        MO_ASSERT(mo_buffer_append_text(&source, "\nend\n"));
+        MO_ASSERT(mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init(&f, (const char *)source.bytes, NULL);
+        struct mo_inferred_body *out = body(&f, "run");
+        CHECK(out != NULL && f.diags.count == 0);
+        if (out != NULL)
+            CHECK(strcmp(out->items[out->count - 1].type->name, "Bool") == 0);
+        finish(&f);
+        mo_buffer_free(&source);
+    }
+}
+
 int main(void) {
     question_name();
     tuple_position();
@@ -389,5 +417,6 @@ int main(void) {
     unused_fix();
     reference_bodies();
     shared_types();
+    syntax_depth();
     return mo_test_report("check bodies");
 }
