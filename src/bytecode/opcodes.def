@@ -1,5 +1,5 @@
-/* Every opcode of bytecode.md 4.3 to 4.7. Numbers are assigned here in specification order,
- * from 1; zero is invalid, so zero-filled code cannot decode as a valid instruction.
+/* Every opcode of bytecode.md 4.3 to 4.7. Numbers are stable, starting at 1; new opcodes
+ * append without renumbering. Zero is invalid, so zero-filled code cannot decode as valid.
  *
  * Define OPCODE(id, number, name, count, limit, tail, a, b, c, d) before including this file.
  * It undefines OPCODE afterward. count is the fixed operand count; a through d describe those
@@ -106,5 +106,6 @@ OPCODE(HOST, 82, "host", 2, MO_LIMIT_BYTECODE_PARAMETERS, HOST, W, HOSTOP, NONE,
 OPCODE(RESET, 83, "reset", 2, 0, NONE, TW, C, NONE, NONE)
 OPCODE(REUSE, 84, "reuse", 3, MO_LIMIT_FIELDS, C, W, TC, LAYOUT, NONE)
 OPCODE(FREE_TOKEN, 85, "free_token", 1, 0, NONE, TC, NONE, NONE, NONE)
+OPCODE(CLEAR, 86, "clear", 1, 0, NONE, W, NONE, NONE, NONE)
 
 #undef OPCODE

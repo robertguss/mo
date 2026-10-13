@@ -508,6 +508,7 @@ static MO_MUST_USE bool ownership(struct flow *f) {
                     MO_ASSERT(changes < fn->code_count);
                     undo[changes++] = (struct undo){r, state[r]};
                     state[r] = mode == MO_ACCESS_TOKEN_WRITE ? TOKEN + f->reset[pc]
+                               : op == MO_OP_CLEAR           ? UNDEFINED
                                : op == MO_OP_MOVE            ? move
                                : f->v.file->types[fn->register_types[r]].reference
                                    ? op == MO_OP_CONST || op == MO_OP_GLOBAL ? BORROWED : OWNED

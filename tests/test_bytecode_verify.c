@@ -195,6 +195,9 @@ static void basics(void) {
     struct fixture t;
     init(&t);
     expect(&t, NULL, 0, 0);
+    const uint32_t clear[] = {MO_OP_CLEAR, 0, MO_OP_CONST, 0, 0, MO_OP_RET, 0};
+    code(&t, clear, N(clear));
+    expect(&t, NULL, 0, 0);
     const uint32_t undefined[] = {MO_OP_RET, 0};
     code(&t, undefined, N(undefined));
     expect(&t, "register is not readable", 0, 1);
@@ -265,6 +268,171 @@ static void memory(void) {
         mo_image_free(image);
     }
     mo_buffer_free(&wire);
+}
+
+struct clear_replay {
+    uint32_t visited;
+};
+static MO_MUST_USE bool clear_readable(uint32_t pc, const bool *readable, void *context) {
+    struct clear_replay *replay = context;
+    if (pc == 3 || pc == 5) {
+        CHECK(readable[0] == (pc == 3));
+        replay->visited++;
+    }
+    return true;
+}
+
+static void clears(void) {
+    struct fixture t;
+    init(&t);
+    const uint32_t value[] = {MO_OP_CONST, 0, 0, MO_OP_CLEAR, 0, MO_OP_CONST, 0, 0, MO_OP_RET, 0};
+    code(&t, value, N(value));
+    expect(&t, NULL, 0, 0);
+    struct mo_buffer wire;
+    struct mo_write_error we;
+    struct mo_load_error le;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    CHECK(mo_bytecode_write(&t.file, &wire, &we));
+    struct mo_image *image = mo_load(wire.bytes, wire.length, &le);
+    CHECK(image != NULL);
+    if (image != NULL) {
+        bool readable[N(default_regs)];
+        CHECK(mo_image_registers_readable(image, 0, 3, readable, &le));
+        CHECK(readable[0]);
+        CHECK(mo_image_registers_readable(image, 0, 5, readable, &le));
+        CHECK(!readable[0]);
+        struct clear_replay replay = {0};
+        CHECK(mo_image_visit_readable(image, 0, readable, clear_readable, &replay, &le));
+        CHECK(replay.visited == 2);
+        mo_image_free(image);
+    }
+    mo_buffer_free(&wire);
+    const uint32_t read[] = {MO_OP_CONST, 0, 0, MO_OP_CLEAR, 0, MO_OP_RET, 0};
+    code(&t, read, N(read));
+    expect(&t, "register is not readable", 0, 6);
+    const uint32_t owned[] = {MO_OP_CONST, 4, 3, MO_OP_DUP, 5, 4, MO_OP_CLEAR, 5, MO_OP_STOP, 4};
+    code(&t, owned, N(owned));
+    expect(&t, "write overwrites ownership or token", 0, 7);
+    const uint32_t token[] = {MO_OP_CONST,
+                              1,
+                              1,
+                              MO_OP_CONST,
+                              4,
+                              3,
+                              MO_OP_DUP,
+                              5,
+                              4,
+                              MO_OP_CONSTRUCT | (2U << 16),
+                              6,
+                              1,
+                              1,
+                              5,
+                              MO_OP_RESET,
+                              8,
+                              6,
+                              MO_OP_CLEAR,
+                              8,
+                              MO_OP_STOP,
+                              4};
+    code(&t, token, N(token));
+    expect(&t, "write overwrites ownership or token", 0, 18);
+    const uint32_t freed[] = {MO_OP_CONST, 1,
+                              1,           MO_OP_CONST,
+                              4,           3,
+                              MO_OP_DUP,   5,
+                              4,           MO_OP_CONSTRUCT | (2U << 16),
+                              6,           1,
+                              1,           5,
+                              MO_OP_RESET, 8,
+                              6,           MO_OP_FREE_TOKEN,
+                              8,           MO_OP_CLEAR,
+                              8,           MO_OP_CONST,
+                              0,           0,
+                              MO_OP_RET,   0};
+    code(&t, freed, N(freed));
+    expect(&t, NULL, 0, 0);
+    const uint32_t joins[] = {MO_OP_CONST, 0,
+                              0,           MO_OP_CONST,
+                              3,           2,
+                              MO_OP_CONST, 4,
+                              3,           MO_OP_BRANCH,
+                              3,           13,
+                              17,          MO_OP_CLEAR,
+                              4,           MO_OP_JUMP,
+                              26,          MO_OP_DUP,
+                              4,           4,
+                              MO_OP_DROP,  4,
+                              MO_OP_CLEAR, 4,
+                              MO_OP_JUMP,  26,
+                              MO_OP_RET,   0};
+    code(&t, joins, N(joins));
+    expect(&t, NULL, 0, 0);
+    /* Leave the borrowed and moved states intact on either edge, without changing shape. */
+    uint32_t unequal[N(joins)];
+    memcpy(unequal, joins, sizeof unequal);
+    unequal[14] = 2;
+    code(&t, unequal, N(unequal));
+    expect(&t, "register states disagree at join", 0, 26);
+    memcpy(unequal, joins, sizeof unequal);
+    unequal[23] = 2;
+    expect(&t, "register states disagree at join", 0, 26);
+    const uint32_t loop[] = {MO_OP_CONST,
+                             0,
+                             0,
+                             MO_OP_CONST,
+                             3,
+                             2,
+                             MO_OP_JUMP,
+                             8,
+                             MO_OP_BRANCH,
+                             3,
+                             12,
+                             26,
+                             MO_OP_CONST,
+                             4,
+                             3,
+                             MO_OP_DUP,
+                             5,
+                             4,
+                             MO_OP_DROP,
+                             5,
+                             MO_OP_CLEAR,
+                             4,
+                             MO_OP_CLEAR,
+                             5,
+                             MO_OP_JUMP,
+                             8,
+                             MO_OP_RET,
+                             0};
+    code(&t, loop, N(loop));
+    expect(&t, NULL, 0, 0);
+    uint32_t backedge[N(loop)];
+    memcpy(backedge, loop, sizeof backedge);
+    backedge[23] = 2;
+    code(&t, backedge, N(backedge));
+    expect(&t, "register states disagree at join", 0, 8);
+
+    const uint32_t regs[] = {15, 10, 3};
+    t.functions[0].register_types = regs;
+    t.functions[0].register_count = N(regs);
+    parameter(&t, 0, 2, MO_PARAMETER_BORROWED);
+    const uint32_t known[] = {MO_OP_SWITCH | (2U << 16),
+                              0,
+                              13,
+                              4,
+                              MO_OP_CLEAR,
+                              0,
+                              MO_OP_CASE_FIELD,
+                              2,
+                              0,
+                              1,
+                              0,
+                              MO_OP_STOP,
+                              1,
+                              MO_OP_STOP,
+                              1};
+    code(&t, known, N(known));
+    expect(&t, "case is not known", 0, 6);
 }
 
 static void arithmetic(void) {
@@ -2237,6 +2405,7 @@ int main(int argc, char **argv) {
     }
     basics();
     memory();
+    clears();
     arithmetic();
     choices_and_joins();
     data();

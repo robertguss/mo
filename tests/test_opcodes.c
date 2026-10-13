@@ -103,6 +103,7 @@ static const struct expected_opcode specification[] = {
     {"reset", "tc", '-', 0},
     {"reuse", "wqL", 'c', MO_LIMIT_FIELDS},
     {"free_token", "q", '-', 0},
+    {"clear", "w", '-', 0},
 };
 
 /* A descriptor has an access exactly when it names a register. This includes every consuming

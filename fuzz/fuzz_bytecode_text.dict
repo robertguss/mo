@@ -71,6 +71,7 @@
 "move"
 "dup"
 "drop"
+"clear"
 "const"
 "global"
 "set_global"
