@@ -1,7 +1,7 @@
 /* Fuzzes the argument parser: the input's zero bytes split it into arguments.
  * Whatever arrives, the parser must return a known command without tripping
  * an assertion or a sanitizer. */
-#include "tools/cli.h"
+#include "tools/tools.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -33,8 +33,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     }
     argv[argc] = NULL;
 
-    const mo_command command = mo_cli_parse(argc, argv);
-    MO_ASSERT(command == MO_COMMAND_STATUS || command == MO_COMMAND_VERSION);
+    struct mo_cli cli;
+    const char *error;
+    bool parsed = mo_cli_parse(argc, argv, &cli, &error);
+    MO_ASSERT(parsed || error != NULL);
     free(copy);
     return 0;
 }

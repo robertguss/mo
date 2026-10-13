@@ -93,7 +93,7 @@ test: $(DEBUG_TESTS) $(BUILD)/debug/mo
 
 sanitize: $(SANITIZE_TESTS) $(BUILD)/sanitize/mo
 	@for t in $(SANITIZE_TESTS); do $$t || exit 1; done
-	@$(BUILD)/sanitize/mo >/dev/null && $(BUILD)/sanitize/mo --version >/dev/null
+	@$(BUILD)/sanitize/mo --version >/dev/null
 
 # The grammar checks run on the debug build, then again under the sanitizers.
 grammar: $(BUILD)/debug/mo-grammar $(BUILD)/sanitize/mo-grammar
