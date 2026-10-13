@@ -1313,6 +1313,15 @@ static MO_MUST_USE struct value call(struct inference *p, struct value callee,
         allocate(p, args->count, sizeof(*ranges), _Alignof(struct note_range));
     if (ranges == NULL)
         return (struct value){0};
+    struct value result = {0};
+    if (p->checked) {
+        result =
+            graph(p, (struct value){.type = argument(p, t, t->shape.count - 1)}, args->count + 1);
+        if (result.type == NULL)
+            return result;
+        result.graph->operands[0] = callee.note;
+        result.graph->output.symbol = callee.symbol;
+    }
     struct note *before = p->last;
     for (unsigned pass = 0; pass < 2; pass++) {
         for (uint32_t i = 0; i < args->count; i++) {
@@ -1324,13 +1333,18 @@ static MO_MUST_USE struct value call(struct inference *p, struct value callee,
             if (arg.type == NULL)
                 return (struct value){0};
             ranges[i] = (struct note_range){previous == NULL ? p->notes : previous->next, p->last};
+            if (p->checked)
+                result.graph->operands[i + 1] = arg.note;
             never = never || arg.never;
         }
     }
     /* Constraint solving may visit lambdas last; metadata retains written order
      * so this never suggests reordering evaluation to downstream consumers. */
     order_notes(p, before, ranges, args->count);
-    return (struct value){.type = argument(p, t, t->shape.count - 1), .never = never};
+    if (!p->checked)
+        result.type = argument(p, t, t->shape.count - 1);
+    result.never = never;
+    return result;
 }
 
 static MO_MUST_USE struct value condition(struct inference *p, const struct mo_syntax *node,
@@ -2026,6 +2040,11 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     }
     case MO_S_CALL: {
         const struct mo_syntax *callee = node->children[0];
+        if (p->checked && (callee->kind == MO_S_CAPNAME || callee->kind == MO_S_QUALIFIED)) {
+            bool reported = unfinished(p);
+            (void)reported;
+            return (struct value){0};
+        }
         const struct mo_builtin_case *builtin = mo_builtin_case_by_name(callee);
         if (builtin != NULL)
             return builtin_construct(p, builtin, node->children[1], expected);
@@ -2378,7 +2397,7 @@ static MO_MUST_USE struct value infer(struct inference *p, const struct mo_synta
         node->kind != MO_S_FALSE && node->kind != MO_S_NAME && node->kind != MO_S_VAR &&
         node->kind != MO_S_BIND && node->kind != MO_S_BINARY && node->kind != MO_S_BINARY_CHAIN &&
         node->kind != MO_S_RANGE && node->kind != MO_S_NEGATE && node->kind != MO_S_NOT &&
-        node->kind != MO_S_PREFIX) {
+        node->kind != MO_S_PREFIX && node->kind != MO_S_CALL) {
         bool reported = unfinished(p);
         (void)reported;
         p->depth--;

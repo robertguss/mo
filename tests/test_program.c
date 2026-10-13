@@ -15,7 +15,7 @@ static void entry_graph(void) {
     MO_ASSERT(mo_sources_init(&sources) && mo_diags_init(&diags));
     const char *text = "module Main\nfn identity(value: Int) : Int\n"
                        "var copy = value\ncopy = 42\ncopy\nend\n"
-                       "fn main() : Int\n7 + 12 * 3 - 1\nend\n";
+                       "fn main() : Int\nidentity(7 + 12 * 3 - 1)\nend\n";
     uint32_t file;
     struct mo_source_error error;
     MO_ASSERT(mo_sources_add_bytes(&sources, "main.mo", (const uint8_t *)text, strlen(text), &file,
@@ -61,7 +61,7 @@ static void entry_graph(void) {
         MO_ASSERT(body->count <= 64);
         int64_t values[64] = {0};
         uint32_t operators = 0;
-        bool found = false;
+        bool found = false, called = false;
         for (uint32_t i = 0; i < body->count; i++) {
             const struct mo_checked_expression *row = &body->items[i];
             for (uint32_t j = 0; j < row->operand_count; j++)
@@ -89,11 +89,20 @@ static void entry_graph(void) {
                     CHECK(row->operation == MO_T_STAR);
                     values[i] = left * right;
                 }
+            } else if (row->syntax->kind == MO_S_CALL) {
+                CHECK(row->symbol == identity->signature->function);
+                MO_ASSERT(row->operand_count == 2 && row->operands[0] < i && row->operands[1] < i);
+                CHECK(body->items[row->operands[0]].symbol == row->symbol);
+                CHECK(body->items[row->operands[0]].type->kind == MO_SOURCE_FUNCTION);
+                CHECK(strcmp(body->items[row->operands[1]].type->name, "Int") == 0);
+                CHECK(row->arguments.count == 0);
+                CHECK(values[row->operands[1]] == 42);
+                called = true;
             } else if (row->operand_count != 0) {
                 values[i] = values[row->operands[row->operand_count - 1]];
             }
         }
-        CHECK(found && operators == 3 && values[body->root] == 42);
+        CHECK(found && called && operators == 3);
     }
     mo_arena_free(&arena);
     mo_arena_free(&syntax);
