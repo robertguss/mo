@@ -73,6 +73,159 @@ static void constant_graph(void) {
     free_fixture(&f);
 }
 
+static void constant_names(void) {
+    struct fixture f;
+    init(&f, "module Main\nnot_boolean? = 17\nfn main()\nend\n");
+    CHECK(f.program == NULL && f.diags.count == 1 && f.diags.items[0].code == MO_CODE_BOOL_NAME);
+    if (f.diags.count != 0)
+        CHECK(f.diags.items[0].primary.span.start == strlen("module Main\n") &&
+              f.diags.items[0].primary.span.end == strlen("module Main\nnot_boolean?"));
+    free_fixture(&f);
+    init(&f, "module Main\nready? = fn() 17 end\nfn main()\nend\n");
+    CHECK(f.program == NULL && f.diags.count == 1 && f.diags.items[0].code == MO_CODE_BOOL_NAME);
+    free_fixture(&f);
+    init(&f, "module Main\nready? = fn() false end\nfn main()\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    free_fixture(&f);
+}
+
+static void constant_context(void) {
+    struct fixture f;
+    init(&f, "module Main\nvalue = Some(try Some(1))\nfn main()\nend\n");
+    CHECK(f.program == NULL && f.diags.count == 1 && f.diags.items[0].code == MO_CODE_TRY_RESULT);
+    free_fixture(&f);
+    init(&f, "module Main\nreader = fn() Some(try Some(1)) end\nfn main()\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    free_fixture(&f);
+}
+
+static void constant_dependencies(void) {
+    static const struct {
+        const char *source;
+        const char *names[3];
+        uint32_t count;
+    } cases[] = {
+        {"answer = first()\nindependent = 7\nbase = 13\n"
+         "fn first() : Int\nsecond()\nend\nfn second() : Int\nbase - 5\nend\n",
+         {"independent", "base", "answer"},
+         3},
+        {"answer = first(2)\nbase = 13\n"
+         "fn first(n: Int) : Int\nif n == 0: base else: second(n - 1)\nend\n"
+         "fn second(n: Int) : Int\nfirst(n)\nend\n",
+         {"base", "answer"},
+         2},
+        {"answer = handler()\nhandler = first\nbase = 13\n"
+         "fn first() : Int\nbase\nend\n",
+         {"handler", "base", "answer"},
+         3},
+        {"answer = handler(-5)\nhandler = Int.abs\n", {"handler", "answer"}, 2},
+        {"answer = render()\nbase = \"label\"\nstruct Label\nvalue: Int\nend\n"
+         "fn to_text(label: Label) : Text\n\"#{base}#{label.value}\"\nend\n"
+         "fn render() : Text\n\"#{(Label(value: 3), [Label(value: 4)])}\"\nend\n",
+         {"base", "answer"},
+         2},
+        {"answer = Label(value: 3) < Label(value: 4)\nbase = Less\n"
+         "struct Label\nvalue: Int\nend\n"
+         "fn compare(_a: Label, _b: Label) : Ordering\nbase\nend\n",
+         {"base", "answer"},
+         2},
+        {"answer = ignore(Label(value: 3))\nstruct Label\nvalue: Int\nend\n"
+         "fn to_text(_label: Label) : Text\nanswer.to_text\nend\n"
+         "fn ignore(_value: T) : Int where T: Text\n42\nend\n",
+         {"answer"},
+         1},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, 4096);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\n") &&
+                  mo_buffer_append_text(&source, cases[i].source) &&
+                  mo_buffer_append_text(&source, "fn main()\nend\n") &&
+                  mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init(&f, (const char *)source.bytes);
+        CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+        if (f.program != NULL) {
+            CHECK(f.program->constant_count == cases[i].count);
+            for (uint32_t j = 0; j < f.program->constant_count && j < cases[i].count; j++) {
+                const struct mo_checked_constant *constant = &f.program->constants[j];
+                CHECK(strcmp(constant->symbol->name, cases[i].names[j]) == 0);
+                CHECK(constant->type->parameters == 0);
+            }
+        }
+        free_fixture(&f);
+        mo_buffer_free(&source);
+    }
+}
+
+static void constant_refusals(void) {
+    static const struct {
+        const char *source;
+        uint16_t code;
+    } cases[] = {
+        {"value = value\n", MO_CODE_CONSTANT_CYCLE},
+        {"first = second\nsecond = first\n", MO_CODE_CONSTANT_CYCLE},
+        {"value = reader()\nfn reader() : Int\nvalue\nend\n", MO_CODE_CONSTANT_CYCLE},
+        {"first = reader()\nsecond = first + 1\nfn reader() : Int\nsecond\nend\n",
+         MO_CODE_CONSTANT_CYCLE},
+        {"value = \"#{Label(value: 3)}\"\nstruct Label\nvalue: Int\nend\n"
+         "fn to_text(_label: Label) : Text\nvalue\nend\n",
+         MO_CODE_CONSTANT_CYCLE},
+        {"values = []\nfn read() : List(Int)\nvalues\nend\n", MO_CODE_CANNOT_INFER},
+        {"reader = fn(x) x end\n", MO_CODE_CANNOT_INFER},
+        {"value = 17\nfn read() : Byte\nvalue\nend\n", MO_CODE_RESULT_TYPE},
+        {"value = apply(reader)\nfn apply(f: fn() : Int) : Int\nf()\nend\n"
+         "fn reader() : Int\n1\nend\n",
+         MO_CODE_CHECK_UNFINISHED},
+        {"value = render(3)\nfn render(x: T) : Text where T: Text\nx.to_text\nend\n",
+         MO_CODE_CHECK_UNFINISHED},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, 4096);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\n") &&
+                  mo_buffer_append_text(&source, cases[i].source) &&
+                  mo_buffer_append_text(&source, "fn main()\nend\n") &&
+                  mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init(&f, (const char *)source.bytes);
+        CHECK(f.program == NULL && f.diags.count == 1 && f.diags.items[0].code == cases[i].code);
+        free_fixture(&f);
+        mo_buffer_free(&source);
+    }
+}
+
+static void constant_chain(void) {
+    const uint32_t count = 5000;
+    struct mo_buffer source;
+    mo_buffer_init(&source, 1 << 20);
+    MO_ASSERT(mo_buffer_append_text(&source, "module Main\n"));
+    for (uint32_t i = 0; i < count; i++) {
+        MO_ASSERT(mo_buffer_append_text(&source, "c") && mo_buffer_append_uint(&source, i) &&
+                  mo_buffer_append_text(&source, " = "));
+        if (i + 1 < count)
+            MO_ASSERT(mo_buffer_append_text(&source, "c") && mo_buffer_append_uint(&source, i + 1));
+        else
+            MO_ASSERT(mo_buffer_append_text(&source, "13"));
+        MO_ASSERT(mo_buffer_append_text(&source, "\n"));
+    }
+    MO_ASSERT(mo_buffer_append_text(&source, "fn main() : Int\nc0\nend\n") &&
+              mo_buffer_append_byte(&source, 0));
+    struct fixture f;
+    init(&f, (const char *)source.bytes);
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        CHECK(f.program->constant_count == count);
+        for (uint32_t i = 1; i < f.program->constant_count; i++) {
+            const struct mo_checked_constant *constant = &f.program->constants[i];
+            const struct mo_checked_body *body = &constant->initializer;
+            CHECK(body->items[body->root].symbol == f.program->constants[i - 1].symbol);
+        }
+    }
+    free_fixture(&f);
+    mo_buffer_free(&source);
+}
+
 static void example_graph(void) {
     struct fixture f;
     init(&f, "module Main\nfn plus(a: Int) : Int\nexamples\n"
@@ -1975,6 +2128,18 @@ static void diagnostic_cap(void) {
     }
     CHECK(capped_resource);
     free_fixture(&f);
+    mo_buffer_clear(&source);
+    MO_ASSERT(mo_buffer_append_text(&source, "module Main\n"));
+    for (uint32_t i = 0; i < 1500; i++)
+        MO_ASSERT(mo_buffer_append_text(&source, "c") && mo_buffer_append_uint(&source, i) &&
+                  mo_buffer_append_text(&source, " = unknown\n"));
+    MO_ASSERT(mo_buffer_append_text(&source, "fn main()\nend\n") &&
+              mo_buffer_append_byte(&source, 0));
+    init(&f, (const char *)source.bytes);
+    CHECK(f.program == NULL && f.diags.count == 1000 && f.diags.dropped == 500);
+    for (uint32_t i = 0; i < f.diags.count; i++)
+        CHECK(f.diags.items[i].code == MO_CODE_NAME_UNKNOWN);
+    free_fixture(&f);
     mo_buffer_free(&source);
 }
 
@@ -2111,7 +2276,12 @@ static void allocation_failures(void) {
         "promise \"doubles\"\nresult == value + value\n"
         "allows result: 6, value: 3\nforbids value: 2, result: 5\nend\n"
         "value + value\nend\ntest \"private \\u{3bb}\"\nassert twice(4) == 8\nend\n"
-        "fn main()\nend\n"};
+        "fn main()\nend\n",
+        "module Main\nanswer = twice(3)\nlabel = \"#{Label(value: answer)}\"\n"
+        "prefix = \"value\"\nstruct Label\nvalue: Int\nend\n"
+        "fn to_text(label: Label) : Text\n\"#{prefix}#{label.value}\"\nend\n"
+        "fn twice(value: T) : T where T: Number\nvalue + value\nend\n"
+        "fn main() : Int\nanswer\nend\n"};
     for (size_t s = 0; s < sizeof(sources) / sizeof(sources[0]); s++) {
         struct fixture f;
         init(&f, sources[s]);
@@ -2147,7 +2317,8 @@ static void corpus(void) {
     static const char *const paths[] = {
         "fuzz/corpus/fuzz_program/loops.mo",    "fuzz/corpus/fuzz_program/patterns.mo",
         "fuzz/corpus/fuzz_program/lambdas.mo",  "fuzz/corpus/fuzz_program/failures.mo",
-        "fuzz/corpus/fuzz_program/examples.mo", "fuzz/corpus/fuzz_program/specs.mo"};
+        "fuzz/corpus/fuzz_program/examples.mo", "fuzz/corpus/fuzz_program/specs.mo",
+        "fuzz/corpus/fuzz_program/constants.mo"};
     struct mo_sources sources;
     MO_ASSERT(mo_sources_init(&sources));
     for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
@@ -2165,6 +2336,11 @@ static void corpus(void) {
 static void run(void *argument) {
     (void)argument;
     constant_graph();
+    constant_names();
+    constant_context();
+    constant_dependencies();
+    constant_refusals();
+    constant_chain();
     example_graph();
     promise_graph();
     generic_spec_graph();

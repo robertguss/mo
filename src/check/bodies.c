@@ -1927,6 +1927,15 @@ static MO_MUST_USE struct value propagate(struct inference *p, struct value inpu
                                           struct term *expected) {
     if (input.type == NULL)
         return input;
+    if (p->function->function->declaration->kind == MO_S_CONST && p->lambda == 0) {
+        bool reported = problem(p, MO_CODE_TRY_RESULT, p->span,
+                                "try has no enclosing function returning Option or Result",
+                                "try passes a failure upwards from the nearest function or "
+                                "anonymous function (reference 8.3).",
+                                NULL);
+        (void)reported;
+        return (struct value){0};
+    }
     struct value out = graph(
         p, (struct value){.type = expected == NULL ? fresh(p, 0) : expected, .never = input.never},
         1);
@@ -4794,7 +4803,26 @@ bool mo_check_constant(struct mo_arena *arena, const struct mo_module_interfaces
     if (infer_function(arena, interfaces, signatures, constants, &context, diags, &checked, halt,
                        NULL, NULL) == NULL)
         return false;
+    const struct mo_source_type *value = checked.body.items[checked.body.root].type;
+    if (constant->symbol->name[constant->symbol->name_length - 1] == '?') {
+        const struct mo_source_type *answer =
+            value->kind == MO_SOURCE_FUNCTION ? value->arguments[value->count - 1] : value;
+        if (answer->kind != MO_SOURCE_NAMED || answer->module != UINT32_MAX ||
+            strcmp(answer->name, "Bool") != 0) {
+            bool kept = mo_diags_add(
+                diags, &(struct mo_diag){
+                           .code = MO_CODE_BOOL_NAME,
+                           .primary = {constant->symbol->declaration->children[0]->span,
+                                       "must be Bool or a function returning Bool"},
+                           .message = "a name ending in ? isn't a yes-or-no answer",
+                           .reason = "A name ending in ? is a Bool, or a function that returns "
+                                     "one (reference 2.3)."});
+            (void)kept;
+            *halt = diags->dropped != 0 && diags->count < MO_LIMIT_DIAGNOSTICS;
+            return false;
+        }
+    }
     constant->initializer = checked.body;
-    constant->type = checked.body.items[checked.body.root].type;
+    constant->type = value;
     return true;
 }
