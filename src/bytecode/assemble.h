@@ -6,7 +6,11 @@
 
 struct mo_text_token {
     uint32_t start, length;
-    char kind; /* w: word, q: quoted, x: hex, n: newline, 0: end, or punctuation */
+    char kind; /* w: word, q: quoted, c: Char, x: hex, n: newline, 0: end, or punctuation */
+};
+struct mo_text_reference {
+    uint32_t source, index, space;
+    struct mo_text_reference *next;
 };
 struct mo_text_position {
     uint32_t wire, text;
@@ -30,6 +34,7 @@ struct mo_text_reader {
     struct mo_arena arena;
     struct mo_buffer raw, positions;
     struct mo_text_table tables[MO_SECTION_COUNT];
+    struct mo_text_reference *references, **last_reference;
     size_t wire_size;
     bool failed, shorthand;
 };

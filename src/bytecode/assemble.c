@@ -41,15 +41,16 @@ void mo_text_next(struct mo_text_reader *r) {
         r->token.kind = 'n';
     } else if (c != 0 && strchr("[](),:", c) != NULL) {
         r->token.kind = c;
-    } else if (c == '"' ||
+    } else if (c == '"' || c == '\'' ||
                (c == 'h' && r->length - start >= 4 && memcmp(r->text + start, "hex\"", 4) == 0)) {
-        r->token.kind = c == '"' ? 'q' : 'x';
-        if (c != '"')
+        r->token.kind = c == '"' ? 'q' : c == '\'' ? 'c' : 'x';
+        unsigned char quote = c == '\'' ? '\'' : '"';
+        if (r->token.kind == 'x')
             r->cursor = start + 4;
         bool closed = false;
         while (r->cursor < r->length) {
             unsigned char b = (unsigned char)r->text[r->cursor++];
-            if (b == '"') {
+            if (b == quote) {
                 closed = true;
                 break;
             }
@@ -57,7 +58,7 @@ void mo_text_next(struct mo_text_reader *r) {
                 mo_text_refuse(r, r->cursor - 1, "expected printable quoted byte or escape");
                 return;
             }
-            if (b == '\\' && r->token.kind == 'q' && r->cursor < r->length)
+            if (b == '\\' && r->token.kind != 'x' && r->cursor < r->length)
                 r->cursor++;
         }
         if (!closed) {
@@ -141,6 +142,17 @@ bool mo_text_ref(struct mo_text_reader *r, char prefix, bool optional, uint32_t 
         mo_text_refuse(r, start, "expected index below UINT32_MAX (use - for absence)");
         return false;
     }
+    if ((which >= 1 && which <= 9) || which >= 12) {
+        struct mo_text_reference *ref =
+            mo_arena_allocate(&r->arena, sizeof *ref, _Alignof(struct mo_text_reference));
+        if (ref == NULL) {
+            mo_text_refuse(r, 0, "no memory");
+            return false;
+        }
+        *ref = (struct mo_text_reference){start, value, (uint32_t)which, NULL};
+        *r->last_reference = ref;
+        r->last_reference = &ref->next;
+    }
     *out = value;
     mo_text_next(r);
     return !r->failed;
@@ -202,10 +214,14 @@ bool mo_text_save(struct mo_text_reader *r, enum mo_bytecode_section section, ui
                                       MO_LIMIT_CONSTANTS, MO_LIMIT_GLOBALS, MO_LIMIT_INITS,
                                       MO_LIMIT_FUNCTIONS, MO_LIMIT_MODULES, MO_LIMIT_FUNCTIONS};
     struct mo_text_table *t = &r->tables[section];
-    if (index != t->count || index >= limits[section]) {
+    if (index > t->count || (!r->shorthand && index != t->count) || index >= limits[section]) {
         mo_text_refuse(r, source, "expected consecutive entry index within section limit");
         return false;
     }
+    if (t->count == 0 && t->source == 0)
+        t->source = source;
+    if (index < t->count)
+        r->wire_size -= t->entries[index].length;
     if (r->raw.length > MO_LIMIT_BYTECODE_SIZE - r->wire_size) {
         mo_text_refuse(r, source, "expected bytecode within size limit");
         return false;
@@ -229,9 +245,11 @@ bool mo_text_save(struct mo_text_reader *r, enum mo_bytecode_section section, ui
         mo_text_refuse(r, 0, "no memory");
         return false;
     }
-    t->entries[t->count++] =
+    t->entries[index] =
         (struct mo_text_entry){bytes, (uint32_t)r->raw.length, positions,
                                (uint32_t)(r->positions.length / sizeof *positions), source};
+    if (index == t->count)
+        t->count++;
     r->wire_size += r->raw.length;
     mo_buffer_clear(&r->raw);
     mo_buffer_clear(&r->positions);
@@ -265,6 +283,29 @@ static MO_MUST_USE uint32_t text_offset(const struct mo_text_reader *r, uint32_t
 }
 
 static MO_MUST_USE bool output(struct mo_text_reader *r, struct mo_buffer *out) {
+    static const char *const expected[] = {"",
+                                           "expected string index in final pool",
+                                           "expected type index in final pool",
+                                           "expected layout index in final pool",
+                                           "expected constant index in final pool",
+                                           "expected global index in final pool",
+                                           "expected init index in final pool",
+                                           "expected function index in final pool",
+                                           "expected module index in final pool",
+                                           "expected debug index in final pool",
+                                           "",
+                                           "",
+                                           "expected primitive index in range",
+                                           "expected host index in range"};
+    for (const struct mo_text_reference *ref = r->references; ref != NULL; ref = ref->next) {
+        uint32_t bound = ref->space <= 9    ? r->tables[ref->space - 1].count
+                         : ref->space == 12 ? MO_PRIM_COUNT
+                                            : MO_HOST_COUNT;
+        if (ref->index >= bound) {
+            mo_text_refuse(r, ref->source, expected[ref->space]);
+            return false;
+        }
+    }
     uint8_t header[MO_BYTECODE_HEADER_SIZE] = {'M', 'O', 'B', 'C', 0, 0, 1, 0};
     if (r->wire_size > out->limit) {
         mo_text_refuse(r, 0, "bytecode output limit");
@@ -315,6 +356,7 @@ bool mo_bytecode_assemble(const char *text, size_t length, struct mo_buffer *out
                                .length = (uint32_t)length,
                                .error = error_out,
                                .wire_size = MO_BYTECODE_HEADER_SIZE + 4 * MO_SECTION_COUNT};
+    r.last_reference = &r.references;
     size_t bounded = length < MO_LIMIT_BYTECODE_SIZE ? length : MO_LIMIT_BYTECODE_SIZE;
     mo_arena_init(&r.arena, mo_bytecode_work_budget(bounded));
     mo_buffer_init(&r.raw, MO_LIMIT_BYTECODE_SIZE);

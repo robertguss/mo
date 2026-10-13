@@ -109,17 +109,19 @@ fuzz: $(FUZZERS)
 
 # A crash artifact fails the run that found it. Start with none, so that one saved by an
 # earlier run does not keep failing the runs after the bug is fixed.
-fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test
+fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test $(BUILD)/debug/tests/test_bytecode_text.test
 	@rm -rf $(FUZZ_BUILD)/artifacts
 	@mkdir -p $(FUZZ_BUILD)/artifacts
 	@mkdir -p $(FUZZ_BUILD)/bytecode-fixtures
 	$(BUILD)/debug/tests/test_bytecode_verify.test --corpus $(FUZZ_BUILD)/bytecode-fixtures
+	$(BUILD)/debug/tests/test_bytecode_text.test --corpus $(FUZZ_BUILD)/bytecode-fixtures
 	@for f in $(FUZZERS); do \
 		base=$$(basename $$f); variants=small; \
 		if [ "$$base" = fuzz_bytecode_io ]; then variants="small large"; fi; \
 		for variant in $$variants; do \
 			name=$$base; options=; \
 			if [ "$$base" = fuzz_bytecode_io ]; then options="-max_len=4096 -timeout=15"; fi; \
+			if [ "$$base" = fuzz_bytecode_text ]; then options="-max_len=16777216 -timeout=30"; fi; \
 			if [ "$$variant" = large ]; then \
 				name=$${base}_large; options="-max_len=134217728 -timeout=30"; fi; \
 			corpus=$(FUZZ_BUILD)/corpus/$$name; \
@@ -127,6 +129,7 @@ fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test
 			mkdir -p $$corpus; \
 			if [ -d fuzz/corpus/$$name ]; then cp -R fuzz/corpus/$$name/. $$corpus/; fi; \
 			if [ "$$base" = fuzz_bytecode_io ]; then cp $(FUZZ_BUILD)/bytecode-fixtures/*.bc $$corpus/; fi; \
+			if [ "$$base" = fuzz_bytecode_text ]; then cp $(FUZZ_BUILD)/bytecode-fixtures/* $$corpus/; fi; \
 			if [ "$$name" = fuzz_core_text ] || [ "$$name" = fuzz_core_check ] || [ "$$name" = fuzz_codegen ]; then \
 				cp tests/core/*.core fuzz/corpus/fuzz_core_text/*.core $$corpus/; fi; \
 			if [ "$$name" = fuzz_check ]; then cp tests/check/diagnostics/e*.mo $$corpus/; fi; \

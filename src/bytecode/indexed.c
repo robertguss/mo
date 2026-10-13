@@ -121,8 +121,17 @@ static MO_MUST_USE bool layout(struct mo_text_reader *r) {
 
 static MO_MUST_USE bool constant(struct mo_text_reader *r) {
     uint32_t index, source = r->token.start;
-    return mo_text_ref(r, 't', false, &index) && mo_text_word(r, index, source) &&
-           mo_text_payload(r, index, false);
+    if (!mo_text_ref(r, 't', false, &index) || !mo_text_word(r, index, source))
+        return false;
+    if (!r->shorthand)
+        return mo_text_payload(r, index, false);
+    /* Seed types may themselves be supplied by a later shorthand header. */
+    source = r->token.start;
+    if (!mo_text_word(r, source, source))
+        return false;
+    while (r->token.kind != 'n' && r->token.kind != 0 && !r->failed)
+        mo_text_next(r);
+    return !r->failed;
 }
 
 bool mo_text_instruction(struct mo_text_reader *r) {
@@ -261,10 +270,18 @@ bool mo_text_indexed_section(struct mo_text_reader *r, enum mo_bytecode_section 
         uint32_t index, source = r->token.start;
         if (!mo_text_ref(r, prefixes[section], false, &index))
             return false;
+        if (index != r->tables[section].count) {
+            mo_text_refuse(r, source, "expected consecutive entry index within section limit");
+            return false;
+        }
         bool ok = false;
         switch (section) {
         case MO_SECTION_STRINGS: {
             struct mo_bytecode_string s;
+            if (r->token.kind != 'q') {
+                mo_text_refuse(r, r->token.start, "expected quoted UTF-8 string");
+                return false;
+            }
             ok = mo_text_quote(r, &s) && mo_text_word(r, s.length, source) &&
                  mo_text_bytes(r, s.bytes, s.length, source);
             break;

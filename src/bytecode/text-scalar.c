@@ -1,5 +1,8 @@
+#define _POSIX_C_SOURCE 200809L
 #include "bytecode/assemble.h"
 
+#include <locale.h>
+#include <stdlib.h>
 #include <string.h>
 
 static MO_MUST_USE int hex(unsigned char c) {
@@ -91,7 +94,8 @@ bool mo_text_quote(struct mo_text_reader *r, struct mo_bytecode_string *out) {
     return !r->failed;
 }
 
-static MO_MUST_USE bool integer(struct mo_text_reader *r, enum mo_type_kind kind, mo_u128 *out) {
+static MO_MUST_USE bool integer(struct mo_text_reader *r, enum mo_type_kind kind, bool shorthand,
+                                mo_u128 *out) {
     struct mo_text_token t = r->token;
     const char *s = r->text + t.start;
     bool negative = t.length != 0 && s[0] == '-';
@@ -105,24 +109,37 @@ static MO_MUST_USE bool integer(struct mo_text_reader *r, enum mo_type_kind kind
         mo_text_refuse(r, t.start, "expected integer literal in type bounds");
         return false;
     }
+    unsigned radix = 10;
+    if (shorthand && !decimal && t.length - i > 2 && s[i] == '0' &&
+        (s[i + 1] == 'x' || s[i + 1] == 'b')) {
+        radix = s[i + 1] == 'x' ? 16 : 2;
+        i += 2;
+    }
+    bool previous_digit = false;
     for (; i < t.length; i++) {
         char c = s[i];
+        if (shorthand && !decimal && c == '_' && previous_digit && i + 1 < t.length) {
+            previous_digit = false;
+            continue;
+        }
         if (decimal && c == '.' && !point && i != (negative ? 1U : 0U) && i + 1 < t.length) {
             point = true;
             continue;
         }
-        if (c < '0' || c > '9' || (point && ++fraction > 18)) {
+        int parsed = hex((unsigned char)c);
+        if (parsed < 0 || (unsigned)parsed >= radix || (point && ++fraction > 18)) {
             mo_text_refuse(r, t.start + i,
                            decimal ? "expected decimal with at most 18 fraction digits"
-                                   : "expected decimal integer digit");
+                                   : "expected integer digit in literal radix");
             return false;
         }
-        unsigned digit = (unsigned)(c - '0');
-        if (value > (maximum - digit) / 10) {
+        unsigned digit = (unsigned)parsed;
+        if (value > (maximum - digit) / radix) {
             mo_text_refuse(r, t.start, "expected numeric literal in type bounds");
             return false;
         }
-        value = value * 10 + digit;
+        value = value * radix + digit;
+        previous_digit = true;
     }
     if (decimal) {
         for (; fraction < 18; fraction++) {
@@ -145,8 +162,177 @@ static MO_MUST_USE bool integer(struct mo_text_reader *r, enum mo_type_kind kind
     return !r->failed;
 }
 
+static MO_MUST_USE bool character(struct mo_text_reader *r, mo_u128 *out) {
+    struct mo_text_token t = r->token;
+    const uint8_t *p = (const uint8_t *)r->text + t.start + 1;
+    uint32_t n = t.length - 2, value = 0;
+    if (n >= 2 && p[0] == '\\') {
+        if (n == 2) {
+            switch (p[1]) {
+            case 'n':
+                value = '\n';
+                break;
+            case 'r':
+                value = '\r';
+                break;
+            case 't':
+                value = '\t';
+                break;
+            case '0':
+                value = 0;
+                break;
+            case '\\':
+                value = '\\';
+                break;
+            case '\'':
+                value = '\'';
+                break;
+            case '"':
+                value = '"';
+                break;
+            default:
+                goto invalid;
+            }
+        } else if (n >= 5 && n <= 10 && p[1] == 'u' && p[2] == '{' && p[n - 1] == '}') {
+            for (uint32_t i = 3; i + 1 < n; i++) {
+                int digit = hex(p[i]);
+                if (digit < 0)
+                    goto invalid;
+                value = value * 16 + (unsigned)digit;
+            }
+        } else {
+            goto invalid;
+        }
+    } else {
+        if (n == 0 || n > 4 || !mo_bytecode_utf8(p, n))
+            goto invalid;
+        uint32_t width = p[0] < 0x80 ? 1 : p[0] < 0xe0 ? 2 : p[0] < 0xf0 ? 3 : 4;
+        if (n != width)
+            goto invalid;
+        value = p[0] & (width == 1 ? 0x7fU : width == 2 ? 0x1fU : width == 3 ? 0xfU : 7U);
+        for (uint32_t i = 1; i < width; i++)
+            value = (value << 6) | (p[i] & 0x3fU);
+    }
+    if (value >= 0x110000 || (value >= 0xd800 && value <= 0xdfff))
+        goto invalid;
+    *out = value;
+    mo_text_next(r);
+    return !r->failed;
+invalid:
+    mo_text_refuse(r, t.start, "expected one Unicode scalar or Char escape");
+    return false;
+}
+
+static MO_MUST_USE bool floating(struct mo_text_reader *r) {
+    struct mo_text_token t = r->token;
+    uint64_t bits = UINT64_C(0x7ff8000000000000);
+    if (!mo_text_is(r, "nan")) {
+        uint32_t i = 0;
+        if (t.length != 0 && r->text[t.start] == '-')
+            i++;
+        bool point = false, exponent = false, digit = false;
+        for (; i < t.length; i++) {
+            char c = r->text[t.start + i];
+            if (c >= '0' && c <= '9') {
+                digit = true;
+            } else if (c == '.' && !point && !exponent && digit && i + 1 < t.length) {
+                point = true;
+                digit = false;
+            } else if ((c == 'e' || c == 'E') && !exponent && digit) {
+                exponent = true;
+                digit = false;
+                if (i + 1 < t.length &&
+                    (r->text[t.start + i + 1] == '+' || r->text[t.start + i + 1] == '-'))
+                    i++;
+            } else {
+                digit = false;
+                break;
+            }
+        }
+        if (t.kind != 'w' || !digit || i != t.length) {
+            mo_text_refuse(r, t.start, "expected Float number or nan");
+            return false;
+        }
+        char *spelling = mo_arena_allocate(&r->arena, (size_t)t.length + 1, 1);
+        if (spelling == NULL) {
+            mo_text_refuse(r, 0, "no memory");
+            return false;
+        }
+        memcpy(spelling, r->text + t.start, t.length);
+        spelling[t.length] = 0;
+        locale_t locale = newlocale(LC_NUMERIC_MASK, "C", (locale_t)0);
+        if (locale == (locale_t)0) {
+            mo_text_refuse(r, 0, "no memory for Float locale");
+            return false;
+        }
+        locale_t old = uselocale(locale);
+        if (old == (locale_t)0) {
+            freelocale(locale);
+            mo_text_refuse(r, 0, "cannot select Float locale");
+            return false;
+        }
+        char *end;
+        double value = strtod(spelling, &end);
+        bool restored = uselocale(old) != (locale_t)0;
+        /* A valid locale returned by uselocale remains valid until restored. */
+        MO_ASSERT(restored && end == spelling + t.length && sizeof value == sizeof bits);
+        freelocale(locale);
+        memcpy(&bits, &value, sizeof bits);
+    }
+    uint8_t bytes[8];
+    for (unsigned i = 0; i < 8; i++)
+        bytes[i] = (uint8_t)(bits >> (8 * i));
+    mo_text_next(r);
+    return mo_text_bytes(r, bytes, sizeof bytes, t.start);
+}
+
+static MO_MUST_USE bool bigint(struct mo_text_reader *r) {
+    struct mo_text_token t = r->token;
+    const char *text = r->text + t.start;
+    bool negative = t.length != 0 && text[0] == '-';
+    uint32_t start = negative ? 1U : 0U;
+    if (t.kind != 'w' || start == t.length) {
+        mo_text_refuse(r, t.start, "expected BigInt decimal integer or bigint sign hex");
+        return false;
+    }
+    if (t.length - start > MO_LIMIT_BYTECODE_BIGINT_DIGITS) {
+        mo_text_refuse(r, t.start,
+                       "expected BigInt within decimal digit limit (use bigint sign hex)");
+        return false;
+    }
+    /* log2(10)/8 < 1/2: half the digit count plus one bounds the magnitude. */
+    uint32_t capacity = (t.length - start) / 2 + 1, length = 0;
+    uint8_t *bytes = mo_arena_allocate(&r->arena, capacity, 1);
+    if (bytes == NULL) {
+        mo_text_refuse(r, 0, "no memory");
+        return false;
+    }
+    for (uint32_t i = start; i < t.length; i++) {
+        if (text[i] < '0' || text[i] > '9') {
+            mo_text_refuse(r, t.start + i, "expected BigInt decimal digit");
+            return false;
+        }
+        unsigned carry = (unsigned)(text[i] - '0');
+        for (uint32_t j = 0; j < length; j++) {
+            carry += 10U * bytes[j];
+            bytes[j] = (uint8_t)carry;
+            carry >>= 8;
+        }
+        if (carry != 0) {
+            MO_ASSERT(length < capacity);
+            bytes[length++] = (uint8_t)carry;
+        }
+    }
+    mo_text_next(r);
+    return mo_text_word(r,
+                        length == 0 ? MO_BIGINT_ZERO
+                        : negative  ? MO_BIGINT_NEGATIVE
+                                    : MO_BIGINT_POSITIVE,
+                        t.start) &&
+           mo_text_word(r, length, t.start) && mo_text_bytes(r, bytes, length, t.start);
+}
+
 bool mo_text_payload(struct mo_text_reader *r, uint32_t type, bool shorthand) {
-    (void)shorthand;
     const struct mo_text_table *types = &r->tables[MO_SECTION_TYPES];
     uint32_t source = r->token.start;
     if (type >= types->count) {
@@ -167,6 +353,11 @@ bool mo_text_payload(struct mo_text_reader *r, uint32_t type, bool shorthand) {
             return false;
         value = boolean;
     } else if (kind == MO_TYPE_CHAR) {
+        if (shorthand && r->token.kind == 'c') {
+            if (!character(r, &value))
+                return false;
+            goto scalar;
+        }
         struct mo_text_token t = r->token;
         if (t.kind != 'w' || t.length < 3 || memcmp(r->text + t.start, "U+", 2) != 0) {
             mo_text_refuse(r, source, "expected Char U+hex scalar");
@@ -186,6 +377,8 @@ bool mo_text_payload(struct mo_text_reader *r, uint32_t type, bool shorthand) {
         }
         mo_text_next(r);
     } else if (kind == MO_TYPE_FLOAT) {
+        if (shorthand)
+            return floating(r);
         struct mo_bytecode_string bits;
         if (!mo_text_take(r, "bits", "expected bits hex for Float") || r->token.kind != 'x') {
             mo_text_refuse(r, r->token.start, "expected hex Float bits");
@@ -205,6 +398,8 @@ bool mo_text_payload(struct mo_text_reader *r, uint32_t type, bool shorthand) {
                mo_text_ref(r, kind == MO_TYPE_TEXT ? 's' : 'f', false, &index) &&
                mo_text_word(r, index, source);
     } else if (kind == MO_TYPE_BYTES || kind == MO_TYPE_BIGINT) {
+        if (shorthand && kind == MO_TYPE_BIGINT && !mo_text_is(r, "bigint"))
+            return bigint(r);
         struct mo_bytecode_string blob;
         if (!mo_text_take(r, kind == MO_TYPE_BYTES ? "bytes" : "bigint",
                           kind == MO_TYPE_BYTES ? "expected bytes hex"
@@ -225,12 +420,13 @@ bool mo_text_payload(struct mo_text_reader *r, uint32_t type, bool shorthand) {
                mo_text_bytes(r, blob.bytes, blob.length, source);
     } else if (kind == MO_TYPE_BYTE || kind == MO_TYPE_INT || kind == MO_TYPE_TIME ||
                kind == MO_TYPE_DURATION || kind == MO_TYPE_DECIMAL) {
-        if (!integer(r, (enum mo_type_kind)kind, &value))
+        if (!integer(r, (enum mo_type_kind)kind, shorthand, &value))
             return false;
     } else {
         mo_text_refuse(r, source, "expected type with a literal encoding");
         return false;
     }
+scalar:;
     uint32_t width = kind == MO_TYPE_DECIMAL ? 16 : 8;
     for (uint32_t i = 0; i < width; i++)
         bytes[i] = (uint8_t)(value >> (8 * i));

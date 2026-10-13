@@ -1295,6 +1295,12 @@ named_operand = R | LABEL | AT | NAME | TYPE | LITERAL | T | L | K | G | F | P |
 
 `NAME` is a Mo qualified name, including type arguments for instantiations;
 `TYPE` is a Mo type or an indexed `T`, with `env(NAME)` for a closure's env.
+In symbolic names, spaces and tabs around type-argument punctuation are
+ignored, and a comma is stored as comma-space: `Wrapper(Int,Text)` and
+`Wrapper(Int, Text)` name the same declaration. Other name bytes, including
+case, are unchanged. Seeds retain their bytes; a symbolic lookup of a seeded
+generic name uses this same normalized spelling. An index-shaped name cannot
+be declared symbolically; use indexed text to retain such names.
 A label is `@` followed by a name; a final label may mark the code's end for
 a variable range, but not a jump target. `registers` lists only additional
 registers, consecutively after explicit parameters and a closure's implicit
@@ -1325,6 +1331,22 @@ closure. Its type is the destination register's type, without
 conversion. Numeric literals are encoded as in 3.1; a float literal uses its
 binary64 value, `nan` the bits `0x7ff8000000000000`. Other NaN payloads need a
 seed. A `range` or choice literal is not a constant (3.1).
+For integer types other than Decimal, shorthand also accepts `0x` hexadecimal
+and `0b` binary digits, and underscores between digits, with the same sign
+and value bounds. Decimal keeps 10.1's exact decimal syntax. Float accepts
+decimal digits with an optional fraction and optional `e`/`E` exponent;
+an exponent may have `+` or `-`. Conversion uses the C numeric locale,
+independently of the caller's locale, and retains signed zero. Overflow and
+underflow produce the binary64 infinity or rounded value, respectively.
+Char accepts 10.1's `U+hex` or one single-quoted Unicode scalar, with escapes
+`\n`, `\r`, `\t`, `\0`, `\'`, `\"`, `\\` and `\u{hex}` (one to six
+hex digits). Text uses `Q` with exactly 10.1's escapes; Bytes uses `bytes HEX`.
+BigInt accepts a signed decimal integer or `bigint SIGN HEX`. Decimal BigInt
+spellings have at most `MO_LIMIT_BYTECODE_BIGINT_DIGITS` (4,096) digits,
+including leading zeros: repeated multiply-by-ten conversion is bounded.
+Larger values use the linear hex spelling, up to section 3's magnitude limit.
+Negative zero becomes zero. None of these shorthand spellings are printed
+by the disassembler in place of 10.1's canonical payloads.
 
 The assembler fills the tables in these steps:
 
@@ -1690,14 +1712,28 @@ more than eight times the added binary bytes. Absent references are shorter;
 condition text remains a string index, with its bytes quoted only in the
 string section. Its at-most-fourfold byte escaping is unchanged.
 Their declarations are in
-`bytecode.h`; stream 3 implements them along with the writer. Each borrows its
+`bytecode.h`. Each borrows its
 input and requires an initialized, empty caller-owned buffer, which must not
 back the input. Invalid input, an output limit or no memory returns false,
 leaves the buffer empty (capacity may have grown), and fills the required
 error structure with static reason text. Assembly errors have a text byte
 offset; disassembly uses `mo_load_error` with an input byte offset. Offset zero
 denotes a failure not tied to an input byte, such as no memory or an output
-limit. First-use table construction is only for shorthand; it never
+limit. Syntax refusals point to the offending token or byte, or text end when
+a token is missing. Final-pool index refusals point to the reference token,
+including forward references. Loader/verifier refusals map the offending
+binary field or instruction back to its source token; a whole-table refusal
+points to the section keyword (or the shorthand declaration/operand that
+created the table entry). Their reason retains the loader's violated rule.
+Assembly uses wire-sized ceilings for encoded bytes and position tables,
+an arena budget derived from text length through `mo_bytecode_work_budget`,
+and `MO_LIMIT_NESTING_DEPTH` for nested types, names and literals. Incremental
+symbol/pool lookups use balanced ordered trees, not linear scans or unkeyed
+hashing; module-global arrays are built by buckets, and choice case offsets
+are indexed once. Apart from bounded numeric conversion and nesting, work is
+near-linear in text bytes plus generated wire bytes, with logarithmic lookup
+factors. Verification keeps section 9's own budgets.
+First-use table construction is only for shorthand; it never
 renumbers a seed or an indexed file.
 
 ## 11. Versions
