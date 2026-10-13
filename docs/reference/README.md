@@ -28,7 +28,8 @@ end
   console. They are its whole authority. It can't touch files, the network or
   the clock, because it wasn't handed them (section 11).
 - Blocks open with a keyword and close with `end`. Indentation carries no
-  meaning; `mo format` lays code out with two spaces per level.
+  meaning; `mo format` lays code out with two spaces per level, in lines of at
+  most 100 columns.
 
 ## 2. Source text
 
@@ -50,7 +51,9 @@ write them as escapes, such as `"\u{200B}"`.
 ### 2.2 Comments
 
 `#` starts a comment that runs to the end of the line. `##` documents the
-declaration below it, or the module when it comes before `module`.
+declaration below it, or the module when it comes before `module`. `mo format`
+lines up the comments at the ends of consecutive lines in one column, two
+spaces after the longest line's code.
 
 ```mo
 ## The price of an order, with tax.
@@ -102,6 +105,13 @@ names = customers
 ready = stocked and
   priced
 ```
+
+These show where a statement may break. `mo format` chooses the breaks itself:
+a statement that fits in 100 columns goes on one line, so it would join each of
+these, and a longer one is broken at its outermost brackets, dots or operators
+first. It counts columns as `Unicode16.display_width` does (section 14), turns
+any run of blank lines between statements into one, and writes no trailing
+commas.
 
 ## 3. Values and types
 
@@ -1391,8 +1401,13 @@ objects nested more than 128 deep.
 
 **Unicode16**, following Unicode 16.0: `graphemes(text: Text) : List(Text)`,
 `display_width(text: Text) : Int`, and `normalize_nfc`, `lowercase` and
-`uppercase(text: Text) : Text`. A later runtime adds `Unicode17` beside it, so
-what a program computes changes only when its `use` line does.
+`uppercase(text: Text) : Text`. `display_width` counts each user-perceived
+character, as `graphemes` splits the text: 2 columns for an emoji (with its
+selector, skin tone or joins), a flag, or one holding a wide or fullwidth
+character; 0 for one made only of control characters, marks and invisible
+characters; and 1 otherwise, ambiguous characters and a lone flag letter
+included. A later runtime adds `Unicode17` beside it, so what a program computes
+changes only when its `use` line does.
 
 ## 15. What comes later
 
