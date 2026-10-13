@@ -13,7 +13,8 @@ static void entry_graph(void) {
     mo_arena_init(&syntax, 1 << 20);
     mo_arena_init(&arena, 4 << 20);
     MO_ASSERT(mo_sources_init(&sources) && mo_diags_init(&diags));
-    const char *text = "module Main\nfn main() : Int\n42\nend\n";
+    const char *text = "module Main\nfn identity(value: Int) : Int\nvalue\nend\n"
+                       "fn main() : Int\n42\nend\n";
     uint32_t file;
     struct mo_source_error error;
     MO_ASSERT(mo_sources_add_bytes(&sources, "main.mo", (const uint8_t *)text, strlen(text), &file,
@@ -25,9 +26,23 @@ static void entry_graph(void) {
     struct mo_program *program = mo_check(&arena, &set, &diags);
     CHECK(program != NULL && !mo_diags_any(&diags));
     if (program != NULL) {
-        CHECK(program->function_count == 1);
-        CHECK(program->entry.function == 0 && program->entry.result == MO_ENTRY_STATUS);
-        const struct mo_checked_body *body = &program->functions[0].body;
+        CHECK(program->function_count == 2);
+        CHECK(program->entry.function == 1 && program->entry.result == MO_ENTRY_STATUS);
+        const struct mo_checked_function *identity = &program->functions[0];
+        CHECK(identity->parameter_count == 1 && identity->body.binding_count == 1);
+        if (identity->parameter_count == 1) {
+            const struct mo_checked_binding *parameter = identity->parameters[0];
+            CHECK(strcmp(parameter->name, "value") == 0);
+            CHECK(strcmp(parameter->type->name, "Int") == 0 && !parameter->variable);
+            bool read = false;
+            for (uint32_t i = 0; i < identity->body.count; i++)
+                if (identity->body.items[i].syntax->kind == MO_S_NAME) {
+                    CHECK(identity->body.items[i].binding == parameter);
+                    read = true;
+                }
+            CHECK(read);
+        }
+        const struct mo_checked_body *body = &program->functions[program->entry.function].body;
         CHECK(body->root < body->count);
         CHECK(strcmp(body->items[body->root].type->name, "Int") == 0);
         bool found = false;

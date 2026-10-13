@@ -41,6 +41,7 @@ struct local {
     struct term *type;
     struct local *previous;
     struct local *next;
+    struct note *binding;
     uint32_t function;
     uint32_t pattern_group, pattern_alternative;
     bool variable;
@@ -57,7 +58,10 @@ struct note {
     struct term *type;
     struct note *next;
     struct emitted *graph;
+    struct note *binding;
     uint32_t index;
+    uint32_t binding_index;
+    bool variable;
     bool discarded;
     bool negative;
 };
@@ -104,7 +108,7 @@ struct inference {
     struct local *unused, *error_unused;
     const char *type_label;
     uint16_t expectation, node_expectation;
-    uint32_t count, depth, loops, lambda, work, epoch;
+    uint32_t count, binding_count, depth, loops, lambda, work, epoch;
     uint32_t pattern_group, pattern_depth;
     bool checked;
     bool keep_patterns;
@@ -119,6 +123,7 @@ struct value {
     const char *builtin_case;
     struct emitted *graph;
     struct note *note;
+    struct note *bound;
     bool never;
 };
 
@@ -580,7 +585,9 @@ static MO_MUST_USE bool record(struct inference *p, const struct mo_syntax *node
                                   .never = v.never},
                        .type = v.type,
                        .graph = v.graph,
-                       .index = UINT32_MAX};
+                       .binding = v.bound,
+                       .index = UINT32_MAX,
+                       .binding_index = UINT32_MAX};
     if (p->last == NULL)
         p->notes = n;
     else
@@ -661,10 +668,22 @@ static MO_MUST_USE struct name_slot *slot(struct inference *p, const struct mo_s
     return entry;
 }
 
+static MO_MUST_USE bool record_binding(struct inference *p, const struct mo_syntax *name,
+                                       struct term *type, bool variable) {
+    if (!record(p, name, (struct value){.type = type, .binding = name}))
+        return false;
+    if (p->checked) {
+        p->last->binding = p->last;
+        p->last->variable = variable;
+        p->binding_count++;
+    }
+    return true;
+}
+
 static MO_MUST_USE bool bind(struct inference *p, const struct mo_syntax *name, struct term *type,
                              bool variable) {
     if (name->kind == MO_S_UNDERSCORE)
-        return record(p, name, (struct value){.type = type, .binding = name});
+        return record_binding(p, name, type, variable);
     struct name_slot *s = slot(p, name, true);
     if (s == NULL)
         return false;
@@ -693,7 +712,10 @@ static MO_MUST_USE bool bind(struct inference *p, const struct mo_syntax *name, 
     s->active = l;
     p->locals = l;
     p->all_locals = l;
-    return record(p, name, (struct value){.type = type, .binding = name});
+    if (!record_binding(p, name, type, variable))
+        return false;
+    l->binding = p->last;
+    return true;
 }
 
 static MO_MUST_USE bool leave(struct inference *p, struct local *mark) {
@@ -856,8 +878,14 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
     if (prefix == NULL && node->kind == MO_S_NAME) {
         struct name_slot *s = slot(p, node, false);
         if (s != NULL && s->active != NULL) {
+            if (p->checked && s->active->function != p->lambda) {
+                bool reported = unfinished(p);
+                (void)reported;
+                return (struct value){0};
+            }
             s->active->used = true;
-            return (struct value){.type = s->active->type, .binding = s->active->name};
+            return (struct value){
+                .type = s->active->type, .binding = s->active->name, .bound = s->active->binding};
         }
     }
     const struct mo_builtin_case *builtin = prefix == NULL ? mo_builtin_case_by_name(node) : NULL;
@@ -936,6 +964,11 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
             hi = mid;
     }
     MO_ASSERT(lo < p->signatures->count && p->signatures->items[lo].function == s);
+    if (p->checked && p->signatures->items[lo].type->parameters != 0) {
+        bool reported = unfinished(p);
+        (void)reported;
+        return (struct value){0};
+    }
     struct term *parameters[26] = {NULL};
     return (struct value){.type = annotation(p, p->signatures->items[lo].type, parameters, 0),
                           .symbol = s};
@@ -2302,7 +2335,7 @@ static MO_MUST_USE struct value infer(struct inference *p, const struct mo_synta
     if (p->checked && node->kind != MO_S_SEQUENCE && node->kind != MO_S_EXPR_STMT &&
         node->kind != MO_S_GROUP && node->kind != MO_S_INT && node->kind != MO_S_DECIMAL &&
         node->kind != MO_S_CHAR && node->kind != MO_S_TEXT && node->kind != MO_S_TRUE &&
-        node->kind != MO_S_FALSE) {
+        node->kind != MO_S_FALSE && node->kind != MO_S_NAME) {
         bool reported = unfinished(p);
         (void)reported;
         p->depth--;
@@ -2662,10 +2695,18 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
     if (p.result == NULL)
         goto failed;
     const struct mo_syntax *parameters = syntax->children[1];
+    struct note **parameter_notes =
+        checked == NULL
+            ? NULL
+            : allocate(&p, parameters->count, sizeof(*parameter_notes), _Alignof(struct note *));
+    if (checked != NULL && parameter_notes == NULL)
+        goto failed;
     for (uint32_t i = 0; i < parameters->count; i++) {
         struct term *type = argument(&p, fn, i);
         if (type == NULL || !bind(&p, parameters->children[i]->children[0], type, false))
             goto failed;
+        if (checked != NULL)
+            parameter_notes[i] = p.last;
     }
     struct value v = named(p.result, "Unit")
                          ? discard(&p, syntax->children[5])
@@ -2690,12 +2731,38 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
     if (checked != NULL) {
         struct mo_checked_expression *rows =
             allocate(&p, p.count, sizeof(*rows), _Alignof(struct mo_checked_expression));
-        if (rows == NULL)
+        struct mo_checked_binding *bindings =
+            allocate(&p, p.binding_count, sizeof(*bindings), _Alignof(struct mo_checked_binding));
+        const struct mo_checked_binding **parameter_bindings =
+            allocate(&p, parameters->count, sizeof(*parameter_bindings),
+                     _Alignof(const struct mo_checked_binding *));
+        if (p.failed)
             goto failed;
-        uint32_t count = 0;
-        for (struct note *n = p.notes; n != NULL; n = n->next)
+        uint32_t count = 0, binding_count = 0;
+        for (struct note *n = p.notes; n != NULL; n = n->next) {
             if (n->graph != NULL)
                 n->index = count++;
+            if (n->binding != n)
+                continue;
+            const struct mo_syntax *name = n->output.syntax;
+            uint32_t length = name->span.end - name->span.start;
+            char *text = allocate(&p, (size_t)length + 1, 1, 1);
+            if (text == NULL)
+                goto failed;
+            memcpy(text, name->text, length);
+            text[length] = '\0';
+            n->binding_index = binding_count++;
+            bindings[n->binding_index] = (struct mo_checked_binding){.syntax = name,
+                                                                     .span = name->span,
+                                                                     .name = text,
+                                                                     .type = n->output.type,
+                                                                     .variable = n->variable};
+        }
+        MO_ASSERT(binding_count == p.binding_count);
+        for (uint32_t i = 0; i < parameters->count; i++) {
+            MO_ASSERT(parameter_notes[i]->binding_index < binding_count);
+            parameter_bindings[i] = &bindings[parameter_notes[i]->binding_index];
+        }
         for (struct note *n = p.notes; n != NULL; n = n->next) {
             if (n->graph == NULL)
                 continue;
@@ -2713,9 +2780,22 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
             rows[n->index].type = n->output.type;
             rows[n->index].operands = operands;
             rows[n->index].never = n->output.never;
+            if (n->output.syntax->kind == MO_S_NAME) {
+                rows[n->index].symbol = n->output.symbol;
+                if (n->binding != NULL) {
+                    MO_ASSERT(n->binding->binding_index < binding_count);
+                    rows[n->index].binding = &bindings[n->binding->binding_index];
+                }
+            }
         }
-        *checked = (struct mo_checked_function){
-            .signature = signature, .body = {.count = count, .items = rows, .root = v.note->index}};
+        *checked = (struct mo_checked_function){.signature = signature,
+                                                .parameter_count = parameters->count,
+                                                .parameters = parameter_bindings,
+                                                .body = {.count = count,
+                                                         .items = rows,
+                                                         .root = v.note->index,
+                                                         .binding_count = binding_count,
+                                                         .bindings = bindings}};
     }
     return out;
 failed:

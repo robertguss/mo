@@ -81,9 +81,9 @@ struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *
     uint32_t main = UINT32_MAX;
     for (uint32_t i = 0; i < signatures->count; i++) {
         const struct mo_function_signature *fn = order[i];
-        if (fn->type->parameters != 0 || fn->type->count != 1) {
+        if (fn->type->parameters != 0) {
             bool kept = report(diags, MO_CODE_CHECK_UNFINISHED, fn->function->declaration->span,
-                               "parameter graph production is not implemented", NULL);
+                               "generic ability checking is not implemented", NULL);
             (void)kept;
             return NULL;
         }
@@ -92,6 +92,13 @@ struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *
         uint32_t index = (uint32_t)(fn - signatures->items);
         if (!mo_check_function(arena, interfaces, signatures, index, diags, &functions[i]))
             return NULL;
+    }
+    if (main != UINT32_MAX && functions[main].parameter_count != 0) {
+        bool kept = report(diags, MO_CODE_CHECK_UNFINISHED,
+                           functions[main].signature->function->declaration->span,
+                           "main capability parameters are not implemented", NULL);
+        (void)kept;
+        return NULL;
     }
     const struct mo_source_type *result =
         main == UINT32_MAX ? NULL : functions[main].signature->type->arguments[0];
