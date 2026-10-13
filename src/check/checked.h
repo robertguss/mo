@@ -12,6 +12,15 @@ MO_MUST_USE bool mo_check_function(struct mo_arena *arena,
                                    struct mo_diags *diags, struct mo_checked_function *out,
                                    bool *halt);
 
+/* Fills a spec's body, parameters, condition rows or anchor values. Original
+ * text/identity belongs to the program-level producer. signature is the subject
+ * for examples/promises/anchors, or a zero-parameter Unit context for a test. */
+MO_MUST_USE bool
+mo_check_spec_body(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
+                   const struct mo_signatures *signatures,
+                   const struct mo_function_signature *signature, struct mo_checked_spec *spec,
+                   struct mo_checked_condition *conditions, struct mo_diags *diags, bool *halt);
+
 MO_MUST_USE bool mo_check_recursion(struct mo_arena *arena, const struct mo_program *program,
                                     struct mo_diags *diags);
 
