@@ -6,6 +6,7 @@
 #include "base/codes.h"
 #include "bytecode/bytecode.h"
 #include "codegen/abilities.h"
+#include "codegen/control.h"
 #include "codegen/index.h"
 #include "codegen/operations.h"
 #include "heap/types.h"
@@ -16,10 +17,17 @@ struct vector {
     uint32_t count, capacity;
     size_t width;
 };
+enum ref_state { REF_UNDEFINED, REF_BORROWED, REF_OWNED, REF_MOVED };
 struct reg {
     uint32_t type, name;
     uint32_t flow, previous, next;
-    bool owned;
+    uint32_t mark;
+    enum ref_state state, goal;
+    bool owned, protected;
+};
+struct change {
+    uint32_t reg;
+    enum ref_state previous;
 };
 struct ownership {
     uint32_t type, edges;
@@ -46,18 +54,22 @@ struct node {
     uint32_t *binds, *cases;
     struct mo_codegen_operation operation;
     uint32_t signature;
-    bool temporary, activity;
+    bool temporary;
+};
+struct join {
+    struct node *node;
+    uint32_t offset, checkpoint;
 };
 struct function {
-    struct vector regs, code, spans, names, captures;
+    struct vector regs, code, spans, names, captures, joins, changes;
     struct node *body;
-    struct mo_codegen_index *locals, *bindings, *zeros, *closure_names, *capture_index;
+    struct mo_codegen_index *locals, *bindings, *zeros, *closure_names, *capture_index, *join_names;
     const struct mo_core_fun_meta *meta;
     const struct mo_core_fun *source;
     struct function *parent, *root;
     struct mo_core_span declaration;
     uint32_t lambda_number, closure_type;
-    uint32_t preorder, instructions, blocks, owned;
+    uint32_t preorder, instructions, blocks, owned, mark;
     bool next_block;
 };
 struct compiler {
@@ -67,7 +79,6 @@ struct compiler {
     struct vector strings, constants, modules, constructors, ownership, edges, constraints;
     struct mo_codegen_index *string_index, *constant_index, *data_index, *fun_index, *global_index,
         *module_index, *builtin_index, *annotation_index, *operation_index;
-    struct mo_codegen_index *closure_zeros[2];
     uint32_t *data, *files, *layouts;
     uint32_t range_int, function_count, function_capacity, unit_constant;
     struct mo_bytecode_global *globals;
@@ -264,7 +275,7 @@ static MO_MUST_USE uint32_t type(struct compiler *c, mo_core_ty t, unsigned dept
     return id;
 }
 static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsigned depth) {
-    enum mo_type_kind kind;
+    enum mo_type_kind kind = MO_TYPE_UNIT;
     switch (t->tag) {
     case MO_CORE_TY_UNIT:
         kind = MO_TYPE_UNIT;
@@ -516,6 +527,7 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
         return type_result(c, status, id);
     }
     }
+    MO_ASSERT((uint32_t)t->tag < MO_CORE_TY_TUPLE);
     return scalar(c, kind);
 }
 static MO_MUST_USE bool signature_take(const char **cursor, char ch) {
@@ -889,6 +901,8 @@ static void function_init(struct function *f) {
     f->spans.width = sizeof(struct mo_bytecode_span);
     f->names.width = sizeof(struct mo_bytecode_register_name);
     f->captures.width = sizeof(struct capture);
+    f->joins.width = sizeof(struct join);
+    f->changes.width = sizeof(struct change);
     f->owned = MO_NO_INDEX;
 }
 /* Capture lookup happens while all enclosing lexical scopes are still active. Intermediate
@@ -935,7 +949,8 @@ static MO_MUST_USE bool context(struct compiler *c, struct function *f, struct n
     MO_ASSERT(depth < MO_LIMIT_CORE_DEPTH);
     if (expected == MO_NO_INDEX || n->type != MO_NO_INDEX)
         return true;
-    if (n->core->tag == MO_CORE_EXPR_STOP || n->core->tag == MO_CORE_EXPR_FAIL)
+    if (n->core->tag == MO_CORE_EXPR_STOP || n->core->tag == MO_CORE_EXPR_FAIL ||
+        n->core->tag == MO_CORE_EXPR_JUMP)
         return true;
     if (n->core->tag == MO_CORE_EXPR_LAM) {
         struct function *lifted = &c->bodies[n->index];
@@ -951,6 +966,10 @@ static MO_MUST_USE bool context(struct compiler *c, struct function *f, struct n
         n->reg = n->children[1]->reg;
         n->temporary = n->children[1]->temporary || n->reg == n->binds[0];
         return true;
+    } else if (n->core->tag == MO_CORE_EXPR_JOIN) {
+        for (uint32_t i = 0; i < n->count; i++)
+            if (!context(c, f, n->children[i], expected, depth + 1))
+                return false;
     } else {
         MO_ASSERT(n->core->tag == MO_CORE_EXPR_IF || n->core->tag == MO_CORE_EXPR_CASE);
         for (uint32_t i = 1; i < n->count; i++) {
@@ -1064,7 +1083,10 @@ static MO_MUST_USE bool children(struct compiler *c, struct function *f, struct 
         uint32_t child_type = MO_NO_INDEX;
         if (n->core->tag == MO_CORE_EXPR_CALL)
             child_type = c->funs[n->index].parameters[i].type;
-        else if (n->core->tag == MO_CORE_EXPR_CON) {
+        else if (n->core->tag == MO_CORE_EXPR_JUMP) {
+            const struct node *target = ((struct join *)f->joins.items)[n->index].node;
+            child_type = ((struct reg *)f->regs.items)[target->binds[i]].type;
+        } else if (n->core->tag == MO_CORE_EXPR_CON) {
             const struct mo_type *t = &c->types.items[n->type];
             child_type =
                 t->kind == MO_TYPE_RECORD ? t->fields[i].type : t->cases[n->index].fields[i].type;
@@ -1363,10 +1385,74 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         }
         break;
     }
-    case MO_CORE_EXPR_JOIN:
-    case MO_CORE_EXPR_JUMP:
-        if (!unsupported(c, "Joins are not implemented yet."))
+    case MO_CORE_EXPR_JOIN: {
+        mo_core_params ps = expr->as.join.params;
+        if (!name_valid(c, expr->as.join.name))
             return NULL;
+        n->index = f->joins.count;
+        struct join *item = append(c, &f->joins, 1, MO_LIMIT_CORE_NODES, MO_CODE_CODEGEN_MEMORY);
+        n->count = 2;
+        n->bind_count = (uint32_t)ps.count;
+        n->binds = allocate(c, ps.count, sizeof *n->binds);
+        n->children = allocate(c, 2, sizeof *n->children);
+        struct mo_codegen_index **entries = allocate(c, ps.count, sizeof *entries);
+        uint32_t *saved = allocate(c, ps.count, sizeof *saved);
+        struct mo_codegen_index *entry =
+            index_add(c, &f->join_names, expr->as.join.name, MO_NO_INDEX, false);
+        if (item == NULL || n->binds == NULL || n->children == NULL || entries == NULL ||
+            saved == NULL || entry == NULL)
+            return NULL;
+        *item = (struct join){.node = n, .offset = MO_NO_INDEX, .checkpoint = MO_NO_INDEX};
+        for (uint32_t i = 0; i < ps.count; i++) {
+            if (!name_valid(c, ps.items[i].name))
+                return NULL;
+            uint32_t ty = type(c, ps.items[i].ty, 0);
+            n->binds[i] = register_add(c, f, ty, binding_name(f, preorder, i));
+            entries[i] = index_add(c, &f->locals, ps.items[i].name, MO_NO_INDEX, false);
+            if (n->binds[i] == MO_NO_INDEX || entries[i] == NULL)
+                return NULL;
+        }
+        uint32_t prior = entry->value;
+        entry->value = n->index;
+        for (uint32_t i = (uint32_t)ps.count; i-- > 0;) {
+            saved[i] = entries[i]->value;
+            entries[i]->value = n->binds[i];
+        }
+        n->children[0] = prepare(c, f, expr->as.join.body, expected, depth + 1);
+        for (uint32_t i = 0; i < ps.count; i++)
+            entries[i]->value = saved[i];
+        n->children[1] =
+            n->children[0] == NULL ? NULL : prepare(c, f, expr->as.join.rest, expected, depth + 1);
+        entry->value = prior;
+        if (n->children[0] == NULL || n->children[1] == NULL)
+            return NULL;
+        n->type = expected != MO_NO_INDEX               ? expected
+                  : n->children[1]->type != MO_NO_INDEX ? n->children[1]->type
+                                                        : n->children[0]->type;
+        for (uint32_t i = 0; i < n->count; i++)
+            if (!context(c, f, n->children[i], n->type, depth + 1))
+                return NULL;
+        break;
+    }
+    case MO_CORE_EXPR_JUMP: {
+        struct mo_codegen_index *entry = mo_codegen_find(f->join_names, expr->as.jump.name);
+        MO_ASSERT(entry != NULL && entry->value != MO_NO_INDEX);
+        n->index = entry->value;
+        if (!children(c, f, n, expr->as.jump.args, MO_NO_INDEX, depth))
+            return NULL;
+        n->bind_count = n->count;
+        n->binds = allocate(c, n->count, sizeof *n->binds);
+        if (n->binds == NULL)
+            return NULL;
+        const struct node *target = ((struct join *)f->joins.items)[n->index].node;
+        for (uint32_t i = 0; i < n->count; i++) {
+            uint32_t ty = ((struct reg *)f->regs.items)[target->binds[i]].type;
+            n->binds[i] = register_add(c, f, ty, MO_NO_INDEX);
+            if (n->binds[i] == MO_NO_INDEX)
+                return NULL;
+        }
+        return n;
+    }
     }
     if (c->error != 0)
         return NULL;
@@ -1453,7 +1539,8 @@ static MO_MUST_USE bool borrow_walk(struct compiler *c, struct function *f, stru
     } else {
         for (uint32_t i = 0; i < n->count; i++) {
             bool child_tail = tail && ((n->core->tag == MO_CORE_EXPR_LET && i == 1) ||
-                                       (n->core->tag == MO_CORE_EXPR_IF && i != 0));
+                                       (n->core->tag == MO_CORE_EXPR_IF && i != 0) ||
+                                       n->core->tag == MO_CORE_EXPR_JOIN);
             if (!borrow_walk(c, f, n->children[i], child_tail, depth + 1))
                 return false;
         }
@@ -1462,11 +1549,17 @@ static MO_MUST_USE bool borrow_walk(struct compiler *c, struct function *f, stru
         uint32_t bound = flow_id(f, n->children[0]->reg), binding = flow_id(f, n->binds[0]);
         if (!depends(c, binding, bound) || !depends(c, bound, binding))
             return false;
-    } else if (n->core->tag == MO_CORE_EXPR_IF) {
-        for (uint32_t i = 1; i < n->count; i++)
+    } else if (n->core->tag == MO_CORE_EXPR_IF || n->core->tag == MO_CORE_EXPR_JOIN) {
+        for (uint32_t i = n->core->tag == MO_CORE_EXPR_JOIN ? 0u : 1u; i < n->count; i++)
             if (!depends(c, own, flow_id(f, n->children[i]->reg)) ||
                 !depends(c, flow_id(f, n->children[i]->reg), own))
                 return false;
+        if (n->core->tag == MO_CORE_EXPR_JOIN)
+            for (uint32_t i = 0; i < n->bind_count; i++)
+                seed(c, flow_id(f, n->binds[i]));
+    } else if (n->core->tag == MO_CORE_EXPR_JUMP) {
+        for (uint32_t i = 0; i < n->count; i++)
+            seed(c, flow_id(f, n->children[i]->reg));
     } else if (n->core->tag == MO_CORE_EXPR_CALL) {
         struct function *callee = &c->bodies[n->index];
         for (uint32_t i = 0; i < n->count; i++) {
@@ -1495,46 +1588,6 @@ static MO_MUST_USE bool borrow_walk(struct compiler *c, struct function *f, stru
     if (tail && n->core->tag != MO_CORE_EXPR_STOP)
         seed(c, own);
     return true;
-}
-/* Mark paths needing reference state normalization only after ownership reaches its fixed point.
- * A nested merge can produce an owner even when its own arms merely read variables. */
-static void activity(struct compiler *c, struct function *f, struct node *n, unsigned depth) {
-    MO_ASSERT(depth < MO_LIMIT_CORE_DEPTH);
-    bool choice = n->core->tag == MO_CORE_EXPR_CASE;
-    for (uint32_t i = 0; i < n->count; i++) {
-        struct node *child = choice && i != 0 ? n->children[i]->children[0] : n->children[i];
-        activity(c, f, child, depth + 1);
-        n->activity |= child->activity;
-        if (choice && i != 0)
-            for (uint32_t j = 0; j < n->children[i]->bind_count; j++)
-                n->activity |=
-                    reference(c, ((struct reg *)f->regs.items)[n->children[i]->binds[j]].type);
-    }
-    if (n->core->tag == MO_CORE_EXPR_LET)
-        n->activity |= reference(c, n->children[0]->type);
-    if (n->core->tag == MO_CORE_EXPR_CALL) {
-        for (uint32_t i = 0; i < n->count; i++)
-            n->activity |= reference(c, n->children[i]->type) &&
-                           c->parameters[n->index][i].ownership == MO_PARAMETER_OWNED;
-    }
-    if (n->core->tag == MO_CORE_EXPR_APP ||
-        (n->core->tag == MO_CORE_EXPR_LAM && n->bind_count != 0))
-        n->activity = true;
-    if (n->core->tag == MO_CORE_EXPR_PRIM && n->operation.opcode != MO_OP_INVALID) {
-        n->activity |= reference(c, n->type);
-        for (uint32_t i = 0; i < n->count; i++)
-            n->activity |= operation_owned(n, i) && reference(c, n->children[i]->type);
-    }
-    if (n->core->tag == MO_CORE_EXPR_CALL || n->core->tag == MO_CORE_EXPR_CON ||
-        n->core->tag == MO_CORE_EXPR_TUPLE || n->core->tag == MO_CORE_EXPR_PROJ)
-        n->activity |= reference(c, n->type);
-    /* Scalar reference slots start borrowed, but aggregate slots start undefined. A path-local
-     * global load changes the latter to borrowed even though it creates no frame owner. */
-    if (n->core->tag == MO_CORE_EXPR_GLOBAL && c->types.items[n->type].kind >= MO_TYPE_TUPLE)
-        n->activity |= reference(c, n->type);
-    if (n->core->tag == MO_CORE_EXPR_IF || choice)
-        n->activity |= reference(c, n->type) &&
-                       ((struct ownership *)c->ownership.items)[flow_id(f, n->reg)].owned;
 }
 static MO_MUST_USE bool borrow_infer(struct compiler *c) {
     for (uint32_t i = 0; i < c->function_count; i++) {
@@ -1571,9 +1624,6 @@ static MO_MUST_USE bool borrow_infer(struct compiler *c) {
         for (uint32_t j = 0; j < c->funs[i].parameter_count; j++)
             if (reference(c, c->parameters[i][j].type) && !slots[flow_id(&c->bodies[i], j)].owned)
                 c->parameters[i][j].ownership = MO_PARAMETER_BORROWED;
-    for (uint32_t i = 0; i < c->function_count; i++)
-        if (c->funs[i].kind != MO_FUNCTION_INIT)
-            activity(c, &c->bodies[i], c->bodies[i].body, 0);
     return true;
 }
 
@@ -1591,6 +1641,63 @@ static MO_MUST_USE bool debug_add(struct compiler *c) {
         return problem(c, MO_CODE_BYTECODE_TOO_BIG,
                        "Debug information exceeds MO_LIMIT_DEBUG_ENTRIES.");
     c->debug_entries++;
+    return true;
+}
+/* Journal only reference-state changes. Branch restoration and normalization visit this log,
+ * never the full register table, and nested checkpoints reuse its storage. */
+static MO_MUST_USE bool state(struct compiler *c, struct function *f, uint32_t r,
+                              enum ref_state value) {
+    struct reg *reg = &((struct reg *)f->regs.items)[r];
+    if (!reference(c, reg->type) || reg->state == value)
+        return true;
+    struct change *change =
+        append(c, &f->changes, 1, 2 * MO_LIMIT_FUNCTION_CODE_WORDS, MO_CODE_CODEGEN_MEMORY);
+    if (change == NULL)
+        return false;
+    *change = (struct change){r, reg->state};
+    reg->state = value;
+    return true;
+}
+static const char *const host_params[] = {
+#define HOSTOP(id, module, name, signature, params, bugs, spec_only) params,
+#include "base/hostops.def"
+};
+static MO_MUST_USE bool consume(struct compiler *c, struct function *f, uint32_t r,
+                                enum mo_operand_access access, const uint32_t *fixed,
+                                enum mo_opcode op, uint32_t slot) {
+    bool owned = access == MO_ACCESS_CONSUME;
+    if (access == MO_ACCESS_MOVE)
+        owned = ((struct reg *)f->regs.items)[r].state == REF_OWNED;
+    else if (access == MO_ACCESS_CALL_PARAMETER) {
+        uint32_t callee = fixed[op == MO_OP_CALL ? 1 : 0];
+        owned = c->funs[callee].parameters[slot].ownership == MO_PARAMETER_OWNED;
+    } else if (access == MO_ACCESS_PRIM_PARAMETER)
+        owned = mo_codegen_primitive((enum mo_primitive_id)fixed[1]).params[slot] == 'o';
+    else if (access == MO_ACCESS_HOST_PARAMETER)
+        owned = host_params[fixed[1]][slot] == 'o';
+    return !owned || state(c, f, r, REF_MOVED);
+}
+static MO_MUST_USE bool transfer(struct compiler *c, struct function *f, enum mo_opcode op,
+                                 const uint32_t *fixed, const uint32_t *variable, uint32_t count) {
+    const struct mo_opcode_info *info = mo_opcode_find((uint32_t)op);
+    MO_ASSERT(info != NULL);
+    enum ref_state result = op == MO_OP_CONST || op == MO_OP_GLOBAL ? REF_BORROWED : REF_OWNED;
+    if (op == MO_OP_MOVE)
+        result = ((struct reg *)f->regs.items)[fixed[1]].state;
+    else if (op == MO_OP_CLEAR)
+        result = REF_UNDEFINED;
+    for (uint32_t i = 0; i < info->fixed_count; i++)
+        if (info->fixed[i].kind == MO_OPERAND_REGISTER &&
+            !consume(c, f, fixed[i], info->fixed[i].access, fixed, op, i))
+            return false;
+    if (info->variable.kind == MO_OPERAND_REGISTER)
+        for (uint32_t i = 0; i < count; i++)
+            if (!consume(c, f, variable[i], info->variable.access, fixed, op, i))
+                return false;
+    for (uint32_t i = 0; i < info->fixed_count; i++)
+        if (info->fixed[i].kind == MO_OPERAND_REGISTER &&
+            info->fixed[i].access == MO_ACCESS_WRITE && !state(c, f, fixed[i], result))
+            return false;
     return true;
 }
 static MO_MUST_USE uint32_t emit(struct compiler *c, struct function *f, struct mo_core_span source,
@@ -1641,6 +1748,8 @@ static MO_MUST_USE uint32_t emit(struct compiler *c, struct function *f, struct 
             *s = current;
         }
     }
+    if (!transfer(c, f, op, fixed, variable, count))
+        return MO_NO_INDEX;
     return offset;
 }
 static MO_MUST_USE bool named(struct compiler *c, struct function *f, uint32_t reg, uint32_t start,
@@ -1693,6 +1802,63 @@ static MO_MUST_USE bool cleanup(struct compiler *c, struct function *f, struct m
             return false;
     return true;
 }
+static void restore(struct function *f, uint32_t checkpoint) {
+    struct reg *regs = f->regs.items;
+    MO_ASSERT(checkpoint <= f->changes.count);
+    while (f->changes.count != checkpoint) {
+        struct change change = ((struct change *)f->changes.items)[--f->changes.count];
+        struct reg *r = &regs[change.reg];
+        if (r->owned && change.previous != REF_OWNED)
+            owner_remove(f, change.reg);
+        else if (!r->owned && change.previous == REF_OWNED)
+            owner_add(f, change.reg);
+        r->state = change.previous;
+    }
+}
+static MO_MUST_USE bool normalize(struct compiler *c, struct function *f, uint32_t checkpoint,
+                                  uint32_t keep, struct mo_core_span s) {
+    MO_ASSERT(checkpoint <= f->changes.count && f->mark != UINT32_MAX);
+    uint32_t mark = ++f->mark, end = f->changes.count;
+    struct reg *regs = f->regs.items;
+    for (uint32_t i = checkpoint; i < end; i++) {
+        struct change change = ((struct change *)f->changes.items)[i];
+        struct reg *r = &regs[change.reg];
+        if (r->mark != mark) {
+            r->mark = mark;
+            r->goal = change.previous;
+        }
+    }
+    for (uint32_t i = end; i != checkpoint;) {
+        uint32_t id = ((struct change *)f->changes.items)[--i].reg;
+        struct reg *r = &regs[id];
+        if (r->mark != mark)
+            continue;
+        r->mark = 0;
+        if (id == keep || r->protected || r->state == r->goal)
+            continue;
+        /* Only path-local slots change on a live edge; lexical owners outside it survive.
+         * Jump argument copies are protected until simultaneous parameter transfer. */
+        MO_ASSERT(r->goal == REF_UNDEFINED);
+        if (r->state == REF_OWNED) {
+            MO_ASSERT(r->owned);
+            if (!drop(c, f, id, s))
+                return false;
+        }
+        if (emit(c, f, s, MO_OP_CLEAR, &id, 1, NULL, 0) == MO_NO_INDEX)
+            return false;
+    }
+    return true;
+}
+static MO_MUST_USE bool merged(struct compiler *c, struct function *f, uint32_t r) {
+    if (!reference(c, ((struct reg *)f->regs.items)[r].type))
+        return true;
+    bool owned = ((struct ownership *)c->ownership.items)[flow_id(f, r)].owned;
+    if (!state(c, f, r, owned ? REF_OWNED : REF_BORROWED))
+        return false;
+    if (owned)
+        owner_add(f, r);
+    return true;
+}
 static MO_MUST_USE bool copy(struct compiler *c, struct function *f, uint32_t to, uint32_t from,
                              bool owned, struct mo_core_span s) {
     bool ref = reference(c, ((struct reg *)f->regs.items)[from].type);
@@ -1715,29 +1881,14 @@ static MO_MUST_USE uint32_t argument(struct compiler *c, struct function *f, uin
         return MO_NO_INDEX;
     return tmp;
 }
-/* Immediate and scalar-constant slots have stable join states. Aggregate references remain
- * undefined until written; this slice refuses reconverging arms that create path-local owners. */
+/* Immediate slots have a stable value state at every edge. Reference slots start undefined
+ * and are cleared back to that state when their path-local value dies. */
 static MO_MUST_USE bool initialize(struct compiler *c, struct function *f, uint32_t reg,
                                    unsigned depth) {
     MO_ASSERT(depth < MO_LIMIT_CORE_DEPTH);
     uint32_t ty = ((struct reg *)f->regs.items)[reg].type;
     const struct mo_type *t = &c->types.items[ty];
-    if (t->kind == MO_TYPE_FUNCTION) {
-        mo_core_string key = {(const char *)&ty, sizeof ty};
-        struct mo_codegen_index *zero = mo_codegen_find(c->closure_zeros[0], key);
-        if (zero == NULL && c->funs[(uint32_t)(f - c->bodies)].spec_code)
-            zero = mo_codegen_find(c->closure_zeros[1], key);
-        if (zero == NULL)
-            return true;
-        struct mo_bytecode_constant k = {.type = ty};
-        k.value.function = zero->value;
-        uint32_t id = constant(c, k);
-        const uint32_t args[] = {reg, id};
-        return id != MO_NO_INDEX &&
-               emit(c, f, c->declaration, MO_OP_CONST, args, 2, NULL, 0) != MO_NO_INDEX;
-    }
-    if (reference(c, ty) && t->kind != MO_TYPE_TEXT && t->kind != MO_TYPE_BYTES &&
-        t->kind != MO_TYPE_BIGINT)
+    if (reference(c, ty))
         return true;
     if (t->kind == MO_TYPE_RANGE) {
         uint32_t field = register_add(c, f, c->range_int, MO_NO_INDEX);
@@ -1767,14 +1918,6 @@ static MO_MUST_USE bool initialize(struct compiler *c, struct function *f, uint3
         return emit(c, f, c->declaration, MO_OP_MAKE_CASE, fixed, 3, &field, count) != MO_NO_INDEX;
     }
     struct mo_bytecode_constant k = {.type = ty};
-    if (t->kind == MO_TYPE_TEXT) {
-        k.value.string = string(c, text(""));
-        if (k.value.string == MO_NO_INDEX)
-            return false;
-    } else if (t->kind == MO_TYPE_BYTES)
-        k.value.bytes = (struct mo_bytecode_bytes){0};
-    else if (t->kind == MO_TYPE_BIGINT)
-        k.value.bigint = (struct mo_bytecode_bigint){.sign = MO_BIGINT_ZERO};
     uint32_t id = constant(c, k);
     const uint32_t fixed[] = {reg, id};
     return id != MO_NO_INDEX &&
@@ -1959,19 +2102,6 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
                     return false;
             break;
         }
-        if (!tail) {
-            for (uint32_t i = 1; i < n->count; i++) {
-                struct node *arm = n->children[i];
-                bool local_owners = choice ? arm->children[0]->activity : arm->activity;
-                if (choice)
-                    for (uint32_t j = 0; j < arm->bind_count; j++)
-                        local_owners |=
-                            reference(c, ((struct reg *)f->regs.items)[arm->binds[j]].type);
-                if (local_owners)
-                    return unsupported(c, "Reconverging branches with path-local reference states "
-                                          "are not implemented yet.");
-            }
-        }
         uint32_t arms = n->count - 1;
         uint32_t *targets = allocate(c, arms, sizeof *targets),
                  *jumps = allocate(c, arms, sizeof *jumps);
@@ -1985,29 +2115,10 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
                            choice ? 1 : 3, choice ? targets : NULL, choice ? arms : 0);
         if (at == MO_NO_INDEX)
             return false;
-        uint32_t owners = f->owned;
+        uint32_t checkpoint = f->changes.count;
         bool any = false;
         for (uint32_t i = 0; i < arms; i++) {
-            /* Existing owners are consumed only by whole-frame cleanup. Removing a head
-             * preserves its next link, so no snapshot/scan is needed on stop/fail paths. */
-            if (tail) {
-                struct reg *regs = f->regs.items;
-                bool retained = owners != MO_NO_INDEX && regs[owners].owned;
-                while (f->owned != (retained ? owners : MO_NO_INDEX))
-                    owner_remove(f, f->owned);
-                if (!retained) {
-                    uint32_t previous = MO_NO_INDEX;
-                    for (uint32_t r = owners; r != MO_NO_INDEX; r = regs[r].next) {
-                        MO_ASSERT(!regs[r].owned);
-                        regs[r].owned = true;
-                        regs[r].previous = previous;
-                        previous = r;
-                    }
-                    f->owned = owners;
-                }
-            } else if (n->reg != MO_NO_INDEX) {
-                owner_remove(f, n->reg);
-            }
+            restore(f, checkpoint);
             uint32_t case_id = choice ? n->cases[i] : i;
             targets[case_id] = f->code.count;
             uint32_t start = f->code.count;
@@ -2033,7 +2144,8 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
                 const uint32_t jump[] = {0};
                 bool owned = n->reg != MO_NO_INDEX &&
                              ((struct ownership *)c->ownership.items)[flow_id(f, n->reg)].owned;
-                if (!copy(c, f, n->reg, body->reg, owned, n->span))
+                if (!copy(c, f, n->reg, body->reg, owned, n->span) ||
+                    !normalize(c, f, checkpoint, n->reg, n->span))
                     return false;
                 jumps[i] = emit(c, f, n->span, MO_OP_JUMP, jump, 1, NULL, 0);
                 if (jumps[i] == MO_NO_INDEX)
@@ -2045,11 +2157,9 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
         for (uint32_t i = 0; i < arms; i++)
             if (jumps[i] != MO_NO_INDEX)
                 words[jumps[i] + 1] = f->code.count;
-        /* The last textual arm may stop even though an earlier arm reaches this join. */
-        if (!tail && any && reference(c, n->type) &&
-            ((struct ownership *)c->ownership.items)[flow_id(f, n->reg)].owned &&
-            !((struct reg *)f->regs.items)[n->reg].owned)
-            owner_add(f, n->reg);
+        restore(f, checkpoint);
+        if (any && !merged(c, f, n->reg))
+            return false;
         *live = any;
         break;
     }
@@ -2163,9 +2273,88 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
         *live = false;
         break;
     }
-    case MO_CORE_EXPR_JOIN:
-    case MO_CORE_EXPR_JUMP:
-        MO_UNREACHABLE();
+    case MO_CORE_EXPR_JOIN: {
+        uint32_t skip = emit(c, f, n->span, MO_OP_JUMP, (uint32_t[]){0}, 1, NULL, 0);
+        if (skip == MO_NO_INDEX)
+            return false;
+        uint32_t checkpoint = f->changes.count;
+        struct join *joins = f->joins.items;
+        joins[n->index].offset = f->code.count;
+        joins[n->index].checkpoint = checkpoint;
+        /* Every incoming jump writes owned copies of reference parameters. The first entry
+         * and loop backedges share the declaration's lexical state outside those parameters. */
+        for (uint32_t i = 0; i < n->bind_count; i++)
+            if (reference(c, ((struct reg *)f->regs.items)[n->binds[i]].type)) {
+                if (!state(c, f, n->binds[i], REF_OWNED))
+                    return false;
+                owner_add(f, n->binds[i]);
+            }
+        uint32_t start = f->code.count;
+        if (!generate(c, f, n->children[0], tail, depth + 1, live))
+            return false;
+        uint32_t exit = MO_NO_INDEX;
+        bool any = *live;
+        if (*live) {
+            bool owned = ((struct ownership *)c->ownership.items)[flow_id(f, n->reg)].owned;
+            if (!copy(c, f, n->reg, n->children[0]->reg, owned, n->span) ||
+                !normalize(c, f, checkpoint, n->reg, n->span))
+                return false;
+            exit = emit(c, f, n->span, MO_OP_JUMP, (uint32_t[]){0}, 1, NULL, 0);
+            if (exit == MO_NO_INDEX)
+                return false;
+        }
+        for (uint32_t i = 0; i < n->bind_count; i++)
+            if (!named(c, f, n->binds[i], start, f->code.count))
+                return false;
+        restore(f, checkpoint);
+        ((uint32_t *)f->code.items)[skip + 1] = f->code.count;
+        if (!generate(c, f, n->children[1], tail, depth + 1, live))
+            return false;
+        if (*live) {
+            bool owned = ((struct ownership *)c->ownership.items)[flow_id(f, n->reg)].owned;
+            if (!copy(c, f, n->reg, n->children[1]->reg, owned, n->span) ||
+                !normalize(c, f, checkpoint, n->reg, n->span))
+                return false;
+        }
+        if (exit != MO_NO_INDEX)
+            ((uint32_t *)f->code.items)[exit + 1] = f->code.count;
+        *live |= any;
+        restore(f, checkpoint);
+        if (*live && !merged(c, f, n->reg))
+            return false;
+        break;
+    }
+    case MO_CORE_EXPR_JUMP: {
+        const struct join *target = &((struct join *)f->joins.items)[n->index];
+        MO_ASSERT(target->offset != MO_NO_INDEX);
+        for (uint32_t i = 0; i < n->count; i++) {
+            if (!generate(c, f, n->children[i], false, depth + 1, live) || !*live)
+                return c->error == 0;
+            if (!copy(c, f, n->binds[i], n->children[i]->reg, true, n->span))
+                return false;
+        }
+        for (uint32_t i = 0; i < n->count; i++)
+            ((struct reg *)f->regs.items)[n->binds[i]].protected = true;
+        if (!normalize(c, f, target->checkpoint, MO_NO_INDEX, n->span))
+            return false;
+        for (uint32_t i = 0; i < n->count; i++) {
+            uint32_t to = target->node->binds[i], from = n->binds[i];
+            const uint32_t args[] = {to, from};
+            if (emit(c, f, n->span, MO_OP_MOVE, args, 2, NULL, 0) == MO_NO_INDEX)
+                return false;
+            ((struct reg *)f->regs.items)[from].protected = false;
+            if (reference(c, ((struct reg *)f->regs.items)[from].type)) {
+                owner_remove(f, from);
+                owner_add(f, to);
+                if (emit(c, f, n->span, MO_OP_CLEAR, &from, 1, NULL, 0) == MO_NO_INDEX)
+                    return false;
+            }
+        }
+        if (emit(c, f, n->span, MO_OP_JUMP, &target->offset, 1, NULL, 0) == MO_NO_INDEX)
+            return false;
+        *live = false;
+        break;
+    }
     }
     if (*live && tail) {
         uint32_t result = argument(c, f, n->reg, true, n->span);
@@ -2616,12 +2805,6 @@ static MO_MUST_USE bool bodies(struct compiler *c) {
         return false;
     for (uint32_t i = declared; i < c->function_count; i++) {
         const struct mo_bytecode_function *fun = &c->funs[i];
-        uint32_t closure_type = c->bodies[i].closure_type;
-        if (fun->capture_count == 0 &&
-            index_add(c, &c->closure_zeros[fun->spec_code ? 1 : 0],
-                      (mo_core_string){(const char *)&closure_type, sizeof closure_type}, i,
-                      true) == NULL)
-            return false;
         enum mo_type_problem status =
             mo_types_layout(&c->types,
                             &(struct mo_layout){.kind = MO_LAYOUT_CLOSURE,
@@ -2716,13 +2899,18 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
         /* Helpers added while initializing are already initialized. Do not reinitialize them. */
         c->span = c->declaration;
         for (uint32_t j = 0; j < fun->parameter_count; j++)
-            if (reference(c, fun->parameters[j].type) &&
-                fun->parameters[j].ownership == MO_PARAMETER_OWNED)
-                owner_add(f, j);
+            if (reference(c, fun->parameters[j].type)) {
+                bool owned = fun->parameters[j].ownership == MO_PARAMETER_OWNED;
+                ((struct reg *)f->regs.items)[j].state = owned ? REF_OWNED : REF_BORROWED;
+                if (owned)
+                    owner_add(f, j);
+            }
         bool closure = fun->kind == MO_FUNCTION_CLOSURE;
         uint32_t inputs = fun->parameter_count + (closure ? 1u : 0u);
-        if (closure)
+        if (closure) {
+            ((struct reg *)f->regs.items)[fun->parameter_count].state = REF_OWNED;
             owner_add(f, fun->parameter_count);
+        }
         uint32_t count = f->regs.count;
         for (uint32_t j = inputs; j < count; j++)
             if (!initialize(c, f, j, 0))
@@ -2794,6 +2982,9 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
         }
         if (c->error != 0)
             return false;
+        if (!mo_codegen_prune(&c->arena, fun, d))
+            return problem(c, MO_CODE_CODEGEN_MEMORY,
+                           "No memory for code generation's reachability pass.");
     }
     const struct mo_bytecode file = {.string_count = c->strings.count,
                                      .strings = c->strings.items,

@@ -1,0 +1,1 @@
+(core 0.7 (Program () ((FunDecl "main" () (int) (join "loop" (("n" (int))) (join "loop" (("b" (tuple ((int))))) (lit (int 1)) (lit (int 2))) (jump "loop" ((lit (int 0))))) "T" (function) 0)) () "main" (noSource)))

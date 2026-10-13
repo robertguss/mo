@@ -52,8 +52,7 @@ def reference_value(rng, depth):
         return f'(call "identity" ({a}))'
     if choice == 2:
         return f'(proj (tuple ({a} {b})) {rng.randrange(2)})'
-    # Reconverging arms with no local owners are supported, including literal/variable results.
-    return '(if_ (var "b") (var "x") (lit (text "fallback")))'
+    return f'(if_ (var "b") {a} {b})'
 
 
 def reference_tail(rng, depth):
@@ -70,6 +69,53 @@ def reference_tail(rng, depth):
     if choice == 2:
         return f'(case_ (con (option (text)) "Some" ({value})) (("None" () {a}) ("Some" ("x") {b})))'
     return f'(case_ (con (data "Pair") "Pair" ({value} {value})) (("Pair" ("x" "y") {a})))'
+
+
+def join_program(i):
+    rng = random.Random(641 + i)
+    ty, fallback = rng.choice([
+        ('(int)', '(lit (int -29))'),
+        ('(text)', '(lit (text "other\\u{0}🙂"))'),
+        ('(bytes)', '(lit (bytes (0 128 255)))'),
+        ('(tuple ((text) (int)))', '(tuple ((lit (text "other")) (lit (int 7))))'),
+        ('(option (text))', '(con (option (text)) "Some" ((lit (text "other"))))'),
+        ('(list (text))', '(prim (list (text) (lit 1)) ((lit (text "item"))))'),
+        ('(fn () (text))', '(lam () (lit (text "other")))'),
+        ('(cap (console))', '(var "x")'),
+    ])
+    body = '(if_ (var "again") (jump "loop" ((var "q") (lit (bool false)))) ' + \
+           f'(if_ (var "b") (var "q") {fallback}))'
+    rest = f'(if_ (var "b") (jump "loop" ((var "x") (lit (bool true)))) {fallback})'
+    variant = i % 6
+    if variant == 0:
+        # A self-edge does not make an unused body reachable, even with reference parameters.
+        body = '(jump "loop" ((var "q") (var "again")))'
+        rest = f'(if_ (var "b") (var "x") {fallback})'
+    elif variant == 1:
+        # Nested jumps can discard the inner join's locals and reach an outer declaration.
+        body = f'(join "inner" (("r" {ty})) (if_ (var "b") ' + \
+               '(jump "loop" ((var "r") (lit (bool false)))) (var "r")) ' + \
+               '(jump "inner" ((var "q"))))'
+    elif variant == 2:
+        # The second lexical label shadows the first; its rest still sees outer parameters.
+        body = f'(join "loop" (("q" {ty})) (var "q") (jump "loop" ((var "q"))))'
+    elif variant == 3:
+        # First-match duplicate parameters survive staging and simultaneous assignment.
+        body = f'(join "inner" (("q" {ty}) ("q" {ty})) (var "q") ' + \
+               f'(jump "inner" ((var "q") {fallback})))'
+    elif variant == 4:
+        # Stop while evaluating a later argument, after an earlier reference was saved.
+        rest = '(jump "loop" ((var "x") (stop "later argument stopped")))'
+    else:
+        body = '(if_ (var "again") (jump "loop" ((var "q") (lit (bool false)))) ' + \
+               '(stop "last arm stopped"))'
+    return f'''(Program () (
+      (FunDecl "start" (("b" (bool)) ("x" {ty})) {ty}
+        (let_ "keep" (var "x") (let_ "chosen"
+          (join "loop" (("q" {ty}) ("again" (bool))) {body} {rest})
+          (call "identity" ((var "chosen"))))) "Generated" (function) 0)
+      (FunDecl "identity" (("x" {ty})) {ty} (var "x") "Generated" (function) 0)
+    ) () "start" (noSource))'''
 
 
 def global_program(i):
@@ -201,6 +247,10 @@ def main():
             path = pathlib.Path(directory) / f"closures-{i}.core"
             path.write_text(f"(core {version} {closure_program(i)})\n")
             generated.append(path)
+        for i in range(192):
+            path = pathlib.Path(directory) / f"joins-{i}.core"
+            path.write_text(f"(core {version} {join_program(i)})\n")
+            generated.append(path)
         excluded = []
         for i, (prim, types, ret, spec) in enumerate(signatures()):
             # These two operations need instruction expansions, not new primitive rows.
@@ -224,6 +274,9 @@ def main():
         for driver in sys.argv[1:]:
             print(f"codegen: {driver}: {len(paths)} fixture/corpus inputs")
             run(driver, paths)
+            supported = [pathlib.Path("tests/core") / f"{name}.core"
+                         for name in ["Account", "Greet", "Metadata", "RateLimit"]]
+            assert run(driver, supported) == (len(supported), 0, 0, 0, 0, 0), "a supported fixture was not compiled"
             assert run(driver, generated) == (len(generated), 0, 0, 0, 0, 0), "a supported generated program was not compiled"
             assert run(driver, excluded) == (0, 0, len(excluded), 0, 0, 0), "a lowering-impossible operation needs E1201"
     print(f"codegen: all generated programs compiled; corpus coverage reported separately ({time.monotonic() - started:.2f}s)")

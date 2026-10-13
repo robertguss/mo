@@ -1990,8 +1990,21 @@ static MO_MUST_USE int core_run(const char *path, const char *test) {
                 break;
             }
         }
-        MO_ASSERT(function != MO_NO_INDEX &&
-                  mo_image_bytecode(image)->functions[function].parameter_count == 0);
+        MO_ASSERT(function != MO_NO_INDEX);
+        if (mo_image_bytecode(image)->functions[function].parameter_count != 0) {
+            /* Real capability Run arguments need the host fixture adapter, not invented fakes. */
+            bool capability = false;
+            for (uint32_t i = 0; i < mo_image_bytecode(image)->functions[function].parameter_count;
+                 i++) {
+                uint32_t type = mo_image_bytecode(image)->functions[function].parameters[i].type;
+                capability |= mo_image_types(image)->items[type].kind == MO_TYPE_CAPABILITY;
+            }
+            MO_ASSERT(capability);
+            MO_ASSERT(puts("needs capability fixture arguments") >= 0 && putchar('\n') != EOF);
+            mo_image_free(image);
+            status = 78;
+            goto done;
+        }
         struct mo_limits limits = mo_limits_default();
         struct mo_defect defect;
         enum mo_outcome outcome = mo_image_init_bounded(image, &limits, 10000, &defect);
@@ -2032,12 +2045,13 @@ static MO_MUST_USE int core_run(const char *path, const char *test) {
             } else
                 MO_ASSERT(mo_buffer_append_text(&text, defect.reason));
         }
-        MO_ASSERT(fwrite(text.bytes, 1, text.length, stdout) == text.length &&
+        MO_ASSERT((text.length == 0 || fwrite(text.bytes, 1, text.length, stdout) == text.length) &&
                   putchar('\n') != EOF);
         mo_buffer_free(&text);
         mo_process_free(p);
         mo_image_free(image);
     }
+done:
     mo_buffer_free(&wire);
     mo_diags_free(&diags);
     mo_arena_free(&arena);

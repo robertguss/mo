@@ -1589,8 +1589,9 @@ The third adds globals and ordered initialization for these expression forms.
 The fourth adds function types, closures and application, including closures
 in constant initializers and spec code. The fifth adds native arithmetic and
 comparisons, generic equality, primitive and host table calls, capability and
-collection types, and list/map literals. List uncons and Range toText need
-expansions and remain unfinished, as do BigInt decimal literals, joins and reuse. The
+collection types, and list/map literals. The sixth adds joins, jumps and
+reconverging reference-state normalization. List uncons and Range toText need
+expansions and remain unfinished, as do BigInt decimal literals and reuse. The
 sample fixtures and Core fuzz corpora are attempted in CI; unfinished forms,
 permanently excluded representations, entry-name collisions, resource limits
 and invalid compiler inputs are counted separately. E1201 inputs are skipped
@@ -1631,8 +1632,8 @@ a later operand's effects. Each insertion consumes the preceding builder and
 distinct operand copies. This uses the existing List empty/append and Map
 empty/literal-insert rows, with at most three tail operands regardless of Core
 literal arity. Builder steps are linear; registers and instructions obey their
-existing limits, including registers × blocks. Reconverging branches with
-path-local collection or capability owners retain the staged E1055 refusal.
+existing limits, including registers × blocks. Reconverging collection and
+capability paths use the same state normalization as other reference values.
 
 Core functions begin the bytecode function table in declaration order, preserving
 call and spec link indices. First-match function/data/parameter lookup agrees with Core.
@@ -1719,22 +1720,37 @@ lexical scope, and remaining owners are dropped before returns/tail calls.
 Stop and fail abandon the frame through the outcome path, not normal cleanup.
 
 The allocator still assigns monotonically numbered temporaries and binders;
-recycling remains for a later slice. It initializes immediate and scalar
-constant slots before control splits so incoming states agree. Function slots
-may start borrowed from an existing capture-less closure of the exact signature,
-preferring non-spec code; spec-only constants are used only in spec code. This
-permits reconverging capture-less lambda arms without inventing a function value.
-Other aggregate references stay undefined until written, never receive invented inhabitants.
-Tail branches support references. Reconverging branches support stable
-literal/variable results but refuse path-local owners with E1055, including
-owned nested merges, capturing lambdas or consumed reference call/application arguments. Dropping those
-owners alone would leave `moved` versus `undefined` states at the join.
-Path-local aggregate global loads likewise require normalization: their slots
-would join as `borrowed` versus `undefined`. Scalar global loads already have
-stable initialized states and can reconverge.
-The allocator must normalize those states before lifting this staged refusal.
+recycling remains for a later slice. Immediate slots are initialized before
+control splits so incoming states agree. All reference slots start undefined;
+there are no dummy Text, collection or function inhabitants. A live merge copies
+the result into its own slot, drops dead owners, and uses `clear` to normalize
+dead borrowed and moved slots to undefined. The result is owned when ownership
+inference requires it, borrowed otherwise, on every incoming edge. Outer lexical
+values retain their state. Stop, fail, returns and tail calls need no merge
+cleanup; their bookkeeping is restored for generating sibling paths.
+
+Joins have lexical label indices and distinct parameter slots. Parameters are
+visible only in the body, labels in both body and rest, with first-match duplicate
+parameter names and inner-label shadowing. Result inference prefers the rest,
+then the body, following Core's checker without repeating preparation. An entry
+jump skips the body. Every Core jump evaluates and saves all arguments in order
+before changing any parameter, including immediate arguments, so swaps work.
+Reference arguments are owned copies; their staging slots use the declared
+parameter types even when an argument stops. The edge then normalizes locals to
+the target declaration's lexical state, drops old parameters, transfers the saved
+values and clears moved reference staging slots. The first entry and all backedges
+thus agree exactly; reference join parameters are conservatively owned. Body and
+rest results use the ordinary value merge, or ordinary returns in tail position.
 Register names run from the binder's write through its body (parameters
-through the function), not through temporary initialization.
+through the function, join parameters through the join body), not through
+temporary initialization.
+
+Unused joins can have self-edges or nested bodies with no path from the entry.
+A linear word-bounded graph walk removes unreachable instructions before the
+writer verifies. It relocates every target, projects piecewise source attribution
+onto surviving instructions, and relocates name ranges, discarding empty ranges.
+Graph scratch is at most nine bytes per permitted function word plus arena
+headers, released per function; surviving output uses the compiler's arena.
 
 Preparation, inference and emission take a bounded number of walks. Ordered
 AVL indices for strings, constants, declarations, lexical names and per-type constructors
@@ -1743,8 +1759,13 @@ type name. Recursion follows the checked Core depth bound; wide lists/arms
 are iterative. `MO_LIMIT_CODEGEN_SCRATCH_SIZE` is 512 bytes per permitted Core
 node (512 MiB), separate from checking and text parsing. Ownership slots/edges
 have explicit node-proportional limits in `limits.h`. Cleanup walks only live
-owners. Tail-arm owner restoration costs no more than the cleanup emitted by
-those arms; reconverging arms never copy or scan the full register table.
+owners. A reversible log records only reference-state changes, bounded by twice
+`MO_LIMIT_FUNCTION_CODE_WORDS` entries per function. Checkpoints and per-register
+marks restore and normalize only changed slots, once per edge, including borrowed
+loads and consuming instruction operands. Nested merges discard their local log
+and publish only the result's state change; sibling arms reuse the log's storage.
+There is no full register-table copy or scan per arm. Instruction expansion and
+Core's depth bound also bound bookkeeping work on nested jumps.
 Emission stops at instruction/register limits, even when cleanup expands code.
 The allocator counts basic blocks as it emits transfers and checks
 `MO_LIMIT_FUNCTION_REGISTER_BLOCKS` both when starting a block and when adding

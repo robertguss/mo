@@ -18,11 +18,20 @@ import sys
 import tempfile
 from fractions import Fraction
 
-from check_codegen import closure_program, expression, global_program, reference_tail
+from check_codegen import closure_program, expression, global_program, join_program, reference_tail
 from check_core_check import VERSION, WORLD, parse, wire, program
 
-NEEDS_DISPATCH = {"needs primitive dispatch": 0, "needs host dispatch": 0}
-CODEGEN_UNSUPPORTED = 15
+NEEDS_DISPATCH = {"needs primitive dispatch": 0, "needs host dispatch": 0,
+                  "needs capability fixture arguments": 1}
+CODEGEN_UNSUPPORTED = 11
+
+
+def canonical(report):
+    # NaN sign/payload are not observable; retain all other bits, including signed zero.
+    if report[0] == "returned" and isinstance(report[1], str) and len(report[1]) == 18 and report[1].startswith("0x"):
+        if math.isnan(struct.unpack(">d", bytes.fromhex(report[1][2:]))[0]):
+            report[1] = "0x7ff8000000000000"
+    return report
 
 
 def run(driver, path, test=None):
@@ -30,8 +39,9 @@ def run(driver, path, test=None):
     result = subprocess.run(args, capture_output=True, text=True, timeout=15)
     if result.returncode == 77:
         return None
-    assert result.returncode == 0, (driver, path, result.stderr)
-    return result.stdout.rstrip("\n").split("\n", 1)
+    assert result.returncode in (0, 78), (driver, path, result.stderr)
+    assert result.stdout.endswith("\n"), (driver, path, result.stdout)
+    return canonical(result.stdout[:-1].split("\n", 1))
 
 
 def oracle(path, world, test=None):
@@ -51,12 +61,85 @@ def oracle(path, world, test=None):
                       else f"overflow: {detail[1]}")
         else:
             detail = {"divByZero": "dividing by zero"}[detail[0]]
-    # NaN sign/payload are not observable in Mo; C fmod and Lean need not
-    # choose the same bits. Preserve every other bit, including signed zero.
-    if report[0] == "returned" and isinstance(detail, str) and detail.startswith("0x"):
-        if math.isnan(struct.unpack(">d", bytes.fromhex(detail[2:]))[0]):
-            detail = "0x7ff8000000000000"
-    return [str(report[0]), detail]
+    return canonical([str(report[0]), detail])
+
+
+def value_expression(value, ty, payload):
+    """Run values need their parameter types to reconstruct nominal choices and empty maps."""
+    tag = value[0]
+    if tag == 'cap':
+        raise NotImplementedError('real capability arguments need the host fixture adapter')
+    if tag == 'con':
+        if ty[0] == 'data':
+            data = next(d for d in payload[1] if d[1] == ty[1])
+            fields = next(c[2] for c in data[2] if c[1] == value[1])
+            types = [field[1] for field in fields]
+        elif ty[0] == 'option':
+            types = [] if value[1] == 'None' else [ty[1]]
+        elif ty[0] == 'result':
+            types = [ty[1] if value[1] == 'Ok' else ty[2]]
+        else:
+            assert not value[2], (value, ty)
+            types = []
+        fields = ' '.join(value_expression(v, t, payload) for v, t in zip(value[2], types))
+        return f'(con {wire(ty)} {wire(value[1])} ({fields}))'
+    if tag == 'tuple':
+        fields = ' '.join(value_expression(v, t, payload) for v, t in zip(value[1], ty[1]))
+        return f'(tuple ({fields}))'
+    if tag == 'map':
+        fields = ' '.join(value_expression(v, t, payload)
+                          for pair in value[1] for v, t in zip(pair, ty[1:]))
+        return f'(prim (map {wire(ty[1])} {wire(ty[2])} (lit {len(value[1])})) ({fields}))'
+    if tag in ['list', 'set']:
+        fields = ' '.join(value_expression(v, ty[1], payload) for v in value[1])
+        literal = f'(prim (list {wire(ty[1])} (lit {len(value[1])})) ({fields}))'
+        return literal if tag == 'list' else f'(prim (set {wire(ty[1])} (fromList)) ({literal}))'
+    if tag == 'range':
+        return f'(prim (range (make)) ((lit (int {value[1]})) (lit (int {value[2]}))))'
+    assert tag in ['int', 'bigInt', 'byte', 'decimal', 'float', 'bool', 'char', 'text', 'bytes',
+                   'unit', 'time', 'duration'], (value, ty)
+    return f'(lit {wire(value)})'
+
+
+def entry_wrapper(payload, args):
+    entry = next(f for f in payload[2] if f[1] == payload[4])
+    assert len(entry[2]) == len(args), (entry[2], args)
+    if not args:
+        return
+    values = ' '.join(value_expression(v, p[1], payload) for v, p in zip(args, entry[2]))
+    assert payload[5][0] == 'noSource', 'a new helper needs compiler metadata when source is present'
+    name = '%VM.entry'
+    assert all(f[1] != name for f in payload[2])
+    wrapper = parse(f'(FunDecl "{name}" () {wire(entry[3])} '
+                    f'(call {wire(payload[4])} ({values})) "Generated" (function) {len(payload[3])})')
+    payload[2].append(wrapper)
+    payload[4] = name
+
+
+def permutation_program(i):
+    rng = random.Random(500 + i)
+    ty, values = [
+        ('(int)', [f'(lit (int {n}))' for n in [-17, 31, 9, -43, 57]]),
+        ('(text)', [f'(lit (text "{s}"))' for s in ['left', 'β', 'third', '', r'last\u{0}']]),
+        ('(bytes)', [f'(lit (bytes ({n} 128 255)))' for n in [0, 1, 3, 17, 57]]),
+        ('(tuple ((text) (int)))', [f'(tuple ((lit (text "v{n}")) (lit (int {n}))))' for n in [-17, 31, 9, -43, 57]]),
+        ('(option (text))', [f'(con (option (text)) "Some" ((lit (text "v{n}"))))' for n in [0, 1, 3, 17, 57]]),
+    ][i % 5]
+    width = 2 if i % 3 == 0 else 3 + i % 3
+    permutation = [1, 0] if width == 2 else list(range(1, width)) + [0]
+    if i % 3 == 2:
+        rng.shuffle(permutation)
+    params = ' '.join(f'("r{j}" {ty})' for j in range(width))
+    swapped = ' '.join(f'(var "r{j}")' for j in permutation)
+    result = ' '.join(f'(var "r{j}")' for j in range(width))
+    initial = ' '.join(values[:width])
+    return f'''(Program () ((FunDecl "entry" () (tuple ({' '.join([ty] * width)}))
+      (join "loop" (("n" (int)) {params})
+        (if_ (prim (cmp (int) (gt)) ((var "n") (lit (int 0))))
+          (jump "loop" ((prim (int (sub)) ((var "n") (lit (int 1)))) {swapped}))
+          (tuple ({result})))
+        (jump "loop" ((lit (int {1 + i % 7})) {initial})))
+      "Generated" (function) 0)) () "entry" (noSource))'''
 
 
 def operations(drivers, root, world):
@@ -230,10 +313,21 @@ def main():
         world.write_text(f"(core {VERSION} {WORLD})\n")
         operations(drivers, root, world)
         structures(drivers, root, world)
-        fixtures = []
+        fixtures, tests = [], {}
         for path in sorted(pathlib.Path("tests/core").glob("*.core")):
             payload = parse(path.read_text())[2]
-            program = payload[1] if payload[0] == "Run" else payload
+            if payload[0] == "Run":
+                selection = payload[3]
+                program = payload[1]
+                if selection[0] == 'entry':
+                    try:
+                        entry_wrapper(program, selection[1])
+                    except NotImplementedError:
+                        pass  # Counted separately by the driver, never a matched outcome.
+                else:
+                    tests[root / path.name] = selection[1]
+            else:
+                program = payload
             target = root / path.name
             target.write_text(f"(core {VERSION} {wire(program)})\n")
             fixtures.append(target)
@@ -280,10 +374,43 @@ def main():
             path = root / f"closure-{i}.core"
             path.write_text(f"(core {VERSION} {wire(payload)})\n")
             generated.append(path)
+        for i in range(192):
+            payload = parse(f'(core {VERSION} {join_program(i)})')[2]
+            entry = next(f for f in payload[2] if f[1] == payload[4])
+            ty = entry[2][1][1]
+            if ty[0] == 'cap':
+                continue  # These 24 parameterized cases await a capability argument adapter.
+            values = {
+                '(int)': '(int -37)', '(text)': '(text "input\\u{0}🙂")',
+                '(bytes)': '(bytes (0 127 255))',
+                '(tuple ((text) (int)))': '(tuple ((text "input") (int 31)))',
+                '(option (text))': '(con "Some" ((text "input")))',
+                '(list (text))': '(list ((text "input") (text "second")))',
+            }
+            # Variant 1 loops forever when b is true: the inner join always jumps
+            # back to loop, regardless of again. Use its terminating input here.
+            flag = 'true' if i % 2 and i % 6 != 1 else 'false'
+            if ty[0] == 'fn':
+                wrapper = parse(f'(FunDecl "%VM.entry" () {wire(ty)} '
+                                f'(call "start" ((lit (bool {flag})) (lam () (lit (text "input"))))) '
+                                '"Generated" (function) 0)')
+                payload[2].append(wrapper)
+                payload[4] = '%VM.entry'
+            else:
+                entry_wrapper(payload, [parse(f'(bool {flag})'),
+                                        parse(values[wire(ty)])])
+            path = root / f'join-{i}.core'
+            path.write_text(f'(core {VERSION} {wire(payload)})\n')
+            generated.append(path)
+        for i in range(150):
+            path = root / f'permutation-{i}.core'
+            path.write_text(f'(core {VERSION} {permutation_program(i)})\n')
+            generated.append(path)
         for i, (ty, literal) in enumerate([
                 ("unit", "unit"), ("bool", "bool true"), ("byte", "byte 255"),
                 ("int", "int -9223372036854775808"), ("float", "float 0x8000000000000000"),
-                ("bytes", "bytes (0 128 255)"),
+                ("bytes", "bytes (0 128 255)"), ("text", 'text ""'),
+                ("text", 'text "line\\n"'), ("float", "float 0xfff8000000000001"),
                 ("char", 'char "🙂"'), ("time", "time -1"), ("duration", "duration -1"),
                 ("decimal", "decimal -170141183460469231731687303715884105727")]):
             path = root / f"literal-{i}.core"
@@ -296,7 +423,6 @@ def main():
             path = root / f"dispatch-{name}.core"
             path.write_text(f'(core {VERSION} (Program () ((FunDecl "entry" () {ret} {body} "M" (function) 0)) () "entry" (noSource)))\n')
             generated.append(path)
-        tests = {}
         path = root / "dispatch-clock.core"
         path.write_text(f'''(core {VERSION} (Program () (
           (FunDecl "entry" () (unit) (lit (unit)) "M" (function) 0)
@@ -324,7 +450,7 @@ def main():
                 if got[0] in pending:
                     pending[got[0]] += 1
                     continue
-                expected = expectations.get(path) or oracle(path, world)
+                expected = expectations.get(path) or oracle(path, world, tests.get(path))
                 assert got == expected, (driver, path.read_text(), expected, got)
                 matched += 1
             assert unsupported == CODEGEN_UNSUPPORTED, (driver, unsupported, CODEGEN_UNSUPPORTED)
