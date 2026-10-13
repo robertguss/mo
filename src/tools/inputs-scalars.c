@@ -38,14 +38,29 @@ static MO_MUST_USE uint64_t float_smaller(uint64_t bits, uint32_t variant) {
     if (variant == 0)
         return 0;
     if (magnitude >= UINT64_C(0x7ff0000000000000)) {
-        return sign | (variant == 1 ? UINT64_C(0x3ff0000000000000) : UINT64_C(0x7fefffffffffffff));
+        return variant == 1   ? sign | UINT64_C(0x3ff0000000000000)
+               : variant == 2 ? sign | UINT64_C(0x7fefffffffffffff)
+                              : bits;
     }
-    if (variant == 2)
-        return sign | (magnitude == 0 ? 0 : magnitude - 1);
-    uint64_t exponent = magnitude >> 52;
-    if (exponent > 1)
-        return sign | (magnitude - (UINT64_C(1) << 52));
-    return sign | (magnitude >> 1);
+    if (variant <= 11) {
+        uint64_t exponent = magnitude >> 52;
+        uint64_t reduced = (uint64_t)smaller(exponent, variant);
+        return sign | (magnitude - ((exponent - reduced) << 52));
+    }
+    return sign | (uint64_t)smaller(magnitude, variant - 11);
+}
+
+static MO_MUST_USE mo_i128 decimal_smaller(mo_i128 value, uint32_t variant) {
+    if (variant != 1)
+        return smaller(value, variant == 0 ? 0 : variant - 1);
+    mo_u128 magnitude = value < 0 ? (mo_u128)(-(value + 1)) + 1 : (mo_u128)value;
+    unsigned digits = 0;
+    for (; magnitude != 0; magnitude /= 10)
+        digits++;
+    mo_i128 divisor = 1;
+    for (unsigned i = 0; i < digits / 2; i++)
+        divisor *= 10;
+    return value / divisor;
 }
 
 enum mo_input_result mo_input_immediate_build(struct mo_input_builder *builder,
@@ -148,7 +163,7 @@ enum mo_input_result mo_input_immediate_build(struct mo_input_builder *builder,
     case MO_TYPE_DECIMAL: {
         mo_i128 value;
         if (copy) {
-            value = smaller(mo_cell_get_decimal(request->source), variant);
+            value = decimal_smaller(mo_cell_get_decimal(request->source), variant);
         } else if (random) {
             uint32_t cap = builder->size < 37 ? builder->size + 1 : 38;
             uint32_t digits = 1 + (uint32_t)(mo_input_random(&builder->random) % cap);
@@ -205,6 +220,45 @@ enum mo_input_result mo_input_immediate_build(struct mo_input_builder *builder,
     return MO_INPUT_OK;
 }
 
+bool mo_input_bigint_smaller(const uint8_t *source, size_t length, uint32_t variant, uint8_t *out) {
+    MO_ASSERT(length <= MO_LIMIT_INPUT_BYTES && (source != NULL || length == 0));
+    if (length == 0)
+        return false;
+    if (variant == 0) {
+        if (out != NULL)
+            memset(out, 0, length);
+        return true;
+    }
+    if (variant == 1) {
+        size_t cut = length / 2;
+        if (cut == 0)
+            return false;
+        if (out != NULL) {
+            memcpy(out, source + cut, length - cut);
+            memset(out + length - cut, 0, cut);
+        }
+        return true;
+    }
+    uint32_t shift = variant - 1;
+    size_t whole = shift / 8;
+    unsigned part = shift % 8;
+    if (whole >= length || (whole == length - 1 && (source[whole] >> part) == 0))
+        return false;
+    unsigned borrow = 0;
+    for (size_t i = 0; i < length; i++) {
+        unsigned distance = i + whole < length ? (unsigned)source[i + whole] >> part : 0;
+        if (part != 0 && i + whole + 1 < length)
+            distance |= (unsigned)source[i + whole + 1] << (8 - part);
+        unsigned subtract = (distance & UINT8_MAX) + borrow;
+        uint8_t byte = (uint8_t)((unsigned)source[i] - subtract);
+        borrow = (unsigned)source[i] < subtract ? 1U : 0U;
+        if (out != NULL)
+            out[i] = byte;
+    }
+    MO_ASSERT(borrow == 0);
+    return true;
+}
+
 static MO_MUST_USE enum mo_input_result blob(struct mo_input_builder *builder,
                                              const struct mo_input_value_request *request,
                                              struct mo_cell *out) {
@@ -230,21 +284,9 @@ static MO_MUST_USE enum mo_input_result blob(struct mo_input_builder *builder,
                 bytes = mo_scratch_resize(&builder->scratch, NULL, 0, length);
                 if (bytes == NULL)
                     return MO_INPUT_NO_MEMORY;
-                if (request->edit->variant == 1) {
-                    uint8_t carry = 0;
-                    for (size_t i = length; i != 0;) {
-                        i--;
-                        bytes[i] = (uint8_t)((source[i] >> 1) | carry);
-                        carry = (uint8_t)(source[i] << 7);
-                    }
-                } else {
-                    memcpy(bytes, source, length);
-                    size_t i = 0;
-                    while (i < length && bytes[i] == 0)
-                        bytes[i++] = UINT8_MAX;
-                    MO_ASSERT(i < length);
-                    bytes[i]--;
-                }
+                bool changed =
+                    mo_input_bigint_smaller(source, length, request->edit->variant, bytes);
+                MO_ASSERT(changed);
                 while (length != 0 && bytes[length - 1] == 0)
                     length--;
                 if (length == 0)

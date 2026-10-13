@@ -188,12 +188,13 @@ static MO_MUST_USE enum mo_input_result candidate(struct mo_input_walk *walk, ui
         count = 65;
         break;
     case MO_TYPE_FLOAT:
+        count = 75;
         break;
     case MO_TYPE_CHAR:
         count = 22;
         break;
     case MO_TYPE_DECIMAL:
-        count = 128;
+        count = 129;
         break;
     case MO_TYPE_RANGE:
         count = 130;
@@ -203,23 +204,16 @@ static MO_MUST_USE enum mo_input_result candidate(struct mo_input_walk *walk, ui
         const uint8_t *data = mo_value_data(value, &bytes);
         if (bytes == 0)
             return MO_INPUT_DONE;
-        if (variant != 0 && variant < count) {
+        count = 2 + (uint32_t)bytes * 8;
+        for (; edit->variant < count; edit->variant++) {
             if (!mo_input_work(&walk->budget, bytes))
                 return MO_INPUT_LIMIT;
-            bool nonzero = false, same_half = true;
-            unsigned borrow = 1;
-            for (size_t i = 0; i < bytes; i++) {
-                uint8_t half =
-                    (uint8_t)((data[i] >> 1) | (i + 1 < bytes ? (unsigned)data[i + 1] << 7 : 0));
-                uint8_t less = (uint8_t)((unsigned)data[i] - borrow);
-                borrow = borrow != 0 && data[i] == 0 ? 1U : 0U;
-                nonzero = nonzero || (variant == 1 ? half : less) != 0;
-                same_half = same_half && half == less;
+            if (mo_input_bigint_smaller(data, bytes, edit->variant, NULL)) {
+                edit->kind = MO_INPUT_EDIT_SCALAR;
+                return MO_INPUT_OK;
             }
-            if (!nonzero || (variant == 2 && same_half))
-                return MO_INPUT_DONE;
         }
-        break;
+        return MO_INPUT_DONE;
     }
     case MO_TYPE_TEXT:
     case MO_TYPE_BYTES: {
@@ -297,6 +291,22 @@ enum mo_input_result mo_input_shrink_next(struct mo_input_shrinker *shrinker,
         uint32_t type;
         struct mo_cell value;
         enum mo_input_result result = mo_input_walk_next(&walk, &type, &value);
+        if (result == MO_INPUT_DONE && cursor.changed) {
+            /* Later changes can make an earlier node reducible again. Keep
+             * this call's work charge when restarting the bounded walk. */
+            uint64_t work = walk.budget.left.work;
+            walk = (struct mo_input_walk){.inputs = inputs,
+                                          .roots = best,
+                                          .end = inputs->parameter_count,
+                                          .budget.left = inputs->limits};
+            walk.budget.left.work = work;
+            cursor.node = node = 0;
+            cursor.variant = 0;
+            cursor.changed = false;
+            continue;
+        }
+        if (result == MO_INPUT_DONE)
+            *shrinker = cursor;
         if (result != MO_INPUT_OK)
             return result;
         if (node++ < cursor.node)
@@ -340,6 +350,7 @@ void mo_input_shrink_feedback(struct mo_input_shrinker *shrinker, bool still_fai
     MO_ASSERT(shrinker != NULL && shrinker->awaiting);
     shrinker->awaiting = false;
     if (still_fails) {
+        shrinker->changed = true;
         if (!shrinker->numeric)
             shrinker->variant = 0;
     } else

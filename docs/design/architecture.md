@@ -1301,11 +1301,17 @@ and supplies borrowed current inputs to the shrinker. Shrink candidates are
 deep copies in the destination heap, which may be a fresh process's heap;
 no reference into the old process is retained. The caller tests a candidate,
 then accepts it as the new failing input or drops it. The shrink call budget
-counts emitted candidates. Integer and fixed-point shrinking tries zero, then
-subtracts distances `abs(x) / 2^k` toward zero for increasing `k`, ending at a
-one-unit distance. Acceptance resumes at that node and distance; structural
-edits restart at the accepted node. Equal scalar candidates are skipped;
-BigInt tries zero, half and the predecessor magnitude without duplicates.
+counts emitted candidates. Numeric shrinking tries zero first. Decimal then
+halves the coefficient's decimal digit count; BigInt shifts away half its
+magnitude bytes; Float reduces its exponent before its ordered magnitude bits.
+Integer, Decimal and BigInt subtract distances `abs(x) / 2^k` toward zero
+for increasing `k`, ending at one unit; Float uses the same distances on its
+exponent and then magnitude bits, ending at one ULP. Acceptance resumes at
+that node and distance within a pass; structural edits restart at the accepted
+node. A pass that accepted anything starts again at node zero with fresh
+distances, because changes to later nodes can make earlier rejections obsolete.
+Shrinking stops when a pass accepts nothing or the call budget runs out.
+Equal scalar candidates are skipped.
 The driver, not this library, decides whether a stopped call is a bug.
 Extreme detection walks a parameter and returns its first Int, Decimal, Time
 or Duration minimum/maximum, including Range's Int endpoints, start before

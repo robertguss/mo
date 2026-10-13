@@ -131,4 +131,9 @@ MO_MUST_USE enum mo_input_result
 mo_input_immediate_build(struct mo_input_builder *builder,
                          const struct mo_input_value_request *request, struct mo_cell *out);
 
+/* A canonical little-endian magnitude. NULL out only checks whether the
+ * candidate changes it; otherwise writes length bytes, including high zeros. */
+MO_MUST_USE bool mo_input_bigint_smaller(const uint8_t *source, size_t length, uint32_t variant,
+                                         uint8_t *out);
+
 #endif

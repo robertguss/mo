@@ -215,6 +215,25 @@ static void shrink_numbers(void) {
     }
     CHECK(calls > 0 && calls < 200);
     CHECK(mo_cell_get_int(best[0]) == 17 && mo_cell_get_int(best[1]) == -23);
+
+    best[0] = mo_cell_int(1000);
+    best[1] = mo_cell_int(999);
+    calls = 0;
+    mo_input_shrink_init(&shrinker, &inputs, 200);
+    for (;;) {
+        struct mo_cell candidate[2];
+        enum mo_input_result result = mo_input_shrink_next(&shrinker, best, heap, candidate);
+        if (result == MO_INPUT_DONE)
+            break;
+        MO_ASSERT(result == MO_INPUT_OK);
+        calls++;
+        bool fails = mo_cell_get_int(candidate[0]) > mo_cell_get_int(candidate[1]);
+        if (fails)
+            memcpy(best, candidate, sizeof best);
+        mo_input_shrink_feedback(&shrinker, fails);
+    }
+    CHECK(calls > 0 && calls < 200);
+    CHECK(mo_cell_get_int(best[0]) == 1 && mo_cell_get_int(best[1]) == 0);
     mo_input_shrink_init(&shrinker, &inputs, 1);
     struct mo_cell candidate[2];
     MO_ASSERT(mo_input_shrink_next(&shrinker, best, heap, candidate) == MO_INPUT_OK);
@@ -233,18 +252,19 @@ static void shrink_thresholds(void) {
     struct mo_heap *heap = mo_heap_new(fixture.image, &heap_limits);
     MO_ASSERT(heap != NULL);
     struct mo_input_limits limits = mo_input_limits_default();
-    for (unsigned model = 0; model < 3; model++) {
-        uint32_t type = fixture.builtin[model == 2 ? MO_TYPE_DECIMAL : MO_TYPE_INT];
+    for (unsigned model = 0; model < 4; model++) {
+        uint32_t type = fixture.builtin[model >= 2 ? MO_TYPE_DECIMAL : MO_TYPE_INT];
         uint32_t parameters[] = {type, type};
-        uint32_t count = model == 1 ? 2U : 1U;
+        uint32_t count = model == 1 || model == 3 ? 2U : 1U;
         struct mo_inputs inputs;
         MO_ASSERT(mo_inputs_init(&inputs, &fixture.types, parameters, count, "M.threshold", 11,
                                  &limits, NULL, 0) == MO_INPUT_OK);
         mo_i128 decimal_max = (mo_i128)(((mo_u128)1 << 127) - 1);
-        struct mo_cell best[] = {model == 2   ? mo_cell_decimal(decimal_max)
+        struct mo_cell best[] = {model >= 2   ? mo_cell_decimal(decimal_max)
                                  : model == 0 ? mo_cell_int(INT64_MAX)
                                               : mo_cell_int(INT64_C(1) << 40),
-                                 mo_cell_int(INT64_C(1) << 40)};
+                                 model == 3 ? mo_cell_decimal(decimal_max)
+                                            : mo_cell_int(INT64_C(1) << 40)};
         struct mo_input_shrinker shrinker;
         mo_input_shrink_init(&shrinker, &inputs, 200);
         for (;;) {
@@ -254,7 +274,9 @@ static void shrink_thresholds(void) {
                 break;
             MO_ASSERT(result == MO_INPUT_OK);
             bool fails =
-                model == 2 ? mo_cell_get_decimal(candidate[0]) > INT64_C(1500000000000000000)
+                model >= 2 ? mo_cell_get_decimal(candidate[0]) > INT64_C(1500000000000000000) &&
+                                 (count == 1 ||
+                                  mo_cell_get_decimal(candidate[1]) > INT64_C(1500000000000000000))
                 : model == 0
                     ? mo_cell_get_int(candidate[0]) > 150
                     : mo_cell_get_int(candidate[0]) > 100 && mo_cell_get_int(candidate[1]) > 100;
@@ -262,15 +284,53 @@ static void shrink_thresholds(void) {
                 memcpy(best, candidate, count * sizeof *best);
             mo_input_shrink_feedback(&shrinker, fails);
         }
-        if (model == 2)
+        if (model >= 2) {
             CHECK(mo_cell_get_decimal(best[0]) == INT64_C(1500000000000000001));
-        else {
+            if (count == 2)
+                CHECK(mo_cell_get_decimal(best[1]) == INT64_C(1500000000000000001));
+        } else {
             CHECK(mo_cell_get_int(best[0]) == (model == 0 ? 151 : 101));
             if (count == 2)
                 CHECK(mo_cell_get_int(best[1]) == 101);
         }
         mo_inputs_free(&inputs);
     }
+    mo_heap_free(heap);
+    mo_heap_image_free(fixture.image);
+    mo_arena_free(&fixture.arena);
+}
+
+static void shrink_floats(void) {
+    struct heap_fixture fixture;
+    heap_fixture_init(&fixture);
+    struct mo_limits heap_limits = mo_limits_default();
+    struct mo_heap *heap = mo_heap_new(fixture.image, &heap_limits);
+    MO_ASSERT(heap != NULL);
+    struct mo_input_limits limits = mo_input_limits_default();
+    struct mo_inputs inputs;
+    uint32_t type = fixture.builtin[MO_TYPE_FLOAT];
+    MO_ASSERT(mo_inputs_init(&inputs, &fixture.types, &type, 1, "M.float", 7, &limits, NULL, 0) ==
+              MO_INPUT_OK);
+    const double starts[] = {0x1.fffffffffffffp1023, 1000.0, -0x1.fffffffffffffp1023};
+    for (unsigned i = 0; i < 3; i++) {
+        struct mo_cell best = mo_cell_float(starts[i]);
+        struct mo_input_shrinker shrinker;
+        mo_input_shrink_init(&shrinker, &inputs, 200);
+        for (;;) {
+            struct mo_cell candidate;
+            enum mo_input_result result = mo_input_shrink_next(&shrinker, &best, heap, &candidate);
+            if (result == MO_INPUT_DONE)
+                break;
+            MO_ASSERT(result == MO_INPUT_OK);
+            double value = mo_cell_get_float(candidate);
+            bool fails = i == 2 ? value < -1.5 : value > 1.5;
+            if (fails)
+                best = candidate;
+            mo_input_shrink_feedback(&shrinker, fails);
+        }
+        CHECK(mo_cell_get_float(best) == (i == 2 ? -0x1.8000000000001p0 : 0x1.8000000000001p0));
+    }
+    mo_inputs_free(&inputs);
     mo_heap_free(heap);
     mo_heap_image_free(fixture.image);
     mo_arena_free(&fixture.arena);
@@ -284,6 +344,69 @@ static MO_MUST_USE bool has_beta(struct mo_cell value) {
             return true;
     }
     return false;
+}
+
+static void shrink_dependent_record(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, 1 << 20);
+    struct mo_types types;
+    mo_types_init(&types, &arena);
+    uint32_t integer = heap_intern(&types, (struct mo_type){.kind = MO_TYPE_INT});
+    uint32_t text = heap_intern(&types, (struct mo_type){.kind = MO_TYPE_TEXT});
+    uint32_t record;
+    MO_ASSERT(mo_types_declare(&types, MO_TYPE_RECORD, "Sized", &record) == MO_TYPES_OK);
+    struct mo_type_field fields[] = {{"a", integer}, {"b", text}};
+    MO_ASSERT(mo_types_define_record(&types, record, fields, 2) == MO_TYPES_OK);
+    MO_ASSERT(mo_types_finish(&types) == MO_TYPES_OK);
+    uint32_t field_types[] = {integer, text};
+    uint32_t layout = heap_layout(&types, (struct mo_layout){.kind = MO_LAYOUT_RECORD,
+                                                             .type = record,
+                                                             .case_index = MO_NO_INDEX,
+                                                             .function = MO_NO_INDEX,
+                                                             .fields = field_types,
+                                                             .field_count = 2});
+    struct mo_limits heap_limits = mo_limits_default();
+    struct mo_heap_image *image = mo_heap_image_new(&types, &heap_limits);
+    MO_ASSERT(image != NULL);
+    struct mo_heap *heap = mo_heap_new(image, &heap_limits);
+    MO_ASSERT(heap != NULL);
+    struct mo_input_limits limits = mo_input_limits_default();
+    struct mo_inputs inputs;
+    MO_ASSERT(mo_inputs_init(&inputs, &types, &record, 1, "M.dependent", 11, &limits, NULL, 0) ==
+              MO_INPUT_OK);
+    struct mo_cell cells[] = {mo_cell_int(1000), mo_cell_unit()}, best;
+    MO_ASSERT(mo_value_text(heap, "abcdefghij", 10, &cells[1]));
+    MO_ASSERT(mo_value_construct(heap, layout, cells, 2, &best));
+    mo_value_drop(heap, text, cells[1]);
+    struct mo_input_shrinker shrinker;
+    mo_input_shrink_init(&shrinker, &inputs, 200);
+    for (;;) {
+        struct mo_cell candidate;
+        enum mo_input_result result = mo_input_shrink_next(&shrinker, &best, heap, &candidate);
+        if (result == MO_INPUT_DONE)
+            break;
+        MO_ASSERT(result == MO_INPUT_OK && input_value_typed(heap, &types, record, candidate));
+        size_t length;
+        const uint8_t *bytes = mo_value_data(mo_value_field(candidate, 1), &length);
+        (void)bytes;
+        bool fails = mo_cell_get_int(mo_value_field(candidate, 0)) > (int64_t)length;
+        if (fails) {
+            mo_value_drop(heap, record, best);
+            best = candidate;
+        } else
+            mo_value_drop(heap, record, candidate);
+        mo_input_shrink_feedback(&shrinker, fails);
+    }
+    size_t length;
+    const uint8_t *bytes = mo_value_data(mo_value_field(best, 1), &length);
+    (void)bytes;
+    CHECK(mo_cell_get_int(mo_value_field(best, 0)) == 1 && length == 0);
+    mo_value_drop(heap, record, best);
+    CHECK(mo_heap_objects(heap) == 0);
+    mo_inputs_free(&inputs);
+    mo_heap_free(heap);
+    mo_heap_image_free(image);
+    mo_arena_free(&arena);
 }
 
 static MO_MUST_USE bool record_fails(struct mo_cell value) {
@@ -729,6 +852,44 @@ static void bigint_candidates(void) {
         CHECK(emitted == magnitude);
         mo_value_drop(heap, type, best);
     }
+    const uint64_t thresholds[] = {150, 1000000};
+    for (unsigned model = 0; model < 4; model++) {
+        uint8_t magnitude[128];
+        memset(magnitude, UINT8_MAX, sizeof magnitude);
+        enum mo_bigint_sign sign = model < 2 ? MO_BIGINT_POSITIVE : MO_BIGINT_NEGATIVE;
+        uint64_t threshold = thresholds[model % 2];
+        struct mo_cell best;
+        MO_ASSERT(mo_value_bigint(heap, sign, magnitude, sizeof magnitude, &best));
+        struct mo_input_shrinker shrinker;
+        mo_input_shrink_init(&shrinker, &inputs, 200);
+        for (;;) {
+            struct mo_cell candidate;
+            enum mo_input_result result = mo_input_shrink_next(&shrinker, &best, heap, &candidate);
+            if (result == MO_INPUT_DONE)
+                break;
+            MO_ASSERT(result == MO_INPUT_OK &&
+                      input_value_typed(heap, &fixture.types, type, candidate));
+            size_t length;
+            const uint8_t *data = mo_value_data(candidate, &length);
+            uint64_t value = 0;
+            for (size_t i = 0; i < length && length <= 8; i++)
+                value |= (uint64_t)data[i] << (8 * i);
+            bool fails = length > 8 || value > threshold;
+            if (fails) {
+                mo_value_drop(heap, type, best);
+                best = candidate;
+            } else
+                mo_value_drop(heap, type, candidate);
+            mo_input_shrink_feedback(&shrinker, fails);
+        }
+        size_t length;
+        const uint8_t *data = mo_value_data(best, &length);
+        uint64_t value = 0;
+        for (size_t i = 0; i < length && length <= 8; i++)
+            value |= (uint64_t)data[i] << (8 * i);
+        CHECK(length <= 8 && value == threshold + 1 && mo_value_bigint_sign(best) == sign);
+        mo_value_drop(heap, type, best);
+    }
     CHECK(mo_heap_objects(heap) == 0);
     mo_inputs_free(&inputs);
     mo_heap_free(heap);
@@ -879,6 +1040,8 @@ int main(void) {
     scalar_boundaries();
     shrink_numbers();
     shrink_thresholds();
+    shrink_floats();
+    shrink_dependent_record();
     shrink_record_across_heaps();
     all_types();
     factory_budget();
