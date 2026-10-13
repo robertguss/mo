@@ -469,11 +469,15 @@ requirement. A phantom parameter does not acquire an ability its fields do not
 need. This walk and signature requirements share the program work budget.
 
 Reference 9.2 defines a customizer as one ordinary function in its type's own
-module, with signature `compare(T, T): Ordering` or `to_text(T): Text`. It does
-not explicitly settle unrelated functions with those names. For this stage the
-names remain reserved for those signatures; E0082 explains that conservative
-restriction. Qualified library prefixes require a module in scope, except the
-modules named after built-in types that reference 10.5 makes implicit.
+module, with signature `compare(T, T): Ordering` or `to_text(T): Text`. Robert's
+option B recognizes a candidate by its name and first parameter's locally
+declared nominal type, then enforces the exact signature with E0082. Other
+functions with those names are ordinary helpers, never ability implementations.
+The trusted `FileError.to_text` library function remains an explicit exception
+for native data. Section 5.4's owner-first dot lookup, visible-field precedence
+and built-in library handling are unchanged. Qualified library prefixes require
+a module in scope, except the modules named after built-in types that reference
+10.5 makes implicit.
 
 **Local inference is a second intermediate result.** `mo_infer_function`
 checks one named body against prepared signatures, returning postorder

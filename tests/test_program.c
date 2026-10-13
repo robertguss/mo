@@ -289,6 +289,33 @@ static void ability_dot_graph(void) {
     free_fixture(&f);
 }
 
+static void customizer_helpers(void) {
+    struct fixture f;
+    static const char *const sources[] = {
+        "fn compare(a: Int, b: Int) : Bool\na == b\nend\n"
+        "fn main() : Int\nif compare(3, 4): 9 else: 7\nend\n",
+        "fn to_text(_n: Int) : Int\n7\nend\n"
+        "fn main() : Int\nto_text(1) + 2.to_text.byte_count\nend\n",
+        "fn to_text() : Int\n7\nend\nfn main() : Int\nto_text()\nend\n",
+        "fn compare() : Bool\ntrue\nend\nfn main() : Int\nif compare(): 7 else: 9\nend\n",
+        "fn to_text(x: T) : T\nx\nend\nfn main() : Int\nto_text(7)\nend\n",
+        "fn to_text(f: fn(Int) : Int) : Int\nf(7)\nend\n"
+        "fn main() : Int\nto_text(fn(x) x end)\nend\n",
+        "fn to_text(_error: FileError) : Text\n\"helper\"\nend\n"
+        "fn main() : Int\nto_text(NotFound(path: \"notes\")).byte_count\nend\n",
+    };
+    for (uint32_t i = 0; i < sizeof(sources) / sizeof(sources[0]); i++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, MO_LIMIT_FILE_SIZE);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\n") &&
+                  mo_buffer_append_text(&source, sources[i]) && mo_buffer_append_byte(&source, 0));
+        init(&f, (const char *)source.bytes);
+        CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+        free_fixture(&f);
+        mo_buffer_free(&source);
+    }
+}
+
 static void method_graph(void) {
     struct fixture f;
     init(&f, "module Main\nstruct Box(T)\nvalue: T\nend\n"
@@ -1266,8 +1293,6 @@ static void rejected_stages(void) {
         {"fn main() : Int where Int: Number\n0\nend\n", MO_CODE_ABILITY_REQUIREMENT},
         {"fn message(error: FileError) : Text\nerror.to_text\nend\nfn main()\nend\n",
          MO_CODE_CHECK_UNFINISHED},
-        {"fn to_text(_error: FileError) : Text\n\"fake\"\nend\nfn main()\nend\n",
-         MO_CODE_ABILITY_CUSTOMIZER},
         {"fn helper(c: Console) : Text\n\"#{c}\"\nend\nfn main()\nend\n", MO_CODE_ABILITY_MISSING},
         {"fn helper(bytes: Bytes) : Text\n\"#{bytes}\"\nend\nfn main()\nend\n",
          MO_CODE_ABILITY_MISSING},
@@ -1293,6 +1318,12 @@ static void rejected_stages(void) {
         {"struct P\nx: Int\nend\nfn compare(_a: P, _b: P) : Int\n0\nend\nfn main()\nend\n",
          MO_CODE_ABILITY_CUSTOMIZER},
         {"struct P\nx: Int\nend\nfn to_text(_p: P) : Int\n0\nend\nfn main()\nend\n",
+         MO_CODE_ABILITY_CUSTOMIZER},
+        {"struct P\nx: Int\nend\nfn to_text(_p: P, c: Text) : Text\nc\nend\n"
+         "fn main()\nend\n",
+         MO_CODE_ABILITY_CUSTOMIZER},
+        {"struct P\nx: Int\nend\nfn compare(_a: P) : Ordering\nEqual\nend\n"
+         "fn main()\nend\n",
          MO_CODE_ABILITY_CUSTOMIZER},
         {"fn main() : Text\n\"not an entry result\"\nend\n", MO_CODE_MAIN_CONTRACT},
         {"fn main(value: Int) : Int\nvalue\nend\n", MO_CODE_MAIN_CONTRACT},
@@ -1588,6 +1619,7 @@ static void run(void *argument) {
     native_graph();
     interpolation_graph();
     ability_dot_graph();
+    customizer_helpers();
     method_graph();
     overload_graph();
     delayed_dot_graph();
