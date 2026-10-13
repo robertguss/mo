@@ -28,11 +28,18 @@ struct mo_defect {
     const struct mo_process *process;
 };
 
-/* Serialized, once per image. Repeated calls return the original outcome.
+/* Serialized, once per image after its runtime attaches. Repeated calls return
+ * the original outcome; failure before attachment may be retried.
  * Failure reports remain valid until image_free. No process may use a failed
  * or uninitialized image. Initialization and process limits include metadata. */
 MO_MUST_USE enum mo_outcome mo_image_init(struct mo_image *image, const struct mo_limits *limits,
                                           struct mo_defect *defect_out);
+/* C harness only: one instruction budget across all initializer calls. Like
+ * process_instruction_limit, exhaustion is an internal stop, not a Mo limit. */
+MO_MUST_USE enum mo_outcome mo_image_init_bounded(struct mo_image *image,
+                                                  const struct mo_limits *limits,
+                                                  uint64_t instructions,
+                                                  struct mo_defect *defect_out);
 MO_MUST_USE struct mo_process *mo_process_new(const struct mo_image *image,
                                               const struct mo_limits *limits);
 void mo_process_free(struct mo_process *process);
@@ -41,7 +48,8 @@ MO_MUST_USE size_t mo_process_stack_used(const struct mo_process *process);
 /* Direct FUNCTION/spec calls only. INIT is invoked by image_init; closures by
  * call_closure. Owned parameters transfer on every outcome, borrowed ones do
  * not. Only RETURNED writes the owned result. Calls may repeat after RETURNED;
- * STOPPED/FAILED end this process and preserve its frames for the report. */
+ * STOPPED/FAILED end this process and preserve its frames for the report.
+ * C-owned borrowed arguments must outlive every frame/report reading them. */
 MO_MUST_USE enum mo_outcome mo_call(struct mo_process *process, uint32_t function,
                                     const struct mo_cell *arguments, uint32_t argument_count,
                                     struct mo_cell *result_out, struct mo_defect *defect_out);

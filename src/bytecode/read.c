@@ -17,6 +17,7 @@ struct reader {
     struct mo_bytecode_debug_positions *debug_positions;
     struct mo_bytecode *file;
     struct mo_type *types;
+    struct mo_layout *layouts;
     struct mo_load_error *error;
     bool failed;
 };
@@ -394,6 +395,7 @@ static void sections(struct reader *r) {
     struct mo_layout *layouts = array(r, &f->layout_count, MO_LIMIT_LAYOUTS, 12, sizeof *layouts,
                                       _Alignof(struct mo_layout));
     f->layouts = layouts;
+    r->layouts = layouts;
     for (uint32_t i = 0; i < f->layout_count && !r->failed; i++) {
         struct mo_layout *l = &layouts[i];
         uint32_t kind = word(r);
@@ -573,7 +575,11 @@ struct mo_bytecode *mo_bytecode_decode_info(struct mo_arena *arena, const uint8_
     if (!valid) {
         return NULL;
     }
-    struct mo_types view = {.items = r.types, .count = r.file->type_count, .finished = true};
+    struct mo_types view = {.items = r.types,
+                            .count = r.file->type_count,
+                            .layouts = r.layouts,
+                            .layout_count = r.file->layout_count,
+                            .finished = true};
     for (uint32_t i = 0; i < view.count; i++) {
         struct mo_type *t = &view.items[i];
         t->reference = t->kind >= MO_TYPE_TEXT;

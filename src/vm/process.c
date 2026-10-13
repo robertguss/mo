@@ -44,7 +44,7 @@ const char *mo_vm_reserve(struct mo_process *process, size_t needed, uint32_t de
         capacity = process->limits.stack_size;
     void *stack = realloc(process->stack, capacity);
     if (stack == NULL)
-        return "--max-heap";
+        return "native memory";
     process->stack = stack;
     process->capacity = capacity;
     return NULL;
@@ -149,8 +149,9 @@ enum mo_outcome mo_call(struct mo_process *process, uint32_t function,
     MO_ASSERT(process != NULL && !process->terminal && process->depth == 0 &&
               function < process->file->function_count && result_out != NULL && defect_out != NULL);
     const struct mo_bytecode_function *fn = &process->file->functions[function];
-    MO_ASSERT(fn->kind != MO_FUNCTION_CLOSURE && argument_count == fn->parameter_count &&
-              (arguments != NULL || argument_count == 0));
+    MO_ASSERT(fn->kind != MO_FUNCTION_CLOSURE &&
+              (fn->kind != MO_FUNCTION_INIT || !process->owns_heap) &&
+              argument_count == fn->parameter_count && (arguments != NULL || argument_count == 0));
     const char *limit = mo_vm_reserve(process, mo_vm_frame_size(fn->register_count), 1);
     enum mo_outcome outcome;
     if (limit != NULL) {
@@ -158,7 +159,9 @@ enum mo_outcome mo_call(struct mo_process *process, uint32_t function,
             if (fn->parameters[i].ownership == MO_PARAMETER_OWNED)
                 mo_value_drop(process->heap, fn->parameters[i].type, arguments[i]);
         }
-        outcome = mo_vm_stop(process, "out of stack", limit, false, mo_cell_unit(), MO_STOPPED);
+        bool native = strcmp(limit, "native memory") == 0;
+        outcome = mo_vm_stop(process, native ? "running out of memory" : "out of stack",
+                             native ? NULL : limit, false, mo_cell_unit(), MO_STOPPED);
     } else {
         mo_vm_enter(process, function, arguments, mo_cell_unit(), false, false, 0, 0);
         outcome = mo_vm_execute(process, result_out);

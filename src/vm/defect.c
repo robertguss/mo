@@ -100,7 +100,8 @@ bool mo_render_defect(const struct mo_process *process, const struct mo_defect *
     ok = ok && mo_buffer_append_byte(out, '\n');
     for (const struct mo_defect_frame *f = defect->frames; ok && f != NULL; f = f->previous)
         ok = frame_text(process->file, f, out);
-    if (ok && defect->frames != NULL) {
+    if (ok && defect->frames != NULL &&
+        process->file->debug[defect->frames->function].name_count != 0) {
         struct mo_vm_frame *f = (struct mo_vm_frame *)(process->stack + process->top);
         const struct mo_bytecode_function *fn = &process->file->functions[f->function];
         const struct mo_bytecode_debug *debug = &process->file->debug[f->function];

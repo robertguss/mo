@@ -139,11 +139,15 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             const struct mo_bytecode_function *callee = &p->file->functions[target];
             size_t offset = tail ? p->top : p->used;
             size_t bytes = mo_vm_frame_size(callee->register_count);
-            const char *limit = bytes > SIZE_MAX - offset
+            const char *limit = !tail && p->depth == UINT32_MAX ? "--max-depth"
+                                : bytes > SIZE_MAX - offset
                                     ? "--max-stack"
                                     : mo_vm_reserve(p, offset + bytes, p->depth + (tail ? 0u : 1u));
-            if (limit != NULL)
-                return mo_vm_stop(p, "out of stack", limit, false, mo_cell_unit(), MO_STOPPED);
+            if (limit != NULL) {
+                bool native = strcmp(limit, "native memory") == 0;
+                return mo_vm_stop(p, native ? "running out of memory" : "out of stack",
+                                  native ? NULL : limit, false, mo_cell_unit(), MO_STOPPED);
+            }
             f = mo_vm_frame(p); /* reserve may move the native stack */
             struct mo_cell arguments[MO_LIMIT_BYTECODE_PARAMETERS];
             const uint32_t *regs = a + (tail ? 1 : 2);

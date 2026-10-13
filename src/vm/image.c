@@ -42,8 +42,9 @@ static MO_MUST_USE bool constant(struct mo_process *p, const struct mo_bytecode_
     MO_UNREACHABLE();
 }
 
-enum mo_outcome mo_image_init(struct mo_image *image, const struct mo_limits *limits,
-                              struct mo_defect *defect_out) {
+static MO_MUST_USE enum mo_outcome initialize(struct mo_image *image,
+                                              const struct mo_limits *limits, bool bounded,
+                                              uint64_t instructions, struct mo_defect *defect_out) {
     MO_ASSERT(image != NULL && limits != NULL && defect_out != NULL);
     struct mo_vm_image *runtime = mo_image_runtime(image);
     if (runtime != NULL) {
@@ -71,6 +72,8 @@ enum mo_outcome mo_image_init(struct mo_image *image, const struct mo_limits *li
     p->types = mo_image_types(image);
     p->runtime = runtime;
     p->limits = *limits;
+    p->bounded = bounded;
+    p->instructions = instructions;
     mo_image_attach_runtime(image, runtime, release_image);
     struct mo_limits heap_limits = *limits;
     heap_limits.heap_size -= bytes;
@@ -101,4 +104,14 @@ enum mo_outcome mo_image_init(struct mo_image *image, const struct mo_limits *li
     runtime->ready = true;
     runtime->outcome = MO_RETURNED;
     return MO_RETURNED;
+}
+
+enum mo_outcome mo_image_init(struct mo_image *image, const struct mo_limits *limits,
+                              struct mo_defect *defect_out) {
+    return initialize(image, limits, false, 0, defect_out);
+}
+
+enum mo_outcome mo_image_init_bounded(struct mo_image *image, const struct mo_limits *limits,
+                                      uint64_t instructions, struct mo_defect *defect_out) {
+    return initialize(image, limits, true, instructions, defect_out);
 }

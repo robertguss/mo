@@ -116,8 +116,10 @@ report (reference 13.2): the stack's size, the call depth and the heap's size.
 `__extension__ typedef __int128`. GCC and Clang both have the type. The
 `__extension__` keeps `-Wpedantic` quiet, and a static assertion fails the
 build on a compiler without it. Decimal's 256-bit intermediate products are
-written once, in `base`, with CBMC proofs and exhaustive tests against a
-big-number reference.
+written once, in `base/decimal.c`, shared by the VM and primitives. Division
+takes exactly 256 steps and rounds the exact result once, with ties to even.
+The current gate checks boundary and generated results against exact Python
+rationals through the public VM; CBMC proofs remain to be added.
 
 ## 3. The front end
 
@@ -819,6 +821,17 @@ once, whatever the counts say. So a stop or a failure in the middle of a
 function leaks nothing. Constants live in the image, made immortal, and
 every process shares them.
 
+An initialized process can make another `mo_call` after a return. A stop or
+failure is terminal: retain the frames and values until rendering finishes,
+then free the process. Reports borrow this storage rather than duplicating
+every variable at exhaustion. C-owned borrowed arguments must remain alive
+while their frames or report can read them. An initialization failure instead
+belongs to the image and lasts until `mo_image_free`; a failed image cannot
+create processes. Initialization is serial, and its attached runtime owns the
+literal cells, global cells, set flags and initializer process. Once attached,
+repeated initialization returns the recorded outcome. A failure allocating
+that initial runtime has no attached state and may be retried.
+
 `heap` supplies a separate `struct mo_heap` owned by the VM's process, created
 with `mo_heap_new(image, limits)`. Execution frames, loading and outcomes
 remain `vm`'s work. A shared `struct mo_heap_image`, prepared once per run,
@@ -831,9 +844,11 @@ before freezing the whole immutable graph, even for a saturated root. It can
 fail for memory without changing counts; published image caches never change.
 Processes never free image allocations or cache captureless closures locally.
 
-Each process heap limit counts its fixed heap context, native allocation
+Each process heap limit counts its process and fixed heap contexts, native allocation
 prefixes, value storage and temporary walk arenas, including chunk overhead.
-The image budget counts shared indices and its initialization heap together.
+The image budget counts runtime cells/flags, its initializer context, shared
+indices and its initialization heap together. Native stack reservation is
+charged separately to the stack limit, including growth slack.
 Caller-owned types and output buffers are outside these limits, as is system
 allocator bookkeeping. Scratch uses the remaining heap and is reclaimed after
 each generic operation; equality, ordering and hashing have no separate work
@@ -1457,6 +1472,10 @@ MO_MUST_USE bool mo_bytecode_disassemble(const uint8_t *bytes, size_t length, st
  * tables live until mo_image_free, retaining file indices and module contents_exposed. */
 MO_MUST_USE struct mo_image *mo_load(const uint8_t *bytes, size_t length, struct mo_load_error *error_out);
 MO_MUST_USE const struct mo_bytecode *mo_image_bytecode(const struct mo_image *image);
+MO_MUST_USE const struct mo_types *mo_image_types(const struct mo_image *image);
+/* The opaque VM run state attaches once; image_free releases it before decoded tables. */
+MO_MUST_USE void *mo_image_runtime(const struct mo_image *image);
+void mo_image_attach_runtime(struct mo_image *image, void *runtime, void (*release)(void *));
 void mo_image_free(struct mo_image *image);
 
 /* src/vm/vm.h: initialization, processes and calls. */
@@ -1470,12 +1489,17 @@ void mo_process_free(struct mo_process *process);    /* frees its whole heap, ne
 /* Arguments passed to owned parameters are consumed on every outcome; those passed to borrowed
  * ones stay the caller's. Duplicate before the call to retain an owned argument for a promise.
  * Only MO_RETURNED writes an owned result_out, which C may drop early. On stop/failure it is
- * unchanged, and defect_out describes why, valid until mo_process_free. */
+ * unchanged, and defect_out describes why, valid until mo_process_free. STOPPED/FAILED
+ * are terminal; RETURNED permits another call. INIT and CLOSURE are not direct C calls. */
 MO_MUST_USE enum mo_outcome mo_call(struct mo_process *process, uint32_t function,
                                     const struct mo_cell *arguments, uint32_t argument_count,
                                     struct mo_cell *result_out, struct mo_defect *defect_out);
 MO_MUST_USE bool mo_render_defect(const struct mo_process *process, const struct mo_defect *defect,
                                   struct mo_buffer *out);
+/* C harness hooks only, not Mo resource limits; internal stop on exhaustion. */
+MO_MUST_USE enum mo_outcome mo_image_init_bounded(struct mo_image *image,
+    const struct mo_limits *limits, uint64_t instructions, struct mo_defect *defect_out);
+void mo_process_instruction_limit(struct mo_process *process, uint64_t instructions);
 /* Initializes the image, then runs main with real capabilities; returns the exit status. */
 MO_MUST_USE int mo_run(struct mo_image *image, const struct mo_run_options *options);
 

@@ -671,7 +671,7 @@ opcode per type it accepts:
 | --- | --- | --- |
 | `add`, `sub`, `mul` | `int`, `decimal` | overflow |
 | `add`, `sub`, `mul` | `float` | none: IEEE 754 |
-| `div`, `rem` | `int`, `decimal` | division by zero; overflow (`int` minimum ÷ −1, and its remainder) |
+| `div`, `rem` | `int`, `decimal` | division by zero; division overflow (`int` minimum ÷ −1, or a Decimal quotient outside its range) |
 | `div`, `rem` | `float` | none |
 | `neg` | `int`, `decimal`, `float`, `duration` | overflow (the minimum) |
 | `add`, `sub` | `duration` | overflow |
@@ -762,6 +762,15 @@ the callee's register count and copies the arguments into registers 0 to n − 1
 has a size limit and the call depth a count limit. Exceeding either is the bug
 "out of stack" (reference 13.2), with a report.
 
+The C implementation charges each frame's native header, 16-byte register
+cells and one ownership-state byte per register, rounded up to 8-byte
+alignment. On the supported 64-bit platforms the header is 64 bytes: three
+registers take 120 bytes, five take 152. Reserved stack capacity, including
+growth slack, never exceeds `--max-stack`; metadata and value storage instead
+count against `--max-heap`. The root call counts as depth one. Calls reserve
+space and depth before transferring any register. Native allocation failure
+is "running out of memory", not a fictitious stack/depth limit violation.
+
 ### 5.2 Tail calls
 
 A tail call replaces the current frame. The arguments are copied to a scratch
@@ -771,6 +780,16 @@ stack. So a tail call never grows the stack beyond the larger of the two
 frames, and loops written as recursion run in constant space (reference 5.3).
 Every call in tail position is compiled as a tail call, including calls to
 closures.
+
+The scratch argument array is a fixed C-stack buffer for at most 256 cells
+(255 explicit closure arguments plus env). It is not recursive and is
+independent of call depth. Construction gathers up to 16 fields locally;
+larger field arrays use checked scratch charged to the remaining heap. A
+constructor, field update, reuse or equality refusal stops with "running out
+of memory" and preserves every operand, token and destination. `reset` and
+`free_token` do not allocate. Minimum Int remainder by −1 returns zero,
+as in the Lean model; the VM avoids evaluating C's undefined signed `%` for
+that pair. Division by that pair still overflows.
 
 A borrowed parameter is kept alive by its owner, an earlier frame. A tail call
 removes the current frame, so a reference the current frame owns can't be
@@ -853,6 +872,12 @@ the VM must preserve that state for the defect report before the operation
 consumes or changes it. This applies to partial in-place updates followed by
 allocation failure and to `Map.%literal_insert` stopping on a duplicate key.
 A consumed or freed operand must never be printed from pre-instruction replay.
+
+The part 1 interpreter has dispatch seams for `prim` and `host`; until the
+corresponding C operations are integrated they stop with an internal
+"dispatch unavailable" reason, leaving all registers untouched. C-only
+instruction budgets bound fuzz execution, including initialization loops;
+they are disabled for normal execution and are not language resource limits.
 
 ## 7. Capabilities and host operations
 
@@ -1105,6 +1130,15 @@ readability alone does not make a partially consumed or mutated operand safe.
 The private streaming replay visits every instruction boundary in one analysis,
 updating the readable mask only for changed registers. It lets fuzzing compare
 all boundaries without repeating a whole-function analysis at each instruction.
+
+Stopping records frame views without allocating, top frame first. A caller's
+PC stays at the call until its callee returns, so its span names the call site.
+Rendering appends transactionally into the caller's bounded output buffer.
+The replay mask and verifier scratch are diagnostic storage outside the
+exhausted process heap; their own verifier limits still apply. Replay refusal
+prints `<variables unavailable>` without reading any cell. A value-printing
+refusal prints `<value unavailable>`. No source-name range means no variable
+to print; moved/undefined registers and reuse tokens are never printed.
 
 ## 10. The text form
 
