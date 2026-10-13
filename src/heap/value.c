@@ -555,13 +555,15 @@ bool mo_list_slice(struct mo_heap *process, uint32_t type, struct mo_cell *list,
                 mo_value_dup(process, element_type, old->cells[old->start + start + i]);
     } else {
         struct mo_cell *cells = old->cells + old->start;
-        for (uint32_t i = 0; i < start; i++) {
-            mo_value_drop(process, element_type, cells[i]);
-            cells[i] = mo_cell_unit();
-        }
-        for (uint32_t i = start + count; i < old->length; i++) {
-            mo_value_drop(process, element_type, cells[i]);
-            cells[i] = mo_cell_unit();
+        if (mo_type_is_reference(process->types, element_type)) {
+            for (uint32_t i = 0; i < start; i++) {
+                mo_value_drop(process, element_type, cells[i]);
+                cells[i] = mo_cell_unit();
+            }
+            for (uint32_t i = start + count; i < old->length; i++) {
+                mo_value_drop(process, element_type, cells[i]);
+                cells[i] = mo_cell_unit();
+            }
         }
         old->start += start;
         old->length = count;

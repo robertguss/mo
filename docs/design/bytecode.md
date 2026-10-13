@@ -150,15 +150,29 @@ The debug heap asserts all three (Architecture section 11).
 
 The C heap keeps a charged private prefix before the eight-byte header:
 teardown links, an iterative-walk link, the allocation size, one structural
-hash cache, type and length, and cache/initialization flags. On 64-bit hosts
-the prefix is 56 bytes; a two-field `(Int, Int)` tuple therefore charges
-96 bytes (56 + 8 + 32), not just its 40-byte header and fields. Table-only
-capacity, size and index metadata lives in its payload, not every object.
+hash cache, type, length and a list's live start, and cache/initialization
+flags. On 64-bit hosts the prefix is 56 bytes; a two-field `(Int, Int)` tuple
+therefore charges 96 bytes (56 + 8 + 32), not just its 40-byte header and fields.
+Table-only capacity, size and index metadata lives in its payload, not every object.
 These are requested allocation bytes; system allocator bookkeeping is not
 included. Fixed-layout cells immediately follow the object header. Built-in
 layouts use `UINT32_MAX - mo_type_kind`, outside the file's layout indices.
 No native allocation bookkeeping enters a bytecode file. Heap teardown
 reclaims all allocations even after a stop or saturation.
+
+A list's live elements occupy `[start, start + length)` within its cell
+buffer. The start uses former padding in the private prefix, so neither
+the object header nor any fixed layout or charged prefix size changes.
+Single-holder slicing releases discarded references and advances the window
+without moving its retained suffix. Past half the buffer's capacity, it
+compacts the live cells; below one quarter capacity it attempts exact
+contraction, transferring ownership and keeping the old buffer on refusal.
+Thus repeated single-holder `drop(1)` (or `remove_at(0)`) has amortized constant
+storage work, plus destruction of discarded references. Immediate elements
+need no discard walk. Shared and immortal updates instead copy just the
+retained live elements. Every builder, generic walk and borrowed view reads
+the live window, never dead prefix cells; mutations invalidate the hash cache.
+Append uses tail slack, and prepend can reuse a dead prefix cell.
 
 The heap-only `mo_heap_new(image, limits)` context is separate from the VM's
 process. `mo_heap_image_new(types, limits)` prepares shared abilities, layout

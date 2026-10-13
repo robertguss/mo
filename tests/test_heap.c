@@ -125,6 +125,169 @@ static void test_lists(struct heap_fixture *f) {
     mo_heap_free(p);
 }
 
+static void check_list_window(struct mo_heap *heap, uint32_t type, struct mo_cell list,
+                              const struct mo_cell *elements, uint32_t count) {
+    CHECK(mo_list_size(list) == count);
+    for (uint32_t i = 0; i < count; i++) {
+        struct mo_cell got;
+        CHECK(mo_list_get(list, i, &got) && mo_cell_get_ref(got) == mo_cell_get_ref(elements[i]));
+    }
+    struct mo_cell expected;
+    MO_ASSERT(mo_value_list(heap, type, elements, count, &expected));
+    bool equal;
+    int order;
+    uint64_t actual_hash, expected_hash;
+    CHECK(mo_value_equal(heap, type, list, expected, &equal) && equal);
+    CHECK(mo_value_compare(heap, type, list, expected, &order) && order == 0);
+    CHECK(mo_value_hash(heap, type, list, &actual_hash) &&
+          mo_value_hash(heap, type, expected, &expected_hash) && actual_hash == expected_hash);
+    struct mo_buffer actual_text, expected_text;
+    mo_buffer_init(&actual_text, 4096);
+    mo_buffer_init(&expected_text, 4096);
+    CHECK(mo_value_print(heap, type, list, &actual_text));
+    CHECK(mo_value_print(heap, type, expected, &expected_text));
+    CHECK(actual_text.length == expected_text.length &&
+          memcmp(actual_text.bytes, expected_text.bytes, actual_text.length) == 0);
+    mo_buffer_free(&expected_text);
+    mo_buffer_free(&actual_text);
+    mo_value_drop(heap, type, expected);
+}
+
+static void test_list_windows(struct heap_fixture *f) {
+    for (unsigned holders = 0; holders < 3; holders++) {
+        for (unsigned operation = 0; operation < 10; operation++) {
+            struct mo_limits limits = mo_limits_default();
+            struct mo_heap *p = mo_heap_new(f->image, &limits);
+            MO_ASSERT(p != NULL);
+            struct mo_cell elements[12], model[24], list;
+            uint32_t text = f->builtin[MO_TYPE_TEXT];
+            for (uint32_t i = 0; i < 12; i++) {
+                char word[] = {(char)('a' + i), '\0'};
+                MO_ASSERT(mo_value_text(p, word, 1, &elements[i]));
+            }
+            MO_ASSERT(mo_value_list(p, f->list, elements, 12, &list));
+            uint64_t hash;
+            MO_ASSERT(mo_value_hash(p, f->list, list, &hash));
+            MO_ASSERT(mo_list_slice(p, f->list, &list, 3, 9));
+            memcpy(model, elements + 3, 9 * sizeof *model);
+            uint32_t count = 9;
+            check_list_window(p, f->list, list, model, count);
+            for (unsigned i = 0; i < 3; i++)
+                CHECK(mo_cell_get_ref(elements[i])->count == 1);
+            struct mo_cell original = list;
+            if (holders == 1)
+                original = mo_value_dup(p, f->list, list);
+            else if (holders == 2) {
+                MO_ASSERT(mo_value_make_immortal(p, f->list, list));
+                for (unsigned i = 0; i < 12; i++)
+                    CHECK(mo_cell_get_ref(elements[i])->count == (i < 3 ? 1U : MO_IMMORTAL_COUNT));
+            }
+            switch (operation) {
+            case 0:
+                MO_ASSERT(mo_list_append(p, f->list, &list, elements[0]));
+                model[count++] = elements[0];
+                break;
+            case 1:
+                MO_ASSERT(mo_list_prepend(p, f->list, &list, elements[0]));
+                memmove(model + 1, model, (size_t)count * sizeof *model);
+                model[0] = elements[0];
+                count++;
+                break;
+            case 2:
+                MO_ASSERT(mo_list_concat(p, f->list, &list, list));
+                memcpy(model + count, model, (size_t)count * sizeof *model);
+                count *= 2;
+                break;
+            case 3:
+                MO_ASSERT(mo_list_reverse(p, f->list, &list));
+                for (uint32_t i = 0; i < count; i++)
+                    model[i] = elements[11 - i];
+                break;
+            case 4:
+                MO_ASSERT(mo_list_set(p, f->list, &list, 4, elements[0]));
+                model[4] = elements[0];
+                break;
+            case 5:
+            case 9: {
+                uint32_t index = operation == 5 ? 4U : 0U;
+                MO_ASSERT(mo_list_remove_at(p, f->list, &list, index));
+                count--;
+                memmove(model + index, model + index + 1, (size_t)(count - index) * sizeof *model);
+                break;
+            }
+            case 6:
+                MO_ASSERT(mo_list_slice(p, f->list, &list, 2, 4));
+                memmove(model, model + 2, 4 * sizeof *model);
+                count = 4;
+                break;
+            case 7:
+                MO_ASSERT(mo_list_slice(p, f->list, &list, 0, 2));
+                count = 2;
+                break;
+            case 8: {
+                struct mo_cell right;
+                MO_ASSERT(mo_value_list(p, f->list, elements, 12, &right));
+                MO_ASSERT(mo_list_slice(p, f->list, &right, 5, 7));
+                MO_ASSERT(mo_list_concat(p, f->list, &list, right));
+                memcpy(model + count, elements + 5, 7 * sizeof *model);
+                count += 7;
+                mo_value_drop(p, f->list, right);
+                break;
+            }
+            default:
+                MO_UNREACHABLE();
+            }
+            check_list_window(p, f->list, list, model, count);
+            if (holders != 0)
+                check_list_window(p, f->list, original, elements + 3, 9);
+            mo_value_drop(p, f->list, list);
+            if (holders == 1)
+                mo_value_drop(p, f->list, original);
+            for (unsigned i = 0; i < 12; i++)
+                mo_value_drop(p, text, elements[i]);
+            CHECK(holders == 2 || mo_heap_objects(p) == 0);
+            mo_heap_free(p);
+        }
+    }
+    /* A full heap must not turn compaction or failed contraction into a
+     * refusal, lose retained ownership, or retain discarded child references. */
+    struct mo_limits limits = mo_limits_default();
+    limits.heap_size = 16 << 10;
+    struct mo_heap *p = mo_heap_new(f->image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_cell elements[16], list;
+    uint32_t text = f->builtin[MO_TYPE_TEXT];
+    for (uint32_t i = 0; i < 16; i++) {
+        char word[] = {(char)('a' + i), '\0'};
+        MO_ASSERT(mo_value_text(p, word, 1, &elements[i]));
+    }
+    MO_ASSERT(mo_value_list(p, f->list, elements, 16, &list));
+    struct mo_scratch full;
+    mo_scratch_init(&full, p);
+    MO_ASSERT(mo_scratch_resize(&full, NULL, 0, full.arena.limit - MO_ARENA_CHUNK_HEADER) != NULL);
+    size_t used = mo_heap_used(p);
+    CHECK(mo_list_slice(p, f->list, &list, 9, 7));
+    CHECK(mo_list_slice(p, f->list, &list, 5, 2));
+    CHECK(mo_heap_used(p) == used && mo_list_size(list) == 2);
+    for (uint32_t i = 0; i < 16; i++)
+        CHECK(mo_cell_get_ref(elements[i])->count == (i < 14 ? 1U : 2U));
+    for (uint32_t i = 0; i < 2; i++) {
+        struct mo_cell got;
+        CHECK(mo_list_get(list, i, &got) &&
+              mo_cell_get_ref(got) == mo_cell_get_ref(elements[14 + i]));
+    }
+    CHECK(mo_list_slice(p, f->list, &list, 2, 0));
+    CHECK(mo_list_size(list) == 0 && mo_heap_used(p) == used);
+    mo_scratch_free(&full);
+    mo_value_drop(p, f->list, list);
+    for (unsigned i = 0; i < 16; i++) {
+        CHECK(mo_cell_get_ref(elements[i])->count == 1);
+        mo_value_drop(p, text, elements[i]);
+    }
+    CHECK(mo_heap_objects(p) == 0);
+    mo_heap_free(p);
+}
+
 static void test_deep_drop(struct heap_fixture *f) {
     struct mo_limits limits = mo_limits_default();
     struct mo_heap *p = mo_heap_new(f->image, &limits);
@@ -1039,6 +1202,7 @@ int main(int argc, char **argv) {
     }
     test_values(&fixture);
     test_lists(&fixture);
+    test_list_windows(&fixture);
     test_deep_drop(&fixture);
     test_limit(&fixture);
     test_tables(&fixture);

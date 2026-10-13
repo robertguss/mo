@@ -1696,6 +1696,16 @@ preserve every operand, its object and ownership, and the output cell, so the
 VM can render pre-instruction registers without snapshots. Single updates use
 the heap's transactional unique/shared paths. Text and list concatenation
 reserve before mutation; shrinking or reordering a unique value cannot fail.
+Lists track a live start in former private-header padding, with the same
+56-byte prefix and unchanged object/wire layouts (bytecode 2.4). Slicing a
+single-holder list advances that window, releasing discarded references;
+compaction past half capacity and best-effort contraction below one quarter
+make repeated `drop(1)` or `remove_at(0)` linear in the input size, plus element
+destruction. Shared/immortal copies contain only the live window. Append uses
+tail slack; prepend can reuse a dead prefix. All generic walks, printing and
+VM/host list views use the same live-element accessors. The million-element
+uncons primitive benchmark runs in the work gate; compiled single-holder
+uncons depends on codegen's dead-operand transfer, not on a heap change alone.
 Set union plans missing keys and insertion slots before any mutation or count
 change, using scratch proportional to the right set and a sparse overlay of
 new slots rather than copying the left index. A singleton union uses the

@@ -284,10 +284,13 @@ static void reuse_refusals(void) {
                         MO_ASSERT(mo_value_text(f.heap, s, strlen(s), &args[i]));
                     } else if (kind == MO_TYPE_INT)
                         args[i] = mo_cell_int(1);
-                    else if (kind == MO_TYPE_LIST)
-                        MO_ASSERT(
-                            mo_value_list(f.heap, type, elements + i, i == 0 ? 3U : 2U, &args[i]));
-                    else {
+                    else if (kind == MO_TYPE_LIST) {
+                        uint32_t n = i == 0 ? 3U : 2U;
+                        MO_ASSERT(mo_value_list(f.heap, type, elements + i, n, &args[i]));
+                        /* Preserve contents with a nonzero live start. */
+                        MO_ASSERT(mo_list_concat(f.heap, type, &args[i], args[i]) &&
+                                  mo_list_slice(f.heap, type, &args[i], n, n));
+                    } else {
                         MO_ASSERT(kind == MO_TYPE_SET);
                         /* Full left storage plus three new keys forces growth,
                          * and exercises refusals after the planning allocation. */
@@ -773,6 +776,49 @@ static void vm_builder_work(uint32_t iterations) {
     mo_image_free(image);
 }
 
+static void vm_list_window(void) {
+    const char *source = "(core " MO_CORE_TEXT_VERSION " (Program () ((FunDecl \"first\" "
+                         "((\"xs\" (list (int)))) (option (int)) "
+                         "(prim (list (int) (first)) ((var \"xs\"))) "
+                         "\"Window\" (function) 0)) () \"first\" (noSource)))";
+    struct mo_arena arena;
+    struct mo_diags diags;
+    struct mo_buffer wire;
+    mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+    MO_ASSERT(mo_diags_init(&diags));
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_core *core = mo_core_parse(&arena, source, strlen(source), &diags);
+    bool ok = core != NULL && mo_compile(core, &wire, &diags);
+    if (!ok && diags.count != 0)
+        MO_ASSERT(fprintf(stderr, "VM list window: %s\n", diags.items[0].message) > 0);
+    MO_ASSERT(ok);
+    struct mo_load_error error;
+    struct mo_image *image = mo_load(wire.bytes, wire.length, &error);
+    MO_ASSERT(image != NULL);
+    mo_buffer_free(&wire);
+    mo_diags_free(&diags);
+    mo_arena_free(&arena);
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    struct mo_process *process = mo_process_new(image, &limits);
+    MO_ASSERT(process != NULL);
+    struct mo_heap *heap = mo_process_heap(process);
+    const struct mo_parameter *parameter = &mo_image_bytecode(image)->functions[0].parameters[0];
+    struct mo_cell values[16], list, out;
+    for (uint32_t i = 0; i < 16; i++)
+        values[i] = mo_cell_int(i);
+    MO_ASSERT(mo_value_list(heap, parameter->type, values, 16, &list));
+    MO_ASSERT(mo_list_slice(heap, parameter->type, &list, 3, 12));
+    MO_ASSERT(mo_call(process, 0, &list, 1, &out, &defect) == MO_RETURNED);
+    CHECK(mo_cell_get_tag(out) == 1 && mo_cell_get_int(mo_cell_get_payload(out)) == 3);
+    if (parameter->ownership == MO_PARAMETER_BORROWED)
+        mo_value_drop(heap, parameter->type, list);
+    CHECK(mo_heap_objects(heap) == 0);
+    mo_process_free(process);
+    mo_image_free(image);
+}
+
 /* A million single-holder uncons steps distinguish advancing a view from
  * moving the retained suffix on every drop. The CI work gate bounds time. */
 static void list_drop_work(void) {
@@ -789,6 +835,7 @@ static void list_drop_work(void) {
     for (uint32_t i = 0; i < 1000000; i++) {
         struct mo_cell first;
         MO_ASSERT(mo_list_get(list, 0, &first));
+        MO_ASSERT(mo_cell_get_int(first) == i);
         sum += mo_cell_get_int(first);
         struct mo_cell args[] = {list, mo_cell_int(1)}, out;
         const char *reason;
@@ -1065,6 +1112,7 @@ int main(int argc, char **argv) {
     unique_union_without_space();
     reuse_refusals();
     reuse_aliases();
+    vm_list_window();
     time_boundary();
     return mo_test_report("primitives");
 }
