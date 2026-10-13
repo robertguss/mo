@@ -800,7 +800,7 @@ examples. The ones a compiler is most likely to get wrong are:
 not syntax inference. Explicit arena-backed task and continuation lists perform
 expression/pattern lowering; an explicit, memoized stack walks type DAGs.
 Queued function/data instances have no recursive C walk. E1150 refuses later
-forms (try, Option or, interpolation, unsupported ability/native
+forms (interpolation, unsupported ability/native
 operations, map literals, constants and spec code); E1151 is arena exhaustion, E1152 the
 shared allocation-byte/step or Core-node bound, and E1153 the source-type,
 instantiation or generated Core path bound. Compilation is independent of the
@@ -845,6 +845,13 @@ its body sees the local copy. This gives Core/codegen a first-use-ordered free
 environment, captured by value at closure creation, independent of later CPS
 rewrites. The aliases retain the captured source names and the lambda span.
 The checker owns capture legality, including capabilities and later var writes.
+
+Option `or` evaluates its left operand once and emits a one-level None/Some
+case; only None evaluates the fallback. `try` uses the same decision, or Ok/Error
+for Result, with the remaining expression confined to the success arm. Failure
+jumps to the containing function or lambda's return join. Lowering uses exactly
+the checked failure and wrapper constructors; the substituted enclosing error
+type supplies a wrapper's concrete nominal identity. No wrapper search remains.
 
 The initial CPS implementation conservatively passes every live outer var,
 not only changed vars, across a continuation join; expression joins also pass

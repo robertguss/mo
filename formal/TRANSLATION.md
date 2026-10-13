@@ -1034,6 +1034,16 @@ position. `try` on an `Option` works the same in a function returning an
 `Storage(FileError)`) and `notes-tool` (into `Unreadable(FileError)`) show
 both kinds.
 
+The C lowerer performs the naming and lazy continuation rewrite itself from
+the checked operand graph. It evaluates the input once, then emits a one-level
+case in native constructor order: None/Some or Ok/Error. Its failure arm jumps
+to the containing function or lambda's return join, even when more arithmetic
+or a constructor follows the `try`. The checker supplies the exact failure
+constructor and optional wrapper; lowering never searches for one. A wrapper's
+type is the substituted enclosing Result's error type, so generic nominal
+identity agrees with the checked result. Option `or` similarly evaluates its
+default only in the None arm and passes Some's value to the continuation.
+
 ### 8.4 Can't happen
 
 `stop "reason"` is Core's `stop`; it fits any type:

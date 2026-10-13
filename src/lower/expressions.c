@@ -26,7 +26,9 @@ enum continuation_kind {
     K_SELECT,
     K_PATTERN,
     K_MATCH,
-    K_FOR
+    K_FOR,
+    K_OPTION,
+    K_TRY
 };
 struct continuation {
     enum continuation_kind kind;
@@ -81,7 +83,7 @@ static bool returns(struct body *b, uint32_t root) {
         if (!seen[i])
             continue;
         const struct mo_checked_expression *r = row(b, i);
-        if (r->syntax->kind == MO_S_RETURN)
+        if (r->syntax->kind == MO_S_RETURN || r->try_ != NULL)
             return true;
         if (r->lambda != NULL)
             continue;
@@ -948,6 +950,58 @@ static void finish_task(struct body *b, struct task t) {
         loop(b, t, k->row, t.value);
         return;
     }
+    if (k->kind == K_OPTION || k->kind == K_TRY) {
+        p->span = k->row->syntax->span;
+        bool result = type(b, row(b, k->row->operands[0])->type)->tag == MO_CORE_TY_RESULT;
+        mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CASE);
+        e->as.case_.expr = t.value;
+        e->as.case_.arms.count = 2;
+        e->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+        struct mo_core_arm *none = &e->as.case_.arms.items[result ? 1 : 0];
+        struct mo_core_arm *some = &e->as.case_.arms.items[result ? 0 : 1];
+        none->ctor = lower_text(p, result ? "Error" : "None");
+        some->ctor = lower_text(p, result ? "Ok" : "Some");
+        some->names.count = 1;
+        some->names.items = LOWER_NEW(p, mo_core_string, 1);
+        some->names.items[0] = lower_fresh(p);
+        *t.out = e;
+        finish(b, lower_var(p, some->names.items[0]), t.state, k->next, &some->body);
+        if (k->kind == K_OPTION)
+            emit(b, k->row->operands[1], t.state, k->next, &none->body);
+        else {
+            const struct mo_checked_try *checked = k->row->try_;
+            mo_core_ty enclosing = type(b, checked->result);
+            mo_core_expr error = NULL;
+            if (result) {
+                none->names.count = 1;
+                none->names.items = LOWER_NEW(p, mo_core_string, 1);
+                none->names.items[0] = lower_fresh(p);
+                error = lower_var(p, none->names.items[0]);
+            }
+            if (checked->wrapper.symbol != NULL || checked->wrapper.builtin != NULL) {
+                MO_ASSERT(result);
+                mo_core_expr wrapped = lower_expr(p, MO_CORE_EXPR_CON);
+                wrapped->as.con.ty = enclosing->as.result.e;
+                wrapped->as.con.ctor =
+                    lower_text(p, checked->wrapper.symbol == NULL ? checked->wrapper.builtin
+                                                                  : checked->wrapper.symbol->name);
+                wrapped->as.con.args = arguments(b, 1);
+                wrapped->as.con.args.items[0] = error;
+                error = wrapped;
+            }
+            mo_core_expr failure = lower_expr(p, MO_CORE_EXPR_CON);
+            failure->as.con.ty = enclosing;
+            failure->as.con.ctor =
+                lower_text(p, checked->failure.symbol == NULL ? checked->failure.builtin
+                                                              : checked->failure.symbol->name);
+            failure->as.con.args = arguments(b, result ? 1 : 0);
+            if (result)
+                failure->as.con.args.items[0] = error;
+            MO_ASSERT(t.state.return_ != NULL);
+            none->body = jump(b, t.state.return_, failure);
+        }
+        return;
+    }
     if (k->kind == K_SEQUENCE) {
         mo_core_expr *out = t.out;
         if (!atom(t.value)) {
@@ -1038,10 +1092,25 @@ static void row_task(struct body *b, struct task t) {
     struct lowering *p = b->p;
     const struct mo_checked_expression *r = row(b, t.row);
     enum mo_syntax_kind tag = kind(r);
-    if (r->try_ != NULL || r->or_kind == MO_CHECK_OR_OPTION || tag == MO_S_TEXT_INTERPOLATED ||
-        tag == MO_S_MAP)
+    if (tag == MO_S_TEXT_INTERPOLATED || tag == MO_S_MAP)
         lower_refuse(p, MO_CODE_LOWER_UNFINISHED,
-                     "try, Option or, interpolation and map literals are not lowered yet");
+                     "interpolation and map literals are not lowered yet");
+    if (r->try_ != NULL) {
+        struct continuation *k = continuation(b, K_TRY);
+        k->row = r;
+        k->next = t.continuation;
+        emit(b, r->operands[0], t.state, k, t.out);
+        return;
+    }
+    if (r->or_kind == MO_CHECK_OR_OPTION) {
+        mo_core_expr *out = t.out;
+        struct continuation *done = branch_join(b, t, type(b, r->type), &out);
+        struct continuation *k = continuation(b, K_OPTION);
+        k->row = r;
+        k->next = done;
+        emit(b, r->operands[0], t.state, k, out);
+        return;
+    }
     if (tag == MO_S_SEQUENCE) {
         if (r->operand_count == 0)
             finish(b, lower_unit(p), t.state, t.continuation, t.out);
@@ -1333,7 +1402,8 @@ void lower_function(struct lowering *p, struct instance *instance) {
                 t.then_ = share_target(&b, t, t.then_, &t.out);
             if (r->operation == MO_T_AND || r->operation == MO_T_OR || r->pattern != NULL)
                 t.else_ = share_target(&b, t, t.else_, &t.out);
-            if (r->operation == MO_T_AND || r->operation == MO_T_OR ||
+            if (r->operation == MO_T_AND ||
+                (r->operation == MO_T_OR && r->or_kind != MO_CHECK_OR_OPTION) ||
                 r->operation == MO_T_IMPLIES) {
                 mo_core_expr select = lower_expr(p, MO_CORE_EXPR_IF);
                 bool or_ = r->operation == MO_T_OR;

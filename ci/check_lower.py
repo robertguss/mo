@@ -57,7 +57,9 @@ def main():
                                         capture_output=True, text=True, timeout=15)
                 if report.returncode == 77:
                     refused += 1
-                    assert path.name in {"branch-false.core", "branch-true.core", "loops.core"}, (
+                    assert path.name in {"branch-false.core", "branch-true.core", "loops.core",
+                                         "try-option-none.core", "try-option-some.core",
+                                         "try-result-direct.core", "try-result-wrap.core"}, (
                         vm, path.name, "unexpected compiler/host refusal")
                     assert not require_vm, (vm, path.name, "compiler or host refused")
                 else:
