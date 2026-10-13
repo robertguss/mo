@@ -15,7 +15,6 @@ error E0038: quoted "headline"\  \xff  bad\xff"\.mo:1:2
     | ^ insert at EOF
 
   --> <unavailable>
-  <unavailable>
 
 A clash between names is an error (reference 10.3).
 

@@ -1010,11 +1010,17 @@ itself. `mo run` exits with the program's own status once the program runs
 except in `run`: the first file ends option parsing and every remaining
 argument, even an empty string or flag, belongs to the program. `--` ends
 option parsing and permits file names starting with `-`. Options with values
-take a separate nonempty argument not starting with `-`; only `--emit=core`
-and `--emit=bytecode` use `=`. Unknown flags, flags on the wrong command,
+take a separate nonempty argument; names cannot start with `-`, and numeric
+values with signs are invalid limits. Only `--emit=core` and
+`--emit=bytecode` use `=`. Unknown flags, flags on the wrong command,
 duplicate flags (except `--only`), missing/extra files and invalid limits are
 command mistakes. A mistake writes one newline-terminated message to standard
 error, nothing to standard output, and exits 2, without extra usage text.
+The message identifies the offending argument (both flag and value for an
+invalid limit). Argument excerpts quote up to 256 bytes, escaping controls,
+non-ASCII bytes, quotes and backslashes as `\xHH`, with `...` for longer
+arguments; the whole message fits 4 KiB. Missing arguments name their command
+or flag.
 
 | Command | Files | Accepted flags |
 | --- | --- | --- |
@@ -1034,16 +1040,23 @@ zeros are accepted. Byte sizes accept bare bytes or the exact suffixes `B`,
 and seconds are whole seconds. Overflow is a command mistake: bytes fit
 `size_t`, depth/calls/seconds fit `uint32_t`. Defaults are 8 MiB stack,
 10,000 frames, 1 GiB heap, 200 calls and 2 seconds. `base/limits.h` bounds
-the command to 256 arguments including the program name, 4,096 bytes per
-argument and 64 KiB total including terminating NULs, also for forwarded
-program arguments.
+Mo's own options and their operands to 256 words, 4,096 bytes per word and
+64 KiB total including terminating NULs. The command name is also
+length-bounded, but neither it nor the program name consumes the option
+budgets. File lists and forwarded program arguments are borrowed from `argv`,
+not copied or capped by Mo: the OS's argument limits bound them, and the
+program's heap will bound arguments converted to Mo values. `mo_cli_file`
+indexes borrowed file lists across an optional `--` separator.
 
 **Current integration boundary.** `check` calls `mo_load_program`,
 `mo_resolve_modules`, `mo_prepare_signatures`, then `mo_infer_function`
 for every named function, retaining independent body errors. Each stage
 stops before the next on errors, including dropped diagnostics; body iteration
 stops on a resource error, but continues past independent source errors and
-unfinished forms. Its shared arena is bounded to 512 MiB (E1054 while parsing,
+unfinished forms, even after the output retention cap. Each body reports into
+its own bounded diagnostics, copied into the capped run's set and then freed;
+this keeps counting dropped errors without making the checker stop because
+the output is full. Its shared arena is bounded to 512 MiB (E1054 while parsing,
 E1058 while checking on exhaustion).
 Status 0 means only that
 these available stages found no error: constants, specs and the other rules
@@ -1054,15 +1067,23 @@ inference results to lowering. `run`, `test` (including `--list`), `format`,
 `fix` and `--emit` currently validate arguments then return status 1 with
 E1400, "this build cannot ... yet", without reading or rewriting files.
 E1400 is the tools' unavailable-stage code, not a language error. A TODO
-will connect stream 1's explicit 16 MiB checking-stack helper when it lands;
+will connect stream 1's `mo_with_stack` and `MO_SOURCE_STACK_SIZE` (32 MiB)
+after checking part 3 merges, wrapping loading and parsing as well as checking;
 until then this build uses the caller's stack and changes no process limits.
 
 **Source builds and documents.** `ci/embed_docs.py` (Python 3, portable to
 macOS) generates byte arrays under `build/generated/tools/embedded.h`.
-`make` checks both documents every invocation, rewriting the header only
-when its contents change, including when the optional guide appears or
-disappears. Each document is bounded to 4 MiB at generation. `guide
---reference` writes the reference bytes exactly. A missing or empty agent
+Ordinary Make prerequisites regenerate only when a document or the script
+changes; mutually exclusive present/absent stamps also detect the optional
+guide appearing or disappearing, regardless of its timestamp. A missing state
+stamp forces generation and recompilation of the document consumer for that
+invocation, even on coarse-timestamp filesystems; once created it is an ordinary
+file prerequisite. After successful generation the header's timestamp advances
+even if its bytes are unchanged,
+so up-to-date builds don't invoke or require Python. Each document is bounded
+to 4 MiB at generation. `guide --reference` writes the reference bytes exactly.
+For `guide` only, a broken pipe (`EPIPE`) succeeds silently because the reader
+chose to stop; other output errors exit 1. A missing or empty agent
 guide returns 1 on standard error and points to `--reference`; no guide is
 created. The generated header records the checkout's absolute `lib/` path.
 A missing `lib/` means no library yet; an existing unreadable library is
@@ -1086,7 +1107,7 @@ citation; codes without a section print no reason. Fixes show their titles
 and fixed lines after applying all original-text edits simultaneously,
 sorted by file and offset, with insertions before replacements at a shared
 start. Rendering never changes files. Unavailable locations display
-`<unavailable>`.
+`<unavailable>` once in their header; a label, if any, follows on its own row.
 
 ### 10.1 Generating inputs for promises
 

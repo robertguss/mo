@@ -15,7 +15,12 @@ static void parse_commands(void) {
     CHECK(cli.argument_count == 2 && strcmp(cli.arguments[0], "--json") == 0);
     const char *wrong[] = {"mo", "check", "--json", "--max-heap", "1GiB", "main.mo"};
     CHECK(!mo_cli_parse(6, wrong, &cli, &error));
-    CHECK(strcmp(error, "flag is not accepted by this command") == 0);
+    CHECK(strcmp(error, "flag is not accepted by this command: \"--max-heap\"") == 0);
+    const char *files[] = {"mo", "format", "one.mo", "--", "-two.mo", "three.mo"};
+    CHECK(mo_cli_parse(6, files, &cli, &error));
+    CHECK(cli.file_count == 3 && strcmp(mo_cli_file(&cli, 0), "one.mo") == 0 &&
+          strcmp(mo_cli_file(&cli, 1), "-two.mo") == 0 &&
+          strcmp(mo_cli_file(&cli, 2), "three.mo") == 0);
     CHECK(!mo_cli_parse(0, NULL, &cli, &error));
 }
 
@@ -43,19 +48,24 @@ static void limit_values(void) {
     CHECK(mo_cli_parse(4, boundary, &cli, &error));
     long_arg[MO_CLI_ARGUMENT_SIZE] = 'x';
     long_arg[MO_CLI_ARGUMENT_SIZE + 1] = '\0';
-    CHECK(!mo_cli_parse(4, boundary, &cli, &error));
+    CHECK(mo_cli_parse(4, boundary, &cli, &error));
+    const char *option[] = {"mo", "test", "--only", long_arg, "main.mo"};
+    CHECK(!mo_cli_parse(5, option, &cli, &error));
     long_arg[MO_CLI_ARGUMENT_SIZE] = '\0';
-    char tail[4067]; /* 15 prefix bytes + 15 * 4097 + 4066 == 65536. */
+    CHECK(mo_cli_parse(5, option, &cli, &error));
+    char tail[3970]; /* 16 * 7 flag bytes + 15 * 4097 + 3969 == 65536. */
     memset(tail, 'x', sizeof(tail));
-    tail[4065] = '\0';
-    const char *aggregate[19] = {"mo", "run", "main.mo"};
-    for (unsigned i = 3; i < 18; i++)
-        aggregate[i] = long_arg;
-    aggregate[18] = tail;
-    CHECK(mo_cli_parse(19, aggregate, &cli, &error));
-    tail[4065] = 'x';
-    tail[4066] = '\0';
-    CHECK(!mo_cli_parse(19, aggregate, &cli, &error));
+    tail[3968] = '\0';
+    const char *aggregate[35] = {"mo", "test"};
+    for (unsigned i = 2; i < 34; i += 2) {
+        aggregate[i] = "--only";
+        aggregate[i + 1] = i == 32 ? tail : long_arg;
+    }
+    aggregate[34] = "main.mo";
+    CHECK(mo_cli_parse(35, aggregate, &cli, &error));
+    tail[3968] = 'x';
+    tail[3969] = '\0';
+    CHECK(!mo_cli_parse(35, aggregate, &cli, &error));
 }
 
 /* An externally visible rendering fixture: tabs, wide/combining scalars,
@@ -132,6 +142,40 @@ static void long_line(void) {
     CHECK(strstr((const char *)out.bytes, "long.mo:1:501") != NULL);
     CHECK(strstr((const char *)out.bytes, "  1 | ...aaaaaaaaaaaaZ") != NULL);
     CHECK(strstr((const char *)out.bytes, "    |                ^ here") != NULL);
+    const char rows[] = "X\nX\nX\nX\nX\nX\nX\nX\nX\nX\nX\nX\nX\nX\nX\n";
+    MO_ASSERT(mo_sources_add_bytes(&sources, "rows.mo", (const uint8_t *)rows, sizeof(rows) - 1,
+                                   &file, &error));
+    d.primary.span = (struct mo_span){file, 14, 29}; /* Lines 8 through 15. */
+    CHECK(mo_render_diagnostic(&sources, &d, false, &out));
+    MO_ASSERT(mo_buffer_append_byte(&out, 0));
+    CHECK(strstr((const char *)out.bytes,
+                 "  9 | X\n    | ^\n     | ...\n  14 | X\n     | ^\n  15 | X\n     | ^ here\n") !=
+          NULL);
+    mo_buffer_free(&out);
+    mo_sources_free(&sources);
+}
+
+static void split_crlf_fix(void) {
+    struct mo_sources sources;
+    MO_ASSERT(mo_sources_init(&sources));
+    uint32_t file;
+    struct mo_source_error error;
+    MO_ASSERT(
+        mo_sources_add_bytes(&sources, "split.mo", (const uint8_t *)"Z\r\n\r\n", 5, &file, &error));
+    struct mo_edit edit = {{file, 0, 2}, "A"};
+    struct mo_fix fix = {"replace", &edit, 1};
+    struct mo_diag d = {.code = MO_CODE_TOOL_UNAVAILABLE,
+                        .message = "split CRLF",
+                        .primary = {{file, 0, 1}, NULL},
+                        .fixes = &fix,
+                        .fix_count = 1};
+    struct mo_buffer out;
+    mo_buffer_init(&out, MO_CLI_DIAGNOSTIC_SIZE);
+    CHECK(mo_render_diagnostic(&sources, &d, false, &out));
+    MO_ASSERT(mo_buffer_append_byte(&out, 0));
+    CHECK(strcmp((const char *)out.bytes,
+                 "error E1400: split CRLF  split.mo:1:1\n\n"
+                 "  1 | Z\n    | ^\n\nFix: replace\n  split.mo:1:1\n  1 | A\n\n") == 0);
     mo_buffer_free(&out);
     mo_sources_free(&sources);
 }
@@ -203,6 +247,7 @@ int main(int argc, char *argv[]) {
     parse_commands();
     limit_values();
     long_line();
+    split_crlf_fix();
     omission();
     sorted_output();
     return mo_test_report("test_cli");

@@ -30,16 +30,20 @@ struct mo_cli {
     const char *module;
     const char *only[MO_CLI_ARGUMENTS];
     uint32_t only_count;
-    const char *files[MO_CLI_ARGUMENTS];
+    const char *const *files; /* borrowed argv slice; use mo_cli_file to skip -- */
     uint32_t file_count;
+    uint32_t file_separator;      /* index of an intervening --, or UINT32_MAX */
     const char *const *arguments; /* run's arguments, borrowed from argv */
     uint32_t argument_count;
+    char error[MO_CLI_ERROR_SIZE];
 };
 
-/* On refusal, error is a static, newline-free command error (exit 2). Nothing
- * has been written. Arguments and their strings are borrowed, not modified. */
+/* On refusal, error points into out: a bounded, newline-free command error
+ * naming the offending argument (exit 2). Nothing has been written. Arguments
+ * and file lists are borrowed, not modified; only Mo's own options are bounded. */
 MO_MUST_USE bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out,
                               const char **error);
+MO_MUST_USE const char *mo_cli_file(const struct mo_cli *cli, uint32_t index);
 MO_MUST_USE const char *mo_version(void);
 MO_MUST_USE const char *mo_version_line(void);
 

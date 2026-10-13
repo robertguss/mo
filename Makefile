@@ -87,11 +87,28 @@ export ASAN_OPTIONS UBSAN_OPTIONS
 
 all: $(BUILD)/debug/mo
 
-build/generated/tools/embedded.h: ci/embed_docs.py docs/reference/README.md FORCE
-	python3 ci/embed_docs.py $@
+# Ordinary prerequisites keep an up-to-date build usable without Python.
+# Mutually exclusive stamps also detect the optional guide appearing/disappearing,
+# even if a newly added guide has an older timestamp than the generated header.
+GUIDE_SOURCE := $(wildcard docs/agent-guide.md)
+GUIDE_STATE := $(if $(GUIDE_SOURCE),present,absent)
+GUIDE_STAMP := build/generated/tools/guide-$(GUIDE_STATE)
+# A missing stamp forces this invocation, even on a coarse-timestamp filesystem;
+# after creation it is an ordinary prerequisite, not a per-invocation generator.
+.PHONY: $(if $(wildcard $(GUIDE_STAMP)),,$(GUIDE_STAMP))
+$(GUIDE_STAMP):
+	@mkdir -p $(dir $@)
+	@rm -f build/generated/tools/guide-present build/generated/tools/guide-absent
+	@touch $@
 
+build/generated/tools/embedded.h: ci/embed_docs.py docs/reference/README.md $(GUIDE_SOURCE) $(GUIDE_STAMP)
+	python3 ci/embed_docs.py $@
+	@touch $@
+
+# Depend directly on the state too: a same-tick header rewrite must still
+# recompile the document consumer when the guide appears or disappears.
 $(BUILD)/debug/src/tools/execute.o $(BUILD)/sanitize/src/tools/execute.o \
-$(FUZZ_BUILD)/src/tools/execute.o: build/generated/tools/embedded.h
+$(FUZZ_BUILD)/src/tools/execute.o: build/generated/tools/embedded.h $(GUIDE_STAMP)
 
 test: $(DEBUG_TESTS) $(BUILD)/debug/mo
 	@for t in $(DEBUG_TESTS); do $$t || exit 1; done

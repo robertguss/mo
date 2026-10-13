@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Black-box CLI contracts and goldens, with Python's real JSON parser."""
+import errno
 import json
 import os
 import pathlib
@@ -92,6 +93,7 @@ def check(binary):
         args = [command, *(["--emit=core"] if command == "check" else []), good]
         result = run(binary, args, 1)
         assert not result.stdout and b"this build cannot" in result.stderr
+        assert result.stderr.count(b"<unavailable>") == 1
     items = records(run(binary, ["test", "--json", "--list", "--only", "No.match", good], 1), "test")
     assert items[1]["code"] == "E1400" and items[1]["reason"] is None
     assert all(items[-1][k] == 0 for k in ("passed", "failed", "stopped"))
@@ -109,21 +111,25 @@ def check(binary):
                  ["check", "--json", "--emit=core", good], ["check", "--version", good],
                  ["check", "--json", "--bad", good]):
         mistake(args)
+    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix or guide): "bad\\x0a\\x09\\xc3\\xbf"')
     for flag, (value, allowed) in flags.items():
         for command in ("check", "run", "test", "format", "fix", "guide"):
             args = [command, flag, *value, *([] if command == "guide" else [good])]
             if command not in allowed:
-                mistake(args, "flag is not accepted by this command")
+                mistake(args, f'flag is not accepted by this command: "{flag}"')
             else:
                 run(binary, args, 0 if flag == "--reference" or (command == "check" and flag == "--json") else 1)
                 if flag != "--only":
                     mistake([command, flag, *value, flag, *value, *([] if command == "guide" else [good])])
         if value:
             for missing in ([], [""], ["--json"]):
-                mistake(["test", flag, *missing], "flag needs a nonempty value")
+                suffix = ''.join(f' "{v}"' for v in missing)
+                mistake(["test", flag, *missing], f'flag needs a nonempty value: "{flag}"{suffix}')
     for flag in ("--max-stack", "--max-depth", "--max-heap", "--calls", "--seconds"):
         for value in ("0", "-1", "+1", " 1", "1 ", "1.5", "1KB", "1mib", "18446744073709551616"):
             mistake(["test", flag, value, good])
+    mistake(["test", "--max-heap", "-1", good],
+            'invalid limit (expected a positive decimal integer; bytes may use B, KiB, MiB or GiB): "--max-heap" "-1"')
     for flag in ("--max-depth", "--calls", "--seconds"):
         mistake(["test", flag, "4294967296", good])
         mistake(["test", flag, "1B", good])
@@ -142,13 +148,19 @@ def check(binary):
     try:
         result = subprocess.run([str(binary), "guide", "--reference"], stdout=write_fd,
                                 stderr=subprocess.PIPE, timeout=30)
-        assert result.returncode == 1 and b"could not write guide" in result.stderr
+        assert result.returncode == 0 and not result.stderr
     finally:
         os.close(write_fd)
-    mistake(["run", good, "x" * 4097])
-    mistake(["run", good, *("x" for _ in range(254))])
-    mistake(["run", good, *("x" * 4096 for _ in range(16))])
-    run(binary, ["run", good, *("x" for _ in range(253))], 1)
+    run(binary, ["run", good, "x" * 5000], 1)
+    run(binary, ["run", good, *(str(i) for i in range(300))], 1)
+    run(binary, ["run", good, *("x" * 4096 for _ in range(16))], 1)
+    for command in ("format", "fix"):
+        run(binary, [command, *([good] * 4096)], 1)
+    run(binary, ["test", *(["--only", "x"] * 128), good], 1)
+    mistake(["test", *(["--only", "x"] * 129), good])
+    mistake(["test", "--only", "x" * 4097, good])
+    run(binary, ["test", *(["--only", "x" * 4096] * 15), good], 1)
+    mistake(["test", *(["--only", "x" * 4096] * 16), good])
     # Unavailable locations, invalid source bytes, invalid POSIX path bytes,
     # and the -- delimiter are exercised against real files, not mocks.
     records(run(binary, ["check", "--json", "tests/cli/missing.mo"], 1), "check")
@@ -159,15 +171,22 @@ def check(binary):
         d = records(run(binary, ["check", "--json", str(path)], 1), "check")[1]
         assert d["code"] == "E0001" and d["primary"]["line"] == 2
         invalid = folder / "bad\udcff"
-        invalid.mkdir()
-        path = invalid / "main.mo"
-        path.write_text("module Main\nfn run()\nunknown\nend\n")
-        d = records(run(binary, ["check", "--json", str(path)], 1), "check")[1]
-        assert "badÿ" in d["primary"]["file"]
+        try:
+            invalid.mkdir()
+        except OSError as error:
+            # APFS/HFS+ refuse non-UTF-8 names; don't hide unrelated I/O errors.
+            if error.errno != errno.EILSEQ:
+                raise
+            print(f"{binary}: filesystem refuses non-UTF-8 names; path case skipped")
+        else:
+            path = invalid / "main.mo"
+            path.write_text("module Main\nfn run()\nunknown\nend\n")
+            d = records(run(binary, ["check", "--json", str(path)], 1), "check")[1]
+            assert "badÿ" in d["primary"]["file"]
         path = folder / "main.mo"
-        path.write_text("module Main\n" + "".join(f"fn f{i}()\nunknown\nend\n" for i in range(1002)))
+        path.write_text("module Main\n" + "".join(f"fn f{i}()\nunknown\nend\n" for i in range(1500)))
         items = records(run(binary, ["check", "--json", str(path)], 1), "check")
-        assert items[-1]["errors"] == 1000 and items[-1]["dropped"] == 1
+        assert items[-1]["errors"] == 1000 and items[-1]["dropped"] == 500
         run(binary, ["format", "--", "-file.mo"], 1)
     print(f"{binary}: CLI goldens, argument matrix and JSON validity passed")
 

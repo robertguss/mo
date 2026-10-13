@@ -221,9 +221,17 @@ static void location(struct writer *w, const struct mo_sources *sources, struct 
     unsigned_number(w, p.column);
 }
 
-static void line_prefix(struct writer *w, uint32_t line) {
+static void line_prefix(struct writer *w, uint32_t line, bool number) {
     text(w, "  ");
-    unsigned_number(w, line);
+    if (number)
+        unsigned_number(w, line);
+    else {
+        /* Caret and elision rows match the decimal line number's width. */
+        do {
+            text(w, " ");
+            line /= 10;
+        } while (line != 0);
+    }
     text(w, " | ");
 }
 
@@ -253,7 +261,7 @@ static void source_line(struct writer *w, const uint8_t *s, uint32_t length, uin
         at += scalar(s + at, length - at, &v);
         column++;
     }
-    line_prefix(w, line);
+    line_prefix(w, line, true);
     uint32_t cells = 0, first = UINT32_MAX, last = 0;
     if (at != 0) {
         text(w, "...");
@@ -278,14 +286,7 @@ static void source_line(struct writer *w, const uint8_t *s, uint32_t length, uin
     }
     text(w, "\n");
     if (mark) {
-        /* Match the decimal line number's width, independently of its size. */
-        text(w, "  ");
-        uint32_t n = line;
-        do {
-            text(w, " ");
-            n /= 10;
-        } while (n != 0);
-        text(w, " | ");
+        line_prefix(w, line, false);
         repeat(w, ' ', first);
         repeat(w, '^', last - first);
         if (label != NULL) {
@@ -300,12 +301,12 @@ static void text_label(struct writer *w, const struct mo_sources *sources,
                        const struct mo_label *label) {
     struct mo_span span = label->span;
     if (!available(sources, span)) {
-        text(w, "  <unavailable>");
         if (label->text != NULL) {
-            text(w, " ");
+            /* The headline/secondary header already printed the location. */
+            text(w, "  ");
             safe_text(w, label->text);
+            text(w, "\n");
         }
-        text(w, "\n");
         return;
     }
     struct mo_position first = mo_sources_position(sources, span.file, span.start);
@@ -314,7 +315,8 @@ static void text_label(struct writer *w, const struct mo_sources *sources,
         mo_sources_position(sources, span.file, span.end > span.start ? span.end - 1 : span.end);
     for (uint32_t line = first.line; w->ok && line <= last.line; line++) {
         if (line == first.line + 2 && last.line - first.line >= 4) {
-            text(w, "    | ...\n");
+            line_prefix(w, line, false);
+            text(w, "...\n");
             line = last.line - 1;
         }
         struct mo_span row = mo_sources_line(sources, span.file, line);
@@ -389,6 +391,9 @@ static void text_fix(struct writer *w, const struct mo_sources *sources, const s
         uint32_t at = mo_sources_line(sources, edits[i]->span.file, p.line).start;
         uint32_t focus = edits[i]->span.start - at;
         uint32_t end = mo_sources_line(sources, edits[i]->span.file, q.line).end;
+        /* Line text trims CRLF; an edit may end between its two bytes. */
+        if (end < edits[stop - 1]->span.end)
+            end = edits[stop - 1]->span.end;
         const uint8_t *original = sources->files[edits[i]->span.file].bytes;
         struct mo_buffer fixed;
         mo_buffer_init(&fixed, MO_CLI_DIAGNOSTIC_SIZE);

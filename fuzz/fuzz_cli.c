@@ -48,6 +48,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         parsed = mo_cli_parse(argc, argv, &cli, &error);
         MO_ASSERT(parsed || error != NULL);
     }
+    if (parsed) {
+        for (uint32_t i = 0; i < cli.file_count; i++)
+            MO_ASSERT(mo_cli_file(&cli, i)[0] != '\0');
+    } else {
+        MO_ASSERT(strlen(error) < MO_CLI_ERROR_SIZE && strchr(error, '\n') == NULL);
+    }
     struct mo_sources sources;
     MO_ASSERT(mo_sources_init(&sources));
     uint32_t file;

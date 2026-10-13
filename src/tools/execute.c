@@ -26,7 +26,8 @@ static void check_program(const struct mo_cli *cli, struct mo_arena *arena,
     const char *library = mo_library_path;
     if (stat(library, &st) != 0 && errno == ENOENT)
         library = NULL;
-    struct mo_module_set *set = mo_load_program(arena, sources, cli->files[0], library, diags);
+    struct mo_module_set *set =
+        mo_load_program(arena, sources, mo_cli_file(cli, 0), library, diags);
     if (set == NULL || mo_diags_any(diags))
         return;
     struct mo_module_interfaces *interfaces = mo_resolve_modules(arena, set, diags);
@@ -36,16 +37,31 @@ static void check_program(const struct mo_cli *cli, struct mo_arena *arena,
     if (signatures == NULL || mo_diags_any(diags))
         return;
     for (uint32_t i = 0; i < signatures->count; i++) {
-        struct mo_inferred_body *body = mo_infer_function(arena, interfaces, signatures, i, diags);
-        if (body == NULL) {
-            if (diags->dropped != 0)
-                break;
-            MO_ASSERT(diags->count != 0);
-            uint16_t code = diags->items[diags->count - 1].code;
-            /* Resource failure is not another independent body mistake. */
-            if (code >= 1000 && code != MO_CODE_CHECK_UNFINISHED)
-                break;
+        /* Independent bodies keep reporting after the output cap. Giving the
+         * checker its own bounded diagnostics prevents a global retention
+         * refusal from stopping inference; only storage in diags is capped. */
+        struct mo_diags local;
+        if (!mo_diags_init(&local)) {
+            mo_diags_free(&local);
+            diags->dropped++;
+            break;
         }
+        struct mo_inferred_body *body = mo_infer_function(arena, interfaces, signatures, i, &local);
+        MO_ASSERT(body != NULL || mo_diags_any(&local));
+        bool resource_failure = local.dropped != 0;
+        for (uint32_t j = 0; j < local.count; j++) {
+            uint16_t code = local.items[j].code;
+            if (code >= 1000 && code != MO_CODE_CHECK_UNFINISHED)
+                resource_failure = true;
+            bool added = mo_diags_add(diags, &local.items[j]);
+            if (!added)
+                MO_ASSERT(diags->dropped != 0);
+        }
+        diags->dropped += local.dropped;
+        mo_diags_free(&local);
+        /* Resource failure is not another independent body mistake. */
+        if (resource_failure)
+            break;
     }
     /* Integration seam: replace the preparation/inference above with mo_check
      * when it returns a whole checked program. Only that result may reach
@@ -68,6 +84,9 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
         const unsigned char *data = cli->reference ? mo_embedded_reference : mo_embedded_guide;
         size_t length = cli->reference ? mo_embedded_reference_size : mo_embedded_guide_size;
         bool ok = fwrite(data, 1, length, output) == length && fflush(output) == 0;
+        /* A reader such as head chose to stop; other output failures still fail. */
+        if (!ok && errno == EPIPE)
+            return 0;
         if (!ok)
             (void)fputs("mo: could not write guide\n", errors);
         return ok ? 0 : 1;
@@ -94,9 +113,9 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
     if (cli->emit != MO_EMIT_NONE)
         unavailable(&diags, "this build cannot emit Core or bytecode yet");
     else if (cli->command == MO_COMMAND_CHECK) {
-        /* TODO(stream 1): run this callback on the forthcoming base helper's
-         * explicitly sized 16 MiB C stack, including loading and parsing. Do
-         * not change process-wide resource limits in this integration layer. */
+        /* TODO(after checking part 3): wrap the whole front end, loading and
+         * parsing included, in mo_with_stack with MO_SOURCE_STACK_SIZE (32 MiB).
+         * Keep process-wide resource limits unchanged. */
         check_program(cli, &arena, &sources, &diags);
     } else {
         const char *message = "this build cannot run programs yet";
