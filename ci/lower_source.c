@@ -64,7 +64,7 @@ static int run_core(const struct mo_core *core, struct mo_diags *diags) {
         struct mo_cell args, env;
         MO_ASSERT(mo_value_list(heap, host->types->texts, NULL, 0, &args));
         MO_ASSERT(mo_value_map(heap, host->types->files, NULL, NULL, 0, &env));
-        outcome = mo_call_main(process, entry, &args, &env, folder, &result, &defect);
+        outcome = mo_call_main(process, entry, &args, &env, folder, NULL, &result, &defect);
         mo_value_drop(heap, host->types->texts, args);
         mo_value_drop(heap, host->types->files, env);
     }

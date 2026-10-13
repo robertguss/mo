@@ -34,6 +34,21 @@ static MO_MUST_USE uint64_t next(struct random_state *s) {
     return result;
 }
 
+bool mo_host_random_restore(struct mo_heap *heap, uint32_t type, bool fake, const uint64_t words[4],
+                            struct mo_cell *out) {
+    MO_ASSERT((words[0] | words[1] | words[2] | words[3]) != 0);
+    struct random_state state;
+    memcpy(state.words, words, sizeof state.words);
+    struct mo_capability_info info = {.operations = &mo_host_operations[fake][MO_CAP_RANDOM]};
+    return mo_value_capability_native(heap, type, &info, &state, sizeof state, out);
+}
+
+void mo_host_random_snapshot(struct mo_cell capability, uint64_t words[4]) {
+    const struct random_state *state =
+        (const struct random_state *)mo_capability_get(capability)->handle;
+    memcpy(words, state->words, sizeof state->words);
+}
+
 enum mo_host_outcome mo_host_random_new(struct mo_host *host, struct mo_heap *heap, uint32_t type,
                                         bool fake, uint64_t seed, struct mo_cell *out,
                                         struct mo_host_error *error) {
@@ -47,10 +62,8 @@ enum mo_host_outcome mo_host_random_new(struct mo_host *host, struct mo_heap *he
         state.words[i] = mix(&seed);
     /* SplitMix64 is bijective: four distinct inputs cannot all produce zero. */
     MO_ASSERT((state.words[0] | state.words[1] | state.words[2] | state.words[3]) != 0);
-    struct mo_capability_info info = {.operations = &mo_host_operations[fake][MO_CAP_RANDOM]};
-    return mo_value_capability_native(heap, type, &info, &state, sizeof state, out)
-               ? MO_HOST_RETURNED
-               : MO_HOST_OUT_OF_MEMORY;
+    return mo_host_random_restore(heap, type, fake, state.words, out) ? MO_HOST_RETURNED
+                                                                      : MO_HOST_OUT_OF_MEMORY;
 }
 
 enum mo_host_outcome mo_host_random(struct mo_host *host, struct mo_heap *heap, uint32_t type,

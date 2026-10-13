@@ -57,14 +57,22 @@ MO_MUST_USE size_t mo_process_stack_used(const struct mo_process *process);
 MO_MUST_USE enum mo_outcome mo_call(struct mo_process *process, uint32_t function,
                                     const struct mo_cell *arguments, uint32_t argument_count,
                                     struct mo_cell *result_out, struct mo_defect *defect_out);
+struct mo_main_capabilities {
+    const struct mo_cell *values;
+    uint32_t count;
+};
 /* main's parameters are capabilities. Make each declared real kind once per
  * process and retain it until teardown. args and env are borrowed List(Text)
  * and Map(Text,Text) cells from this heap, needed only if main declares them;
- * folder is a borrowed directory descriptor for Files/ReadFiles. */
+ * folder is a borrowed directory descriptor for Files/ReadFiles.
+ * Non-NULL supplied replaces construction with verified, borrowed capabilities
+ * from this heap, one per parameter in declaration order, including repeats of
+ * a kind. Owned parameters are duplicated; borrowed ones must outlive stopped
+ * reports. The vector need only outlive this call. No supplied value is cached. */
 MO_MUST_USE enum mo_outcome mo_call_main(struct mo_process *process, uint32_t function,
                                          const struct mo_cell *args, const struct mo_cell *env,
-                                         int folder, struct mo_cell *result_out,
-                                         struct mo_defect *defect_out);
+                                         int folder, const struct mo_main_capabilities *supplied,
+                                         struct mo_cell *result_out, struct mo_defect *defect_out);
 /* C harness hook, not a Mo resource limit. Default is unlimited. Exhaustion
  * produces an internal stop before the next instruction (for bounded fuzzing). */
 void mo_process_instruction_limit(struct mo_process *process, uint64_t instructions);

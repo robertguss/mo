@@ -87,6 +87,47 @@ static void expect(struct host_fixture *f, uint32_t operation, uint32_t type,
     mo_value_drop(f->heap, f->types.text, args[2]);
 }
 
+static void test_fake_restore(void) {
+    struct host_fixture f;
+    host_fixture_init(&f, mo_limits_default().heap_size);
+    struct mo_cell words[] = {host_text(&f, "first"), host_text(&f, "last"), host_text(&f, "old"),
+                              host_text(&f, "error"), host_text(&f, "after")};
+    struct mo_host_fake_state initial = {.kind = MO_CAP_CONSOLE}, snapshot;
+    MO_ASSERT(mo_value_list(f.heap, f.types.texts, words, 2, &initial.as.console.input));
+    MO_ASSERT(mo_value_list(f.heap, f.types.texts, words + 2, 1, &initial.as.console.output));
+    MO_ASSERT(mo_value_list(f.heap, f.types.texts, words + 3, 1, &initial.as.console.errors));
+    struct mo_cell console;
+    struct mo_host_error error;
+    uint32_t type = f.capabilities[MO_CAP_CONSOLE];
+    MO_ASSERT(mo_host_fake_restore(&f.host, f.heap, type, &initial, &console, &error) ==
+              MO_HOST_RETURNED);
+    mo_host_fake_state_drop(&f.host, f.heap, &initial);
+    expect(&f, MO_HOST_CONSOLE_READ_LINE, f.option, console, "", "", "Some(\"first\")");
+    expect(&f, MO_HOST_CONSOLE_PRINT, f.unit, console, "after", "", "Unit");
+    MO_ASSERT(mo_host_fake_snapshot(&f.host, f.heap, console, &snapshot));
+    expect(&f, MO_HOST_CONSOLE_READ_LINE, f.option, console, "", "", "Some(\"last\")");
+    expect(&f, MO_HOST_CONSOLE_PRINT, f.unit, console, "later", "", "Unit");
+    struct mo_cell last, old, after, error_item;
+    CHECK(mo_list_size(snapshot.as.console.input) == 1 &&
+          mo_list_size(snapshot.as.console.output) == 2 &&
+          mo_list_size(snapshot.as.console.errors) == 1);
+    MO_ASSERT(mo_list_get(snapshot.as.console.input, 0, &last) &&
+              mo_list_get(snapshot.as.console.output, 0, &old) &&
+              mo_list_get(snapshot.as.console.output, 1, &after) &&
+              mo_list_get(snapshot.as.console.errors, 0, &error_item));
+    bool equal;
+    CHECK(mo_value_equal(f.heap, f.types.text, words[1], last, &equal) && equal);
+    CHECK(mo_value_equal(f.heap, f.types.text, words[2], old, &equal) && equal);
+    CHECK(mo_value_equal(f.heap, f.types.text, words[3], error_item, &equal) && equal);
+    CHECK(mo_value_equal(f.heap, f.types.text, words[4], after, &equal) && equal);
+    mo_host_fake_state_drop(&f.host, f.heap, &snapshot);
+    mo_value_drop(f.heap, type, console);
+    for (unsigned i = 0; i < 5; i++)
+        mo_value_drop(f.heap, f.types.text, words[i]);
+    CHECK(mo_heap_objects(f.heap) == 0);
+    host_fixture_free(&f);
+}
+
 static void test_fake_files(void) {
     struct host_fixture f;
     host_fixture_init(&f, mo_limits_default().heap_size);
@@ -890,7 +931,7 @@ static void test_main_capabilities(void) {
     int folder = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     MO_ASSERT(folder >= 0);
     for (unsigned call = 0; call < 2; call++) {
-        CHECK(mo_call_main(p, 0, &args, &env, folder, &result, &defect) == MO_RETURNED);
+        CHECK(mo_call_main(p, 0, &args, &env, folder, NULL, &result, &defect) == MO_RETURNED);
         struct mo_cell item;
         CHECK(mo_list_size(result) == 1);
         MO_ASSERT(mo_list_get(result, 0, &item));
@@ -904,6 +945,46 @@ static void test_main_capabilities(void) {
     mo_value_drop(heap, host->types->text, text);
     mo_value_drop(heap, host->types->texts, args);
     mo_value_drop(heap, host->types->files, env);
+    mo_process_free(p);
+    mo_image_free(image);
+    mo_buffer_free(&wire);
+}
+
+static void test_supplied_main_capabilities(void) {
+    const char *source =
+        "bytecode 0.1 shorthand\nmodule M exposes [M.main]\n"
+        "function M.main(left: Clock borrowed, right: Clock owned): Time function in M\n"
+        " registers [r2: Time]\n host r2, Clock.now, r1\n drop r1\n ret r2\nend\n";
+    struct mo_buffer wire;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_assemble_error assembly;
+    MO_ASSERT(mo_bytecode_assemble(source, strlen(source), &wire, &assembly));
+    struct mo_load_error error;
+    struct mo_image *image = mo_load(wire.bytes, wire.length, &error);
+    MO_ASSERT(image != NULL);
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    struct mo_process *p = mo_process_new(image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_heap *heap = mo_process_heap(p);
+    struct mo_host *host = mo_process_host(p);
+    uint32_t type = host->types->capabilities[MO_CAP_CLOCK];
+    struct mo_cell clocks[2], instant = mo_cell_time(-17), result;
+    struct mo_host_error host_error;
+    MO_ASSERT(mo_host_call(host, heap, MO_HOST_CLOCK_FIXED, type, &instant, &clocks[0],
+                           &host_error) == MO_HOST_RETURNED);
+    instant = mo_cell_time(31);
+    MO_ASSERT(mo_host_call(host, heap, MO_HOST_CLOCK_FIXED, type, &instant, &clocks[1],
+                           &host_error) == MO_HOST_RETURNED);
+    struct mo_main_capabilities supplied = {.values = clocks, .count = 2};
+    for (unsigned call = 0; call < 2; call++) {
+        CHECK(mo_call_main(p, 0, NULL, NULL, -1, &supplied, &result, &defect) == MO_RETURNED);
+        CHECK(mo_cell_get_time(result) == 31);
+    }
+    mo_value_drop(heap, type, clocks[0]);
+    mo_value_drop(heap, type, clocks[1]);
+    CHECK(mo_heap_objects(heap) == 0);
     mo_process_free(p);
     mo_image_free(image);
     mo_buffer_free(&wire);
@@ -1083,6 +1164,7 @@ int main(int argc, char **argv) {
     struct heap_fixture fixture;
     heap_fixture_init(&fixture);
     test_console(&fixture);
+    test_fake_restore();
     test_fake_files();
     test_fake_folder_exhaustion();
     test_real_files(false);
@@ -1098,6 +1180,7 @@ int main(int argc, char **argv) {
     test_clock_random();
     test_empty_image();
     test_main_capabilities();
+    test_supplied_main_capabilities();
     test_vm_host_exhaustion();
     mo_heap_image_free(fixture.image);
     mo_arena_free(&fixture.arena);
