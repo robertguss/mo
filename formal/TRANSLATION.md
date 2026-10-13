@@ -1333,8 +1333,13 @@ this same boundary when they are added.
 Each line of an `examples` block is a zero-argument function of kind
 `example`, returning `Unit` on success or failing with a Text detail.
 Equality is `%eq` at the compared type. Lowering computes operands once and
-supplies their text forms as failure details; sample helpers use a fixed
-detail where deriving those forms isn't modeled yet.
+supplies their structural text forms as failure details, converting only on
+failure through the borrowed `Text.%structural`, never user `to_text`.
+Equal-only values need no Text proof. A failed `is` reports the same structural
+form for its snapshotted input. These forms agree with the test runner's JSON
+`left`, `right` and `input`. Sample helpers use a fixed detail where deriving
+those forms isn't modeled yet; C lowering refuses such details with E1150 until
+Core's structural primitive is available rather than lose the compared values.
 
 ```mo
 count("one two\nthree\n") == Counts(lines: 2, words: 3, bytes: 14)
@@ -1387,6 +1392,13 @@ matching arm and fails in the others. The test passes when it returns Unit.
 world, and no continuation runs. A bug while computing the detail remains a
 stop, not a failure. The sample helper `passes` lowers its Boolean condition
 to a Unit assertion in spec mode.
+
+C lowering names tests `MODULE.test.N` and examples
+`SUBJECT.example.N` from the checked source ordinals, not traversal order.
+Metadata retains decoded test wording, original example line bytes and the
+source span. Ordinary false conditions produce `assertion failed` or
+`example failed`; ordinary-function assertions remain stops. Equality/pattern
+details follow the structural-only rule above when Core supports it.
 
 ### 12.4 Fakes
 

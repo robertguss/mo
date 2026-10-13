@@ -39,7 +39,8 @@ static struct mo_core *checked(struct lower_fixture *f, const char *name, const 
     return core;
 }
 
-static void run(struct mo_core *core, int64_t expected) {
+static void run_outcome(struct mo_core *core, const char *name, enum mo_outcome outcome,
+                        int64_t expected, const char *detail) {
     struct mo_diags diags;
     struct mo_buffer bytes;
     CHECK(mo_diags_init(&diags));
@@ -62,28 +63,44 @@ static void run(struct mo_core *core, int64_t expected) {
             struct mo_cell result;
             const struct mo_bytecode *file = mo_image_bytecode(image);
             uint32_t entry = UINT32_MAX;
+            bool integer = false;
+            mo_core_string target =
+                name == NULL ? core->entry : (mo_core_string){name, strlen(name)};
             for (size_t i = 0; i < core->funs.count; i++)
-                if (core->entry.length == core->funs.items[i].name.length &&
-                    memcmp(core->entry.bytes, core->funs.items[i].name.bytes, core->entry.length) ==
-                        0) {
-                    mo_core_string name = core->metadata.funs.items[i].name;
+                if (target.length == core->funs.items[i].name.length &&
+                    memcmp(target.bytes, core->funs.items[i].name.bytes, target.length) == 0) {
+                    integer = core->funs.items[i].ret->tag == MO_CORE_TY_INT;
+                    mo_core_string display = core->metadata.funs.items[i].name;
                     for (uint32_t j = 0; j < file->function_count; j++) {
                         const struct mo_bytecode_string *s =
                             &file->strings[file->functions[j].name];
-                        if (s->length == name.length &&
-                            memcmp(s->bytes, name.bytes, name.length) == 0)
+                        if (s->length == display.length &&
+                            memcmp(s->bytes, display.bytes, display.length) == 0)
                             entry = j;
                     }
                 }
             CHECK(entry != UINT32_MAX);
-            CHECK(mo_call(process, entry, NULL, 0, &result, &defect) == MO_RETURNED);
-            CHECK(mo_cell_get_int(result) == expected);
+            CHECK(mo_call(process, entry, NULL, 0, &result, &defect) == outcome);
+            if (outcome == MO_RETURNED && integer)
+                CHECK(mo_cell_get_int(result) == expected);
+            if (detail != NULL) {
+                CHECK(defect.has_detail);
+                if (defect.has_detail) {
+                    size_t length;
+                    const uint8_t *value = mo_value_data(defect.detail, &length);
+                    CHECK(length == strlen(detail) && memcmp(value, detail, length) == 0);
+                }
+            }
             mo_process_free(process);
         }
         mo_image_free(image);
     }
     mo_buffer_free(&bytes);
     mo_diags_free(&diags);
+}
+
+static void run(struct mo_core *core, int64_t expected) {
+    run_outcome(core, NULL, MO_RETURNED, expected, NULL);
 }
 
 static void test_literal(void) {
@@ -984,6 +1001,57 @@ static void test_constants(void) {
     lower_fixture_free(&f);
 }
 
+static void test_specs(void) {
+    for (uint32_t probe = 0; probe < 4; probe++) {
+        struct lower_fixture f;
+        bool test = probe < 2, pass = probe % 2 == 0;
+        const char *source = test   ? pass ? "test \"a condition\"\nassert true\nend\n"
+                                           : "test \"a condition\"\nassert false\nend\n"
+                             : pass ? "example\ntrue\nend\n"
+                                    : "example\nfalse\nend\n";
+        char bytes[128];
+        int length =
+            snprintf(bytes, sizeof bytes, "module Main\nfn main() : Int\n7\nend\n%s", source);
+        MO_ASSERT(length > 0 && (size_t)length < sizeof bytes);
+        lower_fixture_init(&f, bytes);
+        (void)lower_fixture_row(&f, MO_S_INT, &f.int_, "7", 0, NULL);
+        struct mo_checked_body main = f.functions[0].body;
+        uint32_t condition = lower_fixture_row(&f, pass ? MO_S_TRUE : MO_S_FALSE, &f.bool_,
+                                               pass ? "true" : "false", 0, NULL);
+        if (test)
+            (void)lower_fixture_row(&f, MO_S_ASSERT, &f.unit_, NULL, 1, &condition);
+        const char *line = pass ? test ? "assert true" : "true" : test ? "assert false" : "false";
+        uint32_t start = (uint32_t)(strstr(bytes, line) - bytes);
+        struct mo_spec_text text = {.bytes = (const uint8_t *)line,
+                                    .length = (uint32_t)strlen(line),
+                                    .span = {0, start, start + (uint32_t)strlen(line)}};
+        struct mo_checked_spec spec = {.kind = test ? MO_SPEC_TEST : MO_SPEC_EXAMPLE,
+                                       .syntax = &f.syntax[condition],
+                                       .number = 1,
+                                       .subject = test ? UINT32_MAX : 0,
+                                       .text = text,
+                                       .wording = (const uint8_t *)"a condition",
+                                       .wording_length = 11,
+                                       .body = f.functions[0].body};
+        f.program.spec_count = 1;
+        f.program.specs = &spec;
+        f.functions[0].body = main;
+        const char *names[] = {"test-pass", "test-fail", "example-pass", "example-fail"};
+        const char *expected[] = {"returned\nUnit\n{\"test\":\"Main.test.1\"}\n",
+                                  "failed\nassertion failed\n{\"test\":\"Main.test.1\"}\n",
+                                  "returned\nUnit\n{\"test\":\"Main.main.example.1\"}\n",
+                                  "failed\nexample failed\n{\"test\":\"Main.main.example.1\"}\n"};
+        struct mo_core *core = checked(&f, names[probe], expected[probe]);
+        if (core != NULL)
+            run_outcome(core, test ? "Main.test.1" : "Main.main.example.1",
+                        pass ? MO_RETURNED : MO_FAILED, 0,
+                        pass   ? NULL
+                        : test ? "assertion failed"
+                               : "example failed");
+        lower_fixture_free(&f);
+    }
+}
+
 static void test_record_text(void) {
     struct lower_fixture f;
     lower_fixture_init(&f, "module Main\nstruct Point\nx: Int\nlabel: Text\nend\n"
@@ -1395,6 +1463,7 @@ int main(int argc, char **argv) {
     test_list_order();
     test_list_text();
     test_constants();
+    test_specs();
     test_record_text();
     test_text();
     test_result_entry();

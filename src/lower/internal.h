@@ -17,6 +17,7 @@ struct substitution {
 struct instance {
     struct instance *next, *hash_next, *source_next;
     const struct mo_checked_function *source;
+    const struct mo_checked_spec *spec;
     struct substitution substitution;
     uint32_t owner, depth, index, const_prefix;
     struct mo_core_fun fun;
@@ -65,6 +66,7 @@ struct lowering {
     uint32_t derived_count, derived_slots;
     mo_core_consts constants;
     struct instance *constant_bodies;
+    struct instance **specs;
 };
 
 _Noreturn void lower_refuse(struct lowering *p, uint16_t code, const char *message);
@@ -109,6 +111,7 @@ void lower_body(struct lowering *p, struct instance *instance, const struct mo_c
 mo_core_string lower_global_name(struct lowering *p, const struct mo_symbol *symbol);
 void lower_constants(struct lowering *p);
 void lower_constant_prefixes(struct lowering *p);
+void lower_specs(struct lowering *p);
 void lower_metadata(struct lowering *p, struct mo_core *core);
 
 #endif

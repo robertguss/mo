@@ -794,7 +794,11 @@ examples. The ones a compiler is most likely to get wrong are:
   passed to source main; Unit/Int entries get no additional authority.
 - **`assert`** in a test, and each example line, become spec code that calls
   the `fail` instruction with the details: both sides of a failed `==`, or
-  the value that didn't match a failed `is`.
+  the value that didn't match a failed `is`. Operands are snapshotted once;
+  only the failure branch converts them with the borrowed
+  `Text.%structural` primitive. Diagnostic text never selects user `to_text`
+  or requires the Text ability, including for Equal-only types. Its forms
+  agree with `mo test --json`'s `left`, `right` and `input` values.
 
 **Part 1 implementation.** `src/lower` consumes the normalized checked graph,
 not syntax inference. Explicit arena-backed task and continuation lists perform
@@ -890,6 +894,13 @@ use the full constant prefix; an arena-backed work queue tightens functions
 reachable from initializer i to prefix i and propagates through calls and
 closure bodies. Metadata retains module/source order separately from init order,
 and initializer nodes carry the same span/binder/closure metadata as functions.
+
+Tests and example lines are separate Unit spec functions with stable source
+ordinals, original wording/line bytes and declaration spans. Successful
+conditions return Unit; an ordinary false condition calls `fail` rather than
+`stop`. Ordinary-function assertions still stop. Equality and pattern failure
+details refuse E1150 until the Core structural primitive lands; lowering must
+not substitute user Text conversions or silently omit their values.
 
 The initial CPS implementation conservatively passes every live outer var,
 not only changed vars, across a continuation join; expression joins also pass

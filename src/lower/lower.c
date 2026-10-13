@@ -241,8 +241,8 @@ struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *progra
                            .span.file = UINT32_MAX};
     if (setjmp(p->escape) != 0)
         return NULL;
-    if (program->function_count == 0 || program->spec_count != 0)
-        lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "specification code is not lowered yet");
+    if (program->function_count == 0)
+        lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "the checked entry function is unavailable");
     p->function_tail = &p->functions;
     p->data_tail = &p->data;
     lower_indices(p);
@@ -266,6 +266,7 @@ struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *progra
         if (f->source != NULL)
             lower_function(p, f);
     lower_constants(p);
+    lower_specs(p);
     entry(p, main);
     for (;;) {
         lower_derived_functions(p);

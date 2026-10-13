@@ -42,18 +42,25 @@ def main():
             for path in sorted(corpus.glob("*.core")):
                 lines = path.with_suffix(".want").read_text().splitlines()
                 expected = lines[:2]
-                stderr = json.loads(lines[2])["stderr"] if len(lines) == 3 else []
-                actual = oracle(path, world)
+                selection = json.loads(lines[2]) if len(lines) == 3 else {}
+                stderr = selection.get("stderr", [])
+                test = selection.get("test")
+                actual = oracle(path, world, test)
                 assert actual == expected, (path.name, expected, actual)
                 if len(lines) == 3:
-                    report = subprocess.run(["formal/.lake/build/bin/mocore", str(path), str(world)],
+                    command = ["formal/.lake/build/bin/mocore", str(path), str(world)]
+                    if test is not None:
+                        command += ["--test", test]
+                    report = subprocess.run(command,
                                             capture_output=True, text=True, timeout=15)
                     assert report.returncode in (0, 1, 2), report
                     effects = parse(report.stdout)[2][-1]
                     assert effects[0] == "effects"
                     assert effects[2] == stderr, (path.name, effects)
                 checked += 1
-                report = subprocess.run([str(vm), "--core", str(path)],
+                command = ([str(vm), "--core", str(path)] if test is None else
+                           [str(driver.parent / "test_vm.test"), "--core-test", str(path), test])
+                report = subprocess.run(command,
                                         capture_output=True, text=True, timeout=15)
                 if report.returncode == 77:
                     refused += 1

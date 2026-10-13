@@ -29,7 +29,8 @@ enum continuation_kind {
     K_FOR,
     K_OPTION,
     K_TRY,
-    K_TEXT
+    K_TEXT,
+    K_EXAMPLE
 };
 struct continuation {
     enum continuation_kind kind;
@@ -972,6 +973,19 @@ static void finish_task(struct body *b, struct task t) {
         *t.out = t.value;
         return;
     }
+    if (k->kind == K_EXAMPLE) {
+        p->span = b->instance->spec->syntax->span;
+        mo_core_expr e = lower_expr(p, MO_CORE_EXPR_IF);
+        e->as.if_.cond = t.value;
+        e->as.if_.then_ = lower_unit(p);
+        e->as.if_.else_ = lower_expr(p, MO_CORE_EXPR_FAIL);
+        mo_core_expr detail = lower_unit(p);
+        detail->as.lit->tag = MO_CORE_LIT_TEXT;
+        detail->as.lit->as.text = lower_text(p, "example failed");
+        e->as.if_.else_->as.fail = detail;
+        *t.out = e;
+        return;
+    }
     if (k->kind == K_JUMP) {
         *t.out = jump(b, k, t.value);
         return;
@@ -1172,6 +1186,19 @@ static void finish_task(struct body *b, struct task t) {
     }
 }
 
+static void require_plain_condition(struct body *b, uint32_t index) {
+    const struct mo_checked_expression *r = row(b, index);
+    while (kind(r) == MO_S_GROUP || kind(r) == MO_S_EXPR_STMT) {
+        lower_work(b->p, 1);
+        MO_ASSERT(r->operand_count == 1 && r->operands[0] < index);
+        index = r->operands[0];
+        r = row(b, index);
+    }
+    if (r->operation == MO_T_EQ || r->pattern != NULL)
+        lower_refuse(b->p, MO_CODE_LOWER_UNFINISHED,
+                     "structural failure details need the Core structural primitive");
+}
+
 static void row_task(struct body *b, struct task t) {
     struct lowering *p = b->p;
     const struct mo_checked_expression *r = row(b, t.row);
@@ -1263,8 +1290,17 @@ static void row_task(struct body *b, struct task t) {
     }
     if (tag == MO_S_ASSERT) {
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_IF);
-        e->as.if_.else_ = lower_expr(p, MO_CORE_EXPR_STOP);
-        e->as.if_.else_->as.stop = lower_text(p, "assertion failed");
+        if (b->instance->fun.kind == MO_CORE_FUNCTION) {
+            e->as.if_.else_ = lower_expr(p, MO_CORE_EXPR_STOP);
+            e->as.if_.else_->as.stop = lower_text(p, "assertion failed");
+        } else {
+            require_plain_condition(b, r->operands[0]);
+            e->as.if_.else_ = lower_expr(p, MO_CORE_EXPR_FAIL);
+            mo_core_expr detail = lower_unit(p);
+            detail->as.lit->tag = MO_CORE_LIT_TEXT;
+            detail->as.lit->as.text = lower_text(p, "assertion failed");
+            e->as.if_.else_->as.fail = detail;
+        }
         push(b, (struct task){.kind = TASK_CONDITION,
                               .row = r->operands[0],
                               .state = t.state,
@@ -1467,7 +1503,11 @@ void lower_body(struct lowering *p, struct instance *instance, const struct mo_c
         instance->meta.body.params.items[i] =
             (struct mo_core_name){true, lower_text(p, parameter->name)};
     }
-    if (returns(&b, b.source->root)) {
+    if (instance->fun.kind == MO_CORE_EXAMPLE) {
+        require_plain_condition(&b, b.source->root);
+        emit(&b, b.source->root, (struct state){0}, continuation(&b, K_EXAMPLE),
+             &instance->fun.body);
+    } else if (returns(&b, b.source->root)) {
         struct continuation *ret = continuation(&b, K_JUMP);
         ret->result = true;
         ret->name = lower_fresh(p);
