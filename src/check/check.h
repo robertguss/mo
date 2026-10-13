@@ -403,6 +403,12 @@ struct mo_checked_ability_use {
  * Ordinary calls have callee first, then positional arguments. Native dot
  * calls omit a callee row; native names the selected operation and operands
  * begin with its explicit receiver. receiver is that row index, not a slot.
+ * Ability dot calls use native "to_text" or "compare", receiver first and no
+ * callee row; their Text/Order use identifies the receiver. Interpolation has
+ * only hole operands, in written order, each with a Text use keyed by its row.
+ * Evaluate and convert each hole before evaluating the next. Literal fragments
+ * remain in syntax.children (HEAD/hole/MID/.../TAIL), not executable rows;
+ * lowering decodes them using the whole triple-quoted text's indentation.
  * Lambdas have one lazy body operand, also named by lambda->body.
  *
  * Intermediate flat operator rows borrow the operator TOKEN's syntax. A
@@ -531,13 +537,13 @@ struct mo_program {
  * the certified subset or NULL with diagnostics, never
  * a partially certified result. set must satisfy mo_resolve_modules' input
  * contract. Use the explicit source-stage stack. The current skeleton supports
- * nongeneric functions, scalar expressions/operators, direct/indirect calls,
- * records/choices and fields, normalized patterns, tuples/lists, conditionals,
- * loops, early exits/asserts and noncapturing lambdas. Native support is direct Console.print; main
- * takes no parameters or one Console and returns Unit or Int. Invalid entry
- * signatures report E0079; valid unfinished entry forms return E1103. Imports,
- * constants/specs, generic functions, any where clause, ability customizers,
- * written Map/Set types (Hash unchecked), derived abilities and unfinished body
+ * generic functions with scoped requirement proofs, scalar expressions/operators, direct/indirect
+ * calls, records/choices and fields, normalized patterns, tuples/lists, conditionals, loops, early
+ * exits/asserts and noncapturing lambdas. Native signatures use the shared tables; operators,
+ * ability dot calls and interpolation retain native/derived/custom/parameter proofs. Written
+ * Map/Set types require Hash. main takes no parameters or one Console and returns Unit or Int.
+ * Invalid entry signatures report E0079; valid unfinished entry forms return E1103. Imports,
+ * constants/specs, user dot/overload dispatch and unfinished body
  * forms return E1103.
  * Future spec checking checks anchor typing, completeness and links but executes no source code:
  * tools compile/run anchors to verify their allows/forbids expectations before accepting a

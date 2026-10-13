@@ -2282,7 +2282,7 @@ certifies generic functions and their keyed requirement proofs, scalar
 expressions and native/derived/custom operator proofs, direct/indirect calls,
 prepared native calls, record/choice construction and fields, normalized
 patterns, tuples/lists, conditionals, loops, early exits/asserts and noncapturing
-lambdas. `main` returns Unit or Int and
+lambdas, ability dot calls and interpolation. `main` returns Unit or Int and
 takes no parameters or one Console. Direct `Console.print` reads its operation
 and named input type from `base/hostops.def`, with the receiver explicit.
 Unresolved dot dispatch, overload selection, Mo library calls, map expressions,
@@ -2319,6 +2319,15 @@ keys. FUNCTION proof parts carry customizer requirements with parallel scoped
 `part_parameters` keys, including for the entry's error-text proof. DERIVED
 choice parts flatten fields in case/field declaration order; empty cases add
 none. Hash/Order signatures include implied Equal requirements explicitly.
+
+Ability dot calls use `native = "to_text"` or `"compare"`, no callee row, and
+receiver-first operands with a Text/Order proof keyed by the receiver row.
+Interpolation emits only its hole expressions, in written order, each with
+its selected Text proof. Conversion runs immediately after each hole, before
+the next hole runs. Literal fragments remain in the syntax tree's alternating
+HEAD/expression/MID/.../TAIL children. Lowering decodes those fragments using
+the whole triple-quoted text's closing indentation; no executable fragment
+rows are introduced.
 
 The graph's operand conventions are part of the contract. Sequence operands
 are statement roots in order, with the last value or Unit for an empty block.

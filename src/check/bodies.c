@@ -1337,8 +1337,45 @@ static MO_MUST_USE struct value construct(struct inference *p, const struct mo_d
 static MO_MUST_USE struct value call(struct inference *p, struct value callee,
                                      const struct mo_syntax *args, const struct value *receiver);
 
+static MO_MUST_USE struct value ability_call(struct inference *p, struct value receiver,
+                                             const struct mo_syntax *name,
+                                             const struct mo_syntax *args) {
+    bool text = compare_text(name, "to_text") == 0;
+    uint32_t count = text ? 0u : 1u;
+    if ((args == NULL ? 0 : args->count) != count ||
+        (count != 0 && args->children[0]->kind == MO_S_NAMED_ARG)) {
+        bool reported = problem(p, MO_CODE_CALL_ARGUMENTS, args == NULL ? name->span : args->span,
+                                "a call's arguments don't match its parameters",
+                                "Use x.to_text or x.compare(y) (reference 9.2).", NULL);
+        (void)reported;
+        return (struct value){0};
+    }
+    struct value out = graph(
+        p,
+        (struct value){.type = native(p, text ? "Text" : "Ordering", 0), .never = receiver.never},
+        count + 1);
+    if (out.type == NULL)
+        return out;
+    if (p->checked) {
+        out.graph->output.native = text ? "to_text" : "compare";
+        out.graph->output.receiver = 0;
+        out.graph->operands[0] = receiver.note;
+    }
+    if (count != 0) {
+        struct value right = infer_as(p, args->children[0], receiver.type, MO_CODE_ARGUMENT_TYPE);
+        if (right.type == NULL)
+            return (struct value){0};
+        if (p->checked)
+            out.graph->operands[1] = right.note;
+        out.never = out.never || right.never;
+    }
+    return out;
+}
+
 static MO_MUST_USE struct value field_value(struct inference *p, struct value v,
-                                            const struct mo_syntax *name) {
+                                            const struct mo_syntax *name,
+                                            const struct mo_syntax *args, bool *called) {
+    *called = true;
     if (v.type == NULL)
         return v;
     p->span = name->span;
@@ -1347,6 +1384,7 @@ static MO_MUST_USE struct value field_value(struct inference *p, struct value v,
         type->shape.module == UINT32_MAX) {
         if (named(type, "Entry") &&
             (compare_text(name, "name") == 0 || compare_text(name, "kind") == 0)) {
+            *called = false;
             uint32_t index = compare_text(name, "name") == 0 ? 0u : 1u;
             const struct mo_builtin_case *data = mo_builtin_case_by_key(23);
             struct value out = graph(
@@ -1360,17 +1398,22 @@ static MO_MUST_USE struct value field_value(struct inference *p, struct value v,
         }
         const struct mo_native_signature *signature = native_definition(p, type->shape.name, name);
         if (signature != NULL)
-            return call(p, native_identifier(p, signature), NULL, &v);
+            return call(p, native_identifier(p, signature), args, &v);
     }
+    const struct mo_data_signature *data = type->variable || type->shape.declaration == NULL
+                                               ? NULL
+                                               : data_type(p, type->shape.declaration);
+    const struct mo_field_signature *field = data == NULL ? NULL : find_field(data, name);
+    bool visible = data != NULL && (type->shape.module == p->function->function->module ||
+                                    type->shape.declaration->insides);
+    if ((field == NULL || !visible) &&
+        (compare_text(name, "to_text") == 0 || compare_text(name, "compare") == 0))
+        return ability_call(p, v, name, args);
     if (type->variable || type->shape.kind != MO_SOURCE_NAMED || type->shape.declaration == NULL) {
         bool reported = unfinished(p);
         (void)reported;
         return (struct value){0};
     }
-    const struct mo_data_signature *data = data_type(p, type->shape.declaration);
-    const struct mo_field_signature *field = data == NULL ? NULL : find_field(data, name);
-    bool visible =
-        type->shape.module == p->function->function->module || type->shape.declaration->insides;
     if (field == NULL || !visible) {
         uint32_t count = 0;
         const struct mo_symbol *method =
@@ -1397,6 +1440,7 @@ static MO_MUST_USE struct value field_value(struct inference *p, struct value v,
         (void)reported;
         return (struct value){0};
     }
+    *called = false;
     struct term *parameters[26] = {NULL};
     for (uint32_t i = 0; i < type->shape.count; i++) {
         MO_ASSERT(data->parameters != NULL && i < data->parameters->count);
@@ -2151,14 +2195,31 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     case MO_S_EXPR_STMT:
     case MO_S_GROUP:
         return infer_as(p, node->children[0], expected, p->node_expectation);
+    case MO_S_TEXT_INTERPOLATED: {
+        uint32_t count = node->count / 2;
+        struct value out = graph(p, (struct value){.type = native(p, "Text", 0)}, count);
+        if (out.type == NULL)
+            return out;
+        for (uint32_t i = 0; i < count; i++) {
+            struct value hole = infer(p, node->children[2 * i + 1], NULL);
+            if (hole.type == NULL)
+                return (struct value){0};
+            if (p->checked)
+                out.graph->operands[i] = hole.note;
+            out.never = out.never || hole.never;
+        }
+        return out;
+    }
     case MO_S_NAME:
     case MO_S_CAPNAME:
     case MO_S_QUALIFIED:
         return identifier(p, node, NULL);
-    case MO_S_FIELD_ACCESS:
+    case MO_S_FIELD_ACCESS: {
         if (node->children[0]->kind == MO_S_CAPNAME)
             return identifier(p, node->children[1], node->children[0]);
-        return field_value(p, infer(p, node->children[0], NULL), node->children[1]);
+        bool called;
+        return field_value(p, infer(p, node->children[0], NULL), node->children[1], NULL, &called);
+    }
     case MO_S_INT:
         return (struct value){.type = fresh(p, INT | BIG | BYTE | DECIMAL | FLOAT)};
     case MO_S_DECIMAL:
@@ -2391,17 +2452,13 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             else if (step->kind == MO_S_CALL)
                 v = call(p, v, step->children[0], NULL);
             else if (step->kind == MO_S_FIELD_ACCESS) {
-                const struct mo_native_signature *native =
-                    root(v.type)->variable || root(v.type)->shape.module != UINT32_MAX
-                        ? NULL
-                        : native_definition(p, root(v.type)->shape.name, step->children[0]);
-                if (native != NULL) {
-                    const struct mo_syntax *args = NULL;
-                    if (i + 1 < node->count && node->children[i + 1]->kind == MO_S_CALL)
-                        args = node->children[++i]->children[0];
-                    v = call(p, native_identifier(p, native), args, &v);
-                } else
-                    v = field_value(p, v, step->children[0]);
+                const struct mo_syntax *args = NULL;
+                if (i + 1 < node->count && node->children[i + 1]->kind == MO_S_CALL)
+                    args = node->children[i + 1]->children[0];
+                bool called;
+                v = field_value(p, v, step->children[0], args, &called);
+                if (called && args != NULL)
+                    i++;
             } else {
                 bool reported = unfinished(p);
                 (void)reported;
@@ -2742,7 +2799,6 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     case MO_S_ARM:
     case MO_S_TRY:
     case MO_S_NAMED_ARG:
-    case MO_S_TEXT_INTERPOLATED:
     case MO_S_UNDERSCORE:
     case MO_S_REST:
     case MO_S_MAP_ENTRY:
@@ -2791,7 +2847,7 @@ static MO_MUST_USE struct value infer(struct inference *p, const struct mo_synta
         node->kind != MO_S_FOR && node->kind != MO_S_WHILE && node->kind != MO_S_BREAK &&
         node->kind != MO_S_CONTINUE && node->kind != MO_S_LIST && node->kind != MO_S_TUPLE &&
         node->kind != MO_S_POSITION && node->kind != MO_S_ADD_ASSIGN &&
-        node->kind != MO_S_SUB_ASSIGN) {
+        node->kind != MO_S_SUB_ASSIGN && node->kind != MO_S_TEXT_INTERPOLATED) {
         bool reported = unfinished(p);
         (void)reported;
         p->depth--;
@@ -3124,13 +3180,18 @@ static MO_MUST_USE bool finish_patterns(struct inference *p) {
 static MO_MUST_USE bool finish_operator(struct inference *p, struct note *note) {
     struct emitted *graph = note->graph;
     enum mo_syntax_token op = graph->output.operation;
-    if (op == MO_T_EOF || op == MO_T_AND || op == MO_T_OR || op == MO_T_IMPLIES || op == MO_T_NOT ||
-        op == MO_T_DOTDOT)
+    const char *native = graph->output.native;
+    bool text = native != NULL && strcmp(native, "to_text") == 0;
+    bool compare = native != NULL && strcmp(native, "compare") == 0;
+    if ((op == MO_T_EOF && !text && !compare) || op == MO_T_AND || op == MO_T_OR ||
+        op == MO_T_IMPLIES || op == MO_T_NOT || op == MO_T_DOTDOT)
         return true;
     enum mo_source_ability ability =
-        op == MO_T_EQ || op == MO_T_NE                                     ? MO_SOURCE_EQUAL
-        : op == MO_T_LT || op == MO_T_LE || op == MO_T_GT || op == MO_T_GE ? MO_SOURCE_ORDER
-                                                                           : MO_SOURCE_NUMBER;
+        text                             ? MO_SOURCE_TEXT
+        : op == MO_T_EQ || op == MO_T_NE ? MO_SOURCE_EQUAL
+        : compare || op == MO_T_LT || op == MO_T_LE || op == MO_T_GT || op == MO_T_GE
+            ? MO_SOURCE_ORDER
+            : MO_SOURCE_NUMBER;
     MO_ASSERT(graph->output.operand_count != 0 && graph->operands[0] != NULL);
     const struct mo_source_type *type = graph->operands[0]->output.type;
     p->span = note->output.syntax->span;
@@ -3147,6 +3208,29 @@ static MO_MUST_USE bool finish_operator(struct inference *p, struct note *note) 
                                            .implementation = implementation};
     graph->output.ability_count = 1;
     graph->output.abilities = use;
+    return true;
+}
+
+static MO_MUST_USE bool finish_interpolation(struct inference *p, struct note *note) {
+    if (note->output.syntax->kind != MO_S_TEXT_INTERPOLATED)
+        return true;
+    struct emitted *graph = note->graph;
+    uint32_t count = graph->output.operand_count;
+    struct mo_checked_ability_use *uses =
+        allocate(p, count, sizeof(*uses), _Alignof(struct mo_checked_ability_use));
+    if (uses == NULL)
+        return false;
+    for (uint32_t i = 0; i < count; i++) {
+        struct note *hole = graph->operands[i];
+        const struct mo_ability_implementation *proof =
+            mo_prove_ability(&p->abilities, hole->output.type, MO_SOURCE_TEXT);
+        if (proof == NULL)
+            return problem(p, p->abilities.error, hole->output.syntax->span, p->abilities.message,
+                           p->abilities.reason, NULL);
+        uses[i] = (struct mo_checked_ability_use){.operand = hole->index, .implementation = proof};
+    }
+    graph->output.ability_count = count;
+    graph->output.abilities = uses;
     return true;
 }
 
@@ -3637,7 +3721,8 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
                 (void)reported;
                 goto failed;
             }
-            if (!finish_operator(&p, n) || !finish_function_use(&p, g))
+            if (!finish_operator(&p, n) || !finish_function_use(&p, g) ||
+                !finish_interpolation(&p, n))
                 goto failed;
             if (g->generic != NULL && g->generic->count != 0) {
                 const struct mo_source_type *actual = finish_type(&p, g->instantiated, 0);
