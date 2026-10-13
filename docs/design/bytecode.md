@@ -500,8 +500,9 @@ For every function there is:
 - a promise's condition lines, each with a span and verbatim text, in source
   order. Its result n > 0 selects condition n − 1.
 
-File names are strings. The VM needs this section to report bugs, and Phase 4
-needs it to show a running program.
+File names are exact byte strings in the separate `files` section. The VM
+needs debug metadata to report bugs, and Phase 4 needs it to show a running
+program.
 
 **Provenance.** Lowering fills the compiler metadata in Core's program
 document (`formal/TEXT.md`); code generation never consults the checked
@@ -1870,7 +1871,7 @@ renumbers a seed or an indexed file.
 
 ## 11. Versions
 
-The format's version is 0.1. In Phase 2 the same build writes and reads a file,
+The format's version is 0.2. In Phase 2 the same build writes and reads a file,
 so the loader accepts only its own version. Phase 5's upgrades need files
 built by one version to load in another, and decide then what stays
 compatible.

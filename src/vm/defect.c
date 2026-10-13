@@ -1,4 +1,4 @@
-#include "bytecode/io.h"
+#include "prim/prim.h"
 #include "vm/internal.h"
 
 #include <stdio.h>
@@ -142,7 +142,9 @@ static MO_MUST_USE size_t filename_part(const uint8_t *bytes, size_t length, cha
                                         const uint8_t **part, size_t *size) {
     uint8_t c = bytes[0];
     uint32_t count = c < 0x80 ? 1 : c < 0xe0 ? 2 : c < 0xf0 ? 3 : 4;
-    if (count <= length && mo_bytecode_utf8(bytes, count))
+    /* Width validates UTF-8 too; this bounded candidate contains at most one scalar. */
+    uint64_t width;
+    if (count <= length && mo_unicode16_display_width(bytes, count, &width))
         return text_part(bytes, length, 0, escape, part, size);
     static const char hex[] = "0123456789abcdef";
     escape[0] = '\\';
