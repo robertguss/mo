@@ -387,9 +387,51 @@ static uint64_t instance_hash(struct lowering *p, const struct mo_checked_functi
     return hash;
 }
 
+void lower_proof(struct lowering *p, const struct mo_ability_implementation **proof,
+                 const struct substitution **substitution) {
+    for (uint32_t depth = 0; (*proof)->kind == MO_ABILITY_PARAMETER; depth++) {
+        lower_work(p, 1);
+        if (depth == MO_LIMIT_SOURCE_ABILITY_DEPTH)
+            lower_refuse(p, MO_CODE_LOWER_DEPTH, "ability substitution is nested too deeply");
+        const struct ability_binding *binding = NULL;
+        if (*substitution != NULL)
+            for (uint32_t i = 0; i < (*substitution)->ability_count; i++) {
+                lower_work(p, 1);
+                const struct ability_binding *candidate = &(*substitution)->abilities[i];
+                if (candidate->proof->ability == (*proof)->ability &&
+                    same_parameter(candidate->parameter, (*proof)->type)) {
+                    binding = candidate;
+                    break;
+                }
+            }
+        if (binding == NULL)
+            lower_refuse(p, MO_CODE_LOWER_UNFINISHED,
+                         "this generic requirement has no keyed implementation proof");
+        *proof = binding->proof;
+        *substitution = binding->substitution;
+    }
+}
+
+struct instance *lower_customizer(struct lowering *p, const struct mo_ability_implementation *proof,
+                                  const struct substitution *substitution, uint32_t owner,
+                                  uint32_t depth) {
+    MO_ASSERT(proof->kind == MO_ABILITY_FUNCTION);
+    struct mo_checked_ability_use *uses =
+        LOWER_NEW(p, struct mo_checked_ability_use, proof->part_count);
+    for (uint32_t i = 0; i < proof->part_count; i++) {
+        lower_work(p, 1);
+        uses[i] = (struct mo_checked_ability_use){.operand = UINT32_MAX,
+                                                  .implementation = proof->parts[i],
+                                                  .parameter = proof->part_parameters[i]};
+    }
+    return lower_instance(p, proof->function, proof->arguments, substitution, proof->part_count,
+                          uses, owner, depth + (proof->arguments.count != 0));
+}
+
 struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symbol,
                                 struct mo_type_arguments arguments,
-                                const struct substitution *substitution, uint32_t owner,
+                                const struct substitution *substitution, uint32_t ability_count,
+                                const struct mo_checked_ability_use *abilities, uint32_t owner,
                                 uint32_t depth) {
     MO_ASSERT(symbol != NULL);
     uint32_t lo = 0, hi = p->program->function_count;
@@ -452,6 +494,23 @@ struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symb
     f->substitution.parameters = LOWER_NEW(p, const struct mo_source_type *, arguments.count);
     for (uint32_t i = 0; i < arguments.count; i++)
         f->substitution.parameters[i] = arguments.items[i].parameter;
+    for (uint32_t i = 0; i < ability_count; i++) {
+        lower_work(p, 1);
+        if (abilities[i].operand == UINT32_MAX)
+            f->substitution.ability_count++;
+    }
+    f->substitution.abilities = LOWER_NEW(p, struct ability_binding, f->substitution.ability_count);
+    uint32_t requirement = 0;
+    for (uint32_t i = 0; i < ability_count; i++) {
+        lower_work(p, 1);
+        if (abilities[i].operand != UINT32_MAX)
+            continue;
+        const struct mo_ability_implementation *proof = abilities[i].implementation;
+        const struct substitution *environment = substitution;
+        lower_proof(p, &proof, &environment);
+        f->substitution.abilities[requirement++] =
+            (struct ability_binding){abilities[i].parameter, proof, environment};
+    }
     mo_core_string name = lower_concat(p, lower_text(p, p->program->set->names[symbol->module]),
                                        ".", lower_text(p, symbol->name));
     /* Overload ownership is a nominal receiver, independent of discovery. */

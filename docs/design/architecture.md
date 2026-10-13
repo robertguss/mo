@@ -917,11 +917,15 @@ Interpolation decodes HEAD/MID/TAIL fragments from the original syntax; only
 hole expressions have checked operands. Triple text uses the closing delimiter's
 indentation for every fragment. Each hole is evaluated and converted through its
 selected Text proof before the next hole is evaluated. The same conversion emits
-`to_text` calls and Result entry errors; unresolved generic PARAMETER proofs refuse
-E1150 until scoped requirement substitution is implemented against the merged
-checker contract. This includes Number/Equal rows: knowing a concrete type is
-not permission to bypass its selected abstract proof. Generic customizers with
-requirement parts likewise refuse until their scoped keys can be substituted.
+`to_text` calls and Result entry errors. Function instances retain requirement
+proofs keyed by the callee's scoped parameter and ability, together with the
+supplying instance's type/proof environment. PARAMETER replacement follows those
+bindings iteratively, bounded by the ability-path and whole-lowering work limits;
+missing keys refuse E1150 rather than guessing from the concrete type. Selected
+customizers bind their own requirement keys from FUNCTION `part_parameters`.
+Derived parts retain the supplying environment, including caller parameters
+inside a composite type such as `List(T)`. Resolving a native Order proof preserves
+direct scalar operators (including Float's IEEE behavior), not total `compare`.
 Derived text helpers reserve a typed function before following the proof's
 parts, memoize concrete type/module pairs with a bounded hash index and drain
 a FIFO body queue. Tuple and record fields convert in declaration order; choice
@@ -957,9 +961,9 @@ and initializer nodes carry the same span/binder/closure metadata as functions.
 Tests and example lines are separate Unit spec functions with stable source
 ordinals, original wording/line bytes and declaration spans. Successful
 conditions return Unit; an ordinary false condition calls `fail` rather than
-`stop`. Ordinary-function assertions still stop. Equality and pattern failure
-details refuse E1150 until the Core structural primitive lands; lowering must
-not substitute user Text conversions or silently omit their values.
+`stop`. Ordinary-function assertions still stop. Equality and pattern failures
+use Core's borrowed structural primitive and the byte-length envelope above;
+they never substitute user Text conversions or require diagnostic Text proofs.
 Promises evaluate condition lines in written order and return the first false
 line's one-based number, or zero after the final success; later lines do not
 run after a failure. Each promise's parameter metadata, subject link and exact

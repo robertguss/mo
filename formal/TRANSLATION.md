@@ -1104,11 +1104,17 @@ instance directly. Concrete source types share a cache across substitutions.
 Index buckets and source-function ordering use names, declaration positions,
 program indices and canonical type hashes, never addresses; ASLR cannot change
 lowering's work-limit verdict. Native scalar leaves share cache entries across bodies.
-Unresolved PARAMETER proofs refuse E1150, even for Number/Equal operators that
-could otherwise be guessed from the substituted concrete type. Generic uses
-must replace requirements by the callee's scoped parameter and ability; generic
-customizers' requirement parts need the same keys. This substitution remains
-staged until its checked contract is merged, without guessing from concrete types.
+Instances bind type-only requirement uses by (callee's scoped parameter, ability),
+not by concrete type. Each binding retains its selected proof and the supplying
+instance's type/proof environment. PARAMETER replacement follows these bindings
+iteratively under the ability-path/work bounds. A composite proof for `List(U)`
+passed from `relay(U)` to `show(T)` retains relay's substitution for its parts,
+not show's unrelated T. FUNCTION parts use `part_parameters` to bind the
+customizer's own requirements; receiver parameter order need not be alphabetical.
+Recursive derived graphs reserve helpers before walking parts. Missing keys
+refuse E1150, including Number/Equal operations that could otherwise be guessed
+from their substituted type. Native Order proofs preserve direct scalar
+comparisons, notably IEEE Float operators rather than total `compare` ordering.
 The C lowerer checks structural Core type height after substitution as well as
 source-template depth. `T` becoming a deep list can push `List(T)` over Core's
 path bound; that instantiation refuses with E1153 rather than returning invalid Core.

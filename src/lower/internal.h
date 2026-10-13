@@ -8,10 +8,18 @@
 
 #include <setjmp.h>
 
+struct ability_binding {
+    const struct mo_source_type *parameter;
+    const struct mo_ability_implementation *proof;
+    const struct substitution *substitution;
+};
+
 struct substitution {
     uint32_t count;
     const struct mo_source_type **parameters;
     mo_core_ty *types;
+    uint32_t ability_count;
+    struct ability_binding *abilities;
 };
 
 struct instance {
@@ -89,8 +97,14 @@ mo_core_string lower_type_name(struct lowering *p, mo_core_ty type);
 uint64_t lower_type_hash(struct lowering *p, mo_core_ty type);
 struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symbol,
                                 struct mo_type_arguments arguments,
-                                const struct substitution *substitution, uint32_t owner,
+                                const struct substitution *substitution, uint32_t ability_count,
+                                const struct mo_checked_ability_use *abilities, uint32_t owner,
                                 uint32_t depth);
+void lower_proof(struct lowering *p, const struct mo_ability_implementation **proof,
+                 const struct substitution **substitution);
+struct instance *lower_customizer(struct lowering *p, const struct mo_ability_implementation *proof,
+                                  const struct substitution *substitution, uint32_t owner,
+                                  uint32_t depth);
 void lower_data(struct lowering *p, struct data_instance *instance);
 mo_core_ctors lower_ctors(struct lowering *p, mo_core_ty type);
 mo_core_expr lower_derived_text(struct lowering *p, const struct mo_ability_implementation *proof,

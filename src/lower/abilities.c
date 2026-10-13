@@ -81,9 +81,11 @@ static mo_core_expr part_text(struct lowering *p, struct derived *d, uint32_t pa
                               mo_core_expr value) {
     MO_ASSERT(part < d->proof->part_count);
     const struct mo_ability_implementation *proof = d->proof->parts[part];
+    const struct substitution *substitution = d->substitution;
+    lower_proof(p, &proof, &substitution);
     mo_core_expr converted =
-        lower_to_text(p, proof, d->substitution, d->function->owner, d->function->depth, value);
-    mo_core_ty type = lower_type(p, proof->type, d->substitution);
+        lower_to_text(p, proof, substitution, d->function->owner, d->function->depth, value);
+    mo_core_ty type = lower_type(p, proof->type, substitution);
     if (proof->kind == MO_ABILITY_NATIVE &&
         (type->tag == MO_CORE_TY_TEXT || type->tag == MO_CORE_TY_CHAR))
         converted = quote(p, converted, type->tag == MO_CORE_TY_CHAR);
@@ -186,6 +188,7 @@ mo_core_expr lower_compare(struct lowering *p, const struct mo_ability_implement
                            const struct substitution *substitution, uint32_t owner, uint32_t depth,
                            mo_core_expr left, mo_core_expr right) {
     MO_ASSERT(proof != NULL && proof->ability == MO_SOURCE_ORDER);
+    lower_proof(p, &proof, &substitution);
     mo_core_expr_list values = args(p, 2);
     values.items[0] = left;
     values.items[1] = right;
@@ -193,13 +196,8 @@ mo_core_expr lower_compare(struct lowering *p, const struct mo_ability_implement
         struct instance *f;
         if (proof->kind == MO_ABILITY_DERIVED)
             f = reserve(p, proof, substitution, owner, depth)->function;
-        else {
-            if (proof->part_count != 0)
-                lower_refuse(p, MO_CODE_LOWER_UNFINISHED,
-                             "generic customizer requirement proofs are not substituted yet");
-            f = lower_instance(p, proof->function, proof->arguments, substitution, owner,
-                               depth + (proof->arguments.count != 0));
-        }
+        else
+            f = lower_customizer(p, proof, substitution, owner, depth);
         mo_core_expr call = lower_expr(p, MO_CORE_EXPR_CALL);
         call->as.call.name = f->fun.name;
         call->as.call.args = values;

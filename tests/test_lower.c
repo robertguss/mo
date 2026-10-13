@@ -681,7 +681,8 @@ static void test_interpolation(void) {
         struct mo_ability_implementation proofs[] = {
             {.ability = MO_SOURCE_TEXT, .kind = MO_ABILITY_NATIVE, .type = &f.int_},
             {.ability = MO_SOURCE_TEXT, .kind = MO_ABILITY_NATIVE, .type = &f.bool_}};
-        struct mo_checked_ability_use uses[] = {{seven, &proofs[0]}, {false_, &proofs[1]}};
+        struct mo_checked_ability_use uses[] = {{.operand = seven, .implementation = &proofs[0]},
+                                                {.operand = false_, .implementation = &proofs[1]}};
         f.rows[text].ability_count = 2;
         f.rows[text].abilities = uses;
         uint32_t expected =
@@ -725,7 +726,7 @@ static void test_derived_text(void) {
                                               .type = &tuple,
                                               .part_count = 3,
                                               .parts = pointers};
-    struct mo_checked_ability_use use = {value, &proof};
+    struct mo_checked_ability_use use = {.operand = value, .implementation = &proof};
     uint32_t text = lower_fixture_row(&f, MO_S_FIELD_ACCESS, &f.text_, NULL, 1, &value);
     f.rows[text].native = "to_text";
     f.rows[text].ability_count = 1;
@@ -765,7 +766,7 @@ static void test_tuple_order(void) {
                                               .type = &tuple,
                                               .part_count = 2,
                                               .parts = proofs};
-    struct mo_checked_ability_use use = {left, &order};
+    struct mo_checked_ability_use use = {.operand = left, .implementation = &order};
     uint32_t less = lower_fixture_op(&f, MO_T_LT, &f.bool_, left, right);
     f.rows[less].ability_count = 1;
     f.rows[less].abilities = &use;
@@ -797,7 +798,7 @@ static void test_float_compare(void) {
         }
         struct mo_ability_implementation proof = {
             .ability = MO_SOURCE_ORDER, .kind = MO_ABILITY_NATIVE, .type = &float_};
-        struct mo_checked_ability_use use = {operands[0], &proof};
+        struct mo_checked_ability_use use = {.operand = operands[0], .implementation = &proof};
         uint32_t compare = lower_fixture_row(&f, MO_S_CALL, &order, NULL, 2, operands);
         f.rows[compare].native = "compare";
         f.rows[compare].ability_count = 1;
@@ -851,7 +852,7 @@ static void test_choice_order(void) {
                                                   .type = &option,
                                                   .part_count = 1,
                                                   .parts = parts};
-        struct mo_checked_ability_use use = {operands[0], &proof};
+        struct mo_checked_ability_use use = {.operand = operands[0], .implementation = &proof};
         uint32_t compare = lower_fixture_row(&f, MO_S_CALL, &order, NULL, 2, operands);
         f.rows[compare].native = "compare";
         f.rows[compare].ability_count = 1;
@@ -904,7 +905,7 @@ static void test_list_order(void) {
                                                   .type = &list,
                                                   .part_count = 1,
                                                   .parts = parts};
-        struct mo_checked_ability_use use = {operands[0], &proof};
+        struct mo_checked_ability_use use = {.operand = operands[0], .implementation = &proof};
         uint32_t compare = lower_fixture_op(&f, probe == 3 ? MO_T_LE : MO_T_LT, &f.bool_,
                                             operands[0], operands[1]);
         f.rows[compare].ability_count = 1;
@@ -946,7 +947,7 @@ static void test_list_text(void) {
                                                   .type = &list,
                                                   .part_count = 1,
                                                   .parts = parts};
-        struct mo_checked_ability_use use = {value, &proof};
+        struct mo_checked_ability_use use = {.operand = value, .implementation = &proof};
         uint32_t text = lower_fixture_row(&f, MO_S_FIELD_ACCESS, &f.text_, NULL, 1, &value);
         f.rows[text].native = "to_text";
         f.rows[text].ability_count = 1;
@@ -1209,7 +1210,7 @@ static void test_structural_binary_text(void) {
         struct mo_ability_implementation equal = {.kind = MO_ABILITY_NATIVE,
                                                   .ability = MO_SOURCE_EQUAL,
                                                   .type = probe == 0 ? &f.text_ : &bytes};
-        struct mo_checked_ability_use use = {left, &equal};
+        struct mo_checked_ability_use use = {.operand = left, .implementation = &equal};
         f.rows[eq].ability_count = 1;
         f.rows[eq].abilities = &use;
         (void)lower_fixture_row(&f, MO_S_ASSERT, &f.unit_, NULL, 1, &eq);
@@ -1350,7 +1351,7 @@ static void test_structural_customizers(void) {
                                                   .kind = MO_ABILITY_FUNCTION,
                                                   .type = &box,
                                                   .function = &f.symbols[1]};
-        struct mo_checked_ability_use use = {left, &proof};
+        struct mo_checked_ability_use use = {.operand = left, .implementation = &proof};
         if (probe == 2) {
             left = lower_fixture_row(&f, MO_S_FIELD_ACCESS, &f.text_, NULL, 1, &left);
             f.rows[left].native = "to_text";
@@ -1522,7 +1523,7 @@ static void test_record_text(void) {
                                               .type = &type,
                                               .part_count = 2,
                                               .parts = proofs};
-    struct mo_checked_ability_use use = {value, &proof};
+    struct mo_checked_ability_use use = {.operand = value, .implementation = &proof};
     uint32_t text = lower_fixture_row(&f, MO_S_FIELD_ACCESS, &f.text_, NULL, 1, &value);
     f.rows[text].native = "to_text";
     f.rows[text].ability_count = 1;

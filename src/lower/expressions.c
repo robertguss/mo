@@ -873,16 +873,19 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                 lower_work(p, 1);
                 const struct mo_checked_ability_use *use = &r->abilities[i];
                 if (use->operand != r->operands[0] ||
-                    use->implementation->ability != MO_SOURCE_ORDER ||
-                    use->implementation->kind == MO_ABILITY_NATIVE)
+                    use->implementation->ability != MO_SOURCE_ORDER)
+                    continue;
+                const struct mo_ability_implementation *proof = use->implementation;
+                const struct substitution *substitution = &b->instance->substitution;
+                lower_proof(p, &proof, &substitution);
+                if (proof->kind == MO_ABILITY_NATIVE)
                     continue;
                 static const struct mo_source_type ordering = {
                     .kind = MO_SOURCE_NAMED, .name = "Ordering", .module = UINT32_MAX};
                 mo_core_ty order = type(b, &ordering);
                 mo_core_expr_list values = arguments(b, 2);
-                values.items[0] = lower_compare(p, use->implementation, &b->instance->substitution,
-                                                b->instance->owner, b->instance->depth,
-                                                args.items[0], args.items[1]);
+                values.items[0] = lower_compare(p, proof, substitution, b->instance->owner,
+                                                b->instance->depth, args.items[0], args.items[1]);
                 values.items[1] = lower_expr(p, MO_CORE_EXPR_CON);
                 values.items[1]->as.con.ty = order;
                 values.items[1]->as.con.ctor = lower_text(
@@ -946,9 +949,9 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
         return lower_prim(p, prim, args);
     }
     if (r->symbol != NULL && r->symbol->declaration->kind == MO_S_FN) {
-        struct instance *f =
-            lower_instance(p, r->symbol, r->arguments, &b->instance->substitution,
-                           b->instance->owner, b->instance->depth + (r->arguments.count != 0));
+        struct instance *f = lower_instance(p, r->symbol, r->arguments, &b->instance->substitution,
+                                            r->ability_count, r->abilities, b->instance->owner,
+                                            b->instance->depth + (r->arguments.count != 0));
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CALL);
         e->as.call.name = f->fun.name;
         e->as.call.args = args;
@@ -1289,9 +1292,9 @@ static void finish_task(struct body *b, struct task t) {
 static void require_concrete_proofs(struct body *b, const struct mo_checked_expression *r) {
     for (uint32_t i = 0; i < r->ability_count; i++) {
         lower_work(b->p, 1);
-        if (r->abilities[i].implementation->kind == MO_ABILITY_PARAMETER)
-            lower_refuse(b->p, MO_CODE_LOWER_UNFINISHED,
-                         "abstract ability requirements are not substituted yet");
+        const struct mo_ability_implementation *proof = r->abilities[i].implementation;
+        const struct substitution *substitution = &b->instance->substitution;
+        lower_proof(b->p, &proof, &substitution);
     }
 }
 
@@ -1544,9 +1547,9 @@ static void row_task(struct body *b, struct task t) {
         return;
     }
     if (r->symbol != NULL && r->symbol->declaration->kind == MO_S_FN && r->operand_count == 0) {
-        struct instance *f =
-            lower_instance(p, r->symbol, r->arguments, &b->instance->substitution,
-                           b->instance->owner, b->instance->depth + (r->arguments.count != 0));
+        struct instance *f = lower_instance(p, r->symbol, r->arguments, &b->instance->substitution,
+                                            r->ability_count, r->abilities, b->instance->owner,
+                                            b->instance->depth + (r->arguments.count != 0));
         mo_core_ty signature = type(b, r->type);
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_LAM);
         e->as.lam.params.count = signature->as.fn.params.count;

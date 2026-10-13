@@ -255,12 +255,12 @@ struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *progra
     MO_ASSERT(program->entry.function < program->function_count);
     struct instance *main =
         lower_instance(p, program->functions[program->entry.function].signature->function,
-                       (struct mo_type_arguments){0}, NULL, 0, 0);
+                       (struct mo_type_arguments){0}, NULL, 0, NULL, 0, 0);
     for (uint32_t i = 0; i < program->function_count; i++) {
         const struct mo_checked_function *f = &program->functions[i];
         if (f->signature->type->parameters == 0)
-            (void)lower_instance(p, f->signature->function, (struct mo_type_arguments){0}, NULL,
-                                 f->signature->function->module, 0);
+            (void)lower_instance(p, f->signature->function, (struct mo_type_arguments){0}, NULL, 0,
+                                 NULL, f->signature->function->module, 0);
     }
     for (struct instance *f = p->functions; f != NULL; f = f->next)
         if (f->source != NULL)

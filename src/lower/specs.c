@@ -55,8 +55,9 @@ void lower_specs(struct lowering *p) {
             if (subject->signature->type->parameters != 0)
                 lower_refuse(p, MO_CODE_LOWER_UNFINISHED,
                              "generic spec instances are not lowered yet");
-            struct instance *ordinary = lower_instance(
-                p, subject->signature->function, (struct mo_type_arguments){0}, NULL, f->owner, 0);
+            struct instance *ordinary =
+                lower_instance(p, subject->signature->function, (struct mo_type_arguments){0}, NULL,
+                               0, NULL, f->owner, 0);
             name = ordinary->meta.name;
             suffix = source->kind == MO_SPEC_PROMISE ? ".promise." : ".example.";
             if (source->kind == MO_SPEC_PROMISE) {
