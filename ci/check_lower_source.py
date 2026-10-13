@@ -100,6 +100,45 @@ CASES = {
     "generic_function_value": ("fn show(value: T) : Text where T: Text\n\"#{value}\"\nend\n"
                                "fn accept(f: fn(Int) : Text) : Int\nif f(17) == \"17\": 67 else: 1\nend\n"
                                "fn main() : Int\naccept(show)\nend", 67),
+    "try_wrapper_requirements": ("enum Inner(T)\nEmptyInner\nBadInner(Set(T))\nend\n"
+                                 "enum Outer(U)\nWrapped(Inner(U))\nend\n"
+                                 "fn empty() : Inner(Int)\nEmptyInner\nend\n"
+                                 "fn lift(value: Result(Int, Inner(T))) : Result(Text, Outer(T)) where T: Hash\n"
+                                 "number = try value\nOk(\"#{number}\")\nend\n"
+                                 "fn main() : Int\nif lift(Error(empty())) is Error(Wrapped(EmptyInner)): 79 else: 1\nend", 79),
+    "helper_and_builtin_text": ("fn to_text(n: Int) : Int\nn + 3\nend\n"
+                                "fn compare(a: Int, b: Int) : Bool\na > b\nend\n"
+                                "fn main() : Int\nif compare(7, 2) and 1 < 2: to_text(7) + 29.to_text.byte_count else: 1\nend", 12),
+    "native_scalar_text": ("fn probe(b: Byte, big: BigInt, d: Decimal, f: Float) : Int\n"
+                           "if b.to_text == \"255\" and big.to_text == \"18446744073709551616\" "
+                           "and d.to_text == \"-1.25\" and f.to_text == \"-0\" "
+                           "and 'λ'.to_text.byte_count == 2: 83 else: 1\nend\n"
+                           "fn time_text(t: Time) : Text\nt.to_text\nend\n"
+                           "fn duration_text(d: Duration) : Text\nd.to_text\nend\n"
+                           "fn main() : Int\nprobe(255, 0x10000000000000000, -1.25, -0.0)\nend", 83),
+    "native_text_function_values": ("fn main() : Int\nrender = Int.to_text\ncount = Text.byte_count\n"
+                                    "count(render(-29)) + count(\"λ日本\")\nend", 11),
+    "option_default_lazy": ("fn main() : Int\na = Some(73) or 1 / 0\n"
+                            "b = None or 7\nc = (Some(Some(13)) or None) or 1 / 0\na + b + c\nend", 93),
+    "option_default_vars": ("fn choose(value: Option(Int)) : Option(Int)\nvar n = 3\n"
+                            "picked = value or try None\nn += picked\nSome(n)\nend\n"
+                            "fn main() : Int\n(choose(Some(41)) or 1) + (choose(None) or 7)\nend", 51),
+    "nested_try_option": ("fn peel(value: Option(Option(Int))) : Option(Int)\nSome(try try value)\nend\n"
+                          "fn main() : Int\n(peel(Some(Some(15))) or 1) + "
+                          "(peel(Some(None)) or 20) + (peel(None) or 30)\nend", 65),
+    "try_nearest_lambda": ("fn probe(f: fn(Option(Int)) : Option(Text)) : Int\n"
+                           "if (f(None) or \"fallback\") == \"fallback\" "
+                           "and (f(Some(12)) or \"\") == \"12\": 85 else: 1\nend\n"
+                           "fn main() : Int\nprobe(fn(value)\nSome(\"#{try value}\")\nend)\nend", 85),
+    "try_direct_result_text": ("fn lift(value: Result(Int, Text)) : Result(Text, Text)\n"
+                               "n = try value\nOk(n.to_text)\nend\n"
+                               "fn measure(value: Result(Int, Text)) : Int\ncase lift(value)\n"
+                               "Ok(s): s.byte_count\nError(s): 10 * s.byte_count\nend\nend\n"
+                               "fn main() : Int\nmeasure(Ok(17)) + measure(Error(\"λ日本\"))\nend", 82),
+    "try_builtin_wrapper": ("fn lift(value: Result(Int, Int)) : Result(Text, Option(Int))\n"
+                             "n = try value\nOk(n.to_text)\nend\n"
+                             "fn main() : Int\ncase lift(Error(9))\n"
+                             "Error(Some(n)): n + 80\nError(None): 2\nOk(_): 1\nend\nend", 89),
 }
 
 for count in (4, 8, 16):

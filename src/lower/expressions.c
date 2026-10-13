@@ -916,6 +916,22 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
         return lower_prim(
             p, (struct mo_core_prim){.tag = MO_CORE_PRIM_TEXT, .as.text = MO_CORE_TEXT_OP_BYTES},
             args);
+    if (r->native != NULL && strcmp(r->native, "Text.byte_count") == 0)
+        return lower_prim(
+            p,
+            (struct mo_core_prim){.tag = MO_CORE_PRIM_TEXT, .as.text = MO_CORE_TEXT_OP_BYTE_COUNT},
+            args);
+    if (r->native != NULL) {
+        const char *member = strrchr(r->native, '.');
+        if (member != NULL && strcmp(member, ".to_text") == 0) {
+            MO_ASSERT(args.count == 1);
+            /* Qualified natives are already selected by the shared signature
+             * table; an ordinary same-name helper has a source symbol instead. */
+            mo_core_ty receiver = r->operand_count == 0 ? type(b, r->type)->as.fn.params.items[0]
+                                                        : type(b, row(b, r->operands[0])->type);
+            return lower_error_text(p, receiver, args.items[0]);
+        }
+    }
     if (r->native != NULL && strcmp(r->native, "to_text") == 0) {
         MO_ASSERT(args.count == 1);
         return lower_to_text(p, ability(b, r, MO_SOURCE_TEXT, r->operands[0]),
@@ -1289,10 +1305,11 @@ static void finish_task(struct body *b, struct task t) {
     }
 }
 
-static void require_concrete_proofs(struct body *b, const struct mo_checked_expression *r) {
-    for (uint32_t i = 0; i < r->ability_count; i++) {
+static void require_concrete_proofs(struct body *b, uint32_t count,
+                                    const struct mo_checked_ability_use *uses) {
+    for (uint32_t i = 0; i < count; i++) {
         lower_work(b->p, 1);
-        const struct mo_ability_implementation *proof = r->abilities[i].implementation;
+        const struct mo_ability_implementation *proof = uses[i].implementation;
         const struct substitution *substitution = &b->instance->substitution;
         lower_proof(b->p, &proof, &substitution);
     }
@@ -1302,7 +1319,7 @@ static void row_task(struct body *b, struct task t) {
     struct lowering *p = b->p;
     const struct mo_checked_expression *r = row(b, t.row);
     enum mo_syntax_kind tag = kind(r);
-    require_concrete_proofs(b, r);
+    require_concrete_proofs(b, r->ability_count, r->abilities);
     if (tag == MO_S_MAP)
         lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "map literals are not lowered yet");
     if (tag == MO_S_TEXT_INTERPOLATED) {
@@ -1317,6 +1334,7 @@ static void row_task(struct body *b, struct task t) {
         return;
     }
     if (r->try_ != NULL) {
+        require_concrete_proofs(b, r->try_->ability_count, r->try_->abilities);
         struct continuation *k = continuation(b, K_TRY);
         k->row = r;
         k->next = t.continuation;
@@ -1546,24 +1564,21 @@ static void row_task(struct body *b, struct task t) {
         finish(b, e, t.state, t.continuation, t.out);
         return;
     }
-    if (r->symbol != NULL && r->symbol->declaration->kind == MO_S_FN && r->operand_count == 0) {
-        struct instance *f = lower_instance(p, r->symbol, r->arguments, &b->instance->substitution,
-                                            r->ability_count, r->abilities, b->instance->owner,
-                                            b->instance->depth + (r->arguments.count != 0));
+    if (r->operand_count == 0 && ((r->symbol != NULL && r->symbol->declaration->kind == MO_S_FN) ||
+                                  (r->native != NULL && strchr(r->native, '.') != NULL &&
+                                   r->type->kind == MO_SOURCE_FUNCTION))) {
         mo_core_ty signature = type(b, r->type);
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_LAM);
         e->as.lam.params.count = signature->as.fn.params.count;
         e->as.lam.params.items = LOWER_NEW(p, struct mo_core_param, e->as.lam.params.count);
-        mo_core_expr call = lower_expr(p, MO_CORE_EXPR_CALL);
-        call->as.call.name = f->fun.name;
-        call->as.call.args = arguments(b, e->as.lam.params.count);
+        mo_core_expr_list args = arguments(b, e->as.lam.params.count);
         for (size_t i = 0; i < e->as.lam.params.count; i++) {
             mo_core_string name = lower_fresh(p);
             e->as.lam.params.items[i] =
                 (struct mo_core_param){name, signature->as.fn.params.items[i]};
-            call->as.call.args.items[i] = lower_var(p, name);
+            args.items[i] = lower_var(p, name);
         }
-        e->as.lam.body = call;
+        e->as.lam.body = application(b, r, args);
         ((struct lower_node *)e)->closure =
             lower_concat(p, b->instance->meta.name, ".ref.", lower_number(p, t.row));
         finish(b, e, t.state, t.continuation, t.out);
@@ -1670,7 +1685,7 @@ void lower_body(struct lowering *p, struct instance *instance, const struct mo_c
                 r = row(&b, t.row);
             }
             p->span = r->syntax->span;
-            require_concrete_proofs(&b, r);
+            require_concrete_proofs(&b, r->ability_count, r->abilities);
             if (r->operation == MO_T_OR || r->operation == MO_T_IMPLIES)
                 t.then_ = share_target(&b, t, t.then_, &t.out);
             if (r->operation == MO_T_AND || r->operation == MO_T_OR || r->pattern != NULL)
