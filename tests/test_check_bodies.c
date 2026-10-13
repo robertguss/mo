@@ -90,6 +90,9 @@ static void inferred_uses(void) {
         {"fn run(_xs: List(Int)) : Int\n0\nend\n", "Int"},
         {"fn identity(value: T) : T\nvalue\nend\nfn run() : Text\nidentity(\"text\")\nend\n",
          "Text"},
+        {"fn identity(value: T) : T\nvalue\nend\nfn run() : Int\n"
+         "assert identity(\"text\") == \"text\"\nidentity(2)\nend\n",
+         "Int"},
         {"fn invoke(f: fn(Int) : Int) : Int\nf(4)\nend\n"
          "fn run() : Int\ninvoke(fn(x) x + 2 end)\nend\n",
          "Int"},
@@ -121,8 +124,21 @@ static void inferred_uses(void) {
             MO_ASSERT(fprintf(stderr, "inferred_uses[%zu]: E%04u %s\n", i, f.diags.items[0].code,
                               f.diags.items[0].message) >= 0);
         CHECK(out != NULL && f.diags.count == 0);
-        if (out != NULL)
+        if (out != NULL) {
             CHECK(strcmp(out->items[out->count - 1].type->name, cases[i].result) == 0);
+            if (i == 1) {
+                bool found = false;
+                for (uint32_t j = 0; j < out->count; j++)
+                    if (out->items[j].syntax->kind == MO_S_LAMBDA) {
+                        const struct mo_source_type *type = out->items[j].type;
+                        CHECK(type->count == 2);
+                        CHECK(strcmp(type->arguments[0]->name, "Decimal") == 0);
+                        CHECK(strcmp(type->arguments[1]->name, "Decimal") == 0);
+                        found = true;
+                    }
+                CHECK(found);
+            }
+        }
         finish(&f);
     }
 }
@@ -140,6 +156,7 @@ static void scope_errors(void) {
         {"fn run(x: Int) : Int\nf = fn(x) x end\nf(x)\nend\n", MO_CODE_BIND_REPEATED},
         {"fn run(x: Int) : Int\n1\nend\n", MO_CODE_UNUSED_NAME},
         {"fn run() : Int\n1 + true\nend\n", MO_CODE_TYPE_MISMATCH},
+        {"fn run(value: T) : T\n1\nend\n", MO_CODE_TYPE_MISMATCH},
         {"fn run()\n_xs = []\nend\n", MO_CODE_CANNOT_INFER},
         {"fn run() : Int\nf = fn(x) x(x) end\nf(1)\nend\n", MO_CODE_TYPE_MISMATCH},
         {"fn callee(x: Int) : Int\nx\nend\nfn run() : Int\ncallee()\nend\n",
@@ -266,6 +283,72 @@ static void allocation_limits(void) {
     finish(&f);
 }
 
+static void unused_fix(void) {
+    const char source[] = "module Main\nfn run() : Int\nvalue = 1\n2\nend\n";
+    struct fixture f;
+    init(&f, source, NULL);
+    CHECK(body(&f, "run") == NULL);
+    MO_ASSERT(f.diags.count == 1 && f.diags.items[0].fix_count == 1);
+    const struct mo_edit *edit = f.diags.items[0].fixes[0].edits;
+    struct mo_buffer fixed;
+    mo_buffer_init(&fixed, 1024);
+    MO_ASSERT(mo_buffer_append(&fixed, (const uint8_t *)source, edit->span.start));
+    MO_ASSERT(mo_buffer_append_text(&fixed, edit->replacement));
+    MO_ASSERT(mo_buffer_append_text(&fixed, source + edit->span.end));
+    MO_ASSERT(mo_buffer_append_byte(&fixed, 0));
+    finish(&f);
+    init(&f, (const char *)fixed.bytes, NULL);
+    CHECK(body(&f, "run") != NULL && f.diags.count == 0);
+    finish(&f);
+    mo_buffer_free(&fixed);
+    init(&f, "module Main\nfn run(value: Int, _value: Int) : Int\n2\nend\n", NULL);
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_UNUSED_NAME);
+    CHECK(f.diags.items[0].fix_count == 0);
+    finish(&f);
+}
+
+static void reference_bodies(void) {
+    struct mo_sources sources;
+    MO_ASSERT(mo_sources_init(&sources));
+    struct mo_source_error problem;
+    uint32_t file;
+    MO_ASSERT(mo_sources_add(&sources, "docs/reference/README.md", &file, &problem));
+    const struct mo_source *reference = &sources.files[file];
+    struct mo_buffer text;
+    mo_buffer_init(&text, MO_LIMIT_FILE_SIZE);
+    MO_ASSERT(mo_buffer_append(&text, reference->bytes, reference->length));
+    MO_ASSERT(mo_buffer_append_byte(&text, 0));
+    const char *const names[] = {"shipping", "discount", "sum_to"};
+    const char *const types[] = {"Decimal", "Decimal", "Int"};
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        char marker[64];
+        int n = snprintf(marker, sizeof(marker), "```mo\nfn %s(", names[i]);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(marker));
+        const char *start = strstr((const char *)text.bytes, marker);
+        MO_ASSERT(start != NULL);
+        start += 6;
+        const char *end = strstr(start, "\n```");
+        MO_ASSERT(end != NULL);
+        struct mo_buffer source;
+        mo_buffer_init(&source, 4096);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\n"));
+        MO_ASSERT(mo_buffer_append(&source, (const uint8_t *)start, (size_t)(end - start)));
+        MO_ASSERT(mo_buffer_append_text(&source, "\n"));
+        MO_ASSERT(mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init(&f, (const char *)source.bytes, NULL);
+        struct mo_inferred_body *out = body(&f, names[i]);
+        CHECK(out != NULL && f.diags.count == 0);
+        if (out != NULL)
+            CHECK(strcmp(out->items[out->count - 1].type->name, types[i]) == 0);
+        finish(&f);
+        mo_buffer_free(&source);
+    }
+    mo_buffer_free(&text);
+    mo_sources_free(&sources);
+}
+
 static void shared_types(void) {
     /* A function value adds one node above the repeated tuple type. */
     for (uint32_t count = MO_LIMIT_SOURCE_TYPE_DEPTH - 2; count <= MO_LIMIT_SOURCE_TYPE_DEPTH - 1;
@@ -303,6 +386,8 @@ int main(void) {
     literal_ranges();
     module_calls();
     allocation_limits();
+    unused_fix();
+    reference_bodies();
     shared_types();
     return mo_test_report("check bodies");
 }

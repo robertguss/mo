@@ -804,6 +804,25 @@ static void function_signatures(void) {
         CHECK(visit->arguments[0]->arguments[1] == visit->arguments[1]);
     } else
         CHECK(false);
+    bool succeeded = false, failed = false;
+    for (size_t limit = 0; limit <= 16384; limit += 16) {
+        struct mo_arena arena;
+        mo_arena_init(&arena, limit);
+        struct mo_signatures *out = mo_prepare_signatures(&arena, &set, names, &f.diags);
+        if (out == NULL) {
+            failed = true;
+            CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CHECK_NO_MEMORY);
+        } else {
+            succeeded = true;
+            CHECK(f.diags.count == 0 && out->count == 3);
+            CHECK(out->items[0].type->arguments[0] == out->items[0].type->arguments[1]);
+            CHECK(strcmp(out->items[2].type->arguments[1]->name, "Unit") == 0);
+        }
+        mo_arena_free(&arena);
+        mo_diags_free(&f.diags);
+        MO_ASSERT(mo_diags_init(&f.diags));
+    }
+    CHECK(succeeded && failed);
     finish(&f);
 }
 

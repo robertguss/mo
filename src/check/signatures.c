@@ -25,8 +25,12 @@ struct preparation {
 
 static MO_MUST_USE bool problem(struct preparation *p, uint16_t code, struct mo_span span,
                                 const char *message, const char *reason) {
+    const char *label = code == MO_CODE_TYPE_NAME        ? "not a type in scope"
+                        : code == MO_CODE_TYPE_ARGUMENTS ? "type parameters don't match"
+                        : code == MO_CODE_BOOL_NAME ? "must be Bool or a function returning Bool"
+                                                    : message;
     bool kept = mo_diags_add(p->diags, &(struct mo_diag){.code = code,
-                                                         .primary = {span, message},
+                                                         .primary = {span, label},
                                                          .message = message,
                                                          .reason = reason});
     p->failed = !kept;
@@ -270,7 +274,7 @@ static MO_MUST_USE const struct mo_source_type *resolve_type(struct preparation 
         if (type.name == NULL && name->span.end - name->span.start == 1) {
             if (count != 0) {
                 bool reported = problem(p, MO_CODE_TYPE_ARGUMENTS, node->span,
-                                        "give the type its type parameters",
+                                        "a type parameter is used as a generic type",
                                         "A type parameter is a single capital letter, not a "
                                         "generic type constructor (reference 9.1).");
                 (void)reported;
@@ -293,7 +297,7 @@ static MO_MUST_USE const struct mo_source_type *resolve_type(struct preparation 
     }
     if (count != arity) {
         bool reported =
-            problem(p, MO_CODE_TYPE_ARGUMENTS, node->span, "give the type its type parameters",
+            problem(p, MO_CODE_TYPE_ARGUMENTS, node->span, "a type's type parameters don't match",
                     "List(T), Map(K, V) and declared generic types take type "
                     "parameters (reference 9.1).");
         (void)reported;
