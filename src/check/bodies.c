@@ -1,6 +1,7 @@
 #include "check/check.h"
 #include "check/checked.h"
 #include "check/data.h"
+#include "check/native.h"
 #include "check/patterns.h"
 
 #include "base/codes.h"
@@ -9,19 +10,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-enum host_operation {
-#define HOSTOP(id, module, name, signature, params, bugs, spec_only) HOST_##id,
-#include "base/hostops.def"
-};
-
-static const struct host_signature {
-    const char *module, *name, *qualified, *type;
-} host_signatures[] = {
-#define HOSTOP(id, module, name, signature, params, bugs, spec_only)                               \
-    {module, name, module "." name, signature},
-#include "base/hostops.def"
-};
 
 enum numeric { INT = 1, BIG = 2, BYTE = 4, DECIMAL = 8, FLOAT = 16 };
 
@@ -930,8 +918,37 @@ static MO_MUST_USE bool missing_field(struct inference *p, struct mo_span span, 
                    declaration);
 }
 
+static MO_MUST_USE const struct mo_native_signature *
+native_definition(struct inference *p, const char *module, const struct mo_syntax *name) {
+    for (uint32_t i = 0; i < p->signatures->native_count; i++) {
+        const struct mo_native_signature *native = &p->signatures->native[i];
+        if (strcmp(native->module, module) == 0 && compare_text(name, native->name) == 0)
+            return native;
+    }
+    return NULL;
+}
+
+static MO_MUST_USE struct value native_identifier(struct inference *p,
+                                                  const struct mo_native_signature *signature) {
+    if (signature->spec_only || signature->type->parameters != 0) {
+        bool reported = unfinished(p);
+        (void)reported;
+        return (struct value){0};
+    }
+    struct term *parameters[26] = {NULL};
+    struct value out =
+        graph(p, (struct value){.type = annotation(p, signature->type, parameters, 0)}, 0);
+    if (p->checked && out.type != NULL)
+        out.graph->output.native = signature->qualified;
+    return out;
+}
+
 static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_syntax *node,
                                            const struct mo_syntax *prefix) {
+    if (node->kind == MO_S_QUALIFIED) {
+        prefix = node->children[0];
+        node = node->children[1];
+    }
     if (prefix == NULL && node->kind == MO_S_NAME) {
         struct name_slot *s = slot(p, node, false);
         if (s != NULL && s->active != NULL) {
@@ -953,6 +970,14 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
     if (p->failed)
         return (struct value){0};
     if (s == NULL) {
+        if (prefix != NULL) {
+            for (uint32_t i = 0; i < p->signatures->native_count; i++) {
+                const struct mo_native_signature *native = &p->signatures->native[i];
+                if (compare_text(prefix, native->module) == 0 &&
+                    compare_text(node, native->name) == 0)
+                    return native_identifier(p, native);
+            }
+        }
         if (prefix != NULL || node->kind == MO_S_CAPNAME || node->kind == MO_S_QUALIFIED) {
             bool reported = unfinished(p);
             (void)reported;
@@ -1279,12 +1304,21 @@ static MO_MUST_USE struct value construct(struct inference *p, const struct mo_d
     return out;
 }
 
+static MO_MUST_USE struct value call(struct inference *p, struct value callee,
+                                     const struct mo_syntax *args, const struct value *receiver);
+
 static MO_MUST_USE struct value field_value(struct inference *p, struct value v,
                                             const struct mo_syntax *name) {
     if (v.type == NULL)
         return v;
     p->span = name->span;
     struct term *type = root(v.type);
+    if (!type->variable && type->shape.kind == MO_SOURCE_NAMED &&
+        type->shape.module == UINT32_MAX) {
+        const struct mo_native_signature *signature = native_definition(p, type->shape.name, name);
+        if (signature != NULL)
+            return call(p, native_identifier(p, signature), NULL, &v);
+    }
     if (type->variable || type->shape.kind != MO_SOURCE_NAMED || type->shape.declaration == NULL) {
         bool reported = unfinished(p);
         (void)reported;
@@ -1366,7 +1400,7 @@ static MO_MUST_USE struct value sequence(struct inference *p, const struct mo_sy
 }
 
 static MO_MUST_USE struct value call(struct inference *p, struct value callee,
-                                     const struct mo_syntax *args) {
+                                     const struct mo_syntax *args, const struct value *receiver) {
     if (callee.type == NULL)
         return (struct value){0};
     struct term *t = root(callee.type);
@@ -1405,18 +1439,26 @@ static MO_MUST_USE struct value call(struct inference *p, struct value callee,
         (void)valid;
         return (struct value){0};
     }
-    if (t->shape.count != args->count + 1) {
-        bool reported = problem(p, MO_CODE_CALL_ARGUMENTS,
-                                args->span.start == args->span.end ? p->span : args->span,
-                                "a call's arguments don't match its parameters",
-                                "A function has no default or optional parameters; pass every "
-                                "argument by position (reference 5.2).",
-                                NULL);
+    uint32_t offset = receiver == NULL ? 0u : 1u;
+    uint32_t count = args == NULL ? 0u : args->count;
+    if (t->shape.count != count + offset + 1) {
+        bool reported =
+            problem(p, MO_CODE_CALL_ARGUMENTS,
+                    args == NULL || args->span.start == args->span.end ? p->span : args->span,
+                    "a call's arguments don't match its parameters",
+                    "A function has no default or optional parameters; pass every "
+                    "argument by position (reference 5.2).",
+                    NULL);
         (void)reported;
         return (struct value){0};
     }
     bool never = callee.never;
-    for (uint32_t i = 0; i < args->count; i++)
+    if (receiver != NULL) {
+        if (!unify_as(p, receiver->type, argument(p, t, 0), MO_CODE_ARGUMENT_TYPE))
+            return (struct value){0};
+        never = never || receiver->never;
+    }
+    for (uint32_t i = 0; i < count; i++)
         if (args->children[i]->kind == MO_S_NAMED_ARG) {
             bool reported = problem(p, MO_CODE_CALL_ARGUMENTS, args->children[i]->span,
                                     "a function is called with named fields",
@@ -1426,27 +1468,29 @@ static MO_MUST_USE struct value call(struct inference *p, struct value callee,
             (void)reported;
             return (struct value){0};
         }
-    struct note_range *ranges =
-        allocate(p, args->count, sizeof(*ranges), _Alignof(struct note_range));
+    struct note_range *ranges = allocate(p, count, sizeof(*ranges), _Alignof(struct note_range));
     if (ranges == NULL)
         return (struct value){0};
     struct value result = {0};
     if (p->checked) {
-        result =
-            graph(p, (struct value){.type = argument(p, t, t->shape.count - 1)}, args->count + 1);
+        result = graph(p, (struct value){.type = argument(p, t, t->shape.count - 1)}, count + 1);
         if (result.type == NULL)
             return result;
-        result.graph->operands[0] = callee.note;
+        result.graph->operands[0] = receiver == NULL ? callee.note : receiver->note;
         result.graph->output.symbol = callee.symbol;
+        if (callee.graph != NULL)
+            result.graph->output.native = callee.graph->output.native;
+        if (receiver != NULL)
+            result.graph->output.receiver = 0;
     }
     struct note *before = p->last;
     for (unsigned pass = 0; pass < 2; pass++) {
-        for (uint32_t i = 0; i < args->count; i++) {
+        for (uint32_t i = 0; i < count; i++) {
             if (lambda_argument(args->children[i]) != (pass != 0))
                 continue;
             struct note *previous = p->last;
             struct value arg =
-                infer_as(p, args->children[i], argument(p, t, i), MO_CODE_ARGUMENT_TYPE);
+                infer_as(p, args->children[i], argument(p, t, i + offset), MO_CODE_ARGUMENT_TYPE);
             if (arg.type == NULL)
                 return (struct value){0};
             ranges[i] = (struct note_range){previous == NULL ? p->notes : previous->next, p->last};
@@ -1457,55 +1501,11 @@ static MO_MUST_USE struct value call(struct inference *p, struct value callee,
     }
     /* Constraint solving may visit lambdas last; metadata retains written order
      * so this never suggests reordering evaluation to downstream consumers. */
-    order_notes(p, before, ranges, args->count);
+    order_notes(p, before, ranges, count);
     if (!p->checked)
         result.type = argument(p, t, t->shape.count - 1);
     result.never = never;
     return result;
-}
-
-/* This first host slice accepts a direct Console.print call, not a bound
- * method value. Its named parameter types come from the shared host table. */
-static MO_MUST_USE struct value console_print(struct inference *p, struct value receiver,
-                                              const struct mo_syntax *args) {
-    const struct host_signature *host = &host_signatures[HOST_CONSOLE_PRINT];
-    MO_ASSERT(receiver.type != NULL && named(receiver.type, host->module));
-    if (args->count != 1 || args->children[0]->kind == MO_S_NAMED_ARG) {
-        bool reported = problem(
-            p, MO_CODE_CALL_ARGUMENTS, p->span, "a call's arguments don't match its parameters",
-            "A function takes every argument by position (reference 5.2).", NULL);
-        (void)reported;
-        return (struct value){0};
-    }
-    /* The selected table row has two plain named inputs and no written result.
-     * Composite signatures are left to the complete native-interface stage. */
-    const char *start = strchr(host->type, ',');
-    MO_ASSERT(start != NULL && start[1] == ' ');
-    start += 2;
-    const char *end = strchr(start, ')');
-    MO_ASSERT(end != NULL && end[1] == '\0');
-    size_t length = (size_t)(end - start);
-    char *name = allocate(p, length + 1, 1, 1);
-    if (name == NULL)
-        return (struct value){0};
-    memcpy(name, start, length);
-    name[length] = '\0';
-    struct term *text = native(p, name, 0);
-    struct value argument = text == NULL
-                                ? (struct value){0}
-                                : infer_as(p, args->children[0], text, MO_CODE_ARGUMENT_TYPE);
-    if (argument.type == NULL)
-        return argument;
-    struct value out = graph(
-        p, (struct value){.type = native(p, "Unit", 0), .never = receiver.never || argument.never},
-        2);
-    if (out.type != NULL) {
-        out.graph->output.native = host->qualified;
-        out.graph->output.receiver = 0; /* operand slot until graph finalization */
-        out.graph->operands[0] = receiver.note;
-        out.graph->operands[1] = argument.note;
-    }
-    return out;
 }
 
 static MO_MUST_USE struct value condition(struct inference *p, const struct mo_syntax *node,
@@ -2298,7 +2298,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             if (data != NULL)
                 return construct(p, data, node->children[1], expected);
         }
-        return call(p, infer(p, node->children[0], NULL), node->children[1]);
+        return call(p, infer(p, node->children[0], NULL), node->children[1], NULL);
     }
     case MO_S_POSITION:
         return position(p, infer(p, node->children[0], NULL), node->children[1]);
@@ -2344,17 +2344,20 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             if (step->kind == MO_S_POSITION)
                 v = position(p, v, step->children[0]);
             else if (step->kind == MO_S_CALL)
-                v = call(p, v, step->children[0]);
-            else if (p->checked && step->kind == MO_S_FIELD_ACCESS &&
-                     named(v.type, host_signatures[HOST_CONSOLE_PRINT].module) &&
-                     compare_text(step->children[0], host_signatures[HOST_CONSOLE_PRINT].name) ==
-                         0 &&
-                     i + 1 < node->count && node->children[i + 1]->kind == MO_S_CALL) {
-                step = node->children[++i];
-                v = console_print(p, v, step->children[0]);
-            } else if (step->kind == MO_S_FIELD_ACCESS)
-                v = field_value(p, v, step->children[0]);
-            else {
+                v = call(p, v, step->children[0], NULL);
+            else if (step->kind == MO_S_FIELD_ACCESS) {
+                const struct mo_native_signature *native =
+                    root(v.type)->variable || root(v.type)->shape.module != UINT32_MAX
+                        ? NULL
+                        : native_definition(p, root(v.type)->shape.name, step->children[0]);
+                if (native != NULL) {
+                    const struct mo_syntax *args = NULL;
+                    if (i + 1 < node->count && node->children[i + 1]->kind == MO_S_CALL)
+                        args = node->children[++i]->children[0];
+                    v = call(p, native_identifier(p, native), args, &v);
+                } else
+                    v = field_value(p, v, step->children[0]);
+            } else {
                 bool reported = unfinished(p);
                 (void)reported;
                 return (struct value){0};
