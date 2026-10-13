@@ -427,9 +427,10 @@ Every stage reports into one structure: a stable code (`E0412`), a headline in
 the reference's words, a reason, the section the reason cites, a primary span
 with a label, secondary spans with labels, and fixes (D223). The reason is one
 sentence that says why, citing the rule's section, as appendix A's "Mo never
-drops a failure silently (reference 8.3)." Only the codes of limits, which cite
-no section, may have none. A fix is one or more text edits, applied together or
-not at all, each against the original text, so they don't overlap; a
+drops a failure silently (reference 8.3)." Implementation codes for compiler
+bugs, resource limits and unfinished forms may cite no section. A fix is one
+or more text edits, applied together or not at all, each against the original
+text, so they don't overlap; a
 diagnostic's fixes are alternatives. `src/tools` renders it
 as the text of reference appendix A, or as JSON for `mo check --json`. Codes
 are registered in one table, `src/base/codes.h`, with the reference section
@@ -437,6 +438,10 @@ each cites. A code is never reused for a different meaning. Diagnostics are
 sorted by position. A stage that reports an error passes nothing it can't
 vouch for to the next, so one mistake doesn't cascade. `mo fix` applies a
 diagnostic's fix when it has exactly one (reference appendix A).
+
+New implementation codes use blocks per stream: front end (check/lower)
+E1100–E1199, code generation E1200–E1299, bytecode/heap/VM E1300–E1399,
+and tools E1400–E1499. Existing codes keep their numbers.
 
 ## 4. Mo Core
 
@@ -807,6 +812,14 @@ crash. A tail call reuses its frame, so tail calls never grow the stack
   `FILE`, including the anchors, as `mo check` does, then runs its `main`
   with the arguments after the file name. The image it runs is the one the
   anchors ran in. Its spec code is there, but `main` can't reach it.
+  Bytecode has no entry field: the tool knows the entry module from loading
+  source and finds `<Module>.main` by full name in the function table.
+  Lowering always produces that name. `mo_compile` requires Core's entry to
+  exist, be an ordinary function, and have a unique full name in the image
+  (from compiler metadata, or `module + "." + name` for `noSource`).
+  It accepts other entry names for Core tools and differential tests.
+  Core's checker establishes the first-match ordinary entry; E1200 reports a
+  lowering bug if any other function, before or after it, has the same full name.
 - **`mo test`** runs every example, every test, and every promise against
   generated inputs, or those that `--only` and `--in` choose by the names of
   `bytecode.md` section 3.5. `--list` prints the names, and `--json` gives
@@ -1050,22 +1063,35 @@ instead of giving a verdict. C must refuse these mismatches promptly; C
 regressions cover them, but they are outside the runnable differential corpus.
 No Lean rule is changed to accommodate this resource limitation.
 
-**Core code generation, first slice.** `mo_compile` rechecks the complete Core
+**Core code generation, staged slices.** `mo_compile` rechecks the complete Core
 document, then writes through `mo_bytecode_write`. Failure appends a diagnostic
 and leaves output empty; success owns its bytes independently of Core. E1055
 means an unfinished compiler form, not a source error; E1056 means scratch or
 allocation exhaustion; E1057 means compiler-produced bytecode was refused.
 Registers, instructions and format limits use E1013, E1014 and E1015.
+E1200 means the ordinary entry's full runtime name is not unique; arbitrary
+entry names are otherwise accepted. E1201 means a permanent representation
+exclusion from source lowering, not an unfinished feature or a resource limit.
 
-This slice compiles immediate scalar literals, variables, lets, direct calls
-(tail calls in every tail position), if, stop, and nonempty choices with empty
-or single small immediate payloads, including Option, Result, Ordering and
-EntryKind. It retains all five Core function kinds. Reference values and borrow
-inference, closures, globals/init, aggregates, primitives/host operations, fail,
-joins and reuse remain for subsequent slices. All fifteen existing sample
-fixtures are attempted in CI but still explicitly unsupported; generated
-programs within the slice must all compile, never merely refuse consistently.
-Writer structural checks apply now; its verifier applies when stream 3 lands.
+The first slice compiles immediate scalar literals, variables, lets, direct
+calls, if, stop, and choices with small immediate payloads. The second adds
+Text and Bytes literals, Text/Bytes/BigInt references, borrow inference,
+tuples of at least two elements and projections, multi-field/boxed and recursive
+choices, Range make/start/end, and spec fail. Option, Result, Ordering and
+EntryKind retain separate instantiated types. It retains all five Core
+function kinds and direct tail calls in every tail position it supports.
+Closures/application, globals/init, collections, other primitives/host operations,
+BigInt decimal literals, joins and reuse remain for subsequent slices. The
+sample fixtures and Core fuzz corpora are attempted in CI; unfinished forms,
+permanently excluded representations, entry-name collisions, resource limits
+and invalid compiler inputs are counted separately. E1201 inputs are skipped
+from compiler outcome comparisons, not passed off as compilations. Core's
+checker differential continues testing them against Lean's broader language.
+Compiler-produced invalid bytecode still fails the corpus check.
+Generated programs within the slices must all compile, never merely refuse
+consistently.
+The writer structurally checks and fully verifies every compiled file.
+Writer refusals are classified by their error kind, never by reason text.
 Outcome comparison with Lean waits for the VM.
 
 Core declaration order is bytecode function order, preserving call and spec
@@ -1073,37 +1099,80 @@ link indices. First-match function/data/parameter lookup agrees with Core.
 Every data declaration uses a nominal choice, including one-constructor
 declarations; an empty name on its single field means an unnamed field.
 Builtin instantiations have separate nominal identities from user types of
-the same printable name. Names/strings and constants use deterministic first
-use. Source-less function names are module + "." + Core name; module order is
-first function use, with no invented exports. Source metadata supplies full
-names, module order/exports, file remapping, declaration and expression spans,
+the same printable name. Instantiated names use Mo's type spelling, including
+tuple arguments such as `Option((Int, Text))`, within `MO_LIMIT_STRING_SIZE`.
+Names/strings and constants use deterministic first use. Source-less function
+names are module + "." + Core name; module order is first function use, with no
+invented exports. Source metadata supplies full names, module order/exports,
+file remapping, declaration and expression spans,
 original binder names/ranges, spec text/links/expectations/condition lines.
 Absent expression spans clear attribution, not inherit the previous span.
 
-The first allocator assigns distinct monotonically numbered temporaries and
-binders; it does not yet recycle registers. It initializes immediate
-temporaries before control splits so incoming definition/ownership states
-agree. Stop reasons are borrowed immortal Text constants, never owned values.
-Single-field default cases share one initialized helper per field type.
-These extra instructions/registers obey the same explicit limits. Register
-names run from the binder's write through its body (parameters through the
-function), not through temporary initialization.
+Borrow inference builds ownership dependencies between parameters, aliases,
+merge results and call arguments. Returns, constructed fields, projections
+and call results require owners. Tail calls add argument-to-parameter edges
+as well as parameter-to-argument edges. A queue propagates each owned slot
+once, including across recursive calls; non-function kinds always own their
+reference parameters. This is conservative across merged aliases. Consuming
+operands get separate duplicates, even when two operands denote the same
+variable. Temporary owners are dropped after use; binders live through their
+lexical scope, and remaining owners are dropped before returns/tail calls.
+Stop and fail abandon the frame through the outcome path, not normal cleanup.
 
-Preparation and emission visit each expression once. Ordered AVL indices for
-strings, constants, declarations, lexical names and per-type constructors
+The allocator still assigns monotonically numbered temporaries and binders;
+recycling remains for a later slice. It initializes immediate and scalar
+constant slots before control splits so incoming states agree; aggregate
+references stay undefined until written, never receive invented inhabitants.
+Tail branches support references. Reconverging branches support stable
+literal/variable results but refuse path-local owners with E1055, including
+owned nested merges or consumed reference call arguments. Dropping those
+owners alone would leave `moved` versus `undefined` states at the join.
+The allocator must normalize those states before lifting this staged refusal.
+Register names run from the binder's write through its body (parameters
+through the function), not through temporary initialization.
+
+Preparation, inference and emission take a bounded number of walks. Ordered
+AVL indices for strings, constants, declarations, lexical names and per-type constructors
 give logarithmic lookup; case emission never searches a declaration by a long
 type name. Recursion follows the checked Core depth bound; wide lists/arms
 are iterative. `MO_LIMIT_CODEGEN_SCRATCH_SIZE` is 512 bytes per permitted Core
-node (512 MiB), separate from checking and text parsing. The register-boundary
-test compiles a 65,533-case choice with a two-million-byte name at 65,535
-registers and refuses one more case with E1013.
+node (512 MiB), separate from checking and text parsing. Ownership slots/edges
+have explicit node-proportional limits in `limits.h`. Cleanup walks only live
+owners. Tail-arm owner restoration costs no more than the cleanup emitted by
+those arms; reconverging arms never copy or scan the full register table.
+Emission stops at instruction/register limits, even when cleanup expands code.
+The allocator counts basic blocks as it emits transfers and checks
+`MO_LIMIT_FUNCTION_REGISTER_BLOCKS` both when starting a block and when adding
+a register. E1015 names that limit before the writer runs. Register recycling
+and function splitting are not implemented yet, so this slice refuses a
+function that would cross the bound rather than emitting it for verification.
+The register-boundary test compiles a 65,533-element tuple at 65,535 registers
+and refuses one more element with E1013. Its one basic block keeps the test
+independent of verification's registers × blocks bound. A separate case/tail-call
+test loads a file one slot below that product bound and checks the compiler's
+own E1015 refusal just above it.
 
-Some valid Core has no direct encoding in the current bytecode contract:
-empty choices, duplicate constructor names, undeclared data types and
-zero/one-element tuples. Empty/NUL-containing names also need a naming policy.
-The first slice explicitly refuses these, rather than inventing inhabitants,
-merging identities or changing Lean rules. Their complete representation is
-still open for the later compiler slices.
+Source lowering has a narrower representation contract than Lean's typed
+Core. The following forms are permanently refused with E1201 and a precise
+reason, including in unused declarations or discarded tuple expressions.
+They require no bytecode or type-builder extension. Mo's grammar prevents
+empty enums and tuples with fewer than two elements; source checking and
+lowering prevent the other forms. The Core checker still follows Lean and
+does not reject a well-typed program merely for using one of these forms:
+
+- **Empty choices and undeclared data types:** neither is produced by lowering.
+  Do not insert dummy constructors, invent nominal declarations or alias Unit.
+- **Duplicate constructor names:** never discard later constructors or remap
+  their arms. Source checking requires unique labels within each declaration.
+- **Zero/one-element tuples:** never erase tuple identity into Unit or the sole
+  element. Tuples of at least two elements keep their arity and projections.
+- **Empty/NUL-containing names:** declarations and lexical binders require
+  nonempty, NUL-free names. Do not escape, rename or truncate them to fit the
+  runtime. Compiler metadata already requires nonempty NUL-free display/file/module
+  names. Text/Bytes payloads and stop messages still permit empty strings and NUL.
+- **Empty or duplicate field labels:** named fields must have nonempty,
+  NUL-free, unique labels. The one empty label on a single field denotes an
+  unnamed field and remains valid; it is not a named-field exception.
 
 ```c
 /* src/base/diag.h: diagnostics, rendered as text or JSON by src/tools. */
