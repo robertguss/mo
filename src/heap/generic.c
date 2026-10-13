@@ -35,7 +35,7 @@ struct mo_cell mo_value_child(const struct mo_types *types, uint32_t type, struc
         MO_ASSERT(a->object.layout < types->layout_count);
         *child_type = types->layouts[a->object.layout].fields[index];
     }
-    return a->cells[index];
+    return a->cells[(kind->kind == MO_TYPE_LIST ? a->start : 0) + index];
 }
 
 static MO_MUST_USE bool compound(enum mo_type_kind kind) {

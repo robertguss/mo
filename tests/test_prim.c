@@ -773,6 +773,39 @@ static void vm_builder_work(uint32_t iterations) {
     mo_image_free(image);
 }
 
+/* A million single-holder uncons steps distinguish advancing a view from
+ * moving the retained suffix on every drop. The CI work gate bounds time. */
+static void list_drop_work(void) {
+    struct prim_fixture f;
+    prim_fixture_init(&f, MO_DEFAULT_HEAP_SIZE);
+    uint32_t type = f.types.items[f.signature[MO_PRIM_LIST_DROP]].result;
+    struct mo_cell list;
+    MO_ASSERT(mo_value_list(f.heap, type, NULL, 0, &list));
+    for (uint32_t i = 0; i < 1000000; i++)
+        MO_ASSERT(mo_list_append(f.heap, type, &list, mo_cell_int(i)));
+    struct timespec start, end;
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+    int64_t sum = 0;
+    for (uint32_t i = 0; i < 1000000; i++) {
+        struct mo_cell first;
+        MO_ASSERT(mo_list_get(list, 0, &first));
+        sum += mo_cell_get_int(first);
+        struct mo_cell args[] = {list, mo_cell_int(1)}, out;
+        const char *reason;
+        MO_ASSERT(mo_prim_call(f.heap, &f.types, MO_PRIM_LIST_DROP, f.signature[MO_PRIM_LIST_DROP],
+                               args, &out, &reason) == MO_PRIM_RETURNED);
+        list = out;
+    }
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &end) == 0);
+    CHECK(sum == INT64_C(499999500000) && mo_list_size(list) == 0);
+    double seconds =
+        (double)(end.tv_sec - start.tv_sec) + (double)(end.tv_nsec - start.tv_nsec) / 1e9;
+    MO_ASSERT(printf("Single-holder List uncons (1000000 steps): %.6f s\n", seconds) > 0);
+    mo_value_drop(f.heap, type, list);
+    CHECK(mo_heap_objects(f.heap) == 0);
+    prim_fixture_free(&f);
+}
+
 /* These sizes distinguish constant-amortized updates from repeated copies.
  * ci/check_primitives.py times them together with the compiled VM builder. */
 static void reuse_work(void) {
@@ -997,6 +1030,7 @@ int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--work") == 0) {
         reuse_work();
         vm_builder_work(30000);
+        list_drop_work();
         primitive_work();
         return mo_test_report("primitive work");
     }
@@ -1008,6 +1042,10 @@ int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--vm-builder-work") == 0) {
         vm_builder_work(100000);
         return mo_test_report("compiled VM builder work");
+    }
+    if (argc == 2 && strcmp(argv[1], "--list-drop-work") == 0) {
+        list_drop_work();
+        return mo_test_report("single-holder List uncons work");
     }
     MO_ASSERT(argc == 1);
     empty_constants_and_rounding();

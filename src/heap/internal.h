@@ -18,10 +18,11 @@ struct mo_allocation {
     uint64_t hash;
     uint32_t type;
     uint32_t length;
+    uint32_t start; /* List's live window; zero for other layouts. */
     bool hash_valid;
     bool deep_immortal;
     bool preparing;
-    uint8_t padding[5];
+    uint8_t padding[1];
     struct mo_object object;
     struct mo_cell cells[];
 };
