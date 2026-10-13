@@ -511,10 +511,6 @@ static void test_limits(void) {
     if (core != NULL) {
         MO_ASSERT(mo_core_check(core, &f.diags));
         run(core, 253);
-        struct mo_buffer printed;
-        mo_buffer_init(&printed, MO_LIMIT_CORE_TEXT_SIZE);
-        CHECK(!mo_core_print(core, &printed)); /* Codec depth must not gate compilation. */
-        mo_buffer_free(&printed);
     }
     mo_diags_free(&f.diags);
     MO_ASSERT(mo_diags_init(&f.diags));
@@ -576,9 +572,9 @@ static void test_ignored_parameters(void) {
 }
 
 static void test_substituted_depth(void) {
-    /* Substitution deepens this generic result without deepening its template. */
-    const uint32_t depths[] = {MO_LIMIT_CORE_DEPTH - 16, MO_LIMIT_CORE_DEPTH - 3,
-                               MO_LIMIT_CORE_DEPTH - 1};
+    /* Source type walks retain their bound even when Core permits longer paths. */
+    const uint32_t depths[] = {MO_LIMIT_SOURCE_TYPE_DEPTH - 16, MO_LIMIT_SOURCE_TYPE_DEPTH - 3,
+                               MO_LIMIT_SOURCE_TYPE_DEPTH + 1};
     for (size_t index = 0; index < sizeof depths / sizeof depths[0]; index++) {
         uint32_t depth = depths[index];
         struct lower_fixture f;
@@ -606,8 +602,8 @@ static void test_substituted_depth(void) {
         f.functions[1].parameters = parameters;
         f.functions[1].body.root = lower_fixture_row(&f, MO_S_LIST, &result, NULL, 0, NULL);
         f.functions[1].body.count = 1;
-        struct mo_source_type types[MO_LIMIT_CORE_DEPTH + 1];
-        const struct mo_source_type *parts[MO_LIMIT_CORE_DEPTH];
+        struct mo_source_type types[MO_LIMIT_SOURCE_TYPE_DEPTH + 3];
+        const struct mo_source_type *parts[MO_LIMIT_SOURCE_TYPE_DEPTH + 2];
         types[0] = f.int_;
         for (uint32_t i = 1; i <= depth + 1; i++) {
             parts[i - 1] = &types[i - 1];
@@ -709,17 +705,20 @@ static void test_source(void *unused) {
     for (uint32_t statements = MO_LIMIT_CORE_DEPTH - 8; statements <= MO_LIMIT_CORE_DEPTH;
          statements++) {
         mo_buffer_clear(&source);
-        MO_ASSERT(mo_buffer_append_text(&source, "module Main\nfn main() : Int\nvar n = 0\n"));
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\nfn count() : Int\nvar n = 0\n"));
         for (uint32_t i = 0; i < statements; i++)
             MO_ASSERT(mo_buffer_append_text(&source, "n += 1\n"));
-        MO_ASSERT(mo_buffer_append_text(&source, "n\nend\n"));
+        MO_ASSERT(mo_buffer_append_text(&source, "n\nend\nfn main() : Int\ncount() % 255\nend\n"));
         mo_arena_init(&output, MO_LIMIT_LOWER_WORK);
         MO_ASSERT(mo_diags_init(&diags));
         core = source_core(&output, &source, &diags);
         if (statements < MO_LIMIT_CORE_DEPTH - 2) {
             CHECK(core != NULL && !mo_diags_any(&diags));
-            if (core != NULL)
-                run(core, statements);
+            if (core != NULL) {
+                run(core, statements % 255);
+                mo_buffer_clear(&printed);
+                CHECK(!mo_core_print(core, &printed)); /* Codec wrappers consume extra depth. */
+            }
         } else {
             CHECK(core == NULL && diags.count == 1);
             CHECK(diags.items[0].code == MO_CODE_LOWER_DEPTH);
