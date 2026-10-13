@@ -122,6 +122,11 @@
  * E1105. A shared subtree keeps its height, not just its first traversal depth. */
 #define MO_LIMIT_SOURCE_TYPE_DEPTH 256
 
+/* Edges on an ability implementation path, including nominal field layouts.
+ * These are not nested type arguments. E1108 bounds proof construction and
+ * callback-dependency walks independently of type height. */
+#define MO_LIMIT_SOURCE_ABILITY_DEPTH 4096
+
 /* Each source nesting can retain the precedence ladder (implies, or, and, not,
  * comparison/is, range, sum, product, negate, postfix) and statement/sequence
  * wrappers. Sixteen frames per level plus the function wrappers bound inference

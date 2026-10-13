@@ -219,6 +219,7 @@ static void corpus(void) {
         {"e0081.mo", "e0081.diag", SIGNATURES},
         {"e0082.mo", "e0082.diag", SIGNATURES},
         {"e0083.mo", "e0083.diag", PROGRAM},
+        {"e0084.mo", "e0084.diag", SIGNATURES},
         {"e0412.mo", "e0412.diag", BODIES},
         {"e1103.mo", "e1103.diag", BODIES},
     };
@@ -446,7 +447,7 @@ static void confined_files(void) {
     CHECK(f.sources.count == 1 && strcmp(f.sources.files[0].path, entry) == 0);
     finish(&f);
     MO_ASSERT(unlink(linked) == 0);
-    MO_ASSERT(symlink("/dev/stdin", linked) == 0);
+    MO_ASSERT(symlink("/dev/null", linked) == 0);
     init(&f, 16 << 20);
     CHECK(mo_load_program(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_OUTSIDE_ROOT);

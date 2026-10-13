@@ -109,6 +109,7 @@
     X(81, ABILITY_REQUIREMENT, "5.5")                                                              \
     X(82, ABILITY_CUSTOMIZER, "9.2")                                                               \
     X(83, POLYMORPHIC_RECURSION, "5.5")                                                            \
+    X(84, DATA_RECURSION, "9.1")                                                                   \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \
@@ -216,6 +217,8 @@
     X(1106, CHECK_SYNTAX_DEPTH, NULL)                                                              \
     /* Inference across bodies exceeds MO_LIMIT_PROGRAM_CHECK_WORK. */                             \
     X(1107, CHECK_PROGRAM_WORK, NULL)                                                              \
+    /* A nominal ability graph exceeds MO_LIMIT_SOURCE_ABILITY_DEPTH. */                           \
+    X(1108, CHECK_ABILITY_DEPTH, NULL)                                                             \
     /* A checked form not yet implemented by lowering. */                                          \
     X(1150, LOWER_UNFINISHED, NULL)                                                                \
     /* The caller's lowering arena has no room. */                                                 \

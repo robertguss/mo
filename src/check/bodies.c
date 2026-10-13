@@ -4,6 +4,7 @@
 #include "check/data.h"
 #include "check/native.h"
 #include "check/patterns.h"
+#include "check/signatures.h"
 
 #include "base/codes.h"
 #include "base/limits.h"
@@ -144,7 +145,7 @@ struct inference {
     uint32_t pattern_group, pattern_depth, lambda_count;
     bool checked;
     bool keep_patterns;
-    bool failed, fatal, partial;
+    bool failed, fatal, partial, unavailable;
 };
 
 struct value {
@@ -235,6 +236,8 @@ static void defer(struct inference *p, uint16_t code, struct mo_span span, const
 }
 
 static void emit_problem(struct inference *p) {
+    if (p->unavailable && p->error.code == 0)
+        return; /* The declaration already has its own diagnostic. */
     MO_ASSERT(p->error.code != 0);
     struct mo_span span = p->error.primary.span;
     struct mo_edit edit = {{span.file, span.start, span.start}, "_"};
@@ -524,8 +527,18 @@ static MO_MUST_USE bool unify(struct inference *p, struct term *a, struct term *
                                          : a->numeric & b->numeric;
     if (a->numeric != 0 && b->numeric != 0 && numeric == 0)
         return mismatch(p, a, b);
-    if ((!a->variable && numeric != 0 && (number_type(a) & numeric) == 0) ||
-        (!b->variable && numeric != 0 && (number_type(b) & numeric) == 0))
+    bool a_number = (numeric & (INT | BIG | DECIMAL | FLOAT)) == (INT | BIG | DECIMAL | FLOAT) &&
+                    a->shape.kind == MO_SOURCE_PARAMETER &&
+                    a->shape.declaration == p->function->function &&
+                    (p->function->requirements[(unsigned)(a->shape.name[0] - 'A')] &
+                     (1u << MO_SOURCE_NUMBER)) != 0;
+    bool b_number = (numeric & (INT | BIG | DECIMAL | FLOAT)) == (INT | BIG | DECIMAL | FLOAT) &&
+                    b->shape.kind == MO_SOURCE_PARAMETER &&
+                    b->shape.declaration == p->function->function &&
+                    (p->function->requirements[(unsigned)(b->shape.name[0] - 'A')] &
+                     (1u << MO_SOURCE_NUMBER)) != 0;
+    if ((!a->variable && numeric != 0 && !a_number && (number_type(a) & numeric) == 0) ||
+        (!b->variable && numeric != 0 && !b_number && (number_type(b) & numeric) == 0))
         return mismatch(p, a, b);
     if (a->variable && !b->variable) {
         struct term *swap = a;
@@ -571,6 +584,10 @@ static MO_MUST_USE bool unify_as(struct inference *p, struct term *found, struct
 
 static MO_MUST_USE struct term *annotation(struct inference *p, const struct mo_source_type *type,
                                            struct term **parameters, uint32_t depth) {
+    if (depth == 0 && !mo_signature_type_available(p->signatures, type)) {
+        p->failed = p->fatal = p->unavailable = true;
+        return NULL;
+    }
     if (!type_depth(p, depth))
         return NULL;
     if (parameters == NULL || !type->parameters) {
@@ -815,6 +832,20 @@ find_symbol(const struct mo_module_scope *scope, const struct mo_syntax *name, u
 
 static MO_MUST_USE const struct mo_data_signature *data_type(struct inference *p,
                                                              const struct mo_symbol *symbol) {
+    if (p->signatures->recovering &&
+        (symbol->declaration->kind == MO_S_STRUCT || symbol->declaration->kind == MO_S_CASE_DECL ||
+         symbol->declaration->kind == MO_S_ENUM)) {
+        const struct mo_symbol *owner =
+            symbol->owner == UINT32_MAX
+                ? symbol
+                : &p->interfaces->scopes[symbol->module].symbols[symbol->owner];
+        const struct mo_nominal_signature *nominal =
+            mo_nominal_signature_by_symbol(p->signatures, owner);
+        if (nominal == NULL || nominal->invalid) {
+            p->failed = p->fatal = p->unavailable = true;
+            return NULL;
+        }
+    }
     uint32_t lo = 0, hi = p->signatures->data_count;
     while (lo < hi) {
         uint32_t mid = lo + (hi - lo) / 2;
@@ -877,7 +908,8 @@ static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
             lo < scope->alias_count && compare_text(prefix, scope->aliases[lo].name) == 0
                 ? &p->interfaces->scopes[scope->aliases[lo].module]
                 : NULL;
-        for (uint32_t i = 0; target == NULL && i < p->interfaces->count; i++) {
+        bool implicit = mo_source_builtin(prefix->text, prefix->span.end - prefix->span.start);
+        for (uint32_t i = 0; implicit && target == NULL && i < p->interfaces->count; i++) {
             if (!work(p))
                 return NULL;
             const struct mo_module_scope *library = &p->interfaces->scopes[i];
@@ -1015,6 +1047,11 @@ static MO_MUST_USE struct value declared_function(struct inference *p, const str
     }
     MO_ASSERT(lo < p->signatures->count && p->signatures->items[lo].function == s);
     const struct mo_function_signature *signature = &p->signatures->items[lo];
+    if (signature->type == NULL) {
+        MO_ASSERT(p->signatures->recovering);
+        p->failed = p->fatal = p->unavailable = true;
+        return (struct value){0};
+    }
     struct value out = function_value(p, signature->type, signature->requirements);
     out.symbol = s;
     return out;
@@ -1135,7 +1172,10 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
     }
     if (s->declaration->kind == MO_S_STRUCT || s->declaration->kind == MO_S_CASE_DECL) {
         const struct mo_data_signature *data = data_type(p, s);
-        MO_ASSERT(data != NULL);
+        if (data == NULL) {
+            MO_ASSERT(p->unavailable);
+            return (struct value){0};
+        }
         if (!visible_data(p, data->type->declaration))
             return (struct value){0};
         if (data->count == 0) {
@@ -3474,12 +3514,9 @@ static MO_MUST_USE bool data_requirements(struct inference *p,
     if (arguments->count == 0)
         return true;
     const struct mo_symbol *owner = arguments->items[0].parameter->declaration;
-    for (uint32_t i = 0; i < p->signatures->data_count; i++) {
-        if (!work(p))
-            return false;
-        if (p->signatures->data[i].type->declaration == owner)
-            needed |= p->signatures->data[i].key_parameters;
-    }
+    const struct mo_nominal_signature *data = mo_nominal_signature_by_symbol(p->signatures, owner);
+    if (data != NULL)
+        needed = data->key_parameters;
     if (needed == 0)
         return true;
     uint32_t length = 0;

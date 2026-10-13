@@ -5,12 +5,15 @@
 #include "check/check.h"
 
 struct mo_ability_cache;
+struct mo_ability_pointer;
 struct mo_ability_context {
     struct mo_arena *arena;
     const struct mo_module_interfaces *interfaces;
     const struct mo_signatures *signatures;
     uint32_t *work;
-    struct mo_ability_cache *cache;
+    struct mo_ability_cache **cache;
+    struct mo_ability_pointer *pointers;
+    uint32_t capacity, count;
     uint16_t error;
     const char *message, *reason;
 };
