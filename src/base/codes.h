@@ -216,6 +216,10 @@
     X(1150, LOWER_UNFINISHED, NULL)                                                                \
     /* The caller's lowering arena has no room. */                                                 \
     X(1151, LOWER_NO_MEMORY, NULL)                                                                 \
+    /* Lowering exceeds MO_LIMIT_LOWER_WORK or MO_LIMIT_CORE_NODES. */                             \
+    X(1152, LOWER_WORK, NULL)                                                                      \
+    /* The generated Core tree exceeds MO_LIMIT_CORE_DEPTH. */                                     \
+    X(1153, LOWER_DEPTH, NULL)                                                                     \
     /* The ordinary entry's full runtime name is not unique in the image. */                       \
     X(1200, CODEGEN_ENTRY, NULL)                                                                   \
     /* Core uses a representation that source lowering never produces: a lowering bug. */          \

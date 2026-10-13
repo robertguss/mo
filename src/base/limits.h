@@ -138,6 +138,12 @@
  * A hostile program cannot multiply the per-function budget by its functions. */
 #define MO_LIMIT_PROGRAM_CHECK_WORK (UINT64_C(1) << 28)
 
+/* Lowering charges allocation bytes and algorithm steps to this shared budget,
+ * independently of the caller arena (E1152). Emitted Core nodes are bounded by
+ * MO_LIMIT_CORE_NODES; paths by MO_LIMIT_CORE_DEPTH (E1153). Generic discovery
+ * also retains MO_LIMIT_INSTANTIATION_DEPTH (E1012). */
+#define MO_LIMIT_LOWER_WORK (UINT64_C(1) << 28)
+
 /* Reserved POSIX stack for source-stage execution, not an input restriction.
  * Tests and fuzzing use base/stack.h; source tools will do so when connected. */
 #define MO_SOURCE_STACK_SIZE (48 << 20)
