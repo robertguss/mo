@@ -196,6 +196,243 @@ static void native_graph(void) {
         CHECK(trim && count && abs && min);
     }
     free_fixture(&f);
+    init(&f, "module Main\nfn main() : Int\nset = Set.empty.add(4)\n"
+             "if set.has?(4): [1, 2, 3].sum else: 0\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        bool empty = false, sum = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->native == NULL)
+                continue;
+            if (strcmp(row->native, "Set.empty") == 0) {
+                CHECK(strcmp(row->type->name, "Set") == 0 && row->operand_count == 0);
+                CHECK(row->arguments.count == 1 && row->ability_count == 2);
+                empty = true;
+            } else if (strcmp(row->native, "List.sum") == 0) {
+                CHECK(strcmp(row->type->name, "Int") == 0);
+                CHECK(row->ability_count == 1 &&
+                      row->abilities[0].implementation->ability == MO_SOURCE_NUMBER);
+                sum = true;
+            }
+        }
+        CHECK(empty && sum);
+    }
+    free_fixture(&f);
+}
+
+static void entry_record(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn describe(entry: Entry) : Text\n"
+             "case entry\nEntry(kind: File, name: name): name\n"
+             "Entry(name: _): entry.name\nend\nend\n"
+             "fn main() : Int\nentry = Entry(kind: File, name: \"notes\")\n"
+             "describe(entry).byte_count\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        bool match = false, field = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->match != NULL) {
+                const struct mo_checked_pattern *pattern = row->match->arms[0].patterns[0];
+                CHECK(strcmp(pattern->constructor.builtin, "Entry") == 0);
+                MO_ASSERT(pattern->part_count == 2);
+                CHECK(strcmp(pattern->parts[0].pattern->type->name, "Text") == 0);
+                CHECK(strcmp(pattern->parts[1].pattern->type->name, "EntryKind") == 0);
+                CHECK(strcmp(pattern->parts[1].pattern->constructor.builtin, "File") == 0);
+                match = true;
+            }
+            if (row->native != NULL && strcmp(row->native, "Entry.name") == 0) {
+                CHECK(row->field == 0 && row->operand_count == 1);
+                field = true;
+            }
+        }
+        CHECK(match && field);
+    }
+    free_fixture(&f);
+}
+
+static void ability_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nstruct Pair\nfirst: Int\nsecond: Text\nend\n"
+             "fn permitted(_keys: Set(Pair), _ints: Set(Int))\nend\n"
+             "fn main() : Int\na = Pair(first: 1, second: \"a\")\n"
+             "b = Pair(first: 2, second: \"b\")\nif a < b: 7 else: 9\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[1].body;
+        bool ordered = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->operation != MO_T_LT)
+                continue;
+            MO_ASSERT(row->ability_count == 1);
+            const struct mo_ability_implementation *proof = row->abilities[0].implementation;
+            CHECK(proof->kind == MO_ABILITY_DERIVED && proof->ability == MO_SOURCE_ORDER);
+            MO_ASSERT(proof->part_count == 2);
+            CHECK(strcmp(proof->parts[0]->type->name, "Int") == 0);
+            CHECK(strcmp(proof->parts[1]->type->name, "Text") == 0);
+            ordered = true;
+        }
+        CHECK(ordered);
+    }
+    free_fixture(&f);
+}
+
+static void generic_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn add(a: T, b: T) : T where T: Number\na + b\nend\n"
+             "fn main() : Int\nadd(3, 4)\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *generic = &f.program->functions[0].body;
+        bool abstract = false, instantiated = false;
+        const struct mo_source_type *parameter =
+            f.program->functions[0].signature->type->arguments[0];
+        for (uint32_t i = 0; i < generic->count; i++) {
+            const struct mo_checked_expression *row = &generic->items[i];
+            if (row->operation != MO_T_PLUS)
+                continue;
+            MO_ASSERT(row->ability_count == 1);
+            CHECK(row->abilities[0].implementation->kind == MO_ABILITY_PARAMETER);
+            CHECK(row->abilities[0].implementation->type == parameter);
+            abstract = true;
+        }
+        const struct mo_checked_body *body = &f.program->functions[1].body;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->syntax->kind != MO_S_CALL)
+                continue;
+            MO_ASSERT(row->arguments.count == 1 && row->ability_count == 1);
+            CHECK(row->arguments.items[0].parameter == parameter);
+            CHECK(strcmp(row->arguments.items[0].type->name, "Int") == 0);
+            CHECK(row->abilities[0].operand == UINT32_MAX);
+            CHECK(row->abilities[0].parameter == parameter);
+            CHECK(row->abilities[0].implementation->ability == MO_SOURCE_NUMBER);
+            CHECK(row->abilities[0].implementation->kind == MO_ABILITY_NATIVE);
+            instantiated = true;
+        }
+        CHECK(abstract && instantiated);
+    }
+    free_fixture(&f);
+    init(&f, "module Main\nfn same(value: T, again?: Bool) : T\n"
+             "if again?: same(value, false) else: value\nend\n"
+             "fn main() : Int\nsame(7, true)\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    free_fixture(&f);
+    init(&f, "module Main\nfn a(value: T)\nb([value])\nend\n"
+             "fn b(_value: U)\na(0)\nend\nfn main()\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    free_fixture(&f);
+    init(&f, "module Main\nstruct Box(T)\nvalue: T\nend\n"
+             "fn compare(a: Box(T), b: Box(T)) : Ordering where T: Order\n"
+             "if a.value < b.value: Less else: Greater\nend\n"
+             "fn main() : Int\nif Box(value: 1) < Box(value: 2): 3 else: 4\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_source_type *parameter =
+            f.program->functions[0].signature->type->arguments[0]->arguments[0];
+        const struct mo_checked_body *body = &f.program->functions[1].body;
+        bool customized = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->operation != MO_T_LT)
+                continue;
+            MO_ASSERT(row->ability_count == 1);
+            const struct mo_ability_implementation *proof = row->abilities[0].implementation;
+            CHECK(proof->kind == MO_ABILITY_FUNCTION);
+            CHECK(proof->function == f.program->functions[0].signature->function);
+            MO_ASSERT(proof->arguments.count == 1 && proof->part_count == 2);
+            CHECK(proof->arguments.items[0].parameter == parameter);
+            CHECK(proof->part_parameters[0] == parameter && proof->part_parameters[1] == parameter);
+            CHECK(proof->parts[0]->ability == MO_SOURCE_EQUAL &&
+                  proof->parts[1]->ability == MO_SOURCE_ORDER);
+            CHECK(strcmp(proof->parts[0]->type->name, "Int") == 0 &&
+                  strcmp(proof->parts[1]->type->name, "Int") == 0);
+            customized = true;
+        }
+        CHECK(customized);
+    }
+    free_fixture(&f);
+}
+
+static void requirement_keys(void) {
+    struct fixture f;
+    init(&f, "module Main\nstruct Bag(T)\nvalues: Set(T)\nend\n"
+             "fn same(a: A, b: B) : Bool where A: Equal, B: Equal\na == a and b == b\nend\n"
+             "fn main() : Int\nbag = Bag(values: Set.empty.add(1))\ncase bag\n"
+             "Bag(values: _): if same(1, 2): 3 else: 4\nend\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_source_type *a = f.program->functions[0].signature->type->arguments[0];
+        const struct mo_source_type *b = f.program->functions[0].signature->type->arguments[1];
+        const struct mo_checked_body *body = &f.program->functions[1].body;
+        bool called = false, constructed = false, patterned = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->symbol == f.program->functions[0].signature->function &&
+                row->syntax->kind == MO_S_CALL) {
+                MO_ASSERT(row->ability_count == 2);
+                CHECK(row->abilities[0].parameter == a && row->abilities[1].parameter == b);
+                CHECK(row->abilities[0].operand == UINT32_MAX &&
+                      row->abilities[1].operand == UINT32_MAX);
+                CHECK(row->abilities[0].implementation == row->abilities[1].implementation);
+                called = true;
+            }
+            if (row->symbol != NULL && strcmp(row->symbol->name, "Bag") == 0) {
+                MO_ASSERT(row->ability_count == 2 && row->arguments.count == 1);
+                CHECK(row->abilities[0].parameter == row->arguments.items[0].parameter);
+                CHECK(row->abilities[1].parameter == row->arguments.items[0].parameter);
+                constructed = true;
+            }
+            if (row->match != NULL) {
+                const struct mo_checked_pattern *pattern = row->match->arms[0].patterns[0];
+                MO_ASSERT(pattern->ability_count == 2 && pattern->arguments.count == 1);
+                CHECK(pattern->abilities[0].parameter == pattern->arguments.items[0].parameter);
+                CHECK(pattern->abilities[1].parameter == pattern->arguments.items[0].parameter);
+                CHECK(pattern->abilities[1].implementation->ability == MO_SOURCE_HASH);
+                patterned = true;
+            }
+        }
+        CHECK(called && constructed && patterned);
+    }
+    free_fixture(&f);
+    init(&f, "module Main\nstruct Box(T)\nvalue: T\nend\n"
+             "fn to_text(_box: Box(T)) : Text where T: Text\n\"box\"\nend\n"
+             "fn supported?(_value: T) : Bool where T: Text\ntrue\nend\n"
+             "fn main() : Int\nif supported?(Box(value: Box(value: 1))): 1 else: 0\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[2].body;
+        bool nested = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->syntax->kind != MO_S_CALL ||
+                row->symbol != f.program->functions[1].signature->function)
+                continue;
+            MO_ASSERT(row->ability_count == 1);
+            const struct mo_ability_implementation *outer = row->abilities[0].implementation;
+            MO_ASSERT(outer->part_count == 1 && outer->parts[0]->part_count == 1);
+            const struct mo_ability_implementation *inner = outer->parts[0];
+            CHECK(outer->kind == MO_ABILITY_FUNCTION && inner->kind == MO_ABILITY_FUNCTION);
+            CHECK(outer->function == f.program->functions[0].signature->function);
+            CHECK(outer->part_parameters[0] == outer->arguments.items[0].parameter);
+            CHECK(inner->part_parameters[0] == inner->arguments.items[0].parameter);
+            CHECK(inner->parts[0]->ability == MO_SOURCE_TEXT &&
+                  strcmp(inner->parts[0]->type->name, "Int") == 0);
+            nested = true;
+        }
+        CHECK(nested);
+    }
+    free_fixture(&f);
+    init(&f, "module Main\nstruct Tree(T)\nchildren: List(Tree(List(T)))\nend\n"
+             "struct Phantom(T)\nvalue: Int\nend\n"
+             "fn accepts(_key: Map(Phantom(Float), Int), _tree: Tree(Int))\nend\n"
+             "fn main()\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    free_fixture(&f);
 }
 
 static void lambda_graph(void) {
@@ -641,27 +878,32 @@ static void rejected_stages(void) {
     } cases[] = {
         {"fn helper()\nend\n", MO_CODE_MAIN_CONTRACT},
         {"fn helper(x: Int) : Int where T: Bogus\nx\nend\nfn main()\nend\n",
-         MO_CODE_CHECK_UNFINISHED},
-        {"fn main() : Int where Q: Equal\n0\nend\n", MO_CODE_CHECK_UNFINISHED},
-        {"fn main() : Int where Int: Number\n0\nend\n", MO_CODE_CHECK_UNFINISHED},
-        {"fn helper(_x: Set(Float))\nend\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
-        {"fn helper(_x: Map(Float, Int))\nend\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
-        {"fn helper(_x: Set(fn(Int) : Int))\nend\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
-        {"fn helper(_x: Map(Console, Int))\nend\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
+         MO_CODE_ABILITY_REQUIREMENT},
+        {"fn main() : Int where Q: Equal\n0\nend\n", MO_CODE_ABILITY_REQUIREMENT},
+        {"fn main() : Int where Int: Number\n0\nend\n", MO_CODE_ABILITY_REQUIREMENT},
+        {"fn helper(_x: Set(Float))\nend\nfn main()\nend\n", MO_CODE_ABILITY_MISSING},
+        {"fn helper(_x: Map(Float, Int))\nend\nfn main()\nend\n", MO_CODE_ABILITY_MISSING},
+        {"fn helper(_x: Set(fn(Int) : Int))\nend\nfn main()\nend\n", MO_CODE_ABILITY_MISSING},
+        {"fn helper(_x: Map(Console, Int))\nend\nfn main()\nend\n", MO_CODE_ABILITY_MISSING},
         {"struct P\nx: Float\nend\nfn helper(_x: Map(P, Int))\nend\nfn main()\nend\n",
-         MO_CODE_CHECK_UNFINISHED},
-        {"struct P\nm: Map(Float, Int)\nend\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
-        {"enum E\nValue(Map(Float, Int))\nend\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
+         MO_CODE_ABILITY_MISSING},
+        {"struct Bag(T)\nvalues: Set(T)\nend\nfn helper(_x: Bag(Float))\nend\nfn main()\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"struct Bag(T)\nvalues: Set(T)\nend\nfn helper(_x: Bag(T)) : Bool where T: Text\n"
+         "true\nend\nfn main() : Int\nif helper(Bag(values: Set.empty.add(\"a\".bytes))): "
+         "1 else: 0\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"struct P\nm: Map(Float, Int)\nend\nfn main()\nend\n", MO_CODE_ABILITY_MISSING},
+        {"enum E\nValue(Map(Float, Int))\nend\nfn main()\nend\n", MO_CODE_ABILITY_MISSING},
         {"fn helper() : Set(Float)\nstop \"no set\"\nend\nfn main()\nend\n",
-         MO_CODE_CHECK_UNFINISHED},
-        {"fn helper(_x: List((Int, Set(Float))))\nend\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
+         MO_CODE_ABILITY_MISSING},
+        {"fn helper(_x: List((Int, Set(Float))))\nend\nfn main()\nend\n", MO_CODE_ABILITY_MISSING},
         {"fn helper(_f: fn(Map(Float, Int)) : Int)\nend\nfn main()\nend\n",
-         MO_CODE_CHECK_UNFINISHED},
-        {"fn helper(_x: Set(Int))\nend\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
+         MO_CODE_ABILITY_MISSING},
         {"struct P\nx: Int\nend\nfn compare(_a: P, _b: P) : Int\n0\nend\nfn main()\nend\n",
-         MO_CODE_CHECK_UNFINISHED},
+         MO_CODE_ABILITY_CUSTOMIZER},
         {"struct P\nx: Int\nend\nfn to_text(_p: P) : Int\n0\nend\nfn main()\nend\n",
-         MO_CODE_CHECK_UNFINISHED},
+         MO_CODE_ABILITY_CUSTOMIZER},
         {"fn main() : Text\n\"not an entry result\"\nend\n", MO_CODE_MAIN_CONTRACT},
         {"fn main(value: Int) : Int\nvalue\nend\n", MO_CODE_MAIN_CONTRACT},
         {"fn main(a: Console, b: Console)\na.print(\"a\")\nb.print(\"b\")\nend\n",
@@ -673,7 +915,9 @@ static void rejected_stages(void) {
         {"fn main() : Result(Int, FileError)\nstop \"bad result\"\nend\n", MO_CODE_MAIN_CONTRACT},
         {"fn main() : Int\n0\nend\nfn main(console: Console)\nconsole.print(\"x\")\nend\n",
          MO_CODE_OVERLOAD},
-        {"fn identity(value: T) : T\nvalue\nend\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn grow(value: T)\ngrow([value])\nend\nfn main()\nend\n", MO_CODE_POLYMORPHIC_RECURSION},
+        {"fn a(value: T)\nb([value])\nend\nfn b(value: U)\na(value)\nend\nfn main()\nend\n",
+         MO_CODE_POLYMORPHIC_RECURSION},
         {"fn main() : Int\nx = 1\nf = fn() x end\nf()\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Int\nm = {\"a\": 1}\ncase m\n_: 1\nend\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Int\ntry Some(1)\nend\n", MO_CODE_CHECK_UNFINISHED},
@@ -777,6 +1021,10 @@ static void run(void *argument) {
     entry_graph();
     console_graph();
     native_graph();
+    entry_record();
+    ability_graph();
+    generic_graph();
+    requirement_keys();
     lambda_graph();
     branch_graph();
     record_graph();

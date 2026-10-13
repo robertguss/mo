@@ -443,6 +443,13 @@ module symbols. Static native calls retain a callee row; dot calls retain
 their receiver and arguments without a callee row. Spec-only host operations
 remain refused until the spec/capability stage exists.
 
+Collection annotations impose implicit Hash requirements, including through
+generic record and choice fields. Preparation computes parameter-dependency
+masks to a fixed point over nominal declarations, without expanding recursive
+layouts. Ability checking validates each declared field and instantiated
+requirement. A phantom parameter does not acquire an ability its fields do not
+need. This walk and signature requirements share the program work budget.
+
 **Local inference is a second intermediate result.** `mo_infer_function`
 checks one named body against prepared signatures, returning postorder
 expression metadata: types, local binder or module symbol, and whether all
@@ -583,10 +590,12 @@ some names by type:
   function can't reach itself again at a bigger type, which is called
   polymorphic recursion: it would need infinitely many copies. The rule is
   checked over each group of generic functions that call each other, directly,
-  through other functions, or through anonymous functions. Within such a group, every
-  call to a member must pass type arguments that are the caller's own type
-  parameters, never types built from them, such as `List(T)`. Breaking it is
-  an error whose message names the calls in the cycle (reference 5.5). As a
+  through other functions, anonymous functions, function values or ability
+  customizers. An explicit-stack component walk follows scoped parameter
+  dependencies. A constructed argument such as `List(T)` is refused when its
+  dependency lies on a cycle: the same parameter can keep growing. Parameter
+  permutations and concrete resets remain finite and are allowed. Breaking it
+  is an error naming the responsible call in the cycle (reference 5.5). As a
   second line of defense, lowering stops with a diagnostic if instantiation
   ever nests deeper than a limit.
 
@@ -2091,18 +2100,19 @@ input to lowering. Its
 may change while checking is completed. `mo_check` is an implemented walking
 skeleton: it prepares interfaces and signatures and shares inference's walk to
 emit typed graphs, rather than running a second name/type checker. It currently
-certifies nongeneric functions, scalar expressions and native scalar operator
-proofs, direct/indirect calls, record/choice construction and fields, normalized
+certifies generic functions and their keyed requirement proofs, scalar
+expressions and native/derived/custom operator proofs, direct/indirect calls,
+prepared native calls, record/choice construction and fields, normalized
 patterns, tuples/lists, conditionals, loops, early exits/asserts and noncapturing
 lambdas. `main` returns Unit or Int and
 takes no parameters or one Console. Direct `Console.print` reads its operation
 and named input type from `base/hostops.def`, with the receiver explicit.
-Native method values, other host operations, generic functions, map expressions,
-imports, constants/specs and derived abilities
-still report E1103. Any `where` clause and any declared `compare` or `to_text`
-customizer are refused until ability checking exists, even on nongeneric
-functions. Written Map/Set types are refused in every annotation, including
-unused declarations and nested fields, until Hash requirements are checked.
+Unresolved dot dispatch, overload selection, Mo library calls, map expressions,
+imports and constants/specs still report E1103. `where` validates scoped
+parameters and the five abilities; customizers must have their declaring
+type's Text/Ordering signature. Written Map/Set types check Hash in every
+annotation, including unused declarations and nested fields. `Set.empty` is
+a polymorphic constant, not a zero-argument function.
 Invalid entry signatures report E0079: parameters must be capabilities without
 duplicate types, and the result must be Unit, Int or Result(Unit, E). Valid
 unfinished entry conventions still report E1103. Checking stops at the first
@@ -2124,6 +2134,13 @@ use. The selected ability implementation is native, derived, a declaring-module
 custom function, or an abstract requirement resolved during monomorphization.
 Types remain shared DAGs; ability graphs can be recursive through nominal
 data. Lowering memoizes them rather than expanding them.
+Type-only requirement uses name the callee's scoped parameter and ability,
+not merely the actual type: two distinct parameters can instantiate to Int.
+Every generic function value, call, constructor and pattern retains these
+keys. FUNCTION proof parts carry customizer requirements with parallel scoped
+`part_parameters` keys, including for the entry's error-text proof. DERIVED
+choice parts flatten fields in case/field declaration order; empty cases add
+none. Hash/Order signatures include implied Equal requirements explicitly.
 
 The graph's operand conventions are part of the contract. Sequence operands
 are statement roots in order, with the last value or Unit for an empty block.
