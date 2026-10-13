@@ -52,11 +52,19 @@ static void oracle(void) {
             }
             MO_ASSERT(mo_buffer_append_byte(&bytes, (uint8_t)value));
         }
+        uint64_t width;
+        MO_ASSERT(mo_unicode16_display_width(bytes.bytes, bytes.length, &width));
         struct mo_cell input, out;
         MO_ASSERT(mo_value_text(f.heap, (const char *)bytes.bytes, bytes.length, &input));
         mo_buffer_free(&bytes);
         enum mo_primitive_id id = operation(line[0]);
         const char *reason;
+        /* Compare every UCD input, including casing and normalization inputs,
+         * before an owned operation consumes its Text. */
+        MO_ASSERT(mo_prim_call(f.heap, &f.types, MO_PRIM_UNICODE16_DISPLAY_WIDTH,
+                               f.signature[MO_PRIM_UNICODE16_DISPLAY_WIDTH], &input, &out,
+                               &reason) == MO_PRIM_RETURNED);
+        MO_ASSERT(reason == NULL && (uint64_t)mo_cell_get_int(out) == width);
         MO_ASSERT(mo_prim_call(f.heap, &f.types, id, f.signature[id], &input, &out, &reason) ==
                   MO_PRIM_RETURNED);
         MO_ASSERT(reason == NULL);
@@ -181,6 +189,10 @@ static void widths(void) {
         {"\xc2\xa1", 1},
     };
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        uint64_t width;
+        MO_ASSERT(mo_unicode16_display_width((const uint8_t *)cases[i].text, strlen(cases[i].text),
+                                             &width));
+        CHECK(width == (uint64_t)cases[i].width);
         struct mo_cell input, out;
         MO_ASSERT(mo_value_text(f.heap, cases[i].text, strlen(cases[i].text), &input));
         const char *reason;
@@ -191,6 +203,46 @@ static void widths(void) {
         mo_value_drop(f.heap, f.builtin[MO_TYPE_TEXT], input);
     }
     prim_fixture_free(&f);
+}
+
+static void width_bytes(void) {
+    const struct {
+        const char *bytes;
+        size_t length;
+        bool valid;
+        uint64_t width;
+    } cases[] = {
+        {NULL, 0, true, 0},
+        {"a\0b", 3, true, 3},
+        {"\xc2\x80", 2, true, 1},
+        {"\xe0\xa0\x80", 3, true, 1},
+        {"\xed\x9f\xbf", 3, true, 1},
+        {"\xee\x80\x80", 3, true, 1},
+        {"\xf0\x90\x80\x80", 4, true, 1},
+        {"\xf4\x8f\xbf\xbf", 4, true, 1},
+        {"a\xc0\x80", 3, false, 0},
+        {"\x80", 1, false, 0},
+        {"\xc2", 1, false, 0},
+        {"\xc2\x7f", 2, false, 0},
+        {"\xe0\x9f\xbf", 3, false, 0},
+        {"\xe0\xa0", 2, false, 0},
+        {"\xe0\xa0\x7f", 3, false, 0},
+        {"\xed\xa0\x80", 3, false, 0},
+        {"\xed\xbf\xbf", 3, false, 0},
+        {"\xf0\x8f\xbf\xbf", 4, false, 0},
+        {"\xf0\x90\x80", 3, false, 0},
+        {"\xf0\x90\x80\x7f", 4, false, 0},
+        {"\xf4\x90\x80\x80", 4, false, 0},
+        {"\xf5\x80\x80\x80", 4, false, 0},
+        {"\xff", 1, false, 0},
+        {"\xe4\xb8\xad\xcc", 4, false, 0},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        uint64_t width = 41;
+        CHECK(mo_unicode16_display_width((const uint8_t *)cases[i].bytes, cases[i].length,
+                                         &width) == cases[i].valid);
+        CHECK(width == (cases[i].valid ? cases[i].width : 41));
+    }
 }
 
 static void refusal(void) {
@@ -272,6 +324,9 @@ static void work(void) {
     const size_t count = 131072;
     for (size_t i = 0; i < count; i++)
         MO_ASSERT(mo_buffer_append(&text, "\xf0\x9f\x87\xa6", 4));
+    uint64_t width;
+    MO_ASSERT(mo_unicode16_display_width(text.bytes, text.length, &width));
+    CHECK(width == count);
     struct mo_cell input, out;
     MO_ASSERT(mo_value_text(f.heap, (const char *)text.bytes, text.length, &input));
     const char *reason;
@@ -292,6 +347,8 @@ static void work(void) {
         MO_ASSERT(mo_buffer_append(&text, "\xcc\x95", 2));
     for (size_t i = 0; i < count; i++)
         MO_ASSERT(mo_buffer_append(&text, "\xcc\x80", 2));
+    MO_ASSERT(mo_unicode16_display_width(text.bytes, text.length, &width));
+    CHECK(width == 1);
     MO_ASSERT(mo_value_text(f.heap, (const char *)text.bytes, text.length, &input));
     MO_ASSERT(mo_prim_call(f.heap, &f.types, MO_PRIM_UNICODE16_NORMALIZE_NFC,
                            f.signature[MO_PRIM_UNICODE16_NORMALIZE_NFC], &input, &out,
@@ -336,6 +393,7 @@ int main(int argc, char **argv) {
     graphemes();
     mappings();
     widths();
+    width_bytes();
     refusal();
     large_results();
     return mo_test_report("Unicode16");
