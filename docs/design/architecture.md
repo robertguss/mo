@@ -1068,8 +1068,11 @@ inference results to lowering. `run`, `test` (including `--list`), `format`,
 E1400, "this build cannot ... yet", without reading or rewriting files.
 E1400 is the tools' unavailable-stage code, not a language error. Source work
 runs synchronously through `mo_with_stack` with `MO_SOURCE_STACK_SIZE`, covering
-loading and parsing as well as every checking stage. The callback joins before
-rendering or freeing its borrowed arenas and diagnostics. It changes no
+loading, parsing and every checking stage in one pipeline callback. Lowering,
+Core checking and code generation must also be wired inside that callback, not
+after it returns: their accepted depths need more than a default C stack.
+The callback joins before rendering or freeing its borrowed arenas and
+diagnostics. It changes no
 process-wide resource limits and follows changes to the shared stack allowance.
 Failure to prepare that stack reports E1401 with an unavailable location and
 the POSIX error as its label, in either text or JSON, and exits 1.
