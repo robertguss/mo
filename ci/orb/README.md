@@ -9,7 +9,7 @@ script every agent runs before pushing.
 
 From an implementation thread: push the branch, open the pull request, then send
 the CI orb's thread ("Mo CI orb",
-https://ampcode.com/threads/T-01a12c75-2065-769a-bed4-8687b915c8db) a message
+https://ampcode.com/threads/T-01a13551-abe5-760e-bcf3-90e87c4466a1) a message
 with `send_thread_message`:
 
 > Run CI on robertguss/mo pull request #N, and reply to <your thread ID>.
