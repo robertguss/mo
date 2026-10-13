@@ -8,13 +8,13 @@ expose Store, Command(..), Reply(..), ParseError(..), empty_store, parse, apply
 ## The longest expiry EXPIRE accepts, in seconds: about 100 years.
 max_expiry = 3_153_600_000
 
-struct Entry
+struct Item
   value: Text
   expires: Option(Time)
 end
 
 struct Store
-  entries: Map(Text, Entry)
+  entries: Map(Text, Item)
 end
 
 enum Command
@@ -92,7 +92,7 @@ fn apply(store: Store, command: Command, now: Time) : (Store, Reply)
 
   live = without_expired(store, now)
   case command
-    Put(key: key, value: value): (put(live, key, Entry(value: value, expires: None)), Okay)
+    Put(key: key, value: value): (put(live, key, Item(value: value, expires: None)), Okay)
     Get(key: key):
       case live.entries.get(key)
         Some(entry): (live, Value(entry.value))
@@ -117,7 +117,7 @@ fn increment(store: Store, key: Text) : (Store, Reply)
     increment(holding("n", "9223372036854775807", None), "n").1 == Failure(message: "the increment would overflow")
   end
 
-  entry = store.entries.get(key) or Entry(value: "0", expires: None)
+  entry = store.entries.get(key) or Item(value: "0", expires: None)
   case entry.value.to_int
     None: (store, Failure(message: "the value is not an integer"))
     Some(n):
@@ -166,7 +166,7 @@ fn without_expired(store: Store, now: Time) : Store
   kept
 end
 
-fn put(store: Store, key: Text, entry: Entry) : Store
+fn put(store: Store, key: Text, entry: Item) : Store
   Store(entries: store.entries.set(key, entry))
 end
 
@@ -196,7 +196,7 @@ end
 t0 = Time.parse("2026-10-12T09:00:00Z") or stop "the time is written correctly"
 
 fn holding(key: Text, value: Text, expires: Option(Time)) : Store
-  Store(entries: {key: Entry(value: value, expires: expires)})
+  Store(entries: {key: Item(value: value, expires: expires)})
 end
 
 test "a key expires after its time"
