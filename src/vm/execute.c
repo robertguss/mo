@@ -89,6 +89,11 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             write(p, f, a[0], value, borrowed);
             break;
         }
+        case MO_OP_CLEAR:
+            MO_ASSERT(a[0] < fn->register_count);
+            MO_ASSERT(mo_vm_states(p, f)[a[0]] != VM_OWNED && mo_vm_states(p, f)[a[0]] != VM_TOKEN);
+            mo_vm_states(p, f)[a[0]] = VM_UNDEFINED;
+            break;
         case MO_OP_DUP:
             value = mo_value_dup(p->heap, fn->register_types[a[1]], read(p, f, a[1]));
             write(p, f, a[0], value, false);

@@ -887,6 +887,10 @@ corresponding C operations are integrated they stop with an internal
 "dispatch unavailable" reason, leaving all registers untouched. C-only
 instruction budgets bound fuzz execution, including initialization loops;
 they are disabled for normal execution and are not language resource limits.
+The differential runner distinguishes these internal stops from Mo's `stop`
+detail, counts primitive/host fixtures separately from matched outcomes and
+pins both pending counts. Integration moves those fixtures into comparison
+and lowers the corresponding count to zero; every other mismatch fails.
 
 ## 7. Capabilities and host operations
 

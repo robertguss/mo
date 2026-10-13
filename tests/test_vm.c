@@ -1315,6 +1315,48 @@ static MO_MUST_USE struct mo_image *assemble(const char *source) {
     return image;
 }
 
+static void test_clear(void) {
+    struct mo_image *image =
+        assemble("bytecode 0.1 shorthand\nmodule M exposes [M.clear]\n"
+                 "function M.clear(x: Text borrowed, n: Int owned) : Unit function in M\n"
+                 " registers [r2: Text, r3: Int, r4: Text, r5: Text]\n"
+                 " variables [(r0, \"cleared\", @start, @end),"
+                 " (r1, \"cleared\", @start, @end), (r2, \"cleared\", @start, @end),"
+                 " (r3, \"cleared\", @start, @end), (r4, \"cleared\", @start, @end),"
+                 " (r5, \"reason\", @start, @end)]\n"
+                 " @start:\n move r2, r0\n clear r2\n clear r1\n dup r4, r0\n"
+                 " drop r4\n clear r4\n clear r3\n const r3, 17\n clear r3\n"
+                 " clear r0\n const r5, \"clear stop\"\n stop r5\n @end:\nend\n");
+    if (image == NULL)
+        return;
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    CHECK(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    struct mo_process *p = mo_process_new(image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_heap *heap = mo_process_heap(p);
+    struct mo_cell args[] = {mo_cell_unit(), mo_cell_int(-19)}, result;
+    MO_ASSERT(mo_value_text(heap, "borrowed", 8, &args[0]));
+    size_t used = mo_heap_used(heap);
+    CHECK(mo_call(p, 0, args, 2, &result, &defect) == MO_STOPPED);
+    CHECK(strcmp(defect.reason, "stop") == 0);
+    CHECK(mo_heap_used(heap) == used && mo_cell_get_ref(args[0])->count == 1);
+    bool readable[6];
+    struct mo_load_error error;
+    CHECK(mo_image_registers_readable(image, 0, defect.frames->pc, readable, &error));
+    for (unsigned i = 0; i < 6; i++)
+        CHECK(readable[i] == (i == 5));
+    struct mo_buffer report;
+    mo_buffer_init(&report, 1024);
+    CHECK(mo_render_defect(p, &defect, &report) && mo_buffer_append_byte(&report, 0));
+    CHECK(strstr((const char *)report.bytes, "cleared") == NULL);
+    CHECK(strstr((const char *)report.bytes, "  reason = \"clear stop\"\n") != NULL);
+    mo_buffer_free(&report);
+    mo_value_drop(heap, mo_image_bytecode(image)->functions[0].register_types[0], args[0]);
+    mo_process_free(p);
+    mo_image_free(image);
+}
+
 static void test_bounded_report(void) {
     struct mo_image *image =
         assemble("bytecode 0.1 shorthand\nmodule M exposes [M.loop]\n"
@@ -1811,7 +1853,7 @@ static void test_initialization_memory(void) {
 /* Differential driver: execute compiler output, with no interpreter internals.
  * Input is a checked zero-argument Program; the Python runner supplies wrappers
  * for fixture entries. A staged compiler refusal is distinct from an outcome. */
-static MO_MUST_USE int core_run(const char *path) {
+static MO_MUST_USE int core_run(const char *path, const char *test) {
     struct mo_sources sources;
     struct mo_source_error source_error;
     uint32_t file;
@@ -1839,8 +1881,10 @@ static MO_MUST_USE int core_run(const char *path) {
         uint32_t function = MO_NO_INDEX;
         for (size_t i = 0; i < core->funs.count; i++) {
             mo_core_string name = core->funs.items[i].name;
-            if (name.length == core->entry.length &&
-                memcmp(name.bytes, core->entry.bytes, name.length) == 0) {
+            mo_core_string target =
+                test == NULL ? core->entry : (mo_core_string){test, strlen(test)};
+            if (name.length == target.length &&
+                memcmp(name.bytes, target.bytes, name.length) == 0) {
                 function = (uint32_t)i;
                 break;
             }
@@ -1872,7 +1916,14 @@ static MO_MUST_USE int core_run(const char *path) {
                 MO_ASSERT(mo_value_print(mo_process_heap(p), type, result, &text));
             mo_value_drop(mo_process_heap(p), type, result);
         } else {
-            MO_ASSERT(puts(outcome == MO_FAILED ? "failed" : "stopped") >= 0);
+            const char *kind = outcome == MO_FAILED ? "failed" : "stopped";
+            if (outcome == MO_STOPPED && !defect.has_detail) {
+                if (strcmp(defect.reason, "internal error: primitive dispatch unavailable") == 0)
+                    kind = "needs primitive dispatch";
+                else if (strcmp(defect.reason, "internal error: host dispatch unavailable") == 0)
+                    kind = "needs host dispatch";
+            }
+            MO_ASSERT(puts(kind) >= 0);
             if (defect.has_detail) {
                 size_t n;
                 const uint8_t *bytes = mo_value_data(defect.detail, &n);
@@ -2034,7 +2085,9 @@ static MO_MUST_USE int structure_driver(void) {
 
 int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "--core") == 0)
-        return core_run(argv[2]);
+        return core_run(argv[2], NULL);
+    if (argc == 4 && strcmp(argv[1], "--core-test") == 0)
+        return core_run(argv[2], argv[3]);
     if (argc == 2 && strcmp(argv[1], "--decimal") == 0)
         return decimal_driver();
     if (argc == 2 && strcmp(argv[1], "--operations") == 0)
@@ -2052,6 +2105,7 @@ int main(int argc, char **argv) {
     test_defects();
     test_borrowing();
     test_scratch_and_fuel();
+    test_clear();
     test_bounded_report();
     test_report_buffers();
     test_report_chars();

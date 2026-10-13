@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Execute supported compiler output and compare outcomes with the Lean model.
+"""Execute compiler output and compare outcomes with the Lean model.
 
-The 15 original Core fixtures currently refuse in codegen; count them honestly.
-Generated zero-argument wrappers exercise the supported forms through
-parse, check, compile, write, load, initialize and call, under each C toolchain.
+Count compiler refusals and unavailable primitive/host dispatch separately,
+never as matched outcomes. Pin the staging counts until those slices integrate.
+Zero-argument wrappers and test selections run through parse, check, compile,
+write, load, initialize and call, under each C toolchain.
 """
 
 import pathlib
@@ -20,17 +21,24 @@ from fractions import Fraction
 from check_codegen import closure_program, expression, global_program, reference_tail
 from check_core_check import VERSION, WORLD, parse, wire, program
 
+NEEDS_DISPATCH = {"needs primitive dispatch": 2, "needs host dispatch": 1}
+CODEGEN_UNSUPPORTED = 15
 
-def run(driver, path):
-    result = subprocess.run([driver, "--core", str(path)], capture_output=True, text=True, timeout=15)
+
+def run(driver, path, test=None):
+    args = [driver, "--core", str(path)] if test is None else [driver, "--core-test", str(path), test]
+    result = subprocess.run(args, capture_output=True, text=True, timeout=15)
     if result.returncode == 77:
         return None
     assert result.returncode == 0, (driver, path, result.stderr)
     return result.stdout.rstrip("\n").split("\n", 1)
 
 
-def oracle(path, world):
-    result = subprocess.run(["formal/.lake/build/bin/mocore", str(path), str(world), "--fuel", "10000"],
+def oracle(path, world, test=None):
+    args = ["formal/.lake/build/bin/mocore", str(path), str(world), "--fuel", "10000"]
+    if test is not None:
+        args += ["--test", test]
+    result = subprocess.run(args,
                             capture_output=True, text=True, timeout=15)
     assert result.returncode in (0, 1, 2), (path, result.stdout, result.stderr)
     report = parse(result.stdout)[2]
@@ -281,19 +289,50 @@ def main():
             path = root / f"literal-{i}.core"
             path.write_text(f'(core {VERSION} (Program () ((FunDecl "entry" () ({ty}) (lit ({literal})) "M" (function) 0)) () "entry" (noSource)))\n')
             generated.append(path)
-        expectations = {path: oracle(path, world) for path in generated}
+        # These compile on main but await dispatch. Keep them in the same runner
+        # so integration moves their exact Lean outcomes into the compared set.
+        for name, ret, body in [
+                ("text-concat", "(text)", '(prim (text (concat)) ((lit (text "left")) (lit (text "right"))))'),
+                ("list-literal", "(list (int))", '(prim (list (int) (lit 2)) ((lit (int -17)) (lit (int 31))))')]:
+            path = root / f"dispatch-{name}.core"
+            path.write_text(f'(core {VERSION} (Program () ((FunDecl "entry" () {ret} {body} "M" (function) 0)) () "entry" (noSource)))\n')
+            generated.append(path)
+        tests = {}
+        path = root / "dispatch-clock.core"
+        path.write_text(f'''(core {VERSION} (Program () (
+          (FunDecl "entry" () (unit) (lit (unit)) "M" (function) 0)
+          (FunDecl "clock" () (unit)
+            (let_ "clock" (prim (io (clockFixed)) ((lit (time 17))))
+              (let_ "time" (prim (io (now)) ((var "clock"))) (lit (unit))))
+            "M" (test) 0)) () "entry" (noSource)))\n''')
+        tests[path] = "clock"
+        generated.append(path)
+        # A program stop may spell an internal reason; it is still a Mo stop.
+        for name in ["primitive", "host"]:
+            path = root / f"stop-{name}.core"
+            path.write_text(f'(core {VERSION} (Program () ((FunDecl "entry" () (unit) (stop "internal error: {name} dispatch unavailable") "M" (function) 0)) () "entry" (noSource)))\n')
+            generated.append(path)
+        expectations = {path: oracle(path, world, tests.get(path)) for path in generated}
         for driver in drivers:
             matched = unsupported = 0
+            pending = dict.fromkeys(NEEDS_DISPATCH, 0)
             for path in fixtures + generated:
-                got = run(driver, path)
+                got = run(driver, path, tests.get(path))
                 if got is None:
                     assert path in fixtures, ("supported generated program refused", path)
                     unsupported += 1
                     continue
+                if got[0] in pending:
+                    pending[got[0]] += 1
+                    continue
                 expected = expectations.get(path) or oracle(path, world)
                 assert got == expected, (driver, path.read_text(), expected, got)
                 matched += 1
+            assert unsupported == CODEGEN_UNSUPPORTED, (driver, unsupported, CODEGEN_UNSUPPORTED)
+            assert pending == NEEDS_DISPATCH, (driver, pending, NEEDS_DISPATCH)
             print(f"vm differential: {driver}: {matched} outcomes match mocore; {unsupported} fixtures explicitly unsupported by codegen")
+            for label, count in pending.items():
+                print(f"vm differential: {driver}: {label}: {count}")
 
 
 if __name__ == "__main__":
