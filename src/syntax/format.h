@@ -18,8 +18,10 @@ struct mo_format_options {
 
 /* Prints a complete, successfully parsed tree into an emptied buffer. On
  * memory/output/depth refusal the buffer is empty and false is returned.
- * WIDTH needs no source storage. SOURCE_PROTOTYPE requires the original
- * sources. Neither policy changes the tree or the sources. */
+ * Sources provisionally supply blank-line trivia for both policies until
+ * that metadata lands in the tree. WIDTH otherwise chooses breaks from the
+ * tree; SOURCE_PROTOTYPE also reads intra-statement gaps. Neither changes
+ * the tree or the sources. Without sources, optional blank lines are lost. */
 MO_MUST_USE bool mo_format(const struct mo_module_syntax *module, const struct mo_sources *sources,
                            struct mo_format_options options, struct mo_buffer *output);
 

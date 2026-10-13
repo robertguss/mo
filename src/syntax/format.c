@@ -7,7 +7,8 @@
 
 struct printer {
     struct mo_document doc;
-    const struct mo_source *source; /* only the source-break prototype */
+    const struct mo_source *source; /* provisional blank-line trivia */
+    enum mo_format_policy policy;
     uint32_t depth;
 };
 
@@ -60,6 +61,14 @@ static void comments(struct printer *f, const struct mo_syntax_comment *c, bool 
         previous = c->span.end;
         first = false;
     }
+}
+
+/* A scope can own a comment on its opening line as well as after its
+ * closing token. Those have the same attachment, but distinct spans. */
+static void trailing(struct printer *f, const struct mo_syntax *n, bool header) {
+    for (const struct mo_syntax_comment *c = n->trailing; c != NULL; c = c->next)
+        if ((c->span.start < n->span.end) == header)
+            mo_doc_add(&f->doc, MO_DOC_COMMENT, c->text, c->span.end - c->span.start, false);
 }
 
 static uint32_t first(const struct mo_syntax *n) {
@@ -167,15 +176,15 @@ static uint32_t operator_at(struct printer *f, uint32_t start, uint32_t end, con
 }
 
 static void binary_step(struct printer *f, const struct mo_syntax *left,
-                        const struct mo_syntax *operator, enum mo_syntax_token t,
+                        const struct mo_syntax *operator_node, enum mo_syntax_token t,
                         const struct mo_syntax *right) {
     const char *word = token(t);
     unsigned space = t == MO_T_DOTDOT ? 0 : 1;
-    uint32_t at = operator!= NULL ? operator->span.start
-        : operator_at(f, left->span.end, right->span.start, word);
+    uint32_t at = operator_node != NULL ? operator_node->span.start
+                                        : operator_at(f, left->span.end, right->span.start, word);
     mo_doc_add(&f->doc, MO_DOC_SOURCE_BREAK, NULL, space, lines(f, left->span.end, at) != 0);
-    if (operator!= NULL)
-        node(f, operator);
+    if (operator_node != NULL)
+        node(f, operator_node);
     else
         text(f, word);
     soft(f, space, at, right->span.start);
@@ -209,6 +218,7 @@ static const struct mo_syntax *addition(const struct mo_syntax *n) {
 
 static void block_body(struct printer *f, const struct mo_syntax *body,
                        const struct mo_syntax *owner) {
+    trailing(f, owner, true);
     op(f, MO_DOC_LINE_IF);
     op(f, MO_DOC_NEST);
     statements(f, body, false);
@@ -303,8 +313,7 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
             node(f, spec->children[i]);
             op(f, MO_DOC_LINE_IF);
         }
-        if (body->count != 0 &&
-            (spec->count != 0 || lines(f, before, first(body->children[0])) > 1))
+        if (body->count != 0 && spec->count != 0)
             op(f, MO_DOC_BLANK);
         statements(f, body, false);
         comments(f, n->ending, false);
@@ -365,6 +374,7 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
         text(f, promise ? "promise " : "examples");
         if (promise)
             node(f, n->children[0]);
+        trailing(f, n, true);
         op(f, MO_DOC_LINE_IF);
         op(f, MO_DOC_NEST);
         statements(f, n->children[promise ? 1 : 0], false);
@@ -408,6 +418,9 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
     case MO_S_ADD_ASSIGN:
     case MO_S_SUB_ASSIGN: {
         const struct mo_syntax *rhs = addition(n);
+        /* The assignment prefix is a separate group: a block in the value
+         * must not force a break between '=' and its opening keyword. */
+        op(f, MO_DOC_GROUP);
         if (n->kind == MO_S_VAR)
             text(f, "var ");
         node(f, n->children[0]);
@@ -417,6 +430,7 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
         if (rhs == NULL)
             rhs = n->children[1];
         soft(f, 1, n->children[0]->span.end, rhs->span.start);
+        op(f, MO_DOC_END_GROUP);
         node(f, rhs);
         break;
     }
@@ -510,7 +524,8 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
         bool inline_body = body->count == 1 && body->children[0]->leading == NULL &&
                            body->children[0]->kind != MO_S_FOR &&
                            body->children[0]->kind != MO_S_WHILE &&
-                           lines(f, n->children[0]->span.end, body->children[0]->span.start) == 0;
+                           (f->policy == MO_FORMAT_WIDTH ||
+                            lines(f, n->children[0]->span.end, body->children[0]->span.start) == 0);
         if (inline_body) {
             text(f, " ");
             node(f, body->children[0]);
@@ -579,10 +594,14 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
         op(f, MO_DOC_NEST);
         uint32_t before = n->children[0]->span.end;
         for (uint32_t i = 1; i < n->count; i++) {
-            node(f, n->children[i]);
-            before = n->children[i]->span.end;
+            const struct mo_syntax *step = n->children[i];
+            comments(f, step->leading, false);
+            op(f, MO_DOC_GROUP);
+            postfix_step(f, step, before);
+            trailing(f, step, false);
+            op(f, MO_DOC_END_GROUP);
+            before = step->span.end;
         }
-        (void)before;
         op(f, MO_DOC_UNNEST);
         break;
     }
@@ -636,7 +655,7 @@ static void node(struct printer *f, const struct mo_syntax *n) {
     comments(f, n->leading, false);
     op(f, MO_DOC_GROUP);
     print_node(f, n);
-    comments(f, n->trailing, true);
+    trailing(f, n, false);
     op(f, MO_DOC_END_GROUP);
     f->depth--;
 }
@@ -647,14 +666,13 @@ bool mo_format(const struct mo_module_syntax *module, const struct mo_sources *s
     if (module == NULL || module->tree == NULL || options.width == 0 ||
         options.width > MO_LIMIT_LINE_LENGTH || options.display_width == NULL)
         return false;
-    struct printer f = {0};
+    struct printer f = {.policy = options.policy};
     mo_doc_init(&f.doc, options.display_width);
-    if (options.policy == MO_FORMAT_SOURCE_PROTOTYPE) {
-        if (sources == NULL || module->span.file >= sources->count) {
-            mo_doc_free(&f.doc);
-            return false;
-        }
+    if (sources != NULL && module->span.file < sources->count)
         f.source = &sources->files[module->span.file];
+    if (options.policy == MO_FORMAT_SOURCE_PROTOTYPE && f.source == NULL) {
+        mo_doc_free(&f.doc);
+        return false;
     }
     node(&f, module->tree);
     bool ok = mo_doc_render(&f.doc, options, output);
