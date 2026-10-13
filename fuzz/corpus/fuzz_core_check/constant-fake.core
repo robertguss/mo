@@ -1,1 +1,1 @@
-(core 0.6 (Program () ((FunDecl "main" () (unit) (lit (unit)) "Main" (function) 1)) ((ConstDecl "fake" (fn () (cap (console))) (lam () (prim (io (consoleFake)) ())))) "main" (noSource)))
+(core 0.8 (Program () ((FunDecl "main" () (unit) (lit (unit)) "Main" (function) 1)) ((ConstDecl "fake" (fn () (cap (console))) (lam () (prim (io (consoleFake)) ())))) "main" (noSource)))

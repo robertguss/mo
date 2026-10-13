@@ -1,4 +1,4 @@
-(core 0.7 (Program () (
+(core 0.8 (Program () (
   (FunDecl "start" (("b" (bool)) ("x" (text))) (int)
     (let_ "value" (if_ (var "b") (call "identity" ((var "x"))) (var "x"))
       (prim (text (charCount)) ((var "value")))) "Merge" (function) 0)

@@ -1,4 +1,4 @@
-(core 0.7 (Program () (
+(core 0.8 (Program () (
   (FunDecl "start" () (tuple ((text) (text)))
     (let_ "outer" (lit (text "survives the loop"))
       (join "loop" (("x" (text)) ("y" (text)) ("again" (bool)))
