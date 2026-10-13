@@ -31,7 +31,6 @@ enum continuation_kind {
     K_OPTION,
     K_TRY,
     K_TEXT,
-    K_EXAMPLE,
     K_PROMISE,
     K_ANCHOR
 };
@@ -47,7 +46,7 @@ struct continuation {
     const struct mo_checked_binding *binding;
     mo_core_expr_list arguments;
     struct variable *variables;
-    bool result;
+    bool result, diagnostic;
     mo_core_expr extra, then_, else_;
     mo_core_string position;
     mo_core_ty position_type;
@@ -64,6 +63,7 @@ struct task {
     mo_core_expr *out, *success, value, then_, else_;
     const struct mo_checked_pattern *pattern;
     const struct mo_checked_arm *arm;
+    bool diagnostic;
 };
 struct body {
     struct lowering *p;
@@ -973,24 +973,48 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
     lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "this checked operation is not lowered yet");
 }
 
+static mo_core_expr text_value(struct body *b, const char *value) {
+    mo_core_expr e = lower_unit(b->p);
+    e->as.lit->tag = MO_CORE_LIT_TEXT;
+    e->as.lit->as.text = lower_text(b->p, value);
+    return e;
+}
+
+static mo_core_expr text_concat(struct body *b, mo_core_expr left, mo_core_expr right) {
+    mo_core_expr_list values = arguments(b, 2);
+    values.items[0] = left;
+    values.items[1] = right;
+    return lower_prim(
+        b->p, (struct mo_core_prim){.tag = MO_CORE_PRIM_TEXT, .as.text = MO_CORE_TEXT_OP_CONCAT},
+        values);
+}
+
+/* Named netstrings retain raw structural text, including newline/NUL. Bind the
+ * observation once: its byte length and payload must describe the same value. */
+static mo_core_expr detail_field(struct body *b, const char *label, mo_core_ty type_,
+                                 mo_core_expr value) {
+    mo_core_expr e =
+        let(b, lower_fresh(b->p),
+            unary(b, (struct mo_core_prim){.tag = MO_CORE_PRIM_STRUCTURAL, .as.structural = type_},
+                  value));
+    mo_core_expr text = lower_var(b->p, e->as.let_.name);
+    mo_core_expr count = unary(
+        b, (struct mo_core_prim){.tag = MO_CORE_PRIM_TEXT, .as.text = MO_CORE_TEXT_OP_BYTE_COUNT},
+        text);
+    count =
+        unary(b, (struct mo_core_prim){.tag = MO_CORE_PRIM_INT, .as.int_ = MO_CORE_INT_OP_TO_TEXT},
+              count);
+    e->as.let_.body =
+        text_concat(b, text_concat(b, text_value(b, label), count),
+                    text_concat(b, text_value(b, ":"), text_concat(b, text, text_value(b, ","))));
+    return e;
+}
+
 static void finish_task(struct body *b, struct task t) {
     struct lowering *p = b->p;
     struct continuation *k = t.continuation;
     if (k->kind == K_END) {
         *t.out = t.value;
-        return;
-    }
-    if (k->kind == K_EXAMPLE) {
-        p->span = b->instance->spec->syntax->span;
-        mo_core_expr e = lower_expr(p, MO_CORE_EXPR_IF);
-        e->as.if_.cond = t.value;
-        e->as.if_.then_ = lower_unit(p);
-        e->as.if_.else_ = lower_expr(p, MO_CORE_EXPR_FAIL);
-        mo_core_expr detail = lower_unit(p);
-        detail->as.lit->tag = MO_CORE_LIT_TEXT;
-        detail->as.lit->as.text = lower_text(p, "example failed");
-        e->as.if_.else_->as.fail = detail;
-        *t.out = e;
         return;
     }
     if (k->kind == K_PROMISE) {
@@ -1047,14 +1071,25 @@ static void finish_task(struct body *b, struct task t) {
         return;
     }
     if (k->kind == K_PATTERN) {
+        if (k->diagnostic)
+            p->span = k->row->syntax->span;
         mo_core_expr e = let(b, lower_fresh(p), t.value);
         *t.out = e;
+        mo_core_expr *out = &e->as.let_.body;
+        if (k->diagnostic) {
+            mo_core_expr failure = lower_expr(p, MO_CORE_EXPR_FAIL);
+            failure->as.fail = detail_field(b, "input ", type(b, row(b, k->row->operands[0])->type),
+                                            lower_var(p, e->as.let_.name));
+            /* Share failures only inside the saved input's lexical scope. */
+            t.row = (uint32_t)(k->row - b->source->items);
+            k->else_ = share_target(b, t, failure, &out);
+        }
         push(b, (struct task){.kind = TASK_PATTERN,
                               .pattern = k->pattern,
                               .value = lower_var(p, e->as.let_.name),
                               .then_ = k->then_,
                               .else_ = k->else_,
-                              .out = &e->as.let_.body});
+                              .out = out});
         return;
     }
     if (k->kind == K_MATCH) {
@@ -1198,7 +1233,7 @@ static void finish_task(struct body *b, struct task t) {
     }
     MO_ASSERT(k->kind == K_ARGUMENTS);
     uint32_t skip = k->row->symbol != NULL && k->row->symbol->declaration->kind == MO_S_FN ? 1 : 0;
-    bool direct = atom(t.value);
+    bool direct = !k->diagnostic && atom(t.value);
     /* A mutable read must be snapped before a later inline assignment. Plain
      * names/literals cannot assign, so x += 1 needs only its actual SSA let. */
     if (direct && t.value->tag == MO_CORE_EXPR_VAR)
@@ -1230,33 +1265,37 @@ static void finish_task(struct body *b, struct task t) {
         emit(b, k->row->operands[next->at + skip], t.state, next, out);
     } else {
         p->span = k->row->syntax->span;
-        finish(b, application(b, k->row, k->arguments), t.state, k->next, out);
+        mo_core_expr value = application(b, k->row, k->arguments);
+        if (k->diagnostic) {
+            MO_ASSERT(k->row->operation == MO_T_EQ && k->arguments.count == 2);
+            mo_core_expr e = lower_expr(p, MO_CORE_EXPR_IF);
+            e->as.if_.cond = value;
+            e->as.if_.then_ = k->then_;
+            e->as.if_.else_ = lower_expr(p, MO_CORE_EXPR_FAIL);
+            mo_core_ty operand = type(b, row(b, k->row->operands[0])->type);
+            mo_core_expr left = detail_field(b, "left ", operand, k->arguments.items[0]);
+            mo_core_expr right = detail_field(b, "right ", operand, k->arguments.items[1]);
+            e->as.if_.else_->as.fail = text_concat(b, left, right);
+            *out = e;
+        } else
+            finish(b, value, t.state, k->next, out);
     }
 }
 
-static void require_plain_condition(struct body *b, uint32_t index) {
-    const struct mo_checked_expression *r = row(b, index);
-    while (kind(r) == MO_S_GROUP || kind(r) == MO_S_EXPR_STMT) {
+static void require_concrete_proofs(struct body *b, const struct mo_checked_expression *r) {
+    for (uint32_t i = 0; i < r->ability_count; i++) {
         lower_work(b->p, 1);
-        MO_ASSERT(r->operand_count == 1 && r->operands[0] < index);
-        index = r->operands[0];
-        r = row(b, index);
+        if (r->abilities[i].implementation->kind == MO_ABILITY_PARAMETER)
+            lower_refuse(b->p, MO_CODE_LOWER_UNFINISHED,
+                         "abstract ability requirements are not substituted yet");
     }
-    if (r->operation == MO_T_EQ || r->pattern != NULL)
-        lower_refuse(b->p, MO_CODE_LOWER_UNFINISHED,
-                     "structural failure details need the Core structural primitive");
 }
 
 static void row_task(struct body *b, struct task t) {
     struct lowering *p = b->p;
     const struct mo_checked_expression *r = row(b, t.row);
     enum mo_syntax_kind tag = kind(r);
-    for (uint32_t i = 0; i < r->ability_count; i++) {
-        lower_work(p, 1);
-        if (r->abilities[i].implementation->kind == MO_ABILITY_PARAMETER)
-            lower_refuse(p, MO_CODE_LOWER_UNFINISHED,
-                         "abstract ability requirements are not substituted yet");
-    }
+    require_concrete_proofs(b, r);
     if (tag == MO_S_MAP)
         lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "map literals are not lowered yet");
     if (tag == MO_S_TEXT_INTERPOLATED) {
@@ -1348,18 +1387,15 @@ static void row_task(struct body *b, struct task t) {
             e->as.if_.else_ = lower_expr(p, MO_CORE_EXPR_STOP);
             e->as.if_.else_->as.stop = lower_text(p, "assertion failed");
         } else {
-            require_plain_condition(b, r->operands[0]);
             e->as.if_.else_ = lower_expr(p, MO_CORE_EXPR_FAIL);
-            mo_core_expr detail = lower_unit(p);
-            detail->as.lit->tag = MO_CORE_LIT_TEXT;
-            detail->as.lit->as.text = lower_text(p, "assertion failed");
-            e->as.if_.else_->as.fail = detail;
+            e->as.if_.else_->as.fail = text_value(b, "assertion failed");
         }
         push(b, (struct task){.kind = TASK_CONDITION,
                               .row = r->operands[0],
                               .state = t.state,
                               .out = t.out,
-                              .value = e});
+                              .value = e,
+                              .diagnostic = b->instance->fun.kind != MO_CORE_FUNCTION});
         finish(b, lower_unit(p), t.state, t.continuation, &e->as.if_.then_);
         return;
     }
@@ -1581,9 +1617,16 @@ void lower_body(struct lowering *p, struct instance *instance, const struct mo_c
         emit(&b, instance->spec->conditions[0].expression, (struct state){0},
              continuation(&b, K_PROMISE), &instance->fun.body);
     } else if (instance->fun.kind == MO_CORE_EXAMPLE) {
-        require_plain_condition(&b, b.source->root);
-        emit(&b, b.source->root, (struct state){0}, continuation(&b, K_EXAMPLE),
-             &instance->fun.body);
+        p->span = instance->spec->syntax->span;
+        mo_core_expr e = lower_expr(p, MO_CORE_EXPR_IF);
+        e->as.if_.then_ = lower_unit(p);
+        e->as.if_.else_ = lower_expr(p, MO_CORE_EXPR_FAIL);
+        e->as.if_.else_->as.fail = text_value(&b, "example failed");
+        push(&b, (struct task){.kind = TASK_CONDITION,
+                               .row = b.source->root,
+                               .out = &instance->fun.body,
+                               .value = e,
+                               .diagnostic = true});
     } else if (returns(&b, b.source->root)) {
         struct continuation *ret = continuation(&b, K_JUMP);
         ret->result = true;
@@ -1613,6 +1656,14 @@ void lower_body(struct lowering *p, struct instance *instance, const struct mo_c
                 t.else_ = t.value->as.if_.else_;
             }
             const struct mo_checked_expression *r = row(&b, t.row);
+            while (kind(r) == MO_S_GROUP || kind(r) == MO_S_EXPR_STMT) {
+                lower_work(p, 1);
+                MO_ASSERT(r->operand_count == 1 && r->operands[0] < t.row);
+                t.row = r->operands[0];
+                r = row(&b, t.row);
+            }
+            p->span = r->syntax->span;
+            require_concrete_proofs(&b, r);
             if (r->operation == MO_T_OR || r->operation == MO_T_IMPLIES)
                 t.then_ = share_target(&b, t, t.then_, &t.out);
             if (r->operation == MO_T_AND || r->operation == MO_T_OR || r->pattern != NULL)
@@ -1630,19 +1681,31 @@ void lower_body(struct lowering *p, struct instance *instance, const struct mo_c
                                        .row = r->operands[0],
                                        .state = t.state,
                                        .out = t.out,
-                                       .value = select});
+                                       .value = select,
+                                       .diagnostic = t.diagnostic && r->operation == MO_T_AND});
                 push(&b, (struct task){.kind = TASK_CONDITION,
                                        .row = r->operands[1],
                                        .state = t.state,
                                        .out = or_ ? &select->as.if_.else_ : &select->as.if_.then_,
                                        .then_ = t.then_,
-                                       .else_ = t.else_});
+                                       .else_ = t.else_,
+                                       .diagnostic = t.diagnostic});
+            } else if (t.diagnostic && r->operation == MO_T_EQ) {
+                struct continuation *k = continuation(&b, K_ARGUMENTS);
+                k->row = r;
+                k->arguments = arguments(&b, 2);
+                k->name = lower_fresh(p);
+                k->then_ = t.then_;
+                k->diagnostic = true;
+                emit(&b, r->operands[0], t.state, k, t.out);
             } else {
                 struct continuation *k =
                     continuation(&b, r->pattern == NULL ? K_SELECT : K_PATTERN);
                 k->then_ = t.then_;
                 k->else_ = t.else_;
                 k->pattern = r->pattern;
+                k->row = r;
+                k->diagnostic = t.diagnostic && r->pattern != NULL;
                 emit(&b, r->pattern == NULL ? t.row : r->operands[0], t.state, k, t.out);
             }
         } else if (t.kind == TASK_PATTERN)

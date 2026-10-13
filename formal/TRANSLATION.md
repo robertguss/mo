@@ -1342,9 +1342,24 @@ supplies their structural text forms as failure details, converting only on
 failure through the borrowed `Text.%structural`, never user `to_text`.
 Equal-only values need no Text proof. A failed `is` reports the same structural
 form for its snapshotted input. These forms agree with the test runner's JSON
-`left`, `right` and `input`. Sample helpers use a fixed detail where deriving
-those forms isn't modeled yet; C lowering refuses such details with E1150 until
-Core's structural primitive is available rather than lose the compared values.
+`left`, `right` and `input`. Core 0.8 supplies `(prim (structural T) (value))`.
+C lowering encodes each field as `LABEL N:VALUE,`, where LABEL is `left`,
+`right` or `input`, N is the canonical decimal UTF-8 byte count, and VALUE is
+the raw structural text. Equality concatenates left then right; `is` emits
+input alone. The runner splits by lengths, so embedded labels, commas, newlines
+and NUL cannot masquerade as fields. It displays the decoded values or puts
+them into the corresponding JSON fields. No quoting changes the observation.
+The structural result is bound once in the failure branch before taking its
+byte count and adding its payload. Pattern failure joins live inside the saved
+input's scope, and all one-level failure cases jump to that one join.
+
+Parentheses and expression statements forward the diagnostic condition.
+`and` reports its first false leaf; `or` reports its right false leaf only
+after the left is false; `implies` reports its right false leaf only after the
+left is true. A false left operand of `or`/`implies` must not fail prematurely.
+Other false Bool leaves keep the fixed assertion/example detail. Successful
+conditions never run structural conversion, and successful `assert ... is`
+bindings remain in scope for later statements. Ordinary assertions still stop.
 
 ```mo
 count("one two\nthree\n") == Counts(lines: 2, words: 3, bytes: 14)
@@ -1352,9 +1367,18 @@ count("one two\nthree\n") == Counts(lines: 2, words: 3, bytes: 14)
 
 ```
 example count.1() : Unit =
-  if %eq(count("one two\nthree\n"), Counts(2, 3, 14)) then Unit
-  else fail "count did not match the expected Counts"
+  let left = count("one two\nthree\n")
+  let right = Counts(2, 3, 14)
+  if %eq(left, right) then Unit
+  else
+    let l = %structural[Counts](left)
+    let r = %structural[Counts](right)
+    fail %text.concat(field("left", l), field("right", r))
 ```
+
+Here `field(label, text)` abbreviates
+`label ++ " " ++ %int.toText(%text.byteCount(text)) ++ ":" ++ text ++ ","`;
+it is concatenation of already-computed native text, never source `to_text`.
 
 ### 12.2 Promises
 

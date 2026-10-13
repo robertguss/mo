@@ -1052,6 +1052,45 @@ static void test_specs(void) {
     }
 }
 
+static void test_structural_failures(void) {
+    struct lower_fixture f;
+    lower_fixture_init(&f, "module Main\nfn main() : Int\n7\nend\n"
+                           "test \"snapshot operands\"\nvar n = 1\n"
+                           "assert n == (n += 1; n)\nend\n");
+    (void)lower_fixture_row(&f, MO_S_INT, &f.int_, "7", 0, NULL);
+    struct mo_checked_body main = f.functions[0].body;
+    f.bindings[0] = (struct mo_checked_binding){.name = "n", .type = &f.int_, .variable = true};
+    f.functions[0].body.binding_count = 1;
+    uint32_t one = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+    uint32_t bind = lower_fixture_bind(&f, 0, one, false);
+    uint32_t left = lower_fixture_read(&f, 0);
+    uint32_t read = lower_fixture_read(&f, 0);
+    uint32_t sum = lower_fixture_op(&f, MO_T_PLUS, &f.int_, read, one);
+    uint32_t write = lower_fixture_bind(&f, 0, sum, true);
+    uint32_t right = lower_fixture_read(&f, 0);
+    uint32_t sequence[] = {write, right};
+    uint32_t operand = lower_fixture_row(&f, MO_S_SEQUENCE, &f.int_, NULL, 2, sequence);
+    uint32_t eq = lower_fixture_op(&f, MO_T_EQ, &f.bool_, left, operand);
+    uint32_t assertion = lower_fixture_row(&f, MO_S_ASSERT, &f.unit_, NULL, 1, &eq);
+    uint32_t statements[] = {bind, assertion};
+    (void)lower_fixture_row(&f, MO_S_SEQUENCE, &f.unit_, NULL, 2, statements);
+    struct mo_checked_spec spec = {.kind = MO_SPEC_TEST,
+                                   .syntax = &f.syntax[assertion],
+                                   .number = 1,
+                                   .subject = UINT32_MAX,
+                                   .wording = (const uint8_t *)"snapshot operands",
+                                   .wording_length = 17,
+                                   .body = f.functions[0].body};
+    f.program.spec_count = 1;
+    f.program.specs = &spec;
+    f.functions[0].body = main;
+    struct mo_core *core = checked(&f, "structural-snapshots",
+                                   "failed\nleft 1:1,right 1:2,\n{\"test\":\"Main.test.1\"}\n");
+    if (core != NULL)
+        run_outcome(core, "Main.test.1", MO_FAILED, 0, "left 1:1,right 1:2,");
+    lower_fixture_free(&f);
+}
+
 static void test_promises(void) {
     const char *numbers[] = {"5", "2", "20"};
     const int64_t answers[] = {0, 1, 2};
@@ -1585,6 +1624,7 @@ int main(int argc, char **argv) {
     test_list_text();
     test_constants();
     test_specs();
+    test_structural_failures();
     test_promises();
     test_record_text();
     test_text();

@@ -799,6 +799,15 @@ examples. The ones a compiler is most likely to get wrong are:
   `Text.%structural` primitive. Diagnostic text never selects user `to_text`
   or requires the Text ability, including for Equal-only types. Its forms
   agree with `mo test --json`'s `left`, `right` and `input` values.
+  The detail envelope is `left N:VALUE,right M:VALUE,` for equality or
+  `input N:VALUE,` for a pattern mismatch: N/M are decimal UTF-8 byte counts,
+  with no leading zero except zero itself. VALUE is the unchanged structural
+  text, including any newline or NUL. The runner splits by byte counts, never
+  labels or line breaks, then displays those values or puts them in JSON.
+  Shared pattern failures are joins inside the input snapshot's scope. Lazy
+  conditions report the failing leaf that actually reaches failure: a false
+  left side of `or` or `implies` is not itself a failure. Other false Bool
+  conditions keep the fixed assertion/example detail.
 
 **Part 1 implementation.** `src/lower` consumes the normalized checked graph,
 not syntax inference. Explicit arena-backed task and continuation lists perform
