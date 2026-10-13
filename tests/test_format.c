@@ -147,6 +147,13 @@ int main(int argc, char **argv) {
         "fn total(order: Order) : Decimal\n"
         "  order.subtotal + order.tax  # the tax is already rounded\nend\n";
     check_source(inline_comment, inline_comment);
+    check_source("a=1 # first\nlonger=2 # second\n\nx=3 # separate\nplain=4\ny=5 # after plain\n",
+                 "a = 1       # first\nlonger = 2  # second\n\n"
+                 "x = 3  # separate\nplain = 4\ny = 5  # after plain\n");
+    check_source("a=\"界\" # wide\nb=\"xx\" # ascii\nc=0 # short\n",
+                 "a = \"界\"  # wide\nb = \"xx\"  # ascii\nc = 0     # short\n");
+    check_source("x=\"#\" # first\ny=\"####\" # second\n# own line\na=1 # isolated\n",
+                 "x = \"#\"     # first\ny = \"####\"  # second\n# own line\na = 1  # isolated\n");
     /* A block callback keeps its header inside the call, as reference 5.6
      * does; its mandatory body lines do not break the enclosing brackets. */
     check_source("result=items.map(fn(item)\nitem.price\nend)\n",

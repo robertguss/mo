@@ -97,8 +97,9 @@ void mo_doc_add(struct mo_document *doc, enum mo_doc_kind kind, const uint8_t *b
 struct writer {
     struct mo_buffer *out;
     struct mo_doc *group, *pending, *pending_last;
+    struct mo_doc *comments, *comments_last;
     mo_format_width_fn display_width;
-    uint32_t indent, column, characters, line_indent;
+    uint32_t indent, column, characters, line_indent, line;
 };
 
 static bool bytes(struct writer *w, const uint8_t *data, size_t size) {
@@ -121,6 +122,7 @@ static bool bytes(struct writer *w, const uint8_t *data, size_t size) {
         if (data[i] == '\n') {
             start = i + 1;
             w->characters = 0;
+            w->line++;
         } else if (data[i] != '\r' && (data[i] & 0xc0) != 0x80 &&
                    ++w->characters > MO_LIMIT_LINE_LENGTH)
             /* Valid input's indivisible token plus new indentation must not
@@ -136,16 +138,31 @@ static bool bytes(struct writer *w, const uint8_t *data, size_t size) {
 static bool newline(struct writer *w, bool always) {
     while (w->pending != NULL) {
         struct mo_doc *d = w->pending;
+        struct mo_doc *next = d->pending;
+        bool inline_comment = w->column != 0;
+        d->suffix_offset = w->out->length;
+        d->suffix_line = w->line;
+        d->suffix_column = w->column;
         if (w->column != 0 && !bytes(w, (const uint8_t *)"  ", 2))
             return false;
         if (!bytes(w, d->bytes, d->length))
             return false;
-        w->pending = d->pending;
+        d->suffix_characters = w->characters;
+        d->pending = NULL;
+        if (inline_comment) {
+            if (w->comments_last != NULL)
+                w->comments_last->pending = d;
+            else
+                w->comments = d;
+            w->comments_last = d;
+        }
+        w->pending = next;
         if (w->pending != NULL) {
             if (!mo_buffer_append_byte(w->out, '\n'))
                 return false;
             w->column = 0;
             w->characters = 0;
+            w->line++;
         }
     }
     w->pending_last = NULL;
@@ -154,8 +171,58 @@ static bool newline(struct writer *w, bool always) {
             return false;
         w->column = 0;
         w->characters = 0;
+        w->line++;
     }
     return true;
+}
+
+/* D238: align consecutive rendered code/comment rows, never '#' bytes in a
+ * literal or own-line comments. Layout is already decided; padding cannot
+ * feed back into the break decisions. Each document/output byte is visited
+ * a bounded number of times, and alignment scratch fits one source file. */
+static bool align_comments(struct writer *w) {
+    bool changed = false;
+    for (struct mo_doc *first = w->comments; first != NULL;) {
+        struct mo_doc *last = first;
+        uint32_t widest = first->suffix_column;
+        while (last->pending != NULL && last->pending->suffix_line == last->suffix_line + 1) {
+            last = last->pending;
+            if (last->suffix_column > widest)
+                widest = last->suffix_column;
+        }
+        for (struct mo_doc *d = first;; d = d->pending) {
+            d->padding = widest - d->suffix_column;
+            if (d->padding > MO_LIMIT_LINE_LENGTH - d->suffix_characters)
+                return false;
+            changed = changed || d->padding != 0;
+            if (d == last)
+                break;
+        }
+        first = last->pending;
+    }
+    if (!changed)
+        return true;
+    struct mo_buffer aligned;
+    mo_buffer_init(&aligned, MO_LIMIT_FILE_SIZE);
+    size_t at = 0;
+    bool ok = true;
+    for (struct mo_doc *d = w->comments; ok && d != NULL; d = d->pending) {
+        if (d->padding == 0)
+            continue;
+        MO_ASSERT(d->suffix_offset >= at && d->suffix_offset <= w->out->length);
+        ok = mo_buffer_append(&aligned, w->out->bytes + at, d->suffix_offset - at);
+        for (uint32_t i = 0; ok && i < d->padding; i++)
+            ok = mo_buffer_append_byte(&aligned, ' ');
+        at = d->suffix_offset;
+    }
+    if (ok)
+        ok = mo_buffer_append(&aligned, w->out->bytes + at, w->out->length - at);
+    if (ok) {
+        mo_buffer_clear(w->out);
+        ok = mo_buffer_append(w->out, aligned.bytes, aligned.length);
+    }
+    mo_buffer_free(&aligned);
+    return ok;
 }
 
 bool mo_doc_render(struct mo_document *doc, struct mo_format_options options,
@@ -163,7 +230,7 @@ bool mo_doc_render(struct mo_document *doc, struct mo_format_options options,
     if (!doc->ok)
         return false;
     MO_ASSERT(doc->group == NULL && doc->depth == 0 && doc->align == NULL && doc->align_depth == 0);
-    struct writer w = {.out = output, .display_width = doc->display_width};
+    struct writer w = {.out = output, .display_width = doc->display_width, .line = 1};
     for (struct mo_doc *d = doc->first; d != NULL; d = d->next) {
         bool ok = true;
         switch (d->kind) {
@@ -171,6 +238,7 @@ bool mo_doc_render(struct mo_document *doc, struct mo_format_options options,
             ok = bytes(&w, d->bytes, d->length);
             break;
         case MO_DOC_COMMENT:
+            d->pending = NULL;
             if (w.pending_last != NULL)
                 w.pending_last->pending = d;
             else
@@ -240,5 +308,5 @@ bool mo_doc_render(struct mo_document *doc, struct mo_format_options options,
         if (!ok)
             return false;
     }
-    return newline(&w, false);
+    return newline(&w, false) && align_comments(&w);
 }

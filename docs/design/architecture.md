@@ -216,8 +216,14 @@ closing lines, without another pair of call-enclosing lines, as the existing
 examples do. Repeated prefix minuses are separated so their token boundary
 stays clear; interpolation edges have no extra padding.
 There are no trailing commas. An inline comment follows its exact token or
-item boundary with two spaces, and forces the next token onto another line;
-own-line comments retain their text and attachments. Leading/ending blank
+item boundary and forces the next token onto another line. Consecutive rendered
+code/comment rows align at one column, two spaces after the longest code row
+(D238); a blank row, own-line comment or code-only row ends that alignment run.
+Alignment uses the supplied display-width callback and does not feed padding
+back into statement breaks. Indivisible comments may extend beyond 100 columns.
+Alignment scratch fits 16 MiB and added padding still observes the lexer's
+65,536-scalar physical-line limit; refusal leaves output empty.
+Own-line comments retain their text and attachments. Leading/ending blank
 lines disappear, statement blank runs collapse to one, and nonempty output
 ends in one LF. Literal and comment spellings are not rewritten. Case arms
 with one non-block statement can share the colon's line; nested control blocks

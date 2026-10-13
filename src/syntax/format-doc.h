@@ -26,7 +26,9 @@ struct mo_doc {
     enum mo_doc_kind kind;
     const uint8_t *bytes;
     size_t length;
+    size_t suffix_offset;
     uint32_t flat_width, saved_indent;
+    uint32_t suffix_line, suffix_column, suffix_characters, padding;
     bool source_break, flat, ends_line;
     struct mo_doc *next, *parent, *pending;
 };
