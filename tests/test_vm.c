@@ -1385,13 +1385,193 @@ static void test_bounded_report(void) {
     mo_buffer_free(&text);
     mo_buffer_init(&text, 256);
     CHECK(mo_render_defect(p, &defect, &text));
-    CHECK(mo_buffer_append_byte(&text, 0));
-    CHECK(strstr((const char *)text.bytes, "stop\n  at N") != NULL &&
-          strstr((const char *)text.bytes, " (F") != NULL &&
-          strstr((const char *)text.bytes, ":7..19)\n") != NULL &&
-          strstr((const char *)text.bytes, "<truncated>") != NULL);
+    char small[257];
+    MO_ASSERT(text.length < sizeof small);
+    memcpy(small, text.bytes, text.length);
+    small[text.length] = '\0';
+    CHECK(strstr(small, "stop\n  at N") != NULL && strstr(small, " (F") != NULL &&
+          strstr(small, ":7..19)\n") != NULL && strstr(small, "<truncated>") != NULL);
     mo_buffer_free(&text);
     mo_value_drop(mo_process_heap(p), 1, detail);
+    mo_process_free(p);
+    mo_image_free(image);
+}
+
+static void test_report_buffers(void) {
+    struct fixture f;
+    fixture_init(&f);
+    struct mo_parameter parameter = {1, MO_PARAMETER_BORROWED};
+    const uint32_t type = 1, stop[] = {MO_OP_STOP, 0};
+    program(&f, 0, &type, 1, stop, 2, 3);
+    f.functions[0].parameters = &parameter;
+    f.functions[0].parameter_count = 1;
+    const struct mo_bytecode_register_name name = {0, 9, 0, 2};
+    f.debug[0].names = &name;
+    f.debug[0].name_count = 1;
+    struct mo_bytecode_string strings[12];
+    memcpy(strings, f.file.strings, sizeof strings);
+    strings[0] = (struct mo_bytecode_string){3, (const uint8_t *)"M.f"};
+    strings[11] = (struct mo_bytecode_string){4, (const uint8_t *)"m.mo"};
+    f.file.strings = strings;
+    const struct mo_bytecode_span span = {.file = 11, .start = 1, .end = 2};
+    f.debug[0].spans = &span;
+    f.debug[0].span_count = 1;
+    struct mo_image *image = initialized(&f);
+    if (image == NULL)
+        return;
+    struct mo_limits limits = mo_limits_default();
+    struct mo_process *p = mo_process_new(image, &limits);
+    MO_ASSERT(p != NULL);
+    char bytes[5000];
+    memset(bytes, 'a', sizeof bytes);
+    memcpy(bytes, "detail! ", 8);
+    struct mo_cell detail, result;
+    MO_ASSERT(mo_value_text(mo_process_heap(p), bytes, sizeof bytes, &detail));
+    struct mo_defect defect;
+    CHECK(mo_call(p, 0, &detail, 1, &result, &defect) == MO_STOPPED);
+    const char *head = "stop\n  at M.f (m.mo:1..2)\n";
+    for (size_t size = 0; size <= 6144; size++) {
+        struct mo_buffer text;
+        mo_buffer_init(&text, size);
+        bool rendered = mo_render_defect(p, &defect, &text);
+        CHECK(text.length <= size);
+        CHECK(rendered == (size >= strlen(head)));
+        char report[6145];
+        if (text.length != 0)
+            memcpy(report, text.bytes, text.length);
+        report[text.length] = '\0';
+        if (size >= 5)
+            CHECK(strncmp(report, "stop\n", 5) == 0);
+        if (size >= strlen(head))
+            CHECK(strncmp(report, head, strlen(head)) == 0);
+        if (size >= 80) {
+            CHECK(strstr(report, "\n  detail: detail! ") != NULL);
+            CHECK(strstr(report, "<truncated>") != NULL);
+        }
+        if (size >= 5000)
+            CHECK(strstr(report, "\n  x = \"") != NULL);
+        mo_buffer_free(&text);
+    }
+    mo_value_drop(mo_process_heap(p), 1, detail);
+    mo_process_free(p);
+    mo_image_free(image);
+}
+
+static void test_report_chars(void) {
+    struct fixture f;
+    fixture_init(&f);
+    struct mo_type types[12];
+    memcpy(types, f.types, sizeof f.types);
+    types[11] = (struct mo_type){.kind = MO_TYPE_CHAR};
+    f.file.types = types;
+    f.file.type_count = 12;
+    struct mo_parameter parameters[] = {{11, MO_PARAMETER_OWNED}, {1, MO_PARAMETER_BORROWED}};
+    const uint32_t registers[] = {11, 1}, stop[] = {MO_OP_STOP, 1};
+    program(&f, 0, registers, 2, stop, 2, 3);
+    f.functions[0].parameters = parameters;
+    f.functions[0].parameter_count = 2;
+    const struct mo_bytecode_register_name name = {0, 9, 0, 2};
+    f.debug[0].names = &name;
+    f.debug[0].name_count = 1;
+    struct mo_image *image = initialized(&f);
+    if (image == NULL)
+        return;
+    const uint32_t scalars[] = {0x1b, '\n', 0x9b, '\''};
+    const char *expected[] = {"  x = '\\u{1b}'\n", "  x = '\\n'\n", "  x = '\\u{9b}'\n",
+                              "  x = '\\\''\n"};
+    for (unsigned i = 0; i < 4; i++) {
+        struct mo_limits limits = mo_limits_default();
+        struct mo_process *p = mo_process_new(image, &limits);
+        MO_ASSERT(p != NULL);
+        struct mo_cell args[] = {mo_cell_char(scalars[i]), mo_cell_unit()}, result;
+        MO_ASSERT(mo_value_text(mo_process_heap(p), "reason", 6, &args[1]));
+        struct mo_defect defect;
+        CHECK(mo_call(p, 0, args, 2, &result, &defect) == MO_STOPPED);
+        struct mo_buffer report;
+        mo_buffer_init(&report, MO_LIMIT_DEFECT_TEXT_SIZE);
+        CHECK(mo_render_defect(p, &defect, &report));
+        MO_ASSERT(mo_buffer_append_byte(&report, 0));
+        CHECK(strstr((const char *)report.bytes, expected[i]) != NULL);
+        CHECK(memchr(report.bytes, 0x1b, report.length) == NULL);
+        mo_buffer_free(&report);
+        mo_value_drop(mo_process_heap(p), 1, args[1]);
+        mo_process_free(p);
+    }
+    mo_image_free(image);
+}
+
+static void test_report_names(void) {
+    struct fixture f;
+    fixture_init(&f);
+    const char *forged = "\n  at forged (x.mo:1..2)\033";
+    struct mo_bytecode_string strings[15];
+    memcpy(strings, f.file.strings, 12 * sizeof *strings);
+    strings[12] = (struct mo_bytecode_string){(uint32_t)strlen(forged), (const uint8_t *)forged};
+    strings[13] = (struct mo_bytecode_string){8, (const uint8_t *)"a\nforged"};
+    strings[14] = (struct mo_bytecode_string){2, (const uint8_t *)"\xc2\x9b"};
+    f.file.strings = strings;
+    f.file.string_count = 15;
+    struct mo_type types[12];
+    memcpy(types, f.types, sizeof f.types);
+    struct mo_type_case cases[4];
+    memcpy(cases, types[5].cases, sizeof cases);
+    struct mo_type_field case_fields[] = {{"a\nforged", 0}, {"b", 1}};
+    cases[1].name = forged;
+    cases[1].fields = case_fields;
+    types[5].cases = cases;
+    struct mo_type_field field = {"\xc2\x9b", 1};
+    types[11] = (struct mo_type){.kind = MO_TYPE_RECORD,
+                                 .name = forged,
+                                 .defined = true,
+                                 .fields = &field,
+                                 .field_count = 1};
+    f.file.types = types;
+    f.file.type_count = 12;
+    struct mo_layout layouts[5];
+    memcpy(layouts, f.file.layouts, 4 * sizeof *layouts);
+    uint32_t text_type = 1;
+    layouts[4] = (struct mo_layout){
+        .kind = MO_LAYOUT_RECORD, .type = 11, .fields = &text_type, .field_count = 1};
+    f.file.layouts = layouts;
+    f.file.layout_count = 5;
+    struct mo_parameter parameters[] = {
+        {5, MO_PARAMETER_BORROWED}, {11, MO_PARAMETER_BORROWED}, {1, MO_PARAMETER_BORROWED}};
+    const uint32_t registers[] = {5, 11, 1}, stop[] = {MO_OP_STOP, 2};
+    program(&f, 0, registers, 3, stop, 2, 3);
+    f.functions[0].parameters = parameters;
+    f.functions[0].parameter_count = 3;
+    const struct mo_bytecode_register_name names[] = {{0, 9, 0, 2}, {1, 10, 0, 2}};
+    f.debug[0].names = names;
+    f.debug[0].name_count = 2;
+    struct mo_image *image = initialized(&f);
+    if (image == NULL)
+        return;
+    struct mo_limits limits = mo_limits_default();
+    struct mo_process *p = mo_process_new(image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_heap *heap = mo_process_heap(p);
+    struct mo_cell text, args[3], result;
+    MO_ASSERT(mo_value_text(heap, "\xc2\x9b", 2, &text));
+    struct mo_cell fields[] = {mo_cell_int(7), text};
+    MO_ASSERT(mo_value_case(heap, 5, 1, fields, 2, &args[0]));
+    MO_ASSERT(mo_value_construct(heap, 4, &text, 1, &args[1]));
+    MO_ASSERT(mo_value_text(heap, "reason", 6, &args[2]));
+    struct mo_defect defect;
+    CHECK(mo_call(p, 0, args, 3, &result, &defect) == MO_STOPPED);
+    struct mo_buffer report;
+    mo_buffer_init(&report, MO_LIMIT_DEFECT_TEXT_SIZE);
+    CHECK(mo_render_defect(p, &defect, &report));
+    MO_ASSERT(mo_buffer_append_byte(&report, 0));
+    CHECK(strstr((const char *)report.bytes, "\n  at forged") == NULL);
+    CHECK(memchr(report.bytes, 0x1b, report.length) == NULL);
+    CHECK(strstr((const char *)report.bytes, "\xc2\x9b") == NULL);
+    CHECK(strstr((const char *)report.bytes, "\\n  at forged (x.mo:1..2)\\u{1b}") != NULL);
+    CHECK(strstr((const char *)report.bytes, "a\\nforged: 7, b: \"\\u{9b}\"") != NULL);
+    CHECK(strstr((const char *)report.bytes, "\\u{9b}: \"\\u{9b}\"") != NULL);
+    mo_buffer_free(&report);
+    mo_value_drop(heap, 1, text);
+    for (unsigned i = 0; i < 3; i++)
+        mo_value_drop(heap, registers[i], args[i]);
     mo_process_free(p);
     mo_image_free(image);
 }
@@ -1873,6 +2053,9 @@ int main(int argc, char **argv) {
     test_borrowing();
     test_scratch_and_fuel();
     test_bounded_report();
+    test_report_buffers();
+    test_report_chars();
+    test_report_names();
     test_tail_growth_and_later_stop();
     test_allocation_stops();
     test_initialization_memory();

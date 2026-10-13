@@ -55,41 +55,69 @@ enum mo_outcome mo_vm_stop(struct mo_process *p, const char *reason, const char 
     return outcome;
 }
 
-/* Clip untrusted text at UTF-8 boundaries, escape terminal controls, and leave
- * room for the truncation marker and closing quote. No scratch allocation. */
+/* One escaped UTF-8 scalar. The image/heap already validated its encoding. */
+static MO_MUST_USE size_t text_part(const uint8_t *bytes, size_t length, uint8_t delimiter,
+                                    char escape[16], const uint8_t **part, size_t *size) {
+    uint8_t c = bytes[0];
+    size_t count = c < 0x80 ? 1 : c < 0xe0 ? 2 : c < 0xf0 ? 3 : 4;
+    MO_ASSERT(count <= length);
+    *part = bytes;
+    *size = count;
+    bool interpolation = delimiter != 0 && c == '#' && length > 1 && bytes[1] == '{';
+    bool c1 = c == 0xc2 && count == 2 && bytes[1] >= 0x80 && bytes[1] <= 0x9f;
+    if (c < 32 || c == 127 || c1 || c == '\\' || (delimiter != 0 && c == delimiter) ||
+        interpolation) {
+        int written = c == '\n'   ? snprintf(escape, 16, "\\n")
+                      : c == '\r' ? snprintf(escape, 16, "\\r")
+                      : c == '\t' ? snprintf(escape, 16, "\\t")
+                      : c == '\\' || (delimiter != 0 && c == delimiter) || interpolation
+                          ? snprintf(escape, 16, "\\%c", c)
+                          : snprintf(escape, 16, "\\u{%x}", c1 ? bytes[1] : c);
+        MO_ASSERT(written > 0 && written < 16);
+        *part = (const uint8_t *)escape;
+        *size = (size_t)written;
+    }
+    return count;
+}
+
+/* Stop measuring once the budget cannot hold the whole escaped spelling. */
+static MO_MUST_USE size_t text_size(const uint8_t *bytes, size_t length, uint8_t delimiter,
+                                    size_t budget) {
+    size_t total = delimiter == 0 ? 0 : 2;
+    if (total > budget)
+        return budget + 1;
+    for (size_t at = 0; at < length;) {
+        char escape[16];
+        const uint8_t *part;
+        size_t size;
+        at += text_part(bytes + at, length - at, delimiter, escape, &part, &size);
+        if (size > budget - total)
+            return budget + 1;
+        total += size;
+    }
+    return total;
+}
+
+/* Reserve a marker only if truncating, and keep complete UTF-8 scalars. */
 static MO_MUST_USE bool text(struct mo_buffer *out, const uint8_t *bytes, size_t length,
-                             bool quoted, size_t budget) {
+                             uint8_t delimiter, size_t budget) {
     static const char marker[] = "… <truncated>";
     size_t available = out->limit - out->length;
     if (budget > available)
         budget = available;
-    size_t reserve = sizeof marker - 1 + (quoted ? 2u : 0u);
+    bool clipped = text_size(bytes, length, delimiter, budget) > budget;
+    size_t reserve = (clipped ? sizeof marker - 1 : 0) + (delimiter != 0 ? 2u : 0u);
     if (budget < reserve)
         return false;
-    size_t end = out->length + budget - reserve;
-    if (quoted && !mo_buffer_append_byte(out, '"'))
+    size_t end = out->length + budget - reserve + (delimiter != 0 ? 1u : 0u);
+    if (delimiter != 0 && !mo_buffer_append_byte(out, delimiter))
         return false;
     size_t i = 0;
     while (i < length) {
-        uint8_t c = bytes[i];
-        size_t count = c < 0x80 ? 1 : c < 0xe0 ? 2 : c < 0xf0 ? 3 : 4;
-        MO_ASSERT(count <= length - i);
         char escape[16];
-        const uint8_t *part = bytes + i;
-        size_t n = count;
-        bool interpolation = quoted && c == '#' && i + 1 < length && bytes[i + 1] == '{';
-        bool c1 = c == 0xc2 && count == 2 && bytes[i + 1] >= 0x80 && bytes[i + 1] <= 0x9f;
-        if (c < 32 || c == 127 || c1 || c == '\\' || (quoted && c == '"') || interpolation) {
-            int written = c == '\n'   ? snprintf(escape, sizeof escape, "\\n")
-                          : c == '\r' ? snprintf(escape, sizeof escape, "\\r")
-                          : c == '\t' ? snprintf(escape, sizeof escape, "\\t")
-                          : c == '\\' || c == '"' || interpolation
-                              ? snprintf(escape, sizeof escape, "\\%c", c)
-                              : snprintf(escape, sizeof escape, "\\u{%x}", c1 ? bytes[i + 1] : c);
-            MO_ASSERT(written > 0 && (size_t)written < sizeof escape);
-            part = (const uint8_t *)escape;
-            n = (size_t)written;
-        }
+        const uint8_t *part;
+        size_t n;
+        size_t count = text_part(bytes + i, length - i, delimiter, escape, &part, &n);
         if (out->length > end || n > end - out->length)
             break;
         if (!mo_buffer_append(out, part, n))
@@ -98,13 +126,13 @@ static MO_MUST_USE bool text(struct mo_buffer *out, const uint8_t *bytes, size_t
     }
     if (i != length && !mo_buffer_append_text(out, marker))
         return false;
-    return !quoted || mo_buffer_append_byte(out, '"');
+    return delimiter == 0 || mo_buffer_append_byte(out, delimiter);
 }
 
 static MO_MUST_USE bool string(const struct mo_bytecode *file, uint32_t index,
                                struct mo_buffer *out, size_t budget) {
     const struct mo_bytecode_string *s = &file->strings[index];
-    return text(out, s->bytes, s->length, false, budget);
+    return text(out, s->bytes, s->length, 0, budget);
 }
 
 static MO_MUST_USE bool frame_text(const struct mo_bytecode *file,
@@ -124,14 +152,35 @@ static MO_MUST_USE bool frame_text(const struct mo_bytecode *file,
      * or the marker for omitted details, even in a small caller buffer. */
     if (available > fixed + 64)
         available -= 32;
-    size_t budget = (available - fixed) / (frame->span.file == MO_NO_INDEX ? 1u : 2u);
+    size_t space = available - fixed;
+    size_t budget = space / (frame->span.file == MO_NO_INDEX ? 1u : 2u);
     if (budget > 512)
         budget = 512;
+    size_t file_budget = budget;
+    if (frame->span.file != MO_NO_INDEX) {
+        const struct mo_bytecode_string *fn = &file->strings[file->functions[frame->function].name];
+        const struct mo_bytecode_string *path = &file->strings[frame->span.file];
+        size_t fn_size = text_size(fn->bytes, fn->length, 0, 512);
+        size_t path_size = text_size(path->bytes, path->length, 0, 512);
+        if (fn_size <= budget) {
+            budget = fn_size;
+            file_budget = space - budget;
+        } else if (path_size <= file_budget) {
+            file_budget = path_size;
+            budget = space - file_budget;
+        } else
+            file_budget = space - budget;
+        if (budget > 512)
+            budget = 512;
+        if (file_budget > 512)
+            file_budget = 512;
+    }
     if (!mo_buffer_append_text(out, "  at ") ||
         !string(file, file->functions[frame->function].name, out, budget))
         return false;
     if (frame->span.file != MO_NO_INDEX) {
-        if (!mo_buffer_append_text(out, " (") || !string(file, frame->span.file, out, budget) ||
+        if (!mo_buffer_append_text(out, " (") ||
+            !string(file, frame->span.file, out, file_budget) ||
             !mo_buffer_append(out, position, (size_t)n) || !mo_buffer_append_byte(out, ')'))
             return false;
     }
@@ -152,8 +201,11 @@ bool mo_render_defect(const struct mo_process *process, const struct mo_defect *
     size_t reason_budget = defect->frames == NULL ? out->limit : out->limit / 3;
     if (reason_budget > 512)
         reason_budget = 512;
-    bool ok =
-        text(out, (const uint8_t *)defect->reason, strlen(defect->reason), false, reason_budget);
+    size_t reason_size = text_size((const uint8_t *)defect->reason, strlen(defect->reason), 0,
+                                   out->limit < 512 ? out->limit : 512);
+    if (reason_size <= out->limit && reason_size <= 512 && reason_size > reason_budget)
+        reason_budget = reason_size;
+    bool ok = text(out, (const uint8_t *)defect->reason, strlen(defect->reason), 0, reason_budget);
     if (defect->limit_name != NULL) {
         char number[64];
         int n = snprintf(number, sizeof number, " = %zu)", defect->limit);
@@ -172,8 +224,13 @@ bool mo_render_defect(const struct mo_process *process, const struct mo_defect *
         size_t length;
         const uint8_t *data = mo_value_data(defect->detail, &length);
         size_t row = out->length;
-        if (!mo_buffer_append_text(out, "  detail: ") || !text(out, data, length, false, 4096) ||
-            !mo_buffer_append_byte(out, '\n')) {
+        bool prefix = mo_buffer_append_text(out, "  detail: ");
+        size_t budget = out->limit - out->length;
+        if (budget != 0)
+            budget--;
+        if (budget > 4096)
+            budget = 4096;
+        if (!prefix || !text(out, data, length, 0, budget) || !mo_buffer_append_byte(out, '\n')) {
             out->length = row;
             goto truncated;
         }
@@ -235,7 +292,21 @@ bool mo_render_defect(const struct mo_process *process, const struct mo_defect *
                     if (process->types->items[type].kind == MO_TYPE_TEXT) {
                         size_t length;
                         const uint8_t *bytes = mo_value_data(value, &length);
-                        ok = text(out, bytes, length, true, budget);
+                        ok = text(out, bytes, length, '"', budget);
+                    } else if (process->types->items[type].kind == MO_TYPE_CHAR) {
+                        uint32_t code = mo_cell_get_char(value);
+                        uint8_t bytes[4];
+                        size_t length = code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+                        for (size_t k = length; k > 1; k--) {
+                            bytes[k - 1] = (uint8_t)(0x80 | (code & 0x3f));
+                            code >>= 6;
+                        }
+                        bytes[0] = (uint8_t)((length == 1   ? 0
+                                              : length == 2 ? 0xc0
+                                              : length == 3 ? 0xe0
+                                                            : 0xf0) |
+                                             code);
+                        ok = text(out, bytes, length, '\'', budget);
                     } else {
                         struct mo_buffer variable;
                         mo_buffer_init(&variable, budget);

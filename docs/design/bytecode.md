@@ -1145,9 +1145,11 @@ PC stays at the call until its callee returns, so its span names the call site.
 Rendering appends at most 64 KiB to the caller's bounded output buffer. It
 writes the reason and top frame before optional details. Stacks longer than
 eight frames show the top four and bottom four with `… N frames …` between.
-Detail text and each variable's output use at most 4096 bytes; truncation has
-a marker. Terminal controls in details and names are escaped, and Text
-variables use the quoted, nested structural form. Optional rendering failure
+Detail text and each variable's output use at most 4096 bytes. Details and
+Text variables truncate with a marker; other values that cannot print within
+their budget show `<value unavailable>`. Terminal controls, including C1,
+are escaped in details, names and nested values. Text and Char variables use
+their quoted, nested structural form. Optional rendering failure
 keeps the reason/top frame and marks omitted output; even a caller's smaller
 buffer gets a partial report, never a rollback of its useful prefix.
 The replay mask and verifier scratch are diagnostic storage outside the

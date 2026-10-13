@@ -95,18 +95,20 @@ static MO_MUST_USE bool time_text(struct mo_buffer *out, int64_t micros) {
 
 static MO_MUST_USE bool quote(struct mo_buffer *out, const uint8_t *bytes, size_t length,
                               uint8_t delimiter) {
-    if (!mo_buffer_append_byte(out, delimiter)) {
+    if (delimiter != 0 && !mo_buffer_append_byte(out, delimiter)) {
         return false;
     }
     for (size_t i = 0; i < length; i++) {
         uint8_t c = bytes[i];
+        bool c1 = c == 0xc2 && i + 1 < length && bytes[i + 1] >= 0x80 && bytes[i + 1] <= 0x9f;
         const char *escape = c == '\n' ? "\\n" : c == '\r' ? "\\r" : c == '\t' ? "\\t" : NULL;
         if (escape != NULL) {
             if (!mo_buffer_append_text(out, escape)) {
                 return false;
             }
-        } else if (c < 32 || c == 127) {
-            if (!mo_buffer_append_text(out, "\\u{") || !mo_buffer_append_hex(out, c, 1) ||
+        } else if (c < 32 || c == 127 || c1) {
+            uint32_t code = c1 ? bytes[++i] : c;
+            if (!mo_buffer_append_text(out, "\\u{") || !mo_buffer_append_hex(out, code, 1) ||
                 !mo_buffer_append_byte(out, '}')) {
                 return false;
             }
@@ -121,7 +123,7 @@ static MO_MUST_USE bool quote(struct mo_buffer *out, const uint8_t *bytes, size_
             }
         }
     }
-    return mo_buffer_append_byte(out, delimiter);
+    return delimiter == 0 || mo_buffer_append_byte(out, delimiter);
 }
 
 static MO_MUST_USE unsigned char_bytes(uint32_t code, uint8_t bytes[4]) {
@@ -265,7 +267,7 @@ bool mo_value_print(struct mo_heap *process, uint32_t type, struct mo_cell value
                     break;
                 }
                 work += length;
-                ok = mo_buffer_append(out, name, length);
+                ok = quote(out, (const uint8_t *)name, length, 0);
                 if (f->count == 0) {
                     depth--;
                     continue;
@@ -310,7 +312,8 @@ bool mo_value_print(struct mo_heap *process, uint32_t type, struct mo_cell value
                 break;
             }
             work += length;
-            ok = ok && mo_buffer_append(out, name, length) && mo_buffer_append_text(out, ": ");
+            ok = ok && quote(out, (const uint8_t *)name, length, 0) &&
+                 mo_buffer_append_text(out, ": ");
         }
         uint32_t child_type;
         struct mo_cell item =
