@@ -1531,8 +1531,11 @@ violates `forbids`; a positive condition number does the opposite. These calls
 use the anchor's saved input/result values, not an execution of the ordinary
 subject. `run` creates its separate main process on the same image only after
 all anchors pass. Both emission forms validate anchors before writing an
-artifact, including Core emission. Generic specs remain E1150 until lowering
-can instantiate their checked subject-scoped requirements.
+artifact, including Core emission. Generic anchors use the same loop: lowering
+supplies concrete promise/anchor functions with the checked subject-scoped
+type and ability requirements. Tools execute every emitted anchor, including
+distinct concrete types, and resolve its failed-condition span through its
+concrete promise link rather than a source declaration index.
 
 E1405 reports an expectation violation or an anchor that could not be executed.
 It marks the anchor and, for a rejected allows, the first false condition.

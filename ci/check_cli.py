@@ -239,6 +239,32 @@ def anchors(binary):
             assert not result.stdout and b"E1405" in result.stderr
             assert b"could not be checked" in result.stderr
 
+        # Both concrete promise instances must be certified. Ignoring the
+        # Decimal instance or attaching its diagnostic to the Int anchor fails.
+        generic = (source.replace("fn twice(n: Int) : Int\n",
+                                  "fn twice(n: T) : T where T: Number, T: Equal, T: Order\n")
+                   .replace("allows result: 6, n: 3\n",
+                            "allows result: 6, n: 3\nallows n: 1.25, result: 2.5\n")
+                   .replace("forbids n: 4, result: 7\n",
+                            "forbids n: 4, result: 7\nforbids result: 2.0, n: 1.25\n"))
+        path.write_text(generic)
+        records(run(binary, ["check", "--json", str(path)], 0), "check")
+        result = run(binary, ["run", str(path)], 37)
+        assert result.stdout == b"main\n" and not result.stderr
+        for kind in ("core", "bytecode"):
+            result = run(binary, ["check", f"--emit={kind}", str(path)], 0)
+            assert b"Main.twice(Decimal).promise.1" in result.stdout and not result.stderr
+
+        path.write_text(generic.replace("result: 2.5", "result: 2.0")
+                        .replace("result: 7", "result: 8"))
+        items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+        assert [d["code"] for d in items[1:-1]] == ["E1405", "E1405"]
+        assert [d["primary"]["line"] for d in items[1:-1]] == [6, 7]
+        assert items[1]["secondary"][0]["line"] == 4 and not items[2]["secondary"]
+        for args in (["run"], ["check", "--emit=core"], ["check", "--emit=bytecode"]):
+            result = run(binary, [*args, str(path)], 1)
+            assert not result.stdout and b"E1405" in result.stderr
+
         # Checking types examples/tests but does not test their truth or run main.
         path.write_text('module Main\nfn main()\nexamples\nfalse\nend\n'
                         'stop "main must not run"\nend\ntest "not run by check"\nassert false\nend\n')
