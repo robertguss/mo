@@ -342,6 +342,149 @@ bool mo_table_remove(struct mo_heap *process, uint32_t type, struct mo_cell *val
     return true;
 }
 
+struct union_entry {
+    struct mo_cell key;
+    uint64_t hash;
+    uint32_t slot;
+};
+
+/* The sparse overlay records only new slots, never copies the left index.
+ * right is already a set, so all planned keys are distinct. Slot hashing uses
+ * the private domain; at most half the overlay is occupied. */
+static MO_MUST_USE bool union_slots(struct mo_heap *process, struct mo_allocation *table,
+                                    struct union_entry *entries, uint32_t count, uint32_t *overlay,
+                                    uint32_t overlay_size) {
+    memset(overlay, 0, (size_t)overlay_size * sizeof *overlay);
+    uint32_t mask = mo_table_info(table)->slots - 1;
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t slot = (uint32_t)entries[i].hash & mask;
+        bool placed = false;
+        for (unsigned probes = 0; probes < MO_LIMIT_HEAP_PROBES; probes++) {
+            uint32_t previous = mo_table_slots(table)[slot];
+            if (previous == 0 || previous == MO_NO_INDEX) {
+                uint32_t at =
+                    (uint32_t)mo_heap_mix(process->image->index_key, slot, 0) & (overlay_size - 1);
+                while (overlay[at] != 0 && overlay[at] != slot + 1)
+                    at = (at + 1) & (overlay_size - 1);
+                if (overlay[at] == 0) {
+                    overlay[at] = slot + 1;
+                    entries[i].slot = slot;
+                    placed = true;
+                    break;
+                }
+            }
+            slot = (slot + 1) & mask;
+        }
+        if (!placed)
+            return false;
+    }
+    return true;
+}
+
+bool mo_set_union(struct mo_heap *process, uint32_t type, struct mo_cell *left,
+                  struct mo_cell right) {
+    MO_ASSERT(process != NULL && left != NULL && type < process->types->count &&
+              process->types->items[type].kind == MO_TYPE_SET);
+    struct mo_allocation *old = mo_heap_allocation(mo_cell_get_ref(*left));
+    struct mo_allocation *other = mo_heap_allocation(mo_cell_get_ref(right));
+    MO_ASSERT(old->type == type && other->type == type);
+    uint32_t right_count = mo_table_info(other)->active;
+    if (old == other || right_count == 0)
+        return true;
+    if (right_count == 1) {
+        uint32_t cursor = 0;
+        struct mo_cell key, value;
+        MO_ASSERT(mo_table_next(right, &cursor, &key, &value));
+        return mo_table_set(process, type, left, key, mo_cell_unit());
+    }
+    struct mo_scratch scratch;
+    mo_scratch_init(&scratch, process);
+    struct union_entry *entries =
+        mo_scratch_resize(&scratch, NULL, 0, (size_t)right_count * sizeof *entries);
+    struct mo_allocation *result = old;
+    bool ok = false;
+    if (entries == NULL)
+        goto done;
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < other->length; i++) {
+        if (mo_table_live(other)[i] == 0)
+            continue;
+        uint32_t position, slot, distance;
+        uint64_t hash = mo_table_hashes(other)[i];
+        if (!lookup(process, type, old, other->cells[i], hash, &position, &slot, &distance))
+            goto done;
+        if (position == MO_NO_INDEX)
+            entries[count++] = (struct union_entry){.key = other->cells[i], .hash = hash};
+    }
+    if (count == 0) {
+        ok = true;
+        goto done;
+    }
+    uint32_t active = mo_table_info(old)->active;
+    if (count > MO_LIMIT_COLLECTION_SIZE - active)
+        goto done;
+    uint32_t overlay_size = 2 * capacity_for(count);
+    uint32_t *overlay =
+        mo_scratch_resize(&scratch, NULL, 0, (size_t)overlay_size * sizeof *overlay);
+    if (overlay == NULL)
+        goto done;
+    uint32_t capacity = mo_table_info(old)->capacity;
+    uint32_t slots = mo_table_info(old)->slots;
+    bool reuse = old->object.count == 1 && count <= capacity - old->length;
+    if (!reuse) {
+        uint32_t needed = active + count;
+        capacity = capacity_for(needed);
+        /* Match single-insert hysteresis when a unique table needs growth. */
+        if (old->object.count == 1 && capacity <= mo_table_info(old)->capacity &&
+            active >= mo_table_info(old)->capacity / 2)
+            capacity = 2 * mo_table_info(old)->capacity;
+        if (slots < 2 * capacity)
+            slots = 2 * capacity;
+    }
+    for (;;) {
+        if (!reuse) {
+            uint32_t position = MO_NO_INDEX, slot = 0;
+            result = copy_table(process, type, old, capacity, slots, MO_NO_INDEX, false, false, 0,
+                                &position, &slot);
+            if (result == NULL)
+                goto done;
+            slots = mo_table_info(result)->slots;
+        }
+        if (union_slots(process, result, entries, count, overlay, overlay_size))
+            break;
+        if (result != old)
+            mo_heap_release(process, result);
+        result = old;
+        if (slots == MO_LIMIT_HEAP_INDEX_SLOTS)
+            goto done;
+        slots *= 2;
+        reuse = false;
+    }
+    /* All fallible work is complete. Copies until here borrow the old cells;
+     * duplicate only now, so even saturated counts cannot change on refusal. */
+    uint32_t key_type = process->types->items[type].parameters[0];
+    if (result != old)
+        for (uint32_t i = 0; i < result->length; i++)
+            result->cells[i] = mo_value_dup(process, key_type, result->cells[i]);
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t next = result->length++;
+        result->cells[next] = mo_value_dup(process, key_type, entries[i].key);
+        mo_table_hashes(result)[next] = entries[i].hash;
+        mo_table_live(result)[next] = 1;
+        mo_table_slots(result)[entries[i].slot] = next + 1;
+    }
+    mo_table_info(result)->active += count;
+    result->hash_valid = false;
+    if (result != old) {
+        mo_value_drop(process, type, *left);
+        *left = mo_cell_ref(&result->object);
+    }
+    ok = true;
+done:
+    mo_scratch_free(&scratch);
+    return ok;
+}
+
 static MO_MUST_USE bool build_table(struct mo_heap *process, uint32_t type, enum mo_type_kind kind,
                                     const struct mo_cell *keys, const struct mo_cell *values,
                                     uint32_t count, struct mo_cell *out) {

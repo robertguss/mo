@@ -340,12 +340,19 @@ def extended_cases():
         xs = [rng.choice(texts) for _ in range(size)]
         initial = seq("list", list(map(enc, xs)))
         for name, op, args in [("append", "append", [enc("β🙂")]),
+                               ("prepend", "prepend", [enc("#{x}")]),
+                               ("concat", "concat", [seq("list", [enc("🙂"), enc("β")])]),
+                               ("reverse", "reverse", []),
+                               ("take", "take", ["(int 3)"]),
+                               ("drop", "drop", ["(int 3)"]),
+                               ("remove_at", "removeAt", ["(int 1)"]),
                                ("contains?", "contains", [enc("β")]),
                                ("unique", "unique", []), ("to_set", "ofList", [])]:
             prim = f"(list (text) ({op}))" if name != "to_set" else "(set (text) (ofList))"
             yield f"List.{name}-utf8-{size}", query(f"List.{name}", prim, [initial] + args)
         initial = seq("set", list(map(enc, dict.fromkeys(xs))))
         for name, op, args in [("add", "add", [enc("🙂")]), ("remove", "remove", [enc("β")]),
+                               ("union", "union", [seq("set", [enc("🙂"), enc("β"), enc("z")])]),
                                ("has?", "has", [enc("#{x}")]), ("to_list", "toList", [])]:
             yield f"Set.{name}-utf8-{size}", query(f"Set.{name}", f"(set (text) ({op}))", [initial] + args)
 
@@ -370,6 +377,45 @@ def extended_cases():
             if i < 20 or i % 8 == 7:
                 yield f"{family}-sequence-{i}", query(f"{family}.{'append' if family == 'List' else 'set' if family == 'Map' else 'add'}",
                                                      "(sequence)", [initial, seq("list", steps)])
+
+    for family in ["Text", "List", "Set"]:
+        initial = enc(" \tβ🙂 \n") if family == "Text" else seq(family.lower(), [])
+        steps, size = [], 0
+        for i in range(256):
+            if family == "Text":
+                name = ["%concat", "trim", "trim_start", "trim_end"][i % 4]
+                op = {"%concat": "concat", "trim_start": "trimStart", "trim_end": "trimEnd"}.get(name, name)
+                args = [enc(rng.choice(texts) + " \t")] if name == "%concat" else []
+                prim = f"(text ({op}))"
+            elif family == "List":
+                name = rng.choice(["concat", "prepend", "reverse", "take", "drop", "remove_at"])
+                if name == "remove_at" and size == 0:
+                    name = "concat"
+                if name == "concat":
+                    xs = [enc(rng.choice(texts)) for _ in range(rng.randrange(5))]
+                    args, size = [seq("list", xs)], size + len(xs)
+                elif name == "prepend":
+                    args, size = [enc(rng.choice(texts))], size + 1
+                elif name in {"take", "drop"}:
+                    n = rng.randrange(size + 3)
+                    args = [f"(int {n})"]
+                    size = min(n, size) if name == "take" else max(0, size - n)
+                elif name == "remove_at":
+                    args = [f"(int {rng.randrange(size)})"]
+                    size -= 1
+                else:
+                    args = []
+                prim = f"(list (text) ({camel(name)}))"
+            else:
+                name = "remove" if i % 3 == 2 else "union"
+                key = "β" + str(i % 32)
+                args = [enc(key)] if name == "remove" else [seq("set", [enc(key), enc("🙂" + str(i % 16))])]
+                prim = f"(set (text) ({name}))"
+            steps.append(seq("tuple", [enc(f"{family}.{name}"), enc(prim)] + args))
+            if i < 20 or i % 8 == 7:
+                first = "%concat" if family == "Text" else "concat" if family == "List" else "union"
+                yield f"{family}-reuse-sequence-{i}", query(f"{family}.{first}", "(sequence)",
+                                                           [initial, seq("list", steps)])
 
     scalars = [("unit", "(unit)"), ("bool", "(bool true)"), ("byte", "(byte 255)"),
                ("char", f"(char {quote(chr(0x1f642))})"), ("text", enc("#{x}β")),
@@ -398,6 +444,13 @@ def main():
                 operands = bytes(512) if variant == 0 else rng.randbytes(512)
                 (directory / f"{name}-{variant}").write_bytes(
                     bytes([i, variant & 1, variant // 3, variant % 3]) + operands)
+        # Text scalar encoding is twice its code point. Keep the first text
+        # at one quarter of self-concat's capacity, then append into its slack.
+        left = bytes([64]) + (ord('β') * 2).to_bytes(8, 'little') * 64 + bytes([1])
+        right = bytes([1]) + (ord('🙂') * 2).to_bytes(8, 'little') + bytes([0])
+        for holders in range(3):
+            (directory / f"TEXT_CONCAT-slack-{holders}").write_bytes(
+                bytes([ids.index('TEXT_CONCAT'), 0, 0, holders]) + left + right)
         return
     generated = list(cases()) + list(extended_cases())
     rows = re.findall(r'^PRIM\(\w+,\s*"([^"]+)",\s*"([^"]+)"',

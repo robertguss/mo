@@ -817,15 +817,32 @@ gives the exact representation; this section gives the reasons.
   becomes immortal and is never freed.
 - **Lists** are arrays with a length and a capacity, so `get` takes constant
   time, and `append` on a list with one holder grows it in place, in amortized
-  constant time.
+  constant time. Owned `concat` reserves the whole suffix before copying its
+  elements; prepend, slices, reverse and removal reuse unique storage. A
+  shared copy reserves exactly the requested elements, not the source's slack.
+  Below one quarter capacity, unique shrinking tries an exact buffer and
+  transfers retained cells; on refusal it keeps its buffer and still succeeds.
+  A prepend, prefix drop or middle removal still moves the following cells in
+  linear time; repeated `drop(1)` or `remove_at(0)` is therefore quadratic.
 - **Maps and sets** are insertion-ordered hash tables: an array of entries in
   insertion order, and an index table of positions, as in CPython's compact
   dictionaries. A removal leaves a tombstone, and the table is compacted when
   tombstones reach a quarter of the entries. Both keep insertion order
   (reference 3.8). Like lists, a map with one holder changes in place, and a
   shared one is copied first (reference 13.3).
-- **Text** is UTF-8 bytes with a byte length, always valid. The character
-  count is computed when asked.
+- **Text** is UTF-8 bytes with a byte length and capacity, always valid. The
+  character count is computed when asked. Owned concatenation grows unique
+  storage geometrically and copies just the new suffix between growths; two
+  valid texts concatenate without another UTF-8 check. Slack is charged to the
+  heap. Unique growth requests twice the needed size (at least 32 bytes for
+  Text or four cells for List), bounded by the representation limit. If that
+  does not fit the remaining heap after the allocation header, it requests the
+  needed size plus half the remaining spare bytes, rounded down to whole cells
+  for List. A native `ENOMEM` refusal retries once at the exact needed size.
+  Shared Text copies have exactly the needed bytes, regardless of old capacity.
+  Unique Text shrinking uses the same best-effort quarter-capacity rule as List.
+  Trims and prefix/suffix removal reuse unique storage, and unchanged trims
+  keep the original object even when shared or immortal.
 - **Reference counting.** The compiler places `dup` and `drop` so that every
   object is freed as soon as nothing can reach it. Parameters are borrowed
   where inference shows the caller keeps them alive (`bytecode.md` 5.4), which
@@ -1432,8 +1449,14 @@ Only a returned result transfers ownership: the result is owned, the `o`
 parameters are consumed, and the `b` parameters stay readable. All refusals
 preserve every operand, its object and ownership, and the output cell, so the
 VM can render pre-instruction registers without snapshots. Single updates use
-the heap's transactional unique/shared paths; multi-step operations build a
-private result before committing ownership. Native walk/build storage is
+the heap's transactional unique/shared paths. Text and list concatenation
+reserve before mutation; shrinking or reordering a unique value cannot fail.
+Set union plans missing keys and insertion slots before any mutation or count
+change, using scratch proportional to the right set and a sparse overlay of
+new slots rather than copying the left index. A singleton union uses the
+existing transactional insertion. Shared/immortal values are copied before a
+change; growth/rehashing builds an index privately, then commits ownership.
+Other multi-step operations build a private result. Native walk/build storage is
 charged to the process through `mo_scratch`; structural formatting uses the
 heap printer's separately bounded caller-owned output buffer.
 

@@ -100,8 +100,16 @@ static MO_MUST_USE bool cell(struct prim_fixture *f, uint32_t type, struct input
         }
         uint64_t width;
         MO_ASSERT(mo_unicode16_display_width(bytes, length, &width));
+        bool slack = byte(in) % 2 != 0 && length >= 32;
         if (!mo_value_text(f->heap, (const char *)bytes, length, out))
             return false;
+        /* Self-concat reserves four times the original bytes; retaining one
+         * quarter avoids contraction and exercises subsequent writes to slack. */
+        if (slack &&
+            (!mo_text_concat(f->heap, out, *out) || !mo_text_slice(f->heap, out, 0, length))) {
+            mo_value_drop(f->heap, type, *out);
+            return false;
+        }
         struct mo_cell result;
         const char *reason;
         MO_ASSERT(mo_prim_call(f->heap, &f->types, MO_PRIM_UNICODE16_DISPLAY_WIDTH,
@@ -143,9 +151,20 @@ static MO_MUST_USE bool cell(struct prim_fixture *f, uint32_t type, struct input
             }
         }
         if (ok) {
-            if (t->kind == MO_TYPE_LIST)
+            if (t->kind == MO_TYPE_LIST) {
                 ok = mo_value_list(f->heap, type, a, count, out);
-            else if (t->kind == MO_TYPE_SET)
+                unsigned shape = byte(in) % 3;
+                if (ok && count != 0 && shape != 0) {
+                    /* Keep the same elements, either at exactly one quarter
+                     * capacity (slack) or below it (best-effort contraction). */
+                    for (unsigned i = 0; i < (shape == 1 ? 1U : 3U) && ok; i++)
+                        ok = mo_list_concat(f->heap, type, out, *out);
+                    if (ok)
+                        ok = mo_list_slice(f->heap, type, out, 0, count);
+                    if (!ok)
+                        mo_value_drop(f->heap, type, *out);
+                }
+            } else if (t->kind == MO_TYPE_SET)
                 ok = mo_value_set(f->heap, type, a, count, out);
             else if (t->kind == MO_TYPE_MAP)
                 ok = mo_value_map(f->heap, type, a, b, count, out);
@@ -298,16 +317,19 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             MO_ASSERT(reason != NULL && memcmp(&result, &unchanged, sizeof result) == 0);
     }
     for (size_t i = 0; i < built; i++) {
-        if (status != MO_PRIM_RETURNED || ownership[id][i] == 'b') {
+        bool preserved = status != MO_PRIM_RETURNED || ownership[id][i] == 'b';
+        if (preserved || holders != 0) {
+            struct mo_cell original = holders == 1 ? held[i] : args[i];
             struct mo_buffer after;
             mo_buffer_init(&after, 262144);
-            MO_ASSERT(mo_value_print(f.heap, signature->parameters[i], args[i], &after));
+            MO_ASSERT(mo_value_print(f.heap, signature->parameters[i], original, &after));
             MO_ASSERT(
                 before[i].length == after.length &&
                 (after.length == 0 || memcmp(before[i].bytes, after.bytes, after.length) == 0));
             mo_buffer_free(&after);
-            mo_value_drop(f.heap, signature->parameters[i], args[i]);
         }
+        if (preserved)
+            mo_value_drop(f.heap, signature->parameters[i], args[i]);
         if (holders == 1)
             mo_value_drop(f.heap, signature->parameters[i], held[i]);
         mo_buffer_free(&before[i]);

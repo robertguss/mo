@@ -433,7 +433,12 @@ enum mo_prim_status mo_prim_text(struct mo_prim_call *c, struct mo_cell *out) {
         if (c->id != MO_PRIM_TEXT_TRIM_START)
             while (end > start && white(t.bytes[end - 1]))
                 end--;
-        return make_text(c, t.bytes + start, end - start, out);
+        struct mo_cell value = c->args[0];
+        if (!mo_text_slice(c->heap, &value, start, end - start))
+            return MO_PRIM_OUT_OF_MEMORY;
+        c->moved = 1;
+        *out = value;
+        return MO_PRIM_RETURNED;
     }
     case MO_PRIM_TEXT_STARTS_WITH:
     case MO_PRIM_TEXT_ENDS_WITH:
@@ -447,26 +452,38 @@ enum mo_prim_status mo_prim_text(struct mo_prim_call *c, struct mo_cell *out) {
             *out = mo_cell_bool(found);
             return MO_PRIM_RETURNED;
         }
-        return found ? some_text(c, t.bytes + (prefix ? p.length : 0), t.length - p.length, out)
-                     : mo_prim_option(c, false, mo_cell_unit(), out);
+        if (!found)
+            return mo_prim_option(c, false, mo_cell_unit(), out);
+        MO_ASSERT(mo_case_shape(c->types, c->result, 1) == MO_CASE_REF);
+        struct mo_cell value = c->args[0];
+        if (!mo_text_slice(c->heap, &value, prefix ? p.length : 0, t.length - p.length))
+            return MO_PRIM_OUT_OF_MEMORY;
+        c->moved = 1;
+        *out = mo_cell_case(1, value);
+        return MO_PRIM_RETURNED;
     }
     case MO_PRIM_TEXT_QUOTED:
         return quoted(c, t, '"', out);
     default:
         break;
     }
+    if (c->id == MO_PRIM_TEXT_CONCAT) {
+        struct text right = view(c->args[1]);
+        if (!mo_prim_bytes_fit(c, t.length + right.length))
+            return MO_PRIM_OUT_OF_MEMORY;
+        struct mo_cell value = c->args[0];
+        if (!mo_text_concat(c->heap, &value, c->args[1]))
+            return MO_PRIM_OUT_OF_MEMORY;
+        c->moved = 1;
+        *out = value;
+        return MO_PRIM_RETURNED;
+    }
     struct mo_scratch scratch;
     mo_scratch_init(&scratch, c->heap);
     enum mo_prim_status status = MO_PRIM_OUT_OF_MEMORY;
     size_t length = t.length;
     int64_t count = 0;
-    struct text b = {0};
-    if (c->id == MO_PRIM_TEXT_CONCAT) {
-        b = view(c->args[1]);
-        if (!mo_prim_bytes_fit(c, length + b.length))
-            goto done;
-        length += b.length;
-    } else if (c->id == MO_PRIM_TEXT_REPEAT) {
+    if (c->id == MO_PRIM_TEXT_REPEAT) {
         count = mo_cell_get_int(c->args[1]);
         if (count < 0) {
             c->reason = "Text.repeat with a negative count";
@@ -505,15 +522,12 @@ enum mo_prim_status mo_prim_text(struct mo_prim_call *c, struct mo_cell *out) {
         memcpy(bytes + (left ? spaces : 0), t.bytes, t.length);
     } else {
         memcpy(bytes, t.bytes, t.length);
-        if (c->id == MO_PRIM_TEXT_CONCAT)
-            memcpy(bytes + t.length, b.bytes, b.length);
-        else
-            for (size_t i = 0; i < length; i++) {
-                if (c->id == MO_PRIM_TEXT_ASCII_LOWERCASE && bytes[i] >= 'A' && bytes[i] <= 'Z')
-                    bytes[i] += 32;
-                if (c->id == MO_PRIM_TEXT_ASCII_UPPERCASE && bytes[i] >= 'a' && bytes[i] <= 'z')
-                    bytes[i] -= 32;
-            }
+        for (size_t i = 0; i < length; i++) {
+            if (c->id == MO_PRIM_TEXT_ASCII_LOWERCASE && bytes[i] >= 'A' && bytes[i] <= 'Z')
+                bytes[i] += 32;
+            if (c->id == MO_PRIM_TEXT_ASCII_UPPERCASE && bytes[i] >= 'a' && bytes[i] <= 'z')
+                bytes[i] -= 32;
+        }
     }
     status = make_text(c, bytes, length, out);
 done:
