@@ -1629,6 +1629,23 @@ static void test_primitive_ownership(void) {
         }
     }
     mo_arena_free(&arena);
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    b = compile(&arena, "(Program () ((FunDecl \"go\" ((\"acc\" (text))) (text) "
+                        "(prim (text (concat)) ((var \"acc\") (lit (text \"ab\")))) "
+                        "\"M\" (function) 0)) () \"go\" (noSource))");
+    if (b != NULL) {
+        const struct mo_bytecode_function *f = &b->functions[0];
+        const uint32_t *call = instruction(f, MO_OP_PRIM, 0);
+        CHECK(call != NULL && call[4] == 0);
+        for (uint32_t pc = 0; pc < f->code_count;) {
+            const struct mo_opcode_info *op = mo_opcode_find(f->code[pc] & MO_OPCODE_MASK);
+            CHECK(op != NULL && op->number != MO_OP_DUP && op->number != MO_OP_DROP);
+            if (op == NULL)
+                break;
+            pc += 1u + op->fixed_count + (f->code[pc] >> MO_OPCODE_VARIABLE_SHIFT);
+        }
+    }
+    mo_arena_free(&arena);
 }
 static void test_operation_order(void) {
     struct mo_arena arena;
