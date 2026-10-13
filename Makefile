@@ -26,7 +26,7 @@ FUZZ_BUILD := build/fuzz
 CSTD := -std=c17
 # Headers are included by their path in src/, which starts with their module, such as
 # "base/base.h".
-INCLUDES := -Isrc
+INCLUDES := -Isrc -Ibuild/generated
 THREADS := -pthread
 WARNINGS := -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion \
 	-Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla \
@@ -87,13 +87,36 @@ export ASAN_OPTIONS UBSAN_OPTIONS
 
 all: $(BUILD)/debug/mo
 
+# Ordinary prerequisites keep an up-to-date build usable without Python.
+# Mutually exclusive stamps also detect the optional guide appearing/disappearing,
+# even if a newly added guide has an older timestamp than the generated header.
+GUIDE_SOURCE := $(wildcard docs/agent-guide.md)
+GUIDE_STATE := $(if $(GUIDE_SOURCE),present,absent)
+GUIDE_STAMP := build/generated/tools/guide-$(GUIDE_STATE)
+# A missing stamp forces this invocation, even on a coarse-timestamp filesystem;
+# after creation it is an ordinary prerequisite, not a per-invocation generator.
+.PHONY: $(if $(wildcard $(GUIDE_STAMP)),,$(GUIDE_STAMP))
+$(GUIDE_STAMP):
+	@mkdir -p $(dir $@)
+	@rm -f build/generated/tools/guide-present build/generated/tools/guide-absent
+	@touch $@
+
+build/generated/tools/embedded.h: ci/embed_docs.py docs/reference/README.md $(GUIDE_SOURCE) $(GUIDE_STAMP)
+	python3 ci/embed_docs.py $@
+	@touch $@
+
+# Depend directly on the state too: a same-tick header rewrite must still
+# recompile the document consumer when the guide appears or disappears.
+$(BUILD)/debug/src/tools/execute.o $(BUILD)/sanitize/src/tools/execute.o \
+$(FUZZ_BUILD)/src/tools/execute.o: build/generated/tools/embedded.h $(GUIDE_STAMP)
+
 test: $(DEBUG_TESTS) $(BUILD)/debug/mo
 	@for t in $(DEBUG_TESTS); do $$t || exit 1; done
 	@$(BUILD)/debug/mo --version >/dev/null
 
 sanitize: $(SANITIZE_TESTS) $(BUILD)/sanitize/mo
 	@for t in $(SANITIZE_TESTS); do $$t || exit 1; done
-	@$(BUILD)/sanitize/mo >/dev/null && $(BUILD)/sanitize/mo --version >/dev/null
+	@$(BUILD)/sanitize/mo --version >/dev/null
 
 # The grammar checks run on the debug build, then again under the sanitizers.
 grammar: $(BUILD)/debug/mo-grammar $(BUILD)/sanitize/mo-grammar
@@ -185,7 +208,7 @@ library-map: $(BUILD)/debug/module-path
 # puts or putchar. Casting the call to (void) ignores the result on purpose. Mo's own functions
 # are covered by MO_MUST_USE. The flags are the debug build's, so clang-tidy sees the code as
 # the compiler does (it ignores the -M options).
-tidy: $(GRAMMAR_GENERATED)/mo.tab.h
+tidy: $(GRAMMAR_GENERATED)/mo.tab.h build/generated/tools/embedded.h
 	clang-tidy --quiet -checks='-*,cert-err33-c' -warnings-as-errors='*' -header-filter='^(src|tests|fuzz|grammar)/' \
 		$(TIDY_FILES) -- $(COMMON) $(DEBUG) $(GRAMMAR_INCLUDES)
 

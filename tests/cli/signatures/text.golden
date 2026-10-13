@@ -1,0 +1,7 @@
+error E0048: a type name isn't in scope  tests/cli/signatures/main.mo:2:15
+
+  2 | fn run(value: Missing) : Int
+    |               ^^^^^^^ not a type in scope
+
+Use brings a module's exposed type names into scope (reference 10.3).
+

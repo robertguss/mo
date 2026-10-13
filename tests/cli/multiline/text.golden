@@ -1,0 +1,11 @@
+error E0078: a function's result doesn't match its signature  tests/cli/multiline/main.mo:3:3
+
+  3 |   fn()
+    |   ^^^^
+  4 |     1
+    | ^^^^^
+  5 |   end
+    | ^^^^^ expected Int, found fn() : ?
+
+A function's signature gives its types (reference 5.1).
+

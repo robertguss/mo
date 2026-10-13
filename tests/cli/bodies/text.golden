@@ -1,0 +1,14 @@
+error E0050: a name isn't visible in this block  tests/cli/bodies/main.mo:3:3
+
+  3 |   unknown
+    |   ^^^^^^^ not visible in this block
+
+A local name is visible from its binding to the end of its block (reference 6.1).
+
+error E0078: a function's result doesn't match its signature  tests/cli/bodies/main.mo:6:3
+
+  6 |   false
+    |   ^^^^^ expected Int, found Bool
+
+A function's signature gives its types (reference 5.1).
+

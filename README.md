@@ -49,7 +49,8 @@ in-place updates) and Elm (helpful error messages).
 
 ## Building
 
-Mo is implemented in C. With a C compiler and `make`:
+Mo is implemented in C. Building requires a C17 compiler, POSIX, `make` and
+Python 3 (to embed the version-matched reference and guide):
 
 ```sh
 make              # build build/<compiler>/debug/mo

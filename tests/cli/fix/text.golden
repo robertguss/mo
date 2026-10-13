@@ -1,0 +1,11 @@
+error E0052: a name or parameter is unused  tests/cli/fix/main.mo:2:8
+
+  2 | fn run(value: Int) : Int
+    |        ^^^^^ never read
+
+A name starting with _ is unused on purpose (reference 6.1).
+
+Fix: mark the name unused on purpose
+  tests/cli/fix/main.mo:2:8
+  2 | fn run(_value: Int) : Int
+

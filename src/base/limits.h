@@ -277,6 +277,21 @@ static inline struct mo_limits mo_limits_default(void) {
 
 /* What the toolchain keeps of its own. */
 
+/* Mo's own option words and operands, not borrowed file lists or forwarded
+ * program arguments (the OS bounds those). The command name is length-bounded
+ * too, but doesn't count toward the option budgets. Mistakes exit 2. */
+#define MO_CLI_ARGUMENTS 256
+#define MO_CLI_ARGUMENT_SIZE 4096
+#define MO_CLI_ARGUMENT_BYTES (64 << 10)
+#define MO_CLI_ERROR_SIZE 4096 /* one escaped, newline-free command error */
+
+/* One complete rendered diagnostic (including JSON escaping). Oversize records
+ * are dropped whole and counted in totals; never emit a partial JSON object. */
+#define MO_CLI_DIAGNOSTIC_SIZE (1 << 20)
+
+/* The staged surface pipeline's one arena. E1054 while parsing, E1058 while checking. */
+#define MO_CLI_CHECK_SIZE (512 << 20)
+
 /* Diagnostics one run keeps. mo_diags_add refuses more, and counts them, so the run can say that
  * it stopped early (src/base/diag.h). */
 #define MO_LIMIT_DIAGNOSTICS 1000
