@@ -27,4 +27,12 @@ MO_MUST_USE enum mo_prim_status mo_prim_call(struct mo_heap *heap, const struct 
                                              const struct mo_cell *arguments, struct mo_cell *out,
                                              const char **reason_out);
 
+/* The same grapheme-aware column estimate as Unicode16.display_width, over a
+ * readable UTF-8 span. bytes may be NULL only when length is zero; width_out is
+ * required. No allocation or heap, constant stack space and linear work.
+ * On success writes the width; on invalid UTF-8 or uint64_t overflow returns
+ * false and leaves width_out unchanged. No source-file or runtime value cap. */
+MO_MUST_USE bool mo_unicode16_display_width(const uint8_t *bytes, size_t length,
+                                            uint64_t *width_out);
+
 #endif

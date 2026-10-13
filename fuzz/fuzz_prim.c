@@ -98,7 +98,17 @@ static MO_MUST_USE bool cell(struct prim_fixture *f, uint32_t type, struct input
             bytes[length] = (uint8_t)(cp | (n == 1 ? 0 : n == 2 ? 0xc0 : n == 3 ? 0xe0 : 0xf0));
             length += n;
         }
-        return mo_value_text(f->heap, (const char *)bytes, length, out);
+        uint64_t width;
+        MO_ASSERT(mo_unicode16_display_width(bytes, length, &width));
+        if (!mo_value_text(f->heap, (const char *)bytes, length, out))
+            return false;
+        struct mo_cell result;
+        const char *reason;
+        MO_ASSERT(mo_prim_call(f->heap, &f->types, MO_PRIM_UNICODE16_DISPLAY_WIDTH,
+                               f->signature[MO_PRIM_UNICODE16_DISPLAY_WIDTH], out, &result,
+                               &reason) == MO_PRIM_RETURNED);
+        MO_ASSERT(reason == NULL && (uint64_t)mo_cell_get_int(result) == width);
+        return true;
     }
     case MO_TYPE_BYTES:
     case MO_TYPE_BIGINT: {
@@ -199,6 +209,9 @@ static void unicode_laws(struct prim_fixture *f, enum mo_primitive_id id,
 }
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+    uint64_t width = UINT64_MAX;
+    if (!mo_unicode16_display_width(data, size, &width))
+        MO_ASSERT(width == UINT64_MAX);
     if (size < 4)
         return 0;
     struct input in = {data, size, 0};
