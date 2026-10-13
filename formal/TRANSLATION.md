@@ -147,6 +147,10 @@ An `Int` literal is a Core literal once the front end has read it
 the library's whole-number functions are primitives that check their bugs:
 overflow and division by zero stop the program, they never wrap.
 
+The C lowerer folds unary minus on a numeric immediate before constructing
+the scalar. In particular, `-9223372036854775808` is one negative Int literal,
+not an out-of-range positive Int followed by `%int.neg`.
+
 ```mo
 q = -7 / 2                     # -3
 r = -7 % 2                     # -1
@@ -209,12 +213,20 @@ let cents = %dec.div(%int.toDecimal(count), 100) in ...
 Multiplication and division round to 18 places with ties to even
 (`roundHalfEven`); `round` and `to_fixed` round ties away from zero.
 `Float` values are IEEE 754 doubles, with `%float.add` and the others.
+The C lowerer converts Float spellings in a private C numeric locale with
+nearest-even rounding, preserving signed zero and restoring the caller's
+rounding state. Decimal spellings instead become exact scaled integers.
 
 ### 3.4 Text, Char and Bytes
 
 Escapes and text on several lines are the front end's: Core gets the
-resulting text. Interpolation lowers to `%text.concat` of the parts, each
-converted to its text form:
+resulting text.
+The staged C checker retains literal spellings. The lowerer decodes escapes,
+normalizes triple-text CRLFs and removes the closing delimiter's indentation;
+the resulting UTF-8 bytes belong to the Core arena.
+
+Interpolation lowers to `%text.concat` of the parts, each converted to its
+text form:
 
 | Part's type | Its text form in Core |
 | --- | --- |
@@ -535,6 +547,12 @@ bound, jumps to a join point around the whole body:
 When the `return` is in tail position already, as above, no join point is
 needed.
 
+The C lowerer's initial CPS pass conservatively installs this join whenever
+a return is reachable in the function, excluding nested lambda bodies. A
+function or lambda with no reachable return has no return join. Expression
+walks and continuation expansion use explicit arena-backed work lists, never
+recursive C calls; the generated Core path limit can refuse an expanded body.
+
 ### 5.2 Calls
 
 A call of a top-level function is `call`: `shipping(2.5, false)` is
@@ -724,6 +742,26 @@ needs only one-level `case`, `if` and `%eq`.
 - A tuple pattern projects; a record pattern with named fields reads them.
 - A list pattern is a chain of `%list.uncons`: `[]` is `None`, `[p, q]` is two
   `Some`s then `None`, and `[first, ..rest]` binds the tail.
+
+The C decision tree tests alternatives in written order. Each arm has one
+success join taking its canonical pattern binders and live outer vars, so
+alternatives share the body and preserve one source identity per lambda.
+A failed pattern or false guard tries the next alternative, including another
+alternative of the same written arm. A guarded alternative group uses an
+index-taking dispatch join and one guard join: guard failure resumes dispatch
+at the following alternative. Failure continuations are joins, rather than
+copies of the remaining tree. Constructor arms always follow declaration
+order, including synthesized failure arms. An unreachable final failure is a
+stop; exhaustiveness has already been proved by checking. Is/and/implies in a
+condition compile around the success continuation, rather than first making
+an intermediate Bool that would lose the pattern's true-path bindings.
+Shared nontrivial condition/pattern continuations are joins too. Only atomic
+leaves or small primitives/jumps with atomic arguments are copied, so chained
+conditions grow linearly at fixed constructor width and each lambda occurs
+once in the metadata preorder. Arguments evaluate in written order; atoms
+pass directly, except mutable reads before later non-atomic operands are
+snapshotted. Discarded Unit/atom statements add no let. Exit jumps retain the
+return/break/continue span, and loop fall-through retains the loop span.
 
 The reference's example:
 
@@ -1018,6 +1056,33 @@ both are Lean functions from types to declarations: `Column (t : Ty)` and
 `topBy (t k : Ty)` in `MoCore/Examples/Inventory.lean`, `Lib.map (a b : Ty)`
 in `MoCore/Lib.lean`.
 
+The C implementation distinguishes nominal data from executable instances.
+A generic data declaration is canonical program-wide by (defining declaration,
+concrete type list) and owned by the defining module. If `Lib.make()` returns
+`Lib.Box(Int)`, a requester-specialized function must accept that same nominal
+type; making requester-specific data names would break the call's Core type.
+Generic function code is instead deduplicated by (requesting module, defining
+declaration, concrete type list). Thus Main and Other can own distinct copies
+`Main::Lib.identity(Int)` and `Other::Lib.identity(Int)`. Nested requests use
+the instance's requesting module. Full names retain origin/type arguments,
+declaration metadata keeps the defining span, and ModuleMeta retains requester
+ownership. Overloaded functions add `@Receiver` before the type list. Duplicate
+code across modules is accepted in Phase 2; later sharing must retain meaning.
+Concrete types and function instances use bounded hash indices, source
+function lookup uses a sorted index, and module metadata visits each owned
+instance directly. Concrete source types share a cache across substitutions.
+Index buckets and source-function ordering use names, declaration positions,
+program indices and canonical type hashes, never addresses; ASLR cannot change
+lowering's work-limit verdict. Native scalar leaves share cache entries across bodies.
+The C lowerer checks structural Core type height after substitution as well as
+source-template depth. `T` becoming a deep list can push `List(T)` over Core's
+path bound; that instantiation refuses with E1153 rather than returning invalid Core.
+The E1152 document bound counts canonical types and every unfolded expression
+occurrence across all function bodies, not just allocated expressions per body.
+The canonical printer has separate schema/metadata depth, node, byte and scratch
+bounds. Lowering does not exercise that codec: a compilable Core document need
+not fit its text form. Callers requesting text handle the printer's refusal.
+
 ### 9.2 The five abilities
 
 Each use of an ability becomes the specific primitive or function for the
@@ -1071,8 +1136,9 @@ semantic operation, but **remain in ModuleMeta**: complete owned declaration
 lists and exposed functions/types with `contents_exposed` (`T` false,
 `T(..)` true). All types keep their full definitions for layouts/structural
 printing. The image's module table and `mo test`'s hidden-type generation
-use exposure, never infer it from those definitions. Instance ownership is
-the requesting module, as architecture 4.2 requires. Constants' module/source
+use exposure, never infer it from those definitions. Generic function instance
+ownership is the requesting module, as architecture 4.2 requires; canonical
+generic data belongs to its defining module. Constants' module/source
 order is retained separately from their dependency-ordered declarations.
 
 ### 10.4 Constants
@@ -1154,8 +1220,12 @@ and turns its result into the exit status:
 | `Int` | that `Int`; outside 0 to 255 it is a bug |
 | `Result(Unit, E)` | 0 for `Ok`; for `Error(e)`, `e`'s text form on standard error, then 1 |
 
-In Core this is a wrapper, which takes a `Console` from the runtime even
-when `main` takes none:
+In Core this is a wrapper. Its parameters are main's capabilities in written
+order. A Result entry reuses main's Console when present; otherwise it appends
+one generated Console from the runtime, used only for printing Error's text.
+That additional capability is never passed to source main. Unit/Int wrappers
+have exactly main's declared capabilities, with no generated Console. The host
+constructs exactly the wrapper's declared capabilities through `mo_call_main`:
 
 ```
 fn %start(args: Args, console: Console, files: Files) : Int =
@@ -2056,7 +2126,10 @@ minor version is 0.8. TEXT.md specifies exact fields and boundary reports.
 2. **Bindings, not renamed identifiers.** Function parameters have optional
    original names; local bindings use (node, binder slot). Case slots flatten
    the arms; lambda/join slots follow parameter order. Repeated SSA versions
-   may share a source name. Generated slots have none. The compiler resolves
+   may share a source name. Generated slots have none. Ignored `_` lambda parameters
+   keep their signature type and position with a generated Core name, but no
+   source binding/name; NULL checked lambda slots do not remove arguments.
+   The compiler resolves
    lexical uses and computes register ranges itself, retaining provenance
    through lifting and optimization; lowering does not guess code offsets.
 3. **Stable image identity.** Full function/spec/closure names are independent
