@@ -15,7 +15,7 @@ struct substitution {
 };
 
 struct instance {
-    struct instance *next;
+    struct instance *next, *hash_next, *source_next;
     const struct mo_checked_function *source;
     struct substitution substitution;
     uint32_t owner, depth, index;
@@ -34,6 +34,7 @@ struct data_instance {
 
 struct type_cache;
 struct canonical_type;
+struct type_frame;
 struct lower_node {
     struct mo_core_expr expr; /* first, so every emitted Expr carries private provenance */
     struct mo_core_span span;
@@ -52,8 +53,12 @@ struct lowering {
     uint32_t nodes, type_count, serial, function_count, data_count;
     struct instance *functions, **function_tail;
     struct data_instance *data, **data_tail;
-    struct type_cache *cache;
-    struct canonical_type *types;
+    struct type_cache **cache;
+    struct canonical_type **types;
+    struct type_frame *type_stack;
+    uint32_t cache_count, cache_slots, type_slots, instance_slots;
+    struct instance **instance_index, **by_source, ***source_tails;
+    const struct mo_checked_function **source_index;
 };
 
 _Noreturn void lower_refuse(struct lowering *p, uint16_t code, const char *message);
@@ -71,6 +76,7 @@ struct mo_core_span lower_span(struct lowering *p, struct mo_span span);
 
 mo_core_ty lower_type(struct lowering *p, const struct mo_source_type *type,
                       const struct substitution *substitution);
+void lower_indices(struct lowering *p);
 mo_core_string lower_type_name(struct lowering *p, mo_core_ty type);
 struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symbol,
                                 struct mo_type_arguments arguments,

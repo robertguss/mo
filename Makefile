@@ -274,6 +274,12 @@ $(BUILD)/debug/tests/test_cli_faults.test: $(BUILD)/debug/tests/test_cli_faults.
 $(BUILD)/sanitize/tests/test_cli_faults.test: $(BUILD)/sanitize/tests/test_cli_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out src/tools/execute.c,$(LIB_SOURCES))) $(BUILD)/sanitize/cli-faults/execute.o
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
+$(BUILD)/debug/lower-source: $(BUILD)/debug/ci/lower_source.o $(call objects,$(BUILD)/debug,$(LIB_SOURCES))
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/lower-source: $(BUILD)/sanitize/ci/lower_source.o $(call objects,$(BUILD)/sanitize,$(LIB_SOURCES))
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
 # Fault injection only in the two translation units owning VM initialization
 # and heap allocation. Compile-time renaming also works with Apple's linker.
 VM_FAULT_SOURCES := src/heap/heap.c src/vm/image.c

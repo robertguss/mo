@@ -1,5 +1,6 @@
 #include "base/codes.h"
 #include "base/limits.h"
+#include "base/stack.h"
 #include "codegen/codegen.h"
 #include "lower/lower.h"
 #include "lower_fixture.h"
@@ -503,10 +504,10 @@ static void test_limits(void) {
     uint32_t zero = lower_fixture_row(&f, MO_S_INT, &f.int_, "0", 0, NULL);
     uint32_t one = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
     uint32_t last = zero;
-    for (unsigned i = 0; i < 130; i++)
+    for (unsigned i = 0; i < 253; i++)
         last = lower_fixture_op(&f, MO_T_PLUS, &f.int_, last, one);
     CHECK(mo_lower(&f.arena, &f.program, &f.sources, &f.diags) == NULL);
-    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_LOWER_DEPTH);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_LOWER_TEXT);
     mo_diags_free(&f.diags);
     MO_ASSERT(mo_diags_init(&f.diags));
     mo_arena_free(&f.arena);
@@ -514,6 +515,20 @@ static void test_limits(void) {
     CHECK(mo_lower(&f.arena, &f.program, &f.sources, &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_LOWER_NO_MEMORY);
     lower_fixture_free(&f);
+}
+
+static void test_native_refusal(void) {
+    const char *names[] = {"Console.read_line", "unknown"};
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+        struct lower_fixture f;
+        lower_fixture_init(&f, "module Main\nfn main() : Int\n1\nend\n");
+        uint32_t value = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+        uint32_t call = lower_fixture_row(&f, MO_S_CALL, &f.int_, NULL, 1, &value);
+        f.rows[call].native = names[i];
+        CHECK(mo_lower(&f.arena, &f.program, &f.sources, &f.diags) == NULL);
+        CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_LOWER_UNFINISHED);
+        lower_fixture_free(&f);
+    }
 }
 
 static void test_ignored_parameters(void) {
@@ -554,7 +569,10 @@ static void test_ignored_parameters(void) {
 
 static void test_substituted_depth(void) {
     /* Substitution deepens this generic result without deepening its template. */
-    for (uint32_t depth = MO_LIMIT_CORE_DEPTH - 3; depth < MO_LIMIT_CORE_DEPTH; depth += 2) {
+    const uint32_t depths[] = {MO_LIMIT_CORE_DEPTH - 16, MO_LIMIT_CORE_DEPTH - 3,
+                               MO_LIMIT_CORE_DEPTH - 1};
+    for (size_t index = 0; index < sizeof depths / sizeof depths[0]; index++) {
+        uint32_t depth = depths[index];
         struct lower_fixture f;
         lower_fixture_init(&f, "module Main\nfn widen(_value: T) : List(T)\n[]\nend\n"
                                "fn main() : Int\nwiden([])\n0\nend\n");
@@ -604,16 +622,98 @@ static void test_substituted_depth(void) {
         uint32_t statements[] = {call, zero};
         (void)lower_fixture_row(&f, MO_S_SEQUENCE, &f.int_, NULL, 2, statements);
         struct mo_core *core = mo_lower(&f.arena, &f.program, &f.sources, &f.diags);
-        if (depth == MO_LIMIT_CORE_DEPTH - 3) {
+        if (index == 0) {
             CHECK(core != NULL && !mo_diags_any(&f.diags));
             if (core != NULL)
                 MO_ASSERT(mo_core_check(core, &f.diags));
         } else {
             CHECK(core == NULL);
-            CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_LOWER_DEPTH);
+            CHECK(f.diags.count == 1 &&
+                  f.diags.items[0].code == (index == 1 ? MO_CODE_LOWER_TEXT : MO_CODE_LOWER_DEPTH));
         }
         lower_fixture_free(&f);
     }
+}
+
+static struct mo_core *source_core(struct mo_arena *output, struct mo_buffer *text,
+                                   struct mo_diags *diags) {
+    struct mo_arena input;
+    struct mo_sources sources;
+    mo_arena_init(&input, MO_LIMIT_LOWER_WORK);
+    MO_ASSERT(mo_sources_init(&sources));
+    uint32_t file;
+    struct mo_source_error error;
+    MO_ASSERT(mo_sources_add_bytes(&sources, "main.mo", text->bytes, text->length, &file, &error));
+    struct mo_module_syntax *module = mo_parse(&input, &sources, file, diags);
+    const char *name = "Main";
+    struct mo_module_set set = {.count = 1, .modules = &module, .names = &name};
+    struct mo_program *program = module == NULL ? NULL : mo_check(&input, &set, diags);
+    MO_ASSERT(program != NULL);
+    struct mo_core *core = mo_lower(output, program, &sources, diags);
+    mo_sources_free(&sources);
+    mo_arena_free(&input);
+    if (core != NULL)
+        MO_ASSERT(mo_core_check(core, diags));
+    return core;
+}
+
+static void test_source(void *unused) {
+    (void)unused;
+    struct mo_arena output;
+    struct mo_diags diags;
+    struct mo_buffer source, printed;
+    mo_buffer_init(&source, MO_LIMIT_FILE_SIZE);
+    mo_buffer_init(&printed, MO_LIMIT_CORE_TEXT_SIZE);
+    size_t previous = 0;
+    for (uint32_t branches = 4; branches <= 16; branches *= 2) {
+        mo_arena_init(&output, MO_LIMIT_LOWER_WORK);
+        MO_ASSERT(mo_diags_init(&diags));
+        mo_buffer_clear(&source);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\nfn main() : Int\nx = false\n"));
+        for (uint32_t i = 0; i < branches; i++)
+            MO_ASSERT(mo_buffer_append_text(&source,
+                                            i == 0 ? "if x and x\n7\n" : "else if x and x\n7\n"));
+        MO_ASSERT(mo_buffer_append_text(&source, "else\n41\nend\nend\n"));
+        struct mo_core *core = source_core(&output, &source, &diags);
+        CHECK(core != NULL);
+        if (core != NULL) {
+            mo_buffer_clear(&printed);
+            CHECK(mo_core_print(core, &printed));
+            /* Doubling branches may double code, never multiply it sixteenfold. */
+            CHECK(previous == 0 || printed.length <= 3 * previous);
+            previous = printed.length;
+        }
+        mo_diags_free(&diags);
+        mo_arena_free(&output);
+    }
+    mo_buffer_clear(&source);
+    MO_ASSERT(mo_buffer_append_text(&source, "module Main\nfn main() : Int\nvar n = 0\n"));
+    for (uint32_t i = 0; i < 80; i++)
+        MO_ASSERT(mo_buffer_append_text(&source, "n += 1\n"));
+    MO_ASSERT(mo_buffer_append_text(&source, "n\nend\n"));
+    mo_arena_init(&output, MO_LIMIT_LOWER_WORK);
+    MO_ASSERT(mo_diags_init(&diags));
+    struct mo_core *core = source_core(&output, &source, &diags);
+    CHECK(core != NULL);
+    if (core != NULL)
+        run(core, 80);
+    mo_arena_free(&output);
+    mo_diags_free(&diags);
+    mo_buffer_clear(&source);
+    MO_ASSERT(mo_buffer_append_text(&source, "module Main\nfn main() : Int\n17\nend\n"));
+    for (uint32_t i = 0; i < 8000; i++) {
+        MO_ASSERT(mo_buffer_append_text(&source, "fn f"));
+        MO_ASSERT(mo_buffer_append_uint(&source, i));
+        MO_ASSERT(mo_buffer_append_text(&source, "() : Int\n17\nend\n"));
+    }
+    mo_arena_init(&output, MO_LIMIT_LOWER_WORK);
+    MO_ASSERT(mo_diags_init(&diags));
+    core = source_core(&output, &source, &diags);
+    CHECK(core != NULL && !mo_diags_any(&diags));
+    mo_diags_free(&diags);
+    mo_arena_free(&output);
+    mo_buffer_free(&source);
+    mo_buffer_free(&printed);
 }
 
 int main(int argc, char **argv) {
@@ -631,7 +731,9 @@ int main(int argc, char **argv) {
     test_text();
     test_result_entry();
     test_limits();
+    test_native_refusal();
     test_ignored_parameters();
     test_substituted_depth();
+    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source, NULL) == 0);
     return mo_test_report("lower");
 }

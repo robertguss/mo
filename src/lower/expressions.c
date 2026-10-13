@@ -145,6 +145,9 @@ static mo_core_expr projection(struct body *b, mo_core_expr value, size_t index)
     return e;
 }
 static mo_core_expr jump(struct body *b, struct continuation *k, mo_core_expr value) {
+    struct mo_span previous = b->p->span;
+    if (k->row != NULL)
+        b->p->span = k->row->syntax->span;
     size_t count = k->result ? 1 : 0;
     if (k->extra != NULL)
         count++;
@@ -160,6 +163,7 @@ static mo_core_expr jump(struct body *b, struct continuation *k, mo_core_expr va
         e->as.jump.args.items[at++] = k->extra;
     for (struct variable *v = k->variables; v != NULL; v = v->next)
         e->as.jump.args.items[at++] = lower_var(b->p, binding_name(b, v->binding));
+    b->p->span = previous;
     return e;
 }
 static mo_core_expr join(struct body *b, struct continuation *k, mo_core_ty result) {
@@ -417,6 +421,10 @@ static struct variable *pattern_variables(struct body *b, const struct mo_checke
  * binders are unique, so a name introduced here cannot be local to the target. */
 static struct variable *condition_variables(struct body *b, uint32_t index, mo_core_expr target,
                                             struct variable *outer) {
+    const struct mo_checked_expression *root = row(b, index);
+    if (root->pattern == NULL && root->operation != MO_T_AND && root->operation != MO_T_OR &&
+        root->operation != MO_T_IMPLIES)
+        return outer;
     struct variable *candidates = outer;
     uint32_t *rows = LOWER_NEW(b->p, uint32_t, b->source->count);
     size_t count = 1;
@@ -467,6 +475,43 @@ static struct variable *condition_variables(struct body *b, uint32_t index, mo_c
             outer = v;
         }
     return outer;
+}
+
+static bool atom(mo_core_expr e) {
+    return e->tag == MO_CORE_EXPR_LIT || e->tag == MO_CORE_EXPR_VAR ||
+           e->tag == MO_CORE_EXPR_GLOBAL;
+}
+
+static bool small_target(mo_core_expr e) {
+    if (atom(e) || e->tag == MO_CORE_EXPR_STOP)
+        return true;
+    mo_core_expr_list args;
+    if (e->tag == MO_CORE_EXPR_JUMP)
+        args = e->as.jump.args;
+    else if (e->tag == MO_CORE_EXPR_PRIM)
+        args = e->as.prim.args;
+    else
+        return false;
+    if (args.count > 4)
+        return false;
+    for (size_t i = 0; i < args.count; i++)
+        if (!atom(args.items[i]))
+            return false;
+    return true;
+}
+
+static mo_core_expr share_target(struct body *b, struct task t, mo_core_expr target,
+                                 mo_core_expr **out) {
+    if (small_target(target))
+        return target;
+    struct continuation *k = continuation(b, K_JUMP);
+    k->name = lower_fresh(b->p);
+    k->variables = condition_variables(b, t.row, target, t.state.variables);
+    mo_core_expr e = join(b, k, NULL);
+    e->as.join.body = target;
+    **out = e;
+    *out = &e->as.join.rest;
+    return jump(b, k, NULL);
 }
 
 static void arm_task(struct body *b, struct task t) {
@@ -680,6 +725,7 @@ static void loop(struct body *b, struct task t, const struct mo_checked_expressi
     finish(b, lower_unit(p), t.state, t.continuation, &exit->as.join.body);
     struct continuation *again = continuation(b, K_JUMP);
     again->name = lower_fresh(p);
+    again->row = r;
     again->variables = t.state.variables;
     if (for_) {
         static const struct mo_source_type int_type = {
@@ -811,6 +857,11 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
         return lower_prim(
             p, (struct mo_core_prim){.tag = MO_CORE_PRIM_IO, .as.io.tag = MO_CORE_IO_OP_PRINT},
             args);
+    if (r->native != NULL && strcmp(r->native, "None") != 0 && strcmp(r->native, "Some") != 0 &&
+        strcmp(r->native, "Ok") != 0 && strcmp(r->native, "Error") != 0 &&
+        strcmp(r->native, "Less") != 0 && strcmp(r->native, "Equal") != 0 &&
+        strcmp(r->native, "Greater") != 0)
+        lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "this native call is not lowered yet");
     if (kind(r) == MO_S_TUPLE || kind(r) == MO_S_MAP_ENTRY) {
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_TUPLE);
         e->as.tuple = args;
@@ -898,15 +949,19 @@ static void finish_task(struct body *b, struct task t) {
         return;
     }
     if (k->kind == K_SEQUENCE) {
-        mo_core_expr e = let(b, lower_fresh(p), t.value);
-        *t.out = e;
+        mo_core_expr *out = t.out;
+        if (!atom(t.value)) {
+            mo_core_expr e = let(b, lower_fresh(p), t.value);
+            *out = e;
+            out = &e->as.let_.body;
+        }
         struct continuation *next = k->next;
         if (k->at + 1 < k->row->operand_count) {
             next = continuation(b, K_SEQUENCE);
             *next = *k;
             next->at++;
         }
-        emit(b, k->row->operands[k->at], t.state, next, &e->as.let_.body);
+        emit(b, k->row->operands[k->at], t.state, next, out);
         return;
     }
     if (k->kind == K_BIND) {
@@ -942,19 +997,40 @@ static void finish_task(struct body *b, struct task t) {
         return;
     }
     MO_ASSERT(k->kind == K_ARGUMENTS);
-    mo_core_expr e = let(b, k->name, t.value);
-    *t.out = e;
-    k->arguments.items[k->at] = lower_var(p, k->name);
     uint32_t skip = k->row->symbol != NULL && k->row->symbol->declaration->kind == MO_S_FN ? 1 : 0;
+    bool direct = atom(t.value);
+    /* A mutable read must be snapped before a later inline assignment. Plain
+     * names/literals cannot assign, so x += 1 needs only its actual SSA let. */
+    if (direct && t.value->tag == MO_CORE_EXPR_VAR)
+        for (struct variable *v = t.state.variables; v != NULL; v = v->next) {
+            lower_work(p, 1);
+            if (!lower_same(t.value->as.var, binding_name(b, v->binding)))
+                continue;
+            for (uint32_t i = k->at + 1 + skip; i < k->row->operand_count; i++) {
+                lower_work(p, 1);
+                const struct mo_checked_expression *later = row(b, k->row->operands[i]);
+                if (later->operand_count != 0 || later->lambda != NULL)
+                    direct = false;
+            }
+        }
+    mo_core_expr *out = t.out;
+    if (direct)
+        k->arguments.items[k->at] = t.value;
+    else {
+        mo_core_expr e = let(b, k->name, t.value);
+        *out = e;
+        out = &e->as.let_.body;
+        k->arguments.items[k->at] = lower_var(p, k->name);
+    }
     if ((size_t)k->at + 1 < k->arguments.count) {
         struct continuation *next = continuation(b, K_ARGUMENTS);
         *next = *k;
         next->at++;
         next->name = lower_fresh(p);
-        emit(b, k->row->operands[next->at + skip], t.state, next, &e->as.let_.body);
+        emit(b, k->row->operands[next->at + skip], t.state, next, out);
     } else {
         p->span = k->row->syntax->span;
-        finish(b, application(b, k->row, k->arguments), t.state, k->next, &e->as.let_.body);
+        finish(b, application(b, k->row, k->arguments), t.state, k->next, out);
     }
 }
 
@@ -1039,6 +1115,10 @@ static void row_task(struct body *b, struct task t) {
                                  : tag == MO_S_BREAK ? t.state.loop->break_
                                                      : t.state.loop->continue_;
         MO_ASSERT(k != NULL);
+        struct continuation *exit = continuation(b, K_JUMP);
+        *exit = *k;
+        exit->row = r;
+        k = exit;
         bool guarded =
             tag == MO_S_RETURN ? r->syntax->children[1] != NULL : r->syntax->children[0] != NULL;
         bool value = tag == MO_S_RETURN && r->syntax->children[0] != NULL;
@@ -1242,6 +1322,10 @@ void lower_function(struct lowering *p, struct instance *instance) {
                 t.else_ = t.value->as.if_.else_;
             }
             const struct mo_checked_expression *r = row(&b, t.row);
+            if (r->operation == MO_T_OR || r->operation == MO_T_IMPLIES)
+                t.then_ = share_target(&b, t, t.then_, &t.out);
+            if (r->operation == MO_T_AND || r->operation == MO_T_OR || r->pattern != NULL)
+                t.else_ = share_target(&b, t, t.else_, &t.out);
             if (r->operation == MO_T_AND || r->operation == MO_T_OR ||
                 r->operation == MO_T_IMPLIES) {
                 mo_core_expr select = lower_expr(p, MO_CORE_EXPR_IF);

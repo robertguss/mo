@@ -2,8 +2,8 @@
 """Source/check/lower integration, after linking ci/lower_source.c with mo_check.
 
 Run from the repository root: python3 ci/check_lower_source.py LOWER_SOURCE
-TEST_VM [--require-vm]. This is separate from main's contract-fixture gate until
-the staged checker merges. The twelve shipped examples are also probed; staged
+TEST_VM [--require-vm]. The same lower-source driver also runs capability
+entries with --core through mo_call_main. The twelve shipped examples are probed; staged
 refusals are named, never counted as execution successes.
 """
 
@@ -51,17 +51,41 @@ CASES = {
     "alternative_guard": ("fn pick(p: (Int, Int)) : Int\ncase p\n"
                           "(n, _) | (_, n) if n > 10: n\n_: 0\nend\nend\n"
                           "fn main() : Int\npick((1, 50))\nend", 50),
+    "guard_lambda": ("fn probe(n: Int, f: fn(Int) : Bool) : Bool\nf(n)\nend\n"
+                     "fn pick(p: (Int, Int)) : Int\ncase p\n"
+                     "(n, _) | (_, n) if probe(n, fn(x)\nx > 10\nend): n\n"
+                     "_: 0\nend\nend\nfn main() : Int\npick((1, 50))\nend", 50),
+    "condition_lambda": ("enum Choice\nC0\nC1\nC2\nC3\nC4\nC5\nend\n"
+                         "fn main() : Int\nc = C5\nf = if c is C0\nfn(x)\nx + 1\nend\n"
+                         "else if c is C1\nfn(x)\nx + 2\nend\n"
+                         "else if c is C2\nfn(x)\nx + 3\nend\n"
+                         "else if c is C3\nfn(x)\nx + 4\nend\n"
+                         "else if c is C4\nfn(x)\nx + 5\nend\n"
+                         "else\nfn(x)\nx + 6\nend\nend\nf(4)\nend", 10),
+    "long_sequence": ("fn main() : Int\nvar n = 0\n" + "n += 1\n" * 80 + "n\nend", 80),
     "lambda": ("enum Choice\nFirst(Int)\nSecond(Int)\nEmpty\nend\n"
                "fn main() : Int\nf = case First(7)\n"
                "First(_) | Second(_): fn(x)\nx + 1\nend\n"
                "Empty: fn(x)\nx + 2\nend\nend\nf(4)\nend", 5),
 }
 
+for count in (4, 8, 16):
+    CASES[f"linear_bool_{count}"] = (
+        "fn main() : Int\nx = false\n" + "\n".join(
+            ("if" if i == 0 else "else if") + " x and x\n7" for i in range(count))
+        + "\nelse\n41\nend\nend", 41)
+    CASES[f"linear_pattern_{count}"] = (
+        "enum Choice\n" + "\n".join(f"C{i}" for i in range(17)) + "\nend\n"
+        "fn main() : Int\nx = C16\n" + "\n".join(
+            ("if" if i == 0 else "else if") + f" x is C{i}\n7" for i in range(count))
+        + "\nelse\n41\nend\nend", 41)
+
 
 def main():
     driver, vm = map(pathlib.Path, sys.argv[1:3])
     require_vm = "--require-vm" in sys.argv
     matched = refused = 0
+    lengths = {}
     with tempfile.TemporaryDirectory(prefix="mo-lower-source-") as directory:
         root = pathlib.Path(directory)
         world = root / "world.core"
@@ -74,12 +98,22 @@ def main():
             assert result.returncode == 0, (name, result.returncode, result.stderr)
             path = root / f"{name}.core"
             path.write_text(result.stdout)
+            lengths[name] = len(result.stdout.encode())
+            metadata = parse(result.stdout)[2][-1]
+            assert metadata[0] == "Metadata"
+            names = [closure[1] for fun in metadata[3] for closure in fun[4][4]]
+            assert len(names) == len(set(names)), (name, "duplicate closure display names", names)
             expected = ["returned", str(status)]
             actual = oracle(path, world)
             assert actual == expected, (name, expected, actual)
             actual = run(str(vm), path)
             if actual is None:
                 refused += 1
+                assert name in {"lazy_bool", "numeric_types", "range_record", "field_update", "while_return", "list_tuple",
+                                "list_pattern", "alternatives", "alternative_guard", "guard_lambda",
+                                "condition_lambda", "lambda", "linear_pattern_4",
+                                "linear_pattern_8", "linear_pattern_16", "linear_bool_4",
+                                "linear_bool_8", "linear_bool_16"}, (name, "unexpected refusal")
                 assert not require_vm, (name, "compiler or host refused")
             else:
                 assert actual == expected, (name, expected, actual)
@@ -93,6 +127,10 @@ def main():
             else:
                 assert result.returncode == 1 and result.stderr.startswith("E"), (path, result)
                 print(f"example {path.name}: staged refusal: {result.stderr.splitlines()[0]}")
+    for family in ("bool", "pattern"):
+        sizes = [lengths[f"linear_{family}_{n}"] for n in (4, 8, 16)]
+        assert all(b <= 3 * a for a, b in zip(sizes, sizes[1:])), (family, sizes)
+        print(f"lower source: linear {family} sizes at 4/8/16 branches: {sizes}")
     print(f"lower source: {len(CASES)} expected outcomes match Lean; "
           f"{matched} VM outcomes match; {refused} compiler/host refusals")
 

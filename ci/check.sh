@@ -136,8 +136,16 @@ if have lake; then
 		for driver in build/{gcc,clang}/{debug,sanitize}/tests/test_lower.test; do
 			if [[ -x "$driver" ]]; then lower_drivers+=("$driver"); fi
 		done
+		for driver in "${lower_drivers[@]}"; do
+			compiler=${driver#build/}; compiler=${compiler%%/*}
+			make --no-print-directory CC="$compiler" "${driver%/tests/*}/lower-source"
+		done
 		if ((${#lower_drivers[@]})); then PYTHONDONTWRITEBYTECODE=1 python3 ci/check_lower.py "${lower_drivers[@]}";
 		else missing "no lowering test executable is built"; fi
+		step "Source/check/lower programs match expected outcomes, Lean and the host-entry VM"
+		for driver in "${lower_drivers[@]}"; do
+			PYTHONDONTWRITEBYTECODE=1 python3 ci/check_lower_source.py "${driver%/tests/*}/lower-source" "${driver%/tests/*}/lower-source"
+		done
 		step "Primitive results and stops match Lean; large inputs keep their work bounds"
 		prim_drivers=()
 		for driver in build/{gcc,clang}/{debug,sanitize}/tests/test_prim.test; do

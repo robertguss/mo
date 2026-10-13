@@ -745,7 +745,9 @@ Queued function/data instances have no recursive C walk. E1150 refuses later
 forms (captures, try, Option or, interpolation, unsupported ability/native
 operations, map literals, constants and spec code); E1151 is arena exhaustion, E1152 the
 shared allocation-byte/step or Core-node bound, and E1153 the source-type,
-instantiation or generated Core path bound. `MO_LIMIT_LOWER_WORK` bounds all
+instantiation or generated Core path bound. E1154 refuses a document outside
+the canonical text codec's depth, node, byte or scratch allowance; lowering
+checks the actual printer before returning. `MO_LIMIT_LOWER_WORK` bounds all
 allocation bytes and work independently of the caller's arena allowance.
 Structural Core type heights are checked after generic substitution, not only
 at the template's source depth; an over-deep concrete result refuses with E1153.
@@ -755,8 +757,14 @@ Numeric immediates fold unary minus before building Core scalars, including
 Int's minimum. Float literals convert in a private C numeric locale with
 nearest-even rounding, then restore the caller's rounding state. Text literals
 decode escapes and triple-text indentation/CRLFs into independently owned bytes.
-List elements are first bound in written order, then passed to Core's
+Arguments and list elements evaluate in written order. Atoms pass directly;
+mutable reads are snapshotted before later non-atomic arguments. Discarded
+Unit/atom statements need no additional let. List elements then pass to Core's
 `%list.lit` primitive. Map literal graphs remain staged with the checker.
+Hash indices memoize concrete types and function instances; concrete source
+types do not depend on an instance's substitution pointer. Source-function
+lookup uses a sorted index, and metadata traverses per-declaration instance
+lists rather than a module/declaration/instance cross product.
 
 Core lookup/display names retain the declaring module and source name;
 overloads add `@Receiver`. Generic function code is keyed by (requesting
@@ -783,7 +791,10 @@ and false guards both try the next alternative, including the same arm's
 remaining alternatives. Guarded groups share one guard join and resume an
 index-taking dispatch join after failure. Conditions
 compile is/and/implies directly around the guarded continuation, keeping true-
-path bindings in scope. Range loops increment only below the saved end;
+path bindings in scope. Shared nontrivial condition and pattern continuations
+become joins; only bounded, atomic leaves are copied. A branch chain therefore
+grows linearly at fixed pattern width and never duplicates a lambda body.
+Range loops increment only below the saved end;
 list/map/set iteration uses uncons after one iterable evaluation/conversion.
 
 Lowering receives the original `mo_sources` as well as the checked program.

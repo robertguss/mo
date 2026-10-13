@@ -1,5 +1,6 @@
 #include "lower/internal.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 struct type_cache {
@@ -7,17 +8,46 @@ struct type_cache {
     const struct mo_source_type *source;
     const struct substitution *substitution;
     mo_core_ty type;
+    uint64_t hash;
 };
 struct canonical_type {
+    struct mo_core_ty type; /* canonical Core types retain their name/height in O(1) */
     struct canonical_type *next;
     mo_core_string name;
-    mo_core_ty type;
+    uint64_t hash;
     uint32_t height;
 };
 
+static uint64_t mix(uint64_t h) {
+    h ^= h >> 30;
+    h *= UINT64_C(0xbf58476d1ce4e5b9);
+    h ^= h >> 27;
+    h *= UINT64_C(0x94d049bb133111eb);
+    return h ^ (h >> 31);
+}
+static uint32_t bucket(uint64_t h, uint32_t slots) {
+    MO_ASSERT(slots != 0 && (slots & (slots - 1)) == 0);
+    return (uint32_t)h & (slots - 1);
+}
+static uint64_t text_hash(struct lowering *p, mo_core_string name) {
+    lower_work(p, name.length);
+    uint64_t hash = UINT64_C(0xcbf29ce484222325);
+    for (size_t i = 0; i < name.length; i++)
+        hash = (hash ^ (uint8_t)name.bytes[i]) * UINT64_C(0x100000001b3);
+    return hash;
+}
+static uint64_t source_hash(const struct mo_source_type *source,
+                            const struct substitution *substitution) {
+    return mix((uintptr_t)source) ^ mix((uintptr_t)substitution);
+}
 static mo_core_ty cached(struct lowering *p, const struct mo_source_type *source,
                          const struct substitution *substitution) {
-    for (struct type_cache *c = p->cache; c != NULL; c = c->next) {
+    if (source->parameters == 0)
+        substitution = NULL;
+    if (p->cache_slots == 0)
+        return NULL;
+    uint32_t at = bucket(source_hash(source, substitution), p->cache_slots);
+    for (struct type_cache *c = p->cache[at]; c != NULL; c = c->next) {
         lower_work(p, 1);
         if (c->source == source && c->substitution == substitution)
             return c->type;
@@ -26,17 +56,37 @@ static mo_core_ty cached(struct lowering *p, const struct mo_source_type *source
 }
 static void remember(struct lowering *p, const struct mo_source_type *source,
                      const struct substitution *substitution, mo_core_ty type) {
+    if (source->parameters == 0)
+        substitution = NULL;
+    if (p->cache_count == MO_LIMIT_CORE_NODES)
+        lower_refuse(p, MO_CODE_LOWER_WORK, "lowering exceeds its type cache limit");
+    if (p->cache_count >= p->cache_slots) {
+        uint32_t slots = p->cache_slots == 0 ? 64 : p->cache_slots * 2;
+        struct type_cache **table = LOWER_NEW(p, struct type_cache *, slots);
+        for (uint32_t i = 0; i < p->cache_slots; i++) {
+            struct type_cache *c = p->cache[i];
+            while (c != NULL) {
+                lower_work(p, 1);
+                struct type_cache *next = c->next;
+                uint32_t at = bucket(c->hash, slots);
+                c->next = table[at];
+                table[at] = c;
+                c = next;
+            }
+        }
+        p->cache = table;
+        p->cache_slots = slots;
+    }
+    uint64_t hash = source_hash(source, substitution);
+    uint32_t at = bucket(hash, p->cache_slots);
     struct type_cache *c = LOWER_NEW(p, struct type_cache, 1);
-    *c = (struct type_cache){p->cache, source, substitution, type};
-    p->cache = c;
+    *c = (struct type_cache){p->cache[at], source, substitution, type, hash};
+    p->cache[at] = c;
+    p->cache_count++;
 }
 mo_core_string lower_type_name(struct lowering *p, mo_core_ty type) {
-    for (struct canonical_type *c = p->types; c != NULL; c = c->next) {
-        lower_work(p, 1);
-        if (c->type == type)
-            return c->name;
-    }
-    MO_UNREACHABLE();
+    lower_work(p, 1);
+    return ((struct canonical_type *)type)->name;
 }
 static bool same_parameter(const struct mo_source_type *a, const struct mo_source_type *b) {
     return a == b || (a->kind == MO_SOURCE_PARAMETER && b->kind == MO_SOURCE_PARAMETER &&
@@ -66,7 +116,8 @@ static mo_core_string applied_name(struct lowering *p, mo_core_string name, uint
 
 static mo_core_ty make_type(struct lowering *p, const struct mo_source_type *source,
                             mo_core_ty *args) {
-    mo_core_ty t = LOWER_NEW(p, struct mo_core_ty, 1);
+    struct canonical_type *made = LOWER_NEW(p, struct canonical_type, 1);
+    mo_core_ty t = &made->type;
     mo_core_string name;
     if (source->kind == MO_SOURCE_FUNCTION) {
         MO_ASSERT(source->count != 0);
@@ -145,20 +196,35 @@ static mo_core_ty make_type(struct lowering *p, const struct mo_source_type *sou
         if (t->tag == MO_CORE_TY_DATA)
             t->as.data = name;
     }
-    for (struct canonical_type *c = p->types; c != NULL; c = c->next) {
+    if (p->type_count >= p->type_slots) {
+        uint32_t slots = p->type_slots == 0 ? 64 : p->type_slots * 2;
+        struct canonical_type **table = LOWER_NEW(p, struct canonical_type *, slots);
+        for (uint32_t i = 0; i < p->type_slots; i++) {
+            struct canonical_type *c = p->types[i];
+            while (c != NULL) {
+                lower_work(p, 1);
+                struct canonical_type *next = c->next;
+                uint32_t at = bucket(c->hash, slots);
+                c->next = table[at];
+                table[at] = c;
+                c = next;
+            }
+        }
+        p->types = table;
+        p->type_slots = slots;
+    }
+    uint64_t hash = text_hash(p, name);
+    uint32_t at = bucket(hash, p->type_slots);
+    for (struct canonical_type *c = p->types[at]; c != NULL; c = c->next) {
         lower_work(p, 1 + name.length);
         if (lower_same(c->name, name))
-            return c->type;
+            return &c->type;
     }
     uint32_t height = 0;
     if (t->tag != MO_CORE_TY_DATA)
         for (uint32_t i = 0; i < source->count; i++) {
-            struct canonical_type *argument = p->types;
-            while (argument != NULL && argument->type != args[i]) {
-                lower_work(p, 1);
-                argument = argument->next;
-            }
-            MO_ASSERT(argument != NULL);
+            lower_work(p, 1);
+            struct canonical_type *argument = (struct canonical_type *)args[i];
             if (height <= argument->height)
                 height = argument->height + 1;
         }
@@ -167,9 +233,11 @@ static mo_core_ty make_type(struct lowering *p, const struct mo_source_type *sou
     if (p->type_count == MO_LIMIT_CORE_NODES)
         lower_refuse(p, MO_CODE_LOWER_WORK, "lowering exceeds its Core type node limit");
     p->type_count++;
-    struct canonical_type *c = LOWER_NEW(p, struct canonical_type, 1);
-    *c = (struct canonical_type){p->types, name, t, height};
-    p->types = c;
+    made->name = name;
+    made->height = height;
+    made->hash = hash;
+    made->next = p->types[at];
+    p->types[at] = made;
     if (t->tag == MO_CORE_TY_DATA) {
         struct data_instance *d = LOWER_NEW(p, struct data_instance, 1);
         d->source = source;
@@ -209,13 +277,16 @@ mo_core_ty lower_type(struct lowering *p, const struct mo_source_type *type,
     mo_core_ty answer = cached(p, type, substitution);
     if (answer != NULL)
         return answer;
-    struct type_frame *stack = LOWER_NEW(p, struct type_frame, MO_LIMIT_SOURCE_TYPE_DEPTH + 1);
+    if (p->type_stack == NULL)
+        p->type_stack = LOWER_NEW(p, struct type_frame, MO_LIMIT_SOURCE_TYPE_DEPTH + 1);
+    struct type_frame *stack = p->type_stack;
     size_t depth = 1;
     stack[0] = (struct type_frame){.source = type, .out = &answer};
     while (depth != 0) {
         lower_work(p, 1);
         struct type_frame *f = &stack[depth - 1];
         mo_core_ty result = cached(p, f->source, substitution);
+        bool found = result != NULL;
         if (result == NULL && f->source->kind == MO_SOURCE_PARAMETER) {
             MO_ASSERT(substitution != NULL);
             for (uint32_t i = 0; i < substitution->count; i++)
@@ -238,10 +309,40 @@ mo_core_ty lower_type(struct lowering *p, const struct mo_source_type *type,
         if (result == NULL)
             result = make_type(p, f->source, f->arguments);
         *f->out = result;
-        remember(p, f->source, substitution, result);
+        if (!found)
+            remember(p, f->source, substitution, result);
         depth--;
     }
     return answer;
+}
+
+static int source_order(const void *a, const void *b) {
+    const struct mo_checked_function *const *left = a, *const *right = b;
+    uintptr_t x = (uintptr_t)(*left)->signature->function;
+    uintptr_t y = (uintptr_t)(*right)->signature->function;
+    return (x > y) - (x < y);
+}
+
+void lower_indices(struct lowering *p) {
+    uint32_t count = p->program->function_count;
+    p->source_index = LOWER_NEW(p, const struct mo_checked_function *, count);
+    p->by_source = LOWER_NEW(p, struct instance *, count);
+    p->source_tails = LOWER_NEW(p, struct instance **, count);
+    for (uint32_t i = 0; i < count; i++) {
+        p->source_index[i] = &p->program->functions[i];
+        p->source_tails[i] = &p->by_source[i];
+    }
+    for (uint32_t n = count; n != 0; n /= 2)
+        lower_work(p, count);
+    qsort(p->source_index, count, sizeof *p->source_index, source_order);
+}
+
+static uint64_t instance_hash(const struct mo_checked_function *source, uint32_t owner,
+                              uint32_t count, mo_core_ty const *types) {
+    uint64_t hash = mix((uintptr_t)source) ^ mix(owner);
+    for (uint32_t i = 0; i < count; i++)
+        hash = mix(hash ^ (uintptr_t)types[i]);
+    return hash;
 }
 
 struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symbol,
@@ -249,20 +350,43 @@ struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symb
                                 const struct substitution *substitution, uint32_t owner,
                                 uint32_t depth) {
     MO_ASSERT(symbol != NULL);
-    const struct mo_checked_function *source = NULL;
-    for (uint32_t i = 0; i < p->program->function_count; i++) {
+    uint32_t lo = 0, hi = p->program->function_count;
+    while (lo < hi) {
         lower_work(p, 1);
-        if (p->program->functions[i].signature->function == symbol) {
-            source = &p->program->functions[i];
-            break;
-        }
+        uint32_t mid = lo + (hi - lo) / 2;
+        if ((uintptr_t)p->source_index[mid]->signature->function < (uintptr_t)symbol)
+            lo = mid + 1;
+        else
+            hi = mid;
     }
-    MO_ASSERT(source != NULL);
+    MO_ASSERT(lo < p->program->function_count);
+    const struct mo_checked_function *source = p->source_index[lo];
+    MO_ASSERT(source->signature->function == symbol);
     uint32_t instance_owner = arguments.count == 0 ? symbol->module : owner;
     mo_core_ty *types = LOWER_NEW(p, mo_core_ty, arguments.count);
     for (uint32_t i = 0; i < arguments.count; i++)
         types[i] = lower_type(p, arguments.items[i].type, substitution);
-    for (struct instance *f = p->functions; f != NULL; f = f->next) {
+    if (p->function_count >= p->instance_slots) {
+        if (p->function_count == MO_LIMIT_CORE_NODES)
+            lower_refuse(p, MO_CODE_LOWER_WORK, "lowering exceeds its function instance limit");
+        uint32_t slots = p->instance_slots == 0 ? 64 : p->instance_slots * 2;
+        struct instance **table = LOWER_NEW(p, struct instance *, slots);
+        for (struct instance *f = p->functions; f != NULL; f = f->next) {
+            lower_work(p, 1 + f->substitution.count);
+            if (f->source == NULL)
+                continue;
+            uint32_t at = bucket(
+                instance_hash(f->source, f->owner, f->substitution.count, f->substitution.types),
+                slots);
+            f->hash_next = table[at];
+            table[at] = f;
+        }
+        p->instance_index = table;
+        p->instance_slots = slots;
+    }
+    uint32_t at =
+        bucket(instance_hash(source, instance_owner, arguments.count, types), p->instance_slots);
+    for (struct instance *f = p->instance_index[at]; f != NULL; f = f->hash_next) {
         lower_work(p, 1 + arguments.count);
         if (f->source != source || f->owner != instance_owner ||
             f->substitution.count != arguments.count)
@@ -308,6 +432,11 @@ struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symb
     f->fun.const_count.digits = lower_text(p, "0");
     *p->function_tail = f;
     p->function_tail = &f->next;
+    f->hash_next = p->instance_index[at];
+    p->instance_index[at] = f;
+    size_t source_index = (size_t)(source - p->program->functions);
+    *p->source_tails[source_index] = f;
+    p->source_tails[source_index] = &f->source_next;
     return f;
 }
 

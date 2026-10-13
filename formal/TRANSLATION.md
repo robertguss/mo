@@ -755,6 +755,13 @@ order, including synthesized failure arms. An unreachable final failure is a
 stop; exhaustiveness has already been proved by checking. Is/and/implies in a
 condition compile around the success continuation, rather than first making
 an intermediate Bool that would lose the pattern's true-path bindings.
+Shared nontrivial condition/pattern continuations are joins too. Only atomic
+leaves or small primitives/jumps with atomic arguments are copied, so chained
+conditions grow linearly at fixed constructor width and each lambda occurs
+once in the metadata preorder. Arguments evaluate in written order; atoms
+pass directly, except mutable reads before later non-atomic operands are
+snapshotted. Discarded Unit/atom statements add no let. Exit jumps retain the
+return/break/continue span, and loop fall-through retains the loop span.
 
 The reference's example:
 
@@ -1061,11 +1068,17 @@ the instance's requesting module. Full names retain origin/type arguments,
 declaration metadata keeps the defining span, and ModuleMeta retains requester
 ownership. Overloaded functions add `@Receiver` before the type list. Duplicate
 code across modules is accepted in Phase 2; later sharing must retain meaning.
+Concrete types and function instances use bounded hash indices, source
+function lookup uses a sorted index, and module metadata visits each owned
+instance directly. Concrete source types share a cache across substitutions.
 The C lowerer checks structural Core type height after substitution as well as
 source-template depth. `T` becoming a deep list can push `List(T)` over Core's
 path bound; that instantiation refuses with E1153 rather than returning invalid Core.
 The E1152 document bound counts canonical types and every unfolded expression
 occurrence across all function bodies, not just allocated expressions per body.
+Before returning, lowering also exercises the canonical printer. Its schema
+wrappers and metadata consume additional depth/nodes/bytes; exceeding those
+codec bounds or its scratch allowance refuses with E1154.
 
 ### 9.2 The five abilities
 
@@ -1120,8 +1133,9 @@ semantic operation, but **remain in ModuleMeta**: complete owned declaration
 lists and exposed functions/types with `contents_exposed` (`T` false,
 `T(..)` true). All types keep their full definitions for layouts/structural
 printing. The image's module table and `mo test`'s hidden-type generation
-use exposure, never infer it from those definitions. Instance ownership is
-the requesting module, as architecture 4.2 requires. Constants' module/source
+use exposure, never infer it from those definitions. Generic function instance
+ownership is the requesting module, as architecture 4.2 requires; canonical
+generic data belongs to its defining module. Constants' module/source
 order is retained separately from their dependency-ordered declarations.
 
 ### 10.4 Constants

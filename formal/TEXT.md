@@ -235,8 +235,9 @@ SpecLine    := (SpecLine (opt SourceSpan) S)
   exports is private, `(i false)` is `T`, and `(i true)` is `T(..)`. All types
   retain complete constructors/fields for VM layouts and structural printing;
   exposure restricts tools, not evaluation. Modules are unique, in loader
-  order; member and export lists are in source declaration order. Instances
-  belong to the requesting module (architecture 4.2). Constant ownership
+  order; member and export lists are in source declaration order. Generic
+  function instances belong to the requesting module (architecture 4.2);
+  generic data declarations belong to their defining module. Constant ownership
   order is independent of Program's dependency order. Files and modules have
   at most 4096 entries, matching C's limits.
 - **Functions/constants:** metadata lists align exactly with Program's

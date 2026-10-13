@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Run lowered contract fixtures against independent expected outcomes and Lean.
 
-Before the staged checker merges these are public mo_program fixtures, not
-source inference substitutes. VM refusals are reported separately; --require-vm
-is used with the join-capable integration build and allows no refusals.
+These public mo_program fixtures cover contracts not yet produced by checking.
+VM refusals are reported separately; --require-vm is used with the join-capable
+integration build and allows no refusals. The host runner supplies capabilities.
 """
 
 import json
@@ -13,7 +13,7 @@ import sys
 import tempfile
 
 from check_core_check import VERSION, WORLD, parse
-from check_vm import oracle, run
+from check_vm import oracle
 
 
 def main():
@@ -21,7 +21,7 @@ def main():
     drivers = [pathlib.Path(arg) for arg in sys.argv[1:] if arg != "--require-vm"]
     assert drivers
     golden = None
-    checked = matched = refused = host_entries = 0
+    checked = matched = refused = 0
     with tempfile.TemporaryDirectory(prefix="mo-lower-") as directory:
         root = pathlib.Path(directory)
         world = root / "world.core"
@@ -38,10 +38,11 @@ def main():
                 golden = documents
             else:
                 assert documents == golden, f"nondeterministic lowering: {driver}"
-            vm = driver.with_name("test_vm.test")
+            vm = driver.parent.parent / "lower-source"
             for path in sorted(corpus.glob("*.core")):
                 lines = path.with_suffix(".want").read_text().splitlines()
                 expected = lines[:2]
+                stderr = json.loads(lines[2])["stderr"] if len(lines) == 3 else []
                 actual = oracle(path, world)
                 assert actual == expected, (path.name, expected, actual)
                 if len(lines) == 3:
@@ -50,28 +51,24 @@ def main():
                     assert report.returncode in (0, 1, 2), report
                     effects = parse(report.stdout)[2][-1]
                     assert effects[0] == "effects"
-                    assert effects[2] == json.loads(lines[2])["stderr"], (path.name, effects)
+                    assert effects[2] == stderr, (path.name, effects)
                 checked += 1
-                program = parse(path.read_text())[2]
-                entry = next(function for function in program[2] if function[1] == program[4])
-                if entry[2]:
-                    # test_vm's public fixture runner takes zero arguments. The
-                    # host's mo_call_main owns construction of runtime capabilities.
-                    host_entries += 1
-                    assert not require_vm, (path.name, "needs the capability-entry host runner")
-                    continue
-                actual = run(str(vm), path)
-                if actual is None:
+                report = subprocess.run([str(vm), "--core", str(path)],
+                                        capture_output=True, text=True, timeout=15)
+                if report.returncode == 77:
                     refused += 1
                     assert path.name in {"branch-false.core", "branch-true.core", "loops.core"}, (
                         vm, path.name, "unexpected compiler/host refusal")
                     assert not require_vm, (vm, path.name, "compiler or host refused")
                 else:
+                    assert report.returncode == 0, (vm, path.name, report.stderr)
+                    actual = report.stdout.rstrip("\n").split("\n", 1)
                     assert actual == expected, (vm, path.name, expected, actual)
+                    assert report.stderr == "".join(s + "\n" for s in stderr), (
+                        vm, path.name, stderr, report.stderr)
                     matched += 1
     print(f"lower: {checked} expected outcomes match Lean; "
-          f"{matched} VM outcomes match; {refused} explicit compiler/host refusals; "
-          f"{host_entries} capability entries need the host runner")
+          f"{matched} VM outcomes match; {refused} explicit compiler/host refusals")
 
 
 if __name__ == "__main__":
