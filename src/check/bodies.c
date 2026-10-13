@@ -123,16 +123,24 @@ static MO_MUST_USE bool problem(struct inference *p, uint16_t code, struct mo_sp
                 code == MO_CODE_ARGUMENT_TYPE || code == MO_CODE_RESULT_TYPE ||
                 code == MO_CODE_NOT_FUNCTION
             ? p->type_label
-        : code == MO_CODE_CANNOT_INFER      ? "no use decides the type"
-        : code == MO_CODE_BOOL_NAME         ? "must be Bool or a function returning Bool"
-        : code == MO_CODE_CALL_ARGUMENTS    ? "pass one positional argument per parameter"
-        : code == MO_CODE_UNUSED_VALUE      ? "not Unit and not used"
-        : code == MO_CODE_NOT_VARIABLE      ? "no assignable var here"
-        : code == MO_CODE_EXIT_OUTSIDE_LOOP ? "no enclosing loop in this function"
-        : code == MO_CODE_LITERAL_RANGE     ? "outside its inferred numeric range"
-        : code == MO_CODE_TUPLE_POSITION    ? "part index is outside this tuple"
-        : code == MO_CODE_FAILURE_IGNORED   ? "handle this Result or pass its failure upward"
-                                            : message;
+        : code == MO_CODE_CANNOT_INFER         ? "no use decides the type"
+        : code == MO_CODE_BOOL_NAME            ? "must be Bool or a function returning Bool"
+        : code == MO_CODE_CALL_ARGUMENTS       ? "pass one positional argument per parameter"
+        : code == MO_CODE_UNUSED_VALUE         ? "not Unit and not used"
+        : code == MO_CODE_NOT_VARIABLE         ? "no assignable var here"
+        : code == MO_CODE_EXIT_OUTSIDE_LOOP    ? "no enclosing loop in this function"
+        : code == MO_CODE_LITERAL_RANGE        ? "outside its inferred numeric range"
+        : code == MO_CODE_TUPLE_POSITION       ? "part index is outside this tuple"
+        : code == MO_CODE_FAILURE_IGNORED      ? "handle this Result or pass its failure upward"
+        : code == MO_CODE_DATA_ARGUMENTS       ? "supplied fields don't match the declaration"
+        : code == MO_CODE_DATA_PRIVATE         ? "the type's insides aren't exposed"
+        : code == MO_CODE_FIELD_MISSING        ? "no field with this name"
+        : code == MO_CODE_PATTERN_FIELDS       ? "matched fields don't fit this constructor"
+        : code == MO_CODE_CASE_CATCH_ALL       ? "covers cases without naming them"
+        : code == MO_CODE_PATTERN_ALTERNATIVES ? "the alternatives bind different names"
+        : code == MO_CODE_CASE_INCOMPLETE      ? "a possible value isn't covered"
+        : code == MO_CODE_PATTERN_CONSTRUCTOR  ? "not a record or case constructor"
+                                               : message;
     p->secondary = (struct mo_label){
         previous == NULL ? span : previous->span,
         code == MO_CODE_BIND_REPEATED ? "the other meaning of this name" : "declared here"};
@@ -893,6 +901,27 @@ static MO_MUST_USE struct value discard(struct inference *p, const struct mo_syn
     return v;
 }
 
+static MO_MUST_USE bool lambda_argument(const struct mo_syntax *node) {
+    while (node->kind == MO_S_GROUP)
+        node = node->children[0];
+    return node->kind == MO_S_LAMBDA;
+}
+
+/* Constraint order must never become evaluation order in output metadata. */
+static void order_notes(struct inference *p, struct note *before, const struct note_range *ranges,
+                        uint32_t count) {
+    for (uint32_t i = 0; i < count; i++) {
+        if (before == NULL)
+            p->notes = ranges[i].first;
+        else
+            before->next = ranges[i].first;
+        before = ranges[i].last;
+    }
+    if (before != NULL)
+        before->next = NULL;
+    p->last = before;
+}
+
 static MO_MUST_USE struct term *
 builtin_type(struct inference *p, const struct mo_builtin_case *data, struct term *expected) {
     struct term *type = native(p, data->type, data->parameters);
@@ -980,10 +1009,13 @@ static MO_MUST_USE struct value construct(struct inference *p, const struct mo_d
         return (struct value){0};
     }
     bool *seen = allocate(p, data->count, sizeof(*seen), _Alignof(bool));
-    if (seen == NULL)
+    const struct mo_field_signature **selected =
+        allocate(p, args->count, sizeof(*selected), _Alignof(const struct mo_field_signature *));
+    struct note_range *ranges =
+        allocate(p, args->count, sizeof(*ranges), _Alignof(struct note_range));
+    if (p->failed)
         return (struct value){0};
     memset(seen, 0, data->count * sizeof(*seen));
-    bool never = false;
     for (uint32_t i = 0; i < args->count; i++) {
         const struct mo_syntax *arg = args->children[i];
         const struct mo_field_signature *field =
@@ -1001,15 +1033,29 @@ static MO_MUST_USE struct value construct(struct inference *p, const struct mo_d
             return (struct value){0};
         }
         seen[field->index] = true;
-        struct term *wanted = annotation(p, field->type, parameters, 0);
-        if (wanted == NULL)
-            return (struct value){0};
-        struct value v = infer(p, data->unnamed ? arg : arg->children[1], wanted);
-        if (v.type == NULL)
-            return (struct value){0};
-        p->last->output.field = field;
-        never = never || v.never;
+        selected[i] = field;
     }
+    bool never = false;
+    struct note *before = p->last;
+    for (unsigned pass = 0; pass < 2; pass++) {
+        for (uint32_t i = 0; i < args->count; i++) {
+            const struct mo_syntax *arg = args->children[i];
+            const struct mo_syntax *value = data->unnamed ? arg : arg->children[1];
+            if (lambda_argument(value) != (pass != 0))
+                continue;
+            struct term *wanted = annotation(p, selected[i]->type, parameters, 0);
+            if (wanted == NULL)
+                return (struct value){0};
+            struct note *previous = p->last;
+            struct value v = infer_as(p, value, wanted, MO_CODE_ARGUMENT_TYPE);
+            if (v.type == NULL)
+                return (struct value){0};
+            p->last->output.field = selected[i];
+            ranges[i] = (struct note_range){previous == NULL ? p->notes : previous->next, p->last};
+            never = never || v.never;
+        }
+    }
+    order_notes(p, before, ranges, args->count);
     return (struct value){.type = type, .symbol = data->symbol, .never = never};
 }
 
@@ -1151,10 +1197,7 @@ static MO_MUST_USE struct value call(struct inference *p, struct value callee,
     struct note *before = p->last;
     for (unsigned pass = 0; pass < 2; pass++) {
         for (uint32_t i = 0; i < args->count; i++) {
-            const struct mo_syntax *node = args->children[i];
-            while (node->kind == MO_S_GROUP)
-                node = node->children[0];
-            if ((node->kind == MO_S_LAMBDA) != (pass != 0))
+            if (lambda_argument(args->children[i]) != (pass != 0))
                 continue;
             struct note *previous = p->last;
             struct value arg =
@@ -1167,16 +1210,7 @@ static MO_MUST_USE struct value call(struct inference *p, struct value callee,
     }
     /* Constraint solving may visit lambdas last; metadata retains written order
      * so this never suggests reordering evaluation to downstream consumers. */
-    for (uint32_t i = 0; i < args->count; i++) {
-        if (before == NULL)
-            p->notes = ranges[i].first;
-        else
-            before->next = ranges[i].first;
-        before = ranges[i].last;
-    }
-    if (before != NULL)
-        before->next = NULL;
-    p->last = before;
+    order_notes(p, before, ranges, args->count);
     return (struct value){.type = argument(p, t, t->shape.count - 1), .never = never};
 }
 
@@ -1521,7 +1555,7 @@ static MO_MUST_USE struct value match(struct inference *p, const struct mo_synta
             struct mo_match_pattern *normalized = NULL;
             if (!pattern(p, alternatives->children[j], input.type, group, j + 1, &normalized))
                 return (struct value){0};
-            if (normalized == NULL)
+            if (normalized == NULL && check->catch_all == NULL)
                 check->catch_all = alternatives->children[j];
             if (arm->children[1] == NULL)
                 check->patterns[check->count++] = normalized;
@@ -1702,12 +1736,12 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             struct value target = infer(p, name, NULL);
             if (target.type == NULL)
                 return (struct value){0};
-            if (node->kind != MO_S_BIND) {
-                struct term *numeric = fresh(p, INT | BIG | DECIMAL | FLOAT);
-                if (numeric == NULL || !unify(p, numeric, target.type, 0))
-                    return (struct value){0};
-            }
-            struct value rhs = infer(p, node->children[1], target.type);
+            p->last->output.binding = variable->name;
+            struct value rhs =
+                node->kind == MO_S_BIND
+                    ? infer(p, node->children[1], target.type)
+                    : binary(p, node->kind == MO_S_ADD_ASSIGN ? MO_T_PLUS : MO_T_MINUS, target,
+                             node->children[1], target.type);
             if (rhs.type == NULL)
                 return (struct value){0};
             return (struct value){.type = native(p, "Unit", 0),
@@ -2352,6 +2386,75 @@ static MO_MUST_USE bool finish_notes(struct inference *p, struct mo_inferred_exp
     return p->error.code == 0;
 }
 
+/* Check only complete, independently typed matches before any retained error.
+ * Later failures inside an arm must not invent a coverage error for that match.
+ * False means coverage already emitted a resource diagnostic. */
+static MO_MUST_USE bool finish_patterns(struct inference *p) {
+    /* Byte is a small finite literal domain. Normalize spelling only after all
+     * uses and literal range checks have fixed the contextual numeric type. */
+    for (struct typed_pattern *at = p->patterns; at != NULL; at = at->next) {
+        const struct mo_syntax *node = at->syntax;
+        if (p->error.code != 0 && node->span.end > p->error.primary.span.start)
+            continue;
+        if (node->kind != MO_S_INT || !named(at->type, "Byte"))
+            continue;
+        uint32_t length = node->span.end - node->span.start;
+        uint32_t base = length > 2 && node->text[1] == 'x'   ? 16u
+                        : length > 2 && node->text[1] == 'b' ? 2u
+                                                             : 10u;
+        uint32_t value = 0;
+        for (uint32_t j = base == 10 ? 0u : 2u; j < length; j++) {
+            uint8_t c = node->text[j];
+            if (c == '_')
+                continue;
+            uint32_t digit = c >= 'a'   ? (uint32_t)(c - 'a') + 10u
+                             : c >= 'A' ? (uint32_t)(c - 'A') + 10u
+                                        : (uint32_t)(c - '0');
+            MO_ASSERT(digit < base && value <= (255u - digit) / base);
+            value = value * base + digit;
+        }
+        char *name = allocate(p, 16, 1, 1);
+        if (name == NULL)
+            return true;
+        int length_written = snprintf(name, 16, "%u", value);
+        MO_ASSERT(length_written > 0 && length_written < 16);
+        at->match.key = 256u + value;
+        at->match.signature = 256;
+        at->match.name = name;
+    }
+    for (struct match_check *check = p->matches; check != NULL; check = check->next) {
+        if (p->error.code != 0 && check->span.end > p->error.primary.span.start)
+            continue;
+        p->span = check->span;
+        struct term *type = root(check->type);
+        bool choice = type->shape.declaration != NULL &&
+                      type->shape.declaration->declaration->kind == MO_S_ENUM;
+        choice = choice || named(type, "Option") || named(type, "Result") ||
+                 named(type, "Ordering") || named(type, "EntryKind") || named(type, "FileError");
+        if (check->catch_all != NULL && choice) {
+            defer(p, MO_CODE_CASE_CATCH_ALL, check->catch_all->span, "a choice arm is a catch-all",
+                  "A whole arm over a choice type can't be _ or a name; "
+                  "list the cases (reference 7.2).");
+            continue;
+        }
+        const char *missing = NULL;
+        if (!mo_patterns_cover(p->arena, p->interfaces, check->patterns, check->count, &p->work,
+                               p->signatures->work, p->diags, check->span, &missing))
+            return false;
+        if (missing != NULL) {
+            char *message = allocate(p, 8192, 1, 1);
+            if (message == NULL)
+                return true;
+            int length = snprintf(message, 8192,
+                                  "case doesn't cover every possible value; missing: %s", missing);
+            MO_ASSERT(length > 0 && length < 8192);
+            defer(p, MO_CODE_CASE_INCOMPLETE, check->span, message,
+                  "The arms must cover every possible value (reference 7.2).");
+        }
+    }
+    return true;
+}
+
 struct mo_inferred_body *mo_infer_function(struct mo_arena *arena,
                                            const struct mo_module_interfaces *interfaces,
                                            const struct mo_signatures *signatures,
@@ -2398,81 +2501,25 @@ struct mo_inferred_body *mo_infer_function(struct mo_arena *arena,
         goto failed;
     *out = (struct mo_inferred_body){.function = signature, .count = p.count, .items = items};
     finalized = true;
-    if (!finish_notes(&p, items))
+    bool valid = finish_notes(&p, items);
+    (void)valid;
+    if (!p.fatal && !finish_patterns(&p)) {
+        mo_diags_sort(diags);
+        return NULL;
+    }
+    if (p.error.code != 0)
         goto failed;
-    /* Byte is a small finite literal domain. Normalize spelling only after all
-     * uses and literal range checks have fixed the contextual numeric type. */
-    for (struct typed_pattern *at = p.patterns; at != NULL; at = at->next) {
-        const struct mo_syntax *node = at->syntax;
-        if (node->kind != MO_S_INT || !named(at->type, "Byte"))
-            continue;
-        uint32_t length = node->span.end - node->span.start;
-        uint32_t base = length > 2 && node->text[1] == 'x'   ? 16u
-                        : length > 2 && node->text[1] == 'b' ? 2u
-                                                             : 10u;
-        uint32_t value = 0;
-        for (uint32_t j = base == 10 ? 0u : 2u; j < length; j++) {
-            uint8_t c = node->text[j];
-            if (c == '_')
-                continue;
-            uint32_t digit = c >= 'a'   ? (uint32_t)(c - 'a') + 10u
-                             : c >= 'A' ? (uint32_t)(c - 'A') + 10u
-                                        : (uint32_t)(c - '0');
-            MO_ASSERT(digit < base && value <= (255u - digit) / base);
-            value = value * base + digit;
-        }
-        char *name = allocate(&p, 16, 1, 1);
-        if (name == NULL)
-            goto failed;
-        int length_written = snprintf(name, 16, "%u", value);
-        MO_ASSERT(length_written > 0 && length_written < 16);
-        at->match.key = 256u + value;
-        at->match.signature = 256;
-        at->match.name = name;
-    }
-    for (struct match_check *check = p.matches; check != NULL; check = check->next) {
-        p.span = check->span;
-        struct term *type = root(check->type);
-        bool choice = type->shape.declaration != NULL &&
-                      type->shape.declaration->declaration->kind == MO_S_ENUM;
-        choice = choice || named(type, "Option") || named(type, "Result") ||
-                 named(type, "Ordering") || named(type, "EntryKind") || named(type, "FileError");
-        if (check->catch_all != NULL && choice) {
-            bool reported = problem(&p, MO_CODE_CASE_CATCH_ALL, check->catch_all->span,
-                                    "a choice arm is a catch-all",
-                                    "A whole arm over a choice type can't be _ or a name; "
-                                    "list the cases (reference 7.2).",
-                                    NULL);
-            (void)reported;
-            goto failed;
-        }
-        const char *missing = NULL;
-        if (!mo_patterns_cover(p.arena, p.interfaces, check->patterns, check->count, &p.work,
-                               p.signatures->work, p.diags, check->span, &missing)) {
-            mo_diags_sort(diags);
-            return NULL;
-        }
-        if (missing != NULL) {
-            char *message = allocate(&p, 8192, 1, 1);
-            if (message == NULL)
-                goto failed;
-            int length = snprintf(message, 8192,
-                                  "case doesn't cover every possible value; missing: %s", missing);
-            MO_ASSERT(length > 0 && length < 8192);
-            bool reported =
-                problem(&p, MO_CODE_CASE_INCOMPLETE, check->span, message,
-                        "The arms must cover every possible value (reference 7.2).", NULL);
-            (void)reported;
-            goto failed;
-        }
-    }
     return out;
 failed:
     if (!p.fatal && !finalized) {
         p.failed = false;
         p.partial = true;
-        bool valid = finish_notes(&p, NULL);
-        (void)valid;
+        bool partial_valid = finish_notes(&p, NULL);
+        (void)partial_valid;
+        if (!p.fatal && !finish_patterns(&p)) {
+            mo_diags_sort(diags);
+            return NULL;
+        }
     }
     emit_problem(&p);
     mo_diags_sort(diags);

@@ -380,7 +380,9 @@ choice-case field types. Each case retains its owning choice's nominal type;
 recursive fields retain that identity rather than expanding a layout.
 Explicit single-letter data parameters are scoped to their declaring type.
 Fields are indexed by name for binary lookup, with declaration-order indices
-for lowering; constructor arguments are checked in written evaluation order.
+for lowering. Constructor lambda fields receive constraints from ordinary
+arguments first, just as positional lambda arguments do. Output metadata keeps
+written evaluation order, not the order in which constraints were solved.
 Duplicate declared or supplied fields are refused without pairwise scans.
 Record/case construction and field reads check the owning type's `(..)`
 exposure before revealing its layout. Field metadata borrows syntax and is
@@ -405,7 +407,7 @@ finalized, without inventing unresolved-type errors from the missing uses.
 Resource errors stop immediately and take priority. The caller can
 continue with independent bodies. Signature preparation currently stops at
 its first error too. E1103 explicitly refuses unfinished body forms; it does
-not silently accept them. Data fields, constructors and patterns, builtin/dot
+not silently accept them. Builtin/dot
 dispatch and delayed overload selection, abilities, polymorphic recursion,
 failure propagation, capture/capability flow, specs, constants, unused imports
 and the entry contract still need their stages. Compile-time duplicate map
@@ -413,6 +415,26 @@ keys (equal literals or repeated names, reference 3.8) are also still pending.
 Nonempty examples or promises are refused with E1103, never silently skipped.
 A successful intermediate body is not a `mo_program`, is not lowering-ready and does not certify those
 rules. `mo_check` will compose the stages and collect independent errors.
+
+**Typed data and patterns.** Construction names every declared field once, or
+supplies a case's single unnamed value. Reads retain the selected field's
+declaration index; field writes retain their original base `var` binder and
+cannot cross a function boundary. Compound assignment uses the same binary
+operand rules as its expanded assignment.
+Patterns resolve constructors and fields, share bindings across alternatives,
+and retain the scopes of `is`, `and` and `implies`. A whole-arm wildcard or name
+over a choice is refused even when guarded. Guarded rows never prove coverage:
+their conditions may be false. An iterative Maranget matrix checks tuples,
+records, choices, lists and literal domains, and reports a bounded missing-value
+preview, not a speculative edit. Byte patterns normalize numeric spelling after
+contextual typing and range checks, so all 256 values establish coverage.
+Matrix cells, partitions, sorting and witness rendering charge the existing
+body and program work budgets; arena exhaustion retains E1058. Explicit frames
+handle wide products and lists without increasing C stack depth. Coverage of
+completed matches before a later independent error participates in the same
+earliest-source-error selection as inference and unused-value checks.
+E0062–E0071 cover duplicate fields, constructor arguments, hidden insides, missing
+fields, data parameters and pattern errors; each has a diagnostic corpus input.
 
 Inferred types are shared DAGs, not expanded trees. Consumers must memoize
 walks. Prepared annotations retain parameter masks and heights; monomorphic

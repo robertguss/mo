@@ -1,0 +1,7 @@
+E0063 4
+0:59..63
+a supplied field doesn't match the record or case
+A record or case is built by naming every field once, or from its one unnamed value (reference 4).
+supplied fields don't match the declaration
+secondary 0:19..24 declared here
+fixes 0

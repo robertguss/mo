@@ -68,7 +68,10 @@ static MO_MUST_USE bool problem(struct preparation *p, uint16_t code, struct mo_
     const char *label = code == MO_CODE_TYPE_NAME        ? "not a type in scope"
                         : code == MO_CODE_TYPE_ARGUMENTS ? "type parameters don't match"
                         : code == MO_CODE_BOOL_NAME ? "must be Bool or a function returning Bool"
-                                                    : message;
+                        : code == MO_CODE_FIELD_REPEATED ? "this field is declared twice"
+                        : code == MO_CODE_DATA_PARAMETERS
+                            ? "type parameters must be distinct single letters"
+                            : message;
     bool kept = mo_diags_add(p->diags, &(struct mo_diag){.code = code,
                                                          .primary = {span, label},
                                                          .message = message,

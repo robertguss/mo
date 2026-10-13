@@ -1,0 +1,7 @@
+E0067 7.3
+0:88..89
+a matched field is absent or repeated
+A record or case is matched with its named fields; fields not named are ignored (reference 7.3).
+matched fields don't fit this constructor
+secondary 0:23..26 declared here
+fixes 0

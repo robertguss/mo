@@ -166,7 +166,9 @@ struct mo_inferred_body {
 /* Infers one named function's body against its prepared signature. Local names,
  * positional calls, lambdas, scalar/collection expressions, variables and
  * control flow are supported. E1103 explicitly refuses unfinished forms.
- * This is not mo_check: fields/constructors/patterns, dot calls, abilities,
+ * Records, cases, fields and typed patterns check construction, hidden insides,
+ * exhaustiveness and the no-whole-arm choice catch-all rule. This is not
+ * mo_check: dot dispatch, abilities,
  * capability/capture flow, specs, constants, unused imports and main's contract
  * still need their checking stages, as do compile-time duplicate map keys.
  * Nonempty examples/promises return E1103. A success is not suitable for lowering.

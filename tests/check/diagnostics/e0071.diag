@@ -1,0 +1,6 @@
+E0071 7.3
+0:40..43
+a pattern doesn't name a record or case
+A pattern names a case or record, a literal, a tuple or a list (reference 7.3).
+not a record or case constructor
+fixes 0

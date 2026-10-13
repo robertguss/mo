@@ -128,6 +128,31 @@ static void record_fields(void) {
     finish(&f);
 }
 
+static void contextual_fields(void) {
+    struct fixture f;
+    init(&f,
+         "module Main\nstruct Apply(T)\nvalue: T\nf: fn(T) : Int\nend\n"
+         "fn run() : Int\nrecord = Apply(f: (fn(p) p.0 end), value: (7, \"a\"))\n"
+         "record.f(record.value)\nend\n",
+         NULL);
+    struct mo_inferred_body *out = body(&f, "run");
+    CHECK(out != NULL && f.diags.count == 0);
+    if (out != NULL) {
+        uint32_t fields = 0;
+        for (uint32_t i = 0; i < out->count; i++) {
+            const struct mo_inferred_expression *note = &out->items[i];
+            if (note->field != NULL &&
+                (note->syntax->kind == MO_S_GROUP || note->syntax->kind == MO_S_TUPLE)) {
+                CHECK(note->field->index == (fields == 0 ? 1u : 0u));
+                fields++;
+            }
+        }
+        CHECK(fields == 2);
+        CHECK(strcmp(out->items[out->count - 1].type->name, "Int") == 0);
+    }
+    finish(&f);
+}
+
 static void field_assignment(void) {
     struct fixture f;
     init(&f,
@@ -140,6 +165,20 @@ static void field_assignment(void) {
     if (out != NULL)
         CHECK(strcmp(out->items[out->count - 1].type->name, "Int") == 0);
     finish(&f);
+
+    const char *assignments[] = {"box.value += 2", "box.value = box.value + 2"};
+    for (size_t i = 0; i < sizeof(assignments) / sizeof(assignments[0]); i++) {
+        char source[256];
+        int n = snprintf(source, sizeof(source),
+                         "module Main\nstruct Box\nvalue: Byte\nend\nfn run()\n"
+                         "var box = Box(value: 1)\n%s\nassert box.value == 3\nend\n",
+                         assignments[i]);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(source));
+        init(&f, source, NULL);
+        CHECK(body(&f, "run") == NULL);
+        CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_BYTE_ARITHMETIC);
+        finish(&f);
+    }
 }
 
 static void choice_patterns(void) {
@@ -155,6 +194,97 @@ static void choice_patterns(void) {
     if (out != NULL)
         CHECK(strcmp(out->items[out->count - 1].type->name, "Decimal") == 0);
     finish(&f);
+}
+
+static void data_errors(void) {
+    const struct {
+        const char *source;
+        uint16_t code;
+        bool preparation;
+    } cases[] = {
+        {"struct Point\nx: Int\nx: Int\nend\n", MO_CODE_FIELD_REPEATED, true},
+        {"struct Box(T, T)\nvalue: T\nend\n", MO_CODE_DATA_PARAMETERS, true},
+        {"struct Point\nx: Int\nend\nfn run() : Point\nPoint(y: 1)\nend\n", MO_CODE_DATA_ARGUMENTS,
+         false},
+        {"struct Point\nx: Int\nend\nfn run(point: Point) : Int\npoint.y\nend\n",
+         MO_CODE_FIELD_MISSING, false},
+        {"enum Reply\nYes(value: Int)\nNo\nend\nfn run(reply: Reply) : Int\n"
+         "case reply\nYes(n): n\nNo: 0\nend\nend\n",
+         MO_CODE_PATTERN_FIELDS, false},
+        {"fn run(reply: Option(Int)) : Int\ncase reply\n_: 0\nend\nend\n", MO_CODE_CASE_CATCH_ALL,
+         false},
+        {"fn run(reply: Option(Int)) : Int\ncase reply\nSome(n) | None: n\nend\nend\n",
+         MO_CODE_PATTERN_ALTERNATIVES, false},
+        {"fn run(flag: Bool) : Int\ncase flag\ntrue: 0\nend\nend\n", MO_CODE_CASE_INCOMPLETE,
+         false},
+        {"fn run(n: Int) : Int\ncase n\nInt: 0\n_: 1\nend\nend\n", MO_CODE_PATTERN_CONSTRUCTOR,
+         false},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char source[512];
+        int n = snprintf(source, sizeof(source), "module Main\n%s", cases[i].source);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(source));
+        struct fixture f;
+        init(&f, source, NULL);
+        if (cases[i].preparation)
+            CHECK(f.signatures == NULL);
+        else
+            CHECK(body(&f, "run") == NULL);
+        if (f.diags.count != 1 || f.diags.items[0].code != cases[i].code)
+            MO_ASSERT(fprintf(stderr, "data_errors[%zu]: expected E%04u, got %u diagnostics%s\n", i,
+                              cases[i].code, f.diags.count,
+                              f.diags.count == 0 ? "" : f.diags.items[0].message) >= 0);
+        CHECK(f.diags.count == 1 && f.diags.items[0].code == cases[i].code);
+        finish(&f);
+    }
+}
+
+static void hidden_data(void) {
+    const char *bodies[] = {"Box(value: 1).value", "box.value", "case box\nBox(value: n): n\nend"};
+    for (unsigned exposed = 0; exposed < 2; exposed++) {
+        char other[256];
+        int n = snprintf(other, sizeof(other),
+                         "module Shapes\nexpose Box%s\nstruct Box\nvalue: Int\nend\n",
+                         exposed == 0 ? "" : "(..)");
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(other));
+        for (size_t i = 0; i < sizeof(bodies) / sizeof(bodies[0]); i++) {
+            char source[256];
+            n = snprintf(source, sizeof(source),
+                         "module Main\nuse Shapes{Box}\nfn run(%s) : Int\n%s\nend\n",
+                         i == 0 ? "" : "box: Box", bodies[i]);
+            MO_ASSERT(n > 0 && (size_t)n < sizeof(source));
+            struct fixture f;
+            init(&f, source, other);
+            CHECK((body(&f, "run") != NULL) == (exposed != 0));
+            if (exposed == 0) {
+                CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_DATA_PRIVATE);
+                CHECK(f.diags.items[0].secondary_count == 1);
+                CHECK(f.diags.items[0].secondary[0].span.file == 1);
+            } else
+                CHECK(f.diags.count == 0);
+            finish(&f);
+        }
+    }
+}
+
+static void product_coverage(void) {
+    for (unsigned complete = 0; complete < 2; complete++) {
+        char source[512];
+        int n = snprintf(source, sizeof(source),
+                         "module Main\nfn run(pair: (Bool, Bool)) : Int\ncase pair\n"
+                         "(true, true): 0\n(true, false): 1\n(false, true): 2\n%send\nend\n",
+                         complete == 0 ? "" : "(false, false): 3\n");
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(source));
+        struct fixture f;
+        init(&f, source, NULL);
+        CHECK((body(&f, "run") != NULL) == (complete != 0));
+        if (complete == 0) {
+            CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CASE_INCOMPLETE);
+            CHECK(strstr(f.diags.items[0].message, "missing: (false, false)") != NULL);
+        } else
+            CHECK(f.diags.count == 0);
+        finish(&f);
+    }
 }
 
 static void pattern_scopes(void) {
@@ -178,6 +308,55 @@ static void list_coverage(void) {
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CASE_INCOMPLETE);
     if (f.diags.count == 1)
         CHECK(strstr(f.diags.items[0].message, "missing: [_, _, .._]") != NULL);
+    finish(&f);
+}
+
+static void pattern_boundaries(void) {
+    struct mo_buffer source;
+    mo_buffer_init(&source, 1 << 20);
+    MO_ASSERT(mo_buffer_append_text(&source, "module Main\nfn run(value: (Bool"));
+    for (uint32_t i = 1; i < 4096; i++)
+        MO_ASSERT(mo_buffer_append_text(&source, i % 32 == 0 ? ",\nBool" : ", Bool"));
+    MO_ASSERT(mo_buffer_append_text(&source, ")) : Int\ncase value\n(_"));
+    for (uint32_t i = 1; i < 4096; i++)
+        MO_ASSERT(mo_buffer_append_text(&source, i % 32 == 0 ? ",\n_" : ", _"));
+    MO_ASSERT(mo_buffer_append_text(&source, "): 0\nend\nend\n"));
+    MO_ASSERT(mo_buffer_append_byte(&source, 0));
+    struct fixture f;
+    init(&f, (const char *)source.bytes, NULL);
+    CHECK(body(&f, "run") != NULL && f.diags.count == 0);
+    uint64_t cost = *f.signatures->work;
+    MO_ASSERT(cost > 0 && cost < MO_LIMIT_PROGRAM_CHECK_WORK);
+    *f.signatures->work = MO_LIMIT_PROGRAM_CHECK_WORK - cost;
+    CHECK(body(&f, "run") != NULL && f.diags.count == 0);
+    CHECK(*f.signatures->work == MO_LIMIT_PROGRAM_CHECK_WORK);
+    *f.signatures->work = MO_LIMIT_PROGRAM_CHECK_WORK - cost + 1;
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CHECK_PROGRAM_WORK);
+    finish(&f);
+    mo_buffer_free(&source);
+
+    mo_buffer_init(&source, 32768);
+    MO_ASSERT(mo_buffer_append_text(&source, "module Main\nenum Chain\nEnd\nNext(Chain)\nend\n"
+                                             "fn run(value: Chain) : Int\ncase value\n"));
+    for (uint32_t i = 0; i < MO_LIMIT_NESTING_DEPTH - 3; i++)
+        MO_ASSERT(mo_buffer_append_text(&source, "Next("));
+    MO_ASSERT(mo_buffer_append_text(&source, "_"));
+    for (uint32_t i = 0; i < MO_LIMIT_NESTING_DEPTH - 3; i++)
+        MO_ASSERT(mo_buffer_append_text(&source, ")"));
+    MO_ASSERT(mo_buffer_append_text(&source, ": 0\nNext(_): 1\nEnd: 2\nend\nend\n"));
+    MO_ASSERT(mo_buffer_append_byte(&source, 0));
+    init(&f, (const char *)source.bytes, NULL);
+    CHECK(body(&f, "run") != NULL && f.diags.count == 0);
+    finish(&f);
+    mo_buffer_free(&source);
+
+    init(&f,
+         "module Main\nfn run(value: Option(Int)) : Int\ncase value\n"
+         "Some(n) if n > 0: n\nNone: 0\nend\nend\n",
+         NULL);
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CASE_INCOMPLETE);
     finish(&f);
 }
 
@@ -538,6 +717,10 @@ static void source_order(void) {
         {"ready? = 1\n_keep = ready?\nmissing", "ready? =", MO_CODE_BOOL_NAME},
         {"if true\na = 1\nend\nmissing", "a =", MO_CODE_UNUSED_NAME},
         {"_xs = []\nmissing", "missing", MO_CODE_NAME_UNKNOWN},
+        {"a = case true\ntrue: 1\nend\nb = case false\nfalse: 2\nend\na + b", "case true",
+         MO_CODE_CASE_INCOMPLETE},
+        {"a = case true\ntrue: 1\nend\nb = 2\na", "case true", MO_CODE_CASE_INCOMPLETE},
+        {"_a = case true\ntrue: 1\nend\nmissing", "case true", MO_CODE_CASE_INCOMPLETE},
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         char source[512];
@@ -870,10 +1053,15 @@ static void work_limits(void) {
 static void run_tests(void *argument) {
     (void)argument;
     record_fields();
+    contextual_fields();
     field_assignment();
     choice_patterns();
+    data_errors();
+    hidden_data();
+    product_coverage();
     pattern_scopes();
     list_coverage();
+    pattern_boundaries();
     builtin_choices();
     byte_coverage();
     question_name();

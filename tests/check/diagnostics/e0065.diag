@@ -1,0 +1,7 @@
+E0065 4.1
+0:69..70
+the record has no such field
+A struct declares named fields, each with a type (reference 4.1).
+no field with this name
+secondary 0:19..24 declared here
+fixes 0
