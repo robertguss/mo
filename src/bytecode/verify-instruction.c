@@ -118,6 +118,7 @@ bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc) {
         REQUIRE(reg(v, a[0]) == reg(v, a[1]), "move/dup type mismatch");
         break;
     case MO_OP_DROP:
+    case MO_OP_CLEAR:
     case MO_OP_JUMP:
     case MO_OP_FREE_TOKEN:
         return true;

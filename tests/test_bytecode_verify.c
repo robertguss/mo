@@ -195,6 +195,9 @@ static void basics(void) {
     struct fixture t;
     init(&t);
     expect(&t, NULL, 0, 0);
+    const uint32_t clear[] = {MO_OP_CLEAR, 0, MO_OP_CONST, 0, 0, MO_OP_RET, 0};
+    code(&t, clear, N(clear));
+    expect(&t, NULL, 0, 0);
     const uint32_t undefined[] = {MO_OP_RET, 0};
     code(&t, undefined, N(undefined));
     expect(&t, "register is not readable", 0, 1);
