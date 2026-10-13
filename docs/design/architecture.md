@@ -1523,7 +1523,12 @@ It marks the anchor and, for a rejected allows, the first false condition.
 The expectation label cites reference 12.2; this tools code has no section/reason
 fields. A stopped report is rendered structurally and copied into diagnostics
 before the process or initializing image is freed. Source paths are matched
-to the retained source store without rewriting filename bytes.
+from bytecode 0.2's separate `files` byte table to the retained source store by
+exact length and bytes, not through the UTF-8 runtime string table. Invalid
+UTF-8 paths therefore support checking, running, bytecode emission and anchor
+locations without filename rewriting. The Core 0.8 text printer's raw-path
+refusal remains separate and unresolved. JSON's existing nonlossless `file`
+representation in 10.2 is unchanged pending approval of an exact-byte field.
 Each anchor call, and image initialization for these checks, has a compiler
 work ceiling of 16 Mi instructions (`MO_CLI_ANCHOR_INSTRUCTIONS`). Exhaustion
 refuses certification, never concludes the expectation was false, and never

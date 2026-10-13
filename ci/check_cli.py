@@ -222,11 +222,22 @@ def anchors(binary):
 
         # Pure infinite computation is a compiler work refusal, not an accepted
         # anchor. The subject's and main's runtime semantics are unchanged.
-        path.write_text(source.replace("n: 3", "n: spin()")
-                        + "fn spin() : Int\nwhile true\nend\n0\nend\n")
-        items = records(run(binary, ["check", "--json", str(path)], 1), "check")
-        assert items[1]["headline"] == "an anchor could not be checked"
-        assert "instruction budget exhausted" in items[1]["primary"]["label"]
+        for operand in ("n: 3", "n: 4"):
+            path.write_text(source.replace(operand, "n: spin()")
+                            + "fn spin() : Int\nwhile true\nend\n0\nend\n")
+            items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+            assert items[1]["headline"] == "an anchor could not be checked"
+            assert "instruction budget exhausted" in items[1]["primary"]["label"]
+
+        # This non-tail computation needs more depth than an anchor's own
+        # tail call of its promise. A bound must stop certification before main.
+        path.write_text(source.replace("n: 3", "n: descend(3)")
+                        + "fn descend(n: Int) : Int\nif n == 0: 0 else: 1 + descend(n - 1)\nend\n")
+        records(run(binary, ["check", "--json", str(path)], 0), "check")
+        for flag in ("--max-stack", "--max-depth", "--max-heap"):
+            result = run(binary, ["run", flag, "1", str(path)], 1)
+            assert not result.stdout and b"E1405" in result.stderr
+            assert b"could not be checked" in result.stderr
 
         # Checking types examples/tests but does not test their truth or run main.
         path.write_text('module Main\nfn main()\nexamples\nfalse\nend\n'
@@ -235,6 +246,56 @@ def anchors(binary):
         assert not result.stdout and not result.stderr
         records(run(binary, ["check", "--json", str(path)], 0), "check")
     print(f"{binary}: real source anchor truth, stops, bounds and nonexecution passed")
+
+
+def filenames(binary):
+    # The operating system accepts byte paths. Do not repair them into Text or
+    # confuse filename indices with ordinary string-table indices.
+    with tempfile.TemporaryDirectory(prefix="mo-filenames-") as directory:
+        reports = []
+        for raw, escaped in ((b"\xff", b"\\xff"), (b"\xc3", b"\\xc3"),
+                             ("ÿ".encode(), "ÿ".encode()),
+                             (b"\\xff", b"\\\\xff"), (b"line\n\\", b"line\\n\\\\")):
+            folder = os.fsencode(directory) + b"/" + raw
+            os.mkdir(folder)
+            path = folder + b"/main.mo"
+            with open(path, "wb") as file:
+                file.write(b"module Main\nfn main() : Int\n37\nend\n")
+            result = run(binary, ["check", path], 0)
+            assert not result.stdout and not result.stderr
+            result = run(binary, ["run", path], 37)
+            assert not result.stdout and not result.stderr
+            result = run(binary, ["check", "--emit=bytecode", path], 0)
+            assert not result.stderr and path.hex().encode() in result.stdout
+            emitted = pathlib.Path(directory) / "program.bytecode"
+            emitted.write_bytes(result.stdout)
+            run(binary.parent / "tests/test_cli.test", ["--roundtrip-bytecode", str(emitted)], 0)
+
+            with open(path, "wb") as file:
+                file.write(b'module Main\nfn main()\nstop "chosen stop"\nend\n')
+            result = run(binary, ["run", path], 70,
+                         env={**os.environ, "LC_ALL": utf8_locale})
+            result.stderr.decode("utf-8")
+            assert not result.stdout and b"chosen stop" in result.stderr
+            assert b"/" + escaped + b"/main.mo:" in result.stderr
+            reports.append(result.stderr)
+
+            # Anchor diagnostics must find both locations in the retained
+            # source store after codegen/load, even for invalid UTF-8 paths.
+            source = (b'module Main\nfn f(n: Int) : Int\npromise "identity"\n'
+                      b'result == n\nallows n: 3, result: 4\nforbids n: 3, result: 2\n'
+                      b'end\nn\nend\nfn main()\nend\n')
+            with open(path, "wb") as file:
+                file.write(source)
+            items = records(run(binary, ["check", "--json", path], 1), "check")
+            diag = items[1]
+            assert diag["code"] == "E1405" and diag["primary"]["line"] == 5
+            assert diag["primary"]["file"].endswith("/main.mo")
+            assert diag["primary"]["start"] == source.index(b"allows")
+            assert diag["secondary"][0]["line"] == 4
+            assert diag["secondary"][0]["start"] == source.index(b"result == n")
+        assert len(set(reports)) == len(reports)
+    print(f"{binary}: exact filename-byte execution, bytecode and anchor locations passed")
 
 
 def source_stack(binary, folder):
@@ -284,6 +345,7 @@ def check(binary):
     faults = binary.parent / "tests/test_cli_faults.test"
     runner(binary)
     anchors(binary)
+    filenames(binary)
     items = records(run(faults, ["--json"], 1), "check")
     assert items[1]["code"] == "E1401" and items[-1]["dropped"] == 0
     assert items[1]["primary"]["file"] is None and items[1]["section"] is None

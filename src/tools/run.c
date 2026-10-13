@@ -34,7 +34,7 @@ static uint32_t entry(const struct mo_core *core, const struct mo_bytecode *file
 static struct mo_span source_span(const struct mo_bytecode *file, const struct mo_sources *sources,
                                   uint32_t path, uint32_t start, uint32_t end) {
     if (path != MO_NO_INDEX) {
-        const struct mo_bytecode_string *name = &file->strings[path];
+        const struct mo_bytecode_bytes *name = &file->files[path];
         for (uint32_t i = 0; i < sources->count; i++)
             if (strlen(sources->files[i].path) == name->length &&
                 memcmp(sources->files[i].path, name->bytes, name->length) == 0)
