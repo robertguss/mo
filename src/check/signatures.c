@@ -3,6 +3,7 @@
 #include "base/codes.h"
 #include "base/limits.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 struct type_entry {
@@ -17,6 +18,7 @@ struct preparation {
     const struct mo_module_interfaces *interfaces;
     struct mo_diags *diags;
     const struct mo_symbol *function;
+    const struct mo_source_type *parameters[26];
     struct type_entry *root;
     struct mo_span span;
     uint32_t depth;
@@ -251,6 +253,17 @@ static MO_MUST_USE const struct mo_source_type *resolve_type(struct preparation 
     }
     const struct mo_syntax *name = node->children[0], *args = node->children[1];
     uint32_t count = args == NULL ? 0 : args->count;
+    if (name->kind == MO_S_CAPNAME && name->span.end - name->span.start == 1 &&
+        p->parameters[name->text[0] - 'A'] != NULL) {
+        if (count == 0)
+            return p->parameters[name->text[0] - 'A'];
+        bool reported = problem(p, MO_CODE_TYPE_ARGUMENTS, node->span,
+                                "a type parameter is used as a generic type",
+                                "A type parameter is a single capital letter, not a generic "
+                                "type constructor (reference 9.1).");
+        (void)reported;
+        return NULL;
+    }
     const struct mo_symbol *symbol = definition(p, name);
     if (p->failed)
         return NULL;
@@ -280,7 +293,8 @@ static MO_MUST_USE const struct mo_source_type *resolve_type(struct preparation 
                 arity = natives[i].arity;
                 break;
             }
-        if (type.name == NULL && name->span.end - name->span.start == 1) {
+        if (type.name == NULL && name->span.end - name->span.start == 1 &&
+            p->function->declaration->kind == MO_S_FN) {
             if (count != 0) {
                 bool reported = problem(p, MO_CODE_TYPE_ARGUMENTS, node->span,
                                         "a type parameter is used as a generic type",
@@ -349,6 +363,89 @@ static MO_MUST_USE bool question_name(struct preparation *p, const struct mo_syn
                    "A name ending in ? is a Bool, or a function that returns one (reference 2.3).");
 }
 
+static MO_MUST_USE int compare_fields(const void *a, const void *b) {
+    const struct mo_field_signature *x = a, *y = b;
+    size_t n = x->name->span.end - x->name->span.start;
+    size_t m = y->name->span.end - y->name->span.start;
+    int order = memcmp(x->name->text, y->name->text, n < m ? n : m);
+    if (order == 0)
+        order = n < m ? -1 : n > m ? 1 : 0;
+    return order != 0 ? order : x->index < y->index ? -1 : x->index > y->index ? 1 : 0;
+}
+
+static MO_MUST_USE bool data_signature(struct preparation *p, const struct mo_symbol *symbol,
+                                       struct mo_data_signature *out) {
+    const struct mo_symbol *owner =
+        symbol->owner == UINT32_MAX ? symbol
+                                    : &p->interfaces->scopes[symbol->module].symbols[symbol->owner];
+    p->function = owner;
+    p->span = symbol->declaration->span;
+    memset(p->parameters, 0, sizeof(p->parameters));
+    const struct mo_syntax *parameters = owner->declaration->children[1];
+    uint32_t arity = parameters == NULL ? 0 : parameters->count;
+    const struct mo_source_type *arguments[26];
+    for (uint32_t i = 0; i < arity; i++) {
+        const struct mo_syntax *name = parameters->children[i];
+        if (name->span.end - name->span.start != 1 || arity > 26 ||
+            p->parameters[name->text[0] - 'A'] != NULL)
+            return problem(p, MO_CODE_DATA_PARAMETERS, name->span,
+                           "a type parameter isn't a distinct single capital letter",
+                           "Your own types take type parameters, which are single capital "
+                           "letters (reference 9.1; names in reference 2.3).");
+        char letter[2] = {(char)name->text[0], '\0'};
+        arguments[i] = intern(p, (struct mo_source_type){.kind = MO_SOURCE_PARAMETER,
+                                                         .name = letter,
+                                                         .module = owner->module,
+                                                         .declaration = owner});
+        if (arguments[i] == NULL)
+            return false;
+        p->parameters[name->text[0] - 'A'] = arguments[i];
+    }
+    const struct mo_source_type *type = intern(p, (struct mo_source_type){.kind = MO_SOURCE_NAMED,
+                                                                          .name = owner->name,
+                                                                          .module = owner->module,
+                                                                          .declaration = owner,
+                                                                          .count = arity,
+                                                                          .arguments = arguments});
+    if (type == NULL)
+        return false;
+    const struct mo_syntax *fields =
+        symbol->declaration->children[symbol->declaration->kind == MO_S_STRUCT ? 2 : 1];
+    bool unnamed = fields != NULL && fields->kind == MO_S_TYPE;
+    uint32_t count = fields == NULL ? 0 : unnamed ? 1u : fields->count;
+    struct mo_field_signature *items =
+        allocate(p, count, sizeof(*items), _Alignof(struct mo_field_signature));
+    if (items == NULL)
+        return false;
+    *out = (struct mo_data_signature){.symbol = symbol,
+                                      .type = type,
+                                      .parameters = parameters,
+                                      .count = count,
+                                      .fields = items,
+                                      .unnamed = unnamed};
+    for (uint32_t i = 0; i < count; i++) {
+        const struct mo_syntax *name = unnamed ? NULL : fields->children[i]->children[0];
+        const struct mo_source_type *field_type =
+            resolve(p, unnamed ? fields : fields->children[i]->children[1]);
+        if (field_type == NULL || (name != NULL && !question_name(p, name, field_type)))
+            return false;
+        items[i] = (struct mo_field_signature){.name = name, .type = field_type, .index = i};
+    }
+    if (!unnamed) {
+        qsort(items, count, sizeof(*items), compare_fields);
+        for (uint32_t i = 1; i < count; i++) {
+            const struct mo_syntax *a = items[i - 1].name, *b = items[i].name;
+            size_t n = a->span.end - a->span.start, m = b->span.end - b->span.start;
+            if (n == m && memcmp(a->text, b->text, n) == 0)
+                return problem(p, MO_CODE_FIELD_REPEATED, b->span,
+                               "a record or case declares the same field twice",
+                               "Records and cases have named fields, each with one type "
+                               "(reference 4).");
+        }
+    }
+    return true;
+}
+
 struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct mo_module_set *set,
                                             const struct mo_module_interfaces *interfaces,
                                             struct mo_diags *diags) {
@@ -356,19 +453,36 @@ struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct
     MO_ASSERT(interfaces->count == set->count && set->count <= MO_LIMIT_FILES);
     struct preparation p = {
         .arena = arena, .interfaces = interfaces, .diags = diags, .span = {UINT32_MAX, 0, 0}};
-    uint32_t count = 0;
+    uint32_t count = 0, data_count = 0;
     for (uint32_t i = 0; i < interfaces->count; i++)
-        for (uint32_t j = 0; j < interfaces->scopes[i].count; j++)
-            if (interfaces->scopes[i].symbols[j].declaration->kind == MO_S_FN)
+        for (uint32_t j = 0; j < interfaces->scopes[i].count; j++) {
+            enum mo_syntax_kind kind = interfaces->scopes[i].symbols[j].declaration->kind;
+            if (kind == MO_S_FN)
                 count++;
+            if (kind == MO_S_STRUCT || kind == MO_S_CASE_DECL)
+                data_count++;
+        }
     struct mo_signatures *out = allocate(&p, 1, sizeof(*out), _Alignof(struct mo_signatures));
     struct mo_function_signature *items =
         allocate(&p, count, sizeof(*items), _Alignof(struct mo_function_signature));
     uint64_t *work = allocate(&p, 1, sizeof(*work), _Alignof(uint64_t));
+    struct mo_data_signature *data =
+        allocate(&p, data_count, sizeof(*data), _Alignof(struct mo_data_signature));
     if (p.failed)
         return NULL;
     *work = 0;
-    *out = (struct mo_signatures){.items = items, .work = work};
+    *out = (struct mo_signatures){.items = items, .data = data, .work = work};
+    for (uint32_t i = 0; i < interfaces->count; i++)
+        for (uint32_t j = 0; j < interfaces->scopes[i].count; j++) {
+            const struct mo_symbol *symbol = &interfaces->scopes[i].symbols[j];
+            if (symbol->declaration->kind == MO_S_STRUCT ||
+                symbol->declaration->kind == MO_S_CASE_DECL) {
+                if (!data_signature(&p, symbol, &out->data[out->data_count]))
+                    goto failed;
+                out->data_count++;
+            }
+        }
+    memset(p.parameters, 0, sizeof(p.parameters));
     for (uint32_t i = 0; i < interfaces->count; i++)
         for (uint32_t j = 0; j < interfaces->scopes[i].count; j++) {
             const struct mo_symbol *function = &interfaces->scopes[i].symbols[j];

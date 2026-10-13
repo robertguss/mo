@@ -87,6 +87,11 @@
     X(59, BOOL_NAME, "2.3")                                                                        \
     X(60, LITERAL_RANGE, "3.3")                                                                    \
     X(61, TUPLE_POSITION, "3.6")                                                                   \
+    X(62, FIELD_REPEATED, "4")                                                                     \
+    X(63, DATA_ARGUMENTS, "4")                                                                     \
+    X(64, DATA_PRIVATE, "10.2")                                                                    \
+    X(65, FIELD_MISSING, "4.1")                                                                    \
+    X(66, DATA_PARAMETERS, "9.1")                                                                  \
     X(72, NOT_FUNCTION, "5.2")                                                                     \
     X(73, NOT_ITERABLE, "7.5")                                                                     \
     X(74, CONDITION_TYPE, "3.1")                                                                   \

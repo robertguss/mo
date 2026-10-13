@@ -75,6 +75,19 @@ static void question_name(void) {
     finish(&f);
 }
 
+static void record_fields(void) {
+    struct fixture f;
+    init(&f,
+         "module Main\nstruct Point\nx: Decimal\ny: Decimal\nend\n"
+         "fn run() : Decimal\npoint = Point(y: 2, x: 1)\npoint.x + point.y\nend\n",
+         NULL);
+    struct mo_inferred_body *out = body(&f, "run");
+    CHECK(out != NULL && f.diags.count == 0);
+    if (out != NULL)
+        CHECK(strcmp(out->items[out->count - 1].type->name, "Decimal") == 0);
+    finish(&f);
+}
+
 static void tuple_position(void) {
     struct fixture f;
     init(&f, "module Main\nfn run(pair: (Int, Text)) : Text\npair.1\nend\n", NULL);
@@ -721,6 +734,7 @@ static void work_limits(void) {
 }
 
 int main(void) {
+    record_fields();
     question_name();
     tuple_position();
     inferred_uses();

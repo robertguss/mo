@@ -360,7 +360,16 @@ single-letter parameters; qualification always selects a nominal type.
 Implicit parameters belong to their function, and are abstract there, not
 shared with another function's same-spelled parameter. All storage uses the
 caller arena, with E1058 on exhaustion. This intermediate result checks no
-bodies, data fields or abilities and is not a checked program.
+bodies or abilities and is not a checked program. It also prepares record and
+choice-case field types. Each case retains its owning choice's nominal type;
+recursive fields retain that identity rather than expanding a layout.
+Explicit single-letter data parameters are scoped to their declaring type.
+Fields are indexed by name for binary lookup, with declaration-order indices
+for lowering; constructor arguments are checked in written evaluation order.
+Duplicate declared or supplied fields are refused without pairwise scans.
+Record/case construction and field reads check the owning type's `(..)`
+exposure before revealing its layout. Field metadata borrows syntax and is
+stored once in the declaring module, not copied into every importing module.
 
 **Local inference is a second intermediate result.** `mo_infer_function`
 checks one named body against prepared signatures, returning postorder

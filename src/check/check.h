@@ -112,15 +112,35 @@ struct mo_function_signature {
     const struct mo_source_type *type;
 };
 
+struct mo_field_signature {
+    const struct mo_syntax *name; /* NULL for a case's single unnamed value */
+    const struct mo_source_type *type;
+    uint32_t index; /* declaration order */
+};
+
+/* One record or choice case. Generic fields refer to parameters owned by the
+ * declaring type, not an implicit function parameter. Recursive fields retain
+ * nominal types; they never expand the record's layout. */
+struct mo_data_signature {
+    const struct mo_symbol *symbol;
+    const struct mo_source_type *type; /* the record or owning choice */
+    const struct mo_syntax *parameters;
+    uint32_t count;
+    struct mo_field_signature *fields; /* sorted by name; indices keep declaration order */
+    bool unnamed;
+};
+
 struct mo_signatures {
     uint32_t count;
     struct mo_function_signature *items; /* module order, then interface symbol order */
     uint64_t *work; /* shared program budget, initialized by preparation; single-threaded */
+    uint32_t data_count;
+    struct mo_data_signature *data; /* module order, then interface symbol order */
 };
 
 /* Prepares all named function signatures, including abstract generic parameters
- * and default Unit results. NULL with diagnostics on failure. This does not
- * check function bodies, abilities or fields; it is not a checked program.
+ * and default Unit results, and record/case field types. NULL with diagnostics
+ * on failure. This does not check function bodies or abilities; it is not a checked program.
  * Result types belong to arena and borrow interfaces, which must outlive them. */
 MO_MUST_USE struct mo_signatures *
 mo_prepare_signatures(struct mo_arena *arena, const struct mo_module_set *set,
@@ -130,8 +150,9 @@ struct mo_inferred_expression {
     const struct mo_syntax *syntax;
     const struct mo_source_type *type;
     const struct mo_syntax *binding; /* binder/parameter; assignment's original var binder */
-    const struct mo_symbol *symbol;  /* resolved module function, otherwise NULL */
-    bool never;                      /* every path leaves the current function or loop, or stops */
+    const struct mo_symbol *symbol;         /* resolved function or constructor, otherwise NULL */
+    const struct mo_field_signature *field; /* selected field or supplied named argument */
+    bool never; /* every path leaves the current function or loop, or stops */
 };
 
 struct mo_inferred_body {
