@@ -198,6 +198,20 @@ def check(binary):
     with tempfile.TemporaryDirectory() as temp:
         folder = pathlib.Path(temp)
         source_stack(binary, folder)
+        unicode_folder = folder / "café"
+        unicode_folder.mkdir()
+        unicode_path = unicode_folder / "main.mo"
+        unicode_path.write_text('module Main\nfn run() : Text\n  -"José 日本語 😀"\nend\n',
+                                encoding="utf-8")
+        result = run(binary, ["check", str(unicode_path)], 1)
+        assert not result.stdout
+        assert str(unicode_path).encode("utf-8") in result.stderr
+        assert '-"José 日本語 😀"'.encode("utf-8") in result.stderr
+        d = records(run(binary, ["check", "--json", str(unicode_path)], 1), "check")[1]
+        assert d["primary"]["file"] == str(unicode_path)
+        # The string occupies twelve original characters, not its byte length
+        # or displayed width. Unary minus refuses this Text operand.
+        assert d["primary"]["column"] == 4 and d["primary"]["end_column"] == 16
         path = folder / "main.mo"
         path.write_bytes(b"module Main\n\xff\n")
         d = records(run(binary, ["check", "--json", str(path)], 1), "check")[1]

@@ -1099,12 +1099,22 @@ error, with no success chatter. Headlines include the code and primary
 `path:line:column`; secondary spans name their own locations. Source rows
 use an ASCII `|` gutter. Locations count original characters as `diag.h`
 specifies, not display cells. Tabs expand to four-cell stops in the excerpt.
-Non-ASCII scalars use `\u{hex}`, and invalid/control bytes use `\xHH`, also
-in paths and messages: terminal controls cannot execute, and wide/combining
-characters cannot displace carets across terminal width tables or locales.
+Valid UTF-8 stays as written, including in paths, messages and fixed lines.
+Only controls, DEL, invalid bytes and the invisible/direction-changing scalars
+refused by reference 2.1 are escaped: ASCII controls and invalid bytes use
+`\xHH`, other refused scalars use `\u{hex}`. Tabs remain expanded spaces.
+Carets and clipping use `mo_unicode16_display_width` from `prim/prim.h`,
+the same grapheme-aware Unicode 16 estimate as the library primitive;
+tools copy no Unicode tables and use no locale-dependent width APIs.
+Safe UTF-8 runs are measured together, not by summing scalar widths.
+Byte spans inside a scalar mark that scalar; a zero-width span still receives
+one caret. JSON's byte offsets and original character columns do not change.
 Long source rows show a window of at most 160 cells with up to twelve
-original characters before the span and `...` for omitted text. Long
-multi-line spans show the first two and last two rows. EOF insertions get
+original characters before the span and `...` for omitted text.
+UTF-8 runs are clipped by binary search over scalar-boundary prefixes,
+not by repeatedly measuring every prefix. A clip does not leave a text base
+without the emoji selector that would increase its width.
+Long multi-line spans show the first two and last two rows. EOF insertions get
 one caret, even after a final newline. Reasons already contain the section
 citation; codes without a section print no reason. Fixes show their titles
 and fixed lines after applying all original-text edits simultaneously,

@@ -1,5 +1,7 @@
 #include "tools/tools.h"
 
+#include "prim/prim.h"
+
 #include <string.h>
 
 struct writer {
@@ -168,32 +170,122 @@ static void json_diag(struct writer *w, const struct mo_sources *sources, const 
     text(w, "]}\n");
 }
 
-/* Render non-ASCII and controls as escapes. In particular, wide and combining
- * characters cannot displace a caret on terminals with different width tables.
- * Locations still count the original scalar as ONE character, never its escape. */
-static uint32_t visible(struct writer *w, const uint8_t *s, size_t length, uint32_t *used,
-                        uint32_t cells) {
-    uint32_t value;
-    *used = scalar(s, length, &value);
-    if (value == '\t') {
-        uint32_t width = 4 - cells % 4;
-        repeat(w, ' ', width);
-        return width;
+/* Reference 2.1's refused characters, plus line controls: never let a source
+ * byte move the terminal cursor or change the surrounding text's direction. */
+static bool escaped(uint32_t c) {
+    return c < 32 || c == 127 || (c >= 128 && c <= 159) || c == UINT32_MAX || c == 0xad ||
+           c == 0x61c || c == 0x180e || (c >= 0x200b && c <= 0x200f) ||
+           (c >= 0x2028 && c <= 0x202e) || (c >= 0x2060 && c <= 0x2064) ||
+           (c >= 0x2066 && c <= 0x206f) || c == 0xfeff || (c >= 0xfff9 && c <= 0xfffb) ||
+           c == 0xe0001 || (c >= 0xe0020 && c <= 0xe007f);
+}
+
+static uint32_t plain_width(const uint8_t *s, size_t length) {
+    uint64_t width;
+    /* Called only on validated UTF-8 runs. Saturating is sufficient for
+     * oversized diagnostic strings: the bounded writer will refuse them. */
+    bool ok = mo_unicode16_display_width(s, length, &width);
+    MO_ASSERT(ok);
+    return width > UINT32_MAX ? UINT32_MAX : (uint32_t)width;
+}
+
+static size_t boundary_before(const uint8_t *s, size_t at) {
+    while (at != 0 && (s[at] & 0xc0) == 0x80)
+        at--;
+    return at;
+}
+
+/* Widths of successive Unicode16 prefixes are monotone. Binary search avoids
+ * remeasuring every scalar prefix of a long combining-mark run. */
+static size_t fitting_prefix(const uint8_t *s, size_t length, uint32_t budget) {
+    size_t low = 0, high = length;
+    while (low < high) {
+        size_t mid = low + (high - low) / 2;
+        size_t end = mid;
+        while (end < length && (s[end] & 0xc0) == 0x80)
+            end++;
+        if (end == low) {
+            uint32_t value;
+            end += scalar(s + end, length - end, &value);
+        }
+        if (plain_width(s, end) <= budget)
+            low = end;
+        else
+            high = boundary_before(s, end - 1);
     }
-    if (value >= 0x20 && value <= 0x7E) {
-        bytes(w, s, 1);
-        return 1;
+    return low;
+}
+
+struct display_piece {
+    size_t used;
+    uint32_t width, value;
+    bool plain;
+};
+
+/* A piece is one escape/tab or a whole safe UTF-8 run. Measuring runs, not
+ * scalars, is essential for combining marks, flags, modifiers and keycaps. */
+static struct display_piece inspect(const uint8_t *s, size_t length, uint32_t cells,
+                                    uint32_t budget) {
+    struct display_piece p = {0};
+    p.used = scalar(s, length, &p.value);
+    if (!escaped(p.value)) {
+        p.plain = true;
+        while (p.used < length) {
+            uint32_t value;
+            uint32_t n = scalar(s + p.used, length - p.used, &value);
+            if (escaped(value))
+                break;
+            p.used += n;
+        }
+        p.width = plain_width(s, p.used);
+        if (p.width > budget) {
+            size_t whole = p.used;
+            uint32_t whole_width = p.width;
+            p.used = fitting_prefix(s, whole, budget);
+            p.width = plain_width(s, p.used);
+            /* A selector can raise the final grapheme's width (heart/keycap).
+             * Do not clip between its base and selector just to fit a cell. */
+            if ((uint64_t)p.width + plain_width(s + p.used, whole - p.used) != whole_width) {
+                p.used = p.width == 0 ? 0 : fitting_prefix(s, p.used, p.width - 1);
+                p.width = plain_width(s, p.used);
+            }
+        }
+    } else {
+        p.width = p.value == '\t'                           ? 4 - cells % 4
+                  : p.value < 0x80 || p.value == UINT32_MAX ? 4u
+                  : p.value <= 0xFFF                        ? 7u
+                  : p.value <= 0xFFFF                       ? 8u
+                  : p.value <= 0xFFFFF                      ? 9u
+                                                            : 10u;
+        if (p.width > budget)
+            p.used = 0;
     }
-    if (value < 0x80 || value == UINT32_MAX) {
+    return p;
+}
+
+static void write_piece(struct writer *w, const uint8_t *s, struct display_piece p) {
+    if (p.plain)
+        bytes(w, s, p.used);
+    else if (p.value == '\t')
+        repeat(w, ' ', p.width);
+    else if (p.value < 0x80 || p.value == UINT32_MAX) {
         text(w, "\\x");
         hex(w, s[0], 2);
-        return 4;
+    } else {
+        text(w, "\\u{");
+        hex(w, p.value, p.width - 4);
+        text(w, "}");
     }
-    text(w, "\\u{");
-    unsigned digits = value <= 0xFFF ? 3u : value <= 0xFFFF ? 4u : value <= 0xFFFFF ? 5u : 6u;
-    hex(w, value, digits);
-    text(w, "}");
-    return digits + 4;
+}
+
+static uint32_t cells_before(const uint8_t *s, uint32_t length) {
+    uint32_t cells = 0;
+    for (size_t at = 0; at < length;) {
+        struct display_piece p = inspect(s + at, length - at, cells, UINT32_MAX);
+        cells += p.width;
+        at += p.used;
+    }
+    return cells;
 }
 
 static void safe_text(struct writer *w, const char *s) {
@@ -202,9 +294,10 @@ static void safe_text(struct writer *w, const char *s) {
     size_t length = strlen(s);
     uint32_t cells = 0;
     for (size_t i = 0; w->ok && i < length;) {
-        uint32_t used;
-        cells += visible(w, (const uint8_t *)s + i, length - i, &used, cells);
-        i += used;
+        struct display_piece p = inspect((const uint8_t *)s + i, length - i, cells, UINT32_MAX);
+        write_piece(w, (const uint8_t *)s + i, p);
+        cells += p.width;
+        i += p.used;
     }
 }
 
@@ -239,22 +332,16 @@ static void line_prefix(struct writer *w, uint32_t line, bool number) {
  * Marks intersecting scalars even when a byte span starts inside one. */
 static void source_line(struct writer *w, const uint8_t *s, uint32_t length, uint32_t line,
                         uint32_t start, uint32_t end, bool mark, const char *label) {
-    uint32_t at = 0, column = 0, focus = 0, focus_cells = 0;
+    uint32_t at = 0, column = 0, focus = 0;
     while (at < start && at < length) {
         uint32_t v;
         uint32_t n = scalar(s + at, length - at, &v);
         if (n > start - at)
             break;
-        focus_cells += v == '\t'                     ? 4 - focus_cells % 4
-                       : v >= 0x20 && v <= 0x7E      ? 1u
-                       : v < 0x80 || v == UINT32_MAX ? 4u
-                       : v <= 0xFFF                  ? 7u
-                       : v <= 0xFFFF                 ? 8u
-                       : v <= 0xFFFFF                ? 9u
-                                                     : 10u;
         at += n;
         focus++;
     }
+    uint32_t focus_cells = cells_before(s, at);
     at = 0;
     while (focus_cells > 100 && column + 12 < focus && at < length) {
         uint32_t v;
@@ -268,14 +355,27 @@ static void source_line(struct writer *w, const uint8_t *s, uint32_t length, uin
         cells = 3;
     }
     while (w->ok && at < length && cells < 148) {
-        uint32_t used;
-        uint32_t width = visible(w, s + at, length - at, &used, cells);
+        struct display_piece p = inspect(s + at, length - at, cells, 148 - cells);
+        uint32_t used = (uint32_t)p.used;
+        if (used == 0)
+            break;
+        write_piece(w, s + at, p);
         if ((at < end && at + used > start) || (start == end && at <= start && at + used > start)) {
+            uint32_t left = 0, right = p.width;
+            if (p.plain) {
+                size_t a = start > at ? start - at : 0;
+                size_t b = end < at + used ? end - at : used;
+                a = boundary_before(s + at, a);
+                while (b < used && (s[at + b] & 0xc0) == 0x80)
+                    b++;
+                left = plain_width(s + at, a);
+                right = plain_width(s + at, b);
+            }
             if (first == UINT32_MAX)
-                first = cells;
-            last = cells + width;
+                first = cells + left;
+            last = cells + right;
         }
-        cells += width;
+        cells += p.width;
         at += used;
     }
     if (at < length)
@@ -284,6 +384,8 @@ static void source_line(struct writer *w, const uint8_t *s, uint32_t length, uin
         first = cells;
         last = cells + 1;
     }
+    if (last <= first)
+        last = first + 1; /* A zero-width span still has a visible caret. */
     text(w, "\n");
     if (mark) {
         line_prefix(w, line, false);

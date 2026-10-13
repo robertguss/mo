@@ -155,6 +155,76 @@ static void long_line(void) {
     mo_sources_free(&sources);
 }
 
+static void utf8_display(void) {
+    /* Tabs, CJK, combining marks, paired regional indicators, skin tones and
+     * keycaps all have asymmetric byte/character/display-column counts. */
+    const char source[] = "a\té界é🇫🇷👍🏽1️⃣ Z\n";
+    struct mo_sources sources;
+    MO_ASSERT(mo_sources_init(&sources));
+    uint32_t file;
+    struct mo_source_error error;
+    MO_ASSERT(mo_sources_add_bytes(&sources, "café/main.mo", (const uint8_t *)source,
+                                   sizeof(source) - 1, &file, &error));
+    struct mo_label secondary[] = {{{file, 5, 6}, "inside UTF-8"},
+                                   {{file, 10, 18}, "flag"},
+                                   {{file, 18, 26}, "skin tone"},
+                                   {{file, 26, 33}, "keycap"}};
+    struct mo_diag d = {.code = MO_CODE_NAME_UNKNOWN,
+                        .message = "UTF-8 café",
+                        .primary = {{file, 34, 35}, "日本語"},
+                        .secondary = secondary,
+                        .secondary_count = 4};
+    struct mo_buffer out;
+    mo_buffer_init(&out, MO_CLI_DIAGNOSTIC_SIZE);
+    CHECK(mo_render_diagnostic(&sources, &d, false, &out));
+    MO_ASSERT(mo_buffer_append_byte(&out, 0));
+    const char *rendered = (const char *)out.bytes;
+    CHECK(strstr(rendered, "UTF-8 café  café/main.mo:1:15") != NULL);
+    CHECK(strstr(rendered, "  1 | a   é界é🇫🇷👍🏽1️⃣ Z\n") != NULL);
+    CHECK(strstr(rendered, "    |                ^ 日本語\n") != NULL);
+    CHECK(strstr(rendered, "    |      ^^ inside UTF-8\n") != NULL);
+    CHECK(strstr(rendered, "    |         ^^ flag\n") != NULL);
+    CHECK(strstr(rendered, "    |           ^^ skin tone\n") != NULL);
+    CHECK(strstr(rendered, "    |             ^^ keycap\n") != NULL);
+
+    /* At a one-cell remainder, a heart's text base fits but its emoji
+     * selector does not. Clip the entire grapheme, not just the selector. */
+    char clipped[156];
+    memset(clipped, 'A', 147);
+    memcpy(clipped + 147, "♥️X\n", 9);
+    MO_ASSERT(
+        mo_sources_add_bytes(&sources, "clipped.mo", (const uint8_t *)clipped, 155, &file, &error));
+    d.primary = (struct mo_label){{file, 0, 1}, NULL};
+    d.secondary_count = 0;
+    CHECK(mo_render_diagnostic(&sources, &d, false, &out));
+    MO_ASSERT(mo_buffer_append_byte(&out, 0));
+    CHECK(strstr((const char *)out.bytes, "♥") == NULL);
+    CHECK(strstr((const char *)out.bytes, "A...\n    | ^\n") != NULL);
+    mo_buffer_free(&out);
+    mo_sources_free(&sources);
+}
+
+static void control_display(void) {
+    /* One member of every refused range, plus controls and an invalid byte.
+     * Their raw bytes must not reach the terminal even outside source rows. */
+    const char controls[] = "\x01\t\r\n\x7f\xff\xc2\x85\xc2\xad\xd8\x9c\xe1\xa0\x8e"
+                            "\xe2\x80\x8b\xe2\x80\xa8\xe2\x81\xa0\xe2\x81\xa6"
+                            "\xef\xbb\xbf\xef\xbf\xb9\xf3\xa0\x80\x81\xf3\xa0\x80\xa0";
+    struct mo_sources sources = {0};
+    struct mo_diag d = {.code = MO_CODE_TOOL_UNAVAILABLE,
+                        .message = controls,
+                        .primary = {{UINT32_MAX, 0, 0}, NULL}};
+    struct mo_buffer out;
+    mo_buffer_init(&out, MO_CLI_DIAGNOSTIC_SIZE);
+    CHECK(mo_render_diagnostic(&sources, &d, false, &out));
+    MO_ASSERT(mo_buffer_append_byte(&out, 0));
+    CHECK(strcmp((const char *)out.bytes,
+                 "error E1400: \\x01    \\x0d\\x0a\\x7f\\xff\\u{085}\\u{0ad}\\u{61c}\\u{180e}"
+                 "\\u{200b}\\u{2028}\\u{2060}\\u{2066}\\u{feff}\\u{fff9}\\u{e0001}\\u{e0020}"
+                 "  <unavailable>\n\n\n") == 0);
+    mo_buffer_free(&out);
+}
+
 static void split_crlf_fix(void) {
     struct mo_sources sources;
     MO_ASSERT(mo_sources_init(&sources));
@@ -247,6 +317,8 @@ int main(int argc, char *argv[]) {
     parse_commands();
     limit_values();
     long_line();
+    utf8_display();
+    control_display();
     split_crlf_fix();
     omission();
     sorted_output();
