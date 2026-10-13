@@ -161,11 +161,17 @@ enum mo_syntax_token {
     MO_T_PERCENT,
 };
 
+enum mo_syntax_comment_anchor { MO_COMMENT_OWN_LINE, MO_COMMENT_TOKEN, MO_COMMENT_ITEM };
+
 struct mo_syntax_comment {
     struct mo_span span;
     const uint8_t *text; /* span.end - span.start bytes, including # */
     uint32_t indentation;
     bool documentation;
+    enum mo_syntax_comment_anchor anchor;
+    enum mo_syntax_token token; /* TOKEN: kind of the immediately preceding token */
+    uint32_t token_index;       /* TOKEN: occurrence of that kind owned by this node;
+                                 * ITEM: item index; both zero-based, ignoring children */
     struct mo_syntax_comment *next;
 };
 
@@ -179,7 +185,9 @@ struct mo_syntax {
     struct mo_syntax_comment *leading;
     struct mo_syntax_comment *trailing;
     struct mo_syntax_comment *ending; /* comments at the end of a block or bracket scope */
-    bool incomplete; /* an erroneous child was omitted; do not check this as a whole */
+    bool incomplete;   /* an erroneous child was omitted; do not check this as a whole */
+    bool blank_before; /* one optional blank line before a statement/declaration's leading comments;
+                        * false for the first statement in a block */
 };
 
 struct mo_header {

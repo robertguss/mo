@@ -15,6 +15,8 @@ struct mo_token {
 struct mo_comment_storage {
     struct mo_syntax_comment value;
     struct mo_comment_storage *previous;
+    struct mo_token preceding;
+    struct mo_syntax *owner;
 };
 
 struct mo_lex {
@@ -26,6 +28,9 @@ struct mo_lex {
     enum mo_syntax_token last;
     bool lambda_parameters; /* after fn(, followed only by names, _ and commas */
     bool lambda_close;      /* the last scanned token closes lambda parameters */
+    struct mo_token preceding;
+    uint32_t preceding_line; /* physical line at the end of that token */
+    bool ignore_comments;    /* bounded token replay for source-independent anchors */
     struct mo_token pending;
     bool has_pending;
     uint32_t depth;

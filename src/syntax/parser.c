@@ -332,6 +332,7 @@ static MO_MUST_USE struct mo_syntax *header(struct parser *p, struct mo_header *
     expect(p, MO_T_NL);
     struct mo_syntax *expose = NULL;
     if (take(p, MO_T_EXPOSE)) {
+        struct mo_span expose_start = p->previous;
         expose = sequence(p);
         expose->kind = MO_S_EXPOSE;
         do {
@@ -344,6 +345,7 @@ static MO_MUST_USE struct mo_syntax *header(struct parser *p, struct mo_header *
             }
             append(p, expose, item);
         } while (take(p, MO_T_COMMA));
+        expose->span.start = expose_start.start;
         expect(p, MO_T_NL);
     }
     struct mo_syntax *uses = sequence(p);
@@ -748,6 +750,7 @@ static MO_MUST_USE struct mo_syntax *postfix(struct parser *p) {
         struct mo_span start = n->span;
         struct mo_syntax *step;
         if (take(p, MO_T_DOT)) {
+            struct mo_span dot = p->previous;
             enum mo_syntax_token token = p->current.kind;
             struct mo_syntax *field = name(p, token == MO_T_CAPNAME ? MO_T_CAPNAME
                                               : token == MO_T_INT   ? MO_T_INT
@@ -755,7 +758,7 @@ static MO_MUST_USE struct mo_syntax *postfix(struct parser *p) {
             step = N(token == MO_T_CAPNAME ? MO_S_QUALIFIED
                      : token == MO_T_INT   ? MO_S_POSITION
                                            : MO_S_FIELD_ACCESS,
-                     field->span, field);
+                     dot, field);
         } else {
             enter(p);
             uint16_t code = p->expect_code;
@@ -1037,6 +1040,7 @@ static MO_MUST_USE bool declaration_header(struct parser *p, enum mo_syntax_toke
         p->depth--;
         parts[2] = take(p, MO_T_COLON) ? type(p) : NULL;
         if (take(p, MO_T_WHERE)) {
+            struct mo_span where = p->previous;
             parts[3] = sequence(p);
             parts[3]->kind = MO_S_WHERE;
             do {
@@ -1044,6 +1048,7 @@ static MO_MUST_USE bool declaration_header(struct parser *p, enum mo_syntax_toke
                 expect(p, MO_T_COLON);
                 append(p, parts[3], N(MO_S_SEQUENCE, v->span, v, name(p, MO_T_CAPNAME)));
             } while (take(p, MO_T_COMMA));
+            parts[3]->span.start = where.start;
         }
     } else if (token == MO_T_STRUCT || token == MO_T_ENUM) {
         parts[0] = name(p, MO_T_CAPNAME);
