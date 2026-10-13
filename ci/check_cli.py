@@ -409,10 +409,10 @@ def check(binary):
                 expected = (b'module Main\na = 0' + b' ' * 51 + b'#' + b'c' * length +
                             b'\n' + b'b' * 50 + b' = 0  # short\n')
                 assert not result.stderr and path.read_bytes() == expected
-                # Constant checking is explicitly staged by the whole checker;
-                # formatting may not turn that into a successful certificate.
+                # Constants are checked, but this formatting fixture has no main;
+                # formatting may not turn it into a successful certificate.
                 result = run(binary, ["check", str(path)], 1)
-                assert b'E1103' in result.stderr
+                assert b'E0079' in result.stderr
         # Rename is observable: an existing reader and hard link keep the old
         # complete file, while the requested path gets the complete new file.
         source = b'module Main\n\n\nfn f()\nvar x=1\nx=x+2\nx\nend\n'
