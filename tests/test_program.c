@@ -682,6 +682,37 @@ static void requirement_keys(void) {
         CHECK(nested);
     }
     free_fixture(&f);
+    init(&f, "module Main\nstruct Pair(Z, A)\nfirst: Z\nsecond: A\nend\n"
+             "fn to_text(pair: Pair(U, T)) : Text where U: Text, T: Text\n"
+             "\"#{pair.first} #{pair.second}\"\nend\n"
+             "fn main() : Int\nPair(first: true, second: 7).to_text.byte_count\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[1].body;
+        bool customized = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->native == NULL || strcmp(row->native, "to_text") != 0)
+                continue;
+            MO_ASSERT(row->ability_count == 1);
+            const struct mo_ability_implementation *proof = row->abilities[0].implementation;
+            MO_ASSERT(proof->kind == MO_ABILITY_FUNCTION && proof->arguments.count == 2 &&
+                      proof->part_count == 2);
+            CHECK(strcmp(proof->arguments.items[0].parameter->name, "T") == 0);
+            CHECK(strcmp(proof->arguments.items[0].type->name, "Int") == 0);
+            CHECK(strcmp(proof->arguments.items[1].parameter->name, "U") == 0);
+            CHECK(strcmp(proof->arguments.items[1].type->name, "Bool") == 0);
+            for (uint32_t j = 0; j < proof->part_count; j++) {
+                const char *expected =
+                    strcmp(proof->part_parameters[j]->name, "T") == 0 ? "Int" : "Bool";
+                CHECK(proof->parts[j]->ability == MO_SOURCE_TEXT);
+                CHECK(strcmp(proof->parts[j]->type->name, expected) == 0);
+            }
+            customized = true;
+        }
+        CHECK(customized);
+    }
+    free_fixture(&f);
     init(&f, "module Main\nstruct Tree(T)\nchildren: List(Tree(List(T)))\nend\n"
              "struct Phantom(T)\nvalue: Int\nend\n"
              "fn accepts(_key: Map(Phantom(Float), Int), _tree: Tree(Int))\nend\n"
