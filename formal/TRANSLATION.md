@@ -280,6 +280,18 @@ declaration order. Native Text/Char parts are quoted within structural values;
 escaping processes original slashes first, then delimiters, interpolation
 markers and control characters, so newly inserted escapes are not doubled.
 
+Qualified native scalar calls, such as `Int.to_text`, use the same scalar
+conversion as a selected native Text proof. A same-name ordinary source helper
+still calls its checked source symbol, so `to_text(7)` may return an Int while
+`29.to_text` returns Text in the same module. `Text.byte_count` lowers to
+`%text.byteCount`, counting UTF-8 bytes rather than characters. A supported
+qualified native used as a function value, such as `Int.to_text` or
+`Text.byte_count`, becomes a `.ref.ROW` lambda adapter (5.6) applying the same
+primitive to its parameters. Unsupported natives still refuse E1150 there.
+Namespace calls, such as `Int.to_text(29)`, retain a pure native callee row in
+the checked graph; lowering skips it before applying the primitive to the
+written arguments. Receiver dots, such as `29.to_text`, have no callee row.
+
 The text functions of section 14 are primitives (`%text.lines`,
 `%text.split`, ...); see section 14 below.
 
@@ -1054,7 +1066,11 @@ to the containing function or lambda's return join, even when more arithmetic
 or a constructor follows the `try`. The checker supplies the exact failure
 constructor and optional wrapper; lowering never searches for one. A wrapper's
 type is the substituted enclosing Result's error type, so generic nominal
-identity agrees with the checked result. Option `or` similarly evaluates its
+identity agrees with the checked result. Its checked type-only requirement uses
+(`operand = UINT32_MAX`, keyed by wrapper-scoped parameter and ability) must
+resolve in the supplying function instance's proof environment before emission;
+an unresolved proof refuses E1150. Direct propagation has no wrapper arguments
+or requirement uses. Option `or` similarly evaluates its
 default only in the None arm and passes Some's value to the continuation.
 
 ### 8.4 Can't happen

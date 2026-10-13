@@ -920,12 +920,25 @@ for Result, with the remaining expression confined to the success arm. Failure
 jumps to the containing function or lambda's return join. Lowering uses exactly
 the checked failure and wrapper constructors; the substituted enclosing error
 type supplies a wrapper's concrete nominal identity. No wrapper search remains.
+The selected generic wrapper's type-only requirements in `mo_checked_try`
+are resolved through the current instance's scoped proof environment before
+emission, just like an explicit constructor. An unresolved requirement refuses
+E1150; direct propagation has no wrapper substitution or requirements.
 
 Interpolation decodes HEAD/MID/TAIL fragments from the original syntax; only
 hole expressions have checked operands. Triple text uses the closing delimiter's
 indentation for every fragment. Each hole is evaluated and converted through its
 selected Text proof before the next hole is evaluated. The same conversion emits
-`to_text` calls and Result entry errors. Function instances retain requirement
+`to_text` calls and Result entry errors. Qualified native scalar `to_text` calls
+use that scalar conversion directly; ordinary same-name source helpers retain
+their selected source symbol. `Text.byte_count` emits Core's byte-count primitive,
+not a character count. Supported qualified natives used as function values get
+the same `.ref.ROW` lambda adapter as source functions and use the same call
+lowering, so taking a function value cannot bypass a native staging refusal.
+An ordinary namespace call retains that callee row in the checked graph;
+lowering skips the pure reference before passing its explicit arguments to the
+primitive. A native receiver dot call has no callee row to skip.
+Function instances retain requirement
 proofs keyed by the callee's scoped parameter and ability, together with the
 supplying instance's type/proof environment. PARAMETER replacement follows those
 bindings iteratively, bounded by the ability-path and whole-lowering work limits;
