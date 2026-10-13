@@ -82,6 +82,7 @@ mo_core_ty lower_type(struct lowering *p, const struct mo_source_type *type,
                       const struct substitution *substitution);
 void lower_indices(struct lowering *p);
 mo_core_string lower_type_name(struct lowering *p, mo_core_ty type);
+uint64_t lower_type_hash(struct lowering *p, mo_core_ty type);
 struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symbol,
                                 struct mo_type_arguments arguments,
                                 const struct substitution *substitution, uint32_t owner,

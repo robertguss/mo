@@ -13,8 +13,8 @@ struct derived {
     struct mo_span span;
 };
 
-static uint32_t bucket(mo_core_ty type, uint32_t owner, uint32_t slots) {
-    uint64_t key = (uintptr_t)type ^ ((uint64_t)owner << 32);
+static uint32_t bucket(struct lowering *p, mo_core_ty type, uint32_t owner, uint32_t slots) {
+    uint64_t key = lower_type_hash(p, type) ^ ((uint64_t)owner << 32);
     key ^= key >> 30;
     key *= UINT64_C(0xbf58476d1ce4e5b9);
     key ^= key >> 27;
@@ -102,14 +102,14 @@ mo_core_expr lower_derived_text(struct lowering *p, const struct mo_ability_impl
         struct derived **table = LOWER_NEW(p, struct derived *, slots);
         for (struct derived *item = p->derived; item != NULL; item = item->next) {
             lower_work(p, 1);
-            uint32_t at = bucket(item->type, item->function->owner, slots);
+            uint32_t at = bucket(p, item->type, item->function->owner, slots);
             item->hash_next = table[at];
             table[at] = item;
         }
         p->derived_index = table;
         p->derived_slots = slots;
     }
-    uint32_t at = bucket(type, owner, p->derived_slots);
+    uint32_t at = bucket(p, type, owner, p->derived_slots);
     struct derived *d;
     for (d = p->derived_index[at]; d != NULL; d = d->hash_next) {
         lower_work(p, 1);

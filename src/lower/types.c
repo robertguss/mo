@@ -121,6 +121,10 @@ mo_core_string lower_type_name(struct lowering *p, mo_core_ty type) {
     lower_work(p, 1);
     return ((struct canonical_type *)type)->name;
 }
+uint64_t lower_type_hash(struct lowering *p, mo_core_ty type) {
+    lower_work(p, 1);
+    return ((struct canonical_type *)type)->hash;
+}
 static bool same_parameter(const struct mo_source_type *a, const struct mo_source_type *b) {
     return a == b || (a->kind == MO_SOURCE_PARAMETER && b->kind == MO_SOURCE_PARAMETER &&
                       a->declaration == b->declaration && a->module == b->module &&
