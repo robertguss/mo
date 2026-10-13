@@ -194,11 +194,51 @@ static void lambda_graph(void) {
     free_fixture(&f);
 }
 
+static void branch_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn choose(flag: Bool) : Int\n"
+             "if flag\nreturn 7\nelse if not flag\nreturn 9\nelse\nstop \"unreachable\"\nend\n"
+             "end\nfn main() : Int\nchoose(false)\nend\n");
+    const struct mo_program *program = f.program;
+    CHECK(program != NULL && !mo_diags_any(&f.diags));
+    if (program != NULL) {
+        const struct mo_checked_body *body = &program->functions[0].body;
+        bool branched = false;
+        uint32_t returns = 0, stops = 0;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            for (uint32_t j = 0; j < row->operand_count; j++)
+                CHECK(row->operands[j] < i);
+            if (row->syntax->kind == MO_S_RETURN) {
+                MO_ASSERT(row->operand_count == 1);
+                CHECK(row->never);
+                const struct mo_syntax *value = body->items[row->operands[0]].syntax;
+                CHECK(value->kind == MO_S_INT && value->text[0] == (returns == 0 ? '7' : '9'));
+                returns++;
+            } else if (row->syntax->kind == MO_S_STOP) {
+                MO_ASSERT(row->operand_count == 1);
+                CHECK(row->never && body->items[row->operands[0]].syntax->kind == MO_S_TEXT);
+                stops++;
+            } else if (row->syntax->kind == MO_S_IF) {
+                MO_ASSERT(row->operand_count == 5);
+                CHECK(row->never && strcmp(row->type->name, "Int") == 0);
+                CHECK(strcmp(body->items[row->operands[0]].type->name, "Bool") == 0);
+                CHECK(strcmp(body->items[row->operands[2]].type->name, "Bool") == 0);
+                CHECK(body->items[row->operands[4]].never);
+                branched = true;
+            }
+        }
+        CHECK(branched && returns == 2 && stops == 1);
+    }
+    free_fixture(&f);
+}
+
 static void run(void *argument) {
     (void)argument;
     entry_graph();
     console_graph();
     lambda_graph();
+    branch_graph();
 }
 
 int main(void) {

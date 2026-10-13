@@ -1874,6 +1874,11 @@ static MO_MUST_USE struct value conditional(struct inference *p, const struct mo
     struct term *condition = native(p, "Bool", 0);
     if (result == NULL || condition == NULL)
         return (struct value){0};
+    struct value emitted =
+        graph(p, (struct value){.type = result}, 2 + 2 * parts->count - (has_else ? 1u : 0u));
+    if (emitted.type == NULL)
+        return emitted;
+    uint32_t operand = 0;
     struct local *mark = p->locals;
     bool previous = p->keep_patterns;
     p->keep_patterns = true;
@@ -1881,10 +1886,14 @@ static MO_MUST_USE struct value conditional(struct inference *p, const struct mo
     p->keep_patterns = previous;
     if (test.type == NULL)
         return (struct value){0};
+    if (p->checked)
+        emitted.graph->operands[operand++] = test.note;
     struct value branch = has_else ? infer_as(p, node->children[1], result, p->node_expectation)
                                    : discard(p, node->children[1]);
     if (branch.type == NULL || !leave(p, mark))
         return (struct value){0};
+    if (p->checked)
+        emitted.graph->operands[operand++] = branch.note;
     bool never = has_else && branch.never;
     for (uint32_t i = 0; i < parts->count; i++) {
         const struct mo_syntax *part = parts->children[i];
@@ -1894,16 +1903,22 @@ static MO_MUST_USE struct value conditional(struct inference *p, const struct mo
             p->keep_patterns = previous;
             if (test.type == NULL)
                 return (struct value){0};
+            if (p->checked)
+                emitted.graph->operands[operand++] = test.note;
         }
         const struct mo_syntax *body = part->children[part->kind == MO_S_ELSE ? 0 : 1];
         branch = has_else ? infer_as(p, body, result, p->node_expectation) : discard(p, body);
         if (branch.type == NULL || !leave(p, mark))
             return (struct value){0};
+        if (p->checked)
+            emitted.graph->operands[operand++] = branch.note;
         never = never && branch.never;
     }
     if (never)
         result = expected == NULL ? native(p, "Unit", 0) : expected;
-    return (struct value){.type = result, .never = never};
+    emitted.type = result;
+    emitted.never = never;
+    return emitted;
 }
 
 static MO_MUST_USE bool binder(struct inference *p, const struct mo_syntax *node,
@@ -2262,27 +2277,53 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     }
     case MO_S_RETURN: {
         struct local *mark = p->locals;
-        if (node->children[1] != NULL && condition(p, node->children[1], true).type == NULL)
-            return (struct value){0};
+        struct value guard = {0};
+        if (node->children[1] != NULL) {
+            guard = condition(p, node->children[1], true);
+            if (guard.type == NULL)
+                return guard;
+        }
         struct value value = node->children[0] == NULL
                                  ? (struct value){.type = native(p, "Unit", 0)}
                                  : infer_as(p, node->children[0], p->result, MO_CODE_RESULT_TYPE);
         if (value.type == NULL || !unify_as(p, value.type, p->result, MO_CODE_RESULT_TYPE) ||
             !leave(p, mark))
             return (struct value){0};
-        return (struct value){.type = native(p, "Unit", 0), .never = node->children[1] == NULL};
+        uint32_t count =
+            (node->children[0] == NULL ? 0u : 1u) + (node->children[1] == NULL ? 0u : 1u);
+        struct value out = graph(
+            p, (struct value){.type = native(p, "Unit", 0), .never = node->children[1] == NULL},
+            count);
+        if (p->checked && out.type != NULL) {
+            if (guard.note != NULL)
+                out.graph->operands[0] = guard.note;
+            if (value.note != NULL)
+                out.graph->operands[count - 1] = value.note;
+        }
+        return out;
     }
     case MO_S_STOP: {
         struct term *text = native(p, "Text", 0);
-        if (text == NULL || infer(p, node->children[0], text).type == NULL)
+        struct value reason = text == NULL ? (struct value){0} : infer(p, node->children[0], text);
+        if (reason.type == NULL)
             return (struct value){0};
-        return (struct value){.type = expected == NULL ? native(p, "Unit", 0) : expected,
-                              .never = true};
+        struct value out =
+            graph(p,
+                  (struct value){.type = expected == NULL ? native(p, "Unit", 0) : expected,
+                                 .never = true},
+                  1);
+        if (p->checked && out.type != NULL)
+            out.graph->operands[0] = reason.note;
+        return out;
     }
     case MO_S_ASSERT: {
-        if (condition(p, node->children[0], true).type == NULL)
+        struct value test = condition(p, node->children[0], true);
+        if (test.type == NULL)
             return (struct value){0};
-        return (struct value){.type = native(p, "Unit", 0)};
+        struct value out = graph(p, (struct value){.type = native(p, "Unit", 0)}, 1);
+        if (p->checked && out.type != NULL)
+            out.graph->operands[0] = test.note;
+        return out;
     }
     case MO_S_FOR:
     case MO_S_WHILE: {
@@ -2505,7 +2546,8 @@ static MO_MUST_USE struct value infer(struct inference *p, const struct mo_synta
         node->kind != MO_S_BIND && node->kind != MO_S_BINARY && node->kind != MO_S_BINARY_CHAIN &&
         node->kind != MO_S_RANGE && node->kind != MO_S_NEGATE && node->kind != MO_S_NOT &&
         node->kind != MO_S_PREFIX && node->kind != MO_S_CALL && node->kind != MO_S_POSTFIX &&
-        node->kind != MO_S_LAMBDA) {
+        node->kind != MO_S_LAMBDA && node->kind != MO_S_IF && node->kind != MO_S_LINE_IF &&
+        node->kind != MO_S_RETURN && node->kind != MO_S_STOP && node->kind != MO_S_ASSERT) {
         bool reported = unfinished(p);
         (void)reported;
         p->depth--;
