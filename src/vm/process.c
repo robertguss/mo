@@ -182,11 +182,15 @@ enum mo_outcome mo_call(struct mo_process *process, uint32_t function,
 
 enum mo_outcome mo_call_main(struct mo_process *process, uint32_t function,
                              const struct mo_cell *args, const struct mo_cell *env, int folder,
+                             const struct mo_main_capabilities *supplied,
                              struct mo_cell *result_out, struct mo_defect *defect_out) {
     MO_ASSERT(process != NULL && !process->terminal && process->depth == 0 &&
               function < process->file->function_count && result_out != NULL && defect_out != NULL);
     const struct mo_bytecode_function *fn = &process->file->functions[function];
-    MO_ASSERT(fn->kind == MO_FUNCTION_FUNCTION && fn->parameter_count <= MO_CAP_RANDOM + 1);
+    MO_ASSERT(fn->kind == MO_FUNCTION_FUNCTION &&
+              fn->parameter_count <= MO_LIMIT_BYTECODE_PARAMETERS);
+    MO_ASSERT(supplied == NULL || (supplied->count == fn->parameter_count &&
+                                   (supplied->count == 0 || supplied->values != NULL)));
     const char *setup = mo_host_start(&process->host);
     if (setup != NULL) {
         enum mo_outcome stopped =
@@ -199,6 +203,8 @@ enum mo_outcome mo_call_main(struct mo_process *process, uint32_t function,
     for (uint32_t i = 0; i < fn->parameter_count; i++) {
         uint32_t type = fn->parameters[i].type;
         MO_ASSERT(process->types->items[type].kind == MO_TYPE_CAPABILITY);
+        if (supplied != NULL)
+            continue;
         enum mo_capability cap = process->types->items[type].capability;
         if (process->capability_set[cap])
             continue;
@@ -218,11 +224,11 @@ enum mo_outcome mo_call_main(struct mo_process *process, uint32_t function,
         }
         process->capability_set[cap] = true;
     }
-    struct mo_cell parameters[MO_CAP_RANDOM + 1];
+    struct mo_cell parameters[MO_LIMIT_BYTECODE_PARAMETERS];
     for (uint32_t i = 0; i < fn->parameter_count; i++) {
         uint32_t type = fn->parameters[i].type;
         enum mo_capability cap = process->types->items[type].capability;
-        struct mo_cell value = process->capabilities[cap];
+        struct mo_cell value = supplied == NULL ? process->capabilities[cap] : supplied->values[i];
         parameters[i] = fn->parameters[i].ownership == MO_PARAMETER_OWNED
                             ? mo_value_dup(process->heap, type, value)
                             : value;

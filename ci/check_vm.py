@@ -19,10 +19,10 @@ import tempfile
 from fractions import Fraction
 
 from check_codegen import closure_program, expression, global_program, join_program, reference_tail
-from check_core_check import VERSION, WORLD, parse, wire, program
+from check_core_check import VERSION, WORLD, Atom, parse, wire, program
 
 NEEDS_DISPATCH = {"needs primitive dispatch": 0, "needs host dispatch": 0,
-                  "needs capability fixture arguments": 9}
+                  "needs capability fixture arguments": 0}
 CODEGEN_UNSUPPORTED = 0
 
 
@@ -44,8 +44,10 @@ def run(driver, path, test=None):
     return canonical(result.stdout[:-1].split("\n", 1))
 
 
-def oracle(path, world, test=None):
-    args = ["formal/.lake/build/bin/mocore", str(path), str(world), "--fuel", "10000"]
+def oracle(path, world, test=None, effects=False):
+    args = ["formal/.lake/build/bin/mocore", str(path)]
+    if world is not None:
+        args += [str(world), "--fuel", "10000"]
     if test is not None:
         args += ["--test", test]
     result = subprocess.run(args,
@@ -61,7 +63,8 @@ def oracle(path, world, test=None):
                       else f"overflow: {detail[1]}")
         else:
             detail = {"divByZero": "dividing by zero"}[detail[0]]
-    return canonical([str(report[0]), detail])
+    outcome = canonical([str(report[0]), detail])
+    return (outcome, report[2]) if effects else outcome
 
 
 def value_expression(value, ty, payload):
@@ -105,15 +108,132 @@ def entry_wrapper(payload, args):
     entry = next(f for f in payload[2] if f[1] == payload[4])
     assert len(entry[2]) == len(args), (entry[2], args)
     if not args:
-        return
-    values = ' '.join(value_expression(v, p[1], payload) for v, p in zip(args, entry[2]))
+        return []
+    parameters, values, capabilities = [], [], []
+    for i, (v, p) in enumerate(zip(args, entry[2])):
+        if p[1][0] == 'cap':
+            assert v[0] == 'cap' and v[1] == p[1][1], (v, p)
+            name = f'%VM.cap{i}'
+            parameters.append([name, p[1]])
+            values.append(f'(var {wire(name)})')
+            capabilities.append(v)
+        else:
+            values.append(value_expression(v, p[1], payload))
     assert payload[5][0] == 'noSource', 'a new helper needs compiler metadata when source is present'
     name = '%VM.entry'
     assert all(f[1] != name for f in payload[2])
-    wrapper = parse(f'(FunDecl "{name}" () {wire(entry[3])} '
-                    f'(call {wire(payload[4])} ({values})) "Generated" (function) {len(payload[3])})')
+    wrapper = parse(f'(FunDecl "{name}" {wire(parameters)} {wire(entry[3])} '
+                    f'(call {wire(payload[4])} ({" ".join(values)})) "Generated" (function) {len(payload[3])})')
     payload[2].append(wrapper)
     payload[4] = name
+    return capabilities
+
+
+def line_bytes(lines):
+    # Printed Text can contain LF, NUL, or no characters. Comparing bytes keeps
+    # those distinctions instead of treating one print as one output line.
+    return b''.join((s + '\n').encode('utf-8') for s in lines)
+
+
+def folders(paths, explicit):
+    out = set(explicit)
+    for name in paths:
+        parts = name.split('/')
+        out.update('/'.join(parts[:i]) for i in range(1, len(parts)))
+    return out - {''}
+
+
+def fake_effects(states):
+    # Maps/sets have extensional effects; list order and Random words matter.
+    return [[s[1], dict(s[2]), s[3], s[4], s[5], dict(s[6]), s[7], s[8],
+             folders(dict(s[6]), s[9])] for s in states]
+
+
+def run_capabilities(driver, path):
+    payload = parse(path.read_text())[2]
+    w = payload[2]
+    with tempfile.TemporaryDirectory(prefix='mo-vm-run-') as directory:
+        root = pathlib.Path(directory)
+        tree = root / 'files'
+        tree.mkdir()
+        for name in folders(dict(w[6]), w[9]):
+            assert name and all(p not in ['', '.', '..'] for p in name.split('/')), name
+            (tree / name).mkdir(parents=True, exist_ok=True)
+        for name, text in w[6]:
+            assert name and all(p not in ['', '.', '..'] for p in name.split('/')), name
+            (tree / name).write_bytes(text.encode('utf-8'))
+        assert all('\n' not in s and not s.endswith('\r') for s in w[3]), w[3]
+        for name, lines in [('input', w[3]), ('output', w[4]), ('errors', w[5])]:
+            (root / name).write_bytes(line_bytes(lines))
+        result = subprocess.run([driver, '--run', str(path), directory],
+                                capture_output=True, text=True, timeout=15)
+        assert result.returncode == 0, (driver, path, result.stdout, result.stderr)
+        body, marker, serialized = result.stdout.rpartition('\n(core ')
+        assert marker and body.count('\n') >= 1, (path, result.stdout)
+        outcome = canonical(body.split('\n', 1))
+        snapshots = parse('(core ' + serialized)[2][5]
+        actual = [(root / 'output').read_bytes(), (root / 'errors').read_bytes(),
+                  {str(p.relative_to(tree)): p.read_bytes() for p in tree.rglob('*') if p.is_file()},
+                  {str(p.relative_to(tree)) for p in tree.rglob('*') if p.is_dir()},
+                  fake_effects(snapshots)]
+    expected, effects = oracle(path, None, effects=True)
+    want = [line_bytes(effects[1]), line_bytes(effects[2]),
+            {name: text.encode('utf-8') for name, text in effects[3]},
+            folders(dict(effects[3]), effects[4]), fake_effects(effects[5])]
+    assert actual == want, (driver, path.read_text(), want, actual)
+    assert outcome == expected, (driver, path.read_text(), expected, outcome)
+    return outcome
+
+
+def capability_cases(root):
+    """Asymmetric worlds expose wrong-kind caching, lost aliases and lost effects."""
+    cases = []
+
+    def add(name, params, ret, body, values, state=None):
+        payload = parse(program(body, ret, params=params))
+        capabilities = entry_wrapper(payload, [parse(v) for v in values])
+        world = parse(WORLD)
+        world[3] = ['native first', 'native last']
+        world[4] = ['native history']
+        world[7] = Atom('-1')
+        if state is not None:
+            world[10] = [parse(state)]
+        request = [Atom('Run'), payload, world, [Atom('entry'), capabilities], Atom('10000')]
+        path = root / f'capability-{name}.core'
+        path.write_text(f'(core {VERSION} {wire(request)})\n')
+        cases.append(path)
+
+    state = ('(CapState ("fake arg" "β") (("key" "value")) ("fake first" "fake last") '
+             '("fake history") ("fake error") (("nested/a" "old")) 117 '
+             '(RandomState 0x0123456789abcdef 0xfedcba9876543210 '
+             '0x1111111111111111 0x9999999999999999) ("empty" "nested"))')
+    for fake in [False, True]:
+        cap = '(cap (console) (some "") ' + ('(some 0))' if fake else '(none))')
+        for stop in [False, True]:
+            ret = '(unit)' if stop else '(tuple ((option (text)) (option (text))))'
+            end = '(stop "after effects")' if stop else (
+                '(tuple ((prim (io (readLine)) ((var "left"))) '
+                '(prim (io (readLine)) ((var "right")))))')
+            body = ('(let_ "p" (prim (io (print)) ((var "left") (lit (text "line\\n\\u{0}")))) '
+                    '(let_ "e" (prim (io (printError)) ((var "right") (lit (text "")))) '
+                    + end + '))')
+            add(f'console-{fake}-{stop}', [('left', '(cap (console))'), ('right', '(cap (console))')],
+                ret, body, [cap, cap], state if fake else None)
+    add('files-alias', [('write', '(cap (files))'), ('read', '(cap (readFiles))')],
+        '(result (text) (fileError))',
+        '(let_ "w" (prim (io (writeText)) ((var "write") (lit (text "a")) '
+        '(lit (text "new🙂")))) (prim (io (readText true)) ((var "read") (lit (text "a")))))',
+        ['(cap (files) (some "nested") (some 0))', '(cap (readFiles) (some "nested") (some 0))'], state)
+    add('values', [('a', '(cap (args))'), ('e', '(cap (env))'), ('c', '(cap (clock))'),
+                   ('r', '(cap (random))')],
+        '(tuple ((list (text)) (option (text)) (time) (int)))',
+        '(tuple ((prim (io (argsList)) ((var "a"))) '
+        '(prim (io (envGet)) ((var "e") (lit (text "key")))) '
+        '(prim (io (now)) ((var "c"))) '
+        '(prim (io (randomInt)) ((var "r") (lit (int -17)) (lit (int 31))))))',
+        ['(cap (args) (some "") (some 0))', '(cap (env) (some "") (some 0))',
+         '(cap (clock) (some "") (some 0))', '(cap (random) (some "") (some 0))'], state)
+    return cases
 
 
 def permutation_program(i):
@@ -313,24 +433,27 @@ def main():
         world.write_text(f"(core {VERSION} {WORLD})\n")
         operations(drivers, root, world)
         structures(drivers, root, world)
-        fixtures, tests = [], {}
+        fixtures, tests, capability_runs = [], {}, set()
         for path in sorted(pathlib.Path("tests/core").glob("*.core")):
             payload = parse(path.read_text())[2]
             if payload[0] == "Run":
                 selection = payload[3]
                 program = payload[1]
                 if selection[0] == 'entry':
-                    try:
-                        entry_wrapper(program, selection[1])
-                    except NotImplementedError:
-                        pass  # Counted separately by the driver, never a matched outcome.
+                    capabilities = entry_wrapper(program, selection[1])
+                    if capabilities:
+                        payload[3] = [Atom('entry'), capabilities]
+                        capability_runs.add(root / path.name)
                 else:
                     tests[root / path.name] = selection[1]
             else:
                 program = payload
             target = root / path.name
-            target.write_text(f"(core {VERSION} {wire(program)})\n")
+            target.write_text(f"(core {VERSION} {wire(payload if target in capability_runs else program)})\n")
             fixtures.append(target)
+        extra_capabilities = capability_cases(root)
+        fixtures += extra_capabilities
+        capability_runs.update(extra_capabilities)
         generated = []
         for i in range(256):
             body = expression(random.Random(207 + i), i % 4)
@@ -378,8 +501,6 @@ def main():
             payload = parse(f'(core {VERSION} {join_program(i)})')[2]
             entry = next(f for f in payload[2] if f[1] == payload[4])
             ty = entry[2][1][1]
-            if ty[0] == 'cap':
-                continue  # These 24 parameterized cases await a capability argument adapter.
             values = {
                 '(int)': '(int -37)', '(text)': '(text "input\\u{0}🙂")',
                 '(bytes)': '(bytes (0 127 255))',
@@ -397,9 +518,20 @@ def main():
                 payload[2].append(wrapper)
                 payload[4] = '%VM.entry'
             else:
-                entry_wrapper(payload, [parse(f'(bool {flag})'),
-                                        parse(values[wire(ty)])])
+                value = '(cap (console) (some "") (some 0))' if ty[0] == 'cap' else values[wire(ty)]
+                capabilities = entry_wrapper(payload, [parse(f'(bool {flag})'), parse(value)])
+                if capabilities:
+                    wrapper = payload[2][-1]
+                    wrapper[3] = parse('(option (text))')
+                    wrapper[4] = parse(f'(prim (io (readLine)) ({wire(wrapper[4])}))')
+                    state = parse(WORLD)
+                    state[10] = [parse('(CapState () () ("returned handle🙂" "remaining") () () () 0 (RandomState '
+                                       '0x0000000000000001 0x0000000000000002 '
+                                       '0x0000000000000003 0x0000000000000004) ())')]
+                    payload = [Atom('Run'), payload, state, [Atom('entry'), capabilities], Atom('10000')]
             path = root / f'join-{i}.core'
+            if payload[0] == 'Run':
+                capability_runs.add(path)
             path.write_text(f'(core {VERSION} {wire(payload)})\n')
             generated.append(path)
         for i in range(150):
@@ -437,11 +569,16 @@ def main():
             path = root / f"stop-{name}.core"
             path.write_text(f'(core {VERSION} (Program () ((FunDecl "entry" () (unit) (stop "internal error: {name} dispatch unavailable") "M" (function) 0)) () "entry" (noSource)))\n')
             generated.append(path)
-        expectations = {path: oracle(path, world, tests.get(path)) for path in generated}
+        expectations = {path: oracle(path, world, tests.get(path)) for path in generated
+                        if path not in capability_runs}
         for driver in drivers:
             matched = unsupported = 0
             pending = dict.fromkeys(NEEDS_DISPATCH, 0)
             for path in fixtures + generated:
+                if path in capability_runs:
+                    run_capabilities(driver, path)
+                    matched += 1
+                    continue
                 got = run(driver, path, tests.get(path))
                 if got is None:
                     assert path in fixtures, ("supported generated program refused", path)

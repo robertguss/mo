@@ -58,4 +58,39 @@ MO_MUST_USE enum mo_host_outcome mo_host_real(struct mo_host *host, struct mo_he
                                               int folder, struct mo_cell *out,
                                               struct mo_host_error *error);
 
+/* Semantic backing state for C fixtures/embedders, independent of heap slots.
+ * Collections are List(Text), Map(Text,Text), or Set(Text) from this heap.
+ * Files and ReadFiles use the same family. Random stores four nonzero-together
+ * generator words, including advanced states, not a seed. */
+struct mo_host_fake_state {
+    enum mo_capability kind;
+    union {
+        struct mo_cell args, env;
+        struct {
+            struct mo_cell input, output, errors;
+        } console;
+        struct {
+            struct mo_cell contents, folders;
+        } files;
+        int64_t time;
+        uint64_t random[4];
+    } as;
+};
+/* Restore an existing well-formed fake, not a fresh Mo constructor: explicit
+ * empty folders and output histories are retained. Borrows every input; only
+ * success writes an owned root capability of the matching declared kind.
+ * Derive narrowed/read-only aliases through the ordinary host operations. */
+MO_MUST_USE enum mo_host_outcome mo_host_fake_restore(struct mo_host *host, struct mo_heap *heap,
+                                                      uint32_t type,
+                                                      const struct mo_host_fake_state *initial,
+                                                      struct mo_cell *out,
+                                                      struct mo_host_error *error);
+/* Snapshot a fake's backing store (not just its narrowed view). Collections in
+ * the successful result are owned immutable snapshots, even after mutations;
+ * only success writes out. Dispose them before freeing the heap. */
+MO_MUST_USE bool mo_host_fake_snapshot(struct mo_host *host, struct mo_heap *heap,
+                                       struct mo_cell capability, struct mo_host_fake_state *out);
+void mo_host_fake_state_drop(struct mo_host *host, struct mo_heap *heap,
+                             struct mo_host_fake_state *state);
+
 #endif

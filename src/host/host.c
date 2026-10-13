@@ -192,3 +192,137 @@ enum mo_host_outcome mo_host_real(struct mo_host *host, struct mo_heap *heap, ui
     MO_ASSERT(cap == MO_CAP_RANDOM);
     return mo_host_random_new(host, heap, type, false, 0, out, error);
 }
+
+enum mo_host_outcome mo_host_fake_restore(struct mo_host *host, struct mo_heap *heap, uint32_t type,
+                                          const struct mo_host_fake_state *initial,
+                                          struct mo_cell *out, struct mo_host_error *error) {
+    MO_ASSERT(host != NULL && heap != NULL && initial != NULL && out != NULL && error != NULL);
+    MO_ASSERT(type < host->types->types.count &&
+              host->types->types.items[type].kind == MO_TYPE_CAPABILITY &&
+              host->types->types.items[type].capability == initial->kind);
+    *error = (struct mo_host_error){0};
+    switch (initial->kind) {
+    case MO_CAP_ARGS:
+        return mo_host_state_cap(host, heap, type, true, &host->types->texts, &initial->as.args, 1,
+                                 out);
+    case MO_CAP_ENV:
+        return mo_host_state_cap(host, heap, type, true, &host->types->files, &initial->as.env, 1,
+                                 out);
+    case MO_CAP_CONSOLE: {
+        uint32_t types[] = {host->types->texts, host->types->texts, host->types->texts,
+                            host->types->integer};
+        struct mo_cell values[] = {initial->as.console.input, initial->as.console.output,
+                                   initial->as.console.errors, mo_cell_int(0)};
+        return mo_host_state_cap(host, heap, type, true, types, values, 4, out);
+    }
+    case MO_CAP_FILES:
+    case MO_CAP_READ_FILES: {
+        struct mo_cell root;
+        if (!mo_value_text(heap, "", 0, &root))
+            return MO_HOST_OUT_OF_MEMORY;
+        uint32_t types[] = {host->types->files, host->types->folders};
+        struct mo_cell values[] = {initial->as.files.contents, initial->as.files.folders};
+        struct mo_state *state;
+        bool ok = mo_state_new(heap, types, values, 2, &state);
+        if (ok) {
+            struct mo_capability_info info = {.operations =
+                                                  &mo_host_operations[true][initial->kind],
+                                              .state = state,
+                                              .has_prefix = true,
+                                              .prefix = root,
+                                              .read_only = initial->kind == MO_CAP_READ_FILES};
+            ok = mo_value_capability(heap, type, &info, out);
+            mo_state_drop(heap, state);
+        }
+        mo_value_drop(heap, host->types->text, root);
+        return ok ? MO_HOST_RETURNED : MO_HOST_OUT_OF_MEMORY;
+    }
+    case MO_CAP_CLOCK: {
+        MO_ASSERT(initial->as.time >= INT64_C(-62135596800000000) &&
+                  initial->as.time <= INT64_C(253402300799999999));
+        struct mo_cell time = mo_cell_time(initial->as.time);
+        return mo_host_state_cap(host, heap, type, true, &host->types->time, &time, 1, out);
+    }
+    case MO_CAP_RANDOM:
+        if ((initial->as.random[0] | initial->as.random[1] | initial->as.random[2] |
+             initial->as.random[3]) == 0)
+            return mo_host_bug(error, "random state is all zero");
+        return mo_host_random_restore(heap, type, true, initial->as.random, out)
+                   ? MO_HOST_RETURNED
+                   : MO_HOST_OUT_OF_MEMORY;
+    }
+    MO_UNREACHABLE();
+}
+
+bool mo_host_fake_snapshot(struct mo_host *host, struct mo_heap *heap, struct mo_cell capability,
+                           struct mo_host_fake_state *out) {
+    const struct mo_capability_info *info = mo_capability_get(capability);
+    const struct mo_host_operations *operations = info->operations;
+    MO_ASSERT(operations->fake);
+    struct mo_host_fake_state result = {.kind = operations->capability};
+    switch (result.kind) {
+    case MO_CAP_ARGS:
+        result.as.args = mo_value_dup(heap, host->types->texts, mo_state_get(info->state, 0));
+        break;
+    case MO_CAP_ENV:
+        result.as.env = mo_value_dup(heap, host->types->files, mo_state_get(info->state, 0));
+        break;
+    case MO_CAP_CONSOLE: {
+        struct mo_cell input = mo_state_get(info->state, 0);
+        uint32_t start = (uint32_t)mo_cell_get_int(mo_state_get(info->state, 3));
+        uint32_t count = mo_list_size(input);
+        MO_ASSERT(start <= count);
+        result.as.console.input = mo_value_dup(heap, host->types->texts, input);
+        if (!mo_list_slice(heap, host->types->texts, &result.as.console.input, start,
+                           count - start)) {
+            mo_value_drop(heap, host->types->texts, result.as.console.input);
+            return false;
+        }
+        result.as.console.output =
+            mo_value_dup(heap, host->types->texts, mo_state_get(info->state, 1));
+        result.as.console.errors =
+            mo_value_dup(heap, host->types->texts, mo_state_get(info->state, 2));
+        break;
+    }
+    case MO_CAP_FILES:
+    case MO_CAP_READ_FILES:
+        result.as.files.contents =
+            mo_value_dup(heap, host->types->files, mo_state_get(info->state, 0));
+        result.as.files.folders =
+            mo_value_dup(heap, host->types->folders, mo_state_get(info->state, 1));
+        break;
+    case MO_CAP_CLOCK:
+        result.as.time = mo_cell_get_time(mo_state_get(info->state, 0));
+        break;
+    case MO_CAP_RANDOM:
+        mo_host_random_snapshot(capability, result.as.random);
+        break;
+    }
+    *out = result;
+    return true;
+}
+
+void mo_host_fake_state_drop(struct mo_host *host, struct mo_heap *heap,
+                             struct mo_host_fake_state *state) {
+    switch (state->kind) {
+    case MO_CAP_ARGS:
+        mo_value_drop(heap, host->types->texts, state->as.args);
+        break;
+    case MO_CAP_ENV:
+        mo_value_drop(heap, host->types->files, state->as.env);
+        break;
+    case MO_CAP_CONSOLE:
+        mo_value_drop(heap, host->types->texts, state->as.console.input);
+        mo_value_drop(heap, host->types->texts, state->as.console.output);
+        mo_value_drop(heap, host->types->texts, state->as.console.errors);
+        break;
+    case MO_CAP_FILES:
+    case MO_CAP_READ_FILES:
+        mo_value_drop(heap, host->types->files, state->as.files.contents);
+        mo_value_drop(heap, host->types->folders, state->as.files.folders);
+        break;
+    case MO_CAP_CLOCK:
+    case MO_CAP_RANDOM:
+        break;
+    }
+}

@@ -1,3 +1,7 @@
+#define _POSIX_C_SOURCE 200809L
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE 1
+#endif
 #include "base/codes.h"
 #include "base/stack.h"
 #include "codegen/codegen.h"
@@ -7,6 +11,8 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "vm_run.h"
 
 static const char *corpus;
 static unsigned seed;
@@ -1953,9 +1959,10 @@ static void test_initialization_memory(void) {
 }
 
 /* Differential driver: execute compiler output, with no interpreter internals.
- * Input is a checked zero-argument Program; the Python runner supplies wrappers
- * for fixture entries. A staged compiler refusal is distinct from an outcome. */
-static MO_MUST_USE int core_run_on_stack(const char *path, const char *test) {
+ * Run wrappers keep capability parameters and reconstruct ordinary arguments.
+ * A staged compiler refusal is distinct from an outcome. */
+static MO_MUST_USE int core_run_on_stack(const char *path, const char *test,
+                                         const char *directory) {
     struct mo_sources sources;
     struct mo_source_error source_error;
     uint32_t file;
@@ -1966,8 +1973,14 @@ static MO_MUST_USE int core_run_on_stack(const char *path, const char *test) {
     mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
     struct mo_diags diags;
     MO_ASSERT(mo_diags_init(&diags));
+    struct mo_core_run *run =
+        directory == NULL ? NULL
+                          : mo_core_text_parse(&arena, MO_CORE_TEXT_RUN,
+                                               (const char *)source->bytes, source->length, &diags);
+    MO_ASSERT(directory == NULL || run != NULL);
     struct mo_core *core =
-        mo_core_parse(&arena, (const char *)source->bytes, source->length, &diags);
+        run == NULL ? mo_core_parse(&arena, (const char *)source->bytes, source->length, &diags)
+                    : &run->program;
     MO_ASSERT(core != NULL && mo_core_check(core, &diags));
     struct mo_buffer wire;
     mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
@@ -1992,29 +2005,27 @@ static MO_MUST_USE int core_run_on_stack(const char *path, const char *test) {
             }
         }
         MO_ASSERT(function != MO_NO_INDEX);
-        if (mo_image_bytecode(image)->functions[function].parameter_count != 0) {
-            /* Real capability Run arguments need the host fixture adapter, not invented fakes. */
-            bool capability = false;
-            for (uint32_t i = 0; i < mo_image_bytecode(image)->functions[function].parameter_count;
-                 i++) {
-                uint32_t type = mo_image_bytecode(image)->functions[function].parameters[i].type;
-                capability |= mo_image_types(image)->items[type].kind == MO_TYPE_CAPABILITY;
-            }
-            MO_ASSERT(capability);
-            MO_ASSERT(puts("needs capability fixture arguments") >= 0 && putchar('\n') != EOF);
-            mo_image_free(image);
-            status = 78;
-            goto done;
-        }
+        const struct mo_bytecode_function *fn = &mo_image_bytecode(image)->functions[function];
+        MO_ASSERT(run != NULL || fn->parameter_count == 0);
         struct mo_limits limits = mo_limits_default();
         struct mo_defect defect;
         enum mo_outcome outcome = mo_image_init_bounded(image, &limits, 10000, &defect);
         struct mo_process *p = outcome == MO_RETURNED ? mo_process_new(image, &limits) : NULL;
         struct mo_cell result;
+        struct vm_run_context context;
+        bool adapted = false;
         if (outcome == MO_RETURNED) {
             MO_ASSERT(p != NULL);
             mo_process_instruction_limit(p, 10000);
-            outcome = mo_call(p, function, NULL, 0, &result, &defect);
+            if (run == NULL)
+                outcome = mo_call(p, function, NULL, 0, &result, &defect);
+            else {
+                vm_run_setup(&context, &arena, p, run, fn, directory);
+                adapted = true;
+                struct mo_main_capabilities supplied = {context.arguments, fn->parameter_count};
+                outcome = mo_call_main(p, function, NULL, NULL, context.folder, &supplied, &result,
+                                       &defect);
+            }
         }
         struct mo_buffer text;
         mo_buffer_init(&text, MO_LIMIT_STRING_SIZE);
@@ -2049,10 +2060,13 @@ static MO_MUST_USE int core_run_on_stack(const char *path, const char *test) {
         MO_ASSERT((text.length == 0 || fwrite(text.bytes, 1, text.length, stdout) == text.length) &&
                   putchar('\n') != EOF);
         mo_buffer_free(&text);
+        if (adapted) {
+            vm_run_effects(&context);
+            vm_run_dispose(&context, fn);
+        }
         mo_process_free(p);
         mo_image_free(image);
     }
-done:
     mo_buffer_free(&wire);
     mo_diags_free(&diags);
     mo_arena_free(&arena);
@@ -2060,15 +2074,15 @@ done:
     return status;
 }
 struct core_arguments {
-    const char *path, *test;
+    const char *path, *test, *directory;
     int status;
 };
 static void core_run_callback(void *argument) {
     struct core_arguments *a = argument;
-    a->status = core_run_on_stack(a->path, a->test);
+    a->status = core_run_on_stack(a->path, a->test, a->directory);
 }
-static MO_MUST_USE int core_run(const char *path, const char *test) {
-    struct core_arguments a = {.path = path, .test = test};
+static MO_MUST_USE int core_run(const char *path, const char *test, const char *directory) {
+    struct core_arguments a = {.path = path, .test = test, .directory = directory};
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, core_run_callback, &a) == 0);
     return a.status;
 }
@@ -2214,9 +2228,11 @@ static MO_MUST_USE int structure_driver(void) {
 
 int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "--core") == 0)
-        return core_run(argv[2], NULL);
+        return core_run(argv[2], NULL, NULL);
     if (argc == 4 && strcmp(argv[1], "--core-test") == 0)
-        return core_run(argv[2], argv[3]);
+        return core_run(argv[2], argv[3], NULL);
+    if (argc == 4 && strcmp(argv[1], "--run") == 0)
+        return core_run(argv[2], NULL, argv[3]);
     if (argc == 2 && strcmp(argv[1], "--decimal") == 0)
         return decimal_driver();
     if (argc == 2 && strcmp(argv[1], "--operations") == 0)

@@ -280,6 +280,22 @@ $(BUILD)/debug/lower-source: $(BUILD)/debug/ci/lower_source.o $(call objects,$(B
 $(BUILD)/sanitize/lower-source: $(BUILD)/sanitize/ci/lower_source.o $(call objects,$(BUILD)/sanitize,$(LIB_SOURCES))
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
+# Run fixtures exercise real Clock dispatch with the World clock supplied at
+# the syscall boundary. Only this executable renames the clock call.
+$(BUILD)/debug/vm-run/host.o: src/host/host.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -Dclock_gettime=mo_vm_run_clock -c $< -o $@
+
+$(BUILD)/sanitize/vm-run/host.o: src/host/host.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) -Dclock_gettime=mo_vm_run_clock -c $< -o $@
+
+$(BUILD)/debug/tests/test_vm.test: $(BUILD)/debug/tests/test_vm.o $(call objects,$(BUILD)/debug,$(filter-out src/host/host.c,$(LIB_SOURCES))) $(BUILD)/debug/vm-run/host.o
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/tests/test_vm.test: $(BUILD)/sanitize/tests/test_vm.o $(call objects,$(BUILD)/sanitize,$(filter-out src/host/host.c,$(LIB_SOURCES))) $(BUILD)/sanitize/vm-run/host.o
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
 # Fault injection only in the two translation units owning VM initialization
 # and heap allocation. Compile-time renaming also works with Apple's linker.
 VM_FAULT_SOURCES := src/heap/heap.c src/vm/image.c
