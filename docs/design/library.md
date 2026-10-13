@@ -568,13 +568,18 @@ sum their widths. A grapheme's width is the maximum of its scalar widths:
 
 - General categories `Mn`, `Mc`, `Me` and `Default_Ignorable_Code_Point` have
   width 0; this takes precedence over East Asian Width.
+- C0 and C1 controls and DEL have width 0, including tabs and line endings.
+  CRLF is one grapheme of width 0. There are no tab stops, cursor movements
+  or line resets in this calculation (D238).
 - East Asian Width `W` and `F` have width 2; all other scalars have width 1.
-  Ambiguous width stays 1. Controls, including tabs and line endings, have
-  width 1, unless default-ignorable. CRLF is one grapheme of width 1. There
-  are no tab stops, cursor movements or line resets in this calculation.
+  Ambiguous width stays 1.
+- An unpaired regional indicator has width 1, despite its
+  `Emoji_Presentation` property. A regional-indicator pair gives the
+  grapheme width 2 (D238).
 - Emoji presentation gives width 2 to the whole grapheme: a scalar with
-  `Emoji_Presentation`, a registered base plus emoji selector U+FE0F, or a keycap
-  `#`, `*`, `0`–`9` plus optional U+FE0F and U+20E3. Regional-indicator pairs,
+  `Emoji_Presentation` other than a regional indicator, a registered base
+  plus emoji selector U+FE0F, or a keycap `#`, `*`, `0`–`9` plus optional
+  U+FE0F and U+20E3. Regional-indicator pairs,
   modifier, tag and ZWJ sequences with emoji-presenting components therefore
   have width 2, not the sum of their components. A text selector does not
   override a scalar's `W`/`F` width.

@@ -95,9 +95,12 @@ static MO_MUST_USE bool cell(struct prim_fixture *f, uint32_t type, struct input
         static const uint32_t samples[] = {
             0,       'A',     'a',    '\'',   0x3a3,  0x345,  0x130,  0xdf,    0x301,
             0x315,   0x915,   0x94d,  0x924,  0x200d, 0xfe0e, 0xfe0f, 0x1f469, 0x1f1e6,
-            0x1f1fa, 0x1f3fb, 0x2764, 0x20e3, 0x1100, 0x1161, 0x11a8, 0x16d63, 0x16d67};
+            0x1f1fa, 0x1f3fb, 0x2764, 0x20e3, 0x1100, 0x1161, 0x11a8, 0x16d63, 0x16d67,
+            '\t',    '\n',    '\r',   0x1f,   0x7f,   0x80,   0x9f};
         uint8_t bytes[1024];
         size_t count = byte(in), length = 0;
+        bool policy_only = true;
+        uint64_t policy_width = 0;
         for (size_t i = 0; i < count; i++) {
             uint64_t raw = word(in);
             uint32_t cp = (raw & 1) != 0
@@ -105,6 +108,12 @@ static MO_MUST_USE bool cell(struct prim_fixture *f, uint32_t type, struct input
                               : (uint32_t)((raw >> 1) % 0x110000);
             if (cp >= 0xd800 && cp <= 0xdfff)
                 cp = 0;
+            /* On texts of controls and regional indicators, D238's width is
+             * exactly the number of indicators, independent of pairing. */
+            if (cp >= 0x1f1e6 && cp <= 0x1f1ff)
+                policy_width++;
+            else if (!(cp < 0x20 || (cp >= 0x7f && cp <= 0x9f)))
+                policy_only = false;
             unsigned n = cp < 0x80 ? 1U : cp < 0x800 ? 2U : cp < 0x10000 ? 3U : 4U;
             for (unsigned j = n; j > 1; j--) {
                 bytes[length + j - 1] = (uint8_t)(0x80 | (cp & 63));
@@ -115,6 +124,7 @@ static MO_MUST_USE bool cell(struct prim_fixture *f, uint32_t type, struct input
         }
         uint64_t width;
         MO_ASSERT(mo_unicode16_display_width(bytes, length, &width));
+        MO_ASSERT(!policy_only || width == policy_width);
         bool slack = byte(in) % 2 != 0 && length >= 32;
         if (!mo_value_text(f->heap, (const char *)bytes, length, out))
             return false;

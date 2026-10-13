@@ -189,11 +189,21 @@ static void widths(void) {
         {"1\u20e3", 2},
         {"1\ufe0f\u20e3", 2},
         {"का", 1},
+        {"🇺", 1},
         {"🇺🇸", 2},
-        {"🇺🇸🇨", 4},
+        {"🇺🇸🇨", 3},
+        {"🇺🇸🇨🇦", 4},
+        {"🇺\ufe0f", 1},
+        {"🇺\xcc\x88🇸", 2},
+        {"🇺\t🇸", 2},
         {"👩‍👩‍👧‍👦", 2},
-        {"\r\n", 1},
-        {"\t", 1},
+        {"\r\n", 0},
+        {"\t", 0},
+        {"\n", 0},
+        {"\r", 0},
+        {"a\tb\r\nc\xc2\x85"
+         "d",
+         4},
         {"\xc2\xa1", 1},
     };
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
@@ -221,8 +231,8 @@ static void width_bytes(void) {
         uint64_t width;
     } cases[] = {
         {NULL, 0, true, 0},
-        {"a\0b", 3, true, 3},
-        {"\xc2\x80", 2, true, 1},
+        {"a\0b", 3, true, 2},
+        {"\xc2\x80", 2, true, 0},
         {"\xe0\xa0\x80", 3, true, 1},
         {"\xed\x9f\xbf", 3, true, 1},
         {"\xee\x80\x80", 3, true, 1},

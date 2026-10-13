@@ -200,6 +200,19 @@ static void utf8_display(void) {
     CHECK(strstr((const char *)out.bytes, "    |           ^^ skin tone\n") != NULL);
     CHECK(strstr((const char *)out.bytes, "    |             ^^ keycap\n") != NULL);
 
+    const char letters[] = "🇺 🇺🇸 Z\n";
+    MO_ASSERT(mo_sources_add_bytes(&sources, "letters.mo", (const uint8_t *)letters,
+                                   sizeof letters - 1, &file, &error));
+    d.primary = (struct mo_label){{file, 14, 15}, "tail"};
+    secondary[0] = (struct mo_label){{file, 0, 4}, "lone letter"};
+    secondary[1] = (struct mo_label){{file, 5, 13}, "pair"};
+    d.secondary_count = 2;
+    CHECK(mo_render_diagnostic(&sources, &d, false, &out));
+    MO_ASSERT(mo_buffer_append_byte(&out, 0));
+    CHECK(strstr((const char *)out.bytes, "    |      ^ tail\n") != NULL);
+    CHECK(strstr((const char *)out.bytes, "    | ^ lone letter\n") != NULL);
+    CHECK(strstr((const char *)out.bytes, "    |   ^^ pair\n") != NULL);
+
     /* At a one-cell remainder, a heart's text base fits but its emoji
      * selector does not. Clip the entire grapheme, not just the selector. */
     char clipped[156];
