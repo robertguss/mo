@@ -206,19 +206,7 @@ static void entry(struct lowering *p, struct instance *main) {
         }
         e->as.case_.arms.items[0].body = lower_int(p, 0);
         mo_core_expr error = lower_var(p, e->as.case_.arms.items[1].names.items[0]);
-        mo_core_expr text;
-        if (checked->error_text->kind == MO_ABILITY_NATIVE)
-            text = lower_error_text(p, main->fun.ret->as.result.e, error);
-        else if (checked->error_text->kind == MO_ABILITY_FUNCTION) {
-            struct instance *f = lower_instance(p, checked->error_text->function,
-                                                checked->error_text->arguments, NULL, 0, 0);
-            text = lower_expr(p, MO_CORE_EXPR_CALL);
-            text->as.call.name = f->fun.name;
-            text->as.call.args.count = 1;
-            text->as.call.args.items = LOWER_NEW(p, mo_core_expr, 1);
-            text->as.call.args.items[0] = error;
-        } else
-            lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "derived error text is not lowered yet");
+        mo_core_expr text = lower_to_text(p, checked->error_text, NULL, 0, 0, error);
         mo_core_expr_list args = {.count = 2, .items = LOWER_NEW(p, mo_core_expr, 2)};
         args.items[0] = lower_var(p, console);
         args.items[1] = text;

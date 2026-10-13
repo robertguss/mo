@@ -626,6 +626,56 @@ static void test_try_result(void) {
     }
 }
 
+static void test_interpolation(void) {
+    for (uint32_t triple = 0; triple < 2; triple++) {
+        struct lower_fixture f;
+        lower_fixture_init(
+            &f, triple ? "module Main\nfn main() : Int\n"
+                         "if \"\"\"\r\n  a\r\n  #{7}: #{false}λ\r\n  \"\"\""
+                         " == \"a\\n7: falseλ\": 19 else: 1\nend\n"
+                       : "module Main\nfn main() : Int\n"
+                         "if \"a\\n#{7}: #{false}λ\" == \"a\\n7: falseλ\": 19 else: 1\nend\n");
+        uint32_t seven = lower_fixture_row(&f, MO_S_INT, &f.int_, "7", 0, NULL);
+        uint32_t false_ = lower_fixture_row(&f, MO_S_FALSE, &f.bool_, "false", 0, NULL);
+        uint32_t operands[] = {seven, false_};
+        uint32_t text = lower_fixture_row(&f, MO_S_TEXT_INTERPOLATED, &f.text_, NULL, 2, operands);
+        struct mo_syntax fragments[3];
+        const char *spellings[] = {triple ? "\"\"\"\r\n  a\r\n  #{" : "\"a\\n#{", "}: #{",
+                                   triple ? "}λ\r\n  \"\"\"" : "}λ\""};
+        const enum mo_syntax_token tokens[] = {MO_T_TEXT_HEAD, MO_T_TEXT_MID, MO_T_TEXT_TAIL};
+        for (uint32_t i = 0; i < 3; i++) {
+            uint32_t start = (uint32_t)(strstr(f.source, spellings[i]) - f.source);
+            fragments[i] =
+                (struct mo_syntax){.kind = MO_S_TOKEN,
+                                   .token = tokens[i],
+                                   .text = (const uint8_t *)spellings[i],
+                                   .span = {0, start, start + (uint32_t)strlen(spellings[i])}};
+        }
+        struct mo_syntax *children[] = {&fragments[0], &f.syntax[seven], &fragments[1],
+                                        &f.syntax[false_], &fragments[2]};
+        f.syntax[text].children = children;
+        f.syntax[text].count = 5;
+        struct mo_ability_implementation proofs[] = {
+            {.ability = MO_SOURCE_TEXT, .kind = MO_ABILITY_NATIVE, .type = &f.int_},
+            {.ability = MO_SOURCE_TEXT, .kind = MO_ABILITY_NATIVE, .type = &f.bool_}};
+        struct mo_checked_ability_use uses[] = {{seven, &proofs[0]}, {false_, &proofs[1]}};
+        f.rows[text].ability_count = 2;
+        f.rows[text].abilities = uses;
+        uint32_t expected =
+            lower_fixture_row(&f, MO_S_TEXT, &f.text_, "\"a\\n7: falseλ\"", 0, NULL);
+        uint32_t equal = lower_fixture_op(&f, MO_T_EQ, &f.bool_, text, expected);
+        uint32_t yes = lower_fixture_row(&f, MO_S_INT, &f.int_, "19", 0, NULL);
+        uint32_t no = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+        uint32_t arms[] = {equal, yes, no};
+        (void)lower_fixture_row(&f, MO_S_IF, &f.int_, NULL, 3, arms);
+        struct mo_core *core =
+            checked(&f, triple ? "interpolation-triple" : "interpolation", "returned\n19\n");
+        if (core != NULL)
+            run(core, 19);
+        lower_fixture_free(&f);
+    }
+}
+
 static void test_text(void) {
     struct lower_fixture f;
     lower_fixture_init(
@@ -965,6 +1015,7 @@ int main(int argc, char **argv) {
     test_option_or();
     test_try_option();
     test_try_result();
+    test_interpolation();
     test_text();
     test_result_entry();
     test_limits();

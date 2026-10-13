@@ -267,6 +267,14 @@ generate `to_text[T]` yet, except a set's, `Lib.setText`, which takes as a
 parameter how an element is written inside another value; none of the
 samples needs it.
 
+In C lowering, interpolation's checked operands are only the hole expressions,
+in written order. Literal HEAD/MID/TAIL parts remain syntax and receive their own
+Core spans after decoding. Triple parts share the final delimiter's indentation
+and normalize CRLFs. Lowering binds each hole's text conversion before evaluating
+the next hole, so a custom `to_text` that stops cannot be overtaken by a later
+hole's evaluation. Explicit `to_text`, interpolation and entry error printing
+use the same selected proof, rather than looking up a customizer again.
+
 The text functions of section 14 are primitives (`%text.lines`,
 `%text.split`, ...); see section 14 below.
 

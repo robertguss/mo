@@ -28,7 +28,8 @@ enum continuation_kind {
     K_MATCH,
     K_FOR,
     K_OPTION,
-    K_TRY
+    K_TRY,
+    K_TEXT
 };
 struct continuation {
     enum continuation_kind kind;
@@ -837,6 +838,20 @@ static enum mo_syntax_kind kind(const struct mo_checked_expression *r) {
         return MO_S_NEGATE;
     return s->kind;
 }
+
+static const struct mo_ability_implementation *ability(struct body *b,
+                                                       const struct mo_checked_expression *r,
+                                                       enum mo_source_ability wanted,
+                                                       uint32_t operand) {
+    for (uint32_t i = 0; i < r->ability_count; i++) {
+        lower_work(b->p, 1);
+        const struct mo_checked_ability_use *use = &r->abilities[i];
+        if (use->operand == operand && use->implementation->ability == wanted)
+            return use->implementation;
+    }
+    lower_refuse(b->p, MO_CODE_LOWER_UNFINISHED, "this operation has no selected ability proof");
+}
+
 static mo_core_expr application(struct body *b, const struct mo_checked_expression *r,
                                 mo_core_expr_list args) {
     struct lowering *p = b->p;
@@ -859,6 +874,12 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
         return lower_prim(
             p, (struct mo_core_prim){.tag = MO_CORE_PRIM_IO, .as.io.tag = MO_CORE_IO_OP_PRINT},
             args);
+    if (r->native != NULL && strcmp(r->native, "to_text") == 0) {
+        MO_ASSERT(args.count == 1);
+        return lower_to_text(p, ability(b, r, MO_SOURCE_TEXT, r->operands[0]),
+                             &b->instance->substitution, b->instance->owner, b->instance->depth,
+                             args.items[0]);
+    }
     if (r->native != NULL && strcmp(r->native, "None") != 0 && strcmp(r->native, "Some") != 0 &&
         strcmp(r->native, "Ok") != 0 && strcmp(r->native, "Error") != 0 &&
         strcmp(r->native, "Less") != 0 && strcmp(r->native, "Equal") != 0 &&
@@ -948,6 +969,36 @@ static void finish_task(struct body *b, struct task t) {
     if (k->kind == K_FOR) {
         t.continuation = k->next;
         loop(b, t, k->row, t.value);
+        return;
+    }
+    if (k->kind == K_TEXT) {
+        p->span = k->row->syntax->span;
+        const struct mo_ability_implementation *proof =
+            ability(b, k->row, MO_SOURCE_TEXT, k->row->operands[k->at]);
+        mo_core_expr e = let(b, lower_fresh(p),
+                             lower_to_text(p, proof, &b->instance->substitution, b->instance->owner,
+                                           b->instance->depth, t.value));
+        *t.out = e;
+        k->arguments.items[2 * k->at + 1] = lower_var(p, e->as.let_.name);
+        if (k->at + 1 < k->row->operand_count) {
+            struct continuation *next = continuation(b, K_TEXT);
+            *next = *k;
+            next->at++;
+            emit(b, k->row->operands[next->at], t.state, next, &e->as.let_.body);
+        } else {
+            p->span = k->row->syntax->span;
+            mo_core_expr text = k->arguments.items[k->arguments.count - 1];
+            for (size_t i = k->arguments.count - 1; i != 0; i--) {
+                mo_core_expr_list args = arguments(b, 2);
+                args.items[0] = k->arguments.items[i - 1];
+                args.items[1] = text;
+                text = lower_prim(p,
+                                  (struct mo_core_prim){.tag = MO_CORE_PRIM_TEXT,
+                                                        .as.text = MO_CORE_TEXT_OP_CONCAT},
+                                  args);
+            }
+            finish(b, text, t.state, k->next, &e->as.let_.body);
+        }
         return;
     }
     if (k->kind == K_OPTION || k->kind == K_TRY) {
@@ -1092,9 +1143,19 @@ static void row_task(struct body *b, struct task t) {
     struct lowering *p = b->p;
     const struct mo_checked_expression *r = row(b, t.row);
     enum mo_syntax_kind tag = kind(r);
-    if (tag == MO_S_TEXT_INTERPOLATED || tag == MO_S_MAP)
-        lower_refuse(p, MO_CODE_LOWER_UNFINISHED,
-                     "interpolation and map literals are not lowered yet");
+    if (tag == MO_S_MAP)
+        lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "map literals are not lowered yet");
+    if (tag == MO_S_TEXT_INTERPOLATED) {
+        MO_ASSERT(r->operand_count != 0 && r->syntax->count == 2 * r->operand_count + 1);
+        struct continuation *k = continuation(b, K_TEXT);
+        k->row = r;
+        k->next = t.continuation;
+        k->arguments = arguments(b, r->syntax->count);
+        for (uint32_t i = 0; i < r->syntax->count; i += 2)
+            k->arguments.items[i] = lower_text_part(p, r->syntax, i);
+        emit(b, r->operands[0], t.state, k, t.out);
+        return;
+    }
     if (r->try_ != NULL) {
         struct continuation *k = continuation(b, K_TRY);
         k->row = r;

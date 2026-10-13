@@ -83,28 +83,11 @@ static size_t encode(uint32_t c, char *out) {
     out[3] = (char)(0x80u | (c & 63u));
     return 4;
 }
-static mo_core_string decoded(struct lowering *p, const struct mo_syntax *s) {
-    size_t length = s->span.end - s->span.start;
-    size_t quote =
-        length >= 6 && s->text[0] == '"' && s->text[1] == '"' && s->text[2] == '"' ? 3 : 1;
-    MO_ASSERT(length >= 2 * quote);
-    char *out = LOWER_NEW(p, char, length + 1);
-    size_t begin = quote, end = length - quote, indent = 0;
-    if (quote == 3) {
-        while (begin < end && s->text[begin] != '\n')
-            begin++;
-        MO_ASSERT(begin < end);
-        begin++;
-        size_t closing = end;
-        while (closing > begin && s->text[closing - 1] == ' ')
-            closing--;
-        indent = end - closing;
-        end = closing > begin ? closing - 1 : begin;
-        if (end > begin && s->text[end - 1] == '\r')
-            end--;
-    }
+static mo_core_string decoded_slice(struct lowering *p, const struct mo_syntax *s, size_t begin,
+                                    size_t end, size_t indent, bool triple, bool line_start) {
+    MO_ASSERT(begin <= end && end <= s->span.end - s->span.start);
+    char *out = LOWER_NEW(p, char, end - begin + 1);
     size_t at = 0;
-    bool line_start = quote == 3;
     for (size_t i = begin; i < end; i++) {
         lower_work(p, 1);
         if (line_start) {
@@ -118,12 +101,12 @@ static mo_core_string decoded(struct lowering *p, const struct mo_syntax *s) {
                 break;
         }
         uint8_t c = s->text[i];
-        if (quote == 3 && c == '\r') {
+        if (triple && c == '\r') {
             MO_ASSERT(i + 1 < end && s->text[i + 1] == '\n');
             i++;
             c = '\n';
         }
-        if (quote == 3 && c == '\n')
+        if (triple && c == '\n')
             line_start = true;
         if (c != '\\') {
             out[at++] = (char)c;
@@ -141,6 +124,64 @@ static mo_core_string decoded(struct lowering *p, const struct mo_syntax *s) {
             out[at++] = c == 'n' ? '\n' : c == 't' ? '\t' : c == 'r' ? '\r' : (char)c;
     }
     return (mo_core_string){out, at};
+}
+
+static mo_core_string decoded(struct lowering *p, const struct mo_syntax *s) {
+    size_t length = s->span.end - s->span.start;
+    size_t quote =
+        length >= 6 && s->text[0] == '"' && s->text[1] == '"' && s->text[2] == '"' ? 3 : 1;
+    MO_ASSERT(length >= 2 * quote);
+    size_t begin = quote, end = length - quote, indent = 0;
+    if (quote == 3) {
+        while (begin < end && s->text[begin] != '\n')
+            begin++;
+        MO_ASSERT(begin < end);
+        begin++;
+        size_t closing = end;
+        while (closing > begin && s->text[closing - 1] == ' ')
+            closing--;
+        indent = end - closing;
+        end = closing > begin ? closing - 1 : begin;
+        if (end > begin && s->text[end - 1] == '\r')
+            end--;
+    }
+    return decoded_slice(p, s, begin, end, indent, quote == 3, quote == 3);
+}
+
+mo_core_expr lower_text_part(struct lowering *p, const struct mo_syntax *owner, uint32_t part) {
+    MO_ASSERT(owner->count >= 3 && part < owner->count && part % 2 == 0);
+    const struct mo_syntax *s = owner->children[part];
+    const struct mo_syntax *head = owner->children[0], *tail = owner->children[owner->count - 1];
+    bool triple =
+        head->span.end - head->span.start >= 3 && head->text[1] == '"' && head->text[2] == '"';
+    size_t quote = triple ? 3 : 1;
+    size_t begin = part == 0 ? quote : 1; /* MID/TAIL start with the hole's closing brace. */
+    size_t end = s->span.end - s->span.start - (part + 1 == owner->count ? quote : 2);
+    size_t indent = 0;
+    if (triple) {
+        size_t closing = tail->span.end - tail->span.start - quote;
+        while (closing != 0 && tail->text[closing - 1] == ' ') {
+            closing--;
+            indent++;
+        }
+        if (part == 0) {
+            while (begin < end && s->text[begin] != '\n')
+                begin++;
+            MO_ASSERT(begin < end);
+            begin++;
+        }
+        if (part + 1 == owner->count) {
+            MO_ASSERT(closing > begin && tail->text[closing - 1] == '\n');
+            end = closing - 1;
+            if (end > begin && tail->text[end - 1] == '\r')
+                end--;
+        }
+    }
+    p->span = s->span;
+    mo_core_expr e = lower_unit(p);
+    e->as.lit->tag = MO_CORE_LIT_TEXT;
+    e->as.lit->as.text = decoded_slice(p, s, begin, end, indent, triple, triple && part == 0);
+    return e;
 }
 
 mo_core_expr lower_literal(struct lowering *p, const struct mo_syntax *s, mo_core_ty type,
@@ -344,4 +385,27 @@ mo_core_expr lower_error_text(struct lowering *p, mo_core_ty type, mo_core_expr 
     mo_core_expr_list args = {.count = 1, .items = LOWER_NEW(p, mo_core_expr, 1)};
     args.items[0] = value;
     return lower_prim(p, prim, args);
+}
+
+mo_core_expr lower_to_text(struct lowering *p, const struct mo_ability_implementation *proof,
+                           const struct substitution *substitution, uint32_t owner, uint32_t depth,
+                           mo_core_expr value) {
+    MO_ASSERT(proof != NULL && proof->ability == MO_SOURCE_TEXT);
+    if (proof->kind == MO_ABILITY_NATIVE)
+        return lower_error_text(p, lower_type(p, proof->type, substitution), value);
+    if (proof->kind == MO_ABILITY_FUNCTION) {
+        if (proof->part_count != 0)
+            lower_refuse(p, MO_CODE_LOWER_UNFINISHED,
+                         "generic customizer requirement proofs are not substituted yet");
+        struct instance *f = lower_instance(p, proof->function, proof->arguments, substitution,
+                                            owner, depth + (proof->arguments.count != 0));
+        mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CALL);
+        e->as.call.name = f->fun.name;
+        e->as.call.args.count = 1;
+        e->as.call.args.items = LOWER_NEW(p, mo_core_expr, 1);
+        e->as.call.args.items[0] = value;
+        return e;
+    }
+    lower_refuse(p, MO_CODE_LOWER_UNFINISHED,
+                 "derived or abstract text implementation is not lowered yet");
 }
