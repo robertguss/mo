@@ -921,6 +921,47 @@ static void test_lowered_names(void) {
     mo_arena_free(&arena);
 }
 
+static void test_join_refusal(void) {
+    const char *const params[] = {"(\"b\" (tuple ((int))))", "(\"\" (int))",
+                                  "(\"b\" (data \"Missing\"))", "(\"b\" (int))"};
+    for (unsigned variant = 0; variant < 4; variant++) {
+        struct mo_arena arena;
+        struct mo_diags diags;
+        struct mo_buffer text, out;
+        mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+        CHECK(mo_diags_init(&diags));
+        mo_buffer_init(&text, MO_LIMIT_CORE_TEXT_SIZE);
+        mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+        CHECK(mo_buffer_append_text(&text, "(Program () ((FunDecl \"main\" () (int) "
+                                           "(join \"loop\" ((\"n\" (int))) "));
+        if (variant == 3) {
+            CHECK(mo_buffer_append_text(&text, "(let_ \"padding\" (tuple ("));
+            for (uint32_t i = 0; i < MO_LIMIT_FUNCTION_REGISTERS - 3u; i++)
+                CHECK(mo_buffer_append_text(&text, "(lit (int 0))"));
+            CHECK(mo_buffer_append_text(&text, ")) "));
+        }
+        CHECK(mo_buffer_append_text(&text, "(join \"loop\" ("));
+        CHECK(mo_buffer_append_text(&text, params[variant]));
+        CHECK(mo_buffer_append_text(&text, ") (lit (int 1)) (lit (int 2)))"));
+        if (variant == 3)
+            CHECK(mo_buffer_append_byte(&text, ')'));
+        CHECK(mo_buffer_append_text(&text, " (jump \"loop\" ((lit (int 0))))) "
+                                           "\"T\" (function) 0)) () \"main\" (noSource))"));
+        CHECK(mo_buffer_append_byte(&text, 0));
+        struct mo_core *p = parse(&arena, (const char *)text.bytes, &diags);
+        if (p != NULL) {
+            CHECK(mo_core_check(p, &diags));
+            CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
+            uint16_t code =
+                variant == 3 ? MO_CODE_TOO_MANY_REGISTERS : MO_CODE_CODEGEN_REPRESENTATION;
+            CHECK(diags.count == 1 && diags.items[0].code == code);
+        }
+        mo_buffer_free(&text);
+        mo_buffer_free(&out);
+        mo_diags_free(&diags);
+        mo_arena_free(&arena);
+    }
+}
 static void test_register_limit(void) {
     for (uint32_t variant = 0; variant < 4; variant++) {
         uint32_t extra = variant % 2;
@@ -1878,6 +1919,7 @@ int main(int argc, char **argv) {
     test_range_and_fail();
     test_representation_refusals();
     test_lowered_names();
+    test_join_refusal();
     test_register_limit();
     test_register_block_limit();
     test_closure();

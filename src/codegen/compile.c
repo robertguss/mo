@@ -1403,8 +1403,6 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
             saved == NULL || entry == NULL)
             return NULL;
         *item = (struct join){.node = n, .offset = MO_NO_INDEX, .checkpoint = MO_NO_INDEX};
-        uint32_t prior = entry->value;
-        entry->value = n->index;
         for (uint32_t i = 0; i < ps.count; i++) {
             if (!name_valid(c, ps.items[i].name))
                 return NULL;
@@ -1414,6 +1412,8 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
             if (n->binds[i] == MO_NO_INDEX || entries[i] == NULL)
                 return NULL;
         }
+        uint32_t prior = entry->value;
+        entry->value = n->index;
         for (uint32_t i = (uint32_t)ps.count; i-- > 0;) {
             saved[i] = entries[i]->value;
             entries[i]->value = n->binds[i];
@@ -1421,7 +1421,8 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         n->children[0] = prepare(c, f, expr->as.join.body, expected, depth + 1);
         for (uint32_t i = 0; i < ps.count; i++)
             entries[i]->value = saved[i];
-        n->children[1] = prepare(c, f, expr->as.join.rest, expected, depth + 1);
+        n->children[1] =
+            n->children[0] == NULL ? NULL : prepare(c, f, expr->as.join.rest, expected, depth + 1);
         entry->value = prior;
         if (n->children[0] == NULL || n->children[1] == NULL)
             return NULL;
