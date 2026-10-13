@@ -80,6 +80,7 @@ struct note {
     struct note *next;
     struct emitted *graph;
     struct note *binding;
+    struct note *callee;
     uint32_t index;
     uint32_t binding_index;
     bool variable;
@@ -129,6 +130,7 @@ struct inference {
     struct typed_pattern *patterns;
     struct match_check *matches;
     struct pattern_defaults *defaults;
+    struct dispatch *dispatches, *last_dispatch;
     struct term *result;
     struct mo_span span;
     struct mo_diag error;
@@ -154,7 +156,20 @@ struct value {
     struct emitted *graph;
     struct note *note;
     struct note *bound;
+    struct note *callee;
+    struct dispatch *dispatch;
     bool never;
+};
+
+struct dispatch {
+    struct dispatch *next;
+    const struct mo_syntax *name;
+    const struct mo_symbol *group;
+    uint32_t count;
+    struct term *type;
+    struct emitted *graph;
+    struct note *note;
+    bool solved;
 };
 
 static MO_MUST_USE bool problem(struct inference *p, uint16_t code, struct mo_span span,
@@ -622,8 +637,11 @@ static MO_MUST_USE bool record(struct inference *p, const struct mo_syntax *node
                        .type = v.type,
                        .graph = v.graph,
                        .binding = v.bound,
+                       .callee = v.callee,
                        .index = UINT32_MAX,
                        .binding_index = UINT32_MAX};
+    if (v.dispatch != NULL && v.dispatch->note == NULL)
+        v.dispatch->note = n;
     if (p->last == NULL)
         p->notes = n;
     else
@@ -969,6 +987,84 @@ static MO_MUST_USE struct value native_identifier(struct inference *p,
     return out;
 }
 
+static MO_MUST_USE struct value declared_function(struct inference *p, const struct mo_symbol *s) {
+    uint32_t lo = 0, hi = p->signatures->count;
+    uintptr_t wanted = (uintptr_t)s;
+    while (lo < hi) {
+        if (!work(p))
+            return (struct value){0};
+        uint32_t mid = lo + (hi - lo) / 2;
+        const struct mo_symbol *at = p->signatures->items[mid].function;
+        if (at->module < s->module || (at->module == s->module && (uintptr_t)at < wanted))
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    MO_ASSERT(lo < p->signatures->count && p->signatures->items[lo].function == s);
+    const struct mo_function_signature *signature = &p->signatures->items[lo];
+    struct value out = function_value(p, signature->type, signature->requirements);
+    out.symbol = s;
+    return out;
+}
+
+static MO_MUST_USE const struct mo_symbol *select_overload(struct inference *p,
+                                                           const struct mo_symbol *group,
+                                                           uint32_t count, struct term *receiver) {
+    if (count == 1)
+        return group;
+    receiver = root(receiver);
+    if (receiver->variable)
+        return NULL;
+    const struct mo_module_scope *scope = &p->interfaces->scopes[group->module];
+    for (uint32_t i = 0; i < count; i++) {
+        if (!work(p))
+            return NULL;
+        MO_ASSERT(group[i].receiver < scope->count);
+        if (receiver->shape.declaration == &scope->symbols[group[i].receiver])
+            return &group[i];
+    }
+    bool reported =
+        problem(p, MO_CODE_ARGUMENT_TYPE, p->span, "no overload takes this first argument's type",
+                "A call picks the function whose first parameter matches its first "
+                "argument (reference 5.1).",
+                NULL);
+    (void)reported;
+    return NULL;
+}
+
+static MO_MUST_USE struct value deferred_function(struct inference *p, const struct mo_syntax *name,
+                                                  const struct mo_symbol *group, uint32_t count) {
+    struct dispatch *pending = allocate(p, 1, sizeof(*pending), _Alignof(struct dispatch));
+    struct value out = graph(p, (struct value){.type = fresh(p, 0)}, 0);
+    if (pending == NULL || out.type == NULL)
+        return (struct value){0};
+    *pending = (struct dispatch){
+        .name = name, .group = group, .count = count, .type = out.type, .graph = out.graph};
+    if (p->last_dispatch == NULL)
+        p->dispatches = pending;
+    else
+        p->last_dispatch->next = pending;
+    p->last_dispatch = pending;
+    out.dispatch = pending;
+    return out;
+}
+
+static MO_MUST_USE const struct mo_module_scope *type_scope(struct inference *p,
+                                                            struct term *type) {
+    if (type->shape.declaration != NULL)
+        return &p->interfaces->scopes[type->shape.module];
+    if (type->shape.kind != MO_SOURCE_NAMED)
+        return NULL;
+    for (uint32_t i = 0; i < p->interfaces->count; i++) {
+        if (!work(p))
+            return NULL;
+        const struct mo_module_scope *scope = &p->interfaces->scopes[i];
+        if (scope->library && scope->name != NULL && strcmp(scope->name, type->shape.name) == 0)
+            return scope;
+    }
+    return NULL;
+}
+
 static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_syntax *node,
                                            const struct mo_syntax *prefix) {
     if (node->kind == MO_S_QUALIFIED) {
@@ -1047,7 +1143,7 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
         (void)reported;
         return (struct value){0};
     }
-    if (s->declaration->kind != MO_S_FN || count != 1) {
+    if (s->declaration->kind != MO_S_FN) {
         bool reported = unfinished(p);
         (void)reported;
         return (struct value){0};
@@ -1067,22 +1163,9 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
         }
         entry->module_use = node;
     }
-    uint32_t lo = 0, hi = p->signatures->count;
-    uintptr_t wanted = (uintptr_t)s;
-    /* Signatures follow the interface arrays: module, then symbol address. */
-    while (lo < hi) {
-        uint32_t mid = lo + (hi - lo) / 2;
-        const struct mo_symbol *at = p->signatures->items[mid].function;
-        if (at->module < s->module || (at->module == s->module && (uintptr_t)at < wanted))
-            lo = mid + 1;
-        else
-            hi = mid;
-    }
-    MO_ASSERT(lo < p->signatures->count && p->signatures->items[lo].function == s);
-    const struct mo_function_signature *signature = &p->signatures->items[lo];
-    struct value out = function_value(p, signature->type, signature->requirements);
-    out.symbol = s;
-    return out;
+    if (count > 1)
+        return deferred_function(p, node, s, count);
+    return declared_function(p, s);
 }
 
 static MO_MUST_USE struct value infer(struct inference *p, const struct mo_syntax *node,
@@ -1409,26 +1492,46 @@ static MO_MUST_USE struct value field_value(struct inference *p, struct value v,
     if ((field == NULL || !visible) &&
         (compare_text(name, "to_text") == 0 || compare_text(name, "compare") == 0))
         return ability_call(p, v, name, args);
-    if (type->variable || type->shape.kind != MO_SOURCE_NAMED || type->shape.declaration == NULL) {
+    if (type->variable) {
         bool reported = unfinished(p);
         (void)reported;
         return (struct value){0};
     }
     if (field == NULL || !visible) {
         uint32_t count = 0;
-        const struct mo_symbol *method =
-            find_symbol(&p->interfaces->scopes[type->shape.module], name, &count);
+        const struct mo_module_scope *owner = type_scope(p, type);
+        if (p->failed)
+            return (struct value){0};
+        const struct mo_symbol *method = owner == NULL ? NULL : find_symbol(owner, name, &count);
         bool plausible = method != NULL && method->declaration->kind == MO_S_FN &&
                          (method->module == p->function->function->module || method->exported);
         if (!plausible) {
             method = definition(p, name, NULL, &count);
             plausible = method != NULL && method->declaration->kind == MO_S_FN;
         }
-        if (plausible || compare_text(name, "to_text") == 0 || compare_text(name, "compare") == 0) {
-            bool reported = unfinished(p);
-            (void)reported;
-            return (struct value){0};
+        if (plausible) {
+            method = select_overload(p, method, count, type);
+            if (method == NULL)
+                return (struct value){0};
+            struct value callee = declared_function(p, method);
+            if (callee.type == NULL)
+                return callee;
+            if (p->checked) {
+                if (!record(p, name, callee))
+                    return (struct value){0};
+                callee.note = p->last;
+            }
+            return call(p, callee, args, &v);
         }
+    }
+    if (type->shape.declaration == NULL) {
+        bool reported = problem(p, MO_CODE_NAME_UNKNOWN, name->span,
+                                "no visible function has this dot-call name",
+                                "A dot call looks in the type's module, then among the names in "
+                                "scope (reference 5.4).",
+                                NULL);
+        (void)reported;
+        return (struct value){0};
     }
     if (!visible_data(p, type->shape.declaration))
         return (struct value){0};
@@ -1560,10 +1663,15 @@ static MO_MUST_USE struct value call(struct inference *p, struct value callee,
         return (struct value){0};
     struct value result = {0};
     if (p->checked) {
-        result = graph(p, (struct value){.type = argument(p, t, t->shape.count - 1)}, count + 1);
+        bool declared_dot = receiver != NULL && callee.note != NULL;
+        uint32_t extra = declared_dot ? 1u : 0u;
+        result =
+            graph(p, (struct value){.type = argument(p, t, t->shape.count - 1)}, count + 1 + extra);
         if (result.type == NULL)
             return result;
-        result.graph->operands[0] = receiver == NULL ? callee.note : receiver->note;
+        result.graph->operands[0] = receiver == NULL || declared_dot ? callee.note : receiver->note;
+        if (declared_dot)
+            result.graph->operands[1] = receiver->note;
         result.graph->output.symbol = callee.symbol;
         if (callee.graph != NULL) {
             result.graph->output.native = callee.graph->output.native;
@@ -1572,7 +1680,7 @@ static MO_MUST_USE struct value call(struct inference *p, struct value callee,
             result.graph->parameters = callee.graph->parameters;
         }
         if (receiver != NULL)
-            result.graph->output.receiver = 0;
+            result.graph->output.receiver = extra;
     }
     struct note *before = p->last;
     for (unsigned pass = 0; pass < 2; pass++) {
@@ -1586,7 +1694,8 @@ static MO_MUST_USE struct value call(struct inference *p, struct value callee,
                 return (struct value){0};
             ranges[i] = (struct note_range){previous == NULL ? p->notes : previous->next, p->last};
             if (p->checked)
-                result.graph->operands[i + 1] = arg.note;
+                result.graph->operands[i + (receiver != NULL && callee.note != NULL ? 2u : 1u)] =
+                    arg.note;
             never = never || arg.never;
         }
     }
@@ -1595,6 +1704,7 @@ static MO_MUST_USE struct value call(struct inference *p, struct value callee,
     order_notes(p, before, ranges, count);
     if (!p->checked)
         result.type = argument(p, t, t->shape.count - 1);
+    result.callee = callee.note;
     result.never = never;
     return result;
 }
@@ -3053,6 +3163,16 @@ static MO_MUST_USE bool finish_notes(struct inference *p, struct mo_inferred_exp
     uint32_t i = 0;
     for (struct note *n = p->notes; n != NULL; n = n->next) {
         p->span = n->output.syntax->span;
+        if (n->callee != NULL) {
+            n->output.symbol = n->callee->output.symbol;
+            if (n->graph != NULL && n->callee->graph != NULL) {
+                struct emitted *callee = n->callee->graph;
+                n->graph->output.symbol = callee->output.symbol;
+                n->graph->function_type = callee->function_type;
+                n->graph->requirements = callee->requirements;
+                n->graph->parameters = callee->parameters;
+            }
+        }
         if (p->partial && p->span.start >= p->error.primary.span.start)
             continue;
         n->output.type = finish_type(p, n->type, 0);
@@ -3589,6 +3709,59 @@ checked_pattern(struct inference *p, const struct mo_syntax *syntax,
     return out;
 }
 
+static MO_MUST_USE bool finish_dispatches(struct inference *p) {
+    bool progress;
+    do {
+        progress = false;
+        for (struct dispatch *at = p->dispatches; at != NULL; at = at->next) {
+            if (!work(p))
+                return false;
+            if (at->solved)
+                continue;
+            p->span = at->name->span;
+            struct term *type = root(at->type);
+            if (type->variable)
+                continue;
+            if (type->shape.kind != MO_SOURCE_FUNCTION || type->shape.count < 2)
+                return problem(p, MO_CODE_CALL_ARGUMENTS, p->span,
+                               "an overloaded function needs a first argument",
+                               "Overloads differ in their first parameter's type (reference 5.1).",
+                               NULL);
+            struct term *receiver = argument(p, type, 0);
+            if (receiver == NULL)
+                return false;
+            if (root(receiver)->variable && root(receiver)->numeric == 0)
+                continue;
+            const struct mo_symbol *symbol = select_overload(p, at->group, at->count, receiver);
+            if (symbol == NULL) {
+                if (!p->failed)
+                    return problem(p, MO_CODE_ARGUMENT_TYPE, p->span,
+                                   "no overload takes this first argument's type",
+                                   "Overloads take local record or choice types (reference 5.1).",
+                                   NULL);
+                return false;
+            }
+            struct value selected = declared_function(p, symbol);
+            if (selected.type == NULL || !unify_as(p, selected.type, type, MO_CODE_ARGUMENT_TYPE))
+                return false;
+            at->note->output.symbol = symbol;
+            if (p->checked) {
+                *at->graph = *selected.graph;
+                at->graph->output.symbol = symbol;
+            }
+            at->solved = true;
+            progress = true;
+        }
+    } while (progress);
+    for (struct dispatch *at = p->dispatches; at != NULL; at = at->next)
+        if (!at->solved)
+            return problem(p, MO_CODE_CANNOT_INFER, at->name->span,
+                           "no use decides this overload's first argument type",
+                           "Give the value a type, or write the call another way (reference 5.1).",
+                           NULL);
+    return true;
+}
+
 static MO_MUST_USE struct mo_inferred_body *
 infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
                const struct mo_signatures *signatures, uint32_t function, struct mo_diags *diags,
@@ -3638,6 +3811,8 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
                          ? discard(&p, syntax->children[5])
                          : infer_as(&p, syntax->children[5], p.result, MO_CODE_RESULT_TYPE);
     if (v.type == NULL || !leave(&p, NULL))
+        goto failed;
+    if (!finish_dispatches(&p))
         goto failed;
     struct mo_inferred_body *out = allocate(&p, 1, sizeof(*out), _Alignof(struct mo_inferred_body));
     struct mo_inferred_expression *items =
