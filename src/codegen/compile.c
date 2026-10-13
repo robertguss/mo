@@ -39,6 +39,7 @@ struct function {
     struct node *body;
     struct mo_codegen_index *locals, *bindings, *zeros;
     const struct mo_core_fun_meta *meta;
+    const struct mo_core_fun *source;
     uint32_t preorder, instructions, blocks, owned;
     bool next_block;
 };
@@ -47,10 +48,12 @@ struct compiler {
     struct mo_arena arena;
     struct mo_types types;
     struct vector strings, constants, modules, constructors, ownership, edges;
-    struct mo_codegen_index *string_index, *constant_index, *data_index, *fun_index, *module_index,
-        *builtin_index;
+    struct mo_codegen_index *string_index, *constant_index, *data_index, *fun_index, *global_index,
+        *module_index, *builtin_index;
     uint32_t *data, *files, *layouts;
-    uint32_t range_int;
+    uint32_t range_int, function_count, unit_constant;
+    struct mo_bytecode_global *globals;
+    uint32_t *init;
     struct mo_bytecode_function *funs;
     struct mo_parameter **parameters;
     struct mo_bytecode_debug *debug;
@@ -593,6 +596,13 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         n->temporary = false;
         return n;
     }
+    case MO_CORE_EXPR_GLOBAL: {
+        struct mo_codegen_index *entry = mo_codegen_find(c->global_index, expr->as.global);
+        MO_ASSERT(entry != NULL);
+        n->index = entry->value;
+        n->type = c->globals[n->index].type;
+        break;
+    }
     case MO_CORE_EXPR_LET: {
         if (!name_valid(c, expr->as.let_.name))
             return NULL;
@@ -773,12 +783,11 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         }
         break;
     }
-    case MO_CORE_EXPR_GLOBAL:
     case MO_CORE_EXPR_LAM:
     case MO_CORE_EXPR_APP:
     case MO_CORE_EXPR_JOIN:
     case MO_CORE_EXPR_JUMP:
-        if (!unsupported(c, "Globals, closures and joins are not "
+        if (!unsupported(c, "Closures and joins are not "
                             "implemented yet."))
             return NULL;
     }
@@ -895,13 +904,19 @@ static void activity(struct compiler *c, struct function *f, struct node *n, uns
     if (n->core->tag == MO_CORE_EXPR_CALL || n->core->tag == MO_CORE_EXPR_CON ||
         n->core->tag == MO_CORE_EXPR_TUPLE || n->core->tag == MO_CORE_EXPR_PROJ)
         n->activity |= reference(c, n->type);
+    /* Scalar reference slots start borrowed, but aggregate slots start undefined. A path-local
+     * global load changes the latter to borrowed even though it creates no frame owner. */
+    if (n->core->tag == MO_CORE_EXPR_GLOBAL && c->types.items[n->type].kind >= MO_TYPE_TUPLE)
+        n->activity |= reference(c, n->type);
     if (n->core->tag == MO_CORE_EXPR_IF || choice)
         n->activity |= reference(c, n->type) &&
                        ((struct ownership *)c->ownership.items)[flow_id(f, n->reg)].owned;
 }
 static MO_MUST_USE bool borrow_infer(struct compiler *c) {
-    for (size_t i = 0; i < c->core->funs.count; i++) {
+    for (uint32_t i = 0; i < c->function_count; i++) {
         struct function *f = &c->bodies[i];
+        if (c->funs[i].kind == MO_FUNCTION_INIT)
+            continue;
         if (c->funs[i].kind != MO_FUNCTION_FUNCTION)
             for (uint32_t j = 0; j < c->funs[i].parameter_count; j++)
                 seed(c, flow_id(f, j));
@@ -926,12 +941,13 @@ static MO_MUST_USE bool borrow_infer(struct compiler *c) {
             }
         }
     }
-    for (size_t i = 0; i < c->core->funs.count; i++)
+    for (uint32_t i = 0; i < c->function_count; i++)
         for (uint32_t j = 0; j < c->funs[i].parameter_count; j++)
             if (reference(c, c->parameters[i][j].type) && !slots[flow_id(&c->bodies[i], j)].owned)
                 c->parameters[i][j].ownership = MO_PARAMETER_BORROWED;
-    for (size_t i = 0; i < c->core->funs.count; i++)
-        activity(c, &c->bodies[i], c->bodies[i].body, 0);
+    for (uint32_t i = 0; i < c->function_count; i++)
+        if (c->funs[i].kind != MO_FUNCTION_INIT)
+            activity(c, &c->bodies[i], c->bodies[i].body, 0);
     return true;
 }
 
@@ -1139,6 +1155,12 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
     }
     case MO_CORE_EXPR_VAR:
         break;
+    case MO_CORE_EXPR_GLOBAL: {
+        const uint32_t args[] = {n->reg, n->index};
+        if (emit(c, f, n->span, MO_OP_GLOBAL, args, 2, NULL, 0) == MO_NO_INDEX)
+            return false;
+        break;
+    }
     case MO_CORE_EXPR_LET: {
         if (!generate(c, f, n->children[0], false, depth + 1, live) || !*live)
             return c->error == 0;
@@ -1215,7 +1237,7 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
                         local_owners |=
                             reference(c, ((struct reg *)f->regs.items)[arm->binds[j]].type);
                 if (local_owners)
-                    return unsupported(c, "Reconverging branches with path-local reference owners "
+                    return unsupported(c, "Reconverging branches with path-local reference states "
                                           "are not implemented yet.");
             }
         }
@@ -1339,7 +1361,6 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
         *live = false;
         break;
     }
-    case MO_CORE_EXPR_GLOBAL:
     case MO_CORE_EXPR_LAM:
     case MO_CORE_EXPR_APP:
     case MO_CORE_EXPR_JOIN:
@@ -1370,7 +1391,7 @@ static MO_MUST_USE bool entry_valid(struct compiler *c) {
         p->metadata.source ? p->metadata.funs.items[entry->value].span : (struct mo_core_span){0};
     c->span = c->declaration;
     uint32_t full_name = c->funs[entry->value].name;
-    for (size_t i = 0; i < p->funs.count; i++) {
+    for (uint32_t i = 0; i < c->function_count; i++) {
         if (i != entry->value && c->funs[i].name == full_name)
             return problem(c, MO_CODE_CODEGEN_ENTRY,
                            "The entry's full runtime name is not unique in the image.");
@@ -1379,24 +1400,26 @@ static MO_MUST_USE bool entry_valid(struct compiler *c) {
 }
 static MO_MUST_USE bool declarations(struct compiler *c) {
     const struct mo_core *p = c->core;
-    if (p->consts.count != 0)
-        return unsupported(c, "Global initialization is not implemented yet.");
-    if (p->funs.count > MO_LIMIT_FUNCTIONS || p->data.count > MO_LIMIT_TYPES)
+    if (p->funs.count > MO_LIMIT_FUNCTIONS ||
+        p->consts.count > (MO_LIMIT_FUNCTIONS - p->funs.count) / 2 ||
+        p->consts.count > MO_LIMIT_GLOBALS || p->data.count > MO_LIMIT_TYPES)
         return problem(c, MO_CODE_BYTECODE_TOO_BIG,
-                       "Core has too many function or type declarations.");
+                       "Core and its initializer helpers exceed a bytecode declaration limit.");
+    c->function_count = (uint32_t)(p->funs.count + 2 * p->consts.count);
     c->data = allocate(c, p->data.count, sizeof *c->data);
-    c->funs = allocate(c, p->funs.count, sizeof *c->funs);
-    c->parameters = allocate(c, p->funs.count, sizeof *c->parameters);
-    c->bodies = allocate(c, p->funs.count, sizeof *c->bodies);
-    c->debug = allocate(c, p->funs.count, sizeof *c->debug);
+    c->funs = allocate(c, c->function_count, sizeof *c->funs);
+    c->parameters = allocate(c, c->function_count, sizeof *c->parameters);
+    c->bodies = allocate(c, c->function_count, sizeof *c->bodies);
+    c->debug = allocate(c, c->function_count, sizeof *c->debug);
     size_t file_count = p->metadata.source ? p->metadata.files.count : 0;
     c->files = allocate(c, file_count, sizeof *c->files);
     if (c->data == NULL || c->funs == NULL || c->parameters == NULL || c->bodies == NULL ||
         c->debug == NULL || c->files == NULL)
         return false;
-    memset(c->funs, 0, p->funs.count * sizeof *c->funs);
-    memset(c->bodies, 0, p->funs.count * sizeof *c->bodies);
-    memset(c->debug, 0, p->funs.count * sizeof *c->debug);
+    memset(c->funs, 0, c->function_count * sizeof *c->funs);
+    memset(c->parameters, 0, c->function_count * sizeof *c->parameters);
+    memset(c->bodies, 0, c->function_count * sizeof *c->bodies);
+    memset(c->debug, 0, c->function_count * sizeof *c->debug);
     for (size_t i = 0; i < file_count; i++) {
         c->files[i] = string(c, p->metadata.files.items[i]);
         if (c->files[i] == MO_NO_INDEX)
@@ -1476,8 +1499,19 @@ static MO_MUST_USE bool declarations(struct compiler *c) {
                                          .type_count = (uint32_t)m->exposed_types.count,
                                          .types = exports,
                                          .function_count = (uint32_t)m->exposed_funs.count,
-                                         .functions = m->exposed_funs.items};
+                                         .functions = m->exposed_funs.items,
+                                         .global_count = (uint32_t)m->consts.count,
+                                         .globals = m->consts.items};
         if (b->name == MO_NO_INDEX || index_add(c, &c->module_index, m->name, id, false) == NULL)
+            return false;
+    }
+    if (!p->metadata.source && (p->data.count != 0 || p->consts.count != 0)) {
+        struct mo_bytecode_module *m =
+            append(c, &c->modules, 1, MO_LIMIT_MODULES, MO_CODE_BYTECODE_TOO_BIG);
+        if (m == NULL || index_add(c, &c->module_index, text("%Core"), 0, false) == NULL)
+            return false;
+        *m = (struct mo_bytecode_module){.name = string(c, text("%Core"))};
+        if (m->name == MO_NO_INDEX)
             return false;
     }
     static const enum mo_function_kind kinds[] = {MO_FUNCTION_FUNCTION, MO_FUNCTION_TEST,
@@ -1543,16 +1577,110 @@ static MO_MUST_USE bool declarations(struct compiler *c) {
                                                    .parameters = params,
                                                    .result_type = type(c, fun->ret, 0)};
         c->bodies[i].meta = meta;
+        c->bodies[i].source = fun;
         if (c->funs[i].result_type == MO_NO_INDEX ||
             index_add(c, &c->fun_index, fun->name, (uint32_t)i, false) == NULL)
             return false;
     }
     return c->error == 0;
 }
+static MO_MUST_USE uint32_t suffixed_name(struct compiler *c, mo_core_string base,
+                                          const char *suffix) {
+    size_t extra = strlen(suffix);
+    if (!name_valid(c, base))
+        return MO_NO_INDEX;
+    if (base.length > MO_LIMIT_STRING_SIZE - extra) {
+        if (!problem(c, MO_CODE_BYTECODE_TOO_BIG,
+                     "Generated initializer name exceeds MO_LIMIT_STRING_SIZE."))
+            return MO_NO_INDEX;
+    }
+    char *bytes = allocate(c, base.length + extra, 1);
+    if (bytes == NULL)
+        return MO_NO_INDEX;
+    memcpy(bytes, base.bytes, base.length);
+    memcpy(bytes + base.length, suffix, extra);
+    return string(c, (mo_core_string){bytes, base.length + extra});
+}
+static MO_MUST_USE bool globals(struct compiler *c) {
+    const struct mo_core *p = c->core;
+    if (p->consts.count == 0)
+        return true;
+    c->globals = allocate(c, p->consts.count, sizeof *c->globals);
+    c->init = allocate(c, p->consts.count, sizeof *c->init);
+    if (c->globals == NULL || c->init == NULL)
+        return false;
+    if (p->metadata.source) {
+        for (uint32_t i = 0; i < p->metadata.modules.count; i++) {
+            const mo_core_indices owned = p->metadata.modules.items[i].consts;
+            for (size_t j = 0; j < owned.count; j++)
+                c->globals[owned.items[j]].module = i;
+        }
+    } else {
+        if (p->consts.count > MO_LIMIT_MODULE_NAMES)
+            return problem(c, MO_CODE_BYTECODE_TOO_BIG,
+                           "Source-less constants exceed MO_LIMIT_MODULE_NAMES in %Core.");
+        uint32_t *ids = allocate(c, p->consts.count, sizeof *ids);
+        if (ids == NULL)
+            return false;
+        struct mo_bytecode_module *module = c->modules.items;
+        module[0].global_count = (uint32_t)p->consts.count;
+        module[0].globals = ids;
+        for (uint32_t i = 0; i < p->consts.count; i++) {
+            ids[i] = i;
+            c->globals[i].module = 0;
+        }
+    }
+    uint32_t unit = scalar(c, MO_TYPE_UNIT);
+    if (unit == MO_NO_INDEX)
+        return false;
+    c->unit_constant = constant(c, (struct mo_bytecode_constant){.type = unit});
+    if (c->unit_constant == MO_NO_INDEX)
+        return false;
+    for (uint32_t i = 0; i < p->consts.count; i++) {
+        const struct mo_core_const *k = &p->consts.items[i];
+        struct mo_core_fun *source = allocate(c, 1, sizeof *source);
+        if (source == NULL)
+            return false;
+        *source = (struct mo_core_fun){.name = k->name, .ret = k->ty, .body = k->body};
+        c->current = source;
+        const struct mo_core_const_meta *meta =
+            p->metadata.source ? &p->metadata.consts.items[i] : NULL;
+        c->declaration = meta == NULL ? (struct mo_core_span){0} : meta->span;
+        c->span = c->declaration;
+        if (!name_valid(c, k->name))
+            return false;
+        mo_core_string full_name = meta == NULL ? k->name : meta->name;
+        c->globals[i].name = string(c, full_name);
+        c->globals[i].type = type(c, k->ty, 0);
+        uint32_t value = (uint32_t)p->funs.count + 2 * i, init = value + 1;
+        c->init[i] = init;
+        c->funs[value] =
+            (struct mo_bytecode_function){.name = suffixed_name(c, full_name, ".init.%value"),
+                                          .module = c->globals[i].module,
+                                          .kind = MO_FUNCTION_FUNCTION,
+                                          .result_type = c->globals[i].type};
+        c->funs[init] = (struct mo_bytecode_function){.name = suffixed_name(c, full_name, ".init"),
+                                                      .module = c->globals[i].module,
+                                                      .kind = MO_FUNCTION_INIT,
+                                                      .result_type = unit};
+        c->bodies[value].source = c->bodies[init].source = source;
+        if (meta != NULL) {
+            struct mo_core_fun_meta *body_meta = allocate(c, 1, sizeof *body_meta);
+            if (body_meta == NULL)
+                return false;
+            *body_meta = (struct mo_core_fun_meta){
+                .name = meta->name, .span = meta->span, .body = meta->body};
+            c->bodies[value].meta = c->bodies[init].meta = body_meta;
+        }
+        if (c->error != 0 || index_add(c, &c->global_index, k->name, i, false) == NULL)
+            return false;
+    }
+    return true;
+}
 static MO_MUST_USE bool bodies(struct compiler *c) {
-    for (size_t i = 0; i < c->core->funs.count; i++) {
-        c->current = &c->core->funs.items[i];
+    for (uint32_t i = 0; i < c->function_count; i++) {
         struct function *f = &c->bodies[i];
+        c->current = f->source;
         const struct mo_core_fun_meta *meta = f->meta;
         c->declaration = meta == NULL ? (struct mo_core_span){0} : meta->span;
         c->span = c->declaration;
@@ -1561,6 +1689,8 @@ static MO_MUST_USE bool bodies(struct compiler *c) {
         f->spans.width = sizeof(struct mo_bytecode_span);
         f->names.width = sizeof(struct mo_bytecode_register_name);
         f->owned = MO_NO_INDEX;
+        if (c->funs[i].kind == MO_FUNCTION_INIT)
+            continue;
         if (meta != NULL) {
             for (size_t j = 0; j < meta->body.bindings.count; j++) {
                 const struct mo_core_binding_meta *binding = &meta->body.bindings.items[j];
@@ -1637,10 +1767,27 @@ static MO_MUST_USE bool bodies(struct compiler *c) {
     }
     return true;
 }
+/* A normal call keeps the publication point reachable even for a body which always stops.
+ * No code follows stop in the value function; its wrapper stores only a returned result. */
+static MO_MUST_USE bool initializer(struct compiler *c, struct function *f, uint32_t index) {
+    uint32_t global = (index - (uint32_t)c->core->funs.count) / 2;
+    uint32_t value = register_add(c, f, c->globals[global].type, MO_NO_INDEX),
+             unit = register_add(c, f, c->funs[index].result_type, MO_NO_INDEX);
+    if (value == MO_NO_INDEX || unit == MO_NO_INDEX)
+        return false;
+    const uint32_t call[] = {value, index - 1}, store[] = {global, value},
+                   result[] = {unit, c->unit_constant};
+    struct mo_core_span source =
+        f->meta == NULL ? (struct mo_core_span){0} : f->meta->body.spans.items[0];
+    return emit(c, f, source, MO_OP_CALL, call, 2, NULL, 0) != MO_NO_INDEX &&
+           emit(c, f, c->declaration, MO_OP_SET_GLOBAL, store, 2, NULL, 0) != MO_NO_INDEX &&
+           emit(c, f, c->declaration, MO_OP_CONST, result, 2, NULL, 0) != MO_NO_INDEX &&
+           emit(c, f, c->declaration, MO_OP_RET, &unit, 1, NULL, 0) != MO_NO_INDEX;
+}
 static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
-    for (size_t i = 0; i < c->core->funs.count; i++) {
-        c->current = &c->core->funs.items[i];
+    for (uint32_t i = 0; i < c->function_count; i++) {
         struct function *f = &c->bodies[i];
+        c->current = f->source;
         struct mo_bytecode_function *fun = &c->funs[i];
         const struct mo_core_fun_meta *meta = f->meta;
         c->declaration = meta == NULL ? (struct mo_core_span){0} : meta->span;
@@ -1654,10 +1801,15 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
         for (uint32_t j = fun->parameter_count; j < count; j++)
             if (!initialize(c, f, j, 0))
                 return false;
-        bool live;
-        if (!generate(c, f, f->body, true, 0, &live))
-            return false;
-        MO_ASSERT(!live);
+        if (fun->kind == MO_FUNCTION_INIT) {
+            if (!initializer(c, f, i))
+                return false;
+        } else {
+            bool live;
+            if (!generate(c, f, f->body, true, 0, &live))
+                return false;
+            MO_ASSERT(!live);
+        }
         uint32_t *types = allocate(c, f->regs.count, sizeof *types);
         if (types == NULL)
             return false;
@@ -1712,11 +1864,15 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
                                      .layouts = c->types.layouts,
                                      .constant_count = c->constants.count,
                                      .constants = c->constants.items,
-                                     .function_count = (uint32_t)c->core->funs.count,
+                                     .global_count = (uint32_t)c->core->consts.count,
+                                     .globals = c->globals,
+                                     .init_count = (uint32_t)c->core->consts.count,
+                                     .init = c->init,
+                                     .function_count = c->function_count,
                                      .functions = c->funs,
                                      .module_count = c->modules.count,
                                      .modules = c->modules.items,
-                                     .debug_count = (uint32_t)c->core->funs.count,
+                                     .debug_count = c->function_count,
                                      .debug = c->debug};
     struct mo_write_error error;
     struct mo_buffer encoded;
@@ -1749,8 +1905,8 @@ bool mo_compile(const struct mo_core *core, struct mo_buffer *out, struct mo_dia
     c.constructors.width = sizeof(struct mo_codegen_index *);
     c.ownership.width = sizeof(struct ownership);
     c.edges.width = sizeof(struct edge);
-    bool ok =
-        declarations(&c) && entry_valid(&c) && bodies(&c) && borrow_infer(&c) && output(&c, out);
+    bool ok = declarations(&c) && globals(&c) && entry_valid(&c) && bodies(&c) &&
+              borrow_infer(&c) && output(&c, out);
     if (!ok) {
         MO_ASSERT(c.error != 0 && out->length == 0);
         struct mo_buffer label;

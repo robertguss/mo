@@ -1080,7 +1080,8 @@ tuples of at least two elements and projections, multi-field/boxed and recursive
 choices, Range make/start/end, and spec fail. Option, Result, Ordering and
 EntryKind retain separate instantiated types. It retains all five Core
 function kinds and direct tail calls in every tail position it supports.
-Closures/application, globals/init, collections, other primitives/host operations,
+The third adds globals and ordered initialization for these expression forms.
+Closures/application, collections, other primitives/host operations,
 BigInt decimal literals, joins and reuse remain for subsequent slices. The
 sample fixtures and Core fuzz corpora are attempted in CI; unfinished forms,
 permanently excluded representations, entry-name collisions, resource limits
@@ -1094,19 +1095,36 @@ The writer structurally checks and fully verifies every compiled file.
 Writer refusals are classified by their error kind, never by reason text.
 Outcome comparison with Lean waits for the VM.
 
-Core declaration order is bytecode function order, preserving call and spec
-link indices. First-match function/data/parameter lookup agrees with Core.
+Core functions begin the bytecode function table in declaration order, preserving
+call and spec link indices. First-match function/data/parameter lookup agrees with Core.
 Every data declaration uses a nominal choice, including one-constructor
 declarations; an empty name on its single field means an unnamed field.
 Builtin instantiations have separate nominal identities from user types of
 the same printable name. Instantiated names use Mo's type spelling, including
 tuple arguments such as `Option((Int, Text))`, within `MO_LIMIT_STRING_SIZE`.
 Names/strings and constants use deterministic first use. Source-less function
-names are module + "." + Core name; module order is first function use, with no
-invented exports. Source metadata supplies full names, module order/exports,
+names are module + "." + Core name; source-less data/constants use a first
+synthetic `%Core` module, followed by function modules in first-use order, with no
+invented exports. Source metadata supplies full names, module order/exports/globals,
 file remapping, declaration and expression spans,
 original binder names/ranges, spec text/links/expectations/condition lines.
 Absent expression spans clear attribution, not inherit the previous span.
+
+Globals and the init list follow Core's constant dependency order; module global
+lists independently retain metadata's source declaration order. A constant's full
+name comes from metadata, or its lookup name in `noSource`. After Core functions,
+each constant appends an ordinary, non-spec value function named `name.init.%value`
+and its non-spec `name.init` wrapper. The value function compiles the original body
+in tail position with its expression spans and binding names. The wrapper calls
+it, consumes the returned value with one `set_global`, then returns Unit. This
+also compiles always-stopping bodies without unreachable stores after stop: the
+verifier sees a store in every wrapper, while a stopped call never publishes.
+Both functions retain the constant's declaration span; the wrapper call uses the
+body's root span and publication/return use the declaration span. Helpers are
+private, never in module exports or the Core call-name index. Entry-name uniqueness
+includes these appended functions. Their counts, registers and blocks obey the
+same limits as ordinary functions. Global references are borrowed, becoming owned
+only through `dup` for a consuming operand or return; they never enter frame cleanup.
 
 Borrow inference builds ownership dependencies between parameters, aliases,
 merge results and call arguments. Returns, constructed fields, projections
@@ -1127,6 +1145,9 @@ Tail branches support references. Reconverging branches support stable
 literal/variable results but refuse path-local owners with E1055, including
 owned nested merges or consumed reference call arguments. Dropping those
 owners alone would leave `moved` versus `undefined` states at the join.
+Path-local aggregate global loads likewise require normalization: their slots
+would join as `borrowed` versus `undefined`. Scalar global loads already have
+stable initialized states and can reconverge.
 The allocator must normalize those states before lifting this staged refusal.
 Register names run from the binder's write through its body (parameters
 through the function), not through temporary initialization.
@@ -1147,7 +1168,8 @@ a register. E1015 names that limit before the writer runs. Register recycling
 and function splitting are not implemented yet, so this slice refuses a
 function that would cross the bound rather than emitting it for verification.
 The register-boundary test compiles a 65,533-element tuple at 65,535 registers
-and refuses one more element with E1013. Its one basic block keeps the test
+in both an ordinary function and a constant value function, and refuses one
+more element with E1013. Its one basic block keeps the test
 independent of verification's registers × blocks bound. A separate case/tail-call
 test loads a file one slot below that product bound and checks the compiler's
 own E1015 refusal just above it.
