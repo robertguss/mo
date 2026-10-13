@@ -13,7 +13,8 @@ static void entry_graph(void) {
     mo_arena_init(&syntax, 1 << 20);
     mo_arena_init(&arena, 4 << 20);
     MO_ASSERT(mo_sources_init(&sources) && mo_diags_init(&diags));
-    const char *text = "module Main\nfn identity(value: Int) : Int\nvalue\nend\n"
+    const char *text = "module Main\nfn identity(value: Int) : Int\n"
+                       "var copy = value\ncopy = 42\ncopy\nend\n"
                        "fn main() : Int\n42\nend\n";
     uint32_t file;
     struct mo_source_error error;
@@ -29,18 +30,30 @@ static void entry_graph(void) {
         CHECK(program->function_count == 2);
         CHECK(program->entry.function == 1 && program->entry.result == MO_ENTRY_STATUS);
         const struct mo_checked_function *identity = &program->functions[0];
-        CHECK(identity->parameter_count == 1 && identity->body.binding_count == 1);
-        if (identity->parameter_count == 1) {
+        CHECK(identity->parameter_count == 1 && identity->body.binding_count == 2);
+        if (identity->parameter_count == 1 && identity->body.binding_count == 2) {
             const struct mo_checked_binding *parameter = identity->parameters[0];
+            const struct mo_checked_binding *copy = &identity->body.bindings[1];
             CHECK(strcmp(parameter->name, "value") == 0);
             CHECK(strcmp(parameter->type->name, "Int") == 0 && !parameter->variable);
-            bool read = false;
-            for (uint32_t i = 0; i < identity->body.count; i++)
-                if (identity->body.items[i].syntax->kind == MO_S_NAME) {
-                    CHECK(identity->body.items[i].binding == parameter);
+            CHECK(strcmp(copy->name, "copy") == 0 && copy->variable);
+            CHECK(strcmp(copy->type->name, "Int") == 0);
+            bool read = false, initialized = false, assigned = false;
+            for (uint32_t i = 0; i < identity->body.count; i++) {
+                const struct mo_checked_expression *row = &identity->body.items[i];
+                if (row->syntax->kind == MO_S_NAME && row->binding == parameter)
                     read = true;
+                if (row->syntax->kind == MO_S_VAR || row->syntax->kind == MO_S_BIND) {
+                    CHECK(row->binding == copy);
+                    CHECK(row->operand_count == 1 && row->operands[0] < i);
+                    CHECK(row->assignment == (row->syntax->kind == MO_S_BIND));
+                    if (row->syntax->kind == MO_S_VAR)
+                        initialized = true;
+                    else
+                        assigned = true;
                 }
-            CHECK(read);
+            }
+            CHECK(read && initialized && assigned);
         }
         const struct mo_checked_body *body = &program->functions[program->entry.function].body;
         CHECK(body->root < body->count);

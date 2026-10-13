@@ -1930,6 +1930,11 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             (void)reported;
             return (struct value){0};
         }
+        if (p->checked && name->kind == MO_S_TUPLE) {
+            bool reported = unfinished(p);
+            (void)reported;
+            return (struct value){0};
+        }
         struct name_slot *s = name->kind == MO_S_NAME ? slot(p, name, false) : NULL;
         struct local *l = s == NULL ? NULL : s->active;
         bool assignment = l != NULL && l->variable && node->kind != MO_S_VAR;
@@ -1972,9 +1977,17 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         if (!assignment &&
             !(node->kind == MO_S_VAR ? bind(p, name, rhs.type, true) : binder(p, name, rhs.type)))
             return (struct value){0};
-        return (struct value){.type = native(p, "Unit", 0),
-                              .binding = assignment ? l->name : NULL,
-                              .never = rhs.never};
+        struct value result = graph(p,
+                                    (struct value){.type = native(p, "Unit", 0),
+                                                   .binding = assignment ? l->name : NULL,
+                                                   .bound = assignment ? l->binding : p->last,
+                                                   .never = rhs.never},
+                                    1);
+        if (p->checked && result.type != NULL) {
+            result.graph->operands[0] = rhs.note;
+            result.graph->output.assignment = assignment;
+        }
+        return result;
     }
     case MO_S_BINARY:
     case MO_S_RANGE: {
@@ -2335,7 +2348,8 @@ static MO_MUST_USE struct value infer(struct inference *p, const struct mo_synta
     if (p->checked && node->kind != MO_S_SEQUENCE && node->kind != MO_S_EXPR_STMT &&
         node->kind != MO_S_GROUP && node->kind != MO_S_INT && node->kind != MO_S_DECIMAL &&
         node->kind != MO_S_CHAR && node->kind != MO_S_TEXT && node->kind != MO_S_TRUE &&
-        node->kind != MO_S_FALSE && node->kind != MO_S_NAME) {
+        node->kind != MO_S_FALSE && node->kind != MO_S_NAME && node->kind != MO_S_VAR &&
+        node->kind != MO_S_BIND) {
         bool reported = unfinished(p);
         (void)reported;
         p->depth--;
@@ -2780,7 +2794,8 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
             rows[n->index].type = n->output.type;
             rows[n->index].operands = operands;
             rows[n->index].never = n->output.never;
-            if (n->output.syntax->kind == MO_S_NAME) {
+            enum mo_syntax_kind kind = n->output.syntax->kind;
+            if (kind == MO_S_NAME || kind == MO_S_VAR || kind == MO_S_BIND) {
                 rows[n->index].symbol = n->output.symbol;
                 if (n->binding != NULL) {
                     MO_ASSERT(n->binding->binding_index < binding_count);
