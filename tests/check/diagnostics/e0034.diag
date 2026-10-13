@@ -1,0 +1,6 @@
+E0034 2.1
+0:16..23
+a module's file can't be read
+Every module is found from its name under the root folder (reference 2.1).
+tests/check/diagnostics/e0034/missing.mo
+fixes 0

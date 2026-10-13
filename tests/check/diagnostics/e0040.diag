@@ -1,0 +1,7 @@
+E0040 10.2
+0:19..28
+a case is exposed without its type
+Exposing a type without (..) hides its fields or cases (reference 10.2).
+Ready
+secondary 0:35..41 declared or imported here
+fixes 0

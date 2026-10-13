@@ -1,0 +1,6 @@
+E0039 10.1
+0:19..25
+an exposed name doesn't exist
+A module's expose line lists its public names (reference 10.1).
+absent
+fixes 0

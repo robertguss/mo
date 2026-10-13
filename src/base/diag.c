@@ -1,8 +1,13 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "base/diag.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "base/buffer.h"
 #include "base/codes.h"
@@ -364,10 +369,24 @@ bool mo_sources_add_bytes(struct mo_sources *sources, const char *path, const ui
  * *error_out, when it can't. */
 static bool read_file(const char *path, struct mo_buffer *scratch,
                       struct mo_source_error *error_out) {
-    errno = 0;
-    FILE *file = fopen(path, "rb");
-    if (file == NULL) {
+    int fd = open(path, O_RDONLY | O_NONBLOCK);
+    if (fd < 0) {
         return refuse(error_out, MO_SOURCE_UNREADABLE, errno);
+    }
+    struct stat status;
+    int inspected = fstat(fd, &status);
+    if (inspected != 0 || !S_ISREG(status.st_mode)) {
+        int problem = inspected != 0 ? errno : EINVAL;
+        if (close(fd) != 0)
+            problem = errno;
+        return refuse(error_out, MO_SOURCE_UNREADABLE, problem);
+    }
+    FILE *file = fdopen(fd, "rb");
+    if (file == NULL) {
+        int problem = errno;
+        if (close(fd) != 0)
+            problem = errno;
+        return refuse(error_out, MO_SOURCE_UNREADABLE, problem);
     }
     uint8_t piece[READ_SIZE];
     struct mo_source_error error = {.problem = MO_SOURCE_UNREADABLE, .system_error = 0};

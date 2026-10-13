@@ -1,0 +1,6 @@
+E0035 2.1
+0:7..12
+the module's name doesn't match its file
+Each part of a module's name becomes a lowercase folder or file name with hyphens between words (reference 2.1).
+wrong.mo
+fixes 0

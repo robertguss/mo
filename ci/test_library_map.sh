@@ -154,6 +154,18 @@ case $output in
 *) fail "the check passed the good tree but counted wrongly:" "$output" ;;
 esac
 
+# The same independently specified table tests the C converter and the map.
+while read -r module expected; do
+	good_tree
+	printf '\n## %s\n\n| Function | Where | Implemented by | Why |\n| --- | --- | --- | --- |\n| `convert` | Mo | `lib/%s` | |\n' \
+		"$module" "$expected" >>"$tree/$map"
+	status=0
+	output=$(sh "$check" "$tree" 2>&1) || status=$?
+	if [ "$status" -ne 0 ]; then
+		fail "module path $module -> $expected was refused:" "$output"
+	fi
+done <"$(dirname "$check")/../tests/module_paths.tsv"
+
 refuses $map '| `abs` | primitive | `INT_ABS` | |' '| `abs` | primitive | `INT_ABSOLUTE` | |' \
 	"$map:12" 'INT_ABSOLUTE is no line of'
 refuses $map '| `abs` | primitive | `INT_ABS` | |' '' "$prims:5" 'INT_ABS has no primitive row'

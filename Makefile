@@ -45,8 +45,8 @@ BASE_SOURCES := $(filter src/base/%,$(LIB_SOURCES))
 SOURCE_LIST := build/sources
 TEST_SOURCES := $(wildcard tests/test_*.c)
 FUZZ_SOURCES := $(wildcard fuzz/fuzz_*.c)
-C_FILES := $(wildcard src/*/*.c src/*/*.h src/core/*.def tests/*.c tests/*.h fuzz/*.c grammar/*.c grammar/*.h)
-TIDY_FILES := $(wildcard src/*/*.c tests/*.c fuzz/*.c grammar/*.c)
+C_FILES := $(wildcard src/*/*.c src/*/*.h src/core/*.def tests/*.c tests/*.h fuzz/*.c grammar/*.c grammar/*.h ci/*.c)
+TIDY_FILES := $(wildcard src/*/*.c tests/*.c fuzz/*.c grammar/*.c ci/*.c)
 
 # The executable grammar (grammar/): Bison builds its parser from grammar/mo.y. The code Bison
 # writes doesn't meet Mo's own warning flags, so it gets the plain ones. Of src/, the grammar
@@ -129,6 +129,7 @@ fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test
 			if [ "$$base" = fuzz_bytecode_io ]; then cp $(FUZZ_BUILD)/bytecode-fixtures/*.bc $$corpus/; fi; \
 			if [ "$$name" = fuzz_core_text ] || [ "$$name" = fuzz_core_check ] || [ "$$name" = fuzz_codegen ]; then \
 				cp tests/core/*.core fuzz/corpus/fuzz_core_text/*.core $$corpus/; fi; \
+			if [ "$$name" = fuzz_check ]; then cp tests/check/diagnostics/e*.mo $$corpus/; fi; \
 			if [ "$$name" = fuzz_syntax ]; then cp grammar/tests/good/*.mo grammar/tests/bad/*.mo examples/*.mo $$corpus/; fi; \
 			if [ "$$name" = fuzz_syntax ]; then \
 				awk 'BEGIN { printf "x = 0"; for (i = 0; i < 30000; i++) printf " +\n1"; print "" }' >$$corpus/flat-binary.mo; \
@@ -159,9 +160,9 @@ deps:
 # docs/design/library.md against the tables it maps, src/base/prims.def and src/base/hostops.def,
 # which ci/library_map.sh reads. Its test runs first, to show that the check catches each kind of
 # disagreement it must refuse.
-library-map:
-	sh ci/test_library_map.sh
-	sh ci/library_map.sh
+library-map: $(BUILD)/debug/module-path
+	MO_MODULE_PATH="$(abspath $(BUILD)/debug/module-path)" sh ci/test_library_map.sh
+	MO_MODULE_PATH="$(abspath $(BUILD)/debug/module-path)" sh ci/library_map.sh
 
 # cert-err33-c flags a call to a standard-library function whose result is ignored, such as
 # fflush or fprintf: the functions on CERT rule ERR33-C's list, which does not include printf,
@@ -195,6 +196,9 @@ $(SOURCE_LIST): FORCE
 	@echo '$(LIB_SOURCES)' | cmp -s - $@ || echo '$(LIB_SOURCES)' >$@
 
 $(BUILD)/debug/mo: $(call objects,$(BUILD)/debug,$(LIB_SOURCES) $(MAIN_SOURCE))
+	$(CC) $(DEBUG) $^ -o $@
+
+$(BUILD)/debug/module-path: $(BUILD)/debug/ci/module_path.o $(call objects,$(BUILD)/debug,$(BASE_SOURCES))
 	$(CC) $(DEBUG) $^ -o $@
 
 $(BUILD)/sanitize/mo: $(call objects,$(BUILD)/sanitize,$(LIB_SOURCES) $(MAIN_SOURCE))

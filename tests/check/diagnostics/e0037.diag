@@ -1,0 +1,6 @@
+E0037 10.3
+0:7..11
+a program can't declare a library module's name
+A program can't declare a module with a library module's name (reference 10.3).
+Json
+fixes 0

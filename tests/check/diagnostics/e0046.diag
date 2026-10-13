@@ -1,0 +1,6 @@
+E0046 10.3
+0:22..26
+the imported name doesn't exist
+Use brings in names declared by the module (reference 10.3).
+totl
+fixes 0

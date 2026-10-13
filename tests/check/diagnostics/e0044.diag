@@ -1,0 +1,10 @@
+E0044 10.3
+0:22..27
+a case is imported without its type
+Importing a choice type brings its exposed cases with it (reference 10.3).
+Ready
+secondary 1:114..120 the owning choice type
+fixes 1
+import the choice type instead
+0:22..27
+"Choice"

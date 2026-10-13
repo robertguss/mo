@@ -1,0 +1,7 @@
+E0047 10.2
+0:23..28
+the choice's cases are hidden
+Exposing a type without (..) hides its fields or cases (reference 10.2).
+Ready
+secondary 1:33..39 the owning choice type
+fixes 0

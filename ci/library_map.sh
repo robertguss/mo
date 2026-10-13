@@ -34,6 +34,13 @@ for file in "$map" "$prims" "$hostops"; do
 	fi
 done
 
+if [ -z "${MO_MODULE_PATH:-}" ]; then
+	repo=$(cd "$(dirname "$0")/.." && pwd)
+	make -s -C "$repo" build/cc/debug/module-path CC=cc
+	MO_MODULE_PATH=$repo/build/cc/debug/module-path
+	export MO_MODULE_PATH
+fi
+
 awk -v prims="$prims" -v hostops="$hostops" -v map="$map" '
 function trim(text) {
 	sub(/^[ \t]+/, "", text)
@@ -67,16 +74,22 @@ function backticked(text, tokens,    n, start, rest) {
 	return n
 }
 
-# The file of a module, as reference 2.1 names it: file-error.mo for FileError.
-function module_file(name,    file, i, c) {
-	file = ""
-	for (i = 1; i <= length(name); i++) {
-		c = substr(name, i, 1)
-		if (i > 1 && c ~ /[A-Z]/)
-			file = file "-"
-		file = file tolower(c)
+# The compiler owns module spelling; the map must not implement a second rule.
+function module_file(name,    command, file, status) {
+	if (name in module_paths)
+		return module_paths[name]
+	if (name !~ /^[A-Z][A-Za-z0-9]*([.][A-Z][A-Za-z0-9]*)*$/) {
+		problem(map ":" FNR, "invalid module name " name)
+		return ""
 	}
-	return "lib/" file ".mo"
+	command = "\"$MO_MODULE_PATH\" \"" name "\""
+	status = (command | getline file)
+	if (close(command) != 0 || status != 1) {
+		problem(map ":" FNR, "module path conversion failed for " name)
+		return ""
+	}
+	module_paths[name] = "lib/" file
+	return module_paths[name]
 }
 
 # The name of the function a row is about, from the first text in backticks in its Function

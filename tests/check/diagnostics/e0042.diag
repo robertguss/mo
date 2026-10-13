@@ -1,0 +1,7 @@
+E0042 5.1
+0:16..21
+the functions don't have different local receiver types
+Two functions share a name only when their first parameters are different types declared in that module (reference 5.1).
+total
+secondary 0:48..53 declared or imported here
+fixes 0

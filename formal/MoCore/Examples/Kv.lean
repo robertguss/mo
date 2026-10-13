@@ -12,11 +12,11 @@ namespace MoCore.Examples.Kv
 
 open MoCore DSL Lib
 
-/-- `struct Entry  value: Text  expires: Option(Time)  end` -/
-def Entry : DataDecl := record "Entry" [("value", tText), ("expires", tOpt tTime)]
+/-- `struct Item  value: Text  expires: Option(Time)  end` -/
+def Item : DataDecl := record "Item" [("value", tText), ("expires", tOpt tTime)]
 
-/-- `struct Store  entries: Map(Text, Entry)  end` -/
-def Store : DataDecl := record "Store" [("entries", tMap tText Entry.ty)]
+/-- `struct Store  entries: Map(Text, Item)  end` -/
+def Store : DataDecl := record "Store" [("entries", tMap tText Item.ty)]
 
 /-- ```
 enum Command
@@ -52,7 +52,7 @@ def ParseError : DataDecl :=
 def cmdRes : Ty := tRes Command.ty ParseError.ty
 def stepTy : Ty := tTup [Store.ty, Reply.ty]
 def entries (e : Expr) : Expr := get Store "entries" e
-def emop (op : MapOp) (args : List Expr) : Expr := mop tText Entry.ty op args
+def emop (op : MapOp) (args : List Expr) : Expr := mop tText Item.ty op args
 def okC (e : Expr) : Expr := ok_ Command.ty ParseError.ty e
 def failure (m : String) : Expr := mkC Reply "Failure" [str m]
 
@@ -60,7 +60,7 @@ def failure (m : String) : Expr := mkC Reply "Failure" [str m]
 def maxExpiry : ConstDecl := const "max_expiry" tInt (int 3153600000)
 
 /-- `empty_store = Store(entries: {})` -/
-def emptyStore : ConstDecl := const "empty_store" Store.ty (mk Store [emptyMap tText Entry.ty])
+def emptyStore : ConstDecl := const "empty_store" Store.ty (mk Store [emptyMap tText Item.ty])
 
 /-- `t0 = Time.parse("2026-10-12T09:00:00Z") or stop "the time is written correctly"` -/
 def t0 : ConstDecl :=
@@ -146,7 +146,7 @@ def buildCommand : FunDecl :=
 fn apply(store: Store, command: Command, now: Time) : (Store, Reply)
   live = without_expired(store, now)
   case command
-    Put(key: key, value: value): (put(live, key, Entry(value: value, expires: None)), Okay)
+    Put(key: key, value: value): (put(live, key, Item(value: value, expires: None)), Okay)
     Get(key: key):
       case live.entries.get(key)
         Some(entry): (live, Value(entry.value))
@@ -168,10 +168,10 @@ def apply : FunDecl :=
     lets [("live", call "without_expired" [v "store", v "now"])] <|
       .case_ (v "command")
         [("Put", ["key", "value"],
-           tup [call "put" [v "live", v "key", mk Entry [v "value", none_ tTime]], mkC Reply "Okay" []]),
+           tup [call "put" [v "live", v "key", mk Item [v "value", none_ tTime]], mkC Reply "Okay" []]),
          ("Get", ["key"],
            caseOpt (emop .get [entries (v "live"), v "key"]) "entry"
-             (tup [v "live", mkC Reply "Value" [get Entry "value" (v "entry")]])
+             (tup [v "live", mkC Reply "Value" [get Item "value" (v "entry")]])
              (tup [v "live", mkC Reply "NoValue" []])),
          ("Del", ["keys"],
            lets [("after", v "live")] <|
@@ -184,7 +184,7 @@ def apply : FunDecl :=
 
 /-- ```
 fn increment(store: Store, key: Text) : (Store, Reply)
-  entry = store.entries.get(key) or Entry(value: "0", expires: None)
+  entry = store.entries.get(key) or Item(value: "0", expires: None)
   case entry.value.to_int
     None: (store, Failure(message: "the value is not an integer"))
     Some(n):
@@ -200,11 +200,11 @@ end
 ``` -/
 def increment : FunDecl :=
   fn "increment" [("store", Store.ty), ("key", tText)] stepTy <|
-    lets [("entry", orElse (emop .get [entries (v "store"), v "key"]) (mk Entry [str "0", none_ tTime]))] <|
-      caseOpt (top .toInt [get Entry "value" (v "entry")]) "n"
+    lets [("entry", orElse (emop .get [entries (v "store"), v "key"]) (mk Item [str "0", none_ tTime]))] <|
+      caseOpt (top .toInt [get Item "value" (v "entry")]) "n"
         (caseOpt (iop .checkedAdd [v "n", int 1]) "more"
           (lets [("updated", v "entry"),
-                 ("updated", setField Entry "value" (v "updated") (intText (v "more")))] <|
+                 ("updated", setField Item "value" (v "updated") (intText (v "more")))] <|
             tup [call "put" [v "store", v "key", v "updated"], mkC Reply "Count" [v "more"]])
           (tup [v "store", failure "the increment would overflow"]))
         (tup [v "store", failure "the value is not an integer"])
@@ -234,7 +234,7 @@ def expire : FunDecl :=
           (tup [mk Store [emop .remove [entries (v "store"), v "key"]], mkC Reply "Count" [int 1]])
           (caseOpt (prim (.time .checkedAdd) [v "now", iop .seconds [v "ttl"]]) "at"
             (lets [("timed", v "entry"),
-                   ("timed", setField Entry "expires" (v "timed") (some_ tTime (v "at")))] <|
+                   ("timed", setField Item "expires" (v "timed") (some_ tTime (v "at")))] <|
               tup [call "put" [v "store", v "key", v "timed"], mkC Reply "Count" [int 1]])
             (tup [v "store", failure "invalid expire time"])))
         (tup [v "store", mkC Reply "Count" [int 0]])
@@ -254,10 +254,10 @@ Iterating a map visits its `(key, value)` entries in insertion order. -/
 def withoutExpired : FunDecl :=
   fn "without_expired" [("store", Store.ty), ("now", tTime)] Store.ty <|
     lets [("kept", v "store")] <|
-      forList "w" (tTup [tText, Entry.ty]) "%ke" (emop .entries [entries (v "store")])
+      forList "w" (tTup [tText, Item.ty]) "%ke" (emop .entries [entries (v "store")])
         [("kept", Store.ty)] [v "kept"]
         (lets [("key", fst (v "%ke")), ("entry", snd (v "%ke"))] <|
-          caseOpt (get Entry "expires" (v "entry")) "at"
+          caseOpt (get Item "expires" (v "entry")) "at"
             (ite (cmp .time .le (v "at") (v "now"))
               (nextRound "w" [setField Store "entries" (v "kept") (emop .remove [entries (v "kept"), v "key"])])
               (nextRound "w" [v "kept"]))
@@ -265,12 +265,12 @@ def withoutExpired : FunDecl :=
         (v "kept")
 
 /-- ```
-fn put(store: Store, key: Text, entry: Entry) : Store
+fn put(store: Store, key: Text, entry: Item) : Store
   Store(entries: store.entries.set(key, entry))
 end
 ``` -/
 def put : FunDecl :=
-  fn "put" [("store", Store.ty), ("key", tText), ("entry", Entry.ty)] Store.ty <|
+  fn "put" [("store", Store.ty), ("key", tText), ("entry", Item.ty)] Store.ty <|
     mk Store [emop .set [entries (v "store"), v "key", v "entry"]]
 
 /-- ```
@@ -326,25 +326,25 @@ def describe : FunDecl :=
 
 /-- ```
 fn holding(key: Text, value: Text, expires: Option(Time)) : Store
-  Store(entries: {key: Entry(value: value, expires: expires)})
+  Store(entries: {key: Item(value: value, expires: expires)})
 end
 ``` -/
 def holding : FunDecl :=
   fn "holding" [("key", tText), ("value", tText), ("expires", tOpt tTime)] Store.ty <|
-    mk Store [mapOf tText Entry.ty [(v "key", mk Entry [v "value", v "expires"])]]
+    mk Store [mapOf tText Item.ty [(v "key", mk Item [v "value", v "expires"])]]
 
 /-- apply: "a store never holds a key past its expiry"
 `result.0.entries.values.all?(fn(entry) entry.expires is Some(at) implies at > now end)` -/
 def applyKeepsLive : FunDecl :=
   promiseFn "apply.promise.1" [("store", Store.ty), ("command", Command.ty), ("now", tTime), ("result", stepTy)]
-    [allL Entry.ty (emop .values [entries (fst (v "result"))])
-      (lam [("entry", Entry.ty)]
-        (caseOpt (get Entry "expires" (v "entry")) "at" (cmp .time .gt (v "at") (v "now")) tt))]
+    [allL Item.ty (emop .values [entries (fst (v "result"))])
+      (lam [("entry", Item.ty)]
+        (caseOpt (get Item "expires" (v "entry")) "at" (cmp .time .gt (v "at") (v "now")) tt))]
 
 def program : Program :=
-  wholeProgram "Kv" "main" [Entry, Store, Command, Reply, ParseError] [maxExpiry, emptyStore, t0]
+  wholeProgram "Kv" "main" [Item, Store, Command, Reply, ParseError] [maxExpiry, emptyStore, t0]
     [replyText, parse, buildCommand, apply, increment, expire,
-     withoutExpired, put, mainFn, describe, holding, applyKeepsLive, Lib.all Entry.ty]
+     withoutExpired, put, mainFn, describe, holding, applyKeepsLive, Lib.all Item.ty]
 
 /-- The checker accepts the program; `decide +kernel` has the kernel run it. -/
 theorem checked : wellTyped? program = true := by decide +kernel
