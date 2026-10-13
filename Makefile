@@ -3,6 +3,7 @@
 #   make              build build/<compiler>/debug/mo
 #   make test         build and run the unit tests
 #   make sanitize     run the tests under AddressSanitizer and UndefinedBehaviorSanitizer
+#   make host-rename-stress  stress both resolvers against concurrent renames, also sanitized
 #   make fuzz-smoke   run every fuzz target briefly (needs clang with libFuzzer)
 #   make format       format the C sources with clang-format
 #   make deps         check that each module includes only what architecture section 2 allows
@@ -83,7 +84,7 @@ UBSAN_OPTIONS ?= halt_on_error=1:print_stacktrace=1
 export ASAN_OPTIONS UBSAN_OPTIONS
 
 .PHONY: all test sanitize fuzz fuzz-smoke format format-check deps library-map tidy grammar formal \
-	clean FORCE
+	host-rename-stress clean FORCE
 
 all: $(BUILD)/debug/mo
 
@@ -117,6 +118,11 @@ test: $(DEBUG_TESTS) $(BUILD)/debug/mo
 sanitize: $(SANITIZE_TESTS) $(BUILD)/sanitize/mo
 	@for t in $(SANITIZE_TESTS); do $$t || exit 1; done
 	@$(BUILD)/sanitize/mo --version >/dev/null
+
+# Timing-dependent stress stays a separate target, not a unit-test gate.
+host-rename-stress: $(BUILD)/debug/tests/host_rename_stress.test $(BUILD)/sanitize/tests/host_rename_stress.test
+	$(BUILD)/debug/tests/host_rename_stress.test
+	$(BUILD)/sanitize/tests/host_rename_stress.test
 
 # The grammar checks run on the debug build, then again under the sanitizers.
 grammar: $(BUILD)/debug/mo-grammar $(BUILD)/sanitize/mo-grammar
@@ -288,6 +294,26 @@ $(BUILD)/debug/tests/test_host_resolver.test: $(BUILD)/debug/tests/test_host_res
 	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
 
 $(BUILD)/sanitize/tests/test_host_resolver.test: $(BUILD)/sanitize/tests/test_host_resolver.o $(call objects,$(BUILD)/sanitize,$(filter-out $(HOST_RESOLVER_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/host-resolver/%.o,$(HOST_RESOLVER_SOURCES))
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
+# As above, substitute only the translation units owning native host calls.
+# Neither the ordinary host objects nor the fixture's heap use these wrappers.
+HOST_FAULT_SOURCES := src/host/host.c src/host/random.c src/host/console.c src/host/real-files.c
+HOST_FAULT_RENAMES := -Dclock_gettime=mo_host_fault_clock -Dgetentropy=mo_host_fault_entropy \
+	-Dread=mo_host_fault_read -Dwrite=mo_host_fault_write -Dwritev=mo_host_fault_writev \
+	-Dpoll=mo_host_fault_poll -Dftruncate=mo_host_fault_truncate
+$(BUILD)/debug/host-faults/%.o: src/%.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) $(HOST_FAULT_RENAMES) -c $< -o $@
+
+$(BUILD)/sanitize/host-faults/%.o: src/%.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) $(HOST_FAULT_RENAMES) -c $< -o $@
+
+$(BUILD)/debug/tests/test_host_faults.test: $(BUILD)/debug/tests/test_host_faults.o $(call objects,$(BUILD)/debug,$(filter-out $(HOST_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/debug/host-faults/%.o,$(HOST_FAULT_SOURCES))
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/tests/test_host_faults.test: $(BUILD)/sanitize/tests/test_host_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out $(HOST_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/host-faults/%.o,$(HOST_FAULT_SOURCES))
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
 $(FUZZ_BUILD)/bin/%: $(FUZZ_BUILD)/fuzz/%.o $(call objects,$(FUZZ_BUILD),$(LIB_SOURCES))
