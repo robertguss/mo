@@ -1,23 +1,46 @@
 #define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE 1
+#endif
 #include "host/files.h"
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
-#if defined(__linux__)
-#include <linux/openat2.h>
+#if defined(__linux__) && !defined(MO_HOST_NO_OPENAT2)
 #include <sys/syscall.h>
+#if defined(__has_include)
+#if __has_include(<linux/openat2.h>)
+#include <linux/openat2.h>
+#endif
+#endif
+#endif
+
+#if defined(SYS_openat2) && defined(RESOLVE_BENEATH)
+#define MO_HAVE_OPENAT2 1
 #endif
 
 void mo_host_close(int descriptor) {
     MO_ASSERT(descriptor >= 0);
-    /* Never retry close: Linux/macOS have released the descriptor even when
-     * interrupted. Cleanup cannot report delayed I/O errors; writes do. */
+    /* Do not retry close: the descriptor can already have been released. */
     int result = close(descriptor);
     MO_ASSERT(result == 0 || errno != EBADF);
+}
+
+static MO_MUST_USE int directory_flags(void) {
+#if defined(O_SEARCH)
+    return O_SEARCH | O_DIRECTORY | O_CLOEXEC;
+#elif defined(O_EXEC)
+    return O_EXEC | O_DIRECTORY | O_CLOEXEC;
+#elif defined(O_PATH)
+    return O_PATH | O_DIRECTORY | O_CLOEXEC;
+#else
+    return O_RDONLY | O_DIRECTORY | O_CLOEXEC;
+#endif
 }
 
 static MO_MUST_USE struct mo_file_error kind(enum mo_path_mode mode, const struct stat *st,
@@ -33,16 +56,42 @@ static MO_MUST_USE struct mo_file_error kind(enum mo_path_mode mode, const struc
 }
 
 static MO_MUST_USE int flags(enum mo_path_mode mode) {
+    int common = O_CLOEXEC | O_NONBLOCK | O_NOCTTY;
     if (mode == PATH_WRITE || mode == PATH_APPEND)
-        return O_WRONLY | O_CREAT | O_CLOEXEC | O_NONBLOCK | (mode == PATH_APPEND ? O_APPEND : 0);
-    return O_RDONLY | O_CLOEXEC | O_NONBLOCK;
+        return O_WRONLY | O_CREAT | common | (mode == PATH_APPEND ? O_APPEND : 0);
+    return O_RDONLY | common;
 }
 
-#if defined(__linux__)
-static MO_MUST_USE struct mo_file_error kernel(int root, const char *path, enum mo_path_mode mode,
-                                               struct mo_path_result *out, bool *handled) {
+static MO_MUST_USE struct mo_file_error portable(int root, const char *path, enum mo_path_mode mode,
+                                                 struct mo_path_result *out);
+
+#if defined(MO_HAVE_OPENAT2)
+static MO_MUST_USE long beneath(int root, const char *path, bool links) {
+    struct open_how how = {.flags = O_PATH | O_CLOEXEC,
+                           .resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS |
+                                      (links ? 0 : RESOLVE_NO_SYMLINKS)};
+    long opened;
+    do {
+        opened = syscall(SYS_openat2, root, path, &how, sizeof how);
+    } while (opened < 0 && errno == EINTR);
+    return opened;
+}
+
+static MO_MUST_USE struct mo_file_error kernel(struct mo_host *host, int root, const char *path,
+                                               enum mo_path_mode mode, struct mo_path_result *out,
+                                               bool *handled) {
     *handled = false;
-    if (mode == PATH_MAKE_FOLDER)
+    if (!host->kernel_probed) {
+        long probe = beneath(root, ".", false);
+        host->kernel_available =
+            probe >= 0 || (errno != ENOSYS && errno != EINVAL && errno != EPERM);
+        host->kernel_probed = true;
+        if (probe >= 0) {
+            MO_ASSERT(probe <= INT_MAX);
+            mo_host_close((int)probe);
+        }
+    }
+    if (!host->kernel_available || mode == PATH_MAKE_FOLDER)
         return (struct mo_file_error){.status = FILE_OK};
     char parent[MO_LIMIT_HOST_PATH_SIZE];
     const char *lookup = path[0] == '\0' ? "." : path;
@@ -55,44 +104,57 @@ static MO_MUST_USE struct mo_file_error kernel(int root, const char *path, enum 
             *slash = '\0';
         lookup = slash == NULL ? "." : parent;
     }
-    int open_flags = flags(mode);
-    if (mode == PATH_EXISTS || mode == PATH_FOLDER)
-        open_flags = O_PATH | O_CLOEXEC;
-    if (mode == PATH_REMOVE)
-        open_flags = O_RDONLY | O_DIRECTORY | O_CLOEXEC;
-    struct open_how how = {.flags = (uint64_t)(unsigned)open_flags,
-                           .mode = mode == PATH_WRITE || mode == PATH_APPEND ? 0666 : 0,
-                           .resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS};
-    long opened;
-    do {
-        opened = syscall(SYS_openat2, root, lookup, &how, sizeof how);
-    } while (opened < 0 && errno == EINTR);
-    if (opened < 0) {
-        int number = errno;
-        /* ELOOP can also mean a procfs magic link. Replay portably to distinguish
-         * a refused absolute target from an actual forty-link exhaustion. */
-        if (number == ENOSYS || number == EINVAL || number == EAGAIN || number == ELOOP)
-            return (struct mo_file_error){.status = FILE_OK};
-        *handled = true;
-        return mo_host_errno(number);
+    /* O_PATH cannot run a device driver. Classify the pinned object first;
+     * reopening our own retained descriptor cannot race a pathname replacement. */
+    long opened = beneath(root, lookup, false);
+    if (opened < 0 && errno == ELOOP) {
+        /* The kernel need not bound an expanded target plus its remaining
+         * path by Mo's buffer size. Apply Mo's link/length limits without
+         * opening the leaf for I/O, then pin beneath root with openat2.
+         * This checks path semantics, not whole-lookup ancestry or a snapshot. */
+        struct mo_path_result checked;
+        struct mo_file_error problem = portable(root, lookup, PATH_EXISTS, &checked);
+        if (problem.status == FILE_NOT_FOUND)
+            return (struct mo_file_error){.status = FILE_OK}; /* Creation uses the full walk. */
+        if (problem.status != FILE_OK) {
+            *handled = true;
+            return problem;
+        }
+        mo_host_close(checked.descriptor);
+        opened = beneath(root, lookup, true);
     }
-    *handled = true;
+    if (opened < 0) {
+        if (errno == EXDEV) {
+            *handled = true;
+            return (struct mo_file_error){.status = FILE_NOT_ALLOWED, .containment = true};
+        }
+        /* Portable expansion supplies stable kind/length/link errors, including
+         * ENOTDIR after a trailing-slash link and overlong expanded missing paths. */
+        return (struct mo_file_error){.status = FILE_OK};
+    }
     MO_ASSERT(opened <= INT_MAX);
     int fd = (int)opened;
     int inspected = mode == PATH_REMOVE ? fstatat(fd, out->name, &out->stat, AT_SYMLINK_NOFOLLOW)
                                         : fstat(fd, &out->stat);
     struct mo_file_error problem =
         inspected == 0 ? kind(mode, &out->stat, false) : mo_host_errno(errno);
-    if (problem.status == FILE_OK && mode == PATH_FOLDER) {
-        int directory = openat(fd, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-        if (directory < 0)
-            problem = mo_host_errno(errno);
-        mo_host_close(fd);
-        fd = directory;
-    }
-    if (problem.status != FILE_OK) {
-        if (fd >= 0)
+    if (problem.status == FILE_OK &&
+        (mode == PATH_READ || mode == PATH_WRITE || mode == PATH_APPEND)) {
+        char retained[64];
+        int n = snprintf(retained, sizeof retained, "/proc/self/fd/%d", fd);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof retained);
+        int actual = open(retained, flags(mode) & ~O_CREAT);
+        if (actual < 0) {
+            /* A Linux system without procfs still has the portable resolver. */
             mo_host_close(fd);
+            return (struct mo_file_error){.status = FILE_OK};
+        }
+        mo_host_close(fd);
+        fd = actual;
+    }
+    *handled = true;
+    if (problem.status != FILE_OK) {
+        mo_host_close(fd);
         return problem;
     }
     out->descriptor = fd;
@@ -100,26 +162,82 @@ static MO_MUST_USE struct mo_file_error kernel(int root, const char *path, enum 
 }
 #endif
 
-/* Directory-object authority, not an atomic namespace snapshot. Each opened
- * directory is authorized until this lookup ends; another process can move
- * it meanwhile. POSIX cannot prevent that reparenting. Link '..' pops these
- * recorded ancestors, never the object's possibly changed OS parent. */
+struct ancestor {
+    dev_t device;
+    ino_t inode;
+    size_t name;
+};
+
+static MO_MUST_USE bool step(uint32_t *steps) {
+    if (*steps == MO_LIMIT_PATH_STEPS)
+        return false;
+    (*steps)++;
+    return true;
+}
+
+static MO_MUST_USE struct mo_file_error replay(int root, const struct ancestor *ancestors,
+                                               const char *names, uint32_t depth, uint32_t *steps,
+                                               int *out) {
+    int current = root;
+    struct mo_file_error problem = {.status = FILE_OK};
+    for (uint32_t i = 0; i < depth; i++) {
+        if (!step(steps)) {
+            problem =
+                (struct mo_file_error){.status = FILE_FAILED, .reason = "MO_LIMIT_PATH_STEPS"};
+            break;
+        }
+        int next = openat(current, names + ancestors[i].name, directory_flags() | O_NOFOLLOW);
+        if (next < 0) {
+            problem =
+                (struct mo_file_error){.status = FILE_FAILED, .reason = "changed while being used"};
+            break;
+        }
+        struct stat st;
+        int inspected = fstat(next, &st);
+        if (inspected < 0 || st.st_dev != ancestors[i].device || st.st_ino != ancestors[i].inode) {
+            mo_host_close(next);
+            problem =
+                (struct mo_file_error){.status = FILE_FAILED, .reason = "changed while being used"};
+            break;
+        }
+        if (current != root)
+            mo_host_close(current);
+        current = next;
+    }
+    if (problem.status == FILE_OK)
+        *out = current;
+    else if (current != root)
+        mo_host_close(current);
+    return problem;
+}
+
+/* Directory-object authority, not an atomic namespace snapshot. Another process
+ * can reparent an opened object. For '..' we reconstruct from the retained root,
+ * never from an OS parent, with fresh authorization and saved identity checks.
+ * Concurrent inode reuse may authorize a replacement still reached from root.
+ * This is not a whole-lookup pre/post ancestry check. At most three temporary
+ * descriptors are live, independent of depth; replay shares the work bound. */
 static MO_MUST_USE struct mo_file_error portable(int root, const char *path, enum mo_path_mode mode,
                                                  struct mo_path_result *out) {
-    int ancestors[MO_LIMIT_HOST_PATH_SIZE / 2 + 1];
-    uint32_t depth = 0, links = 0, races = 0;
-    ancestors[0] = root;
-    char pending[MO_LIMIT_HOST_PATH_SIZE], component[MO_LIMIT_HOST_PATH_SIZE],
-        target[MO_LIMIT_HOST_PATH_SIZE];
+    struct ancestor ancestors[MO_LIMIT_HOST_PATH_SIZE / 2 + 1];
+    uint32_t depth = 0, links = 0, races = 0, steps = 0;
+    int current = root;
+    char names[MO_LIMIT_HOST_PATH_SIZE], pending[MO_LIMIT_HOST_PATH_SIZE],
+        component[MO_LIMIT_HOST_PATH_SIZE], target[MO_LIMIT_HOST_PATH_SIZE];
+    size_t name_size = 0, at = 0;
     memcpy(pending, path, strlen(path) + 1);
-    size_t at = 0;
     bool trailing_slash = false;
     struct mo_file_error problem = {.status = FILE_OK};
     for (;;) {
+        if (!step(&steps)) {
+            problem =
+                (struct mo_file_error){.status = FILE_FAILED, .reason = "MO_LIMIT_PATH_STEPS"};
+            break;
+        }
         while (pending[at] == '/')
             at++;
         if (pending[at] == '\0') {
-            int fd = fcntl(ancestors[depth], F_DUPFD_CLOEXEC, 0);
+            int fd = fcntl(current, F_DUPFD_CLOEXEC, 0);
             if (fd < 0) {
                 problem = mo_host_errno(errno);
                 break;
@@ -127,48 +245,82 @@ static MO_MUST_USE struct mo_file_error portable(int root, const char *path, enu
             int inspected = fstat(fd, &out->stat);
             problem =
                 inspected == 0 ? kind(mode, &out->stat, trailing_slash) : mo_host_errno(errno);
-            if (problem.status != FILE_OK) {
+            if (problem.status != FILE_OK)
                 mo_host_close(fd);
-                break;
+            else {
+                out->descriptor = fd;
+                memcpy(out->name, ".", 2);
             }
-            out->descriptor = fd;
-            memcpy(out->name, ".", 2);
             break;
         }
         size_t end = at;
         while (pending[end] != '\0' && pending[end] != '/')
             end++;
-        memcpy(component, pending + at, end - at);
-        component[end - at] = '\0';
+        size_t length = end - at;
+        memcpy(component, pending + at, length);
+        component[length] = '\0';
         size_t next = end;
         while (pending[next] == '/')
             next++;
         bool final = pending[next] == '\0';
+        if (final && pending[end] == '/')
+            trailing_slash = true;
         if (strcmp(component, ".") == 0) {
             at = next;
             continue;
         }
         if (strcmp(component, "..") == 0) {
             if (depth == 0) {
-                problem.status = FILE_NOT_ALLOWED;
+                problem = (struct mo_file_error){.status = FILE_NOT_ALLOWED, .containment = true};
                 break;
             }
-            mo_host_close(ancestors[depth--]);
+            name_size = ancestors[--depth].name;
+            /* Collapse a run of parent components before replay, so a deep
+             * descent followed by deep '..' is linear rather than quadratic. */
+            while (pending[next] == '.' && pending[next + 1] == '.' &&
+                   (pending[next + 2] == '/' || pending[next + 2] == '\0')) {
+                if (depth == 0) {
+                    problem =
+                        (struct mo_file_error){.status = FILE_NOT_ALLOWED, .containment = true};
+                    break;
+                }
+                if (!step(&steps)) {
+                    problem = (struct mo_file_error){.status = FILE_FAILED,
+                                                     .reason = "MO_LIMIT_PATH_STEPS"};
+                    break;
+                }
+                name_size = ancestors[--depth].name;
+                next += 2;
+                while (pending[next] == '/')
+                    next++;
+            }
+            if (problem.status != FILE_OK)
+                break;
+            if (current != root)
+                mo_host_close(current);
+            current = root;
+            problem = replay(root, ancestors, names, depth, &steps, &current);
+            if (problem.status != FILE_OK)
+                break;
             at = next;
             continue;
         }
         struct stat st;
-        int inspected = fstatat(ancestors[depth], component, &st, AT_SYMLINK_NOFOLLOW);
+        int inspected = fstatat(current, component, &st, AT_SYMLINK_NOFOLLOW);
         bool missing = inspected < 0 && errno == ENOENT;
         if (missing && mode == PATH_MAKE_FOLDER) {
-            if (mkdirat(ancestors[depth], component, 0777) != 0 && errno != EEXIST) {
+            if (mkdirat(current, component, 0777) != 0 && errno != EEXIST) {
                 problem = mo_host_errno(errno);
                 break;
             }
-            inspected = fstatat(ancestors[depth], component, &st, AT_SYMLINK_NOFOLLOW);
+            inspected = fstatat(current, component, &st, AT_SYMLINK_NOFOLLOW);
             missing = false;
         }
         bool creating = missing && final && (mode == PATH_WRITE || mode == PATH_APPEND);
+        if (creating && trailing_slash) {
+            problem = (struct mo_file_error){.status = FILE_FAILED, .reason = "not a folder"};
+            break;
+        }
         if (inspected < 0 && !creating) {
             problem = mo_host_errno(errno);
             break;
@@ -178,9 +330,7 @@ static MO_MUST_USE struct mo_file_error portable(int root, const char *path, enu
                 problem = (struct mo_file_error){.status = FILE_FAILED, .reason = "too many links"};
                 break;
             }
-            /* readlinkat writes no terminator. A full buffer means refusal;
-             * one byte less still fits pending with its terminator. */
-            ssize_t n = readlinkat(ancestors[depth], component, target, sizeof target);
+            ssize_t n = readlinkat(current, component, target, sizeof target);
             if (n < 0) {
                 if (errno == EINVAL && races++ < MO_LIMIT_PATH_LINKS)
                     continue;
@@ -188,21 +338,19 @@ static MO_MUST_USE struct mo_file_error portable(int root, const char *path, enu
                 break;
             }
             links++;
-            size_t length = (size_t)n, rest = strlen(pending + next);
-            if (length == 0 || target[0] == '/') {
-                problem.status = FILE_NOT_ALLOWED;
+            size_t size = (size_t)n, rest = strlen(pending + next);
+            if (size == 0 || target[0] == '/') {
+                problem = (struct mo_file_error){.status = FILE_NOT_ALLOWED, .containment = true};
                 break;
             }
-            if (length + (rest != 0 ? 1 : 0) + rest >= sizeof pending) {
+            if (size + (rest != 0 ? 1 : 0) + rest >= sizeof pending) {
                 problem = (struct mo_file_error){.status = FILE_FAILED, .reason = "path too long"};
                 break;
             }
-            if (final && target[length - 1] == '/')
-                trailing_slash = true;
-            memmove(pending + length + (rest != 0 ? 1 : 0), pending + next, rest + 1);
-            memcpy(pending, target, length);
+            memmove(pending + size + (rest != 0 ? 1 : 0), pending + next, rest + 1);
+            memcpy(pending, target, size);
             if (rest != 0)
-                pending[length] = '/';
+                pending[size] = '/';
             at = 0;
             continue;
         }
@@ -215,23 +363,26 @@ static MO_MUST_USE struct mo_file_error portable(int root, const char *path, enu
             if (problem.status != FILE_OK)
                 break;
             if (mode == PATH_REMOVE || mode == PATH_EXISTS) {
-                int fd = fcntl(ancestors[depth], F_DUPFD_CLOEXEC, 0);
+                int fd = fcntl(current, F_DUPFD_CLOEXEC, 0);
                 if (fd < 0) {
                     problem = mo_host_errno(errno);
                     break;
                 }
                 out->descriptor = fd;
                 out->stat = st;
-                memcpy(out->name, component, strlen(component) + 1);
+                memcpy(out->name, component, length + 1);
                 break;
             }
         }
-        int open_flags = final ? flags(mode) : O_RDONLY | O_DIRECTORY | O_CLOEXEC;
+        int open_flags = final ? flags(mode) : directory_flags();
         if (final && (mode == PATH_FOLDER || mode == PATH_MAKE_FOLDER))
-            open_flags |= O_DIRECTORY;
-        int fd = openat(ancestors[depth], component, open_flags | O_NOFOLLOW, 0666);
+            open_flags = directory_flags();
+        if (creating)
+            open_flags |= O_EXCL;
+        int fd = openat(current, component, open_flags | O_NOFOLLOW, 0666);
         if (fd < 0) {
-            if ((errno == ELOOP || errno == ENOTDIR) && races++ < MO_LIMIT_PATH_LINKS)
+            if ((errno == ELOOP || errno == ENOTDIR || (creating && errno == EEXIST)) &&
+                races++ < MO_LIMIT_PATH_LINKS)
                 continue;
             problem = mo_host_errno(errno);
             break;
@@ -251,16 +402,21 @@ static MO_MUST_USE struct mo_file_error portable(int root, const char *path, enu
             }
             break;
         }
-        if (depth + 1 == MO_LIMIT_HOST_PATH_SIZE / 2 + 1) {
+        if (depth == MO_LIMIT_HOST_PATH_SIZE / 2 || length + 1 > sizeof names - name_size) {
             mo_host_close(fd);
             problem = (struct mo_file_error){.status = FILE_FAILED, .reason = "path too long"};
             break;
         }
-        ancestors[++depth] = fd;
+        ancestors[depth++] = (struct ancestor){st.st_dev, st.st_ino, name_size};
+        memcpy(names + name_size, component, length + 1);
+        name_size += length + 1;
+        if (current != root)
+            mo_host_close(current);
+        current = fd;
         at = next;
     }
-    while (depth != 0)
-        mo_host_close(ancestors[depth--]);
+    if (current != root)
+        mo_host_close(current);
     return problem;
 }
 
@@ -269,10 +425,10 @@ struct mo_file_error mo_host_resolve(struct mo_host *host, int root, const char 
     MO_ASSERT(root >= 0);
     if (strlen(path) >= MO_LIMIT_HOST_PATH_SIZE)
         return (struct mo_file_error){.status = FILE_FAILED, .reason = "path too long"};
-#if defined(__linux__)
+#if defined(MO_HAVE_OPENAT2)
     if (!host->force_fallback) {
         bool handled;
-        struct mo_file_error problem = kernel(root, path, mode, out, &handled);
+        struct mo_file_error problem = kernel(host, root, path, mode, out, &handled);
         if (handled)
             return problem;
     }

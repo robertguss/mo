@@ -24,8 +24,16 @@ struct mo_host {
     uint32_t open_folders;
     int input, output, errors;
     bool force_fallback; /* C tests exercise the portable resolver on Linux. */
+    bool started, kernel_probed, kernel_available;
 };
 void mo_host_init(struct mo_host *host, const struct mo_host_types *types);
+/* Before running main, once per context and before starting threads. Changes
+ * process-wide SIGPIPE to ignored and raises the soft descriptor budget up to
+ * MO_LIMIT_OPEN_FOLDERS + 32 (never above its hard limit). C embedders calling
+ * real Console directly must call this, or arrange SIGPIPE handling themselves.
+ * NULL on success, otherwise a static internal-stop reason. Prints never change
+ * signal dispositions. Embedders may manage their descriptor budget themselves. */
+MO_MUST_USE const char *mo_host_start(struct mo_host *host);
 
 enum mo_host_outcome { MO_HOST_RETURNED, MO_HOST_OUT_OF_MEMORY, MO_HOST_BUG, MO_HOST_INTERNAL };
 struct mo_host_error {

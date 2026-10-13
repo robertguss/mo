@@ -244,6 +244,24 @@ $(BUILD)/debug/tests/test_vm_faults.test: $(BUILD)/debug/tests/test_vm_faults.o 
 $(BUILD)/sanitize/tests/test_vm_faults.test: $(BUILD)/sanitize/tests/test_vm_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out $(VM_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/vm-faults/%.o,$(VM_FAULT_SOURCES))
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
+# Only this test substitutes the resolver's native calls and lowers host read
+# limits. Heap builders and every other executable retain the production limits.
+HOST_RESOLVER_SOURCES := src/host/path.c src/host/console.c src/host/real-files.c
+HOST_RESOLVER_OPTIONS := -include tests/host_small_limits.h -Dreadlinkat=mo_host_resolver_readlink -Dsyscall=mo_host_resolver_syscall
+$(BUILD)/debug/host-resolver/%.o: src/%.c tests/host_small_limits.h Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) $(HOST_RESOLVER_OPTIONS) -c $< -o $@
+
+$(BUILD)/sanitize/host-resolver/%.o: src/%.c tests/host_small_limits.h Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) $(HOST_RESOLVER_OPTIONS) -c $< -o $@
+
+$(BUILD)/debug/tests/test_host_resolver.test: $(BUILD)/debug/tests/test_host_resolver.o $(call objects,$(BUILD)/debug,$(filter-out $(HOST_RESOLVER_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/debug/host-resolver/%.o,$(HOST_RESOLVER_SOURCES))
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/tests/test_host_resolver.test: $(BUILD)/sanitize/tests/test_host_resolver.o $(call objects,$(BUILD)/sanitize,$(filter-out $(HOST_RESOLVER_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/host-resolver/%.o,$(HOST_RESOLVER_SOURCES))
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
 $(FUZZ_BUILD)/bin/%: $(FUZZ_BUILD)/fuzz/%.o $(call objects,$(FUZZ_BUILD),$(LIB_SOURCES))
 	@mkdir -p $(dir $@)
 	$(FUZZ_CC) $(FUZZ) $^ -o $@ $(LDLIBS)

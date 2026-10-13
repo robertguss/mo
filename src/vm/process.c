@@ -187,6 +187,13 @@ enum mo_outcome mo_call_main(struct mo_process *process, uint32_t function,
               function < process->file->function_count && result_out != NULL && defect_out != NULL);
     const struct mo_bytecode_function *fn = &process->file->functions[function];
     MO_ASSERT(fn->kind == MO_FUNCTION_FUNCTION && fn->parameter_count <= MO_CAP_RANDOM + 1);
+    const char *setup = mo_host_start(&process->host);
+    if (setup != NULL) {
+        enum mo_outcome stopped =
+            mo_vm_stop(process, setup, NULL, false, mo_cell_unit(), MO_STOPPED);
+        *defect_out = process->defect;
+        return stopped;
+    }
     /* Construct before duplicating any owned argument, so refusal cannot leave
      * duplicates that have not yet entered a frame. Cached kinds remain owned. */
     for (uint32_t i = 0; i < fn->parameter_count; i++) {

@@ -2,8 +2,31 @@
 #include "host/files.h"
 
 #include <fcntl.h>
+#include <signal.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <time.h>
+
+const char *mo_host_start(struct mo_host *host) {
+    if (host->started)
+        return NULL;
+    struct rlimit budget;
+    if (getrlimit(RLIMIT_NOFILE, &budget) != 0)
+        return "internal error: descriptor budget unavailable";
+    rlim_t wanted = MO_LIMIT_OPEN_FOLDERS + 32u;
+    if (wanted > budget.rlim_max)
+        wanted = budget.rlim_max;
+    if (budget.rlim_cur < wanted) {
+        budget.rlim_cur = wanted;
+        if (setrlimit(RLIMIT_NOFILE, &budget) != 0)
+            return "internal error: descriptor budget unavailable";
+    }
+    struct sigaction action = {.sa_handler = SIG_IGN};
+    if (sigemptyset(&action.sa_mask) != 0 || sigaction(SIGPIPE, &action, NULL) != 0)
+        return "internal error: could not ignore SIGPIPE";
+    host->started = true;
+    return NULL;
+}
 
 #define OPERATIONS(fake_)                                                                          \
     {                                                                                              \

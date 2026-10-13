@@ -10,6 +10,7 @@ struct mo_file_error {
     enum mo_file_status status;
     const char *reason;
     int number;
+    bool containment; /* Only lexical/link escapes permanently forbid within. */
 };
 struct mo_folder {
     struct mo_host *owner;

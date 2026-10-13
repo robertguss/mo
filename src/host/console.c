@@ -2,8 +2,9 @@
 #include "host/internal.h"
 
 #include <errno.h>
-#include <signal.h>
+#include <poll.h>
 #include <string.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 struct console_input {
@@ -11,6 +12,21 @@ struct console_input {
     size_t position, length;
     bool ended;
 };
+
+static MO_MUST_USE bool ready(int fd, short events) {
+    struct pollfd item = {.fd = fd, .events = events};
+    int result;
+    do {
+        result = poll(&item, 1, -1);
+    } while (result < 0 && errno == EINTR);
+    if (result < 0)
+        return false;
+    if ((item.revents & POLLNVAL) != 0) {
+        errno = EBADF;
+        return false;
+    }
+    return true; /* HUP/ERR are handled by the next read/write. */
+}
 
 enum mo_host_outcome mo_host_console_real(struct mo_heap *heap, uint32_t type,
                                           struct mo_cell *out) {
@@ -53,8 +69,8 @@ static MO_MUST_USE bool lossy(struct mo_heap *heap, struct mo_scratch *scratch,
         bool valid;
         size_t count = subpart(bytes + at, length - at, &valid);
         size_t added = valid ? count : 3;
-        if (added > UINT32_MAX - size) {
-            errno = ENOSPC;
+        if (added > MO_LIMIT_VALUE_BYTES - size) {
+            errno = EOVERFLOW;
             return false;
         }
         size += added;
@@ -85,13 +101,22 @@ static MO_MUST_USE enum mo_host_outcome input(struct mo_host *host, struct mo_he
     uint8_t *bytes = NULL;
     size_t length = 0, capacity = 0;
     enum mo_host_outcome outcome = MO_HOST_OUT_OF_MEMORY;
+    int number;
     bool newline = false;
     for (;;) {
         if (in->position == in->length && !in->ended) {
             ssize_t n;
-            do {
+            for (;;) {
                 n = read(host->input, in->bytes, sizeof in->bytes);
-            } while (n < 0 && errno == EINTR);
+                if (n < 0 && errno == EINTR)
+                    continue;
+                if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) &&
+                    ready(host->input, POLLIN))
+                    continue;
+                if (n < 0 && errno == EBADF)
+                    n = 0; /* A closed stdin is end of input. */
+                break;
+            }
             if (n < 0) {
                 *error =
                     (struct mo_host_error){.reason = "internal error: console input unavailable"};
@@ -108,14 +133,15 @@ static MO_MUST_USE enum mo_host_outcome input(struct mo_host *host, struct mo_he
         size_t available = in->length - in->position;
         const uint8_t *end = memchr(start, '\n', available);
         size_t count = end == NULL ? available : (size_t)(end - start);
-        if (count > UINT32_MAX - length) {
-            errno = ENOSPC;
+        if (count > MO_LIMIT_VALUE_BYTES - length) {
+            errno = EOVERFLOW;
             goto done;
         }
         if (length + count > capacity) {
-            size_t next = capacity == 0 ? 256 : capacity;
+            size_t next = capacity == 0 ? (MO_LIMIT_VALUE_BYTES < 256 ? MO_LIMIT_VALUE_BYTES : 256)
+                                        : capacity;
             while (next < length + count)
-                next = next > UINT32_MAX / 2 ? UINT32_MAX : next * 2;
+                next = next > MO_LIMIT_VALUE_BYTES / 2 ? MO_LIMIT_VALUE_BYTES : next * 2;
             void *grown = mo_scratch_resize(&scratch, bytes, capacity, next);
             if (grown == NULL)
                 goto done;
@@ -144,7 +170,10 @@ static MO_MUST_USE enum mo_host_outcome input(struct mo_host *host, struct mo_he
         mo_value_drop(heap, host->types->text, text);
     outcome = built ? MO_HOST_RETURNED : MO_HOST_OUT_OF_MEMORY;
 done:
+    number = errno;
     mo_scratch_free(&scratch);
+    if (outcome == MO_HOST_OUT_OF_MEMORY)
+        errno = number;
     return outcome;
 }
 
@@ -164,26 +193,30 @@ enum mo_host_outcome mo_host_console_fake(struct mo_host *host, struct mo_heap *
 static MO_MUST_USE enum mo_host_outcome output(struct mo_host *host, struct mo_cell text, int fd,
                                                struct mo_host_error *error) {
     (void)host;
-    struct sigaction action = {.sa_handler = SIG_IGN};
-    if (sigemptyset(&action.sa_mask) != 0 || sigaction(SIGPIPE, &action, NULL) != 0)
-        return mo_host_bug(error, "could not ignore SIGPIPE");
     size_t length;
     const uint8_t *bytes = mo_value_data(text, &length);
-    size_t at = 0;
-    while (at < length) {
-        ssize_t n = write(fd, bytes + at, length - at);
+    /* One writev preserves atomic lines up to PIPE_BUF, including their LF.
+     * POSIX iovec lacks const; neither writev nor this loop changes the bytes. */
+    struct iovec pieces[] = {{(void *)(uintptr_t)bytes, length}, {(void *)(uintptr_t) "\n", 1}};
+    unsigned at = length == 0 ? 1u : 0u;
+    while (at < 2) {
+        ssize_t n = writev(fd, pieces + at, (int)(2 - at));
         if (n < 0 && errno == EINTR)
+            continue;
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && ready(fd, POLLOUT))
             continue;
         if (n <= 0)
             return mo_host_bug(error, "printing to an output that is gone");
-        at += (size_t)n;
+        size_t used = (size_t)n;
+        while (at < 2 && used >= pieces[at].iov_len) {
+            used -= pieces[at].iov_len;
+            at++;
+        }
+        if (at < 2) {
+            pieces[at].iov_base = (uint8_t *)pieces[at].iov_base + used;
+            pieces[at].iov_len -= used;
+        }
     }
-    ssize_t n;
-    do {
-        n = write(fd, "\n", 1);
-    } while (n < 0 && errno == EINTR);
-    if (n != 1)
-        return mo_host_bug(error, "printing to an output that is gone");
     return MO_HOST_RETURNED;
 }
 

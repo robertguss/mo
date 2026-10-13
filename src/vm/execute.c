@@ -352,6 +352,9 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             struct mo_host_error error;
             enum mo_host_outcome outcome = mo_host_call(
                 &p->host, p->heap, a[1], fn->register_types[a[0]], arguments, &value, &error);
+            if (outcome == MO_HOST_OUT_OF_MEMORY && errno == EOVERFLOW)
+                return mo_vm_stop(p, "running out of memory: MO_LIMIT_VALUE_BYTES", NULL, false,
+                                  mo_cell_unit(), MO_STOPPED);
             if (outcome == MO_HOST_OUT_OF_MEMORY)
                 return memory(p);
             if (outcome != MO_HOST_RETURNED)

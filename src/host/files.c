@@ -22,7 +22,7 @@ struct mo_file_error mo_host_normalize(struct mo_cell value, char *out, size_t *
     size_t length;
     const uint8_t *bytes = mo_value_data(value, &length);
     if (length == 0)
-        return (struct mo_file_error){.status = FILE_NOT_ALLOWED};
+        return (struct mo_file_error){.status = FILE_NOT_ALLOWED, .containment = true};
     size_t written = 0, at = 0;
     while (at < length) {
         size_t end = at;
@@ -30,10 +30,10 @@ struct mo_file_error mo_host_normalize(struct mo_cell value, char *out, size_t *
             end++;
         size_t n = end - at;
         if (n == 0 || (end == length - 1 && bytes[end] == '/'))
-            return (struct mo_file_error){.status = FILE_NOT_ALLOWED};
+            return (struct mo_file_error){.status = FILE_NOT_ALLOWED, .containment = true};
         if (n == 2 && bytes[at] == '.' && bytes[at + 1] == '.') {
             if (written == 0)
-                return (struct mo_file_error){.status = FILE_NOT_ALLOWED};
+                return (struct mo_file_error){.status = FILE_NOT_ALLOWED, .containment = true};
             while (written != 0 && out[written - 1] != '/')
                 written--;
             if (written != 0)

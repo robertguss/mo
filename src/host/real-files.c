@@ -127,7 +127,7 @@ static MO_MUST_USE enum mo_host_outcome narrow(struct mo_host *host, struct mo_h
             return MO_HOST_OUT_OF_MEMORY;
         }
     }
-    bool forbidden = original->forbidden || problem.status == FILE_NOT_ALLOWED;
+    bool forbidden = original->forbidden || problem.containment;
     enum mo_host_outcome result =
         capability(host, heap, type, fd, state, pending ? &prefix : NULL, forbidden, out, error);
     if (pending) {
@@ -150,7 +150,7 @@ static MO_MUST_USE enum mo_host_outcome read_file(struct mo_host *host, struct m
     bool ok = true;
     for (;;) {
         if (used == capacity) {
-            if (capacity == UINT32_MAX) {
+            if (capacity == MO_LIMIT_VALUE_BYTES) {
                 uint8_t extra;
                 ssize_t n = read(fd, &extra, 1);
                 if (n < 0 && errno == EINTR)
@@ -160,14 +160,14 @@ static MO_MUST_USE enum mo_host_outcome read_file(struct mo_host *host, struct m
                 if (n < 0)
                     problem = mo_host_errno(errno);
                 else {
-                    errno = ENOSPC;
+                    errno = EOVERFLOW; /* Runtime representation, not the heap budget. */
                     ok = false;
                 }
                 break;
             }
-            size_t next = capacity == 0               ? 256
-                          : capacity > UINT32_MAX / 2 ? UINT32_MAX
-                                                      : capacity * 2;
+            size_t next = capacity == 0 ? (MO_LIMIT_VALUE_BYTES < 256 ? MO_LIMIT_VALUE_BYTES : 256)
+                          : capacity > MO_LIMIT_VALUE_BYTES / 2 ? MO_LIMIT_VALUE_BYTES
+                                                                : capacity * 2;
             void *grown = mo_scratch_resize(&scratch, bytes, capacity, next);
             if (grown == NULL) {
                 ok = false;
@@ -197,7 +197,10 @@ static MO_MUST_USE enum mo_host_outcome read_file(struct mo_host *host, struct m
             ok = true;
         }
     }
+    int number = errno;
     mo_scratch_free(&scratch);
+    if (!ok)
+        errno = number;
     if (!ok)
         return MO_HOST_OUT_OF_MEMORY;
     if (problem.status != FILE_OK)
@@ -370,7 +373,10 @@ static MO_MUST_USE enum mo_host_outcome call(struct mo_host *host, struct mo_hea
                       ? mo_host_file_ok(host, heap, type, mo_cell_unit(), out)
                       : mo_host_file_error(host, heap, type, args[1], problem, out);
     }
+    int number = errno;
     mo_host_close(fd);
+    if (outcome == MO_HOST_OUT_OF_MEMORY)
+        errno = number;
     return outcome;
 }
 
@@ -394,13 +400,16 @@ enum mo_host_outcome mo_host_real_files_call(struct mo_host *host, struct mo_hea
             }
         }
         problem = memchr(bytes, '\0', length) != NULL
-                      ? (struct mo_file_error){.status = FILE_NOT_ALLOWED}
+                      ? (struct mo_file_error){.status = FILE_NOT_ALLOWED, .containment = true}
                       : mo_host_normalize(args[1], path, &length);
         if (problem.status != FILE_OK)
             path[0] = '\0';
     }
     enum mo_host_outcome outcome =
         call(host, heap, operation, type, args, out, error, path, problem);
+    int number = errno;
     mo_scratch_free(&scratch);
+    if (outcome == MO_HOST_OUT_OF_MEMORY)
+        errno = number;
     return outcome;
 }

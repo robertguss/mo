@@ -828,15 +828,27 @@ it is given. It never calls the operating system itself.
   and paths whose `..` would leave the capability's root are refused;
   `a/../b` resolves to `b`. The normalized path is then resolved beneath the
   root, following symbolic links only while they stay inside (D236). Where
-  the system has `openat2`, `RESOLVE_BENEATH` does exactly that. Elsewhere
-  the VM resolves one component at a time with `openat` and `O_NOFOLLOW`;
+  the system has usable `openat2`, `RESOLVE_BENEATH` does exactly that. A
+  feature probe treats `ENOSYS`, `EINVAL` and seccomp's `EPERM` as unavailable;
+  builds without the kernel headers or syscall number also use the fallback.
+  Elsewhere the VM resolves one component at a time with `openat` and `O_NOFOLLOW`;
   when a component is a link, it reads it with `readlinkat`, refuses an
   absolute target, and resolves the target from the link's folder in the same
   way, refusing any step that would leave the root. Either way a path passes
   through at most `MO_LIMIT_PATH_LINKS` links. The capability's folder is the
   directory object held open, not its pathname. Each directory opened during
   a lookup is authorized for that operation; `..`, including in a link target,
-  pops a recorded traversal ancestor and never climbs above that root object.
+  never climbs above that root object. In the portable resolver, popping `..`
+  re-resolves the parent from the capability's folder; after another process
+  replaces an ancestor, the lookup may reach the replacement, which is still
+  inside the folder. This is fresh authorization from the retained root, not
+  a walk through an OS parent. Saved component device/inode identities are
+  checked during replay; a mismatch is a concurrent change reported transiently
+  as `Failed(path, "changed while being used")`, not `NotAllowed`. Inode reuse
+  under concurrent replacement cannot portably preserve exact ancestor identity.
+  The lookup-wide `MO_LIMIT_PATH_STEPS` budget (4,194,304 component steps,
+  including replay) bounds the extra work; exhaustion gives
+  `Failed(path, "MO_LIMIT_PATH_STEPS")`, a limit refusal, not a bug.
   Mo's own resolution never leaves its directory-object authority through
   links or `..`. Another process may rename an intermediate directory during
   the lookup, which may then follow that object to its new location. Preventing
@@ -853,10 +865,19 @@ it is given. It never calls the operating system itself.
   checks a path's kind itself rather than trusting `errno`, since systems
   differ, as macOS's `unlink` of a folder gives `EPERM`. Real reads and writes
   refuse a non-regular, non-folder object with "not a regular file" rather
-  than reading a device or blocking on a pipe. Outside these kind and native
-  representation guards, failures carry the system's message.
+  than reading a device or blocking on a pipe. Linux pins the resolved object
+  with `O_PATH` and classifies it before opening it for I/O, then reopens the
+  retained descriptor through `/proc/self/fd` with `O_NOCTTY`. Without procfs
+  it uses the portable resolver. Portable traversal uses search-only directory
+  descriptors where the system supplies them (`O_SEARCH`, `O_EXEC` or `O_PATH`).
+  A trailing-slash link target is checked before creating a missing file.
+  Outside these kind and native representation guards, failures carry the
+  system's message.
   Native resolution uses at most `MO_LIMIT_HOST_PATH_SIZE` bytes, including
   the terminator; an expanded path past it gives `Failed(path, "path too long")`.
+  The Linux fast path first resolves without links; if links are present it
+  applies Mo's expansion/link limits with the portable walk before pinning the
+  result with `openat2`. This is a path-semantics check, not an ancestry check.
   POSIX cannot name a file with NUL, so real paths containing it are refused
   with `NotAllowed`. Fakes keep exact Text bytes, including NUL, as Core does,
   and use charged dynamic path storage rather than the native path bound.
@@ -866,15 +887,29 @@ it is given. It never calls the operating system itself.
   rather than a lossy name that cannot identify that entry.
   A missing narrowed root retains its parent capability and binds when that
   parent later makes the folder. Every retained parent is older than its
-  child, preserving acyclicity. Once bound, the handle keeps that directory
-  object. Persistent real handles, including deferred ones, count against
-  `MO_LIMIT_OPEN_FOLDERS`; temporary traversal descriptors are bounded by the
-  native path length and closed when the operation ends.
-- **Console.** The runtime ignores `SIGPIPE`. Writing to a closed output
-  returns `EPIPE`, which is a bug with status 70: "printing to an output that
-  is gone" (reference 13.2). A real print appends a line feed; a fake records
-  the unchanged argument as one list entry. Real input replaces each maximal
+  child, preserving acyclicity. Permission refusal is retryable; only a
+  containment refusal permanently makes a narrowed capability reach nothing.
+  Once bound, the handle keeps that directory object. Persistent real handles,
+  including deferred ones, count against `MO_LIMIT_OPEN_FOLDERS`; portable
+  traversal keeps at most three temporary
+  descriptors regardless of depth, and closes them when the operation ends.
+  At main's startup, `mo_host_start` raises the process's soft descriptor limit
+  towards `MO_LIMIT_OPEN_FOLDERS + 32`, never past its hard limit. A lower hard
+  limit can still refuse opening a handle or a temporary descriptor.
+- **Console.** Main's startup calls `mo_host_start` once per context, before
+  starting threads, to ignore process-wide `SIGPIPE`. C embedders calling real
+  Console directly must call it, or arrange their own signal handling and
+  descriptor budget. Printing never changes a signal disposition. Writing to
+  a closed output returns `EPIPE`, which is a bug with status 70: "printing to
+  an output that is gone" (reference 13.2). A real print appends a line feed;
+  a fake records the unchanged argument as one list entry. Real output uses
+  `writev` for the argument and LF together, so lines no larger than `PIPE_BUF` are atomic on
+  a pipe. Non-blocking input and output wait with `poll` on `EAGAIN` and retry;
+  a closed stdin is end of input. Real input replaces each maximal
   invalid UTF-8 subpart with U+FFFD and removes LF or CRLF, not a bare CR.
+  Reads and line input use the runtime `MO_LIMIT_VALUE_BYTES` representation
+  bound, not a source-file size bound. Exceeding it names that limit; charged
+  scratch or value allocations exhausting the process heap name `--max-heap`.
 - **Random.** `Random.seeded(n)` and the real `Random` use xoshiro256**,
   seeded through SplitMix64. `int(low, high)` uses Lemire's method, which is
   unbiased. So a seeded sequence is the same on every machine, and stays so

@@ -233,6 +233,13 @@
  * usually gets, leaving room for the files the program reads and writes. */
 #define MO_LIMIT_OPEN_FOLDERS 256
 
+/* Lookup-wide component attempts, including portable ancestor reconstruction.
+ * A refusal is Failed naming this limit, not a language bug. Test builds may
+ * lower it to exercise exhaustion without millions of system calls. */
+#ifndef MO_LIMIT_PATH_STEPS
+#define MO_LIMIT_PATH_STEPS (1U << 22)
+#endif
+
 /* Type-ability preparation has a work cap. Runtime printing uses its caller's
  * output budget; equality, ordering and hashing have no work cap. Scratch uses the remaining heap.
  * Insertion grows its index after this probe bound; searches probe to empty.

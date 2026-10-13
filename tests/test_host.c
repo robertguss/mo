@@ -1,4 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE 1
+#endif
 #include "host/host.h"
 #include "host_fixture.h"
 #include "test.h"
@@ -6,10 +9,14 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static void test_console(struct heap_fixture *f) {
@@ -259,7 +266,71 @@ static void test_real_files(bool portable) {
                "Entry(name: \"slash\", kind: Link)])");
         expect(&f, MO_HOST_FILES_READ_TEXT, f.result_text, files, "fifo", "",
                "Error(Failed(path: \"fifo\", reason: \"not a regular file\"))");
+        expect(&f, MO_HOST_FILES_WRITE_TEXT, f.result_unit, files, "fifo", "x",
+               "Error(Failed(path: \"fifo\", reason: \"not a regular file\"))");
         CHECK(unlinkat(directory, "fifo", 0) == 0);
+        int socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        MO_ASSERT(socket_fd >= 0);
+        struct sockaddr_un address = {.sun_family = AF_UNIX};
+        int address_size = snprintf(address.sun_path, sizeof address.sun_path, "%s/socket", path);
+        MO_ASSERT(address_size > 0 && (size_t)address_size < sizeof address.sun_path &&
+                  bind(socket_fd, (const struct sockaddr *)&address, sizeof address) == 0);
+        expect(&f, MO_HOST_FILES_READ_TEXT, f.result_text, files, "socket", "",
+               "Error(Failed(path: \"socket\", reason: \"not a regular file\"))");
+        expect(&f, MO_HOST_FILES_WRITE_TEXT, f.result_unit, files, "socket", "x",
+               "Error(Failed(path: \"socket\", reason: \"not a regular file\"))");
+        CHECK(close(socket_fd) == 0 && unlinkat(directory, "socket", 0) == 0);
+        CHECK(symlinkat("newdir/", directory, "missing-slash") == 0);
+        expect(&f, MO_HOST_FILES_WRITE_TEXT, f.result_unit, files, "missing-slash", "x",
+               "Error(Failed(path: \"missing-slash\", reason: \"not a folder\"))");
+        struct stat absent;
+        CHECK(fstatat(directory, "newdir", &absent, AT_SYMLINK_NOFOLLOW) < 0 && errno == ENOENT);
+        CHECK(unlinkat(directory, "missing-slash", 0) == 0);
+        expect(&f, MO_HOST_FILES_WRITE_TEXT, f.result_unit, files, "slash", "x",
+               "Error(Failed(path: \"slash\", reason: \"not a folder\"))");
+        char long_target[4000];
+        memset(long_target, 'a', sizeof long_target - 1);
+        long_target[sizeof long_target - 1] = '\0';
+        if (symlinkat(long_target, directory, "long-rest") == 0) {
+            char long_path[129], expected[256];
+            memcpy(long_path, "long-rest/", 10);
+            memset(long_path + 10, 'b', 118);
+            long_path[128] = '\0';
+            int n = snprintf(expected, sizeof expected,
+                             "Error(Failed(path: \"%s\", reason: \"path too long\"))", long_path);
+            MO_ASSERT(n > 0 && (size_t)n < sizeof expected);
+            expect(&f, MO_HOST_FILES_READ_TEXT, f.result_text, files, long_path, "", expected);
+            CHECK(unlinkat(directory, "long-rest", 0) == 0);
+        } else
+            CHECK(errno == ENAMETOOLONG);
+        CHECK(mkdirat(directory, "search", 0700) == 0);
+        expect(&f, MO_HOST_FILES_WRITE_TEXT, f.result_unit, files, "search/f", "searchable",
+               "Ok(Unit)");
+        CHECK(fchmodat(directory, "search", 0311, 0) == 0);
+        expect(&f, MO_HOST_FILES_READ_TEXT, f.result_text, files, "search/f", "",
+               "Ok(\"searchable\")");
+        if (geteuid() != 0) {
+            CHECK(mkdirat(directory, "search/nest", 0700) == 0);
+            expect(&f, MO_HOST_FILES_WRITE_TEXT, f.result_unit, files, "search/nest/f", "restored",
+                   "Ok(Unit)");
+            CHECK(fchmodat(directory, "search", 0000, 0) == 0);
+            struct mo_cell args[] = {files, host_text(&f, "search/nest")}, narrowed;
+            MO_ASSERT(mo_host_call(&f.host, f.heap, MO_HOST_FILES_WITHIN,
+                                   f.capabilities[MO_CAP_FILES], args, &narrowed,
+                                   &error) == MO_HOST_RETURNED);
+            expect(&f, MO_HOST_FILES_READ_TEXT, f.result_text, narrowed, "f", "",
+                   "Error(NotAllowed(path: \"f\"))");
+            CHECK(fchmodat(directory, "search", 0755, 0) == 0);
+            expect(&f, MO_HOST_FILES_READ_TEXT, f.result_text, narrowed, "f", "",
+                   "Ok(\"restored\")");
+            mo_value_drop(f.heap, f.capabilities[MO_CAP_FILES], narrowed);
+            mo_value_drop(f.heap, f.types.text, args[1]);
+            CHECK(unlinkat(directory, "search/nest/f", 0) == 0 &&
+                  unlinkat(directory, "search/nest", AT_REMOVEDIR) == 0);
+        }
+        CHECK(fchmodat(directory, "search", 0755, 0) == 0 &&
+              unlinkat(directory, "search/f", 0) == 0 &&
+              unlinkat(directory, "search", AT_REMOVEDIR) == 0);
         expect(&f, MO_HOST_FILES_WRITE_TEXT, f.result_unit, files, "deep", "",
                "Error(Failed(path: \"deep\", reason: \"is a folder\"))");
         expect(&f, MO_HOST_FILES_APPEND_TEXT, f.result_unit, files, "deep", "",
@@ -301,8 +372,20 @@ static void test_real_files(bool portable) {
             expect(&f, MO_HOST_FILES_READ_TEXT, f.result_text, files, "longest", "",
                    "Ok(\"hello!\")");
             CHECK(unlinkat(directory, "longest", 0) == 0);
+            longest[sizeof longest - 2] = '.';
+            CHECK(symlinkat(longest, directory, "longest") == 0);
+            expect(&f, MO_HOST_FILES_READ_TEXT, f.result_text, files, "longest/a", "",
+                   "Error(Failed(path: \"longest/a\", reason: \"path too long\"))");
+            CHECK(unlinkat(directory, "longest", 0) == 0);
         } else
             CHECK(errno == ENAMETOOLONG);
+        CHECK(symlinkat("new-file", directory, "create-link") == 0);
+        expect(&f, MO_HOST_FILES_WRITE_TEXT, f.result_unit, files, "create-link", "created",
+               "Ok(Unit)");
+        expect(&f, MO_HOST_FILES_READ_TEXT, f.result_text, files, "new-file", "",
+               "Ok(\"created\")");
+        CHECK(unlinkat(directory, "new-file", 0) == 0 &&
+              unlinkat(directory, "create-link", 0) == 0);
         /* macOS starts with 256 descriptors. Let this test reach Mo's limit
          * before the test process's unrelated descriptors reach the OS limit. */
         struct rlimit original, raised;
@@ -369,9 +452,16 @@ static void test_real_files(bool portable) {
     host_fixture_free(&f);
 }
 
+static volatile sig_atomic_t broken_outputs;
+static void broken_output(int signal_number) {
+    if (signal_number == SIGPIPE)
+        broken_outputs++;
+}
+
 static void test_real_console(void) {
     struct host_fixture f;
     host_fixture_init(&f, mo_limits_default().heap_size);
+    MO_ASSERT(mo_host_start(&f.host) == NULL);
     int input[2], output[2];
     MO_ASSERT(pipe(input) == 0 && pipe(output) == 0);
     f.host.input = input[0];
@@ -394,16 +484,237 @@ static void test_real_console(void) {
     char bytes[16];
     CHECK(read(output[0], bytes, sizeof bytes) == 6 && memcmp(bytes, "hello\n", 6) == 0);
     CHECK(close(output[0]) == 0);
+    struct sigaction handler = {.sa_handler = broken_output}, previous, observed;
+    MO_ASSERT(sigemptyset(&handler.sa_mask) == 0 && sigaction(SIGPIPE, &handler, &previous) == 0);
+    CHECK(mo_host_start(&f.host) == NULL); /* No repeated process-wide change. */
     result = mo_cell_int(19);
     CHECK(mo_host_call(&f.host, f.heap, MO_HOST_CONSOLE_PRINT, f.unit, args, &result, &error) ==
           MO_HOST_BUG);
     CHECK(mo_cell_get_int(result) == 19 &&
           strcmp(error.reason, "printing to an output that is gone") == 0);
+    CHECK(sigaction(SIGPIPE, NULL, &observed) == 0 && observed.sa_handler == broken_output &&
+          broken_outputs == 1);
+    CHECK(sigaction(SIGPIPE, &previous, NULL) == 0);
     mo_value_drop(f.heap, f.types.text, args[1]);
     mo_value_drop(f.heap, f.capabilities[MO_CAP_CONSOLE], console);
     CHECK(close(input[0]) == 0 && close(output[1]) == 0);
     CHECK(mo_heap_objects(f.heap) == 0);
     host_fixture_free(&f);
+}
+
+static void test_nonblocking_console(void) {
+    struct host_fixture f;
+    host_fixture_init(&f, mo_limits_default().heap_size);
+    MO_ASSERT(mo_host_start(&f.host) == NULL);
+    int output[2];
+    MO_ASSERT(pipe(output) == 0 && fcntl(output[1], F_SETFL, O_NONBLOCK) == 0);
+    char fill[4096];
+    memset(fill, 'P', sizeof fill);
+    size_t prefix = 0;
+    for (;;) {
+        ssize_t n = write(output[1], fill, sizeof fill);
+        if (n < 0) {
+            MO_ASSERT(errno == EAGAIN || errno == EWOULDBLOCK);
+            break;
+        }
+        MO_ASSERT(n > 0);
+        prefix += (size_t)n;
+    }
+    const size_t length = 200000;
+    pid_t child = fork();
+    MO_ASSERT(child >= 0);
+    if (child == 0) {
+        MO_ASSERT(close(output[1]) == 0);
+        size_t used = 0;
+        ssize_t n;
+        while ((n = read(output[0], fill, sizeof fill)) > 0) {
+            for (size_t i = 0; i < (size_t)n; i++) {
+                size_t at = used + i;
+                uint8_t expected = at < prefix             ? 'P'
+                                   : at == prefix + length ? '\n'
+                                                           : (uint8_t)('a' + (at - prefix) % 23);
+                CHECK((uint8_t)fill[i] == expected);
+            }
+            used += (size_t)n;
+        }
+        CHECK(n == 0 && used == prefix + length + 1 && close(output[0]) == 0);
+        _exit(mo_test_failures == 0 ? 0 : 1);
+    }
+    MO_ASSERT(close(output[0]) == 0);
+    f.host.output = output[1];
+    char *bytes = malloc(length);
+    MO_ASSERT(bytes != NULL);
+    for (size_t i = 0; i < length; i++)
+        bytes[i] = (char)('a' + i % 23);
+    struct mo_cell console, text, out;
+    struct mo_host_error error;
+    MO_ASSERT(mo_host_real(&f.host, f.heap, f.capabilities[MO_CAP_CONSOLE], NULL, -1, &console,
+                           &error) == MO_HOST_RETURNED &&
+              mo_value_text(f.heap, bytes, length, &text));
+    free(bytes);
+    struct mo_cell args[] = {console, text};
+    CHECK(mo_host_call(&f.host, f.heap, MO_HOST_CONSOLE_PRINT, f.unit, args, &out, &error) ==
+          MO_HOST_RETURNED);
+    CHECK(close(output[1]) == 0);
+    int status;
+    MO_ASSERT(waitpid(child, &status, 0) == child);
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    mo_value_drop(f.heap, f.types.text, text);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_CONSOLE], console);
+    int input[2];
+    MO_ASSERT(pipe(input) == 0 && fcntl(input[0], F_SETFL, O_NONBLOCK) == 0);
+    f.host.input = input[0];
+    child = fork();
+    MO_ASSERT(child >= 0);
+    if (child == 0) {
+        MO_ASSERT(close(input[0]) == 0 && write(input[1], "delayed\n", 8) == 8 &&
+                  close(input[1]) == 0);
+        _exit(0);
+    }
+    MO_ASSERT(close(input[1]) == 0);
+    MO_ASSERT(mo_host_real(&f.host, f.heap, f.capabilities[MO_CAP_CONSOLE], NULL, -1, &console,
+                           &error) == MO_HOST_RETURNED);
+    expect(&f, MO_HOST_CONSOLE_READ_LINE, f.option, console, "", "", "Some(\"delayed\")");
+    expect(&f, MO_HOST_CONSOLE_READ_LINE, f.option, console, "", "", "None");
+    MO_ASSERT(waitpid(child, &status, 0) == child);
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0 && close(input[0]) == 0);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_CONSOLE], console);
+    /* A fresh capability must turn EBADF, not just a buffered EOF, into None. */
+    MO_ASSERT(mo_host_real(&f.host, f.heap, f.capabilities[MO_CAP_CONSOLE], NULL, -1, &console,
+                           &error) == MO_HOST_RETURNED);
+    expect(&f, MO_HOST_CONSOLE_READ_LINE, f.option, console, "", "", "None");
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_CONSOLE], console);
+    CHECK(mo_heap_objects(f.heap) == 0);
+    host_fixture_free(&f);
+}
+
+static MO_MUST_USE unsigned descriptors(void) {
+    unsigned count = 0;
+    for (int fd = 0; fd < 128; fd++) {
+        int result = fcntl(fd, F_GETFD);
+        MO_ASSERT(result >= 0 || errno == EBADF);
+        count += result >= 0 ? 1u : 0u;
+    }
+    return count;
+}
+
+static void test_deep_path(bool portable) {
+    char temporary[] = "/tmp/mo-host-deep-XXXXXX";
+    MO_ASSERT(mkdtemp(temporary) != NULL);
+    int root = open(temporary, O_RDONLY | O_DIRECTORY | O_CLOEXEC), current = root;
+    MO_ASSERT(root >= 0);
+    int marker = openat(root, "marker", O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    MO_ASSERT(marker >= 0 && write(marker, "deep", 4) == 4 && close(marker) == 0 &&
+              symlinkat("marker", root, "up") == 0);
+    char target[604], path[2403];
+    for (unsigned i = 0; i < 200; i++)
+        memcpy(target + 3 * i, "../", 3);
+    memcpy(target + 600, "up", 3);
+    for (unsigned depth = 1; depth <= 1200; depth++) {
+        MO_ASSERT(mkdirat(current, "d", 0700) == 0);
+        int next = openat(current, "d", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        MO_ASSERT(next >= 0);
+        if (current != root)
+            MO_ASSERT(close(current) == 0);
+        current = next;
+        memcpy(path + 2 * (depth - 1), "d/", 2);
+        if (depth % 200 == 0)
+            MO_ASSERT(symlinkat(target, current, "up") == 0);
+    }
+    memcpy(path + 2400, "up", 3);
+    struct rlimit original;
+    MO_ASSERT(getrlimit(RLIMIT_NOFILE, &original) == 0 && original.rlim_cur >= 64);
+    struct rlimit lowered = original;
+    lowered.rlim_cur = 64;
+    MO_ASSERT(setrlimit(RLIMIT_NOFILE, &lowered) == 0);
+    struct host_fixture f;
+    host_fixture_init(&f, mo_limits_default().heap_size);
+    f.host.force_fallback = portable;
+    struct mo_cell files;
+    struct mo_host_error error;
+    MO_ASSERT(mo_host_real(&f.host, f.heap, f.capabilities[MO_CAP_FILES], NULL, root, &files,
+                           &error) == MO_HOST_RETURNED);
+    unsigned before = descriptors();
+    expect(&f, MO_HOST_FILES_READ_TEXT, f.result_text, files, path, "", "Ok(\"deep\")");
+    CHECK(descriptors() == before);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_FILES], files);
+    CHECK(mo_heap_objects(f.heap) == 0);
+    host_fixture_free(&f);
+    CHECK(setrlimit(RLIMIT_NOFILE, &original) == 0);
+    for (unsigned depth = 1200; depth != 0; depth--) {
+        if (depth % 200 == 0)
+            CHECK(unlinkat(current, "up", 0) == 0);
+        int parent = openat(current, "..", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        MO_ASSERT(parent >= 0 && close(current) == 0 && unlinkat(parent, "d", AT_REMOVEDIR) == 0);
+        current = parent;
+    }
+    CHECK(close(current) == 0 && unlinkat(root, "up", 0) == 0 && unlinkat(root, "marker", 0) == 0 &&
+          close(root) == 0 && rmdir(temporary) == 0);
+}
+
+static void test_large_input(bool portable) {
+    char path[] = "/tmp/mo-host-large-XXXXXX";
+    MO_ASSERT(mkdtemp(path) != NULL);
+    int folder = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    int fd = openat(folder, "large", O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    MO_ASSERT(folder >= 0 && fd >= 0);
+    char block[1000];
+    for (size_t i = 0; i < sizeof block; i++)
+        block[i] = (char)('a' + i % 23);
+    for (unsigned i = 0; i < 9000; i++)
+        MO_ASSERT(write(fd, block, sizeof block) == (ssize_t)sizeof block);
+    for (unsigned small = 0; small < 2; small++) {
+        struct host_fixture f;
+        host_fixture_init(&f, small == 0 ? (64u << 20) : (8u << 20));
+        f.host.force_fallback = portable;
+        struct mo_cell files, console, out = mo_cell_int(99);
+        struct mo_host_error error;
+        MO_ASSERT(mo_host_real(&f.host, f.heap, f.capabilities[MO_CAP_FILES], NULL, folder, &files,
+                               &error) == MO_HOST_RETURNED);
+        struct mo_cell args[] = {files, host_text(&f, "large")};
+        enum mo_host_outcome result = mo_host_call(&f.host, f.heap, MO_HOST_FILES_READ_TEXT,
+                                                   f.result_text, args, &out, &error);
+        if (small == 0) {
+            CHECK(result == MO_HOST_RETURNED && mo_cell_get_tag(out) == 0);
+            size_t length;
+            const uint8_t *data = mo_value_data(mo_cell_get_payload(out), &length);
+            CHECK(length == 9000000);
+            for (size_t i = 0; i < length; i++)
+                if (data[i] != (uint8_t)block[i % sizeof block]) {
+                    CHECK(false);
+                    break;
+                }
+            mo_value_drop(f.heap, f.result_text, out);
+        } else
+            CHECK(result == MO_HOST_OUT_OF_MEMORY && errno == ENOSPC && mo_cell_get_int(out) == 99);
+        MO_ASSERT(lseek(fd, 0, SEEK_SET) == 0);
+        f.host.input = fd;
+        MO_ASSERT(mo_host_real(&f.host, f.heap, f.capabilities[MO_CAP_CONSOLE], NULL, -1, &console,
+                               &error) == MO_HOST_RETURNED);
+        out = mo_cell_int(99);
+        result = mo_host_call(&f.host, f.heap, MO_HOST_CONSOLE_READ_LINE, f.option, &console, &out,
+                              &error);
+        if (small == 0) {
+            CHECK(result == MO_HOST_RETURNED && mo_cell_get_tag(out) == 1);
+            size_t length;
+            const uint8_t *data = mo_value_data(mo_cell_get_payload(out), &length);
+            CHECK(length == 9000000);
+            for (size_t i = 0; i < length; i++)
+                if (data[i] != (uint8_t)block[i % sizeof block]) {
+                    CHECK(false);
+                    break;
+                }
+            mo_value_drop(f.heap, f.option, out);
+        } else
+            CHECK(result == MO_HOST_OUT_OF_MEMORY && errno == ENOSPC && mo_cell_get_int(out) == 99);
+        mo_value_drop(f.heap, f.capabilities[MO_CAP_CONSOLE], console);
+        mo_value_drop(f.heap, f.capabilities[MO_CAP_FILES], files);
+        mo_value_drop(f.heap, f.types.text, args[1]);
+        CHECK(mo_heap_objects(f.heap) == 0);
+        host_fixture_free(&f);
+    }
+    CHECK(close(fd) == 0 && unlinkat(folder, "large", 0) == 0 && close(folder) == 0 &&
+          rmdir(path) == 0);
 }
 
 static void test_clock_random(void) {
@@ -703,6 +1014,11 @@ int main(int argc, char **argv) {
     test_real_files(false);
     test_real_files(true);
     test_real_console();
+    test_nonblocking_console();
+    test_deep_path(false);
+    test_deep_path(true);
+    test_large_input(false);
+    test_large_input(true);
     test_clock_random();
     test_empty_image();
     test_main_capabilities();

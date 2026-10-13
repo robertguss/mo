@@ -1150,8 +1150,8 @@ static void test_defects(void) {
             enum mo_outcome outcome = mo_call(p, 0, NULL, 0, &out, &defect);
             if (kind == 2) {
                 CHECK(outcome == MO_STOPPED);
-                CHECK(strcmp(defect.reason, "overflow: Int") == 0 &&
-                      mo_cell_get_int(out) == 99 && defect.frames->pc == 3);
+                CHECK(strcmp(defect.reason, "overflow: Int") == 0 && mo_cell_get_int(out) == 99 &&
+                      defect.frames->pc == 3);
             } else {
                 CHECK(outcome == MO_RETURNED);
                 mo_value_drop(mo_process_heap(p), 3, out);
