@@ -3,6 +3,7 @@
 
 #include "base/codes.h"
 
+#include <locale.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -155,6 +156,182 @@ static void long_line(void) {
     mo_sources_free(&sources);
 }
 
+static void utf8_display(void) {
+    /* Tabs, CJK, combining marks, paired regional indicators, skin tones and
+     * keycaps all have asymmetric byte/character/display-column counts. */
+    const char source[] = "a\té界é🇫🇷👍🏽1️⃣ Z\n";
+    struct mo_sources sources;
+    MO_ASSERT(mo_sources_init(&sources));
+    uint32_t file;
+    struct mo_source_error error;
+    MO_ASSERT(mo_sources_add_bytes(&sources, "café/main.mo", (const uint8_t *)source,
+                                   sizeof(source) - 1, &file, &error));
+    struct mo_label secondary[] = {{{file, 5, 6}, "inside UTF-8"},
+                                   {{file, 10, 18}, "flag"},
+                                   {{file, 18, 26}, "skin tone"},
+                                   {{file, 26, 33}, "keycap"}};
+    struct mo_diag d = {.code = MO_CODE_NAME_UNKNOWN,
+                        .message = "UTF-8 café",
+                        .primary = {{file, 34, 35}, "日本語"},
+                        .secondary = secondary,
+                        .secondary_count = 4};
+    struct mo_buffer out;
+    mo_buffer_init(&out, MO_CLI_DIAGNOSTIC_SIZE);
+    CHECK(mo_render_diagnostic(&sources, &d, false, &out));
+    MO_ASSERT(mo_buffer_append_byte(&out, 0));
+    const char *rendered = (const char *)out.bytes;
+    CHECK(strstr(rendered, "UTF-8 café  café/main.mo:1:15") != NULL);
+    CHECK(strstr(rendered, "  1 | a   é界é🇫🇷👍🏽1️⃣ Z\n") != NULL);
+    CHECK(strstr(rendered, "    |                ^ 日本語\n") != NULL);
+    CHECK(strstr(rendered, "    |      ^^ inside UTF-8\n") != NULL);
+    CHECK(strstr(rendered, "    |         ^^ flag\n") != NULL);
+    CHECK(strstr(rendered, "    |           ^^ skin tone\n") != NULL);
+    CHECK(strstr(rendered, "    |             ^^ keycap\n") != NULL);
+
+    /* Byte spans may start/end inside a cluster, not just inside a scalar. */
+    secondary[0] = (struct mo_label){{file, 8, 10}, "accent"};
+    secondary[1].span = (struct mo_span){file, 14, 18};
+    secondary[2].span = (struct mo_span){file, 22, 26};
+    secondary[3].span = (struct mo_span){file, 27, 33};
+    CHECK(mo_render_diagnostic(&sources, &d, false, &out));
+    MO_ASSERT(mo_buffer_append_byte(&out, 0));
+    CHECK(strstr((const char *)out.bytes, "    |        ^ accent\n") != NULL);
+    CHECK(strstr((const char *)out.bytes, "    |         ^^ flag\n") != NULL);
+    CHECK(strstr((const char *)out.bytes, "    |           ^^ skin tone\n") != NULL);
+    CHECK(strstr((const char *)out.bytes, "    |             ^^ keycap\n") != NULL);
+
+    /* At a one-cell remainder, a heart's text base fits but its emoji
+     * selector does not. Clip the entire grapheme, not just the selector. */
+    char clipped[156];
+    memset(clipped, 'A', 147);
+    memcpy(clipped + 147, "♥️X\n", 9);
+    MO_ASSERT(
+        mo_sources_add_bytes(&sources, "clipped.mo", (const uint8_t *)clipped, 155, &file, &error));
+    d.primary = (struct mo_label){{file, 0, 1}, NULL};
+    d.secondary_count = 0;
+    CHECK(mo_render_diagnostic(&sources, &d, false, &out));
+    MO_ASSERT(mo_buffer_append_byte(&out, 0));
+    CHECK(strstr((const char *)out.bytes, "♥") == NULL);
+    CHECK(strstr((const char *)out.bytes, "A...\n    | ^\n") != NULL);
+
+    struct mo_buffer row;
+    mo_buffer_init(&row, MO_LIMIT_FILE_SIZE);
+    const char *clusters[] = {"🇫🇷", "é"};
+    for (unsigned i = 0; i < 2; i++) {
+        mo_buffer_clear(&row);
+        for (unsigned j = 0; j < 120; j++)
+            MO_ASSERT(mo_buffer_append_text(&row, clusters[i]));
+        uint32_t focus = (uint32_t)row.length;
+        MO_ASSERT(mo_buffer_append_text(&row, "Z\n"));
+        MO_ASSERT(mo_sources_add_bytes(&sources, "left.mo", row.bytes, row.length, &file, &error));
+        d.primary.span = (struct mo_span){file, focus, focus + 1};
+        CHECK(mo_render_diagnostic(&sources, &d, false, &out));
+        MO_ASSERT(mo_buffer_append_byte(&out, 0));
+        CHECK(strstr((const char *)out.bytes, i == 0 ? "  1 | ...🇫🇷" : "  1 | ...é") != NULL);
+        CHECK(strstr((const char *)out.bytes, i == 0 ? "...🇷" : "...́") == NULL);
+        CHECK(strstr((const char *)out.bytes, i == 0 ? "    |                            ^\n"
+                                                     : "    |                ^\n") != NULL);
+    }
+    /* Reserve three bytes for elision: a 4093-byte cluster fits, but a
+     * 4095-byte cluster does not. Both still occupy just one display cell. */
+    for (unsigned count = 2046; count <= 2047; count++) {
+        mo_buffer_clear(&row);
+        MO_ASSERT(mo_buffer_append_byte(&row, 'a'));
+        for (unsigned i = 0; i < count; i++)
+            MO_ASSERT(mo_buffer_append_text(&row, "́"));
+        MO_ASSERT(mo_buffer_append_byte(&row, 'Z'));
+        MO_ASSERT(mo_sources_add_bytes(&sources, "cap.mo", row.bytes, row.length, &file, &error));
+        d.primary.span = (struct mo_span){file, 0, 1};
+        CHECK(mo_render_diagnostic(&sources, &d, false, &out));
+        MO_ASSERT(mo_buffer_append_byte(&out, 0));
+        CHECK(strstr((const char *)out.bytes, count == 2046 ? "  1 | á" : "  1 | ...\n") != NULL);
+        CHECK(strstr((const char *)out.bytes, "Z\n") == NULL);
+    }
+    /* A single oversized zero-width extension must elide the whole cluster,
+     * not defeat the byte cap or leave a dangling combining mark. */
+    mo_buffer_clear(&row);
+    MO_ASSERT(mo_buffer_append_byte(&row, 'a'));
+    for (unsigned i = 0; i < 30000; i++)
+        MO_ASSERT(mo_buffer_append_text(&row, "́"));
+    MO_ASSERT(mo_sources_add_bytes(&sources, "budget.mo", row.bytes, row.length, &file, &error));
+    d.primary.span = (struct mo_span){file, 1, (uint32_t)row.length};
+    CHECK(mo_render_diagnostic(&sources, &d, false, &out));
+    MO_ASSERT(mo_buffer_append_byte(&out, 0));
+    CHECK(strstr((const char *)out.bytes, "  1 | ...\n    | ^\n") != NULL);
+    CHECK(out.length < 256);
+    /* Context must not let that giant cluster hide a later, narrow span. */
+    MO_ASSERT(mo_buffer_append_byte(&row, 'Z'));
+    MO_ASSERT(mo_sources_add_bytes(&sources, "after.mo", row.bytes, row.length, &file, &error));
+    d.primary.span = (struct mo_span){file, (uint32_t)row.length - 1, (uint32_t)row.length};
+    CHECK(mo_render_diagnostic(&sources, &d, false, &out));
+    MO_ASSERT(mo_buffer_append_byte(&out, 0));
+    CHECK(strstr((const char *)out.bytes, "  1 | ...Z\n    |    ^\n") != NULL);
+    mo_buffer_free(&row);
+    mo_buffer_free(&out);
+    mo_sources_free(&sources);
+}
+
+static void ascii_locale(void) {
+    MO_ASSERT(setlocale(LC_CTYPE, "C") != NULL);
+    const uint8_t source[] = "a\téÛ\n";
+    struct mo_sources sources;
+    MO_ASSERT(mo_sources_init(&sources));
+    uint32_t file;
+    struct mo_source_error error;
+    MO_ASSERT(mo_sources_add_bytes(&sources, "café.mo", source, sizeof(source) - 1, &file, &error));
+    struct mo_edit edit = {{file, 2, 4}, "界"};
+    struct mo_fix fix = {"日本語", &edit, 1};
+    struct mo_diag d = {.code = MO_CODE_TOOL_UNAVAILABLE,
+                        .message = "José",
+                        .primary = {{file, 4, 6}, "Û"},
+                        .fixes = &fix,
+                        .fix_count = 1};
+    struct mo_buffer out;
+    mo_buffer_init(&out, MO_CLI_DIAGNOSTIC_SIZE);
+    CHECK(mo_render_diagnostic(&sources, &d, false, &out));
+    MO_ASSERT(mo_buffer_append_byte(&out, 0));
+    CHECK(strstr((const char *)out.bytes, "Jos\\u{0e9}  caf\\u{0e9}.mo:1:4") != NULL);
+    CHECK(strstr((const char *)out.bytes, "  1 | a   \\u{0e9}\\u{0db}\n") != NULL);
+    CHECK(strstr((const char *)out.bytes, "    |            ^^^^^^^ \\u{0db}\n") != NULL);
+    CHECK(strstr((const char *)out.bytes, "Fix: \\u{65e5}\\u{672c}\\u{8a9e}") != NULL);
+    CHECK(strstr((const char *)out.bytes, "  1 | a   \\u{754c}\\u{0db}\n") != NULL);
+    for (size_t i = 0; i < out.length; i++)
+        CHECK(out.bytes[i] < 128);
+    /* JSON stays UTF-8, independent of the terminal's encoding. */
+    CHECK(mo_render_diagnostic(&sources, &d, true, &out));
+    MO_ASSERT(mo_buffer_append_byte(&out, 0));
+    CHECK(strstr((const char *)out.bytes, "\"headline\":\"José\"") != NULL);
+    mo_buffer_free(&out);
+    mo_sources_free(&sources);
+}
+
+static void control_display(void) {
+    /* One member of every refused range, plus controls and an invalid byte.
+     * Their raw bytes must not reach the terminal even outside source rows. */
+    const char controls[] = "\x01\t\r\n\x7f\xff\xc2\x85\xc2\xad\xd8\x9c\xe1\xa0\x8e"
+                            "\xe2\x80\x8b\xe2\x80\xa8\xe2\x81\xa0\xe2\x81\xa6"
+                            "\xef\xbb\xbf\xef\xbf\xb9\xf3\xa0\x80\x81\xf3\xa0\x80\xa0";
+    struct mo_sources sources = {0};
+    struct mo_diag d = {.code = MO_CODE_TOOL_UNAVAILABLE,
+                        .message = controls,
+                        .primary = {{UINT32_MAX, 0, 0}, NULL}};
+    struct mo_buffer out;
+    mo_buffer_init(&out, MO_CLI_DIAGNOSTIC_SIZE);
+    CHECK(mo_render_diagnostic(&sources, &d, false, &out));
+    MO_ASSERT(mo_buffer_append_byte(&out, 0));
+    CHECK(strcmp((const char *)out.bytes,
+                 "error E1400: \\x01    \\x0d\\x0a\\x7f\\xff\\u{085}\\u{0ad}\\u{61c}\\u{180e}"
+                 "\\u{200b}\\u{2028}\\u{2060}\\u{2066}\\u{feff}\\u{fff9}\\u{e0001}\\u{e0020}"
+                 "  <unavailable>\n\n\n") == 0);
+    CHECK(mo_render_diagnostic(&sources, &d, true, &out));
+    MO_ASSERT(mo_buffer_append_byte(&out, 0));
+    CHECK(strstr((const char *)out.bytes,
+                 "\\u0001\\u0009\\u000d\\u000a\\u007f\\u00ff\\u0085\\u00ad\\u061c"
+                 "\\u180e\\u200b\\u2028\\u2060\\u2066\\ufeff\\ufff9"
+                 "\\udb40\\udc01\\udb40\\udc20") != NULL);
+    mo_buffer_free(&out);
+}
+
 static void split_crlf_fix(void) {
     struct mo_sources sources;
     MO_ASSERT(mo_sources_init(&sources));
@@ -239,6 +416,17 @@ static void sorted_output(void) {
 }
 
 int main(int argc, char *argv[]) {
+    /* Explicit UTF-8 test locale, including on macOS; production selects the
+     * user's locale instead. The C-locale regression runs last. */
+    const char *locales[] = {"C.UTF-8", "en_US.UTF-8", "UTF-8"};
+    bool utf8 = false;
+    for (unsigned i = 0; i < sizeof(locales) / sizeof(locales[0]); i++) {
+        if (setlocale(LC_CTYPE, locales[i]) != NULL) {
+            utf8 = true;
+            break;
+        }
+    }
+    MO_ASSERT(utf8);
     if (argc == 2 && strcmp(argv[1], "--render-bytes") == 0)
         return render_bytes() ? 0 : 1;
     if (argc == 2 &&
@@ -247,8 +435,11 @@ int main(int argc, char *argv[]) {
     parse_commands();
     limit_values();
     long_line();
+    utf8_display();
+    control_display();
     split_crlf_fix();
     omission();
     sorted_output();
+    ascii_locale();
     return mo_test_report("test_cli");
 }

@@ -35,4 +35,14 @@ MO_MUST_USE enum mo_prim_status mo_prim_call(struct mo_heap *heap, const struct 
 MO_MUST_USE bool mo_unicode16_display_width(const uint8_t *bytes, size_t length,
                                             uint64_t *width_out);
 
+/* First Unicode16.graphemes cluster of a valid UTF-8 span (a precondition),
+ * starting at a cluster boundary: text start or the previous cluster's end.
+ * Inspects/validates only that cluster and one lookahead scalar, not the suffix.
+ * No allocation, constant stack and work linear in the inspected prefix;
+ * repeated calls split a text in linear work. length_out is required. Returns
+ * false on empty input or malformed bytes encountered in the inspected prefix,
+ * leaving *length_out unchanged. bytes may be NULL only for empty input. */
+MO_MUST_USE bool mo_unicode16_next_grapheme(const uint8_t *bytes, size_t length,
+                                            size_t *length_out);
+
 #endif

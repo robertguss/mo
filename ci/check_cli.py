@@ -2,17 +2,30 @@
 """Black-box CLI contracts and goldens, with Python's real JSON parser."""
 import errno
 import json
+import locale
 import os
 import pathlib
+import resource
 import subprocess
 import sys
 import tempfile
 
 root = pathlib.Path(__file__).resolve().parent.parent
 
+# Select an installed UTF-8 locale for the raw-text regression, independently
+# of the CI shell's locale. C/POSIX/unavailable locales are tested separately.
+for utf8_locale in ("C.UTF-8", "en_US.UTF-8", "UTF-8"):
+    try:
+        locale.setlocale(locale.LC_CTYPE, utf8_locale)
+        break
+    except locale.Error:
+        pass
+else:
+    raise AssertionError("CLI display tests need an installed UTF-8 locale")
 
-def run(binary, args, status):
-    result = subprocess.run([str(binary), *args], cwd=root, capture_output=True, timeout=30)
+
+def run(binary, args, status, env=None):
+    result = subprocess.run([str(binary), *args], cwd=root, env=env, capture_output=True, timeout=30)
     assert result.returncode == status, (args, result.returncode, result.stderr)
     return result
 
@@ -27,6 +40,36 @@ def records(result, command):
     assert items[-1]["status"] == result.returncode
     assert items[-1]["errors"] == len(items) - 2
     return items
+
+
+def source_stack(binary, folder):
+    # This fixture exercises the entire precedence ladder at the source-depth
+    # boundary, not only nested brackets. The process stack stays small while
+    # loading, parsing and inference must use the explicit source-work stack.
+    path = folder / "main.mo"
+    header = ("module Main\nfn run(a: Bool, b: Bool, c: Bool, d: Range, e: Int, "
+              "f: Int, g: Int, h: fn(Bool) : Int) : Bool\n")
+
+    def small_stack():
+        _, hard = resource.getrlimit(resource.RLIMIT_STACK)
+        resource.setrlimit(resource.RLIMIT_STACK, (1 << 20, hard))
+
+    for depth, status in ((255, 0), (256, 1)):
+        path.write_text(header + "a implies b or c and not d == e .. f + g * -h(" * depth
+                        + "a" + ")" * depth + "\nend\n")
+        for json_mode in (False, True):
+            result = subprocess.run(
+                [str(binary), "check", *(["--json"] if json_mode else []), str(path)],
+                cwd=root, capture_output=True, timeout=30, preexec_fn=small_stack)
+            assert result.returncode == status, (depth, json_mode, result.returncode, result.stderr)
+            if json_mode:
+                items = records(result, "check")
+                assert items[-1]["errors"] == status and items[-1]["dropped"] == 0
+                if status:
+                    assert items[1]["code"] == "E1006"
+            else:
+                assert not result.stdout
+                assert (b"E1006" in result.stderr) if status else not result.stderr
 
 
 flags = {
@@ -47,6 +90,12 @@ flags = {
 
 def check(binary):
     driver = binary.parent / "tests/test_cli.test"
+    faults = binary.parent / "tests/test_cli_faults.test"
+    items = records(run(faults, ["--json"], 1), "check")
+    assert items[1]["code"] == "E1401" and items[-1]["dropped"] == 0
+    assert items[1]["primary"]["file"] is None and items[1]["section"] is None
+    failure = run(faults, ["--text"], 1)
+    assert not failure.stdout and b"E1401" in failure.stderr
     for stage in ("parse", "load", "modules", "signatures", "bodies", "fix", "multiline"):
         path = f"tests/cli/{stage}/main.mo"
         for json_mode in (False, True):
@@ -166,6 +215,41 @@ def check(binary):
     records(run(binary, ["check", "--json", "tests/cli/missing.mo"], 1), "check")
     with tempfile.TemporaryDirectory() as temp:
         folder = pathlib.Path(temp)
+        source_stack(binary, folder)
+        encoded = folder / "caf\u00e9-ascii"
+        encoded.mkdir()
+        path = encoded / "main.mo"
+        path.write_text('module Main\nfn run() : Int\n"Jos\u00e9 \u65e5\u672c\u8a9e \U0001f600\u00db"\nend\n',
+                        encoding="utf-8")
+        for terminal in ("C", "POSIX", "mo_locale_that_does_not_exist"):
+            result = subprocess.run([str(binary), "check", str(path)], cwd=root,
+                                    env={**os.environ, "LC_ALL": terminal},
+                                    capture_output=True, timeout=30)
+            assert result.returncode == 1 and not result.stdout
+            result.stderr.decode("ascii")
+            assert b"caf\\u{0e9}" in result.stderr and b"Jos\\u{0e9}" in result.stderr
+        unsafe = folder / "bad\u009b\u202e\U000e0001"
+        unsafe.mkdir()
+        path = unsafe / "main.mo"
+        path.write_text("module Main\nfn run()\nunknown\nend\n")
+        result = run(binary, ["check", "--json", str(path)], 1)
+        assert b"\\u009b\\u202e\\udb40\\udc01" in result.stdout
+        assert records(result, "check")[1]["primary"]["file"] == str(path)
+        unicode_folder = folder / "café"
+        unicode_folder.mkdir()
+        unicode_path = unicode_folder / "main.mo"
+        unicode_path.write_text('module Main\nfn run() : Text\n  -"José 日本語 😀"\nend\n',
+                                encoding="utf-8")
+        result = run(binary, ["check", str(unicode_path)], 1,
+                     env={**os.environ, "LC_ALL": utf8_locale})
+        assert not result.stdout
+        assert str(unicode_path).encode("utf-8") in result.stderr
+        assert '-"José 日本語 😀"'.encode("utf-8") in result.stderr
+        d = records(run(binary, ["check", "--json", str(unicode_path)], 1), "check")[1]
+        assert d["primary"]["file"] == str(unicode_path)
+        # The string occupies twelve original characters, not its byte length
+        # or displayed width. Unary minus refuses this Text operand.
+        assert d["primary"]["column"] == 4 and d["primary"]["end_column"] == 16
         path = folder / "main.mo"
         path.write_bytes(b"module Main\n\xff\n")
         d = records(run(binary, ["check", "--json", str(path)], 1), "check")[1]

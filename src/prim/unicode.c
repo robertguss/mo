@@ -151,6 +151,26 @@ static MO_MUST_USE bool boundary(struct boundary *s, uint32_t p) {
     return split;
 }
 
+bool mo_unicode16_next_grapheme(const uint8_t *bytes, size_t length, size_t *length_out) {
+    MO_ASSERT(length_out != NULL && (bytes != NULL || length == 0));
+    if (length == 0)
+        return false;
+    struct boundary state = {0};
+    size_t at = 0;
+    while (at < length) {
+        size_t here = at;
+        uint32_t cp;
+        if (!checked_scalar(bytes, length, &at, &cp))
+            return false;
+        if (boundary(&state, properties(cp)) && here != 0) {
+            *length_out = here;
+            return true;
+        }
+    }
+    *length_out = length;
+    return true;
+}
+
 static MO_MUST_USE bool piece(struct mo_prim_call *c, struct mo_cell *list, const uint8_t *bytes,
                               size_t length) {
     struct mo_cell text;

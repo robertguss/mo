@@ -69,13 +69,21 @@ static void oracle(void) {
                   MO_PRIM_RETURNED);
         MO_ASSERT(reason == NULL);
         if (id == MO_PRIM_UNICODE16_GRAPHEMES) {
+            size_t input_length, at = 0;
+            const uint8_t *input_bytes = mo_value_data(input, &input_length);
             for (uint32_t i = 0; i < mo_list_size(out); i++) {
                 if (i != 0)
                     MO_ASSERT(putchar(':') != EOF);
                 struct mo_cell item;
                 MO_ASSERT(mo_list_get(out, i, &item));
+                size_t next, item_length;
+                MO_ASSERT(mo_unicode16_next_grapheme(input_bytes + at, input_length - at, &next));
+                const uint8_t *item_bytes = mo_value_data(item, &item_length);
+                MO_ASSERT(next == item_length && memcmp(input_bytes + at, item_bytes, next) == 0);
+                at += next;
                 print_hex(item);
             }
+            MO_ASSERT(at == input_length);
         } else if (id == MO_PRIM_UNICODE16_DISPLAY_WIDTH)
             MO_ASSERT(printf("%" PRId64, mo_cell_get_int(out)) >= 0);
         else
@@ -242,7 +250,21 @@ static void width_bytes(void) {
         CHECK(mo_unicode16_display_width((const uint8_t *)cases[i].bytes, cases[i].length,
                                          &width) == cases[i].valid);
         CHECK(width == (cases[i].valid ? cases[i].width : 41));
+        size_t next = 41;
+        bool nonempty_valid = cases[i].valid && cases[i].length != 0;
+        CHECK(mo_unicode16_next_grapheme((const uint8_t *)cases[i].bytes, cases[i].length, &next) ==
+              nonempty_valid);
+        size_t expected = nonempty_valid ? cases[i].length : 41;
+        if (nonempty_valid && cases[i].bytes[0] == 'a')
+            expected = 1; /* a, NUL, b are three separate clusters. */
+        CHECK(next == expected);
     }
+    size_t next = 41;
+    CHECK(mo_unicode16_next_grapheme((const uint8_t *)"ab\xff", 3, &next));
+    CHECK(next == 1); /* Suffix validation belongs to the caller. */
+    next = 41;
+    CHECK(!mo_unicode16_next_grapheme((const uint8_t *)"b\xff", 2, &next));
+    CHECK(next == 41); /* Malformed lookahead must still refuse. */
 }
 
 static void refusal(void) {
@@ -321,6 +343,17 @@ static void work(void) {
     size_t baseline = mo_heap_used(f.heap);
     struct mo_buffer text;
     mo_buffer_init(&text, MO_LIMIT_STRING_SIZE);
+    /* Full-suffix revalidation in next_grapheme would turn this into 10^12
+     * visits. The UCD runner executes --work under its existing 20s ceiling. */
+    for (size_t i = 0; i < 1000000; i++)
+        MO_ASSERT(mo_buffer_append_byte(&text, 'a'));
+    for (size_t at = 0; at < text.length;) {
+        size_t next;
+        MO_ASSERT(mo_unicode16_next_grapheme(text.bytes + at, text.length - at, &next));
+        CHECK(next == 1);
+        at += next;
+    }
+    text.length = 0;
     const size_t count = 131072;
     for (size_t i = 0; i < count; i++)
         MO_ASSERT(mo_buffer_append(&text, "\xf0\x9f\x87\xa6", 4));

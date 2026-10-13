@@ -5,12 +5,25 @@
 
 #include "base/codes.h"
 
+#include <locale.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
+int LLVMFuzzerInitialize(int *argc, char ***argv);
+
+int LLVMFuzzerInitialize(int *argc, char ***argv) {
+    (void)argc;
+    (void)argv;
+    const char *locales[] = {"C.UTF-8", "en_US.UTF-8", "UTF-8"};
+    for (unsigned i = 0; i < sizeof(locales) / sizeof(locales[0]); i++) {
+        if (setlocale(LC_CTYPE, locales[i]) != NULL)
+            return 0;
+    }
+    MO_ASSERT(false); /* Exercise the cluster path, not just ASCII escapes. */
+}
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     enum { MAX_ARGUMENTS = 16 };

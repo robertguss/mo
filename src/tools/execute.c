@@ -3,23 +3,53 @@
 #include "tools/tools.h"
 
 #include "base/codes.h"
+#include "base/stack.h"
 #include "check/check.h"
 #include "tools/embedded.h"
 
 #include <errno.h>
+#include <string.h>
 #include <sys/stat.h>
 
-static void unavailable(struct mo_diags *diags, const char *message) {
-    struct mo_diag d = {.code = MO_CODE_TOOL_UNAVAILABLE,
+static void tool_error(struct mo_diags *diags, uint16_t code, const char *message,
+                       const char *detail) {
+    struct mo_diag d = {.code = code,
                         .message = message,
-                        .primary = {.span = {.file = UINT32_MAX}}};
+                        .primary = {.span = {.file = UINT32_MAX}, .text = detail}};
     bool added = mo_diags_add(diags, &d);
     if (!added)
         MO_ASSERT(mo_diags_any(diags));
 }
 
-static void check_program(const struct mo_cli *cli, struct mo_arena *arena,
-                          struct mo_sources *sources, struct mo_diags *diags) {
+struct pipeline_work {
+    const struct mo_cli *cli;
+    struct mo_arena *arena;
+    struct mo_sources *sources;
+    struct mo_diags *diags;
+};
+
+static void execute_pipeline(void *argument) {
+    const struct pipeline_work *work = argument;
+    const struct mo_cli *cli = work->cli;
+    struct mo_arena *arena = work->arena;
+    struct mo_sources *sources = work->sources;
+    struct mo_diags *diags = work->diags;
+    if (cli->emit != MO_EMIT_NONE) {
+        tool_error(diags, MO_CODE_TOOL_UNAVAILABLE, "this build cannot emit Core or bytecode yet",
+                   NULL);
+        return;
+    }
+    if (cli->command != MO_COMMAND_CHECK) {
+        const char *message = "this build cannot run programs yet";
+        if (cli->command == MO_COMMAND_TEST)
+            message = "this build cannot run or list tests yet";
+        if (cli->command == MO_COMMAND_FORMAT)
+            message = "this build cannot format files yet";
+        if (cli->command == MO_COMMAND_FIX)
+            message = "this build cannot apply fixes yet";
+        tool_error(diags, MO_CODE_TOOL_UNAVAILABLE, message, NULL);
+        return;
+    }
     struct stat st;
     /* No installed library yet is normal; an existing but unreadable folder
      * must still reach the loader's E1102 rather than silently disappear. */
@@ -65,7 +95,9 @@ static void check_program(const struct mo_cli *cli, struct mo_arena *arena,
     }
     /* Integration seam: replace the preparation/inference above with mo_check
      * when it returns a whole checked program. Only that result may reach
-     * mo_lower -> mo_compile -> image initialization and promise anchors.
+     * mo_lower -> Core checking -> mo_compile -> image initialization and
+     * promise anchors. Keep all those stages inside this one source-stack
+     * callback: Core checking and codegen can exceed the caller's C stack too.
      * Local inference results deliberately cannot be passed to lowering. */
 }
 
@@ -110,23 +142,11 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
     }
     struct mo_arena arena;
     mo_arena_init(&arena, MO_CLI_CHECK_SIZE);
-    if (cli->emit != MO_EMIT_NONE)
-        unavailable(&diags, "this build cannot emit Core or bytecode yet");
-    else if (cli->command == MO_COMMAND_CHECK) {
-        /* TODO(after checking part 3): wrap the whole front end, loading and
-         * parsing included, in mo_with_stack with MO_SOURCE_STACK_SIZE (32 MiB).
-         * Keep process-wide resource limits unchanged. */
-        check_program(cli, &arena, &sources, &diags);
-    } else {
-        const char *message = "this build cannot run programs yet";
-        if (cli->command == MO_COMMAND_TEST)
-            message = "this build cannot run or list tests yet";
-        if (cli->command == MO_COMMAND_FORMAT)
-            message = "this build cannot format files yet";
-        if (cli->command == MO_COMMAND_FIX)
-            message = "this build cannot apply fixes yet";
-        unavailable(&diags, message);
-    }
+    struct pipeline_work work = {cli, &arena, &sources, &diags};
+    int error = mo_with_stack(MO_SOURCE_STACK_SIZE, execute_pipeline, &work);
+    if (error != 0)
+        tool_error(&diags, MO_CODE_TOOL_SOURCE_STACK, "could not prepare the source pipeline stack",
+                   strerror(error));
     int status = mo_write_diagnostics(output, errors, cli->json, cli->command, &sources, &diags);
     mo_arena_free(&arena);
     mo_sources_free(&sources);

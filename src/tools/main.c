@@ -2,10 +2,14 @@
 
 #include "tools/tools.h"
 
+#include <locale.h>
 #include <signal.h>
 #include <stdio.h>
 
 int main(int argc, char *argv[]) {
+    /* Only character encoding follows the environment; numeric parsing does
+     * not. An unavailable locale leaves POSIX's ASCII-safe C locale active. */
+    (void)setlocale(LC_CTYPE, "");
     struct mo_cli cli;
     const char *error;
     if (!mo_cli_parse(argc, (const char *const *)argv, &cli, &error)) {
