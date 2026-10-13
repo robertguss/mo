@@ -6,7 +6,8 @@
 
 #include <stddef.h>
 
-/* Runs function(argument) on a new thread with stack_size bytes, then joins it.
+/* Runs function(argument) on a new thread with at least stack_size bytes,
+ * rounding up to the POSIX page size, then joins it.
  * Returns zero after completion, or a POSIX error number without running it.
  * The argument and all storage it borrows must remain valid until this returns.
  * This does not make the work concurrent with the caller, or make shared state

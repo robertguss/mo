@@ -20,7 +20,11 @@ int main(void) {
     unsigned value = 17;
     CHECK(mo_with_stack(512 << 10, small_caller, &value) == 0);
     CHECK(value == 36);
-    CHECK(mo_with_stack(1, large_frame, &value) == EINVAL);
+    CHECK(mo_with_stack(0, large_frame, &value) == EINVAL);
     CHECK(value == 36);
+    CHECK(mo_with_stack(SIZE_MAX, large_frame, &value) == EOVERFLOW);
+    CHECK(value == 36);
+    CHECK(mo_with_stack((4 << 20) + 1, large_frame, &value) == 0);
+    CHECK(value == 55);
     return mo_test_report("stack");
 }

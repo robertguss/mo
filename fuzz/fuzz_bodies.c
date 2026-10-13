@@ -150,9 +150,13 @@ static void check(const uint8_t *data, size_t size, size_t limit, int expected) 
             const struct mo_syntax *part = path->children[j];
             MO_ASSERT(mo_buffer_append(&helper, part->text, part->span.end - part->span.start));
         }
-        MO_ASSERT(mo_buffer_append_text(
-            &helper, "\nexpose identity, add\nfn identity(value: T) : T\nvalue\nend\n"
-                     "fn add(a: Int, b: Int) : Int\na + b\nend\n"));
+        MO_ASSERT(mo_buffer_append_text(&helper,
+                                        "\nexpose identity, add, Shape(..), Box(..)\n"
+                                        "enum Shape\nDot\nCircle(Decimal)\n"
+                                        "Rectangle(width: Decimal, height: Decimal)\nend\n"
+                                        "struct Box\npair: (Int, Bool)\nshapes: List(Shape)\nend\n"
+                                        "fn identity(value: T) : T\nvalue\nend\n"
+                                        "fn add(a: Int, b: Int) : Int\na + b\nend\n"));
         bool added = mo_sources_add_bytes(&sources, "helper.mo", helper.bytes, helper.length, &file,
                                           &problem);
         mo_buffer_free(&helper);

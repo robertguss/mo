@@ -126,7 +126,8 @@
 
 /* Type construction, unification, occurs checks and expression visits in one
  * surface function. E1104 bounds generated constraints and shared type DAGs
- * independently of the caller's arena limit. */
+ * independently of the caller's arena limit. Coverage charges algorithm steps
+ * and one unit per allocated byte, so retained matrices share this bound. */
 #define MO_LIMIT_SOURCE_CHECK_WORK (1 << 24)
 
 /* Inference work shared by every body checked against one preparation, E1107.
@@ -134,7 +135,7 @@
 #define MO_LIMIT_PROGRAM_CHECK_WORK (UINT64_C(1) << 28)
 
 /* Reserved POSIX stack for source-stage execution, not an input restriction.
- * Tests, fuzzing and tools use base/stack.h rather than platform thread defaults. */
+ * Tests and fuzzing use base/stack.h; source tools will do so when connected. */
 #define MO_SOURCE_STACK_SIZE (32 << 20)
 
 /* Registers of one function, its parameters included. The code generator refuses a function that

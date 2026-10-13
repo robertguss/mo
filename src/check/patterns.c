@@ -69,6 +69,17 @@ static MO_MUST_USE bool work(struct coverage *p, uint32_t amount) {
 static MO_MUST_USE void *allocate(struct coverage *p, size_t count, size_t size, size_t alignment) {
     if (p->failed)
         return NULL;
+    MO_ASSERT(size != 0);
+    /* Retained matrix storage must be bounded by work, not merely by the
+     * caller's arena. Charge bytes as well as the algorithm's visited cells. */
+    if (count > MO_LIMIT_SOURCE_CHECK_WORK / size) {
+        bool reported =
+            problem(p, MO_CODE_CHECK_WORK, "the function needs too much pattern-checking work");
+        (void)reported;
+        return NULL;
+    }
+    if (!work(p, (uint32_t)(count * size)))
+        return NULL;
     void *out = mo_arena_allocate_array(p->arena, count, size, alignment);
     if (out == NULL) {
         bool reported = problem(p, MO_CODE_CHECK_NO_MEMORY, "the checking arena has no room");
@@ -103,55 +114,89 @@ static MO_MUST_USE int compare_heads(const void *a, const void *b) {
     return x->pattern->key < y->pattern->key ? -1 : x->pattern->key > y->pattern->key ? 1 : 0;
 }
 
-static MO_MUST_USE struct mo_match_pattern *missing_head(struct coverage *p, struct frame *f) {
-    struct mo_match_pattern *first = f->heads[0].pattern;
+static void append(char *text, size_t *length, const char *bytes, size_t count);
+
+static MO_MUST_USE bool head_present(struct coverage *p, const struct frame *f, uintptr_t key,
+                                     bool *present) {
+    if (!work(p, 1))
+        return false;
+    uint32_t lo = 0, hi = f->count;
+    while (lo < hi) {
+        if (!work(p, 1))
+            return false;
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (f->heads[mid].pattern->key < key)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    *present = lo < f->count && f->heads[lo].pattern->key == key;
+    return true;
+}
+
+static MO_MUST_USE struct mo_match_pattern *missing_head(struct coverage *p, struct frame *f,
+                                                         struct mo_match_pattern *first) {
     const char *name = "<another value>";
     uintptr_t key = 0;
     uint32_t count = 0;
     if (first->choice != NULL) {
         const struct mo_symbol *owner = first->choice;
         const struct mo_module_scope *scope = &p->interfaces->scopes[owner->module];
-        /* Mark cases once, rather than scanning the matrix for each case. */
-        bool *seen = allocate(p, scope->count, sizeof(*seen), _Alignof(bool));
-        if (seen == NULL || !work(p, scope->count))
+        char *text = allocate(p, 4096, 1, 1);
+        if (text == NULL)
             return NULL;
-        memset(seen, 0, scope->count * sizeof(*seen));
-        for (uint32_t i = 0; i < f->count; i++) {
-            const struct mo_symbol *symbol = (const struct mo_symbol *)f->heads[i].pattern->key;
-            MO_ASSERT(symbol >= scope->symbols && symbol < scope->symbols + scope->count);
-            seen[(size_t)(symbol - scope->symbols)] = true;
-        }
-        for (uint32_t i = 0; i < owner->case_count; i++)
-            if (!seen[owner->cases[i]]) {
-                const struct mo_symbol *symbol = &scope->symbols[owner->cases[i]];
-                name = symbol->name;
-                if (symbol->declaration->children[1] != NULL) {
-                    size_t length = strlen(name);
-                    char *payload = allocate(p, length + 5, 1, 1);
-                    if (payload == NULL)
-                        return NULL;
-                    memcpy(payload, name, length);
-                    memcpy(payload + length, "(..)", 5);
-                    name = payload;
-                }
-                break;
+        size_t length = 0;
+        uint32_t missing = 0, shown = 0;
+        for (uint32_t i = 0; i < owner->case_count; i++) {
+            const struct mo_symbol *symbol = &scope->symbols[owner->cases[i]];
+            bool present;
+            if (!head_present(p, f, (uintptr_t)symbol, &present))
+                return NULL;
+            if (present)
+                continue;
+            missing++;
+            if (shown < 8 && length < 3800) {
+                if (shown != 0)
+                    append(text, &length, " | ", 3);
+                append(text, &length, symbol->name,
+                       symbol->name_length > 128 ? 128 : symbol->name_length);
+                if (symbol->name_length > 128)
+                    append(text, &length, "...", 3);
+                if (symbol->declaration->children[1] != NULL)
+                    append(text, &length, "(..)", 4);
+                shown++;
             }
+        }
+        if (missing > shown) {
+            int n = snprintf(text + length, 4096 - length, " and %u more", missing - shown);
+            MO_ASSERT(n > 0 && (size_t)n < 4096 - length);
+            length += (size_t)n;
+        }
+        text[length] = '\0';
+        name = text;
     } else if (mo_builtin_case_by_key(first->key) != NULL) {
         const struct mo_builtin_case *domain = mo_builtin_case_by_key(first->key);
+        char *text = allocate(p, 4096, 1, 1);
+        if (text == NULL)
+            return NULL;
+        size_t length = 0;
         for (uint32_t i = 0; i < domain->cases; i++) {
             uintptr_t candidate = domain->first_key + i;
-            bool found = false;
-            for (uint32_t j = 0; j < f->count; j++)
-                found = found || f->heads[j].pattern->key == candidate;
+            bool found;
+            if (!head_present(p, f, candidate, &found))
+                return NULL;
             if (!found) {
                 const struct mo_builtin_case *missing = mo_builtin_case_by_key(candidate);
                 MO_ASSERT(missing != NULL);
-                name = missing->name;
-                key = missing->key;
-                count = missing->count;
-                break;
+                if (length != 0)
+                    append(text, &length, " | ", 3);
+                append(text, &length, missing->name, strlen(missing->name));
+                if (missing->count != 0)
+                    append(text, &length, "(..)", 4);
             }
         }
+        text[length] = '\0';
+        name = text;
     } else if (first->signature == 256) {
         bool seen[256] = {false};
         for (uint32_t i = 0; i < f->count; i++) {
@@ -170,11 +215,11 @@ static MO_MUST_USE struct mo_match_pattern *missing_head(struct coverage *p, str
             }
     } else if (first->signature == 2) {
         if (first->key == 1 || first->key == 2)
-            name = first->key == 1 ? "false" : "true";
+            name = f->count == 0 ? "false | true" : first->key == 1 ? "false" : "true";
         else if (first->key == 3 || first->key == 4) {
-            name = first->key == 3 ? "[_, .._]" : "[]";
-            key = first->key == 3 ? 4u : 3u;
-            count = first->key == 3 ? 2u : 0u;
+            name = f->count == 0 ? "[] | [_, .._]" : first->key == 3 ? "[_, .._]" : "[]";
+            key = f->count == 0 ? 0 : first->key == 3 ? 4u : 3u;
+            count = f->count == 0 ? 0 : first->key == 3 ? 2u : 0u;
         }
     }
     struct mo_match_pattern *out = allocate(p, 1, sizeof(*out), _Alignof(struct mo_match_pattern));
@@ -218,8 +263,6 @@ static MO_MUST_USE struct frame *partition(struct coverage *p, struct row *rows,
     for (uint32_t i = 1; i < count; i++)
         distinct += heads[i].pattern->key != heads[i - 1].pattern->key ? 1u : 0u;
     f->complete = distinct == heads[0].pattern->signature;
-    if (!f->complete)
-        f->chosen = missing_head(p, f);
     return p->failed ? NULL : f;
 }
 
@@ -341,9 +384,9 @@ static MO_MUST_USE const char *render(struct coverage *p, struct cell *witness) 
 }
 
 bool mo_patterns_cover(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
-                       struct mo_match_pattern *const *patterns, uint32_t count, uint32_t *steps,
-                       uint64_t *program_work, struct mo_diags *diags, struct mo_span span,
-                       const char **missing) {
+                       struct mo_match_pattern *const *patterns, uint32_t count,
+                       const struct mo_source_type *type, uint32_t *steps, uint64_t *program_work,
+                       struct mo_diags *diags, struct mo_span span, const char **missing) {
     struct coverage p = {.arena = arena,
                          .interfaces = interfaces,
                          .diags = diags,
@@ -356,6 +399,35 @@ bool mo_patterns_cover(struct mo_arena *arena, const struct mo_module_interfaces
         struct cell *cells = prepend(&p, patterns[i], NULL);
         if (cells == NULL || !add_row(&p, &rows, cells))
             return false;
+    }
+    if (count == 0) {
+        struct mo_match_pattern domain = {0};
+        if (type->declaration != NULL && type->declaration->declaration->kind == MO_S_ENUM)
+            domain.choice = type->declaration;
+        else if (type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX) {
+            for (uintptr_t key = 6; key <= 22; key++) {
+                const struct mo_builtin_case *builtin = mo_builtin_case_by_key(key);
+                if (builtin != NULL && strcmp(builtin->type, type->name) == 0) {
+                    domain.key = key;
+                    break;
+                }
+            }
+            if (strcmp(type->name, "Bool") == 0)
+                domain = (struct mo_match_pattern){.key = 1, .signature = 2};
+            else if (strcmp(type->name, "List") == 0)
+                domain = (struct mo_match_pattern){.key = 3, .signature = 2};
+        }
+        if (domain.key != 0 || domain.choice != NULL) {
+            struct frame empty = {0};
+            struct mo_match_pattern *hole = missing_head(&p, &empty, &domain);
+            if (hole == NULL)
+                return false;
+            struct cell witness = {.pattern = hole};
+            *missing = render(&p, &witness);
+            return !p.failed;
+        }
+        *missing = "every value";
+        return true;
     }
     uint32_t width = 1;
     struct frame *stack = NULL;
@@ -370,7 +442,11 @@ bool mo_patterns_cover(struct mo_arena *arena, const struct mo_module_interfaces
                     return false;
             }
             for (struct frame *f = stack; f != NULL; f = f->parent) {
-                struct mo_match_pattern *chosen = f->chosen;
+                struct mo_match_pattern *chosen = f->complete || f->count == 0
+                                                      ? f->chosen
+                                                      : missing_head(&p, f, f->heads[0].pattern);
+                if (p.failed)
+                    return false;
                 if (f->complete) {
                     struct mo_match_pattern *node =
                         allocate(&p, 1, sizeof(*node), _Alignof(struct mo_match_pattern));

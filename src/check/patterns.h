@@ -15,13 +15,14 @@ struct mo_match_pattern {
 };
 
 /* Maranget's exhaustiveness matrix. Guarded rows are excluded by the caller.
- * Charges matrix steps and cells to the body and program work budgets and all
+ * Charges matrix steps and allocated bytes to the body and program work budgets and all
  * storage to its arena. An explicit frame stack also handles wide tuples without C
  * recursion. False means a diagnostic; true with *missing == NULL means total. */
 MO_MUST_USE bool mo_patterns_cover(struct mo_arena *arena,
                                    const struct mo_module_interfaces *interfaces,
                                    struct mo_match_pattern *const *patterns, uint32_t count,
-                                   uint32_t *work, uint64_t *program_work, struct mo_diags *diags,
+                                   const struct mo_source_type *type, uint32_t *work,
+                                   uint64_t *program_work, struct mo_diags *diags,
                                    struct mo_span span, const char **missing);
 
 #endif

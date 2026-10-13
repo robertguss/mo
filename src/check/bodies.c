@@ -20,6 +20,7 @@ struct term {
     uint32_t height; /* longest path to a leaf in a resolved type DAG */
     unsigned numeric;
     bool variable;
+    bool partial_default;
 };
 
 struct local;
@@ -29,6 +30,7 @@ struct name_slot {
     const struct mo_syntax *local_name;
     struct name_slot *left, *right;
     struct local *active;
+    struct local *expired;
     uint32_t height;
 };
 
@@ -66,7 +68,9 @@ struct typed_pattern {
 struct match_check {
     struct mo_match_pattern **patterns;
     uint32_t count;
+    uint32_t end;
     struct mo_span span;
+    const struct mo_syntax *scrutinee;
     struct term *type;
     const struct mo_syntax *catch_all;
     struct match_check *next;
@@ -87,6 +91,8 @@ struct inference {
     struct mo_span span;
     struct mo_diag error;
     struct mo_label secondary;
+    struct mo_edit edit;
+    struct mo_fix fix;
     struct local *unused, *error_unused;
     const char *type_label;
     uint16_t expectation, node_expectation;
@@ -170,7 +176,8 @@ static void emit_problem(struct inference *p) {
     struct mo_edit edit = {{span.file, span.start, span.start}, "_"};
     struct mo_fix fix = {"mark the name unused on purpose", &edit, 1};
     bool offer_fix = false;
-    if (p->error.code == MO_CODE_UNUSED_NAME && !p->error_unused->variable) {
+    if (p->error.code == MO_CODE_UNUSED_NAME && !p->error_unused->variable &&
+        p->error_unused->pattern_alternative <= 1) {
         const struct mo_syntax *name = p->error_unused->name;
         size_t length = name->span.end - name->span.start;
         uint8_t *candidate = mo_arena_allocate(p->arena, length + 1, 1);
@@ -198,8 +205,10 @@ static void emit_problem(struct inference *p) {
         offer_fix = at == NULL && scope->imported_count == 0 &&
                     mo_find_symbol(scope, candidate, length + 1) == NULL;
     }
-    p->error.fixes = offer_fix ? &fix : NULL;
-    p->error.fix_count = offer_fix ? 1u : 0u;
+    if (p->error.code == MO_CODE_UNUSED_NAME) {
+        p->error.fixes = offer_fix ? &fix : NULL;
+        p->error.fix_count = offer_fix ? 1u : 0u;
+    }
     bool kept = mo_diags_add(p->diags, &p->error);
     (void)kept;
 }
@@ -667,6 +676,7 @@ static MO_MUST_USE bool leave(struct inference *p, struct local *mark) {
                   "A name starting with _ is unused on purpose (reference 6.1).");
         }
         l->slot->active = NULL;
+        l->slot->expired = l;
         p->locals = l->previous;
     }
     return true;
@@ -796,6 +806,22 @@ static MO_MUST_USE struct value builtin_construct(struct inference *p,
                                                   const struct mo_syntax *args,
                                                   struct term *expected);
 
+static MO_MUST_USE bool missing_field(struct inference *p, struct mo_span span, const uint8_t *name,
+                                      size_t length, const struct mo_syntax *declaration) {
+    char *message = allocate(p, 256, 1, 1);
+    if (message == NULL)
+        return false;
+    int n = name == NULL ? snprintf(message, 256, "the case is missing its unnamed value")
+                         : snprintf(message, 256, "the record or case is missing field '%.*s%s'",
+                                    (int)(length > 128 ? 128 : length), (const char *)name,
+                                    length > 128 ? "..." : "");
+    MO_ASSERT(n > 0 && n < 256);
+    return problem(p, MO_CODE_DATA_ARGUMENTS, span, message,
+                   "There are no optional fields; a record or case is built with "
+                   "every field (reference 4).",
+                   declaration);
+}
+
 static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_syntax *node,
                                            const struct mo_syntax *prefix) {
     if (prefix == NULL && node->kind == MO_S_NAME) {
@@ -817,6 +843,13 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
             bool reported = unfinished(p);
             (void)reported;
         } else {
+            struct name_slot *entry = slot(p, node, false);
+            if (entry != NULL && entry->expired != NULL && p->error.code == MO_CODE_UNUSED_NAME &&
+                p->error_unused == entry->expired) {
+                /* An attempted read outside the binding's scope explains why
+                 * it looked unused. Report that use, not a destructive rename. */
+                p->error.code = 0;
+            }
             bool reported =
                 problem(p, MO_CODE_NAME_UNKNOWN, node->span, "a name isn't visible in this block",
                         "A local name is visible from its binding to the end of its "
@@ -835,11 +868,10 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
             struct term *parameters[26] = {NULL};
             return (struct value){.type = annotation(p, data->type, parameters, 0), .symbol = s};
         }
-        bool reported = problem(p, MO_CODE_DATA_ARGUMENTS, node->span,
-                                "the record or case hasn't been given its fields",
-                                "A record or case is built with every field, named or its one "
-                                "unnamed value (reference 4).",
-                                s->declaration->children[0]);
+        const struct mo_syntax *field = data->by_index[0]->name;
+        bool reported =
+            missing_field(p, node->span, field == NULL ? NULL : field->text,
+                          field == NULL ? 0 : field->span.end - field->span.start, field);
         (void)reported;
         return (struct value){0};
     }
@@ -955,6 +987,25 @@ static MO_MUST_USE struct value builtin_construct(struct inference *p,
     struct term *type = builtin_type(p, data, expected);
     if (type == NULL)
         return (struct value){0};
+    if ((args == NULL ? 0 : args->count) < data->count) {
+        bool provided[2] = {false, false};
+        for (uint32_t i = 0; args != NULL && i < args->count; i++) {
+            uint32_t index = builtin_field(data, args->children[i]);
+            if (index < data->count)
+                provided[index] = true;
+        }
+        for (uint32_t i = 0; i < data->count; i++) {
+            if (provided[i])
+                continue;
+            const char *name = data->fields[i];
+            bool reported =
+                missing_field(p, args == NULL ? p->span : args->span, (const uint8_t *)name,
+                              name == NULL ? 0 : strlen(name), NULL);
+            (void)reported;
+            return (struct value){0};
+        }
+        MO_ASSERT(false);
+    }
     if ((args == NULL ? 0 : args->count) != data->count) {
         bool reported = problem(p, MO_CODE_DATA_ARGUMENTS, args == NULL ? p->span : args->span,
                                 "the case hasn't been given every field",
@@ -999,15 +1050,6 @@ static MO_MUST_USE struct value construct(struct inference *p, const struct mo_d
     struct term *type = annotation(p, data->type, parameters, 0);
     if (type == NULL || (expected != NULL && !unify(p, type, expected, 0)))
         return (struct value){0};
-    if (args->count != data->count) {
-        bool reported = problem(p, MO_CODE_DATA_ARGUMENTS, args->span,
-                                "the record or case hasn't been given every field",
-                                "There are no optional fields; a record or case is built with "
-                                "every field (reference 4).",
-                                data->symbol->declaration->children[0]);
-        (void)reported;
-        return (struct value){0};
-    }
     bool *seen = allocate(p, data->count, sizeof(*seen), _Alignof(bool));
     const struct mo_field_signature **selected =
         allocate(p, args->count, sizeof(*selected), _Alignof(const struct mo_field_signature *));
@@ -1034,6 +1076,15 @@ static MO_MUST_USE struct value construct(struct inference *p, const struct mo_d
         }
         seen[field->index] = true;
         selected[i] = field;
+    }
+    for (uint32_t i = 0; i < data->count; i++) {
+        if (seen[i])
+            continue;
+        const struct mo_syntax *name = data->by_index[i]->name;
+        bool reported = missing_field(p, args->span, name == NULL ? NULL : name->text,
+                                      name == NULL ? 0 : name->span.end - name->span.start, name);
+        (void)reported;
+        return (struct value){0};
     }
     bool never = false;
     struct note *before = p->last;
@@ -1395,10 +1446,22 @@ static MO_MUST_USE bool pattern_node(struct inference *p, const struct mo_syntax
         *out = tail;
         return record(p, node, (struct value){.type = type});
     }
-    if (node->kind == MO_S_CAPNAME || node->kind == MO_S_QUALIFIED || node->kind == MO_S_CALL) {
+    bool qualified_call =
+        node->kind == MO_S_POSTFIX && node->count == 3 && node->children[0]->kind == MO_S_CAPNAME &&
+        node->children[1]->kind == MO_S_QUALIFIED && node->children[2]->kind == MO_S_CALL;
+    if (node->kind == MO_S_CAPNAME || node->kind == MO_S_QUALIFIED || node->kind == MO_S_CALL ||
+        qualified_call) {
         const struct mo_syntax *name = node->kind == MO_S_CALL ? node->children[0] : node;
         const struct mo_syntax *args = node->kind == MO_S_CALL ? node->children[1] : NULL;
+        const struct mo_syntax *prefix = NULL;
+        if (qualified_call) {
+            prefix = node->children[0];
+            name = node->children[1]->children[0];
+            args = node->children[2]->children[0];
+        }
         const struct mo_builtin_case *builtin = mo_builtin_case_by_name(name);
+        if (prefix != NULL)
+            builtin = NULL;
         if (builtin != NULL) {
             struct term *nominal = builtin_type(p, builtin, type);
             if (nominal == NULL)
@@ -1436,10 +1499,13 @@ static MO_MUST_USE bool pattern_node(struct inference *p, const struct mo_syntax
             return record(p, node, (struct value){.type = type, .builtin_case = builtin->name});
         }
         uint32_t count = 0;
-        const struct mo_symbol *symbol = definition(p, name, NULL, &count);
+        const struct mo_symbol *symbol = definition(p, name, prefix, &count);
         if (p->failed)
             return false;
         const struct mo_data_signature *data = symbol == NULL ? NULL : data_type(p, symbol);
+        if (data == NULL && prefix == NULL && name->kind == MO_S_CAPNAME &&
+            compare_text(name, "Entry") == 0)
+            return unfinished(p);
         if (data == NULL)
             return problem(p, MO_CODE_PATTERN_CONSTRUCTOR, name->span,
                            "a pattern doesn't name a record or case",
@@ -1478,6 +1544,31 @@ static MO_MUST_USE bool pattern_node(struct inference *p, const struct mo_syntax
                                                      : arg->kind == MO_S_NAMED_ARG
                                                          ? find_field(data, arg->children[0])
                                                          : NULL;
+            if (!data->unnamed && data->count == 1 && args->count == 1 &&
+                arg->kind != MO_S_NAMED_ARG) {
+                const struct mo_syntax *field_name = data->fields[0].name;
+                size_t length = field_name->span.end - field_name->span.start;
+                char *replacement = allocate(p, length + 3, 1, 1);
+                if (replacement == NULL)
+                    return false;
+                memcpy(replacement, field_name->text, length);
+                memcpy(replacement + length, ": ", 3);
+                bool reported = problem(p, MO_CODE_PATTERN_FIELDS, arg->span,
+                                        "a matched field hasn't been named",
+                                        "A case with named fields is matched by naming them "
+                                        "(reference 7.3).",
+                                        field_name);
+                (void)reported;
+                if (p->error.code == MO_CODE_PATTERN_FIELDS &&
+                    p->error.primary.span.start == arg->span.start) {
+                    p->edit = (struct mo_edit){{arg->span.file, arg->span.start, arg->span.start},
+                                               replacement};
+                    p->fix = (struct mo_fix){"name the matched field", &p->edit, 1};
+                    p->error.fixes = &p->fix;
+                    p->error.fix_count = 1;
+                }
+                return false;
+            }
             if (field == NULL || seen[field->index])
                 return problem(p, MO_CODE_PATTERN_FIELDS, arg->span,
                                "a matched field is absent or repeated",
@@ -1494,6 +1585,17 @@ static MO_MUST_USE bool pattern_node(struct inference *p, const struct mo_syntax
         }
         return record(p, node, (struct value){.type = type, .symbol = symbol});
     }
+    bool literal =
+        node->kind == MO_S_INT || node->kind == MO_S_DECIMAL || node->kind == MO_S_TEXT ||
+        node->kind == MO_S_CHAR || node->kind == MO_S_TRUE || node->kind == MO_S_FALSE ||
+        (node->kind == MO_S_NEGATE &&
+         (node->children[0]->kind == MO_S_INT || node->children[0]->kind == MO_S_DECIMAL));
+    if (!literal)
+        return problem(p, MO_CODE_PATTERN_CONSTRUCTOR, node->span,
+                       "a pattern doesn't name a record or case",
+                       "A pattern names a case or record, a literal, a tuple or a list "
+                       "(reference 7.3).",
+                       NULL);
     struct value literal_value = infer(p, node, type);
     if (literal_value.type == NULL)
         return false;
@@ -1543,8 +1645,14 @@ static MO_MUST_USE struct value match(struct inference *p, const struct mo_synta
         allocate(p, count, sizeof(*patterns), _Alignof(struct mo_match_pattern *));
     if (p->failed)
         return (struct value){0};
-    *check = (struct match_check){
-        .patterns = patterns, .span = node->span, .type = input.type, .next = p->matches};
+    struct mo_span header = node->span;
+    header.end = node->children[0]->span.end;
+    *check = (struct match_check){.patterns = patterns,
+                                  .span = header,
+                                  .end = node->span.end,
+                                  .scrutinee = node->children[0],
+                                  .type = input.type,
+                                  .next = p->matches};
     p->matches = check;
     bool never = true;
     for (uint32_t i = 0; i < arms->count; i++) {
@@ -2191,6 +2299,7 @@ static MO_MUST_USE const struct mo_source_type *finish_type(struct inference *p,
             return NULL;
         }
         t->variable = false;
+        t->partial_default = p->partial;
         t->shape = (struct mo_source_type){.kind = MO_SOURCE_NAMED,
                                            .module = UINT32_MAX,
                                            .name = (t->numeric & INT) != 0 ? "Int" : "Decimal"};
@@ -2205,6 +2314,7 @@ static MO_MUST_USE const struct mo_source_type *finish_type(struct inference *p,
         args[i] = finish_type(p, t->arguments[i], depth + 1);
         if (args[i] == NULL)
             return NULL;
+        t->partial_default = t->partial_default || root(t->arguments[i])->partial_default;
         uint32_t height = root(t->arguments[i])->height + 1;
         if (height > t->height)
             t->height = height;
@@ -2423,10 +2533,14 @@ static MO_MUST_USE bool finish_patterns(struct inference *p) {
         at->match.name = name;
     }
     for (struct match_check *check = p->matches; check != NULL; check = check->next) {
-        if (p->error.code != 0 && check->span.end > p->error.primary.span.start)
+        if (p->error.code != 0 && check->end > p->error.primary.span.start)
             continue;
         p->span = check->span;
         struct term *type = root(check->type);
+        /* Defaulting during a failed walk cannot certify a literal domain:
+         * the later use deciding Byte versus Int may never have been reached. */
+        if (type->variable || type->resolved == NULL || type->partial_default)
+            continue;
         bool choice = type->shape.declaration != NULL &&
                       type->shape.declaration->declaration->kind == MO_S_ENUM;
         choice = choice || named(type, "Option") || named(type, "Result") ||
@@ -2438,18 +2552,26 @@ static MO_MUST_USE bool finish_patterns(struct inference *p) {
             continue;
         }
         const char *missing = NULL;
-        if (!mo_patterns_cover(p->arena, p->interfaces, check->patterns, check->count, &p->work,
-                               p->signatures->work, p->diags, check->span, &missing))
+        if (!mo_patterns_cover(p->arena, p->interfaces, check->patterns, check->count,
+                               type->resolved, &p->work, p->signatures->work, p->diags, check->span,
+                               &missing))
             return false;
         if (missing != NULL) {
             char *message = allocate(p, 8192, 1, 1);
             if (message == NULL)
                 return true;
-            int length = snprintf(message, 8192,
-                                  "case doesn't cover every possible value; missing: %s", missing);
+            int length =
+                snprintf(message, 8192, "case doesn't cover every possible value; %smissing: %s",
+                         check->count == 0 ? "guards don't count toward coverage; " : "", missing);
             MO_ASSERT(length > 0 && length < 8192);
             defer(p, MO_CODE_CASE_INCOMPLETE, check->span, message,
                   "The arms must cover every possible value (reference 7.2).");
+            if (p->error.code == MO_CODE_CASE_INCOMPLETE &&
+                p->error.primary.span.start == check->span.start) {
+                p->secondary = (struct mo_label){check->scrutinee->span, "matched value"};
+                p->error.secondary = &p->secondary;
+                p->error.secondary_count = 1;
+            }
         }
     }
     return true;

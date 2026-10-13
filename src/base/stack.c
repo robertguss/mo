@@ -2,7 +2,10 @@
 
 #include "base/stack.h"
 
+#include <errno.h>
 #include <pthread.h>
+#include <stdint.h>
+#include <unistd.h>
 
 struct work {
     void (*function)(void *);
@@ -17,6 +20,19 @@ static MO_MUST_USE void *run(void *argument) {
 
 int mo_with_stack(size_t stack_size, void (*function)(void *), void *argument) {
     MO_ASSERT(function != NULL);
+    errno = 0;
+    long page = sysconf(_SC_PAGESIZE);
+    if (page <= 0)
+        return errno == 0 ? EINVAL : errno;
+    if ((uintmax_t)page > SIZE_MAX)
+        return EOVERFLOW;
+    size_t size = (size_t)page, remainder = stack_size % size;
+    if (remainder != 0) {
+        size_t padding = size - remainder;
+        if (padding > SIZE_MAX - stack_size)
+            return EOVERFLOW;
+        stack_size += padding;
+    }
     pthread_attr_t attributes;
     int error = pthread_attr_init(&attributes);
     if (error != 0)

@@ -301,9 +301,10 @@ use the existing base limits and their codes. E1101 refuses a module outside
 its root; E1102 reports an unreadable library folder without a language
 section citation.
 
-**Source-stage stack.** Tools, checker tests and the `fuzz_check` and
-`fuzz_bodies` targets run source work through `mo_with_stack` in
-`base/stack.h`. It sets a new POSIX thread's stack explicitly and joins it
+**Source-stage stack.** Checker tests and the `fuzz_check` and `fuzz_bodies`
+targets run source work through `mo_with_stack` in `base/stack.h`; tools will
+use it when source commands are connected. It rounds the requested allowance
+up to the POSIX page size, sets a new thread's stack explicitly and joins it
 before returning; arenas, diagnostics and the shared work budget remain
 single-threaded. It returns a POSIX error number without running the callback
 if thread setup fails. It does not change the caller's stack limit or assume
@@ -426,13 +427,30 @@ and retain the scopes of `is`, `and` and `implies`. A whole-arm wildcard or name
 over a choice is refused even when guarded. Guarded rows never prove coverage:
 their conditions may be false. An iterative Maranget matrix checks tuples,
 records, choices, lists and literal domains, and reports a bounded missing-value
-preview, not a speculative edit. Byte patterns normalize numeric spelling after
-contextual typing and range checks, so all 256 values establish coverage.
+preview, not a speculative edit. A missing choice partition lists up to eight
+absent cases in declaration order, then `and N more`; names longer than 128
+bytes are elided so the omitted count remains visible. Previews also have a
+4,000-byte ceiling. All-guarded cases explain that guards do not count toward
+coverage, listing the choice's cases or the missing domain. Qualified constructor
+patterns use the same resolution and binding rules as unqualified patterns.
+The literal fallback accepts only literals and negated numbers, never construction
+expressions. `Entry` patterns report E1103 until native record interfaces arrive.
+Byte patterns normalize numeric spelling after contextual typing and range
+checks, so all 256 values establish coverage.
 Matrix cells, partitions, sorting and witness rendering charge the existing
-body and program work budgets; arena exhaustion retains E1058. Explicit frames
-handle wide products and lists without increasing C stack depth. Coverage of
+body and program work budgets. Each allocated coverage byte also costs one work
+unit, bounding retained matrix storage independently of the caller's arena;
+arena exhaustion retains E1058. Missing-case previews are built only for a hole,
+using the choice's case index rather than its module's unrelated symbols.
+Explicit frames handle wide products and lists without increasing C stack depth. Coverage of
 completed matches before a later independent error participates in the same
-earliest-source-error selection as inference and unused-value checks.
+earliest-source-error selection as inference and unused-value checks, but a
+scrutinee left unresolved or defaulted during a failed walk cannot prove coverage.
+An attempted read outside a local's scope replaces that local's unused-name
+error, not an earlier independent error. Unused-name fixes are withheld for shared
+alternative binders; a single unnamed match of a single named field has a certain
+field-name insertion fix. Missing construction fields are named. Coverage errors
+mark the case header and its scrutinee, not the full arm block.
 E0062–E0071 cover duplicate fields, constructor arguments, hidden insides, missing
 fields, data parameters and pattern errors; each has a diagnostic corpus input.
 
