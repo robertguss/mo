@@ -57,6 +57,7 @@ HOSTOP(FILES_READ_BYTES,       "Files",     "read_bytes",     "fn(Files, Text) :
 HOSTOP(FILES_WRITE_TEXT,       "Files",     "write_text",     "fn(Files, Text, Text) : Result(Unit, FileError)",     "bbb", "",                                   false)
 HOSTOP(FILES_APPEND_TEXT,      "Files",     "append_text",    "fn(Files, Text, Text) : Result(Unit, FileError)",     "bbb", "",                                   false)
 HOSTOP(FILES_REMOVE,           "Files",     "remove",         "fn(Files, Text) : Result(Unit, FileError)",           "bb",  "",                                   false)
+HOSTOP(FILES_MAKE_FOLDER,      "Files",     "make_folder",    "fn(Files, Text) : Result(Unit, FileError)",           "bb",  "",                                   false)
 HOSTOP(FILES_LIST,             "Files",     "list",           "fn(Files, Text) : Result(List(Text), FileError)",     "bb",  "",                                   false)
 HOSTOP(FILES_ENTRIES,          "Files",     "entries",        "fn(Files, Text) : Result(List(Entry), FileError)",    "bb",  "",                                   false)
 HOSTOP(FILES_EXISTS,           "Files",     "exists?",        "fn(Files, Text) : Bool",                              "bb",  "",                                   false)

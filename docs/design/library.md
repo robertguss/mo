@@ -471,6 +471,7 @@ spec code (reference 12.4).
 | `write_text(path, text)` | host | `FILES_WRITE_TEXT` | |
 | `append_text(path, text)` | host | `FILES_APPEND_TEXT` | |
 | `remove(path)` | host | `FILES_REMOVE` | |
+| `make_folder(folder)` | host | `FILES_MAKE_FOLDER` | |
 | `list(folder)` | host | `FILES_LIST` | |
 | `entries(folder)` | host | `FILES_ENTRIES` | |
 | `walk(folder)` | Mo | `lib/files.mo` | written over `entries` one folder at a time, entering folders by path rather than with `within`, so it holds no folder open (D232) |

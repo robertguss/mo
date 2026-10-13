@@ -634,6 +634,7 @@ static void test_every_capability_operation_is_there(void) {
         {"Files", "write_text"},
         {"Files", "append_text"},
         {"Files", "remove"},
+        {"Files", "make_folder"},
         {"Files", "list"},
         {"Files", "entries"},
         {"Files", "exists?"},

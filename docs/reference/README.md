@@ -36,7 +36,11 @@ end
 
 A program is a tree of modules under one root folder. The module
 `Shop.OrderBook` lives in `shop/order-book.mo`: each part of its name becomes a
-lowercase folder or file name, with hyphens between words.
+lowercase folder or file name, with hyphens between words. A word starts at a
+capital letter that follows a lowercase letter or a digit, and at the last
+capital of a run that a lowercase letter follows, so `XMLReader` lives in
+`xml-reader.mo`, `HTTP2Server` in `http2-server.mo` and `Unicode16Tool` in
+`unicode16-tool.mo`.
 
 Source is UTF-8. Characters that change how text looks without being seen are
 an error anywhere, even in text and comments: direction overrides, zero-width
@@ -1308,10 +1312,13 @@ outside tests, examples and promises is an error (section 12.4).
 **Files**: `read_text(path: Text) : Result(Text, FileError)`,
 `read_bytes(path: Text) : Result(Bytes, FileError)`,
 `write_text(path: Text, text: Text)` (replaces the whole file),
-`append_text(path: Text, text: Text)` and `remove(path: Text)`, each
-`: Result(Unit, FileError)`; `list(folder: Text) : Result(List(Text), FileError)`,
+`append_text(path: Text, text: Text)`, `remove(path: Text)` and
+`make_folder(folder: Text)`, each `: Result(Unit, FileError)`; `list(folder: Text) : Result(List(Text), FileError)`,
 the names in the folder, sorted; `exists?(path: Text) : Bool`;
-`within(folder: Text) : Files`; `read_only : ReadFiles`.
+`within(folder: Text) : Files`; `read_only : ReadFiles`. Writing or
+appending into a folder that doesn't exist gives `Error(NotFound(path: path))`;
+`make_folder` makes the folder and any missing folders above it, and succeeds
+if the folder already exists.
 `entries(folder: Text) : Result(List(Entry), FileError)` gives the folder's
 entries in `list`'s order, each an `Entry(name: Text, kind: EntryKind)` whose
 kind is `File`, `Folder`, `Link` or `Other`; a link is reported, never
@@ -1321,8 +1328,9 @@ entries in `list`'s order, each folder followed by what's inside it. It doesn't
 enter links, and stops at the first folder it can't read. A capability from
 `within` or `read_only` holds its folder open while it's used, and having too
 many open at once is a bug (13.2).
-`Files.in_memory(files: Map(Text, Text)) : Files`. In such a fake, a folder
-exists when some file is inside it, and `list` and `entries` give the names
+`Files.in_memory(files: Map(Text, Text)) : Files`. In such a fake, the
+folders are those its files are in, those `make_folder` made, and those whose
+last file was removed, as on a disk, and `list` and `entries` give the names
 directly inside a folder, each subfolder once. Files that make one path both a
 file and a folder, as `{"a": "x", "a/b": "y"}` do, are a bug (13.2). **ReadFiles** has `read_text`,
 `read_bytes`, `list`, `entries`, `walk`, `exists?` and `within`. Paths are relative and use `/`; `"."` is the capability's own
@@ -1335,8 +1343,8 @@ returns a `Result` gives `Error(NotAllowed(path: path))`, and `exists?` on it gi
 and every operation follows them; a path through an absolute link, or one that
 leads outside, is refused in the same way, and one through more than 40 links
 gives `Error(Failed(path: path, reason: "too many links"))`. `remove` removes a
-link itself, never what it points to. Listing a file gives
-`Error(Failed(path: path, reason: "not a folder"))`, and reading, writing,
+link itself, never what it points to. Listing a file, or making a folder where a file is,
+gives `Error(Failed(path: path, reason: "not a folder"))`, and reading, writing,
 appending to or removing a folder gives
 `Error(Failed(path: path, reason: "is a folder"))`.
 
