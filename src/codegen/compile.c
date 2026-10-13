@@ -183,14 +183,29 @@ static MO_MUST_USE uint32_t scalar(struct compiler *c, enum mo_type_kind kind) {
     enum mo_type_problem status = mo_types_intern(&c->types, &(struct mo_type){.kind = kind}, &id);
     return type_result(c, status, id);
 }
-static MO_MUST_USE const char *type_name(struct compiler *c, uint32_t id) {
+static MO_MUST_USE bool type_text(struct compiler *c, struct mo_buffer *out, const char *s) {
+    size_t length = strlen(s);
+    if (length > out->limit - out->length)
+        return problem(c, MO_CODE_BYTECODE_TOO_BIG,
+                       "Instantiated type name exceeds MO_LIMIT_STRING_SIZE.");
+    return mo_buffer_append(out, s, length) ||
+           problem(c, MO_CODE_CODEGEN_MEMORY, "No memory for an instantiated type name.");
+}
+static MO_MUST_USE bool type_name(struct compiler *c, uint32_t id, struct mo_buffer *out,
+                                  unsigned depth) {
+    MO_ASSERT(depth < MO_LIMIT_CORE_DEPTH);
     static const char *const names[] = {"Unit", "Bool",  "Byte",     "Int",     "Float",
                                         "Char", "Time",  "Duration", "Decimal", "Range",
                                         "Text", "Bytes", "BigInt"};
     const struct mo_type *t = &c->types.items[id];
-    return t->kind <= MO_TYPE_BIGINT  ? names[t->kind]
-           : t->kind == MO_TYPE_TUPLE ? "Tuple"
-                                      : t->name;
+    if (t->kind != MO_TYPE_TUPLE)
+        return type_text(c, out, t->kind <= MO_TYPE_BIGINT ? names[t->kind] : t->name);
+    if (!type_text(c, out, "("))
+        return false;
+    for (uint32_t i = 0; i < t->parameter_count; i++)
+        if ((i != 0 && !type_text(c, out, ", ")) || !type_name(c, t->parameters[i], out, depth + 1))
+            return false;
+    return type_text(c, out, ")");
 }
 static MO_MUST_USE uint32_t type(struct compiler *c, mo_core_ty t, unsigned depth) {
     if (depth >= MO_LIMIT_CORE_DEPTH) {
@@ -300,15 +315,13 @@ static MO_MUST_USE uint32_t type(struct compiler *c, mo_core_ty t, unsigned dept
                                                            : "EntryKind";
         struct mo_buffer buf;
         mo_buffer_init(&buf, MO_LIMIT_STRING_SIZE);
-        bool ok = mo_buffer_append_text(&buf, base);
+        bool ok = type_text(c, &buf, base);
         if (a != MO_NO_INDEX)
-            ok = ok && mo_buffer_append_byte(&buf, '(') &&
-                 mo_buffer_append_text(&buf, type_name(c, a));
+            ok = ok && type_text(c, &buf, "(") && type_name(c, a, &buf, 0);
         if (b != MO_NO_INDEX)
-            ok = ok && mo_buffer_append_text(&buf, ", ") &&
-                 mo_buffer_append_text(&buf, type_name(c, b));
+            ok = ok && type_text(c, &buf, ", ") && type_name(c, b, &buf, 0);
         if (a != MO_NO_INDEX)
-            ok = ok && mo_buffer_append_byte(&buf, ')');
+            ok = ok && type_text(c, &buf, ")");
         const char *nominal =
             ok ? name(c, (mo_core_string){(const char *)buf.bytes, buf.length}) : NULL;
         mo_buffer_free(&buf);

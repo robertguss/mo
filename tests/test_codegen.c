@@ -529,6 +529,20 @@ static void test_aggregate_values(void) {
             CHECK(drop[1] == 0);
     }
     mo_arena_free(&arena);
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    b = compile(&arena, "(Program () ((FunDecl \"main\" () (result (tuple ((text) (option (int)))) "
+                        "(tuple ((bool) (text)))) (con (result (tuple ((text) (option (int)))) "
+                        "(tuple ((bool) (text)))) \"Ok\" ((tuple ((lit (text \"a\")) "
+                        "(con (option (int)) \"Some\" ((lit (int 7)))))))) \"M\" (function) 0)) "
+                        "() \"main\" (noSource))");
+    if (b != NULL) {
+        const struct mo_type *result = &b->types[b->functions[0].result_type];
+        CHECK(strcmp(result->name, "Result((Text, Option(Int)), (Bool, Text))") == 0);
+        uint32_t ok = result->cases[0].fields[0].type, error = result->cases[1].fields[0].type;
+        CHECK(ok != error && b->types[ok].kind == MO_TYPE_TUPLE &&
+              b->types[error].kind == MO_TYPE_TUPLE);
+    }
+    mo_arena_free(&arena);
 }
 
 static void test_range_and_fail(void) {

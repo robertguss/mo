@@ -1082,10 +1082,12 @@ link indices. First-match function/data/parameter lookup agrees with Core.
 Every data declaration uses a nominal choice, including one-constructor
 declarations; an empty name on its single field means an unnamed field.
 Builtin instantiations have separate nominal identities from user types of
-the same printable name. Names/strings and constants use deterministic first
-use. Source-less function names are module + "." + Core name; module order is
-first function use, with no invented exports. Source metadata supplies full
-names, module order/exports, file remapping, declaration and expression spans,
+the same printable name. Instantiated names use Mo's type spelling, including
+tuple arguments such as `Option((Int, Text))`, within `MO_LIMIT_STRING_SIZE`.
+Names/strings and constants use deterministic first use. Source-less function
+names are module + "." + Core name; module order is first function use, with no
+invented exports. Source metadata supplies full names, module order/exports,
+file remapping, declaration and expression spans,
 original binder names/ranges, spec text/links/expectations/condition lines.
 Absent expression spans clear attribution, not inherit the previous span.
 
@@ -1153,11 +1155,11 @@ checker or an invalid-bytecode diagnostic:
   behavior, not Unit or the sole element's representation. The bytecode reader
   and type builder must permit these arities and their tuple layouts.
 - **Empty/NUL-containing names:** lexical Core keys stay byte strings; they
-  need no renaming when absent from bytecode. Emitted type, case and named-field
-  names must eventually retain exact bytes, not a lossy escape or C-string
-  truncation. This requires length-aware runtime names and relaxed bytecode
-  name checks. Empty single-field names still mean unnamed fields; empty
-  multi-field labels and duplicate field labels also need that extension.
+  need no renaming when absent from bytecode. Emitted type, case, named-field,
+  function and module names must eventually retain exact bytes, not a lossy
+  escape or C-string truncation. This requires length-aware runtime names and
+  relaxed bytecode name checks. Empty single-field names still mean unnamed
+  fields; empty multi-field labels and duplicate field labels also need that extension.
   Compiler metadata already requires nonempty NUL-free display/file/module
   names, independently of Core's lexical keys. Text/Bytes payloads allow NUL now.
 
