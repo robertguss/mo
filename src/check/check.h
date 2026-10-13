@@ -342,12 +342,17 @@ enum mo_checked_or { MO_CHECK_OR_ABSENT, MO_CHECK_OR_BOOL, MO_CHECK_OR_OPTION };
 /* The source type decides Option versus Result. failure is None or Error in
  * the enclosing result; wrapper is absent for a direct propagation, or the
  * unique single-unnamed-field case selected by reference 8.3. Neither lower nor
- * codegen searches for a wrapper or chooses among candidates. */
+ * codegen searches for a wrapper or chooses among candidates. Successful input
+ * and enclosing result payloads need not have the same type. A generic wrapper
+ * carries its substitution and keyed type-only requirements, just like an
+ * explicit constructor; direct propagation has neither. */
 struct mo_checked_try {
     const struct mo_source_type *result; /* enclosing function/lambda result */
     struct mo_constructor_ref failure;
     struct mo_constructor_ref wrapper;
     struct mo_type_arguments arguments; /* wrapper substitution */
+    uint32_t ability_count;
+    const struct mo_checked_ability_use *abilities; /* keyed wrapper requirements, type-only */
 };
 
 struct mo_checked_lambda {
@@ -385,6 +390,12 @@ struct mo_checked_ability_use {
  * optional else body. RETURN has an optional guard first, then an optional
  * value; syntax distinguishes bare return from guarded bare return. Guards
  * run before the lazy value, even though the value is written first.
+ * OR has left/default operands, with a lazy right operand for both Bool and
+ * Option. An Option OR returns its payload type; its never flag comes from
+ * the mandatory left only. TRY has one input operand and try_ metadata; its
+ * failure returns from the nearest function/lambda, not the containing named
+ * function when inside a lambda. Neither form introduces constructor rows
+ * for its implicit failure/default paths.
  *
  * WHILE operands are condition/body; FOR operands are iterable/body. Both
  * return Unit. The body is lazy, and WHILE re-evaluates its condition each
@@ -550,11 +561,13 @@ struct mo_program {
  * contract. Use the explicit source-stage stack. The current skeleton supports
  * generic functions with scoped requirement proofs, scalar expressions/operators, direct/indirect
  * calls, records/choices and fields, normalized patterns, tuples/lists, conditionals, loops, early
- * exits/asserts and noncapturing lambdas. Native signatures use the shared tables; operators,
+ * exits/asserts, noncapturing lambdas, lazy Option defaults and nearest-function/lambda try with
+ * unique error wrapping. Native signatures use the shared tables; operators,
  * ability dot calls and interpolation retain native/derived/custom/parameter proofs. Source
  * dot/overload dispatch and loaded library calls retain the selected symbols. Written Map/Set
  * types require Hash. main takes no parameters or one Console and returns Unit or Int.
- * Invalid entry signatures report E0079; valid unfinished entry forms return E1103. Imports,
+ * Missing main and invalid entry signatures report E0079; there is no certified absent entry.
+ * Valid unfinished entry forms return E1103. Imports,
  * constants/specs and unfinished body forms return E1103.
  * Future spec checking checks anchor typing, completeness and links but executes no source code:
  * tools compile/run anchors to verify their allows/forbids expectations before accepting a

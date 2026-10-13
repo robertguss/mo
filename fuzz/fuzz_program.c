@@ -4,6 +4,8 @@
 #include "check/check.h"
 #include "check/native.h"
 
+#include <string.h>
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 
 static void binding(const struct mo_checked_body *body, const struct mo_checked_binding *value,
@@ -121,6 +123,28 @@ static void graph(const struct mo_program *program) {
                     for (uint32_t k = 0; k < arm->pattern_count; k++)
                         pattern(program, body, arm->patterns[k], parameters, 0);
                 }
+            }
+            if (row->operation == MO_T_OR) {
+                MO_ASSERT(row->operand_count == 2 &&
+                          row->never == body->items[row->operands[0]].never);
+                const struct mo_source_type *left = body->items[row->operands[0]].type;
+                MO_ASSERT(row->or_kind == MO_CHECK_OR_BOOL || row->or_kind == MO_CHECK_OR_OPTION);
+                MO_ASSERT(
+                    strcmp(left->name, row->or_kind == MO_CHECK_OR_BOOL ? "Bool" : "Option") == 0);
+            } else
+                MO_ASSERT(row->or_kind == MO_CHECK_OR_ABSENT);
+            if (row->try_ != NULL) {
+                MO_ASSERT(row->operand_count == 1);
+                const struct mo_source_type *input = body->items[row->operands[0]].type;
+                const struct mo_checked_try *try_ = row->try_;
+                bool option = strcmp(input->name, "Option") == 0;
+                MO_ASSERT(option || strcmp(input->name, "Result") == 0);
+                MO_ASSERT(strcmp(try_->result->name, input->name) == 0);
+                MO_ASSERT(strcmp(try_->failure.builtin, option ? "None" : "Error") == 0);
+                MO_ASSERT(row->never == body->items[row->operands[0]].never);
+                requirements(program, &try_->arguments, try_->ability_count, try_->abilities);
+                for (uint32_t j = 0; j < try_->arguments.count; j++)
+                    MO_ASSERT((try_->arguments.items[j].type->parameters & ~parameters) == 0);
             }
             if (row->lambda != NULL) {
                 MO_ASSERT(row->lambda->body < i && row->lambda->number != 0 &&

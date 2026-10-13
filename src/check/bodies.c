@@ -70,6 +70,8 @@ struct emitted {
     const struct mo_source_type *generic;
     struct term *instantiated;
     struct term *pattern_type;
+    struct term *try_result;
+    struct failure_check *failure;
     const struct mo_source_type *function_type;
     const uint8_t *requirements;
     struct term **parameters; /* compact A-Z substitution terms */
@@ -118,6 +120,28 @@ struct pattern_defaults {
     struct pattern_defaults *next;
 };
 
+struct failure_check {
+    struct failure_check *next;
+    struct term *input, *value, *context, *fallback;
+    struct note *input_note;
+    struct emitted *graph;
+    struct mo_span span;
+    struct mo_constructor_ref wrapper;
+    const struct mo_source_type *generic;
+    bool solved, never;
+};
+
+struct type_pair {
+    const struct mo_source_type *a, *b;
+    struct type_pair *next;
+};
+
+struct failure_guess {
+    struct term *term;
+    const struct mo_source_type *type;
+    struct failure_guess *next;
+};
+
 struct inference {
     struct mo_arena *arena;
     struct mo_diags *diags;
@@ -132,6 +156,8 @@ struct inference {
     struct match_check *matches;
     struct pattern_defaults *defaults;
     struct dispatch *dispatches, *last_dispatch;
+    struct failure_check *failures;
+    struct type_pair *equal_types;
     struct term *result;
     struct mo_span span;
     struct mo_diag error;
@@ -1795,10 +1821,45 @@ static MO_MUST_USE struct value binary(struct inference *p, enum mo_syntax_token
     bool logical = op == MO_T_AND || op == MO_T_OR || op == MO_T_IMPLIES;
     bool comparison = op == MO_T_EQ || op == MO_T_NE || op == MO_T_LT || op == MO_T_LE ||
                       op == MO_T_GT || op == MO_T_GE;
+    if (op == MO_T_OR && root(a.type)->variable) {
+        struct mo_span span = p->span;
+        struct value fallback = infer(p, right, expected);
+        struct value out = graph(p, (struct value){.type = fresh(p, 0), .never = a.never}, 2);
+        struct failure_check *pending =
+            allocate(p, 1, sizeof(*pending), _Alignof(struct failure_check));
+        if (fallback.type == NULL || out.type == NULL || pending == NULL)
+            return (struct value){0};
+        *pending = (struct failure_check){.next = p->failures,
+                                          .input = a.type,
+                                          .value = out.type,
+                                          .fallback = fallback.type,
+                                          .graph = out.graph,
+                                          .span = span,
+                                          .never = fallback.never};
+        p->failures = pending;
+        if (p->checked) {
+            out.graph->operands[0] = a.note;
+            out.graph->operands[1] = fallback.note;
+            out.graph->output.operation = MO_T_OR;
+        }
+        return out;
+    }
     if (logical && op == MO_T_OR && named(a.type, "Option")) {
-        bool reported = unfinished(p);
-        (void)reported;
-        return (struct value){0};
+        struct term *payload = argument(p, a.type, 0);
+        if (payload == NULL ||
+            (expected != NULL && !unify_as(p, payload, expected, p->node_expectation)))
+            return (struct value){0};
+        struct value fallback = infer(p, right, payload);
+        if (fallback.type == NULL)
+            return fallback;
+        struct value out = graph(p, (struct value){.type = payload, .never = a.never}, 2);
+        if (p->checked && out.type != NULL) {
+            out.graph->operands[0] = a.note;
+            out.graph->operands[1] = fallback.note;
+            out.graph->output.operation = MO_T_OR;
+            out.graph->output.or_kind = MO_CHECK_OR_OPTION;
+        }
+        return out;
     }
     struct term *operand = logical             ? native(p, "Bool", 0)
                            : op == MO_T_DOTDOT ? native(p, "Int", 0)
@@ -1836,6 +1897,40 @@ static MO_MUST_USE struct value binary(struct inference *p, enum mo_syntax_token
         out.graph->output.operation = op;
         out.graph->output.or_kind = op == MO_T_OR ? MO_CHECK_OR_BOOL : MO_CHECK_OR_ABSENT;
     }
+    return out;
+}
+
+static MO_MUST_USE bool solve_failure(struct inference *p, struct failure_check *at, bool defaults);
+
+static MO_MUST_USE struct value propagate(struct inference *p, struct value input,
+                                          struct term *expected) {
+    if (input.type == NULL)
+        return input;
+    struct value out = graph(
+        p, (struct value){.type = expected == NULL ? fresh(p, 0) : expected, .never = input.never},
+        1);
+    struct failure_check *pending =
+        allocate(p, 1, sizeof(*pending), _Alignof(struct failure_check));
+    if (out.type == NULL || pending == NULL)
+        return (struct value){0};
+    *pending = (struct failure_check){.next = p->failures,
+                                      .input = input.type,
+                                      .value = out.type,
+                                      .context = p->result,
+                                      .input_note = input.note,
+                                      .graph = out.graph,
+                                      .span = p->span,
+                                      .never = input.never};
+    p->failures = pending;
+    if (p->checked && out.type != NULL) {
+        out.graph->operands[0] = input.note;
+        out.graph->try_result = p->result;
+        out.graph->failure = pending;
+    }
+    if (!root(p->result)->variable &&
+        (named(input.type, "Option") || named(input.type, "Result")) &&
+        !solve_failure(p, pending, false))
+        return (struct value){0};
     return out;
 }
 
@@ -2568,7 +2663,8 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         struct value result = op == MO_T_AND ? condition(p, node->children[0], true)
                                              : infer(p, node->children[0], NULL);
         for (uint32_t i = 1; i < node->count && result.type != NULL; i += 2) {
-            result = binary(p, node->children[i]->token, result, node->children[i + 1], expected);
+            result = binary(p, node->children[i]->token, result, node->children[i + 1],
+                            i + 2 == node->count ? expected : NULL);
             if (p->checked && result.type != NULL && i + 2 < node->count) {
                 if (!record(p, node->children[i], result))
                     return (struct value){0};
@@ -2913,6 +3009,11 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         }
         return out;
     }
+    case MO_S_TRY: {
+        struct value input = infer(p, node->children[0], NULL);
+        p->span = (struct mo_span){node->span.file, node->span.start, node->span.start + 3};
+        return propagate(p, input, expected);
+    }
     case MO_S_NEGATE:
     case MO_S_NOT:
     case MO_S_PREFIX: {
@@ -2931,6 +3032,18 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             enum mo_syntax_token op = node->kind == MO_S_PREFIX ? node->children[i - 1]->token
                                       : node->kind == MO_S_NOT  ? MO_T_NOT
                                                                 : MO_T_MINUS;
+            if (op == MO_T_TRY) {
+                p->span = node->children[i - 1]->span;
+                v = propagate(p, v, i == 1 ? expected : NULL);
+                if (v.type == NULL)
+                    return v;
+                if (p->checked && i != 1) {
+                    if (!record(p, node->children[i - 1], v))
+                        return (struct value){0};
+                    v.note = p->last;
+                }
+                continue;
+            }
             struct term *wanted = op == MO_T_NOT ? native(p, "Bool", 0)
                                   : op == MO_T_MINUS
                                       ? (root(v.type)->shape.kind == MO_SOURCE_PARAMETER
@@ -2984,7 +3097,6 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     case MO_S_BINDER:
     case MO_S_ELSE:
     case MO_S_ARM:
-    case MO_S_TRY:
     case MO_S_NAMED_ARG:
     case MO_S_UNDERSCORE:
     case MO_S_REST:
@@ -3034,7 +3146,8 @@ static MO_MUST_USE struct value infer(struct inference *p, const struct mo_synta
         node->kind != MO_S_FOR && node->kind != MO_S_WHILE && node->kind != MO_S_BREAK &&
         node->kind != MO_S_CONTINUE && node->kind != MO_S_LIST && node->kind != MO_S_TUPLE &&
         node->kind != MO_S_POSITION && node->kind != MO_S_ADD_ASSIGN &&
-        node->kind != MO_S_SUB_ASSIGN && node->kind != MO_S_TEXT_INTERPOLATED) {
+        node->kind != MO_S_SUB_ASSIGN && node->kind != MO_S_TEXT_INTERPOLATED &&
+        node->kind != MO_S_TRY) {
         bool reported = unfinished(p);
         (void)reported;
         p->depth--;
@@ -3596,6 +3709,175 @@ pattern_field_type(struct inference *p, const struct mo_data_signature *data,
     return type == NULL ? NULL : finish_type(p, type, 0);
 }
 
+static MO_MUST_USE bool same_failure_type(struct inference *p, const struct mo_source_type *a,
+                                          const struct mo_source_type *b, uint32_t depth) {
+    if (!work(p) || !type_depth(p, depth))
+        return false;
+    if (a == b)
+        return true;
+    if (a->kind != b->kind || a->module != b->module || a->declaration != b->declaration ||
+        a->count != b->count || strcmp(a->name, b->name) != 0)
+        return false;
+    for (struct type_pair *pair = p->equal_types; pair != NULL; pair = pair->next) {
+        if (!work(p))
+            return false;
+        if (pair->a == a && pair->b == b)
+            return true;
+    }
+    for (uint32_t i = 0; i < a->count; i++)
+        if (!same_failure_type(p, a->arguments[i], b->arguments[i], depth + 1))
+            return false;
+    struct type_pair *pair = allocate(p, 1, sizeof(*pair), _Alignof(struct type_pair));
+    if (pair == NULL)
+        return false;
+    *pair = (struct type_pair){a, b, p->equal_types};
+    p->equal_types = pair;
+    return true;
+}
+
+/* Candidates do not constrain unknown payloads until exactly one matches.
+ * Repeated variables must agree, and shared type paths are visited once. */
+static MO_MUST_USE bool failure_matches(struct inference *p, struct term *input,
+                                        const struct mo_source_type *type,
+                                        struct failure_guess **guesses, uint32_t depth) {
+    if (!work(p) || !type_depth(p, depth))
+        return false;
+    input = root(input);
+    if (input->variable && input->numeric != 0 && finish_type(p, input, 0) == NULL)
+        return false;
+    if (input->resolved != NULL)
+        return same_failure_type(p, input->resolved, type, depth);
+    for (struct failure_guess *at = *guesses; at != NULL; at = at->next) {
+        if (!work(p))
+            return false;
+        if (at->term == input)
+            return same_failure_type(p, at->type, type, depth);
+    }
+    if (!input->variable) {
+        const struct mo_source_type *shape = &input->shape;
+        if (shape->kind != type->kind || shape->module != type->module ||
+            shape->declaration != type->declaration || shape->count != type->count ||
+            strcmp(shape->name, type->name) != 0)
+            return false;
+        for (uint32_t i = 0; i < type->count; i++) {
+            struct term *part = argument(p, input, i);
+            if (part == NULL || !failure_matches(p, part, type->arguments[i], guesses, depth + 1))
+                return false;
+        }
+    }
+    struct failure_guess *guess = allocate(p, 1, sizeof(*guess), _Alignof(struct failure_guess));
+    if (guess == NULL)
+        return false;
+    *guess = (struct failure_guess){input, type, *guesses};
+    *guesses = guess;
+    return true;
+}
+
+static MO_MUST_USE bool finish_wrapping(struct inference *p) {
+    for (struct failure_check *at = p->failures; at != NULL; at = at->next) {
+        p->span = at->span;
+        if (!work(p))
+            return false;
+        if (at->fallback != NULL || named(at->input, "Option"))
+            continue;
+        struct term *from = argument(p, at->input, 1), *to = argument(p, at->context, 1);
+        if (from == NULL || to == NULL)
+            return false;
+        if ((root(from)->variable && root(from)->numeric == 0) || root(to)->variable) {
+            if (!unify(p, from, to, 0))
+                return false;
+        }
+        const struct mo_source_type *target = finish_type(p, to, 0);
+        if (target == NULL)
+            return false;
+        struct failure_guess *guesses = NULL;
+        if (failure_matches(p, from, target, &guesses, 0)) {
+            struct term *actual = annotation(p, target, NULL, 0);
+            if (actual == NULL || !unify(p, from, actual, 0))
+                return false;
+            continue;
+        }
+        if (p->failed)
+            return false;
+        const struct mo_source_type *selected = NULL;
+        uint32_t count = 0;
+        if (target->declaration != NULL && target->declaration->declaration->kind == MO_S_ENUM) {
+            const struct mo_symbol *owner = target->declaration;
+            if (!visible_data(p, owner))
+                return false;
+            const struct mo_module_scope *scope = &p->interfaces->scopes[owner->module];
+            for (uint32_t i = 0; i < owner->case_count; i++) {
+                if (!work(p))
+                    return false;
+                const struct mo_data_signature *data =
+                    data_type(p, &scope->symbols[owner->cases[i]]);
+                MO_ASSERT(data != NULL);
+                if (!data->unnamed || data->count != 1)
+                    continue;
+                const struct mo_source_type *field = pattern_field_type(p, data, target, 0);
+                if (field == NULL)
+                    return false;
+                guesses = NULL;
+                if (failure_matches(p, from, field, &guesses, 0)) {
+                    count++;
+                    selected = field;
+                    at->wrapper.symbol = data->symbol;
+                    at->generic = data->type;
+                }
+                if (p->failed)
+                    return false;
+            }
+        } else if (target->declaration == NULL) {
+            const struct mo_builtin_case *first = mo_builtin_case_by_type(target->name);
+            for (uint32_t i = 0; first != NULL && i < first->cases; i++) {
+                if (!work(p))
+                    return false;
+                const struct mo_builtin_case *data = mo_builtin_case_by_key(first->first_key + i);
+                MO_ASSERT(data != NULL);
+                if (data->count != 1 || data->fields[0] != NULL)
+                    continue;
+                MO_ASSERT(data->parameter < target->count);
+                guesses = NULL;
+                if (failure_matches(p, from, target->arguments[data->parameter], &guesses, 0)) {
+                    count++;
+                    selected = target->arguments[data->parameter];
+                    at->wrapper.builtin = data->name;
+                    at->generic = mo_builtin_template(data);
+                }
+                if (p->failed)
+                    return false;
+            }
+        }
+        if (count != 1) {
+            struct type_preview preview = {0};
+            if (!preview_type(p, &preview, from, 0))
+                return false;
+            char *message = allocate(p, 768, 1, 1);
+            if (message == NULL)
+                return false;
+            int length = snprintf(message, 768,
+                                  "try needs exactly one failure case holding %.511s as its "
+                                  "unnamed value; found %u",
+                                  preview.text, (unsigned)count);
+            MO_ASSERT(length > 0 && length < 768);
+            return problem(p, MO_CODE_TRY_WRAPPER, p->span, message,
+                           count == 0
+                               ? "Add one case Wrap(E) to the function's failure type, where E "
+                                 "is the source failure type; named fields don't wrap "
+                                 "(reference 8.3)."
+                               : "Keep exactly one case with this unnamed value; make the "
+                                 "other matching cases use named fields, or handle the failure "
+                                 "with case (reference 8.3).",
+                           NULL);
+        }
+        MO_ASSERT(selected != NULL);
+        struct term *actual = annotation(p, selected, NULL, 0);
+        if (actual == NULL || !unify(p, from, actual, 0))
+            return false;
+    }
+    return true;
+}
+
 /* One immutable typed ANY per field and nominal instantiation. Omitted parts
  * borrow these nodes, whose syntax points at the declaring field. */
 static MO_MUST_USE const struct mo_checked_pattern *const *
@@ -3867,6 +4149,88 @@ static MO_MUST_USE bool finish_dot(struct inference *p, struct dispatch *at) {
     return true;
 }
 
+static MO_MUST_USE struct term *failure_container(struct inference *p, bool option) {
+    struct term *out = native(p, option ? "Option" : "Result", option ? 1u : 2u);
+    if (out == NULL)
+        return NULL;
+    for (uint32_t i = 0; i < out->shape.count; i++) {
+        out->arguments[i] = fresh(p, 0);
+        if (out->arguments[i] == NULL)
+            return NULL;
+    }
+    return out;
+}
+
+static MO_MUST_USE bool solve_failure(struct inference *p, struct failure_check *at,
+                                      bool defaults) {
+    p->span = at->span;
+    struct term *input = root(at->input);
+    if (at->fallback != NULL) {
+        if (input->variable && defaults && input->numeric != 0 && finish_type(p, input, 0) == NULL)
+            return false;
+        if (root(input)->variable)
+            return true;
+        bool option = named(input, "Option");
+        struct term *value = option ? argument(p, input, 0) : native(p, "Bool", 0);
+        if (value == NULL || (!option && !unify_as(p, input, value, MO_CODE_CONDITION_TYPE)) ||
+            !unify(p, at->value, value, 0) || (!at->never && !unify(p, at->fallback, value, 0)))
+            return false;
+        if (at->graph != NULL)
+            at->graph->output.or_kind = option ? MO_CHECK_OR_OPTION : MO_CHECK_OR_BOOL;
+        at->solved = true;
+        return true;
+    }
+    if (input->variable && input->numeric != 0) {
+        if (!defaults)
+            return true;
+        if (finish_type(p, input, 0) == NULL)
+            return false;
+    }
+    struct term *context = root(at->context);
+    bool option = named(input, "Option"), result = named(input, "Result");
+    if (at->never && (named(context, "Option") || named(context, "Result")) && !option && !result) {
+        input = failure_container(p, named(context, "Option"));
+        if (input == NULL)
+            return false;
+        at->input = input;
+        if (at->input_note != NULL)
+            at->input_note->type = input;
+        option = named(input, "Option");
+        result = !option;
+    }
+    if (context->variable && (option || result)) {
+        struct term *wanted = failure_container(p, option);
+        if (wanted == NULL || !unify(p, context, wanted, 0))
+            return false;
+        context = root(context);
+    }
+    if (input->variable && (named(context, "Option") || named(context, "Result"))) {
+        struct term *wanted = failure_container(p, named(context, "Option"));
+        if (wanted == NULL || !unify(p, input, wanted, 0))
+            return false;
+        input = root(input);
+        option = named(input, "Option");
+        result = !option;
+    }
+    if (input->variable || context->variable)
+        return true;
+    if (!option && !result)
+        return problem(p, MO_CODE_TRY_INPUT, p->span, "try needs a Result or an Option",
+                       "try takes the value out of an Ok or Some (reference 8.3).", NULL);
+    if (!named(context, option ? "Option" : "Result"))
+        return problem(p, MO_CODE_TRY_RESULT, p->span,
+                       "try needs a function returning the same failure kind",
+                       "try works on a Result in a function returning Result, or on an "
+                       "Option in a function returning Option; otherwise handle the "
+                       "failure with case (reference 8.3).",
+                       NULL);
+    struct term *value = argument(p, input, 0);
+    if (value == NULL || !unify(p, at->value, value, 0))
+        return false;
+    at->solved = true;
+    return true;
+}
+
 static MO_MUST_USE bool finish_dispatches(struct inference *p) {
     bool progress;
     bool defaults = false;
@@ -3924,6 +4288,15 @@ static MO_MUST_USE bool finish_dispatches(struct inference *p) {
             at->solved = true;
             progress = true;
         }
+        for (struct failure_check *at = p->failures; at != NULL; at = at->next) {
+            if (!work(p))
+                return false;
+            if (!at->solved) {
+                if (!solve_failure(p, at, defaults))
+                    return false;
+                progress = progress || at->solved;
+            }
+        }
         if (!progress && !defaults) {
             defaults = true;
             progress = true;
@@ -3935,16 +4308,25 @@ static MO_MUST_USE bool finish_dispatches(struct inference *p) {
                            "no use decides this dispatch's receiver type",
                            "Give the value a type, or write the call another way (reference 5.4).",
                            NULL);
+    for (struct failure_check *at = p->failures; at != NULL; at = at->next)
+        if (!at->solved)
+            return problem(p, MO_CODE_CANNOT_INFER, at->span,
+                           "no use decides this failure expression's type",
+                           "or needs Bool or Option, and try needs Option or Result in the "
+                           "enclosing function (reference 8).",
+                           NULL);
     return true;
 }
 
 static MO_MUST_USE struct mo_inferred_body *
 infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
                const struct mo_signatures *signatures, uint32_t function, struct mo_diags *diags,
-               struct mo_checked_function *checked) {
+               struct mo_checked_function *checked, bool *halt) {
     MO_ASSERT(arena != NULL && interfaces != NULL && signatures != NULL && diags != NULL);
+    MO_ASSERT(halt != NULL);
     MO_ASSERT(function < signatures->count && signatures->work != NULL);
     MO_ASSERT(*signatures->work <= MO_LIMIT_PROGRAM_CHECK_WORK);
+    *halt = false;
     const struct mo_function_signature *signature = &signatures->items[function];
     const struct mo_syntax *syntax = signature->function->declaration;
     struct inference p = {.arena = arena,
@@ -3988,7 +4370,7 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
                          : infer_as(&p, syntax->children[5], p.result, MO_CODE_RESULT_TYPE);
     if (v.type == NULL || !leave(&p, NULL))
         goto failed;
-    if (!finish_dispatches(&p))
+    if (!finish_dispatches(&p) || !finish_wrapping(&p))
         goto failed;
     struct mo_inferred_body *out = allocate(&p, 1, sizeof(*out), _Alignof(struct mo_inferred_body));
     struct mo_inferred_expression *items =
@@ -4000,6 +4382,7 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
     bool valid = finish_notes(&p, items);
     (void)valid;
     if (!p.fatal && !finish_patterns(&p)) {
+        *halt = true;
         mo_diags_sort(diags);
         return NULL;
     }
@@ -4075,6 +4458,26 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
             if (!finish_operator(&p, n) || !finish_function_use(&p, g) ||
                 !finish_interpolation(&p, n))
                 goto failed;
+            if (g->try_result != NULL) {
+                struct mo_checked_try *try_ =
+                    allocate(&p, 1, sizeof(*try_), _Alignof(struct mo_checked_try));
+                if (try_ == NULL)
+                    goto failed;
+                const struct mo_source_type *result = finish_type(&p, g->try_result, 0);
+                if (result == NULL)
+                    goto failed;
+                *try_ = (struct mo_checked_try){
+                    .result = result,
+                    .failure = {.builtin = named(g->try_result, "Option") ? "None" : "Error"},
+                    .wrapper = g->failure->wrapper};
+                if (g->failure->generic != NULL &&
+                    (!type_arguments(&p, g->failure->generic, result->arguments[1],
+                                     &try_->arguments) ||
+                     !data_requirements(&p, &try_->arguments, &try_->ability_count,
+                                        &try_->abilities)))
+                    goto failed;
+                g->output.try_ = try_;
+            }
             if (g->generic != NULL && g->generic->count != 0) {
                 const struct mo_source_type *actual = finish_type(&p, g->instantiated, 0);
                 if (actual == NULL ||
@@ -4169,11 +4572,13 @@ failed:
         bool partial_valid = finish_notes(&p, NULL);
         (void)partial_valid;
         if (!p.fatal && !finish_patterns(&p)) {
+            *halt = true;
             mo_diags_sort(diags);
             return NULL;
         }
     }
     emit_problem(&p);
+    *halt = p.error.code >= 1000 || (diags->dropped != 0 && diags->count < MO_LIMIT_DIAGNOSTICS);
     mo_diags_sort(diags);
     return NULL;
 }
@@ -4182,12 +4587,13 @@ struct mo_inferred_body *mo_infer_function(struct mo_arena *arena,
                                            const struct mo_module_interfaces *interfaces,
                                            const struct mo_signatures *signatures,
                                            uint32_t function, struct mo_diags *diags) {
-    return infer_function(arena, interfaces, signatures, function, diags, NULL);
+    bool halt;
+    return infer_function(arena, interfaces, signatures, function, diags, NULL, &halt);
 }
 
 bool mo_check_function(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
                        const struct mo_signatures *signatures, uint32_t function,
-                       struct mo_diags *diags, struct mo_checked_function *out) {
+                       struct mo_diags *diags, struct mo_checked_function *out, bool *halt) {
     MO_ASSERT(out != NULL);
-    return infer_function(arena, interfaces, signatures, function, diags, out) != NULL;
+    return infer_function(arena, interfaces, signatures, function, diags, out, halt) != NULL;
 }

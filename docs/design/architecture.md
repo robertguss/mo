@@ -502,8 +502,12 @@ checks independent bodies despite later declaration errors, and sorts the
 combined diagnostics by source position. Invalid declarations and their nominal
 dependents suppress uses rather than inventing secondary type errors. A failed
 ability context is discarded, including provisional recursive proofs. Resource
-or diagnostic-storage failure stops the walk. Neither a partial preparation nor
-a partially checked program is published through the public interfaces.
+or diagnostic-storage failure stops the walk. Filling the diagnostic count alone
+does not stop independent body checks: later errors increment `dropped`. Body
+checking retains its failure kind privately so an unrecorded resource error still
+halts; staged forms stop before secondary body errors. Neither a partial
+preparation nor a partially checked program is published through the public
+interfaces.
 
 Native signatures are prepared once per checking run from `prims.def` and
 `hostops.def`. The checker adds positional parameter names to each table's Mo
@@ -527,11 +531,15 @@ requirement. A phantom parameter does not acquire an ability its fields do not
 need. This walk and signature requirements share the program work budget.
 
 Reference 9.2 defines a customizer as one ordinary function in its type's own
-module, with signature `compare(T, T): Ordering` or `to_text(T): Text`. It does
-not explicitly settle unrelated functions with those names. For this stage the
-names remain reserved for those signatures; E0082 explains that conservative
-restriction. Qualified library prefixes require a module in scope, except the
-modules named after built-in types that reference 10.5 makes implicit.
+module, with signature `compare(T, T): Ordering` or `to_text(T): Text`. Robert's
+option B recognizes a candidate by its name and first parameter's locally
+declared nominal type, then enforces the exact signature with E0082. Other
+functions with those names are ordinary helpers, never ability implementations.
+The trusted `FileError.to_text` library function remains an explicit exception
+for native data. Section 5.4's owner-first dot lookup, visible-field precedence
+and built-in library handling are unchanged. Qualified library prefixes require
+a module in scope, except the modules named after built-in types that reference
+10.5 makes implicit.
 
 **Local inference is a second intermediate result.** `mo_infer_function`
 checks one named body against prepared signatures, returning postorder
@@ -2412,6 +2420,8 @@ expressions and native/derived/custom operator proofs, direct/indirect calls,
 prepared native calls, record/choice construction and fields, normalized
 patterns, tuples/lists, conditionals, loops, early exits/asserts and noncapturing
 lambdas, dot/overload dispatch, Mo-library calls, ability dots and interpolation.
+Option defaults and Option/Result `try` are checked too, including unique
+failure wrapping and generic wrapper requirements.
 `main` returns Unit or Int and takes no parameters or one Console.
 Direct `Console.print` reads its operation
 and named input type from `base/hostops.def`, with the receiver explicit.
@@ -2448,8 +2458,9 @@ grow the cycle. Proof traversal memoizes recursive nominal graphs.
 Invalid entry signatures report E0079: parameters must be capabilities without
 duplicate types, and the result must be Unit, Int or Result(Unit, E). Valid
 unfinished entry conventions still report E1103. Checking stops at the first
-failed stage or body; no staged inference result or partly filled program is
-returned as certified output.
+unfinished stage or resource failure; independent body errors are retained in
+source order, with further errors counted after the diagnostic cap. No staged
+inference result or partly filled program is returned as certified output.
 The whole-program corpus asserts resolved graphs and canonical binders, checks
 unfinished-stage rejection, sweeps arena limits and reaches maximum nesting.
 `fuzz_program` walks graph invariants and varies allocation budgets. Generated
@@ -2532,9 +2543,28 @@ constructing a scalar, including Int's signed minimum.
 
 Checked patterns name their cases and declaration-order fields. Case arms keep
 source order and guards; coverage and the no-catch-all rule are already checked.
-`or` explicitly selects Bool or Option. `try` identifies its enclosing result,
-failure constructor and any unique wrapping case. Lambda records retain typed
-parameters, captures in first-use order and source-order numbers before lifting.
+`or` explicitly selects Bool or Option, with two operands and a lazy right
+operand. An Option default returns its payload, even when that payload is
+another Option; flat chains constrain only their final result. `never` depends
+on the mandatory left, not a stopping fallback. Deferred defaults and `try`
+solve alongside dot dispatch, before numeric defaults and final types.
+`try` has one input operand and identifies the nearest function/lambda result,
+failure constructor and any unique wrapping case. Input and enclosing success
+payloads need not match. Equal failure types propagate directly; an unconstrained
+whole error variable first unifies for direct propagation. Otherwise exactly
+one unnamed-field case must match the source error type after generic
+substitution and ordinary numeric defaults. Unknown payloads such as None's
+parameter can be constrained by that unique case; candidate matching does not
+bind them speculatively, and repeated variables must agree. Destination type
+arguments must already be determined by the signature or other uses.
+Wrapping requires the type's insides to be visible, like explicit
+construction. Named fields do not wrap. E0085/E0086 reject the wrong input/result
+family; E0087 names a missing or ambiguous wrapper. The selected wrapper retains
+its substitution and keyed type-only requirements in `mo_checked_try`; lowering
+does not search for cases or proofs. All deferred checks and type comparisons
+share the ordinary work/depth/arena limits and memoize shared type paths.
+Lambda records retain typed parameters, captures in first-use order and
+source-order numbers before lifting.
 Constants alone are dependency-ordered, with source-order ties. The entry names
 the entry module's `main`, its ordered capability parameters, result convention
 and the Text implementation for a returned failure.
