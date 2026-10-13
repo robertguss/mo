@@ -1,4 +1,5 @@
 #include "base/codes.h"
+#include "base/stack.h"
 #include "codegen/codegen.h"
 #include "test.h"
 #include "vm/vm.h"
@@ -1954,7 +1955,7 @@ static void test_initialization_memory(void) {
 /* Differential driver: execute compiler output, with no interpreter internals.
  * Input is a checked zero-argument Program; the Python runner supplies wrappers
  * for fixture entries. A staged compiler refusal is distinct from an outcome. */
-static MO_MUST_USE int core_run(const char *path, const char *test) {
+static MO_MUST_USE int core_run_on_stack(const char *path, const char *test) {
     struct mo_sources sources;
     struct mo_source_error source_error;
     uint32_t file;
@@ -2057,6 +2058,19 @@ done:
     mo_arena_free(&arena);
     mo_sources_free(&sources);
     return status;
+}
+struct core_arguments {
+    const char *path, *test;
+    int status;
+};
+static void core_run_callback(void *argument) {
+    struct core_arguments *a = argument;
+    a->status = core_run_on_stack(a->path, a->test);
+}
+static MO_MUST_USE int core_run(const char *path, const char *test) {
+    struct core_arguments a = {.path = path, .test = test};
+    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, core_run_callback, &a) == 0);
+    return a.status;
 }
 
 static MO_MUST_USE mo_i128 decimal_input(const char *text) {

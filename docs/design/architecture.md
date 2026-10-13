@@ -1554,6 +1554,46 @@ Metadata module names use merge sorting and exported types use indexed
 ownership instead of nested membership scans. Literal list/map arities are
 compared with their actual arguments before allocating any signature space.
 
+**Core-stage stack.** `MO_LIMIT_CORE_DEPTH` is 4,096; the text-size and node
+limits are unchanged. The wire limit counts list wrappers and the document;
+the in-memory expression/type limit counts walker levels. A statement may lower
+to several lets, so the depth limit is not a source statement-count allowance.
+Core parsing, printing, metadata validation, checking and compilation must run
+through `mo_with_stack(MO_SOURCE_STACK_SIZE)`, like source checking. Core and
+codegen tests, their corpus drivers and fuzz targets, and the VM's `--core`
+driver use this explicit stack, not the platform's default. Every caller that
+accepts full-depth Core must use it. The `mo` command's pending source-stack
+follow-up carries this contract when it connects Core stages. The existing
+48 MiB source allowance is retained.
+
+The following are minimum passing stack reservations, in MiB, from 256 KiB
+sweeps on Linux x86-64 with Clang `-O0 -g` debug and ASan/UBSan builds using
+`-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined`. Each boundary was
+repeated twice; the reservation 256 KiB below each listed minimum failed with
+stack exhaustion. Codec inputs reach the 4,096 wire-level bound: a 4,093-let
+expression and 4,094 nested List types; the primitive expression has 2,046
+nested negations under one let. Checker, metadata and compiler inputs have 4,096
+levels (4,095 lets or negations plus a literal), with complete source metadata.
+The type input is a 4,096-level List parameter on an otherwise shallow function.
+
+| Public walker | Let debug / ASan | Negation debug / ASan | List type debug / ASan |
+| --- | --- | --- | --- |
+| Text parser, including its canonical-output printer | 2.25 / 3.25 | 1.75 / 2.50 | 2.25 / 3.25 |
+| Text printer | 2.25 / 3.00 | 1.75 / 2.00 | 2.25 / 3.00 |
+| Metadata validator | 0.75 / 0.75 | 1.00 / 1.00 | — |
+| Core checker, including metadata validation | 5.25 / 9.25 | 5.25 / 9.25 | 1.25 / 2.00 |
+| Codegen, including its Core recheck | 5.25 / 9.25 | 5.25 / 9.25 | 5.25 / 6.25 |
+
+`index.c`'s AVL insert/find was separately exercised with 4,096 sorted binder
+names: both builds pass at the smallest tested reservation, 256 KiB. Its
+recursion follows AVL height, not Core nesting. The checker exceeds half an
+8 MiB main-thread stack, even without sanitizers; ASan exhausts 9 MiB.
+The explicit allowance therefore covers all Core tools. These reservations are
+measured bounds for these inputs, not portable frame-size constants; compiler
+flags and instrumentation can change them. Depth-bound tests run with the
+same 48 MiB allowance in CI. Lean's `mocore` also runs a 4,096-let chain to
+`returned "7"` with fuel 100,000, independently of C's implementation limit.
+
 `ci/check_core_check.py` compares every Core fixture and committed or smoke
 `fuzz_core_text`/`fuzz_core_check` corpus file with `mocore`, plus fixture mutations,
 type-directed trees and an independent table of all primitive/host signatures.

@@ -1,6 +1,8 @@
 #include "base/codes.h"
 #include "base/limits.h"
+#include "base/stack.h"
 #include "core/core.h"
+#include "core_depth.h"
 #include "test.h"
 
 #include <string.h>
@@ -577,7 +579,32 @@ static MO_MUST_USE int verdict(const char *path) {
     mo_sources_free(&sources);
     return status == 8 ? 8 : 0;
 }
-int main(int argc, char **argv) {
+static void test_depth(void) {
+    for (unsigned form = 0; form < 2; form++) {
+        struct mo_arena arena;
+        struct mo_diags diags;
+        mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+        CHECK(mo_diags_init(&diags));
+        struct mo_core *p = core_depth(&arena, MO_LIMIT_CORE_DEPTH, form == 0);
+        if (p != NULL) {
+            CHECK(mo_core_metadata_valid(p));
+            CHECK(mo_core_check(p, &diags) && !mo_diags_any(&diags));
+            p->metadata.funs.items[0].body.spans.count--;
+            CHECK(!mo_core_metadata_valid(p));
+        }
+        mo_arena_free(&arena);
+        p = core_depth(&arena, MO_LIMIT_CORE_DEPTH + 1u, form == 0);
+        if (p != NULL) {
+            CHECK(!mo_core_metadata_valid(p));
+            p->metadata.source = false;
+            CHECK(!mo_core_check(p, &diags));
+            CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CORE_CHECK_LIMIT);
+        }
+        mo_diags_free(&diags);
+        mo_arena_free(&arena);
+    }
+}
+static MO_MUST_USE int tests(int argc, char **argv) {
     if (argc > 1) {
         for (int i = 1; i < argc; i++)
             if (verdict(argv[i]) != 0)
@@ -595,5 +622,20 @@ int main(int argc, char **argv) {
     test_nested_spans();
     test_large_programs();
     test_parser_node_limit();
+    test_depth();
     return mo_test_report("test_core_check");
+}
+struct arguments {
+    int argc, status;
+    char **argv;
+};
+static void run(void *argument) {
+    struct arguments *a = argument;
+    a->status = tests(a->argc, a->argv);
+}
+int main(int argc, char **argv) {
+    struct arguments a = {.argc = argc, .argv = argv};
+    int error = mo_with_stack(MO_SOURCE_STACK_SIZE, run, &a);
+    CHECK(error == 0);
+    return error == 0 ? a.status : mo_test_report("test_core_check stack");
 }

@@ -1,13 +1,21 @@
 #include "base/limits.h"
+#include "base/stack.h"
 #include "core/core.h"
 
 #include <string.h>
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 
+struct input {
+    const uint8_t *data;
+    size_t size;
+};
 /* Try each caller-supplied category, including ambiguous tags such as unit, stopped and failed.
  * The real sample runs are seeds too, supplied by make fuzz-smoke without duplicate fixtures. */
-int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+static void run(void *argument) {
+    const struct input *input = argument;
+    const uint8_t *data = input->data;
+    size_t size = input->size;
     const enum mo_core_text_kind kinds[] = {
         MO_CORE_TEXT_TYPE,        MO_CORE_TEXT_CAP,     MO_CORE_TEXT_LITERAL,
         MO_CORE_TEXT_PRIMITIVE,   MO_CORE_TEXT_EXPR,    MO_CORE_TEXT_PROGRAM,
@@ -22,7 +30,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
         if (!mo_diags_init(&diags)) {
             mo_arena_free(&arena);
-            return 0;
+            return;
         }
         mo_buffer_init(&first, MO_LIMIT_CORE_TEXT_SIZE * 2);
         mo_buffer_init(&second, MO_LIMIT_CORE_TEXT_SIZE * 2);
@@ -45,5 +53,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         mo_diags_free(&diags);
         mo_arena_free(&arena);
     }
+}
+int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+    struct input input = {data, size};
+    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, run, &input) == 0);
     return 0;
 }

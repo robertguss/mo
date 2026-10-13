@@ -1,5 +1,6 @@
 #include "base/codes.h"
 #include "base/limits.h"
+#include "base/stack.h"
 #include "core/core.h"
 #include "test.h"
 
@@ -613,6 +614,27 @@ static void test_typed_fields(void) {
 static void test_limits_and_ownership(void) {
     struct mo_buffer text;
     mo_buffer_init(&text, MO_LIMIT_CORE_TEXT_SIZE);
+    CHECK(mo_buffer_append_text(&text, "(core " MO_CORE_TEXT_VERSION " "));
+    for (size_t i = 0; i < MO_LIMIT_CORE_DEPTH - 3u; i++)
+        CHECK(mo_buffer_append_text(&text, "(let_ \"x\" (lit (int 0)) "));
+    CHECK(mo_buffer_append_text(&text, "(lit (int 7))"));
+    for (size_t i = 0; i < MO_LIMIT_CORE_DEPTH - 2u; i++)
+        CHECK(mo_buffer_append_byte(&text, ')'));
+    CHECK(mo_buffer_append_byte(&text, '\n'));
+    round_trip_bytes(MO_CORE_TEXT_EXPR, (const char *)text.bytes, text.length,
+                     (const char *)text.bytes, text.length);
+    mo_buffer_clear(&text);
+    CHECK(
+        mo_buffer_append_text(&text, "(core " MO_CORE_TEXT_VERSION " (let_ \"x\" (lit (int 0)) "));
+    for (size_t i = 0; i < (MO_LIMIT_CORE_DEPTH - 4u) / 2u; i++)
+        CHECK(mo_buffer_append_text(&text, "(prim (int (neg)) ("));
+    CHECK(mo_buffer_append_text(&text, "(lit (int 7))"));
+    for (size_t i = 0; i < (MO_LIMIT_CORE_DEPTH - 4u) / 2u; i++)
+        CHECK(mo_buffer_append_text(&text, "))"));
+    CHECK(mo_buffer_append_text(&text, "))\n"));
+    round_trip_bytes(MO_CORE_TEXT_EXPR, (const char *)text.bytes, text.length,
+                     (const char *)text.bytes, text.length);
+    mo_buffer_clear(&text);
     CHECK(mo_buffer_append_text(&text, "(core 0.7 "));
     for (size_t i = 0; i < MO_LIMIT_CORE_DEPTH - 2; i++)
         CHECK(mo_buffer_append_text(&text, "(list "));
@@ -705,7 +727,8 @@ static void test_print_byte_limit(void) {
     mo_buffer_free(&chars);
     mo_buffer_free(&out);
 }
-int main(void) {
+static void tests(void *unused) {
+    (void)unused;
     test_fixtures();
     test_shapes();
     test_operations();
@@ -715,5 +738,8 @@ int main(void) {
     test_typed_fields();
     test_limits_and_ownership();
     test_print_byte_limit();
+}
+int main(void) {
+    CHECK(mo_with_stack(MO_SOURCE_STACK_SIZE, tests, NULL) == 0);
     return mo_test_report("test_core_text");
 }

@@ -757,6 +757,9 @@ enum mo_core_text_kind {
     MO_CORE_TEXT_RANDOM_STATE
 };
 #define MO_CORE_TEXT_VERSION "0.7"
+/* Core parsing, printing, metadata validation and checking use bounded recursion.
+ * Callers must run Core work on MO_SOURCE_STACK_SIZE via mo_with_stack (base/stack.h),
+ * rather than relying on platform thread-stack defaults; see architecture section 12. */
 MO_MUST_USE void *mo_core_text_parse(struct mo_arena *arena, enum mo_core_text_kind kind,
                                      const char *text, size_t length, struct mo_diags *diags);
 MO_MUST_USE bool mo_core_text_print(enum mo_core_text_kind kind, const void *value,
