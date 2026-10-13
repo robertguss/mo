@@ -1081,7 +1081,8 @@ choices, Range make/start/end, and spec fail. Option, Result, Ordering and
 EntryKind retain separate instantiated types. It retains all five Core
 function kinds and direct tail calls in every tail position it supports.
 The third adds globals and ordered initialization for these expression forms.
-Closures/application, collections, other primitives/host operations,
+The fourth adds function types, closures and application, including closures
+in constant initializers and spec code. Collections, other primitives/host operations,
 BigInt decimal literals, joins and reuse remain for subsequent slices. The
 sample fixtures and Core fuzz corpora are attempted in CI; unfinished forms,
 permanently excluded representations, entry-name collisions, resource limits
@@ -1126,6 +1127,43 @@ includes these appended functions. Their counts, registers and blocks obey the
 same limits as ordinary functions. Global references are borrowed, becoming owned
 only through `dup` for a consuming operand or return; they never enter frame cleanup.
 
+Lifted closures follow all original functions and initializer helpers. A sizing
+walk reserves their slots; preparation appends them in expression preorder, first
+through Core functions in declaration order, then constants in dependency order.
+They remain private and absent from the Core call-name index and module exports.
+Entry-name uniqueness includes them. Source metadata supplies their full names;
+`noSource` uses the enclosing Core lookup name plus `.fn.N`, counted from 1 in
+preorder across nested lambdas, as `formal/TEXT.md` specifies. A constant's lambdas
+use its name, not the generated value helper's suffix.
+
+Capture discovery resolves active lexical registers, not names after scopes have
+been restored. Captures follow first use, deduplicate by register identity, and
+retain values through intermediate environments when only a nested lambda uses
+them. Globals are read in lifted code, not copied into the environment. Explicit
+parameters precede one implicit owned `env` register; all reference parameters
+and extracted reference captures are owned. The environment is released by the
+ordinary return/tail-call cleanup. Capture-less lambdas have immortal constants
+and a closure layout, even though they need no allocation. Other lambdas consume
+distinct capture copies with `make_closure`. Applications evaluate the callee,
+then arguments in Core order, and consume distinct owned copies, including the
+closure itself; every tail application uses `tail_call_closure`. Named-function
+values are Core lambdas wrapping direct calls, not a separate compiler form.
+Closure signatures have at most `MO_LIMIT_PARAMETERS` explicit parameters, leaving
+room for the implicit environment within `MO_LIMIT_BYTECODE_PARAMETERS`; captures
+also obey `MO_LIMIT_FIELDS` and the function register bound. These are E1015/E1013
+resource refusals, not E1057 writer failures.
+
+Expected function types reach lambda bodies through function results, calls,
+applications and constructor fields. Missing inference results from stopping
+lambdas can be resolved once from a later if/case arm without repeating preparation
+or lifting, preserving the checker's fallback rule with bounded work. Lifted
+debug declarations use the lambda node's span, including absent spans. Body
+preorder, binder slots and closure names retain the enclosing metadata's identities;
+the indices are built once and shared. Explicit parameters use their lambda
+binder names; capture names survive extraction and cover the extracted registers
+from `field` through the function. Spec closures inherit the spec flag, not their
+enclosing function's spec text, subject, anchor expectation or condition lines.
+
 Borrow inference builds ownership dependencies between parameters, aliases,
 merge results and call arguments. Returns, constructed fields, projections
 and call results require owners. Tail calls add argument-to-parameter edges
@@ -1139,11 +1177,14 @@ Stop and fail abandon the frame through the outcome path, not normal cleanup.
 
 The allocator still assigns monotonically numbered temporaries and binders;
 recycling remains for a later slice. It initializes immediate and scalar
-constant slots before control splits so incoming states agree; aggregate
-references stay undefined until written, never receive invented inhabitants.
+constant slots before control splits so incoming states agree. Function slots
+may start borrowed from an existing capture-less closure of the exact signature,
+preferring non-spec code; spec-only constants are used only in spec code. This
+permits reconverging capture-less lambda arms without inventing a function value.
+Other aggregate references stay undefined until written, never receive invented inhabitants.
 Tail branches support references. Reconverging branches support stable
 literal/variable results but refuse path-local owners with E1055, including
-owned nested merges or consumed reference call arguments. Dropping those
+owned nested merges, capturing lambdas or consumed reference call/application arguments. Dropping those
 owners alone would leave `moved` versus `undefined` states at the join.
 Path-local aggregate global loads likewise require normalization: their slots
 would join as `borrowed` versus `undefined`. Scalar global loads already have

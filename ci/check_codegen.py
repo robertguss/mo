@@ -105,6 +105,50 @@ def global_program(i):
     ) "start" (noSource))'''
 
 
+def closure_program(i):
+    rng = random.Random(543 + i)
+    ty, value, other = rng.choice([
+        ('(int)', '(lit (int 17))', '(lit (int -29))'),
+        ('(text)', '(lit (text "A\\u{0}🙂"))', '(lit (text "other"))'),
+        ('(bytes)', '(lit (bytes (0 128 255)))', '(lit (bytes (37 19)))'),
+        ('(tuple ((text) (int)))', '(tuple ((lit (text "left")) (lit (int 7))))',
+         '(tuple ((lit (text "right")) (lit (int 23))))'),
+        ('(option (text))', '(con (option (text)) "Some" ((lit (text "first"))))',
+         '(con (option (text)) "None" ())'),
+    ])
+    fn = f'(fn ({ty}) {ty})'
+    forms = [
+        f'(app (lam (("z" {ty})) (var "z")) ({value}))',
+        f'(app (lam (("z" {ty})) (if_ (var "b") (var "x") (var "z"))) ({value}))',
+        f'(app (app (lam (("z" (int))) (lam (("y" (int))) (var "x"))) '
+        '((lit (int 7)))) ((lit (int -23))))',
+        f'(let_ "f" (lam () (var "x")) (let_ "x" {other} (app (var "f") ())))',
+        f'(let_ "f" (lam (("x" {ty})) (var "x")) '
+        '(let_ "y" (app (var "f") ((var "x"))) (app (var "f") ((var "y")))))',
+        f'(app (lam (("z" {ty})) (call "identity" ((var "z")))) ((var "x")))',
+        f'(let_ "f" (if_ (var "b") (lam (("z" {ty})) (stop "stop")) '
+        f'(lam (("z" {ty})) (var "z"))) (app (var "f") ((var "x"))))',
+        f'(case_ (con (option {fn}) "Some" ((lam (("z" {ty})) (var "z")))) '
+        f'(("None" () {value}) ("Some" ("f") (app (var "f") ((var "x"))))))',
+        f'(app (lam (("z" {ty}) ("z" {ty})) (var "z")) ({value} {other}))',
+        f'(let_ "x" {value} (app (lam () (let_ "x" {other} '
+        '(let_ "f" (lam () (var "x")) (app (var "f") ())))) ()))',
+    ]
+    body = forms[i % len(forms)]
+    if i % 11 == 0:
+        # A closure-valued global, and a closure application during initialization.
+        return f'''(Program () (
+          (FunDecl "start" () {ty} (global "answer") "Generated" (function) 2)
+        ) (
+          (ConstDecl "f" {fn} (lam (("x" {ty})) (var "x")))
+          (ConstDecl "answer" {ty} (app (global "f") ({value})))
+        ) "start" (noSource))'''
+    return f'''(Program () (
+      (FunDecl "start" (("b" (bool)) ("x" {ty})) {ty} {body} "Generated" (function) 0)
+      (FunDecl "identity" (("x" {ty})) {ty} (var "x") "Generated" (function) 0)
+    ) () "start" (noSource))'''
+
+
 def run(driver, paths):
     result = subprocess.run([driver, *map(str, paths)], text=True, capture_output=True, timeout=60)
     print(result.stdout, end="")
@@ -150,6 +194,10 @@ def main():
         for i in range(192):
             path = pathlib.Path(directory) / f"globals-{i}.core"
             path.write_text(f"(core {version} {global_program(i)})\n")
+            generated.append(path)
+        for i in range(384):
+            path = pathlib.Path(directory) / f"closures-{i}.core"
+            path.write_text(f"(core {version} {closure_program(i)})\n")
             generated.append(path)
         for driver in sys.argv[1:]:
             print(f"codegen: {driver}: {len(paths)} fixture/corpus inputs")

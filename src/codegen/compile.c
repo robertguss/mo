@@ -57,6 +57,7 @@ struct compiler {
     struct vector strings, constants, modules, constructors, ownership, edges;
     struct mo_codegen_index *string_index, *constant_index, *data_index, *fun_index, *global_index,
         *module_index, *builtin_index;
+    struct mo_codegen_index *closure_zeros[2];
     uint32_t *data, *files, *layouts;
     uint32_t range_int, function_count, function_capacity, unit_constant;
     struct mo_bytecode_global *globals;
@@ -219,7 +220,7 @@ static MO_MUST_USE bool type_name(struct compiler *c, uint32_t id, struct mo_buf
             return false;
     return type_text(c, out, ")") &&
            (t->kind != MO_TYPE_FUNCTION ||
-            (type_text(c, out, " -> ") && type_name(c, t->result, out, depth + 1)));
+            (type_text(c, out, " : ") && type_name(c, t->result, out, depth + 1)));
 }
 static MO_MUST_USE uint32_t type(struct compiler *c, mo_core_ty t, unsigned depth) {
     if (depth >= MO_LIMIT_CORE_DEPTH) {
@@ -629,9 +630,45 @@ static MO_MUST_USE uint32_t variable(struct compiler *c, struct function *f, mo_
 static MO_MUST_USE uint32_t suffixed_name(struct compiler *c, mo_core_string base,
                                           const char *suffix);
 static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, mo_core_expr expr,
-                                        unsigned depth);
+                                        uint32_t expected, unsigned depth);
+/* Only inference failures need a later context. Resolve them once, without retrying the Core
+ * walk: an if/case may infer from a later arm and type an earlier stopping lambda. */
+static MO_MUST_USE bool context(struct compiler *c, struct function *f, struct node *n,
+                                uint32_t expected, unsigned depth) {
+    MO_ASSERT(depth < MO_LIMIT_CORE_DEPTH);
+    if (expected == MO_NO_INDEX || n->type != MO_NO_INDEX)
+        return true;
+    if (n->core->tag == MO_CORE_EXPR_STOP || n->core->tag == MO_CORE_EXPR_FAIL)
+        return true;
+    if (n->core->tag == MO_CORE_EXPR_LAM) {
+        struct function *lifted = &c->bodies[n->index];
+        uint32_t result = c->types.items[expected].result;
+        c->funs[n->index].result_type = result;
+        lifted->closure_type = expected;
+        if (!context(c, lifted, lifted->body, result, depth + 1))
+            return false;
+    } else if (n->core->tag == MO_CORE_EXPR_LET) {
+        if (!context(c, f, n->children[1], expected, depth + 1))
+            return false;
+        n->type = n->children[1]->type;
+        n->reg = n->children[1]->reg;
+        n->temporary = n->children[1]->temporary || n->reg == n->binds[0];
+        return true;
+    } else {
+        MO_ASSERT(n->core->tag == MO_CORE_EXPR_IF || n->core->tag == MO_CORE_EXPR_CASE);
+        for (uint32_t i = 1; i < n->count; i++) {
+            struct node *body =
+                n->core->tag == MO_CORE_EXPR_CASE ? n->children[i]->children[0] : n->children[i];
+            if (!context(c, f, body, expected, depth + 1))
+                return false;
+        }
+    }
+    n->type = expected;
+    n->reg = register_add(c, f, expected, MO_NO_INDEX);
+    return n->reg != MO_NO_INDEX;
+}
 static MO_MUST_USE bool lambda(struct compiler *c, struct function *parent, struct node *n,
-                               uint32_t preorder, unsigned depth) {
+                               uint32_t preorder, uint32_t expected, unsigned depth) {
     MO_ASSERT(c->function_count < c->function_capacity);
     uint32_t index = c->function_count++;
     n->index = index;
@@ -687,21 +724,24 @@ static MO_MUST_USE bool lambda(struct compiler *c, struct function *parent, stru
             return false;
         entry->value = i;
     }
-    f->body = prepare(c, f, n->core->as.lam.body, depth + 1);
+    uint32_t result = expected == MO_NO_INDEX ? MO_NO_INDEX : c->types.items[expected].result;
+    f->body = prepare(c, f, n->core->as.lam.body, result, depth + 1);
     parent->preorder = f->preorder;
     if (f->body == NULL)
         return false;
-    if (f->body->type == MO_NO_INDEX)
-        return unsupported(c, "Context-typed stopping lambdas are not implemented yet.");
-    c->funs[index].result_type = f->body->type;
-    status = mo_types_intern(&c->types,
-                             &(struct mo_type){.kind = MO_TYPE_FUNCTION,
-                                               .parameters = types,
-                                               .parameter_count = (uint32_t)ps.count,
-                                               .result = f->body->type},
-                             &n->type);
-    if (type_result(c, status, n->type) == MO_NO_INDEX)
-        return false;
+    if (result == MO_NO_INDEX)
+        result = f->body->type;
+    c->funs[index].result_type = result;
+    if (result != MO_NO_INDEX) {
+        status = mo_types_intern(&c->types,
+                                 &(struct mo_type){.kind = MO_TYPE_FUNCTION,
+                                                   .parameters = types,
+                                                   .parameter_count = (uint32_t)ps.count,
+                                                   .result = result},
+                                 &n->type);
+        if (type_result(c, status, n->type) == MO_NO_INDEX)
+            return false;
+    }
     uint32_t *captures = allocate(c, f->captures.count, sizeof *captures);
     n->binds = allocate(c, f->captures.count, sizeof *n->binds);
     if (captures == NULL || n->binds == NULL)
@@ -718,20 +758,27 @@ static MO_MUST_USE bool lambda(struct compiler *c, struct function *parent, stru
     return true;
 }
 static MO_MUST_USE bool children(struct compiler *c, struct function *f, struct node *n,
-                                 mo_core_expr_list xs, unsigned depth) {
+                                 mo_core_expr_list xs, uint32_t expected, unsigned depth) {
     n->count = (uint32_t)xs.count;
     n->children = allocate(c, xs.count, sizeof *n->children);
     if (n->children == NULL)
         return false;
     for (uint32_t i = 0; i < n->count; i++) {
-        n->children[i] = prepare(c, f, xs.items[i], depth + 1);
+        uint32_t child_type = MO_NO_INDEX;
+        if (n->core->tag == MO_CORE_EXPR_CALL)
+            child_type = c->funs[n->index].parameters[i].type;
+        else if (n->core->tag == MO_CORE_EXPR_CON)
+            child_type = c->types.items[n->type].cases[n->index].fields[i].type;
+        else if (n->core->tag == MO_CORE_EXPR_IF)
+            child_type = i == 0 ? scalar(c, MO_TYPE_BOOL) : expected;
+        n->children[i] = prepare(c, f, xs.items[i], child_type, depth + 1);
         if (n->children[i] == NULL)
             return false;
     }
     return true;
 }
 static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, mo_core_expr expr,
-                                        unsigned depth) {
+                                        uint32_t expected, unsigned depth) {
     if (depth >= MO_LIMIT_CORE_DEPTH) {
         if (!problem(c, MO_CODE_NESTED_TOO_DEEPLY,
                      "Core expression nesting exceeds MO_LIMIT_CORE_DEPTH."))
@@ -778,7 +825,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
             return NULL;
         n->count = 2;
         n->bind_count = 1;
-        n->children[0] = prepare(c, f, expr->as.let_.bound, depth + 1);
+        n->children[0] = prepare(c, f, expr->as.let_.bound, MO_NO_INDEX, depth + 1);
         if (n->children[0] == NULL)
             return NULL;
         n->binds[0] = register_add(c, f, n->children[0]->type, binding_name(f, preorder, 0));
@@ -788,7 +835,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
             return NULL;
         uint32_t saved = entry->value;
         entry->value = n->binds[0];
-        n->children[1] = prepare(c, f, expr->as.let_.body, depth + 1);
+        n->children[1] = prepare(c, f, expr->as.let_.body, expected, depth + 1);
         entry->value = saved;
         if (n->children[1] == NULL)
             return NULL;
@@ -802,7 +849,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         MO_ASSERT(entry != NULL);
         n->index = entry->value;
         n->type = c->funs[n->index].result_type;
-        if (!children(c, f, n, expr->as.call.args, depth))
+        if (!children(c, f, n, expr->as.call.args, MO_NO_INDEX, depth))
             return NULL;
         break;
     }
@@ -810,16 +857,21 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         small[0] = expr->as.if_.cond;
         small[1] = expr->as.if_.then_;
         small[2] = expr->as.if_.else_;
-        if (!children(c, f, n, (mo_core_expr_list){small, 3}, depth))
+        if (!children(c, f, n, (mo_core_expr_list){small, 3}, expected, depth))
             return NULL;
         n->type = n->children[1]->type != MO_NO_INDEX ? n->children[1]->type : n->children[2]->type;
+        if (n->type == MO_NO_INDEX)
+            n->type = expected;
+        for (uint32_t i = 1; i < n->count; i++)
+            if (!context(c, f, n->children[i], n->type, depth + 1))
+                return NULL;
         break;
     case MO_CORE_EXPR_CON:
         n->type = type(c, expr->as.con.ty, 0);
-        if (n->type == MO_NO_INDEX || !children(c, f, n, expr->as.con.args, depth))
+        if (n->type == MO_NO_INDEX)
             return NULL;
         n->index = constructor(c, n->type, expr->as.con.ctor);
-        if (n->index == MO_NO_INDEX)
+        if (n->index == MO_NO_INDEX || !children(c, f, n, expr->as.con.args, MO_NO_INDEX, depth))
             return NULL;
         break;
     case MO_CORE_EXPR_CASE: {
@@ -828,7 +880,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         n->cases = allocate(c, n->count - 1, sizeof *n->cases);
         if (n->children == NULL || n->cases == NULL)
             return NULL;
-        n->children[0] = prepare(c, f, expr->as.case_.expr, depth + 1);
+        n->children[0] = prepare(c, f, expr->as.case_.expr, MO_NO_INDEX, depth + 1);
         if (n->children[0] == NULL)
             return NULL;
         uint32_t ty = n->children[0]->type;
@@ -860,7 +912,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
                 saved[j] = entries[j]->value;
                 entries[j]->value = regs[j];
             }
-            struct node *body = prepare(c, f, arm->body, depth + 1);
+            struct node *body = prepare(c, f, arm->body, expected, depth + 1);
             for (uint32_t j = 0; j < ctor->field_count; j++)
                 entries[j]->value = saved[j];
             if (body == NULL)
@@ -880,6 +932,11 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
             if (n->type == MO_NO_INDEX)
                 n->type = body->type;
         }
+        if (n->type == MO_NO_INDEX)
+            n->type = expected;
+        for (uint32_t i = 1; i < n->count; i++)
+            if (!context(c, f, n->children[i]->children[0], n->type, depth + 1))
+                return NULL;
         break;
     }
     case MO_CORE_EXPR_STOP: {
@@ -898,7 +955,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
                          "Zero/one-element tuples cannot come from lowering."))
                 return NULL;
         }
-        if (!children(c, f, n, expr->as.tuple, depth))
+        if (!children(c, f, n, expr->as.tuple, MO_NO_INDEX, depth))
             return NULL;
         uint32_t *params = allocate(c, n->count, sizeof *params);
         if (params == NULL)
@@ -916,7 +973,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
     }
     case MO_CORE_EXPR_PROJ:
         small[0] = expr->as.proj.expr;
-        if (!children(c, f, n, (mo_core_expr_list){small, 1}, depth))
+        if (!children(c, f, n, (mo_core_expr_list){small, 1}, MO_NO_INDEX, depth))
             return NULL;
         n->index = 0;
         for (size_t i = 0; i < expr->as.proj.index.digits.length; i++)
@@ -925,7 +982,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         break;
     case MO_CORE_EXPR_FAIL:
         small[0] = expr->as.fail;
-        if (!children(c, f, n, (mo_core_expr_list){small, 1}, depth))
+        if (!children(c, f, n, (mo_core_expr_list){small, 1}, MO_NO_INDEX, depth))
             return NULL;
         return n;
     case MO_CORE_EXPR_PRIM: {
@@ -937,7 +994,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
                              "Only Range make/start/end primitives are implemented in this slice."))
                 return NULL;
         }
-        if (!children(c, f, n, expr->as.prim.args, depth))
+        if (!children(c, f, n, expr->as.prim.args, MO_NO_INDEX, depth))
             return NULL;
         if (p->as.range == MO_CORE_RANGE_OP_MAKE) {
             c->range_int = scalar(c, MO_TYPE_INT);
@@ -950,7 +1007,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         break;
     }
     case MO_CORE_EXPR_LAM:
-        if (!lambda(c, f, n, preorder, depth))
+        if (!lambda(c, f, n, preorder, expected, depth))
             return NULL;
         break;
     case MO_CORE_EXPR_APP: {
@@ -958,12 +1015,13 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         n->children = allocate(c, n->count, sizeof *n->children);
         if (n->children == NULL)
             return NULL;
-        n->children[0] = prepare(c, f, expr->as.app.f, depth + 1);
+        n->children[0] = prepare(c, f, expr->as.app.f, MO_NO_INDEX, depth + 1);
         if (n->children[0] == NULL)
             return NULL;
         n->type = c->types.items[n->children[0]->type].result;
         for (uint32_t i = 1; i < n->count; i++) {
-            n->children[i] = prepare(c, f, expr->as.app.args.items[i - 1], depth + 1);
+            uint32_t arg_type = c->types.items[n->children[0]->type].parameters[i - 1];
+            n->children[i] = prepare(c, f, expr->as.app.args.items[i - 1], arg_type, depth + 1);
             if (n->children[i] == NULL)
                 return NULL;
         }
@@ -1089,7 +1147,8 @@ static void activity(struct compiler *c, struct function *f, struct node *n, uns
             n->activity |= reference(c, n->children[i]->type) &&
                            c->parameters[n->index][i].ownership == MO_PARAMETER_OWNED;
     }
-    if (n->core->tag == MO_CORE_EXPR_APP || n->core->tag == MO_CORE_EXPR_LAM)
+    if (n->core->tag == MO_CORE_EXPR_APP ||
+        (n->core->tag == MO_CORE_EXPR_LAM && n->bind_count != 0))
         n->activity = true;
     if (n->core->tag == MO_CORE_EXPR_CALL || n->core->tag == MO_CORE_EXPR_CON ||
         n->core->tag == MO_CORE_EXPR_TUPLE || n->core->tag == MO_CORE_EXPR_PROJ)
@@ -1288,6 +1347,20 @@ static MO_MUST_USE bool initialize(struct compiler *c, struct function *f, uint3
     MO_ASSERT(depth < MO_LIMIT_CORE_DEPTH);
     uint32_t ty = ((struct reg *)f->regs.items)[reg].type;
     const struct mo_type *t = &c->types.items[ty];
+    if (t->kind == MO_TYPE_FUNCTION) {
+        mo_core_string key = {(const char *)&ty, sizeof ty};
+        struct mo_codegen_index *zero = mo_codegen_find(c->closure_zeros[0], key);
+        if (zero == NULL && c->funs[(uint32_t)(f - c->bodies)].spec_code)
+            zero = mo_codegen_find(c->closure_zeros[1], key);
+        if (zero == NULL)
+            return true;
+        struct mo_bytecode_constant k = {.type = ty};
+        k.value.function = zero->value;
+        uint32_t id = constant(c, k);
+        const uint32_t args[] = {reg, id};
+        return id != MO_NO_INDEX &&
+               emit(c, f, c->declaration, MO_OP_CONST, args, 2, NULL, 0) != MO_NO_INDEX;
+    }
     if (reference(c, ty) && t->kind != MO_TYPE_TEXT && t->kind != MO_TYPE_BYTES &&
         t->kind != MO_TYPE_BIGINT)
         return true;
@@ -2055,7 +2128,7 @@ static MO_MUST_USE bool bodies(struct compiler *c) {
                 return false;
             entry->value = j;
         }
-        f->body = prepare(c, f, c->current->body, 0);
+        f->body = prepare(c, f, c->current->body, c->funs[i].result_type, 0);
         if (f->body == NULL)
             return false;
     }
@@ -2064,6 +2137,12 @@ static MO_MUST_USE bool bodies(struct compiler *c) {
         return false;
     for (uint32_t i = declared; i < c->function_count; i++) {
         const struct mo_bytecode_function *fun = &c->funs[i];
+        uint32_t closure_type = c->bodies[i].closure_type;
+        if (fun->capture_count == 0 &&
+            index_add(c, &c->closure_zeros[fun->spec_code ? 1 : 0],
+                      (mo_core_string){(const char *)&closure_type, sizeof closure_type}, i,
+                      true) == NULL)
+            return false;
         enum mo_type_problem status =
             mo_types_layout(&c->types,
                             &(struct mo_layout){.kind = MO_LAYOUT_CLOSURE,
