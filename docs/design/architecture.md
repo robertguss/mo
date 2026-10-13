@@ -1122,9 +1122,13 @@ and Range row. Time/Duration's own operations and all five Unicode16 rows
 still return the staged `NOT_IMPLEMENTED` refusal. Unicode16 will use generated
 UCD 16.0 tables and its conformance data, not an approximate implementation.
 The C/Lean differential gate covers each implemented row, exact Float bits,
-all four Number instances of sum, and exact stop details. Model-only bridges
-in `formal/Main.lean` compose existing model operations for lowering's order,
-literal insertion, sum and text-form helpers; they do not change `Prim.lean`.
+all four Number instances of sum, and exact stop details, with shared and unique
+operands and multi-step collection updates. `%structural` uses the reference's
+text form, including shortest decimal Float spellings and escaped nested
+interpolation markers; Core's debug observation mode still exposes Float bits.
+Model-only bridges in `formal/Main.lean` compose existing model operations for
+lowering's order, literal insertion, sum and text-form helpers; they do not
+change `Prim.lean`.
 Long text matching uses KMP. BigInt multiplication uses explicit-stack
 Karatsuba; division uses normalized base-2^32 long division (a single pass for
 a one-limb divisor), with scratch bounded by operand/result sizes and the heap.
@@ -1553,8 +1557,8 @@ MO_MUST_USE struct mo_cell mo_value_dup(struct mo_heap *heap, uint32_t type, str
 void mo_value_drop(struct mo_heap *heap, uint32_t type, struct mo_cell value);
 /* Building generated inputs borrows input cells and duplicates references kept. Successful
  * results are owned in the process heap; false leaves inputs and out unchanged. Byte builders
- * copy at most MO_LIMIT_STRING_SIZE bytes; NULL is allowed only for zero length. Bytes accepts
- * any sequence. BigInt uses base.h's sign enum and bytecode 3.1's canonical magnitude; invalid
+ * copy at most MO_LIMIT_VALUE_BYTES bytes, subject to --max-heap; NULL is allowed only for
+ * zero length. Bytes accepts any sequence. BigInt uses base.h's sign enum and bytecode 3.1's canonical magnitude; invalid
  * signs/magnitudes, lengths past the limit and allocation/heap-limit failure return false. */
 MO_MUST_USE bool mo_value_text(struct mo_heap *heap, const char *utf8, size_t length, struct mo_cell *out);
 MO_MUST_USE bool mo_value_bytes(struct mo_heap *heap, const uint8_t *bytes, size_t length, struct mo_cell *out);
