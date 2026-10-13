@@ -161,15 +161,15 @@ delimiters. Collection sequences, binders and expression-statement wrappers
 own no lexical tokens. The final `end` of an `if` belongs to that `if`, not
 to its last else part. No source location is needed to print an anchor.
 
-Separator comments use an `ITEM` boundary anchor on the item collection,
-with the zero-based index of the preceding item. A comment immediately
-after an item's final token, when the next token is a comma or its closing
+Optional trailing-comma comments use an `ITEM` boundary anchor on the item
+collection, with the zero-based index of its final item. A comment immediately
+after that item's final token, when the next token is the collection's closing
 delimiter, uses the same anchor. In particular, `[1, # c` followed by `]`
 and `[1 # c` followed by `]` have identical trees: optional trailing commas
 are not part of the tree. This applies to parameters, arguments, named
 fields, tuples, lists and maps wherever the grammar allows a trailing
-comma, and to type-argument and header collections. A single unnamed case
-field uses its case declaration as its one-item collection. The printer
+comma. Other commas, type-argument and header collections, lambda parameters
+and single unnamed case fields retain their exact `TOKEN` anchors. The printer
 places the comment after the item and after any comma it chooses to print.
 Non-token anchors have token kind `EOF`; own-line anchors have index zero.
 
@@ -275,9 +275,10 @@ proved out-of-domain input need not validate an over-deep pattern.
 budget. Dense generated source can need roughly 100 bytes of arena per
 source byte (about 800 MiB for an 8 MiB source), and some flat chains need
 more; this is an estimate, not a bound. Failure to allocate is E1054, even
-during recovery. Comment attachment uses temporary arena storage for two
-node indexes, bounded by the caller arena's unused budget and freed before
-returning: caller arena plus scratch never exceeds that arena's limit.
+during recovery. Comment attachment uses temporary arena storage for a
+node-start index and sparse inline-token counters, bounded by the caller
+arena's unused budget and freed before returning: caller arena plus scratch
+never exceeds that arena's limit.
 Source storage and diagnostics have their own base-module budgets.
 Reserve at least 2 MiB of C stack for the parser and tree walks. Deep
 255-lambda fixtures need about 256–512 KiB in optimized builds and about

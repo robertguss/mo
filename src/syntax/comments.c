@@ -119,28 +119,20 @@ struct item_list {
 static struct item_list bracket_items(struct mo_syntax *n) {
     struct item_list list = {.closer = MO_T_RPAREN};
     struct mo_syntax *seq = NULL;
-    if (n->kind == MO_S_LIST || n->kind == MO_S_MAP || n->kind == MO_S_GROUP ||
-        n->kind == MO_S_TUPLE || n->kind == MO_S_EXPOSE || n->kind == MO_S_WHERE) {
+    if (n->kind == MO_S_LIST || n->kind == MO_S_MAP || n->kind == MO_S_TUPLE) {
         seq = n;
         if (n->kind == MO_S_LIST)
             list.closer = MO_T_RBRACK;
         if (n->kind == MO_S_MAP)
             list.closer = MO_T_RBRACE;
-    } else if (n->kind == MO_S_FN || n->kind == MO_S_STRUCT || n->kind == MO_S_ENUM)
+    } else if (n->kind == MO_S_FN)
         seq = n->children[1];
-    else if (n->kind == MO_S_LAMBDA || n->kind == MO_S_ANCHOR)
-        seq = n->children[0];
     else if (n->kind == MO_S_CALL)
         seq = n->children[n->count - 1];
-    else if (n->kind == MO_S_USE) {
-        seq = n->children[1];
-        list.closer = MO_T_RBRACE;
-    } else if (n->kind == MO_S_TYPE)
-        seq = n->children[n->token == MO_T_FN || n->token == MO_T_LPAREN ? 0 : 1];
     else if (n->kind == MO_S_CASE_DECL && n->children[1] != NULL) {
         seq = n->children[1];
         if (seq->kind != MO_S_SEQUENCE)
-            return (struct item_list){n, n->children + 1, 1, MO_T_RPAREN};
+            return list;
     }
     if (seq != NULL) {
         list.owner = seq;
@@ -150,8 +142,8 @@ static struct item_list bracket_items(struct mo_syntax *n) {
     return list;
 }
 
-/* An item-end comment and a separator comment have the same semantic
- * boundary. In particular, dropping an optional trailing comma cannot
+/* A final-item comment and an optional trailing-comma comment have the same
+ * semantic boundary. Dropping an optional trailing comma cannot
  * change its anchor. Descend first to prefer the innermost bracket list. */
 static struct mo_syntax *item_owner(struct mo_syntax *n, struct mo_token preceding,
                                     enum mo_syntax_token next, uint32_t *index) {
@@ -179,8 +171,7 @@ static struct mo_syntax *item_owner(struct mo_syntax *n, struct mo_token precedi
         }
     }
     struct item_list list = bracket_items(n);
-    if (list.count == 0 ||
-        (preceding.kind != MO_T_COMMA && next != MO_T_COMMA && next != list.closer))
+    if (list.count == 0 || next != list.closer)
         return NULL;
     uint32_t target = preceding.kind == MO_T_COMMA ? preceding.span.start : preceding.span.end;
     uint32_t low = 0, high = list.count;
@@ -191,7 +182,8 @@ static struct mo_syntax *item_owner(struct mo_syntax *n, struct mo_token precedi
         else
             high = mid;
     }
-    if (low == 0 || (preceding.kind != MO_T_COMMA && list.items[low - 1]->span.end != target))
+    if (low != list.count ||
+        (preceding.kind != MO_T_COMMA && list.items[low - 1]->span.end != target))
         return NULL;
     *index = low - 1;
     return list.owner;

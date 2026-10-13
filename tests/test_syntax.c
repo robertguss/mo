@@ -361,9 +361,9 @@ static void control_flow(void) {
         CHECK(item(&f, 3)->children[0]->token == MO_T_MINUS);
         CHECK(item(&f, 4)->children[0]->children[3]->token == MO_T_PERCENT);
         CHECK(item(&f, 12)->children[0]->kind == MO_S_NEGATE);
-        const struct mo_syntax_comment *boundary = item(&f, 13)->children[1]->children[1]->trailing;
-        CHECK(boundary != NULL && boundary->anchor == MO_COMMENT_ITEM &&
-              boundary->token_index == 0);
+        const struct mo_syntax_comment *comma = item(&f, 13)->children[1]->trailing;
+        CHECK(comma != NULL && comma->anchor == MO_COMMENT_TOKEN && comma->token == MO_T_COMMA &&
+              comma->token_index == 0);
     }
     free_fixture(&f);
     const char *bad[] = {
@@ -408,7 +408,7 @@ static void inline_anchors(void) {
             CHECK(prefix->trailing->token == MO_T_NOT);
             CHECK(prefix->trailing->token_index == 0);
         }
-        const enum mo_syntax_token tokens[] = {MO_T_LPAREN, MO_T_RPAREN, MO_T_END};
+        const enum mo_syntax_token tokens[] = {MO_T_LPAREN, MO_T_COMMA, MO_T_RPAREN, MO_T_END};
         const struct mo_syntax_comment *c = lambda->trailing;
         for (size_t i = 0; i < sizeof tokens / sizeof tokens[0]; i++) {
             CHECK(c != NULL);
@@ -419,8 +419,7 @@ static void inline_anchors(void) {
             }
         }
         CHECK(c == NULL);
-        c = lambda->children[0]->trailing;
-        CHECK(c != NULL && c->anchor == MO_COMMENT_ITEM && c->token_index == 0);
+        CHECK(lambda->children[0]->trailing == NULL);
     }
     free_fixture(&f);
 }
