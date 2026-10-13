@@ -345,6 +345,55 @@ def constants(binary):
                 result = run(binary, [*args, str(path)], 1)
                 assert not result.stdout and b"E1405" in result.stderr
                 assert reason.encode() in result.stderr and b"Main.main" not in result.stderr
+
+        # Calling a constant function value is not another read of the value.
+        # An earlier-global alias and nearest-lambda try used to emit invalid
+        # Core; a permitted closure must not be rejected with deferred globals.
+        for body, status in (
+            ('base = 13\nhandler = first\nanswer = handler()\n'
+             'reader = fn() Some(try Some(1)) end\nfn first() : Int\nbase\nend\n'
+             'fn main() : Int\nanswer + (reader() or 9)\nend\n', 14),
+            ('base = 13\nhandler = fn() base end\n'
+             'fn main() : Int\nhandler() + 24\nend\n', 37),
+        ):
+            path.write_text("module Main\n" + body)
+            result = run(binary, ["check", str(path)], 0)
+            assert not result.stdout and not result.stderr
+            records(run(binary, ["check", "--json", str(path)], 0), "check")
+            result = run(binary, ["run", str(path)], status)
+            assert not result.stdout and not result.stderr
+            for kind in ("core", "bytecode"):
+                result = run(binary, ["check", f"--emit={kind}", str(path)], 0)
+                assert result.stdout and not result.stderr
+                emitted = pathlib.Path(directory) / f"constant-functions.{kind}"
+                emitted.write_bytes(result.stdout)
+                result = run(binary.parent / "tests/test_cli.test",
+                             [f"--roundtrip-{kind}", str(emitted)], 0)
+                assert not result.stdout and not result.stderr
+
+        # A lazy body is not an initialization dependency. Neither a lambda,
+        # a named adapter nor a self-alias may access beyond its creation prefix.
+        # Native function values are a separate unfinished lowering route.
+        for body, reason in (
+            ('handler = fn() base end\nbase = 13\n'
+             'fn main() : Int\nhandler() + 24\nend\n', "deferred function"),
+            ('answer = handler()\nhandler = first\nbase = 13\n'
+             'fn first() : Int\nbase\nend\nfn main() : Int\nanswer + 24\nend\n',
+             "deferred function"),
+            ('handler = first\nfn first() : Int\nhandler()\nend\n'
+             'fn main() : Int\n17\nend\n', "deferred function"),
+            ('answer = handler(-7)\nhandler = Int.abs\n'
+             'fn main() : Int\nanswer + 30\nend\n', "native call"),
+        ):
+            path.write_text("module Main\n" + body)
+            items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+            assert items[-1]["errors"] == 1 and items[-1]["dropped"] == 0
+            assert items[1]["code"] == "E1150" and reason in items[1]["headline"]
+            for args in (["check"], ["run"], ["check", "--emit=core"],
+                         ["check", "--emit=bytecode"]):
+                result = run(binary, [*args, str(path)], 1)
+                assert not result.stdout and b"E1150" in result.stderr
+                assert reason.encode() in result.stderr and b"invalid compiler Core" not in result.stderr
     print(f"{binary}: source constant initialization, generic anchors and refusal boundaries passed")
 
 

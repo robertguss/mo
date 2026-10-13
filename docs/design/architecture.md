@@ -1564,13 +1564,23 @@ continue through the remaining anchors while diagnostics fit.
 **Source constants.** Tools consume the checker's closed, dependency-ordered
 constant carrier without reconstructing its dependencies. Image initialization
 evaluates every constant, including unused ones, before anchors or main can
-read globals (reference 10.4). Without anchors, plain `check` and both emissions
-validate initializer code but do not execute it. `run` initializes its image
-before starting main; an initializer stop is a runtime bug, exits 70 and never
-runs main. With anchors, initialization uses the same bounded certification
-path for checking, running and both emissions: a stop or instruction ceiling
+read globals (reference 10.4). Ordinary calls required by an initializer run;
+merely creating a function value does not execute its body. Without anchors,
+plain `check` and both emissions validate initializer code but do not execute it.
+`run` initializes its image before main; an initializer stop is a runtime bug,
+exits 70 and never runs main. With anchors, initialization uses the same bounded
+certification path for checking, running and both emissions: a stop or instruction ceiling
 reports E1405 inability to check, not a satisfied forbids. It emits no artifact
 and runs neither anchors nor main. No new tools error code is needed.
+
+Calls through constant function values and closures with already available
+globals use the same path as other source code. A deferred lambda or named
+function adapter needing a later global refuses E1150 during lowering (4.3),
+even when called only after initialization. Supporting that lazy body does not
+justify changing the checker's dependency order or adding false execution edges.
+Native function aliases such as `Int.abs` remain a separate E1150 staging route.
+Tools render these refusals and suppress both artifacts; they do not treat
+them as invalid compiler Core or runtime bugs.
 
 `test` (including `--list`) and `fix` still return E1400, "this build cannot
 ... yet". `test` checks the source's typing first; `fix` rewrites nothing.
