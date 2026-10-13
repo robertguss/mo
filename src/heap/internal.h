@@ -92,17 +92,7 @@ MO_MUST_USE uint32_t mo_value_children(const struct mo_types *types, uint32_t ty
 MO_MUST_USE struct mo_cell mo_value_child(const struct mo_types *types, uint32_t type,
                                           struct mo_cell value, uint32_t index,
                                           uint32_t *child_type);
-MO_MUST_USE bool mo_float_text(double value, struct mo_buffer *out);
 MO_MUST_USE bool mo_bigint_text(struct mo_heap *process, struct mo_cell value,
                                 struct mo_buffer *out);
-
-struct mo_scratch {
-    struct mo_arena arena;
-    struct mo_heap *process;
-};
-void mo_scratch_init(struct mo_scratch *scratch, struct mo_heap *process);
-void mo_scratch_free(struct mo_scratch *scratch);
-MO_MUST_USE void *mo_scratch_resize(struct mo_scratch *scratch, void *bytes, size_t old_size,
-                                    size_t new_size);
 
 #endif

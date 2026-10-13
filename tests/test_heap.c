@@ -35,10 +35,12 @@ static void test_values(struct heap_fixture *f) {
     CHECK(mo_value_data(out, &length)[0] == 255 && length == 2);
     mo_value_drop(p, f->builtin[MO_TYPE_BYTES], out);
     CHECK(mo_value_bigint(p, MO_BIGINT_ZERO, NULL, 0, &out));
+    CHECK(mo_value_bigint_sign(out) == MO_BIGINT_ZERO);
     mo_value_drop(p, f->builtin[MO_TYPE_BIGINT], out);
     const uint8_t magnitude[] = {0, 255};
     for (unsigned sign = MO_BIGINT_POSITIVE; sign <= MO_BIGINT_NEGATIVE; sign++) {
         CHECK(mo_value_bigint(p, (enum mo_bigint_sign)sign, magnitude, 2, &out));
+        CHECK(mo_value_bigint_sign(out) == (enum mo_bigint_sign)sign);
         CHECK(memcmp(mo_value_data(out, &length), magnitude, 2) == 0 && length == 2);
         mo_value_drop(p, f->builtin[MO_TYPE_BIGINT], out);
     }
@@ -555,6 +557,12 @@ static void test_host_storage(struct heap_fixture *f) {
 }
 
 static void test_print(struct heap_fixture *f) {
+    struct mo_buffer small;
+    mo_buffer_init(&small, 2);
+    CHECK(mo_buffer_append_byte(&small, 'x'));
+    CHECK(!mo_float_text(-12.5, &small));
+    CHECK(small.length == 1 && small.bytes[0] == 'x');
+    mo_buffer_free(&small);
     struct mo_limits limits = mo_limits_default();
     struct mo_heap *p = mo_heap_new(f->image, &limits);
     MO_ASSERT(p != NULL);

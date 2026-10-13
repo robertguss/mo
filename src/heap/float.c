@@ -152,7 +152,7 @@ static MO_MUST_USE bool round_trips(uint64_t coefficient, int exponent, uint64_t
     return (lower > 0 || (lower == 0 && even)) && (upper < 0 || (upper == 0 && even));
 }
 
-bool mo_float_text(double value, struct mo_buffer *out) {
+static MO_MUST_USE bool float_text(double value, struct mo_buffer *out) {
     uint64_t bits;
     memcpy(&bits, &value, sizeof bits);
     uint64_t magnitude = bits & UINT64_C(0x7fffffffffffffff);
@@ -250,4 +250,13 @@ bool mo_float_text(double value, struct mo_buffer *out) {
         }
     }
     return true;
+}
+
+bool mo_float_text(double value, struct mo_buffer *out) {
+    MO_ASSERT(out != NULL);
+    size_t before = out->length;
+    bool ok = float_text(value, out);
+    if (!ok)
+        out->length = before;
+    return ok;
 }

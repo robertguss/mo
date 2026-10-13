@@ -107,10 +107,48 @@ uint32_t mo_bigint_sign(const struct mo_allocation *value) {
     return sign;
 }
 
+enum mo_bigint_sign mo_value_bigint_sign(struct mo_cell value) {
+    struct mo_allocation *a = mo_heap_allocation(mo_cell_get_ref(value));
+    MO_ASSERT(a->object.layout == MO_BUILTIN_LAYOUT(MO_TYPE_BIGINT));
+    uint32_t sign = mo_bigint_sign(a);
+    MO_ASSERT(sign <= MO_BIGINT_NEGATIVE);
+    return (enum mo_bigint_sign)sign;
+}
+
 struct mo_cell mo_value_field(struct mo_cell value, uint32_t field) {
     struct mo_allocation *allocation = mo_heap_allocation(mo_cell_get_ref(value));
     MO_ASSERT(field < allocation->length);
     return allocation->cells[field];
+}
+
+bool mo_value_set_field_owned(struct mo_heap *process, uint32_t type, struct mo_cell value,
+                              uint32_t field, struct mo_cell replacement, struct mo_cell *out) {
+    MO_ASSERT(process != NULL && out != NULL && type < process->types->count);
+    struct mo_allocation *old = mo_heap_allocation(mo_cell_get_ref(value));
+    MO_ASSERT(old->type == type && old->object.layout < process->types->layout_count);
+    const struct mo_layout *layout = &process->types->layouts[old->object.layout];
+    MO_ASSERT((layout->kind == MO_LAYOUT_RECORD || layout->kind == MO_LAYOUT_TUPLE) &&
+              field < layout->field_count);
+    if (old->object.count == 1) {
+        struct mo_cell previous = old->cells[field];
+        old->cells[field] = replacement;
+        old->hash_valid = false;
+        mo_value_drop(process, layout->fields[field], previous);
+        *out = value;
+        return true;
+    }
+    struct mo_allocation *copy = mo_heap_allocate(
+        process, type, old->object.layout, (size_t)layout->field_count * sizeof(struct mo_cell));
+    if (copy == NULL)
+        return false;
+    copy->length = layout->field_count;
+    for (uint32_t i = 0; i < copy->length; i++) {
+        copy->cells[i] =
+            i == field ? replacement : mo_value_dup(process, layout->fields[i], old->cells[i]);
+    }
+    mo_value_drop(process, type, value);
+    *out = mo_cell_ref(&copy->object);
+    return true;
 }
 
 static MO_MUST_USE bool construct(struct mo_heap *process, uint32_t layout,

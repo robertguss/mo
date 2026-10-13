@@ -88,8 +88,24 @@ void mo_heap_free(struct mo_heap *process);
 MO_MUST_USE size_t mo_heap_used(const struct mo_heap *process);
 MO_MUST_USE size_t mo_heap_objects(const struct mo_heap *process);
 
+/* Temporary native operands and walk storage share the heap's remaining
+ * budget, including concurrent scratch arenas. Free before ending the heap. */
+struct mo_scratch {
+    struct mo_arena arena;
+    struct mo_heap *process;
+};
+void mo_scratch_init(struct mo_scratch *scratch, struct mo_heap *process);
+void mo_scratch_free(struct mo_scratch *scratch);
+MO_MUST_USE void *mo_scratch_resize(struct mo_scratch *scratch, void *bytes, size_t old_size,
+                                    size_t new_size);
+
 /* Borrowed views last until the owner is dropped or updated. */
 MO_MUST_USE const uint8_t *mo_value_data(struct mo_cell value, size_t *length);
+/* BigInt only. Its magnitude is the read-only byte view above. */
+MO_MUST_USE enum mo_bigint_sign mo_value_bigint_sign(struct mo_cell value);
+/* Append D236's shortest Float spelling without allocating process scratch.
+ * Failure preserves the existing output, as mo_value_print does. */
+MO_MUST_USE bool mo_float_text(double value, struct mo_buffer *out);
 MO_MUST_USE struct mo_cell mo_value_field(struct mo_cell value, uint32_t field);
 MO_MUST_USE uint32_t mo_list_size(struct mo_cell list);
 MO_MUST_USE bool mo_list_get(struct mo_cell list, uint32_t index, struct mo_cell *out);
@@ -201,6 +217,11 @@ MO_MUST_USE bool mo_value_case_owned(struct mo_heap *process, uint32_t type, uin
 MO_MUST_USE bool mo_value_closure_owned(struct mo_heap *process, uint32_t function,
                                         const struct mo_cell *captures, uint32_t count,
                                         struct mo_cell *out);
+/* Consume the record/tuple and replacement on success, copying only when
+ * shared. On failure both values and out are unchanged. */
+MO_MUST_USE bool mo_value_set_field_owned(struct mo_heap *process, uint32_t type,
+                                          struct mo_cell value, uint32_t field,
+                                          struct mo_cell replacement, struct mo_cell *out);
 
 /* reset consumes a fixed-layout record, tuple or boxed choice. Tokens own
  * cleared storage, not values. reuse borrows fields, consumes the token only
