@@ -1076,7 +1076,7 @@ static void finish_task(struct body *b, struct task t) {
         } else {
             p->span = spec->syntax->span;
             mo_core_expr call = lower_expr(p, MO_CORE_EXPR_CALL);
-            call->as.call.name = p->specs[spec->promise]->fun.name;
+            call->as.call.name = b->instance->subject->fun.name;
             call->as.call.args = k->arguments;
             *out = call;
         }
@@ -1753,4 +1753,5 @@ void lower_function(struct lowering *p, struct instance *instance) {
     p->span = source->signature->function->declaration->span;
     instance->fun.ret = lower_type(p, source->signature->type, &instance->substitution)->as.fn.ret;
     lower_body(p, instance, &source->body, source->parameter_count, source->parameters);
+    lower_subject_specs(p, instance);
 }

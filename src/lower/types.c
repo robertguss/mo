@@ -428,6 +428,22 @@ struct instance *lower_customizer(struct lowering *p, const struct mo_ability_im
                           uses, owner, depth + (proof->arguments.count != 0));
 }
 
+mo_core_string lower_function_name(struct lowering *p, const struct mo_symbol *symbol) {
+    mo_core_string name = lower_global_name(p, symbol);
+    /* Overload ownership is a nominal receiver, independent of discovery. */
+    if (symbol->receiver != UINT32_MAX) {
+        const struct mo_module_scope *scope = &p->program->interfaces->scopes[symbol->module];
+        const struct mo_symbol *group =
+            mo_find_symbol(scope, (const uint8_t *)symbol->name, strlen(symbol->name));
+        MO_ASSERT(group != NULL);
+        if (group->overload_count > 1) {
+            const struct mo_symbol *receiver = &scope->symbols[symbol->receiver];
+            name = lower_concat(p, name, "@", lower_text(p, receiver->name));
+        }
+    }
+    return name;
+}
+
 struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symbol,
                                 struct mo_type_arguments arguments,
                                 const struct substitution *substitution, uint32_t ability_count,
@@ -511,20 +527,7 @@ struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symb
         f->substitution.abilities[requirement++] =
             (struct ability_binding){abilities[i].parameter, proof, environment};
     }
-    mo_core_string name = lower_concat(p, lower_text(p, p->program->set->names[symbol->module]),
-                                       ".", lower_text(p, symbol->name));
-    /* Overload ownership is a nominal receiver, independent of discovery. */
-    if (symbol->receiver != UINT32_MAX) {
-        const struct mo_module_scope *scope = &p->program->interfaces->scopes[symbol->module];
-        const struct mo_symbol *group =
-            mo_find_symbol(scope, (const uint8_t *)symbol->name, strlen(symbol->name));
-        MO_ASSERT(group != NULL);
-        if (group->overload_count > 1) {
-            const struct mo_symbol *receiver = &scope->symbols[symbol->receiver];
-            name = lower_concat(p, name, "@", lower_text(p, receiver->name));
-        }
-    }
-    name = applied_name(p, name, arguments.count, types);
+    mo_core_string name = applied_name(p, lower_function_name(p, symbol), arguments.count, types);
     if (arguments.count != 0)
         name = lower_concat(p, lower_text(p, p->program->set->names[owner]), "::", name);
     f->fun.name = name;

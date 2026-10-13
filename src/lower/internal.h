@@ -26,6 +26,7 @@ struct instance {
     struct instance *next, *hash_next, *source_next;
     const struct mo_checked_function *source;
     const struct mo_checked_spec *spec;
+    struct instance *subject; /* promise: concrete function; anchor: concrete promise */
     struct substitution substitution;
     uint32_t owner, depth, index, const_prefix;
     struct mo_core_fun fun;
@@ -75,6 +76,7 @@ struct lowering {
     mo_core_consts constants;
     struct instance *constant_bodies;
     struct instance **specs;
+    uint32_t *promise_heads, *promise_next;
 };
 
 _Noreturn void lower_refuse(struct lowering *p, uint16_t code, const char *message);
@@ -123,9 +125,11 @@ void lower_function(struct lowering *p, struct instance *instance);
 void lower_body(struct lowering *p, struct instance *instance, const struct mo_checked_body *source,
                 uint32_t parameter_count, const struct mo_checked_binding *const *parameters);
 mo_core_string lower_global_name(struct lowering *p, const struct mo_symbol *symbol);
+mo_core_string lower_function_name(struct lowering *p, const struct mo_symbol *symbol);
 void lower_constants(struct lowering *p);
 void lower_constant_prefixes(struct lowering *p);
 void lower_specs(struct lowering *p);
+void lower_subject_specs(struct lowering *p, struct instance *subject);
 void lower_metadata(struct lowering *p, struct mo_core *core);
 
 #endif
