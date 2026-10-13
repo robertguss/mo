@@ -818,6 +818,19 @@ static void test_representation_refusals(void) {
          "(lit (unit))", "duplicate named fields", MO_CODE_CODEGEN_REPRESENTATION},
         {"((DataDecl \"D\" ((Ctor \"C\" ((\"\" (int)) (\"x\" (text)))))))", "()", "(unit)",
          "(lit (unit))", "Empty or duplicate", MO_CODE_CODEGEN_REPRESENTATION},
+        {"()", "((\"m\" (map (float) (text))))", "(unit)", "(lit (unit))", "without Hash",
+         MO_CODE_CODEGEN_REPRESENTATION},
+        {"()", "((\"xs\" (list (float))))", "(list (float))",
+         "(prim (list (float) (unique)) ((var \"xs\")))", "without Hash",
+         MO_CODE_CODEGEN_REPRESENTATION},
+        {"()", "((\"f\" (fn ((int)) (text))))", "(bool)",
+         "(prim (eq (fn ((int)) (text))) ((var \"f\") (var \"f\")))", "without Equal",
+         MO_CODE_CODEGEN_REPRESENTATION},
+        {"((DataDecl \"D\" ((Ctor \"End\" ()) (Ctor \"Next\" ((\"tail\" (data \"D\")) "
+         "(\"value\" (float)))))))",
+         "((\"xs\" (list (data \"D\"))))", "(list (data \"D\"))",
+         "(prim (list (data \"D\") (unique)) ((var \"xs\")))", "without Hash",
+         MO_CODE_CODEGEN_REPRESENTATION},
         {"()", "((\"b\" (bool)) (\"x\" (text)))", "(text)",
          "(let_ \"y\" (if_ (var \"b\") (proj (tuple ((var \"x\") (lit (int 1)))) 0) (var \"x\")) "
          "(var \"y\"))",
@@ -1486,6 +1499,223 @@ static void test_primitive_ownership(void) {
     }
     mo_arena_free(&arena);
 }
+static void test_operation_order(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b = compile(
+        &arena,
+        "(Program () ((FunDecl \"start\" () (bool) "
+        "(prim (cmp (float) (ge)) ((call \"left\" ()) (call \"right\" ()))) \"M\" (function) 0) "
+        "(FunDecl \"left\" () (float) (lit (float 0x7ff8000000000000)) \"M\" (function) 0) "
+        "(FunDecl \"right\" () (float) (lit (float 0x0000000000000000)) \"M\" (function) 0)) "
+        "() \"start\" (noSource))");
+    if (b != NULL) {
+        const struct mo_bytecode_function *f = &b->functions[0];
+        const uint32_t *left = instruction(f, MO_OP_CALL, 0),
+                       *right = instruction(f, MO_OP_CALL, 1),
+                       *compare = instruction(f, MO_OP_LE_FLOAT, 0);
+        if (left != NULL && right != NULL && compare != NULL)
+            CHECK(left < right && right < compare && left[2] == 1 && right[2] == 2 &&
+                  compare[2] == right[1] && compare[3] == left[1]);
+    }
+    mo_arena_free(&arena);
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    b = compile(&arena, "(Program () ((FunDecl \"start\" ((\"a\" (text)) (\"b\" (text))) (bool) "
+                        "(prim (cmp (text) (gt)) ((var \"a\") (var \"b\"))) \"M\" (function) 0)) "
+                        "() \"start\" (noSource))");
+    if (b != NULL) {
+        const struct mo_bytecode_function *f = &b->functions[0];
+        const uint32_t *compare = instruction(f, MO_OP_PRIM, 0),
+                       *test = instruction(f, MO_OP_LT_CHOICE, 0);
+        CHECK(f->parameters[0].ownership == MO_PARAMETER_BORROWED &&
+              f->parameters[1].ownership == MO_PARAMETER_BORROWED);
+        if (compare != NULL && test != NULL) {
+            CHECK(compare[2] == MO_PRIM_TEXT_COMPARE && compare[4] == 1 && compare[5] == 0 &&
+                  test[2] == compare[1]);
+            bool equal_tag = false;
+            for (uint32_t at = 0; at < f->code_count;) {
+                const struct mo_opcode_info *op = mo_opcode_find(f->code[at] & MO_OPCODE_MASK);
+                CHECK(op != NULL);
+                if (op == NULL)
+                    break;
+                if (op->number == MO_OP_MAKE_CASE && f->code[at + 1] == test[3])
+                    equal_tag = f->code[at + 3] == 1;
+                at += 1u + op->fixed_count + (f->code[at] >> MO_OPCODE_VARIABLE_SHIFT);
+            }
+            CHECK(equal_tag);
+        }
+    }
+    mo_arena_free(&arena);
+}
+static void test_host_operations(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b = compile(
+        &arena,
+        "(Program () ((FunDecl \"start\" ((\"files\" (cap (files))) (\"ro\" (cap (readFiles)))) "
+        "(tuple ((result (unit) (fileError)) (result (list (entry)) (fileError)))) "
+        "(tuple ((prim (io (makeFolder)) ((var \"files\") (lit (text \"a\")))) "
+        "(prim (io (entries true)) ((var \"ro\") (lit (text \"b\")))))) "
+        "\"M\" (function) 0)) () \"start\" (noSource))");
+    if (b != NULL) {
+        const struct mo_bytecode_function *f = &b->functions[0];
+        CHECK(f->parameters[0].ownership == MO_PARAMETER_BORROWED &&
+              f->parameters[1].ownership == MO_PARAMETER_BORROWED);
+        const uint32_t *folder = instruction(f, MO_OP_HOST, 0),
+                       *entries = instruction(f, MO_OP_HOST, 1);
+        if (folder != NULL && entries != NULL)
+            CHECK(folder[2] == MO_HOST_FILES_MAKE_FOLDER && folder[3] == 0 &&
+                  entries[2] == MO_HOST_READFILES_ENTRIES && entries[3] == 1);
+        bool error_shape = false, entry_layout = false;
+        for (uint32_t i = 0; i < b->type_count; i++) {
+            const struct mo_type *t = &b->types[i];
+            if (t->kind == MO_TYPE_CHOICE && strcmp(t->name, "FileError") == 0) {
+                CHECK(t->case_count == 4 && strcmp(t->cases[0].name, "NotFound") == 0 &&
+                      strcmp(t->cases[1].name, "NotAllowed") == 0 &&
+                      strcmp(t->cases[2].name, "NotText") == 0 &&
+                      strcmp(t->cases[3].name, "Failed") == 0 && t->cases[3].field_count == 2 &&
+                      strcmp(t->cases[3].fields[0].name, "path") == 0 &&
+                      strcmp(t->cases[3].fields[1].name, "reason") == 0);
+                error_shape = true;
+            }
+            if (t->kind == MO_TYPE_RECORD && strcmp(t->name, "Entry") == 0) {
+                CHECK(t->field_count == 2 && strcmp(t->fields[0].name, "name") == 0 &&
+                      strcmp(t->fields[1].name, "kind") == 0);
+                for (uint32_t j = 0; j < b->layout_count; j++)
+                    entry_layout |=
+                        b->layouts[j].kind == MO_LAYOUT_RECORD && b->layouts[j].type == i;
+            }
+        }
+        CHECK(error_shape && entry_layout);
+    }
+    mo_arena_free(&arena);
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    b = compile(&arena,
+                "(Program () ((FunDecl \"start\" () (unit) (lit (unit)) \"M\" (function) 0) "
+                "(FunDecl \"spec\" ((\"result\" (int))) (int) "
+                "(let_ \"c\" (prim (io (consoleFake)) ()) "
+                "(let_ \"lines\" (prim (io (printed)) ((var \"c\"))) (lit (int 0)))) "
+                "\"M\" (promise) 0)) () \"start\" (noSource))");
+    if (b != NULL) {
+        const struct mo_bytecode_function *f = &b->functions[1];
+        const uint32_t *fake = instruction(f, MO_OP_HOST, 0),
+                       *printed = instruction(f, MO_OP_HOST, 1);
+        CHECK(f->spec_code);
+        if (fake != NULL && printed != NULL)
+            CHECK(fake[0] == MO_OP_HOST && fake[2] == MO_HOST_CONSOLE_FAKE &&
+                  printed[2] == MO_HOST_CONSOLE_PRINTED &&
+                  (printed[0] >> MO_OPCODE_VARIABLE_SHIFT) == 1);
+    }
+    mo_arena_free(&arena);
+}
+static void test_collection_literals(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b = compile(
+        &arena, "(Program () ((FunDecl \"start\" ((\"x\" (text))) (map (text) (text)) "
+                "(prim (map (text) (text) (lit 3)) ((var \"x\") (var \"x\") (var \"x\") "
+                "(var \"x\") (call \"later\" ((var \"x\"))) (var \"x\"))) \"M\" (function) 0) "
+                "(FunDecl \"later\" ((\"x\" (text))) (text) (var \"x\") \"M\" (function) 0)) "
+                "() \"start\" (noSource))");
+    if (b != NULL) {
+        const struct mo_bytecode_function *f = &b->functions[0];
+        const uint32_t *later = instruction(f, MO_OP_CALL, 0),
+                       *empty = instruction(f, MO_OP_PRIM, 0),
+                       *insert = instruction(f, MO_OP_PRIM, 1);
+        if (later != NULL && empty != NULL && insert != NULL)
+            CHECK(later < empty && empty < insert && later[2] == 1 &&
+                  empty[2] == MO_PRIM_MAP_EMPTY && insert[2] == MO_PRIM_MAP_LITERAL_INSERT &&
+                  insert[4] == empty[1] && insert[5] != insert[6]);
+        for (uint32_t i = 1; i <= 3; i++) {
+            const uint32_t *pair = instruction(f, MO_OP_PRIM, i);
+            if (pair != NULL)
+                CHECK(pair[2] == MO_PRIM_MAP_LITERAL_INSERT &&
+                      (pair[0] >> MO_OPCODE_VARIABLE_SHIFT) == 3);
+        }
+    }
+    mo_arena_free(&arena);
+    /* A variadic Core literal must not become an instruction tail wider than 255 arguments. */
+    struct mo_buffer payload;
+    mo_buffer_init(&payload, MO_LIMIT_CORE_TEXT_SIZE);
+    CHECK(mo_buffer_append_text(&payload, "(Program () ((FunDecl \"start\" () (list (int)) "
+                                          "(prim (list (int) (lit 300)) ("));
+    for (uint32_t i = 0; i < 300; i++) {
+        CHECK(mo_buffer_append_text(&payload, "(lit (int "));
+        CHECK(mo_buffer_append_uint(&payload, i));
+        CHECK(mo_buffer_append_text(&payload, "))"));
+    }
+    CHECK(mo_buffer_append_text(&payload, ")) \"M\" (function) 0)) () \"start\" (noSource))"));
+    CHECK(mo_buffer_append_byte(&payload, 0));
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    b = compile(&arena, (const char *)payload.bytes);
+    if (b != NULL) {
+        const struct mo_bytecode_function *f = &b->functions[0];
+        for (uint32_t i = 1; i <= 300; i++) {
+            const uint32_t *append = instruction(f, MO_OP_PRIM, i);
+            if (append != NULL)
+                CHECK(append[2] == MO_PRIM_LIST_APPEND &&
+                      (append[0] >> MO_OPCODE_VARIABLE_SHIFT) == 2);
+        }
+    }
+    mo_arena_free(&arena);
+    mo_buffer_free(&payload);
+}
+static void test_instantiated_type_depth(void) {
+    /* Implicit List/Option wrappers can exceed the annotation's depth after checking. */
+    for (uint32_t n = MO_LIMIT_CORE_DEPTH - 2; n < MO_LIMIT_CORE_DEPTH; n++) {
+        struct mo_arena arena;
+        struct mo_diags diags;
+        struct mo_buffer out;
+        mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+        mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+        CHECK(mo_diags_init(&diags));
+        struct mo_core *p = parse(&arena,
+                                  "(Program () ((FunDecl \"start\" () (unit) "
+                                  "(let_ \"unused\" (prim (list (int) (removeAt)) "
+                                  "((prim (list (int) (lit 0)) ()) (lit (int 0)))) (lit (unit))) "
+                                  "\"M\" (function) 0)) () \"start\" (noSource))",
+                                  &diags);
+        if (p != NULL) {
+            struct mo_core_ty types[MO_LIMIT_CORE_DEPTH] = {{.tag = MO_CORE_TY_INT}};
+            for (uint32_t i = 1; i <= n; i++)
+                types[i] = (struct mo_core_ty){.tag = MO_CORE_TY_LIST, .as.list = &types[i - 1]};
+            mo_core_expr remove = p->funs.items[0].body->as.let_.bound;
+            remove->as.prim.prim.as.list.t = &types[n];
+            remove->as.prim.args.items[0]->as.prim.prim.as.list.t = &types[n];
+            CHECK(mo_core_check(p, &diags));
+            bool ok = mo_compile(p, &out, &diags);
+            CHECK(ok == (n == MO_LIMIT_CORE_DEPTH - 2));
+            if (!ok)
+                CHECK(out.length == 0 && diags.count == 1 &&
+                      diags.items[0].code == MO_CODE_NESTED_TOO_DEEPLY &&
+                      strstr(diags.items[0].primary.text, "Instantiated type name") != NULL);
+        }
+        mo_buffer_free(&out);
+        mo_diags_free(&diags);
+        mo_arena_free(&arena);
+    }
+}
+static void test_entry_record(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b = compile(
+        &arena, "(Program () ((FunDecl \"start\" () (text) "
+                "(let_ \"e\" (con (entry) \"Entry\" ((lit (text \"path\")) (con (entryKind) "
+                "\"Folder\" ()))) "
+                "(let_ \"name\" (case_ (var \"e\") ((\"Entry\" (\"name\" \"kind\") "
+                "(prim (text (trim)) ((var \"name\")))))) (var \"name\"))) \"M\" (function) 0)) "
+                "() \"start\" (noSource))");
+    if (b != NULL) {
+        const struct mo_bytecode_function *f = &b->functions[0];
+        const uint32_t *con = instruction(f, MO_OP_CONSTRUCT, 0),
+                       *field = instruction(f, MO_OP_FIELD, 0),
+                       *trim = instruction(f, MO_OP_PRIM, 0);
+        if (con != NULL && field != NULL && trim != NULL)
+            CHECK(b->layouts[con[2]].kind == MO_LAYOUT_RECORD && field[3] == 0 &&
+                  trim[2] == MO_PRIM_TEXT_TRIM && trim[4] != field[1]);
+    }
+    mo_arena_free(&arena);
+}
 int main(int argc, char **argv) {
     if (argc > 1)
         return corpus(argc, argv);
@@ -1513,5 +1743,10 @@ int main(int argc, char **argv) {
     test_closure_parameter_limit();
     test_shared_function_types();
     test_primitive_ownership();
+    test_operation_order();
+    test_host_operations();
+    test_collection_literals();
+    test_instantiated_type_depth();
+    test_entry_record();
     return mo_test_report("test_codegen");
 }

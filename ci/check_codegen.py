@@ -16,6 +16,8 @@ import sys
 import tempfile
 import time
 
+from check_core_check import program, signatures
+
 
 def expression(rng, depth):
     if depth == 0:
@@ -199,10 +201,31 @@ def main():
             path = pathlib.Path(directory) / f"closures-{i}.core"
             path.write_text(f"(core {version} {closure_program(i)})\n")
             generated.append(path)
+        excluded = []
+        for i, (prim, types, ret, spec) in enumerate(signatures()):
+            # These two operations need instruction expansions, not new primitive rows.
+            if prim in ['(range (toText))', '(list (byte) (uncons))']:
+                continue
+            params = [(f"arg{j}", t) for j, t in enumerate(types)]
+            args = ' '.join(f'(var "arg{j}")' for j in range(len(types)))
+            body = f'(prim {prim} ({args}))'
+            if spec:
+                body = f'(let_ "discard" {body} (lit (int 0)))'
+                params.append(("result", "(int)"))
+            payload = program(body, "(int)" if spec else ret, params,
+                              "promise" if spec else "function")
+            path = pathlib.Path(directory) / f"operation-{i}.core"
+            path.write_text(f"(core {version} {payload})\n")
+            if prim.startswith(('(eq (fn ', '(eq (cap ', '(eq (data ')):
+                # Lean types these, but source lowering cannot produce runtime equality on them.
+                excluded.append(path)
+            else:
+                generated.append(path)
         for driver in sys.argv[1:]:
             print(f"codegen: {driver}: {len(paths)} fixture/corpus inputs")
             run(driver, paths)
             assert run(driver, generated) == (len(generated), 0, 0, 0, 0, 0), "a supported generated program was not compiled"
+            assert run(driver, excluded) == (0, 0, len(excluded), 0, 0, 0), "a lowering-impossible operation needs E1201"
     print(f"codegen: all generated programs compiled; corpus coverage reported separately ({time.monotonic() - started:.2f}s)")
 
 

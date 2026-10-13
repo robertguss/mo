@@ -1082,8 +1082,10 @@ EntryKind retain separate instantiated types. It retains all five Core
 function kinds and direct tail calls in every tail position it supports.
 The third adds globals and ordered initialization for these expression forms.
 The fourth adds function types, closures and application, including closures
-in constant initializers and spec code. Collections, other primitives/host operations,
-BigInt decimal literals, joins and reuse remain for subsequent slices. The
+in constant initializers and spec code. The fifth adds native arithmetic and
+comparisons, generic equality, primitive and host table calls, capability and
+collection types, and list/map literals. List uncons and Range toText need
+expansions and remain unfinished, as do BigInt decimal literals, joins and reuse. The
 sample fixtures and Core fuzz corpora are attempted in CI; unfinished forms,
 permanently excluded representations, entry-name collisions, resource limits
 and invalid compiler inputs are counted separately. E1201 inputs are skipped
@@ -1096,6 +1098,37 @@ The writer structurally checks and fully verifies every compiled file.
 Writer refusals are classified by their error kind, never by reason text.
 Outcome comparison with Lean waits for the VM.
 
+Primitive and host names map to rows in `prims.def` and `hostops.def`; codegen
+reads their signatures and ownership columns directly. Trusted signature
+templates are instantiated once per opcode/row and canonical type arguments,
+not reparsed per expression. All operand expressions run in Core order.
+Greater-than comparisons swap the resulting registers, not evaluation order;
+Float uses native less-than/less-or-equal, never negated comparisons, preserving
+NaN behaviour. Text, Bytes and BigInt use their compare rows and compare the
+Ordering result with Equal. Generic equality uses `equal` at the exact type.
+Owned reference operands get distinct copies; borrowed operands remain live
+through the instruction, and temporary owners are dropped only afterward.
+This also preserves pre-instruction operands for a stopped call's report.
+Host tails include the borrowed capability; zero-argument fakes have no tail.
+Core's spec restrictions are retained and checked again by the verifier.
+
+FileError has the exact ordered cases and named Text fields of bytecode 9.
+Entry is the builtin record `(name: Text, kind: EntryKind)`, with its record
+layout, separate from user choice declarations. Its Core constructor emits
+`construct`; its sole case arm reads `field` without a switch or merge.
+Option and Result containing these or collections retain their nominal
+instantiation identities and names. Collections and capabilities use the
+existing runtime type kinds, without a format or type-builder extension.
+
+Variadic list/map literals first evaluate all operands, then start empty and
+append elements or insert pairs in order. A duplicate map key must not suppress
+a later operand's effects. Each insertion consumes the preceding builder and
+distinct operand copies. This uses the existing List empty/append and Map
+empty/literal-insert rows, with at most three tail operands regardless of Core
+literal arity. Builder steps are linear; registers and instructions obey their
+existing limits, including registers × blocks. Reconverging branches with
+path-local collection or capability owners retain the staged E1055 refusal.
+
 Core functions begin the bytecode function table in declaration order, preserving
 call and spec link indices. First-match function/data/parameter lookup agrees with Core.
 Every data declaration uses a nominal choice, including one-constructor
@@ -1103,6 +1136,8 @@ declarations; an empty name on its single field means an unnamed field.
 Builtin instantiations have separate nominal identities from user types of
 the same printable name. Instantiated names use Mo's type spelling, including
 tuple arguments such as `Option((Int, Text))`, within `MO_LIMIT_STRING_SIZE`.
+Their rendering also obeys `MO_LIMIT_CORE_DEPTH`, reporting E1006 if implicit
+signature wrappers take a checked annotation past that recursion bound.
 Compound Core annotations are translated once per node, preserving first-use
 type indices even when lowering shares immutable subtrees. This prevents
 exponential traversal of type DAGs.
@@ -1239,6 +1274,15 @@ does not reject a well-typed program merely for using one of these forms:
 - **Empty or duplicate field labels:** named fields must have nonempty,
   NUL-free, unique labels. The one empty label on a single field denotes an
   unnamed field and remains valid; it is not a named-field exception.
+- **Missing runtime abilities:** Map keys and Set elements need Hash; equality
+  and the constrained primitive rows need Equal or Hash as their signatures say.
+  Core and Lean allow broader instantiations, including equality on functions
+  or capabilities and Float map keys, which source checking cannot lower.
+  Codegen refuses these with E1201 before the writer, not E1057. Abilities are
+  inferred once over the runtime type graph, removing bits through reverse
+  edges to a greatest fixed point, including recursive nominal types. Each bit
+  changes once; each instruction constraint then takes constant time. No Lean
+  rule is changed and compiler comparisons skip these permanent exclusions.
 
 ```c
 /* src/base/diag.h: diagnostics, rendered as text or JSON by src/tools. */

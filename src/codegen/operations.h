@@ -9,9 +9,12 @@ struct mo_codegen_operation {
     enum mo_opcode opcode;
     uint32_t row;
     const char *signature, *params;
+    bool reverse, compare;
+    enum { MO_CODEGEN_LITERAL_NONE, MO_CODEGEN_LITERAL_LIST, MO_CODEGEN_LITERAL_MAP } literal;
 };
 
 MO_MUST_USE bool mo_codegen_operation(const struct mo_core_prim *prim,
                                       struct mo_codegen_operation *out);
+MO_MUST_USE struct mo_codegen_operation mo_codegen_primitive(enum mo_primitive_id row);
 
 #endif
