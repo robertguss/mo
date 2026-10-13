@@ -680,7 +680,8 @@ def main():
                 matched += 1
             assert unsupported == CODEGEN_UNSUPPORTED, (driver, unsupported, CODEGEN_UNSUPPORTED)
             assert pending == NEEDS_DISPATCH, (driver, pending, NEEDS_DISPATCH)
-            assert matched == 1430 + OWNED_OUTCOMES + NESTED_LOOP_OUTCOMES, (driver, matched)
+            # #71 restores nine fixtures, 24 capability joins and six capability cases.
+            assert matched == 1469 + OWNED_OUTCOMES + NESTED_LOOP_OUTCOMES, (driver, matched)
             print(f"vm differential: {driver}: {matched} outcomes match mocore; {unsupported} fixtures explicitly unsupported by codegen")
             for label, count in pending.items():
                 print(f"vm differential: {driver}: {label}: {count}")
