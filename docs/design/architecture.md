@@ -1797,7 +1797,7 @@ E1200 means the ordinary entry's full runtime name is not unique; arbitrary
 entry names are otherwise accepted. E1201 means a permanent representation
 exclusion from source lowering, not an unfinished feature or a resource limit.
 E1202 means decimal BigInt conversion exceeded its program-wide work budget.
-E1203 means reference liveness exceeded its per-function work budget.
+E1203 means reference liveness exceeded its per-function work or storage budget.
 
 The first slice compiles immediate scalar literals, variables, lets, direct
 calls, if, stop, and choices with small immediate payloads. The second adds
@@ -1989,9 +1989,19 @@ Lets, branch results, captures, constructors, calls, host/primitive operands,
 returns and jump staging move an existing owner when it dies at that transfer.
 Other uses duplicate it. Join free-variable sets grow monotonically to a fixed
 point, so a backedge keeps every register needed by the next iteration live.
+Each join converges its body locally, solving inner joins against its current
+entry set before updating its own. Growth of an outer entry set retries its
+body; independent joins and the function's surrounding code need no retry.
+The final stable walk records transfers for emission. Only the body adds
+requirements to its join's entry set; the rest reads the converged set. Lexical
+labels prevent other joins outside that body or rest from reading it.
 Lexical aliases retain separate holders until their own last uses. Temporary
 owners are dropped after use; remaining owners are dropped before returns/tail calls.
 Stop and fail abandon the frame through the outcome path, not normal cleanup.
+The VM differential gate keeps 1,024 deterministic nested-operand, alias,
+capture, branch and simultaneous-backedge cases. It also requires 85 nested
+counter loops and 16 nested loops around a 400-step branching body to compile
+and return `"donevw"`, agreeing with Core rather than exhausting E1203.
 
 With runtime single-holder reuse, the VM builder
 `go(acc ++ "ab", n-1)` scales linearly. Clang `-O0 -g`, Linux x86-64, three
@@ -2048,7 +2058,7 @@ Graph scratch is at most nine bytes per permitted function word plus arena
 headers, released per function; surviving output uses the compiler's arena.
 
 Preparation, borrow inference and emission use bounded walks. Reference liveness
-charges node/operand visits and register-set clearing, copying, union and edge scans
+charges node/operand visits and register-set searches, shifts, copies, unions and edge scans
 to `MO_LIMIT_CODEGEN_LIVE_WORK` (2^26) per function, including fixed-point retries;
 exhaustion gives E1203 with empty output. Ordered
 AVL indices for strings, constants, declarations, lexical names and per-type constructors
@@ -2062,11 +2072,15 @@ owners. A reversible log records only reference-state changes, bounded by twice
 marks restore and normalize only changed slots, once per edge, including borrowed
 loads and consuming instruction operands. Nested merges discard their local log
 and publish only the result's state change; sibling arms reuse the log's storage.
-Liveness separately keeps dense branch-after/work and join-entry sets. Their
-register-cell count is bounded before allocation by
-`MO_LIMIT_FUNCTION_REGISTER_BLOCKS`; the sets need at most three times that
-many bytes, plus one working set. Dead-reference normalization scans these
-sets under the same liveness work ceiling. Instruction expansion and Core's
+Liveness keeps sorted sparse branch-after/work and join-entry sets containing
+only reference registers. Clearing resets a count, copies visit present entries,
+and unions merge sorted entries. Membership uses bounded binary search; insertion
+and removal charge every shifted cell. `MO_LIMIT_CODEGEN_LIVE_CELLS` (2^22)
+bounds all set allocations per function, including old growth blocks retained
+by the arena: at most 16 MiB of register indices. Dead-reference normalization
+merges each set with a prepared reference-only register index under the same
+liveness work ceiling; immediate registers do not multiply branch costs.
+Instruction expansion and Core's
 depth bound also bound bookkeeping work on nested jumps.
 Emission stops at instruction/register limits, even when cleanup expands code.
 The allocator counts basic blocks as it emits transfers and checks

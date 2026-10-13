@@ -284,7 +284,7 @@ def owned_program(i):
                 flag = rng.choice(['true', 'false'])
                 return f'(if_ (lit (bool {flag})) {a} {b})'
             if choice == 3:
-                return f'(proj {rng.randrange(2)} (tuple ({a} {b})))'
+                return f'(proj (tuple ({a} {b})) {rng.randrange(2)})'
             if choice == 4:
                 return f'(call "id" ({a}))'
             if choice == 5:
@@ -324,7 +324,10 @@ def nested_loop_program(levels, steps):
         if i == levels - 1:
             body = f'(jump "loop{i}" ({decrement}))'
             for j in range(steps):
-                body = f'(let_ "v{j}" (prim (int (add)) ({counter} (lit (int {j})))) {body})'
+                value = f'''(if_ (lit (bool true))
+                  (prim (int (add)) ({counter} (lit (int {j}))))
+                  (lit (int {-j})))'''
+                body = f'(let_ "v{j}" {value} {body})'
         else:
             body = nested
         body = f'(if_ (prim (eq (int)) ({counter} (lit (int 0)))) {zero} {body})'
