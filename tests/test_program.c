@@ -233,12 +233,59 @@ static void branch_graph(void) {
     free_fixture(&f);
 }
 
+static void record_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nstruct Pair(T)\nleft: T\nright: T\nend\n"
+             "fn main() : Int\nvar pair = Pair(right: 9, left: 4)\npair.left = 7\n"
+             "pair.left + pair.right\nend\n");
+    const struct mo_program *program = f.program;
+    CHECK(program != NULL && !mo_diags_any(&f.diags));
+    if (program != NULL) {
+        const struct mo_checked_body *body = &program->functions[program->entry.function].body;
+        bool constructed = false, assigned = false;
+        uint32_t reads = 0;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->symbol != NULL && row->symbol->declaration->kind == MO_S_STRUCT) {
+                CHECK(strcmp(row->symbol->name, "Pair") == 0);
+                MO_ASSERT(row->operand_count == 2 && row->operands[0] < i && row->operands[1] < i);
+                CHECK(row->arguments.count == 1);
+                if (row->arguments.count == 1) {
+                    CHECK(strcmp(row->arguments.items[0].parameter->name, "T") == 0);
+                    CHECK(row->arguments.items[0].parameter->declaration == row->symbol);
+                    CHECK(strcmp(row->arguments.items[0].type->name, "Int") == 0);
+                }
+                CHECK(body->items[row->operands[0]].field == 1);
+                CHECK(body->items[row->operands[1]].field == 0);
+                const struct mo_checked_expression *right = &body->items[row->operands[0]];
+                MO_ASSERT(right->operand_count == 1);
+                CHECK(body->items[right->operands[0]].syntax->text[0] == '9');
+                constructed = true;
+            } else if (row->syntax->kind == MO_S_FIELD_ACCESS) {
+                MO_ASSERT(row->operand_count == 1 && row->operands[0] < i);
+                CHECK(strcmp(row->type->name, "Int") == 0);
+                CHECK(row->field == (reads == 2 ? 1u : 0u));
+                reads++;
+            } else if (row->assignment) {
+                MO_ASSERT(row->binding != NULL && row->operand_count == 2);
+                CHECK(strcmp(row->binding->name, "pair") == 0 && row->binding->variable);
+                CHECK(body->items[row->operands[0]].field == 0);
+                CHECK(body->items[row->operands[1]].syntax->text[0] == '7');
+                assigned = true;
+            }
+        }
+        CHECK(constructed && assigned && reads == 3);
+    }
+    free_fixture(&f);
+}
+
 static void run(void *argument) {
     (void)argument;
     entry_graph();
     console_graph();
     lambda_graph();
     branch_graph();
+    record_graph();
 }
 
 int main(void) {

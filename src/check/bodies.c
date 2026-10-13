@@ -71,6 +71,8 @@ struct emitted {
     struct mo_checked_expression output;
     struct note **operands;
     struct emitted_lambda *lambda;
+    const struct mo_source_type *generic;
+    struct term *instantiated;
 };
 
 struct note {
@@ -597,6 +599,12 @@ static MO_MUST_USE bool record(struct inference *p, const struct mo_syntax *node
     struct note *n = allocate(p, 1, sizeof(*n), _Alignof(struct note));
     if (n == NULL)
         return false;
+    if (v.graph != NULL) {
+        if (v.symbol != NULL)
+            v.graph->output.symbol = v.symbol;
+        if (v.builtin_case != NULL)
+            v.graph->output.native = v.builtin_case;
+    }
     *n = (struct note){.output = {.syntax = node,
                                   .binding = v.binding,
                                   .symbol = v.symbol,
@@ -950,7 +958,14 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
             return (struct value){0};
         if (data->count == 0) {
             struct term *parameters[26] = {NULL};
-            return (struct value){.type = annotation(p, data->type, parameters, 0), .symbol = s};
+            struct value out = graph(
+                p, (struct value){.type = annotation(p, data->type, parameters, 0), .symbol = s},
+                0);
+            if (p->checked && out.type != NULL) {
+                out.graph->generic = data->type;
+                out.graph->instantiated = out.type;
+            }
+            return out;
         }
         const struct mo_syntax *field = data->by_index[0]->name;
         bool reported =
@@ -1073,6 +1088,11 @@ static MO_MUST_USE struct value builtin_construct(struct inference *p,
                                                   const struct mo_builtin_case *data,
                                                   const struct mo_syntax *args,
                                                   struct term *expected) {
+    if (p->checked && (data->parameters != 0 || data->count != 0)) {
+        bool reported = unfinished(p);
+        (void)reported;
+        return (struct value){0};
+    }
     struct term *type = builtin_type(p, data, expected);
     if (type == NULL)
         return (struct value){0};
@@ -1139,6 +1159,13 @@ static MO_MUST_USE struct value construct(struct inference *p, const struct mo_d
     struct term *type = annotation(p, data->type, parameters, 0);
     if (type == NULL || (expected != NULL && !unify(p, type, expected, 0)))
         return (struct value){0};
+    struct value out = graph(p, (struct value){.type = type, .symbol = data->symbol}, args->count);
+    if (out.type == NULL)
+        return out;
+    if (p->checked) {
+        out.graph->generic = data->type;
+        out.graph->instantiated = type;
+    }
     bool *seen = allocate(p, data->count, sizeof(*seen), _Alignof(bool));
     const struct mo_field_signature **selected =
         allocate(p, args->count, sizeof(*selected), _Alignof(const struct mo_field_signature *));
@@ -1191,12 +1218,26 @@ static MO_MUST_USE struct value construct(struct inference *p, const struct mo_d
             if (v.type == NULL)
                 return (struct value){0};
             p->last->output.field = selected[i];
+            if (p->checked) {
+                if (!data->unnamed) {
+                    struct value supplied = graph(p, (struct value){.type = v.type}, 1);
+                    if (supplied.type == NULL)
+                        return supplied;
+                    supplied.graph->output.field = selected[i]->index;
+                    supplied.graph->operands[0] = v.note;
+                    if (!record(p, arg, supplied))
+                        return (struct value){0};
+                    v.note = p->last;
+                }
+                out.graph->operands[i] = v.note;
+            }
             ranges[i] = (struct note_range){previous == NULL ? p->notes : previous->next, p->last};
             never = never || v.never;
         }
     }
     order_notes(p, before, ranges, args->count);
-    return (struct value){.type = type, .symbol = data->symbol, .never = never};
+    out.never = never;
+    return out;
 }
 
 static MO_MUST_USE struct value field_value(struct inference *p, struct value v,
@@ -1247,8 +1288,18 @@ static MO_MUST_USE struct value field_value(struct inference *p, struct value v,
         if (p->failed)
             return (struct value){0};
     }
-    return (struct value){
-        .type = annotation(p, field->type, parameters, 0), .field = field, .never = v.never};
+    struct value out = graph(p,
+                             (struct value){.type = annotation(p, field->type, parameters, 0),
+                                            .field = field,
+                                            .never = v.never},
+                             1);
+    if (p->checked && out.type != NULL) {
+        out.graph->output.field = field->index;
+        out.graph->operands[0] = v.note;
+        out.graph->generic = data->type;
+        out.graph->instantiated = type;
+    }
+    return out;
 }
 
 static MO_MUST_USE struct value sequence(struct inference *p, const struct mo_syntax *node,
@@ -1376,27 +1427,13 @@ static MO_MUST_USE struct value call(struct inference *p, struct value callee,
 
 /* This first host slice accepts a direct Console.print call, not a bound
  * method value. Its named parameter types come from the shared host table. */
-static MO_MUST_USE struct value console_print(struct inference *p, const struct mo_syntax *node) {
+static MO_MUST_USE struct value console_print(struct inference *p, struct value receiver,
+                                              const struct mo_syntax *args) {
     const struct host_signature *host = &host_signatures[HOST_CONSOLE_PRINT];
-    if (node->count != 3 || node->children[1]->kind != MO_S_FIELD_ACCESS ||
-        node->children[2]->kind != MO_S_CALL ||
-        compare_text(node->children[1]->children[0], host->name) != 0) {
-        bool reported = unfinished(p);
-        (void)reported;
-        return (struct value){0};
-    }
-    struct value receiver = infer(p, node->children[0], NULL);
-    if (receiver.type == NULL)
-        return receiver;
-    if (!named(receiver.type, host->module)) {
-        bool reported = unfinished(p);
-        (void)reported;
-        return (struct value){0};
-    }
-    const struct mo_syntax *args = node->children[2]->children[0];
+    MO_ASSERT(receiver.type != NULL && named(receiver.type, host->module));
     if (args->count != 1 || args->children[0]->kind == MO_S_NAMED_ARG) {
         bool reported = problem(
-            p, MO_CODE_CALL_ARGUMENTS, node->span, "a call's arguments don't match its parameters",
+            p, MO_CODE_CALL_ARGUMENTS, p->span, "a call's arguments don't match its parameters",
             "A function takes every argument by position (reference 5.2).", NULL);
         (void)reported;
         return (struct value){0};
@@ -1975,7 +2012,12 @@ static MO_MUST_USE struct value position(struct inference *p, struct value v,
         (void)reported;
         return (struct value){0};
     }
-    return (struct value){.type = argument(p, t, at), .never = v.never};
+    struct value out = graph(p, (struct value){.type = argument(p, t, at), .never = v.never}, 1);
+    if (p->checked && out.type != NULL) {
+        out.graph->operands[0] = v.note;
+        out.graph->output.field = at;
+    }
+    return out;
 }
 
 static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_syntax *node,
@@ -2042,10 +2084,19 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                              node->children[1], target.type);
             if (rhs.type == NULL)
                 return (struct value){0};
-            return (struct value){.type = native(p, "Unit", 0),
-                                  .binding = variable->name,
-                                  .field = target.field,
-                                  .never = rhs.never};
+            struct value out = graph(p,
+                                     (struct value){.type = native(p, "Unit", 0),
+                                                    .binding = variable->name,
+                                                    .bound = variable->binding,
+                                                    .field = target.field,
+                                                    .never = rhs.never},
+                                     2);
+            if (p->checked && out.type != NULL) {
+                out.graph->output.assignment = true;
+                out.graph->operands[0] = target.note;
+                out.graph->operands[1] = rhs.note;
+            }
+            return out;
         }
         if (name->kind != MO_S_NAME && name->kind != MO_S_TUPLE && name->kind != MO_S_UNDERSCORE) {
             bool reported = unfinished(p);
@@ -2140,11 +2191,6 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     }
     case MO_S_CALL: {
         const struct mo_syntax *callee = node->children[0];
-        if (p->checked && (callee->kind == MO_S_CAPNAME || callee->kind == MO_S_QUALIFIED)) {
-            bool reported = unfinished(p);
-            (void)reported;
-            return (struct value){0};
-        }
         const struct mo_builtin_case *builtin = mo_builtin_case_by_name(callee);
         if (builtin != NULL)
             return builtin_construct(p, builtin, node->children[1], expected);
@@ -2162,8 +2208,6 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     case MO_S_POSITION:
         return position(p, infer(p, node->children[0], NULL), node->children[1]);
     case MO_S_POSTFIX: {
-        if (p->checked)
-            return console_print(p, node);
         bool qualified = node->children[0]->kind == MO_S_CAPNAME &&
                          (node->children[1]->kind == MO_S_FIELD_ACCESS ||
                           node->children[1]->kind == MO_S_QUALIFIED);
@@ -2193,18 +2237,37 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                             : infer(p, node->children[0], NULL);
         if (data != NULL || builtin != NULL)
             start++;
+        if (p->checked && v.type != NULL && v.note == NULL && start < node->count) {
+            if (v.graph == NULL)
+                v = graph(p, v, 0);
+            if (v.type == NULL || !record(p, node->children[start - 1], v))
+                return (struct value){0};
+            v.note = p->last;
+        }
         for (uint32_t i = start; i < node->count && v.type != NULL; i++) {
             const struct mo_syntax *step = node->children[i];
             if (step->kind == MO_S_POSITION)
                 v = position(p, v, step->children[0]);
             else if (step->kind == MO_S_CALL)
                 v = call(p, v, step->children[0]);
-            else if (step->kind == MO_S_FIELD_ACCESS)
+            else if (p->checked && step->kind == MO_S_FIELD_ACCESS &&
+                     named(v.type, host_signatures[HOST_CONSOLE_PRINT].module) &&
+                     compare_text(step->children[0], host_signatures[HOST_CONSOLE_PRINT].name) ==
+                         0 &&
+                     i + 1 < node->count && node->children[i + 1]->kind == MO_S_CALL) {
+                step = node->children[++i];
+                v = console_print(p, v, step->children[0]);
+            } else if (step->kind == MO_S_FIELD_ACCESS)
                 v = field_value(p, v, step->children[0]);
             else {
                 bool reported = unfinished(p);
                 (void)reported;
                 return (struct value){0};
+            }
+            if (p->checked && v.type != NULL && i + 1 < node->count) {
+                if (!record(p, step, v))
+                    return (struct value){0};
+                v.note = p->last;
             }
         }
         return v;
@@ -2547,7 +2610,9 @@ static MO_MUST_USE struct value infer(struct inference *p, const struct mo_synta
         node->kind != MO_S_RANGE && node->kind != MO_S_NEGATE && node->kind != MO_S_NOT &&
         node->kind != MO_S_PREFIX && node->kind != MO_S_CALL && node->kind != MO_S_POSTFIX &&
         node->kind != MO_S_LAMBDA && node->kind != MO_S_IF && node->kind != MO_S_LINE_IF &&
-        node->kind != MO_S_RETURN && node->kind != MO_S_STOP && node->kind != MO_S_ASSERT) {
+        node->kind != MO_S_CAPNAME && node->kind != MO_S_QUALIFIED &&
+        node->kind != MO_S_FIELD_ACCESS && node->kind != MO_S_RETURN && node->kind != MO_S_STOP &&
+        node->kind != MO_S_ASSERT) {
         bool reported = unfinished(p);
         (void)reported;
         p->depth--;
@@ -2564,7 +2629,7 @@ static MO_MUST_USE struct value infer(struct inference *p, const struct mo_synta
         return (struct value){0};
     if (p->checked && (node->kind == MO_S_EXPR_STMT || node->kind == MO_S_GROUP)) {
         struct note *operand = v.note;
-        v = graph(p, v, 1);
+        v = graph(p, (struct value){.type = v.type, .never = v.never}, 1);
         if (v.type == NULL)
             return v;
         v.graph->operands[0] = operand;
@@ -3036,6 +3101,19 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
             }
             if (!finish_operator(&p, n))
                 goto failed;
+            if (g->generic != NULL && g->generic->count != 0) {
+                const struct mo_source_type *actual = finish_type(&p, g->instantiated, 0);
+                struct mo_type_argument *arguments = allocate(
+                    &p, g->generic->count, sizeof(*arguments), _Alignof(struct mo_type_argument));
+                if (actual == NULL || arguments == NULL)
+                    goto failed;
+                MO_ASSERT(actual->count == g->generic->count);
+                for (uint32_t i = 0; i < actual->count; i++)
+                    arguments[i] =
+                        (struct mo_type_argument){g->generic->arguments[i], actual->arguments[i]};
+                g->output.arguments =
+                    (struct mo_type_arguments){.count = actual->count, .items = arguments};
+            }
             if (g->lambda != NULL) {
                 struct emitted_lambda *lambda = g->lambda;
                 const struct mo_checked_binding **bound =
@@ -3060,13 +3138,9 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
                 MO_ASSERT(g->output.receiver < g->output.operand_count);
                 rows[n->index].receiver = operands[g->output.receiver];
             }
-            enum mo_syntax_kind kind = n->output.syntax->kind;
-            if (kind == MO_S_NAME || kind == MO_S_VAR || kind == MO_S_BIND) {
-                rows[n->index].symbol = n->output.symbol;
-                if (n->binding != NULL) {
-                    MO_ASSERT(n->binding->binding_index < binding_count);
-                    rows[n->index].binding = &bindings[n->binding->binding_index];
-                }
+            if (n->binding != NULL) {
+                MO_ASSERT(n->binding->binding_index < binding_count);
+                rows[n->index].binding = &bindings[n->binding->binding_index];
             }
         }
         *checked = (struct mo_checked_function){.signature = signature,

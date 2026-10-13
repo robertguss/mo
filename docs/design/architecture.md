@@ -415,7 +415,8 @@ and the entry contract still need their stages. Compile-time duplicate map
 keys (equal literals or repeated names, reference 3.8) are also still pending.
 Nonempty examples or promises are refused with E1103, never silently skipped.
 A successful intermediate body is not a `mo_program`, is not lowering-ready and does not certify those
-rules. `mo_check` will compose the stages and collect independent errors.
+rules. `mo_check` composes implemented stages for a certified subset; section 12
+records its walking skeleton and the forms still refused with E1103.
 
 **Typed data and patterns.** Construction names every declared field once, or
 supplies a case's single unnamed value. Reads retain the selected field's
@@ -1501,12 +1502,20 @@ does not reject a well-typed program merely for using one of these forms:
   rule is changed and compiler comparisons skip these permanent exclusions.
 
 **Checked-program contract, provisional.** `src/check/check.h` now defines the
-input to lowering, not an implemented whole-program checker. Its
+input to lowering. Its
 `mo_checked_*` records and `mo_program` are an in-memory interface; their layout
-may change while checking is completed. `mo_check` is declared but not yet
-implemented. No staged inference result may be presented as a checked program.
-A future successful call certifies every static rule and fills the entire
-contract; an unfinished stage reports E1103 instead of returning partial success.
+may change while checking is completed. `mo_check` is an implemented walking
+skeleton: it prepares interfaces and signatures and shares inference's walk to
+emit typed graphs, rather than running a second name/type checker. It currently
+certifies nongeneric functions, scalar expressions and native scalar operator
+proofs, direct/indirect calls, record/choice construction and fields, conditionals,
+returns/stops/asserts and noncapturing lambdas. `main` returns Unit or Int and
+takes no parameters or one Console. Direct `Console.print` reads its operation
+and named input type from `base/hostops.def`, with the receiver explicit.
+Native method values, other host operations, generic functions, builtin generic
+cases, patterns/loops/collections, imports, constants/specs and derived abilities
+still report E1103. Checking stops at the first failed stage or body; no staged
+inference result or partly filled program is returned as certified output.
 
 Each named function has a typed expression graph in written postorder, explicit
 operand indices, a root, and typed canonical binders, including nested lambdas
@@ -1518,6 +1527,24 @@ use. The selected ability implementation is native, derived, a declaring-module
 custom function, or an abstract requirement resolved during monomorphization.
 Types remain shared DAGs; ability graphs can be recursive through nominal
 data. Lowering memoizes them rather than expanding them.
+
+The graph's operand conventions are part of the contract. Sequence operands
+are statement roots in order, with the last value or Unit for an empty block.
+Group and expression-statement rows forward one operand. If rows alternate
+condition/body operands, followed by an optional else body. A guarded return
+has its guard before its lazy value, matching evaluation rather than spelling.
+A whole-var assignment has one value operand; a field update has its resolved
+target projection followed by its value, and retains the original base var.
+Projection rows retain the field path. Constructor operands keep written order:
+named-argument wrapper rows carry the declaration-order field index and forward
+one value; a single unnamed payload needs no wrapper. Ordinary calls have callee
+then argument operands. Native dot calls omit the callee, retaining its qualified
+native spelling and an explicit receiver operand/row index. Lambda bodies remain
+lazy operands. Intermediate flat operators borrow their TOKEN syntax; final
+chain/postfix rows borrow the owner, whose final step supplies the syntax kind.
+This avoids copying normalized syntax solely for lowering. Numeric leaves retain
+source spelling; lowering folds an immediately negated numeric literal before
+constructing a scalar, including Int's signed minimum.
 
 Checked patterns name their cases and declaration-order fields. Case arms keep
 source order and guards; coverage and the no-catch-all rule are already checked.
@@ -1539,7 +1566,8 @@ and run them before accepting their allows/forbids expectations. This keeps
 `check` dependent only on `syntax` and `base`.
 
 The result arena owns interfaces, signatures, types, binders, graphs and spec
-byte copies. The program borrows its loaded set and syntax, which must outlive
+byte copies; native spellings may borrow immutable compiler tables.
+The program borrows its loaded set and syntax, which must outlive
 it and remain unchanged. It borrows no source-store bytes. Original sources
 remain a separate argument to `mo_lower` for filenames and provenance; Core
 copies all metadata and borrows neither input. Counts, graph work, arena storage
@@ -1595,8 +1623,8 @@ MO_MUST_USE struct mo_inferred_body *mo_infer_function(struct mo_arena *arena,
                                                        const struct mo_module_interfaces *interfaces,
                                                        const struct mo_signatures *signatures,
                                                        uint32_t function, struct mo_diags *diags);
-/* Provisional checked-program contract, defined in check.h. mo_check is
- * declaration-only until all checking stages are implemented. */
+/* Provisional checked-program contract, defined in check.h. mo_check produces
+ * only its certified subset; unfinished forms report E1103. */
 struct mo_program {
     const struct mo_module_set *set; /* borrows loaded syntax */
     const struct mo_module_interfaces *interfaces;
@@ -1609,7 +1637,7 @@ struct mo_program {
     const struct mo_checked_spec *specs; /* text, spans, conditions and links */
     struct mo_checked_entry entry; /* main capabilities and result convention */
 };
-/* Eventually: lowering-ready program, or NULL with diagnostics; no partial success. */
+/* Lowering-ready program, or NULL with diagnostics; no partial success. */
 MO_MUST_USE struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *set,
                                         struct mo_diags *diags);
 
