@@ -62,14 +62,16 @@ enum mo_input_result mo_inputs_init(struct mo_inputs *inputs, const struct mo_ty
     if (result != MO_INPUT_OK) {
         return result;
     }
-    uint64_t product = 1;
+    uint64_t product = 1, axes = 1;
     for (uint32_t i = 0; i < count; i++) {
         uint32_t variants = inputs->info[parameters[i]].count;
         MO_ASSERT(variants != 0);
         inputs->counts[i] = variants;
+        axes += variants - 1;
         product =
             product > limits->combinations / variants ? limits->combinations : product * variants;
     }
+    inputs->axes = axes > limits->combinations ? limits->combinations : (uint32_t)axes;
     inputs->boundaries = (uint32_t)product;
     if (inputs->boundaries > limits->combinations) {
         inputs->boundaries = limits->combinations;
@@ -81,6 +83,47 @@ void mo_inputs_free(struct mo_inputs *inputs) {
     mo_arena_free(&inputs->arena);
 }
 
+static MO_MUST_USE bool boundary_variants(const struct mo_inputs *inputs, uint32_t *variants,
+                                          uint64_t *work) {
+    memset(variants, 0, inputs->parameter_count * sizeof *variants);
+    if (inputs->ordinal < inputs->axes) {
+        uint64_t rank = inputs->ordinal;
+        if (rank == 0)
+            return true;
+        rank--;
+        for (uint32_t i = 0; i < inputs->parameter_count; i++) {
+            if (rank < inputs->counts[i] - 1) {
+                variants[i] = 1 + (uint32_t)rank;
+                return true;
+            }
+            rank -= inputs->counts[i] - 1;
+        }
+        MO_ASSERT(false);
+    }
+    /* Unrank the product with the base and one-parameter tuples removed.
+     * Their positions are sorted by increasing mixed-radix place value. */
+    uint64_t index = inputs->ordinal - inputs->axes + 1, weight = 1;
+    for (uint32_t i = inputs->parameter_count; i != 0;) {
+        i--;
+        for (uint32_t digit = 1; digit < inputs->counts[i] && digit <= index / weight; digit++) {
+            if (*work == 0)
+                return false;
+            (*work)--;
+            index++;
+        }
+        if (weight > index / inputs->counts[i])
+            break;
+        weight *= inputs->counts[i];
+    }
+    for (uint32_t i = inputs->parameter_count; i != 0;) {
+        i--;
+        variants[i] = (uint32_t)(index % inputs->counts[i]);
+        index /= inputs->counts[i];
+    }
+    MO_ASSERT(index == 0);
+    return true;
+}
+
 enum mo_input_result mo_inputs_next(struct mo_inputs *inputs, struct mo_heap *destination,
                                     struct mo_cell *out, enum mo_input_kind *kind) {
     MO_ASSERT(inputs != NULL && destination != NULL && kind != NULL);
@@ -89,18 +132,14 @@ enum mo_input_result mo_inputs_next(struct mo_inputs *inputs, struct mo_heap *de
         return MO_INPUT_DONE;
     }
     uint32_t variants[MO_LIMIT_BYTECODE_PARAMETERS];
-    uint64_t index = inputs->ordinal;
     bool boundary = inputs->ordinal < inputs->boundaries;
-    for (uint32_t i = inputs->parameter_count; i != 0;) {
-        i--;
-        variants[i] = (uint32_t)(index % inputs->counts[i]);
-        index /= inputs->counts[i];
-    }
+    uint64_t work = inputs->limits.work;
+    if (boundary && !boundary_variants(inputs, variants, &work))
+        return MO_INPUT_LIMIT;
     uint64_t size = boundary ? 0 : 1 + (inputs->ordinal - inputs->boundaries) / 4;
     if (size > inputs->limits.elements) {
         size = inputs->limits.elements;
     }
-    uint64_t work = inputs->limits.work;
     enum mo_input_result result =
         mo_input_build(inputs, destination, NULL, boundary ? variants : NULL, (uint32_t)size,
                        input_stream(inputs->seed, inputs->ordinal), NULL, &work, out);

@@ -180,15 +180,23 @@ static MO_MUST_USE enum mo_input_result candidate(struct mo_input_walk *walk, ui
         count = 1;
         break;
     case MO_TYPE_BYTE:
+        count = 9;
+        break;
     case MO_TYPE_INT:
-    case MO_TYPE_FLOAT:
-    case MO_TYPE_CHAR:
     case MO_TYPE_TIME:
     case MO_TYPE_DURATION:
+        count = 65;
+        break;
+    case MO_TYPE_FLOAT:
+        break;
+    case MO_TYPE_CHAR:
+        count = 22;
+        break;
     case MO_TYPE_DECIMAL:
+        count = 128;
         break;
     case MO_TYPE_RANGE:
-        count = 6;
+        count = 130;
         break;
     case MO_TYPE_BIGINT: {
         size_t bytes;
@@ -306,6 +314,7 @@ enum mo_input_result mo_input_shrink_next(struct mo_input_shrinker *shrinker,
                 return result;
             cursor.calls++;
             cursor.awaiting = true;
+            cursor.numeric = edit.kind == MO_INPUT_EDIT_SCALAR;
             *shrinker = cursor;
             return MO_INPUT_OK;
         }
@@ -316,8 +325,8 @@ void mo_input_shrink_feedback(struct mo_input_shrinker *shrinker, bool still_fai
     MO_ASSERT(shrinker != NULL && shrinker->awaiting);
     shrinker->awaiting = false;
     if (still_fails) {
-        shrinker->node = 0;
-        shrinker->variant = 0;
+        if (!shrinker->numeric)
+            shrinker->variant = 0;
     } else
         shrinker->variant++;
 }

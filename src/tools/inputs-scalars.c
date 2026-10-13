@@ -17,13 +17,19 @@ static MO_MUST_USE int64_t integer(struct mo_input_builder *builder) {
     return signed_word(word);
 }
 
-static MO_MUST_USE int64_t smaller(int64_t value, uint32_t variant) {
-    MO_ASSERT(variant < 3);
-    return variant == 0   ? 0
-           : variant == 1 ? value / 2
-           : value > 0    ? value - 1
-           : value < 0    ? value + 1
-                          : 0;
+static MO_MUST_USE mo_i128 smaller(mo_i128 value, uint32_t variant) {
+    MO_ASSERT(variant < 128);
+    if (variant == 0)
+        return 0;
+    mo_u128 magnitude = value < 0 ? (mo_u128)(-(value + 1)) + 1 : (mo_u128)value;
+    /* Zero was already tried. Skip repeated one-unit distances too. */
+    if (magnitude <= 1 || (variant > 1 && (magnitude >> (variant - 1)) <= 1))
+        return value;
+    mo_u128 distance = magnitude >> variant;
+    if (distance == 0)
+        distance = 1;
+    mo_i128 result = (mo_i128)(magnitude - distance);
+    return value < 0 ? -result : result;
 }
 
 static MO_MUST_USE uint64_t float_smaller(uint64_t bits, uint32_t variant) {
@@ -93,7 +99,7 @@ enum mo_input_result mo_input_immediate_build(struct mo_input_builder *builder,
         break;
     }
     case MO_TYPE_INT:
-        result = mo_cell_int(copy     ? smaller(mo_cell_get_int(request->source), variant)
+        result = mo_cell_int(copy     ? (int64_t)smaller(mo_cell_get_int(request->source), variant)
                              : random ? integer(builder)
                                       : ints[index]);
         break;
@@ -124,7 +130,7 @@ enum mo_input_result mo_input_immediate_build(struct mo_input_builder *builder,
         break;
     }
     case MO_TYPE_TIME: {
-        int64_t value = copy     ? smaller(mo_cell_get_time(request->source), variant)
+        int64_t value = copy     ? (int64_t)smaller(mo_cell_get_time(request->source), variant)
                         : random ? times[1] + (int64_t)(mo_input_random(&builder->random) %
                                                         UINT64_C(315537897600000000))
                                  : times[index];
@@ -133,20 +139,16 @@ enum mo_input_result mo_input_immediate_build(struct mo_input_builder *builder,
     }
     case MO_TYPE_DURATION: {
         const int64_t durations[] = {0, INT64_MIN, INT64_MAX};
-        result = mo_cell_duration(copy     ? smaller(mo_cell_get_duration(request->source), variant)
-                                  : random ? integer(builder)
-                                           : durations[index]);
+        result =
+            mo_cell_duration(copy ? (int64_t)smaller(mo_cell_get_duration(request->source), variant)
+                             : random ? integer(builder)
+                                      : durations[index]);
         break;
     }
     case MO_TYPE_DECIMAL: {
         mo_i128 value;
         if (copy) {
-            value = mo_cell_get_decimal(request->source);
-            value = variant == 0   ? 0
-                    : variant == 1 ? value / 2
-                    : value > 0    ? value - 1
-                    : value < 0    ? value + 1
-                                   : 0;
+            value = smaller(mo_cell_get_decimal(request->source), variant);
         } else if (random) {
             mo_u128 magnitude = (mo_u128)mo_input_random(&builder->random) << 64;
             magnitude |= mo_input_random(&builder->random);
@@ -164,10 +166,10 @@ enum mo_input_result mo_input_immediate_build(struct mo_input_builder *builder,
         struct mo_range range;
         if (copy) {
             range = mo_cell_get_range(request->source);
-            if (variant < 3)
-                range.start = smaller(range.start, variant);
+            if (variant < 65)
+                range.start = (int64_t)smaller(range.start, variant);
             else
-                range.end = smaller(range.end, variant - 3);
+                range.end = (int64_t)smaller(range.end, variant - 65);
         } else if (random) {
             range.start = integer(builder);
             range.end = integer(builder);

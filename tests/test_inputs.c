@@ -30,8 +30,10 @@ static void integer_inputs(void) {
         CHECK(mo_cell_get_int(a[1]) == mo_cell_get_int(b[1]));
         if (i < 25) {
             CHECK(ka == MO_INPUT_BOUNDARY);
-            CHECK(mo_cell_get_int(a[0]) == boundaries[i / 5]);
-            CHECK(mo_cell_get_int(a[1]) == boundaries[i % 5]);
+            unsigned left = i == 0 ? 0 : i < 5 ? i : i < 9 ? 0 : 1 + (i - 9) / 4;
+            unsigned right = i < 5 ? 0 : i < 9 ? i - 4 : 1 + (i - 9) % 4;
+            CHECK(mo_cell_get_int(a[0]) == boundaries[left]);
+            CHECK(mo_cell_get_int(a[1]) == boundaries[right]);
         } else {
             CHECK(ka == MO_INPUT_RANDOM);
         }
@@ -70,6 +72,44 @@ static void integer_inputs(void) {
     /* Once Ints use all 64 bits, adjacent streams must not be shifted copies. */
     CHECK(shifted < 4);
     mo_inputs_free(&first);
+    mo_heap_free(heap);
+    mo_heap_image_free(fixture.image);
+    mo_arena_free(&fixture.arena);
+}
+
+static void boundary_coverage(void) {
+    struct heap_fixture fixture;
+    heap_fixture_init(&fixture);
+    struct mo_limits heap_limits = mo_limits_default();
+    struct mo_heap *heap = mo_heap_new(fixture.image, &heap_limits);
+    MO_ASSERT(heap != NULL);
+    uint32_t parameters[8];
+    for (unsigned p = 0; p < 8; p++)
+        parameters[p] = fixture.builtin[MO_TYPE_INT];
+    const int64_t boundaries[] = {0, 1, -1, INT64_MIN, INT64_MAX};
+    struct mo_input_limits limits = mo_input_limits_default();
+    for (uint32_t count = 1; count <= 8; count++) {
+        struct mo_inputs inputs;
+        MO_ASSERT(mo_inputs_init(&inputs, &fixture.types, parameters, count, "M.coverage", 10,
+                                 &limits, NULL, 0) == MO_INPUT_OK);
+        unsigned seen[8] = {0};
+        for (unsigned trial = 0; trial < 200; trial++) {
+            struct mo_cell values[8];
+            enum mo_input_kind kind;
+            MO_ASSERT(mo_inputs_next(&inputs, heap, values, &kind) == MO_INPUT_OK);
+            if (kind != MO_INPUT_BOUNDARY)
+                break;
+            for (uint32_t p = 0; p < count; p++) {
+                int64_t value = mo_cell_get_int(values[p]);
+                for (unsigned b = 0; b < 5; b++)
+                    if (value == boundaries[b])
+                        seen[p] |= 1U << b;
+            }
+        }
+        for (uint32_t p = 0; p < count; p++)
+            CHECK(seen[p] == 31);
+        mo_inputs_free(&inputs);
+    }
     mo_heap_free(heap);
     mo_heap_image_free(fixture.image);
     mo_arena_free(&fixture.arena);
@@ -181,6 +221,56 @@ static void shrink_numbers(void) {
     mo_input_shrink_feedback(&shrinker, false);
     CHECK(mo_input_shrink_next(&shrinker, best, heap, candidate) == MO_INPUT_DONE);
     mo_inputs_free(&inputs);
+    mo_heap_free(heap);
+    mo_heap_image_free(fixture.image);
+    mo_arena_free(&fixture.arena);
+}
+
+static void shrink_thresholds(void) {
+    struct heap_fixture fixture;
+    heap_fixture_init(&fixture);
+    struct mo_limits heap_limits = mo_limits_default();
+    struct mo_heap *heap = mo_heap_new(fixture.image, &heap_limits);
+    MO_ASSERT(heap != NULL);
+    struct mo_input_limits limits = mo_input_limits_default();
+    for (unsigned model = 0; model < 3; model++) {
+        uint32_t type = fixture.builtin[model == 2 ? MO_TYPE_DECIMAL : MO_TYPE_INT];
+        uint32_t parameters[] = {type, type};
+        uint32_t count = model == 1 ? 2U : 1U;
+        struct mo_inputs inputs;
+        MO_ASSERT(mo_inputs_init(&inputs, &fixture.types, parameters, count, "M.threshold", 11,
+                                 &limits, NULL, 0) == MO_INPUT_OK);
+        mo_i128 decimal_max = (mo_i128)(((mo_u128)1 << 127) - 1);
+        struct mo_cell best[] = {model == 2   ? mo_cell_decimal(decimal_max)
+                                 : model == 0 ? mo_cell_int(INT64_MAX)
+                                              : mo_cell_int(INT64_C(1) << 40),
+                                 mo_cell_int(INT64_C(1) << 40)};
+        struct mo_input_shrinker shrinker;
+        mo_input_shrink_init(&shrinker, &inputs, 200);
+        for (;;) {
+            struct mo_cell candidate[2];
+            enum mo_input_result result = mo_input_shrink_next(&shrinker, best, heap, candidate);
+            if (result == MO_INPUT_DONE)
+                break;
+            MO_ASSERT(result == MO_INPUT_OK);
+            bool fails =
+                model == 2 ? mo_cell_get_decimal(candidate[0]) > INT64_C(1500000000000000000)
+                : model == 0
+                    ? mo_cell_get_int(candidate[0]) > 150
+                    : mo_cell_get_int(candidate[0]) > 100 && mo_cell_get_int(candidate[1]) > 100;
+            if (fails)
+                memcpy(best, candidate, count * sizeof *best);
+            mo_input_shrink_feedback(&shrinker, fails);
+        }
+        if (model == 2)
+            CHECK(mo_cell_get_decimal(best[0]) == INT64_C(1500000000000000001));
+        else {
+            CHECK(mo_cell_get_int(best[0]) == (model == 0 ? 151 : 101));
+            if (count == 2)
+                CHECK(mo_cell_get_int(best[1]) == 101);
+        }
+        mo_inputs_free(&inputs);
+    }
     mo_heap_free(heap);
     mo_heap_image_free(fixture.image);
     mo_arena_free(&fixture.arena);
@@ -528,8 +618,10 @@ static void recursive_boundaries(void) {
 
 int main(void) {
     integer_inputs();
+    boundary_coverage();
     scalar_boundaries();
     shrink_numbers();
+    shrink_thresholds();
     shrink_record_across_heaps();
     all_types();
     factory_budget();

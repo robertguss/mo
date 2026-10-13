@@ -1301,12 +1301,19 @@ and supplies borrowed current inputs to the shrinker. Shrink candidates are
 deep copies in the destination heap, which may be a fresh process's heap;
 no reference into the old process is retained. The caller tests a candidate,
 then accepts it as the new failing input or drops it. The shrink call budget
-counts emitted candidates. The driver, not this library, decides whether a
+counts emitted candidates. Integer and fixed-point shrinking tries zero, then
+subtracts distances `abs(x) / 2^k` toward zero for increasing `k`, ending at a
+one-unit distance. Acceptance resumes at that node and distance; structural
+edits restart at the accepted node. The driver, not this library, decides whether a
 stopped call is a bug. Extreme detection walks a parameter and returns its
 first Int, Decimal, Time or Duration minimum/maximum; overrides are opaque.
 
-Boundary order is declaration order, with the last parameter varying fastest
-in the capped Cartesian product. Records and tuples start with minimum fields,
+Boundary order starts with the base tuple, then varies each parameter alone
+in declaration order, so a capped product does not hide later boundaries of
+early parameters. The remaining Cartesian tuples follow, last parameter
+fastest, without repeating the base or one-parameter tuples. A cap below
+`1 + sum(boundaries_per_parameter - 1)` truncates even this initial coverage.
+Records and tuples start with minimum fields,
 then vary one field at a time. Choices try every case with minimum fields,
 then field variations. Minimum inhabitants use the shallowest terminating
 choice case. Recursive back-edges add one non-minimum shell rather than an
@@ -1320,8 +1327,9 @@ infinities, NaN and smallest subnormals, Range's empty/forward/reversed bounds,
 Bytes' empty/one-byte/1,024-byte values, and BigInt's 0/±1/±128-byte magnitudes.
 
 SipHash-1-3 in `base/hash.h` hashes the full name with the public fixed key
-`6d6f2d70726f6d69:73652d696e707574`. Integer-only SplitMix64 streams are
-independent per input ordinal. Random sizes increase every four inputs,
+`6d6f2d70726f6d69:73652d696e707574`. The same key hashes the little-endian
+16-byte pair of name seed and ordinal into each SplitMix64 starting state;
+adjacent inputs do not share shifted portions of a stream. Random sizes increase every four inputs,
 up to the collection-size budget; scalar bit widths and blob sizes grow too.
 An allocation or generation-limit refusal preserves outputs and the ordinal;
 the caller may retry or explicitly skip it without changing later streams.

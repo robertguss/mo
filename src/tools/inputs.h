@@ -16,7 +16,8 @@ enum mo_input_result {
 enum mo_input_kind { MO_INPUT_BOUNDARY, MO_INPUT_RANDOM };
 
 struct mo_input_limits {
-    /* Cartesian products, last parameter fastest, before random trials. */
+    /* Base and one-parameter variations, then the remaining Cartesian product
+     * (last parameter fastest), before random trials. A smaller cap truncates. */
     uint32_t combinations;
     /* Per input: tree height, nodes (including scalars), collection entries,
      * total Text/Bytes/BigInt payload bytes, and walk/build work. */
@@ -76,6 +77,7 @@ struct mo_inputs {
     uint32_t counts[MO_LIMIT_BYTECODE_PARAMETERS];
     uint32_t parameter_count;
     uint32_t boundaries;
+    uint32_t axes;
     uint64_t seed;
     uint64_t ordinal;
 };
@@ -107,8 +109,9 @@ void mo_inputs_skip(struct mo_inputs *inputs);
 /* A shrink session owns no values. Before next, best is the caller's borrowed
  * current failing tuple. Success returns an owned, deeply copied candidate in
  * destination. Retain it while testing it; on a still-failing verdict replace
- * best with it before the next step, otherwise drop it. feedback restarts at
- * the first parameter after acceptance. A refusal preserves the cursor and
+ * best with it before the next step, otherwise drop it. feedback resumes at
+ * the accepted node, retaining numeric distance and restarting structural
+ * edits there. A refusal preserves the cursor and
  * output. The budget counts emitted candidates, not skipped equal values.
  * Timing and classification of stopped calls remain with the driver. */
 struct mo_input_shrinker {
@@ -118,6 +121,7 @@ struct mo_input_shrinker {
     uint32_t calls;
     uint32_t budget;
     bool awaiting;
+    bool numeric;
 };
 void mo_input_shrink_init(struct mo_input_shrinker *shrinker, const struct mo_inputs *inputs,
                           uint32_t budget);
