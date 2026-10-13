@@ -40,7 +40,7 @@ static struct instance *reserve(struct lowering *p, uint32_t index, struct insta
     f->fun.const_count.digits = lower_text(p, "0");
     f->meta.span = lower_span(p, p->span);
     f->meta.text.some = true;
-    bool wording = source->kind == MO_SPEC_TEST || source->kind == MO_SPEC_PROMISE;
+    bool wording = source->kind == MO_SPEC_TEST;
     f->meta.text.value = wording
                              ? lower_copy(p, (const char *)source->wording, source->wording_length)
                              : lower_copy(p, (const char *)source->text.bytes, source->text.length);

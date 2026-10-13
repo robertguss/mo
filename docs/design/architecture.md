@@ -993,7 +993,19 @@ postorder, then reorder the saved values into promise-parameter order for a
 single call. Their names include the promise ordinal before `.allows.N` or
 `.forbids.N`, preventing collisions between a subject's promises. Anchor
 metadata records the promise link and expectation; lowering does not execute it.
-Generic spec instances remain E1150 while their producer is staged.
+Generic promises share one instance per concrete ordinary subject instance
+(type list and requesting module). Their type substitution and keyed ability
+environment are the subject's existing scope, never a fresh promise scope.
+An anchor supplies its checked type arguments and type-only requirement proofs
+to reserve that subject and calls the corresponding concrete promise. Instances
+discovered in examples, tests, promise bodies or customizers use the same bounded
+body queue; reserving before lowering bodies also permits same-instance recursion.
+Examples remain single zero-parameter specs even on generic subjects: concrete
+calls inside the example instantiate functions, not copies of the example.
+Promise spec text is its verbatim header; test text is decoded wording, as Core
+text and bytecode require. Conditions keep original bytes/spans independently.
+These translations certify neither an anchor's expectation nor the ordinary
+subject's result: tools must execute allows/forbids in fresh processes.
 
 The initial CPS implementation conservatively passes every live outer var,
 not only changed vars, across a continuation join; expression joins also pass
@@ -1025,7 +1037,9 @@ binding or binder name. Repeated SSA/loop
 binders retain their original name at distinct node/slot identities.
 Lowering supplies correct promise signatures/line correspondence and links
 anchors to promises and promises to their ordinary subjects. Module ownership
-lists preserve source order even though constants are dependency-ordered.
+lists group ordinary/spec instances by original declaration position, preserving
+source order independently of discovery/call indices; synthesized helpers follow
+source declarations. Constants retain source order here despite dependency order.
 
 Compilation needs **only this Core document**. It validates metadata shape,
 retains provenance through lambda lifting/optimization, maps binder identities

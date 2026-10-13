@@ -1822,13 +1822,31 @@ static void test_source_specs(void *unused) {
     MO_ASSERT(mo_buffer_append_text(
         &source, "module Main\nfn twice(value: T) : T where T: Number, T: Equal\n"
                  "promise \"returns twice its input\"\nresult == value + value\n"
-                 "allows result: 6, value: 3\nforbids value: 1.25, result: 2.0\nend\n"
+                 "allows result: 6, value: 3\nallows value: 4, result: 8\n"
+                 "forbids value: 1.25, result: 2.0\nend\n"
                  "value + value\nend\nfn main() : Int\n17\nend\n"));
     struct mo_core *core = source_core(&output, &source, &diags);
     CHECK(core != NULL && !mo_diags_any(&diags));
     if (core != NULL) {
         run_outcome(core, "Main::Main.twice(Int).promise.1.allows.1", MO_RETURNED, 0, NULL);
+        run_outcome(core, "Main::Main.twice(Int).promise.1.allows.2", MO_RETURNED, 0, NULL);
         run_outcome(core, "Main::Main.twice(Decimal).promise.1.forbids.1", MO_RETURNED, 1, NULL);
+        uint32_t last = 0, promises = 0;
+        const struct mo_core_module_meta *module = &core->metadata.modules.items[0];
+        for (size_t i = 0; i < module->funs.count; i++) {
+            uint32_t index = module->funs.items[i];
+            if (core->funs.items[index].kind == MO_CORE_FUNCTION)
+                continue;
+            const struct mo_core_fun_meta *meta = &core->metadata.funs.items[index];
+            CHECK(meta->span.some && meta->span.value.start >= last);
+            last = meta->span.value.start;
+            if (core->funs.items[index].kind == MO_CORE_PROMISE) {
+                promises++;
+                CHECK(meta->lines.count == 1 && meta->lines.items[0].text.length == 23 &&
+                      memcmp(meta->lines.items[0].text.bytes, "result == value + value", 23) == 0);
+            }
+        }
+        CHECK(promises == 2); /* Same subject/type list shares one promise. */
     }
     mo_arena_free(&output);
     mo_diags_free(&diags);

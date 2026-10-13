@@ -68,7 +68,7 @@ struct lowering {
     struct canonical_type **types;
     struct type_frame *type_stack;
     uint32_t cache_count, cache_slots, type_slots, instance_slots;
-    struct instance **instance_index, **by_source, ***source_tails;
+    struct instance **instance_index;
     const struct mo_checked_function **source_index;
     struct derived *derived, **derived_tail, *derived_pending;
     struct derived **derived_index;

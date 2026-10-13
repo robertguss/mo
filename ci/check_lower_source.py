@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 
-from check_core_check import VERSION, WORLD, parse
+from check_core_check import VERSION, WORLD, parse, wire
 from check_vm import oracle, run
 
 
@@ -142,6 +142,122 @@ CASES = {
                              "Error(Some(n)): n + 80\nError(None): 2\nOk(_): 1\nend\nend", 89),
 }
 
+SPEC_CASES = {
+    "examples": ("fn plus(value: Int) : Int\nexamples\nplus(3) == 4\nend\n"
+                 "examples\nplus(8) == 10\nend\nvalue + 1\nend\n"
+                 "fn main() : Int\n17\nend", {
+                     None: ["returned", "17"],
+                     "Main.plus.example.1": ["returned", "Unit"],
+                     "Main.plus.example.2": ["failed", "left 1:9,right 2:10,"],
+                 }),
+    "generic_examples": ("fn twice(value: T) : T where T: Number, T: Equal\nexamples\n"
+                         "twice(3) == 6\ntwice(1.25) == 2.5\nend\nvalue + value\nend\n"
+                         "fn main() : Int\n17\nend", {
+                             "Main.twice.example.1": ["returned", "Unit"],
+                             "Main.twice.example.2": ["returned", "Unit"],
+                         }),
+    "tuple_promise": ("fn ordered(a: Int, b: Int) : (Int, Int)\n"
+                      "promise \"values stay\\nordered\"\nresult.0 <= result.1\n"
+                      "result == (a, b) or result == (b, a)\n"
+                      "allows result: (2, 5), b: 2, a: 5\n"
+                      "forbids a: 5, result: (5, 2), b: 2\n"
+                      "forbids result: (2, 2), b: 2, a: 5\nend\n"
+                      "if a <= b: (a, b) else: (b, a)\nend\nfn main()\nend", {
+                          "Main.ordered.promise.1.allows.1": ["returned", "0"],
+                          "Main.ordered.promise.1.forbids.1": ["returned", "1"],
+                          "Main.ordered.promise.1.forbids.2": ["returned", "2"],
+                      }),
+    "generic_requirements": ("fn twice(value: T) : T where T: Number, T: Equal, T: Order\n"
+                             "promise \"bounded double\"\nresult > value\n"
+                             "result == value + value\nallows result: 6, value: 3\n"
+                             "allows value: 4, result: 8\nforbids result: 2, value: 3\n"
+                             "forbids value: 1.25, result: 2.0\nend\nvalue + value\nend\n"
+                             "fn main() : Int\n17\nend", {
+                                 "Main::Main.twice(Int).promise.1.allows.1": ["returned", "0"],
+                                 "Main::Main.twice(Int).promise.1.allows.2": ["returned", "0"],
+                                 "Main::Main.twice(Int).promise.1.forbids.1": ["returned", "1"],
+                                 "Main::Main.twice(Decimal).promise.1.forbids.2": ["returned", "2"],
+                             }),
+    "lazy_promise": ("fn identity(value: Int) : Int\npromise \"lazy conditions\"\n"
+                     "result == value\n1 / 0 == 0\nallows value: 3, result: 4\n"
+                     "forbids result: 3, value: 3\nend\nvalue\nend\nfn main()\nend", {
+                         "Main.identity.promise.1.allows.1": ["returned", "1"],
+                         "Main.identity.promise.1.forbids.1": ["stopped", "dividing by zero"],
+                     }),
+    "anchor_order": ("fn first() : Int\nstop \"result first\"\nend\n"
+                     "fn second() : Int\nstop \"value second\"\nend\n"
+                     "fn identity(value: T) : T where T: Equal\n"
+                     "promise \"written argument order\"\nresult == value\n"
+                     "allows result: 3, value: 3\n"
+                     "forbids result: first(), value: second()\n"
+                     "end\nvalue\nend\nfn main()\nstop \"main is separate\"\nend", {
+                         "Main::Main.identity(Int).promise.1.allows.1": ["returned", "0"],
+                         "Main::Main.identity(Int).promise.1.forbids.1": ["stopped", "result first"],
+                     }),
+    "scoped_text": ("struct Box(T)\nvalue: T\nend\n"
+                    "fn to_text(box: Box(T)) : Text where T: Text\n\"<#{box.value}>\"\nend\n"
+                    "fn relay(value: U) : Text where U: Text\nvalue.to_text\nend\n"
+                    "fn show(value: T) : Text where T: Text\n"
+                    "promise \"uses the selected renderer\"\nresult == relay(value)\n"
+                    "allows result: \"<7>\", value: Box(value: 7)\n"
+                    "forbids value: Box(value: \"x\"), result: \"wrong\"\nend\n"
+                    "relay(value)\nend\nfn main()\nend", {
+                        "Main::Main.show(Main.Box(Int)).promise.1.allows.1": ["returned", "0"],
+                        "Main::Main.show(Main.Box(Text)).promise.1.forbids.1": ["returned", "1"],
+                    }),
+    "permuted_keys": ("fn mixed(left: Z, right: A) : (Z, A) "
+                      "where Z: Number, Z: Equal, A: Equal\n"
+                      "promise \"keeps the second and doubles the first\"\n"
+                      "result.0 == left + left\nresult.1 == right\n"
+                      "allows right: \"λ\", result: (6, \"λ\"), left: 3\n"
+                      "forbids result: (2.5, false), left: 1.25, right: true\nend\n"
+                      "(left + left, right)\nend\nfn main()\nend", {
+                          "Main::Main.mixed(Text, Int).promise.1.allows.1": ["returned", "0"],
+                          "Main::Main.mixed(Bool, Decimal).promise.1.forbids.1": ["returned", "2"],
+                      }),
+    "custom_order": ("struct Box\nvalue: Int\nend\n"
+                     "fn compare(a: Box, b: Box) : Ordering\n"
+                     "if a.value < b.value: Greater else: Less\nend\n"
+                     "fn pick(a: T, b: T) : T where T: Order, T: Equal\n"
+                     "promise \"uses reverse ordering\"\n"
+                     "if a < b: result == a else: result == b\n"
+                     "allows result: Box(value: 7), a: Box(value: 2), b: Box(value: 7)\n"
+                     "forbids b: Box(value: 7), result: Box(value: 2), a: Box(value: 2)\n"
+                     "end\nif a < b: a else: b\nend\nfn main()\nend", {
+                         "Main::Main.pick(Main.Box).promise.1.allows.1": ["returned", "0"],
+                         "Main::Main.pick(Main.Box).promise.1.forbids.1": ["returned", "1"],
+                     }),
+    "proof_free_details": ("struct Box\nvalue: Int\nend\n"
+                           "fn to_text(_box: Box) : Text\nstop \"must not render\"\nend\n"
+                           "fn same(a: T, b: T) : Bool where T: Equal\nexamples\n"
+                           "Box(value: 7) == Box(value: 9)\nend\na == b\nend\n"
+                           "test \"Unicode details\\u{0}\"\nassert \"λ\" == \"日本\"\nend\n"
+                           "fn main()\nend", {
+                               "Main.same.example.1": ["failed", "left 13:Box(value: 7),right 13:Box(value: 9),"],
+                               "Main.test.1": ["failed", "left 2:λ,right 6:日本,"],
+                           }),
+    "late_instances": ("fn keep(value: T) : T where T: Equal\n"
+                       "promise \"keeps its input\"\nresult == value\n"
+                       "allows value: 3, result: 3\nforbids result: 4, value: 3\nend\n"
+                       "value\nend\ntest \"spec-only generic use\"\n"
+                       "assert keep((\"λ\", false)) == (\"λ\", false)\nend\nfn main()\nend", {
+                           "Main.test.1": ["returned", "Unit"],
+                           "Main::Main.keep(Int).promise.1.allows.1": ["returned", "0"],
+                           "Main::Main.keep(Int).promise.1.forbids.1": ["returned", "1"],
+                       }),
+    "promise_ordinals": ("fn keep(value: T) : T where T: Equal\n"
+                         "promise \"keeps input\"\nresult == value\n"
+                         "allows value: 3, result: 3\nforbids result: 4, value: 3\nend\n"
+                         "promise \"changes input\"\nresult != value\n"
+                         "allows result: 4, value: 3\nforbids value: 3, result: 3\nend\n"
+                         "value\nend\nfn main()\nend", {
+                             "Main::Main.keep(Int).promise.1.allows.1": ["returned", "0"],
+                             "Main::Main.keep(Int).promise.2.allows.1": ["returned", "0"],
+                             "Main::Main.keep(Int).promise.1.forbids.1": ["returned", "1"],
+                             "Main::Main.keep(Int).promise.2.forbids.1": ["returned", "1"],
+                         }),
+}
+
 for count in (4, 8, 16):
     CASES[f"linear_bool_{count}"] = (
         "fn main() : Int\nx = false\n" + "\n".join(
@@ -152,6 +268,77 @@ for count in (4, 8, 16):
         "fn main() : Int\nx = C16\n" + "\n".join(
             ("if" if i == 0 else "else if") + f" x is C{i}\n7" for i in range(count))
         + "\nelse\n41\nend\nend", 41)
+
+
+def check_specs(driver, vm, root, world):
+    checked = 0
+    for name, (body, selections) in SPEC_CASES.items():
+        source = root / "main.mo"
+        original = ("module Main\n" + body + "\n").encode()
+        source.write_bytes(original)
+        report = subprocess.run([str(driver), str(source)], capture_output=True,
+                                text=True, timeout=30)
+        assert report.returncode == 0, (name, report.returncode, report.stderr)
+        path = root / f"spec-{name}.core"
+        path.write_text(report.stdout)
+        document = parse(report.stdout)
+        program = document[2]
+        metadata = program[-1]
+        assert metadata[0] == "Metadata"
+        names = [fun[1] for fun in program[2]]
+        assert len(names) == len(set(names)), (name, "duplicate spec/instance names")
+        promises = []
+        for fun, meta in zip(program[2], metadata[3]):
+            kind = fun[6][0]
+            if kind == "promise":
+                promises.append(fun[1])
+                subject = program[2][int(meta[5][1])]
+                assert [p[1] for p in fun[2]] == [p[1] for p in subject[2]] + [subject[3]], name
+                start = int(meta[2][1][2])
+                header = original[start:].split(b"\n", 1)[0].decode()
+                assert meta[3] == ["some", header] and header.startswith("promise "), name
+                for line in meta[7]:
+                    span = line[1][1]
+                    assert line[2].encode() == original[int(span[2]):int(span[3])], (name, line)
+            elif kind == "anchor":
+                assert program[2][int(meta[5][1])][6][0] == "promise" and not fun[2], name
+            elif kind == "test" and name == "proof_free_details":
+                assert meta[3] == ["some", "Unicode details\0"], meta[3]
+        for module in metadata[2]:
+            spans = [int(metadata[3][int(i)][2][1][2]) for i in module[3]
+                     if program[2][int(i)][6][0] != "function"]
+            assert spans == sorted(spans), (name, "discovery changed spec source order")
+        if name == "generic_requirements":
+            assert len(promises) == 2, (name, "same subject/type list must share its promise")
+        if name == "late_instances":
+            assert "Main::Main.keep((Text, Bool)).promise.1" in promises, promises
+        for target, expected in selections.items():
+            actual_target, oracle_path = target, path
+            anchor = target is not None and any(
+                f[1] == target and f[6][0] == "anchor" for f in program[2])
+            if anchor:
+                # Lean selects Unit specs, not Int anchors. A Unit observation
+                # adapter reports the answer as failure Text. The VM executes
+                # the original checked source document with all metadata intact.
+                probe = parse(report.stdout)
+                payload = probe[2]
+                actual_target = "%lower.source.anchor.answer"
+                payload[2].append(parse(f'''(FunDecl {wire(actual_target)} () (unit)
+                    (fail (prim (int (toText)) ((call {wire(target)} ()))))
+                    "Main" (test) {len(payload[3])})'''))
+                payload[5] = parse("(noSource)")
+                oracle_path = root / "source-anchor-probe.core"
+                oracle_path.write_text(wire(probe) + "\n")
+            actual = oracle(oracle_path, world, actual_target)
+            if anchor and actual[0] == "failed":
+                actual[0] = "returned"
+            assert actual == expected, (name, target, expected, actual)
+            runner = vm if target is None else vm.parent / "tests/test_vm.test"
+            actual = run(str(runner), path, target)
+            assert actual == expected, (name, target, expected, actual)
+            checked += 1
+    print(f"lower source specs: {len(SPEC_CASES)} real programs; {checked} expected "
+          "outcomes match Lean and VM; 0 refusals")
 
 
 def main():
@@ -191,6 +378,7 @@ def main():
             else:
                 assert actual == expected, (name, expected, actual)
                 matched += 1
+        check_specs(driver, vm, root, world)
         for path in sorted(pathlib.Path("examples").glob("*.mo")):
             result = subprocess.run([str(driver), str(path.resolve())], capture_output=True,
                                     text=True, timeout=30)

@@ -368,11 +368,8 @@ static int source_order(const void *a, const void *b) {
 void lower_indices(struct lowering *p) {
     uint32_t count = p->program->function_count;
     p->source_index = LOWER_NEW(p, const struct mo_checked_function *, count);
-    p->by_source = LOWER_NEW(p, struct instance *, count);
-    p->source_tails = LOWER_NEW(p, struct instance **, count);
     for (uint32_t i = 0; i < count; i++) {
         p->source_index[i] = &p->program->functions[i];
-        p->source_tails[i] = &p->by_source[i];
         for (uint32_t n = count; n != 0; n /= 2)
             lower_work(p, 1 + strlen(p->source_index[i]->signature->function->name));
     }
@@ -539,9 +536,6 @@ struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symb
     p->function_tail = &f->next;
     f->hash_next = p->instance_index[at];
     p->instance_index[at] = f;
-    size_t source_index = (size_t)(source - p->program->functions);
-    *p->source_tails[source_index] = f;
-    p->source_tails[source_index] = &f->source_next;
     return f;
 }
 
