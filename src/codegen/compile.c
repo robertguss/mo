@@ -6,6 +6,7 @@
 #include "base/codes.h"
 #include "bytecode/bytecode.h"
 #include "codegen/abilities.h"
+#include "codegen/bigint.h"
 #include "codegen/control.h"
 #include "codegen/index.h"
 #include "codegen/operations.h"
@@ -92,6 +93,7 @@ struct compiler {
     struct mo_core_span span, declaration;
     uint16_t error;
     const char *reason;
+    size_t bigint_work;
 };
 
 static MO_MUST_USE bool problem(struct compiler *c, uint16_t code, const char *reason) {
@@ -727,23 +729,26 @@ static MO_MUST_USE uint32_t constant(struct compiler *c, struct mo_bytecode_cons
     enum mo_type_kind kind = c->types.items[value.type].kind;
     if (kind == MO_TYPE_TEXT)
         memcpy(key + 4, &value.value.string, sizeof value.value.string);
-    else if (kind == MO_TYPE_BIGINT) {
-        /* Only the zero initializer is implemented; decimal literals remain staged refusals. */
-        MO_ASSERT(value.value.bigint.sign == MO_BIGINT_ZERO &&
-                  value.value.bigint.magnitude.length == 0);
-    } else if (kind == MO_TYPE_FUNCTION)
+    else if (kind == MO_TYPE_FUNCTION)
         memcpy(key + 4, &value.value.function, sizeof value.value.function);
-    else if (kind != MO_TYPE_BYTES)
+    else if (kind != MO_TYPE_BYTES && kind != MO_TYPE_BIGINT)
         memcpy(key + 4, value.value.immediate, 16);
     mo_core_string bytes = {(const char *)key, sizeof key};
-    if (kind == MO_TYPE_BYTES) {
-        char *payload = allocate(c, 4u + value.value.bytes.length, 1);
+    if (kind == MO_TYPE_BYTES || kind == MO_TYPE_BIGINT) {
+        struct mo_bytecode_bytes data =
+            kind == MO_TYPE_BYTES ? value.value.bytes : value.value.bigint.magnitude;
+        size_t prefix = kind == MO_TYPE_BYTES ? 4u : 8u;
+        char *payload = allocate(c, prefix + data.length, 1);
         if (payload == NULL)
             return MO_NO_INDEX;
         memcpy(payload, &value.type, 4);
-        if (value.value.bytes.length != 0)
-            memcpy(payload + 4, value.value.bytes.bytes, value.value.bytes.length);
-        bytes = (mo_core_string){payload, 4u + value.value.bytes.length};
+        if (kind == MO_TYPE_BIGINT) {
+            uint32_t sign = (uint32_t)value.value.bigint.sign;
+            memcpy(payload + 4, &sign, 4);
+        }
+        if (data.length != 0)
+            memcpy(payload + prefix, data.bytes, data.length);
+        bytes = (mo_core_string){payload, prefix + data.length};
     }
     struct mo_codegen_index *old = mo_codegen_find(c->constant_index, bytes);
     if (old != NULL)
@@ -761,13 +766,24 @@ static MO_MUST_USE uint32_t literal(struct compiler *c, mo_core_lit lit, uint32_
                                               MO_TYPE_DECIMAL, MO_TYPE_FLOAT,  MO_TYPE_BOOL,
                                               MO_TYPE_CHAR,    MO_TYPE_TEXT,   MO_TYPE_BYTES,
                                               MO_TYPE_UNIT,    MO_TYPE_TIME,   MO_TYPE_DURATION};
-    if (lit->tag == MO_CORE_LIT_BIG_INT) {
-        if (!unsupported(c, "BigInt decimal-to-magnitude conversion is not implemented yet."))
-            return MO_NO_INDEX;
-    }
     *ty = scalar(c, kinds[lit->tag]);
     if (*ty == MO_NO_INDEX)
         return MO_NO_INDEX;
+    if (lit->tag == MO_CORE_LIT_BIG_INT) {
+        struct mo_bytecode_constant k = {.type = *ty};
+        enum mo_codegen_bigint_problem status =
+            mo_codegen_bigint(&c->arena, lit->as.big_int, &c->bigint_work, &k.value.bigint);
+        if (status != MO_CODEGEN_BIGINT_OK) {
+            if (!problem(c,
+                         status == MO_CODEGEN_BIGINT_LIMIT ? MO_CODE_CODEGEN_BIGINT_WORK
+                                                           : MO_CODE_CODEGEN_MEMORY,
+                         status == MO_CODEGEN_BIGINT_LIMIT
+                             ? "BigInt conversion exceeds MO_LIMIT_CODEGEN_BIGINT_WORK."
+                             : "No memory for BigInt literal conversion."))
+                return MO_NO_INDEX;
+        }
+        return constant(c, k);
+    }
     mo_u128 bits = 0;
     const mo_core_integer *integer = NULL;
     switch (lit->tag) {
@@ -1319,7 +1335,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
     case MO_CORE_EXPR_PRIM: {
         const struct mo_core_prim *p = &expr->as.prim.prim;
         if (!mo_codegen_operation(p, &n->operation)) {
-            if (!unsupported(c, "List uncons and Range toText expansions are not implemented yet."))
+            if (!unsupported(c, "The Core primitive has no code generation route."))
                 return NULL;
         }
         mo_core_ty variables[4] = {NULL};
@@ -1351,15 +1367,41 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
                 return NULL;
             n->cases[0] = operation_signature(c, &convert, variables);
             n->cases[1] = operation_signature(c, &concat, variables);
-            uint32_t integer = scalar(c, MO_TYPE_INT);
-            n->index = constant(c, (struct mo_bytecode_constant){
-                                       .type = n->type, .value.string = string(c, text(".."))});
+            uint32_t integer = scalar(c, MO_TYPE_INT), separator = string(c, text(".."));
             if (n->cases[0] == MO_NO_INDEX || n->cases[1] == MO_NO_INDEX ||
-                integer == MO_NO_INDEX || n->index == MO_NO_INDEX)
+                integer == MO_NO_INDEX || separator == MO_NO_INDEX)
+                return NULL;
+            n->index = constant(
+                c, (struct mo_bytecode_constant){.type = n->type, .value.string = separator});
+            if (n->index == MO_NO_INDEX)
                 return NULL;
             for (uint32_t i = 0; i < n->bind_count; i++)
                 if ((n->binds[i] = register_add(c, f, i < 2 ? integer : n->type, MO_NO_INDEX)) ==
                     MO_NO_INDEX)
+                    return NULL;
+        } else if (n->operation.expansion == MO_CODEGEN_EXPAND_UNCONS) {
+            n->bind_count = 5;
+            n->binds = allocate(c, n->bind_count, sizeof *n->binds);
+            n->cases = allocate(c, 2, sizeof *n->cases);
+            struct mo_codegen_operation first = mo_codegen_primitive(MO_PRIM_LIST_FIRST),
+                                        rest = mo_codegen_primitive(MO_PRIM_LIST_DROP);
+            if (n->binds == NULL || n->cases == NULL)
+                return NULL;
+            n->cases[0] = operation_signature(c, &first, variables);
+            n->cases[1] = operation_signature(c, &rest, variables);
+            if (n->cases[0] == MO_NO_INDEX || n->cases[1] == MO_NO_INDEX)
+                return NULL;
+            uint32_t option = c->types.items[n->cases[0]].result,
+                     pair = c->types.items[n->type].cases[1].fields[0].type;
+            const uint32_t types[] = {option, c->types.items[option].cases[1].fields[0].type,
+                                      c->types.items[n->signature].parameters[0],
+                                      c->types.items[n->cases[1]].parameters[1], pair};
+            n->index = constant(
+                c, (struct mo_bytecode_constant){.type = types[3], .value.immediate = {1}});
+            if (n->index == MO_NO_INDEX)
+                return NULL;
+            for (uint32_t i = 0; i < n->bind_count; i++)
+                if ((n->binds[i] = register_add(c, f, types[i], MO_NO_INDEX)) == MO_NO_INDEX)
                     return NULL;
         }
         if (n->operation.compare) {
@@ -1977,6 +2019,52 @@ static MO_MUST_USE bool range_text(struct compiler *c, struct function *f, struc
            library(c, f, MO_PRIM_TEXT_CONCAT, n->cases[1], n->reg, suffix, 2, n->span) &&
            drop(c, f, n->binds[3], n->span);
 }
+static MO_MUST_USE bool uncons(struct compiler *c, struct function *f, struct node *n,
+                               uint32_t list) {
+    uint32_t first = n->binds[0], head = n->binds[1], rest = n->binds[2], one = n->binds[3],
+             pair = n->binds[4];
+    if (!library(c, f, MO_PRIM_LIST_FIRST, n->cases[0], first, &list, 1, n->span))
+        return false;
+    uint32_t checkpoint = f->changes.count;
+    uint32_t branch = emit(c, f, n->span, MO_OP_SWITCH, &first, 1, (uint32_t[]){0, 0}, 2);
+    if (branch == MO_NO_INDEX)
+        return false;
+    ((uint32_t *)f->code.items)[branch + 2] = f->code.count;
+    const uint32_t none[] = {n->reg, n->type, 0};
+    if (emit(c, f, n->span, MO_OP_MAKE_CASE, none, 3, NULL, 0) == MO_NO_INDEX)
+        return false;
+    owner_add(f, n->reg);
+    uint32_t skip = emit(c, f, n->span, MO_OP_JUMP, (uint32_t[]){0}, 1, NULL, 0);
+    if (skip == MO_NO_INDEX)
+        return false;
+    restore(f, checkpoint);
+    ((uint32_t *)f->code.items)[branch + 3] = f->code.count;
+    const uint32_t field[] = {head, first, 1, 0}, count[] = {one, n->index};
+    if (emit(c, f, n->span, MO_OP_CASE_FIELD, field, 4, NULL, 0) == MO_NO_INDEX ||
+        emit(c, f, n->span, MO_OP_CONST, count, 2, NULL, 0) == MO_NO_INDEX)
+        return false;
+    if (reference(c, ((struct reg *)f->regs.items)[head].type))
+        owner_add(f, head);
+    uint32_t copy = argument(c, f, list, true, n->span);
+    if (copy == MO_NO_INDEX ||
+        !library(c, f, MO_PRIM_LIST_DROP, n->cases[1], rest, (uint32_t[]){copy, one}, 2, n->span))
+        return false;
+    const uint32_t construct[] = {pair, c->layouts[((struct reg *)f->regs.items)[pair].type]},
+                   some[] = {n->reg, n->type, 1}, fields[] = {head, rest};
+    owner_remove(f, head);
+    owner_remove(f, rest);
+    if (emit(c, f, n->span, MO_OP_CONSTRUCT, construct, 2, fields, 2) == MO_NO_INDEX)
+        return false;
+    /* The private tuple moves straight into Some; it never joins the live-owner set. */
+    if (emit(c, f, n->span, MO_OP_MAKE_CASE, some, 3, &pair, 1) == MO_NO_INDEX)
+        return false;
+    owner_add(f, n->reg);
+    if (!normalize(c, f, checkpoint, n->reg, n->span))
+        return false;
+    ((uint32_t *)f->code.items)[skip + 1] = f->code.count;
+    restore(f, checkpoint);
+    return merged(c, f, n->reg) && drop(c, f, first, n->span);
+}
 /* false through *live means a terminal path, not a compiler refusal. */
 static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct node *n, bool tail,
                                  unsigned depth, bool *live) {
@@ -2244,6 +2332,9 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
         }
         if (n->operation.expansion == MO_CODEGEN_EXPAND_RANGE) {
             if (!range_text(c, f, n, regs[0]))
+                return false;
+        } else if (n->operation.expansion == MO_CODEGEN_EXPAND_UNCONS) {
+            if (!uncons(c, f, n, regs[0]))
                 return false;
         } else if (n->operation.literal != MO_CODEGEN_LITERAL_NONE) {
             bool map = n->operation.literal == MO_CODEGEN_LITERAL_MAP;

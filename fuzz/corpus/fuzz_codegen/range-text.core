@@ -1,0 +1,1 @@
+(core 0.7 (Program () ((FunDecl "start" (("b" (bool)) ("r" (range))) (text) (if_ (var "b") (prim (range (toText)) ((var "r"))) (prim (range (toText)) ((prim (range (make)) ((lit (int -9223372036854775808)) (lit (int 9223372036854775807))))))) "Ranges" (function) 0)) () "start" (noSource)))

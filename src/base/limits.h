@@ -82,6 +82,10 @@
 /* Prepared code, ordered indices and decoded bytecode tables; E1056 on exhaustion. */
 #define MO_LIMIT_CODEGEN_SCRATCH_SIZE (UINT64_C(512) * MO_LIMIT_CORE_NODES)
 
+/* Decimal BigInt conversion work across one compilation. Balanced radix conversion counts
+ * digit reads, limb operations and coefficient products; E1202, not a compiler bug. */
+#define MO_LIMIT_CODEGEN_BIGINT_WORK (1u << 26)
+
 /* Borrow inference slots and dependency edges, also E1056. They grow with prepared registers
  * and Core operands; each owned slot is propagated once, never by rescanning the call graph. */
 #define MO_LIMIT_CODEGEN_OWNERSHIP_SLOTS (4u * MO_LIMIT_CORE_NODES)

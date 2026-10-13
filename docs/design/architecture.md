@@ -1577,6 +1577,7 @@ Registers, instructions and format limits use E1013, E1014 and E1015.
 E1200 means the ordinary entry's full runtime name is not unique; arbitrary
 entry names are otherwise accepted. E1201 means a permanent representation
 exclusion from source lowering, not an unfinished feature or a resource limit.
+E1202 means decimal BigInt conversion exceeded its program-wide work budget.
 
 The first slice compiles immediate scalar literals, variables, lets, direct
 calls, if, stop, and choices with small immediate payloads. The second adds
@@ -1590,8 +1591,9 @@ The fourth adds function types, closures and application, including closures
 in constant initializers and spec code. The fifth adds native arithmetic and
 comparisons, generic equality, primitive and host table calls, capability and
 collection types, and list/map literals. The sixth adds joins, jumps and
-reconverging reference-state normalization. List uncons and Range toText need
-expansions and remain unfinished, as do BigInt decimal literals and reuse. The
+reconverging reference-state normalization. The seventh adds List uncons and
+Range toText expansions and BigInt decimal literals; all 15 Core fixtures now
+compile. Register recycling and reuse remain unfinished optimizations. The
 sample fixtures and Core fuzz corpora are attempted in CI; unfinished forms,
 permanently excluded representations, entry-name collisions, resource limits
 and invalid compiler inputs are counted separately. E1201 inputs are skipped
@@ -1617,6 +1619,31 @@ through the instruction, and temporary owners are dropped only afterward.
 This also preserves pre-instruction operands for a stopped call's report.
 Host tails include the borrowed capability; zero-argument fakes have no tail.
 Core's spec restrictions are retained and checked again by the verifier.
+
+Range toText reads the two endpoints once, converts each with Int.to_text and
+concatenates `start + ".." + end`, retaining the borrowed endpoint text until
+its last use. List uncons borrows its input and switches on List.first. None
+returns None without constructing a tail; Some extracts the head and runs
+List.drop on a distinct owned copy with count 1, then constructs Some((head,
+tail)). The original list remains usable. Both expansions use only existing
+instruction/primitive rows, with their declared ownership, and use the Core
+operation's span throughout. Arm-local reference registers are normalized at
+the uncons merge just like explicit Core branches.
+
+BigInt decimal literals become canonical little-endian magnitudes and signs;
+zero has no magnitude bytes. Constant interning includes type, sign and
+magnitude. Conversion groups nine decimal digits, combines them with powers
+of 10^9 in a balanced tree, and multiplies with Karatsuba using a 24-frame
+explicit stack. For n decimal digits, work is subquadratic, \(O(n^{\log_2 3})\),
+not repeated multiplication by ten. Scratch uses nine padded limb arrays of
+i128 coefficients, at most 144 MiB plus an arena header under the Core text
+limit, and is freed after each literal. The
+program-wide MO_LIMIT_CODEGEN_BIGINT_WORK (2^26) charges digit reads, limb
+operations and coefficient products. Exceeding it gives E1202 at the literal
+span (or declaration fallback), leaves output empty and is a resource refusal,
+not a compiler bug. CI compares generated magnitudes/signs with Python across
+limb, nine-digit group and multiplication boundaries; it also requires every
+fixture and supported generated program to compile deterministically and verify.
 
 FileError has the exact ordered cases and named Text fields of bytecode 9.
 Entry is the builtin record `(name: Text, kind: EntryKind)`, with its record

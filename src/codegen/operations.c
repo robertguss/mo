@@ -287,8 +287,12 @@ bool mo_codegen_operation(const struct mo_core_prim *p, struct mo_codegen_operat
             MO_PRIM_LIST_SET,       MO_PRIM_LIST_REMOVE_AT, MO_PRIM_LIST_EMPTY,
             MO_PRIM_LIST_ENUMERATE, MO_PRIM_LIST_CONTAINS,  MO_PRIM_LIST_UNIQUE,
             MO_PRIM_LIST_ZIP};
-        if (p->as.list.op.tag == MO_CORE_LIST_OP_UNCONS)
-            return false;
+        if (p->as.list.op.tag == MO_CORE_LIST_OP_UNCONS) {
+            *out = (struct mo_codegen_operation){.signature = "fn(List(T)) : Option((T, List(T)))",
+                                                 .params = "b",
+                                                 .expansion = MO_CODEGEN_EXPAND_UNCONS};
+            return true;
+        }
         row = rows[p->as.list.op.tag];
         *out = primitives[row];
         if (p->as.list.op.tag == MO_CORE_LIST_OP_LIT)
