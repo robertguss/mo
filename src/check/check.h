@@ -1,5 +1,5 @@
-/* Loading and module interfaces, before body checking. These results are not a
- * checked program and cannot be lowered. Result arrays and names belong to
+/* Loading, module interfaces, signatures and staged local body inference.
+ * These results are not a checked program and cannot be lowered. Arrays and names belong to
  * arena; interface declaration and origin pointers borrow the loaded
  * syntax, which must outlive the interfaces. Syntax owns its token text
  * independently of sources. */
@@ -136,14 +136,19 @@ struct mo_inferred_body {
 
 /* Infers one named function's body against its prepared signature. Local names,
  * positional calls, lambdas, scalar/collection expressions, variables and
- * control flow are supported. E1061 explicitly refuses unfinished forms.
+ * control flow are supported. E1103 explicitly refuses unfinished forms.
  * This is not mo_check: fields/constructors/patterns, dot calls, abilities,
  * capability/capture flow, specs, constants, unused imports and main's contract
  * still need their checking stages. A success is not suitable for lowering.
  * NULL with a diagnostic on failure, stopping at the first error in this body.
  * Output belongs to arena and borrows syntax, interfaces and signatures. Equal
  * inferred types are structurally equal; pointer identity is not required.
- * All work and storage obey base limits and the caller arena's budget. */
+ * Types are shared DAGs: consumers must memoize walks, not expand shared paths.
+ * E1104 bounds inference work per function; E1105 bounds inferred type paths
+ * independently of source nesting. Both limits are in base/limits.h. All
+ * temporary and result storage uses the caller arena, with E1058 on exhaustion.
+ * Syntax and type walks use depth-bounded C recursion; allow several MiB of
+ * stack under sanitizers. No scratch allocation bypasses the caller arena. */
 MO_MUST_USE struct mo_inferred_body *
 mo_infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
                   const struct mo_signatures *signatures, uint32_t function,

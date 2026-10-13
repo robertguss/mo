@@ -152,17 +152,7 @@ static MO_MUST_USE int compare_name(const struct mo_syntax *node, const char *na
 
 static MO_MUST_USE const struct mo_symbol *lookup(const struct mo_module_scope *scope,
                                                   const struct mo_syntax *name) {
-    uint32_t lo = 0, hi = scope->count;
-    while (lo < hi) {
-        uint32_t mid = lo + (hi - lo) / 2;
-        if (compare_name(name, scope->symbols[mid].name) > 0)
-            lo = mid + 1;
-        else
-            hi = mid;
-    }
-    return lo < scope->count && compare_name(name, scope->symbols[lo].name) == 0
-               ? &scope->symbols[lo]
-               : NULL;
+    return mo_find_symbol(scope, name->text, name->span.end - name->span.start);
 }
 
 static MO_MUST_USE const struct mo_symbol *definition(struct preparation *p,
@@ -333,6 +323,19 @@ static MO_MUST_USE const struct mo_source_type *resolve(struct preparation *p,
     return type;
 }
 
+static MO_MUST_USE bool question_name(struct preparation *p, const struct mo_syntax *name,
+                                      const struct mo_source_type *type) {
+    if (name->text[name->span.end - name->span.start - 1] != '?')
+        return true;
+    if (type->kind == MO_SOURCE_FUNCTION)
+        type = type->arguments[type->count - 1];
+    if (type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX &&
+        strcmp(type->name, "Bool") == 0)
+        return true;
+    return problem(p, MO_CODE_BOOL_NAME, name->span, "a name ending in ? isn't a yes-or-no answer",
+                   "A name ending in ? is a Bool, or a function that returns one (reference 2.3).");
+}
+
 struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct mo_module_set *set,
                                             const struct mo_module_interfaces *interfaces,
                                             struct mo_diags *diags) {
@@ -363,7 +366,8 @@ struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct
             MO_ASSERT(parameters->count <= MO_LIMIT_PARAMETERS);
             for (uint32_t k = 0; k < parameters->count; k++) {
                 arguments[k] = resolve(&p, parameters->children[k]->children[1]);
-                if (arguments[k] == NULL)
+                if (arguments[k] == NULL ||
+                    !question_name(&p, parameters->children[k]->children[0], arguments[k]))
                     goto failed;
             }
             arguments[parameters->count] = resolve(&p, function->declaration->children[2]);
@@ -375,7 +379,7 @@ struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct
                                                    .module = UINT32_MAX,
                                                    .count = parameters->count + 1,
                                                    .arguments = arguments});
-            if (type == NULL)
+            if (type == NULL || !question_name(&p, function->declaration->children[0], type))
                 goto failed;
             out->items[out->count++] = (struct mo_function_signature){function, type};
         }

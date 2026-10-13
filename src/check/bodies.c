@@ -16,6 +16,7 @@ struct term {
     const struct mo_source_type *resolved;
     uint32_t rank;
     uint32_t seen;
+    uint32_t height; /* longest path to a leaf in a resolved type DAG */
     unsigned numeric;
     bool variable;
 };
@@ -24,6 +25,7 @@ struct local;
 struct name_slot {
     const struct mo_syntax *name;
     const struct mo_syntax *module_use;
+    const struct mo_syntax *local_name;
     struct name_slot *left, *right;
     struct local *active;
     uint32_t height;
@@ -76,13 +78,57 @@ static MO_MUST_USE bool problem(struct inference *p, uint16_t code, struct mo_sp
     if (p->failed)
         return false;
     struct mo_label secondary = {previous == NULL ? span : previous->span, "declared here"};
+    struct mo_edit edit = {{span.file, span.start, span.start}, "_"};
+    struct mo_fix fix = {"mark the name unused on purpose", &edit, 1};
+    bool offer_fix = false;
+    if (code == MO_CODE_UNUSED_NAME) {
+        const struct mo_syntax *name = p->locals->name;
+        size_t length = name->span.end - name->span.start;
+        uint8_t *candidate = mo_arena_allocate(p->arena, length + 1, 1);
+        if (candidate == NULL)
+            return problem(p, MO_CODE_CHECK_NO_MEMORY, span, "the checking arena has no room", NULL,
+                           NULL);
+        candidate[0] = '_';
+        memcpy(candidate + 1, name->text, length);
+        struct name_slot *at = p->names;
+        while (at != NULL) {
+            size_t other = at->name->span.end - at->name->span.start;
+            size_t shared = length + 1 < other ? length + 1 : other;
+            int order = memcmp(candidate, at->name->text, shared);
+            if (order == 0)
+                order = length + 1 < other ? -1 : length + 1 > other ? 1 : 0;
+            if (order == 0)
+                break;
+            at = order < 0 ? at->left : at->right;
+        }
+        const struct mo_module_scope *scope = &p->interfaces->scopes[p->function->function->module];
+        offer_fix = at == NULL && scope->imported_count == 0 &&
+                    mo_find_symbol(scope, candidate, length + 1) == NULL;
+    }
+    const char *label =
+        code == MO_CODE_NAME_UNKNOWN        ? "not visible in this block"
+        : code == MO_CODE_BIND_REPEATED     ? "this name already has a meaning"
+        : code == MO_CODE_UNUSED_NAME       ? "never read"
+        : code == MO_CODE_TYPE_MISMATCH     ? "the types don't match"
+        : code == MO_CODE_CANNOT_INFER      ? "no use decides the type"
+        : code == MO_CODE_BOOL_NAME         ? "must be Bool or a function returning Bool"
+        : code == MO_CODE_CALL_ARGUMENTS    ? "pass one positional argument per parameter"
+        : code == MO_CODE_UNUSED_VALUE      ? "not Unit and not used"
+        : code == MO_CODE_NOT_VARIABLE      ? "no assignable var here"
+        : code == MO_CODE_EXIT_OUTSIDE_LOOP ? "no enclosing loop in this function"
+        : code == MO_CODE_LITERAL_RANGE     ? "outside its inferred numeric range"
+        : code == MO_CODE_TUPLE_POSITION    ? "part index is outside this tuple"
+        : code == MO_CODE_FAILURE_IGNORED   ? "handle this Result or pass its failure upward"
+                                            : message;
     bool kept =
         mo_diags_add(p->diags, &(struct mo_diag){.code = code,
-                                                 .primary = {span, message},
+                                                 .primary = {span, label},
                                                  .message = message,
                                                  .reason = reason,
                                                  .secondary = previous == NULL ? NULL : &secondary,
-                                                 .secondary_count = previous == NULL ? 0 : 1});
+                                                 .secondary_count = previous == NULL ? 0 : 1,
+                                                 .fixes = offer_fix ? &fix : NULL,
+                                                 .fix_count = offer_fix ? 1u : 0u});
     (void)kept;
     p->failed = true;
     return false;
@@ -174,15 +220,15 @@ static MO_MUST_USE unsigned number_type(struct term *t) {
 }
 
 static MO_MUST_USE bool mismatch(struct inference *p) {
-    return problem(p, MO_CODE_TYPE_MISMATCH, p->span, "Mo never converts between types silently",
+    return problem(p, MO_CODE_TYPE_MISMATCH, p->span, "values of different types are combined",
                    "Comparing or combining values of different types is an error (reference 3).",
                    NULL);
 }
 
 static MO_MUST_USE bool type_depth(struct inference *p, uint32_t depth) {
-    if (depth < MO_LIMIT_NESTING_DEPTH)
+    if (depth < MO_LIMIT_SOURCE_TYPE_DEPTH)
         return true;
-    return problem(p, MO_CODE_NESTED_TOO_DEEPLY, p->span, "the inferred type is nested too deeply",
+    return problem(p, MO_CODE_CHECK_TYPE_DEPTH, p->span, "the inferred type is nested too deeply",
                    NULL, NULL);
 }
 
@@ -356,14 +402,13 @@ static MO_MUST_USE bool bind(struct inference *p, const struct mo_syntax *name, 
     if (s == NULL)
         return false;
     if (s->active != NULL)
-        return problem(p, MO_CODE_BIND_REPEATED, name->span,
-                       "within a function a name means one thing",
+        return problem(p, MO_CODE_BIND_REPEATED, name->span, "a visible name is bound again",
                        "While a local name or parameter is visible it can't be bound again, "
                        "even in an inner block (reference 6.1).",
                        s->active->name);
     if (s->module_use != NULL)
         return problem(p, MO_CODE_BIND_REPEATED, name->span,
-                       "within a function a name means one thing",
+                       "a name means both a local and a module function",
                        "A function can't refer to its module's function by a name it uses for "
                        "a local (reference 6.1).",
                        s->module_use);
@@ -377,6 +422,7 @@ static MO_MUST_USE bool bind(struct inference *p, const struct mo_syntax *name, 
                         .previous = p->locals,
                         .next = p->all_locals,
                         .function = p->lambda};
+    s->local_name = name;
     s->active = l;
     p->locals = l;
     p->all_locals = l;
@@ -387,8 +433,7 @@ static MO_MUST_USE bool leave(struct inference *p, struct local *mark) {
     while (p->locals != mark) {
         struct local *l = p->locals;
         if (!l->used && l->name->text[0] != '_')
-            return problem(p, MO_CODE_UNUSED_NAME, l->name->span,
-                           "unused names and parameters are errors",
+            return problem(p, MO_CODE_UNUSED_NAME, l->name->span, "a name or parameter is unused",
                            "A name starting with _ is unused on purpose (reference 6.1).", NULL);
         l->slot->active = NULL;
         p->locals = l->previous;
@@ -398,40 +443,35 @@ static MO_MUST_USE bool leave(struct inference *p, struct local *mark) {
 
 static MO_MUST_USE const struct mo_symbol *
 find_symbol(const struct mo_module_scope *scope, const struct mo_syntax *name, uint32_t *count) {
-    uint32_t lo = 0, hi = scope->count;
-    while (lo < hi) {
-        uint32_t mid = lo + (hi - lo) / 2;
-        if (compare_text(name, scope->symbols[mid].name) > 0)
-            lo = mid + 1;
-        else
-            hi = mid;
-    }
-    if (lo == scope->count || compare_text(name, scope->symbols[lo].name) != 0)
-        return NULL;
-    uint32_t end = lo + 1;
-    while (end < scope->count && compare_text(name, scope->symbols[end].name) == 0)
-        end++;
-    *count = end - lo;
-    return &scope->symbols[lo];
+    const struct mo_symbol *s =
+        mo_find_symbol(scope, name->text, name->span.end - name->span.start);
+    if (s != NULL)
+        *count = s->overload_count;
+    return s;
 }
 
-static MO_MUST_USE const struct mo_symbol *
-definition(struct inference *p, const struct mo_syntax *name, uint32_t *count) {
+static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
+                                                      const struct mo_syntax *name,
+                                                      const struct mo_syntax *prefix,
+                                                      uint32_t *count) {
     const struct mo_module_scope *scope = &p->interfaces->scopes[p->function->function->module];
     if (name->kind == MO_S_QUALIFIED) {
+        prefix = name->children[0];
+        name = name->children[1];
+    }
+    if (prefix != NULL) {
         uint32_t lo = 0, hi = scope->alias_count;
         while (lo < hi) {
             uint32_t mid = lo + (hi - lo) / 2;
-            if (compare_text(name->children[0], scope->aliases[mid].name) > 0)
+            if (compare_text(prefix, scope->aliases[mid].name) > 0)
                 lo = mid + 1;
             else
                 hi = mid;
         }
-        if (lo == scope->alias_count ||
-            compare_text(name->children[0], scope->aliases[lo].name) != 0)
+        if (lo == scope->alias_count || compare_text(prefix, scope->aliases[lo].name) != 0)
             return NULL;
-        const struct mo_symbol *s = find_symbol(&p->interfaces->scopes[scope->aliases[lo].module],
-                                                name->children[1], count);
+        const struct mo_symbol *s =
+            find_symbol(&p->interfaces->scopes[scope->aliases[lo].module], name, count);
         if (s != NULL && !s->exported) {
             bool reported = problem(p, MO_CODE_IMPORT_PRIVATE, name->span,
                                     "everything not on expose is private to the module",
@@ -460,8 +500,9 @@ definition(struct inference *p, const struct mo_syntax *name, uint32_t *count) {
     return scope->imported[lo].symbols;
 }
 
-static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_syntax *node) {
-    if (node->kind == MO_S_NAME) {
+static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_syntax *node,
+                                           const struct mo_syntax *prefix) {
+    if (prefix == NULL && node->kind == MO_S_NAME) {
         struct name_slot *s = slot(p, node, false);
         if (s != NULL && s->active != NULL) {
             s->active->used = true;
@@ -471,19 +512,19 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
     if (node->kind == MO_S_CAPNAME && compare_text(node, "Unit") == 0)
         return (struct value){.type = native(p, "Unit", 0)};
     uint32_t count = 0;
-    const struct mo_symbol *s = definition(p, node, &count);
+    const struct mo_symbol *s = definition(p, node, prefix, &count);
     if (p->failed)
         return (struct value){0};
     if (s == NULL) {
-        if (node->kind == MO_S_CAPNAME || node->kind == MO_S_QUALIFIED) {
+        if (prefix != NULL || node->kind == MO_S_CAPNAME || node->kind == MO_S_QUALIFIED) {
             bool reported = unfinished(p);
             (void)reported;
         } else {
-            bool reported = problem(p, MO_CODE_NAME_UNKNOWN, node->span,
-                                    "a name is visible from its binding to the end of its block",
-                                    "A local name is visible from its binding to the end of its "
-                                    "block (reference 6.1).",
-                                    NULL);
+            bool reported =
+                problem(p, MO_CODE_NAME_UNKNOWN, node->span, "a name isn't visible in this block",
+                        "A local name is visible from its binding to the end of its "
+                        "block (reference 6.1).",
+                        NULL);
             (void)reported;
         }
         return (struct value){0};
@@ -493,10 +534,19 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
         (void)reported;
         return (struct value){0};
     }
-    if (node->kind == MO_S_NAME && s->module == p->function->function->module) {
+    if (prefix == NULL && node->kind == MO_S_NAME && s->module == p->function->function->module) {
         struct name_slot *entry = slot(p, node, true);
         if (entry == NULL)
             return (struct value){0};
+        if (entry->local_name != NULL) {
+            bool reported = problem(p, MO_CODE_BIND_REPEATED, node->span,
+                                    "a name means both a local and a module function",
+                                    "A function can't refer to its module's function by a name "
+                                    "it uses for a local (reference 6.1).",
+                                    entry->local_name);
+            (void)reported;
+            return (struct value){0};
+        }
         entry->module_use = node;
     }
     uint32_t lo = 0, hi = p->signatures->count;
@@ -567,11 +617,11 @@ static MO_MUST_USE struct value call(struct inference *p, struct value callee,
         t = root(fn);
     }
     if (t->shape.kind != MO_SOURCE_FUNCTION || t->shape.count != args->count + 1) {
-        bool reported =
-            problem(p, MO_CODE_CALL_ARGUMENTS, args->span, "arguments are passed by position",
-                    "A function has no default or optional parameters; pass every "
-                    "argument by position (reference 5.2).",
-                    NULL);
+        bool reported = problem(p, MO_CODE_CALL_ARGUMENTS, args->span,
+                                "a call's arguments don't match its parameters",
+                                "A function has no default or optional parameters; pass every "
+                                "argument by position (reference 5.2).",
+                                NULL);
         (void)reported;
         return (struct value){0};
     }
@@ -579,7 +629,7 @@ static MO_MUST_USE struct value call(struct inference *p, struct value callee,
     for (uint32_t i = 0; i < args->count; i++) {
         if (args->children[i]->kind == MO_S_NAMED_ARG) {
             bool reported = problem(p, MO_CODE_CALL_ARGUMENTS, args->children[i]->span,
-                                    "only records and cases are built with named fields",
+                                    "a function is called with named fields",
                                     "Arguments are passed by position; only records and cases "
                                     "are built with named fields (reference 5.2).",
                                     NULL);
@@ -612,6 +662,12 @@ static MO_MUST_USE struct value binary(struct inference *p, enum mo_syntax_token
     if (operand == NULL || !unify(p, a.type, operand, 0))
         return (struct value){0};
     if (!logical && !comparison && op != MO_T_DOTDOT) {
+        if (root(operand)->shape.kind == MO_SOURCE_PARAMETER || named(operand, "Time") ||
+            named(operand, "Duration")) {
+            bool reported = unfinished(p);
+            (void)reported;
+            return (struct value){0};
+        }
         struct term *numeric = fresh(p, INT | BIG | DECIMAL | FLOAT);
         if (numeric == NULL || !unify(p, operand, numeric, 0))
             return (struct value){0};
@@ -682,6 +738,39 @@ static MO_MUST_USE bool binder(struct inference *p, const struct mo_syntax *node
     return true;
 }
 
+static MO_MUST_USE struct value position(struct inference *p, struct value v,
+                                         const struct mo_syntax *index) {
+    if (v.type == NULL)
+        return v;
+    struct term *t = root(v.type);
+    if (t->variable) {
+        bool reported = unfinished(p);
+        (void)reported;
+        return (struct value){0};
+    }
+    uint32_t at = 0;
+    bool fits = true;
+    for (uint32_t i = 0; i < index->span.end - index->span.start; i++) {
+        uint8_t c = index->text[i];
+        if (c == '_')
+            continue;
+        uint32_t digit = (uint32_t)(c - '0');
+        if (digit > 9 || at > (UINT32_MAX - digit) / 10) {
+            fits = false;
+            break;
+        }
+        at = at * 10 + digit;
+    }
+    if (!fits || t->shape.kind != MO_SOURCE_TUPLE || at >= t->shape.count) {
+        bool reported =
+            problem(p, MO_CODE_TUPLE_POSITION, index->span, "the tuple has no such part",
+                    "Tuple parts are read with .0, .1 and so on (reference 3.6).", NULL);
+        (void)reported;
+        return (struct value){0};
+    }
+    return (struct value){.type = t->arguments[at], .never = v.never};
+}
+
 static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_syntax *node,
                                            struct term *expected) {
     switch (node->kind) {
@@ -693,7 +782,11 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     case MO_S_NAME:
     case MO_S_CAPNAME:
     case MO_S_QUALIFIED:
-        return identifier(p, node);
+        return identifier(p, node, NULL);
+    case MO_S_FIELD_ACCESS:
+        if (node->children[0]->kind == MO_S_CAPNAME)
+            return identifier(p, node->children[1], node->children[0]);
+        break;
     case MO_S_INT:
         return (struct value){.type = fresh(p, INT | BIG | BYTE | DECIMAL | FLOAT)};
     case MO_S_DECIMAL:
@@ -710,7 +803,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     case MO_S_ADD_ASSIGN:
     case MO_S_SUB_ASSIGN: {
         const struct mo_syntax *name = node->children[0];
-        if (name->kind != MO_S_NAME && name->kind != MO_S_TUPLE) {
+        if (name->kind != MO_S_NAME && name->kind != MO_S_TUPLE && name->kind != MO_S_UNDERSCORE) {
             bool reported = unfinished(p);
             (void)reported;
             return (struct value){0};
@@ -719,24 +812,24 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         struct local *l = s == NULL ? NULL : s->active;
         bool assignment = l != NULL && l->variable && node->kind != MO_S_VAR;
         if (l != NULL && !assignment) {
-            bool reported = problem(p, MO_CODE_BIND_REPEATED, name->span,
-                                    "within a function a name means one thing",
-                                    "While a local name or parameter is visible it can't be "
-                                    "bound again (reference 6.1).",
-                                    l->name);
+            bool reported =
+                problem(p, MO_CODE_BIND_REPEATED, name->span, "a visible name is bound again",
+                        "While a local name or parameter is visible it can't be "
+                        "bound again (reference 6.1).",
+                        l->name);
             (void)reported;
             return (struct value){0};
         }
         if ((node->kind == MO_S_ADD_ASSIGN || node->kind == MO_S_SUB_ASSIGN) && !assignment) {
-            bool reported = problem(p, MO_CODE_NOT_VARIABLE, name->span,
-                                    "var declares a name that can be assigned again",
-                                    "+= and -= assign a var or its fields (reference 6.2).", NULL);
+            bool reported =
+                problem(p, MO_CODE_NOT_VARIABLE, name->span, "a name that isn't var is assigned",
+                        "+= and -= assign a var or its fields (reference 6.2).", NULL);
             (void)reported;
             return (struct value){0};
         }
         if (assignment && l->function != p->lambda) {
             bool reported = problem(p, MO_CODE_NOT_VARIABLE, name->span,
-                                    "var can be assigned within the function that declares it",
+                                    "a var is assigned outside the function that declares it",
                                     "A var can be assigned again within the function that declares "
                                     "it (reference 6.2).",
                                     l->name);
@@ -769,16 +862,25 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     }
     case MO_S_CALL:
         return call(p, infer(p, node->children[0], NULL), node->children[1]);
+    case MO_S_POSITION:
+        return position(p, infer(p, node->children[0], NULL), node->children[1]);
     case MO_S_POSTFIX: {
-        struct value v = infer(p, node->children[0], NULL);
-        for (uint32_t i = 1; i < node->count && v.type != NULL; i++) {
+        bool qualified =
+            node->children[0]->kind == MO_S_CAPNAME && node->children[1]->kind == MO_S_FIELD_ACCESS;
+        struct value v = qualified
+                             ? identifier(p, node->children[1]->children[0], node->children[0])
+                             : infer(p, node->children[0], NULL);
+        for (uint32_t i = qualified ? 2u : 1u; i < node->count && v.type != NULL; i++) {
             const struct mo_syntax *step = node->children[i];
-            if (step->kind != MO_S_CALL) {
+            if (step->kind == MO_S_POSITION)
+                v = position(p, v, step->children[0]);
+            else if (step->kind == MO_S_CALL)
+                v = call(p, v, step->children[0]);
+            else {
                 bool reported = unfinished(p);
                 (void)reported;
                 return (struct value){0};
             }
-            v = call(p, v, step->children[0]);
         }
         return v;
     }
@@ -830,9 +932,13 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         }
         return (struct value){.type = native(p, "Unit", 0), .never = node->children[1] == NULL};
     }
-    case MO_S_STOP:
+    case MO_S_STOP: {
+        struct term *text = native(p, "Text", 0);
+        if (text == NULL || infer(p, node->children[0], text).type == NULL)
+            return (struct value){0};
         return (struct value){.type = expected == NULL ? native(p, "Unit", 0) : expected,
                               .never = true};
+    }
     case MO_S_ASSERT: {
         struct term *condition = native(p, "Bool", 0);
         if (condition == NULL || infer(p, node->children[0], condition).type == NULL)
@@ -885,7 +991,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     case MO_S_CONTINUE: {
         if (p->loops == 0) {
             bool reported = problem(p, MO_CODE_EXIT_OUTSIDE_LOOP, node->span,
-                                    "break and continue belong to a loop",
+                                    "break or continue is outside a loop",
                                     "Break leaves the loop and continue starts its next round "
                                     "(reference 7.5).",
                                     NULL);
@@ -954,8 +1060,9 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         }
         uint32_t count = node->kind == MO_S_PREFIX ? node->count - 1 : 1;
         for (uint32_t i = count; i != 0; i--) {
-            enum mo_syntax_token op =
-                node->kind == MO_S_PREFIX ? node->children[i - 1]->token : node->token;
+            enum mo_syntax_token op = node->kind == MO_S_PREFIX ? node->children[i - 1]->token
+                                      : node->kind == MO_S_NOT  ? MO_T_NOT
+                                                                : MO_T_MINUS;
             struct term *wanted = op == MO_T_NOT     ? native(p, "Bool", 0)
                                   : op == MO_T_MINUS ? fresh(p, INT | BIG | DECIMAL | FLOAT)
                                                      : NULL;
@@ -994,8 +1101,6 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     case MO_S_TRY:
     case MO_S_IS:
     case MO_S_NAMED_ARG:
-    case MO_S_FIELD_ACCESS:
-    case MO_S_POSITION:
     case MO_S_TEXT_INTERPOLATED:
     case MO_S_UNDERSCORE:
     case MO_S_REST:
@@ -1042,15 +1147,18 @@ static MO_MUST_USE const struct mo_source_type *finish_type(struct inference *p,
     if (!work(p) || !type_depth(p, depth))
         return NULL;
     t = root(t);
-    if (t->resolved != NULL)
+    if (t->resolved != NULL) {
+        if (!type_depth(p, depth + t->height))
+            return NULL;
         return t->resolved;
+    }
     if (t->variable) {
         if (t->numeric == 0) {
-            bool reported = problem(p, MO_CODE_CANNOT_INFER, p->span,
-                                    "types are inferred from all their uses in a body",
-                                    "A function's signature gives its types; inside a body types "
-                                    "are inferred from all their uses (reference 5.1).",
-                                    NULL);
+            bool reported =
+                problem(p, MO_CODE_CANNOT_INFER, p->span, "no use decides this expression's type",
+                        "A function's signature gives its types; inside a body types "
+                        "are inferred from all their uses (reference 5.1).",
+                        NULL);
             (void)reported;
             return NULL;
         }
@@ -1069,6 +1177,9 @@ static MO_MUST_USE const struct mo_source_type *finish_type(struct inference *p,
         args[i] = finish_type(p, t->arguments[i], depth + 1);
         if (args[i] == NULL)
             return NULL;
+        uint32_t height = root(t->arguments[i])->height + 1;
+        if (height > t->height)
+            t->height = height;
     }
     struct mo_source_type *out = allocate(p, 1, sizeof(*out), _Alignof(struct mo_source_type));
     if (out != NULL) {
@@ -1077,6 +1188,32 @@ static MO_MUST_USE const struct mo_source_type *finish_type(struct inference *p,
         t->resolved = out;
     }
     return out;
+}
+
+static MO_MUST_USE bool finite_integer(const struct mo_syntax *node, unsigned base) {
+    uint32_t bits = 0;
+    bool smaller = false;
+    for (uint32_t i = 2; i < node->span.end - node->span.start; i++) {
+        uint8_t c = node->text[i];
+        if (c == '_')
+            continue;
+        unsigned digit = c >= 'a'   ? (unsigned)(c - 'a') + 10
+                         : c >= 'A' ? (unsigned)(c - 'A') + 10
+                                    : (unsigned)(c - '0');
+        for (unsigned j = base == 16 ? 4u : 1u; j != 0; j--) {
+            unsigned bit = (digit >> (j - 1)) & 1u;
+            if (bits == 0 && bit == 0)
+                continue;
+            bits++;
+            if (bits <= 54 && bit == 0)
+                smaller = true;
+            if (bits > 1024)
+                return false;
+        }
+    }
+    /* Nearest-even overflows at 2^1024 - 2^970: 54 leading ones,
+     * then 970 zeros. No floating arithmetic is needed to test this boundary. */
+    return bits < 1024 || smaller;
 }
 
 static MO_MUST_USE bool literal(struct inference *p, const struct note *n) {
@@ -1129,7 +1266,7 @@ static MO_MUST_USE bool literal(struct inference *p, const struct note *n) {
         fits = fits && magnitude <= maximum;
     } else if (strcmp(name, "Float") == 0) {
         if (base != 10)
-            fits = fits || length < 1024;
+            fits = finite_integer(node, base);
         else {
             char *text = allocate(p, length + 1, 1, 1);
             if (text == NULL)
@@ -1145,11 +1282,11 @@ static MO_MUST_USE bool literal(struct inference *p, const struct note *n) {
             fits = isfinite(value);
         }
     }
-    return fits || problem(p, MO_CODE_LITERAL_RANGE, node->span,
-                           "a number literal takes the type its context needs",
-                           "A number literal takes its context's numeric type and must fit "
-                           "that type's range (reference 3.3).",
-                           NULL);
+    return fits ||
+           problem(p, MO_CODE_LITERAL_RANGE, node->span, "a number literal doesn't fit its type",
+                   "A number literal takes its context's numeric type and must fit "
+                   "that type's range (reference 3.3).",
+                   NULL);
 }
 
 struct mo_inferred_body *mo_infer_function(struct mo_arena *arena,
@@ -1192,7 +1329,7 @@ struct mo_inferred_body *mo_infer_function(struct mo_arena *arena,
         if (n->discarded && !named(n->type, "Unit")) {
             bool reported = problem(
                 &p, named(n->type, "Result") ? MO_CODE_FAILURE_IGNORED : MO_CODE_UNUSED_VALUE,
-                p.span, "a result isn't used",
+                p.span, named(n->type, "Result") ? "a failure is ignored" : "a result isn't used",
                 named(n->type, "Result") ? "Mo never drops a failure silently (reference 8.3)."
                                          : "A result that isn't Unit and isn't used is an error "
                                            "(reference 6.1).",
@@ -1201,6 +1338,26 @@ struct mo_inferred_body *mo_infer_function(struct mo_arena *arena,
             goto failed;
         }
         items[i++] = n->output;
+    }
+    for (struct local *l = p.all_locals; l != NULL; l = l->next) {
+        p.span = l->name->span;
+        const struct mo_source_type *type = finish_type(&p, l->type, 0);
+        if (type == NULL)
+            goto failed;
+        if (l->name->text[l->name->span.end - l->name->span.start - 1] != '?')
+            continue;
+        if (type->kind == MO_SOURCE_FUNCTION)
+            type = type->arguments[type->count - 1];
+        if (type->kind != MO_SOURCE_NAMED || type->module != UINT32_MAX ||
+            strcmp(type->name, "Bool") != 0) {
+            bool reported = problem(&p, MO_CODE_BOOL_NAME, p.span,
+                                    "a name ending in ? isn't a yes-or-no answer",
+                                    "A name ending in ? is a Bool, or a function that returns "
+                                    "one (reference 2.3).",
+                                    NULL);
+            (void)reported;
+            goto failed;
+        }
     }
     MO_ASSERT(i == p.count);
     return out;

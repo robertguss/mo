@@ -161,7 +161,7 @@ static void snapshot(struct mo_buffer *b, const struct mo_diag *diag) {
 }
 
 static void corpus(void) {
-    enum phase { INTERFACES, LOADING, SIGNATURES };
+    enum phase { INTERFACES, LOADING, SIGNATURES, BODIES };
     const struct {
         const char *input;
         const char *expected;
@@ -184,6 +184,20 @@ static void corpus(void) {
         {"e0047.mo", "e0047.diag", INTERFACES},
         {"e0048.mo", "e0048.diag", SIGNATURES},
         {"e0049.mo", "e0049.diag", SIGNATURES},
+        {"e0050.mo", "e0050.diag", BODIES},
+        {"e0051.mo", "e0051.diag", BODIES},
+        {"e0052.mo", "e0052.diag", BODIES},
+        {"e0053.mo", "e0053.diag", BODIES},
+        {"e0054.mo", "e0054.diag", BODIES},
+        {"e0055.mo", "e0055.diag", BODIES},
+        {"e0056.mo", "e0056.diag", BODIES},
+        {"e0057.mo", "e0057.diag", BODIES},
+        {"e0058.mo", "e0058.diag", BODIES},
+        {"e0059.mo", "e0059.diag", BODIES},
+        {"e0060.mo", "e0060.diag", BODIES},
+        {"e0061.mo", "e0061.diag", BODIES},
+        {"e0412.mo", "e0412.diag", BODIES},
+        {"e1103.mo", "e1103.diag", BODIES},
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         struct fixture f;
@@ -211,8 +225,19 @@ static void corpus(void) {
                 CHECK(names == NULL);
             else {
                 CHECK(names != NULL);
-                if (names != NULL)
-                    CHECK(mo_prepare_signatures(&f.arena, &set, names, &f.diags) == NULL);
+                if (names != NULL) {
+                    struct mo_signatures *signatures =
+                        mo_prepare_signatures(&f.arena, &set, names, &f.diags);
+                    if (cases[i].phase == SIGNATURES)
+                        CHECK(signatures == NULL);
+                    else {
+                        MO_ASSERT(signatures != NULL);
+                        for (uint32_t j = 0; j < signatures->count; j++)
+                            if (signatures->items[j].function->module == 0 &&
+                                mo_infer_function(&f.arena, names, signatures, j, &f.diags) == NULL)
+                                break;
+                    }
+                }
             }
         }
         CHECK(f.diags.count == 1 && f.diags.dropped == 0);

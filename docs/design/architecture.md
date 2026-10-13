@@ -360,6 +360,41 @@ shared with another function's same-spelled parameter. All storage uses the
 caller arena, with E1058 on exhaustion. This intermediate result checks no
 bodies, data fields or abilities and is not a checked program.
 
+**Local inference is a second intermediate result.** `mo_infer_function`
+checks one named body against prepared signatures, returning postorder
+expression metadata: types, local binder or module symbol, and whether all
+paths leave the function or loop or stop. An AVL lexical index restores
+visible bindings on scope exit, while retaining local/module name uses for
+the one-meaning rule. Union-find constraints preserve numeric literal choices
+until all uses are known. Named generic parameters remain abstract in their
+own body; each reference to a generic function gets fresh parameters.
+
+This stage supports positional and module-qualified function calls, contextual
+anonymous functions, scalar/list/map/tuple expressions, tuple projections,
+bindings, variables, conditionals, loops and early exits. It stops at the
+first error in a body, so a dependent error cannot cascade. The caller can
+continue with independent bodies. Signature preparation currently stops at
+its first error too. E1103 explicitly refuses unfinished body forms; it does
+not silently accept them. Data fields, constructors and patterns, builtin/dot
+dispatch and delayed overload selection, abilities, polymorphic recursion,
+failure propagation, capture/capability flow, specs, constants, unused imports
+and the entry contract still need their stages. A successful intermediate
+body is not a `mo_program`, is not lowering-ready and does not certify those
+rules. `mo_check` will compose the stages and collect independent errors.
+
+Inferred types are shared DAGs, not expanded trees. Consumers must memoize
+walks. Occurs checks visit each shared term once per walk; output conversion
+caches each term and its longest leaf path. Source nesting cannot bound the
+types built by flat calls: `duplicate(T) : (T, T)` can double a type's apparent
+tree on every line. `MO_LIMIT_SOURCE_TYPE_DEPTH` caps paths at 256 nodes,
+including function values (E1105); cached subtrees retain their height when
+reused at greater depth. `MO_LIMIT_SOURCE_CHECK_WORK` caps term construction,
+unification, occurs checks, expression visits and output conversion at
+16,777,216 operations per function (E1104). Both errors are implementation
+limits, not language restrictions. All temporary and output storage is
+charged to the caller arena (E1058), with no additional scratch arena.
+Depth-bounded C recursion needs several MiB of stack under sanitizers.
+
 Type checking is **bidirectional**, one function body at a time. A signature
 is given, and the body is checked against it: an expression is either
 checked against an expected type or has its type inferred, and inferred types
@@ -1331,13 +1366,22 @@ MO_MUST_USE struct mo_module_syntax *mo_parse(struct mo_arena *arena, const stru
 MO_MUST_USE bool mo_read_header(struct mo_arena *arena, const struct mo_sources *sources, uint32_t file,
                                 struct mo_header *header_out, struct mo_diags *diags);
 
-/* src/check/check.h: implemented loading and module interfaces; NULL with diagnostics. */
+/* src/check/check.h: implemented intermediate stages; NULL with diagnostics.
+ * None of their successes is a lowering-ready checked program. */
 MO_MUST_USE struct mo_module_set *mo_load_program(struct mo_arena *arena, struct mo_sources *sources,
                                                   const char *entry, const char *library,
                                                   struct mo_diags *diags);
 MO_MUST_USE struct mo_module_interfaces *mo_resolve_modules(struct mo_arena *arena,
                                                             const struct mo_module_set *set,
                                                             struct mo_diags *diags);
+MO_MUST_USE struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena,
+                                                        const struct mo_module_set *set,
+                                                        const struct mo_module_interfaces *interfaces,
+                                                        struct mo_diags *diags);
+MO_MUST_USE struct mo_inferred_body *mo_infer_function(struct mo_arena *arena,
+                                                       const struct mo_module_interfaces *interfaces,
+                                                       const struct mo_signatures *signatures,
+                                                       uint32_t function, struct mo_diags *diags);
 /* Planned next: the whole program, checked, or NULL with diagnostics. */
 MO_MUST_USE struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *set,
                                         struct mo_diags *diags);

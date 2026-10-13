@@ -1,0 +1,9 @@
+E0052 6.1
+0:19..24
+a name or parameter is unused
+A name starting with _ is unused on purpose (reference 6.1).
+never read
+fixes 1
+mark the name unused on purpose
+0:19..19
+"_"

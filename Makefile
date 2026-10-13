@@ -133,6 +133,7 @@ fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test $(BUILD)/d
 			if [ "$$name" = fuzz_core_text ] || [ "$$name" = fuzz_core_check ] || [ "$$name" = fuzz_codegen ]; then \
 				cp tests/core/*.core fuzz/corpus/fuzz_core_text/*.core $$corpus/; fi; \
 			if [ "$$name" = fuzz_check ]; then cp tests/check/diagnostics/e*.mo $$corpus/; fi; \
+			if [ "$$name" = fuzz_bodies ]; then cp tests/check/diagnostics/e*.mo examples/*.mo $$corpus/; fi; \
 			if [ "$$name" = fuzz_syntax ]; then cp grammar/tests/good/*.mo grammar/tests/bad/*.mo examples/*.mo $$corpus/; fi; \
 			if [ "$$name" = fuzz_syntax ]; then \
 				awk 'BEGIN { printf "x = 0"; for (i = 0; i < 30000; i++) printf " +\n1"; print "" }' >$$corpus/flat-binary.mo; \

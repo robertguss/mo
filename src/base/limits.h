@@ -113,6 +113,11 @@
  * Lowering stops at it: E1012. */
 #define MO_LIMIT_INSTANTIATION_DEPTH 64
 
+/* Nodes along one path in an inferred surface type, including instantiated
+ * function values. This independently bounds implicit growth on flat source:
+ * E1105. A shared subtree keeps its height, not just its first traversal depth. */
+#define MO_LIMIT_SOURCE_TYPE_DEPTH 256
+
 /* Type construction, unification, occurs checks and expression visits in one
  * surface function. E1104 bounds generated constraints and shared type DAGs
  * independently of the caller's arena limit. */

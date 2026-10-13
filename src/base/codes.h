@@ -86,6 +86,7 @@
     X(58, EXIT_OUTSIDE_LOOP, "7.5")                                                                \
     X(59, BOOL_NAME, "2.3")                                                                        \
     X(60, LITERAL_RANGE, "3.3")                                                                    \
+    X(61, TUPLE_POSITION, "3.6")                                                                   \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \
@@ -187,6 +188,8 @@
     X(1103, CHECK_UNFINISHED, NULL)                                                                \
     /* Inference exceeds MO_LIMIT_SOURCE_CHECK_WORK for one function. */                           \
     X(1104, CHECK_WORK, NULL)                                                                      \
+    /* An inferred surface type exceeds MO_LIMIT_SOURCE_TYPE_DEPTH. */                             \
+    X(1105, CHECK_TYPE_DEPTH, NULL)                                                                \
     /* The ordinary entry's full runtime name is not unique in the image. */                       \
     X(1200, CODEGEN_ENTRY, NULL)                                                                   \
     /* Core uses a representation that source lowering never produces: a lowering bug. */          \

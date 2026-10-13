@@ -1,0 +1,6 @@
+E0055 5.2
+0:47..47
+a call's arguments don't match its parameters
+A function has no default or optional parameters; pass every argument by position (reference 5.2).
+pass one positional argument per parameter
+fixes 0

@@ -1,0 +1,6 @@
+E0057 6.2
+0:23..28
+a name that isn't var is assigned
++= and -= assign a var or its fields (reference 6.2).
+no assignable var here
+fixes 0

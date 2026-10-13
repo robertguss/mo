@@ -1,0 +1,6 @@
+E0059 2.3
+0:29..35
+a name ending in ? isn't a yes-or-no answer
+A name ending in ? is a Bool, or a function that returns one (reference 2.3).
+must be Bool or a function returning Bool
+fixes 0
