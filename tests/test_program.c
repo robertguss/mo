@@ -353,7 +353,7 @@ static void delayed_dot_graph(void) {
     init(&f, "module Main\nstruct P\nto_text: Int\napply: fn(Int) : Int\nend\n"
              "fn main() : Int\n"
              "field = fn(value) value.to_text end\n"
-             "invoke = fn(value) value.apply(4) end\n"
+             "invoke = fn(value) value.apply(4).abs end\n"
              "method = fn(value) value.abs end\n"
              "p = P(to_text: 7, apply: fn(x) x + 1 end)\n"
              "field(p) + invoke(p) + method(-3)\nend\n");
@@ -366,6 +366,10 @@ static void delayed_dot_graph(void) {
             const struct mo_checked_expression *row = &body->items[i];
             for (uint32_t j = 0; j < row->operand_count; j++)
                 CHECK(row->operands[j] < i);
+            if (row->operand_count == 2 && row->operation == MO_T_EOF && row->symbol == NULL &&
+                row->native == NULL && row->receiver == UINT32_MAX &&
+                body->items[row->operands[0]].type->kind == MO_SOURCE_FUNCTION)
+                CHECK(row->syntax->kind == MO_S_CALL || row->syntax->kind == MO_S_POSTFIX);
             if (row->field != UINT32_MAX && row->operand_count == 1 &&
                 row->syntax->kind != MO_S_NAMED_ARG && row->symbol == NULL) {
                 projections++;

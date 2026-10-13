@@ -169,7 +169,7 @@ struct dispatch {
     struct term *type;
     struct emitted *graph;
     struct note *note;
-    const struct mo_syntax *syntax, *arguments;
+    const struct mo_syntax *syntax, *call, *arguments;
     struct value receiver;
     struct value *inputs;
     bool solved;
@@ -1556,9 +1556,10 @@ static MO_MUST_USE struct value member(struct inference *p, struct value v,
 static MO_MUST_USE struct value field_value(struct inference *p, struct value receiver,
                                             const struct mo_syntax *name,
                                             const struct mo_syntax *syntax,
-                                            const struct mo_syntax *args, bool *called) {
+                                            const struct mo_syntax *site, bool *called) {
     if (receiver.type == NULL)
         return receiver;
+    const struct mo_syntax *args = site == NULL ? NULL : site->children[0];
     if (root(receiver.type)->variable) {
         *called = true;
         uint32_t count = args == NULL ? 0u : args->count;
@@ -1567,6 +1568,7 @@ static MO_MUST_USE struct value field_value(struct inference *p, struct value re
             return out;
         struct dispatch *pending = out.dispatch;
         pending->syntax = syntax;
+        pending->call = site;
         pending->arguments = args;
         pending->receiver = receiver;
         pending->inputs = allocate(p, count, sizeof(*pending->inputs), _Alignof(struct value));
@@ -2597,12 +2599,12 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             else if (step->kind == MO_S_CALL)
                 v = call(p, v, step->children[0], NULL);
             else if (step->kind == MO_S_FIELD_ACCESS) {
-                const struct mo_syntax *args = NULL;
+                const struct mo_syntax *site = NULL;
                 if (i + 1 < node->count && node->children[i + 1]->kind == MO_S_CALL)
-                    args = node->children[i + 1]->children[0];
+                    site = node->children[i + 1];
                 bool called;
-                v = field_value(p, v, step->children[0], step, args, &called);
-                if (called && args != NULL)
+                v = field_value(p, v, step->children[0], step, site, &called);
+                if (called && site != NULL)
                     i++;
             } else {
                 bool reported = unfinished(p);
@@ -3795,6 +3797,10 @@ static MO_MUST_USE bool finish_dot(struct inference *p, struct dispatch *at) {
         return false;
     if (!p->checked)
         return true;
+    if (!method && at->note->output.syntax == at->syntax) {
+        MO_ASSERT(at->call != NULL);
+        at->note->output.syntax = at->call;
+    }
     bool callee = !method || selected.symbol != NULL;
     struct note *function = callee ? dispatch_callee(p, at, selected, method) : NULL;
     if (callee && function == NULL)
