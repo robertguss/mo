@@ -1104,6 +1104,11 @@ instance directly. Concrete source types share a cache across substitutions.
 Index buckets and source-function ordering use names, declaration positions,
 program indices and canonical type hashes, never addresses; ASLR cannot change
 lowering's work-limit verdict. Native scalar leaves share cache entries across bodies.
+Unresolved PARAMETER proofs refuse E1150, even for Number/Equal operators that
+could otherwise be guessed from the substituted concrete type. Generic uses
+must replace requirements by the callee's scoped parameter and ability; generic
+customizers' requirement parts need the same keys. This substitution remains
+staged until its checked contract is merged, without guessing from concrete types.
 The C lowerer checks structural Core type height after substitution as well as
 source-template depth. `T` becoming a deep list can push `List(T)` over Core's
 path bound; that instantiation refuses with E1153 rather than returning invalid Core.

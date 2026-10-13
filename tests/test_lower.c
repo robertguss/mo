@@ -1291,6 +1291,44 @@ static void test_native_refusal(void) {
     }
 }
 
+static void test_abstract_ability_refusal(void) {
+    struct lower_fixture f;
+    lower_fixture_init(&f,
+                       "module Main\nfn double(value: T) : T where T: Number\nvalue + value\nend\n"
+                       "fn main() : Int\ndouble(17)\nend\n");
+    f.program.function_count = f.declarations.count = 2;
+    f.symbols[1].name = "double";
+    struct mo_source_type parameter = {
+        .kind = MO_SOURCE_PARAMETER, .name = "T", .declaration = &f.symbols[1], .parameters = 1};
+    f.function_types[1].count = 2;
+    f.function_types[1].parameters = 1;
+    f.signature_parts[1][0] = f.signature_parts[1][1] = &parameter;
+    f.bindings[0] = (struct mo_checked_binding){.name = "value", .type = &parameter};
+    const struct mo_checked_binding *parameters[] = {&f.bindings[0]};
+    f.functions[1].parameter_count = 1;
+    f.functions[1].parameters = parameters;
+    f.functions[0].body.binding_count = 1;
+    uint32_t left = lower_fixture_read(&f, 0), right = lower_fixture_read(&f, 0);
+    uint32_t sum = lower_fixture_op(&f, MO_T_PLUS, &parameter, left, right);
+    struct mo_ability_implementation abstract = {
+        .ability = MO_SOURCE_NUMBER, .kind = MO_ABILITY_PARAMETER, .type = &parameter};
+    struct mo_checked_ability_use requirement = {.operand = left, .implementation = &abstract};
+    f.rows[sum].ability_count = 1;
+    f.rows[sum].abilities = &requirement;
+    f.functions[1].body = f.functions[0].body;
+    struct mo_type_argument argument = {&parameter, &f.int_};
+    uint32_t callee = lower_fixture_row(&f, MO_S_NAME, &f.function_types[1], NULL, 0, NULL);
+    f.rows[callee].symbol = &f.symbols[1];
+    uint32_t value = lower_fixture_row(&f, MO_S_INT, &f.int_, "17", 0, NULL);
+    uint32_t operands[] = {callee, value};
+    uint32_t call = lower_fixture_row(&f, MO_S_CALL, &f.int_, NULL, 2, operands);
+    f.rows[call].symbol = &f.symbols[1];
+    f.rows[call].arguments = (struct mo_type_arguments){1, &argument};
+    CHECK(mo_lower(&f.arena, &f.program, &f.sources, &f.diags) == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_LOWER_UNFINISHED);
+    lower_fixture_free(&f);
+}
+
 static void test_ignored_parameters(void) {
     struct lower_fixture f;
     lower_fixture_init(&f, "module Main\nfn identity(_unused: Int) : Int\n"
@@ -1539,6 +1577,7 @@ int main(int argc, char **argv) {
     test_result_entry();
     test_limits();
     test_native_refusal();
+    test_abstract_ability_refusal();
     test_ignored_parameters();
     test_substituted_depth();
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source, NULL) == 0);

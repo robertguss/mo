@@ -1251,6 +1251,12 @@ static void row_task(struct body *b, struct task t) {
     struct lowering *p = b->p;
     const struct mo_checked_expression *r = row(b, t.row);
     enum mo_syntax_kind tag = kind(r);
+    for (uint32_t i = 0; i < r->ability_count; i++) {
+        lower_work(p, 1);
+        if (r->abilities[i].implementation->kind == MO_ABILITY_PARAMETER)
+            lower_refuse(p, MO_CODE_LOWER_UNFINISHED,
+                         "abstract ability requirements are not substituted yet");
+    }
     if (tag == MO_S_MAP)
         lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "map literals are not lowered yet");
     if (tag == MO_S_TEXT_INTERPOLATED) {

@@ -862,7 +862,10 @@ hole expressions have checked operands. Triple text uses the closing delimiter's
 indentation for every fragment. Each hole is evaluated and converted through its
 selected Text proof before the next hole is evaluated. The same conversion emits
 `to_text` calls and Result entry errors; unresolved generic PARAMETER proofs refuse
-E1150 until the checker publishes scoped requirement keys.
+E1150 until scoped requirement substitution is implemented against the merged
+checker contract. This includes Number/Equal rows: knowing a concrete type is
+not permission to bypass its selected abstract proof. Generic customizers with
+requirement parts likewise refuse until their scoped keys can be substituted.
 Derived text helpers reserve a typed function before following the proof's
 parts, memoize concrete type/module pairs with a bounded hash index and drain
 a FIFO body queue. Tuple and record fields convert in declaration order; choice
