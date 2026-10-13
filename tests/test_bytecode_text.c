@@ -275,6 +275,54 @@ static void symbolic_names(void) {
     }
 }
 
+static void filenames(void) {
+    struct mo_buffer source;
+    mo_buffer_init(&source, MO_LIMIT_BYTECODE_TEXT_SIZE);
+    CHECK(mo_buffer_append_text(
+        &source,
+        "bytecode 0.2 shorthand\nstrings\n s0 \"keep\"\nend\n"
+        "files\n P0 hex\"ff\"\n P1 hex\"ff\"\n P2 hex\"c3\"\n"
+        " P3 hex\"5c786666\"\n P4 \"é\"\nend\n"
+        "module A exposes [A.main]\n"
+        "function A.main() : Unit function in A\n registers [r0: Unit]\n"
+        " declaration (P1, 2, 9)\n span hex\"ff\" 3 8\n const r0, ()\n"
+        " span - 0 0\n ret r0\nend\n"
+        "function A.law(result: Unit owned) : Int promise spec in A\n registers [r1: Int]\n"
+        " text \"law\"\n declaration (hex\"5c786666\", 10, 20)\n subject A.main\n"
+        " lines [(hex\"0a5c\", 11, 12, \"condition\"), (-, 0, 0, \"absent\")]\n"
+        " const r1, 0\n ret r1\nend\n"));
+    struct mo_image *image = assemble(&source);
+    if (image != NULL) {
+        const struct mo_bytecode *b = mo_image_bytecode(image);
+        const char *const paths[] = {"\xff", "\xff", "\xc3", "\\xff", "é", "\n\\"};
+        CHECK(b->file_count == 6 && b->strings[0].length == 4 &&
+              memcmp(b->strings[0].bytes, "keep", 4) == 0);
+        for (uint32_t i = 0; i < b->file_count; i++)
+            CHECK(b->files[i].length == strlen(paths[i]) &&
+                  memcmp(b->files[i].bytes, paths[i], strlen(paths[i])) == 0);
+        CHECK(b->debug[0].file == 1 && b->debug[0].start == 2 && b->debug[0].end == 9);
+        CHECK(b->debug[0].span_count == 2 && b->debug[0].spans[0].file == 0 &&
+              b->debug[0].spans[1].file == MO_BYTECODE_NO_INDEX &&
+              b->debug[0].spans[1].start == 0 && b->debug[0].spans[1].end == 0);
+        CHECK(b->debug[1].file == 3 && b->debug[1].line_count == 2 &&
+              b->debug[1].lines[0].file == 5 && b->debug[1].lines[1].file == MO_BYTECODE_NO_INDEX);
+        mo_image_free(image);
+    }
+    mo_buffer_free(&source);
+    const char *const bad[] = {"bytecode 0.2 shorthand\nfiles\n P0 hex\"\"\nend\n",
+                               "bytecode 0.2 shorthand\nfiles\n P0 hex\"610062\"\nend\n"};
+    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++)
+        refusal(bad[i], strlen(bad[i]), (uint32_t)(strstr(bad[i], "P0") - bad[i]),
+                "filename must be nonempty and contain no NUL");
+    const char *missing = "bytecode 0.2 shorthand\nmodule A exposes []\n"
+                          "function A.main() : Unit function in A\n registers [r0: Unit]\n"
+                          " declaration (P0, 0, 1)\n const r0, ()\n ret r0\nend\n";
+    refusal(missing, strlen(missing), (uint32_t)(strstr(missing, "P0") - missing),
+            "expected filename index in final pool");
+    const char *old = "bytecode 0.1 shorthand\n";
+    refusal(old, strlen(old), 9, "expected bytecode version 0.2");
+}
+
 static void refusals(void) {
     static const struct {
         const char *text, *at, *reason;
@@ -708,6 +756,7 @@ int main(int argc, char **argv) {
     scalars();
     programs();
     symbolic_names();
+    filenames();
     refusals();
     instruction_refusals();
     boundaries();

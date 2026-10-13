@@ -1174,6 +1174,66 @@ static void test_utf8(void) {
     expect_write_reason(&f, "invalid array or count past limit");
 }
 
+static void test_filename_table(void) {
+    struct mo_buffer wire;
+    struct mo_write_error we;
+    struct mo_load_error le;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode_bytes rows[MO_LIMIT_FILES];
+    for (uint32_t i = 0; i < MO_LIMIT_FILES; i++)
+        rows[i] = (struct mo_bytecode_bytes)STRING("\xff");
+    struct mo_bytecode file = {.files = rows, .file_count = MO_LIMIT_FILES};
+    CHECK(mo_bytecode_write(&file, &wire, &we));
+    struct mo_image *image = mo_load(wire.bytes, wire.length, &le);
+    CHECK(image != NULL);
+    if (image != NULL) {
+        memset(wire.bytes, 0, wire.length);
+        const struct mo_bytecode *b = mo_image_bytecode(image);
+        CHECK(b->file_count == MO_LIMIT_FILES);
+        for (uint32_t i = 0; i < b->file_count; i++)
+            CHECK(b->files[i].length == 1 && b->files[i].bytes[0] == 0xff);
+        mo_image_free(image);
+    }
+    mo_buffer_clear(&wire);
+    file.file_count++;
+    CHECK(!mo_bytecode_write(&file, &wire, &we) && wire.length == 0 &&
+          we.kind == MO_BYTECODE_LIMIT);
+    file.file_count = 1;
+    const struct mo_bytecode_bytes bad[] = {
+        STRING(""), STRING("a\0b"), {MO_LIMIT_STRING_SIZE + 1U, (const uint8_t *)"x"}};
+    for (uint32_t i = 0; i < ARRAY_COUNT(bad); i++) {
+        rows[0] = bad[i];
+        CHECK(!mo_bytecode_write(&file, &wire, &we) && wire.length == 0);
+        CHECK(we.kind == (i == 2 ? MO_BYTECODE_LIMIT : MO_BYTECODE_INVALID));
+    }
+    struct mo_arena arena;
+    mo_arena_init(&arena, 2 * (size_t)MO_LIMIT_STRING_SIZE);
+    uint8_t *long_path = mo_arena_allocate(&arena, MO_LIMIT_STRING_SIZE, 1);
+    CHECK(long_path != NULL);
+    if (long_path != NULL) {
+        memset(long_path, 0xff, MO_LIMIT_STRING_SIZE);
+        rows[0] = (struct mo_bytecode_bytes){MO_LIMIT_STRING_SIZE, long_path};
+        CHECK(mo_bytecode_write(&file, &wire, &we));
+        image = mo_load(wire.bytes, wire.length, &le);
+        CHECK(image != NULL);
+        if (image != NULL) {
+            const struct mo_bytecode_bytes *path = &mo_image_bytecode(image)->files[0];
+            CHECK(path->length == MO_LIMIT_STRING_SIZE &&
+                  memcmp(path->bytes, long_path, MO_LIMIT_STRING_SIZE) == 0);
+            mo_image_free(image);
+        }
+        mo_buffer_clear(&wire);
+    }
+    mo_arena_free(&arena);
+    rows[0] = (struct mo_bytecode_bytes)STRING("\xc3");
+    CHECK(mo_bytecode_write(&file, &wire, &we));
+    /* Old binary versions remain refused, even with the new section layout. */
+    wire.bytes[6] = 1;
+    CHECK(mo_load(wire.bytes, wire.length, &le) == NULL && le.offset == 6 &&
+          le.kind == MO_BYTECODE_INVALID);
+    mo_buffer_free(&wire);
+}
+
 static void test_limits_and_caches(void) {
     struct mo_arena arena;
     mo_arena_init(&arena, 8 << 20);
@@ -1851,6 +1911,7 @@ int main(void) {
     test_worked_encoding();
     test_literal_boundaries();
     test_utf8();
+    test_filename_table();
     test_limits_and_caches();
     test_large_tables();
     test_large_names();

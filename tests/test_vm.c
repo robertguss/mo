@@ -1552,6 +1552,63 @@ static void test_bounded_report(void) {
     mo_image_free(image);
 }
 
+static void test_filename_bytes(void) {
+    const struct {
+        const char *bytes, *rendered;
+    } cases[] = {
+        {"utf8-é🙂.mo", "utf8-é🙂.mo"},
+        {"byte-\xff.mo", "byte-\\xff.mo"},
+        {"literal-\\xff.mo", "literal-\\\\xff.mo"},
+        {"broken-\xc3", "broken-\\xc3"},
+        {"control-\n\t\r\x1b\x7f\xc2\x80", "control-\\n\\t\\r\\u{1b}\\u{7f}\\u{80}"},
+        {"\xe0\x9f\xbf\xed\xa0\x80\xf4\x90\x80\x80",
+         "\\xe0\\x9f\\xbf\\xed\\xa0\\x80\\xf4\\x90\\x80\\x80"},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        struct fixture f;
+        fixture_init(&f);
+        uint8_t bytes[64];
+        size_t length = strlen(cases[i].bytes);
+        MO_ASSERT(length <= sizeof bytes);
+        memcpy(bytes, cases[i].bytes, length);
+        const struct mo_bytecode_bytes path = {(uint32_t)length, bytes};
+        f.file.files = &path;
+        f.file.file_count = 1;
+        const uint32_t type = 1, code[] = {MO_OP_CONST, 0, 1, MO_OP_STOP, 0};
+        program(&f, 0, &type, 1, code, sizeof code / sizeof code[0], 3);
+        const struct mo_bytecode_span span = {.code_offset = 3, .file = 0, .start = 3, .end = 9};
+        f.debug[0].spans = &span;
+        f.debug[0].span_count = 1;
+        struct mo_image *image = initialized(&f);
+        if (image == NULL)
+            continue;
+        memset(bytes, 0, length); /* Image filenames must not borrow the writer's bytes. */
+        const struct mo_bytecode *b = mo_image_bytecode(image);
+        CHECK(b->file_count == 1 && b->files[0].length == length &&
+              memcmp(b->files[0].bytes, cases[i].bytes, length) == 0);
+        struct mo_limits limits = mo_limits_default();
+        struct mo_process *p = mo_process_new(image, &limits);
+        MO_ASSERT(p != NULL);
+        struct mo_cell result;
+        struct mo_defect defect;
+        CHECK(mo_call(p, 0, NULL, 0, &result, &defect) == MO_STOPPED);
+        CHECK(defect.span.file == 0 && defect.span.start == 3 && defect.span.end == 9);
+        struct mo_buffer text, expected;
+        mo_buffer_init(&text, 256);
+        mo_buffer_init(&expected, 256);
+        CHECK(mo_buffer_append_text(&expected, "stop\n  at M ("));
+        CHECK(mo_buffer_append_text(&expected, cases[i].rendered));
+        CHECK(mo_buffer_append_text(&expected, ":3..9)\n  detail: stop\n"));
+        CHECK(mo_render_defect(p, &defect, &text));
+        CHECK(text.length == expected.length &&
+              memcmp(text.bytes, expected.bytes, text.length) == 0);
+        mo_buffer_free(&text);
+        mo_buffer_free(&expected);
+        mo_process_free(p);
+        mo_image_free(image);
+    }
+}
+
 static void test_report_buffers(void) {
     struct fixture f;
     fixture_init(&f);
@@ -2260,6 +2317,7 @@ int main(int argc, char **argv) {
     test_scratch_and_fuel();
     test_clear();
     test_bounded_report();
+    test_filename_bytes();
     test_report_buffers();
     test_report_chars();
     test_report_names();

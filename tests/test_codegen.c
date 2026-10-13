@@ -234,8 +234,12 @@ static void test_metadata(void) {
         "(FunDecl \"example\" () (unit) (lit (unit)) \"M\" (example) 0)) () \"main\" (noSource))",
         &diags);
     if (p != NULL) {
-        mo_core_string files[] = {
-            {"absent-\xff.mo", 11}, {"absent-B.mo", 11}, {"absent-\\xff.mo", 14}};
+        mo_core_string files[] = {{"absent-\xff.mo", 11},
+                                  {"absent-B.mo", 11},
+                                  {"absent-\\xff.mo", 14},
+                                  {"\xc3", 1},
+                                  {"é.mo", 5},
+                                  {"absent-\xff.mo", 11}};
         uint32_t owned[] = {0, 1, 2, 3, 4}, data[] = {0}, exposed[] = {0};
         struct mo_core_exposed_type hidden[] = {{0, false}};
         struct mo_core_module_meta module = {.name = {"M", 1},
@@ -250,7 +254,7 @@ static void test_metadata(void) {
                             anchor_spans[] = {{true, {1, 50, 60}}, {0}};
         struct mo_core_binding_meta binding = {0, 0, {"sourceLocal", 11}};
         struct mo_core_name param = {true, {"sourceResult", 12}};
-        struct mo_core_spec_line condition = {{true, {1, 70, 75}}, {"result >= 0", 11}};
+        struct mo_core_spec_line condition = {{true, {5, 70, 75}}, {"result >= 0", 11}};
         struct mo_core_fun_meta meta[5] = {
             {.name = {"M.main", 6},
              .span = {true, {1, 1, 99}},
@@ -278,7 +282,7 @@ static void test_metadata(void) {
         for (size_t i = 0; i < 5; i++)
             meta[i].name.length = strlen(meta[i].name.bytes);
         p->metadata = (struct mo_core_metadata){
-            .source = true, .files = {files, 3}, .modules = {&module, 1}, .funs = {meta, 5}};
+            .source = true, .files = {files, 6}, .modules = {&module, 1}, .funs = {meta, 5}};
         bool ok = mo_compile(p, &out, &diags);
         CHECK(ok && !mo_diags_any(&diags));
         if (!ok && diags.count != 0)
@@ -288,8 +292,8 @@ static void test_metadata(void) {
             ok ? mo_bytecode_decode(&arena, out.bytes, out.length, &error) : NULL;
         CHECK(b != NULL);
         if (b != NULL) {
-            CHECK(b->file_count == 3);
-            for (uint32_t i = 0; i < b->file_count; i++)
+            CHECK(b->file_count == 6);
+            for (uint32_t i = 0; i < b->file_count && i < 6; i++)
                 CHECK(b->files[i].length == files[i].length &&
                       memcmp(b->files[i].bytes, files[i].bytes, files[i].length) == 0);
             CHECK(string_is(b, b->functions[0].name, "M.main"));
@@ -308,7 +312,7 @@ static void test_metadata(void) {
             CHECK(cleared && remapped);
             CHECK(b->debug[1].subject == 0 && b->debug[1].line_count == 1 &&
                   string_is(b, b->debug[1].lines[0].text, "result >= 0") &&
-                  b->debug[1].lines[0].file == 1 && b->debug[1].lines[0].start == 70);
+                  b->debug[1].lines[0].file == 5 && b->debug[1].lines[0].start == 70);
             CHECK(b->debug[2].subject == 1 && b->debug[2].expectation == MO_BYTECODE_ALLOWS);
             CHECK(b->functions[1].kind == MO_FUNCTION_PROMISE &&
                   b->functions[2].kind == MO_FUNCTION_ANCHOR &&
