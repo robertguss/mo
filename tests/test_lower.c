@@ -110,7 +110,7 @@ static void test_literal(void) {
     const struct mo_source_type *parts[] = {&int_type};
     struct mo_source_type function_type = {
         .kind = MO_SOURCE_FUNCTION, .count = 1, .arguments = parts};
-    struct mo_function_signature signature = {&symbol, &function_type};
+    struct mo_function_signature signature = {.function = &symbol, .type = &function_type};
     struct mo_syntax literal = {
         .kind = MO_S_INT, .span = {0, 28, 30}, .text = (const uint8_t *)"17"};
     struct mo_checked_expression expression = {
