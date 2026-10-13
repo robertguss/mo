@@ -212,7 +212,9 @@ fn pretty(value: Json, indent: Text) : Text
       "[\n#{lines.join(",\n")}\n#{indent}]"
     Object(fields):
       return "{}" if fields.empty?
-      lines = fields.entries.map(fn(entry) "#{inner}#{quoted(entry.0)}: #{pretty(entry.1, inner)}" end)
+      lines = fields.entries.map(
+        fn(entry) "#{inner}#{quoted(entry.0)}: #{pretty(entry.1, inner)}" end
+      )
       "{\n#{lines.join(",\n")}\n#{indent}}"
   end
 end
@@ -251,7 +253,11 @@ end
 ## The value at a path of object keys and array positions.
 fn at_path(value: Json, path: List(Text)) : Option(Json)
   examples
-    at_path(Object({"items": Array([Null, Object({"name": String("pen")})])}), ["items", "1", "name"]) == Some(String("pen"))
+    at_path(
+      Object({"items": Array([Null, Object({"name": String("pen")})])}),
+      ["items", "1", "name"]
+    ) ==
+      Some(String("pen"))
     at_path(Array([Null]), ["5"]) == None
     at_path(Null, []) == Some(Null)
   end

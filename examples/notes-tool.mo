@@ -34,8 +34,12 @@ max_limit = 100
 fn search_notes(notes: ReadFiles, input: SearchInput) : Result(SearchOutput, ToolError)
   promise "a search never returns more hits than its limit"
     result is Ok(output) implies output.hits.size <= input.limit
-    allows notes: Files.in_memory({}).read_only, input: SearchInput(query: "x", limit: 1), result: Ok(SearchOutput(hits: [], truncated?: false))
-    forbids notes: Files.in_memory({}).read_only, input: SearchInput(query: "x", limit: 1), result: Ok(SearchOutput(hits: [hit, hit], truncated?: false))
+    allows notes: Files.in_memory({}).read_only, input: SearchInput(query: "x", limit: 1), result: Ok(
+      SearchOutput(hits: [], truncated?: false)
+    )
+    forbids notes: Files.in_memory({}).read_only, input: SearchInput(query: "x", limit: 1), result: Ok(
+      SearchOutput(hits: [hit, hit], truncated?: false)
+    )
   end
 
   query = input.query.trim.ascii_lowercase
@@ -62,10 +66,13 @@ test "only Markdown notes are searched, and case doesn't matter"
     "recipes.md": "bread: flour, water, salt\n",
     "bakery.txt": "not a note\n"
   }).read_only
-  assert search_notes(notes, SearchInput(query: "bakery", limit: 10)) == Ok(SearchOutput(
-    hits: [Hit(file: "plans.md", line: 2, text: "Call the Bakery on Monday")],
-    truncated?: false
-  ))
+  assert search_notes(notes, SearchInput(query: "bakery", limit: 10)) ==
+    Ok(
+      SearchOutput(
+        hits: [Hit(file: "plans.md", line: 2, text: "Call the Bakery on Monday")],
+        truncated?: false
+      )
+    )
 end
 
 test "too many hits are cut at the limit, and the output says so"

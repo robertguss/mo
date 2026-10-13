@@ -78,7 +78,9 @@ fn build_command(name: Text, args: List(Text)) : Result(Command, ParseError)
     ("EXPIRE", [key, seconds]):
       n = try seconds.to_int.or_fail(NotAnInteger(text: seconds))
       Ok(Expire(key: key, seconds: n))
-    _ if ["SET", "GET", "DEL", "INCR", "EXPIRE"].contains?(name): Error(WrongArguments(command: name))
+    _ if ["SET", "GET", "DEL", "INCR", "EXPIRE"].contains?(name): Error(
+      WrongArguments(command: name)
+    )
     _: Error(UnknownCommand(name: name))
   end
 end
@@ -86,8 +88,14 @@ end
 fn apply(store: Store, command: Command, now: Time) : (Store, Reply)
   promise "a store never holds a key past its expiry"
     result.0.entries.values.all?(fn(entry) entry.expires is Some(at) implies at > now end)
-    allows store: empty_store, command: Put(key: "a", value: "1"), now: t0, result: (holding("a", "1", None), Okay)
-    forbids store: empty_store, command: Put(key: "a", value: "1"), now: t0, result: (holding("a", "1", Some(t0)), Okay)
+    allows store: empty_store, command: Put(key: "a", value: "1"), now: t0, result: (
+      holding("a", "1", None),
+      Okay
+    )
+    forbids store: empty_store, command: Put(key: "a", value: "1"), now: t0, result: (
+      holding("a", "1", Some(t0)),
+      Okay
+    )
   end
 
   live = without_expired(store, now)
@@ -114,7 +122,8 @@ fn increment(store: Store, key: Text) : (Store, Reply)
     increment(holding("n", "41", None), "n").1 == Count(42)
     increment(empty_store, "n").1 == Count(1)
     increment(holding("n", "x", None), "n").1 == Failure(message: "the value is not an integer")
-    increment(holding("n", "9223372036854775807", None), "n").1 == Failure(message: "the increment would overflow")
+    increment(holding("n", "9223372036854775807", None), "n").1 ==
+      Failure(message: "the increment would overflow")
   end
 
   entry = store.entries.get(key) or Item(value: "0", expires: None)
@@ -138,7 +147,8 @@ fn expire(store: Store, key: Text, ttl: Int, now: Time) : (Store, Reply)
     expire(empty_store, "a", 10, t0).1 == Count(0)
     expire(holding("a", "1", None), "a", 10, t0).1 == Count(1)
     expire(holding("a", "1", None), "a", -1, t0) == (empty_store, Count(1))
-    expire(holding("a", "1", None), "a", 4_000_000_000, t0).1 == Failure(message: "invalid expire time")
+    expire(holding("a", "1", None), "a", 4_000_000_000, t0).1 ==
+      Failure(message: "invalid expire time")
   end
 
   return (store, Failure(message: "invalid expire time")) if ttl > max_expiry

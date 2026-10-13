@@ -38,8 +38,14 @@ end
 fn request(limiter: Limiter, client: Text, now: Time) : (Limiter, Decision)
   promise "a client is never allowed more tokens than its bucket holds"
     result.1 is Allowed(remaining: left) implies left >= 0 and left <= limiter.capacity - 1
-    allows limiter: limiter_of(2), client: "a", now: t0, result: (limiter_of(2), Allowed(remaining: 1))
-    forbids limiter: limiter_of(2), client: "a", now: t0, result: (limiter_of(2), Allowed(remaining: 2))
+    allows limiter: limiter_of(2), client: "a", now: t0, result: (
+      limiter_of(2),
+      Allowed(remaining: 1)
+    )
+    forbids limiter: limiter_of(2), client: "a", now: t0, result: (
+      limiter_of(2),
+      Allowed(remaining: 2)
+    )
   end
 
   full = Bucket(tokens: limiter.capacity, updated: now)

@@ -201,7 +201,7 @@ before their nested groups. Layout ignores source storage, including source
 spans used only for locations. Indivisible names,
 literals and comments can exceed the target width. The document budget is
 128 MiB, with 8,224 nested groups or alignment scopes; the CLI's output is
-bounded by the 16 MiB source-file limit and 65,536 scalars per physical line.
+bounded by `MO_LIMIT_FILE_SIZE` (8 MiB) and 65,536 scalars per physical line.
 A refusal returns no partial output and never replaces the source file.
 
 Indentation is two spaces per level. Bracket contents and block bodies indent
@@ -221,7 +221,7 @@ code/comment rows align at one column, two spaces after the longest code row
 (D238); a blank row, own-line comment or code-only row ends that alignment run.
 Alignment uses the supplied display-width callback and does not feed padding
 back into statement breaks. Indivisible comments may extend beyond 100 columns.
-Alignment scratch fits 16 MiB and added padding still observes the lexer's
+Alignment scratch fits `MO_LIMIT_FILE_SIZE` and added padding still observes the lexer's
 65,536-scalar physical-line limit; refusal leaves output empty.
 Own-line comments retain their text and attachments. Leading/ending blank
 lines disappear, statement blank runs collapse to one, and nonempty output

@@ -79,7 +79,8 @@ end
 
 fn transfer(from: Account, to: Account, amount: Decimal) : Result((Account, Account), AccountError)
   promise "a transfer moves money without making or losing any"
-    result is Ok((paid, received)) implies paid.balance + received.balance == from.balance + to.balance
+    result is Ok((paid, received)) implies
+      paid.balance + received.balance == from.balance + to.balance
     allows from: alice(100.00), to: bob(5.00), amount: 30.00, result: Ok((alice(70.00), bob(35.00)))
     forbids from: alice(100.00), to: bob(5.00), amount: 30.00, result: Ok((alice(70.00), bob(5.00)))
   end

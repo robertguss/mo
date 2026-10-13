@@ -108,12 +108,18 @@ static void reference(void) {
     struct mo_source_error problem;
     MO_ASSERT(mo_sources_add(&sources, "docs/reference/README.md", &file, &problem));
     const struct mo_source *source = &sources.files[file];
+    struct mo_buffer continuations;
+    mo_buffer_init(&continuations, MO_LIMIT_FILE_SIZE);
     uint32_t pos = 0, start = 0, block = 0;
-    bool inside = false;
+    bool inside = false, section_24 = false;
     while (pos < source->length) {
         uint32_t end = pos;
         while (end < source->length && source->bytes[end] != '\n')
             end++;
+        if (!inside && end - pos >= 3 && memcmp(source->bytes + pos, "## ", 3) == 0)
+            section_24 = false;
+        if (!inside && end - pos >= 4 && memcmp(source->bytes + pos, "### ", 4) == 0)
+            section_24 = end - pos >= 8 && memcmp(source->bytes + pos, "### 2.4 ", 8) == 0;
         if (!inside && end - pos == 5 && memcmp(source->bytes + pos, "```mo", 5) == 0) {
             inside = true;
             start = end + 1;
@@ -121,12 +127,23 @@ static void reference(void) {
             char path[80];
             int written = snprintf(path, sizeof path, "docs/reference/README.md block %u", ++block);
             MO_ASSERT(written > 0 && (size_t)written < sizeof path);
-            CHECK(check_bytes(path, source->bytes + start, pos - start, NULL, true));
+            CHECK(check_bytes(path, source->bytes + start, pos - start, NULL, !section_24));
+            if (section_24)
+                MO_ASSERT(mo_buffer_append(&continuations, source->bytes + start, pos - start));
             inside = false;
         }
         pos = end < source->length ? end + 1 : end;
     }
     CHECK(!inside);
+    /* Only these three continuation examples are exempt, by section rather
+     * than fence number. Joining their canonical outputs proves a new block
+     * cannot silently inherit an exemption from the section heading. */
+    CHECK(check_bytes("reference 2.4 exemption contract", continuations.bytes, continuations.length,
+                      "order = Order(id: 7, lines: [], paid?: false)\n"
+                      "names = customers.filter(fn(c) c.active? end).map(fn(c) c.name end)\n"
+                      "ready = stocked and priced\n",
+                      false));
+    mo_buffer_free(&continuations);
     mo_sources_free(&sources);
 }
 
@@ -204,13 +221,19 @@ int main(int argc, char **argv) {
         "x=f(\"界界界界界界界界界界界界界界界界界界界界界界界界\",\"abcdefghijklmnop\")\n",
         "x = f(\"界界界界界界界界界界界界界界界界界界界界界界界界\", \"abcdefghijklmnop\")\n");
     char literal[89], source[128], expected[128];
-    memset(literal, 'x', sizeof literal - 1);
-    literal[sizeof literal - 1] = '\0';
-    int written = snprintf(source, sizeof source, "x=\"%s\".length\n", literal);
-    MO_ASSERT(written > 0 && (size_t)written < sizeof source);
-    written = snprintf(expected, sizeof expected, "x = \"%s\"\n  .length\n", literal);
-    MO_ASSERT(written > 0 && (size_t)written < sizeof expected);
-    check_source(source, expected);
+    /* Four columns before the literal, two quotes and seven for .length:
+     * 87 letters fit exactly at 100; 88 require the outer dot break. */
+    for (size_t length = 87; length <= 88; length++) {
+        memset(literal, 'x', length);
+        literal[length] = '\0';
+        int written = snprintf(source, sizeof source, "x=\"%s\".length\n", literal);
+        MO_ASSERT(written > 0 && (size_t)written < sizeof source);
+        written =
+            snprintf(expected, sizeof expected,
+                     length == 87 ? "x = \"%s\".length\n" : "x = \"%s\"\n  .length\n", literal);
+        MO_ASSERT(written > 0 && (size_t)written < sizeof expected);
+        check_source(source, expected);
+    }
     files("grammar/tests/good/*.mo", true, true, true);
     files("examples/*.mo", true, true, true);
     files("lib/*.mo", false, true, true);
