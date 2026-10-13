@@ -127,10 +127,14 @@ static MO_MUST_USE bool integer(struct mo_text_reader *r, enum mo_type_kind kind
             continue;
         }
         int parsed = hex((unsigned char)c);
-        if (parsed < 0 || (unsigned)parsed >= radix || (point && ++fraction > 18)) {
+        if (parsed < 0 || (unsigned)parsed >= radix) {
             mo_text_refuse(r, t.start + i,
-                           decimal ? "expected decimal with at most 18 fraction digits"
+                           decimal ? "expected decimal digit"
                                    : "expected integer digit in literal radix");
+            return false;
+        }
+        if (point && ++fraction > 18) {
+            mo_text_refuse(r, t.start + i, "expected decimal with at most 18 fraction digits");
             return false;
         }
         unsigned digit = (unsigned)parsed;
@@ -300,36 +304,53 @@ static MO_MUST_USE bool bigint(struct mo_text_reader *r) {
                        "expected BigInt within decimal digit limit (use bigint sign hex)");
         return false;
     }
-    /* log2(10)/8 < 1/2: half the digit count plus one bounds the magnitude. */
-    uint32_t capacity = (t.length - start) / 2 + 1, length = 0;
-    uint8_t *bytes = mo_arena_allocate(&r->arena, capacity, 1);
+    /* Nine decimal digits per step and base-2^32 limbs keep the bounded
+     * conversion's work small even when a file is filled with large literals. */
+    uint32_t capacity = (t.length - start) / 8 + 1, length = 0;
+    uint32_t *limbs =
+        mo_arena_allocate_array(&r->arena, capacity, sizeof *limbs, _Alignof(uint32_t));
+    if (limbs == NULL) {
+        mo_text_refuse(r, 0, "no memory");
+        return false;
+    }
+    for (uint32_t i = start; i < t.length;) {
+        uint32_t digits = t.length - i < 9 ? t.length - i : 9;
+        uint64_t carry = 0, scale = 1;
+        for (uint32_t j = 0; j < digits; j++, i++) {
+            if (text[i] < '0' || text[i] > '9') {
+                mo_text_refuse(r, t.start + i, "expected BigInt decimal digit");
+                return false;
+            }
+            carry = carry * 10 + (unsigned)(text[i] - '0');
+            scale *= 10;
+        }
+        for (uint32_t j = 0; j < length; j++) {
+            carry += scale * limbs[j];
+            limbs[j] = (uint32_t)carry;
+            carry >>= 32;
+        }
+        if (carry != 0) {
+            MO_ASSERT(length < capacity);
+            limbs[length++] = (uint32_t)carry;
+        }
+    }
+    uint32_t byte_length = length * 4;
+    uint8_t *bytes = mo_arena_allocate(&r->arena, (size_t)byte_length + 1, 1);
     if (bytes == NULL) {
         mo_text_refuse(r, 0, "no memory");
         return false;
     }
-    for (uint32_t i = start; i < t.length; i++) {
-        if (text[i] < '0' || text[i] > '9') {
-            mo_text_refuse(r, t.start + i, "expected BigInt decimal digit");
-            return false;
-        }
-        unsigned carry = (unsigned)(text[i] - '0');
-        for (uint32_t j = 0; j < length; j++) {
-            carry += 10U * bytes[j];
-            bytes[j] = (uint8_t)carry;
-            carry >>= 8;
-        }
-        if (carry != 0) {
-            MO_ASSERT(length < capacity);
-            bytes[length++] = (uint8_t)carry;
-        }
-    }
+    for (uint32_t i = 0; i < byte_length; i++)
+        bytes[i] = (uint8_t)(limbs[i / 4] >> (8 * (i % 4)));
+    while (byte_length != 0 && bytes[byte_length - 1] == 0)
+        byte_length--;
     mo_text_next(r);
     return mo_text_word(r,
-                        length == 0 ? MO_BIGINT_ZERO
-                        : negative  ? MO_BIGINT_NEGATIVE
-                                    : MO_BIGINT_POSITIVE,
+                        byte_length == 0 ? MO_BIGINT_ZERO
+                        : negative       ? MO_BIGINT_NEGATIVE
+                                         : MO_BIGINT_POSITIVE,
                         t.start) &&
-           mo_text_word(r, length, t.start) && mo_text_bytes(r, bytes, length, t.start);
+           mo_text_word(r, byte_length, t.start) && mo_text_bytes(r, bytes, byte_length, t.start);
 }
 
 bool mo_text_payload(struct mo_text_reader *r, uint32_t type, bool shorthand) {
@@ -401,13 +422,13 @@ bool mo_text_payload(struct mo_text_reader *r, uint32_t type, bool shorthand) {
         if (shorthand && kind == MO_TYPE_BIGINT && !mo_text_is(r, "bigint"))
             return bigint(r);
         struct mo_bytecode_string blob;
+        uint32_t sign = MO_BIGINT_ZERO;
         if (!mo_text_take(r, kind == MO_TYPE_BYTES ? "bytes" : "bigint",
                           kind == MO_TYPE_BYTES ? "expected bytes hex"
                                                 : "expected bigint sign hex"))
             return false;
         if (kind == MO_TYPE_BIGINT) {
             static const char *const signs[] = {"zero", "positive", "negative"};
-            uint32_t sign;
             if (!mo_text_enum(r, signs, 3, "expected zero, positive or negative", &sign) ||
                 !mo_text_word(r, sign, source))
                 return false;
@@ -416,7 +437,14 @@ bool mo_text_payload(struct mo_text_reader *r, uint32_t type, bool shorthand) {
             mo_text_refuse(r, r->token.start, "expected hex bytes");
             return false;
         }
-        return mo_text_quote(r, &blob) && mo_text_word(r, blob.length, source) &&
+        if (!mo_text_quote(r, &blob))
+            return false;
+        if (kind == MO_TYPE_BIGINT && ((sign == MO_BIGINT_ZERO) != (blob.length == 0) ||
+                                       (blob.length != 0 && blob.bytes[blob.length - 1] == 0))) {
+            mo_text_refuse(r, source, "noncanonical bigint literal");
+            return false;
+        }
+        return mo_text_word(r, blob.length, source) &&
                mo_text_bytes(r, blob.bytes, blob.length, source);
     } else if (kind == MO_TYPE_BYTE || kind == MO_TYPE_INT || kind == MO_TYPE_TIME ||
                kind == MO_TYPE_DURATION || kind == MO_TYPE_DECIMAL) {

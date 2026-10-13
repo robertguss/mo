@@ -39,14 +39,11 @@ static MO_MUST_USE bool body(struct mo_shorthand *s, unsigned depth, uint32_t *o
         kind = MO_TYPE_SET;
     if (mo_text_is(r, "Map"))
         kind = MO_TYPE_MAP;
-    struct mo_bytecode_string nominal = {0};
     if (kind == MO_BYTECODE_NO_INDEX) {
-        struct mo_text_token token = r->token;
-        uint32_t cursor = r->cursor;
-        if (!mo_short_name(s, false, &nominal))
-            return false;
-        r->token = token;
-        r->cursor = cursor;
+        struct mo_bytecode_string nominal;
+        /* Type arguments are part of a nominal identity, not runtime dependencies. */
+        return mo_short_name(s, false, &nominal) &&
+               mo_short_lookup(s, MO_SECTION_TYPES, nominal, source, out);
     }
     if (kind != MO_BYTECODE_NO_INDEX && !mo_text_word(r, kind, source))
         return false;
@@ -76,14 +73,10 @@ static MO_MUST_USE bool body(struct mo_shorthand *s, unsigned depth, uint32_t *o
             return false;
         if (kind != MO_BYTECODE_NO_INDEX)
             mo_text_patch(r, count_offset, count);
-        if (kind == MO_BYTECODE_NO_INDEX && r->token.kind == 'w' && r->text[r->token.start] == '.')
-            mo_text_next(r);
     } else if (kind != MO_BYTECODE_NO_INDEX) {
         mo_text_refuse(r, r->token.start, "expected type parameters (");
         return false;
     }
-    if (kind == MO_BYTECODE_NO_INDEX)
-        return mo_short_lookup(s, MO_SECTION_TYPES, nominal, source, out);
     if ((tuple && count < 2) || ((kind == MO_TYPE_LIST || kind == MO_TYPE_SET) && count != 1) ||
         (kind == MO_TYPE_MAP && count != 2)) {
         mo_text_refuse(
@@ -106,8 +99,9 @@ bool mo_short_type(struct mo_shorthand *s, unsigned depth, uint32_t *out) {
         mo_text_refuse(r, r->token.start, "expected type within nesting limit");
         return false;
     }
-    if (r->token.kind == 'w' && r->token.length > 1 && r->text[r->token.start] == 't' &&
-        r->text[r->token.start + 1] >= '0' && r->text[r->token.start + 1] <= '9') {
+    if (r->token.kind == 'w' && r->text[r->token.start] == 't' &&
+        mo_short_index((struct mo_bytecode_string){r->token.length,
+                                                   (const uint8_t *)r->text + r->token.start})) {
         return mo_text_ref(r, 't', false, out);
     }
     struct mo_buffer raw = r->raw, positions = r->positions;

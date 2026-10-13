@@ -11,10 +11,13 @@ struct validation {
     const struct mo_bytecode_read_info *info;
     struct mo_arena arena;
     struct mo_load_error *error;
+    struct mo_bytecode_error_site current;
 };
 
 static MO_MUST_USE bool refuse(struct validation *v, const char *reason) {
     *v->error = (struct mo_load_error){.offset = MO_BYTECODE_HEADER_SIZE, .reason = reason};
+    if (v->info->site != NULL)
+        *v->info->site = v->current;
     return false;
 }
 
@@ -135,6 +138,7 @@ static MO_MUST_USE bool type_table(struct validation *v) {
     memset(state, 0, f->type_count);
     uint32_t key_count = 0;
     for (uint32_t i = 0; i < f->type_count; i++) {
+        v->current = (struct mo_bytecode_error_site){MO_SECTION_TYPES, i};
         const struct mo_type *t = &f->types[i];
         if (nominal(t)) {
             if (t->kind == MO_TYPE_RECORD &&
@@ -186,6 +190,7 @@ static MO_MUST_USE bool type_table(struct validation *v) {
                     frame->next < t->parameter_count ? t->parameters[frame->next] : t->result;
                 frame->next++;
                 if (state[dep] == 1) {
+                    v->current = (struct mo_bytecode_error_site){MO_SECTION_TYPES, frame->type};
                     return refuse(v, "structural type cycle");
                 }
                 if (state[dep] == 0) {
@@ -202,6 +207,8 @@ static MO_MUST_USE bool type_table(struct validation *v) {
     qsort(keys, key_count, sizeof *keys, compare_types);
     for (uint32_t i = 1; i < key_count; i++) {
         if (type_key(keys[i - 1], keys[i]) == 0) {
+            uint32_t a = (uint32_t)(keys[i - 1] - f->types), b = (uint32_t)(keys[i] - f->types);
+            v->current = (struct mo_bytecode_error_site){MO_SECTION_TYPES, a > b ? a : b};
             return refuse(v, "duplicate interned type");
         }
     }
@@ -248,6 +255,7 @@ static MO_MUST_USE bool layouts(struct validation *v) {
         return false;
     }
     for (uint32_t i = 0; i < f->layout_count; i++) {
+        v->current = (struct mo_bytecode_error_site){MO_SECTION_LAYOUTS, i};
         const struct mo_layout *l = &f->layouts[i];
         if (l->type >= f->type_count) {
             return refuse(v, "layout type out of range");
@@ -311,6 +319,8 @@ static MO_MUST_USE bool layouts(struct validation *v) {
     qsort(keys, f->layout_count, sizeof *keys, compare_layouts);
     for (uint32_t i = 1; i < f->layout_count; i++) {
         if (compare_layouts(&keys[i - 1], &keys[i]) == 0) {
+            uint32_t a = (uint32_t)(keys[i - 1] - f->layouts), b = (uint32_t)(keys[i] - f->layouts);
+            v->current = (struct mo_bytecode_error_site){MO_SECTION_LAYOUTS, a > b ? a : b};
             return refuse(v, "duplicate layout");
         }
     }
@@ -328,6 +338,7 @@ static MO_MUST_USE uint64_t immediate(const uint8_t *bytes) {
 static MO_MUST_USE bool constants(struct validation *v) {
     const struct mo_bytecode *f = v->file;
     for (uint32_t i = 0; i < f->constant_count; i++) {
+        v->current = (struct mo_bytecode_error_site){MO_SECTION_CONSTANTS, i};
         const struct mo_bytecode_constant *k = &f->constants[i];
         enum mo_type_kind kind = f->types[k->type].kind;
         uint64_t value = immediate(k->value.immediate);
@@ -370,6 +381,7 @@ static MO_MUST_USE bool constants(struct validation *v) {
 static MO_MUST_USE bool functions(struct validation *v) {
     const struct mo_bytecode *f = v->file;
     for (uint32_t i = 0; i < f->function_count; i++) {
+        v->current = (struct mo_bytecode_error_site){MO_SECTION_FUNCTIONS, i};
         const struct mo_bytecode_function *fn = &f->functions[i];
         if (!named(v, fn->name) || fn->module >= f->module_count ||
             fn->result_type >= f->type_count) {
@@ -423,6 +435,12 @@ static MO_MUST_USE bool functions(struct validation *v) {
 static MO_MUST_USE bool modules(struct validation *v) {
     const struct mo_bytecode *f = v->file;
     if (f->init_count != f->global_count || f->debug_count != f->function_count) {
+        /* A missing init declaration belongs to the first unpaired global. */
+        v->current = f->init_count < f->global_count
+                         ? (struct mo_bytecode_error_site){MO_SECTION_GLOBALS, f->init_count}
+                     : f->init_count != f->global_count
+                         ? (struct mo_bytecode_error_site){MO_SECTION_INIT, MO_BYTECODE_NO_INDEX}
+                         : (struct mo_bytecode_error_site){MO_SECTION_DEBUG, MO_BYTECODE_NO_INDEX};
         return refuse(v, "init/global or debug/function count mismatch");
     }
     uint8_t *inits = allocate(v, f->function_count, 1, 1);
@@ -433,6 +451,7 @@ static MO_MUST_USE bool modules(struct validation *v) {
     memset(inits, 0, f->function_count);
     memset(globals, 0, f->global_count);
     for (uint32_t i = 0; i < f->init_count; i++) {
+        v->current = (struct mo_bytecode_error_site){MO_SECTION_INIT, i};
         uint32_t fn = f->init[i];
         if (fn >= f->function_count || f->functions[fn].kind != MO_FUNCTION_INIT ||
             inits[fn] != 0) {
@@ -442,16 +461,19 @@ static MO_MUST_USE bool modules(struct validation *v) {
     }
     for (uint32_t i = 0; i < f->function_count; i++) {
         if (f->functions[i].kind == MO_FUNCTION_INIT && inits[i] == 0) {
+            v->current = (struct mo_bytecode_error_site){MO_SECTION_FUNCTIONS, i};
             return refuse(v, "init function absent from init section");
         }
     }
     for (uint32_t i = 0; i < f->global_count; i++) {
+        v->current = (struct mo_bytecode_error_site){MO_SECTION_GLOBALS, i};
         const struct mo_bytecode_global *g = &f->globals[i];
         if (g->type >= f->type_count || !named(v, g->name) || g->module >= f->module_count) {
             return refuse(v, "global type, name or module out of range");
         }
     }
     for (uint32_t i = 0; i < f->module_count; i++) {
+        v->current = (struct mo_bytecode_error_site){MO_SECTION_MODULES, i};
         const struct mo_bytecode_module *m = &f->modules[i];
         if (!named(v, m->name)) {
             return refuse(v, "invalid module name");
@@ -484,6 +506,7 @@ static MO_MUST_USE bool modules(struct validation *v) {
     }
     for (uint32_t i = 0; i < f->global_count; i++) {
         if (globals[i] == 0) {
+            v->current = (struct mo_bytecode_error_site){MO_SECTION_GLOBALS, i};
             return refuse(v, "global absent from module");
         }
     }

@@ -2,7 +2,7 @@
 
 #include <string.h>
 
-static MO_MUST_USE bool index_shaped(struct mo_bytecode_string name) {
+bool mo_short_index(struct mo_bytecode_string name) {
     if (name.length < 2 || strchr("stLkgifmdrph", name.bytes[0]) == NULL)
         return false;
     for (uint32_t i = 1; i < name.length; i++)
@@ -16,11 +16,6 @@ bool mo_short_name(struct mo_shorthand *s, bool header, struct mo_bytecode_strin
     uint32_t start = r->token.start, end = start + r->token.length;
     if (r->token.kind != 'w' || r->token.length == 0) {
         mo_text_refuse(r, start, "expected qualified name");
-        return false;
-    }
-    struct mo_bytecode_string first = {r->token.length, (const uint8_t *)r->text + start};
-    if (index_shaped(first)) {
-        mo_text_refuse(r, start, "expected symbolic name, not reserved index spelling");
         return false;
     }
     mo_text_next(r);
@@ -56,7 +51,10 @@ bool mo_short_name(struct mo_shorthand *s, bool header, struct mo_bytecode_strin
             mo_text_next(r);
         }
     }
-    uint8_t *bytes = mo_arena_allocate(&r->arena, 2 * (size_t)(end - start) + 1, 1);
+    size_t capacity = 3 * (size_t)(end - start);
+    if (capacity > MO_LIMIT_STRING_SIZE)
+        capacity = MO_LIMIT_STRING_SIZE;
+    uint8_t *bytes = mo_arena_allocate(&r->arena, capacity + 1, 1);
     if (bytes == NULL) {
         mo_text_refuse(r, 0, "no memory");
         return false;
@@ -66,12 +64,19 @@ bool mo_short_name(struct mo_shorthand *s, bool header, struct mo_bytecode_strin
         uint8_t c = (uint8_t)r->text[i];
         if (c == ' ' || c == '\t')
             continue;
+        unsigned added = c == ':' ? 3U : c == ',' ? 2U : 1U;
+        if (added > capacity - n) {
+            mo_text_refuse(r, start, "expected bounded UTF-8 qualified name");
+            return false;
+        }
+        if (c == ':')
+            bytes[n++] = ' ';
         bytes[n++] = c;
-        if (c == ',')
+        if (c == ',' || c == ':')
             bytes[n++] = ' ';
     }
     bytes[n] = 0;
-    if (n == 0 || n > MO_LIMIT_STRING_SIZE || !mo_bytecode_utf8(bytes, n)) {
+    if (n == 0 || !mo_bytecode_utf8(bytes, n)) {
         mo_text_refuse(r, start, "expected bounded UTF-8 qualified name");
         return false;
     }
@@ -104,7 +109,7 @@ bool mo_short_reference(struct mo_shorthand *s, enum mo_bytecode_section section
     struct mo_text_reader *r = s->r;
     uint32_t source = r->token.start;
     struct mo_bytecode_string key = {r->token.length, (const uint8_t *)r->text + source};
-    if (index_shaped(key))
+    if (mo_short_index(key))
         return mo_text_ref(r, prefix, false, out);
     return mo_short_name(s, false, &key) && mo_short_lookup(s, section, key, source, out);
 }
@@ -175,9 +180,14 @@ static MO_MUST_USE bool declare(struct mo_shorthand *s, enum mo_bytecode_section
                                 uint32_t kind, uint32_t source) {
     struct mo_text_reader *r = s->r;
     struct mo_bytecode_string name;
+    uint32_t name_source = r->token.start;
     if (!mo_short_name(s, section == MO_SECTION_FUNCTIONS, &name))
         return false;
-    if (mo_text_find(s->declarations, name) != NULL) {
+    if (mo_short_index(name)) {
+        mo_text_refuse(r, name_source, "expected symbolic name, not reserved index spelling");
+        return false;
+    }
+    if (mo_text_find(s->symbols[section], name) != NULL) {
         mo_text_refuse(r, source, "expected unique symbolic declaration");
         return false;
     }
@@ -195,8 +205,7 @@ static MO_MUST_USE bool declare(struct mo_shorthand *s, enum mo_bytecode_section
     *decl = (struct mo_text_decl){section, source, index, name, NULL};
     *s->last = decl;
     s->last = &decl->next;
-    return mo_text_insert(r, &s->symbols[section], name, index) != NULL &&
-           mo_text_insert(r, &s->declarations, name, index) != NULL;
+    return mo_text_insert(r, &s->symbols[section], name, index) != NULL;
 }
 
 /* String encounters are independent of type interning. Recording them during reservation
@@ -238,6 +247,7 @@ static MO_MUST_USE bool reserve(struct mo_shorthand *s) {
             if (!mo_short_name(s, true, &name) || !mo_short_string(s, name, source, &unused))
                 return false;
         }
+        bool registers = body == MO_SECTION_FUNCTIONS && mo_text_is(r, "registers");
         struct mo_text_token previous = {0};
         while (r->token.kind != 'n' && r->token.kind != 0 && !r->failed) {
             struct mo_text_token token = r->token;
@@ -247,10 +257,11 @@ static MO_MUST_USE bool reserve(struct mo_shorthand *s) {
                 if (!mo_text_quote(r, &bytes) || !mo_short_string(s, bytes, token.start, &unused))
                     return false;
             } else {
-                if (token.kind == ':' && previous.kind == 'w' && r->text[previous.start] != '@') {
+                if (!registers && token.kind == ':' && previous.kind == 'w' &&
+                    r->text[previous.start] != '@') {
                     struct mo_bytecode_string bytes = {previous.length,
                                                        (const uint8_t *)r->text + previous.start};
-                    if (!index_shaped(bytes) && !mo_short_string(s, bytes, previous.start, &unused))
+                    if (!mo_short_string(s, bytes, previous.start, &unused))
                         return false;
                 }
                 mo_text_next(r);
@@ -375,15 +386,15 @@ static MO_MUST_USE bool module(struct mo_shorthand *s, const struct mo_text_decl
     while (ok && !mo_text_is(r, "]")) {
         uint32_t source = r->token.start;
         struct mo_bytecode_string key;
-        ok = mo_short_name(s, true, &key);
+        ok = mo_short_name(s, false, &key);
+        bool exposed = ok && key.length >= 4 && memcmp(key.bytes + key.length - 4, "(..)", 4) == 0;
+        if (exposed)
+            key.length -= 4;
         struct mo_text_index *type = ok ? mo_text_find(s->symbols[MO_SECTION_TYPES], key) : NULL;
         struct mo_text_index *fn = ok ? mo_text_find(s->symbols[MO_SECTION_FUNCTIONS], key) : NULL;
-        bool exposed = false;
-        if (ok && mo_text_is(r, "(")) {
-            mo_text_next(r);
-            ok = mo_text_take(r, "..", "expected .. in contents exposure") &&
-                 mo_text_take(r, ")", "expected ) after ..");
-            exposed = true;
+        if (ok && type != NULL && fn != NULL) {
+            mo_text_refuse(r, source, "expected unambiguous exposed type or function");
+            ok = false;
         }
         if (ok && type != NULL)
             ok = mo_buffer_append_le32(&types, type->value) &&
@@ -457,12 +468,11 @@ bool mo_text_shorthand(struct mo_text_reader *r) {
         }
         const struct mo_text_entry *entry = &r->tables[MO_SECTION_STRINGS].entries[name];
         struct mo_bytecode_string key = {entry->length - 4, entry->bytes + 4};
-        if (mo_text_find(s.declarations, key) != NULL) {
+        if (mo_text_find(s.symbols[MO_SECTION_TYPES], key) != NULL) {
             mo_text_refuse(r, e->source, "expected unique symbolic declaration");
             return false;
         }
-        if (mo_text_insert(r, &s.symbols[MO_SECTION_TYPES], key, i) == NULL ||
-            mo_text_insert(r, &s.declarations, key, i) == NULL)
+        if (mo_text_insert(r, &s.symbols[MO_SECTION_TYPES], key, i) == NULL)
             return false;
     }
     uint32_t n = r->tables[MO_SECTION_FUNCTIONS].count;

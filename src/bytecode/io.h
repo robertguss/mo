@@ -23,6 +23,12 @@ static inline MO_MUST_USE size_t mo_bytecode_work_budget(size_t wire_size) {
 }
 
 struct mo_bytecode_names;
+/* Extra source-map context for relational errors whose public wire offset is 20.
+ * COUNT means no site; NO_INDEX means the section count rather than an entry. */
+struct mo_bytecode_error_site {
+    enum mo_bytecode_section section;
+    uint32_t entry;
+};
 struct mo_bytecode_debug_positions {
     uint32_t spans; /* count word; entries start four bytes later */
     uint32_t names;
@@ -34,6 +40,7 @@ struct mo_bytecode_read_info {
     const struct mo_bytecode_names *names;
     const uint32_t *code; /* first code word, by function */
     const struct mo_bytecode_debug_positions *debug;
+    struct mo_bytecode_error_site *site;
     size_t wire_size;
 };
 
@@ -44,11 +51,14 @@ MO_MUST_USE struct mo_bytecode *mo_bytecode_decode(struct mo_arena *arena, const
                                                    size_t length, struct mo_load_error *error);
 
 /* As decode, retaining first-code-word wire positions in the caller's arena for verification. */
-MO_MUST_USE struct mo_bytecode *mo_bytecode_decode_info(struct mo_arena *arena,
-                                                        const uint8_t *bytes, size_t length,
-                                                        const uint32_t **code_offsets,
-                                                        struct mo_types *types_out,
-                                                        struct mo_load_error *error);
+MO_MUST_USE struct mo_bytecode *
+mo_bytecode_decode_info(struct mo_arena *arena, const uint8_t *bytes, size_t length,
+                        const uint32_t **code_offsets, struct mo_types *types_out,
+                        struct mo_bytecode_error_site *site, struct mo_load_error *error);
+
+MO_MUST_USE struct mo_image *mo_bytecode_load_site(const uint8_t *bytes, size_t length,
+                                                   struct mo_bytecode_error_site *site,
+                                                   struct mo_load_error *error);
 
 /* Structural-only writer for decoder tests and indexed I/O internals; never execute its output. */
 MO_MUST_USE bool mo_bytecode_encode(const struct mo_bytecode *file, struct mo_buffer *out,

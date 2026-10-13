@@ -51,7 +51,7 @@ static MO_MUST_USE bool types(struct mo_shorthand *s, struct type_info **out,
     return true;
 }
 
-static MO_MUST_USE bool literal(struct mo_shorthand *s, uint32_t type, bool shorthand) {
+bool mo_short_literal(struct mo_shorthand *s, uint32_t type, bool shorthand) {
     struct mo_text_reader *r = s->r;
     uint32_t source = r->token.start;
     if (type >= r->tables[MO_SECTION_TYPES].count) {
@@ -82,7 +82,7 @@ static MO_MUST_USE bool literal(struct mo_shorthand *s, uint32_t type, bool shor
 
 static MO_MUST_USE bool layout(struct mo_shorthand *s, const struct mo_text_request *q,
                                const struct type_info *info, struct mo_text_index *names,
-                               uint32_t *out) {
+                               struct mo_text_index **cache, uint32_t *out) {
     struct mo_text_reader *r = s->r;
     uint32_t kind = q->kind, type = q->type, tag = q->tag;
     bool automatic = q->automatic;
@@ -165,6 +165,17 @@ static MO_MUST_USE bool layout(struct mo_shorthand *s, const struct mo_text_requ
         mo_text_refuse(r, q->source, "expected record, tuple, boxed case or closure layout");
         return false;
     }
+    uint8_t key[12];
+    const uint32_t parts[] = {kind, type, tag};
+    for (unsigned i = 0; i < 3; i++)
+        for (unsigned b = 0; b < 4; b++)
+            key[i * 4 + b] = (uint8_t)(parts[i] >> (8 * b));
+    struct mo_text_index *found =
+        mo_text_find(*cache, (struct mo_bytecode_string){sizeof key, key});
+    if (found != NULL) {
+        *out = found->value;
+        return true;
+    }
     if (!mo_text_word(r, kind, q->source) || !mo_text_word(r, type, q->source) ||
         ((kind == MO_LAYOUT_CASE || kind == MO_LAYOUT_CLOSURE) &&
          !mo_text_word(r, tag, q->source)) ||
@@ -173,7 +184,14 @@ static MO_MUST_USE bool layout(struct mo_shorthand *s, const struct mo_text_requ
     for (uint32_t i = 0; i < count; i++)
         if (!mo_text_word(r, mo_text_get(e, offset + i * stride), q->source))
             return false;
-    return mo_short_pool(s, MO_SECTION_LAYOUTS, q->source, out);
+    if (!mo_short_pool(s, MO_SECTION_LAYOUTS, q->source, out))
+        return false;
+    uint8_t *saved = mo_arena_copy(&r->arena, key, sizeof key, 1);
+    if (saved == NULL) {
+        mo_text_refuse(r, 0, "no memory");
+        return false;
+    }
+    return mo_text_insert(r, cache, (struct mo_bytecode_string){sizeof key, saved}, *out) != NULL;
 }
 
 static MO_MUST_USE bool globals(struct mo_shorthand *s) {
@@ -232,7 +250,7 @@ bool mo_short_finish(struct mo_shorthand *s) {
     if (!mo_text_check_references(r, false))
         return false;
     struct type_info *info;
-    struct mo_text_index *names = NULL;
+    struct mo_text_index *names = NULL, *cache = NULL;
     if (!types(s, &info, &names))
         return false;
     struct mo_text_table *constants = &r->tables[MO_SECTION_CONSTANTS];
@@ -241,8 +259,8 @@ bool mo_short_finish(struct mo_shorthand *s) {
         uint32_t type = mo_text_get(e, 0), source = e->source;
         r->cursor = mo_text_get(e, 4);
         mo_text_next(r);
-        if (!mo_text_word(r, type, source) || !literal(s, type, false) || !mo_text_end_line(r) ||
-            !mo_text_save(r, MO_SECTION_CONSTANTS, i, source))
+        if (!mo_text_word(r, type, source) || !mo_short_literal(s, type, false) ||
+            !mo_text_end_line(r) || !mo_text_save(r, MO_SECTION_CONSTANTS, i, source))
             return false;
         e = &constants->entries[i];
         if (mo_text_insert(r, &s->pools[MO_SECTION_CONSTANTS],
@@ -252,17 +270,22 @@ bool mo_short_finish(struct mo_shorthand *s) {
     for (const struct mo_text_request *q = s->requests; q != NULL; q = q->next) {
         uint32_t index;
         if (q->constant) {
-            r->cursor = q->source;
-            mo_text_next(r);
-            if (!mo_text_word(r, q->type, q->source) || !literal(s, q->type, true))
-                return false;
-            if (r->token.kind != 'n' && r->token.kind != 0 && r->token.kind != ',') {
-                mo_text_refuse(r, r->token.start, "expected end of literal operand");
-                return false;
+            if (q->payload.length != 0) {
+                if (!mo_text_bytes(r, q->payload.bytes, q->payload.length, q->source))
+                    return false;
+            } else {
+                r->cursor = q->source;
+                mo_text_next(r);
+                if (!mo_text_word(r, q->type, q->source) || !mo_short_literal(s, q->type, true))
+                    return false;
+                if (r->token.kind != 'n' && r->token.kind != 0 && r->token.kind != ',') {
+                    mo_text_refuse(r, r->token.start, "expected end of literal operand");
+                    return false;
+                }
             }
             if (!mo_short_pool(s, MO_SECTION_CONSTANTS, q->source, &index))
                 return false;
-        } else if (!layout(s, q, info, names, &index))
+        } else if (!layout(s, q, info, names, &cache, &index))
             return false;
         if (q->offset != MO_BYTECODE_NO_INDEX) {
             struct mo_text_entry *fn = &r->tables[MO_SECTION_FUNCTIONS].entries[q->function];

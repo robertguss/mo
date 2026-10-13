@@ -121,7 +121,7 @@ static MO_MUST_USE bool summaries(struct mo_arena *arena, struct graph *g, uint3
 
 bool mo_verify_program_init(struct mo_arena *arena, const struct mo_bytecode *f,
                             const uint32_t *code_offsets, struct mo_verify_program *out,
-                            struct mo_load_error *error) {
+                            struct mo_bytecode_error_site *site, struct mo_load_error *error) {
     uint32_t nodes = f->function_count;
     size_t capacity = 0;
     for (uint32_t i = 0; i < f->function_count; i++) {
@@ -166,12 +166,16 @@ bool mo_verify_program_init(struct mo_arena *arena, const struct mo_bytecode *f,
             return refuse(error, code_offsets[index], "init has no global store");
         }
         if (out->global_rank[target] != 0) {
+            if (site != NULL)
+                *site = (struct mo_bytecode_error_site){MO_SECTION_FUNCTIONS, index};
             return refuse(error, 20, "global has multiple initializers");
         }
         out->global_rank[target] = i + 1;
     }
     for (uint32_t i = 0; i < f->global_count; i++) {
         if (out->global_rank[i] == 0) {
+            if (site != NULL)
+                *site = (struct mo_bytecode_error_site){MO_SECTION_GLOBALS, i};
             return refuse(error, 20, "global has no initializer");
         }
     }

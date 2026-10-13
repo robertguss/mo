@@ -306,8 +306,9 @@ static MO_MUST_USE bool library(struct function_reader *f, bool host, uint32_t *
     };
     struct mo_text_reader *r = f->s->r;
     char prefix = host ? 'h' : 'p';
-    if (r->token.length > 1 && r->text[r->token.start] == prefix &&
-        r->text[r->token.start + 1] >= '0' && r->text[r->token.start + 1] <= '9')
+    if (r->token.kind == 'w' && r->text[r->token.start] == prefix &&
+        mo_short_index((struct mo_bytecode_string){r->token.length,
+                                                   (const uint8_t *)r->text + r->token.start}))
         return mo_text_ref(r, prefix, false, out);
     uint32_t source = r->token.start;
     struct mo_bytecode_string name;
@@ -329,8 +330,9 @@ static MO_MUST_USE bool library(struct function_reader *f, bool host, uint32_t *
 static MO_MUST_USE bool layout(struct function_reader *f, uint32_t offset, uint32_t *out) {
     struct mo_text_reader *r = f->s->r;
     uint32_t source = r->token.start;
-    if (r->token.length > 1 && r->text[source] == 'L' && r->text[source + 1] >= '0' &&
-        r->text[source + 1] <= '9') {
+    if (r->token.kind == 'w' && r->text[source] == 'L' &&
+        mo_short_index(
+            (struct mo_bytecode_string){r->token.length, (const uint8_t *)r->text + source})) {
         return mo_text_ref(r, 'L', false, out);
     }
     struct mo_text_request q = {.kind = MO_BYTECODE_NO_INDEX,
@@ -351,8 +353,9 @@ static MO_MUST_USE bool layout(struct function_reader *f, uint32_t offset, uint3
         uint32_t cursor = r->cursor;
         struct mo_bytecode_string name;
         bool ordinary =
-            token.kind == '(' || (token.length > 1 && r->text[source] == 't' &&
-                                  r->text[source + 1] >= '0' && r->text[source + 1] <= '9');
+            token.kind == '(' || (token.kind == 'w' && r->text[source] == 't' &&
+                                  mo_short_index((struct mo_bytecode_string){
+                                      token.length, (const uint8_t *)r->text + source}));
         if (!ordinary) {
             if (!mo_short_name(f->s, false, &name))
                 return false;
@@ -417,6 +420,33 @@ static MO_MUST_USE bool skip_literal(struct mo_text_reader *r) {
         return false;
     }
     return !r->failed;
+}
+
+static MO_MUST_USE bool constant(struct function_reader *f, struct mo_text_request *q) {
+    struct mo_text_reader *r = f->s->r;
+    if (q->type >= r->tables[MO_SECTION_TYPES].count)
+        return skip_literal(r) && mo_short_request(f->s, q);
+    struct mo_buffer saved = r->raw, positions = r->positions;
+    mo_buffer_init(&r->raw, MO_LIMIT_BYTECODE_SIZE);
+    mo_buffer_init(&r->positions, 2 * (size_t)MO_LIMIT_BYTECODE_SIZE);
+    bool ok = mo_text_word(r, q->type, q->source) && mo_short_literal(f->s, q->type, true);
+    if (ok && r->token.kind != 'n' && r->token.kind != 0 && r->token.kind != ',') {
+        mo_text_refuse(r, r->token.start, "expected end of literal operand");
+        ok = false;
+    }
+    if (ok) {
+        q->payload.length = (uint32_t)r->raw.length;
+        q->payload.bytes = mo_arena_copy(&r->arena, r->raw.bytes, r->raw.length, 1);
+        if (q->payload.bytes == NULL) {
+            mo_text_refuse(r, 0, "no memory");
+            ok = false;
+        }
+    }
+    mo_buffer_free(&r->positions);
+    mo_buffer_free(&r->raw);
+    r->raw = saved;
+    r->positions = positions;
+    return ok && mo_short_request(f->s, q);
 }
 
 static MO_MUST_USE bool instruction(struct function_reader *f) {
@@ -499,7 +529,7 @@ static MO_MUST_USE bool instruction(struct function_reader *f) {
                                             .function = f->decl->index,
                                             .offset = (uint32_t)r->raw.length,
                                             .source = at};
-                ok = mo_short_request(f->s, &q) && skip_literal(r);
+                ok = constant(f, &q);
             }
             break;
         case MO_OPERAND_NONE:
@@ -597,10 +627,10 @@ static MO_MUST_USE bool code(struct function_reader *f) {
 }
 
 static MO_MUST_USE bool debug_array(struct function_reader *f, const struct mo_buffer *entries,
-                                    const struct mo_buffer *sources) {
+                                    const struct mo_buffer *sources, uint32_t source) {
     struct mo_text_reader *r = f->s->r;
     MO_ASSERT(entries->length / 16 == sources->length / 4);
-    if (!mo_text_word(r, (uint32_t)(entries->length / 16), f->decl->source))
+    if (!mo_text_word(r, (uint32_t)(entries->length / 16), source))
         return false;
     for (uint32_t i = 0; i < entries->length / 16; i++)
         if (!mo_text_bytes(r, entries->bytes + i * 16, 16, get(sources, i * 4)))
@@ -629,15 +659,15 @@ bool mo_short_function(struct mo_shorthand *s, const struct mo_text_decl *decl) 
     bool ok = header(&f) && metadata(&f) && code(&f) &&
               mo_text_save(r, MO_SECTION_FUNCTIONS, decl->index, decl->source);
     if (ok)
-        ok = debug_array(&f, &f.spans, &f.span_sources) &&
-             debug_array(&f, &f.variables, &f.variable_sources) &&
+        ok = debug_array(&f, &f.spans, &f.span_sources, decl->source) &&
+             debug_array(&f, &f.variables, &f.variable_sources, f.debug_sources[0]) &&
              mo_text_word(r, f.debug.text, f.debug_sources[1]) &&
              mo_text_word(r, f.debug.file, f.debug_sources[2]) &&
              mo_text_word(r, f.debug.start, f.debug_sources[2]) &&
              mo_text_word(r, f.debug.end, f.debug_sources[2]) &&
              mo_text_word(r, f.debug.subject, f.debug_sources[3]) &&
              mo_text_word(r, f.debug.expectation, f.debug_sources[4]) &&
-             debug_array(&f, &f.lines, &f.line_sources) &&
+             debug_array(&f, &f.lines, &f.line_sources, f.debug_sources[5]) &&
              mo_text_save(r, MO_SECTION_DEBUG, decl->index, decl->source);
     mo_buffer_free(&f.line_sources);
     mo_buffer_free(&f.span_sources);

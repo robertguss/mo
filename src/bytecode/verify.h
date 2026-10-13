@@ -31,6 +31,7 @@ struct mo_verification {
 MO_MUST_USE bool mo_bytecode_verify(const struct mo_bytecode *file, const struct mo_types *types,
                                     const uint32_t *code_offsets, size_t wire_size,
                                     struct mo_arena *arena, struct mo_verification *out,
+                                    struct mo_bytecode_error_site *site,
                                     struct mo_load_error *error);
 
 /* Replay only this function, reporting states before pc. pc must be an instruction boundary.

@@ -217,6 +217,59 @@ static void refusal(const char *text, size_t length, uint32_t offset, const char
     mo_buffer_free(&bytes);
 }
 
+static void symbolic_names(void) {
+    static const struct {
+        const char *text;
+        uint32_t types;
+    } cases[] = {
+        {"bytecode 0.1 shorthand\nrecord Box(Text)\n n: Int\nend\n"
+         "function A.get(b: Box(Text) borrowed) : Int function in A\n registers [r1: Int]\n"
+         " field r1, r0, 0\n ret r1\nend\nmodule A exposes [Box(Text), A.get]\n",
+         2},
+        {"bytecode 0.1 shorthand\nstrings\n s0 \"Column(Product)\"\n s1 \"n\"\nend\n"
+         "types\n t0 record s0 [(s1, t1)]\n t1 int\nend\n"
+         "function A.get(c: Column(Product) borrowed) : Int function in A\n registers [r1: Int]\n"
+         " field r1, r0, 0\n ret r1\nend\nmodule A exposes [Column(Product), A.get]\n",
+         2},
+        {"bytecode 0.1 shorthand\nstrings\n s0 \"Box(fn(Int) : Int)\"\n s1 \"n\"\nend\n"
+         "types\n t0 record s0 [(s1, t1)]\n t1 int\nend\n"
+         "function A.get(c: Box(fn(Int):Int) borrowed) : Int function in A\n registers [r1: Int]\n"
+         " field r1, r0, 0\n ret r1\nend\nmodule A exposes [Box(fn(Int) : Int)(..)]\n",
+         2},
+        {"bytecode 0.1 shorthand\nrecord Account\n value: Int\nend\n"
+         "module Account exposes [Account]\n",
+         2},
+        {"bytecode 0.1 shorthand\nstrings\n s0 \"Account\"\n s1 \"value\"\nend\n"
+         "types\n t0 record s0 [(s1, t1)]\n t1 int\nend\nmodule Account exposes [Account]\n",
+         2},
+        {"bytecode 0.1 shorthand\nrecord t1x\n t1: Int\nend\nchoice Mode\n case t1\nend\n"
+         "function A.get(p1: Int owned) : t1x function in A\n registers [r1: t1x]\n"
+         " construct r1, t1x, r0\n ret r1\nend\nmodule A exposes [t1x(..), Mode(..), A.get]\n",
+         3},
+        {"bytecode 0.1 shorthand\nrecord Page(Int)\n n: Int\nend\n"
+         "function A.id(Int)(p1: Int borrowed) : Int function in A\n registers []\n ret r0\nend\n"
+         "module A exposes [Page(Int), A.id(Int)]\n",
+         2},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        struct mo_buffer text;
+        mo_buffer_init(&text, MO_LIMIT_BYTECODE_TEXT_SIZE);
+        CHECK(mo_buffer_append_text(&text, cases[i].text));
+        struct mo_image *image = assemble(&text);
+        if (image != NULL) {
+            const struct mo_bytecode *b = mo_image_bytecode(image);
+            CHECK(b->type_count == cases[i].types && b->modules[0].type_count >= 1);
+            if (i == 6)
+                CHECK(!b->modules[0].types[0].contents_exposed &&
+                      b->modules[0].function_count == 1);
+            if (i == 2)
+                CHECK(strcmp(b->types[0].name, "Box(fn(Int) : Int)") == 0);
+            mo_image_free(image);
+        }
+        mo_buffer_free(&text);
+    }
+}
+
 static void refusals(void) {
     static const struct {
         const char *text, *at, *reason;
@@ -269,6 +322,41 @@ static void refusals(void) {
          "function A.id(n: Int owned) : Int function in A\n"
          "registers [r1: fn(Int): Int]\nconstruct r1, closure(f9)\nret r0\nend\n",
          "f9", "expected function index in final pool"},
+        {"bytecode 0.1 shorthand\nmodule A exposes []\nfunction A.test() : Unit test in A\n"
+         " registers [r0: Unit]\n const r0, ()\n ret r0\nend\n",
+         "function A.test", "function spec flag disagrees with kind"},
+        {"bytecode 0.1 shorthand\nmodule A exposes []\nrecord Bad\n n: Int\n n: Int\nend\n",
+         "record Bad", "duplicate field name"},
+        {"bytecode 0.1 shorthand\nmodule A exposes []\nfunction A.test(n: Int owned) : Unit test "
+         "spec in A\n"
+         " registers [r1: Unit]\n const r1, ()\n ret r1\nend\n",
+         "function A.test", "invalid function kind signature"},
+        {"bytecode 0.1 shorthand\nmodule B exposes [A.id]\nmodule A exposes []\n"
+         "function A.id(n: Int owned) : Int function in A\n registers []\n ret r0\nend\n",
+         "module B", "exposed function out of range/module"},
+        {"bytecode 0.1 shorthand\nmodule A exposes []\nglobal A.n: Int in A\n", "global A.n",
+         "init/global or debug/function count mismatch"},
+        {"bytecode 0.1 shorthand\nrecord A.id\n n: Int\nend\n"
+         "function A.id(n: Int owned) : Int function in A\n registers []\n ret r0\nend\n"
+         "module A exposes [A.id]\n",
+         "A.id]\n", "expected unambiguous exposed type or function"},
+        {"bytecode 0.1 shorthand\nmodule A exposes []\nfunction A.id() : Int function in A\n"
+         " registers [r0: Int]\n const r0, nope\n bogus r0\nend\n",
+         "nope", "expected integer digit in literal radix"},
+        {"bytecode 0.1 indexed\nstrings\n s0 \"A\"\n s1 \"A.test\"\nend\ntypes\n t0 unit\nend\n"
+         "layouts\nend\nconstants\n k0 t0 ()\nend\nglobals\nend\ninit\nend\nfunctions\n"
+         " f0 s1 m0 test spec 0\n params []\n result t0\n captures []\n registers [t0]\n code\n "
+         "const r0, k0\n ret r0\n end\n end\nend\n"
+         "modules\n m0 s0 types [] functions [] globals []\nend\ndebug\n d0 spans [] variables [] "
+         "text - declaration (-, 0, 0) subject - expectation none lines []\nend\n",
+         "f0 s1", "function spec flag disagrees with kind"},
+        {"bytecode 0.1 shorthand\nmodule A exposes []\n"
+         "global A.x: Int in A\nglobal A.y: Int in A\ninit [A.first, A.second]\n"
+         "function A.first() : Unit init in A\n registers [r0: Int, r1: Unit]\n"
+         " const r0, 1\n set_global A.x, r0\n const r1, ()\n ret r1\nend\n"
+         "function A.second() : Unit init in A\n registers [r0: Int, r1: Unit]\n"
+         " const r0, 2\n set_global A.x, r0\n const r1, ()\n ret r1\nend\n",
+         "function A.second", "global has multiple initializers"},
     };
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
         const char *at = strstr(cases[i].text, cases[i].at);
@@ -303,6 +391,12 @@ static void refusals(void) {
         {"Char", "U+110000", "expected Unicode scalar value", 0},
         {"Bytes", "bytes hex\"a\"", "expected even number of hex digits", 11},
         {"BigInt", "12.3", "expected BigInt decimal digit", 2},
+        {"BigInt", "0x10", "expected BigInt decimal digit", 1},
+        {"BigInt", "0b101", "expected BigInt decimal digit", 1},
+        {"BigInt", "1_000", "expected BigInt decimal digit", 1},
+        {"BigInt", "bigint positive hex\"0100\"", "noncanonical bigint literal", 0},
+        {"Decimal", "1.", "expected decimal digit", 1},
+        {"Decimal", ".1", "expected decimal digit", 0},
     };
     for (size_t i = 0; i < sizeof bad_literals / sizeof bad_literals[0]; i++) {
         struct mo_buffer text;
@@ -343,6 +437,8 @@ static void instruction_refusals(void) {
          "invalid debug register range"},
         {"declaration (-, 0, 1)\n", "ret r0\n", "-, 0",
          "expected ordered location, or zero bounds for absent file"},
+        {"lines [(-, 0, 0, \"condition\")]\n", "ret r0\n", "lines",
+         "condition lines or expectation on wrong function kind"},
     };
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
         struct mo_buffer text;
@@ -468,6 +564,74 @@ static void boundaries(void) {
     mo_buffer_free(&text);
 }
 
+/* Run separately so CI can put a wall-clock ceiling on hostile-but-bounded work.
+ * The malformed allocations still require every shorthand layout request to resolve. */
+static void work(const char *kind) {
+    bool record = strcmp(kind, "record") == 0, choice = strcmp(kind, "case") == 0;
+    MO_ASSERT(record || choice || strcmp(kind, "bigint") == 0);
+    struct mo_buffer text, bytes;
+    mo_buffer_init(&text, MO_LIMIT_BYTECODE_TEXT_SIZE);
+    mo_buffer_init(&bytes, MO_LIMIT_BYTECODE_SIZE);
+    CHECK(mo_buffer_append_text(&text, "bytecode 0.1 shorthand\n"));
+    if (record || choice) {
+        CHECK(mo_buffer_append_text(&text, record ? "record Big\n" : "choice Big\ncase Wide("));
+        for (unsigned i = 0; i < MO_LIMIT_FIELDS; i++) {
+            char field[48];
+            int n = snprintf(field, sizeof field, "field%05u: Int%s", i,
+                             record                     ? "\n"
+                             : i + 1 == MO_LIMIT_FIELDS ? ")\n"
+                                                        : ", ");
+            CHECK(n > 0 && (size_t)n < sizeof field);
+            CHECK(mo_buffer_append_text(&text, field));
+        }
+        CHECK(mo_buffer_append_text(&text, "end\nmodule A exposes []\n"
+                                           "function A.build() : Big function in A\n"
+                                           "registers [r0: Big]\n"));
+        uint32_t source = (uint32_t)text.length;
+        for (unsigned i = 0; i < 20000; i++)
+            CHECK(mo_buffer_append_text(&text,
+                                        record ? "construct r0, Big\n" : "make_case r0, Big, 0\n"));
+        CHECK(mo_buffer_append_text(&text, "ret r0\nend\n"));
+        refusal((const char *)text.bytes, text.length, source,
+                record ? "construct/reuse field count" : "make_case field count");
+    } else {
+        CHECK(mo_buffer_append_text(&text, "module A exposes []\n"
+                                           "function A.big() : Unit function in A\n"
+                                           "registers [r0: BigInt, r1: Unit]\n"));
+        uint8_t digits[MO_LIMIT_BYTECODE_BIGINT_DIGITS];
+        memset(digits, '9', sizeof digits);
+        for (unsigned i = 0; i < 4000; i++) {
+            CHECK(mo_buffer_append_text(&text, "const r0, "));
+            CHECK(mo_buffer_append(&text, digits, sizeof digits));
+            CHECK(mo_buffer_append_byte(&text, '\n'));
+        }
+        CHECK(mo_buffer_append_text(&text, "const r1, ()\nret r1\nend\n"));
+        struct mo_assemble_error ae;
+        struct mo_load_error le;
+        bool ok = mo_bytecode_assemble((const char *)text.bytes, text.length, &bytes, &ae);
+        CHECK(ok);
+        if (!ok)
+            CHECK(fprintf(stderr, "assembly refusal at %u: %s\n", ae.offset, ae.reason) >= 0);
+        if (ok) {
+            struct mo_image *image = mo_load(bytes.bytes, bytes.length, &le);
+            CHECK(image != NULL);
+            if (image != NULL) {
+                const struct mo_bytecode *b = mo_image_bytecode(image);
+                CHECK(b->constant_count == 2);
+                const struct mo_bytecode_bigint *integer = &b->constants[0].value.bigint;
+                CHECK(integer->sign == MO_BIGINT_POSITIVE);
+                CHECK(printf("magnitude ") >= 0);
+                for (uint32_t i = 0; i < integer->magnitude.length; i++)
+                    CHECK(printf("%02x", (unsigned)integer->magnitude.bytes[i]) >= 0);
+                CHECK(printf("\n") >= 0);
+                mo_image_free(image);
+            }
+        }
+    }
+    mo_buffer_free(&bytes);
+    mo_buffer_free(&text);
+}
+
 static void ordered_names(void) {
     /* Monotone keys would make an unbalanced pool/symbol tree exceed its stack bound.
      * Repeated lookups must also reuse the seed, rather than scanning every earlier name. */
@@ -526,12 +690,18 @@ static void empty(void) {
 }
 
 int main(int argc, char **argv) {
-    MO_ASSERT(argc == 1 || (argc == 3 && strcmp(argv[1], "--corpus") == 0));
+    MO_ASSERT(argc == 1 ||
+              (argc == 3 && (strcmp(argv[1], "--corpus") == 0 || strcmp(argv[1], "--work") == 0)));
+    if (argc == 3 && strcmp(argv[1], "--work") == 0) {
+        work(argv[2]);
+        return mo_test_report("bytecode text work");
+    }
     if (argc == 3)
         corpus = argv[2];
     empty();
     scalars();
     programs();
+    symbolic_names();
     refusals();
     instruction_refusals();
     boundaries();

@@ -1664,11 +1664,11 @@ static void work_bound(void) {
         mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
         CHECK(mo_bytecode_write(&t.file, &wire, &we));
         const struct mo_bytecode *f =
-            mo_bytecode_decode_info(&arena, wire.bytes, wire.length, &offsets, &view, &le);
+            mo_bytecode_decode_info(&arena, wire.bytes, wire.length, &offsets, &view, NULL, &le);
         CHECK(f != NULL);
         if (f != NULL) {
             struct mo_verification verified;
-            CHECK(mo_bytecode_verify(f, &view, offsets, wire.length, &arena, &verified, &le));
+            CHECK(mo_bytecode_verify(f, &view, offsets, wire.length, &arena, &verified, NULL, &le));
             uint64_t work = 0;
             CHECK(mo_bytecode_readable(f, &view, &verified, 0, offsets[0], 3 + n * 4, readable,
                                        &work, &le));
@@ -2119,9 +2119,9 @@ static void hostile_work(void) {
     mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
     CHECK(mo_bytecode_encode(&t.file, &wire, &we));
     const struct mo_bytecode *f =
-        mo_bytecode_decode_info(&arena, wire.bytes, wire.length, &offsets, &view, &le);
+        mo_bytecode_decode_info(&arena, wire.bytes, wire.length, &offsets, &view, NULL, &le);
     MO_ASSERT(f != NULL);
-    CHECK(mo_bytecode_verify(f, &view, offsets, wire.length, &arena, &verified, &le));
+    CHECK(mo_bytecode_verify(f, &view, offsets, wire.length, &arena, &verified, NULL, &le));
     uint64_t work = 0;
     CHECK(mo_bytecode_readable(f, &view, &verified, 0, offsets[0], pc - 2, readable, &work, &le));
     CHECK(work < UINT64_C(4) * (pc + count));

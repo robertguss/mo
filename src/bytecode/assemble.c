@@ -344,10 +344,15 @@ static MO_MUST_USE bool output(struct mo_text_reader *r, struct mo_buffer *out) 
     for (unsigned i = 0; i < 8; i++)
         out->bytes[12 + i] = (uint8_t)(hash >> (8 * i));
     struct mo_load_error error;
-    struct mo_image *image = mo_load(out->bytes, out->length, &error);
+    struct mo_bytecode_error_site site;
+    struct mo_image *image = mo_bytecode_load_site(out->bytes, out->length, &site, &error);
     if (image == NULL) {
-        mo_text_refuse(r, error.kind == MO_BYTECODE_NO_MEMORY ? 0 : text_offset(r, error.offset),
-                       error.reason);
+        uint32_t source = error.kind == MO_BYTECODE_NO_MEMORY ? 0 : text_offset(r, error.offset);
+        if (error.offset == MO_BYTECODE_HEADER_SIZE && site.section < MO_SECTION_COUNT) {
+            const struct mo_text_table *table = &r->tables[site.section];
+            source = site.entry < table->count ? table->entries[site.entry].source : table->source;
+        }
+        mo_text_refuse(r, source, error.reason);
         return false;
     }
     mo_image_free(image);
