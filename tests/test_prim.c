@@ -418,6 +418,19 @@ static void primitive_work(void) {
     prim_fixture_free(&f);
 }
 
+static void time_boundary(void) {
+    struct prim_fixture f;
+    prim_fixture_init(&f, 1 << 20);
+    struct mo_cell args[] = {mo_cell_time(INT64_C(253402300799999999)), mo_cell_duration(1)};
+    struct mo_cell out = mo_cell_int(41);
+    const char *reason;
+    CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_TIME_CHECKED_ADD,
+                       f.signature[MO_PRIM_TIME_CHECKED_ADD], args, &out,
+                       &reason) == MO_PRIM_RETURNED);
+    CHECK(mo_cell_get_tag(out) == 0);
+    prim_fixture_free(&f);
+}
+
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--big-text-1m") == 0) {
         bigint_text_work(415241);
@@ -448,5 +461,6 @@ int main(int argc, char **argv) {
     text_split();
     collection_ownership();
     refusal_preserves_operands();
+    time_boundary();
     return mo_test_report("primitives");
 }

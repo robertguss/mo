@@ -119,6 +119,7 @@ fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test $(BUILD)/d
 	@mkdir -p $(FUZZ_BUILD)/vm-fixtures
 	$(BUILD)/debug/tests/test_vm.test --corpus $(FUZZ_BUILD)/vm-fixtures
 	python3 ci/check_primitives.py --corpus $(FUZZ_BUILD)/corpus/fuzz_prim
+	python3 ci/check_unicode16.py --corpus $(FUZZ_BUILD)/corpus/fuzz_prim
 	@for f in $(FUZZERS); do \
 		base=$$(basename $$f); variants=small; \
 		if [ "$$base" = fuzz_bytecode_io ]; then variants="small large"; fi; \

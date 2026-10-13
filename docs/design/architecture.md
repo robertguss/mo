@@ -1106,8 +1106,9 @@ index, including `fn() : T` for a zero-argument constant. Entry sets and checks
 unchanged zero-based row of `base/prims.def`, declared in `base/prims.h` so
 `prim` need not depend on `bytecode`. A typed status distinguishes a result,
 overflow, division by zero, an outside-domain call, a repeated map-literal key,
-allocation/size refusal, and a primitive not implemented in the current stage.
-The static reason is detail for a defect, never something dispatch parses.
+and allocation/size refusal. All primitive rows are implemented. The static
+reason records the arithmetic type, outside-domain operation or representation
+limit for the VM's defect report.
 Only a returned result transfers ownership: the result is owned, the `o`
 parameters are consumed, and the `b` parameters stay readable. All refusals
 preserve every operand, its object and ownership, and the output cell, so the
@@ -1117,11 +1118,13 @@ private result before committing ownership. Native walk/build storage is
 charged to the process through `mo_scratch`; structural formatting uses the
 heap printer's separately bounded caller-owned output buffer.
 
-Primitive part 1 implements every numeric, Text, Char, Bytes, List, Map, Set
-and Range row. Time/Duration's own operations and all five Unicode16 rows
-still return the staged `NOT_IMPLEMENTED` refusal. Unicode16 will use generated
-UCD 16.0 tables and its conformance data, not an approximate implementation.
-The C/Lean differential gate covers each implemented row, exact Float bits,
+Primitive parts 1 and 2 implement every row. Time/Duration use microseconds,
+the heap's formatter and the UTC instant's inclusive years 1 through 9999.
+The parser follows `Support/Time.lean`, including offsets, lowercase `t`/`z`
+and one to six fractional digits; an offset may move local year `0000` into
+valid UTC year 1. `checked_add` returns `None` outside the time range; Time
+arithmetic instructions stop with the bug required by reference 3.9.
+The C/Lean differential gate covers every non-Unicode row, exact Float bits,
 all four Number instances of sum, and exact stop details, with shared and unique
 operands and multi-step collection updates. `%structural` uses the reference's
 text form, including shortest decimal Float spellings and escaped nested
@@ -1133,6 +1136,23 @@ Long text matching uses KMP. BigInt multiplication uses explicit-stack
 Karatsuba; division uses normalized base-2^32 long division (a single pass for
 a one-limb divisor), with scratch bounded by operand/result sizes and the heap.
 Reference 13.3 promises no constant or linear cost for BigInt arithmetic.
+
+Unicode16 is trusted, not reimplemented in Lean. `ci/unicode16/` holds the
+compressed unmodified UCD 16.0.0 sources, their SHA-256 hashes and license;
+`ci/generate_unicode16.py` generates the compact range/mapping tables.
+CI checks reproducibility and every grapheme/NFC test vector, full case data
+and final-sigma contexts. Graphemes use the untailored extended rules of
+UAX #29 revision 45. The width policy is explicit in `library.md`.
+Property, mapping and composition lookups are logarithmic in their table
+counts, with direct ASCII properties and algorithmic Hangul handling. Each
+scalar is visited a bounded number of times: segmentation keeps suffix
+states, sigma lookahead runs do not overlap, and canonical ordering uses
+stable counting sort on long combining runs (insertion sort only up to 32
+scalars). Decompositions expand to at most four scalars, case mappings to
+three. Scratch derives from input/output sizes and shares the process heap
+budget. Output respects the runtime `MO_LIMIT_VALUE_BYTES` representation
+ceiling and collection limits, not the source-file limit. Allocation refusals
+name `--max-heap`; any refusal preserves operands and output just like part 1.
 
 **Core's checker.** `mo_core_check` accepts complete parsed or arena-built
 Core trees, not arbitrary pointers or invalid C enum tags. Its typing contract
@@ -1619,9 +1639,10 @@ the CBMC proofs, within a time budget for the CI orb.
   allocation ledger or claim of a 40-byte allocation is part of this version.
 - **Text's character count** is computed on each call. Caching it costs a word
   per text; decide with the benchmark.
-- **Unicode16** needs tables generated from the Unicode Character Database
-  16.0, kept in the repository with the generator and the source files'
-  hashes.
+- **Unicode16** now has generated UCD 16.0.0 tables, the generator, compressed
+  unmodified sources and their hashes in the repository (section 12).
+  CI checks regeneration and the UCD's conformance data; width follows the
+  explicit policy in `library.md`, not the host terminal.
 - **The bytecode format's stability.** It is internal in Phase 2. Phase 5's
   upgrades need a versioned format; decide then whether it is public.
 

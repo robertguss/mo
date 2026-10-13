@@ -213,6 +213,45 @@ def collection_cases(rng, rows):
             yield f"{module}.{name}-{i}", query(f"{module}.{name}", primitive, args)
 
 
+def time_cases(rng):
+    low, high = -62135596800000000, 253402300799999999
+    times = [low, low + 1, -86400000001, -1, 0, 1, high - 1, high]
+    times += [rng.randrange(low, high + 1) for _ in range(128)]
+    durations = [-(1 << 63), (1 << 63)-1, -1001, -999, -1, 0, 1, 999, 1001]
+    durations += [rng.randrange(-(1 << 63), 1 << 63) for _ in range(128)]
+    for name, op in [("in_milliseconds", "inMilliseconds"), ("in_seconds", "inSeconds"),
+                     ("to_text", "durToText")]:
+        for i, d in enumerate(durations):
+            yield f"Duration.{name}-{i}", query(f"Duration.{name}", f"(time ({op}))", [f"(duration {d})"])
+    for i, t in enumerate(times):
+        yield f"Time.to_text-{i}", query("Time.to_text", "(time (toText))", [f"(time {t})"])
+        for d in durations[:9] + [low - t - 1, low - t, high - t, high - t + 1]:
+            yield f"Time.checked_add-{i}-{d}", query("Time.checked_add", "(time (checkedAdd))",
+                                                    [f"(time {t})", f"(duration {d})"])
+    texts = ["", "0001-01-01T00:00:00Z", "9999-12-31T23:59:59.999999Z",
+             "0001-01-01T00:00:00+00:01", "9999-12-31T23:59:59-00:01",
+             "0000-12-31T23:59:59-00:01", "0000-02-29T00:00:00Z",
+             "2000-02-29t23:59:59.123456z", "1900-02-29T00:00:00Z",
+             "2026-10-12T04:15:00.5+02:00", "1970-01-01T00:00:00-23:59",
+             "1970-01-01T00:00:00+24:00", "1970-01-01T00:00:00+01:60",
+             "1970-01-01T00:00:60Z", "1970-01-01T24:00:00Z",
+             "1970-01-01T00:00:00.Z", "1970-01-01T00:00:00.1234567Z",
+             "1970-00-01T00:00:00Z", "1970-13-01T00:00:00Z",
+             "1970-01-00T00:00:00Z", "1970-04-31T00:00:00Z",
+             "1970-01-01 00:00:00Z", "1970-01-01T00:00:00Z\0"]
+    for _ in range(256):
+        y, m, d = rng.randrange(10000), rng.randrange(14), rng.randrange(33)
+        hh, mm, ss = rng.randrange(26), rng.randrange(62), rng.randrange(62)
+        fraction = rng.choice(["", ".", f".{rng.randrange(10**7):07}", f".{rng.randrange(10**6):06}"])
+        zone = rng.choice(["Z", "z", f"+{rng.randrange(26):02}:{rng.randrange(62):02}", "-23:59"])
+        texts.append(f"{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}{fraction}{zone}")
+    # Mutations hit every fixed-width digit and separator, not only range checks.
+    canonical = "2000-02-29T12:34:56.123456+02:30"
+    texts += [canonical[:i] + c + canonical[i+1:] for i in range(len(canonical)) for c in ["x", "0", "9"]]
+    for i, s in enumerate(texts):
+        yield f"Time.parse-{i}", query("Time.parse", "(time (parse))", [f"(text {quote(s)})"])
+
+
 def cases():
     rng = random.Random(1300)
     rows = re.findall(r'^PRIM\((\w+),\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*"([ob]*)",',
@@ -275,6 +314,7 @@ def cases():
     yield from text_cases(rng, rows)
     yield from big_cases(rng, rows)
     yield from collection_cases(rng, rows)
+    yield from time_cases(rng)
     for family, samples in [("decimal", [[], [-maximum, -1], [maximum, 1, -1], [-1, 1], [1, 2, 3]]),
                             ("bigInt", [[], [-(1 << 512), 1 << 511, (1 << 64)-1], [1, -1, 2]]),
                             ("float", [[], [1e30, -1e30, 0.1], [-0.0], [float('inf'), float('-inf')]])]:
@@ -353,7 +393,7 @@ def main():
         directory.mkdir(parents=True, exist_ok=True)
         ids = re.findall(r'^PRIM\((\w+),', pathlib.Path("src/base/prims.def").read_text(), re.M)
         rng = random.Random(1300)
-        for i, name in enumerate(ids[:ids.index("RANGE_CONTAINS") + 1]):
+        for i, name in enumerate(ids):
             for variant in range(6):
                 operands = bytes(512) if variant == 0 else rng.randbytes(512)
                 (directory / f"{name}-{variant}").write_bytes(
@@ -363,7 +403,7 @@ def main():
     rows = re.findall(r'^PRIM\(\w+,\s*"([^"]+)",\s*"([^"]+)"',
                       pathlib.Path("src/base/prims.def").read_text(), re.M)
     expected_rows = {f"{module}.{name}" for module, name in rows
-                     if module not in {"Time", "Duration", "Unicode16"}}
+                     if module != "Unicode16"}
     covered = {re.search(r'\(text "([^"]+)"\)', raw)[1] for _, raw in generated}
     if covered != expected_rows:
         raise AssertionError(f"primitive oracle coverage differs: {covered ^ expected_rows}")

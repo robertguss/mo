@@ -44,6 +44,17 @@ static MO_MUST_USE bool cell(struct prim_fixture *f, uint32_t type, struct input
         *out = mo_cell_int(n);
         return true;
     }
+    case MO_TYPE_TIME:
+        *out = mo_cell_time((int64_t)(word(in) % UINT64_C(315537897600000000)) -
+                            INT64_C(62135596800000000));
+        return true;
+    case MO_TYPE_DURATION: {
+        uint64_t raw = word(in);
+        int64_t n;
+        memcpy(&n, &raw, sizeof n);
+        *out = mo_cell_duration(n);
+        return true;
+    }
     case MO_TYPE_FLOAT: {
         uint64_t raw = word(in);
         double n;
@@ -65,23 +76,36 @@ static MO_MUST_USE bool cell(struct prim_fixture *f, uint32_t type, struct input
         *out = mo_cell_range(start, end);
         return true;
     }
-    case MO_TYPE_TEXT:
+    case MO_TYPE_TEXT: {
+        static const uint32_t samples[] = {
+            0,       'A',     'a',    '\'',   0x3a3,  0x345,  0x130,  0xdf,    0x301,
+            0x315,   0x915,   0x94d,  0x924,  0x200d, 0xfe0e, 0xfe0f, 0x1f469, 0x1f1e6,
+            0x1f1fa, 0x1f3fb, 0x2764, 0x20e3, 0x1100, 0x1161, 0x11a8, 0x16d63, 0x16d67};
+        uint8_t bytes[1024];
+        size_t count = byte(in), length = 0;
+        for (size_t i = 0; i < count; i++) {
+            uint64_t raw = word(in);
+            uint32_t cp = (raw & 1) != 0
+                              ? samples[(raw >> 1) % (sizeof samples / sizeof samples[0])]
+                              : (uint32_t)((raw >> 1) % 0x110000);
+            if (cp >= 0xd800 && cp <= 0xdfff)
+                cp = 0;
+            unsigned n = cp < 0x80 ? 1U : cp < 0x800 ? 2U : cp < 0x10000 ? 3U : 4U;
+            for (unsigned j = n; j > 1; j--) {
+                bytes[length + j - 1] = (uint8_t)(0x80 | (cp & 63));
+                cp >>= 6;
+            }
+            bytes[length] = (uint8_t)(cp | (n == 1 ? 0 : n == 2 ? 0xc0 : n == 3 ? 0xe0 : 0xf0));
+            length += n;
+        }
+        return mo_value_text(f->heap, (const char *)bytes, length, out);
+    }
     case MO_TYPE_BYTES:
     case MO_TYPE_BIGINT: {
         uint8_t bytes[1024];
-        size_t count = word(in) % 257, length = 0;
-        static const char *const scalars[] = {"a", "β", "🙂", "e", "́", "#", "{", "\n"};
-        for (size_t i = 0; i < count; i++) {
-            if (t->kind == MO_TYPE_TEXT) {
-                const char *scalar = scalars[byte(in) % 8];
-                size_t n = strlen(scalar);
-                memcpy(bytes + length, scalar, n);
-                length += n;
-            } else
-                bytes[length++] = byte(in);
-        }
-        if (t->kind == MO_TYPE_TEXT)
-            return mo_value_text(f->heap, (const char *)bytes, length, out);
+        size_t length = word(in) % 1025;
+        for (size_t i = 0; i < length; i++)
+            bytes[i] = byte(in);
         if (t->kind == MO_TYPE_BYTES)
             return mo_value_bytes(f->heap, bytes, length, out);
         while (length != 0 && bytes[length - 1] == 0)
@@ -134,11 +158,51 @@ static MO_MUST_USE bool cell(struct prim_fixture *f, uint32_t type, struct input
     }
 }
 
+static void unicode_laws(struct prim_fixture *f, enum mo_primitive_id id,
+                         const struct mo_cell *args, struct mo_cell result) {
+    if (id == MO_PRIM_UNICODE16_GRAPHEMES) {
+        size_t length, at = 0;
+        const uint8_t *original = mo_value_data(args[0], &length);
+        for (uint32_t i = 0; i < mo_list_size(result); i++) {
+            struct mo_cell item, again;
+            MO_ASSERT(mo_list_get(result, i, &item));
+            size_t n;
+            const uint8_t *bytes = mo_value_data(item, &n);
+            MO_ASSERT(n != 0 && n <= length - at && memcmp(bytes, original + at, n) == 0);
+            at += n;
+            const char *reason;
+            enum mo_prim_status status =
+                mo_prim_call(f->heap, &f->types, id, f->signature[id], &item, &again, &reason);
+            if (status == MO_PRIM_RETURNED) {
+                MO_ASSERT(mo_list_size(again) == 1);
+                mo_value_drop(f->heap, f->types.items[f->signature[id]].result, again);
+            } else
+                MO_ASSERT(status == MO_PRIM_OUT_OF_MEMORY);
+        }
+        MO_ASSERT(at == length);
+    } else if (id == MO_PRIM_UNICODE16_NORMALIZE_NFC) {
+        uint32_t text = f->builtin[MO_TYPE_TEXT];
+        struct mo_cell duplicate = mo_value_dup(f->heap, text, result), again;
+        const char *reason;
+        enum mo_prim_status status =
+            mo_prim_call(f->heap, &f->types, id, f->signature[id], &duplicate, &again, &reason);
+        if (status == MO_PRIM_RETURNED) {
+            size_t a, b;
+            const uint8_t *left = mo_value_data(result, &a), *right = mo_value_data(again, &b);
+            MO_ASSERT(a == b && (a == 0 || memcmp(left, right, a) == 0));
+            mo_value_drop(f->heap, text, again);
+        } else {
+            MO_ASSERT(status == MO_PRIM_OUT_OF_MEMORY);
+            mo_value_drop(f->heap, text, duplicate);
+        }
+    }
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (size < 4)
         return 0;
     struct input in = {data, size, 0};
-    enum mo_primitive_id id = (enum mo_primitive_id)(byte(&in) % (MO_PRIM_RANGE_CONTAINS + 1));
+    enum mo_primitive_id id = (enum mo_primitive_id)(byte(&in) % MO_PRIM_COUNT);
     struct prim_fixture f;
     size_t budget = byte(&in) % 2 == 0 ? 65536U : 262144U;
     enum mo_type_kind element = byte(&in) % 2 == 0 ? MO_TYPE_INT : MO_TYPE_TEXT;
@@ -177,9 +241,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (built == count) {
         const char *reason;
         status = mo_prim_call(f.heap, &f.types, id, f.signature[id], args, &result, &reason);
-        MO_ASSERT(status != MO_PRIM_NOT_IMPLEMENTED);
         if (status == MO_PRIM_RETURNED) {
             MO_ASSERT(reason == NULL);
+            unicode_laws(&f, id, args, result);
             struct mo_buffer output;
             mo_buffer_init(&output, 262144);
             /* Rendering may exceed its independent output or scratch ceiling. */
