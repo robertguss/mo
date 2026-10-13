@@ -1716,6 +1716,38 @@ static void test_entry_record(void) {
     }
     mo_arena_free(&arena);
 }
+static void test_join(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b = compile(
+        &arena, "(Program () ((FunDecl \"start\" ((\"again\" (bool))) (tuple ((int) (int))) "
+                "(join \"loop\" ((\"x\" (int)) (\"y\" (int))) "
+                "(if_ (var \"again\") (jump \"loop\" ((var \"y\") (var \"x\"))) "
+                "(tuple ((var \"x\") (var \"y\")))) "
+                "(jump \"loop\" ((lit (int 17)) (lit (int -29))))) "
+                "\"M\" (function) 0)) () \"start\" (noSource))");
+    if (b != NULL) {
+        const struct mo_bytecode_function *f = &b->functions[0];
+        const uint32_t *branch = instruction(f, MO_OP_BRANCH, 0),
+                       *entry = instruction(f, MO_OP_JUMP, 0),
+                       *back = instruction(f, MO_OP_JUMP, 1);
+        if (branch != NULL && entry != NULL && back != NULL)
+            CHECK(entry[1] > (uint32_t)(back - f->code) && back[1] == (uint32_t)(branch - f->code));
+        /* Both source cells must be saved before either parameter is overwritten. */
+        if (branch != NULL) {
+            uint32_t at = branch[2];
+            CHECK(at + 12 <= f->code_count);
+            if (at + 12 <= f->code_count) {
+                const uint32_t *moves = f->code + at;
+                CHECK(moves[0] == MO_OP_MOVE && moves[3] == MO_OP_MOVE && moves[6] == MO_OP_MOVE &&
+                      moves[9] == MO_OP_MOVE && moves[2] == moves[10] && moves[5] == moves[7] &&
+                      moves[1] == moves[8] && moves[4] == moves[11] && moves[1] != moves[10] &&
+                      moves[4] != moves[7]);
+            }
+        }
+    }
+    mo_arena_free(&arena);
+}
 int main(int argc, char **argv) {
     if (argc > 1)
         return corpus(argc, argv);
@@ -1748,5 +1780,6 @@ int main(int argc, char **argv) {
     test_collection_literals();
     test_instantiated_type_depth();
     test_entry_record();
+    test_join();
     return mo_test_report("test_codegen");
 }

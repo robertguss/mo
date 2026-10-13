@@ -48,10 +48,14 @@ struct node {
     uint32_t signature;
     bool temporary, activity;
 };
+struct join {
+    struct node *node;
+    uint32_t offset, owners;
+};
 struct function {
-    struct vector regs, code, spans, names, captures;
+    struct vector regs, code, spans, names, captures, joins;
     struct node *body;
-    struct mo_codegen_index *locals, *bindings, *zeros, *closure_names, *capture_index;
+    struct mo_codegen_index *locals, *bindings, *zeros, *closure_names, *capture_index, *join_names;
     const struct mo_core_fun_meta *meta;
     const struct mo_core_fun *source;
     struct function *parent, *root;
@@ -889,6 +893,7 @@ static void function_init(struct function *f) {
     f->spans.width = sizeof(struct mo_bytecode_span);
     f->names.width = sizeof(struct mo_bytecode_register_name);
     f->captures.width = sizeof(struct capture);
+    f->joins.width = sizeof(struct join);
     f->owned = MO_NO_INDEX;
 }
 /* Capture lookup happens while all enclosing lexical scopes are still active. Intermediate
@@ -935,7 +940,8 @@ static MO_MUST_USE bool context(struct compiler *c, struct function *f, struct n
     MO_ASSERT(depth < MO_LIMIT_CORE_DEPTH);
     if (expected == MO_NO_INDEX || n->type != MO_NO_INDEX)
         return true;
-    if (n->core->tag == MO_CORE_EXPR_STOP || n->core->tag == MO_CORE_EXPR_FAIL)
+    if (n->core->tag == MO_CORE_EXPR_STOP || n->core->tag == MO_CORE_EXPR_FAIL ||
+        n->core->tag == MO_CORE_EXPR_JUMP)
         return true;
     if (n->core->tag == MO_CORE_EXPR_LAM) {
         struct function *lifted = &c->bodies[n->index];
@@ -951,6 +957,10 @@ static MO_MUST_USE bool context(struct compiler *c, struct function *f, struct n
         n->reg = n->children[1]->reg;
         n->temporary = n->children[1]->temporary || n->reg == n->binds[0];
         return true;
+    } else if (n->core->tag == MO_CORE_EXPR_JOIN) {
+        for (uint32_t i = 0; i < n->count; i++)
+            if (!context(c, f, n->children[i], expected, depth + 1))
+                return false;
     } else {
         MO_ASSERT(n->core->tag == MO_CORE_EXPR_IF || n->core->tag == MO_CORE_EXPR_CASE);
         for (uint32_t i = 1; i < n->count; i++) {
@@ -1064,7 +1074,10 @@ static MO_MUST_USE bool children(struct compiler *c, struct function *f, struct 
         uint32_t child_type = MO_NO_INDEX;
         if (n->core->tag == MO_CORE_EXPR_CALL)
             child_type = c->funs[n->index].parameters[i].type;
-        else if (n->core->tag == MO_CORE_EXPR_CON) {
+        else if (n->core->tag == MO_CORE_EXPR_JUMP) {
+            const struct node *target = ((struct join *)f->joins.items)[n->index].node;
+            child_type = ((struct reg *)f->regs.items)[target->binds[i]].type;
+        } else if (n->core->tag == MO_CORE_EXPR_CON) {
             const struct mo_type *t = &c->types.items[n->type];
             child_type =
                 t->kind == MO_TYPE_RECORD ? t->fields[i].type : t->cases[n->index].fields[i].type;
@@ -1363,10 +1376,70 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         }
         break;
     }
-    case MO_CORE_EXPR_JOIN:
-    case MO_CORE_EXPR_JUMP:
-        if (!unsupported(c, "Joins are not implemented yet."))
+    case MO_CORE_EXPR_JOIN: {
+        mo_core_params ps = expr->as.join.params;
+        if (!name_valid(c, expr->as.join.name))
             return NULL;
+        n->index = f->joins.count;
+        struct join *item = append(c, &f->joins, 1, MO_LIMIT_CORE_NODES, MO_CODE_CODEGEN_MEMORY);
+        n->count = 2;
+        n->bind_count = (uint32_t)ps.count;
+        n->binds = allocate(c, ps.count, sizeof *n->binds);
+        n->children = allocate(c, 2, sizeof *n->children);
+        struct mo_codegen_index **entries = allocate(c, ps.count, sizeof *entries);
+        uint32_t *saved = allocate(c, ps.count, sizeof *saved);
+        struct mo_codegen_index *entry =
+            index_add(c, &f->join_names, expr->as.join.name, MO_NO_INDEX, false);
+        if (item == NULL || n->binds == NULL || n->children == NULL || entries == NULL ||
+            saved == NULL || entry == NULL)
+            return NULL;
+        *item = (struct join){.node = n, .offset = MO_NO_INDEX, .owners = MO_NO_INDEX};
+        uint32_t prior = entry->value;
+        entry->value = n->index;
+        for (uint32_t i = 0; i < ps.count; i++) {
+            if (!name_valid(c, ps.items[i].name))
+                return NULL;
+            uint32_t ty = type(c, ps.items[i].ty, 0);
+            n->binds[i] = register_add(c, f, ty, binding_name(f, preorder, i));
+            entries[i] = index_add(c, &f->locals, ps.items[i].name, MO_NO_INDEX, false);
+            if (n->binds[i] == MO_NO_INDEX || entries[i] == NULL)
+                return NULL;
+        }
+        for (uint32_t i = (uint32_t)ps.count; i-- > 0;) {
+            saved[i] = entries[i]->value;
+            entries[i]->value = n->binds[i];
+        }
+        n->children[0] = prepare(c, f, expr->as.join.body, expected, depth + 1);
+        for (uint32_t i = 0; i < ps.count; i++)
+            entries[i]->value = saved[i];
+        n->children[1] = prepare(c, f, expr->as.join.rest, expected, depth + 1);
+        entry->value = prior;
+        if (n->children[0] == NULL || n->children[1] == NULL)
+            return NULL;
+        n->type = expected != MO_NO_INDEX               ? expected
+                  : n->children[1]->type != MO_NO_INDEX ? n->children[1]->type
+                                                        : n->children[0]->type;
+        for (uint32_t i = 0; i < n->count; i++)
+            if (!context(c, f, n->children[i], n->type, depth + 1))
+                return NULL;
+        break;
+    }
+    case MO_CORE_EXPR_JUMP: {
+        struct mo_codegen_index *entry = mo_codegen_find(f->join_names, expr->as.jump.name);
+        MO_ASSERT(entry != NULL && entry->value != MO_NO_INDEX);
+        n->index = entry->value;
+        if (!children(c, f, n, expr->as.jump.args, MO_NO_INDEX, depth))
+            return NULL;
+        n->bind_count = n->count;
+        n->binds = allocate(c, n->count, sizeof *n->binds);
+        if (n->binds == NULL)
+            return NULL;
+        for (uint32_t i = 0; i < n->count; i++)
+            if ((n->binds[i] = register_add(c, f, n->children[i]->type, MO_NO_INDEX)) ==
+                MO_NO_INDEX)
+                return NULL;
+        return n;
+    }
     }
     if (c->error != 0)
         return NULL;
@@ -1453,7 +1526,8 @@ static MO_MUST_USE bool borrow_walk(struct compiler *c, struct function *f, stru
     } else {
         for (uint32_t i = 0; i < n->count; i++) {
             bool child_tail = tail && ((n->core->tag == MO_CORE_EXPR_LET && i == 1) ||
-                                       (n->core->tag == MO_CORE_EXPR_IF && i != 0));
+                                       (n->core->tag == MO_CORE_EXPR_IF && i != 0) ||
+                                       n->core->tag == MO_CORE_EXPR_JOIN);
             if (!borrow_walk(c, f, n->children[i], child_tail, depth + 1))
                 return false;
         }
@@ -1462,11 +1536,17 @@ static MO_MUST_USE bool borrow_walk(struct compiler *c, struct function *f, stru
         uint32_t bound = flow_id(f, n->children[0]->reg), binding = flow_id(f, n->binds[0]);
         if (!depends(c, binding, bound) || !depends(c, bound, binding))
             return false;
-    } else if (n->core->tag == MO_CORE_EXPR_IF) {
-        for (uint32_t i = 1; i < n->count; i++)
+    } else if (n->core->tag == MO_CORE_EXPR_IF || n->core->tag == MO_CORE_EXPR_JOIN) {
+        for (uint32_t i = n->core->tag == MO_CORE_EXPR_JOIN ? 0u : 1u; i < n->count; i++)
             if (!depends(c, own, flow_id(f, n->children[i]->reg)) ||
                 !depends(c, flow_id(f, n->children[i]->reg), own))
                 return false;
+        if (n->core->tag == MO_CORE_EXPR_JOIN)
+            for (uint32_t i = 0; i < n->bind_count; i++)
+                seed(c, flow_id(f, n->binds[i]));
+    } else if (n->core->tag == MO_CORE_EXPR_JUMP) {
+        for (uint32_t i = 0; i < n->count; i++)
+            seed(c, flow_id(f, n->children[i]->reg));
     } else if (n->core->tag == MO_CORE_EXPR_CALL) {
         struct function *callee = &c->bodies[n->index];
         for (uint32_t i = 0; i < n->count; i++) {
@@ -1692,6 +1772,22 @@ static MO_MUST_USE bool cleanup(struct compiler *c, struct function *f, struct m
         if (!drop(c, f, f->owned, s))
             return false;
     return true;
+}
+static void restore_owners(struct function *f, uint32_t owners) {
+    struct reg *regs = f->regs.items;
+    bool retained = owners != MO_NO_INDEX && regs[owners].owned;
+    while (f->owned != (retained ? owners : MO_NO_INDEX))
+        owner_remove(f, f->owned);
+    if (!retained) {
+        uint32_t previous = MO_NO_INDEX;
+        for (uint32_t r = owners; r != MO_NO_INDEX; r = regs[r].next) {
+            MO_ASSERT(!regs[r].owned);
+            regs[r].owned = true;
+            regs[r].previous = previous;
+            previous = r;
+        }
+        f->owned = owners;
+    }
 }
 static MO_MUST_USE bool copy(struct compiler *c, struct function *f, uint32_t to, uint32_t from,
                              bool owned, struct mo_core_span s) {
@@ -2163,9 +2259,76 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
         *live = false;
         break;
     }
-    case MO_CORE_EXPR_JOIN:
-    case MO_CORE_EXPR_JUMP:
-        MO_UNREACHABLE();
+    case MO_CORE_EXPR_JOIN: {
+        for (uint32_t i = 0; i < n->bind_count; i++)
+            if (reference(c, ((struct reg *)f->regs.items)[n->binds[i]].type))
+                return unsupported(c, "Reference join normalization is not implemented yet.");
+        if (f->owned != MO_NO_INDEX)
+            return unsupported(c, "Reference join normalization is not implemented yet.");
+        uint32_t skip = emit(c, f, n->span, MO_OP_JUMP, (uint32_t[]){0}, 1, NULL, 0);
+        if (skip == MO_NO_INDEX)
+            return false;
+        uint32_t owners = f->owned;
+        struct join *joins = f->joins.items;
+        joins[n->index].offset = f->code.count;
+        joins[n->index].owners = owners;
+        uint32_t start = f->code.count;
+        if (!generate(c, f, n->children[0], tail, depth + 1, live))
+            return false;
+        uint32_t exit = MO_NO_INDEX;
+        bool any = *live;
+        if (*live) {
+            bool owned = ((struct ownership *)c->ownership.items)[flow_id(f, n->reg)].owned;
+            if (!copy(c, f, n->reg, n->children[0]->reg, owned, n->span) ||
+                (n->children[0]->temporary && !drop(c, f, n->children[0]->reg, n->span)))
+                return false;
+            exit = emit(c, f, n->span, MO_OP_JUMP, (uint32_t[]){0}, 1, NULL, 0);
+            if (exit == MO_NO_INDEX)
+                return false;
+        }
+        for (uint32_t i = 0; i < n->bind_count; i++)
+            if (!named(c, f, n->binds[i], start, f->code.count))
+                return false;
+        restore_owners(f, owners);
+        ((uint32_t *)f->code.items)[skip + 1] = f->code.count;
+        if (!generate(c, f, n->children[1], tail, depth + 1, live))
+            return false;
+        if (*live) {
+            bool owned = ((struct ownership *)c->ownership.items)[flow_id(f, n->reg)].owned;
+            if (!copy(c, f, n->reg, n->children[1]->reg, owned, n->span) ||
+                (n->children[1]->temporary && !drop(c, f, n->children[1]->reg, n->span)))
+                return false;
+        }
+        if (exit != MO_NO_INDEX)
+            ((uint32_t *)f->code.items)[exit + 1] = f->code.count;
+        *live |= any;
+        if (*live && reference(c, n->type) &&
+            ((struct ownership *)c->ownership.items)[flow_id(f, n->reg)].owned &&
+            !((struct reg *)f->regs.items)[n->reg].owned)
+            owner_add(f, n->reg);
+        break;
+    }
+    case MO_CORE_EXPR_JUMP: {
+        const struct join *target = &((struct join *)f->joins.items)[n->index];
+        MO_ASSERT(target->offset != MO_NO_INDEX);
+        for (uint32_t i = 0; i < n->count; i++) {
+            if (!generate(c, f, n->children[i], false, depth + 1, live) || !*live)
+                return c->error == 0;
+            if (!copy(c, f, n->binds[i], n->children[i]->reg, true, n->span))
+                return false;
+        }
+        if (f->owned != target->owners)
+            return unsupported(c, "Reference jump normalization is not implemented yet.");
+        for (uint32_t i = 0; i < n->count; i++) {
+            const uint32_t args[] = {target->node->binds[i], n->binds[i]};
+            if (emit(c, f, n->span, MO_OP_MOVE, args, 2, NULL, 0) == MO_NO_INDEX)
+                return false;
+        }
+        if (emit(c, f, n->span, MO_OP_JUMP, &target->offset, 1, NULL, 0) == MO_NO_INDEX)
+            return false;
+        *live = false;
+        break;
+    }
     }
     if (*live && tail) {
         uint32_t result = argument(c, f, n->reg, true, n->span);
