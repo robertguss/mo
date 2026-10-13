@@ -324,6 +324,54 @@ static void test_metadata(void) {
     mo_diags_free(&diags);
     mo_arena_free(&arena);
 }
+static void test_promise_subject(void) {
+    const char *const params[] = {
+        "((\"x\" (text)) (\"result\" (int)))",
+        "((\"x\" (int)) (\"result\" (text)))",
+        "((\"result\" (int)))",
+    };
+    for (size_t i = 0; i < sizeof params / sizeof params[0]; i++) {
+        struct mo_arena arena;
+        struct mo_diags diags;
+        struct mo_buffer text, out;
+        mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+        CHECK(mo_diags_init(&diags));
+        mo_buffer_init(&text, MO_LIMIT_CORE_TEXT_SIZE);
+        mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+        CHECK(mo_buffer_append_text(&text, "(Program () ((FunDecl \"main\" ((\"x\" (int))) "
+                                           "(int) (var \"x\") \"M\" (function) 0) "
+                                           "(FunDecl \"law\" "));
+        CHECK(mo_buffer_append_text(&text, params[i]));
+        CHECK(mo_buffer_append_text(&text, " (int) (lit (int 0)) \"M\" (promise) 0)) "
+                                           "() \"main\" (noSource))"));
+        CHECK(mo_buffer_append_byte(&text, 0));
+        struct mo_core *p = parse(&arena, (const char *)text.bytes, &diags);
+        if (p != NULL) {
+            uint32_t members[] = {0, 1};
+            struct mo_core_module_meta module = {.name = {"M", 1}, .funs = {members, 2}};
+            struct mo_core_span span = {0};
+            struct mo_core_name names[2] = {{0}};
+            struct mo_core_spec_line line = {.text = {"law", 3}};
+            struct mo_core_fun_meta meta[] = {
+                {.name = {"M.main", 6}, .body = {.spans = {&span, 1}, .params = {names, 1}}},
+                {.name = {"M.law", 5},
+                 .text = {true, {"law", 3}},
+                 .body = {.spans = {&span, 1}, .params = {names, p->funs.items[1].params.count}},
+                 .subject = {true, 0},
+                 .lines = {&line, 1}},
+            };
+            p->metadata = (struct mo_core_metadata){
+                .source = true, .modules = {&module, 1}, .funs = {meta, 2}};
+            CHECK(mo_core_metadata_valid(p) && mo_core_check(p, &diags));
+            CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
+            CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_REPRESENTATION);
+        }
+        mo_buffer_free(&out);
+        mo_buffer_free(&text);
+        mo_diags_free(&diags);
+        mo_arena_free(&arena);
+    }
+}
 static void test_refusals(void) {
     struct mo_arena arena;
     struct mo_diags diags;
@@ -345,13 +393,13 @@ static void test_refusals(void) {
     mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
     p = parse(
         &arena,
-        "(Program () ((FunDecl \"main\" () (bigInt) (lit (bigInt 17)) \"M\" (function) 0)) () "
+        "(Program () ((FunDecl \"main\" () (bigInt) (lit (bool true)) \"M\" (function) 0)) () "
         "\"main\" (noSource))",
         &diags);
     if (p != NULL) {
         CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
-        CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_UNSUPPORTED);
-        CHECK(strstr(diags.items[0].primary.text, "main:") != NULL);
+        CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CORE_CHECK_TYPE);
+        CHECK(strstr(diags.items[0].primary.text, "main") != NULL);
     }
     mo_diags_free(&diags);
     CHECK(mo_diags_init(&diags));
@@ -785,6 +833,32 @@ static void test_range_and_fail(void) {
             CHECK(fail[1] == 1);
     }
     mo_arena_free(&arena);
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    b = compile(&arena, "(Program () ((FunDecl \"main\" ((\"r\" (range))) (text) "
+                        "(prim (range (toText)) ((var \"r\"))) \"M\" (function) 0)) "
+                        "() \"main\" (noSource))");
+    if (b != NULL) {
+        const struct mo_bytecode_function *f = &b->functions[0];
+        const uint32_t *start = instruction(f, MO_OP_RANGE_START, 0),
+                       *end = instruction(f, MO_OP_RANGE_END, 0),
+                       *left = instruction(f, MO_OP_PRIM, 0),
+                       *right = instruction(f, MO_OP_PRIM, 1),
+                       *prefix = instruction(f, MO_OP_PRIM, 2),
+                       *suffix = instruction(f, MO_OP_PRIM, 3);
+        if (start != NULL && end != NULL && left != NULL && right != NULL && prefix != NULL &&
+            suffix != NULL) {
+            CHECK(start[2] == 0 && end[2] == 0 && left[2] == MO_PRIM_INT_TO_TEXT &&
+                  right[2] == MO_PRIM_INT_TO_TEXT && left[4] == start[1] && right[4] == end[1]);
+            CHECK(prefix[2] == MO_PRIM_TEXT_CONCAT && suffix[2] == MO_PRIM_TEXT_CONCAT &&
+                  prefix[4] == left[1] && suffix[4] == prefix[1] && suffix[5] == right[1]);
+            bool separator = false;
+            for (uint32_t i = 0; i < b->constant_count; i++)
+                separator |= b->types[b->constants[i].type].kind == MO_TYPE_TEXT &&
+                             string_is(b, b->constants[i].value.string, "..");
+            CHECK(separator);
+        }
+    }
+    mo_arena_free(&arena);
 }
 
 static void test_representation_refusals(void) {
@@ -1106,7 +1180,7 @@ static void test_register_block_limit(void) {
 
 /* Batch corpus driver: malformed documents and ill-typed programs are not compiler inputs.
  * Lowering-impossible forms are excluded; unfinished forms are not passed off as compilation. */
-static MO_MUST_USE int corpus(int argc, char **argv) {
+static MO_MUST_USE int corpus(int argc, char **argv, bool bigints) {
     unsigned compiled = 0, unsupported = 0, excluded = 0, entry = 0, limited = 0, rejected = 0;
     for (int i = 1; i < argc; i++) {
         struct mo_sources sources;
@@ -1144,12 +1218,32 @@ static MO_MUST_USE int corpus(int argc, char **argv) {
                     if (ok) {
                         compiled++;
                         CHECK(memcmp(first.bytes, second.bytes, first.length) == 0);
+                        if (bigints) {
+                            struct mo_load_error error;
+                            struct mo_bytecode *b =
+                                mo_bytecode_decode(&arena, first.bytes, first.length, &error);
+                            CHECK(b != NULL);
+                            if (b != NULL) {
+                                const struct mo_bytecode_function *f = &b->functions[0];
+                                /* Generated oracle inputs return one literal, after initializers.
+                                 */
+                                CHECK(f->code_count >= 5);
+                                uint32_t id = f->code[f->code_count - 3];
+                                CHECK(id < b->constant_count &&
+                                      b->types[b->constants[id].type].kind == MO_TYPE_BIGINT);
+                                const struct mo_bytecode_bigint *k = &b->constants[id].value.bigint;
+                                CHECK(printf("%u:", (unsigned)k->sign) >= 0);
+                                for (uint32_t at = 0; at < k->magnitude.length; at++)
+                                    CHECK(printf("%02x", (unsigned)k->magnitude.bytes[at]) >= 0);
+                                CHECK(putchar('\n') != EOF);
+                            }
+                        }
                     } else {
                         uint16_t code = diags.count == 0 ? 0 : diags.items[0].code;
-                        bool limit = code == MO_CODE_TOO_MANY_REGISTERS ||
-                                     code == MO_CODE_FUNCTION_TOO_LONG ||
-                                     code == MO_CODE_BYTECODE_TOO_BIG ||
-                                     code == MO_CODE_CODEGEN_MEMORY;
+                        bool limit =
+                            code == MO_CODE_TOO_MANY_REGISTERS ||
+                            code == MO_CODE_FUNCTION_TOO_LONG || code == MO_CODE_BYTECODE_TOO_BIG ||
+                            code == MO_CODE_CODEGEN_MEMORY || code == MO_CODE_CODEGEN_BIGINT_WORK;
                         if (code == MO_CODE_CODEGEN_ENTRY)
                             entry++;
                         else if (code == MO_CODE_CODEGEN_REPRESENTATION)
@@ -1694,6 +1788,146 @@ static void test_collection_literals(void) {
     mo_arena_free(&arena);
     mo_buffer_free(&payload);
 }
+static void test_uncons(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b =
+        compile(&arena, "(Program () ((FunDecl \"start\" ((\"xs\" (list (text)))) "
+                        "(tuple ((option (tuple ((text) (list (text))))) (list (text)))) "
+                        "(tuple ((prim (list (text) (uncons)) ((var \"xs\"))) (var \"xs\"))) "
+                        "\"M\" (function) 0)) () \"start\" (noSource))");
+    if (b != NULL) {
+        const struct mo_bytecode_function *f = &b->functions[0];
+        const uint32_t *first = instruction(f, MO_OP_PRIM, 0),
+                       *rest = instruction(f, MO_OP_PRIM, 1),
+                       *branch = instruction(f, MO_OP_SWITCH, 0),
+                       *head = instruction(f, MO_OP_CASE_FIELD, 0),
+                       *copy = instruction(f, MO_OP_DUP, 0),
+                       *pair = instruction(f, MO_OP_CONSTRUCT, 0);
+        if (first != NULL && rest != NULL && branch != NULL && head != NULL && copy != NULL &&
+            pair != NULL) {
+            CHECK(first[2] == MO_PRIM_LIST_FIRST && first[4] == 0 && branch[1] == first[1]);
+            CHECK(head[2] == first[1] && head[3] == 1 && head[4] == 0 &&
+                  branch[3] == (uint32_t)(head - f->code));
+            CHECK(rest[2] == MO_PRIM_LIST_DROP && rest[4] == copy[1] && copy[2] == 0 &&
+                  rest[4] != 0 && pair[3] == head[1] && pair[4] == rest[1]);
+            const struct mo_type *option = &b->types[f->register_types[first[1]]];
+            CHECK(option->kind == MO_TYPE_CHOICE &&
+                  b->types[option->cases[1].fields[0].type].kind == MO_TYPE_TEXT);
+        }
+    }
+    mo_arena_free(&arena);
+}
+static void test_bigint_literals(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b = compile(
+        &arena, "(Program () ((FunDecl \"start\" () (tuple ((bigInt) (bigInt) (bigInt) (bigInt))) "
+                "(tuple ((lit (bigInt 0)) (lit (bigInt 18446744073709551616)) "
+                "(lit (bigInt -18446744073709551616)) (lit (bigInt 18446744073709551616)))) "
+                "\"M\" (function) 0)) () \"start\" (noSource))");
+    if (b != NULL) {
+        uint32_t count = 0;
+        for (uint32_t i = 0; i < b->constant_count; i++) {
+            if (b->types[b->constants[i].type].kind != MO_TYPE_BIGINT)
+                continue;
+            const struct mo_bytecode_bigint *k = &b->constants[i].value.bigint;
+            if (count == 0)
+                CHECK(k->sign == MO_BIGINT_ZERO && k->magnitude.length == 0);
+            else {
+                const uint8_t bytes[] = {0, 0, 0, 0, 0, 0, 0, 0, 1};
+                CHECK(k->sign == (count == 1 ? MO_BIGINT_POSITIVE : MO_BIGINT_NEGATIVE) &&
+                      k->magnitude.length == sizeof bytes &&
+                      memcmp(k->magnitude.bytes, bytes, sizeof bytes) == 0);
+            }
+            count++;
+        }
+        CHECK(count == 3);
+    }
+    mo_arena_free(&arena);
+}
+static void test_bigint_limit(void) {
+    for (unsigned variant = 0; variant < 3; variant++) {
+        struct mo_buffer text, out;
+        struct mo_arena arena;
+        struct mo_diags diags;
+        mo_buffer_init(&text, MO_LIMIT_CORE_TEXT_SIZE);
+        mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+        mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+        CHECK(mo_diags_init(&diags));
+        CHECK(mo_buffer_append_text(&text, "(Program () ((FunDecl \"start\" () "));
+        CHECK(mo_buffer_append_text(
+            &text,
+            variant == 0 ? "(bigInt) " : "(tuple ((bigInt) (bigInt) (bigInt) (bigInt))) (tuple ("));
+        uint32_t length = variant == 0 ? MO_LIMIT_CORE_TEXT_SIZE - 256u : 131072u;
+        char digits[1024];
+        memset(digits, '9', sizeof digits);
+        for (unsigned literal = 0; literal < (variant == 0 ? 1u : 4u); literal++) {
+            CHECK(mo_buffer_append_text(&text, "(lit (bigInt "));
+            for (uint32_t at = 0; at < length - 1u;) {
+                size_t count = length - 1u - at < sizeof digits ? length - 1u - at : sizeof digits;
+                CHECK(mo_buffer_append(&text, digits, count));
+                at += (uint32_t)count;
+            }
+            CHECK(mo_buffer_append_byte(&text, (uint8_t)('9' - (variant == 1 ? literal : 0u))));
+            CHECK(mo_buffer_append_text(&text, "))"));
+        }
+        if (variant != 0)
+            CHECK(mo_buffer_append_text(&text, "))"));
+        CHECK(mo_buffer_append_text(&text, " \"M\" (function) 0)) () \"start\" (noSource))"));
+        CHECK(mo_buffer_append_byte(&text, 0));
+        struct mo_core *p = parse(&arena, (const char *)text.bytes, &diags);
+        if (p != NULL) {
+            mo_core_string file = {"absent.mo", 9};
+            uint32_t fun = 0;
+            struct mo_core_module_meta module = {.name = {"M", 1}, .funs = {&fun, 1}};
+            struct mo_core_span spans[5] = {{true, {0, 5, 47}}};
+            struct mo_core_fun_meta meta = {.name = {"M.start", 7},
+                                            .span = {true, {0, 1, 100}},
+                                            .body = {.spans = {spans, variant == 0 ? 1u : 5u}}};
+            p->metadata = (struct mo_core_metadata){
+                .source = true, .files = {&file, 1}, .modules = {&module, 1}, .funs = {&meta, 1}};
+            CHECK(mo_core_check(p, &diags));
+            bool ok = mo_compile(p, &out, &diags);
+            if (variant == 2) {
+                /* Repeating 10^131072 - 1 pays for one conversion, not four. */
+                CHECK(ok && !mo_diags_any(&diags));
+                struct mo_load_error error;
+                struct mo_bytecode *b =
+                    ok ? mo_bytecode_decode(&arena, out.bytes, out.length, &error) : NULL;
+                CHECK(b != NULL);
+                uint32_t positives = 0;
+                for (uint32_t i = 0; b != NULL && i < b->constant_count; i++) {
+                    const struct mo_bytecode_constant *k = &b->constants[i];
+                    if (b->types[k->type].kind != MO_TYPE_BIGINT ||
+                        k->value.bigint.sign != MO_BIGINT_POSITIVE)
+                        continue;
+                    positives++;
+                    /* ceil(log_256(10^131072)) bytes; the low 128 bits are all ones. */
+                    CHECK(k->value.bigint.magnitude.length == 54427);
+                    for (uint32_t j = 0; j < 16 && j < k->value.bigint.magnitude.length; j++)
+                        CHECK(k->value.bigint.magnitude.bytes[j] == 255);
+                }
+                CHECK(positives == 1);
+            } else {
+                CHECK(!ok && out.length == 0);
+                CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_BIGINT_WORK);
+            }
+            if (variant != 2 && diags.count == 1) {
+                const struct mo_diag *d = &diags.items[0];
+                CHECK(strstr(d->primary.text, "start: BigInt conversion exceeds") != NULL &&
+                      strstr(d->message, "resource limit") != NULL);
+                CHECK(d->primary.span.file == 0 &&
+                      d->primary.span.start == (variant == 0 ? 5u : 1u) &&
+                      d->primary.span.end == (variant == 0 ? 47u : 100u));
+            }
+        }
+        mo_diags_free(&diags);
+        mo_arena_free(&arena);
+        mo_buffer_free(&out);
+        mo_buffer_free(&text);
+    }
+}
 static void test_instantiated_type_depth(void) {
     /* Implicit List/Option wrappers can exceed the annotation's depth after checking. */
     for (uint32_t n = MO_LIMIT_CORE_DEPTH - 2; n < MO_LIMIT_CORE_DEPTH; n++) {
@@ -1903,12 +2137,15 @@ static void test_join_metadata(void) {
     mo_arena_free(&arena);
 }
 int main(int argc, char **argv) {
+    if (argc > 1 && strcmp(argv[1], "--bigints") == 0)
+        return corpus(argc - 1, argv + 1, true);
     if (argc > 1)
-        return corpus(argc, argv);
+        return corpus(argc, argv, false);
     test_literals();
     test_control();
     test_calls_and_scopes();
     test_metadata();
+    test_promise_subject();
     test_refusals();
     test_references();
     test_globals();
@@ -1933,6 +2170,9 @@ int main(int argc, char **argv) {
     test_operation_order();
     test_host_operations();
     test_collection_literals();
+    test_uncons();
+    test_bigint_literals();
+    test_bigint_limit();
     test_instantiated_type_depth();
     test_entry_record();
     test_merge();

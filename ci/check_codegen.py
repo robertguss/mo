@@ -19,6 +19,63 @@ import time
 from check_core_check import program, signatures
 
 
+def expansion_program(i):
+    types = ['(unit)', '(int)', '(range)', '(decimal)', '(text)', '(bigInt)',
+             '(tuple ((text) (int)))', '(option (text))', '(list (text))',
+             '(fn () (text))', '(cap (files))']
+    ty = types[i % len(types)]
+    result = f'(option (tuple ({ty} (list {ty}))))'
+    uncons = f'(prim (list {ty} (uncons)) ((var "xs")))'
+    value = [
+        uncons,
+        f'(if_ (var "b") {uncons} (con {result} "None" ()))',
+        f'(let_ "old" {uncons} {uncons})',
+        f'(case_ {uncons} (("None" () {uncons}) '
+        f'("Some" ("pair") (con {result} "Some" ((var "pair"))))))',
+        f'(app (lam () {uncons}) ())',
+        f'(join "loop" (("xs" (list {ty})) ("again" (bool))) '
+        f'(let_ "discard" {uncons} (if_ (var "again") '
+        f'(jump "loop" ((var "xs") (lit (bool false)))) {uncons})) '
+        '(jump "loop" ((var "xs") (var "b"))))',
+    ][i % 6]
+    # Keep the input after the expansion; a consuming lowering must copy, not move it.
+    return f'''(Program () (
+      (FunDecl "start" (("b" (bool)) ("xs" (list {ty})) ("r" (range)))
+        (tuple ({result} (list {ty}) (text)))
+        (tuple ({value} (var "xs") (prim (range (toText)) ((var "r")))))
+        "Generated" (function) 0)
+    ) () "start" (noSource))'''
+
+
+def bigint_oracle(driver, directory, version):
+    # Expected signs and little-endian magnitudes come from Python, never the converter.
+    sys.set_int_max_str_digits(0)
+    rng = random.Random(1202)
+    numbers = [0, 1, -1]
+    for bits in [8, 16, 31, 32, 33, 63, 64, 65, 127, 128, 129, 511, 512, 513, 4096]:
+        numbers.extend((1 << bits) + delta for delta in [-1, 0, 1])
+    for groups in [1, 2, 4, 8, 16, 32, 64, 128, 512, 4096]:
+        for digits in [9 * groups - 1, 9 * groups, 9 * groups + 1]:
+            numbers.extend([10 ** (digits - 1) + 17, -(10 ** digits - 1)])
+    numbers.extend(rng.getrandbits(rng.randrange(1, 32769)) * rng.choice([-1, 1])
+                   for _ in range(96))
+    paths, expected = [], []
+    for i, number in enumerate(numbers):
+        path = pathlib.Path(directory) / f'bigint-{i}.core'
+        path.write_text(f'(core {version} ' +
+                        program(f'(lit (bigInt {number}))', '(bigInt)') + ')\n')
+        paths.append(path)
+        magnitude = abs(number).to_bytes((abs(number).bit_length() + 7) // 8, 'little')
+        expected.append(f'{0 if number == 0 else 1 if number > 0 else 2}:{magnitude.hex()}')
+    result = subprocess.run([driver, '--bigints', *map(str, paths)], text=True,
+                            capture_output=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    actual = result.stdout.splitlines()
+    assert actual[:-2] == expected, f'{driver}: compiled BigInt magnitudes differ from Python'
+    assert f'{len(paths)} compiled deterministically; 0 explicitly unsupported;' in actual[-2]
+    print(f'codegen: {driver}: {len(paths)} BigInt signs/magnitudes match Python')
+
+
 def expression(rng, depth):
     if depth == 0:
         return rng.choice(['(var "x")', '(lit (int -17))', '(lit (int 29))'])
@@ -251,11 +308,12 @@ def main():
             path = pathlib.Path(directory) / f"joins-{i}.core"
             path.write_text(f"(core {version} {join_program(i)})\n")
             generated.append(path)
+        for i in range(132):
+            path = pathlib.Path(directory) / f"expansions-{i}.core"
+            path.write_text(f"(core {version} {expansion_program(i)})\n")
+            generated.append(path)
         excluded = []
         for i, (prim, types, ret, spec) in enumerate(signatures()):
-            # These two operations need instruction expansions, not new primitive rows.
-            if prim in ['(range (toText))', '(list (byte) (uncons))']:
-                continue
             params = [(f"arg{j}", t) for j, t in enumerate(types)]
             args = ' '.join(f'(var "arg{j}")' for j in range(len(types)))
             body = f'(prim {prim} ({args}))'
@@ -274,11 +332,12 @@ def main():
         for driver in sys.argv[1:]:
             print(f"codegen: {driver}: {len(paths)} fixture/corpus inputs")
             run(driver, paths)
-            supported = [pathlib.Path("tests/core") / f"{name}.core"
-                         for name in ["Account", "Greet", "Metadata", "RateLimit"]]
+            supported = sorted(pathlib.Path("tests/core").glob('*.core'))
+            assert len(supported) == 15, "fixture coverage changed; review the compiler contract"
             assert run(driver, supported) == (len(supported), 0, 0, 0, 0, 0), "a supported fixture was not compiled"
             assert run(driver, generated) == (len(generated), 0, 0, 0, 0, 0), "a supported generated program was not compiled"
             assert run(driver, excluded) == (0, 0, len(excluded), 0, 0, 0), "a lowering-impossible operation needs E1201"
+            bigint_oracle(driver, directory, version)
     print(f"codegen: all generated programs compiled; corpus coverage reported separately ({time.monotonic() - started:.2f}s)")
 
 

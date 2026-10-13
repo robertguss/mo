@@ -11,6 +11,7 @@ struct mo_codegen_operation {
     const char *signature, *params;
     bool reverse, compare;
     enum { MO_CODEGEN_LITERAL_NONE, MO_CODEGEN_LITERAL_LIST, MO_CODEGEN_LITERAL_MAP } literal;
+    enum { MO_CODEGEN_EXPAND_NONE, MO_CODEGEN_EXPAND_RANGE, MO_CODEGEN_EXPAND_UNCONS } expansion;
 };
 
 MO_MUST_USE bool mo_codegen_operation(const struct mo_core_prim *prim,

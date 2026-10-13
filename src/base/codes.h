@@ -216,6 +216,8 @@
     X(1200, CODEGEN_ENTRY, NULL)                                                                   \
     /* Core uses a representation that source lowering never produces: a lowering bug. */          \
     X(1201, CODEGEN_REPRESENTATION, NULL)                                                          \
+    /* Decimal BigInt conversion exceeds the compilation's work limit. */                          \
+    X(1202, CODEGEN_BIGINT_WORK, NULL)                                                             \
     /* The command requests a toolchain stage not implemented by this build. */                    \
     X(1400, TOOL_UNAVAILABLE, NULL)
 

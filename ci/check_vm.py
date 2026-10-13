@@ -22,8 +22,8 @@ from check_codegen import closure_program, expression, global_program, join_prog
 from check_core_check import VERSION, WORLD, parse, wire, program
 
 NEEDS_DISPATCH = {"needs primitive dispatch": 0, "needs host dispatch": 0,
-                  "needs capability fixture arguments": 1}
-CODEGEN_UNSUPPORTED = 11
+                  "needs capability fixture arguments": 9}
+CODEGEN_UNSUPPORTED = 0
 
 
 def canonical(report):
