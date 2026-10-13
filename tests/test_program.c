@@ -15,7 +15,7 @@ static void entry_graph(void) {
     MO_ASSERT(mo_sources_init(&sources) && mo_diags_init(&diags));
     const char *text = "module Main\nfn identity(value: Int) : Int\n"
                        "var copy = value\ncopy = 42\ncopy\nend\n"
-                       "fn main() : Int\n42\nend\n";
+                       "fn main() : Int\n7 + 12 * 3 - 1\nend\n";
     uint32_t file;
     struct mo_source_error error;
     MO_ASSERT(mo_sources_add_bytes(&sources, "main.mo", (const uint8_t *)text, strlen(text), &file,
@@ -58,18 +58,42 @@ static void entry_graph(void) {
         const struct mo_checked_body *body = &program->functions[program->entry.function].body;
         CHECK(body->root < body->count);
         CHECK(strcmp(body->items[body->root].type->name, "Int") == 0);
+        MO_ASSERT(body->count <= 64);
+        int64_t values[64] = {0};
+        uint32_t operators = 0;
         bool found = false;
         for (uint32_t i = 0; i < body->count; i++) {
             const struct mo_checked_expression *row = &body->items[i];
             for (uint32_t j = 0; j < row->operand_count; j++)
                 CHECK(row->operands[j] < i);
             if (row->syntax->kind == MO_S_INT) {
-                CHECK(row->syntax->span.end - row->syntax->span.start == 2);
-                CHECK(memcmp(row->syntax->text, "42", 2) == 0);
-                found = true;
+                for (uint32_t j = 0; j < row->syntax->span.end - row->syntax->span.start; j++)
+                    values[i] = values[i] * 10 + (int64_t)(row->syntax->text[j] - '0');
+                found = found || values[i] == 7;
+            } else if (row->operation != MO_T_EOF) {
+                operators++;
+                MO_ASSERT(row->operand_count == 2 && row->operands[0] < i && row->operands[1] < i);
+                int64_t left = values[row->operands[0]], right = values[row->operands[1]];
+                CHECK(row->ability_count == 1);
+                if (row->ability_count == 1) {
+                    CHECK(row->abilities[0].operand == row->operands[0]);
+                    CHECK(row->abilities[0].implementation->kind == MO_ABILITY_NATIVE);
+                    CHECK(row->abilities[0].implementation->ability == MO_SOURCE_NUMBER);
+                    CHECK(strcmp(row->abilities[0].implementation->type->name, "Int") == 0);
+                }
+                if (row->operation == MO_T_PLUS)
+                    values[i] = left + right;
+                else if (row->operation == MO_T_MINUS)
+                    values[i] = left - right;
+                else {
+                    CHECK(row->operation == MO_T_STAR);
+                    values[i] = left * right;
+                }
+            } else if (row->operand_count != 0) {
+                values[i] = values[row->operands[row->operand_count - 1]];
             }
         }
-        CHECK(found);
+        CHECK(found && operators == 3 && values[body->root] == 42);
     }
     mo_arena_free(&arena);
     mo_arena_free(&syntax);

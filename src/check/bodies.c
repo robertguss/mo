@@ -1374,7 +1374,15 @@ static MO_MUST_USE struct value binary(struct inference *p, enum mo_syntax_token
     struct term *result = logical || comparison ? native(p, "Bool", 0)
                           : op == MO_T_DOTDOT   ? native(p, "Range", 0)
                                                 : operand;
-    return (struct value){.type = result, .never = a.never || (!logical && b.never)};
+    struct value out =
+        graph(p, (struct value){.type = result, .never = a.never || (!logical && b.never)}, 2);
+    if (p->checked && out.type != NULL) {
+        out.graph->operands[0] = a.note;
+        out.graph->operands[1] = b.note;
+        out.graph->output.operation = op;
+        out.graph->output.or_kind = op == MO_T_OR ? MO_CHECK_OR_BOOL : MO_CHECK_OR_ABSENT;
+    }
+    return out;
 }
 
 static MO_MUST_USE struct mo_match_pattern *
@@ -2006,8 +2014,14 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         bool logical = op == MO_T_AND || op == MO_T_OR;
         struct value result = logical ? condition(p, node->children[0], op == MO_T_AND)
                                       : infer(p, node->children[0], NULL);
-        for (uint32_t i = 1; i < node->count && result.type != NULL; i += 2)
+        for (uint32_t i = 1; i < node->count && result.type != NULL; i += 2) {
             result = binary(p, node->children[i]->token, result, node->children[i + 1], expected);
+            if (p->checked && result.type != NULL && i + 2 < node->count) {
+                if (!record(p, node->children[i], result))
+                    return (struct value){0};
+                result.note = p->last;
+            }
+        }
         return result;
     }
     case MO_S_CALL: {
@@ -2284,6 +2298,19 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                                                     : MO_CODE_NUMBER_ABILITY;
             if (!unify_as(p, v.type, wanted, code))
                 return (struct value){0};
+            if (p->checked) {
+                struct note *input = v.note;
+                v = graph(p, (struct value){.type = v.type, .never = v.never}, 1);
+                if (v.type == NULL)
+                    return v;
+                v.graph->operands[0] = input;
+                v.graph->output.operation = op;
+                if (i != 1) {
+                    if (!record(p, node->children[i - 1], v))
+                        return (struct value){0};
+                    v.note = p->last;
+                }
+            }
         }
         return v;
     }
@@ -2349,7 +2376,9 @@ static MO_MUST_USE struct value infer(struct inference *p, const struct mo_synta
         node->kind != MO_S_GROUP && node->kind != MO_S_INT && node->kind != MO_S_DECIMAL &&
         node->kind != MO_S_CHAR && node->kind != MO_S_TEXT && node->kind != MO_S_TRUE &&
         node->kind != MO_S_FALSE && node->kind != MO_S_NAME && node->kind != MO_S_VAR &&
-        node->kind != MO_S_BIND) {
+        node->kind != MO_S_BIND && node->kind != MO_S_BINARY && node->kind != MO_S_BINARY_CHAIN &&
+        node->kind != MO_S_RANGE && node->kind != MO_S_NEGATE && node->kind != MO_S_NOT &&
+        node->kind != MO_S_PREFIX) {
         bool reported = unfinished(p);
         (void)reported;
         p->depth--;
@@ -2679,6 +2708,44 @@ static MO_MUST_USE bool finish_patterns(struct inference *p) {
     return true;
 }
 
+static MO_MUST_USE bool finish_operator(struct inference *p, struct note *note) {
+    struct emitted *graph = note->graph;
+    enum mo_syntax_token op = graph->output.operation;
+    if (op == MO_T_EOF || op == MO_T_AND || op == MO_T_OR || op == MO_T_IMPLIES || op == MO_T_NOT ||
+        op == MO_T_DOTDOT)
+        return true;
+    enum mo_source_ability ability =
+        op == MO_T_EQ || op == MO_T_NE                                     ? MO_SOURCE_EQUAL
+        : op == MO_T_LT || op == MO_T_LE || op == MO_T_GT || op == MO_T_GE ? MO_SOURCE_ORDER
+                                                                           : MO_SOURCE_NUMBER;
+    MO_ASSERT(graph->output.operand_count != 0 && graph->operands[0] != NULL);
+    const struct mo_source_type *type = graph->operands[0]->output.type;
+    bool numeric = strcmp(type->name, "Int") == 0 || strcmp(type->name, "BigInt") == 0 ||
+                   strcmp(type->name, "Decimal") == 0 || strcmp(type->name, "Float") == 0;
+    bool scalar = numeric || strcmp(type->name, "Bool") == 0 || strcmp(type->name, "Byte") == 0 ||
+                  strcmp(type->name, "Text") == 0 || strcmp(type->name, "Char") == 0 ||
+                  strcmp(type->name, "Unit") == 0 || strcmp(type->name, "Bytes") == 0 ||
+                  strcmp(type->name, "Time") == 0 || strcmp(type->name, "Duration") == 0;
+    bool supported = ability == MO_SOURCE_NUMBER  ? numeric
+                     : ability == MO_SOURCE_EQUAL ? scalar || strcmp(type->name, "Range") == 0
+                                                  : scalar;
+    p->span = note->output.syntax->span;
+    if (type->kind != MO_SOURCE_NAMED || type->module != UINT32_MAX || !supported)
+        return unfinished(p);
+    struct mo_ability_implementation *implementation =
+        allocate(p, 1, sizeof(*implementation), _Alignof(struct mo_ability_implementation));
+    struct mo_checked_ability_use *use =
+        allocate(p, 1, sizeof(*use), _Alignof(struct mo_checked_ability_use));
+    if (p->failed)
+        return false;
+    *implementation = (struct mo_ability_implementation){
+        .ability = ability, .kind = MO_ABILITY_NATIVE, .type = type};
+    *use = (struct mo_checked_ability_use){graph->operands[0]->index, implementation};
+    graph->output.ability_count = 1;
+    graph->output.abilities = use;
+    return true;
+}
+
 static MO_MUST_USE struct mo_inferred_body *
 infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
                const struct mo_signatures *signatures, uint32_t function, struct mo_diags *diags,
@@ -2789,6 +2856,8 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
                 MO_ASSERT(g->operands[i] != NULL && g->operands[i]->index < n->index);
                 operands[i] = g->operands[i]->index;
             }
+            if (!finish_operator(&p, n))
+                goto failed;
             rows[n->index] = g->output;
             rows[n->index].syntax = n->output.syntax;
             rows[n->index].type = n->output.type;
