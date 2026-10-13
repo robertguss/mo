@@ -124,6 +124,11 @@ static void prim_fixture_init_type(struct prim_fixture *f, size_t budget,
     {                                                                                              \
         const char *cursor = spelling;                                                             \
         f->signature[MO_PRIM_##id] = prim_type(f, &cursor);                                        \
+        if (sizeof(params) == 1) {                                                                 \
+            struct mo_type fn = {.kind = MO_TYPE_FUNCTION, .result = f->signature[MO_PRIM_##id]};  \
+            MO_ASSERT(mo_types_intern(&f->types, &fn, &f->signature[MO_PRIM_##id]) ==              \
+                      MO_TYPES_OK);                                                                \
+        }                                                                                          \
     }
 #include "base/prims.def"
     MO_ASSERT(mo_types_finish(&f->types) == MO_TYPES_OK);

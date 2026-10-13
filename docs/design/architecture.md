@@ -1101,7 +1101,8 @@ table, so streams 2 and 4 use the same indices in calls and value builders.
 
 `src/prim/prim.h` is the VM's primitive seam. `mo_prim_call(heap, types, id,
 instantiation, arguments, out, reason_out)` takes the verified function-type
-index, or the result-type index for a zero-argument constant. The id is the
+index, including `fn() : T` for a zero-argument constant. Entry sets and checks
+`FE_TONEAREST`, also used by subsequent VM arithmetic. The id is the
 unchanged zero-based row of `base/prims.def`, declared in `base/prims.h` so
 `prim` need not depend on `bytecode`. A typed status distinguishes a result,
 overflow, division by zero, an outside-domain call, a repeated map-literal key,

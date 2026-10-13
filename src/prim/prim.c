@@ -1,5 +1,6 @@
 #include "prim/internal.h"
 
+#include <fenv.h>
 #include <string.h>
 
 enum mo_prim_status mo_prim_option(struct mo_prim_call *call, bool some, struct mo_cell value,
@@ -64,14 +65,15 @@ enum mo_prim_status mo_prim_call(struct mo_heap *heap, const struct mo_types *ty
     };
     const struct mo_type *signature = &types->items[instantiation];
     size_t count = strlen(ownership[id]);
-    MO_ASSERT(count == 0 || (arguments != NULL && signature->kind == MO_TYPE_FUNCTION &&
-                             count == signature->parameter_count));
+    MO_ASSERT(signature->kind == MO_TYPE_FUNCTION && count == signature->parameter_count &&
+              (count == 0 || arguments != NULL));
+    MO_ASSERT(fesetround(FE_TONEAREST) == 0 && fegetround() == FE_TONEAREST);
     struct mo_prim_call call = {.heap = heap,
                                 .types = types,
                                 .id = id,
                                 .args = arguments,
-                                .params = count == 0 ? NULL : signature->parameters,
-                                .result = count == 0 ? instantiation : signature->result};
+                                .params = signature->parameters,
+                                .result = signature->result};
     struct mo_cell result;
     enum mo_prim_status status;
     if (id == MO_PRIM_INT_POW) {

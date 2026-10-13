@@ -1,7 +1,32 @@
 #include "prim_oracle.h"
 #include "test.h"
 
+#include <fenv.h>
+#include <math.h>
 #include <string.h>
+
+static void empty_constants_and_rounding(void) {
+    struct prim_fixture f;
+    prim_fixture_init(&f, 1 << 20);
+    const enum mo_primitive_id ids[] = {MO_PRIM_LIST_EMPTY, MO_PRIM_MAP_EMPTY, MO_PRIM_SET_EMPTY};
+    const char *reason;
+    struct mo_cell out;
+    for (size_t i = 0; i < sizeof ids / sizeof ids[0]; i++) {
+        const struct mo_type *fn = &f.types.items[f.signature[ids[i]]];
+        MO_ASSERT(fn->kind == MO_TYPE_FUNCTION && fn->parameter_count == 0);
+        CHECK(mo_prim_call(f.heap, &f.types, ids[i], f.signature[ids[i]], NULL, &out, &reason) ==
+              MO_PRIM_RETURNED);
+        CHECK(reason == NULL);
+        CHECK(ids[i] == MO_PRIM_LIST_EMPTY ? mo_list_size(out) == 0 : mo_table_size(out) == 0);
+        mo_value_drop(f.heap, fn->result, out);
+    }
+    MO_ASSERT(fesetround(FE_UPWARD) == 0);
+    struct mo_cell arg = mo_cell_float(2.0);
+    MO_ASSERT(mo_prim_call(f.heap, &f.types, MO_PRIM_FLOAT_SQRT, f.signature[MO_PRIM_FLOAT_SQRT],
+                           &arg, &out, &reason) == MO_PRIM_RETURNED);
+    CHECK(fegetround() == FE_TONEAREST && mo_cell_get_float(out) == sqrt(2.0));
+    prim_fixture_free(&f);
+}
 
 static void integer_power(void) {
     struct mo_arena arena;
@@ -286,6 +311,7 @@ int main(int argc, char **argv) {
         return mo_test_report("primitive work");
     }
     MO_ASSERT(argc == 1);
+    empty_constants_and_rounding();
     integer_power();
     integer_floor();
     decimal_rounding();

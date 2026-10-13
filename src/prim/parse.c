@@ -6,6 +6,9 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __APPLE__
+#include <xlocale.h>
+#endif
 
 static MO_MUST_USE bool digit(uint8_t c) {
     return c >= '0' && c <= '9';

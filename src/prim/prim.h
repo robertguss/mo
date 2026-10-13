@@ -16,12 +16,13 @@ enum mo_prim_status {
 };
 
 /* types is sealed and belongs to heap's image. id and instantiation are verified: a
- * function type for a call, or the result type for a zero-argument constant. arguments
+ * function type, including fn() : T for a zero-argument constant. arguments
  * holds the signature's valid cells and may be NULL only for no arguments. out is not
  * an argument or an owned reference. On RETURNED, out owns the result and the call
  * consumes exactly prims.def's owned parameters; borrowed parameters stay readable.
  * All other outcomes leave operands, their objects/ownership and out unchanged.
  * reason_out is required, gives static detail on refusal and is NULL on success.
+ * Entry sets FE_TONEAREST; the VM's arithmetic and subsequent primitive calls use it.
  * NOT_IMPLEMENTED is the explicit staged-library refusal, never a language failure. */
 MO_MUST_USE enum mo_prim_status mo_prim_call(struct mo_heap *heap, const struct mo_types *types,
                                              enum mo_primitive_id id, uint32_t instantiation,
