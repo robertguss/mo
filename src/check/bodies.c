@@ -1796,9 +1796,21 @@ static MO_MUST_USE struct value binary(struct inference *p, enum mo_syntax_token
     bool comparison = op == MO_T_EQ || op == MO_T_NE || op == MO_T_LT || op == MO_T_LE ||
                       op == MO_T_GT || op == MO_T_GE;
     if (logical && op == MO_T_OR && named(a.type, "Option")) {
-        bool reported = unfinished(p);
-        (void)reported;
-        return (struct value){0};
+        struct term *payload = argument(p, a.type, 0);
+        if (payload == NULL ||
+            (expected != NULL && !unify_as(p, payload, expected, p->node_expectation)))
+            return (struct value){0};
+        struct value fallback = infer(p, right, payload);
+        if (fallback.type == NULL)
+            return fallback;
+        struct value out = graph(p, (struct value){.type = payload, .never = a.never}, 2);
+        if (p->checked && out.type != NULL) {
+            out.graph->operands[0] = a.note;
+            out.graph->operands[1] = fallback.note;
+            out.graph->output.operation = MO_T_OR;
+            out.graph->output.or_kind = MO_CHECK_OR_OPTION;
+        }
+        return out;
     }
     struct term *operand = logical             ? native(p, "Bool", 0)
                            : op == MO_T_DOTDOT ? native(p, "Int", 0)

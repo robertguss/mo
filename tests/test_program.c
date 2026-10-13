@@ -845,6 +845,31 @@ static void generic_lambdas(void) {
     free_fixture(&f);
 }
 
+static void option_or_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn main() : Int\nSome(17) or 3\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        bool found = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->operation != MO_T_OR)
+                continue;
+            MO_ASSERT(row->operand_count == 2);
+            CHECK(row->or_kind == MO_CHECK_OR_OPTION);
+            CHECK(strcmp(row->type->name, "Int") == 0);
+            CHECK(strcmp(body->items[row->operands[0]].type->name, "Option") == 0);
+            CHECK(body->items[row->operands[1]].syntax->kind == MO_S_INT &&
+                  body->items[row->operands[1]].syntax->text[0] == '3');
+            CHECK(!row->never && row->ability_count == 0);
+            found = true;
+        }
+        CHECK(found);
+    }
+    free_fixture(&f);
+}
+
 static void lambda_graph(void) {
     struct fixture f;
     init(&f, "module Main\n"
@@ -1342,7 +1367,6 @@ static void rejected_stages(void) {
         {"fn main() : Int\nx = 1\nf = fn() x end\nf()\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Int\nm = {\"a\": 1}\ncase m\n_: 1\nend\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Int\ntry Some(1)\nend\n", MO_CODE_CHECK_UNFINISHED},
-        {"fn main() : Int\nSome(1) or 0\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main(console: Console)\nconsole.printed\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"value = 1\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Int\nexamples\n1 == 1\nend\n1\nend\n", MO_CODE_CHECK_UNFINISHED},
@@ -1632,6 +1656,7 @@ static void run(void *argument) {
     requirement_keys();
     data_recursion();
     generic_lambdas();
+    option_or_graph();
     lambda_graph();
     branch_graph();
     record_graph();
