@@ -2478,10 +2478,19 @@ UTF-8, embedded NUL and triple-quoted indentation. Specs follow module/source
 order; sorting remaps anchor links without changing source ordinals.
 Failure details require no Text proof and bypass customizers: lowering uses
 the structural form of Text.%structural, including for Equal-only types.
+Constants use the same inference and graph emitter. An unresolved constant
+read pauses its initializer; an explicit stack checks the dependency before
+resuming. Each initializer must decide its closed type without constraints
+from its uses. Dependency order follows the checked evaluation graphs,
+including ordinary calls and selected ability callbacks; merely making a
+function value does not call it. Source-order ties use a minimum ready queue.
+Constant cycles are E0089 (10.4). Unresolved indirect calls and abstract
+Text/Order callback environments reached during initialization remain E1103,
+rather than supplying an unproven order or reporting a guessed cycle.
 `main` returns Unit or Int and takes no parameters or one Console.
 Direct `Console.print` reads its operation
 and named input type from `base/hostops.def`, with the receiver explicit.
-Map expressions, imports and constants still report E1103.
+Map expressions and imports still report E1103.
 Spec-only capability operations also remain staged. `where`
 validates scoped parameters and the five abilities; customizers must have their declaring
 type's Text/Ordering signature. A generic customizer covers the whole nominal
