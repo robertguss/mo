@@ -413,8 +413,8 @@ with empty parentheses: `defaults()`.
 ### 5.3 Recursion
 
 Functions may call themselves and each other. A call in tail position, the last
-thing a function does, uses no stack, so a recursive loop can run as long as it
-needs to:
+thing a function does, takes the caller's place on the stack instead of adding
+to it, so a recursive loop can run as long as it needs to:
 
 ```mo
 fn sum_to(n: Int, total: Int) : Int
@@ -1161,8 +1161,8 @@ matches nothing is a mistake in the command.
 of stack, by default 8 MiB; `--max-depth` the calls in progress at once, by
 default 10,000; and `--max-heap` the bytes of memory, by default 1 GiB. Going
 past one is a bug whose report names the limit (section 13.2). A call in tail
-position uses no stack and doesn't count toward the depth (section 5.3). A
-program can't set its own limits.
+position takes its caller's place on the stack and doesn't count toward the
+depth (section 5.3). A program can't set its own limits.
 
 `mo check --json` and `mo test --json` write one JSON object per line to
 standard output: first the format's version, then one for each error and for
