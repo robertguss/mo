@@ -561,11 +561,13 @@ struct mo_program {
  * contract. Use the explicit source-stage stack. The current skeleton supports
  * generic functions with scoped requirement proofs, scalar expressions/operators, direct/indirect
  * calls, records/choices and fields, normalized patterns, tuples/lists, conditionals, loops, early
- * exits/asserts and noncapturing lambdas. Native signatures use the shared tables; operators,
+ * exits/asserts, noncapturing lambdas, lazy Option defaults and nearest-function/lambda try with
+ * unique error wrapping. Native signatures use the shared tables; operators,
  * ability dot calls and interpolation retain native/derived/custom/parameter proofs. Source
  * dot/overload dispatch and loaded library calls retain the selected symbols. Written Map/Set
  * types require Hash. main takes no parameters or one Console and returns Unit or Int.
- * Invalid entry signatures report E0079; valid unfinished entry forms return E1103. Imports,
+ * Missing main and invalid entry signatures report E0079; there is no certified absent entry.
+ * Valid unfinished entry forms return E1103. Imports,
  * constants/specs and unfinished body forms return E1103.
  * Future spec checking checks anchor typing, completeness and links but executes no source code:
  * tools compile/run anchors to verify their allows/forbids expectations before accepting a

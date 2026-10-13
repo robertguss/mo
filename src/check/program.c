@@ -128,16 +128,16 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
         if (module->header.uses->count != 0) {
             bool kept = report(diags, MO_CODE_CHECK_UNFINISHED, module->header.uses->span,
                                "unused import checking is not implemented", NULL);
-            if (!kept)
-                return NULL;
+            (void)kept;
+            return NULL;
         }
         for (uint32_t j = 0; j < items->count; j++) {
             const struct mo_syntax *item = items->children[j];
             if (item->kind == MO_S_CONST || item->kind == MO_S_TEST) {
                 bool kept = report(diags, MO_CODE_CHECK_UNFINISHED, item->span,
                                    "constant or spec checking is not implemented", NULL);
-                if (!kept)
-                    return NULL;
+                (void)kept;
+                return NULL;
             }
         }
     }
@@ -162,8 +162,9 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
         if (fn->function->module == 0 && strcmp(fn->function->name, "main") == 0)
             main = i;
         uint32_t index = (uint32_t)(fn - signatures->items);
-        if (!mo_check_function(arena, interfaces, signatures, index, diags, &functions[i]) &&
-            resource_failed(diags))
+        bool halt;
+        if (!mo_check_function(arena, interfaces, signatures, index, diags, &functions[i], &halt) &&
+            halt)
             return NULL;
     }
     mo_diags_sort(diags);

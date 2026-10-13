@@ -444,8 +444,12 @@ checks independent bodies despite later declaration errors, and sorts the
 combined diagnostics by source position. Invalid declarations and their nominal
 dependents suppress uses rather than inventing secondary type errors. A failed
 ability context is discarded, including provisional recursive proofs. Resource
-or diagnostic-storage failure stops the walk. Neither a partial preparation nor
-a partially checked program is published through the public interfaces.
+or diagnostic-storage failure stops the walk. Filling the diagnostic count alone
+does not stop independent body checks: later errors increment `dropped`. Body
+checking retains its failure kind privately so an unrecorded resource error still
+halts; staged forms stop before secondary body errors. Neither a partial
+preparation nor a partially checked program is published through the public
+interfaces.
 
 Native signatures are prepared once per checking run from `prims.def` and
 `hostops.def`. The checker adds positional parameter names to each table's Mo
@@ -2175,8 +2179,9 @@ grow the cycle. Proof traversal memoizes recursive nominal graphs.
 Invalid entry signatures report E0079: parameters must be capabilities without
 duplicate types, and the result must be Unit, Int or Result(Unit, E). Valid
 unfinished entry conventions still report E1103. Checking stops at the first
-failed stage or body; no staged inference result or partly filled program is
-returned as certified output.
+unfinished stage or resource failure; independent body errors are retained in
+source order, with further errors counted after the diagnostic cap. No staged
+inference result or partly filled program is returned as certified output.
 The whole-program corpus asserts resolved graphs and canonical binders, checks
 unfinished-stage rejection, sweeps arena limits and reaches maximum nesting.
 `fuzz_program` walks graph invariants and varies allocation budgets. Generated

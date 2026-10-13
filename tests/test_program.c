@@ -1628,6 +1628,7 @@ static void rejected_stages(void) {
          MO_CODE_TRY_WRAPPER},
         {"fn main(console: Console)\nconsole.printed\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"value = 1\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"value = 1\nfn main() : Int\nmissing\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Int\nexamples\n1 == 1\nend\n1\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn helper() : Int\nmissing\nend\nfn main() : Int\n0\nend\n", MO_CODE_NAME_UNKNOWN},
     };
@@ -1696,6 +1697,16 @@ static void diagnostic_order(void) {
         mo_buffer_free(&source);
     }
     struct fixture f;
+    init(&f, "module Main\nfn zebra() : Int\nunknown\nend\n"
+             "fn alpha() : Int\nfalse\nend\n");
+    CHECK(f.program == NULL && f.diags.count == 2);
+    if (f.diags.count == 2) {
+        CHECK(f.diags.items[0].code == MO_CODE_NAME_UNKNOWN &&
+              f.diags.items[1].code == MO_CODE_RESULT_TYPE);
+        CHECK(mo_sources_position(&f.sources, 0, f.diags.items[0].primary.span.start).line == 3 &&
+              mo_sources_position(&f.sources, 0, f.diags.items[1].primary.span.start).line == 6);
+    }
+    free_fixture(&f);
     init(&f, "module Main\nfn main() : Int\nlater(1)\nend\n"
              "fn later(_x: Unknown) : Int\n0\nend\n");
     CHECK(f.program == NULL && f.diags.count == 1);
@@ -1722,6 +1733,42 @@ static void diagnostic_order(void) {
         CHECK(span.end - span.start == 5 && memcmp(source + span.start, "s < s", 5) == 0);
     }
     free_fixture(&f);
+}
+
+static void diagnostic_cap(void) {
+    struct mo_buffer source;
+    mo_buffer_init(&source, MO_LIMIT_FILE_SIZE);
+    MO_ASSERT(mo_buffer_append_text(&source, "module Main\n"));
+    for (uint32_t i = 0; i < 1500; i++) {
+        MO_ASSERT(mo_buffer_append_text(&source, "fn f") && mo_buffer_append_uint(&source, i) &&
+                  mo_buffer_append_text(&source, "()\nunknown\nend\n"));
+    }
+    MO_ASSERT(mo_buffer_append_byte(&source, 0));
+    struct fixture f;
+    init(&f, (const char *)source.bytes);
+    CHECK(f.program == NULL && f.diags.count == 1000 && f.diags.dropped == 500);
+    for (uint32_t i = 0; i < f.diags.count; i++)
+        CHECK(f.diags.items[i].code == MO_CODE_NAME_UNKNOWN);
+    size_t used = f.arena.used;
+    bool capped_resource = false;
+    for (size_t i = 32; i < 64; i++) {
+        mo_arena_free(&f.arena);
+        mo_arena_init(&f.arena, used * i / 64);
+        mo_diags_free(&f.diags);
+        MO_ASSERT(mo_diags_init(&f.diags));
+        f.program = mo_check(&f.arena, &f.set, &f.diags);
+        CHECK(f.program == NULL && mo_diags_any(&f.diags));
+        if (f.diags.count == MO_LIMIT_DIAGNOSTICS) {
+            /* A smaller arena can still finish by allocating smaller chunks.
+             * Exhaustion after the cap must stop before all remaining bodies. */
+            CHECK(f.diags.dropped > 0 && f.diags.dropped <= 500);
+            capped_resource = capped_resource || f.diags.dropped < 500;
+        } else if (f.diags.count != 0)
+            CHECK(f.diags.items[f.diags.count - 1].code == MO_CODE_CHECK_NO_MEMORY);
+    }
+    CHECK(capped_resource);
+    free_fixture(&f);
+    mo_buffer_free(&source);
 }
 
 static void ability_scaling(void) {
@@ -1938,6 +1985,7 @@ static void run(void *argument) {
     rejected_stages();
     depth_graph();
     diagnostic_order();
+    diagnostic_cap();
     ability_scaling();
     ability_depth();
     allocation_failures();

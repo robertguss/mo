@@ -4321,10 +4321,12 @@ static MO_MUST_USE bool finish_dispatches(struct inference *p) {
 static MO_MUST_USE struct mo_inferred_body *
 infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
                const struct mo_signatures *signatures, uint32_t function, struct mo_diags *diags,
-               struct mo_checked_function *checked) {
+               struct mo_checked_function *checked, bool *halt) {
     MO_ASSERT(arena != NULL && interfaces != NULL && signatures != NULL && diags != NULL);
+    MO_ASSERT(halt != NULL);
     MO_ASSERT(function < signatures->count && signatures->work != NULL);
     MO_ASSERT(*signatures->work <= MO_LIMIT_PROGRAM_CHECK_WORK);
+    *halt = false;
     const struct mo_function_signature *signature = &signatures->items[function];
     const struct mo_syntax *syntax = signature->function->declaration;
     struct inference p = {.arena = arena,
@@ -4380,6 +4382,7 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
     bool valid = finish_notes(&p, items);
     (void)valid;
     if (!p.fatal && !finish_patterns(&p)) {
+        *halt = true;
         mo_diags_sort(diags);
         return NULL;
     }
@@ -4569,11 +4572,13 @@ failed:
         bool partial_valid = finish_notes(&p, NULL);
         (void)partial_valid;
         if (!p.fatal && !finish_patterns(&p)) {
+            *halt = true;
             mo_diags_sort(diags);
             return NULL;
         }
     }
     emit_problem(&p);
+    *halt = p.error.code >= 1000 || (diags->dropped != 0 && diags->count < MO_LIMIT_DIAGNOSTICS);
     mo_diags_sort(diags);
     return NULL;
 }
@@ -4582,12 +4587,13 @@ struct mo_inferred_body *mo_infer_function(struct mo_arena *arena,
                                            const struct mo_module_interfaces *interfaces,
                                            const struct mo_signatures *signatures,
                                            uint32_t function, struct mo_diags *diags) {
-    return infer_function(arena, interfaces, signatures, function, diags, NULL);
+    bool halt;
+    return infer_function(arena, interfaces, signatures, function, diags, NULL, &halt);
 }
 
 bool mo_check_function(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
                        const struct mo_signatures *signatures, uint32_t function,
-                       struct mo_diags *diags, struct mo_checked_function *out) {
+                       struct mo_diags *diags, struct mo_checked_function *out, bool *halt) {
     MO_ASSERT(out != NULL);
-    return infer_function(arena, interfaces, signatures, function, diags, out) != NULL;
+    return infer_function(arena, interfaces, signatures, function, diags, out, halt) != NULL;
 }
