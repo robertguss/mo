@@ -626,6 +626,7 @@ incoming edge has the same one.
 | `move r_d, r_s` | copies the cell; an owned `r_s` is consumed and `r_d` becomes owned; a borrowed `r_s` stays borrowed and `r_d` becomes borrowed too |
 | `dup r_d, r_s` | reads `r_s`, adds one to the count, and `r_d` is owned |
 | `drop r_s` | consumes `r_s`: subtracts one from the count, and frees the object at zero, dropping what it holds |
+| `clear r_d` | writes `undefined`, removing its known case, whatever its declared type; the usual write rule refuses an owned register or token. Reads nothing; at runtime it does nothing: no cell read, count change or allocation |
 | `const r_d, k` | loads a constant; a reference is immortal, so `r_d` is borrowed |
 | `global r_d, g` | loads a module constant; `r_d` is borrowed |
 | `set_global g, r_s` | only in `init` functions; consumes `r_s` and makes it immortal, with everything it reaches |
@@ -999,6 +1000,9 @@ checks:
 5. **Ownership and definition.** A dataflow over the states of section 4.2,
    with known cases, per function. Every read and every consume follows 4.2.
    At every join, each register's state is the same on every incoming edge.
+   A code generator makes dead registers' states agree with `clear`, after
+   `drop` for an owned reference or `free_token` for a token, including on
+   loop back-edges.
    `ret` and tail calls leave nothing owned except what they consume. `stop`
    and `fail` may leave owned registers: they end the process, whose heap is
    freed all at once (Architecture section 8).

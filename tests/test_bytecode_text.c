@@ -181,6 +181,11 @@ static void programs(void) {
         "function A.unwrap(n: Wrapper(Int, Text) borrowed) : Int function in A\n"
         " registers [r1: Int]\n field r1, r0, 0\n ret r1\nend\n"
         "module A exposes [Wrapper(Int, Text)(..), A.unwrap]\n",
+
+        "bytecode 0.1 shorthand\nmodule A exposes [A.clear]\n"
+        "function A.clear(x: Text borrowed) : Unit function in A\n"
+        " registers [r1: Unit, r2: Int, r3: Text]\n"
+        " clear r0\n clear r3\n const r2, 7\n clear r2\n const r1, ()\n ret r1\nend\n",
     };
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
         struct mo_buffer text;
