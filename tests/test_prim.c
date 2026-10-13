@@ -99,15 +99,15 @@ static void reuse_refusals(void) {
     for (size_t operation = 0; operation < sizeof ids / sizeof ids[0]; operation++) {
         enum mo_primitive_id id = ids[operation];
         for (unsigned holders = 0; holders < 3; holders++) {
-            for (size_t room = 0; room <= 1536; room += 32) {
+            for (size_t room = 0; room <= 8192; room += 128) {
                 struct prim_fixture f;
                 prim_fixture_init_type(&f, 1 << 20, MO_TYPE_TEXT);
                 const struct mo_type *fn = &f.types.items[f.signature[id]];
                 size_t count = fn->parameter_count;
                 struct mo_cell args[3], held[3], out = mo_cell_int(41);
-                struct mo_cell elements[4];
-                const char *const words[] = {"β", "🙂", "x", "z"};
-                for (unsigned i = 0; i < 4; i++)
+                struct mo_cell elements[7];
+                const char *const words[] = {"β", "🙂", "x", "z", "u", "v", "w"};
+                for (unsigned i = 0; i < 7; i++)
                     MO_ASSERT(mo_value_text(f.heap, words[i], strlen(words[i]), &elements[i]));
                 for (size_t i = 0; i < count; i++) {
                     uint32_t type = fn->parameters[i];
@@ -125,7 +125,10 @@ static void reuse_refusals(void) {
                             mo_value_list(f.heap, type, elements + i, i == 0 ? 3U : 2U, &args[i]));
                     else {
                         MO_ASSERT(kind == MO_TYPE_SET);
-                        MO_ASSERT(mo_value_set(f.heap, type, elements + i, 3, &args[i]));
+                        /* Full left storage plus three new keys forces growth,
+                         * and exercises refusals after the planning allocation. */
+                        MO_ASSERT(mo_value_set(f.heap, type, elements + (i == 0 ? 0 : 4),
+                                               i == 0 ? 4U : 3U, &args[i]));
                     }
                     if (holders == 1)
                         held[i] = mo_value_dup(f.heap, type, args[i]);
@@ -179,7 +182,7 @@ static void reuse_refusals(void) {
                 }
                 if (status == MO_PRIM_RETURNED)
                     mo_value_drop(f.heap, fn->result, out);
-                for (unsigned i = 0; i < 4; i++)
+                for (unsigned i = 0; i < 7; i++)
                     mo_value_drop(f.heap, f.builtin[MO_TYPE_TEXT], elements[i]);
                 CHECK(holders == 2 || mo_heap_objects(f.heap) == 0);
                 prim_fixture_free(&f);
