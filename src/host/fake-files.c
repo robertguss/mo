@@ -96,31 +96,21 @@ enum mo_host_outcome mo_host_files_fake(struct mo_host *host, struct mo_heap *he
     return ok ? MO_HOST_RETURNED : MO_HOST_OUT_OF_MEMORY;
 }
 
-static MO_MUST_USE bool blocked(struct mo_host *host, struct mo_heap *heap,
-                                const struct mo_capability_info *info, char *path, bool *out) {
-    struct mo_cell files = mo_state_get(info->state, 0), unused;
-    bool found;
-    if (!mo_table_get(heap, host->types->files, files, info->prefix, &found, &unused))
-        return false;
-    if (found) {
-        *out = true;
-        return true;
-    }
-    for (size_t i = 0; path[i] != '\0'; i++) {
-        if (path[i] != '/')
-            continue;
-        path[i] = '\0';
-        bool ok = contains(host, heap, host->types->files, files, path, &found, &unused);
-        path[i] = '/';
-        if (!ok)
-            return false;
-        if (found) {
-            *out = true;
+/* Scan stored key bytes once instead of allocating and hashing every path
+ * prefix. Deep paths cannot turn one lookup into quadratic prefix work. */
+static MO_MUST_USE bool blocked(const struct mo_capability_info *info, const char *path) {
+    size_t length = strlen(path), root_length;
+    const uint8_t *root = mo_value_data(info->prefix, &root_length);
+    uint32_t position = 0;
+    struct mo_cell key, unused;
+    while (mo_table_next(mo_state_get(info->state, 0), &position, &key, &unused)) {
+        size_t n;
+        const uint8_t *bytes = mo_value_data(key, &n);
+        if ((n == root_length && memcmp(bytes, root, n) == 0) ||
+            (n < length && path[n] == '/' && memcmp(bytes, path, n) == 0))
             return true;
-        }
     }
-    *out = false;
-    return true;
+    return false;
 }
 
 static MO_MUST_USE enum mo_host_outcome derived(struct mo_host *host, struct mo_heap *heap,
@@ -261,11 +251,9 @@ static MO_MUST_USE enum mo_host_outcome call(struct mo_host *host, struct mo_hea
         }
         return mo_host_file_error(host, heap, type, args[1], problem, out);
     }
-    bool block, root_folder, is_folder, is_file;
+    bool block = blocked(info, path), root_folder, is_folder, is_file;
     struct mo_cell folders = mo_state_get(info->state, 1), files = mo_state_get(info->state, 0),
                    value;
-    if (!blocked(host, heap, info, path, &block))
-        return MO_HOST_OUT_OF_MEMORY;
     size_t root_length;
     const uint8_t *root = mo_value_data(info->prefix, &root_length);
     (void)root;
@@ -301,8 +289,12 @@ static MO_MUST_USE enum mo_host_outcome call(struct mo_host *host, struct mo_hea
         enum mo_host_outcome outcome = mo_host_file_ok(host, heap, type, mo_cell_unit(), &result);
         if (outcome != MO_HOST_RETURNED)
             return outcome;
-        if (!add_prefixes(host, heap, mo_state_slot(info->state, 1), (const uint8_t *)path,
-                          strlen(path), true)) {
+        struct mo_cell staged = mo_value_dup(heap, host->types->folders, folders);
+        bool ok = add_prefixes(host, heap, &staged, (const uint8_t *)path, strlen(path), true);
+        if (ok)
+            mo_state_set(heap, info->state, 1, staged);
+        mo_value_drop(heap, host->types->folders, staged);
+        if (!ok) {
             mo_value_drop(heap, type, result);
             return MO_HOST_OUT_OF_MEMORY;
         }

@@ -118,6 +118,44 @@ static void test_fake_files(void) {
     host_fixture_free(&f);
 }
 
+static void test_fake_folder_exhaustion(void) {
+    unsigned refusals = 0, successes = 0;
+    for (size_t remaining = 128; remaining <= 12288; remaining += 128) {
+        struct host_fixture f;
+        const size_t limit = 32768;
+        host_fixture_init(&f, limit);
+        struct mo_cell map, files, result = mo_cell_int(37);
+        MO_ASSERT(mo_value_map(f.heap, f.types.files, NULL, NULL, 0, &map));
+        struct mo_host_error error;
+        MO_ASSERT(mo_host_call(&f.host, f.heap, MO_HOST_FILES_IN_MEMORY,
+                               f.capabilities[MO_CAP_FILES], &map, &files,
+                               &error) == MO_HOST_RETURNED);
+        struct mo_cell args[] = {files, host_text(&f, "a/b/c/d/e/f/g/h/i/j/k/l")};
+        size_t used = mo_heap_used(f.heap);
+        struct mo_scratch held;
+        mo_scratch_init(&held, f.heap);
+        MO_ASSERT(mo_scratch_resize(&held, NULL, 0, limit - used - remaining) != NULL);
+        enum mo_host_outcome outcome = mo_host_call(&f.host, f.heap, MO_HOST_FILES_MAKE_FOLDER,
+                                                    f.result_unit, args, &result, &error);
+        mo_scratch_free(&held);
+        if (outcome == MO_HOST_OUT_OF_MEMORY) {
+            refusals++;
+            CHECK(mo_cell_get_int(result) == 37 && mo_heap_used(f.heap) == used);
+            expect(&f, MO_HOST_FILES_LIST, f.result_names, files, ".", "", "Ok([])");
+        } else {
+            successes++;
+            CHECK(outcome == MO_HOST_RETURNED);
+            mo_value_drop(f.heap, f.result_unit, result);
+            expect(&f, MO_HOST_FILES_LIST, f.result_names, files, ".", "", "Ok([\"a\"])");
+        }
+        mo_value_drop(f.heap, f.types.text, args[1]);
+        mo_value_drop(f.heap, f.capabilities[MO_CAP_FILES], files);
+        CHECK(mo_heap_objects(f.heap) == 0);
+        host_fixture_free(&f);
+    }
+    CHECK(refusals != 0 && successes != 0);
+}
+
 static void pending_root(struct host_fixture *f, struct mo_cell files) {
     struct mo_cell args[] = {files, host_text(f, "future")}, child;
     struct mo_host_error error;
@@ -272,6 +310,7 @@ int main(void) {
     heap_fixture_init(&fixture);
     test_console(&fixture);
     test_fake_files();
+    test_fake_folder_exhaustion();
     test_real_files(false);
     test_real_files(true);
     test_real_console();
