@@ -9,6 +9,7 @@
 
 #include "base/base.h"
 #include "base/buffer.h"
+#include "base/hostops.h"
 #include "base/limits.h"
 #include "base/prims.h"
 
@@ -158,11 +159,7 @@ enum { MO_OPCODE_VARIABLE_SHIFT = 16 };
 /* p and h are zero-based row indices in the base tables. The spec gives symbolic ids but no
  * numbers; deriving these enums from table order keeps every consumer on the same numbering.
  * Phase 2 reads and writes with the same build, so the numbers need not survive table edits. */
-enum mo_host_id {
-#define HOSTOP(id, module, name, signature, params, bugs, spec_only) MO_HOST_##id,
-#include "base/hostops.def"
-    MO_HOST_COUNT,
-};
+/* The enums live in base/prims.h and base/hostops.h. */
 
 /* Only FUNCTION permits borrowed parameters. INIT/TEST/EXAMPLE take no arguments and return
  * Unit. PROMISE takes the subject's arguments and result, and returns Int; ANCHOR takes no

@@ -44,7 +44,7 @@ static MO_MUST_USE uint32_t heap_layout(struct mo_types *types, struct mo_layout
     return out;
 }
 
-static void heap_fixture_init(struct heap_fixture *fixture) {
+static inline void heap_fixture_init(struct heap_fixture *fixture) {
     mo_arena_init(&fixture->arena, 1 << 20);
     mo_types_init(&fixture->types, &fixture->arena);
     struct mo_types *types = &fixture->types;

@@ -70,6 +70,11 @@ static MO_MUST_USE enum mo_outcome primitive_stop(struct mo_process *p, enum mo_
     return mo_vm_stop(p, reason, NULL, false, mo_cell_unit(), MO_STOPPED);
 }
 
+static const char *const host_modes[] = {
+#define HOSTOP(id, module, name, signature, params, bugs, spec_only) params,
+#include "base/hostops.def"
+};
+
 enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
     MO_ASSERT(fesetround(FE_TONEAREST) == 0 && fegetround() == FE_TONEAREST);
     for (;;) {
@@ -338,9 +343,29 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             write(p, f, a[0], value, false);
             break;
         }
-        case MO_OP_HOST:
-            return mo_vm_stop(p, "internal error: host dispatch unavailable", NULL, false,
-                              mo_cell_unit(), MO_STOPPED);
+        case MO_OP_HOST: {
+            MO_ASSERT(a[0] < fn->register_count && a[1] < MO_HOST_COUNT &&
+                      count <= MO_LIMIT_BYTECODE_PARAMETERS);
+            struct mo_cell arguments[MO_LIMIT_BYTECODE_PARAMETERS];
+            for (uint32_t i = 0; i < count; i++)
+                arguments[i] = read(p, f, a[2 + i]);
+            struct mo_host_error error;
+            enum mo_host_outcome outcome = mo_host_call(
+                &p->host, p->heap, a[1], fn->register_types[a[0]], arguments, &value, &error);
+            if (outcome == MO_HOST_OUT_OF_MEMORY && errno == EOVERFLOW)
+                return mo_vm_stop(p, "running out of memory: MO_LIMIT_VALUE_BYTES", NULL, false,
+                                  mo_cell_unit(), MO_STOPPED);
+            if (outcome == MO_HOST_OUT_OF_MEMORY)
+                return memory(p);
+            if (outcome != MO_HOST_RETURNED)
+                return mo_vm_stop(p, error.reason, NULL, error.has_detail, error.detail,
+                                  MO_STOPPED);
+            for (uint32_t i = 0; i < count; i++)
+                if (host_modes[a[1]][i] == 'o')
+                    consume(p, f, a[2 + i]);
+            write(p, f, a[0], value, false);
+            break;
+        }
         default:
             MO_UNREACHABLE();
         }

@@ -882,8 +882,9 @@ consumes or changes it. This applies to partial in-place updates followed by
 allocation failure and to `Map.%literal_insert` stopping on a duplicate key.
 A consumed or freed operand must never be printed from pre-instruction replay.
 
-The part 1 interpreter has dispatch seams for `prim` and `host`; until the
-corresponding C operations are integrated they stop with an internal
+The interpreter dispatches `host` through `mo_host_call`, committing owned
+register consumption only after success. `prim` remains a dispatch seam until
+the corresponding C operations are integrated; it stops with an internal
 "dispatch unavailable" reason, leaving all registers untouched. C-only
 instruction budgets bound fuzz execution, including initialization loops;
 they are disabled for normal execution and are not language resource limits.
@@ -924,10 +925,13 @@ spec code can't call, tail-call or make a closure of a spec function or an
 neither make a fake nor run a test's code, even in an image that contains
 tests.
 
-**A fake's state** and a `Random`'s generator state are the only mutable
-objects in the heap, and only their slots change. What they hold are numbers,
-or ordinary counted values: texts, bytes, and lists and maps of them, never a
-capability or a closure, so the heap stays acyclic.
+**A fake's state**, a `Random`'s generator state, and real buffered input or
+deferred folder bindings are the only mutable objects in the heap. Fake
+slots hold numbers or ordinary counted values: texts, bytes, and lists, sets
+and maps of them, never a capability or a closure. Native capability storage
+is inline, charged heap memory, not an uncharged side table. A deferred real
+folder may retain its older parent capability until teardown; those links
+always point from a new child to an existing parent, so the heap stays acyclic.
 They change only the way programs change values: `Files.in_memory(files)`
 consumes its map, so if the test still holds the map, the first write copies
 it; `printed` returns a duplicate of the state's list, so printing more later
@@ -938,7 +942,11 @@ make new handles on the same state, with a longer prefix or read-only set.
 
 **A real capability** is made by the runtime, once, for `main`. Dropping a real
 `Files` or `ReadFiles` handle closes its folder's descriptor. The number of
-open handles has a named limit, and `within` past it is a bug.
+open handles has a named limit, and `within` past it is a bug. `mo_call_main`
+retains each declared kind in the process so repeated calls share it.
+Host refusal keeps the capability and operand ownership intact. Fake updates
+are transactional on allocation failure; real external I/O and bindings cannot
+be rolled back (architecture 7).
 
 ## 8. Generic operations in the VM
 

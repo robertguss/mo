@@ -1147,11 +1147,16 @@ static void test_defects(void) {
             struct mo_process *p = mo_process_new(image, &limits);
             MO_ASSERT(p != NULL);
             struct mo_cell out = mo_cell_int(99);
-            CHECK(mo_call(p, 0, NULL, 0, &out, &defect) == MO_STOPPED);
-            CHECK(strcmp(defect.reason, kind == 2
-                                            ? "overflow: Int"
-                                            : "internal error: host dispatch unavailable") == 0 &&
-                  mo_cell_get_int(out) == 99 && defect.frames->pc == 3);
+            enum mo_outcome outcome = mo_call(p, 0, NULL, 0, &out, &defect);
+            if (kind == 2) {
+                CHECK(outcome == MO_STOPPED);
+                CHECK(strcmp(defect.reason, "overflow: Int") == 0 && mo_cell_get_int(out) == 99 &&
+                      defect.frames->pc == 3);
+            } else {
+                CHECK(outcome == MO_RETURNED);
+                mo_value_drop(mo_process_heap(p), 3, out);
+                CHECK(mo_heap_objects(mo_process_heap(p)) == 0);
+            }
             mo_process_free(p);
             mo_image_free(image);
             continue;
@@ -1314,10 +1319,22 @@ static void test_scratch_and_fuel(void) {
     struct mo_limits limits = mo_limits_default();
     struct mo_defect defect;
     /* Refuse the constructor with scratch available, then refuse its gather
-     * scratch itself. Both leave the register and destination untouched. */
+     * scratch itself. Both leave the register and destination untouched.
+     * Find the process minimum through its public API: host metadata is also
+     * charged, and this test bounds execution space, not a private struct. */
+    size_t minimum = 0;
+    struct mo_limits probe_limits = limits;
+    struct mo_process *probe;
+    do {
+        probe_limits.heap_size = minimum++;
+        probe = mo_process_new(image, &probe_limits);
+    } while (probe == NULL && minimum < 4096);
+    MO_ASSERT(probe != NULL);
+    mo_process_free(probe);
+    minimum--;
     for (unsigned scenario = 0; scenario < 3; scenario++) {
         if (scenario != 0)
-            limits.heap_size = scenario == 1 ? 800 : 400;
+            limits.heap_size = minimum + (scenario == 1 ? 400u : 0u);
         struct mo_process *p = mo_process_new(image, &limits);
         MO_ASSERT(p != NULL);
         struct mo_heap *heap = mo_process_heap(p);

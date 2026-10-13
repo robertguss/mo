@@ -154,6 +154,11 @@
  * (architecture 7, D236): Linux's own limit. */
 #define MO_LIMIT_PATH_LINKS 40
 
+/* Native filesystem resolver bytes, including NUL. Paths or expanded link
+ * targets past this produce Failed(path, "path too long"). Fake paths use
+ * charged dynamic storage instead, and are not constrained by OS path buffers. */
+#define MO_LIMIT_HOST_PATH_SIZE 4096
+
 /* Bytes in one bytecode file. */
 #define MO_LIMIT_BYTECODE_SIZE (256 << 20)
 
@@ -227,6 +232,13 @@
  * stops the program (bytecode.md section 7). It stays well below the 1,024 descriptors a process
  * usually gets, leaving room for the files the program reads and writes. */
 #define MO_LIMIT_OPEN_FOLDERS 256
+
+/* Lookup-wide component attempts, including portable ancestor reconstruction.
+ * A refusal is Failed naming this limit, not a language bug. Test builds may
+ * lower it to exercise exhaustion without millions of system calls. */
+#ifndef MO_LIMIT_PATH_STEPS
+#define MO_LIMIT_PATH_STEPS (1U << 18)
+#endif
 
 /* Type-ability preparation has a work cap. Runtime printing uses its caller's
  * output budget; equality, ordering and hashing have no work cap. Scratch uses the remaining heap.

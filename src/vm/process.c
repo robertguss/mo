@@ -1,5 +1,6 @@
 #include "vm/internal.h"
 
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -109,7 +110,8 @@ struct mo_process *mo_process_new(const struct mo_image *image, const struct mo_
     }
     process->image = image;
     process->file = mo_image_bytecode(image);
-    process->types = mo_image_types(image);
+    process->types = &runtime->host_types.types;
+    mo_host_init(&process->host, &runtime->host_types);
     process->runtime = runtime;
     process->limits = *limits;
     process->owns_heap = true;
@@ -132,6 +134,11 @@ void mo_process_free(struct mo_process *process) {
 struct mo_heap *mo_process_heap(struct mo_process *process) {
     MO_ASSERT(process != NULL);
     return process->heap;
+}
+
+struct mo_host *mo_process_host(struct mo_process *process) {
+    MO_ASSERT(process != NULL);
+    return &process->host;
 }
 
 size_t mo_process_stack_used(const struct mo_process *process) {
@@ -171,4 +178,54 @@ enum mo_outcome mo_call(struct mo_process *process, uint32_t function,
     if (outcome != MO_RETURNED)
         *defect_out = process->defect;
     return outcome;
+}
+
+enum mo_outcome mo_call_main(struct mo_process *process, uint32_t function,
+                             const struct mo_cell *args, const struct mo_cell *env, int folder,
+                             struct mo_cell *result_out, struct mo_defect *defect_out) {
+    MO_ASSERT(process != NULL && !process->terminal && process->depth == 0 &&
+              function < process->file->function_count && result_out != NULL && defect_out != NULL);
+    const struct mo_bytecode_function *fn = &process->file->functions[function];
+    MO_ASSERT(fn->kind == MO_FUNCTION_FUNCTION && fn->parameter_count <= MO_CAP_RANDOM + 1);
+    const char *setup = mo_host_start(&process->host);
+    if (setup != NULL) {
+        enum mo_outcome stopped =
+            mo_vm_stop(process, setup, NULL, false, mo_cell_unit(), MO_STOPPED);
+        *defect_out = process->defect;
+        return stopped;
+    }
+    /* Construct before duplicating any owned argument, so refusal cannot leave
+     * duplicates that have not yet entered a frame. Cached kinds remain owned. */
+    for (uint32_t i = 0; i < fn->parameter_count; i++) {
+        uint32_t type = fn->parameters[i].type;
+        MO_ASSERT(process->types->items[type].kind == MO_TYPE_CAPABILITY);
+        enum mo_capability cap = process->types->items[type].capability;
+        if (process->capability_set[cap])
+            continue;
+        struct mo_host_error error;
+        const struct mo_cell *contents = cap == MO_CAP_ARGS ? args : cap == MO_CAP_ENV ? env : NULL;
+        enum mo_host_outcome outcome = mo_host_real(&process->host, process->heap, type, contents,
+                                                    folder, &process->capabilities[cap], &error);
+        if (outcome != MO_HOST_RETURNED) {
+            const char *reason =
+                outcome == MO_HOST_OUT_OF_MEMORY ? "running out of memory" : error.reason;
+            const char *limit =
+                outcome == MO_HOST_OUT_OF_MEMORY && errno != ENOMEM ? "--max-heap" : NULL;
+            enum mo_outcome stopped =
+                mo_vm_stop(process, reason, limit, false, mo_cell_unit(), MO_STOPPED);
+            *defect_out = process->defect;
+            return stopped;
+        }
+        process->capability_set[cap] = true;
+    }
+    struct mo_cell parameters[MO_CAP_RANDOM + 1];
+    for (uint32_t i = 0; i < fn->parameter_count; i++) {
+        uint32_t type = fn->parameters[i].type;
+        enum mo_capability cap = process->types->items[type].capability;
+        struct mo_cell value = process->capabilities[cap];
+        parameters[i] = fn->parameters[i].ownership == MO_PARAMETER_OWNED
+                            ? mo_value_dup(process->heap, type, value)
+                            : value;
+    }
+    return mo_call(process, function, parameters, fn->parameter_count, result_out, defect_out);
 }

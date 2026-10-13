@@ -851,7 +851,10 @@ it is given. It never calls the operating system itself.
 
 - **Real capabilities** are made once, by the runtime, for `main`: exactly
   the ones `main` declares, from the process's arguments, environment and
-  start folder (reference 11.2).
+  start folder (reference 11.2). `mo_call_main` caches each declared kind in
+  the process, so a later call keeps the same state and open directory object.
+  Its C caller supplies borrowed argument/environment values and a directory
+  descriptor; construction retains them before that caller releases them.
 - **Fakes** are made by the fake constructors, which only spec code may call:
   `Console.fake()`, `Files.in_memory(...)` and the rest (reference 12.4). A
   fake's state is a mutable object shared by every handle on that fake. So a
@@ -865,13 +868,34 @@ it is given. It never calls the operating system itself.
   and paths whose `..` would leave the capability's root are refused;
   `a/../b` resolves to `b`. The normalized path is then resolved beneath the
   root, following symbolic links only while they stay inside (D236). Where
-  the system has `openat2`, `RESOLVE_BENEATH` does exactly that. Elsewhere
-  the VM resolves one component at a time with `openat` and `O_NOFOLLOW`;
+  the system has usable `openat2`, `RESOLVE_BENEATH` does exactly that. A
+  feature probe treats `ENOSYS`, `EINVAL` and seccomp's `EPERM` as unavailable;
+  builds without the kernel headers or syscall number also use the fallback.
+  Elsewhere the VM resolves one component at a time with `openat` and `O_NOFOLLOW`;
   when a component is a link, it reads it with `readlinkat`, refuses an
   absolute target, and resolves the target from the link's folder in the same
   way, refusing any step that would leave the root. Either way a path passes
-  through at most `MO_LIMIT_PATH_LINKS` links, and a race can't lead outside
-  the folder. `remove` unlinks its last component without following it, so it
+  through at most `MO_LIMIT_PATH_LINKS` links. The capability's folder is the
+  directory object held open, not its pathname. Each directory opened during
+  a lookup is authorized for that operation; `..`, including in a link target,
+  never climbs above that root object. In the portable resolver, popping `..`
+  re-resolves the parent from the capability's folder; after another process
+  replaces an ancestor, the lookup may reach the replacement, which is still
+  inside the folder. This is fresh authorization from the retained root, not
+  a walk through an OS parent. Saved component device/inode identities are
+  checked during replay; a mismatch is a concurrent change reported transiently
+  as `Failed(path, "changed while being used")`, not `NotAllowed`. Inode reuse
+  under concurrent replacement cannot portably preserve exact ancestor identity.
+  The lookup-wide `MO_LIMIT_PATH_STEPS` budget (262,144 component steps,
+  including replay) bounds the extra work; exhaustion gives
+  `Failed(path, "MO_LIMIT_PATH_STEPS")`, a limit refusal, not a bug.
+  Mo's own resolution never leaves its directory-object authority through
+  links or `..`. Another process may rename an intermediate directory during
+  the lookup, which may then follow that object to its new location. Preventing
+  those concurrent reparentings is outside the portable guarantee; no POSIX
+  ancestry precheck or postcheck can make the namespace an atomic snapshot.
+  This is directory-object authority, as in Capsicum, WASI, cap-std and Go's
+  `os.Root`. `remove` unlinks its last component without following it, so it
   removes a link itself. A refused link gives `NotAllowed`, like any path that
   would leave the folder. Errors map to `FileError`: a missing file to
   `NotFound`, a refused path or permission to `NotAllowed`, invalid UTF-8 in
@@ -879,18 +903,73 @@ it is given. It never calls the operating system itself.
   own, the same on every system and in fakes: "not a folder" where a folder
   was needed, "is a folder" where a file was, and "too many links"; the VM
   checks a path's kind itself rather than trusting `errno`, since systems
-  differ, as macOS's `unlink` of a folder gives `EPERM`. Any other failure
-  carries the system's message.
-  `list` sorts names by their bytes, which is the order of their characters.
-- **Console.** The runtime ignores `SIGPIPE`. Writing to a closed output
-  returns `EPIPE`, which is a bug with status 70: "printing to an output that
-  is gone" (reference 13.2).
+  differ, as macOS's `unlink` of a folder gives `EPERM`. Real reads and writes
+  refuse a non-regular, non-folder object with "not a regular file" rather
+  than reading a device or blocking on a pipe. Linux pins the resolved object
+  with `O_PATH` and classifies it before opening it for I/O, then reopens the
+  retained descriptor through `/proc/self/fd` with `O_NOCTTY`. It checks the
+  reopened descriptor's device/inode against the pinned object before I/O;
+  a mismatch gives `Failed(path, "changed while being used")`, including when
+  a privileged process has substituted a different `/proc` mount. Without procfs
+  it uses the portable resolver. Portable traversal uses search-only directory
+  descriptors where the system supplies them (`O_SEARCH`, `O_EXEC` or `O_PATH`).
+  macOS headers older than 13 lack `O_SEARCH` and fall back to `O_RDONLY`, so
+  traversing a directory there also needs read permission.
+  A trailing-slash link target is checked before creating a missing file.
+  Outside these kind and native representation guards, failures carry the
+  system's message.
+  Native resolution uses at most `MO_LIMIT_HOST_PATH_SIZE` bytes, including
+  the terminator; an expanded path past it gives `Failed(path, "path too long")`.
+  The Linux fast path first resolves without links; if links are present it
+  applies Mo's expansion/link limits with the portable walk before pinning the
+  result with `openat2`. This is a path-semantics check, not an ancestry check.
+  POSIX cannot name a file with NUL, so real paths containing it are refused
+  with `NotAllowed`. Fakes keep exact Text bytes, including NUL, as Core does,
+  and use charged dynamic path storage rather than the native path bound.
+  `list` sorts names by their bytes, which is the order of their characters;
+  `entries` classifies children without following their links. An invalid
+  UTF-8 name gives `Failed(path, "folder contains a name that is not text")`,
+  rather than a lossy name that cannot identify that entry.
+  A missing narrowed root retains its parent capability and binds when that
+  parent later makes the folder. Every retained parent is older than its
+  child, preserving acyclicity. Permission refusal is retryable; only a
+  containment refusal permanently makes a narrowed capability reach nothing.
+  Once bound, the handle keeps that directory object. Persistent real handles,
+  including deferred ones, count against `MO_LIMIT_OPEN_FOLDERS`; portable
+  traversal keeps at most three temporary
+  descriptors regardless of depth, and closes them when the operation ends.
+  At main's startup, `mo_host_start` tries to raise the process's soft descriptor
+  limit towards `MO_LIMIT_OPEN_FOLDERS + 32`, never past its hard limit. The raise
+  is best-effort: a sandbox may deny it without preventing startup. The existing
+  soft limit or a lower hard limit can still refuse a later handle or temporary
+  descriptor through the ordinary file error.
+- **Console.** Main's startup calls `mo_host_start` once per context, before
+  starting threads, to ignore process-wide `SIGPIPE`. C embedders calling real
+  Console directly must call it, or arrange their own signal handling and
+  descriptor budget. Printing never changes a signal disposition. Writing to
+  a closed output returns `EPIPE`, which is a bug with status 70: "printing to
+  an output that is gone" (reference 13.2). A real print appends a line feed;
+  a fake records the unchanged argument as one list entry. Real output uses
+  `writev` for the argument and LF together, so lines no larger than `PIPE_BUF` are atomic on
+  a pipe. Non-blocking input and output wait with `poll` on `EAGAIN` and retry;
+  a closed stdin is end of input. Real input replaces each maximal
+  invalid UTF-8 subpart with U+FFFD and removes LF or CRLF, not a bare CR.
+  Reads and line input use the runtime `MO_LIMIT_VALUE_BYTES` representation
+  bound, not a source-file size bound. Exceeding it names that limit; charged
+  scratch or value allocations exhausting the process heap name `--max-heap`.
 - **Random.** `Random.seeded(n)` and the real `Random` use xoshiro256**,
   seeded through SplitMix64. `int(low, high)` uses Lemire's method, which is
   unbiased. So a seeded sequence is the same on every machine, and stays so
   within a major version.
 - **Clock.** The real clock reads the system's real-time clock, in
-  microseconds. `Clock.fixed(t)` always returns `t`.
+  microseconds, and stops if it is outside the years 1 to 9999.
+  `Clock.fixed(t)` always returns `t`.
+
+Host refusal leaves operand cells and ownership unchanged; only a successful
+operation consumes the owned arguments in `hostops.def`. Fake updates commit
+only after all allocations succeed. Real I/O cannot be rolled back: partial
+writes, input consumption, directory binding and earlier `make_folder` steps
+may remain after a refusal. The capability still exists for the defect report.
 
 The library is written in Mo wherever it can be (condition 4 of D207). C
 implements only what Mo can't express or must be fast: arithmetic and
@@ -954,7 +1033,11 @@ Processes never free image allocations or cache captureless closures locally.
 Each process heap limit counts its process and fixed heap contexts, native allocation
 prefixes, value storage and temporary walk arenas, including chunk overhead.
 The image budget counts runtime cells/flags, its initializer context, shared
-indices and its initialization heap together. Native stack reservation is
+indices and its initialization heap together. Host preparation copies the
+sealed type table and adds any absent private Int, Time, Text, List(Text),
+Set(Text) and Map(Text, Text) types for capability storage; original indices
+and layouts never change. That stable table is charged to the image budget
+and shared by its heaps, not allocated once per process. Native stack reservation is
 charged separately to the stack limit, including growth slack.
 Caller-owned types and output buffers are outside these limits, as is system
 allocator bookkeeping. Scratch uses the remaining heap and is reclaimed after

@@ -138,6 +138,13 @@ if have lake; then
 		done
 		if ((${#prim_drivers[@]})); then python3 ci/check_primitives.py "${prim_drivers[@]}";
 		else missing "no primitive test executable is built"; fi
+		step "Fake capability operations match the Lean host model"
+		host_drivers=()
+		for driver in build/{gcc,clang}/{debug,sanitize}/tests/test_host.test; do
+			if [[ -x "$driver" ]]; then host_drivers+=("$driver"); fi
+		done
+		if ((${#host_drivers[@]})); then PYTHONDONTWRITEBYTECODE=1 python3 ci/check_host.py "${host_drivers[@]}";
+		else missing "no host test executable is built"; fi
 	else
 		missing "python3 is not installed"
 	fi
