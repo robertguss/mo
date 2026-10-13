@@ -23,8 +23,31 @@ def options (args : List String) (fuel : Nat) (test : Option String) : Parse (Na
   | "--test" :: n :: rest => options rest fuel (some n)
   | _ => throw "expected --fuel N or --test NAME"
 
+/-- A test-only batch protocol: a Value tuple holds the table name, the Core
+primitive's text, then its arguments. Evaluate the unchanged primitive model. -/
+def primitiveQueries : IO UInt32 := do
+  let input ← IO.getStdin
+  let output ← IO.getStdout
+  repeat
+    let line ← input.getLine
+    if line.isEmpty then break
+    let query : Parse (Prim × List Value) := do
+      let v ← parseDocument line >>= valueIn
+      match v with
+      | .tuple (.text _ :: .text p :: vs) => return (← parseSexp p >>= primIn, vs)
+      | _ => throw "expected primitive name, Core primitive and arguments"
+    match query with
+    | .error why => throw (IO.userError why)
+    | .ok (p, vs) =>
+      match p.eval vs {} with
+      | .ok v _ => output.putStr ("ok " ++ document (valueOut v))
+      | .stopped b _ => output.putStr ("stopped " ++ document (bugOut b))
+      | _ => throw (IO.userError "primitive did not return or stop")
+  pure 0
+
 def main (args : List String) : IO UInt32 := do
   try
+    if args == ["--primitives"] then return ← primitiveQueries
     let request : Except Report Run ← match args with
       | [path] => do pure (((← readCore path) >>= runIn).mapError Report.parseError)
       | p :: w :: opts => do

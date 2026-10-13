@@ -324,6 +324,10 @@ enum mo_prim_status mo_prim_number(struct mo_prim_call *c, struct mo_cell *out) 
     default:
         MO_UNREACHABLE();
     }
+    if (isnan(a)) {
+        uint64_t canonical = UINT64_C(0x7ff8000000000000);
+        memcpy(&a, &canonical, sizeof a);
+    }
     *out = mo_cell_float(a);
     return MO_PRIM_RETURNED;
 }

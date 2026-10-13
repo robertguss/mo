@@ -12,7 +12,8 @@ struct prim_fixture {
     struct mo_heap *heap;
     uint32_t builtin[MO_TYPE_BIGINT + 1];
     uint32_t signature[MO_PRIM_COUNT];
-    uint32_t options[MO_TYPE_BIGINT + 1];
+    uint32_t options[512];
+    uint32_t ordering;
 };
 
 static MO_MUST_USE uint32_t prim_type(struct prim_fixture *f, const char **cursor) {
@@ -51,7 +52,7 @@ static MO_MUST_USE uint32_t prim_type(struct prim_fixture *f, const char **curso
         else if (length == 6 && memcmp(start, "Option", 6) == 0) {
             MO_ASSERT(*p++ == '(');
             uint32_t element = prim_type(f, &p);
-            MO_ASSERT(*p++ == ')' && element <= MO_TYPE_BIGINT);
+            MO_ASSERT(*p++ == ')' && element < 512);
             if (f->options[element] == MO_NO_INDEX) {
                 uint32_t index;
                 MO_ASSERT(mo_types_declare(&f->types, MO_TYPE_CHOICE, "Option", &index) ==
@@ -66,13 +67,15 @@ static MO_MUST_USE uint32_t prim_type(struct prim_fixture *f, const char **curso
             *cursor = p;
             return f->options[element];
         } else if (length == 8 && memcmp(start, "Ordering", 8) == 0) {
-            uint32_t index;
-            MO_ASSERT(mo_types_declare(&f->types, MO_TYPE_CHOICE, "Ordering", &index) ==
-                      MO_TYPES_OK);
-            struct mo_type_case cases[] = {{.name = "Less"}, {.name = "Same"}, {.name = "More"}};
-            MO_ASSERT(mo_types_define_choice(&f->types, index, cases, 3) == MO_TYPES_OK);
+            if (f->ordering == MO_NO_INDEX) {
+                MO_ASSERT(mo_types_declare(&f->types, MO_TYPE_CHOICE, "Ordering", &f->ordering) ==
+                          MO_TYPES_OK);
+                struct mo_type_case cases[] = {
+                    {.name = "Less"}, {.name = "Same"}, {.name = "More"}};
+                MO_ASSERT(mo_types_define_choice(&f->types, f->ordering, cases, 3) == MO_TYPES_OK);
+            }
             *cursor = p;
-            return index;
+            return f->ordering;
         } else {
             MO_UNREACHABLE();
         }
@@ -106,15 +109,14 @@ static void prim_fixture_init(struct prim_fixture *f, size_t budget) {
     memset(f, 0, sizeof *f);
     mo_arena_init(&f->arena, 4 << 20);
     mo_types_init(&f->types, &f->arena);
+    memset(f->options, 0xff, sizeof f->options);
+    f->ordering = MO_NO_INDEX;
     for (unsigned i = 0; i <= MO_TYPE_BIGINT; i++) {
         struct mo_type t = {.kind = (enum mo_type_kind)i};
         MO_ASSERT(mo_types_intern(&f->types, &t, &f->builtin[i]) == MO_TYPES_OK);
-        f->options[i] = MO_NO_INDEX;
     }
-    /* The parser below needs only the numeric signatures until generic options are added. */
 #define PRIM(id, module, name, spelling, params, bugs)                                             \
-    if (MO_PRIM_##id <= MO_PRIM_FLOAT_TO_TEXT &&                                                   \
-        !(MO_PRIM_##id >= MO_PRIM_BIGINT_ADD && MO_PRIM_##id <= MO_PRIM_BIGINT_TO_TEXT)) {         \
+    {                                                                                              \
         const char *cursor = spelling;                                                             \
         f->signature[MO_PRIM_##id] = prim_type(f, &cursor);                                        \
     }
@@ -122,6 +124,16 @@ static void prim_fixture_init(struct prim_fixture *f, size_t budget) {
     MO_ASSERT(mo_types_finish(&f->types) == MO_TYPES_OK);
     for (uint32_t i = 0; i < f->types.count; i++) {
         const struct mo_type *t = &f->types.items[i];
+        if (t->kind == MO_TYPE_TUPLE) {
+            struct mo_layout layout = {.kind = MO_LAYOUT_TUPLE,
+                                       .type = i,
+                                       .case_index = MO_NO_INDEX,
+                                       .function = MO_NO_INDEX,
+                                       .fields = t->parameters,
+                                       .field_count = t->parameter_count};
+            uint32_t index;
+            MO_ASSERT(mo_types_layout(&f->types, &layout, &index) == MO_TYPES_OK);
+        }
         if (t->kind == MO_TYPE_CHOICE) {
             for (uint32_t k = 0; k < t->case_count; k++) {
                 if (mo_case_shape(&f->types, i, k) == MO_CASE_BOXED) {

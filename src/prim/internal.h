@@ -20,6 +20,8 @@ struct mo_prim_call {
 MO_MUST_USE enum mo_prim_status mo_prim_option(struct mo_prim_call *call, bool some,
                                                struct mo_cell value, struct mo_cell *out);
 MO_MUST_USE enum mo_prim_status mo_prim_number(struct mo_prim_call *call, struct mo_cell *out);
+MO_MUST_USE enum mo_prim_status mo_prim_text(struct mo_prim_call *call, struct mo_cell *out);
+MO_MUST_USE enum mo_prim_status mo_prim_parse(struct mo_prim_call *call, struct mo_cell *out);
 MO_MUST_USE enum mo_prim_status mo_prim_print(struct mo_prim_call *call, uint32_t type,
                                               struct mo_cell value, struct mo_cell *out);
 MO_MUST_USE double mo_prim_ratio_float(bool negative, mo_u128 n, mo_u128 d);

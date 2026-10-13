@@ -1,4 +1,4 @@
-#include "prim_fixture.h"
+#include "prim_oracle.h"
 #include "test.h"
 
 #include <string.h>
@@ -91,9 +91,42 @@ static void decimal_rounding(void) {
     prim_fixture_free(&f);
 }
 
-int main(void) {
+static void text_split(void) {
+    struct prim_fixture f;
+    prim_fixture_init(&f, 1 << 20);
+    struct mo_cell args[2], out = mo_cell_int(41);
+    CHECK(mo_value_text(f.heap, "ababa", 5, &args[0]));
+    CHECK(mo_value_text(f.heap, "aba", 3, &args[1]));
+    const char *reason;
+    enum mo_prim_status status = mo_prim_call(f.heap, &f.types, MO_PRIM_TEXT_SPLIT,
+                                              f.signature[MO_PRIM_TEXT_SPLIT], args, &out, &reason);
+    CHECK(status == MO_PRIM_RETURNED);
+    if (status == MO_PRIM_RETURNED) {
+        struct mo_cell piece;
+        size_t length;
+        CHECK(mo_list_size(out) == 2);
+        MO_ASSERT(mo_list_get(out, 0, &piece));
+        const uint8_t *bytes = mo_value_data(piece, &length);
+        CHECK(length == 0);
+        CHECK(mo_list_get(out, 1, &piece));
+        bytes = mo_value_data(piece, &length);
+        CHECK(length == 2 && memcmp(bytes, "ba", 2) == 0);
+        mo_value_drop(f.heap, f.types.items[f.signature[MO_PRIM_TEXT_SPLIT]].result, out);
+    }
+    mo_value_drop(f.heap, f.builtin[MO_TYPE_TEXT], args[0]);
+    mo_value_drop(f.heap, f.builtin[MO_TYPE_TEXT], args[1]);
+    prim_fixture_free(&f);
+}
+
+int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "--oracle") == 0) {
+        primitive_oracle();
+        return 0;
+    }
+    MO_ASSERT(argc == 1);
     integer_power();
     integer_floor();
     decimal_rounding();
+    text_split();
     return mo_test_report("primitives");
 }

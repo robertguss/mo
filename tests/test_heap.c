@@ -577,9 +577,12 @@ static void test_print(struct heap_fixture *f) {
     expect_text(p, f->builtin[MO_TYPE_TIME], mo_cell_time(INT64_C(253402300799999999)),
                 "9999-12-31T23:59:59.999999Z");
     expect_text(p, f->builtin[MO_TYPE_DURATION], mo_cell_duration(-1500000), "-1.5s");
+    expect_text(p, f->builtin[MO_TYPE_DURATION], mo_cell_duration(500000), "0.5s");
     expect_text(p, f->builtin[MO_TYPE_DURATION], mo_cell_duration(INT64_MIN),
                 "-9223372036854.775808s");
     expect_text(p, f->builtin[MO_TYPE_DECIMAL], mo_cell_decimal(1), "0.000000000000000001");
+    expect_text(p, f->builtin[MO_TYPE_DECIMAL], mo_cell_decimal(INT64_C(-500000000000000000)),
+                "-0.5");
     expect_text(p, f->builtin[MO_TYPE_DECIMAL],
                 mo_cell_decimal((mo_i128)3 * INT64_C(1000000000000000000)), "3");
     expect_text(p, f->builtin[MO_TYPE_RANGE], mo_cell_range(-2, 13), "-2..13");
