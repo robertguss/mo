@@ -324,6 +324,11 @@ static inline struct mo_limits mo_limits_default(void) {
 #define MO_LIMIT_INPUT_WORK (64 << 20)
 #define MO_LIMIT_INPUT_METADATA (128 << 20)
 
+/* Formatter document storage and nested groups. Output is additionally bounded
+ * by the caller's buffer and the lexer's per-line character limit. */
+#define MO_FORMAT_DOCUMENT_SIZE (128 << 20)
+#define MO_FORMAT_DOCUMENT_DEPTH (32 * MO_LIMIT_NESTING_DEPTH + 32)
+
 /* Diagnostics one run keeps. mo_diags_add refuses more, and counts them, so the run can say that
  * it stopped early (src/base/diag.h). */
 #define MO_LIMIT_DIAGNOSTICS 1000

@@ -4,9 +4,17 @@
 #define MO_TEST_FORMAT_CONTRACT_H
 
 #include "base/limits.h"
+#include "prim/prim.h"
 #include "syntax/format.h"
 
 #include <string.h>
+
+static inline uint32_t format_display_width(const uint8_t *bytes, size_t length) {
+    uint64_t width;
+    MO_ASSERT(mo_unicode16_display_width(bytes, length, &width));
+    MO_ASSERT(width <= UINT32_MAX);
+    return (uint32_t)width;
+}
 
 static inline void format_word(struct mo_buffer *b, uint32_t value) {
     MO_ASSERT(mo_buffer_append_le32(b, value));
@@ -16,6 +24,9 @@ static inline void format_comments(struct mo_buffer *b, const struct mo_syntax_c
     for (; c != NULL; c = c->next) {
         format_word(b, c->span.end - c->span.start);
         format_word(b, c->documentation);
+        format_word(b, (uint32_t)c->anchor);
+        format_word(b, (uint32_t)c->token);
+        format_word(b, c->token_index);
         MO_ASSERT(mo_buffer_append(b, c->text, c->span.end - c->span.start));
     }
     format_word(b, UINT32_MAX);
@@ -46,6 +57,7 @@ static inline void format_tree(struct mo_buffer *b, const struct mo_syntax *root
         format_word(b, (uint32_t)(visit.sum ? MO_S_BINARY : increment ? MO_S_BIND : n->kind));
         format_word(b, (uint32_t)(visit.sum ? MO_T_PLUS : n->token));
         format_word(b, n->count);
+        format_word(b, visit.sum ? 0 : n->blank_before);
         format_word(b, n->text == NULL ? 0 : n->span.end - n->span.start);
         if (n->text != NULL)
             MO_ASSERT(mo_buffer_append(b, n->text, n->span.end - n->span.start));

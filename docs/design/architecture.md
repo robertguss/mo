@@ -188,6 +188,52 @@ Formatting twice changes nothing, and the formatted program's tree equals the
 original's, except for the rewrites the reference names: `x = x + y` becomes
 `x += y` (reference 6.2).
 
+**The printer (provisional layout).** `syntax/format.h` prints a successful
+tree through an arena-owned Wadler-style document: text, groups, nesting,
+optional breaks and mandatory lines. Flat group widths are cached; rendering
+does not repeatedly scan document suffixes. Syntax takes a display-width
+callback; tools supply `mo_unicode16_display_width` from prim, without adding
+a syntax-to-prim dependency or copying Unicode tables.
+
+Pending Robert's width-versus-source decision, tools select width-based
+layout at 100 display columns. The width policy ignores source storage,
+including source spans used only for locations; an internal source-break
+prototype reads span gaps but is not a command option. Indivisible names,
+literals and comments can exceed the target width. The document budget is
+128 MiB, with 8,224 nested groups or alignment scopes; the CLI's output is
+bounded by the 16 MiB source-file limit and 65,536 scalars per physical line.
+A refusal returns no partial output and never replaces the source file.
+
+Indentation is two spaces per level. Bracket contents and block bodies indent
+from the physical indentation of their opening line, not a dormant dot or
+operator continuation. Operators have one space on either side, except for
+`..`; field dots and bracket edges have none. There is one space after commas
+and colons; function result annotations use ` : `. Broken bracket groups put
+each item on its own line and put the closer at the opener's indentation.
+An operator stays beside a bracketed operand's opener. A call with one
+bracketed value or block callback shares that inner scope's opening and
+closing lines, without another pair of call-enclosing lines, as the existing
+examples do. Repeated prefix minuses are separated so their token boundary
+stays clear; interpolation edges have no extra padding.
+There are no trailing commas. An inline comment follows its exact token or
+item boundary with two spaces, and forces the next token onto another line;
+own-line comments retain their text and attachments. Leading/ending blank
+lines disappear, statement blank runs collapse to one, and nonempty output
+ends in one LF. Literal and comment spellings are not rewritten. Case arms
+with one non-block statement can share the colon's line; nested control blocks
+start on the next line. The `+=` rewrite applies to equal names and field
+paths, but is deferred when it would discard or move a token comment.
+
+The corpus test reparses every accepted input, compares the tree (including
+comment anchors and blank bits, modulo `+=`), and formats again. Its strict
+fixed-point mode covers all reference `mo` blocks, examples, library samples
+and good grammar fixtures except `grammar/tests/good/layout.mo`, which
+deliberately varies layout. Fixed-point differences remain failures, not
+updated snapshots or further exemptions; width layout and two-space inline
+comment padding currently conflict with some existing examples. CI runs this
+gate without exemptions for those differences; passing it awaits the layout
+decision and resolution of the examples' style choices.
+
 **The source tree contract.** `src/syntax/syntax.h` defines a tagged node
 with ordered children, an operator token, and half-open spans. Absent
 optional children are `NULL`; an empty sequence is a node with no children.
@@ -1274,8 +1320,8 @@ these available stages found no error: constants, specs and the other rules
 listed in `check.h` are not whole-program checked. The seam in
 `tools/execute.c` will replace staged inference with `mo_check`, then
 connect `mo_lower`, `mo_compile` and anchor evaluation; it never passes
-inference results to lowering. `run`, `test` (including `--list`), `format`,
-`fix` and `--emit` currently validate arguments then return status 1 with
+inference results to lowering. `run`, `test` (including `--list`), `fix`
+and `--emit` currently validate arguments then return status 1 with
 E1400, "this build cannot ... yet", without reading or rewriting files.
 E1400 is the tools' unavailable-stage code, not a language error. Source work
 runs synchronously through `mo_with_stack` with `MO_SOURCE_STACK_SIZE`, covering
@@ -1287,6 +1333,27 @@ diagnostics. It changes no
 process-wide resource limits and follows changes to the shared stack allowance.
 Failure to prepare that stack reports E1401 with an unavailable location and
 the POSIX error as its label, in either text or JSON, and exits 1.
+
+**Atomic formatting.** `format FILE...` handles files independently and in
+argument order. Loading one file, parsing and printing it do not retain the
+previous file's tree. Parsing and printing run synchronously through
+`mo_with_stack(MO_SOURCE_STACK_SIZE)`. A parse error, printing refusal or file
+error leaves that file unchanged, reports text diagnostics on standard error
+and sets status 1; later files still run. Success is silent, with status 0.
+The batch shows at most 1,000 diagnostics and counts all omissions.
+
+Only ordinary regular files are accepted: symlinks, directories, FIFOs and
+devices are refused before reading. Changed bytes are written to a sibling
+`mkstemp` file, flushed, given the original ordinary permission bits, synced
+and closed, then renamed over the requested path. Failed writes or renames
+remove the temporary. A replacement inode discovered before rename is
+refused, but this is not locking against concurrent in-place edits. Unchanged
+files keep their inode and modification time; reading may advance access time.
+Renamed files break hard-link sharing and do not preserve ownership, ACLs,
+extended attributes or special mode bits.
+The rename is atomic for readers, not a promise of directory durability after
+a power failure. E1402 reports file access/replacement failures; E1403 reports
+source-stack, document, recursion, output or source-line budget refusals.
 
 **Source builds and documents.** `ci/embed_docs.py` (Python 3, portable to
 macOS) generates byte arrays under `build/generated/tools/embedded.h`.

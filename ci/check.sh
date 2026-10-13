@@ -191,6 +191,14 @@ if have clang-format; then make --no-print-directory format-check; else missing 
 step "Results of standard-library calls are used (clang-tidy)"
 if have clang-tidy; then make --no-print-directory tidy; else missing "clang-tidy is not installed"; fi
 
+step "The source formatter: reference, examples, library and good grammar are fixed points"
+formatter_driver=
+for driver in build/{gcc,clang}/debug/tests/test_format.test; do
+	if [[ -x "$driver" ]]; then formatter_driver=$driver; break; fi
+done
+if [[ -n "$formatter_driver" ]]; then "$formatter_driver" --fixed-points;
+else missing "no source formatter test executable is built"; fi
+
 if ((${#skipped[@]} == 0)); then
 	step "All checks passed"
 else

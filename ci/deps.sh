@@ -17,7 +17,7 @@ set -eu
 rules='
 # module | public headers           | uses
 base     | base/*.h base/*.def      |
-syntax   | syntax/syntax.h          |
+syntax   | syntax/syntax.h syntax/format.h |
 check    | check/check.h            | syntax
 lower    | lower/lower.h            | check core
 core     | core/core.h              |

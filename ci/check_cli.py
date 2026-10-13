@@ -6,6 +6,7 @@ import locale
 import os
 import pathlib
 import resource
+import stat
 import subprocess
 import sys
 import tempfile
@@ -138,7 +139,7 @@ def check(binary):
     else:
         result = run(binary, ["guide"], 1)
         assert not result.stdout and b"--reference" in result.stderr
-    for command in ("run", "test", "format", "fix", "check"):
+    for command in ("run", "test", "fix", "check"):
         args = [command, *(["--emit=core"] if command == "check" else []), good]
         result = run(binary, args, 1)
         assert not result.stdout and b"this build cannot" in result.stderr
@@ -188,7 +189,7 @@ def check(binary):
             run(binary, ["test", flag, value, good], 1)
     run(binary, ["run", good, "--bad", ""], 1)
     run(binary, ["test", "--only", "a", "--only", "b", "--in", "Main", good], 1)
-    run(binary, ["format", good, good], 1)
+    run(binary, ["format", good, good], 0)
     run(binary, ["fix", good, good], 1)
     for version in ("--version", "-V"):
         assert run(binary, [version], 0).stdout == b"mo 0.0.0\n"
@@ -204,7 +205,7 @@ def check(binary):
     run(binary, ["run", good, *(str(i) for i in range(300))], 1)
     run(binary, ["run", good, *("x" * 4096 for _ in range(16))], 1)
     for command in ("format", "fix"):
-        run(binary, [command, *([good] * 4096)], 1)
+        run(binary, [command, *([good] * 4096)], 0 if command == "format" else 1)
     run(binary, ["test", *(["--only", "x"] * 128), good], 1)
     mistake(["test", *(["--only", "x"] * 129), good])
     mistake(["test", "--only", "x" * 4097, good])
@@ -272,6 +273,51 @@ def check(binary):
         items = records(run(binary, ["check", "--json", str(path)], 1), "check")
         assert items[-1]["errors"] == 1000 and items[-1]["dropped"] == 500
         run(binary, ["format", "--", "-file.mo"], 1)
+        # The printer must refuse rather than introduce a lexer limit error.
+        for letter in (b'a', '界'.encode()):
+            for length in (65532, 65533):
+                source = b'module Main\nfn f() : Text\n"' + letter * length + b'"\nend\n'
+                path.write_bytes(source)
+                result = run(binary, ["format", str(path)], 0 if length == 65532 else 1)
+                assert not result.stdout
+                if length == 65533:
+                    assert b"E1403" in result.stderr and path.read_bytes() == source
+                else:
+                    assert not result.stderr and b'\n  "' in path.read_bytes()
+                    run(binary, ["check", str(path)], 0)
+        # Rename is observable: an existing reader and hard link keep the old
+        # complete file, while the requested path gets the complete new file.
+        source = b'module Main\n\n\nfn f()\nvar x=1\nx=x+2\nx\nend\n'
+        expected = b'module Main\n\nfn f()\n  var x = 1\n  x += 2\n  x\nend\n'
+        path.write_bytes(source)
+        path.chmod(0o640)
+        alias = folder / 'alias.mo'
+        os.link(path, alias)
+        with path.open('rb') as old_reader:
+            result = run(binary, ["format", str(path)], 0)
+            assert not result.stdout and not result.stderr
+            assert path.read_bytes() == expected and old_reader.read() == source
+        assert alias.read_bytes() == source
+        assert stat.S_IMODE(path.stat().st_mode) == 0o640
+        before = path.stat()
+        run(binary, ["format", str(path)], 0)
+        after = path.stat()
+        assert before.st_ino == after.st_ino and before.st_mtime_ns == after.st_mtime_ns
+        bad = folder / 'bad.mo'
+        bad_source = b'module Bad\nfn f()\n(\nend\n'
+        bad.write_bytes(bad_source)
+        path.write_bytes(source)
+        result = run(binary, ["format", str(bad), str(path)], 1)
+        assert not result.stdout and b'E' in result.stderr
+        assert bad.read_bytes() == bad_source and path.read_bytes() == expected
+        symlink = folder / 'linked.mo'
+        symlink.symlink_to(alias)
+        fifo = folder / 'pipe.mo'
+        os.mkfifo(fifo)
+        result = run(binary, ["format", str(symlink), str(fifo), str(folder)], 1)
+        assert result.stderr.count(b'E1402') == 3 and not result.stdout
+        assert symlink.is_symlink() and alias.read_bytes() == source
+        assert not list(folder.glob('.mo-format-*'))
     print(f"{binary}: CLI goldens, argument matrix and JSON validity passed")
 
 

@@ -5,21 +5,124 @@
 
 #include <string.h>
 
+struct comment_cursor {
+    const struct mo_syntax *node;
+    const struct mo_syntax_comment *next;
+    uint32_t counts[MO_T_PERCENT + 1];
+};
+
 struct printer {
     struct mo_document doc;
-    const struct mo_source *source; /* provisional blank-line trivia */
+    const struct mo_source *source; /* SOURCE_PROTOTYPE break hints only */
     enum mo_format_policy policy;
     uint32_t depth;
+    struct comment_cursor *cursor;
 };
 
 static void node(struct printer *f, const struct mo_syntax *n);
+static const char *token(enum mo_syntax_token t);
 
 static void op(struct printer *f, enum mo_doc_kind kind) {
     mo_doc_add(&f->doc, kind, NULL, 0, false);
 }
 
+static void anchor(struct printer *f, struct comment_cursor *cursor,
+                   enum mo_syntax_comment_anchor kind, enum mo_syntax_token t, uint32_t index) {
+    while (cursor->next != NULL && cursor->next->anchor == kind && cursor->next->token == t &&
+           cursor->next->token_index == index) {
+        const struct mo_syntax_comment *c = cursor->next;
+        mo_doc_add(&f->doc, MO_DOC_COMMENT, c->text, c->span.end - c->span.start, false);
+        op(f, MO_DOC_SUFFIX_LINE);
+        cursor->next = c->next;
+    }
+}
+
+static void token_anchor(struct printer *f, enum mo_syntax_token t) {
+    anchor(f, f->cursor, MO_COMMENT_TOKEN, t, f->cursor->counts[t]++);
+}
+
+static const char *const spellings[MO_T_PERCENT + 1] = {[MO_T_MODULE] = "module",
+                                                        [MO_T_EXPOSE] = "expose",
+                                                        [MO_T_USE] = "use",
+                                                        [MO_T_FN] = "fn",
+                                                        [MO_T_STRUCT] = "struct",
+                                                        [MO_T_ENUM] = "enum",
+                                                        [MO_T_VAR] = "var",
+                                                        [MO_T_IF] = "if",
+                                                        [MO_T_ELSE] = "else",
+                                                        [MO_T_CASE] = "case",
+                                                        [MO_T_FOR] = "for",
+                                                        [MO_T_IN] = "in",
+                                                        [MO_T_WHILE] = "while",
+                                                        [MO_T_BREAK] = "break",
+                                                        [MO_T_CONTINUE] = "continue",
+                                                        [MO_T_RETURN] = "return",
+                                                        [MO_T_TRY] = "try",
+                                                        [MO_T_AND] = "and",
+                                                        [MO_T_OR] = "or",
+                                                        [MO_T_NOT] = "not",
+                                                        [MO_T_IS] = "is",
+                                                        [MO_T_IMPLIES] = "implies",
+                                                        [MO_T_TRUE] = "true",
+                                                        [MO_T_FALSE] = "false",
+                                                        [MO_T_STOP] = "stop",
+                                                        [MO_T_PROMISE] = "promise",
+                                                        [MO_T_ALLOWS] = "allows",
+                                                        [MO_T_FORBIDS] = "forbids",
+                                                        [MO_T_EXAMPLES] = "examples",
+                                                        [MO_T_TEST] = "test",
+                                                        [MO_T_ASSERT] = "assert",
+                                                        [MO_T_WHERE] = "where",
+                                                        [MO_T_END] = "end",
+                                                        [MO_T_LPAREN] = "(",
+                                                        [MO_T_RPAREN] = ")",
+                                                        [MO_T_LBRACK] = "[",
+                                                        [MO_T_RBRACK] = "]",
+                                                        [MO_T_LBRACE] = "{",
+                                                        [MO_T_RBRACE] = "}",
+                                                        [MO_T_COMMA] = ",",
+                                                        [MO_T_COLON] = ":",
+                                                        [MO_T_DOT] = ".",
+                                                        [MO_T_DOTDOT] = "..",
+                                                        [MO_T_BAR] = "|",
+                                                        [MO_T_ASSIGN] = "=",
+                                                        [MO_T_PLUSEQ] = "+=",
+                                                        [MO_T_MINUSEQ] = "-=",
+                                                        [MO_T_PLUS] = "+",
+                                                        [MO_T_MINUS] = "-",
+                                                        [MO_T_STAR] = "*",
+                                                        [MO_T_SLASH] = "/",
+                                                        [MO_T_PERCENT] = "%",
+                                                        [MO_T_EQ] = "==",
+                                                        [MO_T_NE] = "!=",
+                                                        [MO_T_LT] = "<",
+                                                        [MO_T_LE] = "<=",
+                                                        [MO_T_GT] = ">",
+                                                        [MO_T_GE] = ">="};
+
 static void text(struct printer *f, const char *s) {
-    mo_doc_text(&f->doc, s);
+    while (*s != '\0') {
+        if (*s == ' ') {
+            mo_doc_add(&f->doc, MO_DOC_SPACE, NULL, 1, false);
+            s++;
+            continue;
+        }
+        size_t length = 0;
+        enum mo_syntax_token t = MO_T_EOF;
+        for (unsigned i = MO_T_MODULE; i <= MO_T_PERCENT; i++) {
+            if (spellings[i] != NULL) {
+                size_t n = strlen(spellings[i]);
+                if (n > length && strncmp(s, spellings[i], n) == 0) {
+                    length = n;
+                    t = (enum mo_syntax_token)i;
+                }
+            }
+        }
+        MO_ASSERT(length != 0);
+        mo_doc_add(&f->doc, MO_DOC_TEXT, (const uint8_t *)s, length, false);
+        token_anchor(f, t);
+        s += length;
+    }
 }
 
 static uint32_t line_at(const struct mo_source *source, uint32_t offset) {
@@ -63,32 +166,16 @@ static void comments(struct printer *f, const struct mo_syntax_comment *c, bool 
     }
 }
 
-/* A scope can own a comment on its opening line as well as after its
- * closing token. Those have the same attachment, but distinct spans. */
-static void trailing(struct printer *f, const struct mo_syntax *n, bool header) {
-    for (const struct mo_syntax_comment *c = n->trailing; c != NULL; c = c->next)
-        if ((c->span.start < n->span.end) == header)
-            mo_doc_add(&f->doc, MO_DOC_COMMENT, c->text, c->span.end - c->span.start, false);
-}
-
 static uint32_t first(const struct mo_syntax *n) {
     return n->leading != NULL ? n->leading->span.start : n->span.start;
 }
 
-static bool declaration(const struct mo_syntax *n) {
-    return n->kind == MO_S_FN || n->kind == MO_S_STRUCT || n->kind == MO_S_ENUM ||
-           n->kind == MO_S_TEST;
-}
-
 static void statements(struct printer *f, const struct mo_syntax *seq, bool top) {
+    (void)top;
     for (uint32_t i = 0; i < seq->count && f->doc.ok; i++) {
         const struct mo_syntax *n = seq->children[i];
-        if (i != 0) {
-            const struct mo_syntax *prev = seq->children[i - 1];
-            if ((top && (declaration(prev) || declaration(n))) ||
-                lines(f, prev->span.end, first(n)) > 1)
-                op(f, MO_DOC_BLANK);
-        }
+        if (n->blank_before)
+            op(f, MO_DOC_BLANK);
         node(f, n);
         op(f, MO_DOC_LINE_IF);
     }
@@ -115,48 +202,57 @@ static uint32_t closing(struct printer *f, uint32_t start, uint32_t end, char cl
     return end;
 }
 
+static bool bracketed(const struct mo_syntax *n) {
+    return n->kind == MO_S_GROUP || n->kind == MO_S_TUPLE || n->kind == MO_S_LIST ||
+           n->kind == MO_S_MAP;
+}
+
 static void brackets(struct printer *f, const struct mo_syntax *owner,
-                     struct mo_syntax *const *items, uint32_t count, const char *open,
-                     const char *close, uint32_t start, uint32_t end) {
+                     const struct mo_syntax *boundary_owner, struct mo_syntax *const *items,
+                     uint32_t count, const char *open, const char *close, uint32_t start,
+                     uint32_t end) {
+    struct comment_cursor separate = {.node = boundary_owner, .next = boundary_owner->trailing};
+    struct comment_cursor *cursor = boundary_owner == f->cursor->node ? f->cursor : &separate;
+    op(f, MO_DOC_ALIGN_LINE);
     op(f, MO_DOC_GROUP);
     text(f, open);
     op(f, MO_DOC_NEST);
+    /* A sole bracketed value or block callback provides the call's layout;
+     * do not add another pair of enclosing lines around that inner scope. */
+    bool envelope = owner != NULL && owner->kind == MO_S_CALL && count == 1 &&
+                    (bracketed(items[0]) || (items[0]->kind == MO_S_LAMBDA &&
+                                             items[0]->children[1]->kind == MO_S_SEQUENCE));
+    enum mo_doc_kind edge = envelope ? MO_DOC_SOURCE_BREAK : MO_DOC_BREAK;
     uint32_t before = start;
     if (count != 0)
-        soft(f, 0, before, first(items[0]));
+        mo_doc_add(&f->doc, edge, NULL, 0, lines(f, before, first(items[0])) != 0);
     for (uint32_t i = 0; i < count && f->doc.ok; i++) {
-        if (i != 0) {
-            text(f, ",");
-            soft(f, 1, items[i - 1]->span.end, first(items[i]));
-        }
         node(f, items[i]);
+        if (i + 1 != count)
+            text(f, ",");
+        anchor(f, cursor, MO_COMMENT_ITEM, MO_T_EOF, i);
+        if (i + 1 != count)
+            soft(f, 1, items[i]->span.end, first(items[i + 1]));
         before = items[i]->span.end;
     }
     if (owner != NULL)
         comments(f, owner->ending, false);
     op(f, MO_DOC_UNNEST);
-    soft(f, 0, before, closing(f, before, end, close[0]));
+    mo_doc_add(&f->doc, edge, NULL, 0, lines(f, before, closing(f, before, end, close[0])) != 0);
     text(f, close);
     op(f, MO_DOC_END_GROUP);
+    op(f, MO_DOC_END_ALIGN);
+    if (cursor != f->cursor && cursor->next != NULL)
+        f->doc.ok = false;
 }
 
 static void sequence_brackets(struct printer *f, const struct mo_syntax *owner,
                               const struct mo_syntax *seq, const char *open, const char *close,
                               uint32_t start, uint32_t end) {
-    brackets(f, owner, seq->children, seq->count, open, close, start, end);
+    brackets(f, owner, seq, seq->children, seq->count, open, close, start, end);
 }
 
 static const char *token(enum mo_syntax_token t) {
-    static const char *const spellings[MO_T_PERCENT + 1] = {
-        [MO_T_PLUS] = "+",    [MO_T_MINUS] = "-",
-        [MO_T_STAR] = "*",    [MO_T_SLASH] = "/",
-        [MO_T_PERCENT] = "%", [MO_T_EQ] = "==",
-        [MO_T_NE] = "!=",     [MO_T_LT] = "<",
-        [MO_T_LE] = "<=",     [MO_T_GT] = ">",
-        [MO_T_GE] = ">=",     [MO_T_AND] = "and",
-        [MO_T_OR] = "or",     [MO_T_IMPLIES] = "implies",
-        [MO_T_IS] = "is",     [MO_T_DOTDOT] = "..",
-        [MO_T_NOT] = "not",   [MO_T_TRY] = "try"};
     MO_ASSERT(t <= MO_T_PERCENT && spellings[t] != NULL);
     return spellings[t];
 }
@@ -187,7 +283,10 @@ static void binary_step(struct printer *f, const struct mo_syntax *left,
         node(f, operator_node);
     else
         text(f, word);
-    soft(f, space, at, right->span.start);
+    /* A bracketed operand has its own breaks. Keep the operator and opener
+     * together, as in the reference's multiline-list equality examples. */
+    mo_doc_add(&f->doc, bracketed(right) ? MO_DOC_SOURCE_BREAK : MO_DOC_BREAK, NULL, space,
+               lines(f, at, right->span.start) != 0);
     node(f, right);
 }
 
@@ -199,7 +298,7 @@ static bool same_target(const struct mo_syntax *a, const struct mo_syntax *b) {
         uint32_t size = a->span.end - a->span.start;
         return size == b->span.end - b->span.start && memcmp(a->text, b->text, size) == 0;
     }
-    if (a->kind != MO_S_FIELD_ACCESS)
+    if (a->kind != MO_S_FIELD_ACCESS && a->kind != MO_S_POSTFIX)
         return false;
     for (uint32_t i = 0; i < a->count; i++)
         if (!same_target(a->children[i], b->children[i]))
@@ -209,16 +308,15 @@ static bool same_target(const struct mo_syntax *a, const struct mo_syntax *b) {
 
 static const struct mo_syntax *addition(const struct mo_syntax *n) {
     const struct mo_syntax *rhs = n->children[1];
-    if (n->kind == MO_S_BIND && rhs->kind == MO_S_BINARY && rhs->token == MO_T_PLUS &&
-        rhs->leading == NULL && rhs->trailing == NULL && rhs->ending == NULL &&
-        same_target(n->children[0], rhs->children[0]))
+    if (n->kind == MO_S_BIND && n->trailing == NULL && rhs->kind == MO_S_BINARY &&
+        rhs->token == MO_T_PLUS && rhs->leading == NULL && rhs->trailing == NULL &&
+        rhs->ending == NULL && same_target(n->children[0], rhs->children[0]))
         return rhs->children[1];
     return NULL;
 }
 
 static void block_body(struct printer *f, const struct mo_syntax *body,
                        const struct mo_syntax *owner) {
-    trailing(f, owner, true);
     op(f, MO_DOC_LINE_IF);
     op(f, MO_DOC_NEST);
     statements(f, body, false);
@@ -244,8 +342,6 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
         if (header != NULL) {
             node(f, header);
             op(f, MO_DOC_LINE_IF);
-            if (items->count != 0)
-                op(f, MO_DOC_BLANK);
         }
         statements(f, items, true);
         comments(f, n->ending, false);
@@ -308,13 +404,11 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
         op(f, MO_DOC_NEST);
         const struct mo_syntax *spec = n->children[4], *body = n->children[5];
         for (uint32_t i = 0; i < spec->count; i++) {
-            if (i != 0)
+            if (spec->children[i]->blank_before)
                 op(f, MO_DOC_BLANK);
             node(f, spec->children[i]);
             op(f, MO_DOC_LINE_IF);
         }
-        if (body->count != 0 && spec->count != 0)
-            op(f, MO_DOC_BLANK);
         statements(f, body, false);
         comments(f, n->ending, false);
         op(f, MO_DOC_UNNEST);
@@ -358,7 +452,7 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
             if (fields->kind == MO_S_SEQUENCE)
                 sequence_brackets(f, NULL, fields, "(", ")", n->children[0]->span.end, n->span.end);
             else
-                brackets(f, NULL, n->children + 1, 1, "(", ")", n->children[0]->span.end,
+                brackets(f, NULL, n, n->children + 1, 1, "(", ")", n->children[0]->span.end,
                          n->span.end);
         }
         break;
@@ -374,7 +468,6 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
         text(f, promise ? "promise " : "examples");
         if (promise)
             node(f, n->children[0]);
-        trailing(f, n, true);
         op(f, MO_DOC_LINE_IF);
         op(f, MO_DOC_NEST);
         statements(f, n->children[promise ? 1 : 0], false);
@@ -521,9 +614,12 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
         }
         text(f, ":");
         const struct mo_syntax *body = n->children[2];
+        const struct mo_syntax *only = body->count == 1 ? body->children[0] : NULL;
+        if (only != NULL && only->kind == MO_S_EXPR_STMT)
+            only = only->children[0];
         bool inline_body = body->count == 1 && body->children[0]->leading == NULL &&
-                           body->children[0]->kind != MO_S_FOR &&
-                           body->children[0]->kind != MO_S_WHILE &&
+                           only->kind != MO_S_FOR && only->kind != MO_S_WHILE &&
+                           only->kind != MO_S_CASE && only->kind != MO_S_IF &&
                            (f->policy == MO_FORMAT_WIDTH ||
                             lines(f, n->children[0]->span.end, body->children[0]->span.start) == 0);
         if (inline_body) {
@@ -587,7 +683,11 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
     case MO_S_POSITION:
         if (n->count == 2)
             node(f, n->children[0]);
+        if (n->kind != MO_S_CALL)
+            op(f, MO_DOC_NEST);
         postfix_step(f, n, n->count == 2 ? n->children[0]->span.end : n->span.start);
+        if (n->kind != MO_S_CALL)
+            op(f, MO_DOC_UNNEST);
         break;
     case MO_S_POSTFIX: {
         node(f, n->children[0]);
@@ -595,11 +695,16 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
         uint32_t before = n->children[0]->span.end;
         for (uint32_t i = 1; i < n->count; i++) {
             const struct mo_syntax *step = n->children[i];
+            struct comment_cursor cursor = {.node = step, .next = step->trailing};
+            struct comment_cursor *previous = f->cursor;
+            f->cursor = &cursor;
             comments(f, step->leading, false);
             op(f, MO_DOC_GROUP);
             postfix_step(f, step, before);
-            trailing(f, step, false);
             op(f, MO_DOC_END_GROUP);
+            if (cursor.next != NULL)
+                f->doc.ok = false;
+            f->cursor = previous;
             before = step->span.end;
         }
         op(f, MO_DOC_UNNEST);
@@ -616,6 +721,7 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
     case MO_S_UNDERSCORE:
     case MO_S_TOKEN:
         mo_doc_add(&f->doc, MO_DOC_TEXT, n->text, n->span.end - n->span.start, false);
+        token_anchor(f, n->token);
         break;
     case MO_S_TEXT_INTERPOLATED:
         for (uint32_t i = 0; i < n->count; i++)
@@ -625,7 +731,7 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
     case MO_S_TUPLE:
     case MO_S_LIST:
     case MO_S_MAP:
-        brackets(f, n, n->children, n->count,
+        brackets(f, n, n, n->children, n->count,
                  n->kind == MO_S_LIST  ? "["
                  : n->kind == MO_S_MAP ? "{"
                                        : "(",
@@ -652,11 +758,24 @@ static void node(struct printer *f, const struct mo_syntax *n) {
         f->doc.ok = false;
         return;
     }
+    struct comment_cursor cursor = {.node = n, .next = n->trailing};
+    struct comment_cursor *previous = f->cursor;
+    f->cursor = &cursor;
     comments(f, n->leading, false);
+    bool block = n->kind == MO_S_FN || n->kind == MO_S_STRUCT || n->kind == MO_S_ENUM ||
+                 n->kind == MO_S_TEST || n->kind == MO_S_PROMISE || n->kind == MO_S_EXAMPLES ||
+                 n->kind == MO_S_FOR || n->kind == MO_S_WHILE || n->kind == MO_S_IF ||
+                 n->kind == MO_S_CASE || n->kind == MO_S_LAMBDA;
+    if (block)
+        op(f, MO_DOC_ALIGN_LINE);
     op(f, MO_DOC_GROUP);
     print_node(f, n);
-    trailing(f, n, false);
     op(f, MO_DOC_END_GROUP);
+    if (block)
+        op(f, MO_DOC_END_ALIGN);
+    if (cursor.next != NULL)
+        f->doc.ok = false;
+    f->cursor = previous;
     f->depth--;
 }
 
@@ -668,7 +787,8 @@ bool mo_format(const struct mo_module_syntax *module, const struct mo_sources *s
         return false;
     struct printer f = {.policy = options.policy};
     mo_doc_init(&f.doc, options.display_width);
-    if (sources != NULL && module->span.file < sources->count)
+    if (options.policy == MO_FORMAT_SOURCE_PROTOTYPE && sources != NULL &&
+        module->span.file < sources->count)
         f.source = &sources->files[module->span.file];
     if (options.policy == MO_FORMAT_SOURCE_PROTOTYPE && f.source == NULL) {
         mo_doc_free(&f.doc);
