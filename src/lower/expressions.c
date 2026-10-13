@@ -909,6 +909,10 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
         return lower_prim(
             p, (struct mo_core_prim){.tag = MO_CORE_PRIM_IO, .as.io.tag = MO_CORE_IO_OP_PRINT},
             args);
+    if (r->native != NULL && strcmp(r->native, "Text.bytes") == 0)
+        return lower_prim(
+            p, (struct mo_core_prim){.tag = MO_CORE_PRIM_TEXT, .as.text = MO_CORE_TEXT_OP_BYTES},
+            args);
     if (r->native != NULL && strcmp(r->native, "to_text") == 0) {
         MO_ASSERT(args.count == 1);
         return lower_to_text(p, ability(b, r, MO_SOURCE_TEXT, r->operands[0]),

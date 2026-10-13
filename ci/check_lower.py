@@ -43,6 +43,10 @@ def main():
                 lines = path.with_suffix(".want").read_text().splitlines()
                 expected = lines[:2]
                 selection = json.loads(lines[2]) if len(lines) == 3 else {}
+                if "detail" in selection:
+                    # Failure Text may contain newlines/NUL; JSON preserves
+                    # those bytes instead of treating them as .want lines.
+                    expected[1] = selection["detail"]
                 stderr = selection.get("stderr", [])
                 test = selection.get("test")
                 call = selection.get("call")
