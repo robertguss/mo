@@ -423,9 +423,36 @@ static void test_lambda(void) {
     struct mo_core *core = checked(&f, "lambda", "returned\n8\n");
     if (core != NULL)
         run(core, 8);
-    lambda.capture_count = 1;
-    CHECK(mo_lower(&f.arena, &f.program, &f.sources, &f.diags) == NULL);
-    CHECK(f.diags.items[0].code == MO_CODE_LOWER_UNFINISHED);
+    lower_fixture_free(&f);
+}
+
+static void test_captures(void) {
+    struct lower_fixture f;
+    lower_fixture_init(&f, "module Main\nfn main() : Int\nx = 9\ny = 2\n"
+                           "f = fn() y * 100 + x end\nf()\nend\n");
+    f.bindings[0] = (struct mo_checked_binding){.name = "x", .type = &f.int_};
+    f.bindings[1] = (struct mo_checked_binding){.name = "y", .type = &f.int_};
+    f.functions[0].body.binding_count = 2;
+    uint32_t nine = lower_fixture_row(&f, MO_S_INT, &f.int_, "9", 0, NULL);
+    uint32_t x = lower_fixture_bind(&f, 0, nine, false);
+    uint32_t two = lower_fixture_row(&f, MO_S_INT, &f.int_, "2", 0, NULL);
+    uint32_t y = lower_fixture_bind(&f, 1, two, false);
+    uint32_t read_y = lower_fixture_read(&f, 1);
+    uint32_t hundred = lower_fixture_row(&f, MO_S_INT, &f.int_, "100", 0, NULL);
+    uint32_t product = lower_fixture_op(&f, MO_T_STAR, &f.int_, read_y, hundred);
+    uint32_t read_x = lower_fixture_read(&f, 0);
+    uint32_t sum = lower_fixture_op(&f, MO_T_PLUS, &f.int_, product, read_x);
+    const struct mo_checked_binding *captures[] = {&f.bindings[1], &f.bindings[0]};
+    struct mo_checked_lambda lambda = {
+        .number = 1, .body = sum, .capture_count = 2, .captures = captures};
+    uint32_t value = lower_fixture_row(&f, MO_S_LAMBDA, &f.function_types[0], NULL, 1, &sum);
+    f.rows[value].lambda = &lambda;
+    uint32_t call = lower_fixture_row(&f, MO_S_CALL, &f.int_, NULL, 1, &value);
+    uint32_t sequence[] = {x, y, call};
+    (void)lower_fixture_row(&f, MO_S_SEQUENCE, &f.int_, NULL, 3, sequence);
+    struct mo_core *core = checked(&f, "captures", "returned\n209\n");
+    if (core != NULL)
+        run(core, 209);
     lower_fixture_free(&f);
 }
 
@@ -764,6 +791,7 @@ int main(int argc, char **argv) {
     test_pattern_scope();
     test_loops();
     test_lambda();
+    test_captures();
     test_text();
     test_result_entry();
     test_limits();

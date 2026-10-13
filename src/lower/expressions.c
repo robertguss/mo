@@ -1207,8 +1207,6 @@ static void row_task(struct body *b, struct task t) {
         return;
     }
     if (r->lambda != NULL) {
-        if (r->lambda->capture_count != 0)
-            lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "capturing lambdas are not lowered yet");
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_LAM);
         e->as.lam.params.count = r->lambda->parameter_count;
         e->as.lam.params.items = LOWER_NEW(p, struct mo_core_param, r->lambda->parameter_count);
@@ -1223,17 +1221,26 @@ static void row_task(struct body *b, struct task t) {
         }
         ((struct lower_node *)e)->closure =
             lower_concat(p, b->instance->meta.name, ".fn.", lower_number(p, r->lambda->number));
+        mo_core_expr *body = &e->as.lam.body;
+        for (uint32_t i = 0; i < r->lambda->capture_count; i++) {
+            const struct mo_checked_binding *capture = r->lambda->captures[i];
+            mo_core_string name = binding_name(b, capture);
+            mo_core_expr snapshot = let(b, name, lower_var(p, name));
+            binder(b, snapshot, 0, capture);
+            *body = snapshot;
+            body = &snapshot->as.let_.body;
+        }
         if (returns(b, r->lambda->body)) {
             struct continuation *ret = continuation(b, K_JUMP);
             ret->result = true;
             ret->name = lower_fresh(p);
             mo_core_expr return_join = join(b, ret, type(b, r->type)->as.fn.ret);
             return_join->as.join.body = lower_var(p, return_join->as.join.params.items[0].name);
-            e->as.lam.body = return_join;
+            *body = return_join;
             emit(b, r->lambda->body, (struct state){.return_ = ret}, continuation(b, K_END),
                  &return_join->as.join.rest);
         } else
-            emit(b, r->lambda->body, (struct state){0}, continuation(b, K_END), &e->as.lam.body);
+            emit(b, r->lambda->body, (struct state){0}, continuation(b, K_END), body);
         finish(b, e, t.state, t.continuation, t.out);
         return;
     }

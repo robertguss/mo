@@ -800,7 +800,7 @@ examples. The ones a compiler is most likely to get wrong are:
 not syntax inference. Explicit arena-backed task and continuation lists perform
 expression/pattern lowering; an explicit, memoized stack walks type DAGs.
 Queued function/data instances have no recursive C walk. E1150 refuses later
-forms (captures, try, Option or, interpolation, unsupported ability/native
+forms (try, Option or, interpolation, unsupported ability/native
 operations, map literals, constants and spec code); E1151 is arena exhaustion, E1152 the
 shared allocation-byte/step or Core-node bound, and E1153 the source-type,
 instantiation or generated Core path bound. Compilation is independent of the
@@ -838,6 +838,13 @@ the defining module. Nongeneric data is retained even without an expression use.
 nominal type a requester-specialized function accepts; separate requester data
 names would make those values incompatible in Core. Anonymous names retain their
 source ordinal as `.fn.N`; generated function-value adapters use `.ref.ROW`.
+
+Capturing lambdas prefix their body with aliases of the checked captures in
+first-use order. Each alias's bound expression refers to the outer binding;
+its body sees the local copy. This gives Core/codegen a first-use-ordered free
+environment, captured by value at closure creation, independent of later CPS
+rewrites. The aliases retain the captured source names and the lambda span.
+The checker owns capture legality, including capabilities and later var writes.
 
 The initial CPS implementation conservatively passes every live outer var,
 not only changed vars, across a continuation join; expression joins also pass

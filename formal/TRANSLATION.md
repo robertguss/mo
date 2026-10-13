@@ -643,6 +643,13 @@ the function is made, including in a later round of a loop around it; the
 front end rejects the rest (reference 5.6), so a closure never has to choose
 between the value it was made with and a later one.
 
+The C lowerer prefixes a capturing lambda with local aliases in the checked
+first-use order: `fn() => let y = y in let x = x in ...`. Each right-hand
+name denotes the outer binding, before its local alias shadows it. Core's
+closure creation snapshots that ordered free environment by value. Prefixes
+prevent CPS or pattern rewrites from changing the capture order; their source
+metadata keeps the capture names and the lambda's responsible span.
+
 `return` and `try` inside an anonymous function leave that anonymous function
 (reference 5.6). The lowering puts its `%return` join point (5.1) inside the
 anonymous function's body, and Core couldn't do otherwise: `lam`'s body is
