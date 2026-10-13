@@ -297,7 +297,8 @@ $(BUILD)/sanitize/tests/test_host_resolver.test: $(BUILD)/sanitize/tests/test_ho
 # Neither the ordinary host objects nor the fixture's heap use these wrappers.
 HOST_FAULT_SOURCES := src/host/host.c src/host/random.c src/host/console.c src/host/real-files.c
 HOST_FAULT_RENAMES := -Dclock_gettime=mo_host_fault_clock -Dgetentropy=mo_host_fault_entropy \
-	-Dread=mo_host_fault_read -Dwrite=mo_host_fault_write -Dftruncate=mo_host_fault_truncate
+	-Dread=mo_host_fault_read -Dwrite=mo_host_fault_write -Dwritev=mo_host_fault_writev \
+	-Dpoll=mo_host_fault_poll -Dftruncate=mo_host_fault_truncate
 $(BUILD)/debug/host-faults/%.o: src/%.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) $(HOST_FAULT_RENAMES) -c $< -o $@

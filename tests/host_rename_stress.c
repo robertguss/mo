@@ -1,4 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE 1
+#endif
 #include "host_fixture.h"
 #include "test.h"
 
@@ -92,11 +95,14 @@ static void stress(bool portable) {
     MO_ASSERT(parent >= 0 && mkdirat(parent, "root", 0700) == 0 &&
               mkdirat(parent, "outside", 0700) == 0);
     int root = openat(parent, "root", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    MO_ASSERT(root >= 0 && mkdirat(root, "gate", 0700) == 0 && mkdirat(root, "safe", 0700) == 0);
+    MO_ASSERT(root >= 0 && mkdirat(root, "gate", 0700) == 0 &&
+              mkdirat(root, "gate/nest", 0700) == 0 && mkdirat(root, "safe", 0700) == 0);
     put(parent, "outside/data", "outside sentinel");
     put(root, "gate/data", "inside");
     put(root, "safe/data", "inside");
     MO_ASSERT(symlinkat("../safe", root, "gate/back") == 0 &&
+              symlinkat("..", root, "gate/nest/back") == 0 &&
+              symlinkat("../../../outside", root, "gate/nest/escape") == 0 &&
               symlinkat("../../outside", root, "gate/escape") == 0 &&
               symlinkat("../outside", root, "attack") == 0);
     char absolute[256];
@@ -115,7 +121,9 @@ static void stress(bool portable) {
     /* Stable controls ensure the assertions catch escapes even when scheduling
      * happens to let every racy lookup run between rename batches. */
     lookup(&f, files, "gate/back/data", false, false, false, &totals);
+    lookup(&f, files, "gate/nest/back/data", false, false, false, &totals);
     lookup(&f, files, "gate/escape/data", false, true, false, &totals);
+    lookup(&f, files, "gate/nest/escape/data", true, true, false, &totals);
     lookup(&f, files, "gate/absolute/data", true, true, false, &totals);
     int commands[2], replies[2];
     MO_ASSERT(pipe(commands) == 0 && pipe(replies) == 0);
@@ -132,7 +140,11 @@ static void stress(bool portable) {
         for (unsigned i = 0; i < LOOKUPS; i++) {
             lookup(&f, files, "gate/data", false, false, true, &totals);
             lookup(&f, files, "gate/back/data", true, false, true, &totals);
+            /* Popping just to gate must replay and reauthorize an ancestor
+             * that the mover can concurrently replace by its escaping link. */
+            lookup(&f, files, "gate/nest/back/data", false, false, true, &totals);
             lookup(&f, files, "gate/escape/data", false, true, true, &totals);
+            lookup(&f, files, "gate/nest/escape/data", true, true, true, &totals);
             lookup(&f, files, "gate/absolute/data", true, true, true, &totals);
         }
         char reply;
@@ -150,6 +162,7 @@ static void stress(bool portable) {
     CHECK(length == 16 && memcmp(bytes, "outside sentinel", 16) == 0);
     CHECK(close(sentinel) == 0);
     lookup(&f, files, "gate/back/data", false, false, false, &totals);
+    lookup(&f, files, "gate/nest/back/data", false, false, false, &totals);
     CHECK(printf("host rename stress (%s): %u operations, %u successes, %u refusals, "
                  "%u concurrent renames\n",
                  portable ? "portable" : "default", totals.returned + totals.refused,
@@ -158,9 +171,11 @@ static void stress(bool portable) {
     CHECK(mo_heap_objects(f.heap) == 0);
     host_fixture_free(&f);
     CHECK(unlinkat(root, "gate/data", 0) == 0 && unlinkat(root, "gate/back", 0) == 0 &&
-          unlinkat(root, "gate/escape", 0) == 0 && unlinkat(root, "gate/absolute", 0) == 0 &&
-          unlinkat(root, "gate", AT_REMOVEDIR) == 0 && unlinkat(root, "safe/data", 0) == 0 &&
-          unlinkat(root, "safe", AT_REMOVEDIR) == 0 && unlinkat(root, "attack", 0) == 0);
+          unlinkat(root, "gate/nest/back", 0) == 0 && unlinkat(root, "gate/nest/escape", 0) == 0 &&
+          unlinkat(root, "gate/nest", AT_REMOVEDIR) == 0 && unlinkat(root, "gate/escape", 0) == 0 &&
+          unlinkat(root, "gate/absolute", 0) == 0 && unlinkat(root, "gate", AT_REMOVEDIR) == 0 &&
+          unlinkat(root, "safe/data", 0) == 0 && unlinkat(root, "safe", AT_REMOVEDIR) == 0 &&
+          unlinkat(root, "attack", 0) == 0);
     CHECK(close(root) == 0 && unlinkat(parent, "root", AT_REMOVEDIR) == 0 &&
           unlinkat(parent, "outside/data", 0) == 0 &&
           unlinkat(parent, "outside", AT_REMOVEDIR) == 0 && close(parent) == 0 && rmdir(path) == 0);

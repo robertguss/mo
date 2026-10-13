@@ -1,11 +1,16 @@
 #define _DEFAULT_SOURCE
 #define _POSIX_C_SOURCE 200809L
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE 1
+#endif
 #include "host_fixture.h"
 #include "test.h"
 
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/random.h>
+#include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -17,13 +22,15 @@ struct io_plan {
     const int *steps; /* negative errno, zero result, or maximum transferred bytes */
     size_t count, at;
 };
-static struct io_plan reads, writes;
+static struct io_plan reads, writes, polls;
 static bool truncate_failure;
 
 MO_MUST_USE int mo_host_fault_entropy(void *bytes, size_t length);
 MO_MUST_USE int mo_host_fault_clock(clockid_t id, struct timespec *out);
 MO_MUST_USE ssize_t mo_host_fault_read(int fd, void *bytes, size_t length);
 MO_MUST_USE ssize_t mo_host_fault_write(int fd, const void *bytes, size_t length);
+MO_MUST_USE ssize_t mo_host_fault_writev(int fd, const struct iovec *pieces, int count);
+MO_MUST_USE int mo_host_fault_poll(struct pollfd *fds, nfds_t count, int timeout);
 MO_MUST_USE int mo_host_fault_truncate(int fd, off_t length);
 
 int mo_host_fault_entropy(void *bytes, size_t length) {
@@ -70,6 +77,34 @@ ssize_t mo_host_fault_read(int fd, void *bytes, size_t length) {
 ssize_t mo_host_fault_write(int fd, const void *bytes, size_t length) {
     int result = transfer(&writes, &length);
     return result <= 0 ? result : write(fd, bytes, length);
+}
+
+ssize_t mo_host_fault_writev(int fd, const struct iovec *pieces, int count) {
+    MO_ASSERT(count > 0 && count <= 2);
+    struct iovec limited[2];
+    size_t length = 0;
+    for (int i = 0; i < count; i++) {
+        MO_ASSERT(pieces[i].iov_len <= SIZE_MAX - length);
+        length += pieces[i].iov_len;
+    }
+    int result = transfer(&writes, &length);
+    if (result <= 0)
+        return result;
+    int used = 0;
+    for (int i = 0; i < count && length != 0; i++) {
+        limited[used] = pieces[i];
+        if (limited[used].iov_len > length)
+            limited[used].iov_len = length;
+        length -= limited[used].iov_len;
+        used++;
+    }
+    return writev(fd, limited, used);
+}
+
+int mo_host_fault_poll(struct pollfd *fds, nfds_t count, int timeout) {
+    size_t length = 1;
+    int result = transfer(&polls, &length);
+    return result <= 0 ? result : poll(fds, count, timeout);
 }
 
 int mo_host_fault_truncate(int fd, off_t length) {
@@ -183,12 +218,15 @@ static void test_console(void) {
     struct mo_cell console = real(&f, MO_CAP_CONSOLE, -1), text = host_text(&f, "abcd");
     struct mo_cell args[] = {console, text}, out;
     struct mo_host_error error;
-    const int short_io[] = {-EINTR, 1, -EINTR, 2};
-    writes = (struct io_plan){short_io, 4, 0};
+    const int short_io[] = {-EINTR, -EAGAIN, 1, -EINTR, 2};
+    const int interrupted_poll[] = {-EINTR};
+    writes = (struct io_plan){short_io, 5, 0};
+    polls = (struct io_plan){interrupted_poll, 1, 0};
     CHECK(mo_host_call(&f.host, f.heap, MO_HOST_CONSOLE_PRINT, f.unit, args, &out, &error) ==
           MO_HOST_RETURNED);
-    CHECK(writes.at == writes.count);
+    CHECK(writes.at == writes.count && polls.at == polls.count);
     file_holds(output, "abcd\n");
+    polls = (struct io_plan){0};
     const int failures[][2] = {{-EPIPE, 0}, {0, 0}, {2, -EIO}, {4, -EPIPE}};
     const char *partial[] = {"", "", "ab", "abcd"};
     for (unsigned i = 0; i < 4; i++) {
@@ -202,7 +240,26 @@ static void test_console(void) {
         holds(text, "abcd");
         file_holds(output, partial[i]);
     }
+    const int blocked[] = {-EAGAIN};
+    const int bad_poll[] = {-EINTR, -EIO};
+    MO_ASSERT(ftruncate(output, 0) == 0 && lseek(output, 0, SEEK_SET) == 0);
+    writes = (struct io_plan){blocked, 1, 0};
+    polls = (struct io_plan){bad_poll, 2, 0};
+    out = mo_cell_int(99);
+    CHECK(mo_host_call(&f.host, f.heap, MO_HOST_CONSOLE_PRINT, f.unit, args, &out, &error) ==
+          MO_HOST_BUG);
+    CHECK(mo_cell_get_int(out) == 99 && polls.at == polls.count &&
+          strcmp(error.reason, "printing to an output that is gone") == 0);
+    holds(text, "abcd");
+    file_holds(output, "");
     writes = (struct io_plan){0};
+    reads = (struct io_plan){blocked, 1, 0};
+    polls = (struct io_plan){bad_poll, 2, 0};
+    CHECK(mo_host_call(&f.host, f.heap, MO_HOST_CONSOLE_READ_LINE, f.option, &console, &out,
+                       &error) == MO_HOST_INTERNAL);
+    CHECK(mo_cell_get_int(out) == 99 && polls.at == polls.count &&
+          strcmp(error.reason, "internal error: console input unavailable") == 0);
+    polls = (struct io_plan){0};
     const int bad_read[] = {-EIO};
     reads = (struct io_plan){bad_read, 1, 0};
     out = mo_cell_int(99);
@@ -211,7 +268,8 @@ static void test_console(void) {
     CHECK(mo_cell_get_int(out) == 99 && reads.at == reads.count &&
           strcmp(error.reason, "internal error: console input unavailable") == 0);
     MO_ASSERT(write(input, "line\r\nnext\n", 11) == 11 && lseek(input, 0, SEEK_SET) == 0);
-    reads = (struct io_plan){short_io, 4, 0};
+    reads = (struct io_plan){short_io, 5, 0};
+    polls = (struct io_plan){interrupted_poll, 1, 0};
     const char *lines[] = {"line", "next"};
     for (unsigned i = 0; i < 2; i++) {
         MO_ASSERT(mo_host_call(&f.host, f.heap, MO_HOST_CONSOLE_READ_LINE, f.option, &console, &out,
@@ -220,7 +278,8 @@ static void test_console(void) {
         holds(mo_cell_get_payload(out), lines[i]);
         mo_value_drop(f.heap, f.option, out);
     }
-    CHECK(reads.at == reads.count);
+    CHECK(reads.at == reads.count && polls.at == polls.count);
+    polls = (struct io_plan){0};
     MO_ASSERT(mo_host_call(&f.host, f.heap, MO_HOST_CONSOLE_READ_LINE, f.option, &console, &out,
                            &error) == MO_HOST_RETURNED);
     CHECK(mo_cell_get_tag(out) == 0);
