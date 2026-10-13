@@ -52,7 +52,9 @@ each target fuzzed for five minutes (`MO_CI_FUZZ_SECONDS`, 300 by default). It
 keeps the log, and any crashing inputs, under `~/mo-ci/logs`, and sends the
 coordinating thread one line with the result, or the end of the log on a
 failure. A failure there is a bug on `main`; fix it in a pull request, and add
-the crashing input to the target's corpus.
+the crashing input to the target's corpus. The nightly run has its own clone
+and lock under `~/mo-ci/nightly`, so pull requests' runs don't wait the hour or
+more it takes.
 
 ## The CI orb itself
 
