@@ -1,5 +1,6 @@
 #include "codegen/codegen.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "base/codes.h"
@@ -25,6 +26,9 @@ struct ownership {
 struct edge {
     uint32_t to, next;
 };
+struct capture {
+    uint32_t source, reg;
+};
 struct node {
     mo_core_expr core;
     struct mo_core_span span;
@@ -35,11 +39,14 @@ struct node {
     bool temporary, activity;
 };
 struct function {
-    struct vector regs, code, spans, names;
+    struct vector regs, code, spans, names, captures;
     struct node *body;
-    struct mo_codegen_index *locals, *bindings, *zeros;
+    struct mo_codegen_index *locals, *bindings, *zeros, *closure_names, *capture_index;
     const struct mo_core_fun_meta *meta;
     const struct mo_core_fun *source;
+    struct function *parent, *root;
+    struct mo_core_span declaration;
+    uint32_t lambda_number, closure_type;
     uint32_t preorder, instructions, blocks, owned;
     bool next_block;
 };
@@ -49,9 +56,10 @@ struct compiler {
     struct mo_types types;
     struct vector strings, constants, modules, constructors, ownership, edges;
     struct mo_codegen_index *string_index, *constant_index, *data_index, *fun_index, *global_index,
-        *module_index, *builtin_index;
+        *module_index, *builtin_index, *annotation_index;
+    struct mo_codegen_index *closure_zeros[2];
     uint32_t *data, *files, *layouts;
-    uint32_t range_int, function_count, unit_constant;
+    uint32_t range_int, function_count, function_capacity, unit_constant;
     struct mo_bytecode_global *globals;
     uint32_t *init;
     struct mo_bytecode_function *funs;
@@ -203,21 +211,36 @@ static MO_MUST_USE bool type_name(struct compiler *c, uint32_t id, struct mo_buf
                                         "Char", "Time",  "Duration", "Decimal", "Range",
                                         "Text", "Bytes", "BigInt"};
     const struct mo_type *t = &c->types.items[id];
-    if (t->kind != MO_TYPE_TUPLE)
+    if (t->kind != MO_TYPE_TUPLE && t->kind != MO_TYPE_FUNCTION)
         return type_text(c, out, t->kind <= MO_TYPE_BIGINT ? names[t->kind] : t->name);
-    if (!type_text(c, out, "("))
+    if (!type_text(c, out, t->kind == MO_TYPE_FUNCTION ? "fn(" : "("))
         return false;
     for (uint32_t i = 0; i < t->parameter_count; i++)
         if ((i != 0 && !type_text(c, out, ", ")) || !type_name(c, t->parameters[i], out, depth + 1))
             return false;
-    return type_text(c, out, ")");
+    return type_text(c, out, ")") &&
+           (t->kind != MO_TYPE_FUNCTION ||
+            (type_text(c, out, " : ") && type_name(c, t->result, out, depth + 1)));
 }
+static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsigned depth);
 static MO_MUST_USE uint32_t type(struct compiler *c, mo_core_ty t, unsigned depth) {
     if (depth >= MO_LIMIT_CORE_DEPTH) {
         if (!problem(c, MO_CODE_NESTED_TOO_DEEPLY,
                      "Core type nesting exceeds MO_LIMIT_CORE_DEPTH."))
             return MO_NO_INDEX;
     }
+    if (t->tag < MO_CORE_TY_TUPLE)
+        return type_uncached(c, t, depth);
+    mo_core_string key = {(const char *)&t, sizeof t};
+    struct mo_codegen_index *old = mo_codegen_find(c->annotation_index, key);
+    if (old != NULL)
+        return old->value;
+    uint32_t id = type_uncached(c, t, depth);
+    if (id == MO_NO_INDEX || index_add(c, &c->annotation_index, key, id, true) == NULL)
+        return MO_NO_INDEX;
+    return id;
+}
+static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsigned depth) {
     enum mo_type_kind kind;
     switch (t->tag) {
     case MO_CORE_TY_UNIT:
@@ -367,14 +390,39 @@ static MO_MUST_USE uint32_t type(struct compiler *c, mo_core_ty t, unsigned dept
             return MO_NO_INDEX;
         return id;
     }
+    case MO_CORE_TY_FN: {
+        if (t->as.fn.params.count > MO_LIMIT_PARAMETERS) {
+            if (!problem(c, MO_CODE_BYTECODE_TOO_BIG,
+                         "Closure signature exceeds MO_LIMIT_PARAMETERS."))
+                return MO_NO_INDEX;
+        }
+        uint32_t *params = allocate(c, t->as.fn.params.count, sizeof *params);
+        if (params == NULL)
+            return MO_NO_INDEX;
+        for (size_t i = 0; i < t->as.fn.params.count; i++) {
+            params[i] = type(c, t->as.fn.params.items[i], depth + 1);
+            if (params[i] == MO_NO_INDEX)
+                return MO_NO_INDEX;
+        }
+        uint32_t result = type(c, t->as.fn.ret, depth + 1), id = MO_NO_INDEX;
+        if (result == MO_NO_INDEX)
+            return MO_NO_INDEX;
+        enum mo_type_problem status =
+            mo_types_intern(&c->types,
+                            &(struct mo_type){.kind = MO_TYPE_FUNCTION,
+                                              .parameters = params,
+                                              .parameter_count = (uint32_t)t->as.fn.params.count,
+                                              .result = result},
+                            &id);
+        return type_result(c, status, id);
+    }
     case MO_CORE_TY_LIST:
     case MO_CORE_TY_MAP:
     case MO_CORE_TY_SET:
     case MO_CORE_TY_FILE_ERROR:
     case MO_CORE_TY_ENTRY:
-    case MO_CORE_TY_FN:
     case MO_CORE_TY_CAP:
-        if (!unsupported(c, "Collection, function and capability types are not implemented yet."))
+        if (!unsupported(c, "Collection and capability types are not implemented yet."))
             return MO_NO_INDEX;
         return MO_NO_INDEX;
     }
@@ -390,7 +438,9 @@ static MO_MUST_USE uint32_t constant(struct compiler *c, struct mo_bytecode_cons
         /* Only the zero initializer is implemented; decimal literals remain staged refusals. */
         MO_ASSERT(value.value.bigint.sign == MO_BIGINT_ZERO &&
                   value.value.bigint.magnitude.length == 0);
-    } else if (kind != MO_TYPE_BYTES)
+    } else if (kind == MO_TYPE_FUNCTION)
+        memcpy(key + 4, &value.value.function, sizeof value.value.function);
+    else if (kind != MO_TYPE_BYTES)
         memcpy(key + 4, value.value.immediate, 16);
     mo_core_string bytes = {(const char *)key, sizeof key};
     if (kind == MO_TYPE_BYTES) {
@@ -549,23 +599,199 @@ static MO_MUST_USE uint32_t constructor(struct compiler *c, uint32_t ty, mo_core
     MO_ASSERT(entry != NULL);
     return entry->value;
 }
+static void function_init(struct function *f) {
+    f->regs.width = sizeof(struct reg);
+    f->code.width = sizeof(uint32_t);
+    f->spans.width = sizeof(struct mo_bytecode_span);
+    f->names.width = sizeof(struct mo_bytecode_register_name);
+    f->captures.width = sizeof(struct capture);
+    f->owned = MO_NO_INDEX;
+}
+/* Capture lookup happens while all enclosing lexical scopes are still active. Intermediate
+ * closures retain a grandparent's value even if only a nested closure uses it. */
+static MO_MUST_USE uint32_t variable(struct compiler *c, struct function *f, mo_core_string key,
+                                     unsigned depth) {
+    MO_ASSERT(depth < MO_LIMIT_CORE_DEPTH);
+    struct mo_codegen_index *entry = mo_codegen_find(f->locals, key);
+    if (entry != NULL && entry->value != MO_NO_INDEX)
+        return entry->value;
+    MO_ASSERT(f->parent != NULL);
+    uint32_t source = variable(c, f->parent, key, depth + 1);
+    if (source == MO_NO_INDEX)
+        return MO_NO_INDEX;
+    mo_core_string capture_key = {(const char *)&source, sizeof source};
+    struct mo_codegen_index *old = mo_codegen_find(f->capture_index, capture_key);
+    uint32_t r;
+    if (old != NULL) {
+        r = old->value;
+    } else {
+        struct reg parent = ((struct reg *)f->parent->regs.items)[source];
+        r = register_add(c, f, parent.type, parent.name);
+        struct capture *item =
+            append(c, &f->captures, 1, MO_LIMIT_FIELDS, MO_CODE_BYTECODE_TOO_BIG);
+        if (r == MO_NO_INDEX || item == NULL ||
+            index_add(c, &f->capture_index, capture_key, r, true) == NULL)
+            return MO_NO_INDEX;
+        *item = (struct capture){source, r};
+    }
+    entry = index_add(c, &f->locals, key, r, false);
+    if (entry == NULL)
+        return MO_NO_INDEX;
+    entry->value = r;
+    return r;
+}
+static MO_MUST_USE uint32_t suffixed_name(struct compiler *c, mo_core_string base,
+                                          const char *suffix);
 static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, mo_core_expr expr,
-                                        unsigned depth);
+                                        uint32_t expected, unsigned depth);
+/* Only inference failures need a later context. Resolve them once, without retrying the Core
+ * walk: an if/case may infer from a later arm and type an earlier stopping lambda. */
+static MO_MUST_USE bool context(struct compiler *c, struct function *f, struct node *n,
+                                uint32_t expected, unsigned depth) {
+    MO_ASSERT(depth < MO_LIMIT_CORE_DEPTH);
+    if (expected == MO_NO_INDEX || n->type != MO_NO_INDEX)
+        return true;
+    if (n->core->tag == MO_CORE_EXPR_STOP || n->core->tag == MO_CORE_EXPR_FAIL)
+        return true;
+    if (n->core->tag == MO_CORE_EXPR_LAM) {
+        struct function *lifted = &c->bodies[n->index];
+        uint32_t result = c->types.items[expected].result;
+        c->funs[n->index].result_type = result;
+        lifted->closure_type = expected;
+        if (!context(c, lifted, lifted->body, result, depth + 1))
+            return false;
+    } else if (n->core->tag == MO_CORE_EXPR_LET) {
+        if (!context(c, f, n->children[1], expected, depth + 1))
+            return false;
+        n->type = n->children[1]->type;
+        n->reg = n->children[1]->reg;
+        n->temporary = n->children[1]->temporary || n->reg == n->binds[0];
+        return true;
+    } else {
+        MO_ASSERT(n->core->tag == MO_CORE_EXPR_IF || n->core->tag == MO_CORE_EXPR_CASE);
+        for (uint32_t i = 1; i < n->count; i++) {
+            struct node *body =
+                n->core->tag == MO_CORE_EXPR_CASE ? n->children[i]->children[0] : n->children[i];
+            if (!context(c, f, body, expected, depth + 1))
+                return false;
+        }
+    }
+    n->type = expected;
+    n->reg = register_add(c, f, expected, MO_NO_INDEX);
+    return n->reg != MO_NO_INDEX;
+}
+static MO_MUST_USE bool lambda(struct compiler *c, struct function *parent, struct node *n,
+                               uint32_t preorder, uint32_t expected, unsigned depth) {
+    MO_ASSERT(c->function_count < c->function_capacity);
+    uint32_t index = c->function_count++;
+    n->index = index;
+    struct function *f = &c->bodies[index];
+    *f = (struct function){.parent = parent,
+                           .root = parent->root,
+                           .meta = parent->meta,
+                           .source = parent->source,
+                           .preorder = parent->preorder,
+                           .bindings = parent->bindings,
+                           .declaration = n->span};
+    function_init(f);
+    uint32_t number = ++f->root->lambda_number;
+    struct mo_codegen_index *named_closure = mo_codegen_find(
+        f->root->closure_names, (mo_core_string){(const char *)&preorder, sizeof preorder});
+    char suffix[32];
+    int length = snprintf(suffix, sizeof suffix, ".fn.%u", number);
+    MO_ASSERT(length > 0 && (size_t)length < sizeof suffix);
+    uint32_t name_id =
+        named_closure == NULL ? suffixed_name(c, f->source->name, suffix) : named_closure->value;
+    uint32_t parent_index = (uint32_t)(parent - c->bodies);
+    mo_core_params ps = n->core->as.lam.params;
+    if (ps.count > MO_LIMIT_PARAMETERS)
+        return problem(c, MO_CODE_BYTECODE_TOO_BIG, "Closure exceeds MO_LIMIT_PARAMETERS.");
+    struct mo_parameter *parameters = allocate(c, ps.count, sizeof *parameters);
+    uint32_t *types = allocate(c, ps.count, sizeof *types);
+    if (name_id == MO_NO_INDEX || parameters == NULL || types == NULL)
+        return false;
+    c->parameters[index] = parameters;
+    c->funs[index] = (struct mo_bytecode_function){.name = name_id,
+                                                   .module = c->funs[parent_index].module,
+                                                   .kind = MO_FUNCTION_CLOSURE,
+                                                   .spec_code = c->funs[parent_index].spec_code,
+                                                   .parameter_count = (uint32_t)ps.count,
+                                                   .parameters = parameters};
+    for (uint32_t i = 0; i < ps.count; i++) {
+        if (!name_valid(c, ps.items[i].name))
+            return false;
+        types[i] = type(c, ps.items[i].ty, 0);
+        parameters[i] = (struct mo_parameter){types[i], MO_PARAMETER_OWNED};
+        if (register_add(c, f, types[i], binding_name(parent, preorder, i)) == MO_NO_INDEX)
+            return false;
+    }
+    uint32_t env = MO_NO_INDEX;
+    enum mo_type_problem status =
+        mo_types_intern(&c->types, &(struct mo_type){.kind = MO_TYPE_ENV, .function = index}, &env);
+    if (type_result(c, status, env) == MO_NO_INDEX ||
+        register_add(c, f, env, MO_NO_INDEX) == MO_NO_INDEX)
+        return false;
+    for (uint32_t i = (uint32_t)ps.count; i-- > 0;) {
+        struct mo_codegen_index *entry = index_add(c, &f->locals, ps.items[i].name, i, false);
+        if (entry == NULL)
+            return false;
+        entry->value = i;
+    }
+    uint32_t result = expected == MO_NO_INDEX ? MO_NO_INDEX : c->types.items[expected].result;
+    f->body = prepare(c, f, n->core->as.lam.body, result, depth + 1);
+    parent->preorder = f->preorder;
+    if (f->body == NULL)
+        return false;
+    if (result == MO_NO_INDEX)
+        result = f->body->type;
+    c->funs[index].result_type = result;
+    if (result != MO_NO_INDEX) {
+        status = mo_types_intern(&c->types,
+                                 &(struct mo_type){.kind = MO_TYPE_FUNCTION,
+                                                   .parameters = types,
+                                                   .parameter_count = (uint32_t)ps.count,
+                                                   .result = result},
+                                 &n->type);
+        if (type_result(c, status, n->type) == MO_NO_INDEX)
+            return false;
+    }
+    uint32_t *captures = allocate(c, f->captures.count, sizeof *captures);
+    n->binds = allocate(c, f->captures.count, sizeof *n->binds);
+    if (captures == NULL || n->binds == NULL)
+        return false;
+    n->bind_count = f->captures.count;
+    for (uint32_t i = 0; i < f->captures.count; i++) {
+        const struct capture *item = &((struct capture *)f->captures.items)[i];
+        n->binds[i] = item->source;
+        captures[i] = ((struct reg *)f->regs.items)[item->reg].type;
+    }
+    c->funs[index].capture_count = f->captures.count;
+    c->funs[index].capture_types = captures;
+    f->closure_type = n->type;
+    return true;
+}
 static MO_MUST_USE bool children(struct compiler *c, struct function *f, struct node *n,
-                                 mo_core_expr_list xs, unsigned depth) {
+                                 mo_core_expr_list xs, uint32_t expected, unsigned depth) {
     n->count = (uint32_t)xs.count;
     n->children = allocate(c, xs.count, sizeof *n->children);
     if (n->children == NULL)
         return false;
     for (uint32_t i = 0; i < n->count; i++) {
-        n->children[i] = prepare(c, f, xs.items[i], depth + 1);
+        uint32_t child_type = MO_NO_INDEX;
+        if (n->core->tag == MO_CORE_EXPR_CALL)
+            child_type = c->funs[n->index].parameters[i].type;
+        else if (n->core->tag == MO_CORE_EXPR_CON)
+            child_type = c->types.items[n->type].cases[n->index].fields[i].type;
+        else if (n->core->tag == MO_CORE_EXPR_IF)
+            child_type = i == 0 ? scalar(c, MO_TYPE_BOOL) : expected;
+        n->children[i] = prepare(c, f, xs.items[i], child_type, depth + 1);
         if (n->children[i] == NULL)
             return false;
     }
     return true;
 }
 static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, mo_core_expr expr,
-                                        unsigned depth) {
+                                        uint32_t expected, unsigned depth) {
     if (depth >= MO_LIMIT_CORE_DEPTH) {
         if (!problem(c, MO_CODE_NESTED_TOO_DEEPLY,
                      "Core expression nesting exceeds MO_LIMIT_CORE_DEPTH."))
@@ -589,9 +815,9 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         n->index = literal(c, expr->as.lit, &n->type);
         break;
     case MO_CORE_EXPR_VAR: {
-        struct mo_codegen_index *entry = mo_codegen_find(f->locals, expr->as.var);
-        MO_ASSERT(entry != NULL && entry->value != MO_NO_INDEX);
-        n->reg = entry->value;
+        n->reg = variable(c, f, expr->as.var, 0);
+        if (n->reg == MO_NO_INDEX)
+            return NULL;
         n->type = ((struct reg *)f->regs.items)[n->reg].type;
         n->temporary = false;
         return n;
@@ -612,7 +838,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
             return NULL;
         n->count = 2;
         n->bind_count = 1;
-        n->children[0] = prepare(c, f, expr->as.let_.bound, depth + 1);
+        n->children[0] = prepare(c, f, expr->as.let_.bound, MO_NO_INDEX, depth + 1);
         if (n->children[0] == NULL)
             return NULL;
         n->binds[0] = register_add(c, f, n->children[0]->type, binding_name(f, preorder, 0));
@@ -622,7 +848,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
             return NULL;
         uint32_t saved = entry->value;
         entry->value = n->binds[0];
-        n->children[1] = prepare(c, f, expr->as.let_.body, depth + 1);
+        n->children[1] = prepare(c, f, expr->as.let_.body, expected, depth + 1);
         entry->value = saved;
         if (n->children[1] == NULL)
             return NULL;
@@ -636,7 +862,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         MO_ASSERT(entry != NULL);
         n->index = entry->value;
         n->type = c->funs[n->index].result_type;
-        if (!children(c, f, n, expr->as.call.args, depth))
+        if (!children(c, f, n, expr->as.call.args, MO_NO_INDEX, depth))
             return NULL;
         break;
     }
@@ -644,16 +870,21 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         small[0] = expr->as.if_.cond;
         small[1] = expr->as.if_.then_;
         small[2] = expr->as.if_.else_;
-        if (!children(c, f, n, (mo_core_expr_list){small, 3}, depth))
+        if (!children(c, f, n, (mo_core_expr_list){small, 3}, expected, depth))
             return NULL;
         n->type = n->children[1]->type != MO_NO_INDEX ? n->children[1]->type : n->children[2]->type;
+        if (n->type == MO_NO_INDEX)
+            n->type = expected;
+        for (uint32_t i = 1; i < n->count; i++)
+            if (!context(c, f, n->children[i], n->type, depth + 1))
+                return NULL;
         break;
     case MO_CORE_EXPR_CON:
         n->type = type(c, expr->as.con.ty, 0);
-        if (n->type == MO_NO_INDEX || !children(c, f, n, expr->as.con.args, depth))
+        if (n->type == MO_NO_INDEX)
             return NULL;
         n->index = constructor(c, n->type, expr->as.con.ctor);
-        if (n->index == MO_NO_INDEX)
+        if (n->index == MO_NO_INDEX || !children(c, f, n, expr->as.con.args, MO_NO_INDEX, depth))
             return NULL;
         break;
     case MO_CORE_EXPR_CASE: {
@@ -662,7 +893,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         n->cases = allocate(c, n->count - 1, sizeof *n->cases);
         if (n->children == NULL || n->cases == NULL)
             return NULL;
-        n->children[0] = prepare(c, f, expr->as.case_.expr, depth + 1);
+        n->children[0] = prepare(c, f, expr->as.case_.expr, MO_NO_INDEX, depth + 1);
         if (n->children[0] == NULL)
             return NULL;
         uint32_t ty = n->children[0]->type;
@@ -694,7 +925,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
                 saved[j] = entries[j]->value;
                 entries[j]->value = regs[j];
             }
-            struct node *body = prepare(c, f, arm->body, depth + 1);
+            struct node *body = prepare(c, f, arm->body, expected, depth + 1);
             for (uint32_t j = 0; j < ctor->field_count; j++)
                 entries[j]->value = saved[j];
             if (body == NULL)
@@ -714,6 +945,11 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
             if (n->type == MO_NO_INDEX)
                 n->type = body->type;
         }
+        if (n->type == MO_NO_INDEX)
+            n->type = expected;
+        for (uint32_t i = 1; i < n->count; i++)
+            if (!context(c, f, n->children[i]->children[0], n->type, depth + 1))
+                return NULL;
         break;
     }
     case MO_CORE_EXPR_STOP: {
@@ -732,7 +968,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
                          "Zero/one-element tuples cannot come from lowering."))
                 return NULL;
         }
-        if (!children(c, f, n, expr->as.tuple, depth))
+        if (!children(c, f, n, expr->as.tuple, MO_NO_INDEX, depth))
             return NULL;
         uint32_t *params = allocate(c, n->count, sizeof *params);
         if (params == NULL)
@@ -750,7 +986,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
     }
     case MO_CORE_EXPR_PROJ:
         small[0] = expr->as.proj.expr;
-        if (!children(c, f, n, (mo_core_expr_list){small, 1}, depth))
+        if (!children(c, f, n, (mo_core_expr_list){small, 1}, MO_NO_INDEX, depth))
             return NULL;
         n->index = 0;
         for (size_t i = 0; i < expr->as.proj.index.digits.length; i++)
@@ -759,7 +995,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         break;
     case MO_CORE_EXPR_FAIL:
         small[0] = expr->as.fail;
-        if (!children(c, f, n, (mo_core_expr_list){small, 1}, depth))
+        if (!children(c, f, n, (mo_core_expr_list){small, 1}, MO_NO_INDEX, depth))
             return NULL;
         return n;
     case MO_CORE_EXPR_PRIM: {
@@ -771,7 +1007,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
                              "Only Range make/start/end primitives are implemented in this slice."))
                 return NULL;
         }
-        if (!children(c, f, n, expr->as.prim.args, depth))
+        if (!children(c, f, n, expr->as.prim.args, MO_NO_INDEX, depth))
             return NULL;
         if (p->as.range == MO_CORE_RANGE_OP_MAKE) {
             c->range_int = scalar(c, MO_TYPE_INT);
@@ -784,11 +1020,29 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         break;
     }
     case MO_CORE_EXPR_LAM:
-    case MO_CORE_EXPR_APP:
+        if (!lambda(c, f, n, preorder, expected, depth))
+            return NULL;
+        break;
+    case MO_CORE_EXPR_APP: {
+        n->count = 1 + (uint32_t)expr->as.app.args.count;
+        n->children = allocate(c, n->count, sizeof *n->children);
+        if (n->children == NULL)
+            return NULL;
+        n->children[0] = prepare(c, f, expr->as.app.f, MO_NO_INDEX, depth + 1);
+        if (n->children[0] == NULL)
+            return NULL;
+        n->type = c->types.items[n->children[0]->type].result;
+        for (uint32_t i = 1; i < n->count; i++) {
+            uint32_t arg_type = c->types.items[n->children[0]->type].parameters[i - 1];
+            n->children[i] = prepare(c, f, expr->as.app.args.items[i - 1], arg_type, depth + 1);
+            if (n->children[i] == NULL)
+                return NULL;
+        }
+        break;
+    }
     case MO_CORE_EXPR_JOIN:
     case MO_CORE_EXPR_JUMP:
-        if (!unsupported(c, "Closures and joins are not "
-                            "implemented yet."))
+        if (!unsupported(c, "Joins are not implemented yet."))
             return NULL;
     }
     if (c->error != 0)
@@ -869,7 +1123,12 @@ static MO_MUST_USE bool borrow_walk(struct compiler *c, struct function *f, stru
                 return false;
         }
         seed(c, own);
-    } else if (n->core->tag == MO_CORE_EXPR_CON || n->core->tag == MO_CORE_EXPR_TUPLE) {
+    } else if (n->core->tag == MO_CORE_EXPR_LAM) {
+        for (uint32_t i = 0; i < n->bind_count; i++)
+            seed(c, flow_id(f, n->binds[i]));
+        seed(c, own);
+    } else if (n->core->tag == MO_CORE_EXPR_APP || n->core->tag == MO_CORE_EXPR_CON ||
+               n->core->tag == MO_CORE_EXPR_TUPLE) {
         for (uint32_t i = 0; i < n->count; i++)
             seed(c, flow_id(f, n->children[i]->reg));
         seed(c, own);
@@ -901,6 +1160,9 @@ static void activity(struct compiler *c, struct function *f, struct node *n, uns
             n->activity |= reference(c, n->children[i]->type) &&
                            c->parameters[n->index][i].ownership == MO_PARAMETER_OWNED;
     }
+    if (n->core->tag == MO_CORE_EXPR_APP ||
+        (n->core->tag == MO_CORE_EXPR_LAM && n->bind_count != 0))
+        n->activity = true;
     if (n->core->tag == MO_CORE_EXPR_CALL || n->core->tag == MO_CORE_EXPR_CON ||
         n->core->tag == MO_CORE_EXPR_TUPLE || n->core->tag == MO_CORE_EXPR_PROJ)
         n->activity |= reference(c, n->type);
@@ -920,6 +1182,8 @@ static MO_MUST_USE bool borrow_infer(struct compiler *c) {
         if (c->funs[i].kind != MO_FUNCTION_FUNCTION)
             for (uint32_t j = 0; j < c->funs[i].parameter_count; j++)
                 seed(c, flow_id(f, j));
+        for (uint32_t j = 0; j < f->captures.count; j++)
+            seed(c, flow_id(f, ((struct capture *)f->captures.items)[j].reg));
         if (!borrow_walk(c, f, f->body, true, 0))
             return false;
     }
@@ -1096,6 +1360,20 @@ static MO_MUST_USE bool initialize(struct compiler *c, struct function *f, uint3
     MO_ASSERT(depth < MO_LIMIT_CORE_DEPTH);
     uint32_t ty = ((struct reg *)f->regs.items)[reg].type;
     const struct mo_type *t = &c->types.items[ty];
+    if (t->kind == MO_TYPE_FUNCTION) {
+        mo_core_string key = {(const char *)&ty, sizeof ty};
+        struct mo_codegen_index *zero = mo_codegen_find(c->closure_zeros[0], key);
+        if (zero == NULL && c->funs[(uint32_t)(f - c->bodies)].spec_code)
+            zero = mo_codegen_find(c->closure_zeros[1], key);
+        if (zero == NULL)
+            return true;
+        struct mo_bytecode_constant k = {.type = ty};
+        k.value.function = zero->value;
+        uint32_t id = constant(c, k);
+        const uint32_t args[] = {reg, id};
+        return id != MO_NO_INDEX &&
+               emit(c, f, c->declaration, MO_OP_CONST, args, 2, NULL, 0) != MO_NO_INDEX;
+    }
     if (reference(c, ty) && t->kind != MO_TYPE_TEXT && t->kind != MO_TYPE_BYTES &&
         t->kind != MO_TYPE_BIGINT)
         return true;
@@ -1173,6 +1451,64 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
         if (*live && n->binds[0] != n->reg && !drop(c, f, n->binds[0], n->span))
             return false;
         return named(c, f, n->binds[0], start, f->code.count);
+    }
+    case MO_CORE_EXPR_LAM: {
+        if (n->bind_count == 0) {
+            struct mo_bytecode_constant k = {.type = n->type};
+            k.value.function = n->index;
+            uint32_t id = constant(c, k);
+            const uint32_t args[] = {n->reg, id};
+            if (id == MO_NO_INDEX ||
+                emit(c, f, n->span, MO_OP_CONST, args, 2, NULL, 0) == MO_NO_INDEX)
+                return false;
+        } else {
+            uint32_t *regs = allocate(c, n->bind_count, sizeof *regs);
+            if (regs == NULL)
+                return false;
+            for (uint32_t i = 0; i < n->bind_count; i++) {
+                regs[i] = argument(c, f, n->binds[i], true, n->span);
+                if (regs[i] == MO_NO_INDEX)
+                    return false;
+                if (regs[i] != n->binds[i])
+                    owner_remove(f, regs[i]);
+            }
+            const uint32_t args[] = {n->reg, n->index};
+            if (emit(c, f, n->span, MO_OP_MAKE_CLOSURE, args, 2, regs, n->bind_count) ==
+                MO_NO_INDEX)
+                return false;
+            owner_add(f, n->reg);
+        }
+        break;
+    }
+    case MO_CORE_EXPR_APP: {
+        uint32_t *regs = allocate(c, n->count, sizeof *regs);
+        if (regs == NULL)
+            return false;
+        for (uint32_t i = 0; i < n->count; i++) {
+            if (!generate(c, f, n->children[i], false, depth + 1, live) || !*live)
+                return c->error == 0;
+            regs[i] = argument(c, f, n->children[i]->reg, true, n->span);
+            if (regs[i] == MO_NO_INDEX)
+                return false;
+        }
+        for (uint32_t i = 0; i < n->count; i++)
+            if (regs[i] != n->children[i]->reg)
+                owner_remove(f, regs[i]);
+        if (tail && !cleanup(c, f, n->span))
+            return false;
+        const uint32_t args[] = {n->reg, regs[0]};
+        if (emit(c, f, n->span, tail ? MO_OP_TAIL_CALL_CLOSURE : MO_OP_CALL_CLOSURE,
+                 tail ? args + 1 : args, tail ? 1 : 2, regs + 1, n->count - 1) == MO_NO_INDEX)
+            return false;
+        *live = !tail;
+        if (*live) {
+            if (reference(c, n->type))
+                owner_add(f, n->reg);
+            for (uint32_t i = 0; i < n->count; i++)
+                if (n->children[i]->temporary && !drop(c, f, n->children[i]->reg, n->span))
+                    return false;
+        }
+        break;
     }
     case MO_CORE_EXPR_CALL:
     case MO_CORE_EXPR_CON:
@@ -1361,8 +1697,6 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
         *live = false;
         break;
     }
-    case MO_CORE_EXPR_LAM:
-    case MO_CORE_EXPR_APP:
     case MO_CORE_EXPR_JOIN:
     case MO_CORE_EXPR_JUMP:
         MO_UNREACHABLE();
@@ -1398,6 +1732,82 @@ static MO_MUST_USE bool entry_valid(struct compiler *c) {
     }
     return true;
 }
+/* One sizing walk keeps function pointers stable during recursive lifting. */
+static MO_MUST_USE bool count_lambdas(struct compiler *c, mo_core_expr e, unsigned depth) {
+    MO_ASSERT(depth < MO_LIMIT_CORE_DEPTH);
+    mo_core_expr small[3];
+    mo_core_expr_list xs = {0};
+    switch (e->tag) {
+    case MO_CORE_EXPR_LAM:
+        if (c->function_capacity == MO_LIMIT_FUNCTIONS)
+            return problem(c, MO_CODE_BYTECODE_TOO_BIG,
+                           "Lifted closures exceed MO_LIMIT_FUNCTIONS.");
+        c->function_capacity++;
+        small[0] = e->as.lam.body;
+        xs = (mo_core_expr_list){small, 1};
+        break;
+    case MO_CORE_EXPR_LET:
+        small[0] = e->as.let_.bound;
+        small[1] = e->as.let_.body;
+        xs = (mo_core_expr_list){small, 2};
+        break;
+    case MO_CORE_EXPR_APP:
+        if (!count_lambdas(c, e->as.app.f, depth + 1))
+            return false;
+        xs = e->as.app.args;
+        break;
+    case MO_CORE_EXPR_CALL:
+        xs = e->as.call.args;
+        break;
+    case MO_CORE_EXPR_TUPLE:
+        xs = e->as.tuple;
+        break;
+    case MO_CORE_EXPR_CON:
+        xs = e->as.con.args;
+        break;
+    case MO_CORE_EXPR_PRIM:
+        xs = e->as.prim.args;
+        break;
+    case MO_CORE_EXPR_JUMP:
+        xs = e->as.jump.args;
+        break;
+    case MO_CORE_EXPR_CASE:
+        if (!count_lambdas(c, e->as.case_.expr, depth + 1))
+            return false;
+        for (size_t i = 0; i < e->as.case_.arms.count; i++)
+            if (!count_lambdas(c, e->as.case_.arms.items[i].body, depth + 1))
+                return false;
+        break;
+    case MO_CORE_EXPR_IF:
+        small[0] = e->as.if_.cond;
+        small[1] = e->as.if_.then_;
+        small[2] = e->as.if_.else_;
+        xs = (mo_core_expr_list){small, 3};
+        break;
+    case MO_CORE_EXPR_PROJ:
+        small[0] = e->as.proj.expr;
+        xs = (mo_core_expr_list){small, 1};
+        break;
+    case MO_CORE_EXPR_FAIL:
+        small[0] = e->as.fail;
+        xs = (mo_core_expr_list){small, 1};
+        break;
+    case MO_CORE_EXPR_JOIN:
+        small[0] = e->as.join.body;
+        small[1] = e->as.join.rest;
+        xs = (mo_core_expr_list){small, 2};
+        break;
+    case MO_CORE_EXPR_LIT:
+    case MO_CORE_EXPR_VAR:
+    case MO_CORE_EXPR_GLOBAL:
+    case MO_CORE_EXPR_STOP:
+        break;
+    }
+    for (size_t i = 0; i < xs.count; i++)
+        if (!count_lambdas(c, xs.items[i], depth + 1))
+            return false;
+    return true;
+}
 static MO_MUST_USE bool declarations(struct compiler *c) {
     const struct mo_core *p = c->core;
     if (p->funs.count > MO_LIMIT_FUNCTIONS ||
@@ -1406,20 +1816,27 @@ static MO_MUST_USE bool declarations(struct compiler *c) {
         return problem(c, MO_CODE_BYTECODE_TOO_BIG,
                        "Core and its initializer helpers exceed a bytecode declaration limit.");
     c->function_count = (uint32_t)(p->funs.count + 2 * p->consts.count);
+    c->function_capacity = c->function_count;
+    for (size_t i = 0; i < p->funs.count; i++)
+        if (!count_lambdas(c, p->funs.items[i].body, 0))
+            return false;
+    for (size_t i = 0; i < p->consts.count; i++)
+        if (!count_lambdas(c, p->consts.items[i].body, 0))
+            return false;
     c->data = allocate(c, p->data.count, sizeof *c->data);
-    c->funs = allocate(c, c->function_count, sizeof *c->funs);
-    c->parameters = allocate(c, c->function_count, sizeof *c->parameters);
-    c->bodies = allocate(c, c->function_count, sizeof *c->bodies);
-    c->debug = allocate(c, c->function_count, sizeof *c->debug);
+    c->funs = allocate(c, c->function_capacity, sizeof *c->funs);
+    c->parameters = allocate(c, c->function_capacity, sizeof *c->parameters);
+    c->bodies = allocate(c, c->function_capacity, sizeof *c->bodies);
+    c->debug = allocate(c, c->function_capacity, sizeof *c->debug);
     size_t file_count = p->metadata.source ? p->metadata.files.count : 0;
     c->files = allocate(c, file_count, sizeof *c->files);
     if (c->data == NULL || c->funs == NULL || c->parameters == NULL || c->bodies == NULL ||
         c->debug == NULL || c->files == NULL)
         return false;
-    memset(c->funs, 0, c->function_count * sizeof *c->funs);
-    memset(c->parameters, 0, c->function_count * sizeof *c->parameters);
-    memset(c->bodies, 0, c->function_count * sizeof *c->bodies);
-    memset(c->debug, 0, c->function_count * sizeof *c->debug);
+    memset(c->funs, 0, c->function_capacity * sizeof *c->funs);
+    memset(c->parameters, 0, c->function_capacity * sizeof *c->parameters);
+    memset(c->bodies, 0, c->function_capacity * sizeof *c->bodies);
+    memset(c->debug, 0, c->function_capacity * sizeof *c->debug);
     for (size_t i = 0; i < file_count; i++) {
         c->files[i] = string(c, p->metadata.files.items[i]);
         if (c->files[i] == MO_NO_INDEX)
@@ -1678,17 +2095,16 @@ static MO_MUST_USE bool globals(struct compiler *c) {
     return true;
 }
 static MO_MUST_USE bool bodies(struct compiler *c) {
-    for (uint32_t i = 0; i < c->function_count; i++) {
+    uint32_t declared = c->function_count;
+    for (uint32_t i = 0; i < declared; i++) {
         struct function *f = &c->bodies[i];
         c->current = f->source;
         const struct mo_core_fun_meta *meta = f->meta;
         c->declaration = meta == NULL ? (struct mo_core_span){0} : meta->span;
         c->span = c->declaration;
-        f->regs.width = sizeof(struct reg);
-        f->code.width = sizeof(uint32_t);
-        f->spans.width = sizeof(struct mo_bytecode_span);
-        f->names.width = sizeof(struct mo_bytecode_register_name);
-        f->owned = MO_NO_INDEX;
+        f->declaration = c->declaration;
+        f->root = f;
+        function_init(f);
         if (c->funs[i].kind == MO_FUNCTION_INIT)
             continue;
         if (meta != NULL) {
@@ -1699,6 +2115,15 @@ static MO_MUST_USE bool bodies(struct compiler *c) {
                 if (n == MO_NO_INDEX ||
                     index_add(c, &f->bindings, (mo_core_string){(const char *)key, sizeof key}, n,
                               true) == NULL)
+                    return false;
+            }
+            for (size_t j = 0; j < meta->body.closures.count; j++) {
+                const struct mo_core_closure_meta *closure = &meta->body.closures.items[j];
+                uint32_t id = string(c, closure->name);
+                if (id == MO_NO_INDEX ||
+                    index_add(c, &f->closure_names,
+                              (mo_core_string){(const char *)&closure->node, sizeof closure->node},
+                              id, true) == NULL)
                     return false;
             }
         }
@@ -1716,13 +2141,33 @@ static MO_MUST_USE bool bodies(struct compiler *c) {
                 return false;
             entry->value = j;
         }
-        f->body = prepare(c, f, c->current->body, 0);
+        f->body = prepare(c, f, c->current->body, c->funs[i].result_type, 0);
         if (f->body == NULL)
             return false;
     }
     uint32_t ignored = 0;
     if (type_result(c, mo_types_finish(&c->types), ignored) == MO_NO_INDEX)
         return false;
+    for (uint32_t i = declared; i < c->function_count; i++) {
+        const struct mo_bytecode_function *fun = &c->funs[i];
+        uint32_t closure_type = c->bodies[i].closure_type;
+        if (fun->capture_count == 0 &&
+            index_add(c, &c->closure_zeros[fun->spec_code ? 1 : 0],
+                      (mo_core_string){(const char *)&closure_type, sizeof closure_type}, i,
+                      true) == NULL)
+            return false;
+        enum mo_type_problem status =
+            mo_types_layout(&c->types,
+                            &(struct mo_layout){.kind = MO_LAYOUT_CLOSURE,
+                                                .type = c->bodies[i].closure_type,
+                                                .case_index = MO_NO_INDEX,
+                                                .function = i,
+                                                .fields = fun->capture_types,
+                                                .field_count = fun->capture_count},
+                            &ignored);
+        if (type_result(c, status, ignored) == MO_NO_INDEX)
+            return false;
+    }
     c->layouts = allocate(c, c->types.count, sizeof *c->layouts);
     if (c->layouts == NULL)
         return false;
@@ -1790,17 +2235,30 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
         c->current = f->source;
         struct mo_bytecode_function *fun = &c->funs[i];
         const struct mo_core_fun_meta *meta = f->meta;
-        c->declaration = meta == NULL ? (struct mo_core_span){0} : meta->span;
+        c->declaration = f->declaration;
         /* Helpers added while initializing are already initialized. Do not reinitialize them. */
         c->span = c->declaration;
         for (uint32_t j = 0; j < fun->parameter_count; j++)
             if (reference(c, fun->parameters[j].type) &&
                 fun->parameters[j].ownership == MO_PARAMETER_OWNED)
                 owner_add(f, j);
+        bool closure = fun->kind == MO_FUNCTION_CLOSURE;
+        uint32_t inputs = fun->parameter_count + (closure ? 1u : 0u);
+        if (closure)
+            owner_add(f, fun->parameter_count);
         uint32_t count = f->regs.count;
-        for (uint32_t j = fun->parameter_count; j < count; j++)
+        for (uint32_t j = inputs; j < count; j++)
             if (!initialize(c, f, j, 0))
                 return false;
+        uint32_t capture_start = f->code.count;
+        for (uint32_t j = 0; j < f->captures.count; j++) {
+            uint32_t r = ((struct capture *)f->captures.items)[j].reg;
+            const uint32_t args[] = {r, fun->parameter_count, j};
+            if (emit(c, f, c->declaration, MO_OP_FIELD, args, 3, NULL, 0) == MO_NO_INDEX)
+                return false;
+            if (reference(c, ((struct reg *)f->regs.items)[r].type))
+                owner_add(f, r);
+        }
         if (fun->kind == MO_FUNCTION_INIT) {
             if (!initializer(c, f, i))
                 return false;
@@ -1818,6 +2276,10 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
         for (uint32_t j = 0; j < fun->parameter_count; j++)
             if (!named(c, f, j, 0, f->code.count))
                 return false;
+        for (uint32_t j = 0; j < f->captures.count; j++)
+            if (!named(c, f, ((struct capture *)f->captures.items)[j].reg, capture_start + 4 * j,
+                       f->code.count))
+                return false;
         fun->register_count = f->regs.count;
         fun->register_types = types;
         fun->code_count = f->code.count;
@@ -1833,7 +2295,7 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
                                         .start = declaration.start,
                                         .end = declaration.end,
                                         .subject = MO_NO_INDEX};
-        if (meta != NULL) {
+        if (meta != NULL && !closure) {
             if (meta->text.some)
                 d->text = string(c, meta->text.value);
             if (meta->subject.some)
@@ -1905,7 +2367,7 @@ bool mo_compile(const struct mo_core *core, struct mo_buffer *out, struct mo_dia
     c.constructors.width = sizeof(struct mo_codegen_index *);
     c.ownership.width = sizeof(struct ownership);
     c.edges.width = sizeof(struct edge);
-    bool ok = declarations(&c) && globals(&c) && entry_valid(&c) && bodies(&c) &&
+    bool ok = declarations(&c) && globals(&c) && bodies(&c) && entry_valid(&c) &&
               borrow_infer(&c) && output(&c, out);
     if (!ok) {
         MO_ASSERT(c.error != 0 && out->length == 0);

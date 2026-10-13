@@ -1136,6 +1136,330 @@ static MO_MUST_USE int corpus(int argc, char **argv) {
         compiled, unsupported, excluded, entry, limited, rejected);
     return mo_test_report("test_codegen corpus");
 }
+static void test_closure(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b =
+        compile(&arena, "(Program () ((FunDecl \"main\" () (text) "
+                        "(app (lam ((\"x\" (text))) (var \"x\")) ((lit (text \"value\")))) "
+                        "\"M\" (function) 0)) () \"main\" (noSource))");
+    if (b != NULL) {
+        CHECK(b->function_count == 2);
+        CHECK(b->functions[1].kind == MO_FUNCTION_CLOSURE);
+        CHECK(b->functions[1].parameter_count == 1 && b->functions[1].capture_count == 0);
+        CHECK(b->functions[1].parameters[0].ownership == MO_PARAMETER_OWNED);
+        CHECK(b->types[b->functions[1].register_types[1]].kind == MO_TYPE_ENV);
+        const struct mo_bytecode_function *f = &b->functions[0];
+        CHECK(f->code_count >= 3 &&
+              (f->code[f->code_count - 3] & MO_OPCODE_MASK) == MO_OP_TAIL_CALL_CLOSURE);
+    }
+    b = compile(&arena, "(Program () ((FunDecl \"start\" () (fn () (int)) "
+                        "(lam () (stop \"stopped lambda\")) \"M\" (function) 0)) "
+                        "() \"start\" (noSource))");
+    if (b != NULL)
+        CHECK(b->functions[1].result_type == b->types[b->functions[0].result_type].result);
+    b = compile(&arena, "(Program () ((FunDecl \"start\" () (text) "
+                        "(app (lam ((\"x\" (text)) (\"x\" (text))) (var \"x\")) "
+                        "((lit (text \"first\")) (lit (text \"second\")))) "
+                        "\"M\" (function) 0)) () \"start\" (noSource))");
+    if (b != NULL) {
+        const uint32_t *dup = instruction(&b->functions[1], MO_OP_DUP, 0);
+        if (dup != NULL)
+            CHECK(dup[2] == 0);
+    }
+    mo_arena_free(&arena);
+}
+static void test_captures(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b = compile(
+        &arena, "(Program () ((FunDecl \"main\" ((\"a\" (text)) (\"b\" (int))) "
+                "(fn ((int)) (fn () (tuple ((text) (int) (int))))) "
+                "(lam ((\"x\" (int))) (lam () (tuple ((var \"a\") (var \"x\") (var \"b\"))))) "
+                "\"M\" (function) 0)) () \"main\" (noSource))");
+    if (b != NULL) {
+        CHECK(b->function_count == 3 && b->functions[1].capture_count == 2 &&
+              b->functions[2].capture_count == 3);
+        CHECK(string_is(b, b->functions[1].name, "main.fn.1") &&
+              string_is(b, b->functions[2].name, "main.fn.2"));
+        CHECK(b->functions[0].parameters[0].ownership == MO_PARAMETER_OWNED);
+        const uint32_t *a = instruction(&b->functions[1], MO_OP_FIELD, 0),
+                       *b_field = instruction(&b->functions[1], MO_OP_FIELD, 1),
+                       *dup = instruction(&b->functions[1], MO_OP_DUP, 0),
+                       *make = instruction(&b->functions[1], MO_OP_MAKE_CLOSURE, 0);
+        if (a != NULL && b_field != NULL && dup != NULL && make != NULL)
+            CHECK(a[2] == 1 && a[3] == 0 && b_field[2] == 1 && b_field[3] == 1 && dup[2] == a[1] &&
+                  make[2] == 2 && make[3] == dup[1] && make[4] == 0 && make[5] == b_field[1]);
+    }
+    b = compile(&arena, "(Program () ((FunDecl \"main\" ((\"x\" (text)) (\"x\" (text))) "
+                        "(fn () (tuple ((text) (text)))) "
+                        "(let_ \"x\" (var \"x\") (lam () (tuple ((var \"x\") (var \"x\"))))) "
+                        "\"M\" (function) 0)) () \"main\" (noSource))");
+    if (b != NULL) {
+        CHECK(b->functions[1].capture_count == 1);
+        const uint32_t *dup = instruction(&b->functions[0], MO_OP_DUP, 0),
+                       *fields = instruction(&b->functions[1], MO_OP_FIELD, 0),
+                       *first = instruction(&b->functions[1], MO_OP_DUP, 0),
+                       *second = instruction(&b->functions[1], MO_OP_DUP, 1);
+        if (dup != NULL && fields != NULL && first != NULL && second != NULL)
+            CHECK(dup[2] == 0 && first[2] == fields[1] && second[2] == fields[1] &&
+                  first[1] != second[1]);
+    }
+    mo_arena_free(&arena);
+}
+static void test_closure_contexts(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    const char *const programs[] = {
+        /* Inference falls back to a later case arm, including a nested stopping lambda. */
+        "(Program () ((FunDecl \"start\" () (fn () (fn () (int))) "
+        "(let_ \"f\" (case_ (con (option (int)) \"Some\" ((lit (int 3)))) "
+        "((\"None\" () (lam () (let_ \"x\" (lit (int 1)) (lam () (stop \"stop\"))))) "
+        "(\"Some\" (\"x\") (lam () (lam () (lit (int 7))))))) (var \"f\")) "
+        "\"M\" (function) 0)) () \"start\" (noSource))",
+        "(Program () ((FunDecl \"start\" () (unit) (lit (unit)) \"M\" (function) 0) "
+        "(FunDecl \"test\" () (unit) (app (lam ((\"why\" (text))) "
+        "(if_ (lit (bool true)) (fail (var \"why\")) (lit (unit)))) "
+        "((lit (text \"failed\")))) \"M\" (test) 0)) () \"start\" (noSource))",
+        "(Program () ((FunDecl \"start\" () (text) (app (global \"closure\") ()) "
+        "\"M\" (function) 2)) ((ConstDecl \"seed\" (text) (lit (text \"seed\"))) "
+        "(ConstDecl \"closure\" (fn () (text)) (let_ \"x\" (global \"seed\") "
+        "(lam () (var \"x\"))))) \"start\" (noSource))",
+        /* A function argument has the signature needed for a stopping lambda. */
+        "(Program () ((FunDecl \"start\" () (int) (call \"apply\" "
+        "((lam () (stop \"stopped\")))) \"M\" (function) 0) "
+        "(FunDecl \"apply\" ((\"f\" (fn () (int)))) (int) (app (var \"f\") ()) "
+        "\"M\" (function) 0)) () \"start\" (noSource))",
+        /* Applications in value position precede a direct tail call. */
+        "(Program () ((FunDecl \"start\" ((\"f\" (fn ((text) (text)) (text))) "
+        "(\"x\" (text))) (text) (let_ \"y\" (app (var \"f\") ((var \"x\") (var \"x\"))) "
+        "(call \"identity\" ((var \"y\")))) \"M\" (function) 0) "
+        "(FunDecl \"identity\" ((\"x\" (text))) (text) (var \"x\") \"M\" (function) 0)) "
+        "() \"start\" (noSource))",
+    };
+    for (size_t i = 0; i < sizeof programs / sizeof programs[0]; i++) {
+        struct mo_bytecode *b = compile(&arena, programs[i]);
+        if (b != NULL && i == 1) {
+            CHECK(b->functions[2].kind == MO_FUNCTION_CLOSURE && b->functions[2].spec_code);
+            CHECK(b->debug[2].text == MO_NO_INDEX && b->debug[2].subject == MO_NO_INDEX);
+        }
+        if (b != NULL && i == 4) {
+            const uint32_t *call = instruction(&b->functions[0], MO_OP_CALL_CLOSURE, 0);
+            if (call != NULL)
+                CHECK(call[2] != call[3] && call[3] != call[4]);
+            CHECK(b->functions[0].parameters[0].ownership == MO_PARAMETER_OWNED &&
+                  b->functions[0].parameters[1].ownership == MO_PARAMETER_OWNED);
+        }
+        mo_arena_free(&arena);
+        mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    }
+    mo_arena_free(&arena);
+}
+static void test_closure_metadata(void) {
+    struct mo_arena arena;
+    struct mo_diags diags;
+    struct mo_buffer out;
+    mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+    mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+    CHECK(mo_diags_init(&diags));
+    struct mo_core *p =
+        parse(&arena,
+              "(Program () ((FunDecl \"start\" ((\"a\" (text))) "
+              "(fn ((text)) (tuple ((text) (text)))) (let_ \"f\" "
+              "(lam ((\"x\" (text))) (tuple ((var \"x\") (var \"a\")))) (var \"f\")) "
+              "\"M\" (function) 0)) () \"start\" (noSource))",
+              &diags);
+    if (p != NULL) {
+        mo_core_string files[] = {{"outer.mo", 8}, {"inner.mo", 8}};
+        uint32_t functions[] = {0};
+        struct mo_core_module_meta module = {.name = {"M", 1}, .funs = {functions, 1}};
+        struct mo_core_span spans[] = {{true, {0, 10, 40}},   {true, {1, 100, 130}},
+                                       {true, {1, 108, 128}}, {0},
+                                       {true, {0, 17, 19}},   {true, {0, 35, 36}}};
+        struct mo_core_name param = {true, {"alpha", 5}};
+        struct mo_core_binding_meta bindings[] = {{0, 0, {"chosen", 6}}, {1, 0, {"arg", 3}}};
+        struct mo_core_closure_meta closure = {1, {"M.start.fn.7", 12}};
+        struct mo_core_fun_meta meta = {.name = {"M.start", 7},
+                                        .span = {true, {0, 1, 50}},
+                                        .body = {.spans = {spans, 6},
+                                                 .params = {&param, 1},
+                                                 .bindings = {bindings, 2},
+                                                 .closures = {&closure, 1}}};
+        p->metadata = (struct mo_core_metadata){
+            .source = true, .files = {files, 2}, .modules = {&module, 1}, .funs = {&meta, 1}};
+        bool ok = mo_compile(p, &out, &diags);
+        CHECK(ok && !mo_diags_any(&diags));
+        struct mo_load_error error;
+        struct mo_bytecode *b =
+            ok ? mo_bytecode_decode(&arena, out.bytes, out.length, &error) : NULL;
+        CHECK(b != NULL);
+        if (b != NULL) {
+            CHECK(string_is(b, b->functions[1].name, "M.start.fn.7"));
+            const struct mo_bytecode_debug *debug = &b->debug[1];
+            CHECK(string_is(b, debug->file, "inner.mo") && debug->start == 100 &&
+                  debug->end == 130);
+            const uint32_t *field = instruction(&b->functions[1], MO_OP_FIELD, 0);
+            bool argument_name = false, capture_name = false;
+            for (uint32_t i = 0; i < debug->name_count; i++) {
+                const struct mo_bytecode_register_name *n = &debug->names[i];
+                argument_name |= string_is(b, n->name, "arg") && n->reg == 0 && n->code_start == 0;
+                capture_name |= field != NULL && string_is(b, n->name, "alpha") &&
+                                n->reg == field[1] &&
+                                n->code_start == (uint32_t)(field - b->functions[1].code) &&
+                                n->code_end == b->functions[1].code_count;
+            }
+            CHECK(argument_name && capture_name);
+            bool body_span = false;
+            for (uint32_t i = 0; i < debug->span_count; i++)
+                body_span |=
+                    debug->spans[i].start == 108 && string_is(b, debug->spans[i].file, "inner.mo");
+            CHECK(body_span);
+        }
+        mo_buffer_free(&out);
+        mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+        closure.name = meta.name;
+        CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
+        CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_ENTRY);
+    }
+    mo_buffer_free(&out);
+    mo_diags_free(&diags);
+    mo_arena_free(&arena);
+}
+static void test_spec_closure_metadata(void) {
+    struct mo_arena arena;
+    struct mo_diags diags;
+    struct mo_buffer out;
+    mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+    mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+    CHECK(mo_diags_init(&diags));
+    struct mo_core *p =
+        parse(&arena,
+              "(Program () ((FunDecl \"start\" () (unit) (lit (unit)) \"M\" (function) 0) "
+              "(FunDecl \"spec\" () (unit) (let_ \"f\" (lam ((\"x\" (text))) (var \"x\")) "
+              "(let_ \"ignored\" (app (var \"f\") ((lit (text \"value\")))) (lit (unit)))) "
+              "\"M\" (test) 0)) () \"start\" (noSource))",
+              &diags);
+    if (p != NULL) {
+        mo_core_string file = {"spec.mo", 7};
+        uint32_t functions[] = {0, 1};
+        struct mo_core_module_meta module = {.name = {"M", 1}, .funs = {functions, 2}};
+        struct mo_core_span main_span = {0}, spec_spans[8] = {{true, {0, 10, 100}},
+                                                              {true, {0, 17, 27}},
+                                                              {true, {0, 20, 21}}};
+        struct mo_core_binding_meta binding = {1, 0, {"callbackArg", 11}};
+        struct mo_core_closure_meta closure = {1, {"M.test.1.fn.42", 14}};
+        struct mo_core_fun_meta meta[] = {
+            {.name = {"M.start", 7}, .body = {.spans = {&main_span, 1}}},
+            {.name = {"M.test.1", 8},
+             .span = {true, {0, 10, 100}},
+             .text = {true, {"call closure", 12}},
+             .body = {
+                 .spans = {spec_spans, 8}, .bindings = {&binding, 1}, .closures = {&closure, 1}}}};
+        p->metadata = (struct mo_core_metadata){
+            .source = true, .files = {&file, 1}, .modules = {&module, 1}, .funs = {meta, 2}};
+        bool ok = mo_compile(p, &out, &diags);
+        CHECK(ok && !mo_diags_any(&diags));
+        struct mo_load_error error;
+        struct mo_bytecode *b =
+            ok ? mo_bytecode_decode(&arena, out.bytes, out.length, &error) : NULL;
+        CHECK(b != NULL);
+        if (b != NULL) {
+            CHECK(string_is(b, b->debug[1].text, "call closure"));
+            CHECK(b->functions[2].spec_code &&
+                  string_is(b, b->functions[2].name, "M.test.1.fn.42"));
+            CHECK(b->debug[2].text == MO_NO_INDEX && b->debug[2].subject == MO_NO_INDEX &&
+                  b->debug[2].line_count == 0 && b->debug[2].expectation == MO_BYTECODE_NOT_ANCHOR);
+            CHECK(b->debug[2].start == 17 && b->debug[2].end == 27);
+        }
+    }
+    mo_buffer_free(&out);
+    mo_diags_free(&diags);
+    mo_arena_free(&arena);
+}
+static void test_closure_parameter_limit(void) {
+    for (uint32_t n = MO_LIMIT_PARAMETERS; n <= MO_LIMIT_PARAMETERS + 1u; n++) {
+        struct mo_buffer text, out;
+        struct mo_arena arena;
+        struct mo_diags diags;
+        mo_buffer_init(&text, MO_LIMIT_CORE_TEXT_SIZE);
+        mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+        mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+        CHECK(mo_diags_init(&diags));
+        CHECK(mo_buffer_append_text(
+            &text, "(Program () ((FunDecl \"start\" () (unit) (let_ \"f\" (lam ("));
+        for (uint32_t i = 0; i < n; i++)
+            CHECK(mo_buffer_append_text(&text, "(\"arg\" (int)) "));
+        CHECK(mo_buffer_append_text(
+            &text,
+            ") (lit (int 42))) (lit (unit))) \"M\" (function) 0)) () \"start\" (noSource))"));
+        CHECK(mo_buffer_append_byte(&text, 0));
+        struct mo_core *p = parse(&arena, (const char *)text.bytes, &diags);
+        if (p != NULL) {
+            CHECK(mo_core_check(p, &diags));
+            bool ok = mo_compile(p, &out, &diags);
+            CHECK(ok == (n == MO_LIMIT_PARAMETERS));
+            if (!ok)
+                CHECK(out.length == 0 && diags.count == 1 &&
+                      diags.items[0].code == MO_CODE_BYTECODE_TOO_BIG &&
+                      strstr(diags.items[0].primary.text, "MO_LIMIT_PARAMETERS") != NULL);
+        }
+        mo_buffer_free(&text);
+        mo_buffer_free(&out);
+        mo_diags_free(&diags);
+        mo_arena_free(&arena);
+    }
+}
+static void test_shared_function_types(void) {
+    struct mo_arena arena;
+    struct mo_diags diags;
+    struct mo_buffer first, second;
+    mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+    mo_buffer_init(&first, MO_LIMIT_BYTECODE_SIZE);
+    mo_buffer_init(&second, MO_LIMIT_BYTECODE_SIZE);
+    CHECK(mo_diags_init(&diags));
+    struct mo_core *p = parse(&arena,
+                              "(Program () ((FunDecl \"start\" ((\"x\" (int))) (int) (var \"x\") "
+                              "\"M\" (function) 0)) () \"start\" (noSource))",
+                              &diags);
+    if (p != NULL) {
+        /* Annotations can share immutable subtrees without expanding their text form. */
+        struct mo_core_ty types[45] = {{.tag = MO_CORE_TY_INT}};
+        mo_core_ty arguments[45][2] = {{NULL}};
+        for (size_t i = 1; i < 45; i++) {
+            arguments[i][0] = arguments[i][1] = &types[i - 1];
+            types[i] = (struct mo_core_ty){
+                .tag = MO_CORE_TY_FN, .as.fn = {.params = {arguments[i], 2}, .ret = &types[0]}};
+        }
+        p->funs.items[0].params.items[0].ty = p->funs.items[0].ret = &types[44];
+        CHECK(mo_core_check(p, &diags));
+        bool ok = mo_compile(p, &first, &diags);
+        CHECK(ok && !mo_diags_any(&diags));
+        CHECK(mo_compile(p, &second, &diags) == ok && first.length == second.length);
+        if (ok) {
+            CHECK(memcmp(first.bytes, second.bytes, first.length) == 0);
+            struct mo_load_error error;
+            struct mo_bytecode *b = mo_bytecode_decode(&arena, first.bytes, first.length, &error);
+            CHECK(b != NULL);
+            if (b != NULL) {
+                uint32_t id = b->functions[0].result_type;
+                for (size_t i = 44; i != 0; i--) {
+                    const struct mo_type *t = &b->types[id];
+                    CHECK(t->kind == MO_TYPE_FUNCTION && t->parameter_count == 2);
+                    if (t->kind != MO_TYPE_FUNCTION || t->parameter_count != 2)
+                        break;
+                    CHECK(t->parameters[0] == t->parameters[1] &&
+                          b->types[t->result].kind == MO_TYPE_INT);
+                    id = t->parameters[0];
+                }
+                CHECK(b->types[id].kind == MO_TYPE_INT);
+            }
+        }
+    }
+    mo_buffer_free(&first);
+    mo_buffer_free(&second);
+    mo_diags_free(&diags);
+    mo_arena_free(&arena);
+}
 int main(int argc, char **argv) {
     if (argc > 1)
         return corpus(argc, argv);
@@ -1155,5 +1479,12 @@ int main(int argc, char **argv) {
     test_lowered_names();
     test_register_limit();
     test_register_block_limit();
+    test_closure();
+    test_captures();
+    test_closure_contexts();
+    test_closure_metadata();
+    test_spec_closure_metadata();
+    test_closure_parameter_limit();
+    test_shared_function_types();
     return mo_test_report("test_codegen");
 }

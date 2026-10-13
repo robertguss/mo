@@ -1,0 +1,1 @@
+(core 0.7 (Program () ((FunDecl "start" (("a" (text)) ("b" (int))) (fn ((int)) (fn () (tuple ((text) (int) (int))))) (lam (("x" (int))) (lam () (tuple ((var "a") (var "x") (var "b"))))) "Closures" (function) 0)) () "start" (noSource)))

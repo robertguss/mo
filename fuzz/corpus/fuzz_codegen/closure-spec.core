@@ -1,0 +1,1 @@
+(core 0.7 (Program () ((FunDecl "start" () (unit) (lit (unit)) "Closures" (function) 0) (FunDecl "test" () (unit) (app (lam (("why" (text))) (if_ (lit (bool true)) (fail (var "why")) (lit (unit)))) ((lit (text "failed")))) "Closures" (test) 0)) () "start" (noSource)))

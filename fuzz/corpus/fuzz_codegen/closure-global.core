@@ -1,0 +1,1 @@
+(core 0.7 (Program () ((FunDecl "start" () (text) (global "answer") "Closures" (function) 3)) ((ConstDecl "seed" (text) (lit (text "captured"))) (ConstDecl "f" (fn () (text)) (let_ "x" (global "seed") (lam () (var "x")))) (ConstDecl "answer" (text) (app (global "f") ()))) "start" (noSource)))

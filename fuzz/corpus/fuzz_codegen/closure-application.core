@@ -1,0 +1,1 @@
+(core 0.7 (Program () ((FunDecl "start" (("b" (bool)) ("x" (text))) (text) (let_ "f" (if_ (var "b") (lam (("z" (text))) (stop "stopped lambda")) (lam (("z" (text))) (var "z"))) (app (var "f") ((var "x")))) "Closures" (function) 0)) () "start" (noSource)))
