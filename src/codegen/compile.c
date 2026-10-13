@@ -46,6 +46,10 @@ struct constraint {
     const struct mo_core_fun *function;
     struct mo_core_span span, declaration;
 };
+struct live_set {
+    uint32_t *items;
+    uint32_t count, capacity;
+};
 struct node {
     mo_core_expr core;
     struct mo_core_span span;
@@ -55,11 +59,14 @@ struct node {
     uint32_t *binds, *cases;
     struct mo_codegen_operation operation;
     uint32_t signature;
+    bool *last;
+    struct live_set after, work;
     bool temporary;
 };
 struct join {
     struct node *node;
     uint32_t offset, checkpoint;
+    struct live_set live;
 };
 struct function {
     struct vector regs, code, spans, names, captures, joins, changes;
@@ -71,6 +78,9 @@ struct function {
     struct mo_core_span declaration;
     uint32_t lambda_number, closure_type;
     uint32_t preorder, instructions, blocks, owned, mark;
+    uint32_t live_count, live_cells, reference_count;
+    uint32_t *references;
+    uint64_t live_work;
     bool next_block;
 };
 struct compiler {
@@ -1702,6 +1712,274 @@ static MO_MUST_USE bool borrow_infer(struct compiler *c) {
     return true;
 }
 
+/* Backward liveness is independent of ownership inference. Sorted sets contain only
+ * references. Each lexical join converges its body (including nested joins) locally;
+ * enclosing joins retry that body only when their own free-variable set grows. */
+static MO_MUST_USE bool live_charge(struct compiler *c, struct function *f, uint64_t count) {
+    if (count > MO_LIMIT_CODEGEN_LIVE_WORK - f->live_work)
+        return problem(c, MO_CODE_CODEGEN_LIVE_WORK,
+                       "Reference liveness exceeds MO_LIMIT_CODEGEN_LIVE_WORK.");
+    f->live_work += count;
+    return true;
+}
+static MO_MUST_USE uint32_t live_position(const struct live_set *live, uint32_t r) {
+    uint32_t lo = 0, hi = live->count;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (live->items[mid] < r)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo;
+}
+static MO_MUST_USE bool live_has(const struct live_set *live, uint32_t r) {
+    uint32_t at = live_position(live, r);
+    return at < live->count && live->items[at] == r;
+}
+static MO_MUST_USE bool live_reserve(struct compiler *c, struct function *f, struct live_set *live,
+                                     uint32_t count) {
+    MO_ASSERT(count <= f->reference_count);
+    if (count <= live->capacity)
+        return true;
+    uint32_t capacity = live->capacity == 0 ? 4 : live->capacity;
+    if (capacity > f->reference_count)
+        capacity = f->reference_count;
+    while (capacity < count)
+        capacity = capacity > f->reference_count / 2 ? f->reference_count : capacity * 2;
+    if (capacity > MO_LIMIT_CODEGEN_LIVE_CELLS - f->live_cells)
+        return problem(c, MO_CODE_CODEGEN_LIVE_WORK,
+                       "Reference liveness exceeds MO_LIMIT_CODEGEN_LIVE_CELLS.");
+    if (!live_charge(c, f, live->count))
+        return false;
+    uint32_t *items = allocate(c, capacity, sizeof *items);
+    if (items == NULL)
+        return false;
+    if (live->count != 0)
+        memcpy(items, live->items, (size_t)live->count * sizeof *items);
+    f->live_cells += capacity; /* Include old blocks retained by the arena. */
+    live->items = items;
+    live->capacity = capacity;
+    return true;
+}
+static MO_MUST_USE bool live_use(struct compiler *c, struct function *f, struct live_set *live,
+                                 uint32_t r) {
+    if (r == MO_NO_INDEX || !reference(c, ((struct reg *)f->regs.items)[r].type))
+        return true;
+    MO_ASSERT(r < f->live_count);
+    if (!live_charge(c, f, 33)) /* A uint32_t binary search visits at most 32 cells. */
+        return false;
+    uint32_t at = live_position(live, r);
+    if (at < live->count && live->items[at] == r)
+        return true;
+    if (!live_charge(c, f, 1u + live->count - at) || !live_reserve(c, f, live, live->count + 1))
+        return false;
+    memmove(live->items + at + 1, live->items + at,
+            (size_t)(live->count - at) * sizeof *live->items);
+    live->items[at] = r;
+    live->count++;
+    return true;
+}
+static MO_MUST_USE bool live_kill(struct compiler *c, struct function *f, struct live_set *live,
+                                  uint32_t r) {
+    if (!live_charge(c, f, 33))
+        return false;
+    uint32_t at = live_position(live, r);
+    if (at == live->count || live->items[at] != r)
+        return true;
+    if (!live_charge(c, f, live->count - at))
+        return false;
+    live->count--;
+    memmove(live->items + at, live->items + at + 1,
+            (size_t)(live->count - at) * sizeof *live->items);
+    return true;
+}
+static MO_MUST_USE bool operand_owned(struct compiler *c, const struct node *n, uint32_t i) {
+    if (n->core->tag == MO_CORE_EXPR_CALL)
+        return c->funs[n->index].parameters[i].ownership == MO_PARAMETER_OWNED;
+    if (n->core->tag == MO_CORE_EXPR_PRIM)
+        return operation_owned(n, i);
+    return true;
+}
+static MO_MUST_USE bool live_copy(struct compiler *c, struct function *f, struct live_set *to,
+                                  const struct live_set *from) {
+    MO_ASSERT(to != from);
+    if (!live_charge(c, f, 1u + from->count) || !live_reserve(c, f, to, from->count))
+        return false;
+    if (from->count != 0)
+        memcpy(to->items, from->items, (size_t)from->count * sizeof *to->items);
+    to->count = from->count;
+    return true;
+}
+static MO_MUST_USE bool live_clear(struct compiler *c, struct function *f, struct live_set *live) {
+    if (!live_charge(c, f, 1))
+        return false;
+    live->count = 0;
+    return true;
+}
+static MO_MUST_USE bool live_union(struct compiler *c, struct function *f, struct live_set *to,
+                                   const struct live_set *from, bool *changed) {
+    MO_ASSERT(to != from);
+    if (!live_charge(c, f, 1u + UINT64_C(2) * (to->count + from->count)))
+        return false;
+    uint32_t a = 0, added = 0;
+    for (uint32_t b = 0; b < from->count; b++) {
+        while (a < to->count && to->items[a] < from->items[b])
+            a++;
+        if (a == to->count || to->items[a] != from->items[b])
+            added++;
+    }
+    if (added == 0)
+        return true;
+    uint32_t count = to->count + added;
+    if (!live_reserve(c, f, to, count))
+        return false;
+    a = to->count;
+    uint32_t b = from->count, end = count;
+    while (b != 0) {
+        if (a != 0 && to->items[a - 1] > from->items[b - 1])
+            to->items[--end] = to->items[--a];
+        else {
+            if (a != 0 && to->items[a - 1] == from->items[b - 1])
+                a--;
+            to->items[--end] = from->items[--b];
+        }
+    }
+    MO_ASSERT(end == a);
+    to->count = count;
+    *changed = true;
+    return true;
+}
+static MO_MUST_USE bool live_walk(struct compiler *c, struct function *f, struct node *n,
+                                  struct live_set *live, unsigned depth) {
+    MO_ASSERT(depth < MO_LIMIT_CORE_DEPTH);
+    c->span = n->span;
+    /* Cover direct membership searches as well as the node/operand visits. */
+    if (!live_charge(c, f, 33u * (2u + UINT64_C(3) * n->count + UINT64_C(2) * n->bind_count)))
+        return false;
+    if (n->last == NULL) {
+        uint32_t count = n->core->tag == MO_CORE_EXPR_LAM ? n->bind_count : n->count;
+        n->last = allocate(c, count == 0 ? 1 : count, sizeof *n->last);
+        if (n->last == NULL)
+            return false;
+    }
+    if (n->core->tag == MO_CORE_EXPR_VAR)
+        return true; /* The parent instruction already marked this lexical register. */
+    if (n->core->tag == MO_CORE_EXPR_LET) {
+        if (!live_walk(c, f, n->children[1], live, depth + 1) ||
+            !live_kill(c, f, live, n->binds[0]))
+            return false;
+        uint32_t r = n->children[0]->reg;
+        n->last[0] = !live_has(live, r);
+        return live_use(c, f, live, r) && live_walk(c, f, n->children[0], live, depth + 1);
+    }
+    if (!live_kill(c, f, live, n->reg))
+        return false;
+    bool branch = n->core->tag == MO_CORE_EXPR_IF || n->core->tag == MO_CORE_EXPR_CASE;
+    bool join = n->core->tag == MO_CORE_EXPR_JOIN;
+    if (branch || join) {
+        if (!live_copy(c, f, &n->after, live))
+            return false;
+        if (branch) {
+            bool choice = n->core->tag == MO_CORE_EXPR_CASE;
+            if (!live_clear(c, f, live))
+                return false;
+            for (uint32_t i = 1; i < n->count; i++) {
+                struct node *arm = n->children[i], *body = choice ? arm->children[0] : arm;
+                if (!live_copy(c, f, &n->work, &n->after))
+                    return false;
+                n->last[i] = !live_has(&n->work, body->reg);
+                if (!live_use(c, f, &n->work, body->reg) ||
+                    !live_walk(c, f, body, &n->work, depth + 1))
+                    return false;
+                if (choice) {
+                    if (!live_charge(c, f, arm->bind_count))
+                        return false;
+                    for (uint32_t j = 0; j < arm->bind_count; j++)
+                        if (!live_kill(c, f, &n->work, arm->binds[j]))
+                            return false;
+                }
+                bool ignored = false;
+                if (!live_union(c, f, live, &n->work, &ignored))
+                    return false;
+            }
+            return live_use(c, f, live, n->children[0]->reg) &&
+                   live_walk(c, f, n->children[0], live, depth + 1);
+        }
+        struct join *target = &((struct join *)f->joins.items)[n->index];
+        bool changed;
+        do {
+            if (!live_copy(c, f, &n->work, &n->after))
+                return false;
+            n->last[0] = !live_has(&n->work, n->children[0]->reg);
+            if (!live_use(c, f, &n->work, n->children[0]->reg) ||
+                !live_walk(c, f, n->children[0], &n->work, depth + 1))
+                return false;
+            for (uint32_t i = 0; i < n->bind_count; i++)
+                if (!live_kill(c, f, &n->work, n->binds[i]))
+                    return false;
+            changed = false;
+            if (!live_union(c, f, &target->live, &n->work, &changed))
+                return false;
+        } while (changed);
+        if (!live_copy(c, f, live, &n->after))
+            return false;
+        n->last[1] = !live_has(live, n->children[1]->reg);
+        return live_use(c, f, live, n->children[1]->reg) &&
+               live_walk(c, f, n->children[1], live, depth + 1);
+    }
+    if (n->core->tag == MO_CORE_EXPR_JUMP) {
+        const struct join *target = &((struct join *)f->joins.items)[n->index];
+        if (!live_copy(c, f, live, &target->live))
+            return false;
+    } else if ((n->core->tag == MO_CORE_EXPR_STOP || n->core->tag == MO_CORE_EXPR_FAIL) &&
+               !live_clear(c, f, live))
+        return false;
+    if (n->core->tag == MO_CORE_EXPR_LAM) {
+        for (uint32_t i = n->bind_count; i-- > 0;) {
+            uint32_t r = n->binds[i];
+            n->last[i] = !live_has(live, r);
+            if (!live_use(c, f, live, r))
+                return false;
+        }
+        return true;
+    }
+    /* Borrowed operands sharing an owned operand need their original register throughout
+     * the instruction. Repeated owned operands duplicate all but the final occurrence. */
+    for (uint32_t i = 0; i < n->count; i++)
+        if (!operand_owned(c, n, i) && !live_use(c, f, live, n->children[i]->reg))
+            return false;
+    for (uint32_t i = n->count; i-- > 0;) {
+        uint32_t r = n->children[i]->reg;
+        n->last[i] = !live_has(live, r);
+        if (!live_use(c, f, live, r))
+            return false;
+    }
+    for (uint32_t i = n->count; i-- > 0;)
+        if (!live_walk(c, f, n->children[i], live, depth + 1))
+            return false;
+    return true;
+}
+static MO_MUST_USE bool live_infer(struct compiler *c, struct function *f) {
+    f->live_count = f->regs.count;
+    if (!live_charge(c, f, UINT64_C(2) * f->live_count))
+        return false;
+    const struct reg *regs = f->regs.items;
+    for (uint32_t i = 0; i < f->live_count; i++)
+        if (reference(c, regs[i].type))
+            f->reference_count++;
+    f->references = allocate(c, f->reference_count, sizeof *f->references);
+    if (f->references == NULL)
+        return false;
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < f->live_count; i++)
+        if (reference(c, regs[i].type))
+            f->references[count++] = i;
+    MO_ASSERT(count == f->reference_count);
+    struct live_set live = {0};
+    return live_use(c, f, &live, f->body->reg) && live_walk(c, f, f->body, &live, 0);
+}
+
 static MO_MUST_USE struct mo_bytecode_span span(struct compiler *c, struct mo_core_span s) {
     if (s.some && s.value.end > MO_LIMIT_FILE_SIZE) {
         if (!problem(c, MO_CODE_BYTECODE_TOO_BIG,
@@ -1890,9 +2168,39 @@ static void restore(struct function *f, uint32_t checkpoint) {
         r->state = change.previous;
     }
 }
+/* Every live edge uses the same undefined state for dead references, including lexical
+ * registers consumed within just one arm. Restoration publishes that state without code. */
+static MO_MUST_USE bool forget_dead(struct compiler *c, struct function *f,
+                                    const struct live_set *live, uint32_t keep,
+                                    struct mo_core_span s, bool instructions) {
+    if (!live_charge(c, f, (uint64_t)f->reference_count + live->count))
+        return false;
+    struct reg *regs = f->regs.items;
+    uint32_t at = 0;
+    for (uint32_t j = 0; j < f->reference_count; j++) {
+        uint32_t i = f->references[j];
+        while (at < live->count && live->items[at] < i)
+            at++;
+        if (i == keep || (at < live->count && live->items[at] == i) || regs[i].protected ||
+            regs[i].state == REF_UNDEFINED)
+            continue;
+        if (instructions) {
+            if (!drop(c, f, i, s) || emit(c, f, s, MO_OP_CLEAR, &i, 1, NULL, 0) == MO_NO_INDEX)
+                return false;
+        } else {
+            owner_remove(f, i);
+            if (!state(c, f, i, REF_UNDEFINED))
+                return false;
+        }
+    }
+    return true;
+}
 static MO_MUST_USE bool normalize(struct compiler *c, struct function *f, uint32_t checkpoint,
-                                  uint32_t keep, struct mo_core_span s) {
+                                  uint32_t keep, struct mo_core_span s,
+                                  const struct live_set *live) {
     MO_ASSERT(checkpoint <= f->changes.count && f->mark != UINT32_MAX);
+    if (live != NULL && !forget_dead(c, f, live, keep, s, true))
+        return false;
     uint32_t mark = ++f->mark, end = f->changes.count;
     struct reg *regs = f->regs.items;
     for (uint32_t i = checkpoint; i < end; i++) {
@@ -1909,7 +2217,10 @@ static MO_MUST_USE bool normalize(struct compiler *c, struct function *f, uint32
         if (r->mark != mark)
             continue;
         r->mark = 0;
-        if (id == keep || r->protected || r->state == r->goal)
+        if (live != NULL && !live_charge(c, f, 33))
+            return false;
+        if (id == keep || r->protected || r->state == r->goal ||
+            (live != NULL && id < f->live_count && !live_has(live, id)))
             continue;
         /* Only path-local slots change on a live edge; lexical owners outside it survive.
          * Jump argument copies are protected until simultaneous parameter transfer. */
@@ -1935,24 +2246,27 @@ static MO_MUST_USE bool merged(struct compiler *c, struct function *f, uint32_t 
     return true;
 }
 static MO_MUST_USE bool copy(struct compiler *c, struct function *f, uint32_t to, uint32_t from,
-                             bool owned, struct mo_core_span s) {
+                             bool owned, struct mo_core_span s, bool last) {
     bool ref = reference(c, ((struct reg *)f->regs.items)[from].type);
-    enum mo_opcode op = ref && owned ? MO_OP_DUP : MO_OP_MOVE;
+    bool move = ref && owned && last && ((struct reg *)f->regs.items)[from].owned;
+    enum mo_opcode op = ref && owned && !move ? MO_OP_DUP : MO_OP_MOVE;
     MO_ASSERT(!ref || owned || !((struct reg *)f->regs.items)[from].owned);
     const uint32_t args[] = {to, from};
     if (emit(c, f, s, op, args, 2, NULL, 0) == MO_NO_INDEX)
         return false;
+    if (move)
+        owner_remove(f, from);
     if (ref && owned)
         owner_add(f, to);
     return true;
 }
 static MO_MUST_USE uint32_t argument(struct compiler *c, struct function *f, uint32_t r, bool owned,
-                                     struct mo_core_span s) {
+                                     struct mo_core_span s, bool last) {
     uint32_t ty = ((struct reg *)f->regs.items)[r].type;
-    if (!reference(c, ty) || !owned)
+    if (!reference(c, ty) || !owned || (last && ((struct reg *)f->regs.items)[r].owned))
         return r;
     uint32_t tmp = register_add(c, f, ty, MO_NO_INDEX);
-    if (tmp == MO_NO_INDEX || !copy(c, f, tmp, r, true, s))
+    if (tmp == MO_NO_INDEX || !copy(c, f, tmp, r, true, s, false))
         return MO_NO_INDEX;
     return tmp;
 }
@@ -2036,13 +2350,19 @@ static MO_MUST_USE bool uncons(struct compiler *c, struct function *f, struct no
              pair = n->binds[4];
     if (!library(c, f, MO_PRIM_LIST_FIRST, n->cases[0], first, &list, 1, n->span))
         return false;
+    /* Both arms consume this argument. Keep its moved state across normalization,
+     * then publish that common state after restoring the branch checkpoint. */
+    MO_ASSERT(((struct reg *)f->regs.items)[list].owned &&
+              !((struct reg *)f->regs.items)[list].protected);
+    ((struct reg *)f->regs.items)[list].protected = true;
     uint32_t checkpoint = f->changes.count;
     uint32_t branch = emit(c, f, n->span, MO_OP_SWITCH, &first, 1, (uint32_t[]){0, 0}, 2);
     if (branch == MO_NO_INDEX)
         return false;
     ((uint32_t *)f->code.items)[branch + 2] = f->code.count;
     const uint32_t none[] = {n->reg, n->type, 0};
-    if (emit(c, f, n->span, MO_OP_MAKE_CASE, none, 3, NULL, 0) == MO_NO_INDEX)
+    if (!drop(c, f, list, n->span) ||
+        emit(c, f, n->span, MO_OP_MAKE_CASE, none, 3, NULL, 0) == MO_NO_INDEX)
         return false;
     owner_add(f, n->reg);
     uint32_t skip = emit(c, f, n->span, MO_OP_JUMP, (uint32_t[]){0}, 1, NULL, 0);
@@ -2056,9 +2376,7 @@ static MO_MUST_USE bool uncons(struct compiler *c, struct function *f, struct no
         return false;
     if (reference(c, ((struct reg *)f->regs.items)[head].type))
         owner_add(f, head);
-    uint32_t copy = argument(c, f, list, true, n->span);
-    if (copy == MO_NO_INDEX ||
-        !library(c, f, MO_PRIM_LIST_DROP, n->cases[1], rest, (uint32_t[]){copy, one}, 2, n->span))
+    if (!library(c, f, MO_PRIM_LIST_DROP, n->cases[1], rest, (uint32_t[]){list, one}, 2, n->span))
         return false;
     const uint32_t construct[] = {pair, c->layouts[((struct reg *)f->regs.items)[pair].type]},
                    some[] = {n->reg, n->type, 1}, fields[] = {head, rest};
@@ -2070,11 +2388,13 @@ static MO_MUST_USE bool uncons(struct compiler *c, struct function *f, struct no
     if (emit(c, f, n->span, MO_OP_MAKE_CASE, some, 3, &pair, 1) == MO_NO_INDEX)
         return false;
     owner_add(f, n->reg);
-    if (!normalize(c, f, checkpoint, n->reg, n->span))
+    if (!normalize(c, f, checkpoint, n->reg, n->span, NULL))
         return false;
     ((uint32_t *)f->code.items)[skip + 1] = f->code.count;
     restore(f, checkpoint);
-    return merged(c, f, n->reg) && drop(c, f, first, n->span);
+    ((struct reg *)f->regs.items)[list].protected = false;
+    owner_remove(f, list);
+    return state(c, f, list, REF_MOVED) && merged(c, f, n->reg) && drop(c, f, first, n->span);
 }
 /* false through *live means a terminal path, not a compiler refusal. */
 static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct node *n, bool tail,
@@ -2102,7 +2422,7 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
             return c->error == 0;
         uint32_t start = f->code.count;
         bool owned = ((struct ownership *)c->ownership.items)[flow_id(f, n->binds[0])].owned;
-        if (!copy(c, f, n->binds[0], n->children[0]->reg, owned, n->span) ||
+        if (!copy(c, f, n->binds[0], n->children[0]->reg, owned, n->span, n->last[0]) ||
             (n->children[0]->temporary && !drop(c, f, n->children[0]->reg, n->span)) ||
             !generate(c, f, n->children[1], tail, depth + 1, live))
             return false;
@@ -2124,11 +2444,10 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
             if (regs == NULL)
                 return false;
             for (uint32_t i = 0; i < n->bind_count; i++) {
-                regs[i] = argument(c, f, n->binds[i], true, n->span);
+                regs[i] = argument(c, f, n->binds[i], true, n->span, n->last[i]);
                 if (regs[i] == MO_NO_INDEX)
                     return false;
-                if (regs[i] != n->binds[i])
-                    owner_remove(f, regs[i]);
+                owner_remove(f, regs[i]);
             }
             const uint32_t args[] = {n->reg, n->index};
             if (emit(c, f, n->span, MO_OP_MAKE_CLOSURE, args, 2, regs, n->bind_count) ==
@@ -2145,13 +2464,14 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
         for (uint32_t i = 0; i < n->count; i++) {
             if (!generate(c, f, n->children[i], false, depth + 1, live) || !*live)
                 return c->error == 0;
-            regs[i] = argument(c, f, n->children[i]->reg, true, n->span);
+        }
+        for (uint32_t i = 0; i < n->count; i++) {
+            regs[i] = argument(c, f, n->children[i]->reg, true, n->span, n->last[i]);
             if (regs[i] == MO_NO_INDEX)
                 return false;
         }
         for (uint32_t i = 0; i < n->count; i++)
-            if (regs[i] != n->children[i]->reg)
-                owner_remove(f, regs[i]);
+            owner_remove(f, regs[i]);
         if (tail && !cleanup(c, f, n->span))
             return false;
         const uint32_t args[] = {n->reg, regs[0]};
@@ -2177,9 +2497,10 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
         for (uint32_t i = 0; i < n->count; i++) {
             if (!generate(c, f, n->children[i], false, depth + 1, live) || !*live)
                 return c->error == 0;
-            bool owned = n->core->tag != MO_CORE_EXPR_CALL ||
-                         c->funs[n->index].parameters[i].ownership == MO_PARAMETER_OWNED;
-            regs[i] = argument(c, f, n->children[i]->reg, owned, n->span);
+        }
+        for (uint32_t i = 0; i < n->count; i++) {
+            regs[i] =
+                argument(c, f, n->children[i]->reg, operand_owned(c, n, i), n->span, n->last[i]);
             if (regs[i] == MO_NO_INDEX)
                 return false;
         }
@@ -2205,9 +2526,9 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
             count = 1;
             *live = false;
         }
-        /* Reserve consumed argument copies while dropping the rest of a tail frame. */
+        /* Reserve consumed operands while dropping the rest of a tail frame. */
         for (uint32_t i = 0; i < n->count; i++)
-            if (regs[i] != n->children[i]->reg)
+            if (operand_owned(c, n, i))
                 owner_remove(f, regs[i]);
         if (op == MO_OP_TAIL_CALL && !cleanup(c, f, n->span))
             return false;
@@ -2242,7 +2563,7 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
                 return false;
             if (*live) {
                 bool owned = ((struct ownership *)c->ownership.items)[flow_id(f, n->reg)].owned;
-                if (!copy(c, f, n->reg, body->reg, owned, n->span) ||
+                if (!copy(c, f, n->reg, body->reg, owned, n->span, n->last[1]) ||
                     (body->temporary && !drop(c, f, body->reg, n->span)) ||
                     (n->children[0]->temporary && !drop(c, f, n->children[0]->reg, n->span)))
                     return false;
@@ -2297,8 +2618,8 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
                 const uint32_t jump[] = {0};
                 bool owned = n->reg != MO_NO_INDEX &&
                              ((struct ownership *)c->ownership.items)[flow_id(f, n->reg)].owned;
-                if (!copy(c, f, n->reg, body->reg, owned, n->span) ||
-                    !normalize(c, f, checkpoint, n->reg, n->span))
+                if (!copy(c, f, n->reg, body->reg, owned, n->span, n->last[i + 1]) ||
+                    !normalize(c, f, checkpoint, n->reg, n->span, &n->after))
                     return false;
                 jumps[i] = emit(c, f, n->span, MO_OP_JUMP, jump, 1, NULL, 0);
                 if (jumps[i] == MO_NO_INDEX)
@@ -2311,7 +2632,7 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
             if (jumps[i] != MO_NO_INDEX)
                 words[jumps[i] + 1] = f->code.count;
         restore(f, checkpoint);
-        if (any && !merged(c, f, n->reg))
+        if (any && (!forget_dead(c, f, &n->after, n->reg, n->span, false) || !merged(c, f, n->reg)))
             return false;
         *live = any;
         break;
@@ -2337,7 +2658,10 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
         for (uint32_t i = 0; i < n->count; i++) {
             if (!generate(c, f, n->children[i], false, depth + 1, live) || !*live)
                 return c->error == 0;
-            regs[i] = argument(c, f, n->children[i]->reg, operation_owned(n, i), n->span);
+        }
+        for (uint32_t i = 0; i < n->count; i++) {
+            regs[i] =
+                argument(c, f, n->children[i]->reg, operation_owned(n, i), n->span, n->last[i]);
             if (regs[i] == MO_NO_INDEX)
                 return false;
         }
@@ -2361,8 +2685,7 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
                 uint32_t args[3] = {builder, regs[i * width], map ? regs[i * width + 1] : 0};
                 owner_remove(f, builder);
                 for (uint32_t j = 0; j < width; j++)
-                    if (regs[i * width + j] != n->children[i * width + j]->reg)
-                        owner_remove(f, regs[i * width + j]);
+                    owner_remove(f, regs[i * width + j]);
                 const uint32_t insert[] = {dest, n->operation.row, n->signature};
                 if (emit(c, f, n->span, MO_OP_PRIM, insert, 3, args, width + 1) == MO_NO_INDEX)
                     return false;
@@ -2371,7 +2694,7 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
             }
         } else {
             for (uint32_t i = 0; i < n->count; i++)
-                if (regs[i] != n->children[i]->reg)
+                if (operation_owned(n, i))
                     owner_remove(f, regs[i]);
             if (n->operation.reverse) {
                 MO_ASSERT(n->count == 2);
@@ -2440,7 +2763,9 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
         struct join *joins = f->joins.items;
         joins[n->index].offset = f->code.count;
         joins[n->index].checkpoint = checkpoint;
-        /* Every incoming jump writes owned copies of reference parameters. The first entry
+        if (!forget_dead(c, f, &joins[n->index].live, MO_NO_INDEX, n->span, false))
+            return false;
+        /* Every incoming jump writes owned reference parameters. The first entry
          * and loop backedges share the declaration's lexical state outside those parameters. */
         for (uint32_t i = 0; i < n->bind_count; i++)
             if (reference(c, ((struct reg *)f->regs.items)[n->binds[i]].type)) {
@@ -2455,8 +2780,8 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
         bool any = *live;
         if (*live) {
             bool owned = ((struct ownership *)c->ownership.items)[flow_id(f, n->reg)].owned;
-            if (!copy(c, f, n->reg, n->children[0]->reg, owned, n->span) ||
-                !normalize(c, f, checkpoint, n->reg, n->span))
+            if (!copy(c, f, n->reg, n->children[0]->reg, owned, n->span, n->last[0]) ||
+                !normalize(c, f, checkpoint, n->reg, n->span, &n->after))
                 return false;
             exit = emit(c, f, n->span, MO_OP_JUMP, (uint32_t[]){0}, 1, NULL, 0);
             if (exit == MO_NO_INDEX)
@@ -2471,15 +2796,16 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
             return false;
         if (*live) {
             bool owned = ((struct ownership *)c->ownership.items)[flow_id(f, n->reg)].owned;
-            if (!copy(c, f, n->reg, n->children[1]->reg, owned, n->span) ||
-                !normalize(c, f, checkpoint, n->reg, n->span))
+            if (!copy(c, f, n->reg, n->children[1]->reg, owned, n->span, n->last[1]) ||
+                !normalize(c, f, checkpoint, n->reg, n->span, &n->after))
                 return false;
         }
         if (exit != MO_NO_INDEX)
             ((uint32_t *)f->code.items)[exit + 1] = f->code.count;
         *live |= any;
         restore(f, checkpoint);
-        if (*live && !merged(c, f, n->reg))
+        if (*live &&
+            (!forget_dead(c, f, &n->after, n->reg, n->span, false) || !merged(c, f, n->reg)))
             return false;
         break;
     }
@@ -2489,12 +2815,14 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
         for (uint32_t i = 0; i < n->count; i++) {
             if (!generate(c, f, n->children[i], false, depth + 1, live) || !*live)
                 return c->error == 0;
-            if (!copy(c, f, n->binds[i], n->children[i]->reg, true, n->span))
+        }
+        for (uint32_t i = 0; i < n->count; i++) {
+            if (!copy(c, f, n->binds[i], n->children[i]->reg, true, n->span, n->last[i]))
                 return false;
         }
         for (uint32_t i = 0; i < n->count; i++)
             ((struct reg *)f->regs.items)[n->binds[i]].protected = true;
-        if (!normalize(c, f, target->checkpoint, MO_NO_INDEX, n->span))
+        if (!normalize(c, f, target->checkpoint, MO_NO_INDEX, n->span, &target->live))
             return false;
         for (uint32_t i = 0; i < n->count; i++) {
             uint32_t to = target->node->binds[i], from = n->binds[i];
@@ -2516,11 +2844,10 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
     }
     }
     if (*live && tail) {
-        uint32_t result = argument(c, f, n->reg, true, n->span);
+        uint32_t result = argument(c, f, n->reg, true, n->span, true);
         if (result == MO_NO_INDEX)
             return false;
-        if (result != n->reg)
-            owner_remove(f, result);
+        owner_remove(f, result);
         if (!cleanup(c, f, n->span) ||
             emit(c, f, n->span, MO_OP_RET, &result, 1, NULL, 0) == MO_NO_INDEX)
             return false;
@@ -3055,6 +3382,8 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
         struct mo_bytecode_function *fun = &c->funs[i];
         const struct mo_core_fun_meta *meta = f->meta;
         c->declaration = f->declaration;
+        if (fun->kind != MO_FUNCTION_INIT && !live_infer(c, f))
+            return false;
         /* Helpers added while initializing are already initialized. Do not reinitialize them. */
         c->span = c->declaration;
         for (uint32_t j = 0; j < fun->parameter_count; j++)

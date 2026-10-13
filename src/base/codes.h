@@ -226,6 +226,8 @@
     X(1201, CODEGEN_REPRESENTATION, NULL)                                                          \
     /* Decimal BigInt conversion exceeds the compilation's work limit. */                          \
     X(1202, CODEGEN_BIGINT_WORK, NULL)                                                             \
+    /* Reference liveness exceeds its per-function work limit. */                                  \
+    X(1203, CODEGEN_LIVE_WORK, NULL)                                                               \
     /* The command requests a toolchain stage not implemented by this build. */                    \
     X(1400, TOOL_UNAVAILABLE, NULL)                                                                \
     /* The OS cannot prepare the explicit source-stage checking stack. */                          \

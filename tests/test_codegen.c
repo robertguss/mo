@@ -483,7 +483,7 @@ static void test_references(void) {
         compile(&arena, "(Program () ((FunDecl \"main\" ((\"x\" (text))) (text) (var \"x\") "
                         "\"M\" (function) 0)) () \"main\" (noSource))");
     if (b != NULL) {
-        const uint32_t expected[] = {MO_OP_DUP, 1, 0, MO_OP_DROP, 0, MO_OP_RET, 1};
+        const uint32_t expected[] = {MO_OP_RET, 0};
         CHECK(b->functions[0].parameters[0].ownership == MO_PARAMETER_OWNED);
         CHECK(b->functions[0].code_count == sizeof expected / sizeof expected[0]);
         CHECK(memcmp(b->functions[0].code, expected, sizeof expected) == 0);
@@ -505,6 +505,17 @@ static MO_MUST_USE const uint32_t *instruction(const struct mo_bytecode_function
     (void)fprintf(stderr, "missing opcode %u in function %u\n", (unsigned)wanted, f->name);
     CHECK(false);
     return NULL;
+}
+static MO_MUST_USE uint32_t opcode_count(const struct mo_bytecode_function *f,
+                                         enum mo_opcode wanted) {
+    uint32_t count = 0;
+    for (uint32_t pc = 0; pc < f->code_count;) {
+        const struct mo_opcode_info *op = mo_opcode_find(f->code[pc] & MO_OPCODE_MASK);
+        MO_ASSERT(op != NULL);
+        count += op->number == (uint32_t)wanted ? 1u : 0u;
+        pc += 1u + op->fixed_count + (f->code[pc] >> MO_OPCODE_VARIABLE_SHIFT);
+    }
+    return count;
 }
 static void test_globals(void) {
     struct mo_arena arena;
@@ -1044,8 +1055,8 @@ static void test_register_limit(void) {
         uint32_t extra = variant % 2;
         bool global = variant >= 2;
         /* One basic block keeps this register boundary independent of verification's
-         * registers × blocks limit. Tuple fields, result and return duplicate fill the frame. */
-        uint32_t count = MO_LIMIT_FUNCTION_REGISTERS - 2u + extra;
+         * registers × blocks limit. Tuple fields and result fill the frame. */
+        uint32_t count = MO_LIMIT_FUNCTION_REGISTERS - 1u + extra;
         struct mo_buffer text, out;
         struct mo_arena arena;
         struct mo_diags diags;
@@ -1105,13 +1116,14 @@ static void test_register_block_limit(void) {
         bool late_register = extra == 2;
         uint32_t count = boundary + extra;
         if (late_register) {
-            /* The last tail argument's dup crosses the bound within an existing block. */
+            /* Repeated owned tail operands still need one duplicate per arm. The last
+             * duplicate crosses the bound within an existing block. */
             count = 1;
             while (UINT64_C(2) * (count + 2u) * (count + 2u) <= MO_LIMIT_FUNCTION_REGISTER_BLOCKS)
                 count++;
         }
         const char *value_type = late_register ? "(text)" : "(unit)";
-        uint32_t arity = late_register ? 1u : 100u;
+        uint32_t arity = late_register ? 2u : 100u;
         struct mo_buffer text, out;
         struct mo_arena arena;
         struct mo_diags diags;
@@ -1246,7 +1258,8 @@ static MO_MUST_USE int corpus(int argc, char **argv, bool bigints) {
                         bool limit =
                             code == MO_CODE_TOO_MANY_REGISTERS ||
                             code == MO_CODE_FUNCTION_TOO_LONG || code == MO_CODE_BYTECODE_TOO_BIG ||
-                            code == MO_CODE_CODEGEN_MEMORY || code == MO_CODE_CODEGEN_BIGINT_WORK;
+                            code == MO_CODE_CODEGEN_MEMORY || code == MO_CODE_CODEGEN_BIGINT_WORK ||
+                            code == MO_CODE_CODEGEN_LIVE_WORK;
                         if (code == MO_CODE_CODEGEN_ENTRY)
                             entry++;
                         else if (code == MO_CODE_CODEGEN_REPRESENTATION)
@@ -1310,9 +1323,9 @@ static void test_closure(void) {
                         "((lit (text \"first\")) (lit (text \"second\")))) "
                         "\"M\" (function) 0)) () \"start\" (noSource))");
     if (b != NULL) {
-        const uint32_t *dup = instruction(&b->functions[1], MO_OP_DUP, 0);
-        if (dup != NULL)
-            CHECK(dup[2] == 0);
+        const uint32_t *ret = instruction(&b->functions[1], MO_OP_RET, 0);
+        if (ret != NULL)
+            CHECK(ret[1] == 0 && opcode_count(&b->functions[1], MO_OP_DUP) == 0);
     }
     mo_arena_free(&arena);
 }
@@ -1332,11 +1345,11 @@ static void test_captures(void) {
         CHECK(b->functions[0].parameters[0].ownership == MO_PARAMETER_OWNED);
         const uint32_t *a = instruction(&b->functions[1], MO_OP_FIELD, 0),
                        *b_field = instruction(&b->functions[1], MO_OP_FIELD, 1),
-                       *dup = instruction(&b->functions[1], MO_OP_DUP, 0),
                        *make = instruction(&b->functions[1], MO_OP_MAKE_CLOSURE, 0);
-        if (a != NULL && b_field != NULL && dup != NULL && make != NULL)
-            CHECK(a[2] == 1 && a[3] == 0 && b_field[2] == 1 && b_field[3] == 1 && dup[2] == a[1] &&
-                  make[2] == 2 && make[3] == dup[1] && make[4] == 0 && make[5] == b_field[1]);
+        if (a != NULL && b_field != NULL && make != NULL)
+            CHECK(a[2] == 1 && a[3] == 0 && b_field[2] == 1 && b_field[3] == 1 && make[2] == 2 &&
+                  make[3] == a[1] && make[4] == 0 && make[5] == b_field[1] &&
+                  opcode_count(&b->functions[1], MO_OP_DUP) == 0);
     }
     b = compile(&arena, "(Program () ((FunDecl \"main\" ((\"x\" (text)) (\"x\" (text))) "
                         "(fn () (tuple ((text) (text)))) "
@@ -1344,13 +1357,13 @@ static void test_captures(void) {
                         "\"M\" (function) 0)) () \"main\" (noSource))");
     if (b != NULL) {
         CHECK(b->functions[1].capture_count == 1);
-        const uint32_t *dup = instruction(&b->functions[0], MO_OP_DUP, 0),
+        const uint32_t *move = instruction(&b->functions[0], MO_OP_MOVE, 0),
                        *fields = instruction(&b->functions[1], MO_OP_FIELD, 0),
                        *first = instruction(&b->functions[1], MO_OP_DUP, 0),
-                       *second = instruction(&b->functions[1], MO_OP_DUP, 1);
-        if (dup != NULL && fields != NULL && first != NULL && second != NULL)
-            CHECK(dup[2] == 0 && first[2] == fields[1] && second[2] == fields[1] &&
-                  first[1] != second[1]);
+                       *pair = instruction(&b->functions[1], MO_OP_CONSTRUCT, 0);
+        if (move != NULL && fields != NULL && first != NULL && pair != NULL)
+            CHECK(move[2] == 0 && first[2] == fields[1] && pair[3] == first[1] &&
+                  pair[4] == fields[1] && opcode_count(&b->functions[1], MO_OP_DUP) == 1);
     }
     mo_arena_free(&arena);
 }
@@ -1629,6 +1642,56 @@ static void test_primitive_ownership(void) {
         }
     }
     mo_arena_free(&arena);
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    b = compile(&arena, "(Program () ((FunDecl \"go\" ((\"acc\" (text)) (\"n\" (int))) (text) "
+                        "(if_ (prim (eq (int)) ((var \"n\") (lit (int 0)))) (var \"acc\") "
+                        "(call \"go\" ((prim (text (concat)) ((var \"acc\") (lit (text \"ab\")))) "
+                        "(prim (int (sub)) ((var \"n\") (lit (int 1))))))) "
+                        "\"M\" (function) 0)) () \"go\" (noSource))");
+    if (b != NULL) {
+        const struct mo_bytecode_function *f = &b->functions[0];
+        const uint32_t *call = instruction(f, MO_OP_PRIM, 0);
+        CHECK(call != NULL && call[4] == 0 && opcode_count(f, MO_OP_DUP) == 0 &&
+              opcode_count(f, MO_OP_DROP) == 0);
+        struct mo_buffer wire;
+        mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+        struct mo_write_error write_error;
+        bool written = mo_bytecode_write(b, &wire, &write_error);
+        CHECK(written);
+        struct mo_load_error load_error;
+        struct mo_image *image = written ? mo_load(wire.bytes, wire.length, &load_error) : NULL;
+        CHECK(image != NULL);
+        if (image != NULL) {
+            struct mo_limits limits = mo_limits_default();
+            struct mo_defect defect;
+            bool initialized = mo_image_init(image, &limits, &defect) == MO_RETURNED;
+            CHECK(initialized);
+            struct mo_process *p = initialized ? mo_process_new(image, &limits) : NULL;
+            CHECK(p != NULL);
+            if (p != NULL) {
+                struct mo_cell args[2], result;
+                bool value = mo_value_text(mo_process_heap(p), "z", 1, &args[0]);
+                CHECK(value);
+                args[1] = mo_cell_int(100);
+                if (value) {
+                    enum mo_outcome outcome = mo_call(p, 0, args, 2, &result, &defect);
+                    CHECK(outcome == MO_RETURNED);
+                    if (outcome == MO_RETURNED) {
+                        size_t length;
+                        const uint8_t *bytes = mo_value_data(result, &length);
+                        CHECK(length == 201 && bytes[0] == 'z');
+                        for (size_t i = 1; i + 1 < length; i += 2)
+                            CHECK(bytes[i] == 'a' && bytes[i + 1] == 'b');
+                        mo_value_drop(mo_process_heap(p), f->result_type, result);
+                    }
+                }
+                mo_process_free(p);
+            }
+            mo_image_free(image);
+        }
+        mo_buffer_free(&wire);
+    }
+    mo_arena_free(&arena);
 }
 static void test_operation_order(void) {
     struct mo_arena arena;
@@ -1809,7 +1872,7 @@ static void test_uncons(void) {
                        *pair = instruction(f, MO_OP_CONSTRUCT, 0);
         if (first != NULL && rest != NULL && branch != NULL && head != NULL && copy != NULL &&
             pair != NULL) {
-            CHECK(first[2] == MO_PRIM_LIST_FIRST && first[4] == 0 && branch[1] == first[1]);
+            CHECK(first[2] == MO_PRIM_LIST_FIRST && first[4] == copy[1] && branch[1] == first[1]);
             CHECK(head[2] == first[1] && head[3] == 1 && head[4] == 0 &&
                   branch[3] == (uint32_t)(head - f->code));
             CHECK(rest[2] == MO_PRIM_LIST_DROP && rest[4] == copy[1] && copy[2] == 0 &&
@@ -1818,6 +1881,20 @@ static void test_uncons(void) {
             CHECK(option->kind == MO_TYPE_CHOICE &&
                   b->types[option->cases[1].fields[0].type].kind == MO_TYPE_TEXT);
         }
+    }
+    mo_arena_free(&arena);
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    b = compile(&arena, "(Program () ((FunDecl \"start\" ((\"xs\" (list (int)))) "
+                        "(option (tuple ((int) (list (int))))) "
+                        "(prim (list (int) (uncons)) ((var \"xs\"))) \"M\" (function) 0)) "
+                        "() \"start\" (noSource))");
+    if (b != NULL) {
+        const struct mo_bytecode_function *f = &b->functions[0];
+        const uint32_t *first = instruction(f, MO_OP_PRIM, 0),
+                       *rest = instruction(f, MO_OP_PRIM, 1);
+        CHECK(f->parameters[0].ownership == MO_PARAMETER_OWNED);
+        if (first != NULL && rest != NULL)
+            CHECK(first[4] == 0 && rest[4] == 0 && opcode_count(f, MO_OP_DUP) == 0);
     }
     mo_arena_free(&arena);
 }
@@ -1983,7 +2060,7 @@ static void test_entry_record(void) {
                        *trim = instruction(f, MO_OP_PRIM, 0);
         if (con != NULL && field != NULL && trim != NULL)
             CHECK(b->layouts[con[2]].kind == MO_LAYOUT_RECORD && field[3] == 0 &&
-                  trim[2] == MO_PRIM_TEXT_TRIM && trim[4] != field[1]);
+                  trim[2] == MO_PRIM_TEXT_TRIM && trim[4] == field[1]);
     }
     mo_arena_free(&arena);
 }
@@ -2068,14 +2145,15 @@ static void test_join(void) {
                         "() \"start\" (noSource))");
     if (b != NULL) {
         const struct mo_bytecode_function *f = &b->functions[0];
-        const uint32_t *first = instruction(f, MO_OP_DUP, 0),
-                       *second = instruction(f, MO_OP_DUP, 1),
-                       *drop = instruction(f, MO_OP_DROP, 0), *left = instruction(f, MO_OP_MOVE, 0),
-                       *right = instruction(f, MO_OP_MOVE, 1);
-        if (first != NULL && second != NULL && drop != NULL && left != NULL && right != NULL)
-            CHECK(first < second && second < drop && drop < left && left < right &&
-                  first[2] == right[1] && second[2] == left[1] && left[2] == first[1] &&
-                  right[2] == second[1] && first[1] != left[1] && second[1] != right[1]);
+        const uint32_t *first = instruction(f, MO_OP_MOVE, 0),
+                       *second = instruction(f, MO_OP_MOVE, 1),
+                       *left = instruction(f, MO_OP_MOVE, 2),
+                       *right = instruction(f, MO_OP_MOVE, 3);
+        if (first != NULL && second != NULL && left != NULL && right != NULL)
+            CHECK(first < second && second < left && left < right && first[2] == right[1] &&
+                  second[2] == left[1] && left[2] == first[1] && right[2] == second[1] &&
+                  first[1] != left[1] && second[1] != right[1] && opcode_count(f, MO_OP_DUP) == 0 &&
+                  opcode_count(f, MO_OP_DROP) == 0);
     }
     mo_arena_free(&arena);
     /* Self-jumps alone do not make a join reachable from the function entry. */

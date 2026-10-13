@@ -86,6 +86,12 @@
  * digit reads, limb operations and coefficient products; E1202, not a compiler bug. */
 #define MO_LIMIT_CODEGEN_BIGINT_WORK (1u << 26)
 
+/* Backward reference liveness, including join fixed points: node/operand visits and
+ * register-set cells copied or merged per function. E1203 on exhaustion. */
+#define MO_LIMIT_CODEGEN_LIVE_WORK (1u << 26)
+/* Sparse reference-set storage, including retained growth blocks, per function. E1203. */
+#define MO_LIMIT_CODEGEN_LIVE_CELLS (1u << 22)
+
 /* Borrow inference slots and dependency edges, also E1056. They grow with prepared registers
  * and Core operands; each owned slot is propagated once, never by rescanning the call graph. */
 #define MO_LIMIT_CODEGEN_OWNERSHIP_SLOTS (4u * MO_LIMIT_CORE_NODES)
