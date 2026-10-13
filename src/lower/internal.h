@@ -18,7 +18,7 @@ struct instance {
     struct instance *next, *hash_next, *source_next;
     const struct mo_checked_function *source;
     struct substitution substitution;
-    uint32_t owner, depth, index;
+    uint32_t owner, depth, index, const_prefix;
     struct mo_core_fun fun;
     struct mo_core_fun_meta meta;
 };
@@ -63,6 +63,8 @@ struct lowering {
     struct derived *derived, **derived_tail, *derived_pending;
     struct derived **derived_index;
     uint32_t derived_count, derived_slots;
+    mo_core_consts constants;
+    struct instance *constant_bodies;
 };
 
 _Noreturn void lower_refuse(struct lowering *p, uint16_t code, const char *message);
@@ -104,6 +106,9 @@ mo_core_expr lower_child(mo_core_expr expr, size_t at);
 void lower_function(struct lowering *p, struct instance *instance);
 void lower_body(struct lowering *p, struct instance *instance, const struct mo_checked_body *source,
                 uint32_t parameter_count, const struct mo_checked_binding *const *parameters);
+mo_core_string lower_global_name(struct lowering *p, const struct mo_symbol *symbol);
+void lower_constants(struct lowering *p);
+void lower_constant_prefixes(struct lowering *p);
 void lower_metadata(struct lowering *p, struct mo_core *core);
 
 #endif

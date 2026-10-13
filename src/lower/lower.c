@@ -241,9 +241,8 @@ struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *progra
                            .span.file = UINT32_MAX};
     if (setjmp(p->escape) != 0)
         return NULL;
-    if (program->function_count == 0 || program->constant_count != 0 || program->spec_count != 0)
-        lower_refuse(p, MO_CODE_LOWER_UNFINISHED,
-                     "constants and specification code are not lowered yet");
+    if (program->function_count == 0 || program->spec_count != 0)
+        lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "specification code is not lowered yet");
     p->function_tail = &p->functions;
     p->data_tail = &p->data;
     lower_indices(p);
@@ -266,6 +265,7 @@ struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *progra
     for (struct instance *f = p->functions; f != NULL; f = f->next)
         if (f->source != NULL)
             lower_function(p, f);
+    lower_constants(p);
     entry(p, main);
     for (;;) {
         lower_derived_functions(p);
@@ -280,10 +280,12 @@ struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *progra
         if (!pending)
             break;
     }
+    lower_constant_prefixes(p);
     for (struct data_instance *d = p->data; d != NULL; d = d->next)
         lower_data(p, d);
     struct mo_core *result = LOWER_NEW(p, struct mo_core, 1);
     result->entry = lower_text(p, "%entry");
+    result->consts = p->constants;
     result->funs.count = p->function_count;
     result->funs.items = LOWER_NEW(p, struct mo_core_fun, result->funs.count);
     result->data.count = p->data_count;

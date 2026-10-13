@@ -801,7 +801,7 @@ not syntax inference. Explicit arena-backed task and continuation lists perform
 expression/pattern lowering; an explicit, memoized stack walks type DAGs.
 Queued function/data instances have no recursive C walk. E1150 refuses later
 forms (unsupported ability/native
-operations, map literals, constants and spec code); E1151 is arena exhaustion, E1152 the
+operations, map literals and spec code); E1151 is arena exhaustion, E1152 the
 shared allocation-byte/step or Core-node bound, and E1153 the source-type,
 instantiation or generated Core path bound. Compilation is independent of the
 text codec: `mo_lower` does not print Core or apply the codec's smaller schema,
@@ -882,6 +882,14 @@ List Order uses a join over the remaining two lists: compare heads once, advance
 both tails only on Equal, and order an exhausted list before a nonempty one.
 Native Float `compare` orders NaNs after numbers and returns Equal for two NaNs,
 while direct scalar comparison operators retain IEEE behavior.
+
+Constants retain the checked dependency order and resolved global names.
+Their Core ConstDecl bodies become bytecode init functions, one per constant;
+lowering does not add duplicate ordinary `.init` functions. Functions normally
+use the full constant prefix; an arena-backed work queue tightens functions
+reachable from initializer i to prefix i and propagates through calls and
+closure bodies. Metadata retains module/source order separately from init order,
+and initializer nodes carry the same span/binder/closure metadata as functions.
 
 The initial CPS implementation conservatively passes every live outer var,
 not only changed vars, across a continuation join; expression joins also pass

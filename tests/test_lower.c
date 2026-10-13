@@ -943,6 +943,47 @@ static void test_list_text(void) {
     }
 }
 
+static void test_constants(void) {
+    struct lower_fixture f;
+    lower_fixture_init(&f, "module Main\nb = read_a() + 7\na = 7\n"
+                           "fn read_a() : Int\na + 5\nend\nfn main() : Int\nb\nend\n");
+    f.program.function_count = f.declarations.count = 2;
+    f.symbols[1].name = "read_a";
+    uint32_t a_start = (uint32_t)(strstr(f.source, "a = 7") - f.source);
+    uint32_t b_start = (uint32_t)(strstr(f.source, "b = read_a() + 7") - f.source);
+    struct mo_syntax declarations[2] = {{.kind = MO_S_CONST, .span = {0, a_start, a_start + 5}},
+                                        {.kind = MO_S_CONST, .span = {0, b_start, b_start + 16}}};
+    struct mo_symbol symbols[2] = {{.name = "a", .declaration = &declarations[0]},
+                                   {.name = "b", .declaration = &declarations[1]}};
+    struct mo_checked_constant constants[2] = {{.symbol = &symbols[0], .type = &f.int_},
+                                               {.symbol = &symbols[1], .type = &f.int_}};
+    uint32_t seven = lower_fixture_row(&f, MO_S_INT, &f.int_, "7", 0, NULL);
+    constants[0].initializer = f.functions[0].body;
+    constants[0].initializer.root = seven;
+    uint32_t a = lower_fixture_row(&f, MO_S_NAME, &f.int_, NULL, 0, NULL);
+    f.rows[a].symbol = &symbols[0];
+    uint32_t five = lower_fixture_row(&f, MO_S_INT, &f.int_, "5", 0, NULL);
+    uint32_t sum = lower_fixture_op(&f, MO_T_PLUS, &f.int_, a, five);
+    f.functions[1].body = f.functions[0].body;
+    f.functions[1].body.root = sum;
+    uint32_t callee = lower_fixture_row(&f, MO_S_NAME, &f.function_types[1], NULL, 0, NULL);
+    f.rows[callee].symbol = &f.symbols[1];
+    uint32_t call = lower_fixture_row(&f, MO_S_CALL, &f.int_, NULL, 1, &callee);
+    f.rows[call].symbol = &f.symbols[1];
+    seven = lower_fixture_row(&f, MO_S_INT, &f.int_, "7", 0, NULL);
+    sum = lower_fixture_op(&f, MO_T_PLUS, &f.int_, call, seven);
+    constants[1].initializer = f.functions[0].body;
+    constants[1].initializer.root = sum;
+    uint32_t b = lower_fixture_row(&f, MO_S_NAME, &f.int_, NULL, 0, NULL);
+    f.rows[b].symbol = &symbols[1];
+    f.program.constant_count = 2;
+    f.program.constants = constants;
+    struct mo_core *core = checked(&f, "constants-through-call", "returned\n19\n");
+    if (core != NULL)
+        run(core, 19);
+    lower_fixture_free(&f);
+}
+
 static void test_record_text(void) {
     struct lower_fixture f;
     lower_fixture_init(&f, "module Main\nstruct Point\nx: Int\nlabel: Text\nend\n"
@@ -1353,6 +1394,7 @@ int main(int argc, char **argv) {
     test_choice_order();
     test_list_order();
     test_list_text();
+    test_constants();
     test_record_text();
     test_text();
     test_result_entry();

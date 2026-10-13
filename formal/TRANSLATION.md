@@ -1200,9 +1200,9 @@ order is retained separately from their dependency-ordered declarations.
 ### 10.4 Constants
 
 A constant is `ConstDecl`: `const name : T = e`. A use is `global name`,
-not a function call. Lowering resolves global names and orders declarations
-by their dependencies, including dependencies through called functions
-(reference 10.4; bytecode 3.2 breaks ties by module then source order).
+not a function call. The checked program already orders declarations by their
+dependencies, including dependencies through called functions; lowering retains
+that order (reference 10.4; bytecode 3.2 breaks ties by module then source order).
 `initConsts` evaluates each once with an empty local environment and only
 the already computed globals, appends its value, then continues. A stop
 ends initialization before the entry or a test; no continuation runs.
@@ -1218,6 +1218,13 @@ prefix where they are made. Constants' names must be distinct, and their
 namespace is separate from local bindings; local shadowing cannot alter a
 resolved global read. Cycles and forward reads, direct or through calls,
 cannot pass these rules.
+The C lowerer starts ordinary functions at the full prefix and tightens a
+callee to the earliest constant initializer that can reach it. A bounded
+work queue propagates those restrictions through direct calls and generated
+function-value adapters, including calls nested in closures. Initializers are
+ConstDecl bodies, not duplicate ordinary functions; codegen emits their `.init`
+functions. Constant metadata carries source-order ownership and full body spans
+independently of the dependency-ordered Core declarations.
 
 ```mo
 max_attempts = 3
