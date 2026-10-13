@@ -249,6 +249,22 @@ $(BUILD)/debug/tests/%.test: $(BUILD)/debug/tests/%.o $(call objects,$(BUILD)/de
 $(BUILD)/sanitize/tests/%.test: $(BUILD)/sanitize/tests/%.o $(call objects,$(BUILD)/sanitize,$(LIB_SOURCES))
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
+# Test-only stack failure at the command's POSIX edge, using the same portable
+# compile-time renaming as the VM faults. Production links ordinary execute.o.
+$(BUILD)/debug/cli-faults/execute.o: src/tools/execute.c Makefile $(SOURCE_LIST) build/generated/tools/embedded.h $(GUIDE_STAMP)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -Dmo_with_stack=mo_cli_fault_stack -c $< -o $@
+
+$(BUILD)/sanitize/cli-faults/execute.o: src/tools/execute.c Makefile $(SOURCE_LIST) build/generated/tools/embedded.h $(GUIDE_STAMP)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) -Dmo_with_stack=mo_cli_fault_stack -c $< -o $@
+
+$(BUILD)/debug/tests/test_cli_faults.test: $(BUILD)/debug/tests/test_cli_faults.o $(call objects,$(BUILD)/debug,$(filter-out src/tools/execute.c,$(LIB_SOURCES))) $(BUILD)/debug/cli-faults/execute.o
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/tests/test_cli_faults.test: $(BUILD)/sanitize/tests/test_cli_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out src/tools/execute.c,$(LIB_SOURCES))) $(BUILD)/sanitize/cli-faults/execute.o
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
 # Fault injection only in the two translation units owning VM initialization
 # and heap allocation. Compile-time renaming also works with Apple's linker.
 VM_FAULT_SOURCES := src/heap/heap.c src/vm/image.c
@@ -265,22 +281,6 @@ $(BUILD)/debug/tests/test_vm_faults.test: $(BUILD)/debug/tests/test_vm_faults.o 
 	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
 
 $(BUILD)/sanitize/tests/test_vm_faults.test: $(BUILD)/sanitize/tests/test_vm_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out $(VM_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/vm-faults/%.o,$(VM_FAULT_SOURCES))
-	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
-
-# Test-only stack failure at the command's POSIX edge, using the same portable
-# compile-time renaming as the VM faults. Production links ordinary execute.o.
-$(BUILD)/debug/cli-faults/execute.o: src/tools/execute.c Makefile $(SOURCE_LIST) build/generated/tools/embedded.h $(GUIDE_STAMP)
-	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(DEBUG) -Dmo_with_stack=mo_cli_fault_stack -c $< -o $@
-
-$(BUILD)/sanitize/cli-faults/execute.o: src/tools/execute.c Makefile $(SOURCE_LIST) build/generated/tools/embedded.h $(GUIDE_STAMP)
-	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(SANITIZE) -Dmo_with_stack=mo_cli_fault_stack -c $< -o $@
-
-$(BUILD)/debug/tests/test_cli_faults.test: $(BUILD)/debug/tests/test_cli_faults.o $(call objects,$(BUILD)/debug,$(filter-out src/tools/execute.c,$(LIB_SOURCES))) $(BUILD)/debug/cli-faults/execute.o
-	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
-
-$(BUILD)/sanitize/tests/test_cli_faults.test: $(BUILD)/sanitize/tests/test_cli_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out src/tools/execute.c,$(LIB_SOURCES))) $(BUILD)/sanitize/cli-faults/execute.o
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
 $(FUZZ_BUILD)/bin/%: $(FUZZ_BUILD)/fuzz/%.o $(call objects,$(FUZZ_BUILD),$(LIB_SOURCES))
