@@ -2110,7 +2110,12 @@ Direct `Console.print` reads its operation
 and named input type from `base/hostops.def`, with the receiver explicit.
 Map expressions, imports and constants/specs still report E1103. `where`
 validates scoped parameters and the five abilities; customizers must have their declaring
-type's Text/Ordering signature. Written Map/Set types check Hash in every
+type's Text/Ordering signature. A generic customizer covers the whole nominal
+type: every receiver type slot is a distinct scoped function parameter, in any
+permutation, with no extra signature parameters. Concrete or constructed
+receiver restrictions are refused with E0082 rather than specializing the
+type's single customizer. Its function substitutions retain A–Z order, not
+the receiver type's slot order. Written Map/Set types check Hash in every
 annotation, including unused declarations and nested fields. `Set.empty` is
 a polymorphic constant, not a zero-argument function.
 Native signatures use the real syntax/type pipeline on the shared tables'
