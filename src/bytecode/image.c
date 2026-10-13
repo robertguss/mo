@@ -6,6 +6,8 @@ struct mo_image {
     const uint32_t *code_offsets;
     struct mo_types types;
     struct mo_verification verified;
+    void *runtime;
+    void (*release_runtime)(void *);
 };
 
 struct mo_image *mo_bytecode_load_site(const uint8_t *bytes, size_t length,
@@ -30,7 +32,11 @@ struct mo_image *mo_bytecode_load_site(const uint8_t *bytes, size_t length,
         mo_arena_free(&arena);
         return NULL;
     }
-    *image = (struct mo_image){arena, file, offsets, types, verified};
+    *image = (struct mo_image){.arena = arena,
+                               .file = file,
+                               .code_offsets = offsets,
+                               .types = types,
+                               .verified = verified};
     return image;
 }
 
@@ -41,6 +47,22 @@ struct mo_image *mo_load(const uint8_t *bytes, size_t length, struct mo_load_err
 const struct mo_bytecode *mo_image_bytecode(const struct mo_image *image) {
     MO_ASSERT(image != NULL);
     return image->file;
+}
+
+const struct mo_types *mo_image_types(const struct mo_image *image) {
+    MO_ASSERT(image != NULL);
+    return &image->types;
+}
+
+void *mo_image_runtime(const struct mo_image *image) {
+    MO_ASSERT(image != NULL);
+    return image->runtime;
+}
+
+void mo_image_attach_runtime(struct mo_image *image, void *runtime, void (*release)(void *)) {
+    MO_ASSERT(image != NULL && image->runtime == NULL && runtime != NULL && release != NULL);
+    image->runtime = runtime;
+    image->release_runtime = release;
 }
 
 bool mo_image_registers_readable(const struct mo_image *image, uint32_t function, uint32_t pc,
@@ -70,6 +92,9 @@ bool mo_image_visit_readable(const struct mo_image *image, uint32_t function, bo
 
 void mo_image_free(struct mo_image *image) {
     MO_ASSERT(image != NULL);
+    if (image->runtime != NULL) {
+        image->release_runtime(image->runtime);
+    }
     struct mo_arena arena = image->arena;
     mo_arena_free(&arena);
 }
