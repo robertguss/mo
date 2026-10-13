@@ -7,6 +7,24 @@
 #include <string.h>
 #include <time.h>
 
+static void unchanged_trim(void) {
+    struct prim_fixture f;
+    prim_fixture_init(&f, 1 << 20);
+    struct mo_cell arg, out;
+    MO_ASSERT(mo_value_text(f.heap, "β🙂", 6, &arg));
+    struct mo_cell held = mo_value_dup(f.heap, f.builtin[MO_TYPE_TEXT], arg);
+    const char *reason;
+    MO_ASSERT(mo_prim_call(f.heap, &f.types, MO_PRIM_TEXT_TRIM, f.signature[MO_PRIM_TEXT_TRIM],
+                           &arg, &out, &reason) == MO_PRIM_RETURNED);
+    CHECK(mo_cell_get_ref(out) == mo_cell_get_ref(held));
+    size_t length;
+    const uint8_t *bytes = mo_value_data(out, &length);
+    CHECK(length == 6 && memcmp(bytes, "β🙂", 6) == 0);
+    mo_value_drop(f.heap, f.builtin[MO_TYPE_TEXT], held);
+    mo_value_drop(f.heap, f.builtin[MO_TYPE_TEXT], out);
+    prim_fixture_free(&f);
+}
+
 static void runtime_sizes(void) {
     struct prim_fixture f;
     prim_fixture_init(&f, MO_DEFAULT_HEAP_SIZE);
@@ -461,6 +479,7 @@ int main(int argc, char **argv) {
     text_split();
     collection_ownership();
     refusal_preserves_operands();
+    unchanged_trim();
     time_boundary();
     return mo_test_report("primitives");
 }

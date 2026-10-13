@@ -77,6 +77,70 @@ bool mo_value_text(struct mo_heap *process, const char *utf8, size_t length, str
     return byte_value(process, MO_TYPE_TEXT, (const uint8_t *)utf8, length, 0, out);
 }
 
+bool mo_text_concat(struct mo_heap *process, struct mo_cell *text, struct mo_cell right) {
+    MO_ASSERT(process != NULL && text != NULL);
+    struct mo_allocation *old = mo_heap_allocation(mo_cell_get_ref(*text));
+    struct mo_allocation *other = mo_heap_allocation(mo_cell_get_ref(right));
+    MO_ASSERT(old->object.layout == MO_BUILTIN_LAYOUT(MO_TYPE_TEXT) &&
+              other->object.layout == MO_BUILTIN_LAYOUT(MO_TYPE_TEXT));
+    if (other->length == 0)
+        return true;
+    if (other->length > MO_LIMIT_VALUE_BYTES - old->length)
+        return false;
+    size_t needed = (size_t)old->length + other->length;
+    size_t capacity = old->size - offsetof(struct mo_allocation, cells);
+    struct mo_allocation *result = old;
+    if (old->object.count != 1 || needed > capacity) {
+        size_t room = capacity > MO_LIMIT_VALUE_BYTES / 2 ? MO_LIMIT_VALUE_BYTES : 2 * capacity;
+        if (room < 32)
+            room = 32;
+        if (room < needed)
+            room = needed;
+        /* Slack is an optimization, not a reason to refuse a fitting value. */
+        if (room > process->limit - process->used ||
+            offsetof(struct mo_allocation, cells) > process->limit - process->used - room)
+            room = needed;
+        result = mo_heap_allocate(process, old->type, old->object.layout, room);
+        if (result == NULL)
+            return false;
+        memcpy(result->cells, old->cells, old->length);
+    }
+    memcpy((uint8_t *)result->cells + old->length, other->cells, other->length);
+    result->length = (uint32_t)needed;
+    result->hash_valid = false;
+    if (result != old) {
+        mo_value_drop(process, old->type, *text);
+        *text = mo_cell_ref(&result->object);
+    }
+    return true;
+}
+
+bool mo_text_slice(struct mo_heap *process, struct mo_cell *text, size_t start, size_t length) {
+    MO_ASSERT(process != NULL && text != NULL);
+    struct mo_allocation *old = mo_heap_allocation(mo_cell_get_ref(*text));
+    MO_ASSERT(old->object.layout == MO_BUILTIN_LAYOUT(MO_TYPE_TEXT) && start <= old->length &&
+              length <= old->length - start);
+    const uint8_t *bytes = (const uint8_t *)old->cells;
+    MO_ASSERT((start == old->length || (bytes[start] & 0xc0) != 0x80) &&
+              (start + length == old->length || (bytes[start + length] & 0xc0) != 0x80));
+    if (length == old->length)
+        return true;
+    struct mo_allocation *result = old;
+    if (old->object.count != 1) {
+        result = mo_heap_allocate(process, old->type, old->object.layout, length);
+        if (result == NULL)
+            return false;
+    }
+    memmove(result->cells, bytes + start, length);
+    result->length = (uint32_t)length;
+    result->hash_valid = false;
+    if (result != old) {
+        mo_value_drop(process, old->type, *text);
+        *text = mo_cell_ref(&result->object);
+    }
+    return true;
+}
+
 bool mo_value_bytes(struct mo_heap *process, const uint8_t *bytes, size_t length,
                     struct mo_cell *out) {
     return byte_value(process, MO_TYPE_BYTES, bytes, length, 0, out);

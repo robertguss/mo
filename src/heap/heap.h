@@ -117,6 +117,16 @@ MO_MUST_USE bool mo_list_append(struct mo_heap *process, uint32_t type, struct m
 MO_MUST_USE bool mo_list_set(struct mo_heap *process, uint32_t type, struct mo_cell *list,
                              uint32_t index, struct mo_cell element);
 
+/* Consume the left Text on success; the right Text is borrowed and may alias
+ * it. Unique storage grows geometrically. slice's byte range must end at UTF-8
+ * boundaries; both operations preserve valid UTF-8 without validating again.
+ * On false every input, count and output is unchanged. Unchanged slices keep
+ * the original object even when shared or immortal. */
+MO_MUST_USE bool mo_text_concat(struct mo_heap *process, struct mo_cell *text,
+                                struct mo_cell right);
+MO_MUST_USE bool mo_text_slice(struct mo_heap *process, struct mo_cell *text, size_t start,
+                               size_t length);
+
 /* Generic operations borrow values. false means unavailable ability or out of
  * memory; result is unchanged. No work cap on equality, ordering or hashing.
  * Structural compare ignores custom Mo compare functions. Hashes use the run's
