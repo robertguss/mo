@@ -1799,7 +1799,8 @@ static struct mo_core *source_core(struct mo_arena *output, struct mo_buffer *te
     MO_ASSERT(mo_sources_add_bytes(&sources, "main.mo", text->bytes, text->length, &file, &error));
     struct mo_module_syntax *module = mo_parse(&input, &sources, file, diags);
     const char *name = "Main";
-    struct mo_module_set set = {.count = 1, .modules = &module, .names = &name};
+    struct mo_module_set set = {
+        .count = 1, .modules = &module, .names = &name, .sources = &sources};
     struct mo_program *program = module == NULL ? NULL : mo_check(&input, &set, diags);
     MO_ASSERT(program != NULL);
     struct mo_core *core = mo_lower(output, program, &sources, diags);
@@ -1808,6 +1809,48 @@ static struct mo_core *source_core(struct mo_arena *output, struct mo_buffer *te
     if (core != NULL)
         MO_ASSERT(mo_core_check(core, diags));
     return core;
+}
+
+static void test_source_specs(void *unused) {
+    (void)unused;
+    struct mo_arena output;
+    struct mo_diags diags;
+    struct mo_buffer source;
+    mo_arena_init(&output, MO_LIMIT_LOWER_WORK);
+    MO_ASSERT(mo_diags_init(&diags));
+    mo_buffer_init(&source, MO_LIMIT_FILE_SIZE);
+    MO_ASSERT(mo_buffer_append_text(
+        &source, "module Main\nfn twice(value: T) : T where T: Number, T: Equal\n"
+                 "promise \"returns twice its input\"\nresult == value + value\n"
+                 "allows result: 6, value: 3\nallows value: 4, result: 8\n"
+                 "forbids value: 1.25, result: 2.0\nend\n"
+                 "value + value\nend\nfn main() : Int\n17\nend\n"));
+    struct mo_core *core = source_core(&output, &source, &diags);
+    CHECK(core != NULL && !mo_diags_any(&diags));
+    if (core != NULL) {
+        run_outcome(core, "Main::Main.twice(Int).promise.1.allows.1", MO_RETURNED, 0, NULL);
+        run_outcome(core, "Main::Main.twice(Int).promise.1.allows.2", MO_RETURNED, 0, NULL);
+        run_outcome(core, "Main::Main.twice(Decimal).promise.1.forbids.1", MO_RETURNED, 1, NULL);
+        uint32_t last = 0, promises = 0;
+        const struct mo_core_module_meta *module = &core->metadata.modules.items[0];
+        for (size_t i = 0; i < module->funs.count; i++) {
+            uint32_t index = module->funs.items[i];
+            if (core->funs.items[index].kind == MO_CORE_FUNCTION)
+                continue;
+            const struct mo_core_fun_meta *meta = &core->metadata.funs.items[index];
+            CHECK(meta->span.some && meta->span.value.start >= last);
+            last = meta->span.value.start;
+            if (core->funs.items[index].kind == MO_CORE_PROMISE) {
+                promises++;
+                CHECK(meta->lines.count == 1 && meta->lines.items[0].text.length == 23 &&
+                      memcmp(meta->lines.items[0].text.bytes, "result == value + value", 23) == 0);
+            }
+        }
+        CHECK(promises == 2); /* Same subject/type list shares one promise. */
+    }
+    mo_arena_free(&output);
+    mo_diags_free(&diags);
+    mo_buffer_free(&source);
 }
 
 static void test_source(void *unused) {
@@ -1941,6 +1984,7 @@ int main(int argc, char **argv) {
     test_abstract_ability_refusal();
     test_ignored_parameters();
     test_substituted_depth();
+    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_specs, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source, NULL) == 0);
     return mo_test_report("lower");
 }

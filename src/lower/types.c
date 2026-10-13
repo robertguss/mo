@@ -368,11 +368,8 @@ static int source_order(const void *a, const void *b) {
 void lower_indices(struct lowering *p) {
     uint32_t count = p->program->function_count;
     p->source_index = LOWER_NEW(p, const struct mo_checked_function *, count);
-    p->by_source = LOWER_NEW(p, struct instance *, count);
-    p->source_tails = LOWER_NEW(p, struct instance **, count);
     for (uint32_t i = 0; i < count; i++) {
         p->source_index[i] = &p->program->functions[i];
-        p->source_tails[i] = &p->by_source[i];
         for (uint32_t n = count; n != 0; n /= 2)
             lower_work(p, 1 + strlen(p->source_index[i]->signature->function->name));
     }
@@ -426,6 +423,22 @@ struct instance *lower_customizer(struct lowering *p, const struct mo_ability_im
     }
     return lower_instance(p, proof->function, proof->arguments, substitution, proof->part_count,
                           uses, owner, depth + (proof->arguments.count != 0));
+}
+
+mo_core_string lower_function_name(struct lowering *p, const struct mo_symbol *symbol) {
+    mo_core_string name = lower_global_name(p, symbol);
+    /* Overload ownership is a nominal receiver, independent of discovery. */
+    if (symbol->receiver != UINT32_MAX) {
+        const struct mo_module_scope *scope = &p->program->interfaces->scopes[symbol->module];
+        const struct mo_symbol *group =
+            mo_find_symbol(scope, (const uint8_t *)symbol->name, strlen(symbol->name));
+        MO_ASSERT(group != NULL);
+        if (group->overload_count > 1) {
+            const struct mo_symbol *receiver = &scope->symbols[symbol->receiver];
+            name = lower_concat(p, name, "@", lower_text(p, receiver->name));
+        }
+    }
+    return name;
 }
 
 struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symbol,
@@ -511,20 +524,7 @@ struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symb
         f->substitution.abilities[requirement++] =
             (struct ability_binding){abilities[i].parameter, proof, environment};
     }
-    mo_core_string name = lower_concat(p, lower_text(p, p->program->set->names[symbol->module]),
-                                       ".", lower_text(p, symbol->name));
-    /* Overload ownership is a nominal receiver, independent of discovery. */
-    if (symbol->receiver != UINT32_MAX) {
-        const struct mo_module_scope *scope = &p->program->interfaces->scopes[symbol->module];
-        const struct mo_symbol *group =
-            mo_find_symbol(scope, (const uint8_t *)symbol->name, strlen(symbol->name));
-        MO_ASSERT(group != NULL);
-        if (group->overload_count > 1) {
-            const struct mo_symbol *receiver = &scope->symbols[symbol->receiver];
-            name = lower_concat(p, name, "@", lower_text(p, receiver->name));
-        }
-    }
-    name = applied_name(p, name, arguments.count, types);
+    mo_core_string name = applied_name(p, lower_function_name(p, symbol), arguments.count, types);
     if (arguments.count != 0)
         name = lower_concat(p, lower_text(p, p->program->set->names[owner]), "::", name);
     f->fun.name = name;
@@ -536,9 +536,6 @@ struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symb
     p->function_tail = &f->next;
     f->hash_next = p->instance_index[at];
     p->instance_index[at] = f;
-    size_t source_index = (size_t)(source - p->program->functions);
-    *p->source_tails[source_index] = f;
-    p->source_tails[source_index] = &f->source_next;
     return f;
 }
 

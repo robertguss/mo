@@ -1418,10 +1418,24 @@ C lowering emits each checked condition exactly once, nested under the previous
 line's success branch. Promise names are `SUBJECT.promise.N`; anchors use that
 whole name followed by `.allows.N` or `.forbids.N`, so distinct promises cannot
 reuse a display name. Metadata preserves the ordinary subject/promise links,
-expectation and each original condition's bytes/span. Anchor value roots are
-evaluated by increasing checked postorder index (written order), saved once,
-and only then permuted to parameter order at the promise call. Generic spec
-instances currently refuse E1150 pending their checked producer.
+expectation, verbatim promise header and each original condition's bytes/span.
+Anchor value roots are evaluated by increasing checked postorder index (written
+order), saved once, and only then permuted to parameter order at the promise call.
+
+Each concrete subject instance reserves its promises with the same scoped type
+and ability environment. An anchor's `arguments` and type-only `abilities`
+(operand `UINT32_MAX`, keyed by subject parameter and ability) select that subject
+instance; no fresh promise parameter scope or inferred diagnostic Text proof is
+introduced. A promise is memoized by source spec plus concrete subject instance,
+including the requesting module, before its body enters the bounded work queue.
+Its name uses the concrete subject's full instance name before `.promise.N`.
+Uses discovered in examples/tests and subsequent promise/customizer bodies also
+reserve the corresponding promises. Unused polymorphic templates emit no Core
+declaration. A generic subject's zero-parameter examples emit once, under its
+uninstantiated overload-qualified name, regardless of the body's concrete calls.
+Module ownership lists group all ordinary/spec instances by original source
+declaration order; call/link indices stay fixed. Tools execute anchors separately
+to check their expectations; typing and lowering alone do not establish truth.
 
 ```mo
 promise "a deposit adds exactly the amount"

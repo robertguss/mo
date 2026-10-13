@@ -138,6 +138,27 @@ static int constant_order(const void *a, const void *b) {
     return (xs > ys) - (xs < ys);
 }
 
+static int function_order(const void *a, const void *b) {
+    const struct instance *const *left = a, *const *right = b;
+    const struct instance *x = *left, *y = *right;
+    if (x->owner != y->owner)
+        return (x->owner > y->owner) - (x->owner < y->owner);
+    bool x_generated = x->source == NULL && x->spec == NULL;
+    bool y_generated = y->source == NULL && y->spec == NULL;
+    if (x_generated != y_generated)
+        return x_generated ? 1 : -1;
+    if (!x_generated) {
+        uint32_t xm = x->source == NULL ? x->spec->module : x->source->signature->function->module;
+        uint32_t ym = y->source == NULL ? y->spec->module : y->source->signature->function->module;
+        if (xm != ym)
+            return (xm > ym) - (xm < ym);
+        uint32_t xs = x->meta.span.value.start, ys = y->meta.span.value.start;
+        if (xs != ys)
+            return (xs > ys) - (xs < ys);
+    }
+    return (x->index > y->index) - (x->index < y->index);
+}
+
 void lower_metadata(struct lowering *p, struct mo_core *core) {
     struct mo_core_metadata *m = &core->metadata;
     m->source = true;
@@ -215,22 +236,27 @@ void lower_metadata(struct lowering *p, struct mo_core *core) {
         out->exposed_types.items =
             LOWER_NEW(p, struct mo_core_exposed_type, out->exposed_types.count);
     }
-    /* Per-declaration instance lists preserve source order without a cross
-     * product over modules, declarations and discovered instances. */
-    for (uint32_t source = 0; source < p->program->function_count; source++)
-        for (struct instance *f = p->by_source[source]; f != NULL; f = f->source_next) {
-            lower_work(p, 1);
-            struct mo_core_module_meta *out = &m->modules.items[f->owner];
-            struct cursor *at = &cursors[f->owner];
-            out->funs.items[at->nf++] = f->index;
-            if (f->source->signature->function->module == f->owner &&
-                f->source->signature->function->exported)
-                out->exposed_funs.items[at->ef++] = f->index;
-        }
+    /* Specs can discover new instances after their anchors. Sort ownership
+     * independently of the stable call/link indices, grouping each source
+     * declaration's instances before the next declaration. Helpers come last. */
+    struct instance **functions = LOWER_NEW(p, struct instance *, p->function_count);
+    uint32_t function = 0;
     for (struct instance *f = p->functions; f != NULL; f = f->next) {
         lower_work(p, 1);
-        if (f->source == NULL)
-            m->modules.items[f->owner].funs.items[cursors[f->owner].nf++] = f->index;
+        functions[function++] = f;
+    }
+    for (uint32_t n = p->function_count; n != 0; n /= 2)
+        lower_work(p, p->function_count);
+    qsort(functions, p->function_count, sizeof *functions, function_order);
+    for (uint32_t j = 0; j < p->function_count; j++) {
+        lower_work(p, 1);
+        struct instance *f = functions[j];
+        struct mo_core_module_meta *out = &m->modules.items[f->owner];
+        struct cursor *at = &cursors[f->owner];
+        out->funs.items[at->nf++] = f->index;
+        if (f->source != NULL && f->source->signature->function->module == f->owner &&
+            f->source->signature->function->exported)
+            out->exposed_funs.items[at->ef++] = f->index;
     }
     for (uint32_t j = 0; j < p->data_count; j++) {
         lower_work(p, 1);

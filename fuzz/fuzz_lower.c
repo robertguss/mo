@@ -1,7 +1,70 @@
 #include "../tests/lower_fixture.h"
 #include "base/codes.h"
+#include "base/stack.h"
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
+
+struct source_input {
+    const uint8_t *bytes;
+    size_t size;
+};
+
+static void source_specs(void *argument) {
+    const struct source_input *input = argument;
+    struct mo_buffer text;
+    mo_buffer_init(&text, 4096);
+    MO_ASSERT(mo_buffer_append_text(
+        &text, "module Main\nfn pair(left: Z, right: A) : (Z, A) "
+               "where Z: Number, Z: Equal, A: Equal\n"
+               "promise \"scoped requirements\"\nresult.0 == left + left\nresult.1 == right\n"));
+    size_t count = input->size < 4 ? input->size : 4;
+    for (size_t i = 0; i <= count + 1; i++) {
+        uint8_t byte = i < count ? input->bytes[i] : 0;
+        bool decimal = (byte & 1) != 0, boolean = (byte & 2) != 0;
+        const char *right = boolean ? "true" : "\"λ\"";
+        MO_ASSERT(mo_buffer_append_text(&text, i == count + 1 ? "forbids result: ("
+                                                              : "allows result: (") &&
+                  mo_buffer_append_uint(&text, (uint32_t)byte * 2 + (i == count + 1)) &&
+                  mo_buffer_append_text(&text, decimal ? ".5, " : ", ") &&
+                  mo_buffer_append_text(&text, right) &&
+                  mo_buffer_append_text(&text, "), right: ") &&
+                  mo_buffer_append_text(&text, right) && mo_buffer_append_text(&text, ", left: ") &&
+                  mo_buffer_append_uint(&text, byte) &&
+                  mo_buffer_append_text(&text, decimal ? ".25\n" : "\n"));
+    }
+    MO_ASSERT(mo_buffer_append_text(&text, "end\n(left + left, right)\nend\n"
+                                           "test \"late concrete use\"\n"
+                                           "assert pair(3, false) == (6, false)\nend\n"
+                                           "fn main() : Int\n17\nend\n"));
+    struct mo_arena frontend, output;
+    struct mo_sources sources;
+    struct mo_diags diags;
+    mo_arena_init(&frontend, 32 << 20);
+    mo_arena_init(&output, 32 << 20);
+    MO_ASSERT(mo_sources_init(&sources) && mo_diags_init(&diags));
+    uint32_t file;
+    struct mo_source_error error;
+    MO_ASSERT(mo_sources_add_bytes(&sources, "main.mo", text.bytes, text.length, &file, &error));
+    struct mo_module_syntax *module = mo_parse(&frontend, &sources, file, &diags);
+    MO_ASSERT(module != NULL && !mo_diags_any(&diags));
+    const char *name = "Main";
+    struct mo_module_set set = {
+        .count = 1, .modules = &module, .names = &name, .sources = &sources};
+    struct mo_program *program = mo_check(&frontend, &set, &diags);
+    MO_ASSERT(program != NULL && !mo_diags_any(&diags));
+    struct mo_core *core = mo_lower(&output, program, &sources, &diags);
+    MO_ASSERT(core != NULL && !mo_diags_any(&diags));
+    mo_arena_free(&frontend);
+    mo_sources_free(&sources);
+    MO_ASSERT(mo_core_check(core, &diags)); /* Including spec metadata after frontend release. */
+    struct mo_buffer wire;
+    mo_buffer_init(&wire, MO_LIMIT_CORE_TEXT_SIZE);
+    MO_ASSERT(mo_core_print(core, &wire));
+    mo_buffer_free(&wire);
+    mo_arena_free(&output);
+    mo_diags_free(&diags);
+    mo_buffer_free(&text);
+}
 
 /* Generate the certified graph shapes, with fresh rows for every occurrence.
  * Every accepted document must check and print; a refusal there is a lower bug. */
@@ -159,5 +222,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                   code == MO_CODE_LOWER_NO_MEMORY);
     }
     lower_fixture_free(&f);
+    struct source_input input = {data, size};
+    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, source_specs, &input) == 0);
     return 0;
 }

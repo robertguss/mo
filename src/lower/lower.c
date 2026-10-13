@@ -273,9 +273,14 @@ struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *progra
         bool pending = false;
         for (struct instance *f = p->functions; f != NULL; f = f->next) {
             lower_work(p, 1);
-            if (f->source != NULL && f->fun.body == NULL) {
+            if ((f->source != NULL || f->spec != NULL) && f->fun.body == NULL) {
                 pending = true;
-                lower_function(p, f);
+                if (f->source != NULL)
+                    lower_function(p, f);
+                else {
+                    MO_ASSERT(f->spec != NULL);
+                    lower_body(p, f, &f->spec->body, f->spec->parameter_count, f->spec->parameters);
+                }
             }
         }
         if (!pending)
