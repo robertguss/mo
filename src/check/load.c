@@ -575,7 +575,7 @@ static MO_MUST_USE struct mo_module_set *load(struct mo_arena *arena, struct mo_
     l.out = allocate(&l, 1, sizeof(*l.out), _Alignof(struct mo_module_set));
     if (l.out == NULL)
         return NULL;
-    *l.out = (struct mo_module_set){0};
+    *l.out = (struct mo_module_set){.sources = sources};
     l.items = allocate(&l, MO_LIMIT_FILES, sizeof(*l.items), _Alignof(struct loaded));
     l.out->modules =
         allocate(&l, MO_LIMIT_FILES, sizeof(*l.out->modules), _Alignof(struct mo_module_syntax *));

@@ -2143,10 +2143,21 @@ patterns, tuples/lists, conditionals, loops, early exits/asserts and noncapturin
 lambdas, dot/overload dispatch, Mo-library calls, ability dots and interpolation.
 Option defaults and Option/Result `try` are checked too, including unique
 failure wrapping and generic wrapper requirements.
+Each source example line is checked through the same inference and graph
+emitter, as a zero-parameter Bool body in its subject's module. Examples retain
+the subject's function index and a per-subject ordinal across examples blocks;
+no subject parameters are brought into the example's scope. Their text/span
+names the original expression bytes, including internal whitespace, without a
+decoded or reconstructed spelling. `mo_module_set.sources` supplies those bytes
+only during checking; `mo_load_program` fills it and checking copies spec text
+into its arena. Synthetic callers with specs must supply equivalent sources.
+Examples have no numbered condition table: their Bool root is authoritative;
+only promise condition tables become bytecode condition metadata.
 `main` returns Unit or Int and takes no parameters or one Console.
 Direct `Console.print` reads its operation
 and named input type from `base/hostops.def`, with the receiver explicit.
-Map expressions, imports and constants/specs still report E1103. `where`
+Map expressions, imports, constants, tests and promises/anchors still report E1103.
+Spec-only capability operations also remain staged. `where`
 validates scoped parameters and the five abilities; customizers must have their declaring
 type's Text/Ordering signature. A generic customizer covers the whole nominal
 type: every receiver type slot is a distinct scoped function parameter, in any

@@ -28,8 +28,11 @@ static void init(struct fixture *f, const char *text) {
                                    &file, &error));
     f->module = mo_parse(&f->syntax, &f->sources, file, &f->diags);
     MO_ASSERT(f->module != NULL && !mo_diags_any(&f->diags));
-    f->set = (struct mo_module_set){
-        .count = 1, .modules = &f->module, .order = &f->order, .uses = &f->uses};
+    f->set = (struct mo_module_set){.count = 1,
+                                    .modules = &f->module,
+                                    .order = &f->order,
+                                    .uses = &f->uses,
+                                    .sources = &f->sources};
     f->program = mo_check(&f->arena, &f->set, &f->diags);
 }
 
@@ -38,6 +41,47 @@ static void free_fixture(struct fixture *f) {
     mo_arena_free(&f->syntax);
     mo_diags_free(&f->diags);
     mo_sources_free(&f->sources);
+}
+
+static void example_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn plus(a: Int) : Int\nexamples\n"
+             "plus(3) == 4\nend\nexamples\nplus(8) == 9\nend\na + 1\nend\n"
+             "fn main() : Int\nexamples\nfalse\nend\nplus(2)\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        CHECK(f.program->spec_count == 3);
+        for (uint32_t i = 0; i < 2 && i < f.program->spec_count; i++) {
+            const struct mo_checked_spec *spec = &f.program->specs[i];
+            CHECK(spec->kind == MO_SPEC_EXAMPLE && spec->module == 0 && spec->subject == 0 &&
+                  spec->number == i + 1 && spec->promise == UINT32_MAX);
+            CHECK(spec->parameter_count == 0 && spec->condition_count == 0);
+            MO_ASSERT(spec->body.root < spec->body.count);
+            const struct mo_checked_expression *root = &spec->body.items[spec->body.root];
+            CHECK(strcmp(root->type->name, "Bool") == 0 && root->operation == MO_T_EQ);
+            MO_ASSERT(root->operand_count == 2);
+            const struct mo_checked_expression *call = &spec->body.items[root->operands[0]];
+            CHECK(call->symbol == f.program->functions[0].signature->function);
+            MO_ASSERT(call->operand_count == 2);
+            CHECK(spec->body.items[call->operands[1]].syntax->text[0] == (i == 0 ? '3' : '8'));
+            CHECK(spec->body.items[root->operands[1]].syntax->text[0] == (i == 0 ? '4' : '9'));
+            struct mo_span span = spec->text.span;
+            CHECK(spec->text.length == span.end - span.start);
+            CHECK(memcmp(spec->text.bytes, f.sources.files[span.file].bytes + span.start,
+                         spec->text.length) == 0);
+        }
+        if (f.program->spec_count == 3) {
+            const struct mo_checked_spec *spec = &f.program->specs[2];
+            CHECK(spec->subject == 1 && spec->number == 1);
+            MO_ASSERT(spec->body.root < spec->body.count);
+            CHECK(spec->body.items[spec->body.root].syntax->kind == MO_S_FALSE);
+        }
+        mo_sources_free(&f.sources);
+        const struct mo_checked_spec *first = &f.program->specs[0];
+        CHECK(first->text.length == 12 && memcmp(first->text.bytes, "plus(3) == 4", 12) == 0);
+        MO_ASSERT(mo_sources_init(&f.sources));
+    }
+    free_fixture(&f);
 }
 
 static void entry_graph(void) {
@@ -1629,7 +1673,9 @@ static void rejected_stages(void) {
         {"fn main(console: Console)\nconsole.printed\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"value = 1\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"value = 1\nfn main() : Int\nmissing\nend\n", MO_CODE_CHECK_UNFINISHED},
-        {"fn main() : Int\nexamples\n1 == 1\nend\n1\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn main() : Int\nexamples\n1\nend\n1\nend\n", MO_CODE_CONDITION_TYPE},
+        {"fn helper(a: Int) : Int\nexamples\na == a\nend\na\nend\nfn main()\nend\n",
+         MO_CODE_NAME_UNKNOWN},
         {"fn helper() : Int\nmissing\nend\nfn main() : Int\n0\nend\n", MO_CODE_NAME_UNKNOWN},
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
@@ -1896,7 +1942,10 @@ static void allocation_failures(void) {
         "module Main\nenum Outer(T)\nWrapped(Set(T))\nend\n"
         "fn lift(value: Result(Int, Set(T))) : Result(Text, Outer(T)) where T: Hash\n"
         "n = try value\nOk(n.to_text)\nend\n"
-        "fn main() : Int\nreader = fn(values) values.get(0) or 17 end\nreader([3])\nend\n"};
+        "fn main() : Int\nreader = fn(values) values.get(0) or 17 end\nreader([3])\nend\n",
+        "module Main\nfn twice(value: T) : T where T: Number\nexamples\n"
+        "twice(3) == 6\nend\nvalue + value\nend\n"
+        "fn main() : Int\ntwice(4)\nend\n"};
     for (size_t s = 0; s < sizeof(sources) / sizeof(sources[0]); s++) {
         struct fixture f;
         init(&f, sources[s]);
@@ -1931,7 +1980,8 @@ static void allocation_failures(void) {
 static void corpus(void) {
     static const char *const paths[] = {
         "fuzz/corpus/fuzz_program/loops.mo", "fuzz/corpus/fuzz_program/patterns.mo",
-        "fuzz/corpus/fuzz_program/lambdas.mo", "fuzz/corpus/fuzz_program/failures.mo"};
+        "fuzz/corpus/fuzz_program/lambdas.mo", "fuzz/corpus/fuzz_program/failures.mo",
+        "fuzz/corpus/fuzz_program/examples.mo"};
     struct mo_sources sources;
     MO_ASSERT(mo_sources_init(&sources));
     for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
@@ -1948,6 +1998,7 @@ static void corpus(void) {
 
 static void run(void *argument) {
     (void)argument;
+    example_graph();
     entry_graph();
     console_graph();
     native_graph();

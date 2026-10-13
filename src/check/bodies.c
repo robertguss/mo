@@ -4321,7 +4321,7 @@ static MO_MUST_USE bool finish_dispatches(struct inference *p) {
 static MO_MUST_USE struct mo_inferred_body *
 infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
                const struct mo_signatures *signatures, uint32_t function, struct mo_diags *diags,
-               struct mo_checked_function *checked, bool *halt) {
+               struct mo_checked_function *checked, bool *halt, const struct mo_syntax *example) {
     MO_ASSERT(arena != NULL && interfaces != NULL && signatures != NULL && diags != NULL);
     MO_ASSERT(halt != NULL);
     MO_ASSERT(function < signatures->count && signatures->work != NULL);
@@ -4335,11 +4335,11 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
                           .signatures = signatures,
                           .function = signature,
                           .checked = checked != NULL,
-                          .span = syntax->span};
+                          .span = example == NULL ? syntax->span : example->span};
     p.abilities = (struct mo_ability_context){
         .arena = arena, .interfaces = interfaces, .signatures = signatures, .work = &p.work};
     bool finalized = false;
-    if (syntax->children[4]->count != 0) {
+    if (checked == NULL && syntax->children[4]->count != 0) {
         p.span = syntax->children[4]->children[0]->span;
         bool reported = unfinished(&p);
         (void)reported;
@@ -4348,24 +4348,26 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
     struct term *fn = annotation(&p, signature->type, NULL, 0);
     if (fn == NULL)
         goto failed;
-    p.result = argument(&p, fn, fn->shape.count - 1);
+    p.result = example == NULL ? argument(&p, fn, fn->shape.count - 1) : native(&p, "Bool", 0);
     if (p.result == NULL)
         goto failed;
     const struct mo_syntax *parameters = syntax->children[1];
+    uint32_t parameter_count = example == NULL ? parameters->count : 0;
     struct note **parameter_notes =
         checked == NULL
             ? NULL
-            : allocate(&p, parameters->count, sizeof(*parameter_notes), _Alignof(struct note *));
+            : allocate(&p, parameter_count, sizeof(*parameter_notes), _Alignof(struct note *));
     if (checked != NULL && parameter_notes == NULL)
         goto failed;
-    for (uint32_t i = 0; i < parameters->count; i++) {
+    for (uint32_t i = 0; i < parameter_count; i++) {
         struct term *type = argument(&p, fn, i);
         if (type == NULL || !bind(&p, parameters->children[i]->children[0], type, false))
             goto failed;
         if (checked != NULL)
             parameter_notes[i] = p.last;
     }
-    struct value v = named(p.result, "Unit")
+    struct value v = example != NULL ? infer_as(&p, example, p.result, MO_CODE_CONDITION_TYPE)
+                     : named(p.result, "Unit")
                          ? discard(&p, syntax->children[5])
                          : infer_as(&p, syntax->children[5], p.result, MO_CODE_RESULT_TYPE);
     if (v.type == NULL || !leave(&p, NULL))
@@ -4394,7 +4396,7 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
         struct mo_checked_binding *bindings =
             allocate(&p, p.binding_count, sizeof(*bindings), _Alignof(struct mo_checked_binding));
         const struct mo_checked_binding **parameter_bindings =
-            allocate(&p, parameters->count, sizeof(*parameter_bindings),
+            allocate(&p, parameter_count, sizeof(*parameter_bindings),
                      _Alignof(const struct mo_checked_binding *));
         struct note **lambdas =
             allocate(&p, p.lambda_count, sizeof(*lambdas), _Alignof(struct note *));
@@ -4432,7 +4434,7 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
         qsort(lambdas, lambda_count, sizeof(*lambdas), source_note_order);
         for (uint32_t i = 0; i < lambda_count; i++)
             lambdas[i]->graph->lambda->output.number = i + 1;
-        for (uint32_t i = 0; i < parameters->count; i++) {
+        for (uint32_t i = 0; i < parameter_count; i++) {
             MO_ASSERT(parameter_notes[i]->binding_index < binding_count);
             parameter_bindings[i] = &bindings[parameter_notes[i]->binding_index];
         }
@@ -4556,7 +4558,7 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
             }
         }
         *checked = (struct mo_checked_function){.signature = signature,
-                                                .parameter_count = parameters->count,
+                                                .parameter_count = parameter_count,
                                                 .parameters = parameter_bindings,
                                                 .body = {.count = count,
                                                          .items = rows,
@@ -4588,12 +4590,25 @@ struct mo_inferred_body *mo_infer_function(struct mo_arena *arena,
                                            const struct mo_signatures *signatures,
                                            uint32_t function, struct mo_diags *diags) {
     bool halt;
-    return infer_function(arena, interfaces, signatures, function, diags, NULL, &halt);
+    return infer_function(arena, interfaces, signatures, function, diags, NULL, &halt, NULL);
 }
 
 bool mo_check_function(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
                        const struct mo_signatures *signatures, uint32_t function,
                        struct mo_diags *diags, struct mo_checked_function *out, bool *halt) {
     MO_ASSERT(out != NULL);
-    return infer_function(arena, interfaces, signatures, function, diags, out, halt) != NULL;
+    return infer_function(arena, interfaces, signatures, function, diags, out, halt, NULL) != NULL;
+}
+
+bool mo_check_example(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
+                      const struct mo_signatures *signatures, uint32_t function,
+                      const struct mo_syntax *syntax, struct mo_diags *diags,
+                      struct mo_checked_body *out, bool *halt) {
+    MO_ASSERT(syntax != NULL && out != NULL);
+    struct mo_checked_function checked;
+    if (infer_function(arena, interfaces, signatures, function, diags, &checked, halt, syntax) ==
+        NULL)
+        return false;
+    *out = checked.body;
+    return true;
 }

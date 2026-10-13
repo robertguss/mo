@@ -3,6 +3,7 @@
 #include "check/signatures.h"
 
 #include "base/codes.h"
+#include "base/limits.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -66,6 +67,53 @@ static MO_MUST_USE bool type_abilities(struct mo_ability_context *context,
     return kept && !resource_failed(diags);
 }
 
+static MO_MUST_USE bool check_examples(struct mo_arena *arena, struct mo_program *program,
+                                       struct mo_checked_spec *specs, uint32_t count,
+                                       struct mo_diags *diags) {
+    const struct mo_signatures *signatures = program->signatures;
+    const struct mo_sources *sources = program->set->sources;
+    uint32_t index = 0;
+    for (uint32_t i = 0; i < program->function_count; i++) {
+        const struct mo_function_signature *fn = program->functions[i].signature;
+        const struct mo_syntax *written = fn->function->declaration->children[4];
+        uint32_t number = 0;
+        for (uint32_t j = 0; j < written->count; j++) {
+            MO_ASSERT(written->children[j]->kind == MO_S_EXAMPLES);
+            const struct mo_syntax *lines = written->children[j]->children[0];
+            for (uint32_t k = 0; k < lines->count; k++) {
+                MO_ASSERT(index < count && sources != NULL);
+                const struct mo_syntax *line = lines->children[k];
+                struct mo_span span = line->span;
+                MO_ASSERT(span.file < sources->count && span.start <= span.end &&
+                          span.end <= sources->files[span.file].length);
+                size_t length = span.end - span.start;
+                uint8_t *bytes = allocate(arena, diags, span, length, 1, 1);
+                if (bytes == NULL)
+                    return false;
+                memcpy(bytes, sources->files[span.file].bytes + span.start, length);
+                struct mo_checked_spec *spec = &specs[index++];
+                *spec = (struct mo_checked_spec){.kind = MO_SPEC_EXAMPLE,
+                                                 .syntax = line,
+                                                 .module = fn->function->module,
+                                                 .subject = i,
+                                                 .number = ++number,
+                                                 .promise = UINT32_MAX,
+                                                 .text = {bytes, length, span}};
+                bool halt;
+                if (!mo_check_example(arena, program->interfaces, signatures,
+                                      (uint32_t)(fn - signatures->items), line, diags, &spec->body,
+                                      &halt)) {
+                    if (halt)
+                        return false;
+                    continue;
+                }
+            }
+        }
+    }
+    MO_ASSERT(index == count);
+    return !mo_diags_any(diags);
+}
+
 static MO_MUST_USE struct mo_program *
 check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo_diags *diags) {
     MO_ASSERT(arena != NULL && set != NULL && set->count != 0 && diags != NULL);
@@ -122,6 +170,7 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
         }
     }
     struct mo_span span = set->modules[0]->span;
+    uint32_t spec_count = 0;
     for (uint32_t i = 0; i < set->count; i++) {
         const struct mo_module_syntax *module = set->modules[i];
         const struct mo_syntax *items = module->tree->children[1];
@@ -138,6 +187,27 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
                                    "constant or spec checking is not implemented", NULL);
                 (void)kept;
                 return NULL;
+            }
+            if (item->kind != MO_S_FN)
+                continue;
+            const struct mo_syntax *specs = item->children[4];
+            for (uint32_t k = 0; k < specs->count; k++) {
+                const struct mo_syntax *spec = specs->children[k];
+                if (spec->kind != MO_S_EXAMPLES || set->sources == NULL) {
+                    bool kept = report(diags, MO_CODE_CHECK_UNFINISHED, spec->span,
+                                       "this specification rule is not implemented", NULL);
+                    (void)kept;
+                    return NULL;
+                }
+                uint32_t lines = spec->children[0]->count;
+                if (lines > MO_LIMIT_PROGRAM_CHECK_WORK - *signatures->work) {
+                    bool kept = report(diags, MO_CODE_CHECK_PROGRAM_WORK, spec->span,
+                                       "the program needs too much spec-checking work", NULL);
+                    (void)kept;
+                    return NULL;
+                }
+                *signatures->work += lines;
+                spec_count += lines;
             }
         }
     }
@@ -230,6 +300,12 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
                                              .result = unit ? MO_ENTRY_UNIT : MO_ENTRY_STATUS,
                                              .capability_count = functions[main].parameter_count,
                                              .capabilities = functions[main].parameters}};
+    struct mo_checked_spec *specs =
+        allocate(arena, diags, span, spec_count, sizeof(*specs), _Alignof(struct mo_checked_spec));
+    if (specs == NULL || !check_examples(arena, program, specs, spec_count, diags))
+        return NULL;
+    program->spec_count = spec_count;
+    program->specs = specs;
     return mo_check_recursion(arena, program, diags) ? program : NULL;
 }
 

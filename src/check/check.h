@@ -16,6 +16,9 @@ struct mo_module_set {
     const char **names;                /* dotted module names */
     bool *library;
     uint32_t **uses; /* one target index per use line, in header order */
+    /* Input to mo_check for exact spec text; need only outlive checking.
+     * May be NULL for a synthetic set without specifications. */
+    const struct mo_sources *sources;
 };
 
 /* Loads the entry and its transitive uses. sources must be initialized and empty.
@@ -567,8 +570,11 @@ struct mo_program {
  * dot/overload dispatch and loaded library calls retain the selected symbols. Written Map/Set
  * types require Hash. main takes no parameters or one Console and returns Unit or Int.
  * Missing main and invalid entry signatures report E0079; there is no certified absent entry.
- * Valid unfinished entry forms return E1103. Imports,
- * constants/specs and unfinished body forms return E1103.
+ * Source example lines are zero-parameter Bool bodies, with their subject index,
+ * per-subject ordinal and an arena-owned copy of their original bytes/span.
+ * set.sources must cover the syntax's original file indices for spec checking.
+ * Valid unfinished entry forms, imports, constants, tests/promises/anchors,
+ * spec-only capability operations and unfinished body forms return E1103.
  * Future spec checking checks anchor typing, completeness and links but executes no source code:
  * tools compile/run anchors to verify their allows/forbids expectations before accepting a
  * command-line mo check. Unfinished stages must report E1103, not succeed. */

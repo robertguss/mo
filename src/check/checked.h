@@ -12,6 +12,12 @@ MO_MUST_USE bool mo_check_function(struct mo_arena *arena,
                                    struct mo_diags *diags, struct mo_checked_function *out,
                                    bool *halt);
 
+MO_MUST_USE bool mo_check_example(struct mo_arena *arena,
+                                  const struct mo_module_interfaces *interfaces,
+                                  const struct mo_signatures *signatures, uint32_t function,
+                                  const struct mo_syntax *syntax, struct mo_diags *diags,
+                                  struct mo_checked_body *out, bool *halt);
+
 MO_MUST_USE bool mo_check_recursion(struct mo_arena *arena, const struct mo_program *program,
                                     struct mo_diags *diags);
 
