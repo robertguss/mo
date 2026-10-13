@@ -56,7 +56,7 @@ struct compiler {
     struct mo_types types;
     struct vector strings, constants, modules, constructors, ownership, edges;
     struct mo_codegen_index *string_index, *constant_index, *data_index, *fun_index, *global_index,
-        *module_index, *builtin_index;
+        *module_index, *builtin_index, *annotation_index;
     struct mo_codegen_index *closure_zeros[2];
     uint32_t *data, *files, *layouts;
     uint32_t range_int, function_count, function_capacity, unit_constant;
@@ -222,12 +222,25 @@ static MO_MUST_USE bool type_name(struct compiler *c, uint32_t id, struct mo_buf
            (t->kind != MO_TYPE_FUNCTION ||
             (type_text(c, out, " : ") && type_name(c, t->result, out, depth + 1)));
 }
+static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsigned depth);
 static MO_MUST_USE uint32_t type(struct compiler *c, mo_core_ty t, unsigned depth) {
     if (depth >= MO_LIMIT_CORE_DEPTH) {
         if (!problem(c, MO_CODE_NESTED_TOO_DEEPLY,
                      "Core type nesting exceeds MO_LIMIT_CORE_DEPTH."))
             return MO_NO_INDEX;
     }
+    if (t->tag < MO_CORE_TY_TUPLE)
+        return type_uncached(c, t, depth);
+    mo_core_string key = {(const char *)&t, sizeof t};
+    struct mo_codegen_index *old = mo_codegen_find(c->annotation_index, key);
+    if (old != NULL)
+        return old->value;
+    uint32_t id = type_uncached(c, t, depth);
+    if (id == MO_NO_INDEX || index_add(c, &c->annotation_index, key, id, true) == NULL)
+        return MO_NO_INDEX;
+    return id;
+}
+static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsigned depth) {
     enum mo_type_kind kind;
     switch (t->tag) {
     case MO_CORE_TY_UNIT:

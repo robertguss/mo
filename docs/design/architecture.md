@@ -1103,6 +1103,9 @@ declarations; an empty name on its single field means an unnamed field.
 Builtin instantiations have separate nominal identities from user types of
 the same printable name. Instantiated names use Mo's type spelling, including
 tuple arguments such as `Option((Int, Text))`, within `MO_LIMIT_STRING_SIZE`.
+Compound Core annotations are translated once per node, preserving first-use
+type indices even when lowering shares immutable subtrees. This prevents
+exponential traversal of type DAGs.
 Names/strings and constants use deterministic first use. Source-less function
 names are module + "." + Core name; source-less data/constants use a first
 synthetic `%Core` module, followed by function modules in first-use order, with no
