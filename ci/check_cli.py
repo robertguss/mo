@@ -156,6 +156,87 @@ def runner(binary):
     print(f"{binary}: real source check/run/emission, statuses, limits and defects passed")
 
 
+def anchors(binary):
+    # Anchor truth is not a typing certificate. Reordered arguments, opposite
+    # expectations and a subject that stops expose distinct wrong consumers.
+    source = ('module Main\nfn twice(n: Int) : Int\n'
+              'promise "returns twice its input"\nresult == n + n\n'
+              'allows result: 6, n: 3\nforbids n: 4, result: 7\nend\n'
+              'if n >= 0: stop "subject must not run" else: n + n\nend\n'
+              'fn main(console: Console) : Int\nconsole.print("main")\n37\nend\n')
+    with tempfile.TemporaryDirectory(prefix="mo-anchors-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        path.write_text(source)
+        for args in (["check"], ["check", "--json"], ["check", "--emit=core"],
+                     ["check", "--emit=bytecode"]):
+            result = run(binary, [*args, str(path)], 0)
+            assert not result.stderr
+            if "--json" in args:
+                records(result, "check")
+            elif len(args) == 1:
+                assert not result.stdout
+            else:
+                assert b"Main.twice.promise.1.allows.1" in result.stdout
+        result = run(binary, ["run", str(path)], 37)
+        assert result.stdout == b"main\n" and not result.stderr
+
+        for allows, forbids in ((True, False), (False, True), (True, True)):
+            bad = source.replace("result: 6", "result: 5") if allows else source
+            if forbids:
+                bad = bad.replace("result: 7", "result: 8")
+            path.write_text(bad)
+            items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+            diags = items[1:-1]
+            assert len(diags) == allows + forbids
+            assert all(d["code"] == "E1405" for d in diags)
+            assert [d["primary"]["line"] for d in diags] == ([5] if allows else []) + ([6] if forbids else [])
+            if allows:
+                assert diags[0]["headline"] == "an allows anchor was rejected"
+                assert diags[0]["secondary"][0]["line"] == 4
+            if forbids:
+                assert diags[-1]["headline"] == "a forbids anchor was accepted"
+                assert not diags[-1]["secondary"]
+            for args in (["check"], ["run"], ["check", "--emit=core"],
+                         ["check", "--emit=bytecode"]):
+                result = run(binary, [*args, str(path)], 1)
+                assert not result.stdout and b"E1405" in result.stderr
+
+        # A second false condition must retain its own source line, while a
+        # rejected forbids may short-circuit before a later stop.
+        path.write_text(source.replace("result == n + n\n", "result == n + n\nn < 2\n"))
+        items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+        assert items[1]["primary"]["line"] == 6 and items[1]["secondary"][0]["line"] == 5
+        path.write_text(source.replace("result == n + n\n",
+                                       "result == n + n\nn == 3 or 1 / 0 == 0\n"))
+        records(run(binary, ["check", "--json", str(path)], 0), "check")
+
+        for operand, line, kind in (("n: 3", 5, "allows"), ("n: 4", 6, "forbids")):
+            path.write_text(source.replace(operand, "n: 1 / 0"))
+            items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+            assert items[1]["code"] == "E1405" and items[1]["primary"]["line"] == line
+            assert items[1]["headline"] == "an anchor could not be checked"
+            assert "dividing by zero" in items[1]["primary"]["label"]
+            assert f"Main.twice.promise.1.{kind}.1" in items[1]["primary"]["label"]
+            result = run(binary, ["run", str(path)], 1)
+            assert not result.stdout and b"could not be checked" in result.stderr
+
+        # Pure infinite computation is a compiler work refusal, not an accepted
+        # anchor. The subject's and main's runtime semantics are unchanged.
+        path.write_text(source.replace("n: 3", "n: spin()")
+                        + "fn spin() : Int\nwhile true\nend\n0\nend\n")
+        items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+        assert items[1]["headline"] == "an anchor could not be checked"
+        assert "instruction budget exhausted" in items[1]["primary"]["label"]
+
+        # Checking types examples/tests but does not test their truth or run main.
+        path.write_text('module Main\nfn main()\nexamples\nfalse\nend\n'
+                        'stop "main must not run"\nend\ntest "not run by check"\nassert false\nend\n')
+        result = run(binary, ["check", str(path)], 0)
+        assert not result.stdout and not result.stderr
+        records(run(binary, ["check", "--json", str(path)], 0), "check")
+    print(f"{binary}: real source anchor truth, stops, bounds and nonexecution passed")
+
+
 def source_stack(binary, folder):
     # This fixture exercises the entire precedence ladder at the source-depth
     # boundary, not only nested brackets. The process stack stays small while
@@ -202,6 +283,7 @@ def check(binary):
     driver = binary.parent / "tests/test_cli.test"
     faults = binary.parent / "tests/test_cli_faults.test"
     runner(binary)
+    anchors(binary)
     items = records(run(faults, ["--json"], 1), "check")
     assert items[1]["code"] == "E1401" and items[-1]["dropped"] == 0
     assert items[1]["primary"]["file"] is None and items[1]["section"] is None

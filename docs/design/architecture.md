@@ -1488,8 +1488,9 @@ checking on exhaustion).
 
 Only a successful certificate reaches `mo_lower` and `mo_core_check`, including
 for plain `check`; an unfinished lowering stage cannot be silently accepted.
-Plain checking never executes the user's `main`. `run` and bytecode emission
-then call `mo_compile`. Lowering has its own 256 MiB work arena; the wire and
+Plain checking never executes the user's `main`, examples or tests. `run`,
+bytecode emission, and checking a program with anchors then call `mo_compile`.
+Lowering has its own 256 MiB work arena; the wire and
 text buffers use their format limits. `--emit=core` prints checked
 Core text; `--emit=bytecode` prints indexed bytecode text after compiling and
 loading its format. E1404 reports artifact loading or output failure.
@@ -1507,11 +1508,34 @@ the call and report. File capabilities borrow the starting-folder descriptor.
 The current source producer still stages Args/Env/file/other entry forms and
 Result returns; those consumer paths await source-level certification controls.
 
+**Executable anchor checks.** Typing a promise is not proof of its allows/forbids
+expectations. After loading and initializing one image, tools call each anchor
+with `mo_call` in a fresh process. An answer of zero satisfies `allows` and
+violates `forbids`; a positive condition number does the opposite. These calls
+use the anchor's saved input/result values, not an execution of the ordinary
+subject. `run` creates its separate main process on the same image only after
+all anchors pass. Both emission forms validate anchors before writing an
+artifact, including Core emission. Generic specs remain E1150 until lowering
+can instantiate their checked subject-scoped requirements.
+
+E1405 reports an expectation violation or an anchor that could not be executed.
+It marks the anchor and, for a rejected allows, the first false condition.
+The expectation label cites reference 12.2; this tools code has no section/reason
+fields. A stopped report is rendered structurally and copied into diagnostics
+before the process or initializing image is freed. Source paths are matched
+to the retained source store without rewriting filename bytes.
+Each anchor call, and image initialization for these checks, has a compiler
+work ceiling of 16 Mi instructions (`MO_CLI_ANCHOR_INSTRUCTIONS`). Exhaustion
+refuses certification, never concludes the expectation was false, and never
+limits the subsequent main. VM stack/depth/heap limits apply too. Diagnostic
+storage or process allocation failure halts anchor checking; semantic failures
+continue through the remaining anchors while diagnostics fit.
+
 `test` (including `--list`) and `fix` still return E1400, "this build cannot
-... yet". `test` checks the source first; `fix` rewrites nothing. A program with
-certified specs also reports E1400 until tools can execute anchors: no command
-claims those expectations passed. E1400 is an unavailable-stage code, not a
-language error.
+... yet". `test` checks the source's typing first; `fix` rewrites nothing.
+Executing examples/tests and generated-input promises is a separate tools stage;
+successful anchor validation does not claim those observations passed.
+E1400 is an unavailable-stage code, not a language error.
 
 Source work runs synchronously through `mo_with_stack` with
 `MO_SOURCE_STACK_SIZE`, covering load, parse, check, lower, Core check, codegen
