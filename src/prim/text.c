@@ -165,7 +165,7 @@ static MO_MUST_USE enum mo_prim_status matching(struct mo_prim_call *c, struct t
         }
         struct text replacement = view(c->args[2]);
         size_t length = text.length - count * pattern.length;
-        if (replacement.length > (MO_LIMIT_STRING_SIZE - length) / count)
+        if (!mo_prim_bytes_fit(c, length + count * replacement.length))
             goto done;
         length += count * replacement.length;
         uint8_t *bytes = mo_scratch_resize(&scratch, NULL, 0, length);
@@ -245,7 +245,7 @@ static MO_MUST_USE enum mo_prim_status quoted(struct mo_prim_call *c, struct tex
                            : 1U;
         if (b == '\n' || b == '\r' || b == '\t')
             extra = 2;
-        if (extra > MO_LIMIT_STRING_SIZE - length)
+        if (!mo_prim_bytes_fit(c, length + extra))
             return MO_PRIM_OUT_OF_MEMORY;
         length += extra;
     }
@@ -347,7 +347,7 @@ static MO_MUST_USE enum mo_prim_status from_chars(struct mo_prim_call *c, struct
         MO_ASSERT(mo_list_get(c->args[0], i, &ch));
         uint8_t bytes[4];
         unsigned n = encode(mo_cell_get_char(ch), bytes);
-        if (n > MO_LIMIT_STRING_SIZE - length)
+        if (!mo_prim_bytes_fit(c, length + n))
             return MO_PRIM_OUT_OF_MEMORY;
         length += n;
     }
@@ -463,7 +463,7 @@ enum mo_prim_status mo_prim_text(struct mo_prim_call *c, struct mo_cell *out) {
     struct text b = {0};
     if (c->id == MO_PRIM_TEXT_CONCAT) {
         b = view(c->args[1]);
-        if (b.length > MO_LIMIT_STRING_SIZE - length)
+        if (!mo_prim_bytes_fit(c, length + b.length))
             goto done;
         length += b.length;
     } else if (c->id == MO_PRIM_TEXT_REPEAT) {
@@ -473,14 +473,16 @@ enum mo_prim_status mo_prim_text(struct mo_prim_call *c, struct mo_cell *out) {
             status = MO_PRIM_OUTSIDE;
             goto done;
         }
-        if (t.length != 0 && (uint64_t)count > MO_LIMIT_STRING_SIZE / t.length)
+        if (t.length != 0 && (uint64_t)count > MO_LIMIT_VALUE_BYTES / t.length) {
+            c->reason = "result exceeds MO_LIMIT_VALUE_BYTES (u32 byte length)";
             goto done;
+        }
         length = t.length == 0 ? 0 : t.length * (size_t)count;
     } else if (c->id == MO_PRIM_TEXT_PAD_LEFT || c->id == MO_PRIM_TEXT_PAD_RIGHT) {
         int64_t width = mo_cell_get_int(c->args[1]);
         size_t chars = characters(t);
         count = width > (int64_t)chars ? width - (int64_t)chars : 0;
-        if ((uint64_t)count > MO_LIMIT_STRING_SIZE - length)
+        if (!mo_prim_bytes_fit(c, length + (uint64_t)count))
             goto done;
         length += (size_t)count;
     } else

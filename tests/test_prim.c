@@ -1,9 +1,74 @@
+#define _POSIX_C_SOURCE 200809L
 #include "prim_oracle.h"
 #include "test.h"
 
 #include <fenv.h>
 #include <math.h>
 #include <string.h>
+#include <time.h>
+
+static void runtime_sizes(void) {
+    struct prim_fixture f;
+    prim_fixture_init(&f, MO_DEFAULT_HEAP_SIZE);
+    struct mo_cell args[2], out = mo_cell_int(41);
+    const char *reason;
+    MO_ASSERT(mo_value_text(f.heap, "x", 1, &args[0]));
+    args[1] = mo_cell_int(9000000);
+    MO_ASSERT(mo_prim_call(f.heap, &f.types, MO_PRIM_TEXT_REPEAT, f.signature[MO_PRIM_TEXT_REPEAT],
+                           args, &out, &reason) == MO_PRIM_RETURNED);
+    size_t length;
+    const uint8_t *bytes = mo_value_data(out, &length);
+    CHECK(length == 9000000);
+    for (size_t i = 0; i < length; i++)
+        CHECK(bytes[i] == 'x');
+    args[0] = out;
+    args[1] = out;
+    MO_ASSERT(mo_prim_call(f.heap, &f.types, MO_PRIM_TEXT_CONCAT, f.signature[MO_PRIM_TEXT_CONCAT],
+                           args, &out, &reason) == MO_PRIM_RETURNED);
+    bytes = mo_value_data(out, &length);
+    CHECK(length == 18000000 && bytes[0] == 'x' && bytes[length - 1] == 'x');
+    mo_value_drop(f.heap, f.builtin[MO_TYPE_TEXT], out);
+
+    MO_ASSERT(mo_value_text(f.heap, "x", 1, &args[0]));
+    args[1] = mo_cell_int((int64_t)MO_LIMIT_VALUE_BYTES + 1);
+    out = mo_cell_int(41);
+    CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_TEXT_REPEAT, f.signature[MO_PRIM_TEXT_REPEAT],
+                       args, &out, &reason) == MO_PRIM_OUT_OF_MEMORY);
+    CHECK(strstr(reason, "MO_LIMIT_VALUE_BYTES") != NULL && mo_cell_get_int(out) == 41);
+    mo_value_drop(f.heap, f.builtin[MO_TYPE_TEXT], args[0]);
+    prim_fixture_free(&f);
+}
+
+/* Independent caller can compare every emitted digit with its own big-number
+ * model. The input is 256^n - 1, with no decimal parser in the measurement. */
+static void bigint_text_work(size_t count) {
+    struct prim_fixture f;
+    prim_fixture_init(&f, MO_DEFAULT_HEAP_SIZE);
+    struct mo_arena arena;
+    mo_arena_init(&arena, count + MO_ARENA_CHUNK_HEADER);
+    uint8_t *magnitude = mo_arena_allocate(&arena, count, 1);
+    MO_ASSERT(magnitude != NULL);
+    memset(magnitude, 255, count);
+    struct mo_cell arg, out;
+    MO_ASSERT(mo_value_bigint(f.heap, MO_BIGINT_POSITIVE, magnitude, count, &arg));
+    const char *reason;
+    struct timespec start, end;
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+    MO_ASSERT(mo_prim_call(f.heap, &f.types, MO_PRIM_BIGINT_TO_TEXT,
+                           f.signature[MO_PRIM_BIGINT_TO_TEXT], &arg, &out,
+                           &reason) == MO_PRIM_RETURNED);
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &end) == 0);
+    size_t length;
+    const uint8_t *text = mo_value_data(out, &length);
+    double seconds =
+        (double)(end.tv_sec - start.tv_sec) + (double)(end.tv_nsec - start.tv_nsec) / 1e9;
+    MO_ASSERT(fprintf(stderr, "%zu digits: %.6f s\n", length, seconds) > 0);
+    MO_ASSERT(fwrite(text, 1, length, stdout) == length && fflush(stdout) == 0);
+    mo_value_drop(f.heap, f.builtin[MO_TYPE_TEXT], out);
+    mo_value_drop(f.heap, f.builtin[MO_TYPE_BIGINT], arg);
+    mo_arena_free(&arena);
+    prim_fixture_free(&f);
+}
 
 static void empty_constants_and_rounding(void) {
     struct prim_fixture f;
@@ -222,6 +287,8 @@ static void refusal_preserves_operands(void) {
                          args, &out, &reason);
         CHECK(status == (pass == 0 ? MO_PRIM_OUTSIDE : MO_PRIM_OUT_OF_MEMORY));
         CHECK(reason != NULL && mo_cell_get_int(out) == 41);
+        if (pass == 1)
+            CHECK(strstr(reason, "--max-heap") != NULL);
         bytes = mo_value_data(args[0], &length);
         CHECK(length == 2 && memcmp(bytes, "ab", 2) == 0);
     }
@@ -267,6 +334,42 @@ static void primitive_work(void) {
     CHECK(mo_table_size(args[0]) == 100000);
     mo_value_drop(f.heap, map, args[0]);
 
+    const enum mo_primitive_id adds[] = {MO_PRIM_MAP_SET, MO_PRIM_SET_ADD};
+    const enum mo_primitive_id removes[] = {MO_PRIM_MAP_REMOVE, MO_PRIM_SET_REMOVE};
+    for (unsigned kind = 0; kind < 2; kind++) {
+        uint32_t type = f.types.items[f.signature[adds[kind]]].result;
+        bool ok = kind == 0 ? mo_value_map(f.heap, type, NULL, NULL, 0, &args[0])
+                            : mo_value_set(f.heap, type, NULL, 0, &args[0]);
+        MO_ASSERT(ok);
+        for (uint32_t i = 0; i < 65536; i++) {
+            args[1] = mo_cell_int(i);
+            if (kind == 0)
+                MO_ASSERT(mo_value_text(f.heap, "β", 2, &args[2]));
+            MO_ASSERT(mo_prim_call(f.heap, &f.types, adds[kind], f.signature[adds[kind]], args,
+                                   &out, &reason) == MO_PRIM_RETURNED);
+            args[0] = out;
+        }
+        for (uint32_t i = 0; i < 100000; i++) {
+            args[1] = mo_cell_int(i % 65536);
+            MO_ASSERT(mo_prim_call(f.heap, &f.types, removes[kind], f.signature[removes[kind]],
+                                   args, &out, &reason) == MO_PRIM_RETURNED);
+            args[0] = out;
+            if (kind == 0)
+                MO_ASSERT(mo_value_text(f.heap, "🙂", 4, &args[2]));
+            MO_ASSERT(mo_prim_call(f.heap, &f.types, adds[kind], f.signature[adds[kind]], args,
+                                   &out, &reason) == MO_PRIM_RETURNED);
+            args[0] = out;
+        }
+        CHECK(mo_table_size(args[0]) == 65536);
+        uint32_t cursor = 0;
+        struct mo_cell key, value;
+        for (uint32_t i = 0; i < 65536; i++) {
+            MO_ASSERT(mo_table_next(args[0], &cursor, &key, &value));
+            CHECK(mo_cell_get_int(key) == (int64_t)((100000 + i) % 65536));
+        }
+        mo_value_drop(f.heap, type, args[0]);
+    }
+
     struct mo_arena arena;
     mo_arena_init(&arena, 8 << 20);
     size_t count = 4 << 20;
@@ -296,14 +399,40 @@ static void primitive_work(void) {
         CHECK(result[i] == 0 && result[count + i] == 255);
     mo_value_drop(f.heap, f.builtin[MO_TYPE_BIGINT], args[0]);
     mo_value_drop(f.heap, f.builtin[MO_TYPE_BIGINT], out);
+    count = 2 << 20;
+    memset(bytes, 255, count);
+    MO_ASSERT(mo_value_bigint(f.heap, MO_BIGINT_POSITIVE, bytes, count, &args[0]));
+    uint8_t three = 3;
+    MO_ASSERT(mo_value_bigint(f.heap, MO_BIGINT_POSITIVE, &three, 1, &args[1]));
+    MO_ASSERT(mo_prim_call(f.heap, &f.types, MO_PRIM_BIGINT_MUL, f.signature[MO_PRIM_BIGINT_MUL],
+                           args, &out, &reason) == MO_PRIM_RETURNED);
+    result = mo_value_data(out, &length);
+    CHECK(length == count + 1 && result[0] == 253 && result[count] == 2);
+    for (size_t i = 1; i < count; i++)
+        CHECK(result[i] == 255);
+    mo_value_drop(f.heap, f.builtin[MO_TYPE_BIGINT], args[0]);
+    mo_value_drop(f.heap, f.builtin[MO_TYPE_BIGINT], args[1]);
+    mo_value_drop(f.heap, f.builtin[MO_TYPE_BIGINT], out);
     mo_arena_free(&arena);
     CHECK(mo_heap_objects(f.heap) == 0 && mo_heap_used(f.heap) == baseline);
     prim_fixture_free(&f);
 }
 
 int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "--big-text-1m") == 0) {
+        bigint_text_work(415241);
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "--big-text-10m") == 0) {
+        bigint_text_work(4152410);
+        return 0;
+    }
     if (argc == 2 && strcmp(argv[1], "--oracle") == 0) {
-        primitive_oracle();
+        primitive_oracle(true);
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "--oracle-unique") == 0) {
+        primitive_oracle(false);
         return 0;
     }
     if (argc == 2 && strcmp(argv[1], "--work") == 0) {
@@ -312,6 +441,7 @@ int main(int argc, char **argv) {
     }
     MO_ASSERT(argc == 1);
     empty_constants_and_rounding();
+    runtime_sizes();
     integer_power();
     integer_floor();
     decimal_rounding();

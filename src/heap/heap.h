@@ -178,7 +178,7 @@ void mo_value_drop(struct mo_heap *process, uint32_t type, struct mo_cell value)
  * field/element types, with counts matching the layout, case or captures.
  * Arrays may be NULL only when count is zero. out must not overlap input
  * arrays or hold an owned reference. text refuses invalid UTF-8. text, bytes
- * and bigint copy their input bytes; length is at most MO_LIMIT_STRING_SIZE,
+ * and bigint copy their input bytes; length is at most MO_LIMIT_VALUE_BYTES,
  * and a byte pointer may be NULL only when length is zero. bytes accepts every
  * byte sequence, including invalid UTF-8 and NUL. bigint uses base's shared
  * signs and bytecode 3.1's little-endian magnitude: ZERO iff length is zero;

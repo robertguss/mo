@@ -68,10 +68,18 @@ static MO_MUST_USE bool cell(struct prim_fixture *f, uint32_t type, struct input
     case MO_TYPE_TEXT:
     case MO_TYPE_BYTES:
     case MO_TYPE_BIGINT: {
-        uint8_t bytes[64];
-        size_t length = byte(in) % 65;
-        for (size_t i = 0; i < length; i++)
-            bytes[i] = t->kind == MO_TYPE_TEXT ? byte(in) & 127 : byte(in);
+        uint8_t bytes[1024];
+        size_t count = word(in) % 257, length = 0;
+        static const char *const scalars[] = {"a", "β", "🙂", "e", "́", "#", "{", "\n"};
+        for (size_t i = 0; i < count; i++) {
+            if (t->kind == MO_TYPE_TEXT) {
+                const char *scalar = scalars[byte(in) % 8];
+                size_t n = strlen(scalar);
+                memcpy(bytes + length, scalar, n);
+                length += n;
+            } else
+                bytes[length++] = byte(in);
+        }
         if (t->kind == MO_TYPE_TEXT)
             return mo_value_text(f->heap, (const char *)bytes, length, out);
         if (t->kind == MO_TYPE_BYTES)
@@ -127,29 +135,41 @@ static MO_MUST_USE bool cell(struct prim_fixture *f, uint32_t type, struct input
 }
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
-    if (size < 2)
+    if (size < 4)
         return 0;
     struct input in = {data, size, 0};
     enum mo_primitive_id id = (enum mo_primitive_id)(byte(&in) % (MO_PRIM_RANGE_CONTAINS + 1));
     struct prim_fixture f;
-    prim_fixture_init(&f, byte(&in) % 2 == 0 ? 16384U : 65536U);
+    size_t budget = byte(&in) % 2 == 0 ? 65536U : 262144U;
+    enum mo_type_kind element = byte(&in) % 2 == 0 ? MO_TYPE_INT : MO_TYPE_TEXT;
+    if (id == MO_PRIM_LIST_SUM)
+        element = MO_TYPE_INT;
+    unsigned holders = byte(&in) % 3;
+    if (element == MO_TYPE_INT)
+        prim_fixture_init(&f, budget);
+    else
+        prim_fixture_init_type(&f, budget, element);
     size_t baseline = mo_heap_used(f.heap);
     static const char *const ownership[] = {
 #define PRIM(id, module, name, signature, params, bugs) params,
 #include "base/prims.def"
     };
     const struct mo_type *signature = &f.types.items[f.signature[id]];
-    uint32_t result_type =
-        signature->kind == MO_TYPE_FUNCTION ? signature->result : f.signature[id];
+    uint32_t result_type = signature->result;
     size_t count = strlen(ownership[id]);
     MO_ASSERT(count <= 3);
-    struct mo_cell args[3], result = mo_cell_int(41), unchanged = result;
+    struct mo_cell args[3], held[3], result = mo_cell_int(41), unchanged = result;
     struct mo_buffer before[3];
+    size_t arguments_at = in.at;
     size_t built = 0;
     for (; built < count; built++) {
         if (!cell(&f, signature->parameters[built], &in, 0, &args[built]))
             break;
-        mo_buffer_init(&before[built], 16384);
+        if (holders == 1)
+            held[built] = mo_value_dup(f.heap, signature->parameters[built], args[built]);
+        else if (holders == 2)
+            MO_ASSERT(mo_value_make_immortal(f.heap, signature->parameters[built], args[built]));
+        mo_buffer_init(&before[built], 262144);
         MO_ASSERT(
             mo_value_print(f.heap, signature->parameters[built], args[built], &before[built]));
     }
@@ -161,10 +181,40 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         if (status == MO_PRIM_RETURNED) {
             MO_ASSERT(reason == NULL);
             struct mo_buffer output;
-            mo_buffer_init(&output, 16384);
+            mo_buffer_init(&output, 262144);
             /* Rendering may exceed its independent output or scratch ceiling. */
             bool printed = mo_value_print(f.heap, result_type, result, &output);
-            (void)printed;
+            /* Compare an independent shared call with the unique/immortal
+             * path. This catches wrong in-place results, not just crashes. */
+            if (printed) {
+                struct prim_fixture reference;
+                prim_fixture_init_type(&reference, 4 << 20, element);
+                struct input replay = {data, size, arguments_at};
+                struct mo_cell operands[3], retained[3], expected;
+                for (size_t i = 0; i < count; i++) {
+                    MO_ASSERT(cell(&reference, signature->parameters[i], &replay, 0, &operands[i]));
+                    retained[i] =
+                        mo_value_dup(reference.heap, signature->parameters[i], operands[i]);
+                }
+                enum mo_prim_status other =
+                    mo_prim_call(reference.heap, &reference.types, id, reference.signature[id],
+                                 operands, &expected, &reason);
+                MO_ASSERT(other == MO_PRIM_RETURNED);
+                struct mo_buffer text;
+                mo_buffer_init(&text, 262144);
+                bool rendered = mo_value_print(reference.heap, result_type, expected, &text);
+                MO_ASSERT(rendered && output.length == text.length &&
+                          (text.length == 0 || memcmp(output.bytes, text.bytes, text.length) == 0));
+                mo_buffer_free(&text);
+                mo_value_drop(reference.heap, result_type, expected);
+                for (size_t i = 0; i < count; i++) {
+                    if (ownership[id][i] == 'b')
+                        mo_value_drop(reference.heap, signature->parameters[i], operands[i]);
+                    mo_value_drop(reference.heap, signature->parameters[i], retained[i]);
+                }
+                MO_ASSERT(mo_heap_objects(reference.heap) == 0);
+                prim_fixture_free(&reference);
+            }
             mo_buffer_free(&output);
             mo_value_drop(f.heap, result_type, result);
         } else
@@ -173,7 +223,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     for (size_t i = 0; i < built; i++) {
         if (status != MO_PRIM_RETURNED || ownership[id][i] == 'b') {
             struct mo_buffer after;
-            mo_buffer_init(&after, 16384);
+            mo_buffer_init(&after, 262144);
             MO_ASSERT(mo_value_print(f.heap, signature->parameters[i], args[i], &after));
             MO_ASSERT(
                 before[i].length == after.length &&
@@ -181,9 +231,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             mo_buffer_free(&after);
             mo_value_drop(f.heap, signature->parameters[i], args[i]);
         }
+        if (holders == 1)
+            mo_value_drop(f.heap, signature->parameters[i], held[i]);
         mo_buffer_free(&before[i]);
     }
-    MO_ASSERT(mo_heap_objects(f.heap) == 0 && mo_heap_used(f.heap) == baseline);
+    if (holders != 2)
+        MO_ASSERT(mo_heap_objects(f.heap) == 0 && mo_heap_used(f.heap) == baseline);
     prim_fixture_free(&f);
     return 0;
 }

@@ -280,7 +280,110 @@ static MO_MUST_USE mo_core_value oracle_value(struct prim_fixture *f, struct mo_
     return v;
 }
 
-static void oracle_query(struct prim_fixture *fixtures, const struct mo_buffer *input) {
+static MO_MUST_USE unsigned oracle_id(mo_core_string name) {
+    static const char *const names[] = {
+#define PRIM(id, module, name, signature, params, bugs) module "." name,
+#include "base/prims.def"
+    };
+    for (unsigned id = 0; id < MO_PRIM_COUNT; id++)
+        if (strlen(names[id]) == name.length && memcmp(names[id], name.bytes, name.length) == 0)
+            return id;
+    MO_UNREACHABLE();
+}
+
+static MO_MUST_USE uint32_t oracle_type(struct prim_fixture *f, mo_core_ty t) {
+    enum mo_type_kind kind;
+    uint32_t params[4];
+    size_t count = 0;
+    switch ((unsigned)t->tag) {
+    case MO_CORE_TY_INT:
+        return f->builtin[MO_TYPE_INT];
+    case MO_CORE_TY_BIG_INT:
+        return f->builtin[MO_TYPE_BIGINT];
+    case MO_CORE_TY_BYTE:
+        return f->builtin[MO_TYPE_BYTE];
+    case MO_CORE_TY_DECIMAL:
+        return f->builtin[MO_TYPE_DECIMAL];
+    case MO_CORE_TY_FLOAT:
+        return f->builtin[MO_TYPE_FLOAT];
+    case MO_CORE_TY_BOOL:
+        return f->builtin[MO_TYPE_BOOL];
+    case MO_CORE_TY_CHAR:
+        return f->builtin[MO_TYPE_CHAR];
+    case MO_CORE_TY_TEXT:
+        return f->builtin[MO_TYPE_TEXT];
+    case MO_CORE_TY_BYTES:
+        return f->builtin[MO_TYPE_BYTES];
+    case MO_CORE_TY_UNIT:
+        return f->builtin[MO_TYPE_UNIT];
+    case MO_CORE_TY_RANGE:
+        return f->builtin[MO_TYPE_RANGE];
+    case MO_CORE_TY_TIME:
+        return f->builtin[MO_TYPE_TIME];
+    case MO_CORE_TY_DURATION:
+        return f->builtin[MO_TYPE_DURATION];
+    case MO_CORE_TY_LIST:
+    case MO_CORE_TY_SET:
+        kind = t->tag == MO_CORE_TY_LIST ? MO_TYPE_LIST : MO_TYPE_SET;
+        params[count++] = oracle_type(f, t->as.list);
+        break;
+    case MO_CORE_TY_MAP:
+        kind = MO_TYPE_MAP;
+        params[count++] = oracle_type(f, t->as.map.k);
+        params[count++] = oracle_type(f, t->as.map.v);
+        break;
+    case MO_CORE_TY_TUPLE:
+        kind = MO_TYPE_TUPLE;
+        MO_ASSERT(t->as.tuple.count <= 4);
+        for (; count < t->as.tuple.count; count++)
+            params[count] = oracle_type(f, t->as.tuple.items[count]);
+        break;
+    default:
+        MO_UNREACHABLE();
+    }
+    for (uint32_t i = 0; i < f->types.count; i++) {
+        const struct mo_type *candidate = &f->types.items[i];
+        if (candidate->kind == kind && candidate->parameter_count == count &&
+            memcmp(candidate->parameters, params, count * sizeof *params) == 0)
+            return i;
+    }
+    return MO_NO_INDEX;
+}
+
+static MO_MUST_USE struct mo_cell oracle_sequence(struct prim_fixture *f, mo_core_value initial,
+                                                  mo_core_value steps, uint32_t type) {
+    struct mo_cell acc = oracle_cell(f, type, initial);
+    static const char *const ownership[] = {
+#define PRIM(id, module, name, signature, params, bugs) params,
+#include "base/prims.def"
+    };
+    for (size_t i = 0; i < steps->as.list.count; i++) {
+        mo_core_values step = steps->as.list.items[i]->as.tuple;
+        unsigned id = oracle_id(step.items[0]->as.text);
+        const struct mo_type *fn = &f->types.items[f->signature[id]];
+        size_t count = step.count - 1;
+        MO_ASSERT(count == fn->parameter_count && count <= 3 && fn->parameters[0] == type);
+        struct mo_cell args[3] = {acc}, out;
+        for (size_t j = 1; j < count; j++)
+            args[j] = oracle_cell(f, fn->parameters[j], step.items[j + 1]);
+        const char *reason;
+        MO_ASSERT(mo_prim_call(f->heap, &f->types, (enum mo_primitive_id)id, f->signature[id], args,
+                               &out, &reason) == MO_PRIM_RETURNED);
+        if (fn->result != type) {
+            MO_ASSERT(mo_cell_get_tag(out) == 1 &&
+                      mo_case_shape(&f->types, fn->result, 1) == MO_CASE_REF);
+            out = mo_cell_get_payload(out);
+        }
+        for (size_t j = 0; j < count; j++)
+            if (ownership[id][j] == 'b')
+                mo_value_drop(f->heap, fn->parameters[j], args[j]);
+        acc = out;
+    }
+    return acc;
+}
+
+static void oracle_query(struct prim_fixture *fixtures, const struct mo_buffer *input,
+                         bool shared) {
     struct mo_arena arena;
     struct mo_diags diags;
     mo_arena_init(&arena, 16 << 20);
@@ -296,29 +399,63 @@ static void oracle_query(struct prim_fixture *fixtures, const struct mo_buffer *
         if (primitive.length == strlen(sums[i]) &&
             memcmp(primitive.bytes, sums[i], primitive.length) == 0)
             f = &fixtures[i];
-    static const char *const names[] = {
-#define PRIM(id, module, name, signature, params, bugs) module "." name,
-#include "base/prims.def"
-    };
     mo_core_string name = query->as.tuple.items[0]->as.text;
-    unsigned id = 0;
-    for (; id < MO_PRIM_COUNT; id++)
-        if (strlen(names[id]) == name.length && memcmp(names[id], name.bytes, name.length) == 0)
-            break;
-    MO_ASSERT(id < MO_PRIM_COUNT);
-    const struct mo_type *signature = &f->types.items[f->signature[id]];
-    uint32_t result_type =
-        signature->kind == MO_TYPE_FUNCTION ? signature->result : f->signature[id];
+    unsigned id = oracle_id(name);
+    if (primitive.length == 10 && memcmp(primitive.bytes, "(sequence)", 10) == 0) {
+        uint32_t type = f->types.items[f->signature[id]].parameters[0];
+        struct mo_cell result =
+            oracle_sequence(f, query->as.tuple.items[2], query->as.tuple.items[3], type);
+        struct mo_buffer text;
+        mo_buffer_init(&text, MO_LIMIT_CORE_TEXT_SIZE);
+        mo_core_value value = oracle_value(f, &arena, type, result);
+        MO_ASSERT(mo_core_text_print(MO_CORE_TEXT_VALUE, value, &text));
+        MO_ASSERT(fputs("ok ", stdout) >= 0 &&
+                  fwrite(text.bytes, 1, text.length, stdout) == text.length);
+        mo_value_drop(f->heap, type, result);
+        mo_buffer_free(&text);
+        mo_diags_free(&diags);
+        mo_arena_free(&arena);
+        return;
+    }
+    /* Text-element collection queries use the fifth sealed image. */
+    if ((primitive.length >= 13 && memcmp(primitive.bytes, "(list (text) ", 13) == 0) ||
+        (primitive.length >= 12 && memcmp(primitive.bytes, "(set (text) ", 12) == 0))
+        f = &fixtures[4];
+    uint32_t instantiation = f->signature[id];
+    if (id == MO_PRIM_TEXT_STRUCTURAL) {
+        struct mo_buffer type_text;
+        mo_buffer_init(&type_text, 4096);
+        MO_ASSERT(mo_buffer_append_text(&type_text, "(core " MO_CORE_TEXT_VERSION " ") &&
+                  mo_buffer_append(&type_text, primitive.bytes + 12, primitive.length - 13) &&
+                  mo_buffer_append_byte(&type_text, ')'));
+        mo_core_ty requested = mo_core_text_parse(
+            &arena, MO_CORE_TEXT_TYPE, (const char *)type_text.bytes, type_text.length, &diags);
+        MO_ASSERT(requested != NULL);
+        uint32_t type = MO_NO_INDEX;
+        for (unsigned i = 0; i < 5; i++) {
+            type = oracle_type(&fixtures[i], requested);
+            if (type != MO_NO_INDEX) {
+                f = &fixtures[i];
+                break;
+            }
+        }
+        MO_ASSERT(type != MO_NO_INDEX && f->structural[type] != MO_NO_INDEX);
+        instantiation = f->structural[type];
+        mo_buffer_free(&type_text);
+    }
+    const struct mo_type *signature = &f->types.items[instantiation];
+    uint32_t result_type = signature->result;
     size_t count = query->as.tuple.count - 2;
     MO_ASSERT(count <= 3);
     struct mo_cell args[3], held[3], result = mo_cell_int(41);
     for (size_t i = 0; i < count; i++) {
         args[i] = oracle_cell(f, signature->parameters[i], query->as.tuple.items[i + 2]);
-        held[i] = mo_value_dup(f->heap, signature->parameters[i], args[i]);
+        if (shared)
+            held[i] = mo_value_dup(f->heap, signature->parameters[i], args[i]);
     }
     const char *reason;
     enum mo_prim_status status = mo_prim_call(f->heap, &f->types, (enum mo_primitive_id)id,
-                                              f->signature[id], args, &result, &reason);
+                                              instantiation, args, &result, &reason);
     struct mo_buffer text;
     mo_buffer_init(&text, MO_LIMIT_CORE_TEXT_SIZE);
     if (status == MO_PRIM_RETURNED) {
@@ -359,34 +496,36 @@ static void oracle_query(struct prim_fixture *fixtures, const struct mo_buffer *
         /* The retained duplicate stays readable even when the call consumed its input. */
         if (status != MO_PRIM_RETURNED || ownership[id][i] == 'b')
             mo_value_drop(f->heap, signature->parameters[i], args[i]);
-        mo_value_drop(f->heap, signature->parameters[i], held[i]);
+        if (shared)
+            mo_value_drop(f->heap, signature->parameters[i], held[i]);
     }
     mo_buffer_free(&text);
     mo_diags_free(&diags);
     mo_arena_free(&arena);
 }
 
-static void primitive_oracle(void) {
-    struct prim_fixture f[4];
+static void primitive_oracle(bool shared) {
+    struct prim_fixture f[5];
     prim_fixture_init(&f[0], MO_DEFAULT_HEAP_SIZE);
     prim_fixture_init_type(&f[1], MO_DEFAULT_HEAP_SIZE, MO_TYPE_DECIMAL);
     prim_fixture_init_type(&f[2], MO_DEFAULT_HEAP_SIZE, MO_TYPE_FLOAT);
     prim_fixture_init_type(&f[3], MO_DEFAULT_HEAP_SIZE, MO_TYPE_BIGINT);
+    prim_fixture_init_type(&f[4], MO_DEFAULT_HEAP_SIZE, MO_TYPE_TEXT);
     struct mo_buffer input;
     mo_buffer_init(&input, MO_LIMIT_CORE_TEXT_SIZE);
     int byte;
     while ((byte = getchar()) != EOF) {
         MO_ASSERT(mo_buffer_append_byte(&input, (uint8_t)byte));
         if (byte == '\n') {
-            oracle_query(f, &input);
+            oracle_query(f, &input, shared);
             mo_buffer_clear(&input);
-            for (unsigned i = 0; i < 4; i++)
+            for (unsigned i = 0; i < 5; i++)
                 MO_ASSERT(mo_heap_objects(f[i].heap) == 0);
         }
     }
     MO_ASSERT(!ferror(stdin) && input.length == 0 && fflush(stdout) == 0);
     mo_buffer_free(&input);
-    for (unsigned i = 0; i < 4; i++)
+    for (unsigned i = 0; i < 5; i++)
         prim_fixture_free(&f[i]);
 }
 

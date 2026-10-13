@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 
+sys.set_int_max_str_digits(0)
 VERSION = re.search(r'#define MO_CORE_TEXT_VERSION "([^"]+)"',
                     pathlib.Path("src/core/core.h").read_text())[1]
 
@@ -102,7 +103,7 @@ def big_cases(rng, rows):
     samples = [0, 1, -1, -(1 << 63), (1 << 63)-1, 1 << 63, -(1 << 63)-1,
                (1 << 32)-1, (1 << 64)-1, 1 << 64, (1 << 128)-1, -(1 << 128)]
     samples += [rng.getrandbits(bits) * rng.choice([-1, 1])
-                for bits in [31, 32, 33, 63, 64, 65, 127, 128, 129, 511, 512, 513, 2048]
+                for bits in [31, 32, 33, 63, 64, 65, 127, 128, 129, 511, 512, 513, 2048, 2049, 4096, 8192]
                 for _ in range(3)]
     encode = lambda n: f"(bigInt {n})"
     for _, module, name, _, params in rows:
@@ -290,6 +291,62 @@ def run(command, data):
     return result.stdout.splitlines()
 
 
+def extended_cases():
+    rng = random.Random(1301)
+    texts = ["", "β", "🙂", "#{x}", '"\\\0', "e\u0301"]
+    enc = lambda s: f"(text {quote(s)})"
+    seq = lambda tag, xs: f"({tag} ({' '.join(xs)}))"
+    for size in [0, 1, 4, 8, 16, 64]:
+        xs = [rng.choice(texts) for _ in range(size)]
+        initial = seq("list", list(map(enc, xs)))
+        for name, op, args in [("append", "append", [enc("β🙂")]),
+                               ("contains?", "contains", [enc("β")]),
+                               ("unique", "unique", []), ("to_set", "ofList", [])]:
+            prim = f"(list (text) ({op}))" if name != "to_set" else "(set (text) (ofList))"
+            yield f"List.{name}-utf8-{size}", query(f"List.{name}", prim, [initial] + args)
+        initial = seq("set", list(map(enc, dict.fromkeys(xs))))
+        for name, op, args in [("add", "add", [enc("🙂")]), ("remove", "remove", [enc("β")]),
+                               ("has?", "has", [enc("#{x}")]), ("to_list", "toList", [])]:
+            yield f"Set.{name}-utf8-{size}", query(f"Set.{name}", f"(set (text) ({op}))", [initial] + args)
+
+    # Prefix queries compare every intermediate state after a long unique
+    # update sequence, including tombstones, compaction and reinsert ordering.
+    for family, initial in [("List", "(list ())"), ("Map", "(map ())"), ("Set", "(set ())")]:
+        steps = []
+        for i in range(256):
+            key = f"(int {i % 16})"
+            if family == "List":
+                name, prim, args = "append", "(list (int) (append))", [key]
+                if i >= 32 and i % 3 == 0:
+                    name, prim, args = "set", "(list (int) (set))", [key, f"(int {-i})"]
+            elif family == "Map":
+                name = "remove" if i >= 16 and i % 3 == 0 else "set"
+                prim = f"(map (int) (text) ({name}))"
+                args = [key] + ([] if name == "remove" else [enc(texts[i % len(texts)])])
+            else:
+                name = "remove" if i >= 16 and i % 3 == 0 else "add"
+                prim, args = f"(set (int) ({name}))", [key]
+            steps.append(seq("tuple", [enc(f"{family}.{name}"), enc(prim)] + args))
+            if i < 20 or i % 8 == 7:
+                yield f"{family}-sequence-{i}", query(f"{family}.{'append' if family == 'List' else 'set' if family == 'Map' else 'add'}",
+                                                     "(sequence)", [initial, seq("list", steps)])
+
+    scalars = [("unit", "(unit)"), ("bool", "(bool true)"), ("byte", "(byte 255)"),
+               ("char", f"(char {quote(chr(0x1f642))})"), ("text", enc("#{x}β")),
+               ("bytes", "(bytes (0 255))"), ("decimal", "(decimal -1500000000000000000)"),
+               ("bigInt", f"(bigInt {-(1 << 2049)})"), ("range", "(range -7 2)")]
+    for tag, value in scalars:
+        yield f"structural-{tag}", query("Text.%structural", f"(structural ({tag}))", [value])
+    for bits in [float_bits(1.5), float_bits(-0.0), 0x7ff0000000000000, 0x7ff8000000000001]:
+        yield f"structural-float-{bits}", query("Text.%structural", "(structural (float))", [floating(bits)])
+    for tag, values in [("text", [enc(s) for s in texts]),
+                        ("float", [floating(float_bits(n)) for n in [1.5, -0.0, 0.1]]),
+                        ("bigInt", [f"(bigInt {1 << 2049})", "(bigInt -3)"])]:
+        yield f"structural-list-{tag}", query("Text.%structural", f"(structural (list ({tag})))", [seq("list", values)])
+    yield "structural-map", query("Text.%structural", "(structural (map (int) (text)))",
+                                  [f"(map (((int -1) {enc('#{x}')}) ((int 3) {enc('β')})))"])
+
+
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == "--corpus":
         directory = pathlib.Path(sys.argv[2])
@@ -297,11 +354,12 @@ def main():
         ids = re.findall(r'^PRIM\((\w+),', pathlib.Path("src/base/prims.def").read_text(), re.M)
         rng = random.Random(1300)
         for i, name in enumerate(ids[:ids.index("RANGE_CONTAINS") + 1]):
-            for variant in range(4):
+            for variant in range(6):
                 operands = bytes(512) if variant == 0 else rng.randbytes(512)
-                (directory / f"{name}-{variant}").write_bytes(bytes([i, variant & 1]) + operands)
+                (directory / f"{name}-{variant}").write_bytes(
+                    bytes([i, variant & 1, variant // 3, variant % 3]) + operands)
         return
-    generated = list(cases())
+    generated = list(cases()) + list(extended_cases())
     rows = re.findall(r'^PRIM\(\w+,\s*"([^"]+)",\s*"([^"]+)"',
                       pathlib.Path("src/base/prims.def").read_text(), re.M)
     expected_rows = {f"{module}.{name}" for module, name in rows
@@ -315,18 +373,31 @@ def main():
         raise AssertionError("mocore returned the wrong number of primitive results")
 
     def check(driver):
-        actual = run([driver, "--oracle"], data)
-        if len(actual) != len(expected):
-            raise AssertionError(f"{driver}: wrong output count")
-        for (label, raw), want, found in zip(generated, expected, actual):
-            if want != found:
-                raise AssertionError(f"{driver}: {label}:\nLean: {want}\nC:    {found}\n{raw}")
+        for mode in ["--oracle", "--oracle-unique"]:
+            actual = run([driver, mode], data)
+            if len(actual) != len(expected):
+                raise AssertionError(f"{driver}: wrong output count")
+            for (label, raw), want, found in zip(generated, expected, actual):
+                if want != found:
+                    raise AssertionError(f"{driver} {mode}: {label}:\nLean: {want}\nC:    {found}\n{raw}")
         start = time.monotonic()
         work = subprocess.run([driver, "--work"], text=True, capture_output=True, timeout=20)
         if work.returncode:
             raise AssertionError(f"{driver}: work regression failed\n{work.stdout}\n{work.stderr}")
         elapsed = time.monotonic() - start
-        return f"{driver}: {len(generated)} primitive calls match mocore; work regressions {elapsed:.2f}s"
+        # Above the old 256 KiB conversion cap. Check all emitted digits using
+        # three independent modular fingerprints of 256^n - 1, not C's result.
+        large = subprocess.run([driver, "--big-text-1m"], capture_output=True, text=True, timeout=120)
+        if large.returncode or len(large.stdout) != 1000000 or not large.stdout.isdecimal():
+            raise AssertionError(f"{driver}: million-digit conversion failed: {large.stderr}")
+        for prime in [1000000007, 1000000009, 2147483647]:
+            remainder = 0
+            for i in range(0, len(large.stdout), 1000):
+                chunk = large.stdout[i:i+1000]
+                remainder = (remainder * pow(10, len(chunk), prime) + int(chunk)) % prime
+            if remainder != (pow(256, 415241, prime) - 1) % prime:
+                raise AssertionError(f"{driver}: million-digit fingerprint differs")
+        return f"{driver}: {len(generated)} primitive calls match mocore (shared and unique); work regressions {elapsed:.2f}s"
 
     if not sys.argv[1:]:
         raise AssertionError("at least one C driver is required")

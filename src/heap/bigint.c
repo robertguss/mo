@@ -4,15 +4,7 @@
 
 #include <string.h>
 
-enum { DECIMAL_BASE = 1000000000, MULTIPLY_LEAF = 16, MULTIPLY_DEPTH = 24 };
-
-static MO_MUST_USE bool charge(size_t *work, size_t amount) {
-    if (amount > MO_LIMIT_BIGINT_TEXT_WORK - *work) {
-        return false;
-    }
-    *work += amount;
-    return true;
-}
+enum { DECIMAL_BASE = 1000000000, MULTIPLY_LEAF = 16, MULTIPLY_DEPTH = 32 };
 
 struct multiply_frame {
     const mo_i128 *a, *b;
@@ -22,9 +14,9 @@ struct multiply_frame {
 };
 
 /* scratch has four times count cells. The explicit stack grows logarithmically
- * and fits for every magnitude allowed by MO_LIMIT_STRING_SIZE. */
-static MO_MUST_USE bool multiply(const mo_i128 *a, const mo_i128 *b, mo_i128 *out, size_t count,
-                                 mo_i128 *scratch, size_t *work) {
+ * and fits for every magnitude allowed by MO_LIMIT_VALUE_BYTES. */
+static void multiply(const mo_i128 *a, const mo_i128 *b, mo_i128 *out, size_t count,
+                     mo_i128 *scratch) {
     struct multiply_frame stack[MULTIPLY_DEPTH];
     unsigned depth = 1;
     stack[0] = (struct multiply_frame){a, b, out, scratch, count, 0};
@@ -32,14 +24,8 @@ static MO_MUST_USE bool multiply(const mo_i128 *a, const mo_i128 *b, mo_i128 *ou
         struct multiply_frame *f = &stack[depth - 1];
         size_t n = f->count, half = n / 2;
         if (f->stage == 0) {
-            if (!charge(work, 2 * n)) {
-                return false;
-            }
             memset(f->out, 0, 2 * n * sizeof *out);
             if (n <= MULTIPLY_LEAF) {
-                if (!charge(work, n * n)) {
-                    return false;
-                }
                 for (size_t i = 0; i < n; i++) {
                     for (size_t j = 0; j < n; j++) {
                         f->out[i + j] += f->a[i] * f->b[j];
@@ -47,9 +33,6 @@ static MO_MUST_USE bool multiply(const mo_i128 *a, const mo_i128 *b, mo_i128 *ou
                 }
                 depth--;
                 continue;
-            }
-            if (!charge(work, 2 * half)) {
-                return false;
             }
             for (size_t i = 0; i < half; i++) {
                 f->scratch[i] = f->a[i] + f->a[half + i];
@@ -70,9 +53,6 @@ static MO_MUST_USE bool multiply(const mo_i128 *a, const mo_i128 *b, mo_i128 *ou
             stack[depth++] = (struct multiply_frame){
                 f->scratch, f->scratch + half, f->scratch + n, f->scratch + 2 * n, half, 0};
         } else {
-            if (!charge(work, 2 * n)) {
-                return false;
-            }
             for (size_t i = 0; i < n; i++) {
                 f->scratch[n + i] -= f->out[i] + f->out[n + i];
             }
@@ -82,13 +62,9 @@ static MO_MUST_USE bool multiply(const mo_i128 *a, const mo_i128 *b, mo_i128 *ou
             depth--;
         }
     }
-    return true;
 }
 
-static MO_MUST_USE bool normalize(mo_i128 *digits, size_t count, size_t *work) {
-    if (!charge(work, count)) {
-        return false;
-    }
+static void normalize(mo_i128 *digits, size_t count) {
     mo_i128 carry = 0;
     for (size_t i = 0; i < count; i++) {
         carry += digits[i];
@@ -97,16 +73,17 @@ static MO_MUST_USE bool normalize(mo_i128 *digits, size_t count, size_t *work) {
         carry /= DECIMAL_BASE;
     }
     MO_ASSERT(carry == 0);
-    return true;
 }
 
 bool mo_bigint_text(struct mo_heap *process, struct mo_cell value, struct mo_buffer *out) {
     struct mo_allocation *allocation = mo_heap_allocation(mo_cell_get_ref(value));
-    if (allocation->length > MO_LIMIT_BIGINT_TEXT_BYTES) {
-        return false;
-    }
     if (allocation->length == 0) {
         return mo_buffer_append_byte(out, '0');
+    }
+    /* Every full lower byte requires more than two decimal digits. Refuse a
+     * definitely short caller buffer before doing the radix conversion. */
+    if (2 * ((size_t)allocation->length - 1) > out->limit - out->length) {
+        return false;
     }
     size_t chunks = 1;
     while (chunks < ((size_t)allocation->length + 3) / 4) {
@@ -134,30 +111,25 @@ bool mo_bigint_text(struct mo_heap *process, struct mo_cell value, struct mo_buf
     }
     power[0] = 294967296;
     power[1] = 4;
-    size_t work = 0;
-    bool ok = charge(&work, 2 * chunks);
-    for (size_t stride = 2; ok && stride < 2 * chunks; stride *= 2) {
-        for (size_t offset = 0; ok && offset < 2 * chunks; offset += 2 * stride) {
-            ok = multiply(current + offset + stride, power, next + offset, stride, scratch, &work);
-            if (ok) {
-                for (size_t i = 0; i < stride; i++) {
-                    next[offset + i] += current[offset + i];
-                }
-                ok = normalize(next + offset, 2 * stride, &work);
+    for (size_t stride = 2; stride < 2 * chunks; stride *= 2) {
+        for (size_t offset = 0; offset < 2 * chunks; offset += 2 * stride) {
+            multiply(current + offset + stride, power, next + offset, stride, scratch);
+            for (size_t i = 0; i < stride; i++) {
+                next[offset + i] += current[offset + i];
             }
+            normalize(next + offset, 2 * stride);
         }
         mo_i128 *swap = current;
         current = next;
         next = swap;
-        if (ok && 2 * stride < 2 * chunks) {
-            ok = multiply(power, power, product, stride, scratch, &work) &&
-                 normalize(product, 2 * stride, &work);
-            if (ok) {
-                memcpy(power, product, 2 * stride * sizeof *power);
-            }
+        if (2 * stride < 2 * chunks) {
+            multiply(power, power, product, stride, scratch);
+            normalize(product, 2 * stride);
+            memcpy(power, product, 2 * stride * sizeof *power);
         }
     }
-    size_t length = ok ? 2 * chunks : 0;
+    bool ok = true;
+    size_t length = 2 * chunks;
     while (length != 0 && current[length - 1] == 0) {
         length--;
     }

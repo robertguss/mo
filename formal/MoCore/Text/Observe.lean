@@ -1,4 +1,5 @@
 import MoCore.Text.Value
+import MoCore.Prim
 import MoCore.Support.Num
 import MoCore.Support.Time
 
@@ -8,16 +9,19 @@ def delimited (a b : String) (ss : List String) : String :=
   a ++ String.intercalate ", " ss ++ b
 
 /-- Structural, not customized `to_text`: the differential oracle must expose fields. -/
-partial def structural (p : Program) (t : Ty) (v : Value) (nested : Bool := false) : Parse String := do
+partial def structural (p : Program) (t : Ty) (v : Value) (nested : Bool := false)
+    (referenceText : Bool := false) : Parse String := do
   match t, v with
   | .int, .int n | .bigInt, .bigInt n | .byte, .byte n => pure (toString n)
   | .decimal, .decimal n => pure (decToText n)
-  | .float, .float b => pure ("0x" ++ hex b.toNat 16)
+  | .float, .float b => pure (if referenceText then floatToText (Float.ofBits b) else "0x" ++ hex b.toNat 16)
   | .bool, .bool b => pure (if b then "true" else "false")
-  | .text, .text s => pure (if nested then quote s else s)
+  | .text, .text s => pure (if nested then
+      if referenceText then (quote s).replace "#{" "\\#{" else quote s
+      else s)
   | .char, .char c =>
       let s := String.singleton c
-      pure (if nested then "'" ++ (if c == '\'' then "\\'" else
+      pure (if nested then "'" ++ (if c == '\'' then "\\'" else if referenceText && c == '"' then "\"" else
         (quote s).drop 1 |>.toString |>.dropEnd 1 |>.toString) ++ "'" else s)
   | .bytes, .bytes bs => pure (delimited "bytes[" "]" (bs.map toString))
   | .unit, .unit => pure "Unit"
@@ -26,11 +30,11 @@ partial def structural (p : Program) (t : Ty) (v : Value) (nested : Bool := fals
   | .duration, .duration n => pure (durationToText n)
   | .tuple ts, .tuple vs =>
       if ts.length != vs.length then throw "tuple value arity"
-      pure (delimited "(" ")" (← (ts.zip vs).mapM fun (t, v) => structural p t v true))
-  | .list t, .list vs => pure (delimited "[" "]" (← vs.mapM fun v => structural p t v true))
-  | .set t, .set vs => pure (delimited "[" "].to_set" (← vs.mapM fun v => structural p t v true))
+      pure (delimited "(" ")" (← (ts.zip vs).mapM fun (t, v) => structural p t v true referenceText))
+  | .list t, .list vs => pure (delimited "[" "]" (← vs.mapM fun v => structural p t v true referenceText))
+  | .set t, .set vs => pure (delimited "[" "].to_set" (← vs.mapM fun v => structural p t v true referenceText))
   | .map k t, .map es => pure (delimited "{" "}" (← es.mapM fun (a, b) => do
-      pure ((← structural p k a true) ++ ": " ++ (← structural p t b true))))
+      pure ((← structural p k a true referenceText) ++ ": " ++ (← structural p t b true referenceText))))
   | t, .con c vs =>
       let cs ← match ctorsOf p t with
         | some cs => pure cs | none => throw "value has no constructors"
@@ -38,7 +42,7 @@ partial def structural (p : Program) (t : Ty) (v : Value) (nested : Bool := fals
         | some fs => pure fs | none => throw "unknown value constructor"
       if fs.length != vs.length then throw "constructor value arity"
       let fields ← (fs.zip vs).mapM fun ((n, t), v) => do
-        let s ← structural p t v true
+        let s ← structural p t v true referenceText
         pure (if tNameFields && n != "0" then n ++ ": " ++ s else s)
       pure (if fields.isEmpty then c else delimited (c ++ "(") ")" fields)
   | .fn _ _, .closure .. => pure "<function>"

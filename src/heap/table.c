@@ -38,7 +38,7 @@ static MO_MUST_USE struct mo_allocation *new_table(struct mo_heap *process, uint
                                                    uint32_t capacity, uint32_t slots) {
     enum mo_type_kind kind = process->types->items[type].kind;
     uint32_t stride = kind == MO_TYPE_MAP ? 2 : 1;
-    MO_ASSERT(capacity >= 4 && capacity <= MO_LIMIT_COLLECTION_SIZE && slots >= 2 * capacity);
+    MO_ASSERT(capacity >= 4 && capacity <= 2 * MO_LIMIT_COLLECTION_SIZE && slots >= 2 * capacity);
     size_t data = (size_t)capacity * (stride * sizeof(struct mo_cell) + sizeof(uint64_t) + 1) +
                   (size_t)slots * sizeof(uint32_t);
     data = (data + 7) & ~(size_t)7;
@@ -254,6 +254,13 @@ bool mo_table_set(struct mo_heap *process, uint32_t type, struct mo_cell *value,
     if (old->object.count != 1 ||
         (inserting && (old->length == info->capacity || distance >= MO_LIMIT_HEAP_PROBES))) {
         uint32_t capacity = capacity_for(info->active + (inserting ? 1 : 0));
+        /* A nearly full unique table needs slack, not a same-sized copy after
+         * every remove/reinsert. Removal compacts after a quarter are dead.
+         * One extra capacity tier also keeps churn amortized at the live limit. */
+        if (old->object.count == 1 && inserting && old->length == info->capacity &&
+            info->active >= info->capacity / 2 && info->capacity <= MO_LIMIT_COLLECTION_SIZE) {
+            capacity = 2 * info->capacity;
+        }
         uint32_t slots = 2 * capacity;
         if (distance >= MO_LIMIT_HEAP_PROBES && slots <= info->slots) {
             if (info->slots == MO_LIMIT_HEAP_INDEX_SLOTS) {

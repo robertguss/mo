@@ -151,11 +151,11 @@ static MO_MUST_USE enum mo_prim_status join(struct mo_prim_call *c, struct mo_ce
         MO_ASSERT(mo_list_get(c->args[0], i, &value));
         const uint8_t *text = mo_value_data(value, &n);
         MO_ASSERT(text != NULL);
-        if (n > MO_LIMIT_STRING_SIZE - length)
+        if (!mo_prim_bytes_fit(c, length + n))
             return MO_PRIM_OUT_OF_MEMORY;
         length += n;
         if (i != 0) {
-            if (separator_length > MO_LIMIT_STRING_SIZE - length)
+            if (!mo_prim_bytes_fit(c, length + separator_length))
                 return MO_PRIM_OUT_OF_MEMORY;
             length += separator_length;
         }
@@ -229,6 +229,20 @@ static MO_MUST_USE enum mo_prim_status list(struct mo_prim_call *c, struct mo_ce
         return sum(c, out);
     if (c->id == MO_PRIM_LIST_JOIN)
         return join(c, out);
+    switch ((unsigned)c->id) {
+    case MO_PRIM_LIST_PREPEND:
+    case MO_PRIM_LIST_CONCAT:
+    case MO_PRIM_LIST_REVERSE:
+    case MO_PRIM_LIST_TAKE:
+    case MO_PRIM_LIST_DROP:
+    case MO_PRIM_LIST_SET:
+    case MO_PRIM_LIST_REMOVE_AT:
+    case MO_PRIM_LIST_ENUMERATE:
+    case MO_PRIM_LIST_ZIP:
+        break;
+    default:
+        MO_UNREACHABLE();
+    }
     bool option = c->id == MO_PRIM_LIST_SET || c->id == MO_PRIM_LIST_REMOVE_AT;
     int64_t index = 0;
     uint32_t start = 0, end = count;
@@ -299,7 +313,8 @@ static MO_MUST_USE enum mo_prim_status list(struct mo_prim_call *c, struct mo_ce
 }
 
 static MO_MUST_USE enum mo_prim_status table(struct mo_prim_call *c, struct mo_cell *out) {
-    bool map = c->id >= MO_PRIM_MAP_EMPTY && c->id <= MO_PRIM_MAP_ENTRIES;
+    bool map = c->id == MO_PRIM_MAP_EMPTY ||
+               (c->id != MO_PRIM_SET_EMPTY && c->types->items[c->params[0]].kind == MO_TYPE_MAP);
     if (c->id == MO_PRIM_MAP_EMPTY || c->id == MO_PRIM_SET_EMPTY) {
         bool ok = map ? mo_value_map(c->heap, c->result, NULL, NULL, 0, out)
                       : mo_value_set(c->heap, c->result, NULL, 0, out);
@@ -342,6 +357,18 @@ static MO_MUST_USE enum mo_prim_status table(struct mo_prim_call *c, struct mo_c
         c->moved = 1;
         *out = value;
         return MO_PRIM_RETURNED;
+    }
+    switch ((unsigned)c->id) {
+    case MO_PRIM_MAP_KEYS:
+    case MO_PRIM_MAP_VALUES:
+    case MO_PRIM_MAP_ENTRIES:
+    case MO_PRIM_SET_UNION:
+    case MO_PRIM_SET_INTERSECTION:
+    case MO_PRIM_SET_DIFFERENCE:
+    case MO_PRIM_SET_TO_LIST:
+        break;
+    default:
+        MO_UNREACHABLE();
     }
     bool union_ = c->id == MO_PRIM_SET_UNION;
     bool filter = c->id == MO_PRIM_SET_INTERSECTION || c->id == MO_PRIM_SET_DIFFERENCE;
@@ -429,7 +456,51 @@ enum mo_prim_status mo_prim_collection(struct mo_prim_call *c, struct mo_cell *o
         *out = result;
         return MO_PRIM_RETURNED;
     }
-    if (c->id <= MO_PRIM_LIST_TO_MAP)
+    switch ((unsigned)c->id) {
+    case MO_PRIM_LIST_EMPTY:
+    case MO_PRIM_LIST_SIZE:
+    case MO_PRIM_LIST_IS_EMPTY:
+    case MO_PRIM_LIST_GET:
+    case MO_PRIM_LIST_FIRST:
+    case MO_PRIM_LIST_LAST:
+    case MO_PRIM_LIST_APPEND:
+    case MO_PRIM_LIST_PREPEND:
+    case MO_PRIM_LIST_CONCAT:
+    case MO_PRIM_LIST_REVERSE:
+    case MO_PRIM_LIST_TAKE:
+    case MO_PRIM_LIST_DROP:
+    case MO_PRIM_LIST_SET:
+    case MO_PRIM_LIST_REMOVE_AT:
+    case MO_PRIM_LIST_ENUMERATE:
+    case MO_PRIM_LIST_ZIP:
+    case MO_PRIM_LIST_CONTAINS:
+    case MO_PRIM_LIST_UNIQUE:
+    case MO_PRIM_LIST_SUM:
+    case MO_PRIM_LIST_JOIN:
         return list(c, out);
-    return table(c, out);
+    case MO_PRIM_MAP_EMPTY:
+    case MO_PRIM_MAP_LITERAL_INSERT:
+    case MO_PRIM_MAP_SIZE:
+    case MO_PRIM_MAP_IS_EMPTY:
+    case MO_PRIM_MAP_GET:
+    case MO_PRIM_MAP_HAS:
+    case MO_PRIM_MAP_SET:
+    case MO_PRIM_MAP_REMOVE:
+    case MO_PRIM_MAP_KEYS:
+    case MO_PRIM_MAP_VALUES:
+    case MO_PRIM_MAP_ENTRIES:
+    case MO_PRIM_SET_EMPTY:
+    case MO_PRIM_SET_SIZE:
+    case MO_PRIM_SET_IS_EMPTY:
+    case MO_PRIM_SET_HAS:
+    case MO_PRIM_SET_ADD:
+    case MO_PRIM_SET_REMOVE:
+    case MO_PRIM_SET_UNION:
+    case MO_PRIM_SET_INTERSECTION:
+    case MO_PRIM_SET_DIFFERENCE:
+    case MO_PRIM_SET_TO_LIST:
+        return table(c, out);
+    default:
+        MO_UNREACHABLE();
+    }
 }

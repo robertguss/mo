@@ -18,7 +18,7 @@ static void trim(struct big *n) {
 }
 
 static MO_MUST_USE bool allocate(struct mo_scratch *s, size_t count, struct big *n) {
-    if (count > MO_LIMIT_STRING_SIZE / 4 + 1)
+    if (count > SIZE_MAX / sizeof *n->limbs)
         return false;
     n->limbs = mo_scratch_resize(s, NULL, 0, (count == 0 ? 1 : count) * sizeof *n->limbs);
     n->count = count;
@@ -91,10 +91,10 @@ struct product {
 };
 
 /* Karatsuba keeps large multiplication subquadratic. Coefficients stay below
- * 2^110 for the byte limit, before carrying into base 2^32. No C recursion. */
+ * 2^122 for u32 byte lengths, before carrying into base 2^32. No C recursion. */
 static void product(const mo_i128 *a, const mo_i128 *b, mo_i128 *out, mo_i128 *scratch,
                     size_t count) {
-    struct product stack[24];
+    struct product stack[32];
     unsigned depth = 1;
     stack[0] = (struct product){a, b, out, scratch, count, 0};
     while (depth != 0) {
@@ -114,16 +114,16 @@ static void product(const mo_i128 *a, const mo_i128 *b, mo_i128 *out, mo_i128 *s
                 f->scratch[half + i] = f->b[i] + f->b[half + i];
             }
             f->stage = 1;
-            MO_ASSERT(depth < 24);
+            MO_ASSERT(depth < 32);
             stack[depth++] = (struct product){f->a, f->b, f->out, f->scratch + 2 * n, half, 0};
         } else if (f->stage == 1) {
             f->stage = 2;
-            MO_ASSERT(depth < 24);
+            MO_ASSERT(depth < 32);
             stack[depth++] =
                 (struct product){f->a + half, f->b + half, f->out + n, f->scratch + 2 * n, half, 0};
         } else if (f->stage == 2) {
             f->stage = 3;
-            MO_ASSERT(depth < 24);
+            MO_ASSERT(depth < 32);
             stack[depth++] = (struct product){
                 f->scratch, f->scratch + half, f->scratch + n, f->scratch + 2 * n, half, 0};
         } else {
@@ -136,17 +136,40 @@ static void product(const mo_i128 *a, const mo_i128 *b, mo_i128 *out, mo_i128 *s
     }
 }
 
-static MO_MUST_USE bool multiply(struct mo_scratch *s, struct big a, struct big b,
-                                 struct big *out) {
+static MO_MUST_USE bool multiply(struct mo_prim_call *c, struct mo_scratch *s, struct big a,
+                                 struct big b, struct big *out) {
     if (a.count == 0 || b.count == 0)
         return allocate(s, 0, out);
-    if (a.count + b.count - 1 > MO_LIMIT_STRING_SIZE / 4)
+    if (!mo_prim_bytes_fit(c, 4 * (a.count + b.count - 2) + 1))
         return false;
+    if (!allocate(s, a.count + b.count, out))
+        return false;
+    if (a.count < b.count) {
+        struct big swap = a;
+        a = b;
+        b = swap;
+    }
+    /* Small multipliers need work proportional to the longer operand, not a
+     * padded Karatsuba tree. Each accumulation fits in u64 with its carry. */
+    if (b.count <= 32) {
+        for (size_t j = 0; j < b.count; j++) {
+            uint64_t carry = 0;
+            for (size_t i = 0; i < a.count; i++) {
+                uint64_t word = (uint64_t)a.limbs[i] * b.limbs[j] + out->limbs[i + j] + carry;
+                out->limbs[i + j] = (uint32_t)word;
+                carry = word >> 32;
+            }
+            out->limbs[a.count + j] = (uint32_t)carry;
+        }
+        out->negative = a.negative != b.negative;
+        trim(out);
+        return true;
+    }
     size_t n = 1;
     while (n < a.count || n < b.count)
         n *= 2;
     mo_i128 *memory = mo_scratch_resize(s, NULL, 0, 8 * n * sizeof *memory);
-    if (memory == NULL || !allocate(s, a.count + b.count, out))
+    if (memory == NULL)
         return false;
     memset(memory, 0, 2 * n * sizeof *memory);
     for (size_t i = 0; i < a.count; i++)
@@ -264,6 +287,10 @@ static MO_MUST_USE bool write_big(struct mo_prim_call *c, struct mo_scratch *s, 
     size_t length = n.count * 4;
     while (length != 0 && bytes[length - 1] == 0)
         length--;
+    if (length > MO_LIMIT_VALUE_BYTES) {
+        c->reason = "BigInt exceeds MO_LIMIT_VALUE_BYTES";
+        return false;
+    }
     enum mo_bigint_sign sign = length == 0  ? MO_BIGINT_ZERO
                                : n.negative ? MO_BIGINT_NEGATIVE
                                             : MO_BIGINT_POSITIVE;
@@ -322,10 +349,10 @@ enum mo_prim_status mo_prim_bigint(struct mo_prim_call *c, struct mo_cell *out) 
             result.negative = a.negative && (exponent & 1) != 0;
         } else {
             while (exponent != 0) {
-                if ((exponent & 1) != 0 && !multiply(&scratch, result, a, &result))
+                if ((exponent & 1) != 0 && !multiply(c, &scratch, result, a, &result))
                     goto done;
                 exponent >>= 1;
-                if (exponent != 0 && !multiply(&scratch, a, a, &a))
+                if (exponent != 0 && !multiply(c, &scratch, a, a, &a))
                     goto done;
             }
         }
@@ -338,7 +365,7 @@ enum mo_prim_status mo_prim_bigint(struct mo_prim_call *c, struct mo_cell *out) 
             if (!add(&scratch, a, b, &result))
                 goto done;
         } else if (c->id == MO_PRIM_BIGINT_MUL) {
-            if (!multiply(&scratch, a, b, &result))
+            if (!multiply(c, &scratch, a, b, &result))
                 goto done;
         } else {
             if (b.count == 0) {

@@ -12,6 +12,7 @@ struct prim_fixture {
     struct mo_heap *heap;
     uint32_t builtin[MO_TYPE_BIGINT + 1];
     uint32_t signature[MO_PRIM_COUNT];
+    uint32_t structural[512];
     uint32_t options[512];
     uint32_t ordering;
     enum mo_type_kind element;
@@ -131,6 +132,16 @@ static void prim_fixture_init_type(struct prim_fixture *f, size_t budget,
         }                                                                                          \
     }
 #include "base/prims.def"
+    uint32_t type_count = f->types.count;
+    MO_ASSERT(type_count < 512);
+    memset(f->structural, 0xff, sizeof f->structural);
+    for (uint32_t i = 0; i < type_count; i++) {
+        struct mo_type fn = {.kind = MO_TYPE_FUNCTION,
+                             .parameters = &i,
+                             .parameter_count = 1,
+                             .result = f->builtin[MO_TYPE_TEXT]};
+        MO_ASSERT(mo_types_intern(&f->types, &fn, &f->structural[i]) == MO_TYPES_OK);
+    }
     MO_ASSERT(mo_types_finish(&f->types) == MO_TYPES_OK);
     for (uint32_t i = 0; i < f->types.count; i++) {
         const struct mo_type *t = &f->types.items[i];

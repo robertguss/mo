@@ -95,7 +95,7 @@ static MO_MUST_USE enum mo_prim_status floating(struct mo_prim_call *c, const ui
         start = at;
         while (at < length && digit(s[at])) {
             /* This saturation exceeds every possible mantissa length and preserves its order. */
-            if (exponent <= MO_LIMIT_STRING_SIZE)
+            if (exponent <= MO_LIMIT_VALUE_BYTES)
                 exponent = exponent * 10 + s[at] - '0';
             at++;
         }

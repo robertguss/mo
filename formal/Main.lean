@@ -39,8 +39,19 @@ def primitiveSum (b : Base) (acc : Value) : List Value → Outcome
 
 /-- Lowering's three-way comparison uses the model's base order, not its
 boolean comparison instruction. Keep this bridge outside the primitive model. -/
+def primitiveSequence (acc : Value) : List Value → Parse Outcome
+  | [] => pure (.ok acc {})
+  | .tuple (.text _ :: .text op :: args) :: rest => do
+      let step := (← primIn (← parseSexp op)).eval (acc :: args) {}
+      match step with
+      | .ok (.con "Some" [next]) _ => primitiveSequence next rest
+      | .ok next _ => primitiveSequence next rest
+      | other => pure other
+  | _ => throw "expected sequence step name, primitive and arguments"
+
 def primitiveEval (p : Sexp) (vs : List Value) : Parse Outcome := do
   match p, vs with
+  | .node [.atom "sequence"], [initial, .list steps] => primitiveSequence initial steps
   | .node [.atom "order", b], [x, y] =>
       let b ← enumIn bases b
       let o ← match baseOrder b x y with
@@ -64,7 +75,7 @@ def primitiveEval (p : Sexp) (vs : List Value) : Parse Outcome := do
         (quote (String.singleton c)).drop 1 |>.toString |>.dropEnd 1 |>.toString
       pure (.ok (.text ("'" ++ body ++ "'")) {})
   | .node [.atom "structural", t], [v] =>
-      let s ← structural {data := [], funs := []} (← tyIn t) v
+      let s ← structural {data := [], funs := []} (← tyIn t) v false true
       pure (.ok (.text s) {})
   | _, _ => pure ((← primIn p).eval vs {})
 

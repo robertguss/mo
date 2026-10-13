@@ -47,7 +47,7 @@ static MO_MUST_USE bool byte_value(struct mo_heap *process, enum mo_type_kind ki
                                    const uint8_t *bytes, size_t length, uint32_t auxiliary,
                                    struct mo_cell *out) {
     MO_ASSERT(process != NULL && out != NULL);
-    if (length > MO_LIMIT_STRING_SIZE || (length != 0 && bytes == NULL) ||
+    if (length > MO_LIMIT_VALUE_BYTES || (length != 0 && bytes == NULL) ||
         process->builtins[kind] == MO_NO_INDEX) {
         return false;
     }
@@ -82,7 +82,7 @@ bool mo_value_bytes(struct mo_heap *process, const uint8_t *bytes, size_t length
 
 bool mo_value_bigint(struct mo_heap *process, enum mo_bigint_sign sign, const uint8_t *magnitude,
                      size_t length, struct mo_cell *out) {
-    if (length > MO_LIMIT_STRING_SIZE || (length != 0 && magnitude == NULL) ||
+    if (length > MO_LIMIT_VALUE_BYTES || (length != 0 && magnitude == NULL) ||
         (sign != MO_BIGINT_ZERO && sign != MO_BIGINT_POSITIVE && sign != MO_BIGINT_NEGATIVE) ||
         ((sign == MO_BIGINT_ZERO) != (length == 0)) ||
         (length != 0 && magnitude[length - 1] == 0)) {

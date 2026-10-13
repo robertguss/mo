@@ -657,10 +657,10 @@ no ownership transfer. `mo_value_bytes` copies an arbitrary byte sequence,
 including NUL and invalid UTF-8. `mo_value_bigint` copies a sign and
 little-endian magnitude in exactly section 3.1's canonical form; signs are
 shared in `base.h` so heap need not include bytecode. Both take a `size_t`
-length of at most `MO_LIMIT_STRING_SIZE`; a byte pointer may be NULL only
+length of at most `MO_LIMIT_VALUE_BYTES`; a byte pointer may be NULL only
 for zero length. Invalid signs/magnitudes, lengths past the bound and
-allocation/heap-limit failures return false. These limits bound C input
-generation, not arithmetic results of a running program.
+allocation/heap-limit failures return false. Source literals and encoded
+constants separately use `MO_LIMIT_STRING_SIZE`; runtime values do not.
 
 ### 4.4 Arithmetic, comparison and ranges
 
@@ -980,10 +980,14 @@ uses the remaining process heap; memo growth releases old arrays. For a type
 with the required ability, a failed generic operation means running out of
 memory, reported as that bug (reference 13.2), not an arbitrary walk limit.
 
-Structural printing retains `MO_LIMIT_HEAP_WORK`'s node/byte/output bound;
-BigInt conversion has a separate `MO_LIMIT_BIGINT_TEXT_WORK` budget and a
-256 KiB magnitude cap (`MO_LIMIT_BIGINT_TEXT_BYTES`). Larger BigInts remain
-valid values. Printing can also refuse scratch or caller output allocation,
+Runtime Text, Bytes and BigInt use u32 byte lengths, with representation ceiling
+`MO_LIMIT_VALUE_BYTES` (4,294,967,295 bytes). `MO_LIMIT_STRING_SIZE` bounds C
+source/constant input, not computed values. Runtime allocation and scratch use
+the process's `--max-heap`; primitive refusals name it or the representation
+ceiling. Balanced BigInt decimal conversion has no magnitude or work cap beyond
+available heap and output. Structural printing expands shared edges only as far
+as the caller's output buffer allows, with work proportional to emitted text
+apart from subquadratic BigInt conversion. Printing can refuse scratch or caller output allocation,
 preserving existing output. Scalars and the first 16 frames use the C stack,
 so scalars and shallow values still print with a full process heap (BigInt
 conversion may require scratch). Defect renderers use `<value unavailable>`
