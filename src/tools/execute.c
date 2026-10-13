@@ -73,8 +73,6 @@ static void execute_pipeline(void *argument) {
                    "this build cannot execute specification code yet", NULL);
         return;
     }
-    if (cli->command == MO_COMMAND_CHECK && cli->emit == MO_EMIT_NONE)
-        return;
     struct mo_arena lowered;
     mo_arena_init(&lowered, MO_LIMIT_LOWER_WORK);
     struct mo_core *core = mo_lower(&lowered, program, sources, diags);
@@ -83,6 +81,9 @@ static void execute_pipeline(void *argument) {
     mo_buffer_init(&printed, cli->emit == MO_EMIT_CORE ? MO_LIMIT_CORE_TEXT_SIZE
                                                        : MO_LIMIT_BYTECODE_TEXT_SIZE);
     if (core == NULL || mo_diags_any(diags) || !mo_core_check(core, diags))
+        goto done;
+    /* Plain check validates lowering too, but never executes the user's main. */
+    if (cli->command == MO_COMMAND_CHECK && cli->emit == MO_EMIT_NONE)
         goto done;
     if (cli->emit == MO_EMIT_CORE) {
         if (!mo_core_print(core, &printed))

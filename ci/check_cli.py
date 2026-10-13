@@ -53,6 +53,8 @@ def runner(binary):
         path = pathlib.Path(directory) / "main.mo"
         path.write_text('module Main\nfn main(console: Console) : Int\n'
                         'console.print("hello 日本語")\n37\nend\n')
+        checked = run(binary, ["check", str(path)], 0)
+        assert not checked.stdout and not checked.stderr
         result = run(binary, ["run", str(path)], 37)
         assert result.stdout == "hello 日本語\n".encode() and not result.stderr
         # Emission writes indexed text, not an opaque binary or an execution

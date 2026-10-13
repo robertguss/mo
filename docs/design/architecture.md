@@ -1473,9 +1473,11 @@ drops, belongs to the checker; tools do not rerun partial checking behind it.
 The shared source arena is bounded to 512 MiB (E1054 while parsing, E1058 while
 checking on exhaustion).
 
-For `run` and emission, only a successful certificate reaches `mo_lower`,
-`mo_core_check` and `mo_compile`. Lowering has its own 256 MiB work arena; the
-wire and text buffers use their format limits. `--emit=core` prints checked
+Only a successful certificate reaches `mo_lower` and `mo_core_check`, including
+for plain `check`; an unfinished lowering stage cannot be silently accepted.
+Plain checking never executes the user's `main`. `run` and bytecode emission
+then call `mo_compile`. Lowering has its own 256 MiB work arena; the wire and
+text buffers use their format limits. `--emit=core` prints checked
 Core text; `--emit=bytecode` prints indexed bytecode text after compiling and
 loading its format. E1404 reports artifact loading or output failure.
 `run` loads the verified bytecode, initializes its image, creates a process
