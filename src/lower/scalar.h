@@ -12,5 +12,8 @@ mo_core_expr lower_error_text(struct lowering *p, mo_core_ty type, mo_core_expr 
 mo_core_expr lower_to_text(struct lowering *p, const struct mo_ability_implementation *proof,
                            const struct substitution *substitution, uint32_t owner, uint32_t depth,
                            mo_core_expr value);
+mo_core_expr lower_compare(struct lowering *p, const struct mo_ability_implementation *proof,
+                           const struct substitution *substitution, uint32_t owner, uint32_t depth,
+                           mo_core_expr left, mo_core_expr right);
 
 #endif

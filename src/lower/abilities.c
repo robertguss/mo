@@ -13,8 +13,9 @@ struct derived {
     struct mo_span span;
 };
 
-static uint32_t bucket(struct lowering *p, mo_core_ty type, uint32_t owner, uint32_t slots) {
-    uint64_t key = lower_type_hash(p, type) ^ ((uint64_t)owner << 32);
+static uint32_t bucket(struct lowering *p, mo_core_ty type, uint32_t owner,
+                       enum mo_source_ability ability, uint32_t slots) {
+    uint64_t key = lower_type_hash(p, type) ^ ((uint64_t)owner << 32) ^ ((uint64_t)ability << 48);
     key ^= key >> 30;
     key *= UINT64_C(0xbf58476d1ce4e5b9);
     key ^= key >> 27;
@@ -89,9 +90,9 @@ static mo_core_expr part_text(struct lowering *p, struct derived *d, uint32_t pa
     return converted;
 }
 
-mo_core_expr lower_derived_text(struct lowering *p, const struct mo_ability_implementation *proof,
-                                const struct substitution *substitution, uint32_t owner,
-                                uint32_t depth, mo_core_expr value) {
+static struct derived *reserve(struct lowering *p, const struct mo_ability_implementation *proof,
+                               const struct substitution *substitution, uint32_t owner,
+                               uint32_t depth) {
     mo_core_ty type = lower_type(p, proof->type, substitution);
     if (proof->type->module != UINT32_MAX && proof->type->kind == MO_SOURCE_NAMED)
         owner = proof->type->module;
@@ -102,18 +103,18 @@ mo_core_expr lower_derived_text(struct lowering *p, const struct mo_ability_impl
         struct derived **table = LOWER_NEW(p, struct derived *, slots);
         for (struct derived *item = p->derived; item != NULL; item = item->next) {
             lower_work(p, 1);
-            uint32_t at = bucket(p, item->type, item->function->owner, slots);
+            uint32_t at = bucket(p, item->type, item->function->owner, item->proof->ability, slots);
             item->hash_next = table[at];
             table[at] = item;
         }
         p->derived_index = table;
         p->derived_slots = slots;
     }
-    uint32_t at = bucket(p, type, owner, p->derived_slots);
+    uint32_t at = bucket(p, type, owner, proof->ability, p->derived_slots);
     struct derived *d;
     for (d = p->derived_index[at]; d != NULL; d = d->hash_next) {
         lower_work(p, 1);
-        if (d->type == type && d->function->owner == owner)
+        if (d->type == type && d->function->owner == owner && d->proof->ability == proof->ability)
             break;
     }
     if (d == NULL) {
@@ -139,26 +140,143 @@ mo_core_expr lower_derived_text(struct lowering *p, const struct mo_ability_impl
         *p->function_tail = f;
         p->function_tail = &f->next;
         f->fun.module = lower_text(p, p->program->set->names[owner]);
-        f->fun.name =
-            lower_concat(p, f->fun.module, ".%to_text(",
-                         lower_concat(p, lower_type_name(p, type), "", lower_text(p, ")")));
+        f->fun.name = lower_concat(
+            p, f->fun.module, proof->ability == MO_SOURCE_TEXT ? ".%to_text(" : ".%compare(",
+            lower_concat(p, lower_type_name(p, type), "", lower_text(p, ")")));
         f->fun.const_count.digits = lower_text(p, "0");
         static const struct mo_source_type text_type = {
             .kind = MO_SOURCE_NAMED, .name = "Text", .module = UINT32_MAX};
-        f->fun.ret = lower_type(p, &text_type, NULL);
-        f->fun.params.count = 1;
-        f->fun.params.items = LOWER_NEW(p, struct mo_core_param, 1);
-        f->fun.params.items[0] = (struct mo_core_param){lower_fresh(p), type};
-        f->meta.body.params.count = 1;
-        f->meta.body.params.items = LOWER_NEW(p, struct mo_core_name, 1);
+        static const struct mo_source_type order_type = {
+            .kind = MO_SOURCE_NAMED, .name = "Ordering", .module = UINT32_MAX};
+        f->fun.ret =
+            lower_type(p, proof->ability == MO_SOURCE_TEXT ? &text_type : &order_type, NULL);
+        f->fun.params.count = proof->ability == MO_SOURCE_TEXT ? 1 : 2;
+        f->fun.params.items = LOWER_NEW(p, struct mo_core_param, f->fun.params.count);
+        for (size_t i = 0; i < f->fun.params.count; i++)
+            f->fun.params.items[i] = (struct mo_core_param){lower_fresh(p), type};
+        f->meta.body.params.count = f->fun.params.count;
+        f->meta.body.params.items = LOWER_NEW(p, struct mo_core_name, f->fun.params.count);
         f->meta.name = f->fun.name;
         f->meta.span = lower_span(p, p->span);
     }
+    return d;
+}
+
+mo_core_expr lower_derived_text(struct lowering *p, const struct mo_ability_implementation *proof,
+                                const struct substitution *substitution, uint32_t owner,
+                                uint32_t depth, mo_core_expr value) {
+    struct derived *d = reserve(p, proof, substitution, owner, depth);
     mo_core_expr call = lower_expr(p, MO_CORE_EXPR_CALL);
     call->as.call.name = d->function->fun.name;
     call->as.call.args = args(p, 1);
     call->as.call.args.items[0] = value;
     return call;
+}
+
+static mo_core_expr ordering(struct lowering *p, const char *name) {
+    static const struct mo_source_type type = {
+        .kind = MO_SOURCE_NAMED, .name = "Ordering", .module = UINT32_MAX};
+    mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CON);
+    e->as.con.ty = lower_type(p, &type, NULL);
+    e->as.con.ctor = lower_text(p, name);
+    return e;
+}
+
+mo_core_expr lower_compare(struct lowering *p, const struct mo_ability_implementation *proof,
+                           const struct substitution *substitution, uint32_t owner, uint32_t depth,
+                           mo_core_expr left, mo_core_expr right) {
+    MO_ASSERT(proof != NULL && proof->ability == MO_SOURCE_ORDER);
+    mo_core_expr_list values = args(p, 2);
+    values.items[0] = left;
+    values.items[1] = right;
+    if (proof->kind == MO_ABILITY_DERIVED || proof->kind == MO_ABILITY_FUNCTION) {
+        struct instance *f;
+        if (proof->kind == MO_ABILITY_DERIVED)
+            f = reserve(p, proof, substitution, owner, depth)->function;
+        else {
+            if (proof->part_count != 0)
+                lower_refuse(p, MO_CODE_LOWER_UNFINISHED,
+                             "generic customizer requirement proofs are not substituted yet");
+            f = lower_instance(p, proof->function, proof->arguments, substitution, owner,
+                               depth + (proof->arguments.count != 0));
+        }
+        mo_core_expr call = lower_expr(p, MO_CORE_EXPR_CALL);
+        call->as.call.name = f->fun.name;
+        call->as.call.args = values;
+        return call;
+    }
+    if (proof->kind != MO_ABILITY_NATIVE)
+        lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "abstract ordering is not substituted yet");
+    mo_core_ty type = lower_type(p, proof->type, substitution);
+    if (type->tag == MO_CORE_TY_UNIT)
+        return ordering(p, "Equal");
+    mo_core_expr less = lower_expr(p, MO_CORE_EXPR_IF);
+    less->as.if_.cond = lower_prim(p, lower_operator(p, MO_T_LT, type, type), values);
+    less->as.if_.then_ = ordering(p, "Less");
+    mo_core_expr greater = lower_expr(p, MO_CORE_EXPR_IF);
+    greater->as.if_.cond = lower_prim(p, lower_operator(p, MO_T_GT, type, type), values);
+    greater->as.if_.then_ = ordering(p, "Greater");
+    greater->as.if_.else_ = ordering(p, "Equal");
+    less->as.if_.else_ = greater;
+    if (type->tag == MO_CORE_TY_FLOAT) {
+        struct mo_core_prim nan = {.tag = MO_CORE_PRIM_FLOAT, .as.float_ = MO_CORE_FLOAT_OP_IS_NAN};
+        mo_core_expr_list one = args(p, 1);
+        one.items[0] = right;
+        mo_core_expr other = lower_expr(p, MO_CORE_EXPR_IF);
+        other->as.if_.cond = lower_prim(p, nan, one);
+        other->as.if_.then_ = ordering(p, "Less");
+        other->as.if_.else_ = less;
+        mo_core_expr both = lower_expr(p, MO_CORE_EXPR_IF);
+        both->as.if_.cond = lower_prim(p, nan, one);
+        both->as.if_.then_ = ordering(p, "Equal");
+        both->as.if_.else_ = ordering(p, "Greater");
+        one = args(p, 1);
+        one.items[0] = left;
+        mo_core_expr e = lower_expr(p, MO_CORE_EXPR_IF);
+        e->as.if_.cond = lower_prim(p, nan, one);
+        e->as.if_.then_ = both;
+        e->as.if_.else_ = other;
+        return e;
+    }
+    return less;
+}
+
+static void fields_order(struct lowering *p, struct derived *d, uint32_t first,
+                         mo_core_expr_list left, mo_core_expr_list right, mo_core_expr *out) {
+    MO_ASSERT(left.count == right.count);
+    for (uint32_t i = 0; i < left.count; i++) {
+        lower_work(p, 1);
+        MO_ASSERT(first + i < d->proof->part_count);
+        mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CASE);
+        e->as.case_.expr =
+            lower_compare(p, d->proof->parts[first + i], d->substitution, d->function->owner,
+                          d->function->depth, left.items[i], right.items[i]);
+        e->as.case_.arms.count = 3;
+        e->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 3);
+        e->as.case_.arms.items[0] =
+            (struct mo_core_arm){.ctor = lower_text(p, "Less"), .body = ordering(p, "Less")};
+        e->as.case_.arms.items[1].ctor = lower_text(p, "Equal");
+        e->as.case_.arms.items[2] =
+            (struct mo_core_arm){.ctor = lower_text(p, "Greater"), .body = ordering(p, "Greater")};
+        *out = e;
+        out = &e->as.case_.arms.items[1].body;
+    }
+    *out = ordering(p, "Equal");
+}
+
+static void derive_order(struct lowering *p, struct derived *d) {
+    p->span = d->span;
+    struct instance *f = d->function;
+    if (d->type->tag != MO_CORE_TY_TUPLE)
+        lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "this derived order shape is not lowered yet");
+    size_t count = d->type->as.tuple.count;
+    MO_ASSERT(count == d->proof->part_count);
+    mo_core_expr_list left = args(p, count), right = args(p, count);
+    for (size_t i = 0; i < count; i++) {
+        left.items[i] = projection(p, lower_var(p, f->fun.params.items[0].name), i);
+        right.items[i] = projection(p, lower_var(p, f->fun.params.items[1].name), i);
+    }
+    fields_order(p, d, 0, left, right, &f->fun.body);
 }
 
 static void fields_text(struct lowering *p, struct derived *d, uint32_t first,
@@ -258,7 +376,12 @@ void lower_derived_functions(struct lowering *p) {
     while (p->derived_pending != NULL) {
         lower_work(p, 1);
         struct derived *d = p->derived_pending;
-        derive_text(p, d);
+        if (d->proof->ability == MO_SOURCE_TEXT)
+            derive_text(p, d);
+        else {
+            MO_ASSERT(d->proof->ability == MO_SOURCE_ORDER);
+            derive_order(p, d);
+        }
         p->derived_pending = d->next;
     }
 }

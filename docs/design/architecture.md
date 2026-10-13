@@ -870,6 +870,11 @@ Nested native
 Text/Char fields are quoted and escape slashes before newly inserted escapes,
 including controls and interpolation markers. Generated parameter metadata
 retains arity with absent source names.
+Derived Order uses the same reservation queue, keyed additionally by ability.
+Tuple comparisons inspect parts left to right and continue only on Equal;
+selected custom compare functions replace structural ordering, not equality.
+Native Float `compare` orders NaNs after numbers and returns Equal for two NaNs,
+while direct scalar comparison operators retain IEEE behavior.
 
 The initial CPS implementation conservatively passes every live outer var,
 not only changed vars, across a continuation join; expression joins also pass

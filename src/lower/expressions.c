@@ -859,6 +859,33 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
     if (r->operation != MO_T_EOF) {
         mo_core_ty left = type(b, row(b, r->operands[0])->type);
         mo_core_ty right = args.count == 2 ? type(b, row(b, r->operands[1])->type) : NULL;
+        if (r->operation == MO_T_LT || r->operation == MO_T_LE || r->operation == MO_T_GT ||
+            r->operation == MO_T_GE) {
+            for (uint32_t i = 0; i < r->ability_count; i++) {
+                lower_work(p, 1);
+                const struct mo_checked_ability_use *use = &r->abilities[i];
+                if (use->operand != r->operands[0] ||
+                    use->implementation->ability != MO_SOURCE_ORDER ||
+                    use->implementation->kind == MO_ABILITY_NATIVE)
+                    continue;
+                static const struct mo_source_type ordering = {
+                    .kind = MO_SOURCE_NAMED, .name = "Ordering", .module = UINT32_MAX};
+                mo_core_ty order = type(b, &ordering);
+                mo_core_expr_list values = arguments(b, 2);
+                values.items[0] = lower_compare(p, use->implementation, &b->instance->substitution,
+                                                b->instance->owner, b->instance->depth,
+                                                args.items[0], args.items[1]);
+                values.items[1] = lower_expr(p, MO_CORE_EXPR_CON);
+                values.items[1]->as.con.ty = order;
+                values.items[1]->as.con.ctor = lower_text(
+                    p, r->operation == MO_T_LT || r->operation == MO_T_GE ? "Less" : "Greater");
+                mo_core_expr e = lower_prim(
+                    p, (struct mo_core_prim){.tag = MO_CORE_PRIM_EQ, .as.eq = order}, values);
+                if (r->operation == MO_T_LE || r->operation == MO_T_GE)
+                    e = unary(b, (struct mo_core_prim){.tag = MO_CORE_PRIM_NOT}, e);
+                return e;
+            }
+        }
         if (left->tag == MO_CORE_TY_UNIT && (r->operation == MO_T_LT || r->operation == MO_T_LE ||
                                              r->operation == MO_T_GT || r->operation == MO_T_GE))
             return lower_bool(p, r->operation == MO_T_LE || r->operation == MO_T_GE);
@@ -879,6 +906,12 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
         return lower_to_text(p, ability(b, r, MO_SOURCE_TEXT, r->operands[0]),
                              &b->instance->substitution, b->instance->owner, b->instance->depth,
                              args.items[0]);
+    }
+    if (r->native != NULL && strcmp(r->native, "compare") == 0) {
+        MO_ASSERT(args.count == 2);
+        return lower_compare(p, ability(b, r, MO_SOURCE_ORDER, r->operands[0]),
+                             &b->instance->substitution, b->instance->owner, b->instance->depth,
+                             args.items[0], args.items[1]);
     }
     if (r->native != NULL && strcmp(r->native, "None") != 0 && strcmp(r->native, "Some") != 0 &&
         strcmp(r->native, "Ok") != 0 && strcmp(r->native, "Error") != 0 &&

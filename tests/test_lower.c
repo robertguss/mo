@@ -720,6 +720,83 @@ static void test_derived_text(void) {
     lower_fixture_free(&f);
 }
 
+static void test_tuple_order(void) {
+    struct lower_fixture f;
+    lower_fixture_init(&f, "module Main\nfn main() : Int\n"
+                           "if (2, 100) < (3, 5): 31 else: 1\nend\n");
+    const struct mo_source_type *parts[] = {&f.int_, &f.int_};
+    struct mo_source_type tuple = {.kind = MO_SOURCE_TUPLE, .count = 2, .arguments = parts};
+    uint32_t two = lower_fixture_row(&f, MO_S_INT, &f.int_, "2", 0, NULL);
+    uint32_t hundred = lower_fixture_row(&f, MO_S_INT, &f.int_, "100", 0, NULL);
+    uint32_t left_parts[] = {two, hundred};
+    uint32_t left = lower_fixture_row(&f, MO_S_TUPLE, &tuple, NULL, 2, left_parts);
+    uint32_t three = lower_fixture_row(&f, MO_S_INT, &f.int_, "3", 0, NULL);
+    uint32_t five = lower_fixture_row(&f, MO_S_INT, &f.int_, "5", 0, NULL);
+    uint32_t right_parts[] = {three, five};
+    uint32_t right = lower_fixture_row(&f, MO_S_TUPLE, &tuple, NULL, 2, right_parts);
+    struct mo_ability_implementation integer = {
+        .ability = MO_SOURCE_ORDER, .kind = MO_ABILITY_NATIVE, .type = &f.int_};
+    const struct mo_ability_implementation *proofs[] = {&integer, &integer};
+    struct mo_ability_implementation order = {.ability = MO_SOURCE_ORDER,
+                                              .kind = MO_ABILITY_DERIVED,
+                                              .type = &tuple,
+                                              .part_count = 2,
+                                              .parts = proofs};
+    struct mo_checked_ability_use use = {left, &order};
+    uint32_t less = lower_fixture_op(&f, MO_T_LT, &f.bool_, left, right);
+    f.rows[less].ability_count = 1;
+    f.rows[less].abilities = &use;
+    uint32_t yes = lower_fixture_row(&f, MO_S_INT, &f.int_, "31", 0, NULL);
+    uint32_t no = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+    uint32_t arms[] = {less, yes, no};
+    (void)lower_fixture_row(&f, MO_S_IF, &f.int_, NULL, 3, arms);
+    struct mo_core *core = checked(&f, "tuple-order", "returned\n31\n");
+    if (core != NULL)
+        run(core, 31);
+    lower_fixture_free(&f);
+}
+
+static void test_float_compare(void) {
+    for (uint32_t mask = 1; mask < 4; mask++) {
+        struct lower_fixture f;
+        lower_fixture_init(&f, "module Main\nfn main() : Int\n"
+                               "if (0.0 / 0.0).compare(0.0) == Greater: 37 else: 1\nend\n");
+        struct mo_source_type float_ = f.int_, order = f.int_;
+        float_.name = "Float";
+        order.name = "Ordering";
+        uint32_t operands[2];
+        for (uint32_t i = 0; i < 2; i++) {
+            operands[i] = lower_fixture_row(&f, MO_S_DECIMAL, &float_, "0.0", 0, NULL);
+            if ((mask & (1u << i)) != 0) {
+                uint32_t zero = lower_fixture_row(&f, MO_S_DECIMAL, &float_, "0.0", 0, NULL);
+                operands[i] = lower_fixture_op(&f, MO_T_SLASH, &float_, operands[i], zero);
+            }
+        }
+        struct mo_ability_implementation proof = {
+            .ability = MO_SOURCE_ORDER, .kind = MO_ABILITY_NATIVE, .type = &float_};
+        struct mo_checked_ability_use use = {operands[0], &proof};
+        uint32_t compare = lower_fixture_row(&f, MO_S_CALL, &order, NULL, 2, operands);
+        f.rows[compare].native = "compare";
+        f.rows[compare].ability_count = 1;
+        f.rows[compare].abilities = &use;
+        uint32_t want = lower_fixture_row(&f, MO_S_NAME, &order, NULL, 0, NULL);
+        f.rows[want].native = mask == 1 ? "Greater" : mask == 2 ? "Less" : "Equal";
+        uint32_t equal = lower_fixture_op(&f, MO_T_EQ, &f.bool_, compare, want);
+        uint32_t yes = lower_fixture_row(&f, MO_S_INT, &f.int_, "37", 0, NULL);
+        uint32_t no = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+        uint32_t arms[] = {equal, yes, no};
+        (void)lower_fixture_row(&f, MO_S_IF, &f.int_, NULL, 3, arms);
+        struct mo_core *core = checked(&f,
+                                       mask == 1   ? "nan-compare-number"
+                                       : mask == 2 ? "number-compare-nan"
+                                                   : "nan-compare-nan",
+                                       "returned\n37\n");
+        if (core != NULL)
+            run(core, 37);
+        lower_fixture_free(&f);
+    }
+}
+
 static void test_record_text(void) {
     struct lower_fixture f;
     lower_fixture_init(&f, "module Main\nstruct Point\nx: Int\nlabel: Text\nend\n"
@@ -1125,6 +1202,8 @@ int main(int argc, char **argv) {
     test_try_result();
     test_interpolation();
     test_derived_text();
+    test_tuple_order();
+    test_float_compare();
     test_record_text();
     test_text();
     test_result_entry();

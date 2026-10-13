@@ -1133,6 +1133,13 @@ controls the earlier construction. Empty constructors print their bare names,
 others use `Name(field: value, ...)`, omitting labels for positional fields.
 Nested native Text and Char use source quoting, unlike top-level `to_text`.
 
+Derived tuple Order emits one Ordering case per part: Less and Greater return
+immediately, and Equal alone compares the next part. Selected custom Order
+functions follow the same protocol. `<` and `>` test the returned constructor;
+`<=` is not Greater and `>=` is not Less. Native Float `compare` tests NaNs
+before its numeric comparisons: two NaNs give Equal, a NaN sorts after any
+number. This does not change direct scalar Float comparisons, which stay IEEE.
+
 A derived order, for `Point` of 4.1:
 
 ```
