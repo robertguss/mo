@@ -625,6 +625,7 @@ struct mo_core_cap_state {
     mo_core_string_pairs files;
     mo_core_integer now;
     struct mo_core_random_state random;
+    mo_core_string_list folders;
 };
 typedef struct {
     struct mo_core_cap_state *items;
@@ -637,6 +638,7 @@ struct mo_core_world {
     mo_core_string_pairs files;
     mo_core_integer now;
     struct mo_core_random_state random;
+    mo_core_string_list folders;
     mo_core_cap_states fakes;
 };
 enum mo_core_bug_tag {
@@ -685,6 +687,7 @@ struct mo_core_outcome {
 struct mo_core_effects {
     mo_core_string_list stdout_, stderr_;
     mo_core_string_pairs files;
+    mo_core_string_list folders;
     mo_core_cap_states fakes;
 };
 enum mo_core_report_tag {
@@ -753,7 +756,7 @@ enum mo_core_text_kind {
     MO_CORE_TEXT_CAP_STATE,
     MO_CORE_TEXT_RANDOM_STATE
 };
-#define MO_CORE_TEXT_VERSION "0.6"
+#define MO_CORE_TEXT_VERSION "0.7"
 MO_MUST_USE void *mo_core_text_parse(struct mo_arena *arena, enum mo_core_text_kind kind,
                                      const char *text, size_t length, struct mo_diags *diags);
 MO_MUST_USE bool mo_core_text_print(enum mo_core_text_kind kind, const void *value,

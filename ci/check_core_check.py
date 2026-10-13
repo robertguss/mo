@@ -76,7 +76,7 @@ def wire(value):
 WORLD = (
     "(World () () () () () () 0 (RandomState "
     + " ".join(["0x0000000000000001"] * 4)
-    + ") ())"
+    + ") () ())"
 )
 
 
@@ -266,7 +266,7 @@ def signatures():
         ]:
             table.append((f"(io ({op} {ro}))", [cap, T], ret, False))
     add("io", "writeText appendText", C("files") + "|" + T + "|" + T, R(U))
-    add("io", "remove", C("files") + "|" + T, R(U))
+    add("io", "remove makeFolder", C("files") + "|" + T, R(U))
     add("io", "readOnly", C("files"), C("readFiles"))
     add("io", "now", C("clock"), "(time)")
     add("io", "randomInt", C("random") + "|" + I + "|" + I, I)

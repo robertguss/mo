@@ -42,7 +42,8 @@ Core is a **typed, monomorphic, strict functional language**:
   kind signatures of bytecode 3.3.
 - **Effects** go through primitives on capability handles, which read and
   update one `World`: arguments, environment variables, standard input,
-  standard output and error, an insertion-ordered in-memory file map, the
+  standard output and error, an insertion-ordered in-memory file map and
+  persistent folder list, the
   clock's time and xoshiro256**'s four-word state. Real handles use these fields; each fake
   constructor allocates an independent state in `World.fakes`. Handles
   derived by `within` or `read_only` share the same fake state. Observing
@@ -52,8 +53,14 @@ Core is a **typed, monomorphic, strict functional language**:
   `within` a path that would leave it gives a handle that reaches nothing, on
   which every call that returns a `Result` gives `Error(NotAllowed(path))` and
   `exists?` gives `false`.
-  `entries` returns sorted immediate names and kinds, with folders implied
-  by file paths, on both real and fake Files/ReadFiles. D236 rejects a fake
+  `entries` returns sorted immediate names and kinds, including empty folders,
+  on both real and fake Files/ReadFiles. D237 records file ancestors when a
+  fake is made and keeps folders after file removal. Writes/appends into
+  missing parents give `NotFound(path)`; Files-only `make_folder` creates
+  folders and missing ancestors, succeeding when already present. The
+  folder list follows `random` in World/CapState; Core 0.7 transports it
+  explicitly and reports real folders alongside files and full fake states.
+  D236 rejects a fake
   whose key is also a folder, naming the path; kind mismatches give
   `Failed(path, "not a folder")` or `Failed(path, "is a folder")`.
   A file used as a `within` root fails subsequent Result calls with
@@ -134,8 +141,8 @@ canonical printing, result protocol, extension rules and sample timings.
 | `MoCore/Text/*.lean` | The reference text codec: S-expressions, types/literals, primitives, programs, lossless values/worlds/outcomes, structural observations and checked run requests. |
 | `MoCore/TextChecks.lean` | Round trips for all twelve programs, every primitive/value, Builtins programs, reproducible runs and report/lexical checks. |
 | `Main.lean` | The `mocore` file/CLI protocol, with distinct diagnostic and outcome exit codes. |
-| `ExportSamples.lean` | Writes twelve entry runs plus Fakes, Library (including D236 kind checks) and synthetic Metadata, in Core text 0.6; optional second directory exports all fourteen fuzz seeds (`lake env lean --run ExportSamples.lean DIR FUZZ_DIR`). |
-| `TEXT.md` | Complete Core text 0.6 contract shared by Lean and C, compiler metadata, worked runs and measurements. |
+| `ExportSamples.lean` | Writes twelve entry runs plus Fakes, Library (including D236/D237 file checks) and synthetic Metadata, in Core text 0.7; optional second directory exports all fourteen fuzz seeds (`lake env lean --run ExportSamples.lean DIR FUZZ_DIR`). |
+| `TEXT.md` | Complete Core text 0.7 contract shared by Lean and C, compiler metadata, file-operation outcomes, worked runs and measurements. |
 | `TRANSLATION.md` | The lowering from every v0.1 feature to Core, how the model follows the answers D227 gave to the questions writing it raised, the three things D228 added, and what the model decided in making `Byte`, `Bytes`, `Range` and `Set` types of their own. |
 
 ## The twelve programs
@@ -218,8 +225,8 @@ Everything below is fully proven: there is no `sorry` anywhere.
   (all 12, map literals included, at every key and value type), `setOp_safe`
   (all 11 set operations, at every element type), `eq_safe` (structural
   equality at every type), the trusted stop for all five Unicode16 operations,
-  and `ioOp_safe` (all 26 capability operations,
-  32 counting the `Files` and `ReadFiles` forms apart), with dispatch to real
+  and `ioOp_safe` (all 27 capability operations,
+  33 counting the `Files` and `ReadFiles` forms apart), with dispatch to real
   or fake state and value typing for both kinds of handles. So every
   primitive is proven safe, and `type_safety` has no hypothesis on
   primitives.

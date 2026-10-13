@@ -155,6 +155,8 @@ structure CapState where
   now : Int := 0
   /-- The random number generator's state. -/
   random : RandomState := RandomState.seeded 0
+  /-- Existing non-root folders, in discovery/creation order. The root is implicit. -/
+  folders : List String := []
   deriving Repr, Inhabited
 
 /-- Real capabilities use the inherited state. Fake handles index the

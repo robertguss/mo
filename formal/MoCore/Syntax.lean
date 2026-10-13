@@ -347,7 +347,7 @@ inductive IoOp where
   /-- `read_bytes`: the world keeps each file as its text, so a file's bytes
   are its text's UTF-8 encoding. -/
   | readBytes (ro : Bool)
-  | writeText | appendText | remove
+  | writeText | appendText | remove | makeFolder
   | list (ro : Bool) | entries (ro : Bool) | «exists» (ro : Bool) | within (ro : Bool) | readOnly
   | now | randomInt
   /-- Fake constructors: only spec code may allocate these handles. -/
@@ -535,7 +535,7 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .readText ro => ([filesCap ro, .text], .result .text .fileError)
   | .readBytes ro => ([filesCap ro, .text], .result .bytes .fileError)
   | .writeText | .appendText => ([.cap .files, .text, .text], .result .unit .fileError)
-  | .remove => ([.cap .files, .text], .result .unit .fileError)
+  | .remove | .makeFolder => ([.cap .files, .text], .result .unit .fileError)
   | .list ro => ([filesCap ro, .text], .result (.list .text) .fileError)
   | .entries ro => ([filesCap ro, .text], .result (.list .entry) .fileError)
   | .exists ro => ([filesCap ro, .text], .bool)

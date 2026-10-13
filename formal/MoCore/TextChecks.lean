@@ -68,8 +68,10 @@ def world : World :=
   { args := ["a", ""], env := [("Z", "last"), ("A", "first")], stdin := ["one", "two"],
     stdout := ["old"], stderr := ["err"], files := [("b", "β\n"), ("a", "")], now := -1,
     random := ⟨0, 0xffffffffffffffff, 0x8000000000000000, 42⟩,
+    folders := ["empty/β", "empty", "empty"],
     fakes := [{ stdin := ["fake input"], stdout := ["fake output"] },
-      { files := [("notes/a", "first"), ("z", "last")], random := RandomState.seeded 123 }] }
+      { files := [("notes/a", "first"), ("z", "last")], folders := ["notes", "fake empty"],
+        random := RandomState.seeded 123 }] }
 
 #guard values.all fun v =>
   match parseDocument (document (valueOut v)) >>= valueIn with
@@ -104,11 +106,11 @@ def world : World :=
   some "('\\'', \"\\n\", 1.5s, 1970-01-01T00:00:00Z, -2..3, bytes[0, 255])"
 
 #guard (["", "(core 0.1 (unit))", "(core 0.2 (unit))", "(core 0.3 (unit))", "(core 0.4 (unit))",
-  "(core 0.5 (unit))", "(core 0.7 (unit))", "(core 0.6 (unit)) extra", "(core 0.6 (unit)",
-  "(core 0.6 \"\\q\")", "(core 0.6 \"\\u{d800}\")", "(core 0.6 \"\\u{110000}\")",
-  "(core 0.6 \"\\u{}\")", "(core 0.6 \"unterminated)"]).all fun s => (parseDocument s).toOption.isNone
-#guard (parseDocument ";before\n(core ;version\n0.6 (int -00012));after" >>= litIn).toOption == some (.int (-12))
-#guard (parseDocument "(core 0.6 (float 0xFFFFFFFFFFFFFFFF))" >>= litIn).toOption == some (.float 0xffffffffffffffff)
+  "(core 0.5 (unit))", "(core 0.6 (unit))", "(core 0.8 (unit))", "(core 0.7 (unit)) extra", "(core 0.7 (unit)",
+  "(core 0.7 \"\\q\")", "(core 0.7 \"\\u{d800}\")", "(core 0.7 \"\\u{110000}\")",
+  "(core 0.7 \"\\u{}\")", "(core 0.7 \"unterminated)"]).all fun s => (parseDocument s).toOption.isNone
+#guard (parseDocument ";before\n(core ;version\n0.7 (int -00012));after" >>= litIn).toOption == some (.int (-12))
+#guard (parseDocument "(core 0.7 (float 0xFFFFFFFFFFFFFFFF))" >>= litIn).toOption == some (.float 0xffffffffffffffff)
 #guard (["(float 0x123)", "(float 0x10000000000000000)", "(char \"ab\")", "(unit extra)",
   "(int +1)", "(int 1_0)"]).all fun s => (parseSexp s >>= litIn).toOption.isNone
 

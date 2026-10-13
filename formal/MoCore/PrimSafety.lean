@@ -800,7 +800,7 @@ theorem eq_safe (t : Ty) : PrimSafe P (.eq t) := by
 
 /-! ## Capabilities -/
 
-theorem folderEntries_safe : ValTy P (folderEntries dir files) (.list .entry) := by
+theorem folderEntries_safe : ValTy P (folderEntries dir files folders) (.list .entry) := by
   apply ValTy.list
   intro v hv
   simp only [List.mem_map] at hv
