@@ -451,6 +451,7 @@ static MO_MUST_USE const uint32_t *instruction(const struct mo_bytecode_function
             return &f->code[pc];
         pc += 1u + op->fixed_count + (f->code[pc] >> MO_OPCODE_VARIABLE_SHIFT);
     }
+    (void)fprintf(stderr, "missing opcode %u in function %u\n", (unsigned)wanted, f->name);
     CHECK(false);
     return NULL;
 }
@@ -721,7 +722,7 @@ static void test_aggregate_values(void) {
             }
         }
         CHECK(found == 1);
-        const uint32_t *lit = instruction(&b->functions[3], MO_OP_CONST, 1);
+        const uint32_t *lit = instruction(&b->functions[3], MO_OP_CONST, 0);
         if (lit != NULL) {
             uint32_t id = b->constants[lit[2]].value.string;
             CHECK(b->strings[id].length == 6 && memcmp(b->strings[id].bytes, "A\0🙂", 6) == 0);
@@ -831,14 +832,6 @@ static void test_representation_refusals(void) {
          "((\"xs\" (list (data \"D\"))))", "(list (data \"D\"))",
          "(prim (list (data \"D\") (unique)) ((var \"xs\")))", "without Hash",
          MO_CODE_CODEGEN_REPRESENTATION},
-        {"()", "((\"b\" (bool)) (\"x\" (text)))", "(text)",
-         "(let_ \"y\" (if_ (var \"b\") (proj (tuple ((var \"x\") (lit (int 1)))) 0) (var \"x\")) "
-         "(var \"y\"))",
-         "Reconverging branches", MO_CODE_CODEGEN_UNSUPPORTED},
-        {"()", "((\"b\" (bool)) (\"x\" (text)))", "(text)",
-         "(let_ \"y\" (if_ (var \"b\") (if_ (var \"b\") (var \"x\") (lit (text \"z\"))) (var "
-         "\"x\")) (var \"y\"))",
-         "Reconverging branches", MO_CODE_CODEGEN_UNSUPPORTED},
     };
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
         struct mo_arena arena;
@@ -1716,6 +1709,46 @@ static void test_entry_record(void) {
     }
     mo_arena_free(&arena);
 }
+static void test_merge(void) {
+    const char *const programs[] = {
+        "(Program () ((FunDecl \"start\" ((\"b\" (bool)) (\"x\" (text))) (int) "
+        "(let_ \"value\" (if_ (var \"b\") (call \"identity\" ((var \"x\"))) (var \"x\")) "
+        "(prim (text (charCount)) ((var \"value\")))) \"M\" (function) 0) "
+        "(FunDecl \"identity\" ((\"x\" (text))) (text) (var \"x\") \"M\" (function) 0)) "
+        "() \"start\" (noSource))",
+        /* These used to be explicit E1055 refusals; both now reconverge. */
+        "(Program () ((FunDecl \"start\" ((\"b\" (bool)) (\"x\" (text))) (text) "
+        "(let_ \"y\" (if_ (var \"b\") (proj (tuple ((var \"x\") (lit (int 1)))) 0) (var \"x\")) "
+        "(var \"y\")) \"M\" (function) 0)) () \"start\" (noSource))",
+        "(Program () ((FunDecl \"start\" ((\"b\" (bool)) (\"x\" (text))) (text) "
+        "(let_ \"y\" (if_ (var \"b\") (if_ (var \"b\") (var \"x\") (lit (text \"z\"))) "
+        "(var \"x\")) (var \"y\")) \"M\" (function) 0)) () \"start\" (noSource))",
+    };
+    for (size_t i = 0; i < sizeof programs / sizeof programs[0]; i++) {
+        struct mo_arena arena;
+        mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+        struct mo_bytecode *b = compile(&arena, programs[i]);
+        if (b != NULL && i == 0) {
+            const struct mo_bytecode_function *f = &b->functions[0];
+            const uint32_t *call = instruction(f, MO_OP_CALL, 0),
+                           *length = instruction(f, MO_OP_PRIM, 0);
+            if (call != NULL && length != NULL) {
+                bool cleared_argument = false;
+                for (uint32_t pc = (uint32_t)(call - f->code); pc < f->code_count;) {
+                    const struct mo_opcode_info *op = mo_opcode_find(f->code[pc] & MO_OPCODE_MASK);
+                    CHECK(op != NULL);
+                    if (op == NULL)
+                        break;
+                    cleared_argument |= op->number == MO_OP_CLEAR && f->code[pc + 1] == call[3];
+                    pc += 1u + op->fixed_count + (f->code[pc] >> MO_OPCODE_VARIABLE_SHIFT);
+                }
+                CHECK(cleared_argument && length[2] == MO_PRIM_TEXT_CHAR_COUNT &&
+                      length[4] != call[1]);
+            }
+        }
+        mo_arena_free(&arena);
+    }
+}
 static void test_join(void) {
     struct mo_arena arena;
     mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
@@ -1747,6 +1780,26 @@ static void test_join(void) {
         }
     }
     mo_arena_free(&arena);
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    b = compile(&arena, "(Program () ((FunDecl \"start\" ((\"again\" (bool)) (\"a\" (text)) "
+                        "(\"b\" (text))) (tuple ((text) (text))) "
+                        "(join \"loop\" ((\"x\" (text)) (\"y\" (text))) "
+                        "(if_ (var \"again\") (jump \"loop\" ((var \"y\") (var \"x\"))) "
+                        "(tuple ((var \"x\") (var \"y\")))) "
+                        "(jump \"loop\" ((var \"a\") (var \"b\")))) \"M\" (function) 0)) "
+                        "() \"start\" (noSource))");
+    if (b != NULL) {
+        const struct mo_bytecode_function *f = &b->functions[0];
+        const uint32_t *first = instruction(f, MO_OP_DUP, 0),
+                       *second = instruction(f, MO_OP_DUP, 1),
+                       *drop = instruction(f, MO_OP_DROP, 0), *left = instruction(f, MO_OP_MOVE, 0),
+                       *right = instruction(f, MO_OP_MOVE, 1);
+        if (first != NULL && second != NULL && drop != NULL && left != NULL && right != NULL)
+            CHECK(first < second && second < drop && drop < left && left < right &&
+                  first[2] == right[1] && second[2] == left[1] && left[2] == first[1] &&
+                  right[2] == second[1] && first[1] != left[1] && second[1] != right[1]);
+    }
+    mo_arena_free(&arena);
     /* Self-jumps alone do not make a join reachable from the function entry. */
     mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
     b = compile(&arena, "(Program () ((FunDecl \"start\" () (int) "
@@ -1759,6 +1812,53 @@ static void test_join(void) {
         if (ret != NULL)
             CHECK(ret == f->code + f->code_count - 2);
     }
+    mo_arena_free(&arena);
+}
+static void test_join_metadata(void) {
+    struct mo_arena arena;
+    struct mo_diags diags;
+    struct mo_buffer out;
+    mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+    mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+    CHECK(mo_diags_init(&diags));
+    struct mo_core *p = parse(&arena,
+                              "(Program () ((FunDecl \"start\" () (int) "
+                              "(join \"unused\" ((\"x\" (int))) (var \"x\") (lit (int 23))) "
+                              "\"M\" (function) 0)) () \"start\" (noSource))",
+                              &diags);
+    if (p != NULL) {
+        mo_core_string file = {"absent.mo", 9};
+        uint32_t member = 0;
+        struct mo_core_module_meta module = {.name = {"M", 1}, .funs = {&member, 1}};
+        struct mo_core_span spans[] = {
+            {true, {0, 10, 50}}, {true, {0, 20, 21}}, {true, {0, 30, 35}}};
+        struct mo_core_binding_meta binding = {0, 0, {"deadParam", 9}};
+        struct mo_core_fun_meta meta = {.name = {"M.start", 7},
+                                        .span = {true, {0, 1, 60}},
+                                        .body = {.spans = {spans, 3}, .bindings = {&binding, 1}}};
+        p->metadata = (struct mo_core_metadata){
+            .source = true, .files = {&file, 1}, .modules = {&module, 1}, .funs = {&meta, 1}};
+        bool ok = mo_compile(p, &out, &diags);
+        CHECK(ok && !mo_diags_any(&diags));
+        struct mo_load_error error;
+        struct mo_bytecode *b =
+            ok ? mo_bytecode_decode(&arena, out.bytes, out.length, &error) : NULL;
+        CHECK(b != NULL);
+        if (b != NULL) {
+            const struct mo_bytecode_function *f = &b->functions[0];
+            const struct mo_bytecode_debug *d = &b->debug[0];
+            const uint32_t *ret = instruction(f, MO_OP_RET, 0);
+            CHECK(d->name_count == 0 && d->span_count == 3);
+            if (ret != NULL && d->span_count == 3) {
+                const struct mo_bytecode_span *s = &d->spans[2];
+                CHECK(s->code_offset == (uint32_t)(ret - 3 - f->code) &&
+                      string_is(b, s->file, "absent.mo") && s->start == 30 && s->end == 35);
+                CHECK(b->constants[ret[-1]].value.immediate[0] == 23);
+            }
+        }
+    }
+    mo_buffer_free(&out);
+    mo_diags_free(&diags);
     mo_arena_free(&arena);
 }
 int main(int argc, char **argv) {
@@ -1793,6 +1893,8 @@ int main(int argc, char **argv) {
     test_collection_literals();
     test_instantiated_type_depth();
     test_entry_record();
+    test_merge();
     test_join();
+    test_join_metadata();
     return mo_test_report("test_codegen");
 }

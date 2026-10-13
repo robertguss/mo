@@ -1,0 +1,10 @@
+(core 0.7 (Program () (
+  (FunDecl "start" () (tuple ((text) (text)))
+    (let_ "outer" (lit (text "survives the loop"))
+      (join "loop" (("x" (text)) ("y" (text)) ("again" (bool)))
+        (if_ (var "again")
+          (jump "loop" ((var "y") (var "x") (lit (bool false))))
+          (tuple ((var "x") (var "outer"))))
+        (jump "loop" ((lit (text "left")) (lit (text "right")) (lit (bool true))))))
+    "Joins" (function) 0)
+) () "start" (noSource)))
