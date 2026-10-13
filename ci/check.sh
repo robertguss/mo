@@ -80,6 +80,13 @@ if have lake; then
 		done
 		if ((${#drivers[@]})); then python3 ci/check_core_check.py "${drivers[@]}";
 		else missing "no Core checker test executable is built"; fi
+		step "Heap Float spellings match Lean and BigInt digits match Python"
+		heap_drivers=()
+		for driver in build/{gcc,clang}/{debug,sanitize}/tests/test_heap.test; do
+			if [[ -x "$driver" ]]; then heap_drivers+=("$driver"); fi
+		done
+		if ((${#heap_drivers[@]})); then python3 ci/check_heap_numbers.py "${heap_drivers[@]}";
+		else missing "no heap test executable is built"; fi
 	else
 		missing "python3 is not installed"
 	fi

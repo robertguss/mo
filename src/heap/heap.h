@@ -8,6 +8,8 @@
 #include <stdint.h>
 
 #include "base/base.h"
+#include "base/buffer.h"
+#include "base/limits.h"
 #include "heap/types.h"
 
 /* A cell is native-endian runtime storage, not a serialized constant. Alignment
@@ -64,7 +66,68 @@ MO_MUST_USE struct mo_cell mo_cell_case(uint32_t tag, struct mo_cell payload);
 MO_MUST_USE uint32_t mo_cell_get_tag(struct mo_cell cell);
 MO_MUST_USE struct mo_cell mo_cell_get_payload(struct mo_cell cell);
 
-struct mo_process;
+struct mo_heap;
+
+struct mo_heap_image;
+/* One context per VM run: borrowed sealed types, shared abilities/layout index,
+ * derived secret hash/index domains and an owned initialization heap. NULL on
+ * randomness or memory failure. The context and types outlive all its heaps.
+ * Layouts may be appended during initialization, before parallel execution;
+ * refresh updates the index only when its layout count changes. */
+MO_MUST_USE struct mo_heap_image *mo_heap_image_new(const struct mo_types *types,
+                                                    const struct mo_limits *limits);
+void mo_heap_image_free(struct mo_heap_image *image);
+MO_MUST_USE bool mo_heap_image_refresh(struct mo_heap_image *image);
+MO_MUST_USE struct mo_heap *mo_heap_image_constants(struct mo_heap_image *image);
+/* The VM's process owns this separate heap. Creation does no entropy reads,
+ * type walks or sorting. Native metadata and scratch count against heap_size.
+ * Free reclaims every allocation, including saturated and abandoned values. */
+MO_MUST_USE struct mo_heap *mo_heap_new(struct mo_heap_image *image,
+                                        const struct mo_limits *limits);
+void mo_heap_free(struct mo_heap *process);
+MO_MUST_USE size_t mo_heap_used(const struct mo_heap *process);
+MO_MUST_USE size_t mo_heap_objects(const struct mo_heap *process);
+
+/* Borrowed views last until the owner is dropped or updated. */
+MO_MUST_USE const uint8_t *mo_value_data(struct mo_cell value, size_t *length);
+MO_MUST_USE struct mo_cell mo_value_field(struct mo_cell value, uint32_t field);
+MO_MUST_USE uint32_t mo_list_size(struct mo_cell list);
+MO_MUST_USE bool mo_list_get(struct mo_cell list, uint32_t index, struct mo_cell *out);
+/* Updates consume *list only on success; element is borrowed. On failure both
+ * are unchanged. Shared and immortal values are copied before modification. */
+MO_MUST_USE bool mo_list_append(struct mo_heap *process, uint32_t type, struct mo_cell *list,
+                                struct mo_cell element);
+MO_MUST_USE bool mo_list_set(struct mo_heap *process, uint32_t type, struct mo_cell *list,
+                             uint32_t index, struct mo_cell element);
+
+/* Generic operations borrow values. false means unavailable ability or out of
+ * memory; result is unchanged. No work cap on equality, ordering or hashing.
+ * Structural compare ignores custom Mo compare functions. Hashes use the run's
+ * hash domain, never its indexing key. No operation uses C recursion. */
+MO_MUST_USE bool mo_value_equal(struct mo_heap *process, uint32_t type, struct mo_cell left,
+                                struct mo_cell right, bool *out);
+MO_MUST_USE bool mo_value_hash(struct mo_heap *process, uint32_t type, struct mo_cell value,
+                               uint64_t *out);
+MO_MUST_USE bool mo_value_compare(struct mo_heap *process, uint32_t type, struct mo_cell left,
+                                  struct mo_cell right, int *out);
+/* Append structural text, without executing Mo code. Caller-owned output is
+ * outside the process heap; scratch is charged to it. On failure the original
+ * output length and contents remain (capacity may grow). A defect renderer
+ * must use a fixed fallback rather than stop when printing runs out of room. */
+MO_MUST_USE bool mo_value_print(struct mo_heap *process, uint32_t type, struct mo_cell value,
+                                struct mo_buffer *out);
+/* Lookup borrows its result; found=false leaves out unchanged. Operations
+ * return false on limits or allocation failure, leaving every input unchanged.
+ * Iteration's position is an entry cursor, not a live-element index. */
+MO_MUST_USE uint32_t mo_table_size(struct mo_cell table);
+MO_MUST_USE bool mo_table_next(struct mo_cell table, uint32_t *position, struct mo_cell *key,
+                               struct mo_cell *value);
+MO_MUST_USE bool mo_table_get(struct mo_heap *process, uint32_t type, struct mo_cell table,
+                              struct mo_cell key, bool *found, struct mo_cell *out);
+MO_MUST_USE bool mo_table_set(struct mo_heap *process, uint32_t type, struct mo_cell *table,
+                              struct mo_cell key, struct mo_cell value);
+MO_MUST_USE bool mo_table_remove(struct mo_heap *process, uint32_t type, struct mo_cell *table,
+                                 struct mo_cell key);
 
 /* Stream 3 implements type-directed ownership for C callers. type is an index
  * in the process image's type table; value is a valid cell of that type, from
@@ -81,9 +144,9 @@ struct mo_process;
  * duplicates of those inputs and the owned result to the promise. Drop any
  * retained ownership afterward, before mo_process_free. A cell copy alone
  * does not duplicate ownership. */
-MO_MUST_USE struct mo_cell mo_value_dup(struct mo_process *process, uint32_t type,
+MO_MUST_USE struct mo_cell mo_value_dup(struct mo_heap *process, uint32_t type,
                                         struct mo_cell value);
-void mo_value_drop(struct mo_process *process, uint32_t type, struct mo_cell value);
+void mo_value_drop(struct mo_heap *process, uint32_t type, struct mo_cell value);
 
 /* Each successful result is owned by the caller in the process's heap. Input
  * cells are borrowed: builders duplicate references they keep, so generators
@@ -106,25 +169,91 @@ void mo_value_drop(struct mo_process *process, uint32_t type, struct mo_cell val
  * magnitudes, a length past the limit, or allocation/heap-limit failure return
  * false, leaving out and inputs unchanged and keeping no input ownership.
  * These are C builders, not bytecode verification. */
-MO_MUST_USE bool mo_value_text(struct mo_process *process, const char *utf8, size_t length,
+MO_MUST_USE bool mo_value_text(struct mo_heap *process, const char *utf8, size_t length,
                                struct mo_cell *out);
-MO_MUST_USE bool mo_value_bytes(struct mo_process *process, const uint8_t *bytes, size_t length,
+MO_MUST_USE bool mo_value_bytes(struct mo_heap *process, const uint8_t *bytes, size_t length,
                                 struct mo_cell *out);
-MO_MUST_USE bool mo_value_bigint(struct mo_process *process, enum mo_bigint_sign sign,
+MO_MUST_USE bool mo_value_bigint(struct mo_heap *process, enum mo_bigint_sign sign,
                                  const uint8_t *magnitude, size_t length, struct mo_cell *out);
-MO_MUST_USE bool mo_value_construct(struct mo_process *process, uint32_t layout,
+MO_MUST_USE bool mo_value_construct(struct mo_heap *process, uint32_t layout,
                                     const struct mo_cell *fields, uint32_t count,
                                     struct mo_cell *out);
-MO_MUST_USE bool mo_value_case(struct mo_process *process, uint32_t type, uint32_t tag,
+MO_MUST_USE bool mo_value_case(struct mo_heap *process, uint32_t type, uint32_t tag,
                                const struct mo_cell *fields, uint32_t count, struct mo_cell *out);
-MO_MUST_USE bool mo_value_list(struct mo_process *process, uint32_t type,
+MO_MUST_USE bool mo_value_list(struct mo_heap *process, uint32_t type,
                                const struct mo_cell *elements, uint32_t count, struct mo_cell *out);
-MO_MUST_USE bool mo_value_map(struct mo_process *process, uint32_t type, const struct mo_cell *keys,
+MO_MUST_USE bool mo_value_map(struct mo_heap *process, uint32_t type, const struct mo_cell *keys,
                               const struct mo_cell *values, uint32_t count, struct mo_cell *out);
-MO_MUST_USE bool mo_value_set(struct mo_process *process, uint32_t type,
+MO_MUST_USE bool mo_value_set(struct mo_heap *process, uint32_t type,
                               const struct mo_cell *elements, uint32_t count, struct mo_cell *out);
-MO_MUST_USE bool mo_value_closure(struct mo_process *process, uint32_t function,
+MO_MUST_USE bool mo_value_closure(struct mo_heap *process, uint32_t function,
                                   const struct mo_cell *captures, uint32_t count,
                                   struct mo_cell *out);
+
+/* VM variants transfer field ownership on success, with no dup/drop pair.
+ * On failure fields and outputs are unchanged. */
+MO_MUST_USE bool mo_value_construct_owned(struct mo_heap *process, uint32_t layout,
+                                          const struct mo_cell *fields, uint32_t count,
+                                          struct mo_cell *out);
+MO_MUST_USE bool mo_value_case_owned(struct mo_heap *process, uint32_t type, uint32_t tag,
+                                     const struct mo_cell *fields, uint32_t count,
+                                     struct mo_cell *out);
+MO_MUST_USE bool mo_value_closure_owned(struct mo_heap *process, uint32_t function,
+                                        const struct mo_cell *captures, uint32_t count,
+                                        struct mo_cell *out);
+
+/* reset consumes a fixed-layout record, tuple or boxed choice. Tokens own
+ * cleared storage, not values. reuse borrows fields, consumes the token only
+ * on success, and preserves it on failure. The VM uses reuse_owned to transfer
+ * its field ownership directly. Never copy a token's ownership. */
+struct mo_token {
+    struct mo_object *memory;
+    uint32_t layout;
+};
+MO_MUST_USE struct mo_token mo_value_reset(struct mo_heap *process, uint32_t type,
+                                           struct mo_cell value);
+MO_MUST_USE bool mo_value_reuse(struct mo_heap *process, struct mo_token *token,
+                                const struct mo_cell *fields, uint32_t count, struct mo_cell *out);
+MO_MUST_USE bool mo_value_reuse_owned(struct mo_heap *process, struct mo_token *token,
+                                      const struct mo_cell *fields, uint32_t count,
+                                      struct mo_cell *out);
+void mo_token_free(struct mo_heap *process, struct mo_token *token);
+/* Image initialization only: the whole immutable graph becomes immortal.
+ * Functions may capture immutable values; no reachable capability/state is
+ * allowed. First compute caches, then freeze them. false means out of memory;
+ * counts and immortality remain unchanged. The mark walk itself allocates
+ * nothing and is iterative, including shared DAGs. */
+MO_MUST_USE bool mo_value_make_immortal(struct mo_heap *process, uint32_t type,
+                                        struct mo_cell value);
+
+/* Host storage, not host operations. A state shares typed mutable slots and
+ * accepts only types with Equal (therefore no reachable function/capability).
+ * Its slot types never change; get borrows, set borrows its input. */
+struct mo_state;
+MO_MUST_USE bool mo_state_new(struct mo_heap *process, const uint32_t *types,
+                              const struct mo_cell *values, uint32_t count, struct mo_state **out);
+MO_MUST_USE struct mo_state *mo_state_dup(struct mo_state *state);
+void mo_state_drop(struct mo_heap *process, struct mo_state *state);
+MO_MUST_USE struct mo_cell mo_state_get(struct mo_state *state, uint32_t index);
+void mo_state_set(struct mo_heap *process, struct mo_state *state, uint32_t index,
+                  struct mo_cell value);
+
+/* operations is an opaque, borrowed, static host table. state and optional
+ * Text prefix are borrowed. On success the handle transfers to the heap;
+ * release(handle) runs once on final drop or teardown, and must neither touch
+ * child values nor reenter the heap. On false everything remains with caller.
+ * Real folder handle limits belong to host; this layer never opens a handle. */
+struct mo_capability_info {
+    const void *operations;
+    struct mo_state *state;
+    struct mo_cell prefix;
+    intptr_t handle;
+    void (*release)(intptr_t handle);
+    bool has_prefix;
+    bool read_only;
+};
+MO_MUST_USE bool mo_value_capability(struct mo_heap *process, uint32_t type,
+                                     const struct mo_capability_info *info, struct mo_cell *out);
+MO_MUST_USE const struct mo_capability_info *mo_capability_get(struct mo_cell value);
 
 #endif
