@@ -45,6 +45,7 @@ MO_MUST_USE bool mo_text_is(const struct mo_text_reader *r, const char *text);
 MO_MUST_USE bool mo_text_take(struct mo_text_reader *r, const char *text, const char *expected);
 MO_MUST_USE bool mo_text_end_line(struct mo_text_reader *r);
 MO_MUST_USE bool mo_text_ref(struct mo_text_reader *r, char prefix, bool optional, uint32_t *out);
+MO_MUST_USE bool mo_text_check_references(struct mo_text_reader *r, bool complete);
 MO_MUST_USE bool mo_text_enum(struct mo_text_reader *r, const char *const *names, uint32_t count,
                               const char *expected, uint32_t *out);
 MO_MUST_USE bool mo_text_word(struct mo_text_reader *r, uint32_t word, uint32_t source);

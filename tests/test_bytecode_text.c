@@ -249,6 +249,26 @@ static void refusals(void) {
          "expected record, choice, global, init, function or module"},
         {"bytecode 0.1 shorthand\ntypes\n t0 list t1\nend\n", "t1",
          "expected type index in final pool"},
+        {"bytecode 0.1 indexed\nstrings\nend\ntypes\n t0 int\nend\nlayouts\nend\n"
+         "constants\n k0 t1 7\nend\nglobals\nend\ninit\nend\nfunctions\nend\n"
+         "modules\nend\ndebug\nend\n",
+         "t1", "expected type index in final pool"},
+        {"bytecode 0.1 shorthand\nconstants\n k0 t9 7\nend\n"
+         "module A exposes [A.id]\nfunction A.id(n: Int owned) : Int function in A\n"
+         "registers []\nret r0\nend\n",
+         "t9", "expected type index in final pool"},
+        {"bytecode 0.1 shorthand\nmodule A exposes [A.id]\n"
+         "function A.id(n: Int owned) : Int function in A\n"
+         "registers [r1: t9]\nconst r1, 7\nret r0\nend\n",
+         "t9", "expected type index in final pool"},
+        {"bytecode 0.1 shorthand\ntypes\n t0 record s9 []\nend\n", "s9",
+         "expected string index in final pool"},
+        {"bytecode 0.1 shorthand\nglobal A.value: Int in m9\nmodule A exposes []\n", "m9",
+         "expected module index in final pool"},
+        {"bytecode 0.1 shorthand\nmodule A exposes [A.id]\n"
+         "function A.id(n: Int owned) : Int function in A\n"
+         "registers [r1: fn(Int): Int]\nconstruct r1, closure(f9)\nret r0\nend\n",
+         "f9", "expected function index in final pool"},
     };
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
         const char *at = strstr(cases[i].text, cases[i].at);

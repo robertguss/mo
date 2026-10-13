@@ -228,6 +228,9 @@ bool mo_short_finish(struct mo_shorthand *s) {
     struct mo_text_reader *r = s->r;
     struct mo_text_token end = r->token;
     uint32_t cursor = r->cursor;
+    /* Refuse at the original reference before a deferred operand needs its target. */
+    if (!mo_text_check_references(r, false))
+        return false;
     struct type_info *info;
     struct mo_text_index *names = NULL;
     if (!types(s, &info, &names))

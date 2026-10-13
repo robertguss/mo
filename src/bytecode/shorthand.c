@@ -451,7 +451,8 @@ bool mo_text_shorthand(struct mo_text_reader *r) {
             continue;
         uint32_t name = mo_text_get(e, 4);
         if (name >= r->tables[MO_SECTION_STRINGS].count) {
-            mo_text_refuse(r, e->source, "expected nominal name string in final pool");
+            MO_ASSERT(e->position_count >= 2);
+            mo_text_refuse(r, e->positions[1].text, "expected string index in final pool");
             return false;
         }
         const struct mo_text_entry *entry = &r->tables[MO_SECTION_STRINGS].entries[name];

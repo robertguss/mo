@@ -123,8 +123,13 @@ static MO_MUST_USE bool constant(struct mo_text_reader *r) {
     uint32_t index, source = r->token.start;
     if (!mo_text_ref(r, 't', false, &index) || !mo_text_word(r, index, source))
         return false;
-    if (!r->shorthand)
+    if (!r->shorthand) {
+        if (index >= r->tables[MO_SECTION_TYPES].count) {
+            mo_text_refuse(r, source, "expected type index in final pool");
+            return false;
+        }
         return mo_text_payload(r, index, false);
+    }
     /* Seed types may themselves be supplied by a later shorthand header. */
     source = r->token.start;
     if (!mo_text_word(r, source, source))

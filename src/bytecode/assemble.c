@@ -282,7 +282,7 @@ static MO_MUST_USE uint32_t text_offset(const struct mo_text_reader *r, uint32_t
     return r->length;
 }
 
-static MO_MUST_USE bool output(struct mo_text_reader *r, struct mo_buffer *out) {
+bool mo_text_check_references(struct mo_text_reader *r, bool complete) {
     static const char *const expected[] = {"",
                                            "expected string index in final pool",
                                            "expected type index in final pool",
@@ -298,6 +298,10 @@ static MO_MUST_USE bool output(struct mo_text_reader *r, struct mo_buffer *out) 
                                            "expected primitive index in range",
                                            "expected host index in range"};
     for (const struct mo_text_reference *ref = r->references; ref != NULL; ref = ref->next) {
+        /* Shorthand's deferred operands can still append layouts and constants. All other
+         * tables are complete before resolving those operands. */
+        if (!complete && (ref->space == 3 || ref->space == 4))
+            continue;
         uint32_t bound = ref->space <= 9    ? r->tables[ref->space - 1].count
                          : ref->space == 12 ? MO_PRIM_COUNT
                                             : MO_HOST_COUNT;
@@ -306,6 +310,12 @@ static MO_MUST_USE bool output(struct mo_text_reader *r, struct mo_buffer *out) 
             return false;
         }
     }
+    return true;
+}
+
+static MO_MUST_USE bool output(struct mo_text_reader *r, struct mo_buffer *out) {
+    if (!mo_text_check_references(r, true))
+        return false;
     uint8_t header[MO_BYTECODE_HEADER_SIZE] = {'M', 'O', 'B', 'C', 0, 0, 1, 0};
     if (r->wire_size > out->limit) {
         mo_text_refuse(r, 0, "bytecode output limit");
