@@ -289,6 +289,99 @@ static void ability_dot_graph(void) {
     free_fixture(&f);
 }
 
+static void method_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nstruct Box(T)\nvalue: T\nend\n"
+             "fn bump(box: Box(T), by: T) : T where T: Number\nbox.value + by\nend\n"
+             "fn main() : Int\nBox(value: 3).bump(4)\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[1].body;
+        bool called = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->receiver == UINT32_MAX)
+                continue;
+            MO_ASSERT(row->operand_count == 3 && row->symbol != NULL);
+            CHECK(strcmp(row->symbol->name, "bump") == 0);
+            CHECK(row->receiver == row->operands[1]);
+            CHECK(body->items[row->operands[0]].type->kind == MO_SOURCE_FUNCTION);
+            CHECK(body->items[row->operands[0]].symbol == row->symbol);
+            CHECK(strcmp(body->items[row->receiver].type->name, "Box") == 0);
+            CHECK(body->items[row->operands[2]].syntax->text[0] == '4');
+            MO_ASSERT(row->arguments.count == 1 && row->ability_count == 1);
+            CHECK(row->abilities[0].parameter == row->arguments.items[0].parameter);
+            CHECK(row->abilities[0].implementation->ability == MO_SOURCE_NUMBER);
+            called = true;
+        }
+        CHECK(called);
+    }
+    free_fixture(&f);
+}
+
+static void overload_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nstruct P\nvalue: Int\nend\nstruct Q\nvalue: Int\nend\n"
+             "fn score(p: P) : Int\np.value\nend\n"
+             "fn score(q: Q) : Int\nq.value + 10\nend\n"
+             "fn main() : Int\nf = fn(value) score(value) end\n"
+             "other = score\nf(P(value: 7)) + other(Q(value: 2)) + P(value: 3).score\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[2].body;
+        uint32_t p = 0, q = 0;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->symbol == NULL || strcmp(row->symbol->name, "score") != 0)
+                continue;
+            if (row->symbol == f.program->functions[0].signature->function)
+                p++;
+            else {
+                CHECK(row->symbol == f.program->functions[1].signature->function);
+                q++;
+            }
+            if (row->receiver != UINT32_MAX)
+                CHECK(row->receiver == row->operands[1]);
+        }
+        CHECK(p == 4 && q == 1);
+    }
+    free_fixture(&f);
+}
+
+static void library_graph(void) {
+    struct fixture f = {0};
+    mo_arena_init(&f.syntax, 1 << 20);
+    mo_arena_init(&f.arena, 16 << 20);
+    MO_ASSERT(mo_sources_init(&f.sources) && mo_diags_init(&f.diags));
+    struct mo_module_set *set =
+        mo_load_program(&f.syntax, &f.sources, "tests/check/program-main/main.mo",
+                        "tests/check/program-lib", &f.diags);
+    CHECK(set != NULL && !mo_diags_any(&f.diags));
+    f.program = set == NULL ? NULL : mo_check(&f.arena, set, &f.diags);
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[f.program->entry.function].body;
+        bool called = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->symbol == NULL || row->receiver == UINT32_MAX)
+                continue;
+            CHECK(strcmp(row->symbol->name, "map") == 0);
+            const struct mo_module_scope *scope =
+                &f.program->interfaces->scopes[row->symbol->module];
+            CHECK(scope->library && strcmp(scope->name, "List") == 0);
+            MO_ASSERT(row->operand_count == 3 && row->arguments.count == 2);
+            CHECK(row->receiver == row->operands[1]);
+            CHECK(body->items[row->operands[2]].lambda != NULL);
+            CHECK(strcmp(row->arguments.items[0].type->name, "Int") == 0);
+            CHECK(strcmp(row->arguments.items[1].type->name, "Int") == 0);
+            called = true;
+        }
+        CHECK(called);
+    }
+    free_fixture(&f);
+}
+
 static void entry_record(void) {
     struct fixture f;
     init(&f, "module Main\nfn describe(entry: Entry) : Text\n"
@@ -1093,6 +1186,9 @@ static void run(void *argument) {
     native_graph();
     interpolation_graph();
     ability_dot_graph();
+    method_graph();
+    overload_graph();
+    library_graph();
     entry_record();
     ability_graph();
     generic_graph();

@@ -56,6 +56,8 @@ struct mo_module_alias {
 };
 
 struct mo_module_scope {
+    const char *name; /* arena-owned dotted name; NULL for an unnamed synthetic module set */
+    bool library;
     uint32_t count;
     struct mo_symbol *symbols; /* sorted by name, then source position */
     uint32_t imported_count;
