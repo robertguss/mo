@@ -286,7 +286,7 @@ static inline struct mo_limits mo_limits_default(void) {
  * are dropped whole and counted in totals; never emit a partial JSON object. */
 #define MO_CLI_DIAGNOSTIC_SIZE (1 << 20)
 
-/* The current staged surface pipeline's one arena. E1058 on exhaustion. */
+/* The staged surface pipeline's one arena. E1054 while parsing, E1058 while checking. */
 #define MO_CLI_CHECK_SIZE (512 << 20)
 
 /* Diagnostics one run keeps. mo_diags_add refuses more, and counts them, so the run can say that

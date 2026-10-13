@@ -191,7 +191,7 @@ library-map: $(BUILD)/debug/module-path
 # puts or putchar. Casting the call to (void) ignores the result on purpose. Mo's own functions
 # are covered by MO_MUST_USE. The flags are the debug build's, so clang-tidy sees the code as
 # the compiler does (it ignores the -M options).
-tidy: $(GRAMMAR_GENERATED)/mo.tab.h
+tidy: $(GRAMMAR_GENERATED)/mo.tab.h build/generated/tools/embedded.h
 	clang-tidy --quiet -checks='-*,cert-err33-c' -warnings-as-errors='*' -header-filter='^(src|tests|fuzz|grammar)/' \
 		$(TIDY_FILES) -- $(COMMON) $(DEBUG) $(GRAMMAR_INCLUDES)
 

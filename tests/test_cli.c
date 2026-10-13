@@ -44,6 +44,18 @@ static void limit_values(void) {
     long_arg[MO_CLI_ARGUMENT_SIZE] = 'x';
     long_arg[MO_CLI_ARGUMENT_SIZE + 1] = '\0';
     CHECK(!mo_cli_parse(4, boundary, &cli, &error));
+    long_arg[MO_CLI_ARGUMENT_SIZE] = '\0';
+    char tail[4067]; /* 15 prefix bytes + 15 * 4097 + 4066 == 65536. */
+    memset(tail, 'x', sizeof(tail));
+    tail[4065] = '\0';
+    const char *aggregate[19] = {"mo", "run", "main.mo"};
+    for (unsigned i = 3; i < 18; i++)
+        aggregate[i] = long_arg;
+    aggregate[18] = tail;
+    CHECK(mo_cli_parse(19, aggregate, &cli, &error));
+    tail[4065] = 'x';
+    tail[4066] = '\0';
+    CHECK(!mo_cli_parse(19, aggregate, &cli, &error));
 }
 
 /* An externally visible rendering fixture: tabs, wide/combining scalars,
@@ -147,9 +159,37 @@ static void omission(void) {
     MO_ASSERT(stream != NULL);
     CHECK(mo_write_diagnostics(stream, stderr, true, MO_COMMAND_CHECK, &sources, &diags) == 1);
     rewind(stream);
-    char line[256];
+    char line[256] = {0};
     CHECK(fgets(line, sizeof(line), stream) != NULL);
     CHECK(strcmp(line, "{\"record\":\"totals\",\"errors\":0,\"dropped\":1,\"status\":1}\n") == 0);
+    CHECK(fclose(stream) == 0);
+    mo_diags_free(&diags);
+}
+
+static void sorted_output(void) {
+    struct mo_sources sources = {0};
+    struct mo_diags diags;
+    MO_ASSERT(mo_diags_init(&diags));
+    struct mo_diag d = {
+        .code = MO_CODE_TOOL_UNAVAILABLE, .primary = {{UINT32_MAX, 2, 3}, NULL}, .message = "late"};
+    MO_ASSERT(mo_diags_add(&diags, &d));
+    d.primary.span.start = 0;
+    d.primary.span.end = 1;
+    d.message = "first at tie";
+    MO_ASSERT(mo_diags_add(&diags, &d));
+    d.message = "second at tie";
+    MO_ASSERT(mo_diags_add(&diags, &d));
+    FILE *stream = tmpfile();
+    MO_ASSERT(stream != NULL);
+    CHECK(mo_write_diagnostics(stream, stderr, true, MO_COMMAND_CHECK, &sources, &diags) == 1);
+    rewind(stream);
+    const char *order[] = {"\"headline\":\"first at tie\"", "\"headline\":\"second at tie\"",
+                           "\"headline\":\"late\""};
+    for (unsigned i = 0; i < 3; i++) {
+        char line[512] = {0};
+        CHECK(fgets(line, sizeof(line), stream) != NULL);
+        CHECK(strstr(line, order[i]) != NULL);
+    }
     CHECK(fclose(stream) == 0);
     mo_diags_free(&diags);
 }
@@ -164,5 +204,6 @@ int main(int argc, char *argv[]) {
     limit_values();
     long_line();
     omission();
+    sorted_output();
     return mo_test_report("test_cli");
 }

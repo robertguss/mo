@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Black-box CLI contracts and goldens, with Python's real JSON parser."""
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -80,8 +81,13 @@ def check(binary):
     assert escaped["headline"] == "".join(chr(i) for i in range(1, 256))
     assert escaped["primary"]["label"] == "é界😀"
     assert run(binary, ["guide", "--reference"], 0).stdout == (root / "docs/reference/README.md").read_bytes()
-    result = run(binary, ["guide"], 1)
-    assert not result.stdout and b"--reference" in result.stderr
+    guide = root / "docs/agent-guide.md"
+    guide_bytes = guide.read_bytes() if guide.exists() else b""
+    if guide_bytes:
+        assert run(binary, ["guide"], 0).stdout == guide_bytes
+    else:
+        result = run(binary, ["guide"], 1)
+        assert not result.stdout and b"--reference" in result.stderr
     for command in ("run", "test", "format", "fix", "check"):
         args = [command, *(["--emit=core"] if command == "check" else []), good]
         result = run(binary, args, 1)
@@ -131,6 +137,14 @@ def check(binary):
     run(binary, ["fix", good, good], 1)
     for version in ("--version", "-V"):
         assert run(binary, [version], 0).stdout == b"mo 0.0.0\n"
+    read_fd, write_fd = os.pipe()
+    os.close(read_fd)
+    try:
+        result = subprocess.run([str(binary), "guide", "--reference"], stdout=write_fd,
+                                stderr=subprocess.PIPE, timeout=30)
+        assert result.returncode == 1 and b"could not write guide" in result.stderr
+    finally:
+        os.close(write_fd)
     mistake(["run", good, "x" * 4097])
     mistake(["run", good, *("x" for _ in range(254))])
     mistake(["run", good, *("x" * 4096 for _ in range(16))])

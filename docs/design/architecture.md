@@ -1043,8 +1043,9 @@ program arguments.
 for every named function, retaining independent body errors. Each stage
 stops before the next on errors, including dropped diagnostics; body iteration
 stops on a resource error, but continues past independent source errors and
-unfinished forms. Its shared
-arena is bounded to 512 MiB (E1058 on exhaustion). Status 0 means only that
+unfinished forms. Its shared arena is bounded to 512 MiB (E1054 while parsing,
+E1058 while checking on exhaustion).
+Status 0 means only that
 these available stages found no error: constants, specs and the other rules
 listed in `check.h` are not whole-program checked. The seam in
 `tools/execute.c` will replace staged inference with `mo_check`, then

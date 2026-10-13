@@ -52,7 +52,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     MO_ASSERT(mo_sources_init(&sources));
     uint32_t file;
     struct mo_source_error problem;
-    MO_ASSERT(mo_sources_add_bytes(&sources, copy, data, size, &file, &problem));
+    char path[MO_LIMIT_PATH_SIZE + 1];
+    size_t path_size = size < MO_LIMIT_PATH_SIZE ? size : MO_LIMIT_PATH_SIZE;
+    if (path_size != 0)
+        memcpy(path, data, path_size);
+    path[path_size] = '\0';
+    MO_ASSERT(mo_sources_add_bytes(&sources, path, data, size, &file, &problem));
     uint32_t start = 0, end = 0;
     for (size_t i = 0; i < size && i < 8; i++) {
         if (i < 4)
@@ -87,7 +92,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                         .fixes = &fix,
                         .fix_count = 1};
     struct mo_buffer out;
-    mo_buffer_init(&out, MO_CLI_DIAGNOSTIC_SIZE);
+    size_t limit = size > 3 ? ((size_t)data[3] + 1) * 4096 : MO_CLI_DIAGNOSTIC_SIZE;
+    mo_buffer_init(&out, limit);
     bool rendered = mo_render_diagnostic(&sources, &d, true, &out);
     MO_ASSERT(rendered || out.length == 0);
     rendered = mo_render_diagnostic(&sources, &d, false, &out);

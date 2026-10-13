@@ -15,7 +15,7 @@ static void text(struct writer *w, const char *s) {
     if (w->ok)
         w->ok = mo_buffer_append_text(w->out, s);
 }
-static void uint(struct writer *w, uint64_t n) {
+static void unsigned_number(struct writer *w, uint64_t n) {
     if (w->ok)
         w->ok = mo_buffer_append_uint(w->out, n);
 }
@@ -94,9 +94,9 @@ static void json_span(struct writer *w, const struct mo_sources *sources, struct
     bool found = available(sources, span);
     json_string(w, found ? sources->files[span.file].path : NULL);
     text(w, ",\"start\":");
-    uint(w, span.start);
+    unsigned_number(w, span.start);
     text(w, ",\"end\":");
-    uint(w, span.end);
+    unsigned_number(w, span.end);
     struct mo_position start = {0}, end = {0};
     if (found) {
         start = mo_sources_position(sources, span.file, span.start);
@@ -107,7 +107,7 @@ static void json_span(struct writer *w, const struct mo_sources *sources, struct
     for (unsigned i = 0; i < 4; i++) {
         text(w, keys[i]);
         if (found)
-            uint(w, values[i]);
+            unsigned_number(w, values[i]);
         else
             text(w, "null");
     }
@@ -126,7 +126,7 @@ static void code(struct writer *w, uint16_t n) {
         text(w, "0");
     if (n < 10)
         text(w, "0");
-    uint(w, n);
+    unsigned_number(w, n);
 }
 
 static void json_diag(struct writer *w, const struct mo_sources *sources, const struct mo_diag *d) {
@@ -216,14 +216,14 @@ static void location(struct writer *w, const struct mo_sources *sources, struct 
     safe_text(w, sources->files[span.file].path);
     struct mo_position p = mo_sources_position(sources, span.file, span.start);
     text(w, ":");
-    uint(w, p.line);
+    unsigned_number(w, p.line);
     text(w, ":");
-    uint(w, p.column);
+    unsigned_number(w, p.column);
 }
 
 static void line_prefix(struct writer *w, uint32_t line) {
     text(w, "  ");
-    uint(w, line);
+    unsigned_number(w, line);
     text(w, " | ");
 }
 
@@ -493,16 +493,16 @@ int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command 
     struct writer w = {&buffer, true};
     if (json) {
         text(&w, "{\"record\":\"totals\",\"errors\":");
-        uint(&w, written);
+        unsigned_number(&w, written);
         text(&w, ",\"dropped\":");
-        uint(&w, dropped);
+        unsigned_number(&w, dropped);
         if (command == MO_COMMAND_TEST)
             text(&w, ",\"passed\":0,\"failed\":0,\"stopped\":0");
         text(&w, ",\"status\":");
-        uint(&w, (uint32_t)status);
+        unsigned_number(&w, (uint32_t)status);
         text(&w, "}\n");
     } else if (dropped != 0) {
-        uint(&w, dropped);
+        unsigned_number(&w, dropped);
         text(&w, " diagnostics omitted: diagnostic storage or output limit\n");
     }
     if (ok && buffer.length != 0)
