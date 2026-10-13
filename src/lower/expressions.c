@@ -927,8 +927,9 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
             MO_ASSERT(args.count == 1);
             /* Qualified natives are already selected by the shared signature
              * table; an ordinary same-name helper has a source symbol instead. */
-            mo_core_ty receiver = r->operand_count == 0 ? type(b, r->type)->as.fn.params.items[0]
-                                                        : type(b, row(b, r->operands[0])->type);
+            mo_core_ty receiver = r->operand_count == 0
+                                      ? type(b, r->type)->as.fn.params.items[0]
+                                      : type(b, row(b, r->operands[r->operand_count - 1])->type);
             return lower_error_text(p, receiver, args.items[0]);
         }
     }
@@ -1585,6 +1586,11 @@ static void row_task(struct body *b, struct task t) {
         return;
     }
     uint32_t skip = r->symbol != NULL && r->symbol->declaration->kind == MO_S_FN ? 1 : 0;
+    /* An ordinary namespace call retains its native function-value callee;
+     * a native receiver dot call has only the receiver and explicit arguments. */
+    if (r->native != NULL && strchr(r->native, '.') != NULL && r->receiver == UINT32_MAX &&
+        r->operand_count != 0 && row(b, r->operands[0])->type->kind == MO_SOURCE_FUNCTION)
+        skip = 1;
     if (r->operand_count == skip) {
         finish(b, application(b, r, arguments(b, 0)), t.state, t.continuation, t.out);
         return;

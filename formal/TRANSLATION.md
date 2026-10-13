@@ -288,6 +288,9 @@ still calls its checked source symbol, so `to_text(7)` may return an Int while
 qualified native used as a function value, such as `Int.to_text` or
 `Text.byte_count`, becomes a `.ref.ROW` lambda adapter (5.6) applying the same
 primitive to its parameters. Unsupported natives still refuse E1150 there.
+Namespace calls, such as `Int.to_text(29)`, retain a pure native callee row in
+the checked graph; lowering skips it before applying the primitive to the
+written arguments. Receiver dots, such as `29.to_text`, have no callee row.
 
 The text functions of section 14 are primitives (`%text.lines`,
 `%text.split`, ...); see section 14 below.

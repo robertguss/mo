@@ -935,6 +935,9 @@ their selected source symbol. `Text.byte_count` emits Core's byte-count primitiv
 not a character count. Supported qualified natives used as function values get
 the same `.ref.ROW` lambda adapter as source functions and use the same call
 lowering, so taking a function value cannot bypass a native staging refusal.
+An ordinary namespace call retains that callee row in the checked graph;
+lowering skips the pure reference before passing its explicit arguments to the
+primitive. A native receiver dot call has no callee row to skip.
 Function instances retain requirement
 proofs keyed by the callee's scoped parameter and ability, together with the
 supplying instance's type/proof environment. PARAMETER replacement follows those

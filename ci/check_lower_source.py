@@ -117,7 +117,8 @@ CASES = {
                            "fn duration_text(d: Duration) : Text\nd.to_text\nend\n"
                            "fn main() : Int\nprobe(255, 0x10000000000000000, -1.25, -0.0)\nend", 83),
     "native_text_function_values": ("fn main() : Int\nrender = Int.to_text\ncount = Text.byte_count\n"
-                                    "count(render(-29)) + count(\"λ日本\")\nend", 11),
+                                    "count(render(-29)) + Text.byte_count(Int.to_text(29)) "
+                                    "+ count(\"λ日本\")\nend", 13),
     "option_default_lazy": ("fn main() : Int\na = Some(73) or 1 / 0\n"
                             "b = None or 7\nc = (Some(Some(13)) or None) or 1 / 0\na + b + c\nend", 93),
     "option_default_vars": ("fn choose(value: Option(Int)) : Option(Int)\nvar n = 3\n"
