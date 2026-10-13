@@ -65,32 +65,45 @@ static MO_MUST_USE struct mo_cell oracle_cell(struct prim_fixture *f, uint32_t t
                 bytes[j] = (uint8_t)carry;
                 carry >>= 8;
             }
-            if (carry != 0) { MO_ASSERT(length < sizeof bytes); bytes[length++] = (uint8_t)carry; }
+            if (carry != 0) {
+                MO_ASSERT(length < sizeof bytes);
+                bytes[length++] = (uint8_t)carry;
+            }
         }
-        enum mo_bigint_sign sign = length == 0 ? MO_BIGINT_ZERO : v->as.big_int.negative ? MO_BIGINT_NEGATIVE : MO_BIGINT_POSITIVE;
+        enum mo_bigint_sign sign = length == 0              ? MO_BIGINT_ZERO
+                                   : v->as.big_int.negative ? MO_BIGINT_NEGATIVE
+                                                            : MO_BIGINT_POSITIVE;
         MO_ASSERT(mo_value_bigint(f->heap, sign, bytes, length, &result));
         return result;
     }
     case MO_TYPE_LIST:
     case MO_TYPE_SET:
     case MO_TYPE_TUPLE: {
-        mo_core_values values = f->types.items[type].kind == MO_TYPE_LIST ? v->as.list :
-                                f->types.items[type].kind == MO_TYPE_SET ? v->as.set : v->as.tuple;
+        mo_core_values values = f->types.items[type].kind == MO_TYPE_LIST  ? v->as.list
+                                : f->types.items[type].kind == MO_TYPE_SET ? v->as.set
+                                                                           : v->as.tuple;
         struct mo_cell cells[4096];
         MO_ASSERT(values.count <= 4096);
         for (size_t i = 0; i < values.count; i++) {
-            uint32_t element = f->types.items[type].parameters[f->types.items[type].kind == MO_TYPE_TUPLE ? i : 0];
+            uint32_t element =
+                f->types.items[type].parameters[f->types.items[type].kind == MO_TYPE_TUPLE ? i : 0];
             cells[i] = oracle_cell(f, element, values.items[i]);
         }
         if (f->types.items[type].kind == MO_TYPE_TUPLE) {
             uint32_t layout = 0;
-            while (layout < f->types.layout_count && f->types.layouts[layout].type != type) layout++;
-            MO_ASSERT(layout < f->types.layout_count && mo_value_construct(f->heap, layout, cells, (uint32_t)values.count, &result));
+            while (layout < f->types.layout_count && f->types.layouts[layout].type != type)
+                layout++;
+            MO_ASSERT(layout < f->types.layout_count &&
+                      mo_value_construct(f->heap, layout, cells, (uint32_t)values.count, &result));
         } else if (f->types.items[type].kind == MO_TYPE_LIST)
             MO_ASSERT(mo_value_list(f->heap, type, cells, (uint32_t)values.count, &result));
-        else MO_ASSERT(mo_value_set(f->heap, type, cells, (uint32_t)values.count, &result));
+        else
+            MO_ASSERT(mo_value_set(f->heap, type, cells, (uint32_t)values.count, &result));
         for (size_t i = 0; i < values.count; i++)
-            mo_value_drop(f->heap, f->types.items[type].parameters[f->types.items[type].kind == MO_TYPE_TUPLE ? i : 0], cells[i]);
+            mo_value_drop(
+                f->heap,
+                f->types.items[type].parameters[f->types.items[type].kind == MO_TYPE_TUPLE ? i : 0],
+                cells[i]);
         return result;
     }
     case MO_TYPE_MAP: {
@@ -98,7 +111,8 @@ static MO_MUST_USE struct mo_cell oracle_cell(struct prim_fixture *f, uint32_t t
         MO_ASSERT(v->as.map.count <= 4096);
         for (size_t i = 0; i < v->as.map.count; i++) {
             keys[i] = oracle_cell(f, f->types.items[type].parameters[0], v->as.map.items[i].key);
-            values[i] = oracle_cell(f, f->types.items[type].parameters[1], v->as.map.items[i].value);
+            values[i] =
+                oracle_cell(f, f->types.items[type].parameters[1], v->as.map.items[i].value);
         }
         MO_ASSERT(mo_value_map(f->heap, type, keys, values, (uint32_t)v->as.map.count, &result));
         for (size_t i = 0; i < v->as.map.count; i++) {
@@ -165,42 +179,56 @@ static MO_MUST_USE mo_core_value oracle_value(struct prim_fixture *f, struct mo_
         size_t length;
         const uint8_t *bytes = mo_value_data(cell, &length);
         v->as.bytes.count = length;
-        v->as.bytes.items = mo_arena_allocate_array(arena, length, sizeof(mo_core_integer), _Alignof(mo_core_integer));
+        v->as.bytes.items = mo_arena_allocate_array(arena, length, sizeof(mo_core_integer),
+                                                    _Alignof(mo_core_integer));
         MO_ASSERT(v->as.bytes.items != NULL);
         for (size_t i = 0; i < length; i++)
-            v->as.bytes.items[i] = oracle_value(f, arena, f->builtin[MO_TYPE_BYTE], mo_cell_byte(bytes[i]))->as.byte;
+            v->as.bytes.items[i] =
+                oracle_value(f, arena, f->builtin[MO_TYPE_BYTE], mo_cell_byte(bytes[i]))->as.byte;
         return v;
     }
     case MO_TYPE_LIST:
     case MO_TYPE_SET:
     case MO_TYPE_TUPLE: {
         enum mo_type_kind kind = f->types.items[type].kind;
-        v->tag = kind == MO_TYPE_LIST ? MO_CORE_VALUE_LIST : kind == MO_TYPE_SET ? MO_CORE_VALUE_SET : MO_CORE_VALUE_TUPLE;
-        size_t count = kind == MO_TYPE_LIST ? mo_list_size(cell) : kind == MO_TYPE_SET ? mo_table_size(cell) : f->types.items[type].parameter_count;
+        v->tag = kind == MO_TYPE_LIST  ? MO_CORE_VALUE_LIST
+                 : kind == MO_TYPE_SET ? MO_CORE_VALUE_SET
+                                       : MO_CORE_VALUE_TUPLE;
+        size_t count = kind == MO_TYPE_LIST  ? mo_list_size(cell)
+                       : kind == MO_TYPE_SET ? mo_table_size(cell)
+                                             : f->types.items[type].parameter_count;
         v->as.list.count = count;
-        v->as.list.items = mo_arena_allocate_array(arena, count, sizeof(mo_core_value), _Alignof(mo_core_value));
+        v->as.list.items =
+            mo_arena_allocate_array(arena, count, sizeof(mo_core_value), _Alignof(mo_core_value));
         MO_ASSERT(v->as.list.items != NULL);
         uint32_t position = 0;
         for (size_t i = 0; i < count; i++) {
             struct mo_cell element, ignored;
-            if (kind == MO_TYPE_LIST) MO_ASSERT(mo_list_get(cell, (uint32_t)i, &element));
-            else if (kind == MO_TYPE_SET) MO_ASSERT(mo_table_next(cell, &position, &element, &ignored));
-            else element = mo_value_field(cell, (uint32_t)i);
-            v->as.list.items[i] = oracle_value(f, arena, f->types.items[type].parameters[kind == MO_TYPE_TUPLE ? i : 0], element);
+            if (kind == MO_TYPE_LIST)
+                MO_ASSERT(mo_list_get(cell, (uint32_t)i, &element));
+            else if (kind == MO_TYPE_SET)
+                MO_ASSERT(mo_table_next(cell, &position, &element, &ignored));
+            else
+                element = mo_value_field(cell, (uint32_t)i);
+            v->as.list.items[i] = oracle_value(
+                f, arena, f->types.items[type].parameters[kind == MO_TYPE_TUPLE ? i : 0], element);
         }
         return v;
     }
     case MO_TYPE_MAP: {
         v->tag = MO_CORE_VALUE_MAP;
         v->as.map.count = mo_table_size(cell);
-        v->as.map.items = mo_arena_allocate_array(arena, v->as.map.count, sizeof *v->as.map.items, _Alignof(struct mo_core_value_pair));
+        v->as.map.items = mo_arena_allocate_array(arena, v->as.map.count, sizeof *v->as.map.items,
+                                                  _Alignof(struct mo_core_value_pair));
         MO_ASSERT(v->as.map.items != NULL);
         uint32_t position = 0;
         for (size_t i = 0; i < v->as.map.count; i++) {
             struct mo_cell key, value;
             MO_ASSERT(mo_table_next(cell, &position, &key, &value));
-            v->as.map.items[i].key = oracle_value(f, arena, f->types.items[type].parameters[0], key);
-            v->as.map.items[i].value = oracle_value(f, arena, f->types.items[type].parameters[1], value);
+            v->as.map.items[i].key =
+                oracle_value(f, arena, f->types.items[type].parameters[0], key);
+            v->as.map.items[i].value =
+                oracle_value(f, arena, f->types.items[type].parameters[1], value);
         }
         return v;
     }
@@ -252,7 +280,7 @@ static MO_MUST_USE mo_core_value oracle_value(struct prim_fixture *f, struct mo_
     return v;
 }
 
-static void oracle_query(struct prim_fixture *f, const struct mo_buffer *input) {
+static void oracle_query(struct prim_fixture *fixtures, const struct mo_buffer *input) {
     struct mo_arena arena;
     struct mo_diags diags;
     mo_arena_init(&arena, 16 << 20);
@@ -260,6 +288,14 @@ static void oracle_query(struct prim_fixture *f, const struct mo_buffer *input) 
     mo_core_value query = mo_core_text_parse(&arena, MO_CORE_TEXT_VALUE, (const char *)input->bytes,
                                              input->length, &diags);
     MO_ASSERT(query != NULL && query->tag == MO_CORE_VALUE_TUPLE && query->as.tuple.count >= 2);
+    struct prim_fixture *f = &fixtures[0];
+    static const char *const sums[] = {"(sum (int))", "(sum (decimal))", "(sum (float))",
+                                       "(sum (bigInt))"};
+    mo_core_string primitive = query->as.tuple.items[1]->as.text;
+    for (size_t i = 0; i < sizeof sums / sizeof sums[0]; i++)
+        if (primitive.length == strlen(sums[i]) &&
+            memcmp(primitive.bytes, sums[i], primitive.length) == 0)
+            f = &fixtures[i];
     static const char *const names[] = {
 #define PRIM(id, module, name, signature, params, bugs) module "." name,
 #include "base/prims.def"
@@ -331,22 +367,27 @@ static void oracle_query(struct prim_fixture *f, const struct mo_buffer *input) 
 }
 
 static void primitive_oracle(void) {
-    struct prim_fixture f;
-    prim_fixture_init(&f, MO_DEFAULT_HEAP_SIZE);
+    struct prim_fixture f[4];
+    prim_fixture_init(&f[0], MO_DEFAULT_HEAP_SIZE);
+    prim_fixture_init_type(&f[1], MO_DEFAULT_HEAP_SIZE, MO_TYPE_DECIMAL);
+    prim_fixture_init_type(&f[2], MO_DEFAULT_HEAP_SIZE, MO_TYPE_FLOAT);
+    prim_fixture_init_type(&f[3], MO_DEFAULT_HEAP_SIZE, MO_TYPE_BIGINT);
     struct mo_buffer input;
     mo_buffer_init(&input, MO_LIMIT_CORE_TEXT_SIZE);
     int byte;
     while ((byte = getchar()) != EOF) {
         MO_ASSERT(mo_buffer_append_byte(&input, (uint8_t)byte));
         if (byte == '\n') {
-            oracle_query(&f, &input);
+            oracle_query(f, &input);
             mo_buffer_clear(&input);
-            MO_ASSERT(mo_heap_objects(f.heap) == 0);
+            for (unsigned i = 0; i < 4; i++)
+                MO_ASSERT(mo_heap_objects(f[i].heap) == 0);
         }
     }
     MO_ASSERT(!ferror(stdin) && input.length == 0 && fflush(stdout) == 0);
     mo_buffer_free(&input);
-    prim_fixture_free(&f);
+    for (unsigned i = 0; i < 4; i++)
+        prim_fixture_free(&f[i]);
 }
 
 #endif

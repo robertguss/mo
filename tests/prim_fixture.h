@@ -14,6 +14,7 @@ struct prim_fixture {
     uint32_t signature[MO_PRIM_COUNT];
     uint32_t options[512];
     uint32_t ordering;
+    enum mo_type_kind element;
 };
 
 static MO_MUST_USE uint32_t prim_type(struct prim_fixture *f, const char **cursor) {
@@ -39,7 +40,9 @@ static MO_MUST_USE uint32_t prim_type(struct prim_fixture *f, const char **curso
         if (length == 1) {
             MO_ASSERT(*start == 'T' || *start == 'U' || *start == 'K' || *start == 'V');
             *cursor = p;
-            return f->builtin[*start == 'U' || *start == 'V' ? MO_TYPE_TEXT : MO_TYPE_INT];
+            return f->builtin[*start == 'U' || *start == 'V' ? MO_TYPE_TEXT
+                              : *start == 'T'                ? f->element
+                                                             : MO_TYPE_INT];
         }
         if (length == 2 && memcmp(start, "fn", 2) == 0)
             kind = MO_TYPE_FUNCTION;
@@ -105,8 +108,10 @@ static MO_MUST_USE uint32_t prim_type(struct prim_fixture *f, const char **curso
     return index;
 }
 
-static void prim_fixture_init(struct prim_fixture *f, size_t budget) {
+static void prim_fixture_init_type(struct prim_fixture *f, size_t budget,
+                                   enum mo_type_kind element) {
     memset(f, 0, sizeof *f);
+    f->element = element;
     mo_arena_init(&f->arena, 4 << 20);
     mo_types_init(&f->types, &f->arena);
     memset(f->options, 0xff, sizeof f->options);
@@ -155,6 +160,10 @@ static void prim_fixture_init(struct prim_fixture *f, size_t budget) {
     limits.heap_size = budget;
     f->heap = mo_heap_new(f->image, &limits);
     MO_ASSERT(f->heap != NULL);
+}
+
+static void prim_fixture_init(struct prim_fixture *f, size_t budget) {
+    prim_fixture_init_type(f, budget, MO_TYPE_INT);
 }
 
 static void prim_fixture_free(struct prim_fixture *f) {

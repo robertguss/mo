@@ -7,6 +7,10 @@ import re
 import struct
 import subprocess
 import sys
+import time
+
+VERSION = re.search(r'#define MO_CORE_TEXT_VERSION "([^"]+)"',
+                    pathlib.Path("src/core/core.h").read_text())[1]
 
 
 def quote(s):
@@ -25,6 +29,171 @@ def floating(n):
 
 def float_bits(n):
     return struct.unpack("<Q", struct.pack("<d", n))[0]
+
+
+def query(name, primitive, args):
+    return f"(core {VERSION} (tuple ((text {quote(name)}) (text {quote(primitive)}) {' '.join(args)})))\n"
+
+
+def text_cases(rng, rows):
+    texts = ["", "a", "aba", "ababa", "aaaaa", "aaaab", "a\n", "\n\n", "a\r\nb\r",
+             " \t\n\r\v\f", " a  b \n c ", "\u00a0a\u00a0", "β🙂", "a\0b", "#{x}", '"\\\x7f']
+    texts += ["".join(rng.choice("aβ🙂 \n\r\t\0") for _ in range(rng.randrange(33))) for _ in range(24)]
+    number_texts = ["", "-", "+1", "00", "-0", "0x10", "1_000", " 1", "1 ", "1.", ".1",
+                    "9223372036854775807", "9223372036854775808", "-9223372036854775808",
+                    "-9223372036854775809", "170141183460469231731.687303715884105727",
+                    "170141183460469231731.687303715884105728", "0.000000000000000001",
+                    "0.0000000000000000001", "nan", "inf", "-inf", "NaN", "1e-324", "5e-324",
+                    "1e309", "1e-9999", "-0.0", "1e+20", "0.100000000000000000000000000001"]
+    number_texts += [str(rng.randrange(-(1 << 64), 1 << 64)) for _ in range(48)]
+    for _, module, name, _, params in rows:
+        if module not in {"Text", "Char", "Bytes"}:
+            continue
+        op = {"%concat": "concat", "empty?": "isEmpty", "starts_with?": "startsWith",
+              "ends_with?": "endsWith", "contains?": "contains", "ascii_lowercase": "lower",
+              "ascii_uppercase": "upper", "ascii_digit?": "isDigit", "ascii_letter?": "isLetter",
+              "ascii_white_space?": "isWhiteSpace"}.get(name, camel(name))
+        primitive = f"({module.lower()} ({op}))"
+        values = []
+        if name == "%compare":
+            primitive = f"(order ({module.lower()}))"
+        if name == "%quoted":
+            primitive = "(quotedText)" if module == "Text" else "(quotedChar)"
+        if module == "Text":
+            if name == "%structural":
+                primitive = "(structural (int))"
+                values = [[f"(int {n})"] for n in [-(1 << 63), -1, 0, 1, (1 << 63)-1]]
+            elif name == "from_chars":
+                values = [["(list (" + " ".join(f"(char {quote(c)})" for c in s) + "))"] for s in texts]
+            elif name in {"to_int", "to_decimal", "to_float"}:
+                values = [[f"(text {quote(s)})"] for s in number_texts]
+            elif name in {"repeat", "pad_left", "pad_right"}:
+                values = [[f"(text {quote(s)})", f"(int {n})"] for s in texts for n in [-1, 0, 1, 2, 7]]
+            elif name == "replace":
+                values = [[f"(text {quote(s)})", f"(text {quote(p)})", f"(text {quote(r)})"]
+                          for s in texts for p in ["", "a", "aa", "aba", "🙂"] for r in ["", "β", "ab"]]
+            elif len(params) == 2:
+                values = [[f"(text {quote(s)})", f"(text {quote(p)})"]
+                          for s in texts for p in ["", "a", "aa", "aba", "🙂", "nomatch"]]
+            else:
+                values = [[f"(text {quote(s)})"] for s in texts]
+        elif module == "Char":
+            scalars = [0, 9, 10, 11, 12, 13, 32, 39, 48, 57, 58, 65, 90, 91, 97, 122, 123,
+                       127, 128, 0xA0, 0xD7FF, 0xE000, 0x1F642, 0x10FFFF]
+            values = [[f"(char {quote(chr(n))})"] for n in scalars]
+        else:
+            byte_sequences = [b"", b"\0", b"abc", b"\xff", b"\xc0\x80", b"\xed\xa0\x80",
+                              b"\xf4\x8f\xbf\xbf", b"\xf4\x90\x80\x80", "β🙂".encode()]
+            byte_sequences += [rng.randbytes(rng.randrange(33)) for _ in range(24)]
+            enc = lambda b: "(bytes (" + " ".join(str(n) for n in b) + "))"
+            if name == "get":
+                values = [[enc(b), f"(int {n})"] for b in byte_sequences for n in [-1, 0, len(b)-1, len(b), (1 << 63)-1]]
+            elif name == "%compare":
+                values = [[enc(a), enc(b)] for a in byte_sequences for b in byte_sequences[:9]]
+            else:
+                values = [[enc(b)] for b in byte_sequences]
+        for i, args in enumerate(values):
+            yield f"{module}.{name}-{i}", query(f"{module}.{name}", primitive, args)
+
+
+def big_cases(rng, rows):
+    samples = [0, 1, -1, -(1 << 63), (1 << 63)-1, 1 << 63, -(1 << 63)-1,
+               (1 << 32)-1, (1 << 64)-1, 1 << 64, (1 << 128)-1, -(1 << 128)]
+    samples += [rng.getrandbits(bits) * rng.choice([-1, 1])
+                for bits in [31, 32, 33, 63, 64, 65, 127, 128, 129, 511, 512, 513, 2048]
+                for _ in range(3)]
+    encode = lambda n: f"(bigInt {n})"
+    for _, module, name, _, params in rows:
+        if module != "BigInt":
+            continue
+        op = camel(name.lstrip("%"))
+        primitive = f"(big ({op}))" if name != "%compare" else "(order (bigInt))"
+        if name == "pow":
+            args = [[encode(a), f"(int {n})"] for a in samples[:12] for n in [-1, 0, 1, 2, 3, 7, 32]]
+        elif len(params) == 2:
+            args = [[encode(a), encode(b)] for a in samples for b in samples]
+        else:
+            args = [[encode(a)] for a in samples]
+        for i, values in enumerate(args):
+            yield f"BigInt.{name}-{i}", query(f"BigInt.{name}", primitive, values)
+
+
+def collection_cases(rng, rows):
+    def seq(kind, values):
+        return f"({kind} ({' '.join(values)}))"
+    enc_int = lambda n: f"(int {n})"
+    enc_text = lambda s: f"(text {quote(s)})"
+    lists = [[], [1], [3, 1, 3, -2, 1, 4], [-(1 << 63), -1], [(1 << 63)-1, 1, -1]]
+    lists += [[rng.randrange(-10, 11) for _ in range(rng.randrange(32))] for _ in range(24)]
+    text_lists = [[], [""], ["a", "β", "", "a"], ["🙂", "x\0y"]]
+    int_lists = [seq("list", list(map(enc_int, xs))) for xs in lists]
+    sets = [seq("set", list(map(enc_int, dict.fromkeys(xs)))) for xs in lists]
+    pairs = [[], [(3, "a"), (1, "β"), (3, "last")], [(-1, ""), (5, "🙂")]]
+    entries = lambda xs: [seq("tuple", [enc_int(k), enc_text(v)]) for k, v in xs]
+    maps = ["(map (" + " ".join(f"({enc_int(k)} {enc_text(v)})" for k, v in xs) + "))"
+            for xs in [[], [(3, "a"), (1, "β")], [(-1, ""), (5, "🙂")]]]
+    for _, module, name, _, params in rows:
+        if module not in {"List", "Map", "Set", "Range"}:
+            continue
+        op = {"%empty": "lit 0", "empty?": "isEmpty", "contains?": "contains", "has?": "has"}.get(name, camel(name))
+        primitive = {"List": f"(list (int) ({op}))", "Map": f"(map (int) (text) ({op}))",
+                     "Set": f"(set (int) ({op}))", "Range": f"(range ({op}))"}[module]
+        values = []
+        if module == "List":
+            if name == "to_set":
+                primitive = "(set (int) (ofList))"
+            elif name == "to_map":
+                primitive = "(map (int) (text) (ofList))"
+                values = [[seq("list", entries(xs))] for xs in pairs]
+            elif name == "join":
+                primitive = "(text (join))"
+                values = [[seq("list", list(map(enc_text, xs))), enc_text(s)]
+                          for xs in text_lists for s in ["", "-", "🙂"]]
+            elif name == "sum":
+                primitive = "(sum (int))"
+            elif name == "zip":
+                primitive = "(list (int) (zip (text)))"
+                values = [[xs, seq("list", list(map(enc_text, ys)))] for xs in int_lists for ys in text_lists]
+            if not values:
+                if not params:
+                    values = [[]]
+                elif name in {"append", "prepend", "contains?"}:
+                    values = [[xs, enc_int(n)] for xs in int_lists for n in [-1, 0, 1, 3, 10]]
+                elif name == "concat":
+                    values = [[xs, ys] for xs in int_lists for ys in int_lists[:3]]
+                elif name in {"get", "take", "drop", "set", "remove_at"}:
+                    values = [[xs, enc_int(n)] + ([enc_int(99)] if name == "set" else [])
+                              for raw, xs in zip(lists, int_lists) for n in [-1, 0, 1, len(raw)-1, len(raw), (1 << 63)-1]]
+                else:
+                    values = [[xs] for xs in int_lists]
+        elif module == "Map":
+            if name == "%literal_insert":
+                primitive = "(literalInsert)"
+            if not params:
+                values = [[]]
+            elif len(params) == 1:
+                values = [[m] for m in maps]
+            else:
+                values = [[m, enc_int(n)] + ([enc_text("new")] if len(params) == 3 else [])
+                          for m in maps for n in [-1, 0, 1, 3, 5, 10]]
+        elif module == "Set":
+            if not params:
+                values = [[]]
+            elif len(params) == 1:
+                values = [[s] for s in sets]
+            elif name in {"union", "intersection", "difference"}:
+                values = [[s, t] for s in sets for t in sets[:4]]
+            else:
+                values = [[s, enc_int(n)] for s in sets for n in [-1, 0, 1, 3, 10]]
+        else:
+            ranges = [(0, 0), (3, 1), (-3, 4), ((1 << 63)-3, (1 << 63)-1), (-(1 << 63), -(1 << 63)+3)]
+            if name == "to_list":
+                values = [[f"(range {a} {b})"] for a, b in ranges]
+            else:
+                values = [[f"(range {a} {b})", enc_int(n)] for a, b in ranges for n in [a-1, a, b-1, b]
+                          if -(1 << 63) <= n < (1 << 63)]
+        for i, args in enumerate(values):
+            yield f"{module}.{name}-{i}", query(f"{module}.{name}", primitive, args)
 
 
 def cases():
@@ -83,8 +252,18 @@ def cases():
         else:
             values = [[floating(n)] for n in float_samples]
         for i, args in enumerate(values):
-            raw = f"(core 0.6 (tuple ((text {quote(module + '.' + name)}) (text {quote(primitive)}) {' '.join(args)})))\n"
+            raw = query(f"{module}.{name}", primitive, args)
             yield f"{module}.{name}-{i}", raw
+    yield from text_cases(rng, rows)
+    yield from big_cases(rng, rows)
+    yield from collection_cases(rng, rows)
+    for family, samples in [("decimal", [[], [-maximum, -1], [maximum, 1, -1], [-1, 1], [1, 2, 3]]),
+                            ("bigInt", [[], [-(1 << 512), 1 << 511, (1 << 64)-1], [1, -1, 2]]),
+                            ("float", [[], [1e30, -1e30, 0.1], [-0.0], [float('inf'), float('-inf')]])]:
+        samples += [[rng.randrange(-100000, 100001) for _ in range(rng.randrange(24))] for _ in range(24)]
+        for i, xs in enumerate(samples):
+            values = [floating(float_bits(float(n))) if family == "float" else f"({family} {n})" for n in xs]
+            yield f"List.sum-{family}-{i}", query("List.sum", f"(sum ({family}))", [f"(list ({' '.join(values)}))"])
 
 
 def run(command, data):
@@ -95,6 +274,16 @@ def run(command, data):
 
 
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--corpus":
+        directory = pathlib.Path(sys.argv[2])
+        directory.mkdir(parents=True, exist_ok=True)
+        ids = re.findall(r'^PRIM\((\w+),', pathlib.Path("src/base/prims.def").read_text(), re.M)
+        rng = random.Random(1300)
+        for i, name in enumerate(ids[:ids.index("RANGE_CONTAINS") + 1]):
+            for variant in range(4):
+                operands = bytes(512) if variant == 0 else rng.randbytes(512)
+                (directory / f"{name}-{variant}").write_bytes(bytes([i, variant & 1]) + operands)
+        return
     generated = list(cases())
     data = "".join(raw for _, raw in generated)
     expected = run(["formal/.lake/build/bin/mocore", "--primitives"], data)
@@ -108,7 +297,12 @@ def main():
         for (label, raw), want, found in zip(generated, expected, actual):
             if want != found:
                 raise AssertionError(f"{driver}: {label}:\nLean: {want}\nC:    {found}\n{raw}")
-        return f"{driver}: {len(generated)} primitive calls match mocore"
+        start = time.monotonic()
+        work = subprocess.run([driver, "--work"], text=True, capture_output=True, timeout=20)
+        if work.returncode:
+            raise AssertionError(f"{driver}: work regression failed\n{work.stdout}\n{work.stderr}")
+        elapsed = time.monotonic() - start
+        return f"{driver}: {len(generated)} primitive calls match mocore; work regressions {elapsed:.2f}s"
 
     if not sys.argv[1:]:
         raise AssertionError("at least one C driver is required")

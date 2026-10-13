@@ -76,11 +76,14 @@ enum mo_prim_status mo_prim_call(struct mo_heap *heap, const struct mo_types *ty
     enum mo_prim_status status;
     if (id == MO_PRIM_INT_POW) {
         status = power(arguments, &result, &call.reason);
-    } else if (id <= MO_PRIM_FLOAT_TO_TEXT &&
-               !(id >= MO_PRIM_BIGINT_ADD && id <= MO_PRIM_BIGINT_TO_TEXT)) {
+    } else if (id >= MO_PRIM_BIGINT_ADD && id <= MO_PRIM_BIGINT_TO_TEXT) {
+        status = mo_prim_bigint(&call, &result);
+    } else if (id <= MO_PRIM_FLOAT_TO_TEXT) {
         status = mo_prim_number(&call, &result);
     } else if (id >= MO_PRIM_TEXT_CONCAT && id <= MO_PRIM_BYTES_DECODE_UTF8) {
         status = mo_prim_text(&call, &result);
+    } else if (id >= MO_PRIM_LIST_EMPTY && id <= MO_PRIM_RANGE_CONTAINS) {
+        status = mo_prim_collection(&call, &result);
     } else {
         call.reason = "primitive not implemented";
         status = MO_PRIM_NOT_IMPLEMENTED;

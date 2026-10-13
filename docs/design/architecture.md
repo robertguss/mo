@@ -1099,6 +1099,36 @@ Stream 3 implements the writer, text tools, image accessor and C value APIs
 declared below. The image retains file indices in every decoded and runtime
 table, so streams 2 and 4 use the same indices in calls and value builders.
 
+`src/prim/prim.h` is the VM's primitive seam. `mo_prim_call(heap, types, id,
+instantiation, arguments, out, reason_out)` takes the verified function-type
+index, or the result-type index for a zero-argument constant. The id is the
+unchanged zero-based row of `base/prims.def`, declared in `base/prims.h` so
+`prim` need not depend on `bytecode`. A typed status distinguishes a result,
+overflow, division by zero, an outside-domain call, a repeated map-literal key,
+allocation/size refusal, and a primitive not implemented in the current stage.
+The static reason is detail for a defect, never something dispatch parses.
+Only a returned result transfers ownership: the result is owned, the `o`
+parameters are consumed, and the `b` parameters stay readable. All refusals
+preserve every operand, its object and ownership, and the output cell, so the
+VM can render pre-instruction registers without snapshots. Single updates use
+the heap's transactional unique/shared paths; multi-step operations build a
+private result before committing ownership. Native walk/build storage is
+charged to the process through `mo_scratch`; structural formatting uses the
+heap printer's separately bounded caller-owned output buffer.
+
+Primitive part 1 implements every numeric, Text, Char, Bytes, List, Map, Set
+and Range row. Time/Duration's own operations and all five Unicode16 rows
+still return the staged `NOT_IMPLEMENTED` refusal. Unicode16 will use generated
+UCD 16.0 tables and its conformance data, not an approximate implementation.
+The C/Lean differential gate covers each implemented row, exact Float bits,
+all four Number instances of sum, and exact stop details. Model-only bridges
+in `formal/Main.lean` compose existing model operations for lowering's order,
+literal insertion, sum and text-form helpers; they do not change `Prim.lean`.
+Long text matching uses KMP. BigInt multiplication uses explicit-stack
+Karatsuba; division uses normalized base-2^32 long division (a single pass for
+a one-limb divisor), with scratch bounded by operand/result sizes and the heap.
+Reference 13.3 promises no constant or linear cost for BigInt arithmetic.
+
 **Core's checker.** `mo_core_check` accepts complete parsed or arena-built
 Core trees, not arbitrary pointers or invalid C enum tags. Its typing contract
 is the executable `formal/MoCore/Check.lean` checker, including declaration
