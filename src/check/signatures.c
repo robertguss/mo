@@ -1,4 +1,6 @@
+#include "check/signatures.h"
 #include "check/check.h"
+#include "check/checked.h"
 #include "check/data.h"
 #include "check/native.h"
 
@@ -8,6 +10,114 @@
 
 #include <stdlib.h>
 #include <string.h>
+
+static MO_MUST_USE int symbol_order(const struct mo_symbol *a, const struct mo_symbol *b) {
+    if (a->module != b->module)
+        return a->module < b->module ? -1 : 1;
+    return (uintptr_t)a < (uintptr_t)b ? -1 : (uintptr_t)a > (uintptr_t)b ? 1 : 0;
+}
+
+const struct mo_data_signature *mo_data_signature_by_symbol(const struct mo_signatures *signatures,
+                                                            const struct mo_symbol *symbol) {
+    uint32_t lo = 0, hi = signatures->data_count;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (symbol_order(signatures->data[mid].symbol, symbol) < 0)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo < signatures->data_count && signatures->data[lo].symbol == symbol
+               ? &signatures->data[lo]
+               : NULL;
+}
+
+const struct mo_function_signature *
+mo_function_signature_by_symbol(const struct mo_signatures *signatures,
+                                const struct mo_symbol *symbol) {
+    uint32_t lo = 0, hi = signatures->count;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (symbol_order(signatures->items[mid].function, symbol) < 0)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo < signatures->count && signatures->items[lo].function == symbol
+               ? &signatures->items[lo]
+               : NULL;
+}
+
+const struct mo_nominal_signature *
+mo_nominal_signature_by_symbol(const struct mo_signatures *signatures,
+                               const struct mo_symbol *symbol) {
+    uint32_t lo = 0, hi = signatures->nominal_count;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (symbol_order(signatures->nominals[mid].type->declaration, symbol) < 0)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo < signatures->nominal_count && signatures->nominals[lo].type->declaration == symbol
+               ? &signatures->nominals[lo]
+               : NULL;
+}
+
+static MO_MUST_USE bool available(const struct mo_signatures *signatures,
+                                  const struct mo_source_type *type) {
+    if (*signatures->work == MO_LIMIT_PROGRAM_CHECK_WORK)
+        return false;
+    (*signatures->work)++;
+    if (type->kind == MO_SOURCE_NAMED && type->declaration != NULL) {
+        const struct mo_nominal_signature *owner =
+            mo_nominal_signature_by_symbol(signatures, type->declaration);
+        if (owner == NULL || owner->invalid)
+            return false;
+    }
+    for (uint32_t i = 0; i < type->count; i++)
+        if (!available(signatures, type->arguments[i]))
+            return false;
+    return true;
+}
+
+bool mo_signature_type_available(const struct mo_signatures *signatures,
+                                 const struct mo_source_type *type) {
+    return type != NULL && (!signatures->recovering || available(signatures, type));
+}
+
+static MO_MUST_USE int customizer_order(const void *a, const void *b) {
+    const struct mo_function_signature *x = *(const struct mo_function_signature *const *)a;
+    const struct mo_function_signature *y = *(const struct mo_function_signature *const *)b;
+    uintptr_t left = (uintptr_t)x->type->arguments[0]->declaration;
+    uintptr_t right = (uintptr_t)y->type->arguments[0]->declaration;
+    return left < right ? -1 : left > right ? 1 : strcmp(x->function->name, y->function->name);
+}
+
+const struct mo_function_signature *mo_customizer_signature(const struct mo_signatures *signatures,
+                                                            const struct mo_source_type *type,
+                                                            enum mo_source_ability ability) {
+    const char *name = ability == MO_SOURCE_TEXT ? "to_text" : "compare";
+    uint32_t lo = 0, hi = signatures->customizer_count;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        const struct mo_function_signature *at = signatures->customizers[mid];
+        uintptr_t left = (uintptr_t)at->type->arguments[0]->declaration;
+        uintptr_t right = (uintptr_t)type->declaration;
+        int order = left < right ? -1 : left > right ? 1 : strcmp(at->function->name, name);
+        if (order < 0)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    if (lo == signatures->customizer_count)
+        return NULL;
+    const struct mo_function_signature *out = signatures->customizers[lo];
+    return out->type->arguments[0]->declaration == type->declaration &&
+                   strcmp(out->function->name, name) == 0
+               ? out
+               : NULL;
+}
 
 static const struct mo_builtin_case builtin_cases[] = {
     {"Unit", "Unit", 6, 6, 1, 0, 0, 0, {NULL, NULL}},
@@ -486,6 +596,40 @@ static MO_MUST_USE int compare_fields(const void *a, const void *b) {
     return order != 0 ? order : x->index < y->index ? -1 : x->index > y->index ? 1 : 0;
 }
 
+static MO_MUST_USE int nominal_order(const void *a, const void *b) {
+    const struct mo_nominal_signature *x = a, *y = b;
+    return symbol_order(x->type->declaration, y->type->declaration);
+}
+
+static MO_MUST_USE bool nominal_index(struct preparation *p) {
+    struct mo_signatures *s = p->signatures;
+    s->nominals =
+        allocate(p, s->data_count, sizeof(*s->nominals), _Alignof(struct mo_nominal_signature));
+    if (s->nominals == NULL)
+        return false;
+    for (uint32_t i = 0; i < s->data_count; i++)
+        s->nominals[i] = (struct mo_nominal_signature){
+            .type = s->data[i].type, .field_count = s->data[i].count, .case_count = 1};
+    qsort(s->nominals, s->data_count, sizeof(*s->nominals), nominal_order);
+    for (uint32_t i = 0; i < s->data_count; i++) {
+        struct mo_nominal_signature value = s->nominals[i];
+        if (s->nominal_count != 0 &&
+            s->nominals[s->nominal_count - 1].type->declaration == value.type->declaration) {
+            MO_ASSERT(value.field_count <=
+                      UINT32_MAX - s->nominals[s->nominal_count - 1].field_count);
+            s->nominals[s->nominal_count - 1].field_count += value.field_count;
+            s->nominals[s->nominal_count - 1].case_count++;
+        } else
+            s->nominals[s->nominal_count++] = value;
+    }
+    for (uint32_t i = 0; i < s->nominal_count; i++) {
+        const struct mo_symbol *owner = s->nominals[i].type->declaration;
+        uint32_t cases = owner->declaration->kind == MO_S_ENUM ? owner->case_count : 1;
+        s->nominals[i].invalid = s->nominals[i].case_count != cases;
+    }
+    return true;
+}
+
 /* Nominal masks reach a fixed point without expanding recursive layouts. */
 static MO_MUST_USE bool dependency_work(struct preparation *p) {
     if (*p->signatures->work == MO_LIMIT_PROGRAM_CHECK_WORK)
@@ -509,18 +653,13 @@ static MO_MUST_USE bool dependencies(struct preparation *p, const struct mo_sour
     if (!keys && type->kind == MO_SOURCE_FUNCTION)
         return true; /* The ability check rejects it independently of parameters. */
     if (type->kind == MO_SOURCE_NAMED && type->declaration != NULL) {
-        uint32_t needed = 0;
-        const struct mo_data_signature *owner = NULL;
-        for (uint32_t i = 0; i < p->signatures->data_count; i++) {
-            if (!dependency_work(p))
-                return false;
-            const struct mo_data_signature *data = &p->signatures->data[i];
-            if (data->type->declaration == type->declaration) {
-                owner = data;
-                needed |= keys ? data->key_parameters : data->hash_parameters;
-            }
+        const struct mo_nominal_signature *owner =
+            mo_nominal_signature_by_symbol(p->signatures, type->declaration);
+        if (owner == NULL) {
+            MO_ASSERT(p->signatures->recovering);
+            return true;
         }
-        MO_ASSERT(owner != NULL);
+        uint32_t needed = keys ? owner->key_parameters : owner->hash_parameters;
         for (uint32_t i = 0; i < type->count; i++) {
             if ((needed & owner->type->arguments[i]->parameters) != 0 &&
                 !dependencies(p, type->arguments[i], false, out))
@@ -537,23 +676,97 @@ static MO_MUST_USE bool dependencies(struct preparation *p, const struct mo_sour
     return true;
 }
 
-static MO_MUST_USE bool data_dependencies(struct preparation *p) {
-    bool changed;
-    do {
-        changed = false;
-        for (uint32_t i = 0; i < p->signatures->data_count; i++) {
-            struct mo_data_signature *data = &p->signatures->data[i];
-            p->span = data->symbol->declaration->span;
-            uint32_t hash = data->hash_parameters, keys = data->key_parameters;
-            for (uint32_t j = 0; j < data->count; j++)
-                if (!dependencies(p, data->fields[j].type, false, &hash) ||
-                    !dependencies(p, data->fields[j].type, true, &keys))
-                    return false;
-            changed = changed || hash != data->hash_parameters || keys != data->key_parameters;
-            data->hash_parameters = hash;
-            data->key_parameters = keys;
+struct dependent {
+    uint32_t data;
+    struct dependent *next;
+};
+
+static MO_MUST_USE bool watch_dependencies(struct preparation *p, const struct mo_source_type *type,
+                                           uint32_t data, struct dependent **watchers) {
+    if (!dependency_work(p))
+        return false;
+    if (type->parameters == 0 && !p->signatures->recovering)
+        return true;
+    if (type->kind == MO_SOURCE_NAMED && type->declaration != NULL) {
+        const struct mo_nominal_signature *owner =
+            mo_nominal_signature_by_symbol(p->signatures, type->declaration);
+        if (owner == NULL) {
+            MO_ASSERT(p->signatures->recovering);
+            return true;
         }
-    } while (changed);
+        uint32_t index = (uint32_t)(owner - p->signatures->nominals);
+        struct dependent *edge = allocate(p, 1, sizeof(*edge), _Alignof(struct dependent));
+        if (edge == NULL)
+            return false;
+        *edge = (struct dependent){data, watchers[index]};
+        watchers[index] = edge;
+    }
+    for (uint32_t i = 0; i < type->count; i++)
+        if (!watch_dependencies(p, type->arguments[i], data, watchers))
+            return false;
+    return true;
+}
+
+static MO_MUST_USE bool data_dependencies(struct preparation *p) {
+    struct mo_signatures *s = p->signatures;
+    if (s->data_count == 0)
+        return true;
+    struct dependent **watchers =
+        allocate(p, s->nominal_count, sizeof(*watchers), _Alignof(struct dependent *));
+    uint32_t *queue = allocate(p, s->data_count, sizeof(*queue), _Alignof(uint32_t));
+    bool *pending = allocate(p, s->data_count, sizeof(*pending), _Alignof(bool));
+    if (p->failed)
+        return false;
+    memset(watchers, 0, (size_t)s->nominal_count * sizeof(*watchers));
+    for (uint32_t i = 0; i < s->data_count; i++) {
+        queue[i] = i;
+        pending[i] = true;
+        for (uint32_t j = 0; j < s->data[i].count; j++)
+            if (!watch_dependencies(p, s->data[i].fields[j].type, i, watchers))
+                return false;
+    }
+    uint32_t head = 0, tail = 0, count = s->data_count;
+    while (count != 0) {
+        uint32_t index = queue[head];
+        head = (head + 1) % s->data_count;
+        count--;
+        pending[index] = false;
+        struct mo_data_signature *data = &s->data[index];
+        p->span = data->symbol->declaration->span;
+        const struct mo_nominal_signature *found =
+            mo_nominal_signature_by_symbol(s, data->type->declaration);
+        MO_ASSERT(found != NULL);
+        uint32_t owner_index = (uint32_t)(found - s->nominals);
+        struct mo_nominal_signature *owner = &s->nominals[owner_index];
+        bool invalid = owner->invalid;
+        uint32_t hash = data->hash_parameters, keys = data->key_parameters;
+        for (uint32_t j = 0; j < data->count; j++) {
+            if (!mo_signature_type_available(s, data->fields[j].type))
+                owner->invalid = true;
+            if (!dependencies(p, data->fields[j].type, false, &hash) ||
+                !dependencies(p, data->fields[j].type, true, &keys))
+                return false;
+        }
+        data->hash_parameters = hash;
+        data->key_parameters = keys;
+        if (owner->invalid == invalid && (hash & ~owner->hash_parameters) == 0 &&
+            (keys & ~owner->key_parameters) == 0)
+            continue;
+        owner->hash_parameters |= hash;
+        owner->key_parameters |= keys;
+        for (const struct dependent *edge = watchers[owner_index]; edge != NULL;
+             edge = edge->next) {
+            if (!dependency_work(p))
+                return false;
+            if (!pending[edge->data]) {
+                MO_ASSERT(count < s->data_count);
+                pending[edge->data] = true;
+                queue[tail] = edge->data;
+                tail = (tail + 1) % s->data_count;
+                count++;
+            }
+        }
+    }
     return true;
 }
 
@@ -624,7 +837,8 @@ static MO_MUST_USE bool customizer(struct preparation *p, const struct mo_source
                    compare ? "compare doesn't have the type's order signature"
                            : "to_text doesn't have the type's text signature",
                    "A type customizes Order or Text in its own module with compare(T, T): Ordering "
-                   "or to_text(T): Text (reference 9.2).");
+                   "or to_text(T): Text (reference 9.2). This stage reserves these names for "
+                   "customizers; it doesn't certify unrelated functions with these names.");
 }
 
 /* The table spells types in Mo. Add positional parameter names, then use the
@@ -768,7 +982,11 @@ static MO_MUST_USE bool data_signature(struct preparation *p, const struct mo_sy
             resolve(p, unnamed ? fields : fields->children[i]->children[1]);
         if (field_type == NULL || (name != NULL && !question_name(p, name, field_type)))
             return false;
-        items[i] = (struct mo_field_signature){.name = name, .type = field_type, .index = i};
+        items[i] = (struct mo_field_signature){
+            .name = name,
+            .annotation = unnamed ? fields : fields->children[i]->children[1],
+            .type = field_type,
+            .index = i};
     }
     if (!unnamed) {
         qsort(items, count, sizeof(*items), compare_fields);
@@ -791,9 +1009,10 @@ static MO_MUST_USE bool data_signature(struct preparation *p, const struct mo_sy
     return true;
 }
 
-struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct mo_module_set *set,
-                                            const struct mo_module_interfaces *interfaces,
-                                            struct mo_diags *diags) {
+struct mo_signatures *mo_prepare_available_signatures(struct mo_arena *arena,
+                                                      const struct mo_module_set *set,
+                                                      const struct mo_module_interfaces *interfaces,
+                                                      struct mo_diags *diags) {
     MO_ASSERT(arena != NULL && set != NULL && interfaces != NULL && diags != NULL);
     MO_ASSERT(interfaces->count == set->count && set->count <= MO_LIMIT_FILES);
     struct preparation p = {
@@ -823,19 +1042,47 @@ struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct
             const struct mo_symbol *symbol = &interfaces->scopes[i].symbols[j];
             if (symbol->declaration->kind == MO_S_STRUCT ||
                 symbol->declaration->kind == MO_S_CASE_DECL) {
-                if (!data_signature(&p, symbol, &out->data[out->data_count]))
-                    goto failed;
-                out->data_count++;
+                if (data_signature(&p, symbol, &out->data[out->data_count]))
+                    out->data_count++;
+                else {
+                    if (diags->dropped != 0 || diags->count == 0 ||
+                        diags->items[diags->count - 1].code >= 1000)
+                        goto failed;
+                    p.failed = false;
+                    out->recovering = true;
+                }
             }
         }
-    if (!data_dependencies(&p))
+    if (!nominal_index(&p) || !data_dependencies(&p))
         goto failed;
+    uint32_t before = diags->count;
+    if (!mo_check_data_recursion(arena, out, diags)) {
+        if (diags->dropped != 0 || diags->count == before ||
+            diags->items[diags->count - 1].code != MO_CODE_DATA_RECURSION)
+            goto failed;
+        out->recovering = true;
+        struct mo_span error = diags->items[diags->count - 1].primary.span;
+        for (uint32_t i = 0; i < out->data_count; i++) {
+            struct mo_span declaration = out->data[i].symbol->declaration->span;
+            if (error.file == declaration.file && error.start >= declaration.start &&
+                error.end <= declaration.end) {
+                const struct mo_nominal_signature *owner =
+                    mo_nominal_signature_by_symbol(out, out->data[i].type->declaration);
+                MO_ASSERT(owner != NULL);
+                out->nominals[(uint32_t)(owner - out->nominals)].invalid = true;
+            }
+        }
+        if (!data_dependencies(&p))
+            goto failed;
+    }
     memset(p.parameters, 0, sizeof(p.parameters));
     for (uint32_t i = 0; i < interfaces->count; i++)
         for (uint32_t j = 0; j < interfaces->scopes[i].count; j++) {
             const struct mo_symbol *function = &interfaces->scopes[i].symbols[j];
             if (function->declaration->kind != MO_S_FN)
                 continue;
+            struct mo_function_signature *signature = &out->items[out->count++];
+            *signature = (struct mo_function_signature){.function = function};
             p.function = function;
             p.span = function->declaration->span;
             const struct mo_syntax *parameters = function->declaration->children[1];
@@ -845,11 +1092,11 @@ struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct
                 arguments[k] = resolve(&p, parameters->children[k]->children[1]);
                 if (arguments[k] == NULL ||
                     !question_name(&p, parameters->children[k]->children[0], arguments[k]))
-                    goto failed;
+                    goto invalid_function;
             }
             arguments[parameters->count] = resolve(&p, function->declaration->children[2]);
             if (arguments[parameters->count] == NULL)
-                goto failed;
+                goto invalid_function;
             const struct mo_source_type *type =
                 intern(&p, (struct mo_source_type){.kind = MO_SOURCE_FUNCTION,
                                                    .name = "fn",
@@ -857,13 +1104,28 @@ struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct
                                                    .count = parameters->count + 1,
                                                    .arguments = arguments});
             if (type == NULL || !question_name(&p, function->declaration->children[0], type))
-                goto failed;
-            struct mo_function_signature *signature = &out->items[out->count++];
-            *signature = (struct mo_function_signature){.function = function, .type = type};
+                goto invalid_function;
             if (!requirements(&p, type, signature->requirements) || !customizer(&p, type))
+                goto invalid_function;
+            signature->type = type;
+            continue;
+        invalid_function:
+            if (diags->dropped != 0 || diags->count == 0 ||
+                diags->items[diags->count - 1].code >= 1000)
                 goto failed;
+            p.failed = false;
+            out->recovering = true;
         }
     MO_ASSERT(out->count == count);
+    out->customizers = allocate(&p, count, sizeof(*out->customizers),
+                                _Alignof(const struct mo_function_signature *));
+    if (out->customizers == NULL)
+        goto failed;
+    for (uint32_t i = 0; i < count; i++)
+        if (items[i].type != NULL && (strcmp(items[i].function->name, "to_text") == 0 ||
+                                      strcmp(items[i].function->name, "compare") == 0))
+            out->customizers[out->customizer_count++] = &items[i];
+    qsort(out->customizers, out->customizer_count, sizeof(*out->customizers), customizer_order);
     out->native_count = (uint32_t)(sizeof(native_texts) / sizeof(native_texts[0]));
     out->native =
         allocate(&p, out->native_count, sizeof(*out->native), _Alignof(struct mo_native_signature));
@@ -874,8 +1136,16 @@ struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct
     for (uint32_t i = 0; i < out->native_count; i++)
         if (!native_signature(&p, &native_texts[i], &out->native[i]))
             goto failed;
+    mo_diags_sort(diags);
     return out;
 failed:
     mo_diags_sort(diags);
     return NULL;
+}
+
+struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct mo_module_set *set,
+                                            const struct mo_module_interfaces *interfaces,
+                                            struct mo_diags *diags) {
+    struct mo_signatures *out = mo_prepare_available_signatures(arena, set, interfaces, diags);
+    return mo_diags_any(diags) ? NULL : out;
 }

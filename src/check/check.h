@@ -117,7 +117,8 @@ struct mo_function_signature {
 };
 
 struct mo_field_signature {
-    const struct mo_syntax *name; /* NULL for a case's single unnamed value */
+    const struct mo_syntax *name;       /* NULL for a case's single unnamed value */
+    const struct mo_syntax *annotation; /* the written field type */
     const struct mo_source_type *type;
     uint32_t index; /* declaration order */
 };
@@ -145,6 +146,10 @@ struct mo_signatures {
     struct mo_data_signature *data; /* module order, then interface symbol order */
     uint32_t native_count;
     struct mo_native_signature *native; /* private prepared table interfaces */
+    uint32_t nominal_count, customizer_count;
+    struct mo_nominal_signature *nominals;            /* private owner index and dependency masks */
+    const struct mo_function_signature **customizers; /* private receiver index */
+    bool recovering; /* private diagnostic recovery; never true in a published preparation */
 };
 
 /* Prepares all named function signatures, including abstract generic parameters
@@ -233,6 +238,8 @@ enum mo_ability_implementation_kind {
 };
 
 /* A shared graph, possibly recursive for nominal data; lower memoizes it.
+ * Checking bounds dependency paths by MO_LIMIT_SOURCE_ABILITY_DEPTH (E1108),
+ * independently of the height of a surface type's arguments.
  * FUNCTION is the selected declaring-module to_text/compare, even if hidden.
  * PARAMETER is an abstract requirement of a generic body; substitution selects
  * its concrete implementation before emitting Core. DERIVED parts follow

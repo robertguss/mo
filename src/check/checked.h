@@ -12,4 +12,8 @@ MO_MUST_USE bool mo_check_function(struct mo_arena *arena,
 MO_MUST_USE bool mo_check_recursion(struct mo_arena *arena, const struct mo_program *program,
                                     struct mo_diags *diags);
 
+MO_MUST_USE bool mo_check_data_recursion(struct mo_arena *arena,
+                                         const struct mo_signatures *signatures,
+                                         struct mo_diags *diags);
+
 #endif

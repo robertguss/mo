@@ -491,6 +491,20 @@ Record/case construction and field reads check the owning type's `(..)`
 exposure before revealing its layout. Field metadata borrows syntax and is
 stored once in the declaring module, not copied into every importing module.
 
+Nonregular generic data is refused at its field annotation (E0084, reference
+9.1). The same explicit-stack component algorithm used for generic calls follows
+scoped data parameters through field types, including function fields. A growing
+argument on a parameter cycle would require layouts without end; a permutation
+or an argument whose dependency ends at a concrete type does not.
+
+Whole-program diagnostic recovery retains available signatures privately,
+checks independent bodies despite later declaration errors, and sorts the
+combined diagnostics by source position. Invalid declarations and their nominal
+dependents suppress uses rather than inventing secondary type errors. A failed
+ability context is discarded, including provisional recursive proofs. Resource
+or diagnostic-storage failure stops the walk. Neither a partial preparation nor
+a partially checked program is published through the public interfaces.
+
 Native signatures are prepared once per checking run from `prims.def` and
 `hostops.def`. The checker adds positional parameter names to each table's Mo
 signature and sends it through the source parser and annotation resolver,
@@ -504,9 +518,20 @@ remain refused until the spec/capability stage exists.
 Collection annotations impose implicit Hash requirements, including through
 generic record and choice fields. Preparation computes parameter-dependency
 masks to a fixed point over nominal declarations, without expanding recursive
-layouts. Ability checking validates each declared field and instantiated
+layouts. A reverse-dependency worklist visits affected declarations when masks
+change; sorted function, constructor, nominal-owner and customizer indices avoid
+scanning unrelated signatures. Ability caches intern structural types using
+hashed child identities, with a separate source-pointer index for shared DAGs.
+Ability checking validates each declared field and instantiated
 requirement. A phantom parameter does not acquire an ability its fields do not
 need. This walk and signature requirements share the program work budget.
+
+Reference 9.2 defines a customizer as one ordinary function in its type's own
+module, with signature `compare(T, T): Ordering` or `to_text(T): Text`. It does
+not explicitly settle unrelated functions with those names. For this stage the
+names remain reserved for those signatures; E0082 explains that conservative
+restriction. Qualified library prefixes require a module in scope, except the
+modules named after built-in types that reference 10.5 makes implicit.
 
 **Local inference is a second intermediate result.** `mo_infer_function`
 checks one named body against prepared signatures, returning postorder
@@ -588,8 +613,11 @@ reused at greater depth. `MO_LIMIT_SOURCE_CHECK_WORK` caps term construction,
 unification, occurs checks, expression visits and output conversion at
 16,777,216 operations per function (E1104). `MO_LIMIT_PROGRAM_CHECK_WORK`
 caps their total at 268,435,456 (E1107), shared by all inference calls against
-one signature preparation. Checking is single-threaded; new preparation starts
-a new run. These errors are implementation limits, not language restrictions.
+one signature preparation. `MO_LIMIT_SOURCE_ABILITY_DEPTH` separately caps a
+proof or callback-dependency path at 4,096 edges (E1108): a chain of nominal
+fields is not the height of one written type. Checking is single-threaded;
+new preparation starts a new run. These errors are implementation limits,
+not language restrictions.
 All temporary and output storage is
 charged to the caller arena (E1058), with no additional scratch arena.
 `MO_LIMIT_SOURCE_INFERENCE_DEPTH` allows sixteen inference frames per source

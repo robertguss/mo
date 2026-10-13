@@ -19,8 +19,8 @@ struct fixture {
 
 static void init(struct fixture *f, const char *text) {
     *f = (struct fixture){0};
-    mo_arena_init(&f->syntax, 1 << 20);
-    mo_arena_init(&f->arena, 16 << 20);
+    mo_arena_init(&f->syntax, 64 << 20);
+    mo_arena_init(&f->arena, MO_CLI_CHECK_SIZE);
     MO_ASSERT(mo_sources_init(&f->sources) && mo_diags_init(&f->diags));
     uint32_t file;
     struct mo_source_error error;
@@ -443,6 +443,40 @@ static void library_graph(void) {
     free_fixture(&f);
 }
 
+static void library_scope(void) {
+    struct fixture f = {0};
+    mo_arena_init(&f.syntax, 1 << 20);
+    mo_arena_init(&f.arena, 16 << 20);
+    MO_ASSERT(mo_sources_init(&f.sources) && mo_diags_init(&f.diags));
+    const char *texts[] = {"module Main\nfn main()\n_j = Json.parse(\"null\")\nend\n",
+                           "module Json\nexpose parse\nfn parse(text: Text) : Int\n"
+                           "text.byte_count\nend\n"};
+    struct mo_module_syntax *modules[2];
+    uint32_t order[] = {0, 1};
+    uint32_t *uses[] = {NULL, NULL};
+    bool library[] = {false, true};
+    const char *names[] = {"Main", "Json"};
+    for (uint32_t i = 0; i < 2; i++) {
+        uint32_t file;
+        struct mo_source_error error;
+        MO_ASSERT(mo_sources_add_bytes(&f.sources, i == 0 ? "main.mo" : "json.mo",
+                                       (const uint8_t *)texts[i], strlen(texts[i]), &file, &error));
+        modules[i] = mo_parse(&f.syntax, &f.sources, file, &f.diags);
+        MO_ASSERT(modules[i] != NULL && !mo_diags_any(&f.diags));
+    }
+    struct mo_module_set set = {.count = 2,
+                                .modules = modules,
+                                .order = order,
+                                .uses = uses,
+                                .library = library,
+                                .names = names};
+    f.program = mo_check(&f.arena, &set, &f.diags);
+    CHECK(f.program == NULL && f.diags.count == 1);
+    if (f.diags.count == 1)
+        CHECK(f.diags.items[0].code == MO_CODE_IMPORT_MISSING);
+    free_fixture(&f);
+}
+
 static void entry_record(void) {
     struct fixture f;
     init(&f, "module Main\nfn describe(entry: Entry) : Text\n"
@@ -717,7 +751,70 @@ static void requirement_keys(void) {
              "struct Phantom(T)\nvalue: Int\nend\n"
              "fn accepts(_key: Map(Phantom(Float), Int), _tree: Tree(Int))\nend\n"
              "fn main()\nend\n");
+    CHECK(f.program == NULL && f.diags.count == 1);
+    if (f.diags.count == 1)
+        CHECK(f.diags.items[0].code == MO_CODE_DATA_RECURSION);
+    free_fixture(&f);
+}
+
+static void data_recursion(void) {
+    static const struct {
+        const char *source;
+        bool grows;
+    } cases[] = {
+        {"struct Tree(T)\nchildren: List(Tree(T))\nend\n", false},
+        {"struct Tree(T, U)\nnext: Option(Tree(U, T))\nend\n", false},
+        {"struct A(T)\nnext: Option(B(List(T)))\nend\n"
+         "struct B(U)\nnext: Option(A(Int))\nend\n",
+         false},
+        {"struct A(T)\nnext: Option(B(List(T)))\nend\n"
+         "struct B(U)\nnext: Option(A(U))\nend\n",
+         true},
+        {"enum Tree(T)\nLeaf(T)\nBranch(List(Tree(List(T))))\nend\n", true},
+        {"struct Tree(T)\nnext: fn() : Tree(List(T))\nend\n", true},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, 4096);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\n") &&
+                  mo_buffer_append_text(&source, cases[i].source) &&
+                  mo_buffer_append_text(&source, "fn main()\nend\n") &&
+                  mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init(&f, (const char *)source.bytes);
+        CHECK((f.program == NULL) == cases[i].grows);
+        if (cases[i].grows) {
+            CHECK(f.diags.count == 1);
+            if (f.diags.count == 1) {
+                CHECK(f.diags.items[0].code == MO_CODE_DATA_RECURSION);
+                struct mo_span span = f.diags.items[0].primary.span;
+                CHECK(span.start > 12 && span.end > span.start &&
+                      span.end < strlen((const char *)source.bytes));
+            }
+        } else
+            CHECK(!mo_diags_any(&f.diags));
+        free_fixture(&f);
+        mo_buffer_free(&source);
+    }
+}
+
+static void generic_lambdas(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn twice(x: T) : T where T: Number\n"
+             "f = fn(c) c + c end\nf(x)\nend\n"
+             "fn main() : Int\ntwice(3)\nend\n");
     CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    free_fixture(&f);
+    init(&f, "module Main\nstruct Box(T)\nvalue: T\nend\n"
+             "fn twice(x: Box(T)) : T where T: Number\n"
+             "f = fn(c) c.value + c.value end\nf(x)\nend\n"
+             "fn negative(x: T) : T where T: Number\nf = fn(c) -c end\nf(x)\nend\n"
+             "fn main() : Int\nnegative(twice(Box(value: 3)))\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    free_fixture(&f);
+    init(&f, "module Main\nfn twice(x: T) : T\n"
+             "f = fn(c) c + c end\nf(x)\nend\nfn main()\nend\n");
+    CHECK(f.program == NULL && f.diags.count != 0);
     free_fixture(&f);
 }
 
@@ -1262,6 +1359,170 @@ static void depth_graph(void) {
     mo_buffer_free(&source);
 }
 
+static void diagnostic_order(void) {
+    static const char *const later[] = {
+        "fn later(_x: Unknown)\nend\n",
+        "fn later(_x: Set(Float))\nend\n",
+        "struct Later\nfield: Unknown\nend\n",
+        "struct Later(T)\nfield: Later(List(T))\nend\n",
+    };
+    for (size_t i = 0; i < sizeof(later) / sizeof(later[0]); i++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, 4096);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\nfn main() : Int\nmissing\nend\n") &&
+                  mo_buffer_append_text(&source, later[i]) && mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init(&f, (const char *)source.bytes);
+        CHECK(f.program == NULL && f.diags.count == 2);
+        if (f.diags.count != 0) {
+            CHECK(f.diags.items[0].code == MO_CODE_NAME_UNKNOWN);
+            CHECK(f.diags.items[0].primary.span.start == 28);
+        }
+        free_fixture(&f);
+        mo_buffer_free(&source);
+    }
+    struct fixture f;
+    init(&f, "module Main\nfn main() : Int\nlater(1)\nend\n"
+             "fn later(_x: Unknown) : Int\n0\nend\n");
+    CHECK(f.program == NULL && f.diags.count == 1);
+    if (f.diags.count == 1)
+        CHECK(f.diags.items[0].code == MO_CODE_TYPE_NAME);
+    free_fixture(&f);
+    init(&f, "module Main\nstruct A\nfield: B\nend\nstruct B\nfield: C\nend\n"
+             "struct C\nfield: Unknown\nend\nfn read(a: A) : Int\na.field.field.field\nend\n"
+             "fn main() : Int\nmissing\nend\n");
+    CHECK(f.program == NULL && f.diags.count == 2);
+    if (f.diags.count == 2) {
+        CHECK(f.diags.items[0].code == MO_CODE_TYPE_NAME);
+        CHECK(f.diags.items[1].code == MO_CODE_NAME_UNKNOWN);
+    }
+    free_fixture(&f);
+    const char *source = "module Main\nfn main() : Int\ns = Set.empty.add(Some(1))\n"
+                         "if s < s: 1 else: 0\nend\n";
+    init(&f, source);
+    CHECK(f.program == NULL && f.diags.count == 1);
+    if (f.diags.count == 1) {
+        CHECK(f.diags.items[0].code == MO_CODE_ABILITY_MISSING);
+        CHECK(strcmp(f.diags.items[0].message, "type Set(Option(Int)) doesn't have Order") == 0);
+        struct mo_span span = f.diags.items[0].primary.span;
+        CHECK(span.end - span.start == 5 && memcmp(source + span.start, "s < s", 5) == 0);
+    }
+    free_fixture(&f);
+}
+
+static void ability_scaling(void) {
+    static const uint32_t counts[] = {4100, 6700, 4500, 3000, 600, 250};
+    for (uint32_t kind = 0; kind < sizeof(counts) / sizeof(counts[0]); kind++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, 4 << 20);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\n"));
+        if (kind == 0)
+            MO_ASSERT(mo_buffer_append_text(&source, "enum E\n"));
+        if (kind == 5)
+            MO_ASSERT(mo_buffer_append_text(&source, "fn duplicate(x: T) : (T, T)\n(x, x)\nend\n"
+                                                     "fn main()\nv0 = 1\n"));
+        for (uint32_t i = 0; i < counts[kind]; i++) {
+            char line[512];
+            int n;
+            if (kind == 0)
+                n = snprintf(line, sizeof(line), "C%u(value: Int)\n", i);
+            else if (kind == 1)
+                n = snprintf(line, sizeof(line), "fn f%u(x: T) : T\nx\nend\n", i);
+            else if (kind == 2 || kind == 3)
+                n = snprintf(line, sizeof(line),
+                             "struct R%u\nx: Int\nend\nfn show%u(x: R%u) : Text\n\"#{x}\"\nend\n",
+                             i, i, i);
+            else if (kind == 4)
+                n = i + 1 < counts[kind]
+                        ? snprintf(line, sizeof(line), "struct R%u(T)\nnext: R%u(T)\nend\n", i,
+                                   i + 1)
+                        : snprintf(line, sizeof(line), "struct R%u(T)\nnext: Set(T)\nend\n", i);
+            else
+                n = snprintf(line, sizeof(line), "v%u = duplicate(v%u)\n", i + 1, i);
+            MO_ASSERT(n > 0 && (size_t)n < sizeof(line) && mo_buffer_append_text(&source, line));
+            if (kind == 3) {
+                n = snprintf(line, sizeof(line), "fn to_text(_x: R%u) : Text\n\"r\"\nend\n", i);
+                MO_ASSERT(n > 0 && (size_t)n < sizeof(line) &&
+                          mo_buffer_append_text(&source, line));
+            }
+        }
+        if (kind == 0)
+            MO_ASSERT(mo_buffer_append_text(&source, "end\nfn same(e: E) : Bool\ne == e\nend\n"));
+        if (kind == 4)
+            MO_ASSERT(mo_buffer_append_text(&source, "fn accepts(_x: R0(T))\nend\n"));
+        if (kind == 5)
+            MO_ASSERT(mo_buffer_append_text(&source, "_set = Set.empty.add(v250)\nend\n"));
+        else
+            MO_ASSERT(mo_buffer_append_text(&source, "fn main()\nend\n"));
+        MO_ASSERT(mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init(&f, (const char *)source.bytes);
+        CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+        if (kind == 3 && f.program != NULL) {
+            for (uint32_t i = 0; i < f.program->function_count; i++) {
+                const struct mo_checked_body *body = &f.program->functions[i].body;
+                for (uint32_t j = 0; j < body->count; j++) {
+                    const struct mo_checked_expression *row = &body->items[j];
+                    if (row->syntax->kind != MO_S_TEXT_INTERPOLATED)
+                        continue;
+                    MO_ASSERT(row->ability_count == 1);
+                    const struct mo_ability_implementation *proof =
+                        row->abilities[0].implementation;
+                    CHECK(proof->kind == MO_ABILITY_FUNCTION && proof->function != NULL);
+                    if (proof->function != NULL) {
+                        const struct mo_module_scope *scope =
+                            &f.program->interfaces->scopes[proof->function->module];
+                        CHECK(proof->function->receiver < scope->count);
+                        if (proof->function->receiver < scope->count)
+                            CHECK(&scope->symbols[proof->function->receiver] ==
+                                  proof->type->declaration);
+                    }
+                }
+            }
+        }
+        free_fixture(&f);
+        mo_buffer_free(&source);
+    }
+}
+
+static void ability_depth(void) {
+    MO_ASSERT(MO_LIMIT_SOURCE_ABILITY_DEPTH % 2 == 0);
+    for (uint32_t extra = 0; extra < 2; extra++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, 1 << 20);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\n"));
+        uint32_t count = MO_LIMIT_SOURCE_ABILITY_DEPTH / 2;
+        for (uint32_t i = 0; i < count; i++) {
+            char line[128];
+            int n =
+                i + 1 < count
+                    ? snprintf(line, sizeof(line), "struct R%u\nnext: Option(R%u)\nend\n", i, i + 1)
+                    : snprintf(line, sizeof(line), "struct R%u\nnext: Option(Int)\nend\n", i);
+            MO_ASSERT(n > 0 && (size_t)n < sizeof(line) && mo_buffer_append_text(&source, line));
+        }
+        MO_ASSERT(mo_buffer_append_text(
+            &source, extra == 0 ? "fn same(a: R0, b: R0) : Bool\na == b\nend\nfn main()\nend\n"
+                                : "fn same(a: Option(R0), b: Option(R0)) : Bool\na == b\nend\n"
+                                  "fn main()\nend\n"));
+        MO_ASSERT(mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init(&f, (const char *)source.bytes);
+        if (extra == 0)
+            CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+        else {
+            CHECK(f.program == NULL && f.diags.count == 1);
+            if (f.diags.count == 1) {
+                CHECK(f.diags.items[0].code == MO_CODE_CHECK_ABILITY_DEPTH);
+                struct mo_span span = f.diags.items[0].primary.span;
+                CHECK(span.end - span.start == 6 &&
+                      memcmp(source.bytes + span.start, "a == b", 6) == 0);
+            }
+        }
+        free_fixture(&f);
+        mo_buffer_free(&source);
+    }
+}
+
 static void allocation_failures(void) {
     static const char *const sources[] = {
         "module Main\nfn main()\nend\n",
@@ -1331,11 +1592,14 @@ static void run(void *argument) {
     overload_graph();
     delayed_dot_graph();
     library_graph();
+    library_scope();
     entry_record();
     ability_graph();
     native_choice_abilities();
     generic_graph();
     requirement_keys();
+    data_recursion();
+    generic_lambdas();
     lambda_graph();
     branch_graph();
     record_graph();
@@ -1349,6 +1613,9 @@ static void run(void *argument) {
     wide_patterns();
     rejected_stages();
     depth_graph();
+    diagnostic_order();
+    ability_scaling();
+    ability_depth();
     allocation_failures();
     corpus();
 }
