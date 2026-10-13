@@ -284,7 +284,7 @@ enum mo_input_result mo_input_build(const struct mo_inputs *inputs, struct mo_he
                                     : boundaries != NULL ? MO_INPUT_SAMPLE
                                                          : MO_INPUT_PRNG,
                             .boundary = boundaries == NULL ? 0 : boundaries[completed],
-                            .source = source == NULL ? (struct mo_cell){0} : source[completed]}};
+                            .source = source == NULL ? mo_cell_unit() : source[completed]}};
             if (inputs->limits.depth == 0) {
                 result = MO_INPUT_LIMIT;
                 break;
