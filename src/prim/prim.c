@@ -1,4 +1,25 @@
-#include "prim/prim.h"
+#include "prim/internal.h"
+
+#include <string.h>
+
+enum mo_prim_status mo_prim_option(struct mo_prim_call *call, bool some, struct mo_cell value,
+                                   struct mo_cell *out) {
+    MO_ASSERT(call->types->items[call->result].kind == MO_TYPE_CHOICE);
+    return mo_value_case(call->heap, call->result, some ? 1U : 0U, some ? &value : NULL,
+                         some ? 1U : 0U, out)
+               ? MO_PRIM_RETURNED
+               : MO_PRIM_OUT_OF_MEMORY;
+}
+
+enum mo_prim_status mo_prim_print(struct mo_prim_call *call, uint32_t type, struct mo_cell value,
+                                  struct mo_cell *out) {
+    struct mo_buffer text;
+    mo_buffer_init(&text, MO_LIMIT_STRING_SIZE);
+    bool ok = mo_value_print(call->heap, type, value, &text) &&
+              mo_value_text(call->heap, (const char *)text.bytes, text.length, out);
+    mo_buffer_free(&text);
+    return ok ? MO_PRIM_RETURNED : MO_PRIM_OUT_OF_MEMORY;
+}
 
 static MO_MUST_USE bool multiply(int64_t a, int64_t b, int64_t *out) {
     mo_i128 wide = (mo_i128)a * b;
@@ -37,11 +58,40 @@ enum mo_prim_status mo_prim_call(struct mo_heap *heap, const struct mo_types *ty
                                  const char **reason_out) {
     MO_ASSERT(heap != NULL && types != NULL && types->finished && instantiation < types->count &&
               id < MO_PRIM_COUNT && out != NULL && reason_out != NULL);
-    *reason_out = NULL;
+    static const char *const ownership[] = {
+#define PRIM(id, module, name, signature, params, bugs) params,
+#include "base/prims.def"
+    };
+    const struct mo_type *signature = &types->items[instantiation];
+    size_t count = strlen(ownership[id]);
+    MO_ASSERT(count == 0 || (arguments != NULL && signature->kind == MO_TYPE_FUNCTION &&
+                             count == signature->parameter_count));
+    struct mo_prim_call call = {.heap = heap,
+                                .types = types,
+                                .id = id,
+                                .args = arguments,
+                                .params = count == 0 ? NULL : signature->parameters,
+                                .result = count == 0 ? instantiation : signature->result};
+    struct mo_cell result;
+    enum mo_prim_status status;
     if (id == MO_PRIM_INT_POW) {
-        MO_ASSERT(arguments != NULL);
-        return power(arguments, out, reason_out);
+        status = power(arguments, &result, &call.reason);
+    } else if (id <= MO_PRIM_FLOAT_TO_TEXT &&
+               !(id >= MO_PRIM_BIGINT_ADD && id <= MO_PRIM_BIGINT_TO_TEXT)) {
+        status = mo_prim_number(&call, &result);
+    } else {
+        call.reason = "primitive not implemented";
+        status = MO_PRIM_NOT_IMPLEMENTED;
     }
-    *reason_out = "primitive not implemented";
-    return MO_PRIM_NOT_IMPLEMENTED;
+    if (status == MO_PRIM_RETURNED) {
+        for (size_t i = 0; i < count; i++) {
+            if (ownership[id][i] == 'o' && (call.moved & (1U << i)) == 0)
+                mo_value_drop(heap, call.params[i], arguments[i]);
+        }
+        *out = result;
+    } else if (status == MO_PRIM_OUT_OF_MEMORY) {
+        call.reason = "out of memory";
+    }
+    *reason_out = call.reason;
+    return status;
 }
