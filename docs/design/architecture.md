@@ -1582,7 +1582,11 @@ The type input is a 4,096-level List parameter on an otherwise shallow function.
 | Text printer | 2.25 / 3.00 | 1.75 / 2.00 | 2.25 / 3.00 |
 | Metadata validator | 0.75 / 0.75 | 1.00 / 1.00 | — |
 | Core checker, including metadata validation | 5.25 / 9.25 | 5.25 / 9.25 | 1.25 / 2.00 |
-| Codegen, including its Core recheck | 5.25 / 9.25 | 5.25 / 9.25 | 5.25 / 6.25 |
+| Codegen, including its Core recheck | 5.25 / 9.25 | 5.75 / 9.25 | 5.25 / 6.25 |
+
+Codegen's boundaries were remeasured after stacking the part 7 primitive and
+BigInt work: debug negation compilation rose from 5.25 to 5.75 MiB; the other
+compiler boundaries and the 48 MiB allowance were unchanged.
 
 `index.c`'s AVL insert/find was separately exercised with 4,096 sorted binder
 names: both builds pass at the smallest tested reservation, 256 KiB. Its
