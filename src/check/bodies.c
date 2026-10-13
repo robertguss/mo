@@ -67,12 +67,19 @@ struct emitted_lambda {
     struct note **parameters;
 };
 
+struct emitted_match {
+    struct mo_checked_match output;
+    struct mo_checked_arm *arms;
+};
+
 struct emitted {
     struct mo_checked_expression output;
     struct note **operands;
     struct emitted_lambda *lambda;
+    struct emitted_match *match;
     const struct mo_source_type *generic;
     struct term *instantiated;
+    struct term *pattern_type;
 };
 
 struct note {
@@ -629,6 +636,13 @@ static MO_MUST_USE int source_note_order(const void *a, const void *b) {
     const struct note *x = *(const struct note *const *)a;
     const struct note *y = *(const struct note *const *)b;
     uint32_t left = x->output.syntax->span.start, right = y->output.syntax->span.start;
+    return left < right ? -1 : left > right ? 1 : 0;
+}
+
+static MO_MUST_USE int syntax_note_order(const void *a, const void *b) {
+    const struct note *x = *(const struct note *const *)a;
+    const struct note *y = *(const struct note *const *)b;
+    uintptr_t left = (uintptr_t)x->output.syntax, right = (uintptr_t)y->output.syntax;
     return left < right ? -1 : left > right ? 1 : 0;
 }
 
@@ -1571,7 +1585,8 @@ static MO_MUST_USE bool pattern_bind(struct inference *p, const struct mo_syntax
         if (!unify(p, local->type, type, 0))
             return false;
         local->pattern_alternative = alternative;
-        return record(p, node, (struct value){.type = type, .binding = local->name});
+        return record(
+            p, node, (struct value){.type = type, .binding = local->name, .bound = local->binding});
     } else {
         if (!bind(p, node, type, false))
             return false;
@@ -1866,6 +1881,22 @@ static MO_MUST_USE struct value match(struct inference *p, const struct mo_synta
                                   .type = input.type,
                                   .next = p->matches};
     p->matches = check;
+    struct value emitted = graph(p, (struct value){.type = result}, 1 + 2 * arms->count);
+    if (emitted.type == NULL)
+        return emitted;
+    uint32_t operand = 1;
+    if (p->checked) {
+        struct emitted_match *match =
+            allocate(p, 1, sizeof(*match), _Alignof(struct emitted_match));
+        struct mo_checked_arm *rows =
+            allocate(p, arms->count, sizeof(*rows), _Alignof(struct mo_checked_arm));
+        if (p->failed)
+            return (struct value){0};
+        *match = (struct emitted_match){.output = {.arm_count = arms->count, .arms = rows},
+                                        .arms = rows};
+        emitted.graph->match = match;
+        emitted.graph->operands[0] = input.note;
+    }
     bool never = true;
     for (uint32_t i = 0; i < arms->count; i++) {
         struct local *mark = p->locals;
@@ -1892,14 +1923,31 @@ static MO_MUST_USE struct value match(struct inference *p, const struct mo_synta
                 }
             }
         }
-        if (arm->children[1] != NULL && condition(p, arm->children[1], true).type == NULL)
-            return (struct value){0};
+        if (p->checked)
+            emitted.graph->match->arms[i] = (struct mo_checked_arm){
+                .syntax = arm, .pattern_count = alternatives->count, .guard = UINT32_MAX};
+        if (arm->children[1] != NULL) {
+            struct value guard = condition(p, arm->children[1], true);
+            if (guard.type == NULL)
+                return guard;
+            if (p->checked) {
+                emitted.graph->match->arms[i].guard = operand;
+                emitted.graph->operands[operand++] = guard.note;
+            }
+        }
         struct value body = infer(p, arm->children[2], result);
         if (body.type == NULL || !leave(p, mark))
             return (struct value){0};
+        if (p->checked) {
+            emitted.graph->match->arms[i].body = operand;
+            emitted.graph->operands[operand++] = body.note;
+        }
         never = never && body.never;
     }
-    return (struct value){.type = result, .never = never};
+    if (p->checked)
+        emitted.graph->output.operand_count = operand;
+    emitted.never = never;
+    return emitted;
 }
 
 static MO_MUST_USE struct value conditional(struct inference *p, const struct mo_syntax *node,
@@ -2336,7 +2384,11 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         struct mo_match_pattern *normalized = NULL;
         if (input.type == NULL || !pattern(p, node->children[1], input.type, 0, 1, &normalized))
             return (struct value){0};
-        return (struct value){.type = native(p, "Bool", 0), .never = input.never};
+        struct value out =
+            graph(p, (struct value){.type = native(p, "Bool", 0), .never = input.never}, 1);
+        if (p->checked && out.type != NULL)
+            out.graph->operands[0] = input.note;
+        return out;
     }
     case MO_S_RETURN: {
         struct local *mark = p->locals;
@@ -2391,6 +2443,8 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     case MO_S_FOR:
     case MO_S_WHILE: {
         struct local *mark = p->locals;
+        struct note *binding = NULL;
+        struct term *element = NULL;
         uint32_t body_index = node->kind == MO_S_FOR ? 2 : 1;
         struct value test = node->kind == MO_S_WHILE ? condition(p, node->children[0], true)
                                                      : infer(p, node->children[1], NULL);
@@ -2401,7 +2455,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             if (boolean == NULL || !unify_as(p, test.type, boolean, MO_CODE_CONDITION_TYPE))
                 return (struct value){0};
         } else {
-            struct term *element = NULL, *container = root(test.type);
+            struct term *container = root(test.type);
             if (named(container, "Range"))
                 element = native(p, "Int", 0);
             else if (named(container, "List") || named(container, "Set"))
@@ -2428,6 +2482,11 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             }
             if (element == NULL || !binder(p, node->children[0], element))
                 return (struct value){0};
+            const struct mo_syntax *name = node->children[0];
+            while (name->kind == MO_S_BINDER)
+                name = name->children[0];
+            if (name->kind != MO_S_TUPLE)
+                binding = p->last;
         }
         p->loops++;
         struct term *unit = native(p, "Unit", 0);
@@ -2436,7 +2495,13 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         p->loops--;
         if (body.type == NULL || !leave(p, mark))
             return (struct value){0};
-        return (struct value){.type = unit};
+        struct value out = graph(p, (struct value){.type = unit, .bound = binding}, 2);
+        if (p->checked && out.type != NULL) {
+            out.graph->operands[0] = test.note;
+            out.graph->operands[1] = body.note;
+            out.graph->pattern_type = element;
+        }
+        return out;
     }
     case MO_S_BREAK:
     case MO_S_CONTINUE: {
@@ -2449,13 +2514,21 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             (void)reported;
             return (struct value){0};
         }
+        struct value guard = {0};
         if (node->children[0] != NULL) {
             struct term *condition = native(p, "Bool", 0);
-            if (condition == NULL ||
-                infer_as(p, node->children[0], condition, MO_CODE_CONDITION_TYPE).type == NULL)
+            guard = condition == NULL
+                        ? (struct value){0}
+                        : infer_as(p, node->children[0], condition, MO_CODE_CONDITION_TYPE);
+            if (guard.type == NULL)
                 return (struct value){0};
         }
-        return (struct value){.type = native(p, "Unit", 0), .never = node->children[0] == NULL};
+        struct value out = graph(
+            p, (struct value){.type = native(p, "Unit", 0), .never = node->children[0] == NULL},
+            guard.type == NULL ? 0u : 1u);
+        if (p->checked && guard.type != NULL && out.type != NULL)
+            out.graph->operands[0] = guard.note;
+        return out;
     }
     case MO_S_LIST:
     case MO_S_TUPLE:
@@ -2612,7 +2685,9 @@ static MO_MUST_USE struct value infer(struct inference *p, const struct mo_synta
         node->kind != MO_S_LAMBDA && node->kind != MO_S_IF && node->kind != MO_S_LINE_IF &&
         node->kind != MO_S_CAPNAME && node->kind != MO_S_QUALIFIED &&
         node->kind != MO_S_FIELD_ACCESS && node->kind != MO_S_RETURN && node->kind != MO_S_STOP &&
-        node->kind != MO_S_ASSERT) {
+        node->kind != MO_S_ASSERT && node->kind != MO_S_CASE && node->kind != MO_S_IS &&
+        node->kind != MO_S_FOR && node->kind != MO_S_WHILE && node->kind != MO_S_BREAK &&
+        node->kind != MO_S_CONTINUE) {
         bool reported = unfinished(p);
         (void)reported;
         p->depth--;
@@ -2980,6 +3055,199 @@ static MO_MUST_USE bool finish_operator(struct inference *p, struct note *note) 
     return true;
 }
 
+static MO_MUST_USE bool type_arguments(struct inference *p, const struct mo_source_type *generic,
+                                       const struct mo_source_type *actual,
+                                       struct mo_type_arguments *out) {
+    if (generic->count == 0)
+        return true;
+    MO_ASSERT(actual->count == generic->count);
+    struct mo_type_argument *items =
+        allocate(p, generic->count, sizeof(*items), _Alignof(struct mo_type_argument));
+    if (items == NULL)
+        return false;
+    for (uint32_t i = 0; i < actual->count; i++)
+        items[i] = (struct mo_type_argument){generic->arguments[i], actual->arguments[i]};
+    *out = (struct mo_type_arguments){.count = actual->count, .items = items};
+    return true;
+}
+
+static MO_MUST_USE const struct note *pattern_note(struct note *const *notes, uint32_t count,
+                                                   const struct mo_syntax *syntax) {
+    while (syntax->kind == MO_S_GROUP || syntax->kind == MO_S_BINDER)
+        syntax = syntax->children[0];
+    uintptr_t key = (uintptr_t)syntax;
+    uint32_t lo = 0, hi = count;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if ((uintptr_t)notes[mid]->output.syntax < key)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    MO_ASSERT(lo < count && notes[lo]->output.syntax == syntax);
+    return notes[lo];
+}
+
+static MO_MUST_USE struct mo_checked_pattern *pattern_output(struct inference *p,
+                                                             const struct mo_syntax *syntax,
+                                                             const struct mo_source_type *type,
+                                                             enum mo_checked_pattern_kind kind,
+                                                             uint32_t count) {
+    uint64_t bytes = sizeof(struct mo_checked_pattern) +
+                     (uint64_t)count * sizeof(struct mo_checked_pattern_part);
+    if (bytes > MO_LIMIT_SOURCE_CHECK_WORK - p->work ||
+        bytes > MO_LIMIT_PROGRAM_CHECK_WORK - *p->signatures->work) {
+        bool reported =
+            problem(p,
+                    bytes > MO_LIMIT_SOURCE_CHECK_WORK - p->work ? MO_CODE_CHECK_WORK
+                                                                 : MO_CODE_CHECK_PROGRAM_WORK,
+                    syntax->span, "the typed patterns need too much storage", NULL, NULL);
+        (void)reported;
+        return NULL;
+    }
+    p->work += (uint32_t)bytes;
+    *p->signatures->work += bytes;
+    struct mo_checked_pattern *out =
+        allocate(p, 1, sizeof(*out), _Alignof(struct mo_checked_pattern));
+    if (out != NULL)
+        *out = (struct mo_checked_pattern){
+            .kind = kind, .syntax = syntax, .type = type, .part_count = count};
+    return out;
+}
+
+static MO_MUST_USE const struct mo_source_type *
+pattern_field_type(struct inference *p, const struct mo_data_signature *data,
+                   const struct mo_source_type *actual, uint32_t index) {
+    struct term *parameters[26] = {NULL};
+    for (uint32_t i = 0; i < actual->count; i++) {
+        unsigned letter = (unsigned)(data->type->arguments[i]->name[0] - 'A');
+        parameters[letter] = annotation(p, actual->arguments[i], NULL, 0);
+        if (parameters[letter] == NULL)
+            return NULL;
+    }
+    struct term *type = annotation(p, data->by_index[index]->type, parameters, 0);
+    return type == NULL ? NULL : finish_type(p, type, 0);
+}
+
+/* Normalize only decisions already retained by inference. The syntax-pointer
+ * index supplies resolved binders/constructors/fields without a second lexical
+ * walk; omitted fields acquire explicit typed ANY parts. */
+static MO_MUST_USE struct mo_checked_pattern *
+checked_pattern(struct inference *p, const struct mo_syntax *syntax,
+                const struct mo_source_type *type, struct note *const *notes, uint32_t note_count,
+                const struct mo_checked_binding *bindings, uint32_t binding_count, uint32_t depth) {
+    if (!work(p) || !type_depth(p, depth))
+        return NULL;
+    if (syntax->kind == MO_S_GROUP || syntax->kind == MO_S_BINDER)
+        return checked_pattern(p, syntax->children[0], type, notes, note_count, bindings,
+                               binding_count, depth + 1);
+    if (syntax->kind == MO_S_UNDERSCORE)
+        return pattern_output(p, syntax, type, MO_PATTERN_ANY, 0);
+    if (syntax->kind == MO_S_NAME) {
+        const struct note *note = pattern_note(notes, note_count, syntax);
+        MO_ASSERT(note->binding != NULL && note->binding->binding_index < binding_count);
+        struct mo_checked_pattern *out = pattern_output(p, syntax, type, MO_PATTERN_BIND, 0);
+        if (out != NULL)
+            out->binding = &bindings[note->binding->binding_index];
+        return out;
+    }
+    if (syntax->kind == MO_S_TUPLE) {
+        struct mo_checked_pattern *out =
+            pattern_output(p, syntax, type, MO_PATTERN_TUPLE, syntax->count);
+        struct mo_checked_pattern_part *parts =
+            allocate(p, syntax->count, sizeof(*parts), _Alignof(struct mo_checked_pattern_part));
+        if (p->failed)
+            return NULL;
+        MO_ASSERT(type->count == syntax->count);
+        out->parts = parts;
+        for (uint32_t i = 0; i < syntax->count; i++) {
+            parts[i] = (struct mo_checked_pattern_part){
+                i, checked_pattern(p, syntax->children[i], type->arguments[i], notes, note_count,
+                                   bindings, binding_count, depth + 1)};
+            if (parts[i].pattern == NULL)
+                return NULL;
+        }
+        return out;
+    }
+    if (syntax->kind == MO_S_LIST) {
+        uint32_t length = syntax->count;
+        bool rest = length != 0 && syntax->children[length - 1]->kind == MO_S_REST;
+        if (rest)
+            length--;
+        const struct mo_checked_pattern **heads =
+            allocate(p, length, sizeof(*heads), _Alignof(const struct mo_checked_pattern *));
+        if (heads == NULL)
+            return NULL;
+        for (uint32_t i = 0; i < length; i++) {
+            heads[i] = checked_pattern(p, syntax->children[i], type->arguments[0], notes,
+                                       note_count, bindings, binding_count, depth + 1);
+            if (heads[i] == NULL)
+                return NULL;
+        }
+        struct mo_checked_pattern *tail =
+            rest ? checked_pattern(p, syntax->children[length]->children[0], type, notes,
+                                   note_count, bindings, binding_count, depth + 1)
+                 : pattern_output(p, syntax, type, MO_PATTERN_LIST, 0);
+        for (uint32_t i = length; tail != NULL && i != 0; i--) {
+            struct mo_checked_pattern *cons = pattern_output(p, syntax, type, MO_PATTERN_LIST, 2);
+            struct mo_checked_pattern_part *parts =
+                allocate(p, 2, sizeof(*parts), _Alignof(struct mo_checked_pattern_part));
+            if (p->failed)
+                return NULL;
+            parts[0] = (struct mo_checked_pattern_part){0, heads[i - 1]};
+            parts[1] = (struct mo_checked_pattern_part){1, tail};
+            cons->parts = parts;
+            tail = cons;
+        }
+        return tail;
+    }
+    bool constructor = syntax->kind == MO_S_CAPNAME || syntax->kind == MO_S_QUALIFIED ||
+                       syntax->kind == MO_S_CALL || syntax->kind == MO_S_POSTFIX;
+    if (!constructor)
+        return pattern_output(p, syntax, type, MO_PATTERN_LITERAL, 0);
+    const struct note *note = pattern_note(notes, note_count, syntax);
+    if (note->output.builtin_case != NULL) {
+        bool reported = unfinished(p);
+        (void)reported;
+        return NULL;
+    }
+    MO_ASSERT(note->output.symbol != NULL);
+    const struct mo_data_signature *data = data_type(p, note->output.symbol);
+    MO_ASSERT(data != NULL);
+    struct mo_checked_pattern *out =
+        pattern_output(p, syntax, type, MO_PATTERN_CONSTRUCTOR, data->count);
+    struct mo_checked_pattern_part *parts =
+        allocate(p, data->count, sizeof(*parts), _Alignof(struct mo_checked_pattern_part));
+    if (p->failed)
+        return NULL;
+    out->constructor.symbol = data->symbol;
+    out->parts = parts;
+    if (!type_arguments(p, data->type, type, &out->arguments))
+        return NULL;
+    for (uint32_t i = 0; i < data->count; i++) {
+        const struct mo_source_type *field = pattern_field_type(p, data, type, i);
+        parts[i] = (struct mo_checked_pattern_part){
+            i, field == NULL ? NULL : pattern_output(p, syntax, field, MO_PATTERN_ANY, 0)};
+        if (parts[i].pattern == NULL)
+            return NULL;
+    }
+    const struct mo_syntax *args = syntax->kind == MO_S_CALL      ? syntax->children[1]
+                                   : syntax->kind == MO_S_POSTFIX ? syntax->children[2]->children[0]
+                                                                  : NULL;
+    for (uint32_t i = 0; args != NULL && i < args->count; i++) {
+        const struct mo_syntax *value =
+            data->unnamed ? args->children[i] : args->children[i]->children[1];
+        const struct note *selected = pattern_note(notes, note_count, value);
+        MO_ASSERT(selected->output.field != NULL);
+        uint32_t index = selected->output.field->index;
+        parts[index].pattern = checked_pattern(p, value, parts[index].pattern->type, notes,
+                                               note_count, bindings, binding_count, depth + 1);
+        if (parts[index].pattern == NULL)
+            return NULL;
+    }
+    return out;
+}
+
 static MO_MUST_USE struct mo_inferred_body *
 infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
                const struct mo_signatures *signatures, uint32_t function, struct mo_diags *diags,
@@ -3053,10 +3321,12 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
                      _Alignof(const struct mo_checked_binding *));
         struct note **lambdas =
             allocate(&p, p.lambda_count, sizeof(*lambdas), _Alignof(struct note *));
+        struct note **notes = allocate(&p, p.count, sizeof(*notes), _Alignof(struct note *));
         if (p.failed)
             goto failed;
-        uint32_t count = 0, binding_count = 0, lambda_count = 0;
+        uint32_t count = 0, binding_count = 0, lambda_count = 0, note_count = 0;
         for (struct note *n = p.notes; n != NULL; n = n->next) {
+            notes[note_count++] = n;
             if (n->graph != NULL) {
                 n->index = count++;
                 if (n->graph->lambda != NULL)
@@ -3080,6 +3350,8 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
         }
         MO_ASSERT(binding_count == p.binding_count);
         MO_ASSERT(lambda_count == p.lambda_count);
+        MO_ASSERT(note_count == p.count);
+        qsort(notes, note_count, sizeof(*notes), syntax_note_order);
         qsort(lambdas, lambda_count, sizeof(*lambdas), source_note_order);
         for (uint32_t i = 0; i < lambda_count; i++)
             lambdas[i]->graph->lambda->output.number = i + 1;
@@ -3103,16 +3375,47 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
                 goto failed;
             if (g->generic != NULL && g->generic->count != 0) {
                 const struct mo_source_type *actual = finish_type(&p, g->instantiated, 0);
-                struct mo_type_argument *arguments = allocate(
-                    &p, g->generic->count, sizeof(*arguments), _Alignof(struct mo_type_argument));
-                if (actual == NULL || arguments == NULL)
+                if (actual == NULL || !type_arguments(&p, g->generic, actual, &g->output.arguments))
                     goto failed;
-                MO_ASSERT(actual->count == g->generic->count);
-                for (uint32_t i = 0; i < actual->count; i++)
-                    arguments[i] =
-                        (struct mo_type_argument){g->generic->arguments[i], actual->arguments[i]};
-                g->output.arguments =
-                    (struct mo_type_arguments){.count = actual->count, .items = arguments};
+            }
+            if (g->match != NULL) {
+                struct emitted_match *match = g->match;
+                match->output.scrutinee = operands[0];
+                for (uint32_t i = 0; i < match->output.arm_count; i++) {
+                    struct mo_checked_arm *arm = &match->arms[i];
+                    if (arm->guard != UINT32_MAX)
+                        arm->guard = operands[arm->guard];
+                    arm->body = operands[arm->body];
+                    const struct mo_checked_pattern **patterns =
+                        allocate(&p, arm->pattern_count, sizeof(*patterns),
+                                 _Alignof(const struct mo_checked_pattern *));
+                    if (patterns == NULL)
+                        goto failed;
+                    arm->patterns = patterns;
+                    for (uint32_t j = 0; j < arm->pattern_count; j++) {
+                        patterns[j] = checked_pattern(&p, arm->syntax->children[0]->children[j],
+                                                      g->operands[0]->output.type, notes,
+                                                      note_count, bindings, binding_count, 0);
+                        if (patterns[j] == NULL)
+                            goto failed;
+                    }
+                }
+                g->output.match = &match->output;
+            } else if (n->output.syntax->kind == MO_S_IS) {
+                g->output.pattern =
+                    checked_pattern(&p, n->output.syntax->children[1], g->operands[0]->output.type,
+                                    notes, note_count, bindings, binding_count, 0);
+                if (g->output.pattern == NULL)
+                    goto failed;
+            }
+            if (g->pattern_type != NULL) {
+                const struct mo_source_type *type = finish_type(&p, g->pattern_type, 0);
+                if (type == NULL)
+                    goto failed;
+                g->output.pattern = checked_pattern(&p, n->output.syntax->children[0], type, notes,
+                                                    note_count, bindings, binding_count, 0);
+                if (g->output.pattern == NULL)
+                    goto failed;
             }
             if (g->lambda != NULL) {
                 struct emitted_lambda *lambda = g->lambda;

@@ -347,6 +347,15 @@ struct mo_checked_ability_use {
  * value; syntax distinguishes bare return from guarded bare return. Guards
  * run before the lazy value, even though the value is written first.
  *
+ * WHILE operands are condition/body; FOR operands are iterable/body. Both
+ * return Unit. The body is lazy, and WHILE re-evaluates its condition each
+ * round. FOR binding is its canonical element name, or NULL for a tuple;
+ * pattern is the normalized element binder, including ignored/tuple slots.
+ * BREAK/CONTINUE have zero operands or one guard, and target the nearest loop
+ * in the same function/lambda. Match arms have their own binding scopes;
+ * pattern alternatives share canonical binders. IS has one scrutinee operand
+ * and its normalized pattern; its bindings follow reference 7.4's true path.
+ *
  * A new binding or whole-var assignment has one initializer/value operand.
  * A field assignment has its target projection then its value, with binding
  * pointing at the base var. Projection operands recursively retain the field
@@ -382,7 +391,7 @@ struct mo_checked_expression {
     const struct mo_checked_ability_use *abilities;
     enum mo_checked_or or_kind;
     const struct mo_checked_try *try_;
-    const struct mo_checked_pattern *pattern; /* is; case uses match instead */
+    const struct mo_checked_pattern *pattern; /* is or for binder; case uses match instead */
     const struct mo_checked_match *match;
     const struct mo_checked_lambda *lambda;
     bool assignment; /* writes binding's original var; false for a new binding */
@@ -488,8 +497,8 @@ struct mo_program {
  * a partially certified result. set must satisfy mo_resolve_modules' input
  * contract. Use the explicit source-stage stack. The current skeleton supports
  * nongeneric functions, scalar expressions/operators, direct/indirect calls,
- * records/choices and fields, conditionals, early returns/stops/asserts and
- * noncapturing lambdas. Native support is direct Console.print; main takes
+ * records/choices and fields, declared/literal patterns, conditionals, loops,
+ * early exits/asserts and noncapturing lambdas. Native support is direct Console.print; main takes
  * no parameters or one Console and returns Unit or Int. Other entry forms,
  * imports, constants/specs, generic functions, derived abilities and unfinished
  * body forms return E1103. Future spec checking checks anchor typing,

@@ -279,6 +279,94 @@ static void record_graph(void) {
     free_fixture(&f);
 }
 
+static void match_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nstruct Pair\nleft: Int\nright: Int\nend\n"
+             "enum Choice\nValue(Pair)\nEmpty\nend\n"
+             "fn choose(value: Choice) : Int\ncase value\n"
+             "Value(Pair(left: n)): n\nEmpty: 0\nend\nend\n"
+             "fn main() : Int\nchoose(Value(Pair(right: 9, left: 4)))\nend\n");
+    const struct mo_program *program = f.program;
+    CHECK(program != NULL && !mo_diags_any(&f.diags));
+    if (program != NULL) {
+        const struct mo_checked_body *body = &program->functions[0].body;
+        bool matched = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_match *match = body->items[i].match;
+            if (match == NULL)
+                continue;
+            CHECK(match->scrutinee < i && match->arm_count == 2);
+            CHECK(body->items[match->scrutinee].binding == program->functions[0].parameters[0]);
+            MO_ASSERT(match->arm_count == 2 && match->arms[0].pattern_count == 1);
+            const struct mo_checked_pattern *value = match->arms[0].patterns[0];
+            CHECK(value->kind == MO_PATTERN_CONSTRUCTOR);
+            CHECK(strcmp(value->constructor.symbol->name, "Value") == 0);
+            MO_ASSERT(value->part_count == 1);
+            const struct mo_checked_pattern *pair = value->parts[0].pattern;
+            CHECK(pair->kind == MO_PATTERN_CONSTRUCTOR);
+            CHECK(strcmp(pair->constructor.symbol->name, "Pair") == 0);
+            MO_ASSERT(pair->part_count == 2);
+            CHECK(pair->parts[0].index == 0 && pair->parts[1].index == 1);
+            CHECK(pair->parts[1].pattern->kind == MO_PATTERN_ANY);
+            const struct mo_checked_pattern *name = pair->parts[0].pattern;
+            MO_ASSERT(name->kind == MO_PATTERN_BIND && name->binding != NULL);
+            CHECK(strcmp(name->binding->name, "n") == 0 && strcmp(name->type->name, "Int") == 0);
+            const struct mo_checked_arm *arm = &match->arms[0];
+            CHECK(arm->guard == UINT32_MAX && arm->body < i);
+            bool read = false;
+            for (uint32_t j = match->scrutinee + 1; j < arm->body; j++)
+                read = read || body->items[j].binding == name->binding;
+            CHECK(read);
+            CHECK(strcmp(match->arms[1].patterns[0]->constructor.symbol->name, "Empty") == 0);
+            matched = true;
+        }
+        CHECK(matched);
+    }
+    free_fixture(&f);
+}
+
+static void loop_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn main() : Int\nvar total = 0\n"
+             "for value in 2..5\ncontinue if value == 3\ntotal = total + value\nend\n"
+             "while total < 20\nbreak if total == 18\ntotal = total + 2\nend\ntotal\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        uint32_t loops = 0, exits = 0;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->syntax->kind == MO_S_FOR || row->syntax->kind == MO_S_WHILE) {
+                loops++;
+                MO_ASSERT(row->operand_count == 2 && row->operands[0] < i && row->operands[1] < i);
+                CHECK(strcmp(row->type->name, "Unit") == 0 && !row->never);
+                CHECK(body->items[row->operands[1]].syntax->kind == MO_S_SEQUENCE);
+                if (row->syntax->kind == MO_S_FOR) {
+                    CHECK(strcmp(body->items[row->operands[0]].type->name, "Range") == 0);
+                    MO_ASSERT(row->binding != NULL && row->pattern != NULL);
+                    CHECK(strcmp(row->binding->name, "value") == 0);
+                    CHECK(strcmp(row->binding->type->name, "Int") == 0);
+                    CHECK(row->pattern->kind == MO_PATTERN_BIND &&
+                          row->pattern->binding == row->binding);
+                    bool read = false;
+                    for (uint32_t j = row->operands[0] + 1; j < row->operands[1]; j++)
+                        read = read || body->items[j].binding == row->binding;
+                    CHECK(read);
+                } else {
+                    CHECK(strcmp(body->items[row->operands[0]].type->name, "Bool") == 0);
+                    CHECK(row->binding == NULL);
+                }
+            } else if (row->syntax->kind == MO_S_BREAK || row->syntax->kind == MO_S_CONTINUE) {
+                exits++;
+                MO_ASSERT(row->operand_count == 1 && row->operands[0] < i);
+                CHECK(!row->never && strcmp(body->items[row->operands[0]].type->name, "Bool") == 0);
+            }
+        }
+        CHECK(loops == 2 && exits == 2);
+    }
+    free_fixture(&f);
+}
+
 static void run(void *argument) {
     (void)argument;
     entry_graph();
@@ -286,6 +374,8 @@ static void run(void *argument) {
     lambda_graph();
     branch_graph();
     record_graph();
+    match_graph();
+    loop_graph();
 }
 
 int main(void) {

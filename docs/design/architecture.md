@@ -1508,12 +1508,12 @@ may change while checking is completed. `mo_check` is an implemented walking
 skeleton: it prepares interfaces and signatures and shares inference's walk to
 emit typed graphs, rather than running a second name/type checker. It currently
 certifies nongeneric functions, scalar expressions and native scalar operator
-proofs, direct/indirect calls, record/choice construction and fields, conditionals,
-returns/stops/asserts and noncapturing lambdas. `main` returns Unit or Int and
+proofs, direct/indirect calls, record/choice construction and fields, declared
+and literal patterns, conditionals, loops, early exits/asserts and noncapturing lambdas. `main` returns Unit or Int and
 takes no parameters or one Console. Direct `Console.print` reads its operation
 and named input type from `base/hostops.def`, with the receiver explicit.
 Native method values, other host operations, generic functions, builtin generic
-cases, patterns/loops/collections, imports, constants/specs and derived abilities
+cases/patterns, collection expressions, imports, constants/specs and derived abilities
 still report E1103. Checking stops at the first failed stage or body; no staged
 inference result or partly filled program is returned as certified output.
 
@@ -1533,6 +1533,14 @@ are statement roots in order, with the last value or Unit for an empty block.
 Group and expression-statement rows forward one operand. If rows alternate
 condition/body operands, followed by an optional else body. A guarded return
 has its guard before its lazy value, matching evaluation rather than spelling.
+While rows have condition/body operands; for rows have iterable/body operands,
+with a canonical element binding for a single name and a normalized binder
+pattern for every name/ignored/tuple form. Both loops return Unit. Conditions
+are re-evaluated on each while round; bodies remain lazy. Break and continue
+have zero operands or one guard and target the nearest loop in the same function.
+Case arms have separate scopes; alternatives share canonical binding pointers.
+An is row has one scrutinee operand and a normalized pattern, retaining 7.4's
+true-path scopes. Omitted record fields become explicit typed ANY patterns.
 A whole-var assignment has one value operand; a field update has its resolved
 target projection followed by its value, and retains the original base var.
 Projection rows retain the field path. Constructor operands keep written order:
