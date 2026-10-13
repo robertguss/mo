@@ -451,6 +451,16 @@ def main():
         for holders in range(3):
             (directory / f"TEXT_CONCAT-slack-{holders}").write_bytes(
                 bytes([ids.index('TEXT_CONCAT'), 0, 0, holders]) + left + right)
+        # Distinct Int elements in a nonzero window or a compacted prefix.
+        # Use every list row; surplus operand bytes are harmless to the fuzzer.
+        for name in ids:
+            if not name.startswith("LIST_"):
+                continue
+            for shape in [3, 4]:
+                cells = bytes([4]) + b"".join(i.to_bytes(8, 'little') for i in [7, 19, 31, 43]) + bytes([shape])
+                for holders in range(3):
+                    (directory / f"{name}-window-{shape}-{holders}").write_bytes(
+                        bytes([ids.index(name), 0, 0, holders]) + cells + cells)
         return
     generated = list(cases()) + list(extended_cases())
     rows = re.findall(r'^PRIM\(\w+,\s*"([^"]+)",\s*"([^"]+)"',

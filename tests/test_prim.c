@@ -284,10 +284,13 @@ static void reuse_refusals(void) {
                         MO_ASSERT(mo_value_text(f.heap, s, strlen(s), &args[i]));
                     } else if (kind == MO_TYPE_INT)
                         args[i] = mo_cell_int(1);
-                    else if (kind == MO_TYPE_LIST)
-                        MO_ASSERT(
-                            mo_value_list(f.heap, type, elements + i, i == 0 ? 3U : 2U, &args[i]));
-                    else {
+                    else if (kind == MO_TYPE_LIST) {
+                        uint32_t n = i == 0 ? 3U : 2U;
+                        MO_ASSERT(mo_value_list(f.heap, type, elements + i, n, &args[i]));
+                        /* Preserve contents with a nonzero live start. */
+                        MO_ASSERT(mo_list_concat(f.heap, type, &args[i], args[i]) &&
+                                  mo_list_slice(f.heap, type, &args[i], n, n));
+                    } else {
                         MO_ASSERT(kind == MO_TYPE_SET);
                         /* Full left storage plus three new keys forces growth,
                          * and exercises refusals after the planning allocation. */
@@ -773,6 +776,150 @@ static void vm_builder_work(uint32_t iterations) {
     mo_image_free(image);
 }
 
+/* Drive consuming uncons through compiled calls, case fields and tuple
+ * projections. Both last-use transfer and the live window earn this bound. */
+static void vm_uncons_work(uint32_t iterations) {
+    MO_ASSERT(iterations <= 1000000);
+    const char *source = "(core " MO_CORE_TEXT_VERSION " (Program () ((FunDecl \"walk\" "
+                         "((\"xs\" (list (int))) (\"acc\" (int))) (int) "
+                         "(case_ (prim (list (int) (uncons)) ((var \"xs\"))) "
+                         "((\"None\" () (var \"acc\")) (\"Some\" (\"pair\") "
+                         "(call \"walk\" ((proj (var \"pair\") 1) "
+                         "(prim (int (add)) ((var \"acc\") (proj (var \"pair\") 0)))))))) "
+                         "\"Walk\" (function) 0)) () \"walk\" (noSource)))";
+    struct mo_arena arena;
+    struct mo_diags diags;
+    struct mo_buffer wire;
+    mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+    MO_ASSERT(mo_diags_init(&diags));
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_core *core = mo_core_parse(&arena, source, strlen(source), &diags);
+    bool ok = core != NULL && mo_compile(core, &wire, &diags);
+    if (!ok && diags.count != 0)
+        MO_ASSERT(fprintf(stderr, "VM uncons: %s\n", diags.items[0].message) > 0);
+    MO_ASSERT(ok);
+    struct mo_load_error error;
+    struct mo_image *image = mo_load(wire.bytes, wire.length, &error);
+    MO_ASSERT(image != NULL);
+    mo_buffer_free(&wire);
+    mo_diags_free(&diags);
+    mo_arena_free(&arena);
+    struct mo_limits limits = mo_limits_default();
+    limits.stack_size = 64 << 10;
+    limits.call_depth = 32;
+    limits.heap_size = 64 << 20;
+    struct mo_defect defect;
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    struct mo_process *process = mo_process_new(image, &limits);
+    MO_ASSERT(process != NULL);
+    struct mo_heap *heap = mo_process_heap(process);
+    const struct mo_parameter *parameter = &mo_image_bytecode(image)->functions[0].parameters[0];
+    struct mo_cell args[] = {mo_cell_unit(), mo_cell_int(0)}, out;
+    struct mo_scratch scratch;
+    mo_scratch_init(&scratch, heap);
+    struct mo_cell *values = NULL;
+    if (iterations != 0) {
+        values = mo_scratch_resize(&scratch, NULL, 0, (size_t)iterations * sizeof *values);
+        MO_ASSERT(values != NULL);
+        for (uint32_t i = 0; i < iterations; i++)
+            values[i] = mo_cell_int(2 * (int64_t)i + 7);
+    }
+    MO_ASSERT(mo_value_list(heap, parameter->type, values, iterations, &args[0]));
+    mo_scratch_free(&scratch);
+    struct timespec start, end;
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+    enum mo_outcome outcome = mo_call(process, 0, args, 2, &out, &defect);
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &end) == 0);
+    CHECK(outcome == MO_RETURNED);
+    if (outcome == MO_RETURNED)
+        CHECK(mo_cell_get_int(out) == (int64_t)iterations * ((int64_t)iterations + 6));
+    if (parameter->ownership == MO_PARAMETER_BORROWED)
+        mo_value_drop(heap, parameter->type, args[0]);
+    CHECK(mo_heap_objects(heap) == 0);
+    double seconds =
+        (double)(end.tv_sec - start.tv_sec) + (double)(end.tv_nsec - start.tv_nsec) / 1e9;
+    MO_ASSERT(printf("Compiled VM uncons (%u elements): %.6f s\n", iterations, seconds) > 0);
+    mo_process_free(process);
+    mo_image_free(image);
+}
+
+static void vm_list_window(void) {
+    const char *source = "(core " MO_CORE_TEXT_VERSION " (Program () ((FunDecl \"first\" "
+                         "((\"xs\" (list (int)))) (option (int)) "
+                         "(prim (list (int) (first)) ((var \"xs\"))) "
+                         "\"Window\" (function) 0)) () \"first\" (noSource)))";
+    struct mo_arena arena;
+    struct mo_diags diags;
+    struct mo_buffer wire;
+    mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+    MO_ASSERT(mo_diags_init(&diags));
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_core *core = mo_core_parse(&arena, source, strlen(source), &diags);
+    bool ok = core != NULL && mo_compile(core, &wire, &diags);
+    if (!ok && diags.count != 0)
+        MO_ASSERT(fprintf(stderr, "VM list window: %s\n", diags.items[0].message) > 0);
+    MO_ASSERT(ok);
+    struct mo_load_error error;
+    struct mo_image *image = mo_load(wire.bytes, wire.length, &error);
+    MO_ASSERT(image != NULL);
+    mo_buffer_free(&wire);
+    mo_diags_free(&diags);
+    mo_arena_free(&arena);
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    struct mo_process *process = mo_process_new(image, &limits);
+    MO_ASSERT(process != NULL);
+    struct mo_heap *heap = mo_process_heap(process);
+    const struct mo_parameter *parameter = &mo_image_bytecode(image)->functions[0].parameters[0];
+    struct mo_cell values[16], list, out;
+    for (uint32_t i = 0; i < 16; i++)
+        values[i] = mo_cell_int(i);
+    MO_ASSERT(mo_value_list(heap, parameter->type, values, 16, &list));
+    MO_ASSERT(mo_list_slice(heap, parameter->type, &list, 3, 12));
+    MO_ASSERT(mo_call(process, 0, &list, 1, &out, &defect) == MO_RETURNED);
+    CHECK(mo_cell_get_tag(out) == 1 && mo_cell_get_int(mo_cell_get_payload(out)) == 3);
+    if (parameter->ownership == MO_PARAMETER_BORROWED)
+        mo_value_drop(heap, parameter->type, list);
+    CHECK(mo_heap_objects(heap) == 0);
+    mo_process_free(process);
+    mo_image_free(image);
+}
+
+/* A million single-holder uncons steps distinguish advancing a view from
+ * moving the retained suffix on every drop. The CI work gate bounds time. */
+static void list_drop_work(void) {
+    struct prim_fixture f;
+    prim_fixture_init(&f, MO_DEFAULT_HEAP_SIZE);
+    uint32_t type = f.types.items[f.signature[MO_PRIM_LIST_DROP]].result;
+    struct mo_cell list;
+    MO_ASSERT(mo_value_list(f.heap, type, NULL, 0, &list));
+    for (uint32_t i = 0; i < 1000000; i++)
+        MO_ASSERT(mo_list_append(f.heap, type, &list, mo_cell_int(i)));
+    struct timespec start, end;
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+    int64_t sum = 0;
+    for (uint32_t i = 0; i < 1000000; i++) {
+        struct mo_cell first;
+        MO_ASSERT(mo_list_get(list, 0, &first));
+        MO_ASSERT(mo_cell_get_int(first) == i);
+        sum += mo_cell_get_int(first);
+        struct mo_cell args[] = {list, mo_cell_int(1)}, out;
+        const char *reason;
+        MO_ASSERT(mo_prim_call(f.heap, &f.types, MO_PRIM_LIST_DROP, f.signature[MO_PRIM_LIST_DROP],
+                               args, &out, &reason) == MO_PRIM_RETURNED);
+        list = out;
+    }
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &end) == 0);
+    CHECK(sum == INT64_C(499999500000) && mo_list_size(list) == 0);
+    double seconds =
+        (double)(end.tv_sec - start.tv_sec) + (double)(end.tv_nsec - start.tv_nsec) / 1e9;
+    MO_ASSERT(printf("Single-holder List uncons (1000000 steps): %.6f s\n", seconds) > 0);
+    mo_value_drop(f.heap, type, list);
+    CHECK(mo_heap_objects(f.heap) == 0);
+    prim_fixture_free(&f);
+}
+
 /* These sizes distinguish constant-amortized updates from repeated copies.
  * ci/check_primitives.py times them together with the compiled VM builder. */
 static void reuse_work(void) {
@@ -997,6 +1144,8 @@ int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--work") == 0) {
         reuse_work();
         vm_builder_work(30000);
+        list_drop_work();
+        vm_uncons_work(1000000);
         primitive_work();
         return mo_test_report("primitive work");
     }
@@ -1008,6 +1157,16 @@ int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--vm-builder-work") == 0) {
         vm_builder_work(100000);
         return mo_test_report("compiled VM builder work");
+    }
+    if (argc == 2 && strcmp(argv[1], "--list-drop-work") == 0) {
+        list_drop_work();
+        return mo_test_report("single-holder List uncons work");
+    }
+    if (argc == 2 && strcmp(argv[1], "--vm-uncons-work") == 0) {
+        vm_uncons_work(250000);
+        vm_uncons_work(500000);
+        vm_uncons_work(1000000);
+        return mo_test_report("compiled VM uncons work");
     }
     MO_ASSERT(argc == 1);
     empty_constants_and_rounding();
@@ -1027,6 +1186,9 @@ int main(int argc, char **argv) {
     unique_union_without_space();
     reuse_refusals();
     reuse_aliases();
+    vm_list_window();
+    vm_uncons_work(0);
+    vm_uncons_work(31);
     time_boundary();
     return mo_test_report("primitives");
 }

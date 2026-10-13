@@ -186,16 +186,31 @@ static MO_MUST_USE bool cell(struct prim_fixture *f, uint32_t type, struct input
         if (ok) {
             if (t->kind == MO_TYPE_LIST) {
                 ok = mo_value_list(f->heap, type, a, count, out);
-                unsigned shape = byte(in) % 3;
+                unsigned shape = byte(in) % 5;
+                uint32_t first = 0, kept = count;
                 if (ok && count != 0 && shape != 0) {
-                    /* Keep the same elements, either at exactly one quarter
-                     * capacity (slack) or below it (best-effort contraction). */
-                    for (unsigned i = 0; i < (shape == 1 ? 1U : 3U) && ok; i++)
-                        ok = mo_list_concat(f->heap, type, out, *out);
-                    if (ok)
-                        ok = mo_list_slice(f->heap, type, out, 0, count);
+                    if (shape == 4 && count > 2) {
+                        /* An exact buffer crosses its half-capacity prefix. */
+                        first = count / 2 + 1;
+                        kept = count - first;
+                        ok = mo_list_slice(f->heap, type, out, first, kept);
+                    } else if (shape != 4) {
+                        /* Slack, contraction, or a nonzero live window. */
+                        for (unsigned i = 0; i < (shape == 2 ? 3U : 1U) && ok; i++)
+                            ok = mo_list_concat(f->heap, type, out, *out);
+                        if (ok)
+                            ok = mo_list_slice(f->heap, type, out, shape == 3 ? count : 0, count);
+                    }
                     if (!ok)
                         mo_value_drop(f->heap, type, *out);
+                }
+                if (ok) {
+                    MO_ASSERT(mo_list_size(*out) == kept);
+                    for (uint32_t i = 0; i < kept; i++) {
+                        struct mo_cell got;
+                        MO_ASSERT(mo_list_get(*out, i, &got) &&
+                                  memcmp(got.bytes, a[first + i].bytes, sizeof got.bytes) == 0);
+                    }
                 }
             } else if (t->kind == MO_TYPE_SET)
                 ok = mo_value_set(f->heap, type, a, count, out);

@@ -387,7 +387,8 @@ void mo_heap_drop_object(struct mo_heap *process, struct mo_object *object) {
             const struct mo_type *kind = &process->types->items[allocation->type];
             if (kind->kind == MO_TYPE_LIST) {
                 for (uint32_t i = 0; i < allocation->length; i++) {
-                    enqueue(process->types, kind->parameters[0], allocation->cells[i], &pending);
+                    enqueue(process->types, kind->parameters[0],
+                            allocation->cells[allocation->start + i], &pending);
                 }
             } else if (kind->kind == MO_TYPE_MAP || kind->kind == MO_TYPE_SET) {
                 uint32_t stride = mo_table_stride(allocation);

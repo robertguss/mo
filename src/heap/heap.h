@@ -123,7 +123,10 @@ MO_MUST_USE bool mo_list_concat(struct mo_heap *process, uint32_t type, struct m
 /* Valid ranges/indices are required. These consume *list only on success and
  * keep unchanged lists even when shared. Unique shrinking cannot fail: below
  * one quarter capacity it tries an exact buffer, retaining storage on refusal.
- * Unique reordering does not allocate. concat's right operand may alias *list. */
+ * Slicing advances a live window, with compaction past half capacity: repeated
+ * unique drop(1) or remove_at(0) has amortized constant storage work, plus
+ * destruction of discarded references. Unique reordering does not allocate.
+ * concat's right operand may alias *list. */
 MO_MUST_USE bool mo_list_slice(struct mo_heap *process, uint32_t type, struct mo_cell *list,
                                uint32_t start, uint32_t count);
 MO_MUST_USE bool mo_list_reverse(struct mo_heap *process, uint32_t type, struct mo_cell *list);

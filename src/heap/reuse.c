@@ -131,7 +131,8 @@ bool mo_value_make_immortal(struct mo_heap *process, uint32_t type, struct mo_ce
                         continue;
                     }
                     for (uint32_t j = 0; j < stride; j++) {
-                        mark(process->types, t->parameters[j], a->cells[stride * i + j], &pending);
+                        uint32_t index = (t->kind == MO_TYPE_LIST ? a->start : 0) + stride * i + j;
+                        mark(process->types, t->parameters[j], a->cells[index], &pending);
                     }
                 }
             }
