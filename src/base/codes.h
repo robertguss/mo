@@ -12,8 +12,8 @@
  *
  * Codes up to E1060 were registered as each part arrived. New implementation codes take the
  * next free number in their part's block, so parts built at the same time never collide: the
- * front end (check, lower) E1100 to E1199, code generation E1200 to E1299, bytecode, heap and
- * VM E1300 to E1399, and the tools E1400 to E1499. */
+ * checker E1100 to E1149, lowering E1150 to E1199, code generation E1200 to E1299, bytecode, heap
+ * and VM E1300 to E1399, and the tools E1400 to E1499. */
 #ifndef MO_CODES_H
 #define MO_CODES_H
 
@@ -212,6 +212,10 @@
     X(1106, CHECK_SYNTAX_DEPTH, NULL)                                                              \
     /* Inference across bodies exceeds MO_LIMIT_PROGRAM_CHECK_WORK. */                             \
     X(1107, CHECK_PROGRAM_WORK, NULL)                                                              \
+    /* A checked form not yet implemented by lowering. */                                          \
+    X(1150, LOWER_UNFINISHED, NULL)                                                                \
+    /* The caller's lowering arena has no room. */                                                 \
+    X(1151, LOWER_NO_MEMORY, NULL)                                                                 \
     /* The ordinary entry's full runtime name is not unique in the image. */                       \
     X(1200, CODEGEN_ENTRY, NULL)                                                                   \
     /* Core uses a representation that source lowering never produces: a lowering bug. */          \
