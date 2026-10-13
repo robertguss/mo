@@ -46,6 +46,7 @@ def fixtures(sources):
     zero = properties(sources["DerivedCoreProperties.txt"], "Default_Ignorable_Code_Point")
     wide = properties(sources["EastAsianWidth.txt"], "W") | properties(sources["EastAsianWidth.txt"], "F")
     emoji = properties(sources["emoji/emoji-data.txt"], "Emoji_Presentation")
+    regional = properties(sources["auxiliary/GraphemeBreakProperty.txt"], "Regional_Indicator")
     cased = properties(sources["DerivedCoreProperties.txt"], "Cased")
     ignorable = properties(sources["DerivedCoreProperties.txt"], "Case_Ignorable")
     variants = {int(row.split()[0], 16) for _, row in rows(sources["emoji/emoji-variation-sequences.txt"])}
@@ -62,7 +63,7 @@ def fixtures(sources):
         start = first if fields[1].endswith(", Last>") else cp
         first = None
         assigned.update(c for c in range(start, cp + 1) if not 0xD800 <= c <= 0xDFFF)
-        if fields[2].startswith("M"):
+        if fields[2] == "Cc" or fields[2].startswith("M"):
             zero.update(range(start, cp + 1))
         if fields[12]:
             upper[cp] = chr(int(fields[12], 16))
@@ -81,12 +82,12 @@ def fixtures(sources):
             cp = ord(ch)
             w = 0 if cp in zero else 2 if cp in wide else 1
             following = cluster[i+1:i+2]
-            presentation = cp in emoji
+            presentation = cp in emoji and cp not in regional
             presentation |= cp in variants and following == "\ufe0f"
             presentation |= ch == "\u20e3" and (cluster[i-1:i] in "#*0123456789" and i > 0 or
                             i > 1 and cluster[i-1] == "\ufe0f" and cluster[i-2] in "#*0123456789")
             answer = max(answer, 2 if presentation else w)
-        return answer
+        return max(answer, 2 if sum(ord(ch) in regional for ch in cluster) == 2 else 0)
 
     grapheme_count = 0
     add("empty graphemes", "g", "", "")
@@ -190,6 +191,13 @@ def fixtures(sources):
         add(f"keycap text selector:{base}", "w", base + "\ufe0e\u20e3", "1")
     add("keycap mark alone", "w", "\u20e3", "0")
     add("spacing mark width policy", "w", "का", "1")
+    for i, (text, expected) in enumerate([
+        ("\x00\t\n\r\n\x1f\x7f\x80\x9f", "0"),
+        ("a\tb\r\nc\x85d", "4"),
+        ("🇺", "1"), ("🇺🇸", "2"), ("🇺🇸🇨", "3"), ("🇺🇸🇨🇦", "4"),
+        ("🇺\ufe0f", "1"), ("🇺\u0308🇸", "2"), ("🇺\t🇸", "2"),
+    ]):
+        add(f"D238 width policy:{i}", "w", text, expected)
     return cases, f"{grapheme_count} grapheme vectors, {normalized} NFC rows (all five columns), full case/width data"
 
 
@@ -220,6 +228,9 @@ def corpus(sources, directory):
     for i, base in enumerate("#*0123456789"):
         for j, selector in enumerate(["", "\ufe0f"]):
             save(f"ucd-keycap-{i}-{j}", "UNICODE16_DISPLAY_WIDTH", base + selector + "\u20e3")
+    for i, text in enumerate(["\x00\t\n\r\n\x1f\x7f\x80\x9f", "🇺", "🇺🇸", "🇺🇸🇨", "🇺🇸🇨🇦",
+                              "🇺\t🇸", "🇺\ufe0f", "🇺\u0308🇸"]):
+        save(f"ucd-width-policy-{i}", "UNICODE16_DISPLAY_WIDTH", text)
     for i, text in enumerate(["0001-01-01T00:00:00Z", "9999-12-31T23:59:59.999999Z",
                               "2026-10-12T04:15:00.5+02:00", "1970-01-01T00:00:60Z"]):
         save(f"time-parse-{i}", "TIME_PARSE", text)

@@ -204,7 +204,8 @@ bool mo_unicode16_display_width(const uint8_t *bytes, size_t length, uint64_t *w
             cluster_width = 0;
             before_previous = previous = 0;
         }
-        unsigned w = (p & MO_UCD_ZERO) != 0 ? 0U : (p & MO_UCD_WIDE) != 0 ? 2U : 1U;
+        bool control = cp < 0x20 || (cp >= 0x7f && cp <= 0x9f);
+        unsigned w = control || (p & MO_UCD_ZERO) != 0 ? 0U : (p & MO_UCD_WIDE) != 0 ? 2U : 1U;
         size_t peek = at;
         uint32_t next = 0;
         if (at < length && !checked_scalar(bytes, length, &peek, &next))
@@ -213,7 +214,10 @@ bool mo_unicode16_display_width(const uint8_t *bytes, size_t length, uint64_t *w
         emoji =
             emoji || (next == 0xfe0f && (p & MO_UCD_VARIANT) != 0) ||
             (cp == 0x20e3 && (keycap(previous) || (previous == 0xfe0f && keycap(before_previous))));
-        if (emoji)
+        /* boundary's parity distinguishes a flag pair from a lone letter. */
+        if ((p & 15U) == MO_GCB_REGIONAL_INDICATOR)
+            w = state.odd_ri ? 1U : 2U;
+        else if (emoji)
             w = 2;
         if (w > cluster_width)
             cluster_width = w;
