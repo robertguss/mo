@@ -4318,56 +4318,166 @@ static MO_MUST_USE bool finish_dispatches(struct inference *p) {
     return true;
 }
 
+static MO_MUST_USE bool anchor_inputs(struct inference *p, const struct mo_syntax *anchor,
+                                      const struct mo_syntax *parameters,
+                                      const struct mo_syntax **inputs) {
+    const struct mo_syntax *values = anchor->children[0];
+    uint32_t count = parameters->count + 1;
+    memset(inputs, 0, (size_t)count * sizeof(*inputs));
+    for (uint32_t i = 0; i < values->count; i++) {
+        const struct mo_syntax *item = values->children[i];
+        const struct mo_syntax *name = item->children[0];
+        uint32_t at = parameters->count;
+        if (compare_text(name, "result") != 0) {
+            for (at = 0; at < parameters->count; at++) {
+                if (!work(p))
+                    return false;
+                if (compare_name(name, parameters->children[at]->children[0]) == 0)
+                    break;
+            }
+            if (at == parameters->count)
+                return problem(p, MO_CODE_ANCHOR_ARGUMENTS, name->span,
+                               "an anchor names a parameter or result",
+                               "Anchors give every parameter and result a value (reference 12.2).",
+                               NULL);
+        }
+        if (inputs[at] != NULL)
+            return problem(p, MO_CODE_ANCHOR_ARGUMENTS, name->span,
+                           "an anchor gives a name more than one value",
+                           "Anchors give every parameter and result one value (reference 12.2).",
+                           inputs[at]->children[0]);
+        inputs[at] = item;
+    }
+    for (uint32_t i = 0; i < count; i++)
+        if (inputs[i] == NULL)
+            return problem(p, MO_CODE_ANCHOR_ARGUMENTS, anchor->span,
+                           "an anchor gives every parameter and result a value",
+                           "No parameter or result can be omitted (reference 12.2).", NULL);
+    return true;
+}
+
 static MO_MUST_USE struct mo_inferred_body *
 infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
-               const struct mo_signatures *signatures, uint32_t function, struct mo_diags *diags,
-               struct mo_checked_function *checked, bool *halt) {
+               const struct mo_signatures *signatures,
+               const struct mo_function_signature *signature, struct mo_diags *diags,
+               struct mo_checked_function *checked, bool *halt, struct mo_checked_spec *spec,
+               struct mo_checked_condition *conditions) {
     MO_ASSERT(arena != NULL && interfaces != NULL && signatures != NULL && diags != NULL);
-    MO_ASSERT(halt != NULL);
-    MO_ASSERT(function < signatures->count && signatures->work != NULL);
+    MO_ASSERT(halt != NULL && signature != NULL && signatures->work != NULL);
     MO_ASSERT(*signatures->work <= MO_LIMIT_PROGRAM_CHECK_WORK);
     *halt = false;
-    const struct mo_function_signature *signature = &signatures->items[function];
     const struct mo_syntax *syntax = signature->function->declaration;
+    const struct mo_syntax *written = spec == NULL ? syntax : spec->syntax;
+    bool promise = spec != NULL && spec->kind == MO_SPEC_PROMISE;
+    bool anchor = spec != NULL && spec->kind == MO_SPEC_ANCHOR;
+    bool test = spec != NULL && spec->kind == MO_SPEC_TEST;
     struct inference p = {.arena = arena,
                           .diags = diags,
                           .interfaces = interfaces,
                           .signatures = signatures,
                           .function = signature,
                           .checked = checked != NULL,
-                          .span = syntax->span};
+                          .span = written->span};
     p.abilities = (struct mo_ability_context){
         .arena = arena, .interfaces = interfaces, .signatures = signatures, .work = &p.work};
     bool finalized = false;
-    if (syntax->children[4]->count != 0) {
+    if (checked == NULL && syntax->children[4]->count != 0) {
         p.span = syntax->children[4]->children[0]->span;
         bool reported = unfinished(&p);
         (void)reported;
         goto failed;
     }
-    struct term *fn = annotation(&p, signature->type, NULL, 0);
+    struct value instance = anchor
+                                ? function_value(&p, signature->type, signature->requirements)
+                                : (struct value){.type = annotation(&p, signature->type, NULL, 0)};
+    struct term *fn = instance.type;
     if (fn == NULL)
         goto failed;
-    p.result = argument(&p, fn, fn->shape.count - 1);
+    p.result = spec == NULL ? argument(&p, fn, fn->shape.count - 1)
+                            : native(&p, test ? "Unit" : "Bool", 0);
     if (p.result == NULL)
         goto failed;
-    const struct mo_syntax *parameters = syntax->children[1];
+    const struct mo_syntax *parameters = test ? NULL : syntax->children[1];
+    uint32_t parameter_count = spec == NULL ? parameters->count
+                               : promise    ? parameters->count + 1
+                                            : 0;
+    const struct mo_syntax **inputs = NULL;
+    struct note **spec_notes = NULL;
+    if (promise || anchor) {
+        inputs = allocate(&p, fn->shape.count, sizeof(*inputs), _Alignof(const struct mo_syntax *));
+        if (inputs == NULL ||
+            !anchor_inputs(&p, anchor ? written : written->children[2]->children[0], parameters,
+                           inputs))
+            goto failed;
+        uint32_t count = anchor ? fn->shape.count : written->children[1]->count;
+        spec_notes = allocate(&p, count, sizeof(*spec_notes), _Alignof(struct note *));
+        if (spec_notes == NULL)
+            goto failed;
+    }
     struct note **parameter_notes =
         checked == NULL
             ? NULL
-            : allocate(&p, parameters->count, sizeof(*parameter_notes), _Alignof(struct note *));
+            : allocate(&p, parameter_count, sizeof(*parameter_notes), _Alignof(struct note *));
     if (checked != NULL && parameter_notes == NULL)
         goto failed;
-    for (uint32_t i = 0; i < parameters->count; i++) {
+    for (uint32_t i = 0; i < parameter_count; i++) {
         struct term *type = argument(&p, fn, i);
-        if (type == NULL || !bind(&p, parameters->children[i]->children[0], type, false))
+        const struct mo_syntax *name =
+            i < parameters->count ? parameters->children[i]->children[0] : inputs[i]->children[0];
+        if (type == NULL || !bind(&p, name, type, false))
             goto failed;
+        if (promise && p.locals != NULL)
+            p.locals->used = true; /* A promise need not mention every subject parameter. */
         if (checked != NULL)
             parameter_notes[i] = p.last;
     }
-    struct value v = named(p.result, "Unit")
-                         ? discard(&p, syntax->children[5])
-                         : infer_as(&p, syntax->children[5], p.result, MO_CODE_RESULT_TYPE);
+    struct value v = {0};
+    if (anchor) {
+        const struct mo_syntax *values = written->children[0];
+        for (uint32_t i = 0; i < values->count; i++) {
+            uint32_t slot = 0;
+            while (inputs[slot] != values->children[i]) {
+                if (!work(&p))
+                    goto failed;
+                slot++;
+                MO_ASSERT(slot < fn->shape.count);
+            }
+            v = infer_as(&p, inputs[slot]->children[1], argument(&p, fn, slot),
+                         MO_CODE_ARGUMENT_TYPE);
+            if (v.type == NULL)
+                goto failed;
+            spec_notes[slot] = v.note;
+        }
+    } else if (promise) {
+        const struct mo_syntax *lines = written->children[1];
+        for (uint32_t i = 0; i < lines->count; i++) {
+            struct value line = infer_as(&p, lines->children[i], p.result, MO_CODE_CONDITION_TYPE);
+            if (line.type == NULL)
+                goto failed;
+            spec_notes[i] = line.note;
+            if (i == 0)
+                v = line;
+            else {
+                struct value both =
+                    graph(&p, (struct value){.type = p.result, .never = v.never}, 2);
+                if (both.type == NULL)
+                    goto failed;
+                both.graph->output.operation = MO_T_AND;
+                both.graph->operands[0] = v.note;
+                both.graph->operands[1] = line.note;
+                if (!record(&p, written, both))
+                    goto failed;
+                both.note = p.last;
+                v = both;
+            }
+        }
+    } else if (spec != NULL)
+        v = test ? discard(&p, written->children[1])
+                 : infer_as(&p, written, p.result, MO_CODE_CONDITION_TYPE);
+    else
+        v = named(p.result, "Unit")
+                ? discard(&p, syntax->children[5])
+                : infer_as(&p, syntax->children[5], p.result, MO_CODE_RESULT_TYPE);
     if (v.type == NULL || !leave(&p, NULL))
         goto failed;
     if (!finish_dispatches(&p) || !finish_wrapping(&p))
@@ -4394,7 +4504,7 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
         struct mo_checked_binding *bindings =
             allocate(&p, p.binding_count, sizeof(*bindings), _Alignof(struct mo_checked_binding));
         const struct mo_checked_binding **parameter_bindings =
-            allocate(&p, parameters->count, sizeof(*parameter_bindings),
+            allocate(&p, parameter_count, sizeof(*parameter_bindings),
                      _Alignof(const struct mo_checked_binding *));
         struct note **lambdas =
             allocate(&p, p.lambda_count, sizeof(*lambdas), _Alignof(struct note *));
@@ -4432,7 +4542,7 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
         qsort(lambdas, lambda_count, sizeof(*lambdas), source_note_order);
         for (uint32_t i = 0; i < lambda_count; i++)
             lambdas[i]->graph->lambda->output.number = i + 1;
-        for (uint32_t i = 0; i < parameters->count; i++) {
+        for (uint32_t i = 0; i < parameter_count; i++) {
             MO_ASSERT(parameter_notes[i]->binding_index < binding_count);
             parameter_bindings[i] = &bindings[parameter_notes[i]->binding_index];
         }
@@ -4555,14 +4665,33 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
                 rows[n->index].binding = &bindings[n->binding->binding_index];
             }
         }
-        *checked = (struct mo_checked_function){.signature = signature,
-                                                .parameter_count = parameters->count,
-                                                .parameters = parameter_bindings,
-                                                .body = {.count = count,
-                                                         .items = rows,
-                                                         .root = v.note->index,
-                                                         .binding_count = binding_count,
-                                                         .bindings = bindings}};
+        if (promise) {
+            MO_ASSERT(conditions != NULL);
+            for (uint32_t i = 0; i < spec->condition_count; i++)
+                conditions[i].expression = spec_notes[i]->index;
+        }
+        if (anchor) {
+            uint32_t *values = allocate(&p, fn->shape.count, sizeof(*values), _Alignof(uint32_t));
+            if (values == NULL || finish_type(&p, fn, 0) == NULL ||
+                !finish_function_use(&p, instance.graph))
+                goto failed;
+            for (uint32_t i = 0; i < fn->shape.count; i++)
+                values[i] = spec_notes[i]->index;
+            spec->value_count = fn->shape.count;
+            spec->values = values;
+            spec->arguments = instance.graph->output.arguments;
+            spec->ability_count = instance.graph->output.ability_count;
+            spec->abilities = instance.graph->output.abilities;
+        }
+        *checked =
+            (struct mo_checked_function){.signature = signature,
+                                         .parameter_count = parameter_count,
+                                         .parameters = parameter_bindings,
+                                         .body = {.count = count,
+                                                  .items = rows,
+                                                  .root = anchor ? UINT32_MAX : v.note->index,
+                                                  .binding_count = binding_count,
+                                                  .bindings = bindings}};
     }
     return out;
 failed:
@@ -4588,12 +4717,31 @@ struct mo_inferred_body *mo_infer_function(struct mo_arena *arena,
                                            const struct mo_signatures *signatures,
                                            uint32_t function, struct mo_diags *diags) {
     bool halt;
-    return infer_function(arena, interfaces, signatures, function, diags, NULL, &halt);
+    MO_ASSERT(function < signatures->count);
+    return infer_function(arena, interfaces, signatures, &signatures->items[function], diags, NULL,
+                          &halt, NULL, NULL);
 }
 
 bool mo_check_function(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
                        const struct mo_signatures *signatures, uint32_t function,
                        struct mo_diags *diags, struct mo_checked_function *out, bool *halt) {
-    MO_ASSERT(out != NULL);
-    return infer_function(arena, interfaces, signatures, function, diags, out, halt) != NULL;
+    MO_ASSERT(out != NULL && function < signatures->count);
+    return infer_function(arena, interfaces, signatures, &signatures->items[function], diags, out,
+                          halt, NULL, NULL) != NULL;
+}
+
+bool mo_check_spec_body(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
+                        const struct mo_signatures *signatures,
+                        const struct mo_function_signature *signature, struct mo_checked_spec *spec,
+                        struct mo_checked_condition *conditions, struct mo_diags *diags,
+                        bool *halt) {
+    MO_ASSERT(spec != NULL && spec->syntax != NULL);
+    struct mo_checked_function checked;
+    if (infer_function(arena, interfaces, signatures, signature, diags, &checked, halt, spec,
+                       conditions) == NULL)
+        return false;
+    spec->body = checked.body;
+    spec->parameter_count = checked.parameter_count;
+    spec->parameters = checked.parameters;
+    return true;
 }

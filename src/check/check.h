@@ -16,6 +16,9 @@ struct mo_module_set {
     const char **names;                /* dotted module names */
     bool *library;
     uint32_t **uses; /* one target index per use line, in header order */
+    /* Input to mo_check for exact spec text; need only outlive checking.
+     * May be NULL for a synthetic set without specifications. */
+    const struct mo_sources *sources;
 };
 
 /* Loads the entry and its transitive uses. sources must be initialized and empty.
@@ -513,10 +516,16 @@ struct mo_checked_spec {
     const struct mo_checked_binding *const *parameters; /* promise: subject params then result */
     struct mo_checked_body body; /* example/promise: Bool; test: Unit; anchor: value rows only */
     struct mo_type_arguments arguments; /* anchor's generic promise instantiation */
+    /* Anchor requirements: type-only uses, keyed by the subject's scoped
+     * parameters, just as a call of that subject. No Text proof for details. */
+    uint32_t ability_count;
+    const struct mo_checked_ability_use *abilities;
     uint32_t value_count;
-    const uint32_t *values; /* anchor value rows in promise-parameter order; empty otherwise */
+    /* Anchor values are indexed by promise-parameter order. Rows themselves
+     * retain written evaluation order, even when names are supplied out of order. */
+    const uint32_t *values;
     uint32_t condition_count;
-    const struct mo_checked_condition *conditions; /* promise lines/assertions, written order */
+    const struct mo_checked_condition *conditions; /* promise Bool lines, in written order */
     bool allows; /* anchor expectation only: true=allows, false=forbids */
 };
 
@@ -567,9 +576,17 @@ struct mo_program {
  * dot/overload dispatch and loaded library calls retain the selected symbols. Written Map/Set
  * types require Hash. main takes no parameters or one Console and returns Unit or Int.
  * Missing main and invalid entry signatures report E0079; there is no certified absent entry.
- * Valid unfinished entry forms return E1103. Imports,
- * constants/specs and unfinished body forms return E1103.
- * Future spec checking checks anchor typing, completeness and links but executes no source code:
+ * Source example lines are zero-parameter Bool bodies, with their subject index,
+ * per-subject ordinal and an arena-owned copy of their original bytes/span.
+ * set.sources must cover the syntax's original file indices for spec checking.
+ * Promises bind subject parameters then implicit result, retain numbered Bool
+ * condition rows and original spans, and combine them with short-circuit and.
+ * Tests are zero-parameter Unit bodies in their module, with decoded wording.
+ * Anchors check names, completeness, typing and generic requirements. Their
+ * arguments/abilities specialize the promise's scoped parameters, not a new scope.
+ * Valid unfinished entry forms, imports, constants, spec-only capability
+ * operations and unfinished body forms return E1103.
+ * Spec checking checks anchor typing, completeness and links but executes no source code:
  * tools compile/run anchors to verify their allows/forbids expectations before accepting a
  * command-line mo check. Unfinished stages must report E1103, not succeed. */
 MO_MUST_USE struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *set,
