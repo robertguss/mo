@@ -62,7 +62,8 @@ static inline void lower_fixture_init(struct lower_fixture *f, const char *sourc
         f->signature_parts[i][0] = &f->int_;
         f->function_types[i] = (struct mo_source_type){
             .kind = MO_SOURCE_FUNCTION, .count = 1, .arguments = f->signature_parts[i]};
-        f->signatures[i] = (struct mo_function_signature){&f->symbols[i], &f->function_types[i]};
+        f->signatures[i] = (struct mo_function_signature){.function = &f->symbols[i],
+                                                          .type = &f->function_types[i]};
         f->functions[i].signature = &f->signatures[i];
         f->functions[i].body.items = f->rows;
         f->functions[i].body.bindings = f->bindings;
