@@ -1005,6 +1005,88 @@ the program has errors or a test failed, and 2 for a mistake in the command
 itself. `mo run` exits with the program's own status once the program runs
 (reference 13.4).
 
+**Command grammar (stream 4, part 1).** No command is a command mistake.
+`--version` (also `-V`) stands alone. Options may precede or follow files,
+except in `run`: the first file ends option parsing and every remaining
+argument, even an empty string or flag, belongs to the program. `--` ends
+option parsing and permits file names starting with `-`. Options with values
+take a separate nonempty argument not starting with `-`; only `--emit=core`
+and `--emit=bytecode` use `=`. Unknown flags, flags on the wrong command,
+duplicate flags (except `--only`), missing/extra files and invalid limits are
+command mistakes. A mistake writes one newline-terminated message to standard
+error, nothing to standard output, and exits 2, without extra usage text.
+
+| Command | Files | Accepted flags |
+| --- | --- | --- |
+| `check` | one entry file | `--json`, `--emit=core`, `--emit=bytecode` |
+| `run` | one entry file, then program arguments | `--max-stack`, `--max-depth`, `--max-heap`, before the file |
+| `test` | one entry file | `--json`, repeatable `--only NAME`, `--in MODULE`, `--list`, `--max-stack`, `--max-depth`, `--max-heap`, `--calls`, `--seconds` |
+| `format`, `fix` | one or more files | none |
+| `guide` | none | `--reference` |
+
+`--json` and `--emit` cannot be combined. Test selections may combine:
+`--only`'s names are intersected with `--in`'s module. `--list` accepts
+budgets but will not consume them. Matching is deferred until the test stage
+exists; the current stub never claims that a selection matched. Limits are
+positive ASCII decimal integers without signs, spaces or fractions; leading
+zeros are accepted. Byte sizes accept bare bytes or the exact suffixes `B`,
+`KiB`, `MiB`, `GiB` (powers of 1024); counts and seconds accept no suffix,
+and seconds are whole seconds. Overflow is a command mistake: bytes fit
+`size_t`, depth/calls/seconds fit `uint32_t`. Defaults are 8 MiB stack,
+10,000 frames, 1 GiB heap, 200 calls and 2 seconds. `base/limits.h` bounds
+the command to 256 arguments including the program name, 4,096 bytes per
+argument and 64 KiB total including terminating NULs, also for forwarded
+program arguments.
+
+**Current integration boundary.** `check` calls `mo_load_program`,
+`mo_resolve_modules`, `mo_prepare_signatures`, then `mo_infer_function`
+for every named function, retaining independent body errors. Each stage
+stops before the next on errors, including dropped diagnostics; body iteration
+stops on a resource error, but continues past independent source errors and
+unfinished forms. Its shared
+arena is bounded to 512 MiB (E1058 on exhaustion). Status 0 means only that
+these available stages found no error: constants, specs and the other rules
+listed in `check.h` are not whole-program checked. The seam in
+`tools/execute.c` will replace staged inference with `mo_check`, then
+connect `mo_lower`, `mo_compile` and anchor evaluation; it never passes
+inference results to lowering. `run`, `test` (including `--list`), `format`,
+`fix` and `--emit` currently validate arguments then return status 1 with
+E1400, "this build cannot ... yet", without reading or rewriting files.
+E1400 is the tools' unavailable-stage code, not a language error. A TODO
+will connect stream 1's explicit 16 MiB checking-stack helper when it lands;
+until then this build uses the caller's stack and changes no process limits.
+
+**Source builds and documents.** `ci/embed_docs.py` (Python 3, portable to
+macOS) generates byte arrays under `build/generated/tools/embedded.h`.
+`make` checks both documents every invocation, rewriting the header only
+when its contents change, including when the optional guide appears or
+disappears. Each document is bounded to 4 MiB at generation. `guide
+--reference` writes the reference bytes exactly. A missing or empty agent
+guide returns 1 on standard error and points to `--reference`; no guide is
+created. The generated header records the checkout's absolute `lib/` path.
+A missing `lib/` means no library yet; an existing unreadable library is
+reported by the loader. Rebuild after moving the checkout. There is no
+working-directory or environment search and no installation layout yet.
+Embedded documents remain usable after moving the executable.
+
+**Text presentation.** Diagnostics and omission notices go to standard
+error, with no success chatter. Headlines include the code and primary
+`path:line:column`; secondary spans name their own locations. Source rows
+use an ASCII `|` gutter. Locations count original characters as `diag.h`
+specifies, not display cells. Tabs expand to four-cell stops in the excerpt.
+Non-ASCII scalars use `\u{hex}`, and invalid/control bytes use `\xHH`, also
+in paths and messages: terminal controls cannot execute, and wide/combining
+characters cannot displace carets across terminal width tables or locales.
+Long source rows show a window of at most 160 cells with up to twelve
+original characters before the span and `...` for omitted text. Long
+multi-line spans show the first two and last two rows. EOF insertions get
+one caret, even after a final newline. Reasons already contain the section
+citation; codes without a section print no reason. Fixes show their titles
+and fixed lines after applying all original-text edits simultaneously,
+sorted by file and offset, with insertions before replacements at a shared
+start. Rendering never changes files. Unavailable locations display
+`<unavailable>`.
+
 ### 10.1 Generating inputs for promises
 
 `mo test` checks a promise's body on many generated inputs, boundaries first
@@ -1093,6 +1175,32 @@ into it, `end` excluded; and `line` and `column` where it starts, and
 characters as messages do (`src/base/diag.h`). A labeled span adds `label`. A
 **value** is a string holding its structural text form (`bytecode.md` section
 8), since JSON's numbers can't hold every `Int`, `Decimal` or `Time` exactly.
+
+**Bounded records and unavailable spans.** Runs retain at most 1,000
+diagnostics and 64 MiB of diagnostic storage (`base/limits.h`). Each rendered
+diagnostic including escaping and newline fits 1 MiB
+(`MO_CLI_DIAGNOSTIC_SIZE`); text fix-preview scratch also fits 1 MiB. A
+diagnostic that cannot fit is omitted whole and added to `dropped`, in
+either presentation. Fields are never truncated to manufacture a record.
+Errors or drops imply status 1; `errors` counts records actually written.
+Output failure exits 1 too; an output that refuses bytes cannot be promised
+a totals record. SIGPIPE is ignored so broken pipes take this failure path.
+Each complete record is written and flushed immediately. Version precedes
+loading; diagnostics follow the stages in one globally position-sorted
+batch; totals come last. Text is likewise flushed per diagnostic.
+
+An unavailable span (`file == UINT32_MAX`, or no retained source) keeps
+its `start` and `end`, but uses `null` for `file`, `line`, `column`,
+`end_line` and `end_column`; absent labels and fix titles are `null`.
+JSON strings preserve valid UTF-8 scalars. Quotes and backslashes are
+escaped; controls and each invalid UTF-8 byte use `\u00HH`. Invalid bytes
+thus become the corresponding U+00HH characters rather than malformed
+UTF-8; offsets still refer to unmodified source bytes. This is not a
+lossless path-byte codec when valid U+00HH also occurs; consumers must check
+decoded paths before rewriting files. Limit/implementation codes have both
+`reason` and `section` null, even when the stage supplies explanatory reason
+text; their explanation belongs in headline/label. Test stubs produce
+version, E1400 diagnostic and totals with all test counts zero.
 
 If `count` in `examples/wc.mo` miscounted words, `mo test --json
 examples/wc.mo` would write these lines, with the four results that pass

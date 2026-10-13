@@ -26,7 +26,7 @@ FUZZ_BUILD := build/fuzz
 CSTD := -std=c17
 # Headers are included by their path in src/, which starts with their module, such as
 # "base/base.h".
-INCLUDES := -Isrc
+INCLUDES := -Isrc -Ibuild/generated
 THREADS := -pthread
 WARNINGS := -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion \
 	-Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla \
@@ -86,6 +86,12 @@ export ASAN_OPTIONS UBSAN_OPTIONS
 	clean FORCE
 
 all: $(BUILD)/debug/mo
+
+build/generated/tools/embedded.h: ci/embed_docs.py docs/reference/README.md FORCE
+	python3 ci/embed_docs.py $@
+
+$(BUILD)/debug/src/tools/execute.o $(BUILD)/sanitize/src/tools/execute.o \
+$(FUZZ_BUILD)/src/tools/execute.o: build/generated/tools/embedded.h
 
 test: $(DEBUG_TESTS) $(BUILD)/debug/mo
 	@for t in $(DEBUG_TESTS); do $$t || exit 1; done

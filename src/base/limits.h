@@ -277,6 +277,18 @@ static inline struct mo_limits mo_limits_default(void) {
 
 /* What the toolchain keeps of its own. */
 
+/* The command line, program name included. Mistakes exit 2 without diagnostics. */
+#define MO_CLI_ARGUMENTS 256
+#define MO_CLI_ARGUMENT_SIZE 4096
+#define MO_CLI_ARGUMENT_BYTES (64 << 10)
+
+/* One complete rendered diagnostic (including JSON escaping). Oversize records
+ * are dropped whole and counted in totals; never emit a partial JSON object. */
+#define MO_CLI_DIAGNOSTIC_SIZE (1 << 20)
+
+/* The current staged surface pipeline's one arena. E1058 on exhaustion. */
+#define MO_CLI_CHECK_SIZE (512 << 20)
+
 /* Diagnostics one run keeps. mo_diags_add refuses more, and counts them, so the run can say that
  * it stopped early (src/base/diag.h). */
 #define MO_LIMIT_DIAGNOSTICS 1000

@@ -1,5 +1,8 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "tools/tools.h"
 
+#include <signal.h>
 #include <stdio.h>
 
 int main(int argc, char *argv[]) {
@@ -9,8 +12,10 @@ int main(int argc, char *argv[]) {
         (void)fprintf(stderr, "%s\n", error);
         return 2;
     }
-    if (cli.command == MO_COMMAND_VERSION)
-        return printf("%s\n", mo_version_line()) >= 0 && fflush(stdout) == 0 ? 0 : 1;
-    (void)fputs("this build cannot do that yet\n", stderr);
-    return 1;
+    /* Broken output is an ordinary tool failure, not exit 141 from SIGPIPE. */
+    if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
+        (void)fputs("mo: could not configure output handling\n", stderr);
+        return 1;
+    }
+    return mo_cli_execute(&cli, stdout, stderr);
 }

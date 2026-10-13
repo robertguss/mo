@@ -1,0 +1,26 @@
+error E0038: quoted "headline"\  \xff  bad\xff"\.mo:1:2
+
+  1 |     \u{754c}e\u{301}
+    |     ^^^^^^^^^^^^^^^^
+  2 | second
+    | ^^^^^^
+    | ...
+  5 | fifth
+    | ^^^^^
+  6 | sixth
+    | ^^^^^ wide span
+
+  --> bad\xff"\.mo:7:1
+  7 | 
+    | ^ insert at EOF
+
+  --> <unavailable>
+  <unavailable>
+
+A clash between names is an error (reference 10.3).
+
+Fix: replace together
+  other.mo:1:2
+  1 | a+BC
+  2 | Z
+

@@ -214,7 +214,9 @@
     /* The ordinary entry's full runtime name is not unique in the image. */                       \
     X(1200, CODEGEN_ENTRY, NULL)                                                                   \
     /* Core uses a representation that source lowering never produces: a lowering bug. */          \
-    X(1201, CODEGEN_REPRESENTATION, NULL)
+    X(1201, CODEGEN_REPRESENTATION, NULL)                                                          \
+    /* The command requests a toolchain stage not implemented by this build. */                    \
+    X(1400, TOOL_UNAVAILABLE, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */
 enum mo_code {

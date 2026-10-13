@@ -1,0 +1,4 @@
+{"record":"version","format":"1.0","mo":"0.0.0","command":"check"}
+{"record":"diagnostic","code":"E0050","headline":"a name isn't visible in this block","reason":"A local name is visible from its binding to the end of its block (reference 6.1).","section":"6.1","primary":{"file":"tests/cli/bodies/main.mo","start":31,"end":38,"line":3,"column":3,"end_line":3,"end_column":10,"label":"not visible in this block"},"secondary":[],"fixes":[]}
+{"record":"diagnostic","code":"E0078","headline":"a function's result doesn't match its signature","reason":"A function's signature gives its types (reference 5.1).","section":"5.1","primary":{"file":"tests/cli/bodies/main.mo","start":62,"end":67,"line":6,"column":3,"end_line":6,"end_column":8,"label":"expected Int, found Bool"},"secondary":[],"fixes":[]}
+{"record":"totals","errors":2,"dropped":0,"status":1}
