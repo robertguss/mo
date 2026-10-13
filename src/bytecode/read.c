@@ -438,6 +438,15 @@ static void sections(struct reader *r) {
         m->functions = indices(r, &m->function_count, MO_LIMIT_MODULE_NAMES);
         m->globals = indices(r, &m->global_count, MO_LIMIT_MODULE_NAMES);
     }
+    struct mo_bytecode_bytes *files = array(r, &f->file_count, MO_LIMIT_FILES, 5, sizeof *files,
+                                            _Alignof(struct mo_bytecode_bytes));
+    f->files = files;
+    for (uint32_t i = 0; i < f->file_count && !r->failed; i++) {
+        files[i].bytes = blob(r, &files[i].length, false);
+        if (!r->failed &&
+            (files[i].length == 0 || memchr(files[i].bytes, 0, files[i].length) != NULL))
+            refuse(r, "filename must be nonempty and contain no NUL");
+    }
     struct mo_bytecode_debug *debug = array(r, &f->debug_count, MO_LIMIT_FUNCTIONS, 36,
                                             sizeof *debug, _Alignof(struct mo_bytecode_debug));
     f->debug = debug;

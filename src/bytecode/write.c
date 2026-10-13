@@ -269,6 +269,11 @@ static MO_MUST_USE bool sections(struct writer *w) {
         WRITE(indices(w, m->functions, m->function_count, MO_LIMIT_MODULE_NAMES));
         WRITE(indices(w, m->globals, m->global_count, MO_LIMIT_MODULE_NAMES));
     }
+    WRITE(count(w, f->file_count, MO_LIMIT_FILES, f->files));
+    for (uint32_t i = 0; i < f->file_count; i++) {
+        WRITE(count(w, f->files[i].length, MO_LIMIT_STRING_SIZE, f->files[i].bytes));
+        WRITE(raw(w, f->files[i].bytes, f->files[i].length));
+    }
     WRITE(count(w, f->debug_count, MO_LIMIT_FUNCTIONS, f->debug));
     for (uint32_t i = 0; i < f->debug_count; i++) {
         const struct mo_bytecode_debug *d = &f->debug[i];
@@ -309,7 +314,8 @@ bool mo_bytecode_encode(const struct mo_bytecode *file, struct mo_buffer *out,
     struct writer w = {.file = file, .out = out, .reason = "bytecode/output limit or no memory"};
     size_t name_bytes = file->string_count <= MO_LIMIT_STRINGS ? (size_t)file->string_count * 4 : 0;
     mo_arena_init(&w.scratch, mo_bytecode_work_budget(MO_BYTECODE_HEADER_SIZE + name_bytes));
-    const uint8_t header[MO_BYTECODE_HEADER_SIZE] = {'M', 'O', 'B', 'C', 0, 0, 1, 0};
+    const uint8_t header[MO_BYTECODE_HEADER_SIZE] = {'M', 'O', 'B', 'C', 0, 0, MO_BYTECODE_MINOR,
+                                                     0};
     bool encoded = raw(&w, header, sizeof header) && sections(&w);
     mo_arena_free(&w.scratch);
     if (!encoded) {
