@@ -147,6 +147,10 @@ An `Int` literal is a Core literal once the front end has read it
 the library's whole-number functions are primitives that check their bugs:
 overflow and division by zero stop the program, they never wrap.
 
+The C lowerer folds unary minus on a numeric immediate before constructing
+the scalar. In particular, `-9223372036854775808` is one negative Int literal,
+not an out-of-range positive Int followed by `%int.neg`.
+
 ```mo
 q = -7 / 2                     # -3
 r = -7 % 2                     # -1
@@ -209,12 +213,20 @@ let cents = %dec.div(%int.toDecimal(count), 100) in ...
 Multiplication and division round to 18 places with ties to even
 (`roundHalfEven`); `round` and `to_fixed` round ties away from zero.
 `Float` values are IEEE 754 doubles, with `%float.add` and the others.
+The C lowerer converts Float spellings in a private C numeric locale with
+nearest-even rounding, preserving signed zero and restoring the caller's
+rounding state. Decimal spellings instead become exact scaled integers.
 
 ### 3.4 Text, Char and Bytes
 
 Escapes and text on several lines are the front end's: Core gets the
-resulting text. Interpolation lowers to `%text.concat` of the parts, each
-converted to its text form:
+resulting text.
+The staged C checker retains literal spellings. The lowerer decodes escapes,
+normalizes triple-text CRLFs and removes the closing delimiter's indentation;
+the resulting UTF-8 bytes belong to the Core arena.
+
+Interpolation lowers to `%text.concat` of the parts, each converted to its
+text form:
 
 | Part's type | Its text form in Core |
 | --- | --- |
@@ -535,6 +547,12 @@ bound, jumps to a join point around the whole body:
 When the `return` is in tail position already, as above, no join point is
 needed.
 
+The C lowerer's initial CPS pass conservatively installs this join whenever
+a return is reachable in the function, excluding nested lambda bodies. A
+function or lambda with no reachable return has no return join. Expression
+walks and continuation expansion use explicit arena-backed work lists, never
+recursive C calls; the generated Core path limit can refuse an expanded body.
+
 ### 5.2 Calls
 
 A call of a top-level function is `call`: `shipping(2.5, false)` is
@@ -724,6 +742,17 @@ needs only one-level `case`, `if` and `%eq`.
 - A tuple pattern projects; a record pattern with named fields reads them.
 - A list pattern is a chain of `%list.uncons`: `[]` is `None`, `[p, q]` is two
   `Some`s then `None`, and `[first, ..rest]` binds the tail.
+
+The C decision tree tests alternatives in written order. Each arm has one
+success join taking its canonical pattern binders and live outer vars, so
+alternatives share the guard/body and preserve one source identity per lambda.
+A failed pattern tries the next alternative; a false guard skips the whole
+arm, not just that alternative. Failure continuations are joins, rather than
+copies of the remaining tree. Constructor arms always follow declaration
+order, including synthesized failure arms. An unreachable final failure is a
+stop; exhaustiveness has already been proved by checking. Is/and/implies in a
+condition compile around the success continuation, rather than first making
+an intermediate Bool that would lose the pattern's true-path bindings.
 
 The reference's example:
 
@@ -1018,6 +1047,19 @@ both are Lean functions from types to declarations: `Column (t : Ty)` and
 `topBy (t k : Ty)` in `MoCore/Examples/Inventory.lean`, `Lib.map (a b : Ty)`
 in `MoCore/Lib.lean`.
 
+The C implementation distinguishes nominal data from executable instances.
+A generic data declaration is canonical program-wide by (defining declaration,
+concrete type list) and owned by the defining module. If `Lib.make()` returns
+`Lib.Box(Int)`, a requester-specialized function must accept that same nominal
+type; making requester-specific data names would break the call's Core type.
+Generic function code is instead deduplicated by (requesting module, defining
+declaration, concrete type list). Thus Main and Other can own distinct copies
+`Main::Lib.identity(Int)` and `Other::Lib.identity(Int)`. Nested requests use
+the instance's requesting module. Full names retain origin/type arguments,
+declaration metadata keeps the defining span, and ModuleMeta retains requester
+ownership. Overloaded functions add `@Receiver` before the type list. Duplicate
+code across modules is accepted in Phase 2; later sharing must retain meaning.
+
 ### 9.2 The five abilities
 
 Each use of an ability becomes the specific primitive or function for the
@@ -1154,8 +1196,12 @@ and turns its result into the exit status:
 | `Int` | that `Int`; outside 0 to 255 it is a bug |
 | `Result(Unit, E)` | 0 for `Ok`; for `Error(e)`, `e`'s text form on standard error, then 1 |
 
-In Core this is a wrapper, which takes a `Console` from the runtime even
-when `main` takes none:
+In Core this is a wrapper. Its parameters are main's capabilities in written
+order. A Result entry reuses main's Console when present; otherwise it appends
+one generated Console from the runtime, used only for printing Error's text.
+That additional capability is never passed to source main. Unit/Int wrappers
+have exactly main's declared capabilities, with no generated Console. The host
+constructs exactly the wrapper's declared capabilities through `mo_call_main`:
 
 ```
 fn %start(args: Args, console: Console, files: Files) : Int =

@@ -93,7 +93,7 @@ static bool returns(struct body *b, uint32_t root) {
     return false;
 }
 static mo_core_ty type(struct body *b, const struct mo_source_type *source) {
-    return lower_type(b->p, source, &b->instance->substitution, b->instance->owner);
+    return lower_type(b->p, source, &b->instance->substitution);
 }
 static mo_core_string binding_name(struct body *b, const struct mo_checked_binding *binding) {
     MO_ASSERT(binding >= b->source->bindings &&
@@ -378,6 +378,39 @@ static void pattern_task(struct body *b, struct task t) {
     }
 }
 
+static struct variable *pattern_variables(struct body *b, const struct mo_checked_pattern *root,
+                                          struct variable *outer) {
+    bool *seen = LOWER_NEW(b->p, bool, b->source->binding_count);
+    struct scan {
+        const struct mo_checked_pattern *pattern;
+        struct scan *next;
+    };
+    struct scan *stack = LOWER_NEW(b->p, struct scan, 1);
+    stack->pattern = root;
+    while (stack != NULL) {
+        lower_work(b->p, 1);
+        const struct mo_checked_pattern *pattern = stack->pattern;
+        stack = stack->next;
+        if (pattern->kind == MO_PATTERN_BIND) {
+            MO_ASSERT(pattern->binding >= b->source->bindings &&
+                      pattern->binding < b->source->bindings + b->source->binding_count);
+            seen[(size_t)(pattern->binding - b->source->bindings)] = true;
+        }
+        for (uint32_t i = 0; i < pattern->part_count; i++) {
+            struct scan *next = LOWER_NEW(b->p, struct scan, 1);
+            *next = (struct scan){pattern->parts[i].pattern, stack};
+            stack = next;
+        }
+    }
+    for (uint32_t i = b->source->binding_count; i != 0; i--)
+        if (seen[i - 1]) {
+            struct variable *v = LOWER_NEW(b->p, struct variable, 1);
+            *v = (struct variable){&b->source->bindings[i - 1], outer};
+            outer = v;
+        }
+    return outer;
+}
+
 static void match(struct body *b, struct task t, struct continuation *k) {
     struct lowering *p = b->p;
     p->span = k->row->syntax->span;
@@ -393,15 +426,29 @@ static void match(struct body *b, struct task t, struct continuation *k) {
     const struct mo_checked_match *m = k->row->match;
     for (uint32_t i = m->arm_count; i != 0; i--) {
         const struct mo_checked_arm *arm = &m->arms[i - 1];
-        struct continuation *arm_next = NULL;
-        mo_core_expr arm_exit = NULL;
-        if (arm->guard != UINT32_MAX) {
-            arm_next = continuation(b, K_JUMP);
-            arm_next->name = lower_fresh(p);
-            arm_next->variables = t.state.variables;
-            arm_exit = join(b, arm_next, NULL);
-            arm_exit->as.join.body = failure;
-            failure = jump(b, arm_next, NULL);
+        p->span = arm->syntax->span;
+        struct continuation *arm_next = continuation(b, K_JUMP);
+        arm_next->name = lower_fresh(p);
+        arm_next->variables = t.state.variables;
+        mo_core_expr arm_exit = join(b, arm_next, NULL);
+        arm_exit->as.join.body = failure;
+        failure = jump(b, arm_next, NULL);
+        struct continuation *selected = continuation(b, K_JUMP);
+        selected->name = lower_fresh(p);
+        MO_ASSERT(arm->pattern_count != 0);
+        selected->variables = pattern_variables(b, arm->patterns[0], t.state.variables);
+        mo_core_expr success = join(b, selected, NULL);
+        if (arm->guard == UINT32_MAX)
+            emit(b, arm->body, t.state, done, &success->as.join.body);
+        else {
+            mo_core_expr select = lower_expr(p, MO_CORE_EXPR_IF);
+            select->as.if_.else_ = jump(b, arm_next, NULL);
+            push(b, (struct task){.kind = TASK_CONDITION,
+                                  .row = arm->guard,
+                                  .state = t.state,
+                                  .value = select,
+                                  .out = &success->as.join.body});
+            emit(b, arm->body, t.state, done, &select->as.if_.then_);
         }
         for (uint32_t j = arm->pattern_count; j != 0; j--) {
             p->span = arm->syntax->span;
@@ -411,31 +458,17 @@ static void match(struct body *b, struct task t, struct continuation *k) {
             mo_core_expr fallback = join(b, next, NULL);
             fallback->as.join.body = failure;
             mo_core_expr no = jump(b, next, NULL);
-            mo_core_expr *success = LOWER_NEW(p, mo_core_expr, 1);
             push(b, (struct task){.kind = TASK_PATTERN,
                                   .pattern = arm->patterns[j - 1],
                                   .value = lower_var(p, bound->as.let_.name),
-                                  .success = success,
+                                  .then_ = jump(b, selected, NULL),
                                   .else_ = no,
                                   .out = &fallback->as.join.rest});
-            if (arm->guard == UINT32_MAX)
-                emit(b, arm->body, t.state, done, success);
-            else {
-                mo_core_expr select = lower_expr(p, MO_CORE_EXPR_IF);
-                select->as.if_.else_ = jump(b, arm_next, NULL);
-                push(b, (struct task){.kind = TASK_CONDITION,
-                                      .row = arm->guard,
-                                      .state = t.state,
-                                      .value = select,
-                                      .out = success});
-                emit(b, arm->body, t.state, done, &select->as.if_.then_);
-            }
             failure = fallback;
         }
-        if (arm_exit != NULL) {
-            arm_exit->as.join.rest = failure;
-            failure = arm_exit;
-        }
+        success->as.join.rest = failure;
+        arm_exit->as.join.rest = success;
+        failure = arm_exit;
     }
     *out = failure;
 }
@@ -521,6 +554,7 @@ static void loop(struct body *b, struct task t, const struct mo_checked_expressi
     struct state state = t.state;
     state.loop = scope;
     mo_core_expr *body_out;
+    mo_core_expr element = NULL;
     struct continuation initial = *again;
     if (!for_) {
         mo_core_expr select = lower_expr(p, MO_CORE_EXPR_IF);
@@ -546,6 +580,7 @@ static void loop(struct body *b, struct task t, const struct mo_checked_expressi
                        args);
         select->as.if_.else_ = jump(b, done, NULL);
         body_out = &select->as.if_.then_;
+        element = lower_var(p, again->position);
         args = arguments(b, 2);
         args.items[0] = lower_var(p, again->position);
         args.items[1] = lower_int(p, 1);
@@ -579,15 +614,30 @@ static void loop(struct body *b, struct task t, const struct mo_checked_expressi
             binder(b, item, 0, r->binding);
         some->body = item;
         body_out = &item->as.let_.body;
+        element = lower_var(p, item->as.let_.name);
         again->extra = projection(b, lower_var(p, some->names.items[0]), 1);
         initial.extra = lower_var(p, list);
     }
     round->as.join.rest = jump(b, &initial, NULL);
+    if (for_ && r->binding == NULL && r->pattern != NULL) {
+        mo_core_expr *success = LOWER_NEW(p, mo_core_expr, 1);
+        mo_core_expr impossible = lower_expr(p, MO_CORE_EXPR_STOP);
+        impossible->as.stop = lower_text(p, "unreachable loop binding failure");
+        push(b, (struct task){.kind = TASK_PATTERN,
+                              .pattern = r->pattern,
+                              .value = element,
+                              .success = success,
+                              .else_ = impossible,
+                              .out = body_out});
+        body_out = success;
+    }
     emit(b, r->operands[1], state, again, body_out);
 }
 
 static enum mo_syntax_kind kind(const struct mo_checked_expression *r) {
     const struct mo_syntax *s = r->syntax;
+    if (r->operation != MO_T_EOF)
+        return MO_S_BINARY;
     if (s->kind == MO_S_POSTFIX)
         return s->children[s->count - 1]->kind;
     if (s->kind == MO_S_BINARY_CHAIN)
@@ -603,6 +653,9 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
     if (r->operation != MO_T_EOF) {
         mo_core_ty left = type(b, row(b, r->operands[0])->type);
         mo_core_ty right = args.count == 2 ? type(b, row(b, r->operands[1])->type) : NULL;
+        if (left->tag == MO_CORE_TY_UNIT && (r->operation == MO_T_LT || r->operation == MO_T_LE ||
+                                             r->operation == MO_T_GT || r->operation == MO_T_GE))
+            return lower_bool(p, r->operation == MO_T_LE || r->operation == MO_T_GE);
         mo_core_expr e = lower_prim(p, lower_operator(p, r->operation, left, right), args);
         if (r->operation == MO_T_NE) {
             mo_core_expr_list one = arguments(b, 1);
@@ -628,14 +681,6 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
             .as.list = {
                 .t = result->as.list,
                 .op = {.tag = MO_CORE_LIST_OP_LIT, .as.lit.digits = lower_number(p, args.count)}}};
-        return lower_prim(p, prim, args);
-    }
-    if (kind(r) == MO_S_MAP) {
-        struct mo_core_prim prim = {.tag = MO_CORE_PRIM_MAP,
-                                    .as.map = {.k = result->as.map.k,
-                                               .v = result->as.map.v,
-                                               .op = {.tag = MO_CORE_MAP_OP_LIT,
-                                                      .lit.digits = lower_number(p, args.count)}}};
         return lower_prim(p, prim, args);
     }
     if (r->symbol != NULL && r->symbol->declaration->kind == MO_S_FN) {
@@ -729,6 +774,19 @@ static void finish_task(struct body *b, struct task t) {
         mo_core_expr e =
             let(b, k->binding == NULL ? lower_fresh(p) : binding_name(b, k->binding), value);
         *t.out = e;
+        if (k->binding == NULL && k->row->pattern != NULL) {
+            mo_core_expr *success = LOWER_NEW(p, mo_core_expr, 1);
+            mo_core_expr impossible = lower_expr(p, MO_CORE_EXPR_STOP);
+            impossible->as.stop = lower_text(p, "unreachable binding failure");
+            push(b, (struct task){.kind = TASK_PATTERN,
+                                  .pattern = k->row->pattern,
+                                  .value = lower_var(p, e->as.let_.name),
+                                  .success = success,
+                                  .else_ = impossible,
+                                  .out = &e->as.let_.body});
+            finish(b, lower_unit(p), t.state, k->next, success);
+            return;
+        }
         if (k->binding != NULL) {
             binder(b, e, 0, k->binding);
             if (k->binding->variable && !k->row->assignment) {
@@ -761,9 +819,10 @@ static void row_task(struct body *b, struct task t) {
     struct lowering *p = b->p;
     const struct mo_checked_expression *r = row(b, t.row);
     enum mo_syntax_kind tag = kind(r);
-    if (r->try_ != NULL || r->or_kind == MO_CHECK_OR_OPTION || tag == MO_S_TEXT_INTERPOLATED)
+    if (r->try_ != NULL || r->or_kind == MO_CHECK_OR_OPTION || tag == MO_S_TEXT_INTERPOLATED ||
+        tag == MO_S_MAP)
         lower_refuse(p, MO_CODE_LOWER_UNFINISHED,
-                     "try, Option or and interpolation are not lowered yet");
+                     "try, Option or, interpolation and map literals are not lowered yet");
     if (tag == MO_S_SEQUENCE) {
         if (r->operand_count == 0)
             finish(b, lower_unit(p), t.state, t.continuation, t.out);

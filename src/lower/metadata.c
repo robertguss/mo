@@ -184,11 +184,6 @@ void lower_metadata(struct lowering *p, struct mo_core *core) {
                         (struct mo_core_exposed_type){index, d->source->declaration->insides};
             }
         }
-        /* Generic data requested from another module follows local declarations. */
-        uint32_t index = 0;
-        for (struct data_instance *d = p->data; d != NULL; d = d->next, index++)
-            if (d->owner == module && d->source->module != module)
-                out->data.items[nd++] = index;
         MO_ASSERT(nf == out->funs.count && ef == out->exposed_funs.count && nd == out->data.count &&
                   ed == out->exposed_types.count);
     }

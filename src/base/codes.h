@@ -218,7 +218,7 @@
     X(1151, LOWER_NO_MEMORY, NULL)                                                                 \
     /* Lowering exceeds MO_LIMIT_LOWER_WORK or MO_LIMIT_CORE_NODES. */                             \
     X(1152, LOWER_WORK, NULL)                                                                      \
-    /* The generated Core tree exceeds MO_LIMIT_CORE_DEPTH. */                                     \
+    /* A source type, instantiation chain or generated Core path is too deep. */                   \
     X(1153, LOWER_DEPTH, NULL)                                                                     \
     /* The ordinary entry's full runtime name is not unique in the image. */                       \
     X(1200, CODEGEN_ENTRY, NULL)                                                                   \

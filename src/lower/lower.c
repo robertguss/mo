@@ -151,7 +151,7 @@ static void entry(struct lowering *p, struct instance *main) {
     wrapper->fun.const_count.digits = lower_text(p, "0");
     static const struct mo_source_type int_type = {
         .kind = MO_SOURCE_NAMED, .name = "Int", .module = UINT32_MAX};
-    wrapper->fun.ret = lower_type(p, &int_type, NULL, 0);
+    wrapper->fun.ret = lower_type(p, &int_type, NULL);
     wrapper->meta.name = lower_concat(p, main->meta.name, ".", lower_text(p, "entry"));
     wrapper->meta.span = lower_span(p, p->span);
     wrapper->fun.params = main->fun.params;
@@ -174,7 +174,7 @@ static void entry(struct lowering *p, struct instance *main) {
         }
         console = lower_fresh(p);
         wrapper->fun.params.items[count] =
-            (struct mo_core_param){console, lower_type(p, &console_type, NULL, 0)};
+            (struct mo_core_param){console, lower_type(p, &console_type, NULL)};
         wrapper->fun.params.count = wrapper->meta.body.params.count = count + 1;
     }
     mo_core_expr call = lower_expr(p, MO_CORE_EXPR_CALL);
@@ -258,6 +258,12 @@ struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *progra
                      "constants and specification code are not lowered yet");
     p->function_tail = &p->functions;
     p->data_tail = &p->data;
+    if (program->signatures != NULL)
+        for (uint32_t i = 0; i < program->signatures->data_count; i++) {
+            const struct mo_source_type *type = program->signatures->data[i].type;
+            if (type->parameters == 0)
+                (void)lower_type(p, type, NULL);
+        }
     MO_ASSERT(program->entry.function < program->function_count);
     struct instance *main =
         lower_instance(p, program->functions[program->entry.function].signature->function,

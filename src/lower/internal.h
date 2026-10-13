@@ -70,7 +70,7 @@ bool lower_same(mo_core_string a, mo_core_string b);
 struct mo_core_span lower_span(struct lowering *p, struct mo_span span);
 
 mo_core_ty lower_type(struct lowering *p, const struct mo_source_type *type,
-                      const struct substitution *substitution, uint32_t owner);
+                      const struct substitution *substitution);
 mo_core_string lower_type_name(struct lowering *p, mo_core_ty type);
 struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symbol,
                                 struct mo_type_arguments arguments,

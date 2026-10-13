@@ -730,10 +730,55 @@ examples. The ones a compiler is most likely to get wrong are:
   `main` declares and turns `main`'s result into an exit status: `Unit` gives
   0; an `Int` is the status, and one outside 0 to 255 is a bug; `Error(e)` of a
   `Result(Unit, E)` prints `e`'s text form to standard error and gives 1
-  (reference 11.2).
+  (reference 11.2). Only a Result entry without a declared Console gets an
+  additional, generated Console parameter. Wrapper parameters retain main's
+  written capability order, followed by that generated Console. It is never
+  passed to source main; Unit/Int entries get no additional authority.
 - **`assert`** in a test, and each example line, become spec code that calls
   the `fail` instruction with the details: both sides of a failed `==`, or
   the value that didn't match a failed `is`.
+
+**Part 1 implementation.** `src/lower` consumes the normalized checked graph,
+not syntax inference. Explicit arena-backed task and continuation lists perform
+expression/pattern lowering; an explicit, memoized stack walks type DAGs.
+Queued function/data instances have no recursive C walk. E1150 refuses later
+forms (captures, try, Option or, interpolation, unsupported ability/native
+operations, map literals, constants and spec code); E1151 is arena exhaustion, E1152 the
+shared allocation-byte/step or Core-node bound, and E1153 the source-type,
+instantiation or generated Core path bound. `MO_LIMIT_LOWER_WORK` bounds all
+allocation bytes and work independently of the caller's arena allowance.
+Numeric immediates fold unary minus before building Core scalars, including
+Int's minimum. Float literals convert in a private C numeric locale with
+nearest-even rounding, then restore the caller's rounding state. Text literals
+decode escapes and triple-text indentation/CRLFs into independently owned bytes.
+List elements are first bound in written order, then passed to Core's
+`%list.lit` primitive. Map literal graphs remain staged with the checker.
+
+Core lookup/display names retain the declaring module and source name;
+overloads add `@Receiver`. Generic function code is keyed by (requesting
+module, defining declaration, concrete type list), with names such as
+`Main::Lib.identity(Int)`. Each requester owns its copy; nested requests belong
+to that instance's owner. Names, declaration spans and module ownership retain
+the types, origin and requester without relying on discovery numbers.
+Generic data instead has one canonical declaration per type list, owned by
+the defining module. Nongeneric data is retained even without an expression use.
+`Lib.make()` returning `Lib.Box(Int)` must return the same
+nominal type a requester-specialized function accepts; separate requester data
+names would make those values incompatible in Core. Anonymous names retain their
+source ordinal as `.fn.N`; generated function-value adapters use `.ref.ROW`.
+
+The initial CPS implementation conservatively passes every live outer var,
+not only changed vars, across a continuation join; expression joins also pass
+their result. Function/lambda return joins are omitted when no return is
+reachable outside nested lambdas. Immutable field updates evaluate the new
+value first and reconstruct the checked projection path from its original
+var. Pattern tests run in written order, with constructors in declaration
+order. Each arm has one shared success join taking canonical pattern binders:
+alternatives do not duplicate its body or renumber closures. Pattern failure
+tries the next alternative, but a false guard skips the whole arm. Conditions
+compile is/and/implies directly around the guarded continuation, keeping true-
+path bindings in scope. Range loops increment only below the saved end;
+list/map/set iteration uses uncons after one iterable evaluation/conversion.
 
 Lowering receives the original `mo_sources` as well as the checked program.
 It copies filenames, spans, original binding names, spec text and module

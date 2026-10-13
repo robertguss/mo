@@ -89,15 +89,47 @@ static mo_core_string decoded(struct lowering *p, const struct mo_syntax *s) {
         length >= 6 && s->text[0] == '"' && s->text[1] == '"' && s->text[2] == '"' ? 3 : 1;
     MO_ASSERT(length >= 2 * quote);
     char *out = LOWER_NEW(p, char, length + 1);
+    size_t begin = quote, end = length - quote, indent = 0;
+    if (quote == 3) {
+        while (begin < end && s->text[begin] != '\n')
+            begin++;
+        MO_ASSERT(begin < end);
+        begin++;
+        size_t closing = end;
+        while (closing > begin && s->text[closing - 1] == ' ')
+            closing--;
+        indent = end - closing;
+        end = closing > begin ? closing - 1 : begin;
+        if (end > begin && s->text[end - 1] == '\r')
+            end--;
+    }
     size_t at = 0;
-    for (size_t i = quote; i < length - quote; i++) {
+    bool line_start = quote == 3;
+    for (size_t i = begin; i < end; i++) {
         lower_work(p, 1);
+        if (line_start) {
+            size_t spaces = 0;
+            while (i < end && spaces < indent && s->text[i] == ' ') {
+                i++;
+                spaces++;
+            }
+            line_start = false;
+            if (i == end)
+                break;
+        }
         uint8_t c = s->text[i];
+        if (quote == 3 && c == '\r') {
+            MO_ASSERT(i + 1 < end && s->text[i + 1] == '\n');
+            i++;
+            c = '\n';
+        }
+        if (quote == 3 && c == '\n')
+            line_start = true;
         if (c != '\\') {
             out[at++] = (char)c;
             continue;
         }
-        MO_ASSERT(++i < length - quote);
+        MO_ASSERT(++i < end);
         c = s->text[i];
         if (c == 'u') {
             MO_ASSERT(s->text[++i] == '{');
@@ -264,6 +296,12 @@ struct mo_core_prim lower_operator(struct lowering *p, enum mo_syntax_token oper
 mo_core_expr lower_error_text(struct lowering *p, mo_core_ty type, mo_core_expr value) {
     if (type->tag == MO_CORE_TY_TEXT)
         return value;
+    if (type->tag == MO_CORE_TY_UNIT) {
+        mo_core_expr e = lower_unit(p);
+        e->as.lit->tag = MO_CORE_LIT_TEXT;
+        e->as.lit->as.text = lower_text(p, "Unit");
+        return e;
+    }
     if (type->tag == MO_CORE_TY_BOOL) {
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_IF);
         e->as.if_.cond = value;

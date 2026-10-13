@@ -64,7 +64,7 @@ static mo_core_string applied_name(struct lowering *p, mo_core_string name, uint
 }
 
 static mo_core_ty make_type(struct lowering *p, const struct mo_source_type *source,
-                            mo_core_ty *args, uint32_t owner) {
+                            mo_core_ty *args) {
     mo_core_ty t = LOWER_NEW(p, struct mo_core_ty, 1);
     mo_core_string name;
     if (source->kind == MO_SOURCE_FUNCTION) {
@@ -157,7 +157,7 @@ static mo_core_ty make_type(struct lowering *p, const struct mo_source_type *sou
         d->source = source;
         d->type = t;
         d->data.name = name;
-        d->owner = source->count == 0 ? source->module : owner;
+        d->owner = source->module;
         if (source->count != 0) {
             const struct mo_symbol *symbol = source->declaration;
             MO_ASSERT(symbol != NULL);
@@ -186,7 +186,7 @@ struct type_frame {
     uint32_t at;
 };
 mo_core_ty lower_type(struct lowering *p, const struct mo_source_type *type,
-                      const struct substitution *substitution, uint32_t owner) {
+                      const struct substitution *substitution) {
     MO_ASSERT(type != NULL);
     mo_core_ty answer = cached(p, type, substitution);
     if (answer != NULL)
@@ -218,7 +218,7 @@ mo_core_ty lower_type(struct lowering *p, const struct mo_source_type *type,
             continue;
         }
         if (result == NULL)
-            result = make_type(p, f->source, f->arguments, owner);
+            result = make_type(p, f->source, f->arguments);
         *f->out = result;
         remember(p, f->source, substitution, result);
         depth--;
@@ -240,12 +240,14 @@ struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symb
         }
     }
     MO_ASSERT(source != NULL);
+    uint32_t instance_owner = arguments.count == 0 ? symbol->module : owner;
     mo_core_ty *types = LOWER_NEW(p, mo_core_ty, arguments.count);
     for (uint32_t i = 0; i < arguments.count; i++)
-        types[i] = lower_type(p, arguments.items[i].type, substitution, owner);
+        types[i] = lower_type(p, arguments.items[i].type, substitution);
     for (struct instance *f = p->functions; f != NULL; f = f->next) {
         lower_work(p, 1 + arguments.count);
-        if (f->source != source || f->substitution.count != arguments.count)
+        if (f->source != source || f->owner != instance_owner ||
+            f->substitution.count != arguments.count)
             continue;
         uint32_t i = 0;
         while (i < arguments.count && f->substitution.types[i] == types[i])
@@ -254,11 +256,10 @@ struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symb
             return f;
     }
     if (depth > MO_LIMIT_INSTANTIATION_DEPTH)
-        lower_refuse(p, MO_CODE_INSTANTIATIONS_TOO_DEEP,
-                     "generic instantiation is nested too deeply");
+        lower_refuse(p, MO_CODE_LOWER_DEPTH, "generic instantiation is nested too deeply");
     struct instance *f = LOWER_NEW(p, struct instance, 1);
     f->source = source;
-    f->owner = arguments.count == 0 ? symbol->module : owner;
+    f->owner = instance_owner;
     f->depth = depth;
     f->index = p->function_count++;
     f->substitution.count = arguments.count;
@@ -270,11 +271,18 @@ struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symb
                                        ".", lower_text(p, symbol->name));
     /* Overload ownership is a nominal receiver, independent of discovery. */
     if (symbol->receiver != UINT32_MAX) {
-        const struct mo_symbol *receiver =
-            &p->program->interfaces->scopes[symbol->module].symbols[symbol->receiver];
-        name = lower_concat(p, name, "@", lower_text(p, receiver->name));
+        const struct mo_module_scope *scope = &p->program->interfaces->scopes[symbol->module];
+        const struct mo_symbol *group =
+            mo_find_symbol(scope, (const uint8_t *)symbol->name, strlen(symbol->name));
+        MO_ASSERT(group != NULL);
+        if (group->overload_count > 1) {
+            const struct mo_symbol *receiver = &scope->symbols[symbol->receiver];
+            name = lower_concat(p, name, "@", lower_text(p, receiver->name));
+        }
     }
     name = applied_name(p, name, arguments.count, types);
+    if (arguments.count != 0)
+        name = lower_concat(p, lower_text(p, p->program->set->names[owner]), "::", name);
     f->fun.name = name;
     f->meta.name = name;
     f->meta.span = lower_span(p, symbol->declaration->span);
@@ -307,7 +315,7 @@ void lower_data(struct lowering *p, struct data_instance *d) {
                 field->name == NULL ? lower_text(p, "0")
                                     : lower_copy(p, (const char *)field->name->text,
                                                  field->name->span.end - field->name->span.start);
-            ctor->fields.items[j].ty = lower_type(p, field->type, &d->substitution, d->owner);
+            ctor->fields.items[j].ty = lower_type(p, field->type, &d->substitution);
         }
     }
 }
@@ -362,14 +370,14 @@ mo_core_ctors lower_ctors(struct lowering *p, mo_core_ty type) {
         names[3] = "Failed";
         for (uint32_t i = 0; i < count; i++) {
             counts[i] = i == 3 ? 2 : 1;
-            fields[i][0] = fields[i][1] = lower_type(p, &text, NULL, 0);
+            fields[i][0] = fields[i][1] = lower_type(p, &text, NULL);
         }
     } else if (type->tag == MO_CORE_TY_ENTRY) {
         count = 1;
         names[0] = "Entry";
         counts[0] = 2;
-        fields[0][0] = lower_type(p, &text, NULL, 0);
-        fields[0][1] = lower_type(p, &entry_kind, NULL, 0);
+        fields[0][0] = lower_type(p, &text, NULL);
+        fields[0][1] = lower_type(p, &entry_kind, NULL);
     } else
         MO_UNREACHABLE();
     mo_core_ctors ctors = {.count = count, .items = LOWER_NEW(p, struct mo_core_ctor, count)};
