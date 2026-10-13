@@ -1637,9 +1637,10 @@ the CBMC proofs, within a time budget for the CI orb.
   allocation ledger or claim of a 40-byte allocation is part of this version.
 - **Text's character count** is computed on each call. Caching it costs a word
   per text; decide with the benchmark.
-- **Unicode16** needs tables generated from the Unicode Character Database
-  16.0, kept in the repository with the generator and the source files'
-  hashes.
+- **Unicode16** now has generated UCD 16.0.0 tables, the generator, compressed
+  unmodified sources and their hashes in the repository (section 12).
+  CI checks regeneration and the UCD's conformance data; width follows the
+  explicit policy in `library.md`, not the host terminal.
 - **The bytecode format's stability.** It is internal in Phase 2. Phase 5's
   upgrades need a versioned format; decide then whether it is public.
 

@@ -220,6 +220,52 @@ static void refusal(void) {
     prim_fixture_free(&f);
 }
 
+static void output_limit(void) {
+    struct prim_fixture f;
+    prim_fixture_init(&f, 64 << 20);
+    size_t baseline = mo_heap_used(f.heap);
+    struct mo_buffer text;
+    mo_buffer_init(&text, MO_LIMIT_STRING_SIZE);
+    /* U+0149 uppercases to U+02BC, N: two input bytes become three output bytes. */
+    const size_t count = MO_LIMIT_STRING_SIZE / 3;
+    for (size_t i = 0; i < count; i++)
+        MO_ASSERT(mo_buffer_append(&text, "\xc5\x89", 2));
+    for (size_t i = 0; i < MO_LIMIT_STRING_SIZE % 3; i++)
+        MO_ASSERT(mo_buffer_append_byte(&text, 'a'));
+    for (unsigned extra = 0; extra < 2; extra++) {
+        struct mo_cell input, out = mo_cell_int(41);
+        MO_ASSERT(mo_value_text(f.heap, (const char *)text.bytes, text.length, &input));
+        struct mo_cell before = input;
+        size_t used = mo_heap_used(f.heap);
+        const char *reason;
+        enum mo_prim_status status =
+            mo_prim_call(f.heap, &f.types, MO_PRIM_UNICODE16_UPPERCASE,
+                         f.signature[MO_PRIM_UNICODE16_UPPERCASE], &input, &out, &reason);
+        size_t length;
+        if (extra == 0) {
+            CHECK(status == MO_PRIM_RETURNED && reason == NULL);
+            const uint8_t *bytes = mo_value_data(out, &length);
+            CHECK(length == MO_LIMIT_STRING_SIZE);
+            for (size_t i = 0; i < count; i++)
+                CHECK(memcmp(bytes + i * 3, "\xca\xbcN", 3) == 0);
+            for (size_t i = count * 3; i < length; i++)
+                CHECK(bytes[i] == 'A');
+            mo_value_drop(f.heap, f.builtin[MO_TYPE_TEXT], out);
+        } else {
+            CHECK(status == MO_PRIM_OUT_OF_MEMORY && strcmp(reason, "out of memory") == 0);
+            CHECK(mo_cell_get_int(out) == 41 && memcmp(&input, &before, sizeof input) == 0);
+            const uint8_t *bytes = mo_value_data(input, &length);
+            CHECK(length == text.length && memcmp(bytes, text.bytes, length) == 0);
+            CHECK(mo_heap_used(f.heap) == used && mo_cell_get_ref(input)->count == 1);
+            mo_value_drop(f.heap, f.builtin[MO_TYPE_TEXT], input);
+        }
+        MO_ASSERT(mo_buffer_append_byte(&text, 'a'));
+    }
+    mo_buffer_free(&text);
+    CHECK(mo_heap_objects(f.heap) == 0 && mo_heap_used(f.heap) == baseline);
+    prim_fixture_free(&f);
+}
+
 /* Repeated RI and reverse-ordered combining runs distinguish suffix-state
  * segmentation and counting sort from quadratic rescans/insertion sort. */
 static void work(void) {
@@ -260,6 +306,23 @@ static void work(void) {
     for (size_t i = 2; i < length; i += 2)
         CHECK(bytes[i] == 0xcc && bytes[i + 1] == (i < count * 2 ? 0x80 : 0x95));
     mo_value_drop(f.heap, f.builtin[MO_TYPE_TEXT], out);
+    text.length = 0;
+    MO_ASSERT(mo_buffer_append_byte(&text, 'A'));
+    for (size_t i = 0; i < count; i++)
+        MO_ASSERT(mo_buffer_append(&text, "\xcd\x85", 2));
+    MO_ASSERT(mo_buffer_append(&text, "\xce\xa3", 2));
+    for (size_t i = 0; i < count; i++)
+        MO_ASSERT(mo_buffer_append(&text, "\xcc\x87", 2));
+    MO_ASSERT(mo_value_text(f.heap, (const char *)text.bytes, text.length, &input));
+    MO_ASSERT(mo_prim_call(f.heap, &f.types, MO_PRIM_UNICODE16_LOWERCASE,
+                           f.signature[MO_PRIM_UNICODE16_LOWERCASE], &input, &out,
+                           &reason) == MO_PRIM_RETURNED);
+    bytes = mo_value_data(out, &length);
+    CHECK(length == text.length && bytes[0] == 'a');
+    CHECK(bytes[count * 2 + 1] == 0xcf && bytes[count * 2 + 2] == 0x82);
+    CHECK(memcmp(bytes + 1, text.bytes + 1, count * 2) == 0);
+    CHECK(memcmp(bytes + count * 2 + 3, text.bytes + count * 2 + 3, count * 2) == 0);
+    mo_value_drop(f.heap, f.builtin[MO_TYPE_TEXT], out);
     mo_buffer_free(&text);
     CHECK(mo_heap_objects(f.heap) == 0 && mo_heap_used(f.heap) == baseline);
     prim_fixture_free(&f);
@@ -279,5 +342,6 @@ int main(int argc, char **argv) {
     mappings();
     widths();
     refusal();
+    output_limit();
     return mo_test_report("Unicode16");
 }
