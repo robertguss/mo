@@ -90,17 +90,40 @@ static void graph(const struct mo_program *program) {
         const struct mo_checked_spec *spec =
             function == NULL ? &program->specs[f - program->function_count] : NULL;
         const struct mo_checked_body *body = function == NULL ? &spec->body : &function->body;
-        uint32_t parameters = function == NULL ? 0 : function->signature->type->parameters;
-        MO_ASSERT(body->root < body->count);
+        uint32_t parameters = function != NULL ? function->signature->type->parameters
+                              : spec->kind == MO_SPEC_PROMISE
+                                  ? program->functions[spec->subject].signature->type->parameters
+                                  : 0;
+        MO_ASSERT(body->root < body->count ||
+                  (spec != NULL && spec->kind == MO_SPEC_ANCHOR && body->root == UINT32_MAX));
         if (function != NULL)
             for (uint32_t i = 0; i < function->parameter_count; i++)
                 binding(body, function->parameters[i], parameters);
         else {
-            MO_ASSERT(spec->kind == MO_SPEC_EXAMPLE && spec->subject < program->function_count &&
-                      spec->module < program->set->count && spec->number != 0 &&
-                      spec->parameter_count == 0 && spec->condition_count == 0);
-            MO_ASSERT(strcmp(body->items[body->root].type->name, "Bool") == 0);
+            MO_ASSERT(spec->module < program->set->count && spec->number != 0);
+            MO_ASSERT(spec->subject < program->function_count ||
+                      (spec->kind == MO_SPEC_TEST && spec->subject == UINT32_MAX));
             MO_ASSERT(spec->text.length == spec->text.span.end - spec->text.span.start);
+            for (uint32_t i = 0; i < spec->parameter_count; i++)
+                binding(body, spec->parameters[i], parameters);
+            if (spec->kind == MO_SPEC_ANCHOR) {
+                MO_ASSERT(spec->promise < program->spec_count &&
+                          program->specs[spec->promise].kind == MO_SPEC_PROMISE &&
+                          spec->value_count == program->specs[spec->promise].parameter_count);
+                requirements(program, &spec->arguments, spec->ability_count, spec->abilities);
+                for (uint32_t i = 0; i < spec->value_count; i++)
+                    MO_ASSERT(spec->values[i] < body->count);
+            } else {
+                MO_ASSERT(strcmp(body->items[body->root].type->name,
+                                 spec->kind == MO_SPEC_TEST ? "Unit" : "Bool") == 0);
+                for (uint32_t i = 0; i < spec->condition_count; i++) {
+                    const struct mo_checked_condition *condition = &spec->conditions[i];
+                    MO_ASSERT(condition->expression < body->count &&
+                              strcmp(body->items[condition->expression].type->name, "Bool") == 0 &&
+                              condition->text.length ==
+                                  condition->text.span.end - condition->text.span.start);
+                }
+            }
         }
         for (uint32_t i = 0; i < body->count; i++) {
             const struct mo_checked_expression *row = &body->items[i];

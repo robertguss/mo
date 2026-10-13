@@ -84,6 +84,134 @@ static void example_graph(void) {
     free_fixture(&f);
 }
 
+static void promise_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn ordered(a: Int, b: Int) : (Int, Int)\n"
+             "promise \"values stay\\nordered\"\nresult.0 <= result.1\n"
+             "result == (a, b) or result == (b, a)\n"
+             "allows result: (2, 5), b: 2, a: 5\n"
+             "forbids a: 5, result: (2, 2), b: 2\nend\n"
+             "if a <= b: (a, b) else: (b, a)\nend\nfn main()\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        CHECK(f.program->spec_count == 3);
+        const struct mo_checked_spec *promise = &f.program->specs[0];
+        CHECK(promise->kind == MO_SPEC_PROMISE && promise->subject == 0 && promise->number == 1);
+        CHECK(promise->parameter_count == 3 && promise->condition_count == 2);
+        CHECK(strcmp(promise->parameters[0]->name, "a") == 0 &&
+              strcmp(promise->parameters[1]->name, "b") == 0 &&
+              strcmp(promise->parameters[2]->name, "result") == 0);
+        CHECK(promise->wording_length == 19 &&
+              memcmp(promise->wording, "values stay\nordered", 19) == 0);
+        CHECK(promise->conditions[0].text.length == 20 &&
+              memcmp(promise->conditions[0].text.bytes, "result.0 <= result.1", 20) == 0);
+        CHECK(promise->body.items[promise->conditions[0].expression].operation == MO_T_LE);
+        CHECK(promise->body.items[promise->conditions[1].expression].operation == MO_T_OR);
+        for (uint32_t i = 1; i < 3; i++) {
+            const struct mo_checked_spec *anchor = &f.program->specs[i];
+            CHECK(anchor->kind == MO_SPEC_ANCHOR && anchor->promise == 0 && anchor->subject == 0 &&
+                  anchor->number == 1 && anchor->allows == (i == 1));
+            CHECK(anchor->body.root == UINT32_MAX && anchor->value_count == 3);
+            CHECK(anchor->body.items[anchor->values[0]].syntax->text[0] == '5');
+            CHECK(anchor->body.items[anchor->values[1]].syntax->text[0] == '2');
+            CHECK(anchor->body.items[anchor->values[2]].operand_count == 2);
+        }
+    }
+    free_fixture(&f);
+}
+
+static void generic_spec_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\n"
+             "test \"private \\u{3bb}\\u{0}\"\nassert twice(3) == 6\nend\n"
+             "fn twice(value: T) : T where T: Number, T: Equal\n"
+             "promise \"returns twice its input\"\nresult == value + value\n"
+             "allows result: 6, value: 3\nforbids value: 1.25, result: 2.0\nend\n"
+             "value + value\nend\nfn main()\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        CHECK(f.program->spec_count == 4);
+        const struct mo_checked_spec *test = &f.program->specs[0];
+        CHECK(test->kind == MO_SPEC_TEST && test->subject == UINT32_MAX && test->number == 1);
+        CHECK(test->wording_length == 11 && memcmp(test->wording, "private \xce\xbb\0", 11) == 0);
+        CHECK(strcmp(test->body.items[test->body.root].type->name, "Unit") == 0);
+        const struct mo_checked_spec *promise = &f.program->specs[1];
+        const struct mo_source_type *parameter =
+            f.program->functions[0].signature->type->arguments[0];
+        CHECK(promise->parameter_count == 2 && promise->parameters[0]->type == parameter &&
+              promise->parameters[1]->type == parameter);
+        const struct mo_checked_expression *condition =
+            &promise->body.items[promise->conditions[0].expression];
+        CHECK(condition->ability_count == 1 &&
+              condition->abilities[0].implementation->kind == MO_ABILITY_PARAMETER &&
+              condition->abilities[0].implementation->type == parameter);
+        for (uint32_t i = 2; i < 4; i++) {
+            const struct mo_checked_spec *anchor = &f.program->specs[i];
+            CHECK(anchor->promise == 1 && anchor->arguments.count == 1 &&
+                  anchor->ability_count == 2);
+            CHECK(anchor->arguments.items[0].parameter == parameter &&
+                  strcmp(anchor->arguments.items[0].type->name, i == 2 ? "Int" : "Decimal") == 0);
+            for (uint32_t j = 0; j < anchor->ability_count; j++) {
+                CHECK(anchor->abilities[j].parameter == parameter &&
+                      anchor->abilities[j].operand == UINT32_MAX &&
+                      anchor->abilities[j].implementation->kind == MO_ABILITY_NATIVE);
+            }
+        }
+        CHECK(f.program->specs[2].values[1] < f.program->specs[2].values[0]);
+        CHECK(f.program->specs[3].values[0] < f.program->specs[3].values[1]);
+    }
+    free_fixture(&f);
+}
+
+static void spec_refusals(void) {
+    static const struct {
+        const char *values;
+        uint16_t code;
+    } cases[] = {
+        {"value: 3", MO_CODE_ANCHOR_ARGUMENTS},
+        {"result: 3", MO_CODE_ANCHOR_ARGUMENTS},
+        {"value: 3, result: 3, value: 4", MO_CODE_ANCHOR_ARGUMENTS},
+        {"value: 3, result: 3, extra: 4", MO_CODE_ANCHOR_ARGUMENTS},
+        {"value: true, result: 3", MO_CODE_ARGUMENT_TYPE},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, 4096);
+        MO_ASSERT(mo_buffer_append_text(&source,
+                                        "module Main\nfn identity(value: Int) : Int\n"
+                                        "promise \"keeps its input\"\nresult == value\nallows ") &&
+                  mo_buffer_append_text(&source, cases[i].values) &&
+                  mo_buffer_append_text(&source, "\nforbids value: 3, result: 4\nend\n"
+                                                 "value\nend\nfn main()\nend\n") &&
+                  mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init(&f, (const char *)source.bytes);
+        CHECK(f.program == NULL && f.diags.count == 1 && f.diags.items[0].code == cases[i].code);
+        free_fixture(&f);
+        mo_buffer_free(&source);
+    }
+    struct fixture f;
+    init(&f, "module Main\nfn identity(value: Int) : Int\n"
+             "promise \"not Boolean\"\nresult + value\nallows value: 1, result: 1\n"
+             "forbids value: 1, result: 2\nend\nvalue\nend\nfn main()\nend\n");
+    CHECK(f.program == NULL && f.diags.count == 1 &&
+          f.diags.items[0].code == MO_CODE_CONDITION_TYPE);
+    free_fixture(&f);
+    init(&f, "module Main\ntest \"not Boolean\"\nassert 17\nend\nfn main()\nend\n");
+    CHECK(f.program == NULL && f.diags.count == 1 &&
+          f.diags.items[0].code == MO_CODE_CONDITION_TYPE);
+    free_fixture(&f);
+    init(&f, "module Main\ntest \"verbatim indentation\"\nend\n"
+             "test \"\"\"\n  first\n    second\n  \"\"\"\nend\nfn main()\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_spec *spec = &f.program->specs[1];
+        CHECK(spec->number == 2 && spec->wording_length == 14 &&
+              memcmp(spec->wording, "first\n  second", 14) == 0);
+    }
+    free_fixture(&f);
+}
+
 static void entry_graph(void) {
     struct fixture f;
     init(&f, "module Main\nfn identity(value: Int) : Int\n"
@@ -1676,6 +1804,10 @@ static void rejected_stages(void) {
         {"fn main() : Int\nexamples\n1\nend\n1\nend\n", MO_CODE_CONDITION_TYPE},
         {"fn helper(a: Int) : Int\nexamples\na == a\nend\na\nend\nfn main()\nend\n",
          MO_CODE_NAME_UNKNOWN},
+        {"fn grow(value: T) : Bool\npromise \"stays finite\"\ngrow([value])\n"
+         "allows value: 1, result: true\nforbids value: 2, result: false\nend\n"
+         "_used = value\ntrue\nend\nfn main()\nend\n",
+         MO_CODE_POLYMORPHIC_RECURSION},
         {"fn helper() : Int\nmissing\nend\nfn main() : Int\n0\nend\n", MO_CODE_NAME_UNKNOWN},
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
@@ -1945,7 +2077,12 @@ static void allocation_failures(void) {
         "fn main() : Int\nreader = fn(values) values.get(0) or 17 end\nreader([3])\nend\n",
         "module Main\nfn twice(value: T) : T where T: Number\nexamples\n"
         "twice(3) == 6\nend\nvalue + value\nend\n"
-        "fn main() : Int\ntwice(4)\nend\n"};
+        "fn main() : Int\ntwice(4)\nend\n",
+        "module Main\nfn twice(value: T) : T where T: Number, T: Equal\n"
+        "promise \"doubles\"\nresult == value + value\n"
+        "allows result: 6, value: 3\nforbids value: 2, result: 5\nend\n"
+        "value + value\nend\ntest \"private \\u{3bb}\"\nassert twice(4) == 8\nend\n"
+        "fn main()\nend\n"};
     for (size_t s = 0; s < sizeof(sources) / sizeof(sources[0]); s++) {
         struct fixture f;
         init(&f, sources[s]);
@@ -1979,9 +2116,9 @@ static void allocation_failures(void) {
 
 static void corpus(void) {
     static const char *const paths[] = {
-        "fuzz/corpus/fuzz_program/loops.mo", "fuzz/corpus/fuzz_program/patterns.mo",
-        "fuzz/corpus/fuzz_program/lambdas.mo", "fuzz/corpus/fuzz_program/failures.mo",
-        "fuzz/corpus/fuzz_program/examples.mo"};
+        "fuzz/corpus/fuzz_program/loops.mo",    "fuzz/corpus/fuzz_program/patterns.mo",
+        "fuzz/corpus/fuzz_program/lambdas.mo",  "fuzz/corpus/fuzz_program/failures.mo",
+        "fuzz/corpus/fuzz_program/examples.mo", "fuzz/corpus/fuzz_program/specs.mo"};
     struct mo_sources sources;
     MO_ASSERT(mo_sources_init(&sources));
     for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
@@ -1999,6 +2136,9 @@ static void corpus(void) {
 static void run(void *argument) {
     (void)argument;
     example_graph();
+    promise_graph();
+    generic_spec_graph();
+    spec_refusals();
     entry_graph();
     console_graph();
     native_graph();

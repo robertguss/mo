@@ -2153,10 +2153,27 @@ only during checking; `mo_load_program` fills it and checking copies spec text
 into its arena. Synthetic callers with specs must supply equivalent sources.
 Examples have no numbered condition table: their Bool root is authoritative;
 only promise condition tables become bytecode condition metadata.
+Promises bind the subject's parameters in signature order and an implicit
+`result` last, using the subject's scoped generic parameters and requirements.
+The implicit binder borrows the first anchor's original `result` name, rather
+than inventing a source location. A promise need not refer to every parameter.
+Each Boolean line retains its original bytes/span and checked row index;
+the Bool root combines those rows with short-circuit `and` in written order.
+Anchor `values` index rows in promise-parameter order, while their body rows
+retain written evaluation order. Each generic anchor has `arguments` and
+type-only `abilities` keyed by the subject's scoped parameter plus ability,
+just as a call of that subject. Malformed anchor names or missing/repeated
+values are E0088 (12.2); anchor evaluation remains in tools, not checking.
+Tests are zero-parameter Unit bodies in their module and see its private names.
+Tests/promises keep both original header bytes and decoded wording, including
+UTF-8, embedded NUL and triple-quoted indentation. Specs follow module/source
+order; sorting remaps anchor links without changing source ordinals.
+Failure details require no Text proof and bypass customizers: lowering uses
+the structural form of Text.%structural, including for Equal-only types.
 `main` returns Unit or Int and takes no parameters or one Console.
 Direct `Console.print` reads its operation
 and named input type from `base/hostops.def`, with the receiver explicit.
-Map expressions, imports, constants, tests and promises/anchors still report E1103.
+Map expressions, imports and constants still report E1103.
 Spec-only capability operations also remain staged. `where`
 validates scoped parameters and the five abilities; customizers must have their declaring
 type's Text/Ordering signature. A generic customizer covers the whole nominal
@@ -2184,7 +2201,8 @@ five Text fields in case order. FileError's Text instead selects the trusted
 library module's to_text (design library); a missing implementation is E1103,
 not an invented native callback or structural fallback.
 Polymorphic recursion uses an explicit-stack SCC walk of scoped parameter
-dependencies from generic uses, including function values and ability callbacks.
+dependencies from generic uses, including function values and ability callbacks
+in function and promise bodies.
 A growing edge within a cycle is E0083; permutations and concrete resets do not
 grow the cycle. Proof traversal memoizes recursive nominal graphs.
 Invalid entry signatures report E0079: parameters must be capabilities without
