@@ -1136,6 +1136,25 @@ static MO_MUST_USE int corpus(int argc, char **argv) {
         compiled, unsupported, excluded, entry, limited, rejected);
     return mo_test_report("test_codegen corpus");
 }
+static void test_closure(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b =
+        compile(&arena, "(Program () ((FunDecl \"main\" () (text) "
+                        "(app (lam ((\"x\" (text))) (var \"x\")) ((lit (text \"value\")))) "
+                        "\"M\" (function) 0)) () \"main\" (noSource))");
+    if (b != NULL) {
+        CHECK(b->function_count == 2);
+        CHECK(b->functions[1].kind == MO_FUNCTION_CLOSURE);
+        CHECK(b->functions[1].parameter_count == 1 && b->functions[1].capture_count == 0);
+        CHECK(b->functions[1].parameters[0].ownership == MO_PARAMETER_OWNED);
+        CHECK(b->types[b->functions[1].register_types[1]].kind == MO_TYPE_ENV);
+        const struct mo_bytecode_function *f = &b->functions[0];
+        CHECK(f->code_count >= 3 &&
+              (f->code[f->code_count - 3] & MO_OPCODE_MASK) == MO_OP_TAIL_CALL_CLOSURE);
+    }
+    mo_arena_free(&arena);
+}
 int main(int argc, char **argv) {
     if (argc > 1)
         return corpus(argc, argv);
@@ -1155,5 +1174,6 @@ int main(int argc, char **argv) {
     test_lowered_names();
     test_register_limit();
     test_register_block_limit();
+    test_closure();
     return mo_test_report("test_codegen");
 }
