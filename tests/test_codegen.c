@@ -324,6 +324,54 @@ static void test_metadata(void) {
     mo_diags_free(&diags);
     mo_arena_free(&arena);
 }
+static void test_promise_subject(void) {
+    const char *const params[] = {
+        "((\"x\" (text)) (\"result\" (int)))",
+        "((\"x\" (int)) (\"result\" (text)))",
+        "((\"result\" (int)))",
+    };
+    for (size_t i = 0; i < sizeof params / sizeof params[0]; i++) {
+        struct mo_arena arena;
+        struct mo_diags diags;
+        struct mo_buffer text, out;
+        mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+        CHECK(mo_diags_init(&diags));
+        mo_buffer_init(&text, MO_LIMIT_CORE_TEXT_SIZE);
+        mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+        CHECK(mo_buffer_append_text(&text, "(Program () ((FunDecl \"main\" ((\"x\" (int))) "
+                                           "(int) (var \"x\") \"M\" (function) 0) "
+                                           "(FunDecl \"law\" "));
+        CHECK(mo_buffer_append_text(&text, params[i]));
+        CHECK(mo_buffer_append_text(&text, " (int) (lit (int 0)) \"M\" (promise) 0)) "
+                                           "() \"main\" (noSource))"));
+        CHECK(mo_buffer_append_byte(&text, 0));
+        struct mo_core *p = parse(&arena, (const char *)text.bytes, &diags);
+        if (p != NULL) {
+            uint32_t members[] = {0, 1};
+            struct mo_core_module_meta module = {.name = {"M", 1}, .funs = {members, 2}};
+            struct mo_core_span span = {0};
+            struct mo_core_name names[2] = {{0}};
+            struct mo_core_spec_line line = {.text = {"law", 3}};
+            struct mo_core_fun_meta meta[] = {
+                {.name = {"M.main", 6}, .body = {.spans = {&span, 1}, .params = {names, 1}}},
+                {.name = {"M.law", 5},
+                 .text = {true, {"law", 3}},
+                 .body = {.spans = {&span, 1}, .params = {names, p->funs.items[1].params.count}},
+                 .subject = {true, 0},
+                 .lines = {&line, 1}},
+            };
+            p->metadata = (struct mo_core_metadata){
+                .source = true, .modules = {&module, 1}, .funs = {meta, 2}};
+            CHECK(mo_core_metadata_valid(p) && mo_core_check(p, &diags));
+            CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
+            CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_REPRESENTATION);
+        }
+        mo_buffer_free(&out);
+        mo_buffer_free(&text);
+        mo_diags_free(&diags);
+        mo_arena_free(&arena);
+    }
+}
 static void test_refusals(void) {
     struct mo_arena arena;
     struct mo_diags diags;
@@ -2097,6 +2145,7 @@ int main(int argc, char **argv) {
     test_control();
     test_calls_and_scopes();
     test_metadata();
+    test_promise_subject();
     test_refusals();
     test_references();
     test_globals();

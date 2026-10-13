@@ -3122,8 +3122,21 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
         if (meta != NULL && !closure) {
             if (meta->text.some)
                 d->text = string(c, meta->text.value);
-            if (meta->subject.some)
+            if (meta->subject.some) {
                 d->subject = meta->subject.value;
+                /* Core metadata checks transport shape. Bytecode additionally requires
+                 * a promise's parameters to be its subject's inputs followed by the result. */
+                if (fun->kind == MO_FUNCTION_PROMISE) {
+                    const struct mo_bytecode_function *subject = &c->funs[d->subject];
+                    bool matches = fun->parameter_count == subject->parameter_count + 1u;
+                    for (uint32_t j = 0; matches && j < subject->parameter_count; j++)
+                        matches = fun->parameters[j].type == subject->parameters[j].type;
+                    if (!matches ||
+                        fun->parameters[subject->parameter_count].type != subject->result_type)
+                        return problem(c, MO_CODE_CODEGEN_REPRESENTATION,
+                                       "Promise metadata parameters differ from its subject.");
+                }
+            }
             if (meta->allows.some)
                 d->expectation = meta->allows.value ? MO_BYTECODE_ALLOWS : MO_BYTECODE_FORBIDS;
             struct mo_bytecode_spec_line *lines = allocate(c, meta->lines.count, sizeof *lines);
