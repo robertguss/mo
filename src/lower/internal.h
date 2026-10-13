@@ -102,6 +102,8 @@ mo_core_expr lower_int(struct lowering *p, uint64_t value);
 mo_core_expr lower_prim(struct lowering *p, struct mo_core_prim prim, mo_core_expr_list args);
 mo_core_expr lower_child(mo_core_expr expr, size_t at);
 void lower_function(struct lowering *p, struct instance *instance);
+void lower_body(struct lowering *p, struct instance *instance, const struct mo_checked_body *source,
+                uint32_t parameter_count, const struct mo_checked_binding *const *parameters);
 void lower_metadata(struct lowering *p, struct mo_core *core);
 
 #endif

@@ -1443,21 +1443,19 @@ static void row_task(struct body *b, struct task t) {
     emit(b, r->operands[skip], t.state, k, t.out);
 }
 
-void lower_function(struct lowering *p, struct instance *instance) {
-    struct body b = {.p = p, .instance = instance, .source = &instance->source->body};
-    p->span = instance->source->signature->function->declaration->span;
+void lower_body(struct lowering *p, struct instance *instance, const struct mo_checked_body *source,
+                uint32_t parameter_count, const struct mo_checked_binding *const *parameters) {
+    struct body b = {.p = p, .instance = instance, .source = source};
     b.names = LOWER_NEW(p, mo_core_string, b.source->binding_count);
     for (uint32_t i = 0; i < b.source->binding_count; i++)
         b.names[i] = lower_fresh(p);
-    mo_core_ty signature = type(&b, instance->source->signature->type);
-    instance->fun.ret = signature->as.fn.ret;
-    instance->fun.params.count = instance->source->parameter_count;
+    instance->fun.params.count = parameter_count;
     instance->fun.params.items = LOWER_NEW(p, struct mo_core_param, instance->fun.params.count);
     instance->meta.body.params.count = instance->fun.params.count;
     instance->meta.body.params.items =
         LOWER_NEW(p, struct mo_core_name, instance->fun.params.count);
     for (size_t i = 0; i < instance->fun.params.count; i++) {
-        const struct mo_checked_binding *parameter = instance->source->parameters[i];
+        const struct mo_checked_binding *parameter = parameters[i];
         instance->fun.params.items[i] =
             (struct mo_core_param){binding_name(&b, parameter), type(&b, parameter->type)};
         instance->meta.body.params.items[i] =
@@ -1534,4 +1532,11 @@ void lower_function(struct lowering *p, struct instance *instance) {
             *t.out = *t.success;
         }
     }
+}
+
+void lower_function(struct lowering *p, struct instance *instance) {
+    const struct mo_checked_function *source = instance->source;
+    p->span = source->signature->function->declaration->span;
+    instance->fun.ret = lower_type(p, source->signature->type, &instance->substitution)->as.fn.ret;
+    lower_body(p, instance, &source->body, source->parameter_count, source->parameters);
 }
