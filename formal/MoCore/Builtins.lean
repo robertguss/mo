@@ -879,6 +879,7 @@ def fileCalls : List (IoOp × Ty × List Expr) :=
   [(.readText false, tText, []), (.readText true, tText, []),
    (.readBytes false, tBytes, []), (.readBytes true, tBytes, []),
    (.writeText, tUnit, [str "new"]), (.appendText, tUnit, [str "new"]), (.remove, tUnit, []),
+   (.makeFolder, tUnit, []),
    (.list false, tList tText, []), (.list true, tList tText, []),
    (.entries false, tList .entry, []), (.entries true, tList .entry, [])]
 
@@ -894,13 +895,17 @@ def fileKindChecks : Expr :=
     let failure (h : Expr) (path reason : String) :=
       eq (tRes t tFileError) (call h path)
         (err_ t tFileError (.con tFileError "Failed" [str path, str reason]))
-    let folderOp := match op with | .list _ | .entries _ => true | _ => false
+    let folderOp := match op with | .list _ | .entries _ | .makeFolder => true | _ => false
     and_ (failure h (if folderOp then "leaf" else "dir")
       (if folderOp then "not a folder" else "is a folder")) <|
     and_ (if folderOp then tt else failure h "." "is a folder") <|
     and_ (failure (io (.within ro) [h, str "leaf"]) "." "not a folder") <|
     and_ (failure (io (.within ro) [h, str "leaf"]) "child" "not a folder") <|
     and_ (failure h "leaf/child" "not a folder") <|
+    and_ (eq (tRes t tFileError) (call (io (.within ro) [h, str "absent"]) "child")
+      (err_ t tFileError (notFound "child"))) <|
+    and_ (if op == .makeFolder then tt else
+      eq (tRes t tFileError) (call h "absent/child") (err_ t tFileError (notFound "absent/child"))) <|
     and_ (eq (tRes t tFileError) (call h "../leaf")
       (err_ t tFileError (notAllowed "../leaf"))) rest) tt
   lets [("read", io .readOnly [v "files"])] <|
@@ -918,6 +923,29 @@ def fileKindChecks : Expr :=
   and_ (not_ (io (.exists false) [io (.within false) [v "files", str "leaf"], str "."])) <|
   and_ (not_ (io (.exists true) [io (.within true) [v "read", str "leaf"], str "child"])) <|
   and_ (eq (tRes tUnit tFileError) (io .writeText [v "files", str "new/item", str "made"])
+    (err_ tUnit tFileError (notFound "new/item"))) <|
+  and_ (eq (tRes tUnit tFileError) (io .appendText [v "files", str "new/item", str "!"])
+    (err_ tUnit tFileError (notFound "new/item"))) <|
+  and_ (not_ (io (.exists false) [v "files", str "new"])) <|
+  and_ (eq (tRes tUnit tFileError) (io .makeFolder [v "files", str "new/deep"])
+    (ok_ tUnit tFileError unitE)) <|
+  and_ (eq (tRes tUnit tFileError) (io .makeFolder [v "files", str "new"])
+    (ok_ tUnit tFileError unitE)) <|
+  and_ (eq (tRes tUnit tFileError) (io .makeFolder [v "files", str "."])
+    (ok_ tUnit tFileError unitE)) <|
+  lets [("narrow", io (.within false) [v "files", str "new/deep"]),
+    ("emptySnapshot", io (.list true) [io .readOnly [v "narrow"], str "."])] <|
+  and_ (io (.exists false) [v "narrow", str "."]) <|
+  and_ (eq (tRes tUnit tFileError) (io .makeFolder [v "narrow", str "./β/../z/empty"])
+    (ok_ tUnit tFileError unitE)) <|
+  and_ (eq (tRes tUnit tFileError) (io .makeFolder [v "narrow", str "../outside"])
+    (err_ tUnit tFileError (notAllowed "../outside"))) <|
+  and_ (not_ (io (.exists false) [v "files", str "new/outside"])) <|
+  and_ (eq (tRes (tList tText) tFileError) (v "emptySnapshot")
+    (ok_ (tList tText) tFileError (listOf tText []))) <|
+  and_ (eq (tRes (tList tText) tFileError) (io (.list true) [v "read", str "new/deep"])
+    (ok_ (tList tText) tFileError (listOf tText [str "z"]))) <|
+  and_ (eq (tRes tUnit tFileError) (io .writeText [v "files", str "new/item", str "made"])
     (ok_ tUnit tFileError unitE)) <|
   and_ (eq (tRes tUnit tFileError) (io .appendText [v "files", str "new/item", str "!"])
     (ok_ tUnit tFileError unitE)) <|
@@ -925,16 +953,23 @@ def fileKindChecks : Expr :=
     (ok_ tText tFileError (str "made!"))) <|
   and_ (eq (tRes tUnit tFileError) (io .remove [v "files", str "new/item"])
     (ok_ tUnit tFileError unitE)) <|
-  not_ (io (.exists false) [v "files", str "new"])
+  and_ (io (.exists false) [v "files", str "new"]) <|
+  and_ (eq (tRes (tList .entry) tFileError)
+    (io (.entries true) [io (.within true) [v "read", str "new/deep/z/empty"], str "."])
+    (ok_ (tList .entry) tFileError (listOf .entry []))) <|
+  eq (tRes (tList .entry) tFileError) (io (.entries true) [v "read", str "new"])
+    (ok_ (tList .entry) tFileError (listOf .entry [entryE "deep" "Folder"]))
 
 def kindFiles : List (String × String) :=
   [("leaf", "old"), ("dir/item", "kept"), ("leafish/item", "sibling")]
 
 def fakeFileKindChecks : Expr :=
   lets [("files", io .filesInMemory [mapOf tText tText
-    (kindFiles.map fun (p, text) => (str p, str text))])] fileKindChecks
+    (kindFiles.map fun (p, text) => (str p, str text))]),
+    ("otherFiles", io .filesInMemory [mapOf tText tText []])] <|
+  and_ fileKindChecks (not_ (io (.exists false) [v "otherFiles", str "new"]))
 
-#guard passes program fileKindChecks { files := kindFiles } [("files", .files)]
+#guard passes program fileKindChecks { files := kindFiles, folders := ["dir", "leafish"] } [("files", .files)]
 #guard passes program fakeFileKindChecks
 #guard ([
   ([("a", "file"), ("a/b", "child")], "a"),
@@ -960,11 +995,11 @@ def libraryProgram : Program :=
   stops program (prim (.unicode16 op) [str "éß👩‍💻"]) op.sig.2
     (.outside "Unicode16 is a trusted primitive unavailable in mocore")
 
--- Real-state dispatch, empty root, inaccessible/narrowed roots and disappeared folders.
+-- Real-state dispatch, empty root, inaccessible/narrowed roots and persistent folders.
 #guard passes program
   (eq (tRes (tList .entry) tFileError) (io (.entries false) [v "files", str "."])
     (ok_ (tList .entry) tFileError (listOf .entry [entryE "b" "File", entryE "é" "Folder"])))
-  { files := [("é/x", "text"), ("b", "text")] } [("files", .files)]
+  { files := [("é/x", "text"), ("b", "text")], folders := ["é"] } [("files", .files)]
 #guard passes program
   (eq (tRes (tList .entry) tFileError) (io (.entries true) [v "read", str "."])
     (ok_ (tList .entry) tFileError (listOf .entry []))) {} [("read", .readFiles)]
@@ -976,9 +1011,9 @@ def libraryProgram : Program :=
       (err_ (tList .entry) tFileError (notAllowed "."))) <|
     seq (io .remove [v "f", str "a/x"]) <|
     and_ (eq (tRes (tList .entry) tFileError) (io (.entries true) [v "r", str "a"])
-      (err_ (tList .entry) tFileError (notFound "a"))) <|
+      (ok_ (tList .entry) tFileError (listOf .entry []))) <|
     eq (tRes (tList .entry) tFileError) (io (.entries false) [v "f", str "."])
-      (ok_ (tList .entry) tFileError (listOf .entry [])))
+      (ok_ (tList .entry) tFileError (listOf .entry [entryE "a" "Folder"])))
 #guard stops program (io .randomInt [v "rng", int 3, int 3]) tInt
   (.outside "Random.int needs low below high") {} [("rng", .random)]
 #guard stops program (io .randomInt [v "rng", int (-1), int 1]) tInt

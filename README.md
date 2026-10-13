@@ -40,8 +40,8 @@ in-place updates) and Elm (helpful error messages).
 - [Mo Core](formal/README.md): the small language every feature lowers to,
   defined in Lean, with its type safety proven, independent fake capabilities
   for specs, xoshiro256** Random, folder entries, trusted Unicode16 interfaces,
-  D236 file-kind checks and Float layout, and the
-  [Core text 0.6 `mocore` oracle](formal/TEXT.md), shared with C.
+  D236 file-kind checks and Float layout, D237 persistent folders and explicit
+  folder creation, and the [Core text 0.7 `mocore` oracle](formal/TEXT.md), shared with C.
 - [Twelve sample programs](examples/), and the
   [executable grammar](grammar/README.md) every example parses with.
 - [The learnability test](learnability/): fresh models from two families

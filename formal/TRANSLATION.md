@@ -1294,13 +1294,14 @@ which `%io.readLine` returns in turn. The runtime splits what it reads where
 UTF-8 into one U+FFFD, the replacement character (reference 14);
 `Console.fake_input(lines)` gives the lines themselves.
 
-In `Files.in_memory`, a folder exists when a file is inside it, and the
-folder the fake stands for, `"."` of its handle, always exists; `list` gives
+In `Files.in_memory`, folders start with every ancestor of a file and persist
+after its removal; `make_folder` adds folders explicitly (D237 below). The
+folder the fake stands for, `"."` of its original handle, always exists; `list` gives
 the names directly inside a folder, each subfolder once, sorted, and listing
 a folder that doesn't exist is `Error(NotFound(folder))` (reference 14).
 `entries` has the same paths, errors and ordering, with `Entry` values:
-implied subfolders have kind `Folder`, other names have kind `File`.
-Removing the last descendant removes an implied folder. `within` and
+stored subfolders have kind `Folder`, other names have kind `File`.
+Removing the last descendant keeps its folders. `within` and
 `read_only` retain the shared store, and earlier lists are snapshots.
 
 Todo's and Find's multi-call tests are now single Core expressions that
@@ -1401,7 +1402,7 @@ place; *not modeled* ones are not in this model yet.
 | `Range`: `a..b`, `for`, `to_list`, `contains?`, `to_text` | `%range.make`; a counting loop over `%range.start` and `%range.end` (7.5); `%range.toList`; `%range.contains`; `%range.toText` |
 | `Option`: `or`, `or_fail`, `map`; `Result`: `map`, `map_error` | lowered: a `case` |
 | `Time`: `+ -` with durations, `-` of two times, `checked_add`, `to_text`, `Time.parse`; `Duration`: `+ - *`, `in_milliseconds`, `in_seconds`, `to_text` | prim (`%time.*`) |
-| `Args.list`, `Env.get`, `Console.print`, `error`, `read_line`, `printed`, `printed_errors`, `Files.read_text`, `read_bytes`, `write_text`, `append_text`, `remove`, `list`, `entries`, `exists?`, `within`, `read_only`, `Clock.now`, `Random.int` | prim (`%io.*`); `ReadFiles` has the read-only forms; `read_bytes` gives a file's text as UTF-8 (11.1); Random uses xoshiro256**/SplitMix64/Lemire |
+| `Args.list`, `Env.get`, `Console.print`, `error`, `read_line`, `printed`, `printed_errors`, `Files.read_text`, `read_bytes`, `write_text`, `append_text`, `remove`, `make_folder`, `list`, `entries`, `exists?`, `within`, `read_only`, `Clock.now`, `Random.int` | prim (`%io.*`); `make_folder` is `%io.makeFolder`, Files only; `ReadFiles` has the read-only forms; `read_bytes` gives a file's text as UTF-8 (11.1); Random uses xoshiro256**/SplitMix64/Lemire |
 | `Files.walk`, `ReadFiles.walk` | Mo library code in `lib/`, not a Core primitive; lowering supplies recursive calls to `entries` |
 | `FileError`'s text form | Core (`FileError.to_text`) |
 | `to_text`, at every type with `Text` | lowered as the part `#{x}` of a text is (3.4), so the two give the same text; a set's is `Lib.setText` (3.4), and the `to_text[T]` the lowering derives for records, choice types, tuples, lists and maps without their own `to_text` is not modeled |
@@ -1721,7 +1722,7 @@ silently added by `runProgram`.
    in `World.fakes`. Dropping all handles does not remove/reuse its state in
    this executable model; heap reclamation and reference counts are VM work.
    Folder roots and identity are independent. `CapState` uses the existing
-   eight real-state fields, with no kind tag or nested fake store; kind
+   nine real-state fields (including D237 folders), with no kind tag or nested fake store; kind
    chooses the fields an operation uses. Source-created cross-kind aliases
    are only Files/ReadFiles. Host-supplied cross-kind aliases can select
    different fields of the same record, as TEXT.md specifies.
@@ -1740,7 +1741,7 @@ silently added by `runProgram`.
    dangling host handles as `invalidRun`; lossless decoding preserves them
    for debugging. Real console observations stop with `outside "console
    observation needs a fake"`; capability types do not encode provenance.
-5. **Interchange.** Core text is 0.6 only. Every handle explicitly carries
+5. **Interchange.** Core text is 0.7 only. Every handle explicitly carries
    real/fake provenance, and World transports the full store. Reports include
    all final fake states, including unreachable states and random words, in allocation
    order, alongside the existing real effects. Fuel exhaustion still has no
@@ -1856,20 +1857,20 @@ Entries contain immediate **names**, not paths or file contents; order is
 the existing `list` order (Unicode scalar order, no normalization).
 
 Both real handles in the modeled world and `Files.in_memory` use the same
-text-file map: implied folders are deduplicated, and links/special files
-cannot be represented by that map. `Link` and `Other` remain constructible
+text-file map and explicit folder list (D237 below); links/special files
+cannot be represented by that state. `Link` and `Other` remain constructible
 and transportable; classifying real OS links without following them belongs
 to the C host implementation. Fake construction now rejects a file/folder
-collision (D236 below). The top folder exists even when empty; other
-empty/missing folders are `NotFound`. No Core `walk` is added.
+collision (D236 below). The top folder exists even when empty; stored empty
+folders exist too, and missing folders give `NotFound`. No Core `walk` is added.
 
 Text 0.3 adds these types/operations and replaces the old natural seed
 with explicit `RandomState` words in World/CapState. It does not silently
 upgrade 0.2 or reinterpret old state. Text 0.4 adds the numeric operations
-below; 0.5 adds compiler metadata; 0.6 implements D236. Lean and C codecs
+below; 0.5 adds compiler metadata; 0.6 implements D236; 0.7 implements D237. Lean and C codecs
 move together, with all 15 run fixtures and 14 fuzz seeds generated by `ExportSamples.lean`;
 the freshness check compares both directories byte for byte. The next
-minor version is 0.7. TEXT.md specifies exact fields and boundary reports.
+minor version is 0.8. TEXT.md specifies exact fields and boundary reports.
 
 ### Numeric completion in text 0.4
 
@@ -1943,32 +1944,34 @@ minor version is 0.7. TEXT.md specifies exact fields and boundary reports.
    normalized/full path. Lexical refusal wins (`NotAllowed`); otherwise a
    file used as the capability root or an intermediate folder gives
    `Failed(path, "not a folder")` before checking the target kind. Failed
-   operations leave files unchanged. The exhaustive file-operation table is:
+   operations leave state unchanged. The current exhaustive file-operation
+   table includes D237's parent checks, folder creation and persistence:
 
    | Operation | File target | Folder target | Missing target |
    | --- | --- | --- | --- |
    | `read_text` | `Ok(text)` | `Failed(path, "is a folder")` | `NotFound(path)` |
    | `read_bytes` | `Ok(UTF-8 bytes)` | `Failed(path, "is a folder")` | `NotFound(path)` |
-   | `write_text` | replace, `Ok(Unit)` | `Failed(path, "is a folder")` | create, `Ok(Unit)` |
-   | `append_text` | append, `Ok(Unit)` | `Failed(path, "is a folder")` | create, `Ok(Unit)` |
+   | `write_text` | replace, `Ok(Unit)` | `Failed(path, "is a folder")` | create if parent exists, `Ok(Unit)`; otherwise `NotFound(path)` |
+   | `append_text` | append, `Ok(Unit)` | `Failed(path, "is a folder")` | create if parent exists, `Ok(Unit)`; otherwise `NotFound(path)` |
    | `remove` | delete, `Ok(Unit)` | `Failed(path, "is a folder")` | `NotFound(path)` |
+   | `make_folder` | `Failed(path, "not a folder")` | `Ok(Unit)`, unchanged | create target and missing ancestors, `Ok(Unit)` |
    | `list` | `Failed(path, "not a folder")` | `Ok(sorted names)` | `NotFound(path)` |
    | `entries` | `Failed(path, "not a folder")` | `Ok(sorted entries)` | `NotFound(path)` |
    | `exists?` | `true` | `true` | `false` |
-   | `within` | retain narrowed root; subsequent Result calls fail `"not a folder"`, `exists?` is false | retain narrowed root | retain narrowed root |
+   | `within` | retain narrowed root; subsequent Result calls fail `"not a folder"`, `exists?` is false | retain narrowed root, including empty folders | retain narrowed root; Result calls give `NotFound`, `exists?` is false |
    | `read_only` | preserve root/state, change kind to ReadFiles | same | same |
-   | `Files.in_memory` | allocate unless a key is also a folder | folders are implied, not separate keys | empty map allocates an empty root |
+   | `Files.in_memory` | allocate unless a key is also a folder | record every file ancestor; preserve it after removal | empty map allocates an empty root |
 
    Errors in the table are wrapped in `Error`. ReadFiles operations have
    identical behavior. Any lexically refused path, including every path on
    an inaccessible handle, gives `NotAllowed` for Result calls and false for
    `exists?`; `within` preserves inaccessibility. Traversing a file likewise
    makes `exists?` false. `within`/`read_only` do not return a Result or
-   eagerly test existence. Writes keep the existing model's implicit-folder
-   creation for missing parents; modeling OS open failures for absent
-   parents is outside this change. Malformed host worlds remain transportable:
-   use-time traversal checks apply, and `entries` still classifies a name
-   with descendants as Folder; no theorem assumes a well-formed file map.
+   eagerly test existence. D237 replaces D236's implicit-folder creation:
+   writes/appends never create parents and removal never removes folders.
+   A missing narrowed root gives `NotFound` for all Result calls, including
+   `make_folder`; it cannot be recreated through that handle. Malformed host
+   worlds remain transportable; no theorem assumes filesystem consistency.
 3. **Shortest digits, fixed thresholds.** Float.to_text keeps the nearest
    shortest round-trip decimal, ties to even. It prints fixed notation for
    decimal exponents -6 through 20 and scientific otherwise, matching
@@ -1999,6 +2002,48 @@ minor version is 0.7. TEXT.md specifies exact fields and boundary reports.
    including narrowed/read-only capabilities and confinement under races,
    must verify this rule; `mocore` has no links or OS I/O and cannot test it.
    No link constructor, resolution algorithm or theorem is added to Lean.
+
+## D237: persistent folders and explicit creation (13 Oct 2026)
+
+1. **State and transport.** `CapState.folders : List String` follows `random`
+   as the ninth field; World inherits it before its `fakes` store. C uses
+   `mo_core_string_list folders` in both records. It is an ordered set of
+   existing non-root folder paths; `""` is the implicit top folder, never
+   inserted by operations. Files remain ordered `(path, text)` pairs. Both
+   fields are shared through fake identity, `within` and `read_only`.
+   Text 0.7 requires the folder list, even when empty; neither codec invents
+   folders from transported files, sorts, normalizes or removes duplicates.
+   Reports add real folders after files and compare all nine fake fields.
+2. **Construction and order.** `Files.in_memory` discovers every proper
+   slash-prefix of each raw key, parent-first, in file insertion order; the
+   first discovery wins. D236's collision check runs against those folders
+   before allocation, preserving its first-conflicting-key rule. File keys
+   still are not normalized; invalid/raw keys remain inaccessible or follow
+   the existing use-time lexical rules. `make_folder` normalizes its argument
+   first, then appends missing prefixes parent-first; existing folders keep
+   their places. Removing files leaves the folder list untouched. There is
+   no folder-removal operation. `make_folder(".")` succeeds without mutation.
+3. **Operation and failure boundary.** `%io.makeFolder : Files, Text →
+   Result(Unit, FileError)` corresponds to `FILES_MAKE_FOLDER`; it is ordinary
+   host I/O, not spec-only, and has no ReadFiles form. Lexical refusal precedes
+   file-root/intermediate checks, then missing-root checks and target kind.
+   A file in the way gives `Failed(originalPath, "not a folder")` without
+   partially creating ancestors. Writes/appends require the resolved parent
+   folder; failures use the caller's full original path, never the parent.
+   All errors leave both fields unchanged. The table above covers every
+   operation; read-only variants agree. Existing empty folders are observable
+   through `list`, `entries`, `exists?`, and narrowed/read-only handles.
+4. **Model choices and limits.** `within` remains lazy: a missing-root handle
+   becomes usable if a wider handle later creates its root. `make_folder` on
+   the missing-root handle itself gives `NotFound`, since making that root
+   would act above its authority. Folder membership is authoritative in host
+   states, which must supply ancestors for a realistic filesystem; arbitrary
+   inconsistent states still decode losslessly and remain type-safe. `entries`
+   classifies a path as Folder exactly when the folder list contains it;
+   transport does not repair malformed host state. Recursive creation is
+   atomic in this model, unlike OS failures that can leave earlier ancestors.
+   Links, permissions, OS errors, descriptors and races remain host-only as
+   in D236. No implementation error code or logical axiom is added.
 
 ## Compiler metadata: decisions
 

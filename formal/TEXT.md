@@ -1,7 +1,7 @@
-# Core text, version 0.6
+# Core text, version 0.7
 
 The Lean implementation in `MoCore/Text/` is the reference codec. Every file
-is `(core 0.6 PAYLOAD)` followed by LF. Constructors are case-sensitive and
+is `(core 0.7 PAYLOAD)` followed by LF. Constructors are case-sensitive and
 named after Lean. A nullary constructor is still a list: `(unit)`.
 
 This is an interchange format, not Mo source or the informal notation in
@@ -10,7 +10,19 @@ transport (`Outcome`, including closures), and observable reports (`Report`,
 the protocol `mocore` writes). The latter uses reference 9.2's structural
 value spelling inside a string. C differential tests compare **reports**.
 
-## Changes from 0.5
+## Changes from 0.6
+
+Version 0.7 implements D237. `(io (makeFolder))` takes Files, Text and returns
+Result(Unit, FileError); there is no ReadFiles or spec-only form. World and
+CapState gain a mandatory folder-string list after RandomState, before
+World's fake store. Reports gain real folders after files, before fake states.
+Folders persist after removing their last file. Writes/appends require an
+existing parent; only makeFolder creates missing folders. Folder discovery,
+ordering, confinement and failure precedence are specified below and in
+TRANSLATION.md's D237 decisions. No implementation error code is added.
+Only 0.7 is accepted; 0.6, older and unknown versions are rejected.
+
+### Earlier changes from 0.5
 
 Version 0.6 implements D236: `Bug` gains `(fileFolderConflict S)` naming a
 file/folder collision refused by `Files.in_memory` before allocation. File
@@ -20,8 +32,8 @@ shortest round-trip digits but uses fixed notation from 1e-6 through below
 1e21; both zeros stay plain `0`/`-0`. Float wire values and structural
 reports still use bits. Symbolic-link resolution remains host behavior,
 to be verified on real folders by VM/host tests, not by this text-file model.
-The envelope accepts only 0.6; 0.5 and unknown versions are rejected.
-No existing record shape, primitive signature or metadata field changes.
+In 0.6 no existing record shape, primitive signature or metadata field changed.
+Version 0.7 supersedes its implicit-folder creation and lifetime rules.
 
 ### Earlier changes from 0.4
 
@@ -81,7 +93,7 @@ buffer's own limit is an independent constraint. Lean's codec does not
 impose the C resource limits.
 
 ```ebnf
-file = "(", "core", "0.6", payload, ")" ;
+file = "(", "core", "0.7", payload, ")" ;
 sexp = atom | string | "(", { sexp }, ")" ;
 integer = [ "-" ], digit, { digit } ;
 bits = "0x", hex-digit (* exactly sixteen *) ;
@@ -106,14 +118,14 @@ Decimal integers count 10⁻¹⁸ units; Time and Duration integers count
 microseconds. Char strings contain exactly one Unicode scalar.
 
 ```text
-(core 0.6 (map (text) (list (byte))))
-(core 0.6 (float 0x8000000000000000))
-(core 0.6 (text "hello\nβ"))
+(core 0.7 (map (text) (list (byte))))
+(core 0.7 (float 0x8000000000000000))
+(core 0.7 (text "hello\nβ"))
 ```
 
 Files are UTF-8 without a BOM; invalid UTF-8 is a parse error. An atom is a
 nonempty run of scalars other than the delimiters defined above. Symbols
-are atoms used as constructor names, `core`, `0.6`, `true` and `false`;
+are atoms used as constructor names, `core`, `0.7`, `true` and `false`;
 only the exact symbols listed in this document are accepted in those
 positions. There is no symbol escaping. Empty lists are `()`. Parsing
 accepts any layout using those delimiters, including adjacent lists,
@@ -321,7 +333,7 @@ Each name in the following table means a **nullary S-expression**, e.g.
 | `ListOp` | `size isEmpty get first last append prepend concat reverse take drop set removeAt uncons enumerate contains unique` |
 | `MapOp` | `empty size isEmpty get has set remove keys values entries ofList` |
 | `SetOp` | `empty size isEmpty has add remove union intersection difference toList ofList` |
-| `IoOp` | `argsList envGet print printError readLine printed printedErrors writeText appendText remove readOnly now randomInt consoleFake consoleFakeInput filesInMemory clockFixed randomSeeded argsOf envOf` |
+| `IoOp` | `argsList envGet print printError readLine printed printedErrors writeText appendText remove makeFolder readOnly now randomInt consoleFake consoleFakeInput filesInMemory clockFixed randomSeeded argsOf envOf` |
 
 The non-nullary operation constructors are exactly:
 
@@ -380,7 +392,7 @@ arguments, a **reached** call stops with the exact report below (exit 1),
 where effects are everything produced so far:
 
 ```text
-(core 0.6 (stopped (outside "Unicode16 is a trusted primitive unavailable in mocore") (effects () () () ())))
+(core 0.7 (stopped (outside "Unicode16 is a trusted primitive unavailable in mocore") (effects () () () () ())))
 ```
 
 An unchosen branch or unused function containing such a call still runs.
@@ -400,23 +412,25 @@ needed. A construction and its lossless value are:
 (con "Entry" ((text "notes") (con "Folder" ())))
 ```
 
-The text-file maps used for both real modeled handles and in-memory fakes
-imply folders from descendants and cannot represent links or special files.
+The text-file maps and explicit folder lists used for both real modeled
+handles and in-memory fakes cannot represent links or special files.
 Those kind values still type-check and transport; the OS host must classify
-them without following links. The top folder always exists, other folders
-only while a descendant exists. `Files.in_memory` refuses any key that is
+them without following links. The top folder always exists; other folders
+exist by membership in the folder list, even when empty. `Files.in_memory`
+records every file ancestor before allocation and refuses any key that is
 also a folder, with `(fileFolderConflict "path")` (exit 1): exact stored
 keys and slash prefixes are compared, without normalization. The first
 conflicting file key in insertion order is reported, including `""` if a
 key tries to replace the implicit root. No fake state is allocated on error.
-Arbitrary host World/CapState maps still decode losslessly, and `entries`
-classifies a name with descendants as Folder in malformed host state.
+Arbitrary host World/CapState maps and folder lists still decode losslessly;
+the folder list is authoritative, and the codecs do not repair inconsistent
+host states. `entries` classifies stored folders as Folder, other names as File.
 Names are immediate names, not relative paths;
 old lists remain snapshots after a shared/narrowed/read-only handle changes
 the map. `walk` is Mo library code in `lib/`, not a Core operation.
 
 Result-returning file operations check kinds after lexical confinement.
-`list`/`entries` on a file give `Error(Failed(path, "not a folder"))`.
+`list`/`entries`/`makeFolder` on a file give `Error(Failed(path, "not a folder"))`.
 `readText`, `readBytes`, `writeText`, `appendText` and `remove` on a folder
 (including `"."`) give `Error(Failed(path, "is a folder"))`. Using a file
 as an intermediate folder or a `within` root gives `"not a folder"` for
@@ -424,9 +438,34 @@ all Result operations, even reading `"."`. Errors preserve the caller's
 original path and leave state unchanged. `exists` is false through a file
 root/intermediate component. `within` and `readOnly` still derive handles
 without returning Result; invalid lexical roots remain inaccessible.
-Missing reads/removes/lists/entries remain `NotFound`; writes/appends still
-create files and imply missing folders. TRANSLATION.md's D236 table covers
-every file operation, ReadFiles variant and failure precedence.
+Missing reads/removes/lists/entries remain `NotFound`; writes/appends create
+files only if the parent folder exists, otherwise `NotFound(originalPath)`.
+`makeFolder` creates the target and missing ancestors, parent-first, and is
+idempotent. Removing a file leaves all folders intact. A missing narrowed
+root gives `NotFound` for every Result call (including makeFolder) and false
+for exists; a wider handle must create that root first. `within` stays lazy.
+
+| Mo operation | File target | Folder target (including empty) | Missing target |
+| --- | --- | --- | --- |
+| `read_text` | `Ok(text)` | `Failed(path, "is a folder")` | `NotFound(path)` |
+| `read_bytes` | `Ok(UTF-8 bytes)` | `Failed(path, "is a folder")` | `NotFound(path)` |
+| `write_text` | replace, `Ok(Unit)` | `Failed(path, "is a folder")` | create if parent exists; otherwise `NotFound(path)` |
+| `append_text` | append, `Ok(Unit)` | `Failed(path, "is a folder")` | create if parent exists; otherwise `NotFound(path)` |
+| `remove` | delete, `Ok(Unit)`; keep folders | `Failed(path, "is a folder")` | `NotFound(path)` |
+| `make_folder` | `Failed(path, "not a folder")` | `Ok(Unit)`, unchanged | create target and ancestors, `Ok(Unit)` |
+| `list` | `Failed(path, "not a folder")` | `Ok(sorted names)` | `NotFound(path)` |
+| `entries` | `Failed(path, "not a folder")` | `Ok(sorted entries)` | `NotFound(path)` |
+| `exists?` | true | true | false |
+| `within` | retain root; Result calls fail `"not a folder"`, exists is false | retain root | retain root; Result calls give `NotFound`, exists is false |
+| `read_only` | preserve root and shared state, change kind | same | same |
+| `Files.in_memory` | allocate unless a key is also a folder | discover and retain file ancestors | empty map makes an empty top folder |
+
+Errors are wrapped in Error, and successful missing-file writes/appends give
+Ok(Unit). ReadFiles variants agree; make_folder has no ReadFiles variant.
+Lexical refusal wins, then a file root/intermediate component, then a missing
+root, then target kind and parent existence. All errors use the caller's
+original path and leave state unchanged. TRANSLATION.md records the atomic
+creation model and host-only limitations.
 
 Host operations follow relative links that remain inside the capability's
 folder; absolute/escaping targets are `NotAllowed`, and more than 40 links
@@ -448,7 +487,7 @@ lexically inside spec code may use them, as for `fail`, `printed` and
 | --- | --- | --- | --- | --- |
 | `Console.fake()` | `consoleFake` | none | Console | all defaults |
 | `Console.fake_input(lines)` | `consoleFakeInput` | List(Text) | Console | stdin = lines |
-| `Files.in_memory(files)` | `filesInMemory` | Map(Text, Text) | Files | files = map entries |
+| `Files.in_memory(files)` | `filesInMemory` | Map(Text, Text) | Files | files = map entries; folders = their ancestors |
 | `Clock.fixed(t)` | `clockFixed` | Time | Clock | now = t |
 | `Random.seeded(n)` | `randomSeeded` | Int | Random | random = four SplitMix64 outputs from n modulo 2⁶⁴ |
 | `Args.of(list)` | `argsOf` | List(Text) | Args | args = list |
@@ -463,12 +502,12 @@ with the same fake index share state; different indices stay separate.
 The capability kind selects the relevant fields; `CapState` has no kind tag.
 Host-supplied aliases of different kinds therefore address different fields
 of the same record. Source constructors cannot create such cross-kind aliases
-except Files/ReadFiles, which intentionally share files.
+except Files/ReadFiles, which intentionally share files and folders.
 
 `within` resolves the root as before and preserves the fake index;
 `readOnly` changes Files to ReadFiles, preserving root and index. Ordinary
 file/console/clock/random/args/env operations read or update only the chosen
-state. Real handles use the world's first eight fields. No fake operation
+state. Real handles use the world's first nine fields. No fake operation
 changes those real fields, and no real operation changes a fake state.
 `printed`/`printedErrors` return snapshots of that fake console's output/
 error list; later printing does not change an earlier result. Input lists and
@@ -509,8 +548,8 @@ V additionally := (range I I)
 root := (none) | (some S)
 fake := (none) | (some N)
 RandomState := (RandomState bits bits bits bits)
-CapState := (CapState (S*) ((S S)*) (S*) (S*) (S*) ((S S)*) I RandomState)
-World := (World (S*) ((S S)*) (S*) (S*) (S*) ((S S)*) I RandomState (CapState*))
+CapState := (CapState (S*) ((S S)*) (S*) (S*) (S*) ((S S)*) I RandomState (S*))
+World := (World (S*) ((S S)*) (S*) (S*) (S*) ((S S)*) I RandomState (S*) (CapState*))
 Bug := (overflow S) | (divByZero) | (stop S) | (outside S) | (repeatedKey)
      | (fileFolderConflict S)
 Outcome := (ok V World) | (stopped Bug World) | (failed S World)
@@ -526,8 +565,8 @@ Constructor values carry no type: their expected type supplies it.
 
 World fields, in order: **arguments, environment, remaining standard input
 lines, standard output lines, standard error lines, files, clock
-microseconds since Unix epoch, random state, fake states**. Each `CapState`
-has the world's first eight fields in exactly the same order, without a
+microseconds since Unix epoch, random state, folders, fake states**. Each `CapState`
+has the world's first nine fields in exactly the same order, without a
 nested store. Fake state contains only texts, ordered text pairs and numbers,
 never values holding handles or closures. Environment and files are
 ordered string pairs; duplicate keys are preserved (the model's lookup
@@ -543,6 +582,17 @@ state is exactly:
 ```text
 (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec)
 ```
+
+Folders are a mandatory ordered string list, not file-map entries or handles.
+Source-created state contains each non-root path once: construction discovers
+raw file ancestors parent-first in file insertion order, and makeFolder adds
+normalized missing prefixes parent-first. Existing folders keep their places;
+file removal never changes the list. The root `""` exists implicitly and is
+not inserted. For example files `[("z/n", "x"), ("a/b/c", "y")]` initialize
+folders `["z", "a", "a/b"]`. Listing still sorts immediate names, independently
+of this state order. Codecs retain every string, duplicate, root entry and
+order in arbitrary host lists; no folder or ancestor is inferred on decode.
+Realistic host state must explicitly supply all existing non-root folders.
 
 There are no wire defaults: this record is required even for states of
 non-Random fakes. All-zero words decode losslessly, but a Random.int using
@@ -599,7 +649,7 @@ Separators are `, ` and `: `, with no spaces just inside delimiters.
 returned list of texts contains two levels of quoting:
 
 ```text
-(core 0.6 (returned "[\"a\", \"b\\n\"]" (effects () () () ())))
+(core 0.7 (returned "[\"a\", \"b\\n\"]" (effects () () () () ())))
 ```
 
 This avoids confusing a top-level Text with a constructor/number, and
@@ -610,15 +660,16 @@ and `<function>` loses captures; use `valueIn`/`valueOut` for reconstruction.
 The full report grammar (not the internal Outcome grammar) is:
 
 ```text
-effects := (effects (S*) (S*) ((S S)*) (CapState*))
+effects := (effects (S*) (S*) ((S S)*) (S*) (CapState*))
 Report := (returned S effects) | (stopped Bug effects) | (failed S effects)
         | (outOfFuel) | (wrong S) | (parseError S) | (illTyped S)
         | (invalidRun S) | (ioError S)
 ```
 
-Effects are real standard output, real standard error, real final files and
+Effects are real standard output, real standard error, real final files, real
+final folders and
 all final fake states in allocation order, including states with no remaining
-handles. Each fake state's full eight fields are compared, including unread
+handles. Each fake state's full nine fields are compared, including unread
 input and all four random words. Real remaining stdin, args, environment,
 clock and random state are still not compared. Files include unchanged entries.
 A stop or failure retains both real and fake effects up to that point.
@@ -689,46 +740,46 @@ A complete one-file program returning a Float's negative zero, with a
 preexisting file and one input line (layout expanded for reading):
 
 ```text
-(core 0.6
+(core 0.7
   (Run
     (Program ()
       ((FunDecl "main" () (float) (lit (float 0x8000000000000000))
         "Main" (function) 0))
       () "main" (noSource))
     (World ("argument") (("MODE" "test")) ("input") () () (("a" "hi\n")) 0
-      (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec) ())
+      (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec) () ())
     (entry ()) 30))
 ```
 
 The exact canonical report (exit 0):
 
 ```text
-(core 0.6 (returned "0x8000000000000000" (effects () () (("a" "hi\n")) ())))
+(core 0.7 (returned "0x8000000000000000" (effects () () (("a" "hi\n")) () ())))
 ```
 
 A named test demonstrating failure without a bug:
 
 ```text
-(core 0.6
+(core 0.7
   (Run
     (Program ()
       ((FunDecl "main" () (unit) (lit (unit)) "Main" (function) 0)
        (FunDecl "expected seven" () (unit) (fail (lit (text "got six"))) "Spec" (test) 0))
       () "main" (noSource))
     (World () () () () () () 0
-      (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec) ())
+      (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec) () ())
     (test "expected seven") 30))
 ```
 
-Its report is `(core 0.6 (failed "got six" (effects () () () ())))` (exit 2).
-Changing fuel to 0 gives `(core 0.6 (outOfFuel))` (exit 3). An ordinary
+Its report is `(core 0.7 (failed "got six" (effects () () () () ())))` (exit 2).
+Changing fuel to 0 gives `(core 0.7 (outOfFuel))` (exit 3). An ordinary
 function with `fail` instead is `illTyped` (exit 5), never evaluated.
 
 A test constructs a console and passes it to ordinary `main`. Observing the
 same handle after the call reads its output; real output stays empty:
 
 ```text
-(core 0.6
+(core 0.7
   (Run
     (Program ()
       ((FunDecl "main" (("c" (cap (console)))) (unit)
@@ -744,21 +795,55 @@ same handle after the call reads its output; real output stays empty:
         "Spec" (test) 0))
       () "main" (noSource))
     (World () () () () () () 0
-      (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec) ())
+      (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec) () ())
     (test "fake") 50))
 ```
 
-Its exact report (exit 0) includes the allocated state's full eight fields:
+Its exact report (exit 0) includes the allocated state's full nine fields:
 
 ```text
-(core 0.6 (returned "Unit" (effects () () () ((CapState () () () ("hello") () () 0 (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec))))))
+(core 0.7 (returned "Unit" (effects () () () () ((CapState () () () ("hello") () () 0 (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec) ())))))
 ```
+
+A D237 run makes two folders, writes their only file, then removes it.
+The real folder list retains both empty folders:
+
+```text
+(core 0.7
+  (Run
+    (Program ()
+      ((FunDecl "main" (("f" (cap (files)))) (result (unit) (fileError))
+        (let_ "_" (prim (io (makeFolder)) ((var "f") (lit (text "a/b"))))
+          (let_ "_" (prim (io (writeText))
+            ((var "f") (lit (text "a/b/only")) (lit (text "text"))))
+            (prim (io (remove)) ((var "f") (lit (text "a/b/only"))))))
+        "Main" (function) 0))
+      () "main" (noSource))
+    (World () () () () () () 0
+      (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec) () ())
+    (entry ((cap (files) (some "") (none)))) 50))
+```
+
+Its exact report (exit 0):
+
+```text
+(core 0.7 (returned "Ok(Unit)" (effects () () () ("a" "a/b") ())))
+```
+
+The file protocol regression also calls this ordinary function with a fake
+Files handle. After return, stop or failure, its CapState still has folders
+`("a" "a/b")`, no files, and no effects on real files/folders. The Builtins
+matrix checks both provenances: writes/appends before creation give
+`Error(NotFound("new/item"))`; after creation they succeed, append preserves
+the earlier text, and after removal all empty folders remain visible to
+`list`, `entries`, `exists?` and shared narrowed/read-only handles.
 
 The exporter below writes all twelve real programs with their timing worlds
 and argument values, plus `Fakes.core`, a named spec exercising all seven
 constructors, independent states, snapshots, shared random handles in closures
 and shared file writes through an ordinary function. `Library.core` tests
-Lemire results, maximum-span Int intervals and entries; its five Unicode16
+Lemire results, maximum-span Int intervals, entries and the D236/D237 file
+matrix; its five Unicode16
 functions are present and checked but not called by that test. `JsonQuery.core`
 is the renamed `examples/json-query.mo` translation, module JsonQuery.
 `Metadata.core` exercises the full compiler envelope on a synthetic program
@@ -792,7 +877,7 @@ all 16 caller-supplied categories, including standalone RandomState.
 
 Historical **version 0.1** measurements, 2026-10-12 in a Linux x86-64 orb,
 Lean 4.34.0 native executable; sizes/timings below predate fake state. Use
-the command below for today's 0.6 corpus, which includes Fakes, Library and Metadata.
+the command below for today's 0.7 corpus, which includes Fakes, Library and Metadata.
 One warm-up, then **21 fresh processes per sample**; wall time includes
 process startup, input I/O, parse, checker, initialization, entry evaluation,
 structural rendering and captured stdout. Fuel 10000. These are the inputs
@@ -826,7 +911,7 @@ for path in sorted(pathlib.Path('/tmp/mocore-samples').glob('*.core')):
     for _ in range(21):
         start = time.perf_counter_ns()
         result = subprocess.run([exe, str(path)], check=True, capture_output=True)
-        assert result.stdout.startswith(b'(core 0.6 (returned ')
+        assert result.stdout.startswith(b'(core 0.7 (returned ')
         times.append((time.perf_counter_ns() - start) / 1e6)
     print(path.stem, path.stat().st_size, statistics.median(times), min(times), max(times))
 PY
@@ -847,9 +932,9 @@ need new run/report examples too. Do not silently reinterpret RandomState,
 Boolean `ro`, root, fake index, or a constructor's field order.
 
 Any added constructor or changed shape/meaning advances the minor wire
-version (next `0.7`), updates both Lean and C and their differential corpus,
+version (next `0.8`), updates both Lean and C and their differential corpus,
 and adds tests for rejecting unsupported versions. The current parser
-accepts **only `0.6`** and rejects unknown constructors; there are no ignored
+accepts **only `0.7`** and rejects unknown constructors; there are no ignored
 extension fields or fallback operation names. Support for older versions,
 if wanted, must be explicit. This document, not the informal lowering
 notation or Lean's `Repr`, specifies what the C implementation must write.

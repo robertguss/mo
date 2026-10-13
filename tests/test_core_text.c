@@ -37,7 +37,7 @@ static void round_trip_bytes(enum mo_core_text_kind kind, const char *input, siz
 static void canonical(enum mo_core_text_kind kind, const char *payload) {
     struct mo_buffer text;
     mo_buffer_init(&text, MO_LIMIT_CORE_TEXT_SIZE);
-    CHECK(mo_buffer_append_text(&text, "(core 0.6 "));
+    CHECK(mo_buffer_append_text(&text, "(core 0.7 "));
     CHECK(mo_buffer_append_text(&text, payload));
     CHECK(mo_buffer_append_text(&text, ")\n"));
     round_trip_bytes(kind, (const char *)text.bytes, text.length, (const char *)text.bytes,
@@ -123,7 +123,7 @@ static void test_shapes(void) {
               "(\"out\\n\") (\"err\") ((\"z\" \"last\") (\"a\" \"first\")) "
               "-999999999999999999999999999999 "
               "(RandomState 0x0000000000000000 0x8000000000000000 0xffffffffffffffff "
-              "0x0123456789abcdef))");
+              "0x0123456789abcdef) (\"empty/β\" \"empty\" \"empty\"))");
     canonical(MO_CORE_TEXT_RANDOM_STATE, "(RandomState 0x0000000000000001 0x8000000000000000 "
                                          "0xffffffffffffffff 0x0123456789abcdef)");
     canonical(
@@ -131,12 +131,12 @@ static void test_shapes(void) {
         "(World (\"b\" \"a\") ((\"K\" \"first\") (\"K\" \"second\")) (\"line\\r\\n\") "
         "(\"old out\\n\") (\"old err\") ((\"z\" \"last\") (\"a\" \"first\") (\"z\" \"duplicate\")) "
         "-123456789012345678901234567890 (RandomState 0x0000000000000001 0x0000000000000002 "
-        "0x0000000000000003 0x0000000000000004) "
+        "0x0000000000000003 0x0000000000000004) (\"real empty\") "
         "((CapState (\"fake\") () (\"input\\r\\n\") (\"fake out\") (\"fake err\") "
         "((\"b\" \"2\") (\"a\" \"1\") (\"b\" \"duplicate\")) -99 (RandomState 0x0000000000000005 "
-        "0x0000000000000006 0x0000000000000007 0x0000000000000008)) "
+        "0x0000000000000006 0x0000000000000007 0x0000000000000008) (\"fake empty\")) "
         "(CapState () () () () () () 0 (RandomState 0x0000000000000000 0x0000000000000000 "
-        "0x0000000000000000 0x0000000000000000))))");
+        "0x0000000000000000 0x0000000000000000) ())))");
     canonical(MO_CORE_TEXT_PROGRAM,
               "(Program ((DataDecl \"Point\" ((Ctor \"Point\" ((\"x\" (int)) (\"y\" (text)))))) "
               "(DataDecl \"Choice\" ((Ctor \"A\" ()) (Ctor \"B\" ((\"0\" (byte))))))) "
@@ -160,33 +160,36 @@ static void test_shapes(void) {
     const char *outcomes[] = {
         "(ok (cap (random) (some \"\") (some 0)) (World () () () (\"effect\") () () -7 "
         "(RandomState 0x0000000000000001 0x0000000000000002 0x0000000000000003 0x0000000000000004) "
+        "() "
         "((CapState () () () () () () 17 (RandomState 0x0000000000000005 0x0000000000000006 "
-        "0x0000000000000007 0x0000000000000008)))))",
+        "0x0000000000000007 0x0000000000000008) ()))))",
         "(stopped (stop \"bug\") (World () () () () (\"error\") () 0 "
         "(RandomState 0x0000000000000001 0x0000000000000002 0x0000000000000003 0x0000000000000004) "
+        "() "
         "((CapState () () () (\"before stop\") () () 0 (RandomState 0x0000000000000005 "
-        "0x0000000000000006 0x0000000000000007 0x0000000000000008)))))",
+        "0x0000000000000006 0x0000000000000007 0x0000000000000008) ()))))",
         "(failed \"detail\" (World () () () () () ((\"a\" \"b\")) 0 "
         "(RandomState 0x0000000000000001 0x0000000000000002 0x0000000000000003 0x0000000000000004) "
+        "() "
         "((CapState () () () () (\"before failure\") () 0 (RandomState 0x0000000000000005 "
-        "0x0000000000000006 0x0000000000000007 0x0000000000000008)))))",
+        "0x0000000000000006 0x0000000000000007 0x0000000000000008) ()))))",
         ("(jumped \"loop\" ((int 1) (text \"next\")) (World () () () () () () 0 (RandomState "
-         "0x0000000000000001 0x0000000000000002 0x0000000000000003 0x0000000000000004) ()))"),
+         "0x0000000000000001 0x0000000000000002 0x0000000000000003 0x0000000000000004) () ()))"),
         "(wrong \"invariant\")",
         "(outOfFuel)"};
     for (size_t i = 0; i < sizeof outcomes / sizeof outcomes[0]; i++)
         canonical(MO_CORE_TEXT_OUTCOME, outcomes[i]);
     const char *reports[] = {
         ("(returned \"[\\\"a\\\", \\\"b\\\\n\\\"]\" (effects (\"a\\nb\") "
-         "(\"error\") ((\"b\" \"2\") (\"a\" \"1\")) "
+         "(\"error\") ((\"b\" \"2\") (\"a\" \"1\")) (\"real folder\") "
          "((CapState () () () (\"fake out\") () () 0 (RandomState 0x0000000000000001 "
-         "0x0000000000000002 0x0000000000000003 0x0000000000000004)))))"),
-        "(stopped (divByZero) (effects (\"before\") () () "
+         "0x0000000000000002 0x0000000000000003 0x0000000000000004) (\"fake folder\")))))"),
+        "(stopped (divByZero) (effects (\"before\") () () () "
         "((CapState () () () () (\"fake err\") () 0 (RandomState 0x0000000000000001 "
-        "0x0000000000000002 0x0000000000000003 0x0000000000000004)))))",
-        "(failed \"detail\" (effects () () () "
+        "0x0000000000000002 0x0000000000000003 0x0000000000000004) ()))))",
+        "(failed \"detail\" (effects () () () () "
         "((CapState () () () () () ((\"fake\" \"file\")) 0 (RandomState 0x0000000000000001 "
-        "0x0000000000000002 0x0000000000000003 0x0000000000000004)))))",
+        "0x0000000000000002 0x0000000000000003 0x0000000000000004) ()))))",
         "(outOfFuel)",
         "(wrong \"internal\")",
         "(parseError \"input\")",
@@ -196,13 +199,13 @@ static void test_shapes(void) {
     for (size_t i = 0; i < sizeof reports / sizeof reports[0]; i++)
         canonical(MO_CORE_TEXT_REPORT, reports[i]);
     canonical(MO_CORE_TEXT_EFFECTS,
-              "(effects (\"out\") (\"err\") ((\"z\" \"1\") (\"a\" \"2\")) ())");
+              "(effects (\"out\") (\"err\") ((\"z\" \"1\") (\"a\" \"2\")) (\"z/folder\") ())");
     canonical(MO_CORE_TEXT_SELECTION, "(entry ((int 3) (cap (args) (some \"\") (none))))");
     canonical(MO_CORE_TEXT_SELECTION, "(test \"a named example\")");
     canonical(
         MO_CORE_TEXT_RUN,
         "(Run (Program () () () \"missing\" (noSource)) (World () () () () () () 0 (RandomState "
-        "0x0000000000000001 0x0000000000000002 0x0000000000000003 0x0000000000000004) ()) "
+        "0x0000000000000001 0x0000000000000002 0x0000000000000003 0x0000000000000004) () ()) "
         "(test \"named\") 123456789012345678901234567890)");
 }
 
@@ -237,7 +240,7 @@ static void test_operations(void) {
         {"set (int)",
          "empty size isEmpty has add remove union intersection difference toList ofList"},
         {"io", "argsList envGet print printError readLine printed printedErrors writeText "
-               "appendText remove readOnly now randomInt consoleFake consoleFakeInput "
+               "appendText remove makeFolder readOnly now randomInt consoleFake consoleFakeInput "
                "filesInMemory clockFixed randomSeeded argsOf envOf"}};
     struct mo_buffer payload;
     mo_buffer_init(&payload, MO_LIMIT_CORE_TEXT_SIZE);
@@ -293,20 +296,20 @@ static void test_operations(void) {
 }
 static void test_normalization(void) {
     const char *input =
-        "; before\r\n(core\t0.6(text\"\\u{000000}\\u{00000A}\\u{00007F}\\u{01F600}é\")); after";
-    const char *expected = "(core 0.6 (text \"\\u{0}\\n\\u{7f}😀é\"))\n";
+        "; before\r\n(core\t0.7(text\"\\u{000000}\\u{00000A}\\u{00007F}\\u{01F600}é\")); after";
+    const char *expected = "(core 0.7 (text \"\\u{0}\\n\\u{7f}😀é\"))\n";
     round_trip_bytes(MO_CORE_TEXT_LITERAL, input, strlen(input), expected, strlen(expected));
-    input = "(core 0.6(bytes(-0000 00000255 -00123456789012345678901234567890)))";
-    expected = "(core 0.6 (bytes (0 255 -123456789012345678901234567890)))\n";
+    input = "(core 0.7(bytes(-0000 00000255 -00123456789012345678901234567890)))";
+    expected = "(core 0.7 (bytes (0 255 -123456789012345678901234567890)))\n";
     round_trip_bytes(MO_CORE_TEXT_LITERAL, input, strlen(input), expected, strlen(expected));
-    input = "(core 0.6(float 0x7FF800000000ABCD))";
-    expected = "(core 0.6 (float 0x7ff800000000abcd))\n";
+    input = "(core 0.7(float 0x7FF800000000ABCD))";
+    expected = "(core 0.7 (float 0x7ff800000000abcd))\n";
     round_trip_bytes(MO_CORE_TEXT_LITERAL, input, strlen(input), expected, strlen(expected));
-    input = "(core 0.6 (proj(var\"v\") -000))";
-    expected = "(core 0.6 (proj (var \"v\") 0))\n";
+    input = "(core 0.7 (proj(var\"v\") -000))";
+    expected = "(core 0.7 (proj (var \"v\") 0))\n";
     round_trip_bytes(MO_CORE_TEXT_EXPR, input, strlen(input), expected, strlen(expected));
-    input = "(core 0.6(cap(files)(some\"notes\")(some -000)))";
-    expected = "(core 0.6 (cap (files) (some \"notes\") (some 0)))\n";
+    input = "(core 0.7(cap(files)(some\"notes\")(some -000)))";
+    expected = "(core 0.7 (cap (files) (some \"notes\") (some 0)))\n";
     round_trip_bytes(MO_CORE_TEXT_VALUE, input, strlen(input), expected, strlen(expected));
 }
 static void malformed(enum mo_core_text_kind kind, const char *input, size_t length, uint16_t code,
@@ -329,75 +332,77 @@ static void test_malformed(void) {
         uint16_t code;
     } cases[] = {
         {MO_CORE_TEXT_LITERAL, "", MO_CODE_CORE_SYNTAX},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (unit)", MO_CODE_CORE_SYNTAX},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (unit)))", MO_CODE_CORE_SYNTAX},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (unit)) (unit)", MO_CODE_CORE_SYNTAX},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (text \"a", MO_CODE_CORE_SYNTAX},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (text \"\\q\"))", MO_CODE_CORE_ESCAPE},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (text \"\\u{}\"))", MO_CODE_CORE_ESCAPE},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (text \"\\u{0000000}\"))", MO_CODE_CORE_ESCAPE},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (text \"\\u{xyz}\"))", MO_CODE_CORE_ESCAPE},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (text \"\\u{D800}\"))", MO_CODE_CORE_ESCAPE},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (text \"\\u{110000}\"))", MO_CODE_CORE_ESCAPE},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (text \"raw\ncontrol\"))", MO_CODE_CORE_ESCAPE},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (text \"raw\177control\"))", MO_CODE_CORE_ESCAPE},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (unit)", MO_CODE_CORE_SYNTAX},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (unit)))", MO_CODE_CORE_SYNTAX},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (unit)) (unit)", MO_CODE_CORE_SYNTAX},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (text \"a", MO_CODE_CORE_SYNTAX},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (text \"\\q\"))", MO_CODE_CORE_ESCAPE},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (text \"\\u{}\"))", MO_CODE_CORE_ESCAPE},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (text \"\\u{0000000}\"))", MO_CODE_CORE_ESCAPE},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (text \"\\u{xyz}\"))", MO_CODE_CORE_ESCAPE},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (text \"\\u{D800}\"))", MO_CODE_CORE_ESCAPE},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (text \"\\u{110000}\"))", MO_CODE_CORE_ESCAPE},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (text \"raw\ncontrol\"))", MO_CODE_CORE_ESCAPE},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (text \"raw\177control\"))", MO_CODE_CORE_ESCAPE},
         {MO_CORE_TEXT_LITERAL, "(core 0.1 (unit))", MO_CODE_CORE_VERSION},
         {MO_CORE_TEXT_LITERAL, "(core 0.2 (unit))", MO_CODE_CORE_VERSION},
         {MO_CORE_TEXT_LITERAL, "(core 0.3 (unit))", MO_CODE_CORE_VERSION},
         {MO_CORE_TEXT_LITERAL, "(core 0.4 (unit))", MO_CODE_CORE_VERSION},
         {MO_CORE_TEXT_LITERAL, "(core 0.5 (unit))", MO_CODE_CORE_VERSION},
-        {MO_CORE_TEXT_LITERAL, "(core 0.7 (unit))", MO_CODE_CORE_VERSION},
+        {MO_CORE_TEXT_LITERAL, "(core 0.6 (unit))", MO_CODE_CORE_VERSION},
+        {MO_CORE_TEXT_LITERAL, "(core 0.8 (unit))", MO_CODE_CORE_VERSION},
         {MO_CORE_TEXT_LITERAL, "(core 9.9 (unit))", MO_CODE_CORE_VERSION},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (Unit))", MO_CODE_CORE_CONSTRUCTOR},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (unit extra))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (text name))", MO_CODE_CORE_FIELD},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (bool True))", MO_CODE_CORE_FIELD},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (int +1))", MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (int -))", MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (int 1_000))", MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (int １２))", MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (float 0X8000000000000000))", MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (float 0x800000000000000))", MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (float 0x800000000000000g))", MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (char \"\"))", MO_CODE_CORE_CHARACTER},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (char \"ab\"))", MO_CODE_CORE_CHARACTER},
-        {MO_CORE_TEXT_LITERAL, "(core 0.6 (bytes 0))", MO_CODE_CORE_FIELD},
-        {MO_CORE_TEXT_EXPR, "(core 0.6 (proj (var \"x\") -1))", MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_PRIMITIVE, "(core 0.6 (int add))", MO_CODE_CORE_FIELD},
-        {MO_CORE_TEXT_PRIMITIVE, "(core 0.6 (big (checkedAdd)))", MO_CODE_CORE_CONSTRUCTOR},
-        {MO_CORE_TEXT_PRIMITIVE, "(core 0.6 (io (consoleFake true)))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_PRIMITIVE, "(core 0.6 (io (consolefake)))", MO_CODE_CORE_CONSTRUCTOR},
-        {MO_CORE_TEXT_PRIMITIVE, "(core 0.6 (unicode16 (normalizeNFC)))", MO_CODE_CORE_CONSTRUCTOR},
-        {MO_CORE_TEXT_PRIMITIVE, "(core 0.6 (unicode16 (graphemes true)))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_PRIMITIVE, "(core 0.6 (io (entries)))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_VALUE, "(core 0.6 (map (((int 1)))))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_OUTCOME, "(core 0.6 (outOfFuel (World () () () () () () 0 0 ())))",
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (Unit))", MO_CODE_CORE_CONSTRUCTOR},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (unit extra))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (text name))", MO_CODE_CORE_FIELD},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (bool True))", MO_CODE_CORE_FIELD},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (int +1))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (int -))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (int 1_000))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (int １２))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (float 0X8000000000000000))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (float 0x800000000000000))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (float 0x800000000000000g))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (char \"\"))", MO_CODE_CORE_CHARACTER},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (char \"ab\"))", MO_CODE_CORE_CHARACTER},
+        {MO_CORE_TEXT_LITERAL, "(core 0.7 (bytes 0))", MO_CODE_CORE_FIELD},
+        {MO_CORE_TEXT_EXPR, "(core 0.7 (proj (var \"x\") -1))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_PRIMITIVE, "(core 0.7 (int add))", MO_CODE_CORE_FIELD},
+        {MO_CORE_TEXT_PRIMITIVE, "(core 0.7 (big (checkedAdd)))", MO_CODE_CORE_CONSTRUCTOR},
+        {MO_CORE_TEXT_PRIMITIVE, "(core 0.7 (io (consoleFake true)))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_PRIMITIVE, "(core 0.7 (io (consolefake)))", MO_CODE_CORE_CONSTRUCTOR},
+        {MO_CORE_TEXT_PRIMITIVE, "(core 0.7 (unicode16 (normalizeNFC)))", MO_CODE_CORE_CONSTRUCTOR},
+        {MO_CORE_TEXT_PRIMITIVE, "(core 0.7 (unicode16 (graphemes true)))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_PRIMITIVE, "(core 0.7 (io (entries)))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_PRIMITIVE, "(core 0.7 (io (makeFolder true)))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_VALUE, "(core 0.7 (map (((int 1)))))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_OUTCOME, "(core 0.7 (outOfFuel (World () () () () () () 0 0 ())))",
          MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_PROGRAM, "(core 0.6 (Program () () \"main\"))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_PROGRAM, "(core 0.6 (Program () () () \"main\"))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_VALUE, "(core 0.6 (cap (files) \"notes\" (none)))", MO_CODE_CORE_FIELD},
-        {MO_CORE_TEXT_VALUE, "(core 0.6 (cap (files) (some \"notes\")))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_VALUE, "(core 0.6 (cap (files) (none) (some -1)))", MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_VALUE, "(core 0.6 (cap (files) (none) (some \"0\")))", MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_VALUE, "(core 0.6 (cap (files) (some 2) (none)))", MO_CODE_CORE_FIELD},
-        {MO_CORE_TEXT_VALUE, "(core 0.6 (cap (files) (none) (none 0)))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_WORLD, "(core 0.6 (World () () () () () () 0 0))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_WORLD, "(core 0.6 (World () () () () () () 0 0 ()))", MO_CODE_CORE_FIELD},
-        {MO_CORE_TEXT_CAP_STATE, "(core 0.6 (CapState () () () () () () 0))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_CAP_STATE, "(core 0.6 (CapState () () () () () () 0 0 ()))",
-         MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_CAP_STATE, "(core 0.6 (CapState () () () () () () 0 -1))",
+        {MO_CORE_TEXT_PROGRAM, "(core 0.7 (Program () () \"main\"))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_PROGRAM, "(core 0.7 (Program () () () \"main\"))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_VALUE, "(core 0.7 (cap (files) \"notes\" (none)))", MO_CODE_CORE_FIELD},
+        {MO_CORE_TEXT_VALUE, "(core 0.7 (cap (files) (some \"notes\")))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_VALUE, "(core 0.7 (cap (files) (none) (some -1)))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_VALUE, "(core 0.7 (cap (files) (none) (some \"0\")))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_VALUE, "(core 0.7 (cap (files) (some 2) (none)))", MO_CODE_CORE_FIELD},
+        {MO_CORE_TEXT_VALUE, "(core 0.7 (cap (files) (none) (none 0)))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_WORLD, "(core 0.7 (World () () () () () () 0 0))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_WORLD, "(core 0.7 (World () () () () () () 0 0 () ()))", MO_CODE_CORE_FIELD},
+        {MO_CORE_TEXT_CAP_STATE, "(core 0.7 (CapState () () () () () () 0))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_CAP_STATE, "(core 0.7 (CapState () () () () () () 0 0))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_CAP_STATE, "(core 0.7 (CapState () () () () () () 0 -1 ()))",
          MO_CODE_CORE_FIELD},
-        {MO_CORE_TEXT_RANDOM_STATE, "(core 0.6 (RandomState 0x0000000000000001))",
+        {MO_CORE_TEXT_RANDOM_STATE, "(core 0.7 (RandomState 0x0000000000000001))",
          MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_RANDOM_STATE, "(core 0.6 (RandomState 0 1 2 3))", MO_CODE_CORE_NUMBER},
+        {MO_CORE_TEXT_RANDOM_STATE, "(core 0.7 (RandomState 0 1 2 3))", MO_CODE_CORE_NUMBER},
         {MO_CORE_TEXT_RANDOM_STATE,
-         "(core 0.6 (RandomState 0x0000000000000001 0x0000000000000002 0x0000000000000003 "
+         "(core 0.7 (RandomState 0x0000000000000001 0x0000000000000002 0x0000000000000003 "
          "0x10000000000000000))",
          MO_CODE_CORE_NUMBER},
-        {MO_CORE_TEXT_BUG, "(core 0.6 (fileFolderConflict))", MO_CODE_CORE_ARITY},
-        {MO_CORE_TEXT_BUG, "(core 0.6 (fileFolderConflict a))", MO_CODE_CORE_FIELD},
-        {MO_CORE_TEXT_EFFECTS, "(core 0.6 (effects () () ()))", MO_CODE_CORE_ARITY}};
+        {MO_CORE_TEXT_BUG, "(core 0.7 (fileFolderConflict))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_BUG, "(core 0.7 (fileFolderConflict a))", MO_CODE_CORE_FIELD},
+        {MO_CORE_TEXT_EFFECTS, "(core 0.7 (effects () () () ()))", MO_CODE_CORE_ARITY},
+        {MO_CORE_TEXT_EFFECTS, "(core 0.7 (effects () () () (3) ()))", MO_CODE_CORE_FIELD}};
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++)
         malformed(cases[i].kind, cases[i].text, strlen(cases[i].text), cases[i].code,
                   MO_LIMIT_CORE_SCRATCH_SIZE);
@@ -406,7 +411,7 @@ static void test_malformed(void) {
     for (size_t i = 0; i < sizeof invalid_utf8 / sizeof invalid_utf8[0]; i++)
         malformed(MO_CORE_TEXT_LITERAL, invalid_utf8[i], strlen(invalid_utf8[i]), MO_CODE_CORE_UTF8,
                   MO_LIMIT_CORE_SCRATCH_SIZE);
-    const char *unit = "(core 0.6 (unit))";
+    const char *unit = "(core 0.7 (unit))";
     malformed(MO_CORE_TEXT_LITERAL, unit, strlen(unit), MO_CODE_CORE_NO_MEMORY, 0);
     malformed(MO_CORE_TEXT_LITERAL, unit, MO_LIMIT_CORE_TEXT_SIZE + 1, MO_CODE_CORE_TEXT_LIMIT,
               MO_LIMIT_CORE_SCRATCH_SIZE);
@@ -514,19 +519,19 @@ static void test_typed_fields(void) {
     mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
     CHECK(mo_diags_init(&diags));
     const char *text =
-        "(core 0.6 (Run (Program ((DataDecl \"D\" ((Ctor \"C\" ((\"field\" (byte))))))) "
+        "(core 0.7 (Run (Program ((DataDecl \"D\" ((Ctor \"C\" ((\"field\" (byte))))))) "
         "((FunDecl \"f\" ((\"x\" (int))) (text) (join \"j\" ((\"y\" (byte))) "
         "(call \"g\" ((var \"y\"))) (jump \"j\" ((lit (byte 7))))) \"Module\" (promise) 123)) "
         "((ConstDecl \"K\" (bool) (lit (bool true)))) \"f\" (noSource)) "
         "(World (\"arg\") ((\"key\" \"env\")) (\"in\") (\"out\") (\"err\") ((\"path\" \"file\")) "
         "-19 (RandomState 0x0000000000000017 0x000000000000001d 0x8000000000000000 "
-        "0xffffffffffffffff) "
+        "0xffffffffffffffff) (\"real folder\") "
         "((CapState (\"fake arg\") ((\"fake key\" \"fake env\")) (\"fake in\") "
         "(\"fake out\") (\"fake err\") ((\"fake path\" \"fake file\")) -37 "
         "(RandomState 0x0000000000000029 0x000000000000002b 0x000000000000002f "
-        "0x0000000000000035)) "
+        "0x0000000000000035) (\"fake folder\")) "
         "(CapState () () () () () () 43 (RandomState 0x000000000000003b 0x000000000000003d "
-        "0x0000000000000043 0x0000000000000047)))) "
+        "0x0000000000000043 0x0000000000000047) ()))) "
         "(entry ((float 0x8000000000000000) (cap (readFiles) (some \"notes\") (some 1)) "
         "(cap (console) (none) (none)))) 31))";
     struct mo_core_run *run =
@@ -562,6 +567,7 @@ static void test_typed_fields(void) {
         CHECK(run->world.random.s0 == 23 && run->world.random.s1 == 29);
         CHECK(run->world.random.s2 == UINT64_C(0x8000000000000000));
         CHECK(run->world.random.s3 == UINT64_MAX);
+        CHECK(strcmp(run->world.folders.items[0].bytes, "real folder") == 0);
         CHECK(run->world.fakes.count == 2);
         struct mo_core_cap_state *state = &run->world.fakes.items[0];
         CHECK(strcmp(state->args.items[0].bytes, "fake arg") == 0);
@@ -575,6 +581,7 @@ static void test_typed_fields(void) {
         CHECK(state->now.negative && strcmp(state->now.digits.bytes, "37") == 0);
         CHECK(state->random.s0 == 41 && state->random.s1 == 43);
         CHECK(state->random.s2 == 47 && state->random.s3 == 53);
+        CHECK(strcmp(state->folders.items[0].bytes, "fake folder") == 0);
         CHECK(strcmp(run->world.fakes.items[1].now.digits.bytes, "43") == 0);
         CHECK(run->world.fakes.items[1].random.s0 == 59 &&
               run->world.fakes.items[1].random.s1 == 61);
@@ -591,7 +598,7 @@ static void test_typed_fields(void) {
         CHECK(real->tag == MO_CORE_VALUE_CAP && !real->as.cap.root.some && !real->as.cap.fake.some);
         CHECK(strcmp(run->fuel.digits.bytes, "31") == 0);
     }
-    text = "(core 0.6 (map (text) (int) (lit 27)))";
+    text = "(core 0.7 (map (text) (int) (lit 27)))";
     struct mo_core_prim *prim =
         mo_core_text_parse(&arena, MO_CORE_TEXT_PRIMITIVE, text, strlen(text), &diags);
     CHECK(prim != NULL);
@@ -606,7 +613,7 @@ static void test_typed_fields(void) {
 static void test_limits_and_ownership(void) {
     struct mo_buffer text;
     mo_buffer_init(&text, MO_LIMIT_CORE_TEXT_SIZE);
-    CHECK(mo_buffer_append_text(&text, "(core 0.6 "));
+    CHECK(mo_buffer_append_text(&text, "(core 0.7 "));
     for (size_t i = 0; i < MO_LIMIT_CORE_DEPTH - 2; i++)
         CHECK(mo_buffer_append_text(&text, "(list "));
     CHECK(mo_buffer_append_text(&text, "(int)"));
@@ -632,7 +639,7 @@ static void test_limits_and_ownership(void) {
     struct mo_diags diags;
     mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
     CHECK(mo_diags_init(&diags));
-    char input[] = "(core 0.6 (Program () () () \"a\\u{0}b\" (noSource)))";
+    char input[] = "(core 0.7 (Program () () () \"a\\u{0}b\" (noSource)))";
     struct mo_core *program = mo_core_parse(&arena, input, strlen(input), &diags);
     CHECK(program != NULL);
     memset(input, 'x', sizeof input);
@@ -641,7 +648,7 @@ static void test_limits_and_ownership(void) {
         struct mo_buffer out;
         mo_buffer_init(&out, 1000);
         CHECK(mo_core_print(program, &out));
-        const char *expected = "(core 0.6 (Program () () () \"a\\u{0}b\" (noSource)))\n";
+        const char *expected = "(core 0.7 (Program () () () \"a\\u{0}b\" (noSource)))\n";
         CHECK(holds(&out, expected, strlen(expected)));
         mo_buffer_free(&out);
         mo_buffer_init(&out, 20);
