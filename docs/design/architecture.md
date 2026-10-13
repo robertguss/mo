@@ -870,6 +870,9 @@ Nested native
 Text/Char fields are quoted and escape slashes before newly inserted escapes,
 including controls and interpolation markers. Generated parameter metadata
 retains arity with absent source names.
+List Text converts elements in order through a tail join, accumulates converted
+pieces in reverse, then reverses once and joins with `, ` inside square brackets.
+It does not repeatedly concatenate a growing text prefix.
 Derived Order uses the same reservation queue, keyed additionally by ability.
 Tuple/record comparisons inspect parts left to right and continue only on Equal;
 choice comparisons dispatch on both constructors, with different cases ordered

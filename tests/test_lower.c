@@ -898,6 +898,51 @@ static void test_list_order(void) {
     }
 }
 
+static void test_list_text(void) {
+    for (uint32_t count = 0; count <= 2; count += 2) {
+        struct lower_fixture f;
+        lower_fixture_init(&f, "module Main\nfn main() : Int\n"
+                               "if [\"z\", \"a\"].to_text == \"[\\\"z\\\", \\\"a\\\"]\": 53 "
+                               "else: 1\n# \"[]\"\nend\n");
+        const struct mo_source_type *part = &f.text_;
+        struct mo_source_type list = {.kind = MO_SOURCE_NAMED,
+                                      .name = "List",
+                                      .module = UINT32_MAX,
+                                      .count = 1,
+                                      .arguments = &part};
+        uint32_t values[2];
+        for (uint32_t i = 0; i < count; i++)
+            values[i] =
+                lower_fixture_row(&f, MO_S_TEXT, &f.text_, i == 0 ? "\"z\"" : "\"a\"", 0, NULL);
+        uint32_t value = lower_fixture_row(&f, MO_S_LIST, &list, NULL, count, values);
+        struct mo_ability_implementation element = {
+            .ability = MO_SOURCE_TEXT, .kind = MO_ABILITY_NATIVE, .type = &f.text_};
+        const struct mo_ability_implementation *parts[] = {&element};
+        struct mo_ability_implementation proof = {.ability = MO_SOURCE_TEXT,
+                                                  .kind = MO_ABILITY_DERIVED,
+                                                  .type = &list,
+                                                  .part_count = 1,
+                                                  .parts = parts};
+        struct mo_checked_ability_use use = {value, &proof};
+        uint32_t text = lower_fixture_row(&f, MO_S_FIELD_ACCESS, &f.text_, NULL, 1, &value);
+        f.rows[text].native = "to_text";
+        f.rows[text].ability_count = 1;
+        f.rows[text].abilities = &use;
+        uint32_t expected = lower_fixture_row(
+            &f, MO_S_TEXT, &f.text_, count == 0 ? "\"[]\"" : "\"[\\\"z\\\", \\\"a\\\"]\"", 0, NULL);
+        uint32_t eq = lower_fixture_op(&f, MO_T_EQ, &f.bool_, text, expected);
+        uint32_t yes = lower_fixture_row(&f, MO_S_INT, &f.int_, "53", 0, NULL);
+        uint32_t no = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+        uint32_t arms[] = {eq, yes, no};
+        (void)lower_fixture_row(&f, MO_S_IF, &f.int_, NULL, 3, arms);
+        struct mo_core *core =
+            checked(&f, count == 0 ? "list-text-empty" : "list-text", "returned\n53\n");
+        if (core != NULL)
+            run(core, 53);
+        lower_fixture_free(&f);
+    }
+}
+
 static void test_record_text(void) {
     struct lower_fixture f;
     lower_fixture_init(&f, "module Main\nstruct Point\nx: Int\nlabel: Text\nend\n"
@@ -1307,6 +1352,7 @@ int main(int argc, char **argv) {
     test_float_compare();
     test_choice_order();
     test_list_order();
+    test_list_text();
     test_record_text();
     test_text();
     test_result_entry();

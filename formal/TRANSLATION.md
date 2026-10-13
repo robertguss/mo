@@ -1132,6 +1132,10 @@ Each field converts once in declaration order; argument spelling order only
 controls the earlier construction. Empty constructors print their bare names,
 others use `Name(field: value, ...)`, omitting labels for positional fields.
 Nested native Text and Char use source quoting, unlike top-level `to_text`.
+List Text uses a join over the remaining list and a reversed List(Text) of
+converted pieces. Each head converts once before advancing the tail. At
+exhaustion, reverse the pieces, `%text.join` with `, `, and surround with `[`/`]`.
+Nested Text/Char elements are quoted; an empty list prints `[]`.
 
 Derived tuple Order emits one Ordering case per part: Less and Greater return
 immediately, and Equal alone compares the next part. Selected custom Order
