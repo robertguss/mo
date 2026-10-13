@@ -361,7 +361,9 @@ static void control_flow(void) {
         CHECK(item(&f, 3)->children[0]->token == MO_T_MINUS);
         CHECK(item(&f, 4)->children[0]->children[3]->token == MO_T_PERCENT);
         CHECK(item(&f, 12)->children[0]->kind == MO_S_NEGATE);
-        CHECK(item(&f, 13)->children[1]->children[1]->children[0]->trailing != NULL);
+        const struct mo_syntax_comment *comma = item(&f, 13)->children[1]->trailing;
+        CHECK(comma != NULL && comma->anchor == MO_COMMENT_TOKEN && comma->token == MO_T_COMMA &&
+              comma->token_index == 0);
     }
     free_fixture(&f);
     const char *bad[] = {
@@ -392,6 +394,206 @@ static MO_MUST_USE uint32_t comment_spans(const struct fixture *f, const struct 
     for (uint32_t i = 0; i < n->count; i++)
         count += comment_spans(f, n->children[i]);
     return count;
+}
+
+static void inline_anchors(void) {
+    struct fixture f;
+    init(&f, "not # prefix\ntrue\nfn( # open\nx, # comma\ny) # parameters\nx\nend # close\n", true);
+    CHECK(f.module != NULL && !mo_diags_any(&f.diags));
+    if (f.module != NULL && !mo_diags_any(&f.diags)) {
+        const struct mo_syntax *prefix = item(&f, 0)->children[0];
+        const struct mo_syntax *lambda = item(&f, 1)->children[0];
+        CHECK(prefix->trailing != NULL);
+        if (prefix->trailing != NULL) {
+            CHECK(prefix->trailing->token == MO_T_NOT);
+            CHECK(prefix->trailing->token_index == 0);
+        }
+        const enum mo_syntax_token tokens[] = {MO_T_LPAREN, MO_T_COMMA, MO_T_RPAREN, MO_T_END};
+        const struct mo_syntax_comment *c = lambda->trailing;
+        for (size_t i = 0; i < sizeof tokens / sizeof tokens[0]; i++) {
+            CHECK(c != NULL);
+            if (c != NULL) {
+                CHECK(c->anchor == MO_COMMENT_TOKEN && c->token == tokens[i] &&
+                      c->token_index == 0);
+                c = c->next;
+            }
+        }
+        CHECK(c == NULL);
+        CHECK(lambda->children[0]->trailing == NULL);
+    }
+    free_fixture(&f);
+}
+
+static const struct mo_syntax_comment *named_comment(const struct mo_syntax *n, const char *text,
+                                                     const struct mo_syntax **owner_out) {
+    if (n == NULL)
+        return NULL;
+    const struct mo_syntax_comment *lists[] = {n->leading, n->trailing, n->ending};
+    for (size_t i = 0; i < sizeof lists / sizeof lists[0]; i++)
+        for (const struct mo_syntax_comment *c = lists[i]; c != NULL; c = c->next)
+            if (c->span.end - c->span.start == strlen(text) &&
+                memcmp(c->text, text, strlen(text)) == 0) {
+                *owner_out = n;
+                return c;
+            }
+    for (uint32_t i = 0; i < n->count; i++) {
+        const struct mo_syntax_comment *c = named_comment(n->children[i], text, owner_out);
+        if (c != NULL)
+            return c;
+    }
+    return NULL;
+}
+
+static void token_positions(void) {
+    struct fixture f;
+    init(&f,
+         "module A. # dot first\nB. # dot second\nC\n"
+         "fn f(a: Int, b: Bool) where # where\nA: Copy, B: Copy\n"
+         "  examples # examples\n    true\n  end # examples close\n"
+         "  text = \"#{Pair(x: # colon\n1)}\"\n"
+         "  x = # assign\n    not # not\n    true\n"
+         "  y = a + # binary\n    b\n"
+         "  z = a + # chain first\n    b + # chain second\n    c\n"
+         "  xs. # field dot\n    first. # chain dot\n    other( # call open\n    1, 2) # call "
+         "close\n"
+         "  ( # group open\n    1) # group close\n"
+         "  [ # list open\n    1, 2] # list close\n"
+         "  { # map open\n    1: 2} # map close\n"
+         "  map_text = \"#{{1: # map colon\n2}}\"\n"
+         "  if true\n    1\n  else if false\n    2\n  else # else\n    3\n  end # conditional "
+         "close\n"
+         "end # function close\n",
+         false);
+    for (uint32_t i = 0; i < f.diags.count; i++) {
+        struct mo_position p =
+            mo_sources_position(&f.sources, 0, f.diags.items[i].primary.span.start);
+        (void)fprintf(stderr, "token fixture %u:%u E%04u: %s\n", p.line, p.column,
+                      f.diags.items[i].code, f.diags.items[i].message);
+    }
+    CHECK(f.module != NULL && !mo_diags_any(&f.diags));
+    const struct {
+        const char *comment;
+        enum mo_syntax_kind owner;
+        enum mo_syntax_token token;
+        uint32_t index;
+    } cases[] = {
+        {"# dot first", MO_S_MODULE, MO_T_DOT, 0},
+        {"# dot second", MO_S_MODULE, MO_T_DOT, 1},
+        {"# colon", MO_S_NAMED_ARG, MO_T_COLON, 0},
+        {"# where", MO_S_WHERE, MO_T_WHERE, 0},
+        {"# examples", MO_S_EXAMPLES, MO_T_EXAMPLES, 0},
+        {"# examples close", MO_S_EXAMPLES, MO_T_END, 0},
+        {"# assign", MO_S_BIND, MO_T_ASSIGN, 0},
+        {"# not", MO_S_NOT, MO_T_NOT, 0},
+        {"# binary", MO_S_BINARY, MO_T_PLUS, 0},
+        {"# chain first", MO_S_TOKEN, MO_T_PLUS, 0},
+        {"# chain second", MO_S_TOKEN, MO_T_PLUS, 0},
+        {"# field dot", MO_S_FIELD_ACCESS, MO_T_DOT, 0},
+        {"# chain dot", MO_S_FIELD_ACCESS, MO_T_DOT, 0},
+        {"# call open", MO_S_CALL, MO_T_LPAREN, 0},
+        {"# call close", MO_S_CALL, MO_T_RPAREN, 0},
+        {"# group open", MO_S_GROUP, MO_T_LPAREN, 0},
+        {"# group close", MO_S_GROUP, MO_T_RPAREN, 0},
+        {"# list open", MO_S_LIST, MO_T_LBRACK, 0},
+        {"# list close", MO_S_LIST, MO_T_RBRACK, 0},
+        {"# map open", MO_S_MAP, MO_T_LBRACE, 0},
+        {"# map colon", MO_S_MAP_ENTRY, MO_T_COLON, 0},
+        {"# map close", MO_S_MAP, MO_T_RBRACE, 0},
+        {"# else", MO_S_ELSE, MO_T_ELSE, 0},
+        {"# conditional close", MO_S_IF, MO_T_END, 0},
+        {"# function close", MO_S_FN, MO_T_END, 0},
+    };
+    if (f.module != NULL && !mo_diags_any(&f.diags)) {
+        CHECK(comment_spans(&f, f.module->tree) == sizeof cases / sizeof cases[0]);
+        for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+            const struct mo_syntax *owner_node = NULL;
+            const struct mo_syntax_comment *c =
+                named_comment(f.module->tree, cases[i].comment, &owner_node);
+            CHECK(c != NULL);
+            if (c != NULL)
+                CHECK(owner_node->kind == cases[i].owner && c->anchor == MO_COMMENT_TOKEN &&
+                      c->token == cases[i].token && c->token_index == cases[i].index);
+        }
+    }
+    free_fixture(&f);
+}
+
+static bool same_comments(const struct mo_syntax_comment *a, const struct mo_syntax_comment *b) {
+    while (a != NULL && b != NULL) {
+        uint32_t size = a->span.end - a->span.start;
+        if (size != b->span.end - b->span.start || a->documentation != b->documentation ||
+            a->anchor != b->anchor || a->token != b->token || a->token_index != b->token_index ||
+            memcmp(a->text, b->text, size) != 0)
+            return false;
+        a = a->next;
+        b = b->next;
+    }
+    return a == NULL && b == NULL;
+}
+
+static bool same_tree(const struct mo_syntax *a, const struct mo_syntax *b) {
+    if (a == NULL || b == NULL)
+        return a == b;
+    if (a->kind != b->kind || a->count != b->count || a->token != b->token ||
+        a->blank_before != b->blank_before || (a->text == NULL) != (b->text == NULL) ||
+        !same_comments(a->leading, b->leading) || !same_comments(a->trailing, b->trailing) ||
+        !same_comments(a->ending, b->ending))
+        return false;
+    if (a->text != NULL && (a->span.end - a->span.start != b->span.end - b->span.start ||
+                            memcmp(a->text, b->text, a->span.end - a->span.start) != 0))
+        return false;
+    for (uint32_t i = 0; i < a->count; i++)
+        if (!same_tree(a->children[i], b->children[i]))
+            return false;
+    return true;
+}
+
+static void optional_separators(void) {
+    const struct {
+        const char *with, *without;
+    } cases[] = {
+        {"[1, # final\n]\n", "[1 # final\n]\n"},
+        {"f(1, # final\n)\n", "f(1 # final\n)\n"},
+        {"Pair(a: 1, b: 2, # final\n)\n", "Pair(a: 1, b: 2 # final\n)\n"},
+        {"(1, 2, # final\n)\n", "(1, 2 # final\n)\n"},
+        {"{1: 2, # final\n}\n", "{1: 2 # final\n}\n"},
+        {"fn f(x: Int, # final\n)\nend\n", "fn f(x: Int # final\n)\nend\n"},
+        {"enum E\nCase(x: Int, # final\n)\nend\n", "enum E\nCase(x: Int # final\n)\nend\n"},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        struct fixture a, b;
+        init(&a, cases[i].with, true);
+        init(&b, cases[i].without, true);
+        CHECK(a.module != NULL && b.module != NULL && !mo_diags_any(&a.diags) &&
+              !mo_diags_any(&b.diags));
+        if (a.module != NULL && b.module != NULL && !mo_diags_any(&a.diags) &&
+            !mo_diags_any(&b.diags)) {
+            CHECK(same_tree(a.module->tree, b.module->tree));
+            const struct mo_syntax *owner_node;
+            const struct mo_syntax_comment *c =
+                named_comment(a.module->tree, "# final", &owner_node);
+            CHECK(c != NULL && c->anchor == MO_COMMENT_ITEM);
+        }
+        free_fixture(&a);
+        free_fixture(&b);
+    }
+}
+
+static void blank_lines(void) {
+    struct fixture f;
+    init(&f,
+         "\nmodule M\r\n\r\nfn f()\r\n\r\n  x = 1\r\n  # consecutive\r\n"
+         "  y = 2\r\n \t\r\n\r\n  # paragraph\r\n  z = 3\r\n\r\nend\r\n"
+         "fn g()\nend\n",
+         false);
+    CHECK(f.module != NULL && !mo_diags_any(&f.diags));
+    if (f.module != NULL && !mo_diags_any(&f.diags)) {
+        const struct mo_syntax *fn = item(&f, 0), *body = fn->children[5];
+        CHECK(fn->blank_before && !item(&f, 1)->blank_before);
+        CHECK(body->count == 3 && !body->children[0]->blank_before &&
+              !body->children[1]->blank_before && body->children[2]->blank_before);
+    }
+    free_fixture(&f);
 }
 
 static void comments(void) {
@@ -906,6 +1108,10 @@ int main(void) {
     recovery();
     control_flow();
     comments();
+    inline_anchors();
+    token_positions();
+    optional_separators();
+    blank_lines();
     limits();
     review_recovery();
     arena_sweeps();

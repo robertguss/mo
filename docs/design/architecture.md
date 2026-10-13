@@ -149,8 +149,41 @@ contain only names, `_` and commas, so this needs two flags and no stack.
 comment on its own line is attached to the next node at its indentation, or
 to the end of its scope if nothing follows. Blocks and multi-line lists,
 maps, tuples, groups and calls are scopes; a comment before a closing bracket
-stays inside that scope. A comment at the end of a line is attached to that
-line's last node. Formatting is a function of the tree.
+stays inside that scope. These comments use `leading` or `ending` with the
+`OWN_LINE` anchor. A comment at the end of a line uses `trailing` on the
+owner of the last token on that physical line, including tokens such as
+`not`, `(`, a parameter-list `)`, `else`, and `end`. Its `TOKEN` anchor
+records the token kind and its zero-based occurrence among tokens of that
+kind owned directly by the node, excluding child tokens. Leaves own their
+raw token; single operators own their operator; flattened chains use their
+operator-token or postfix-step nodes. A construct owns its keywords and
+delimiters. Collection sequences, binders and expression-statement wrappers
+own no lexical tokens. The final `end` of an `if` belongs to that `if`, not
+to its last else part. No source location is needed to print an anchor.
+
+Optional trailing-comma comments use an `ITEM` boundary anchor on the item
+collection, with the zero-based index of its final item. A comment immediately
+after that item's final token, when the next token is the collection's closing
+delimiter, uses the same anchor. In particular, `[1, # c` followed by `]`
+and `[1 # c` followed by `]` have identical trees: optional trailing commas
+are not part of the tree. This applies to parameters, arguments, named
+fields, tuples, lists and maps wherever the grammar allows a trailing
+comma. Other commas, type-argument and header collections, lambda parameters
+and single unnamed case fields retain their exact `TOKEN` anchors. The printer
+places the comment after the item and after any comma it chooses to print.
+Non-token anchors have token kind `EOF`; own-line anchors have index zero.
+
+Statements and declarations have `blank_before`: one bit recording whether
+an empty physical line occurred since the previous statement or declaration.
+Spaces and tabs on an otherwise empty line count; comment-only lines do not.
+Runs collapse to one blank line, placed before the attached leading comments.
+The first statement of a block has no initial blank line; specification
+blocks and the ordinary function body form one statement sequence for this
+purpose. A module header can precede the first declaration's blank line.
+No end-of-block blank lines are retained. No intra-statement break bits are
+recorded while the width-versus-source layout decision remains pending.
+
+Formatting is a function of the tree.
 Formatting twice changes nothing, and the formatted program's tree equals the
 original's, except for the rewrites the reference names: `x = x + y` becomes
 `x += y` (reference 6.2).
@@ -163,6 +196,12 @@ arena, including literal quotes, escapes and interpolation delimiters. The
 tree does not borrow source storage. Grouping parentheses remain nodes;
 lists, maps, tuples and argument sequences remain distinct. No typing or
 name resolution is done here.
+
+Trivia annotation uses the caller's bounded arena budget for temporary
+indexes. Only files with inline comments need an additional token scan;
+that scan skips allocating comments, indexes token occurrences, and
+normalizes item boundaries. It does not change the parser's acceptance or
+the semantic tree, and all existing checker consumers may ignore trivia.
 
 Children follow the executable grammar's production order with these
 normalizations: a function type has its argument sequence and optional
@@ -236,9 +275,10 @@ proved out-of-domain input need not validate an over-deep pattern.
 budget. Dense generated source can need roughly 100 bytes of arena per
 source byte (about 800 MiB for an 8 MiB source), and some flat chains need
 more; this is an estimate, not a bound. Failure to allocate is E1054, even
-during recovery. Comment attachment uses temporary arena storage for two
-node indexes, bounded by the caller arena's unused budget and freed before
-returning: caller arena plus scratch never exceeds that arena's limit.
+during recovery. Comment attachment uses temporary arena storage for a
+node-start index and sparse inline-token counters, bounded by the caller
+arena's unused budget and freed before returning: caller arena plus scratch
+never exceeds that arena's limit.
 Source storage and diagnostics have their own base-module budgets.
 Reserve at least 2 MiB of C stack for the parser and tree walks. Deep
 255-lambda fixtures need about 256–512 KiB in optimized builds and about

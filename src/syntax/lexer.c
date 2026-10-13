@@ -583,6 +583,12 @@ struct mo_token mo_syntax_next(struct mo_lex *lx) {
             if (!advance(lx))
                 goto bad_gap;
         } else if (c == '#') {
+            if (lx->ignore_comments) {
+                while (peek(lx, 0) != -1 && peek(lx, 0) != 10 && peek(lx, 0) != 13)
+                    if (!advance(lx))
+                        goto bad_gap;
+                continue;
+            }
             struct mo_comment_storage *storage =
                 mo_arena_allocate(lx->arena, sizeof *storage, _Alignof(struct mo_comment_storage));
             if (storage == NULL) {
@@ -590,11 +596,18 @@ struct mo_token mo_syntax_next(struct mo_lex *lx) {
                 token.kind = MO_T_ERROR;
                 return token;
             }
-            storage->previous = lx->last_comment;
+            *storage = (struct mo_comment_storage){.previous = lx->last_comment};
+            if (lx->preceding.kind != MO_T_EOF && lx->preceding_line == lx->line &&
+                lx->preceding.span.end <= lx->pos)
+                storage->preceding = lx->preceding;
             struct mo_syntax_comment *comment = &storage->value;
             *comment = (struct mo_syntax_comment){.span = {lx->file, lx->pos, lx->pos},
                                                   .indentation = lx->column - 1,
-                                                  .documentation = peek(lx, 1) == '#'};
+                                                  .documentation = peek(lx, 1) == '#',
+                                                  .anchor = storage->preceding.kind == MO_T_EOF
+                                                                ? MO_COMMENT_OWN_LINE
+                                                                : MO_COMMENT_TOKEN,
+                                                  .token = storage->preceding.kind};
             while (peek(lx, 0) != -1 && peek(lx, 0) != 10 && peek(lx, 0) != 13)
                 if (!advance(lx))
                     goto bad_gap;
@@ -669,6 +682,10 @@ scanned:
         (lx->lambda_parameters &&
          (token.kind == MO_T_NAME || token.kind == MO_T_UNDERSCORE || token.kind == MO_T_COMMA));
     token.span.end = lx->pos;
+    if (token.kind != MO_T_EOF && token.kind != MO_T_ERROR) {
+        lx->preceding = token;
+        lx->preceding_line = lx->line;
+    }
     if (token.kind == MO_T_EOF && depth > 0) {
         (void)lex_error(lx, MO_CODE_SOURCE_TEXT, "an interpolation is closed with }");
         token.kind = MO_T_ERROR;
