@@ -18,6 +18,25 @@ static MO_MUST_USE bool charge(size_t *work, size_t amount) {
     *work += amount;
     return true;
 }
+/* Predict coefficient work before allocating scratch. For power-of-two n, multiply costs
+ * 2n+n² at a leaf and 5n+3M(n/2) otherwise. Output-byte work depends on the magnitude and
+ * stays charged at emission; no acceptable input is refused by a pessimistic limb count. */
+static MO_MUST_USE bool fits_work(size_t chunks, size_t work) {
+    if (!charge(&work, 2 * chunks)) /* initial zeroing and final high-limb scan */
+        return false;
+    size_t multiplication = 3; /* M(1) */
+    for (size_t stride = 1; stride < chunks; stride *= 2) {
+        size_t groups = chunks / (2 * stride), cost = multiplication + 3 * stride;
+        if (cost > (MO_LIMIT_CODEGEN_BIGINT_WORK - work) / groups || !charge(&work, groups * cost))
+            return false;
+        if (2 * stride < chunks && !charge(&work, multiplication + 4 * stride))
+            return false;
+        /* multiplication cannot have exceeded the work ceiling on a passing iteration. */
+        multiplication = stride < MULTIPLY_LEAF ? 4 * stride + 4 * stride * stride
+                                                : 10 * stride + 3 * multiplication;
+    }
+    return true;
+}
 struct frame {
     const mo_i128 *a, *b;
     mo_i128 *out, *scratch;
@@ -106,6 +125,8 @@ enum mo_codegen_bigint_problem mo_codegen_bigint(struct mo_arena *arena, mo_core
     while (chunks < (length + 8) / 9)
         chunks *= 2;
     MO_ASSERT(chunks <= (1u << 20));
+    if (!fits_work(chunks, *work))
+        return MO_CODEGEN_BIGINT_LIMIT;
     struct mo_arena temporary;
     mo_arena_init(&temporary, 9 * chunks * sizeof(mo_i128) + MO_ARENA_CHUNK_HEADER);
     mo_i128 *storage =
