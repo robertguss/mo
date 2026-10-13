@@ -13,8 +13,11 @@ static void source_specs(void *argument) {
     const struct source_input *input = argument;
     struct mo_buffer text;
     mo_buffer_init(&text, 4096);
+    MO_ASSERT(mo_buffer_append_text(&text, "module Main\ncomputed = source + 1\nsource = "));
+    MO_ASSERT(mo_buffer_append_uint(&text, input->size == 0 ? 0 : input->bytes[0]));
     MO_ASSERT(mo_buffer_append_text(
-        &text, "module Main\nfn pair(left: Z, right: A) : (Z, A) "
+        &text, "\nreader = fn() Some(try Some(1)) end\n"
+               "fn pair(left: Z, right: A) : (Z, A) "
                "where Z: Number, Z: Equal, A: Equal\n"
                "promise \"scoped requirements\"\nresult.0 == left + left\nresult.1 == right\n"));
     size_t count = input->size < 4 ? input->size : 4;
@@ -34,7 +37,9 @@ static void source_specs(void *argument) {
     }
     MO_ASSERT(mo_buffer_append_text(&text, "end\n(left + left, right)\nend\n"
                                            "test \"late concrete use\"\n"
-                                           "assert pair(3, false) == (6, false)\nend\n"
+                                           "assert pair(3, false) == (6, false)\n"
+                                           "assert computed == source + 1\n"
+                                           "assert (reader() or 9) == 1\nend\n"
                                            "fn main() : Int\n17\nend\n"));
     struct mo_arena frontend, output;
     struct mo_sources sources;

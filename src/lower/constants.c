@@ -35,8 +35,22 @@ static int name_order(const void *a, const void *b) {
     return order != 0 ? order : (x.length > y.length) - (x.length < y.length);
 }
 
+struct global {
+    mo_core_string name;
+    uint32_t index;
+};
+
+static int global_order(const void *a, const void *b) {
+    const struct global *left = a, *right = b;
+    mo_core_string x = left->name, y = right->name;
+    size_t length = x.length < y.length ? x.length : y.length;
+    int order = memcmp(x.bytes, y.bytes, length);
+    return order != 0 ? order : (x.length > y.length) - (x.length < y.length);
+}
+
 struct prefix_walk {
     struct instance **index, **queue;
+    struct global *globals;
     bool *queued;
     uint32_t head, tail, count;
     struct frame {
@@ -53,6 +67,25 @@ static void restrict_calls(struct lowering *p, struct prefix_walk *w, mo_core_ex
         lower_work(p, 1);
         struct frame *frame = &w->stack[depth - 1];
         mo_core_expr e = frame->expr;
+        if (frame->child == 0 && e->tag == MO_CORE_EXPR_GLOBAL) {
+            uint32_t lo = 0, hi = p->program->constant_count;
+            struct global key = {.name = e->as.global};
+            while (lo < hi) {
+                lower_work(p, 1 + e->as.global.length);
+                uint32_t mid = lo + (hi - lo) / 2;
+                if (global_order(&w->globals[mid], &key) < 0)
+                    lo = mid + 1;
+                else
+                    hi = mid;
+            }
+            MO_ASSERT(lo < p->program->constant_count &&
+                      lower_same(w->globals[lo].name, e->as.global));
+            if (w->globals[lo].index >= prefix) {
+                p->span = ((struct lower_node *)e)->span.value;
+                lower_refuse(p, MO_CODE_LOWER_UNFINISHED,
+                             "this constant's deferred function needs globals not yet initialized");
+            }
+        }
         if (frame->child == 0 && e->tag == MO_CORE_EXPR_CALL) {
             uint32_t lo = 0, hi = p->function_count;
             struct instance key = {.fun.name = e->as.call.name}, *pointer = &key;
@@ -95,8 +128,15 @@ void lower_constant_prefixes(struct lowering *p) {
         return;
     struct prefix_walk w = {.index = LOWER_NEW(p, struct instance *, p->function_count),
                             .queue = LOWER_NEW(p, struct instance *, p->function_count),
+                            .globals = LOWER_NEW(p, struct global, count),
                             .queued = LOWER_NEW(p, bool, p->function_count),
                             .stack = LOWER_NEW(p, struct frame, MO_LIMIT_CORE_DEPTH)};
+    for (uint32_t i = 0; i < count; i++) {
+        w.globals[i] = (struct global){p->constants.items[i].name, i};
+        for (uint32_t n = count; n != 0; n /= 2)
+            lower_work(p, 1 + w.globals[i].name.length);
+    }
+    qsort(w.globals, count, sizeof *w.globals, global_order);
     for (struct instance *f = p->functions; f != NULL; f = f->next) {
         lower_work(p, 1);
         f->const_prefix = count;

@@ -1560,8 +1560,7 @@ static void row_task(struct body *b, struct task t) {
         finish(b, e, t.state, t.continuation, t.out);
         return;
     }
-    if (r->operand_count == 0 && r->symbol != NULL &&
-        r->symbol->declaration->kind == MO_S_CONST) {
+    if (r->operand_count == 0 && r->symbol != NULL && r->symbol->declaration->kind == MO_S_CONST) {
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_GLOBAL);
         e->as.global = lower_global_name(p, r->symbol);
         finish(b, e, t.state, t.continuation, t.out);

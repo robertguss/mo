@@ -1861,17 +1861,33 @@ static void test_source_constants(void *unused) {
     mo_arena_init(&output, MO_LIMIT_LOWER_WORK);
     MO_ASSERT(mo_diags_init(&diags));
     mo_buffer_init(&source, MO_LIMIT_FILE_SIZE);
-    MO_ASSERT(mo_buffer_append_text(
-        &source, "module Main\nbase = 13\nhandler = first\nanswer = handler()\n"
-                 "reader = fn() Some(try Some(1)) end\n"
-                 "fn first() : Int\nbase\nend\n"
-                 "fn main() : Int\nanswer + (reader() or 7)\nend\n"));
+    MO_ASSERT(mo_buffer_append_text(&source,
+                                    "module Main\nbase = 13\nhandler = first\nanswer = handler()\n"
+                                    "reader = fn() Some(try Some(1)) end\n"
+                                    "fn first() : Int\nbase\nend\n"
+                                    "fn main() : Int\nanswer + (reader() or 7)\nend\n"));
     struct mo_core *core = source_core(&output, &source, &diags);
     CHECK(core != NULL && !mo_diags_any(&diags));
     if (core != NULL)
         run(core, 14);
     mo_arena_free(&output);
     mo_diags_free(&diags);
+    const char *deferred[] = {
+        "handler = fn() base end\nbase = 13\nfn main() : Int\nhandler() + 24\nend\n",
+        ("answer = handler()\nhandler = first\nbase = 13\n"
+         "fn first() : Int\nbase\nend\nfn main() : Int\nanswer + 24\nend\n"),
+        "handler = first\nfn first() : Int\nhandler()\nend\nfn main() : Int\n17\nend\n"};
+    for (size_t i = 0; i < sizeof deferred / sizeof deferred[0]; i++) {
+        mo_arena_init(&output, MO_LIMIT_LOWER_WORK);
+        MO_ASSERT(mo_diags_init(&diags));
+        mo_buffer_clear(&source);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\n") &&
+                  mo_buffer_append_text(&source, deferred[i]));
+        core = source_core(&output, &source, &diags);
+        CHECK(core == NULL && diags.count == 1 && diags.items[0].code == MO_CODE_LOWER_UNFINISHED);
+        mo_arena_free(&output);
+        mo_diags_free(&diags);
+    }
     mo_buffer_free(&source);
 }
 

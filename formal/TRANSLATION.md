@@ -1252,6 +1252,15 @@ function-value adapters, including calls nested in closures. Initializers are
 ConstDecl bodies, not duplicate ordinary functions; codegen emits their `.init`
 functions. Constant metadata carries source-order ownership and full body spans
 independently of the dependency-ordered Core declarations.
+Calls through constant function values translate to `app (global name) args`;
+only leaf reads translate to `global name`. Core lambdas retain the prefix at
+creation, even when their bodies are not executed during initialization. The
+current C lowerer refuses E1150 if an initializer's deferred lambda or named
+function adapter needs a global outside that prefix. A bounded name index and
+the existing call work queue detect this before returning Core. The checked
+constant order remains unchanged: constructing a function does not acquire a
+false execution dependency. Supporting these later-global closures needs a
+separate representation decision, not a change to the producer's dependency walk.
 
 ```mo
 max_attempts = 3

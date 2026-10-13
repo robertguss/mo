@@ -140,6 +140,30 @@ CASES = {
                              "n = try value\nOk(n.to_text)\nend\n"
                              "fn main() : Int\ncase lift(Error(9))\n"
                              "Error(Some(n)): n + 80\nError(None): 2\nOk(_): 1\nend\nend", 89),
+    "constant_diamond": ("answer = left + right\nleft = base * 2\nright = base + 19\n"
+                         "base = 13\nfn main() : Int\nanswer\nend", 58),
+    "constant_mutual_calls": ("answer = first(4)\nbase = 13\n"
+                              "fn first(n: Int) : Int\nif n == 0: base else: second(n - 1)\nend\n"
+                              "fn second(n: Int) : Int\nfirst(n)\nend\n"
+                              "fn main() : Int\nanswer + 24\nend", 37),
+    "constant_function_calls": ("base = 13\nhandler = first\nanswer = handler()\n"
+                                "reader = fn() Some(try Some(1)) end\n"
+                                "fn first() : Int\nbase\nend\n"
+                                "fn main() : Int\nanswer + (reader() or 7)\nend", 14),
+    "constant_unused_requirement": ("answer = ignore(Label(value: 3))\nstruct Label\nvalue: Int\nend\n"
+                                    "fn to_text(_label: Label) : Text\nanswer.to_text\nend\n"
+                                    "fn ignore(_value: T) : Int where T: Text\n42\nend\n"
+                                    "fn main() : Int\nanswer\nend", 42),
+    "constant_custom_text": ("answer = render()\nbase = \"label\"\nstruct Label\nvalue: Int\nend\n"
+                             "fn to_text(label: Label) : Text\n\"#{base}#{label.value}\"\nend\n"
+                             "fn render() : Text\n\"#{(Label(value: 3), [Label(value: 4)])}\"\nend\n"
+                             "fn main() : Int\nif answer == \"(label3, [label4])\": 37 else: 1\nend", 37),
+    "constant_custom_order": ("answer = Label(value: 3) < Label(value: 4)\nbase = Less\n"
+                              "struct Label\nvalue: Int\nend\n"
+                              "fn compare(_a: Label, _b: Label) : Ordering\nbase\nend\n"
+                              "fn main() : Int\nif answer: 43 else: 1\nend", 43),
+    "constant_chain": ("\n".join(f"c{i} = c{i + 1} + 1" for i in range(64)) +
+                       "\nc64 = 3\nfn main() : Int\nc0\nend", 67),
 }
 
 SPEC_CASES = {
@@ -256,6 +280,38 @@ SPEC_CASES = {
                              "Main::Main.keep(Int).promise.1.forbids.1": ["returned", "1"],
                              "Main::Main.keep(Int).promise.2.forbids.1": ["returned", "1"],
                          }),
+    "constant_specs": ("total = twice(seed)\nseed = 7\n"
+                       "fn twice(value: T) : T where T: Number, T: Equal\nexamples\n"
+                       "twice(seed) == total\nend\npromise \"doubles its input\"\n"
+                       "result == value + value\nallows value: 3, result: 6\n"
+                       "forbids result: 5, value: 3\nend\nvalue + value\nend\n"
+                       "test \"initialized before specs\"\nassert total == 14\nend\n"
+                       "fn main() : Int\ntotal\nend", {
+                           None: ["returned", "14"],
+                           "Main.twice.example.1": ["returned", "Unit"],
+                           "Main::Main.twice(Int).promise.1.allows.1": ["returned", "0"],
+                           "Main::Main.twice(Int).promise.1.forbids.1": ["returned", "1"],
+                           "Main.test.1": ["returned", "Unit"],
+                       }),
+    "constant_stop": ("unused = crash()\nfn crash() : Int\nstop \"unused initializer\"\nend\n"
+                      "test \"not reached\"\nassert false\nend\nfn main() : Int\n17\nend", {
+                          None: ["stopped", "unused initializer"],
+                          "Main.test.1": ["stopped", "unused initializer"],
+                      }),
+    "constant_ready_order": ("pending = later + fail_late()\nfirst = fail_first()\nlater = 13\n"
+                             "fn fail_late() : Int\nstop \"dependent\"\nend\n"
+                             "fn fail_first() : Int\nstop \"ready first\"\nend\n"
+                             "fn main() : Int\npending\nend", {
+                                 None: ["stopped", "ready first"],
+                             }),
+}
+
+REFUSALS = {
+    "deferred_lambda": "handler = fn() base end\nbase = 13\nfn main() : Int\nhandler() + 24\nend",
+    "deferred_alias": "answer = handler()\nhandler = first\nbase = 13\n"
+                      "fn first() : Int\nbase\nend\nfn main() : Int\nanswer + 24\nend",
+    "deferred_self_alias": "handler = first\nfn first() : Int\nhandler()\nend\nfn main() : Int\n17\nend",
+    "native_abs": "answer = handler(-7)\nhandler = Int.abs\nfn main() : Int\nanswer + 30\nend",
 }
 
 for count in (4, 8, 16):
@@ -379,6 +435,13 @@ def main():
                 assert actual == expected, (name, expected, actual)
                 matched += 1
         check_specs(driver, vm, root, world)
+        for name, body in REFUSALS.items():
+            source = root / "main.mo"
+            source.write_text("module Main\n" + body + "\n")
+            result = subprocess.run([str(driver), str(source)], capture_output=True,
+                                    text=True, timeout=30)
+            assert result.returncode == 1 and result.stdout == "" and result.stderr.startswith("E1150:"), (name, result)
+        print(f"lower source: {len(REFUSALS)} explicit deferred-global/native refusals")
         for path in sorted(pathlib.Path("examples").glob("*.mo")):
             result = subprocess.run([str(driver), str(path.resolve())], capture_output=True,
                                     text=True, timeout=30)
