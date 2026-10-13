@@ -94,14 +94,18 @@ struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *
             return NULL;
     }
     if (main != UINT32_MAX && functions[main].parameter_count != 0) {
-        bool kept = report(diags, MO_CODE_CHECK_UNFINISHED,
-                           functions[main].signature->function->declaration->span,
-                           "main capability parameters are not implemented", NULL);
-        (void)kept;
-        return NULL;
+        const struct mo_source_type *type = functions[main].parameters[0]->type;
+        if (functions[main].parameter_count != 1 || type->kind != MO_SOURCE_NAMED ||
+            type->module != UINT32_MAX || strcmp(type->name, "Console") != 0) {
+            bool kept = report(diags, MO_CODE_CHECK_UNFINISHED,
+                               functions[main].signature->function->declaration->span,
+                               "this main capability convention is not implemented", NULL);
+            (void)kept;
+            return NULL;
+        }
     }
-    const struct mo_source_type *result =
-        main == UINT32_MAX ? NULL : functions[main].signature->type->arguments[0];
+    const struct mo_source_type *type = main == UINT32_MAX ? NULL : functions[main].signature->type;
+    const struct mo_source_type *result = type == NULL ? NULL : type->arguments[type->count - 1];
     bool unit = result != NULL && result->kind == MO_SOURCE_NAMED && result->module == UINT32_MAX &&
                 strcmp(result->name, "Unit") == 0;
     bool status = result != NULL && result->kind == MO_SOURCE_NAMED &&
@@ -116,12 +120,14 @@ struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *
         (void)kept;
         return NULL;
     }
-    *program = (struct mo_program){
-        .set = set,
-        .interfaces = interfaces,
-        .signatures = signatures,
-        .function_count = signatures->count,
-        .functions = functions,
-        .entry = {.function = main, .result = unit ? MO_ENTRY_UNIT : MO_ENTRY_STATUS}};
+    *program = (struct mo_program){.set = set,
+                                   .interfaces = interfaces,
+                                   .signatures = signatures,
+                                   .function_count = signatures->count,
+                                   .functions = functions,
+                                   .entry = {.function = main,
+                                             .result = unit ? MO_ENTRY_UNIT : MO_ENTRY_STATUS,
+                                             .capability_count = functions[main].parameter_count,
+                                             .capabilities = functions[main].parameters}};
     return program;
 }

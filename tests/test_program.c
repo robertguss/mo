@@ -6,26 +6,46 @@
 
 #include <string.h>
 
-static void entry_graph(void) {
+struct fixture {
     struct mo_arena syntax, arena;
     struct mo_sources sources;
     struct mo_diags diags;
-    mo_arena_init(&syntax, 1 << 20);
-    mo_arena_init(&arena, 4 << 20);
-    MO_ASSERT(mo_sources_init(&sources) && mo_diags_init(&diags));
-    const char *text = "module Main\nfn identity(value: Int) : Int\n"
-                       "var copy = value\ncopy = 42\ncopy\nend\n"
-                       "fn main() : Int\nidentity(7 + 12 * 3 - 1)\nend\n";
+    struct mo_module_syntax *module;
+    uint32_t order, *uses;
+    struct mo_module_set set;
+    struct mo_program *program;
+};
+
+static void init(struct fixture *f, const char *text) {
+    *f = (struct fixture){0};
+    mo_arena_init(&f->syntax, 1 << 20);
+    mo_arena_init(&f->arena, 4 << 20);
+    MO_ASSERT(mo_sources_init(&f->sources) && mo_diags_init(&f->diags));
     uint32_t file;
     struct mo_source_error error;
-    MO_ASSERT(mo_sources_add_bytes(&sources, "main.mo", (const uint8_t *)text, strlen(text), &file,
-                                   &error));
-    struct mo_module_syntax *module = mo_parse(&syntax, &sources, file, &diags);
-    MO_ASSERT(module != NULL && !mo_diags_any(&diags));
-    uint32_t order[] = {0}, *uses[] = {NULL};
-    struct mo_module_set set = {.count = 1, .modules = &module, .order = order, .uses = uses};
-    struct mo_program *program = mo_check(&arena, &set, &diags);
-    CHECK(program != NULL && !mo_diags_any(&diags));
+    MO_ASSERT(mo_sources_add_bytes(&f->sources, "main.mo", (const uint8_t *)text, strlen(text),
+                                   &file, &error));
+    f->module = mo_parse(&f->syntax, &f->sources, file, &f->diags);
+    MO_ASSERT(f->module != NULL && !mo_diags_any(&f->diags));
+    f->set = (struct mo_module_set){
+        .count = 1, .modules = &f->module, .order = &f->order, .uses = &f->uses};
+    f->program = mo_check(&f->arena, &f->set, &f->diags);
+}
+
+static void free_fixture(struct fixture *f) {
+    mo_arena_free(&f->arena);
+    mo_arena_free(&f->syntax);
+    mo_diags_free(&f->diags);
+    mo_sources_free(&f->sources);
+}
+
+static void entry_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn identity(value: Int) : Int\n"
+             "var copy = value\ncopy = 42\ncopy\nend\n"
+             "fn main() : Int\nidentity(7 + 12 * 3 - 1)\nend\n");
+    const struct mo_program *program = f.program;
+    CHECK(program != NULL && !mo_diags_any(&f.diags));
     if (program != NULL) {
         CHECK(program->function_count == 2);
         CHECK(program->entry.function == 1 && program->entry.result == MO_ENTRY_STATUS);
@@ -104,15 +124,46 @@ static void entry_graph(void) {
         }
         CHECK(found && called && operators == 3);
     }
-    mo_arena_free(&arena);
-    mo_arena_free(&syntax);
-    mo_diags_free(&diags);
-    mo_sources_free(&sources);
+    free_fixture(&f);
+}
+
+static void console_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn main(console: Console)\nconsole.print(\"hello\")\nend\n");
+    const struct mo_program *program = f.program;
+    CHECK(program != NULL && !mo_diags_any(&f.diags));
+    if (program != NULL) {
+        CHECK(program->entry.result == MO_ENTRY_UNIT);
+        CHECK(program->entry.capability_count == 1);
+        const struct mo_checked_function *main = &program->functions[program->entry.function];
+        MO_ASSERT(main->parameter_count == 1 && program->entry.capability_count == 1);
+        CHECK(program->entry.capabilities[0] == main->parameters[0]);
+        CHECK(strcmp(main->parameters[0]->type->name, "Console") == 0);
+        bool printed = false;
+        for (uint32_t i = 0; i < main->body.count; i++) {
+            const struct mo_checked_expression *row = &main->body.items[i];
+            if (row->native == NULL)
+                continue;
+            CHECK(strcmp(row->native, "Console.print") == 0);
+            MO_ASSERT(row->operand_count == 2 && row->operands[0] < i && row->operands[1] < i);
+            CHECK(row->receiver == row->operands[0]);
+            CHECK(main->body.items[row->receiver].binding == main->parameters[0]);
+            const struct mo_checked_expression *text = &main->body.items[row->operands[1]];
+            CHECK(text->syntax->kind == MO_S_TEXT);
+            CHECK(text->syntax->span.end - text->syntax->span.start == 7);
+            CHECK(memcmp(text->syntax->text, "\"hello\"", 7) == 0);
+            CHECK(strcmp(row->type->name, "Unit") == 0);
+            printed = true;
+        }
+        CHECK(printed);
+    }
+    free_fixture(&f);
 }
 
 static void run(void *argument) {
     (void)argument;
     entry_graph();
+    console_graph();
 }
 
 int main(void) {

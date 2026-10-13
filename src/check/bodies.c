@@ -9,6 +9,19 @@
 #include <stdio.h>
 #include <string.h>
 
+enum host_operation {
+#define HOSTOP(id, module, name, signature, params, bugs, spec_only) HOST_##id,
+#include "base/hostops.def"
+};
+
+static const struct host_signature {
+    const char *module, *name, *qualified, *type;
+} host_signatures[] = {
+#define HOSTOP(id, module, name, signature, params, bugs, spec_only)                               \
+    {module, name, module "." name, signature},
+#include "base/hostops.def"
+};
+
 enum numeric { INT = 1, BIG = 2, BYTE = 4, DECIMAL = 8, FLOAT = 16 };
 
 struct term {
@@ -1347,6 +1360,64 @@ static MO_MUST_USE struct value call(struct inference *p, struct value callee,
     return result;
 }
 
+/* This first host slice accepts a direct Console.print call, not a bound
+ * method value. Its named parameter types come from the shared host table. */
+static MO_MUST_USE struct value console_print(struct inference *p, const struct mo_syntax *node) {
+    const struct host_signature *host = &host_signatures[HOST_CONSOLE_PRINT];
+    if (node->count != 3 || node->children[1]->kind != MO_S_FIELD_ACCESS ||
+        node->children[2]->kind != MO_S_CALL ||
+        compare_text(node->children[1]->children[0], host->name) != 0) {
+        bool reported = unfinished(p);
+        (void)reported;
+        return (struct value){0};
+    }
+    struct value receiver = infer(p, node->children[0], NULL);
+    if (receiver.type == NULL)
+        return receiver;
+    if (!named(receiver.type, host->module)) {
+        bool reported = unfinished(p);
+        (void)reported;
+        return (struct value){0};
+    }
+    const struct mo_syntax *args = node->children[2]->children[0];
+    if (args->count != 1 || args->children[0]->kind == MO_S_NAMED_ARG) {
+        bool reported = problem(
+            p, MO_CODE_CALL_ARGUMENTS, node->span, "a call's arguments don't match its parameters",
+            "A function takes every argument by position (reference 5.2).", NULL);
+        (void)reported;
+        return (struct value){0};
+    }
+    /* The selected table row has two plain named inputs and no written result.
+     * Composite signatures are left to the complete native-interface stage. */
+    const char *start = strchr(host->type, ',');
+    MO_ASSERT(start != NULL && start[1] == ' ');
+    start += 2;
+    const char *end = strchr(start, ')');
+    MO_ASSERT(end != NULL && end[1] == '\0');
+    size_t length = (size_t)(end - start);
+    char *name = allocate(p, length + 1, 1, 1);
+    if (name == NULL)
+        return (struct value){0};
+    memcpy(name, start, length);
+    name[length] = '\0';
+    struct term *text = native(p, name, 0);
+    struct value argument = text == NULL
+                                ? (struct value){0}
+                                : infer_as(p, args->children[0], text, MO_CODE_ARGUMENT_TYPE);
+    if (argument.type == NULL)
+        return argument;
+    struct value out = graph(
+        p, (struct value){.type = native(p, "Unit", 0), .never = receiver.never || argument.never},
+        2);
+    if (out.type != NULL) {
+        out.graph->output.native = host->qualified;
+        out.graph->output.receiver = 0; /* operand slot until graph finalization */
+        out.graph->operands[0] = receiver.note;
+        out.graph->operands[1] = argument.note;
+    }
+    return out;
+}
+
 static MO_MUST_USE struct value condition(struct inference *p, const struct mo_syntax *node,
                                           bool keep);
 
@@ -2062,6 +2133,8 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     case MO_S_POSITION:
         return position(p, infer(p, node->children[0], NULL), node->children[1]);
     case MO_S_POSTFIX: {
+        if (p->checked)
+            return console_print(p, node);
         bool qualified = node->children[0]->kind == MO_S_CAPNAME &&
                          (node->children[1]->kind == MO_S_FIELD_ACCESS ||
                           node->children[1]->kind == MO_S_QUALIFIED);
@@ -2397,7 +2470,7 @@ static MO_MUST_USE struct value infer(struct inference *p, const struct mo_synta
         node->kind != MO_S_FALSE && node->kind != MO_S_NAME && node->kind != MO_S_VAR &&
         node->kind != MO_S_BIND && node->kind != MO_S_BINARY && node->kind != MO_S_BINARY_CHAIN &&
         node->kind != MO_S_RANGE && node->kind != MO_S_NEGATE && node->kind != MO_S_NOT &&
-        node->kind != MO_S_PREFIX && node->kind != MO_S_CALL) {
+        node->kind != MO_S_PREFIX && node->kind != MO_S_CALL && node->kind != MO_S_POSTFIX) {
         bool reported = unfinished(p);
         (void)reported;
         p->depth--;
@@ -2882,6 +2955,10 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
             rows[n->index].type = n->output.type;
             rows[n->index].operands = operands;
             rows[n->index].never = n->output.never;
+            if (g->output.receiver != UINT32_MAX) {
+                MO_ASSERT(g->output.receiver < g->output.operand_count);
+                rows[n->index].receiver = operands[g->output.receiver];
+            }
             enum mo_syntax_kind kind = n->output.syntax->kind;
             if (kind == MO_S_NAME || kind == MO_S_VAR || kind == MO_S_BIND) {
                 rows[n->index].symbol = n->output.symbol;
