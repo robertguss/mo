@@ -222,6 +222,73 @@ static void native_graph(void) {
     free_fixture(&f);
 }
 
+static void interpolation_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn render(value: T) : Text where T: Text\n"
+             "\"a #{value} b #{true} c\"\nend\nfn main() : Int\nrender(7).byte_count\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        bool found = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            CHECK(row->syntax->kind != MO_S_TOKEN);
+            if (row->syntax->kind != MO_S_TEXT_INTERPOLATED)
+                continue;
+            MO_ASSERT(row->operand_count == 2 && row->ability_count == 2);
+            CHECK(row->syntax->count == 5 && strcmp(row->type->name, "Text") == 0);
+            CHECK(body->items[row->operands[0]].binding == f.program->functions[0].parameters[0]);
+            CHECK(body->items[row->operands[1]].syntax->kind == MO_S_TRUE);
+            for (uint32_t j = 0; j < 2; j++) {
+                CHECK(row->abilities[j].operand == row->operands[j]);
+                CHECK(row->abilities[j].parameter == NULL);
+                CHECK(row->abilities[j].implementation->ability == MO_SOURCE_TEXT);
+            }
+            CHECK(row->abilities[0].implementation->kind == MO_ABILITY_PARAMETER);
+            CHECK(row->abilities[1].implementation->kind == MO_ABILITY_NATIVE);
+            found = true;
+        }
+        CHECK(found);
+    }
+    free_fixture(&f);
+}
+
+static void ability_dot_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nstruct Box(T)\nvalue: T\nend\n"
+             "fn to_text(box: Box(T)) : Text where T: Text\n\"#{box.value}\"\nend\n"
+             "fn show(x: T) : Text where T: Text\nx.to_text\nend\n"
+             "fn order(a: T, b: T) : Ordering where T: Order\na.compare(b)\nend\n"
+             "fn main() : Int\nassert order(1, 2) == Less\n"
+             "show(Box(value: 7)).byte_count + (true, 3).to_text.byte_count\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        uint32_t conversions = 0, comparisons = 0;
+        for (uint32_t j = 0; j < f.program->function_count; j++) {
+            const struct mo_checked_body *body = &f.program->functions[j].body;
+            for (uint32_t i = 0; i < body->count; i++) {
+                const struct mo_checked_expression *row = &body->items[i];
+                if (row->native == NULL ||
+                    (strcmp(row->native, "to_text") != 0 && strcmp(row->native, "compare") != 0))
+                    continue;
+                bool text = strcmp(row->native, "to_text") == 0;
+                MO_ASSERT(row->ability_count == 1 && row->operand_count == (text ? 1u : 2u));
+                CHECK(row->receiver == row->operands[0] && row->symbol == NULL);
+                CHECK(row->abilities[0].operand == row->receiver);
+                CHECK(row->abilities[0].implementation->ability ==
+                      (text ? MO_SOURCE_TEXT : MO_SOURCE_ORDER));
+                CHECK(strcmp(row->type->name, text ? "Text" : "Ordering") == 0);
+                if (text)
+                    conversions++;
+                else
+                    comparisons++;
+            }
+        }
+        CHECK(conversions == 2 && comparisons == 1);
+    }
+    free_fixture(&f);
+}
+
 static void entry_record(void) {
     struct fixture f;
     init(&f, "module Main\nfn describe(entry: Entry) : Text\n"
@@ -881,6 +948,9 @@ static void rejected_stages(void) {
          MO_CODE_ABILITY_REQUIREMENT},
         {"fn main() : Int where Q: Equal\n0\nend\n", MO_CODE_ABILITY_REQUIREMENT},
         {"fn main() : Int where Int: Number\n0\nend\n", MO_CODE_ABILITY_REQUIREMENT},
+        {"fn helper(c: Console) : Text\n\"#{c}\"\nend\nfn main()\nend\n", MO_CODE_ABILITY_MISSING},
+        {"fn helper(bytes: Bytes) : Text\n\"#{bytes}\"\nend\nfn main()\nend\n",
+         MO_CODE_ABILITY_MISSING},
         {"fn helper(_x: Set(Float))\nend\nfn main()\nend\n", MO_CODE_ABILITY_MISSING},
         {"fn helper(_x: Map(Float, Int))\nend\nfn main()\nend\n", MO_CODE_ABILITY_MISSING},
         {"fn helper(_x: Set(fn(Int) : Int))\nend\nfn main()\nend\n", MO_CODE_ABILITY_MISSING},
@@ -1021,6 +1091,8 @@ static void run(void *argument) {
     entry_graph();
     console_graph();
     native_graph();
+    interpolation_graph();
+    ability_dot_graph();
     entry_record();
     ability_graph();
     generic_graph();
