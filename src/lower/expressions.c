@@ -43,7 +43,7 @@ struct continuation {
     mo_core_ty position_type;
     const struct mo_checked_pattern *pattern;
 };
-enum task_kind { TASK_ROW, TASK_FINISH, TASK_CONDITION, TASK_PATTERN, TASK_COPY };
+enum task_kind { TASK_ROW, TASK_FINISH, TASK_CONDITION, TASK_PATTERN, TASK_ARM, TASK_COPY };
 struct task {
     enum task_kind kind;
     struct task *next;
@@ -52,6 +52,7 @@ struct task {
     struct continuation *continuation;
     mo_core_expr *out, *success, value, then_, else_;
     const struct mo_checked_pattern *pattern;
+    const struct mo_checked_arm *arm;
 };
 struct body {
     struct lowering *p;
@@ -411,6 +412,173 @@ static struct variable *pattern_variables(struct body *b, const struct mo_checke
     return outer;
 }
 
+/* Only condition-introduced names read by the target cross its join. Outer
+ * immutable names remain lexical; live vars cross explicitly. Canonical
+ * binders are unique, so a name introduced here cannot be local to the target. */
+static struct variable *condition_variables(struct body *b, uint32_t index, mo_core_expr target,
+                                            struct variable *outer) {
+    struct variable *candidates = outer;
+    uint32_t *rows = LOWER_NEW(b->p, uint32_t, b->source->count);
+    size_t count = 1;
+    rows[0] = index;
+    while (count != 0) {
+        lower_work(b->p, 1);
+        const struct mo_checked_expression *r = row(b, rows[--count]);
+        if (r->pattern != NULL)
+            candidates = pattern_variables(b, r->pattern, candidates);
+        if (r->operation == MO_T_AND || r->operation == MO_T_OR || r->operation == MO_T_IMPLIES) {
+            MO_ASSERT(count + 2 <= b->source->count);
+            rows[count++] = r->operands[0];
+            rows[count++] = r->operands[1];
+        }
+    }
+    if (candidates == outer)
+        return outer;
+    struct scan {
+        mo_core_expr expr;
+        size_t child;
+    };
+    struct scan *stack = LOWER_NEW(b->p, struct scan, MO_LIMIT_CORE_DEPTH);
+    size_t depth = 1;
+    stack[0].expr = target;
+    bool *used = LOWER_NEW(b->p, bool, b->source->binding_count);
+    while (depth != 0) {
+        lower_work(b->p, 1);
+        struct scan *f = &stack[depth - 1];
+        if (f->child == 0 && f->expr->tag == MO_CORE_EXPR_VAR)
+            for (struct variable *v = candidates; v != outer; v = v->next) {
+                lower_work(b->p, 1);
+                if (lower_same(f->expr->as.var, binding_name(b, v->binding)))
+                    used[(size_t)(v->binding - b->source->bindings)] = true;
+            }
+        mo_core_expr next = lower_child(f->expr, f->child++);
+        if (next == NULL)
+            depth--;
+        else {
+            if (depth == MO_LIMIT_CORE_DEPTH)
+                lower_refuse(b->p, MO_CODE_LOWER_DEPTH, "condition target is too deep");
+            stack[depth++] = (struct scan){.expr = next};
+        }
+    }
+    for (uint32_t i = b->source->binding_count; i != 0; i--)
+        if (used[i - 1]) {
+            struct variable *v = LOWER_NEW(b->p, struct variable, 1);
+            *v = (struct variable){&b->source->bindings[i - 1], outer};
+            outer = v;
+        }
+    return outer;
+}
+
+static void arm_task(struct body *b, struct task t) {
+    struct lowering *p = b->p;
+    const struct mo_checked_arm *arm = t.arm;
+    p->span = arm->syntax->span;
+    struct continuation *selected = continuation(b, K_JUMP);
+    selected->name = lower_fresh(p);
+    selected->variables = pattern_variables(b, arm->patterns[0], t.state.variables);
+    if (arm->guard != UINT32_MAX)
+        selected->variables = condition_variables(b, arm->guard, t.value, selected->variables);
+    mo_core_expr success = join(b, selected, NULL);
+    success->as.join.body = t.value;
+    *t.out = success;
+    if (arm->guard != UINT32_MAX && arm->pattern_count > 1) {
+        /* Re-enter the next alternative after a false guard. A single shared
+         * guard/body preserves closure identity even when patterns overlap. */
+        static const struct mo_source_type int_ = {
+            .kind = MO_SOURCE_NAMED, .name = "Int", .module = UINT32_MAX};
+        struct continuation *choose = continuation(b, K_JUMP);
+        choose->name = lower_fresh(p);
+        choose->position = lower_fresh(p);
+        choose->position_type = type(b, &int_);
+        choose->variables = t.state.variables;
+        mo_core_expr dispatch = join(b, choose, NULL);
+        success->as.join.rest = dispatch;
+        struct continuation initial = *choose;
+        initial.extra = lower_int(p, 0);
+        dispatch->as.join.rest = jump(b, &initial, NULL);
+        struct continuation *guard = continuation(b, K_JUMP);
+        guard->name = lower_fresh(p);
+        guard->position = lower_fresh(p);
+        guard->position_type = choose->position_type;
+        guard->variables = pattern_variables(b, arm->patterns[0], t.state.variables);
+        mo_core_expr tested = join(b, guard, NULL);
+        dispatch->as.join.body = tested;
+        mo_core_expr select = lower_expr(p, MO_CORE_EXPR_IF);
+        select->as.if_.then_ = jump(b, selected, NULL);
+        mo_core_expr_list args = arguments(b, 2);
+        args.items[0] = lower_var(p, guard->position);
+        args.items[1] = lower_int(p, 1);
+        choose->extra = lower_prim(
+            p, (struct mo_core_prim){.tag = MO_CORE_PRIM_INT, .as.int_ = MO_CORE_INT_OP_ADD}, args);
+        select->as.if_.else_ = jump(b, choose, NULL);
+        push(b, (struct task){.kind = TASK_CONDITION,
+                              .row = arm->guard,
+                              .state = t.state,
+                              .value = select,
+                              .out = &tested->as.join.body});
+        mo_core_expr failure = t.else_;
+        for (uint32_t j = arm->pattern_count; j != 0; j--) {
+            mo_core_expr gate = lower_expr(p, MO_CORE_EXPR_IF);
+            args = arguments(b, 2);
+            args.items[0] = lower_var(p, choose->position);
+            args.items[1] = lower_int(p, j - 1);
+            gate->as.if_.cond =
+                lower_prim(p,
+                           (struct mo_core_prim){.tag = MO_CORE_PRIM_CMP,
+                                                 .as.cmp = {MO_CORE_BASE_INT, MO_CORE_CMP_OP_LE}},
+                           args);
+            gate->as.if_.else_ = failure;
+            struct continuation retry = *choose;
+            retry.extra = lower_int(p, j);
+            guard->extra = lower_int(p, j - 1);
+            push(b, (struct task){.kind = TASK_PATTERN,
+                                  .pattern = arm->patterns[j - 1],
+                                  .value = t.then_,
+                                  .then_ = jump(b, guard, NULL),
+                                  .else_ = jump(b, &retry, NULL),
+                                  .out = &gate->as.if_.then_});
+            failure = gate;
+        }
+        tested->as.join.rest = failure;
+        return;
+    }
+    mo_core_expr failure = t.else_;
+    for (uint32_t j = arm->pattern_count; j != 0; j--) {
+        struct continuation *next = continuation(b, K_JUMP);
+        next->name = lower_fresh(p);
+        next->variables = t.state.variables;
+        mo_core_expr fallback = join(b, next, NULL);
+        fallback->as.join.body = failure;
+        mo_core_expr yes = jump(b, selected, NULL);
+        mo_core_expr no = jump(b, next, NULL);
+        if (arm->guard != UINT32_MAX) {
+            mo_core_expr select = lower_expr(p, MO_CORE_EXPR_IF);
+            select->as.if_.then_ = yes;
+            select->as.if_.else_ = no;
+            mo_core_expr *guarded = LOWER_NEW(p, mo_core_expr, 1);
+            push(b, (struct task){.kind = TASK_PATTERN,
+                                  .pattern = arm->patterns[j - 1],
+                                  .value = t.then_,
+                                  .success = guarded,
+                                  .else_ = no,
+                                  .out = &fallback->as.join.rest});
+            push(b, (struct task){.kind = TASK_CONDITION,
+                                  .row = arm->guard,
+                                  .state = t.state,
+                                  .value = select,
+                                  .out = guarded});
+        } else
+            push(b, (struct task){.kind = TASK_PATTERN,
+                                  .pattern = arm->patterns[j - 1],
+                                  .value = t.then_,
+                                  .then_ = yes,
+                                  .else_ = no,
+                                  .out = &fallback->as.join.rest});
+        failure = fallback;
+    }
+    success->as.join.rest = failure;
+}
+
 static void match(struct body *b, struct task t, struct continuation *k) {
     struct lowering *p = b->p;
     p->span = k->row->syntax->span;
@@ -433,41 +601,16 @@ static void match(struct body *b, struct task t, struct continuation *k) {
         mo_core_expr arm_exit = join(b, arm_next, NULL);
         arm_exit->as.join.body = failure;
         failure = jump(b, arm_next, NULL);
-        struct continuation *selected = continuation(b, K_JUMP);
-        selected->name = lower_fresh(p);
         MO_ASSERT(arm->pattern_count != 0);
-        selected->variables = pattern_variables(b, arm->patterns[0], t.state.variables);
-        mo_core_expr success = join(b, selected, NULL);
-        if (arm->guard == UINT32_MAX)
-            emit(b, arm->body, t.state, done, &success->as.join.body);
-        else {
-            mo_core_expr select = lower_expr(p, MO_CORE_EXPR_IF);
-            select->as.if_.else_ = jump(b, arm_next, NULL);
-            push(b, (struct task){.kind = TASK_CONDITION,
-                                  .row = arm->guard,
-                                  .state = t.state,
-                                  .value = select,
-                                  .out = &success->as.join.body});
-            emit(b, arm->body, t.state, done, &select->as.if_.then_);
-        }
-        for (uint32_t j = arm->pattern_count; j != 0; j--) {
-            p->span = arm->syntax->span;
-            struct continuation *next = continuation(b, K_JUMP);
-            next->name = lower_fresh(p);
-            next->variables = t.state.variables;
-            mo_core_expr fallback = join(b, next, NULL);
-            fallback->as.join.body = failure;
-            mo_core_expr no = jump(b, next, NULL);
-            push(b, (struct task){.kind = TASK_PATTERN,
-                                  .pattern = arm->patterns[j - 1],
-                                  .value = lower_var(p, bound->as.let_.name),
-                                  .then_ = jump(b, selected, NULL),
-                                  .else_ = no,
-                                  .out = &fallback->as.join.rest});
-            failure = fallback;
-        }
-        success->as.join.rest = failure;
-        arm_exit->as.join.rest = success;
+        mo_core_expr *body = LOWER_NEW(p, mo_core_expr, 1);
+        push(b, (struct task){.kind = TASK_ARM,
+                              .arm = arm,
+                              .state = t.state,
+                              .success = body,
+                              .then_ = lower_var(p, bound->as.let_.name),
+                              .else_ = failure,
+                              .out = &arm_exit->as.join.rest});
+        emit(b, arm->body, t.state, done, body);
         failure = arm_exit;
     }
     *out = failure;
@@ -1128,7 +1271,10 @@ void lower_function(struct lowering *p, struct instance *instance) {
             }
         } else if (t.kind == TASK_PATTERN)
             pattern_task(&b, t);
-        else {
+        else if (t.kind == TASK_ARM) {
+            t.value = *t.success;
+            arm_task(&b, t);
+        } else {
             MO_ASSERT(t.kind == TASK_COPY && *t.success != NULL);
             *t.out = *t.success;
         }

@@ -5,7 +5,7 @@ struct frame {
     size_t child;
     bool entered;
 };
-static mo_core_expr child(mo_core_expr e, size_t at) {
+mo_core_expr lower_child(mo_core_expr e, size_t at) {
     switch (e->tag) {
     case MO_CORE_EXPR_LIT:
     case MO_CORE_EXPR_VAR:
@@ -86,7 +86,7 @@ static void body(struct lowering *p, mo_core_expr expr, struct mo_core_body_meta
                 node++;
                 f->entered = true;
             }
-            mo_core_expr next = child(f->expr, f->child++);
+            mo_core_expr next = lower_child(f->expr, f->child++);
             if (next == NULL) {
                 depth--;
                 continue;

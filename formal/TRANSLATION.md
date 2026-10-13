@@ -745,9 +745,11 @@ needs only one-level `case`, `if` and `%eq`.
 
 The C decision tree tests alternatives in written order. Each arm has one
 success join taking its canonical pattern binders and live outer vars, so
-alternatives share the guard/body and preserve one source identity per lambda.
-A failed pattern tries the next alternative; a false guard skips the whole
-arm, not just that alternative. Failure continuations are joins, rather than
+alternatives share the body and preserve one source identity per lambda.
+A failed pattern or false guard tries the next alternative, including another
+alternative of the same written arm. A guarded alternative group uses an
+index-taking dispatch join and one guard join: guard failure resumes dispatch
+at the following alternative. Failure continuations are joins, rather than
 copies of the remaining tree. Constructor arms always follow declaration
 order, including synthesized failure arms. An unreachable final failure is a
 stop; exhaustiveness has already been proved by checking. Is/and/implies in a

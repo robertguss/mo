@@ -85,6 +85,7 @@ mo_core_expr lower_unit(struct lowering *p);
 mo_core_expr lower_bool(struct lowering *p, bool value);
 mo_core_expr lower_int(struct lowering *p, uint64_t value);
 mo_core_expr lower_prim(struct lowering *p, struct mo_core_prim prim, mo_core_expr_list args);
+mo_core_expr lower_child(mo_core_expr expr, size_t at);
 void lower_function(struct lowering *p, struct instance *instance);
 void lower_metadata(struct lowering *p, struct mo_core *core);
 

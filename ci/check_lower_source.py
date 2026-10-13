@@ -48,6 +48,9 @@ CASES = {
                      "fn main() : Int\ncase Second(11)\n"
                      "First(n) | Second(n) if n < 5: 1\n"
                      "First(n) | Second(n): n + 17\nEmpty: 0\nend\nend", 28),
+    "alternative_guard": ("fn pick(p: (Int, Int)) : Int\ncase p\n"
+                          "(n, _) | (_, n) if n > 10: n\n_: 0\nend\nend\n"
+                          "fn main() : Int\npick((1, 50))\nend", 50),
     "lambda": ("enum Choice\nFirst(Int)\nSecond(Int)\nEmpty\nend\n"
                "fn main() : Int\nf = case First(7)\n"
                "First(_) | Second(_): fn(x)\nx + 1\nend\n"

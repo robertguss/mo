@@ -779,7 +779,9 @@ value first and reconstruct the checked projection path from its original
 var. Pattern tests run in written order, with constructors in declaration
 order. Each arm has one shared success join taking canonical pattern binders:
 alternatives do not duplicate its body or renumber closures. Pattern failure
-tries the next alternative, but a false guard skips the whole arm. Conditions
+and false guards both try the next alternative, including the same arm's
+remaining alternatives. Guarded groups share one guard join and resume an
+index-taking dispatch join after failure. Conditions
 compile is/and/implies directly around the guarded continuation, keeping true-
 path bindings in scope. Range loops increment only below the saved end;
 list/map/set iteration uses uncons after one iterable evaluation/conversion.
