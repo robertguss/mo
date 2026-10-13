@@ -104,6 +104,7 @@
     X(76, BYTE_ARITHMETIC, "3.2")                                                                  \
     X(77, ARGUMENT_TYPE, "5.2")                                                                    \
     X(78, RESULT_TYPE, "5.1")                                                                      \
+    X(79, MAIN_CONTRACT, "11.2")                                                                   \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \

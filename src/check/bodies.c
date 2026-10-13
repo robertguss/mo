@@ -1,4 +1,5 @@
 #include "check/check.h"
+#include "check/checked.h"
 #include "check/data.h"
 #include "check/patterns.h"
 
@@ -46,10 +47,17 @@ struct local {
     bool used;
 };
 
+struct emitted {
+    struct mo_checked_expression output;
+    struct note **operands;
+};
+
 struct note {
     struct mo_inferred_expression output;
     struct term *type;
     struct note *next;
+    struct emitted *graph;
+    uint32_t index;
     bool discarded;
     bool negative;
 };
@@ -98,6 +106,7 @@ struct inference {
     uint16_t expectation, node_expectation;
     uint32_t count, depth, loops, lambda, work, epoch;
     uint32_t pattern_group, pattern_depth;
+    bool checked;
     bool keep_patterns;
     bool failed, fatal, partial;
 };
@@ -108,6 +117,8 @@ struct value {
     const struct mo_symbol *symbol;
     const struct mo_field_signature *field;
     const char *builtin_case;
+    struct emitted *graph;
+    struct note *note;
     bool never;
 };
 
@@ -541,6 +552,22 @@ static MO_MUST_USE int compare_name(const struct mo_syntax *a, const struct mo_s
     return order != 0 ? order : x < y ? -1 : x > y ? 1 : 0;
 }
 
+static MO_MUST_USE struct value graph(struct inference *p, struct value v, uint32_t count) {
+    if (!p->checked || v.type == NULL)
+        return v;
+    if (!work(p))
+        return (struct value){0};
+    struct emitted *out = allocate(p, 1, sizeof(*out), _Alignof(struct emitted));
+    struct note **operands = allocate(p, count, sizeof(*operands), _Alignof(struct note *));
+    if (p->failed)
+        return (struct value){0};
+    *out = (struct emitted){
+        .output = {.operand_count = count, .field = UINT32_MAX, .receiver = UINT32_MAX},
+        .operands = operands};
+    v.graph = out;
+    return v;
+}
+
 static MO_MUST_USE bool record(struct inference *p, const struct mo_syntax *node, struct value v) {
     struct note *n = allocate(p, 1, sizeof(*n), _Alignof(struct note));
     if (n == NULL)
@@ -551,7 +578,9 @@ static MO_MUST_USE bool record(struct inference *p, const struct mo_syntax *node
                                   .field = v.field,
                                   .builtin_case = v.builtin_case,
                                   .never = v.never},
-                       .type = v.type};
+                       .type = v.type,
+                       .graph = v.graph,
+                       .index = UINT32_MAX};
     if (p->last == NULL)
         p->notes = n;
     else
@@ -1165,18 +1194,24 @@ static MO_MUST_USE struct value field_value(struct inference *p, struct value v,
 static MO_MUST_USE struct value sequence(struct inference *p, const struct mo_syntax *node,
                                          struct term *expected) {
     struct value last = {.type = native(p, "Unit", 0)};
+    struct value emitted = graph(p, last, node->count);
+    if (emitted.type == NULL)
+        return (struct value){0};
     bool never = false;
     for (uint32_t i = 0; i < node->count; i++) {
         last = infer_as(p, node->children[i], i + 1 == node->count && !never ? expected : NULL,
                         p->node_expectation);
         if (last.type == NULL)
             return (struct value){0};
+        if (p->checked)
+            emitted.graph->operands[i] = last.note;
         never = never || last.never;
         /* The last note belongs to this statement, not its nested expressions. */
         if (i + 1 != node->count)
             p->last->discarded = !last.never;
     }
     last.never = never;
+    last.graph = emitted.graph;
     return last;
 }
 
@@ -2264,6 +2299,15 @@ static MO_MUST_USE struct value infer(struct inference *p, const struct mo_synta
     p->node_expectation = code;
     p->expectation = 0;
     p->depth++;
+    if (p->checked && node->kind != MO_S_SEQUENCE && node->kind != MO_S_EXPR_STMT &&
+        node->kind != MO_S_GROUP && node->kind != MO_S_INT && node->kind != MO_S_DECIMAL &&
+        node->kind != MO_S_CHAR && node->kind != MO_S_TEXT && node->kind != MO_S_TRUE &&
+        node->kind != MO_S_FALSE) {
+        bool reported = unfinished(p);
+        (void)reported;
+        p->depth--;
+        return (struct value){0};
+    }
     struct value v = infer_node(p, node, expected);
     p->depth--;
     p->expectation = code;
@@ -2273,8 +2317,19 @@ static MO_MUST_USE struct value infer(struct inference *p, const struct mo_synta
     if (v.type == NULL || (propagates && !keep && !leave(p, mark)) ||
         (expected != NULL && !v.never && !unify(p, v.type, expected, 0)))
         return (struct value){0};
+    if (p->checked && (node->kind == MO_S_EXPR_STMT || node->kind == MO_S_GROUP)) {
+        struct note *operand = v.note;
+        v = graph(p, v, 1);
+        if (v.type == NULL)
+            return v;
+        v.graph->operands[0] = operand;
+    } else if (p->checked && v.graph == NULL)
+        v = graph(p, v, 0);
+    if (v.type == NULL)
+        return v;
     if (!record(p, node, v))
         return (struct value){0};
+    v.note = p->last;
     return v;
 }
 
@@ -2577,10 +2632,10 @@ static MO_MUST_USE bool finish_patterns(struct inference *p) {
     return true;
 }
 
-struct mo_inferred_body *mo_infer_function(struct mo_arena *arena,
-                                           const struct mo_module_interfaces *interfaces,
-                                           const struct mo_signatures *signatures,
-                                           uint32_t function, struct mo_diags *diags) {
+static MO_MUST_USE struct mo_inferred_body *
+infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
+               const struct mo_signatures *signatures, uint32_t function, struct mo_diags *diags,
+               struct mo_checked_function *checked) {
     MO_ASSERT(arena != NULL && interfaces != NULL && signatures != NULL && diags != NULL);
     MO_ASSERT(function < signatures->count && signatures->work != NULL);
     MO_ASSERT(*signatures->work <= MO_LIMIT_PROGRAM_CHECK_WORK);
@@ -2591,6 +2646,7 @@ struct mo_inferred_body *mo_infer_function(struct mo_arena *arena,
                           .interfaces = interfaces,
                           .signatures = signatures,
                           .function = signature,
+                          .checked = checked != NULL,
                           .span = syntax->span};
     bool finalized = false;
     if (syntax->children[4]->count != 0) {
@@ -2631,6 +2687,36 @@ struct mo_inferred_body *mo_infer_function(struct mo_arena *arena,
     }
     if (p.error.code != 0)
         goto failed;
+    if (checked != NULL) {
+        struct mo_checked_expression *rows =
+            allocate(&p, p.count, sizeof(*rows), _Alignof(struct mo_checked_expression));
+        if (rows == NULL)
+            goto failed;
+        uint32_t count = 0;
+        for (struct note *n = p.notes; n != NULL; n = n->next)
+            if (n->graph != NULL)
+                n->index = count++;
+        for (struct note *n = p.notes; n != NULL; n = n->next) {
+            if (n->graph == NULL)
+                continue;
+            struct emitted *g = n->graph;
+            uint32_t *operands =
+                allocate(&p, g->output.operand_count, sizeof(*operands), _Alignof(uint32_t));
+            if (operands == NULL)
+                goto failed;
+            for (uint32_t i = 0; i < g->output.operand_count; i++) {
+                MO_ASSERT(g->operands[i] != NULL && g->operands[i]->index < n->index);
+                operands[i] = g->operands[i]->index;
+            }
+            rows[n->index] = g->output;
+            rows[n->index].syntax = n->output.syntax;
+            rows[n->index].type = n->output.type;
+            rows[n->index].operands = operands;
+            rows[n->index].never = n->output.never;
+        }
+        *checked = (struct mo_checked_function){
+            .signature = signature, .body = {.count = count, .items = rows, .root = v.note->index}};
+    }
     return out;
 failed:
     if (!p.fatal && !finalized) {
@@ -2646,4 +2732,18 @@ failed:
     emit_problem(&p);
     mo_diags_sort(diags);
     return NULL;
+}
+
+struct mo_inferred_body *mo_infer_function(struct mo_arena *arena,
+                                           const struct mo_module_interfaces *interfaces,
+                                           const struct mo_signatures *signatures,
+                                           uint32_t function, struct mo_diags *diags) {
+    return infer_function(arena, interfaces, signatures, function, diags, NULL);
+}
+
+bool mo_check_function(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
+                       const struct mo_signatures *signatures, uint32_t function,
+                       struct mo_diags *diags, struct mo_checked_function *out) {
+    MO_ASSERT(out != NULL);
+    return infer_function(arena, interfaces, signatures, function, diags, out) != NULL;
 }
