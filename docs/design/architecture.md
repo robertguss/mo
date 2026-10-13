@@ -1877,6 +1877,7 @@ entry names are otherwise accepted. E1201 means a permanent representation
 exclusion from source lowering, not an unfinished feature or a resource limit.
 E1202 means decimal BigInt conversion exceeded its program-wide work budget.
 E1203 means reference liveness exceeded its per-function work or storage budget.
+E1204 means register recycling exceeded its per-function work budget.
 
 The first slice compiles immediate scalar literals, variables, lets, direct
 calls, if, stop, and choices with small immediate payloads. The second adds
@@ -1892,8 +1893,9 @@ comparisons, generic equality, primitive and host table calls, capability and
 collection types, and list/map literals. The sixth adds joins, jumps and
 reconverging reference-state normalization. The seventh adds List uncons and
 Range toText expansions and BigInt decimal literals; all 15 Core fixtures now
-compile. The eighth consumes owned operands at their last use. Register
-recycling and reuse remain unfinished optimizations. The
+compile. The eighth consumes owned operands at their last use. The ninth recycles
+exact-type block-local registers. Cross-block recycling and reset/reuse remain
+unfinished optimizations. The
 sample fixtures and Core fuzz corpora are attempted in CI; unfinished forms,
 permanently excluded representations, entry-name collisions, resource limits
 and invalid compiler inputs are counted separately. E1201 inputs are skipped
@@ -2102,8 +2104,9 @@ returned byte was checked as `"z"` followed by exactly the requested number
 of `"ab"` pairs. The recursive builder's bytecode has no `dup` or `drop`;
 the permanent test checks that property and its VM result without timing gates.
 
-The allocator still assigns monotonically numbered temporaries and binders;
-recycling remains for a later slice. Immediate slots are initialized before
+Preparation assigns monotonically numbered virtual temporaries and binders;
+the physical allocator recycles block-local lifetimes after pruning. Immediate
+slots are initialized before
 control splits so incoming states agree. All reference slots start undefined;
 there are no dummy Text, collection or function inhabitants. A live merge copies
 the result into its own slot, drops dead owners, and uses `clear` to normalize
@@ -2161,18 +2164,44 @@ merges each set with a prepared reference-only register index under the same
 liveness work ceiling; immediate registers do not multiply branch costs.
 Instruction expansion and Core's
 depth bound also bound bookkeeping work on nested jumps.
-Emission stops at instruction/register limits, even when cleanup expands code.
-The allocator counts basic blocks as it emits transfers and checks
-`MO_LIMIT_FUNCTION_REGISTER_BLOCKS` both when starting a block and when adding
-a register. E1015 names that limit before the writer runs. Register recycling
-and function splitting are not implemented yet, so this slice refuses a
-function that would cross the bound rather than emitting it for verification.
+Emission stops at instruction/code-word limits, even when cleanup expands code.
+Virtual registers share the ownership graph's slot bound, not the physical
+frame bound. After pruning, a linear operand scan identifies blocks and
+first/last accesses. ABI parameters and the closure environment stay in their
+original slots; cross-block registers, reset tokens, prologue read dependencies
+and registers whose first real access reads an incoming value remain pinned.
+Remaining intervals recycle slots of exactly the same type through per-type
+free lists. An instruction reads every operand before its writes; retiring
+intervals become available only after the whole instruction. A new result
+therefore cannot overwrite an operand that instruction still needs.
+
+Owned reference intervals recycle only after a consuming access or clear.
+Known constant/global borrows and same-block borrowed moves can retire after
+their last read. Other ownership stays conservative. Pooled references are
+cleared at every normal block exit; references read by that exit's transfer
+instruction are pinned. Thus pooled slots are undefined on all incoming edges,
+including backedges. Returns, stop/fail and tail calls abandon the frame and
+need no pool normalization. Scalar initialization remains before control splits,
+so a reused scalar slot stays initialized on every edge. Unused prologue writes
+are removed. Rewriting relocates targets and piecewise spans; local names begin
+after their first definition and end no later than physical reassignment.
+
+Register scanning, allocation, inserted clears and relocation charge
+`MO_LIMIT_CODEGEN_REGISTER_WORK` (2^26) per function. Scratch is a separately
+bounded arena freed after each function; code growth stays within
+`MO_LIMIT_FUNCTION_CODE_WORDS`. Physical slot counts and their product with
+block counts are checked before the writer runs, giving E1013 or E1015, not
+E1057. Function splitting and cross-block recycling remain future work.
+The 4,096-deep scalar chains use at most three physical slots and return the
+same values; a 1,024-step owned Text chain uses at most eight, checks every
+returned byte and leaves no process-heap objects after dropping the result.
 The register-boundary test compiles a 65,534-element tuple at 65,535 registers
 in both an ordinary function and a constant value function, and refuses one
 more element with E1013. Its one basic block keeps the test
-independent of verification's registers × blocks bound. A separate case/tail-call
-test loads a file one slot below that product bound and checks the compiler's
-own E1015 refusal just above it.
+independent of verification's registers × blocks bound. Wide case/tail-call
+programs that formerly exceeded the virtual product now fit in at most three
+slots. A separate boundary keeps 255 ABI slots pinned: 16,447 arms load at
+4,194,240 register-block cells; 16,448 arms exceed 2^22 and get E1015.
 
 Source lowering has a narrower representation contract than Lean's typed
 Core. The following forms are permanently refused with E1201 and a precise

@@ -8,7 +8,7 @@
 
 struct interval {
     uint32_t first, last, block, slot, next, replaced, written;
-    bool pinned, closed;
+    bool pinned, closed, borrowed;
 };
 struct slot {
     uint32_t type, next, previous, block, clear_next;
@@ -135,9 +135,18 @@ static MO_MUST_USE bool scan(struct allocation *a, uint32_t prologue) {
                 if (ref && transfer(op) && !terminal(op))
                     v->pinned = true;
                 v->last = pc;
-                v->closed =
-                    mode == MO_ACCESS_CONSUME || mode == MO_ACCESS_MOVE ||
-                    (write && (op == MO_OP_CLEAR || op == MO_OP_CONST || op == MO_OP_GLOBAL));
+                if (write) {
+                    v->borrowed = op == MO_OP_CONST || op == MO_OP_GLOBAL;
+                    if (op == MO_OP_MOVE) {
+                        const struct interval *source = &a->intervals[f->code[pc + 2]];
+                        v->borrowed = source->borrowed && !source->pinned && source->block == block;
+                    }
+                }
+                /* Constant/global borrows remain safe to overwrite after their last
+                 * read. Owned references must actually have been retired. Across
+                 * blocks or from ABI inputs, unknown ownership stays conservative. */
+                v->closed = v->borrowed || mode == MO_ACCESS_CONSUME || mode == MO_ACCESS_MOVE ||
+                            (write && op == MO_OP_CLEAR);
             }
         }
         pc += n;
