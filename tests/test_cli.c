@@ -2,10 +2,53 @@
 #include "tools/tools.h"
 
 #include "base/codes.h"
+#include "base/stack.h"
+#include "bytecode/bytecode.h"
+#include "core/core.h"
 
 #include <locale.h>
 #include <stdlib.h>
 #include <string.h>
+
+struct emission {
+    const char *path;
+    bool core, ok;
+};
+
+/* Consume real CLI output through the public codecs, not a prefix check. A
+ * truncated record or lost metadata must not pass the emission regression. */
+static void roundtrip_emission(void *argument) {
+    struct emission *e = argument;
+    struct mo_sources sources;
+    struct mo_source_error error;
+    struct mo_diags diags;
+    struct mo_arena arena;
+    struct mo_buffer printed, wire;
+    MO_ASSERT(mo_sources_init(&sources) && mo_diags_init(&diags));
+    mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+    mo_buffer_init(&printed, e->core ? MO_LIMIT_CORE_TEXT_SIZE : MO_LIMIT_BYTECODE_TEXT_SIZE);
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    uint32_t file;
+    if (mo_sources_add(&sources, e->path, &file, &error)) {
+        const struct mo_source *s = &sources.files[file];
+        if (e->core) {
+            struct mo_core *core = mo_core_parse(&arena, (const char *)s->bytes, s->length, &diags);
+            e->ok = core != NULL && mo_core_check(core, &diags) && mo_core_print(core, &printed);
+        } else {
+            struct mo_assemble_error assembled;
+            struct mo_load_error loaded;
+            e->ok = mo_bytecode_assemble((const char *)s->bytes, s->length, &wire, &assembled) &&
+                    mo_bytecode_disassemble(wire.bytes, wire.length, &printed, &loaded);
+        }
+        e->ok =
+            e->ok && printed.length == s->length && memcmp(printed.bytes, s->bytes, s->length) == 0;
+    }
+    mo_buffer_free(&wire);
+    mo_buffer_free(&printed);
+    mo_arena_free(&arena);
+    mo_diags_free(&diags);
+    mo_sources_free(&sources);
+}
 
 static void parse_commands(void) {
     struct mo_cli cli;
@@ -440,6 +483,11 @@ int main(int argc, char *argv[]) {
         }
     }
     MO_ASSERT(utf8);
+    if (argc == 3 && (strcmp(argv[1], "--roundtrip-core") == 0 ||
+                      strcmp(argv[1], "--roundtrip-bytecode") == 0)) {
+        struct emission e = {.path = argv[2], .core = strcmp(argv[1], "--roundtrip-core") == 0};
+        return mo_with_stack(MO_SOURCE_STACK_SIZE, roundtrip_emission, &e) == 0 && e.ok ? 0 : 1;
+    }
     if (argc == 2 && strcmp(argv[1], "--render-bytes") == 0)
         return render_bytes() ? 0 : 1;
     if (argc == 2 &&

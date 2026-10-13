@@ -1321,32 +1321,45 @@ not copied or capped by Mo: the OS's argument limits bound them, and the
 program's heap will bound arguments converted to Mo values. `mo_cli_file`
 indexes borrowed file lists across an optional `--` separator.
 
-**Current integration boundary.** `check` calls `mo_load_program`,
-`mo_resolve_modules`, `mo_prepare_signatures`, then `mo_infer_function`
-for every named function, retaining independent body errors. Each stage
-stops before the next on errors, including dropped diagnostics; body iteration
-stops on a resource error, but continues past independent source errors and
-unfinished forms, even after the output retention cap. Each body reports into
-its own bounded diagnostics, copied into the capped run's set and then freed;
-this keeps counting dropped errors without making the checker stop because
-the output is full. Its shared arena is bounded to 512 MiB (E1054 while parsing,
-E1058 while checking on exhaustion).
-Status 0 means only that
-these available stages found no error: constants, specs and the other rules
-listed in `check.h` are not whole-program checked. The seam in
-`tools/execute.c` will replace staged inference with `mo_check`, then
-connect `mo_lower`, `mo_compile` and anchor evaluation; it never passes
-inference results to lowering. `run`, `test` (including `--list`), `fix`
-and `--emit` currently validate arguments then return status 1 with
-E1400, "this build cannot ... yet", without reading or rewriting files.
-E1400 is the tools' unavailable-stage code, not a language error. Source work
-runs synchronously through `mo_with_stack` with `MO_SOURCE_STACK_SIZE`, covering
-loading, parsing and every checking stage in one pipeline callback. Lowering,
-Core checking and code generation must also be wired inside that callback, not
-after it returns: their accepted depths need more than a default C stack.
-The callback joins before rendering or freeing its borrowed arenas and
-diagnostics. It changes no
-process-wide resource limits and follows changes to the shared stack allowance.
+**Current integration boundary.** `check` calls `mo_load_program` and whole
+`mo_check`, never reconstructing a certificate from local inference. The entry
+module must contain `main`, including for `check`; absence reports E0079.
+Forms not yet certified by the producer return E1103 rather than a false
+success. Diagnostic collection, including independent bodies and count-cap
+drops, belongs to the checker; tools do not rerun partial checking behind it.
+The shared source arena is bounded to 512 MiB (E1054 while parsing, E1058 while
+checking on exhaustion).
+
+For `run` and emission, only a successful certificate reaches `mo_lower`,
+`mo_core_check` and `mo_compile`. Lowering has its own 256 MiB work arena; the
+wire and text buffers use their format limits. `--emit=core` prints checked
+Core text; `--emit=bytecode` prints indexed bytecode text after compiling and
+loading its format. E1404 reports artifact loading or output failure.
+`run` loads the verified bytecode, initializes its image, creates a process
+with the requested VM limits, and calls lowering's Int-returning entry wrapper
+through `mo_call_main`. The Core entry's full metadata name identifies that
+wrapper in bytecode; source function indices are not bytecode indices.
+Lowering owns the Unit/Int/Result exit convention and status-range checks.
+Program output goes to standard output, structural defect reports to standard
+error, and a runtime bug exits 70. Defect reports retain their stopped process
+or initializing image until rendering finishes, and apply terminal-safe text
+escaping, never user `to_text` customizers. Only requested Args/Env values are
+materialized in the process heap; their owned originals remain alive through
+the call and report. File capabilities borrow the starting-folder descriptor.
+The current source producer still stages Args/Env/file/other entry forms and
+Result returns; those consumer paths await source-level certification controls.
+
+`test` (including `--list`) and `fix` still return E1400, "this build cannot
+... yet". `test` checks the source first; `fix` rewrites nothing. A program with
+certified specs also reports E1400 until tools can execute anchors: no command
+claims those expectations passed. E1400 is an unavailable-stage code, not a
+language error.
+
+Source work runs synchronously through `mo_with_stack` with
+`MO_SOURCE_STACK_SIZE`, covering load, parse, check, lower, Core check, codegen
+and execution in one callback. It joins before freeing borrowed arenas or
+diagnostics. It changes no process-wide resource limits and follows changes to
+the shared stack allowance.
 Failure to prepare that stack reports E1401 with an unavailable location and
 the POSIX error as its label, in either text or JSON, and exits 1.
 
