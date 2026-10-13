@@ -234,6 +234,16 @@ int main(int argc, char **argv) {
         MO_ASSERT(written > 0 && (size_t)written < sizeof expected);
         check_source(source, expected);
     }
+    char path_source[144], path_expected[144];
+    int written = snprintf(path_source, sizeof path_source, "module %060d.%060d\n", 0, 0);
+    MO_ASSERT(written > 0 && (size_t)written < sizeof path_source);
+    /* Turn the generated zero runs into valid module-name components. */
+    memset(path_source + 7, 'A', 60);
+    memset(path_source + 68, 'B', 60);
+    written = snprintf(path_expected, sizeof path_expected, "module %.*s\n  .%s", 60,
+                       path_source + 7, path_source + 68);
+    MO_ASSERT(written > 0 && (size_t)written < sizeof path_expected);
+    check_source(path_source, path_expected);
     files("grammar/tests/good/*.mo", true, true, true);
     files("examples/*.mo", true, true, true);
     files("lib/*.mo", false, true, true);

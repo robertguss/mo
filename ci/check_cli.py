@@ -285,6 +285,21 @@ def check(binary):
                 else:
                     assert not result.stderr and b'\n  "' in path.read_bytes()
                     run(binary, ["check", str(path)], 0)
+        # Alignment adds 49 spaces to the short code row. Each input row is
+        # legal; only the aligned result crosses the scalar limit in case two.
+        for length in (65479, 65480):
+            source = (b'module Main\na=0 #' + b'c' * length + b'\n' +
+                      b'b' * 50 + b'=0 # short\n')
+            path.write_bytes(source)
+            result = run(binary, ["format", str(path)], 0 if length == 65479 else 1)
+            assert not result.stdout
+            if length == 65480:
+                assert b'E1403' in result.stderr and path.read_bytes() == source
+            else:
+                expected = (b'module Main\na = 0' + b' ' * 51 + b'#' + b'c' * length +
+                            b'\n' + b'b' * 50 + b' = 0  # short\n')
+                assert not result.stderr and path.read_bytes() == expected
+                run(binary, ["check", str(path)], 0)
         # Rename is observable: an existing reader and hard link keep the old
         # complete file, while the requested path gets the complete new file.
         source = b'module Main\n\n\nfn f()\nvar x=1\nx=x+2\nx\nend\n'

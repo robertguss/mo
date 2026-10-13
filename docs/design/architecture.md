@@ -210,6 +210,8 @@ operator continuation. Operators have one space on either side, except for
 `..`; field dots and bracket edges have none. There is one space after commas
 and colons; function result annotations use ` : `. Broken bracket groups put
 each item on its own line and put the closer at the opener's indentation.
+Module and use paths have their own fit groups; long paths break before dots
+with two-space continuation indentation, independent of other header lines.
 An operator stays beside a bracketed operand's opener. A call with one
 bracketed value or block callback shares that inner scope's opening and
 closing lines, without another pair of call-enclosing lines, as the existing

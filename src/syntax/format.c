@@ -150,10 +150,24 @@ static void statements(struct printer *f, const struct mo_syntax *seq, bool top)
 }
 
 static void separated(struct printer *f, const struct mo_syntax *seq, const char *separator) {
+    bool dotted = strcmp(separator, ".") == 0;
+    if (dotted) {
+        /* A module path needs its own fit decision: expose/use lines make
+         * its enclosing header group multiline even when this path fits. */
+        op(f, MO_DOC_GROUP);
+        op(f, MO_DOC_NEST);
+    }
     for (uint32_t i = 0; i < seq->count && f->doc.ok; i++) {
-        if (i != 0)
+        if (i != 0) {
+            if (dotted)
+                soft(f, 0);
             text(f, separator);
+        }
         node(f, seq->children[i]);
+    }
+    if (dotted) {
+        op(f, MO_DOC_UNNEST);
+        op(f, MO_DOC_END_GROUP);
     }
 }
 
