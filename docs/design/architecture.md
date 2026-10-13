@@ -491,6 +491,48 @@ Record/case construction and field reads check the owning type's `(..)`
 exposure before revealing its layout. Field metadata borrows syntax and is
 stored once in the declaring module, not copied into every importing module.
 
+Nonregular generic data is refused at its field annotation (E0084, reference
+9.1). The same explicit-stack component algorithm used for generic calls follows
+scoped data parameters through field types, including function fields. A growing
+argument on a parameter cycle would require layouts without end; a permutation
+or an argument whose dependency ends at a concrete type does not.
+
+Whole-program diagnostic recovery retains available signatures privately,
+checks independent bodies despite later declaration errors, and sorts the
+combined diagnostics by source position. Invalid declarations and their nominal
+dependents suppress uses rather than inventing secondary type errors. A failed
+ability context is discarded, including provisional recursive proofs. Resource
+or diagnostic-storage failure stops the walk. Neither a partial preparation nor
+a partially checked program is published through the public interfaces.
+
+Native signatures are prepared once per checking run from `prims.def` and
+`hostops.def`. The checker adds positional parameter names to each table's Mo
+signature and sends it through the source parser and annotation resolver,
+including nested function and collection types. Its syntax and parameter
+owners live in the checking arena; temporary source bytes are released after
+parsing. Native identities remain qualified table spellings, not fake source
+module symbols. Static native calls retain a callee row; dot calls retain
+their receiver and arguments without a callee row. Spec-only host operations
+remain refused until the spec/capability stage exists.
+
+Collection annotations impose implicit Hash requirements, including through
+generic record and choice fields. Preparation computes parameter-dependency
+masks to a fixed point over nominal declarations, without expanding recursive
+layouts. A reverse-dependency worklist visits affected declarations when masks
+change; sorted function, constructor, nominal-owner and customizer indices avoid
+scanning unrelated signatures. Ability caches intern structural types using
+hashed child identities, with a separate source-pointer index for shared DAGs.
+Ability checking validates each declared field and instantiated
+requirement. A phantom parameter does not acquire an ability its fields do not
+need. This walk and signature requirements share the program work budget.
+
+Reference 9.2 defines a customizer as one ordinary function in its type's own
+module, with signature `compare(T, T): Ordering` or `to_text(T): Text`. It does
+not explicitly settle unrelated functions with those names. For this stage the
+names remain reserved for those signatures; E0082 explains that conservative
+restriction. Qualified library prefixes require a module in scope, except the
+modules named after built-in types that reference 10.5 makes implicit.
+
 **Local inference is a second intermediate result.** `mo_infer_function`
 checks one named body against prepared signatures, returning postorder
 expression metadata: types, local binder or module symbol, and whether all
@@ -537,7 +579,7 @@ bytes are elided so the omitted count remains visible. Previews also have a
 coverage, listing the choice's cases or the missing domain. Qualified constructor
 patterns use the same resolution and binding rules as unqualified patterns.
 The literal fallback accepts only literals and negated numbers, never construction
-expressions. `Entry` patterns report E1103 until native record interfaces arrive.
+expressions. `Entry` uses its native record fields, in name/kind order.
 Byte patterns normalize numeric spelling after contextual typing and range
 checks, so all 256 values establish coverage.
 Matrix cells, partitions, sorting and witness rendering charge the existing
@@ -571,8 +613,11 @@ reused at greater depth. `MO_LIMIT_SOURCE_CHECK_WORK` caps term construction,
 unification, occurs checks, expression visits and output conversion at
 16,777,216 operations per function (E1104). `MO_LIMIT_PROGRAM_CHECK_WORK`
 caps their total at 268,435,456 (E1107), shared by all inference calls against
-one signature preparation. Checking is single-threaded; new preparation starts
-a new run. These errors are implementation limits, not language restrictions.
+one signature preparation. `MO_LIMIT_SOURCE_ABILITY_DEPTH` separately caps a
+proof or callback-dependency path at 4,096 edges (E1108): a chain of nominal
+fields is not the height of one written type. Checking is single-threaded;
+new preparation starts a new run. These errors are implementation limits,
+not language restrictions.
 All temporary and output storage is
 charged to the caller arena (E1058), with no additional scratch arena.
 `MO_LIMIT_SOURCE_INFERENCE_DEPTH` allows sixteen inference frames per source
@@ -631,10 +676,12 @@ some names by type:
   function can't reach itself again at a bigger type, which is called
   polymorphic recursion: it would need infinitely many copies. The rule is
   checked over each group of generic functions that call each other, directly,
-  through other functions, or through anonymous functions. Within such a group, every
-  call to a member must pass type arguments that are the caller's own type
-  parameters, never types built from them, such as `List(T)`. Breaking it is
-  an error whose message names the calls in the cycle (reference 5.5). As a
+  through other functions, anonymous functions, function values or ability
+  customizers. An explicit-stack component walk follows scoped parameter
+  dependencies. A constructed argument such as `List(T)` is refused when its
+  dependency lies on a cycle: the same parameter can keep growing. Parameter
+  permutations and concrete resets remain finite and are allowed. Breaking it
+  is an error naming the responsible call in the cycle (reference 5.5). As a
   second line of defense, lowering stops with a diagnostic if instantiation
   ever nests deeper than a limit.
 
@@ -794,14 +841,27 @@ examples. The ones a compiler is most likely to get wrong are:
   passed to source main; Unit/Int entries get no additional authority.
 - **`assert`** in a test, and each example line, become spec code that calls
   the `fail` instruction with the details: both sides of a failed `==`, or
-  the value that didn't match a failed `is`.
+  the value that didn't match a failed `is`. Operands are snapshotted once;
+  only the failure branch converts them with the borrowed
+  `Text.%structural` primitive. Diagnostic text never selects user `to_text`
+  or requires the Text ability, including for Equal-only types. Its forms
+  agree with `mo test --json`'s `left`, `right` and `input` values.
+  The detail envelope is `left N:VALUE,right M:VALUE,` for equality or
+  `input N:VALUE,` for a pattern mismatch: N/M are decimal UTF-8 byte counts,
+  with no leading zero except zero itself. VALUE is the unchanged structural
+  text, including any newline or NUL. The runner splits by byte counts, never
+  labels or line breaks, then displays those values or puts them in JSON.
+  Shared pattern failures are joins inside the input snapshot's scope. Lazy
+  conditions report the failing leaf that actually reaches failure: a false
+  left side of `or` or `implies` is not itself a failure. Other false Bool
+  conditions keep the fixed assertion/example detail.
 
 **Part 1 implementation.** `src/lower` consumes the normalized checked graph,
 not syntax inference. Explicit arena-backed task and continuation lists perform
 expression/pattern lowering; an explicit, memoized stack walks type DAGs.
 Queued function/data instances have no recursive C walk. E1150 refuses later
-forms (captures, try, Option or, interpolation, unsupported ability/native
-operations, map literals, constants and spec code); E1151 is arena exhaustion, E1152 the
+forms (unsupported ability/native
+operations, map literals and spec code); E1151 is arena exhaustion, E1152 the
 shared allocation-byte/step or Core-node bound, and E1153 the source-type,
 instantiation or generated Core path bound. Compilation is independent of the
 text codec: `mo_lower` does not print Core or apply the codec's smaller schema,
@@ -838,6 +898,81 @@ the defining module. Nongeneric data is retained even without an expression use.
 nominal type a requester-specialized function accepts; separate requester data
 names would make those values incompatible in Core. Anonymous names retain their
 source ordinal as `.fn.N`; generated function-value adapters use `.ref.ROW`.
+
+Capturing lambdas prefix their body with aliases of the checked captures in
+first-use order. Each alias's bound expression refers to the outer binding;
+its body sees the local copy. This gives Core/codegen a first-use-ordered free
+environment, captured by value at closure creation, independent of later CPS
+rewrites. The aliases retain the captured source names and the lambda span.
+The checker owns capture legality, including capabilities and later var writes.
+
+Option `or` evaluates its left operand once and emits a one-level None/Some
+case; only None evaluates the fallback. `try` uses the same decision, or Ok/Error
+for Result, with the remaining expression confined to the success arm. Failure
+jumps to the containing function or lambda's return join. Lowering uses exactly
+the checked failure and wrapper constructors; the substituted enclosing error
+type supplies a wrapper's concrete nominal identity. No wrapper search remains.
+
+Interpolation decodes HEAD/MID/TAIL fragments from the original syntax; only
+hole expressions have checked operands. Triple text uses the closing delimiter's
+indentation for every fragment. Each hole is evaluated and converted through its
+selected Text proof before the next hole is evaluated. The same conversion emits
+`to_text` calls and Result entry errors. Function instances retain requirement
+proofs keyed by the callee's scoped parameter and ability, together with the
+supplying instance's type/proof environment. PARAMETER replacement follows those
+bindings iteratively, bounded by the ability-path and whole-lowering work limits;
+missing keys refuse E1150 rather than guessing from the concrete type. Selected
+customizers bind their own requirement keys from FUNCTION `part_parameters`.
+Derived parts retain the supplying environment, including caller parameters
+inside a composite type such as `List(T)`. Resolving a native Order proof preserves
+direct scalar operators (including Float's IEEE behavior), not total `compare`.
+Derived text helpers reserve a typed function before following the proof's
+parts, memoize concrete type/module pairs with a bounded hash index and drain
+a FIFO body queue. Tuple and record fields convert in declaration order; choice
+helpers use a one-level case, indexing proofs by flattened case/field order.
+Empty constructors print their bare name; other constructors print their name
+and fields, retaining declared field labels but not the positional `0` sentinel.
+Native FileError and Entry display their path/reason and path/kind labels.
+Nested native
+Text/Char fields are quoted and escape slashes before newly inserted escapes,
+including controls and interpolation markers. Generated parameter metadata
+retains arity with absent source names.
+List Text converts elements in order through a tail join, accumulates converted
+pieces in reverse, then reverses once and joins with `, ` inside square brackets.
+It does not repeatedly concatenate a growing text prefix.
+Derived Order uses the same reservation queue, keyed additionally by ability.
+Tuple/record comparisons inspect parts left to right and continue only on Equal;
+choice comparisons dispatch on both constructors, with different cases ordered
+by declaration position and matching cases comparing their flattened fields.
+Selected custom compare functions replace structural ordering, not equality.
+List Order uses a join over the remaining two lists: compare heads once, advance
+both tails only on Equal, and order an exhausted list before a nonempty one.
+Native Float `compare` orders NaNs after numbers and returns Equal for two NaNs,
+while direct scalar comparison operators retain IEEE behavior.
+
+Constants retain the checked dependency order and resolved global names.
+Their Core ConstDecl bodies become bytecode init functions, one per constant;
+lowering does not add duplicate ordinary `.init` functions. Functions normally
+use the full constant prefix; an arena-backed work queue tightens functions
+reachable from initializer i to prefix i and propagates through calls and
+closure bodies. Metadata retains module/source order separately from init order,
+and initializer nodes carry the same span/binder/closure metadata as functions.
+
+Tests and example lines are separate Unit spec functions with stable source
+ordinals, original wording/line bytes and declaration spans. Successful
+conditions return Unit; an ordinary false condition calls `fail` rather than
+`stop`. Ordinary-function assertions still stop. Equality and pattern failures
+use Core's borrowed structural primitive and the byte-length envelope above;
+they never substitute user Text conversions or require diagnostic Text proofs.
+Promises evaluate condition lines in written order and return the first false
+line's one-based number, or zero after the final success; later lines do not
+run after a failure. Each promise's parameter metadata, subject link and exact
+condition text/spans survive in Core. Anchors evaluate argument roots in source
+postorder, then reorder the saved values into promise-parameter order for a
+single call. Their names include the promise ordinal before `.allows.N` or
+`.forbids.N`, preventing collisions between a subject's promises. Anchor
+metadata records the promise link and expectation; lowering does not execute it.
+Generic spec instances remain E1150 while their producer is staged.
 
 The initial CPS implementation conservatively passes every live outer var,
 not only changed vars, across a continuation join; expression joins also pass
@@ -2272,18 +2407,44 @@ input to lowering. Its
 may change while checking is completed. `mo_check` is an implemented walking
 skeleton: it prepares interfaces and signatures and shares inference's walk to
 emit typed graphs, rather than running a second name/type checker. It currently
-certifies nongeneric functions, scalar expressions and native scalar operator
-proofs, direct/indirect calls, record/choice construction and fields, normalized
+certifies generic functions and their keyed requirement proofs, scalar
+expressions and native/derived/custom operator proofs, direct/indirect calls,
+prepared native calls, record/choice construction and fields, normalized
 patterns, tuples/lists, conditionals, loops, early exits/asserts and noncapturing
-lambdas. `main` returns Unit or Int and
-takes no parameters or one Console. Direct `Console.print` reads its operation
+lambdas, dot/overload dispatch, Mo-library calls, ability dots and interpolation.
+`main` returns Unit or Int and takes no parameters or one Console.
+Direct `Console.print` reads its operation
 and named input type from `base/hostops.def`, with the receiver explicit.
-Native method values, other host operations, generic functions, map expressions,
-imports, constants/specs and derived abilities
-still report E1103. Any `where` clause and any declared `compare` or `to_text`
-customizer are refused until ability checking exists, even on nongeneric
-functions. Written Map/Set types are refused in every annotation, including
-unused declarations and nested fields, until Hash requirements are checked.
+Map expressions, imports and constants/specs still report E1103. `where`
+validates scoped parameters and the five abilities; customizers must have their declaring
+type's Text/Ordering signature. A generic customizer covers the whole nominal
+type: every receiver type slot is a distinct scoped function parameter, in any
+permutation, with no extra signature parameters. Concrete or constructed
+receiver restrictions are refused with E0082 rather than specializing the
+type's single customizer. Its function substitutions retain A–Z order, not
+the receiver type's slot order. Written Map/Set types check Hash in every
+annotation, including unused declarations and nested fields. `Set.empty` is
+a polymorphic constant, not a zero-argument function.
+Native signatures use the real syntax/type pipeline on the shared tables'
+Mo spellings, with arena-owned synthetic declarations for scoped parameters.
+Resource diagnostics for that preparation mark the real entry module, never
+the synthetic text. Native dots retain receiver-first operands; source methods
+have callee/receiver/explicit arguments. A visible function-valued field is
+projected and called without an inserted receiver. Visible fields take
+precedence over methods and abilities. Unresolved lambda receivers and overload
+values wait for constraints from all their uses, then numeric defaults; selected
+functions and callable projections are inserted before their saved arguments.
+Mo-library functions use their loaded module's actual symbols, signatures and
+checked bodies, whether called with a dot or qualified name. Public lookup still
+requires expose; ability customizers need not be exposed. Entry's structural
+proof parts are Text then EntryKind; FileError's structural parts flatten its
+five Text fields in case order. FileError's Text instead selects the trusted
+library module's to_text (design library); a missing implementation is E1103,
+not an invented native callback or structural fallback.
+Polymorphic recursion uses an explicit-stack SCC walk of scoped parameter
+dependencies from generic uses, including function values and ability callbacks.
+A growing edge within a cycle is E0083; permutations and concrete resets do not
+grow the cycle. Proof traversal memoizes recursive nominal graphs.
 Invalid entry signatures report E0079: parameters must be capabilities without
 duplicate types, and the result must be Unit, Int or Result(Unit, E). Valid
 unfinished entry conventions still report E1103. Checking stops at the first
@@ -2305,6 +2466,25 @@ use. The selected ability implementation is native, derived, a declaring-module
 custom function, or an abstract requirement resolved during monomorphization.
 Types remain shared DAGs; ability graphs can be recursive through nominal
 data. Lowering memoizes them rather than expanding them.
+Type-only requirement uses name the callee's scoped parameter and ability,
+not merely the actual type: two distinct parameters can instantiate to Int.
+Every generic function value, call, constructor and pattern retains these
+keys. FUNCTION proof parts carry customizer requirements with parallel scoped
+`part_parameters` keys, including for the entry's error-text proof. DERIVED
+choice parts flatten fields in case/field declaration order; empty cases add
+none. Hash/Order signatures include implied Equal requirements explicitly.
+
+Source dot operands are selected callee, receiver, then explicit arguments;
+receiver names operand one's row. Callable fields are ordinary calls with a
+projection callee. Ability dots use `native = "to_text"` or `"compare"`,
+no callee row, and
+receiver-first operands with a Text/Order proof keyed by the receiver row.
+Interpolation emits only its hole expressions, in written order, each with
+its selected Text proof. Conversion runs immediately after each hole, before
+the next hole runs. Literal fragments remain in the syntax tree's alternating
+HEAD/expression/MID/.../TAIL children. Lowering decodes those fragments using
+the whole triple-quoted text's closing indentation; no executable fragment
+rows are introduced.
 
 The graph's operand conventions are part of the contract. Sequence operands
 are statement roots in order, with the last value or Unit for an empty block.

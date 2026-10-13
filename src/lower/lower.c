@@ -206,19 +206,7 @@ static void entry(struct lowering *p, struct instance *main) {
         }
         e->as.case_.arms.items[0].body = lower_int(p, 0);
         mo_core_expr error = lower_var(p, e->as.case_.arms.items[1].names.items[0]);
-        mo_core_expr text;
-        if (checked->error_text->kind == MO_ABILITY_NATIVE)
-            text = lower_error_text(p, main->fun.ret->as.result.e, error);
-        else if (checked->error_text->kind == MO_ABILITY_FUNCTION) {
-            struct instance *f = lower_instance(p, checked->error_text->function,
-                                                checked->error_text->arguments, NULL, 0, 0);
-            text = lower_expr(p, MO_CORE_EXPR_CALL);
-            text->as.call.name = f->fun.name;
-            text->as.call.args.count = 1;
-            text->as.call.args.items = LOWER_NEW(p, mo_core_expr, 1);
-            text->as.call.args.items[0] = error;
-        } else
-            lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "derived error text is not lowered yet");
+        mo_core_expr text = lower_to_text(p, checked->error_text, NULL, 0, 0, error);
         mo_core_expr_list args = {.count = 2, .items = LOWER_NEW(p, mo_core_expr, 2)};
         args.items[0] = lower_var(p, console);
         args.items[1] = text;
@@ -253,9 +241,8 @@ struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *progra
                            .span.file = UINT32_MAX};
     if (setjmp(p->escape) != 0)
         return NULL;
-    if (program->function_count == 0 || program->constant_count != 0 || program->spec_count != 0)
-        lower_refuse(p, MO_CODE_LOWER_UNFINISHED,
-                     "constants and specification code are not lowered yet");
+    if (program->function_count == 0)
+        lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "the checked entry function is unavailable");
     p->function_tail = &p->functions;
     p->data_tail = &p->data;
     lower_indices(p);
@@ -268,23 +255,38 @@ struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *progra
     MO_ASSERT(program->entry.function < program->function_count);
     struct instance *main =
         lower_instance(p, program->functions[program->entry.function].signature->function,
-                       (struct mo_type_arguments){0}, NULL, 0, 0);
+                       (struct mo_type_arguments){0}, NULL, 0, NULL, 0, 0);
     for (uint32_t i = 0; i < program->function_count; i++) {
         const struct mo_checked_function *f = &program->functions[i];
         if (f->signature->type->parameters == 0)
-            (void)lower_instance(p, f->signature->function, (struct mo_type_arguments){0}, NULL,
-                                 f->signature->function->module, 0);
+            (void)lower_instance(p, f->signature->function, (struct mo_type_arguments){0}, NULL, 0,
+                                 NULL, f->signature->function->module, 0);
     }
     for (struct instance *f = p->functions; f != NULL; f = f->next)
-        lower_function(p, f);
-    entry(p, main);
-    for (struct instance *f = p->functions; f != NULL; f = f->next)
-        if (f->source != NULL && f->fun.body == NULL)
+        if (f->source != NULL)
             lower_function(p, f);
+    lower_constants(p);
+    lower_specs(p);
+    entry(p, main);
+    for (;;) {
+        lower_derived_functions(p);
+        bool pending = false;
+        for (struct instance *f = p->functions; f != NULL; f = f->next) {
+            lower_work(p, 1);
+            if (f->source != NULL && f->fun.body == NULL) {
+                pending = true;
+                lower_function(p, f);
+            }
+        }
+        if (!pending)
+            break;
+    }
+    lower_constant_prefixes(p);
     for (struct data_instance *d = p->data; d != NULL; d = d->next)
         lower_data(p, d);
     struct mo_core *result = LOWER_NEW(p, struct mo_core, 1);
     result->entry = lower_text(p, "%entry");
+    result->consts = p->constants;
     result->funs.count = p->function_count;
     result->funs.items = LOWER_NEW(p, struct mo_core_fun, result->funs.count);
     result->data.count = p->data_count;

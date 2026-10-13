@@ -126,6 +126,18 @@ static int data_order(const void *a, const void *b) {
                     : (left->index > right->index) - (left->index < right->index);
 }
 
+struct constant_order {
+    const struct mo_symbol *symbol;
+    uint32_t index;
+};
+static int constant_order(const void *a, const void *b) {
+    const struct constant_order *x = a, *y = b;
+    if (x->symbol->module != y->symbol->module)
+        return x->symbol->module < y->symbol->module ? -1 : 1;
+    uint32_t xs = x->symbol->declaration->span.start, ys = y->symbol->declaration->span.start;
+    return (xs > ys) - (xs < ys);
+}
+
 void lower_metadata(struct lowering *p, struct mo_core *core) {
     struct mo_core_metadata *m = &core->metadata;
     m->source = true;
@@ -145,10 +157,20 @@ void lower_metadata(struct lowering *p, struct mo_core *core) {
         nodes += f->meta.body.spans.count;
         m->funs.items[i++] = f->meta;
     }
+    m->consts.count = core->consts.count;
+    m->consts.items = LOWER_NEW(p, struct mo_core_const_meta, m->consts.count);
+    for (i = 0; i < core->consts.count; i++) {
+        struct instance *f = &p->constant_bodies[i];
+        body(p, f->fun.body, &f->meta.body, stack);
+        if (f->meta.body.spans.count > MO_LIMIT_CORE_NODES - nodes)
+            lower_refuse(p, MO_CODE_LOWER_WORK, "lowered document exceeds the Core node limit");
+        nodes += f->meta.body.spans.count;
+        m->consts.items[i] = (struct mo_core_const_meta){f->meta.name, f->meta.span, f->meta.body};
+    }
     m->modules.count = p->program->set->count;
     m->modules.items = LOWER_NEW(p, struct mo_core_module_meta, m->modules.count);
     struct cursor {
-        size_t nf, ef, nd, ed;
+        size_t nf, ef, nd, ed, nc;
     };
     struct cursor *cursors = LOWER_NEW(p, struct cursor, m->modules.count);
     for (struct instance *f = p->functions; f != NULL; f = f->next) {
@@ -173,11 +195,22 @@ void lower_metadata(struct lowering *p, struct mo_core *core) {
     for (uint32_t n = p->data_count; n != 0; n /= 2)
         lower_work(p, p->data_count);
     qsort(data, p->data_count, sizeof *data, data_order);
+    struct constant_order *constants = LOWER_NEW(p, struct constant_order, p->constants.count);
+    for (uint32_t j = 0; j < p->constants.count; j++) {
+        lower_work(p, 1);
+        const struct mo_symbol *symbol = p->program->constants[j].symbol;
+        constants[j] = (struct constant_order){symbol, j};
+        m->modules.items[symbol->module].consts.count++;
+    }
+    for (size_t n = p->constants.count; n != 0; n /= 2)
+        lower_work(p, p->constants.count);
+    qsort(constants, p->constants.count, sizeof *constants, constant_order);
     for (uint32_t module = 0; module < m->modules.count; module++) {
         struct mo_core_module_meta *out = &m->modules.items[module];
         out->name = lower_text(p, p->program->set->names[module]);
         out->funs.items = LOWER_NEW(p, uint32_t, out->funs.count);
         out->data.items = LOWER_NEW(p, uint32_t, out->data.count);
+        out->consts.items = LOWER_NEW(p, uint32_t, out->consts.count);
         out->exposed_funs.items = LOWER_NEW(p, uint32_t, out->exposed_funs.count);
         out->exposed_types.items =
             LOWER_NEW(p, struct mo_core_exposed_type, out->exposed_types.count);
@@ -208,5 +241,10 @@ void lower_metadata(struct lowering *p, struct mo_core *core) {
         if (d->source->declaration->exported)
             out->exposed_types.items[at->ed++] =
                 (struct mo_core_exposed_type){data[j].index, d->source->declaration->insides};
+    }
+    for (size_t j = 0; j < p->constants.count; j++) {
+        lower_work(p, 1);
+        uint32_t module = constants[j].symbol->module;
+        m->modules.items[module].consts.items[cursors[module].nc++] = constants[j].index;
     }
 }

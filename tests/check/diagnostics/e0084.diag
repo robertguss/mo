@@ -1,0 +1,6 @@
+E0084 9.1
+0:37..56
+a generic type holds itself at a bigger type: Tree holds Tree in a type-parameter cycle
+A generic type can't hold itself at a bigger type built from its parameter; it would need types without end (reference 9.1).
+a generic type holds itself at a bigger type: Tree holds Tree in a type-parameter cycle
+fixes 0

@@ -67,6 +67,39 @@ CASES = {
                "fn main() : Int\nf = case First(7)\n"
                "First(_) | Second(_): fn(x)\nx + 1\nend\n"
                "Empty: fn(x)\nx + 2\nend\nend\nf(4)\nend", 5),
+    "generic_text": ("fn show(value: T) : Text where T: Text\n\"#{value}\"\nend\n"
+                     "fn relay(value: U) : Text where U: Text\nshow(value)\nend\n"
+                     "fn main() : Int\nif relay((7, false)) == \"(7, false)\": 37 else: 1\nend", 37),
+    "generic_composite": ("fn show(value: T) : Text where T: Text\n\"#{value}\"\nend\n"
+                          "fn relay(value: U) : Text where U: Text\nshow([value])\nend\n"
+                          "fn main() : Int\nif relay(\"x\") == \"[\\\"x\\\"]\": 43 else: 1\nend", 43),
+    "generic_number": ("fn add(a: T, b: T) : T where T: Number\na + b\nend\n"
+                       "fn twice(value: U) : U where U: Number\nadd(value, value)\nend\n"
+                       "fn main() : Int\nif twice(1.25) == 2.5: twice(23) else: 1\nend", 46),
+    "generic_custom_text": ("struct Box(T)\nvalue: T\nend\n"
+                            "fn to_text(box: Box(T)) : Text where T: Text\n\"<#{box.value}>\"\nend\n"
+                            "fn show(value: U) : Text where U: Text\n\"#{Box(value: value)}\"\nend\n"
+                            "fn main() : Int\nif show(Box(value: 7)) == \"<<7>>\": 47 else: 1\nend", 47),
+    "permuted_custom_text": ("struct Pair(Z, A)\nfirst: Z\nsecond: A\nend\n"
+                             "fn to_text(pair: Pair(U, T)) : Text where U: Text, T: Text\n"
+                             "\"#{pair.first}/#{pair.second}\"\nend\n"
+                             "fn main() : Int\nif Pair(first: true, second: 7).to_text == \"true/7\": 49 else: 1\nend", 49),
+    "generic_custom_order": ("struct Box(T)\nvalue: T\nend\n"
+                             "fn compare(a: Box(T), b: Box(T)) : Ordering where T: Order\n"
+                             "if a.value < b.value: Less else: Greater\nend\n"
+                             "fn below?(a: U, b: U) : Bool where U: Order\na < b\nend\n"
+                             "fn main() : Int\nif below?(Box(value: 2), Box(value: 7)): 53 else: 1\nend", 53),
+    "generic_float_order": ("fn above?(a: T, b: T) : Bool where T: Order\na > b\nend\n"
+                            "fn probe(zero: Float) : Int\nif above?(zero / zero, 1.0): 1 else: 59\nend\n"
+                            "fn main() : Int\nprobe(0.0)\nend", 59),
+    "recursive_generic_text": ("enum Chain(T)\nEmpty\nMore(value: T, rest: Chain(T))\nend\n"
+                               "fn empty() : Chain(Int)\nEmpty\nend\n"
+                               "fn show(value: U) : Text where U: Text\n\"#{value}\"\nend\n"
+                               "fn main() : Int\nif show(More(value: 7, rest: More(value: 9, rest: empty()))) == "
+                               "\"More(value: 7, rest: More(value: 9, rest: Empty))\": 61 else: 1\nend", 61),
+    "generic_function_value": ("fn show(value: T) : Text where T: Text\n\"#{value}\"\nend\n"
+                               "fn accept(f: fn(Int) : Text) : Int\nif f(17) == \"17\": 67 else: 1\nend\n"
+                               "fn main() : Int\naccept(show)\nend", 67),
 }
 
 for count in (4, 8, 16):

@@ -39,7 +39,8 @@ static struct mo_core *checked(struct lower_fixture *f, const char *name, const 
     return core;
 }
 
-static void run(struct mo_core *core, int64_t expected) {
+static void run_outcome_bytes(struct mo_core *core, const char *name, enum mo_outcome outcome,
+                              int64_t expected, const char *detail, size_t detail_length) {
     struct mo_diags diags;
     struct mo_buffer bytes;
     CHECK(mo_diags_init(&diags));
@@ -62,28 +63,50 @@ static void run(struct mo_core *core, int64_t expected) {
             struct mo_cell result;
             const struct mo_bytecode *file = mo_image_bytecode(image);
             uint32_t entry = UINT32_MAX;
+            bool integer = false;
+            mo_core_string target =
+                name == NULL ? core->entry : (mo_core_string){name, strlen(name)};
             for (size_t i = 0; i < core->funs.count; i++)
-                if (core->entry.length == core->funs.items[i].name.length &&
-                    memcmp(core->entry.bytes, core->funs.items[i].name.bytes, core->entry.length) ==
-                        0) {
-                    mo_core_string name = core->metadata.funs.items[i].name;
+                if (target.length == core->funs.items[i].name.length &&
+                    memcmp(target.bytes, core->funs.items[i].name.bytes, target.length) == 0) {
+                    integer = core->funs.items[i].ret->tag == MO_CORE_TY_INT;
+                    mo_core_string display = core->metadata.funs.items[i].name;
                     for (uint32_t j = 0; j < file->function_count; j++) {
                         const struct mo_bytecode_string *s =
                             &file->strings[file->functions[j].name];
-                        if (s->length == name.length &&
-                            memcmp(s->bytes, name.bytes, name.length) == 0)
+                        if (s->length == display.length &&
+                            memcmp(s->bytes, display.bytes, display.length) == 0)
                             entry = j;
                     }
                 }
             CHECK(entry != UINT32_MAX);
-            CHECK(mo_call(process, entry, NULL, 0, &result, &defect) == MO_RETURNED);
-            CHECK(mo_cell_get_int(result) == expected);
+            enum mo_outcome actual = mo_call(process, entry, NULL, 0, &result, &defect);
+            CHECK(actual == outcome);
+            if (actual == MO_RETURNED && integer)
+                CHECK(mo_cell_get_int(result) == expected);
+            if (actual == outcome && detail != NULL) {
+                CHECK(defect.has_detail);
+                if (defect.has_detail) {
+                    size_t length;
+                    const uint8_t *value = mo_value_data(defect.detail, &length);
+                    CHECK(length == detail_length && memcmp(value, detail, length) == 0);
+                }
+            }
             mo_process_free(process);
         }
         mo_image_free(image);
     }
     mo_buffer_free(&bytes);
     mo_diags_free(&diags);
+}
+
+static void run_outcome(struct mo_core *core, const char *name, enum mo_outcome outcome,
+                        int64_t expected, const char *detail) {
+    run_outcome_bytes(core, name, outcome, expected, detail, detail == NULL ? 0 : strlen(detail));
+}
+
+static void run(struct mo_core *core, int64_t expected) {
+    run_outcome(core, NULL, MO_RETURNED, expected, NULL);
 }
 
 static void test_literal(void) {
@@ -110,7 +133,7 @@ static void test_literal(void) {
     const struct mo_source_type *parts[] = {&int_type};
     struct mo_source_type function_type = {
         .kind = MO_SOURCE_FUNCTION, .count = 1, .arguments = parts};
-    struct mo_function_signature signature = {&symbol, &function_type};
+    struct mo_function_signature signature = {.function = &symbol, .type = &function_type};
     struct mo_syntax literal = {
         .kind = MO_S_INT, .span = {0, 28, 30}, .text = (const uint8_t *)"17"};
     struct mo_checked_expression expression = {
@@ -423,9 +446,1098 @@ static void test_lambda(void) {
     struct mo_core *core = checked(&f, "lambda", "returned\n8\n");
     if (core != NULL)
         run(core, 8);
-    lambda.capture_count = 1;
-    CHECK(mo_lower(&f.arena, &f.program, &f.sources, &f.diags) == NULL);
-    CHECK(f.diags.items[0].code == MO_CODE_LOWER_UNFINISHED);
+    lower_fixture_free(&f);
+}
+
+static void test_captures(void) {
+    struct lower_fixture f;
+    lower_fixture_init(&f, "module Main\nfn main() : Int\nx = 9\ny = 2\n"
+                           "f = fn() y * 100 + x end\nf()\nend\n");
+    f.bindings[0] = (struct mo_checked_binding){.name = "x", .type = &f.int_};
+    f.bindings[1] = (struct mo_checked_binding){.name = "y", .type = &f.int_};
+    f.functions[0].body.binding_count = 2;
+    uint32_t nine = lower_fixture_row(&f, MO_S_INT, &f.int_, "9", 0, NULL);
+    uint32_t x = lower_fixture_bind(&f, 0, nine, false);
+    uint32_t two = lower_fixture_row(&f, MO_S_INT, &f.int_, "2", 0, NULL);
+    uint32_t y = lower_fixture_bind(&f, 1, two, false);
+    uint32_t read_y = lower_fixture_read(&f, 1);
+    uint32_t hundred = lower_fixture_row(&f, MO_S_INT, &f.int_, "100", 0, NULL);
+    uint32_t product = lower_fixture_op(&f, MO_T_STAR, &f.int_, read_y, hundred);
+    uint32_t read_x = lower_fixture_read(&f, 0);
+    uint32_t sum = lower_fixture_op(&f, MO_T_PLUS, &f.int_, product, read_x);
+    const struct mo_checked_binding *captures[] = {&f.bindings[1], &f.bindings[0]};
+    struct mo_checked_lambda lambda = {
+        .number = 1, .body = sum, .capture_count = 2, .captures = captures};
+    uint32_t value = lower_fixture_row(&f, MO_S_LAMBDA, &f.function_types[0], NULL, 1, &sum);
+    f.rows[value].lambda = &lambda;
+    uint32_t call = lower_fixture_row(&f, MO_S_CALL, &f.int_, NULL, 1, &value);
+    uint32_t sequence[] = {x, y, call};
+    (void)lower_fixture_row(&f, MO_S_SEQUENCE, &f.int_, NULL, 3, sequence);
+    struct mo_core *core = checked(&f, "captures", "returned\n209\n");
+    if (core != NULL)
+        run(core, 209);
+    lower_fixture_free(&f);
+}
+
+static void test_option_or(void) {
+    for (uint32_t some = 0; some < 2; some++) {
+        struct lower_fixture f;
+        lower_fixture_init(&f, some ? "module Main\nfn main() : Int\nSome(17) or 1 / 0\nend\n"
+                                    : "module Main\nfn main() : Int\nNone or 37\nend\n");
+        const struct mo_source_type *part = &f.int_;
+        struct mo_source_type option = {.kind = MO_SOURCE_NAMED,
+                                        .name = "Option",
+                                        .module = UINT32_MAX,
+                                        .count = 1,
+                                        .arguments = &part};
+        uint32_t value = 0;
+        if (some)
+            value = lower_fixture_row(&f, MO_S_INT, &f.int_, "17", 0, NULL);
+        uint32_t input = lower_fixture_row(&f, MO_S_CALL, &option, NULL, some, &value);
+        f.rows[input].native = some ? "Some" : "None";
+        uint32_t fallback;
+        if (some) {
+            uint32_t one = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+            uint32_t zero = lower_fixture_row(&f, MO_S_INT, &f.int_, "0", 0, NULL);
+            fallback = lower_fixture_op(&f, MO_T_SLASH, &f.int_, one, zero);
+        } else
+            fallback = lower_fixture_row(&f, MO_S_INT, &f.int_, "37", 0, NULL);
+        uint32_t or_ = lower_fixture_op(&f, MO_T_OR, &f.int_, input, fallback);
+        f.rows[or_].or_kind = MO_CHECK_OR_OPTION;
+        struct mo_core *core = checked(&f, some ? "option-some" : "option-none",
+                                       some ? "returned\n17\n" : "returned\n37\n");
+        if (core != NULL)
+            run(core, some ? 17 : 37);
+        lower_fixture_free(&f);
+    }
+}
+
+static void test_try_option(void) {
+    for (uint32_t some = 0; some < 2; some++) {
+        struct lower_fixture f;
+        lower_fixture_init(&f, "module Main\nfn probe() : Option(Int)\n"
+                               "Some(2 + try Some(17))\nend\n"
+                               "fn main() : Int\nprobe() or 37\nend\n");
+        f.program.function_count = f.declarations.count = 2;
+        f.symbols[1].name = "probe";
+        const struct mo_source_type *part = &f.int_;
+        struct mo_source_type option = {.kind = MO_SOURCE_NAMED,
+                                        .name = "Option",
+                                        .module = UINT32_MAX,
+                                        .count = 1,
+                                        .arguments = &part};
+        f.signature_parts[1][0] = &option;
+        uint32_t two = lower_fixture_row(&f, MO_S_INT, &f.int_, "2", 0, NULL);
+        uint32_t seventeen = lower_fixture_row(&f, MO_S_INT, &f.int_, "17", 0, NULL);
+        uint32_t input = lower_fixture_row(&f, MO_S_CALL, &option, NULL, some, &seventeen);
+        f.rows[input].native = some ? "Some" : "None";
+        struct mo_checked_try try_ = {.result = &option, .failure.builtin = "None"};
+        uint32_t unwrap = lower_fixture_row(&f, MO_S_TRY, &f.int_, NULL, 1, &input);
+        f.rows[unwrap].try_ = &try_;
+        uint32_t sum = lower_fixture_op(&f, MO_T_PLUS, &f.int_, two, unwrap);
+        f.functions[1].body.root = lower_fixture_row(&f, MO_S_CALL, &option, NULL, 1, &sum);
+        f.rows[f.functions[1].body.root].native = "Some";
+        f.functions[1].body.count = f.count;
+        uint32_t callee = lower_fixture_row(&f, MO_S_NAME, &f.function_types[1], NULL, 0, NULL);
+        f.rows[callee].symbol = &f.symbols[1];
+        uint32_t call = lower_fixture_row(&f, MO_S_CALL, &option, NULL, 1, &callee);
+        f.rows[call].symbol = &f.symbols[1];
+        uint32_t fallback = lower_fixture_row(&f, MO_S_INT, &f.int_, "37", 0, NULL);
+        uint32_t or_ = lower_fixture_op(&f, MO_T_OR, &f.int_, call, fallback);
+        f.rows[or_].or_kind = MO_CHECK_OR_OPTION;
+        (void)checked(&f, some ? "try-option-some" : "try-option-none",
+                      some ? "returned\n19\n" : "returned\n37\n");
+        lower_fixture_free(&f);
+    }
+}
+
+static void test_try_result(void) {
+    for (uint32_t wrapped = 0; wrapped < 2; wrapped++) {
+        struct lower_fixture f;
+        lower_fixture_init(&f, wrapped ? "module Main\nfn main() : Int\ncase probe()\n"
+                                         "Ok(_): 1\nError(Some(\"bad\")): 43\nError(_): 1\n"
+                                         "end\nend\nfn probe() : Result(Int, Option(Text))\n"
+                                         "Ok(2 + try Error(\"bad\"))\nend\n"
+                                       : "module Main\nfn main() : Int\ncase probe()\n"
+                                         "Ok(_): 1\nError(\"bad\"): 43\nError(_): 1\n"
+                                         "end\nend\nfn probe() : Result(Int, Text)\n"
+                                         "Ok(2 + try Error(\"bad\"))\nend\n");
+        f.program.function_count = f.declarations.count = 2;
+        f.symbols[1].name = "probe";
+        const struct mo_source_type *text_part = &f.text_;
+        struct mo_source_type option = {.kind = MO_SOURCE_NAMED,
+                                        .name = "Option",
+                                        .module = UINT32_MAX,
+                                        .count = 1,
+                                        .arguments = &text_part};
+        const struct mo_source_type *inner_parts[] = {&f.int_, &f.text_};
+        const struct mo_source_type *outer_parts[] = {&f.int_, wrapped ? &option : &f.text_};
+        struct mo_source_type inner = {.kind = MO_SOURCE_NAMED,
+                                       .name = "Result",
+                                       .module = UINT32_MAX,
+                                       .count = 2,
+                                       .arguments = inner_parts};
+        struct mo_source_type outer = inner;
+        outer.arguments = outer_parts;
+        f.signature_parts[1][0] = &outer;
+        uint32_t two = lower_fixture_row(&f, MO_S_INT, &f.int_, "2", 0, NULL);
+        uint32_t text = lower_fixture_row(&f, MO_S_TEXT, &f.text_, "\"bad\"", 0, NULL);
+        uint32_t input = lower_fixture_row(&f, MO_S_CALL, &inner, NULL, 1, &text);
+        f.rows[input].native = "Error";
+        struct mo_checked_try try_ = {.result = &outer,
+                                      .failure.builtin = "Error",
+                                      .wrapper.builtin = wrapped ? "Some" : NULL};
+        uint32_t unwrap = lower_fixture_row(&f, MO_S_TRY, &f.int_, NULL, 1, &input);
+        f.rows[unwrap].try_ = &try_;
+        uint32_t sum = lower_fixture_op(&f, MO_T_PLUS, &f.int_, two, unwrap);
+        f.functions[1].body.root = lower_fixture_row(&f, MO_S_CALL, &outer, NULL, 1, &sum);
+        f.rows[f.functions[1].body.root].native = "Ok";
+        f.functions[1].body.count = f.count;
+        uint32_t callee = lower_fixture_row(&f, MO_S_NAME, &f.function_types[1], NULL, 0, NULL);
+        f.rows[callee].symbol = &f.symbols[1];
+        uint32_t call = lower_fixture_row(&f, MO_S_CALL, &outer, NULL, 1, &callee);
+        f.rows[call].symbol = &f.symbols[1];
+        uint32_t yes = lower_fixture_row(&f, MO_S_INT, &f.int_, "43", 0, NULL);
+        uint32_t no = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+        struct mo_checked_pattern literal = {
+            .kind = MO_PATTERN_LITERAL, .syntax = &f.syntax[text], .type = &f.text_};
+        struct mo_checked_pattern_part text_payload = {0, &literal};
+        struct mo_checked_pattern some = {.kind = MO_PATTERN_CONSTRUCTOR,
+                                          .syntax = &f.syntax[text],
+                                          .type = &option,
+                                          .constructor.builtin = "Some",
+                                          .part_count = 1,
+                                          .parts = &text_payload};
+        struct mo_checked_pattern_part payload = {0, wrapped ? &some : &literal};
+        struct mo_checked_pattern error = {.kind = MO_PATTERN_CONSTRUCTOR,
+                                           .syntax = &f.syntax[call],
+                                           .type = &outer,
+                                           .constructor.builtin = "Error",
+                                           .part_count = 1,
+                                           .parts = &payload};
+        struct mo_checked_pattern any_int = {
+            .kind = MO_PATTERN_ANY, .syntax = &f.syntax[call], .type = &f.int_};
+        struct mo_checked_pattern any_error = {
+            .kind = MO_PATTERN_ANY, .syntax = &f.syntax[call], .type = outer_parts[1]};
+        struct mo_checked_pattern_part ok_payload = {0, &any_int};
+        struct mo_checked_pattern_part any_payload = {0, &any_error};
+        struct mo_checked_pattern ok = error, fallback = error;
+        ok.constructor.builtin = "Ok";
+        ok.parts = &ok_payload;
+        fallback.parts = &any_payload;
+        const struct mo_checked_pattern *patterns[] = {&ok, &error, &fallback};
+        struct mo_checked_arm arms[] = {{.syntax = &f.syntax[call],
+                                         .pattern_count = 1,
+                                         .patterns = &patterns[0],
+                                         .guard = UINT32_MAX,
+                                         .body = no},
+                                        {.syntax = &f.syntax[call],
+                                         .pattern_count = 1,
+                                         .patterns = &patterns[1],
+                                         .guard = UINT32_MAX,
+                                         .body = yes},
+                                        {.syntax = &f.syntax[call],
+                                         .pattern_count = 1,
+                                         .patterns = &patterns[2],
+                                         .guard = UINT32_MAX,
+                                         .body = no}};
+        struct mo_checked_match match = {.scrutinee = call, .arm_count = 3, .arms = arms};
+        uint32_t case_ = lower_fixture_row(&f, MO_S_CASE, &f.int_, NULL, 0, NULL);
+        f.rows[case_].match = &match;
+        (void)checked(&f, wrapped ? "try-result-wrap" : "try-result-direct", "returned\n43\n");
+        lower_fixture_free(&f);
+    }
+}
+
+static void test_interpolation(void) {
+    for (uint32_t triple = 0; triple < 2; triple++) {
+        struct lower_fixture f;
+        lower_fixture_init(
+            &f, triple ? "module Main\nfn main() : Int\n"
+                         "if \"\"\"\r\n  a\r\n  #{7}: #{false}λ\r\n  \"\"\""
+                         " == \"a\\n7: falseλ\": 19 else: 1\nend\n"
+                       : "module Main\nfn main() : Int\n"
+                         "if \"a\\n#{7}: #{false}λ\" == \"a\\n7: falseλ\": 19 else: 1\nend\n");
+        uint32_t seven = lower_fixture_row(&f, MO_S_INT, &f.int_, "7", 0, NULL);
+        uint32_t false_ = lower_fixture_row(&f, MO_S_FALSE, &f.bool_, "false", 0, NULL);
+        uint32_t operands[] = {seven, false_};
+        uint32_t text = lower_fixture_row(&f, MO_S_TEXT_INTERPOLATED, &f.text_, NULL, 2, operands);
+        struct mo_syntax fragments[3];
+        const char *spellings[] = {triple ? "\"\"\"\r\n  a\r\n  #{" : "\"a\\n#{", "}: #{",
+                                   triple ? "}λ\r\n  \"\"\"" : "}λ\""};
+        const enum mo_syntax_token tokens[] = {MO_T_TEXT_HEAD, MO_T_TEXT_MID, MO_T_TEXT_TAIL};
+        for (uint32_t i = 0; i < 3; i++) {
+            uint32_t start = (uint32_t)(strstr(f.source, spellings[i]) - f.source);
+            fragments[i] =
+                (struct mo_syntax){.kind = MO_S_TOKEN,
+                                   .token = tokens[i],
+                                   .text = (const uint8_t *)spellings[i],
+                                   .span = {0, start, start + (uint32_t)strlen(spellings[i])}};
+        }
+        struct mo_syntax *children[] = {&fragments[0], &f.syntax[seven], &fragments[1],
+                                        &f.syntax[false_], &fragments[2]};
+        f.syntax[text].children = children;
+        f.syntax[text].count = 5;
+        struct mo_ability_implementation proofs[] = {
+            {.ability = MO_SOURCE_TEXT, .kind = MO_ABILITY_NATIVE, .type = &f.int_},
+            {.ability = MO_SOURCE_TEXT, .kind = MO_ABILITY_NATIVE, .type = &f.bool_}};
+        struct mo_checked_ability_use uses[] = {{.operand = seven, .implementation = &proofs[0]},
+                                                {.operand = false_, .implementation = &proofs[1]}};
+        f.rows[text].ability_count = 2;
+        f.rows[text].abilities = uses;
+        uint32_t expected =
+            lower_fixture_row(&f, MO_S_TEXT, &f.text_, "\"a\\n7: falseλ\"", 0, NULL);
+        uint32_t equal = lower_fixture_op(&f, MO_T_EQ, &f.bool_, text, expected);
+        uint32_t yes = lower_fixture_row(&f, MO_S_INT, &f.int_, "19", 0, NULL);
+        uint32_t no = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+        uint32_t arms[] = {equal, yes, no};
+        (void)lower_fixture_row(&f, MO_S_IF, &f.int_, NULL, 3, arms);
+        struct mo_core *core =
+            checked(&f, triple ? "interpolation-triple" : "interpolation", "returned\n19\n");
+        if (core != NULL)
+            run(core, 19);
+        lower_fixture_free(&f);
+    }
+}
+
+static void test_derived_text(void) {
+    struct lower_fixture f;
+    lower_fixture_init(
+        &f,
+        "module Main\nfn main() : Int\n"
+        "if (7, \"a\\n\", '\\n').to_text == \"(7, \\\"a\\\\n\\\", '\\\\n')\": 23 else: 1\nend\n");
+    struct mo_source_type char_ = f.int_;
+    char_.name = "Char";
+    const struct mo_source_type *types[] = {&f.int_, &f.text_, &char_};
+    struct mo_source_type tuple = {.kind = MO_SOURCE_TUPLE, .count = 3, .arguments = types};
+    uint32_t values[] = {lower_fixture_row(&f, MO_S_INT, &f.int_, "7", 0, NULL),
+                         lower_fixture_row(&f, MO_S_TEXT, &f.text_, "\"a\\n\"", 0, NULL),
+                         lower_fixture_row(&f, MO_S_CHAR, &char_, "'\\n'", 0, NULL)};
+    uint32_t value = lower_fixture_row(&f, MO_S_TUPLE, &tuple, NULL, 3, values);
+    struct mo_ability_implementation parts[3];
+    const struct mo_ability_implementation *pointers[3];
+    for (uint32_t i = 0; i < 3; i++) {
+        parts[i] = (struct mo_ability_implementation){
+            .ability = MO_SOURCE_TEXT, .kind = MO_ABILITY_NATIVE, .type = types[i]};
+        pointers[i] = &parts[i];
+    }
+    struct mo_ability_implementation proof = {.ability = MO_SOURCE_TEXT,
+                                              .kind = MO_ABILITY_DERIVED,
+                                              .type = &tuple,
+                                              .part_count = 3,
+                                              .parts = pointers};
+    struct mo_checked_ability_use use = {.operand = value, .implementation = &proof};
+    uint32_t text = lower_fixture_row(&f, MO_S_FIELD_ACCESS, &f.text_, NULL, 1, &value);
+    f.rows[text].native = "to_text";
+    f.rows[text].ability_count = 1;
+    f.rows[text].abilities = &use;
+    uint32_t expected =
+        lower_fixture_row(&f, MO_S_TEXT, &f.text_, "\"(7, \\\"a\\\\n\\\", '\\\\n')\"", 0, NULL);
+    uint32_t eq = lower_fixture_op(&f, MO_T_EQ, &f.bool_, text, expected);
+    uint32_t yes = lower_fixture_row(&f, MO_S_INT, &f.int_, "23", 0, NULL);
+    uint32_t no = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+    uint32_t arms[] = {eq, yes, no};
+    (void)lower_fixture_row(&f, MO_S_IF, &f.int_, NULL, 3, arms);
+    struct mo_core *core = checked(&f, "derived-text", "returned\n23\n");
+    if (core != NULL)
+        run(core, 23);
+    lower_fixture_free(&f);
+}
+
+static void test_tuple_order(void) {
+    struct lower_fixture f;
+    lower_fixture_init(&f, "module Main\nfn main() : Int\n"
+                           "if (2, 100) < (3, 5): 31 else: 1\nend\n");
+    const struct mo_source_type *parts[] = {&f.int_, &f.int_};
+    struct mo_source_type tuple = {.kind = MO_SOURCE_TUPLE, .count = 2, .arguments = parts};
+    uint32_t two = lower_fixture_row(&f, MO_S_INT, &f.int_, "2", 0, NULL);
+    uint32_t hundred = lower_fixture_row(&f, MO_S_INT, &f.int_, "100", 0, NULL);
+    uint32_t left_parts[] = {two, hundred};
+    uint32_t left = lower_fixture_row(&f, MO_S_TUPLE, &tuple, NULL, 2, left_parts);
+    uint32_t three = lower_fixture_row(&f, MO_S_INT, &f.int_, "3", 0, NULL);
+    uint32_t five = lower_fixture_row(&f, MO_S_INT, &f.int_, "5", 0, NULL);
+    uint32_t right_parts[] = {three, five};
+    uint32_t right = lower_fixture_row(&f, MO_S_TUPLE, &tuple, NULL, 2, right_parts);
+    struct mo_ability_implementation integer = {
+        .ability = MO_SOURCE_ORDER, .kind = MO_ABILITY_NATIVE, .type = &f.int_};
+    const struct mo_ability_implementation *proofs[] = {&integer, &integer};
+    struct mo_ability_implementation order = {.ability = MO_SOURCE_ORDER,
+                                              .kind = MO_ABILITY_DERIVED,
+                                              .type = &tuple,
+                                              .part_count = 2,
+                                              .parts = proofs};
+    struct mo_checked_ability_use use = {.operand = left, .implementation = &order};
+    uint32_t less = lower_fixture_op(&f, MO_T_LT, &f.bool_, left, right);
+    f.rows[less].ability_count = 1;
+    f.rows[less].abilities = &use;
+    uint32_t yes = lower_fixture_row(&f, MO_S_INT, &f.int_, "31", 0, NULL);
+    uint32_t no = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+    uint32_t arms[] = {less, yes, no};
+    (void)lower_fixture_row(&f, MO_S_IF, &f.int_, NULL, 3, arms);
+    struct mo_core *core = checked(&f, "tuple-order", "returned\n31\n");
+    if (core != NULL)
+        run(core, 31);
+    lower_fixture_free(&f);
+}
+
+static void test_float_compare(void) {
+    for (uint32_t mask = 1; mask < 4; mask++) {
+        struct lower_fixture f;
+        lower_fixture_init(&f, "module Main\nfn main() : Int\n"
+                               "if (0.0 / 0.0).compare(0.0) == Greater: 37 else: 1\nend\n");
+        struct mo_source_type float_ = f.int_, order = f.int_;
+        float_.name = "Float";
+        order.name = "Ordering";
+        uint32_t operands[2];
+        for (uint32_t i = 0; i < 2; i++) {
+            operands[i] = lower_fixture_row(&f, MO_S_DECIMAL, &float_, "0.0", 0, NULL);
+            if ((mask & (1u << i)) != 0) {
+                uint32_t zero = lower_fixture_row(&f, MO_S_DECIMAL, &float_, "0.0", 0, NULL);
+                operands[i] = lower_fixture_op(&f, MO_T_SLASH, &float_, operands[i], zero);
+            }
+        }
+        struct mo_ability_implementation proof = {
+            .ability = MO_SOURCE_ORDER, .kind = MO_ABILITY_NATIVE, .type = &float_};
+        struct mo_checked_ability_use use = {.operand = operands[0], .implementation = &proof};
+        uint32_t compare = lower_fixture_row(&f, MO_S_CALL, &order, NULL, 2, operands);
+        f.rows[compare].native = "compare";
+        f.rows[compare].ability_count = 1;
+        f.rows[compare].abilities = &use;
+        uint32_t want = lower_fixture_row(&f, MO_S_NAME, &order, NULL, 0, NULL);
+        f.rows[want].native = mask == 1 ? "Greater" : mask == 2 ? "Less" : "Equal";
+        uint32_t equal = lower_fixture_op(&f, MO_T_EQ, &f.bool_, compare, want);
+        uint32_t yes = lower_fixture_row(&f, MO_S_INT, &f.int_, "37", 0, NULL);
+        uint32_t no = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+        uint32_t arms[] = {equal, yes, no};
+        (void)lower_fixture_row(&f, MO_S_IF, &f.int_, NULL, 3, arms);
+        struct mo_core *core = checked(&f,
+                                       mask == 1   ? "nan-compare-number"
+                                       : mask == 2 ? "number-compare-nan"
+                                                   : "nan-compare-nan",
+                                       "returned\n37\n");
+        if (core != NULL)
+            run(core, 37);
+        lower_fixture_free(&f);
+    }
+}
+
+static void test_choice_order(void) {
+    for (uint32_t probe = 0; probe < 4; probe++) {
+        struct lower_fixture f;
+        lower_fixture_init(&f, "module Main\nfn main() : Int\n"
+                               "if Some(2).compare(Some(7)) == Less: 43 else: 1\nend\n");
+        const struct mo_source_type *part = &f.int_;
+        struct mo_source_type option = {.kind = MO_SOURCE_NAMED,
+                                        .name = "Option",
+                                        .module = UINT32_MAX,
+                                        .count = 1,
+                                        .arguments = &part};
+        struct mo_source_type order = f.int_;
+        order.name = "Ordering";
+        uint32_t operands[2];
+        for (uint32_t i = 0; i < 2; i++) {
+            bool some = probe == 2 || probe == 3 || (probe == 0 ? i == 0 : i == 1);
+            uint32_t value = 0;
+            if (some)
+                value = lower_fixture_row(&f, MO_S_INT, &f.int_, i == 0 || probe == 3 ? "2" : "7",
+                                          0, NULL);
+            operands[i] = lower_fixture_row(&f, MO_S_CALL, &option, NULL, some, &value);
+            f.rows[operands[i]].native = some ? "Some" : "None";
+        }
+        struct mo_ability_implementation integer = {
+            .ability = MO_SOURCE_ORDER, .kind = MO_ABILITY_NATIVE, .type = &f.int_};
+        const struct mo_ability_implementation *parts[] = {&integer};
+        struct mo_ability_implementation proof = {.ability = MO_SOURCE_ORDER,
+                                                  .kind = MO_ABILITY_DERIVED,
+                                                  .type = &option,
+                                                  .part_count = 1,
+                                                  .parts = parts};
+        struct mo_checked_ability_use use = {.operand = operands[0], .implementation = &proof};
+        uint32_t compare = lower_fixture_row(&f, MO_S_CALL, &order, NULL, 2, operands);
+        f.rows[compare].native = "compare";
+        f.rows[compare].ability_count = 1;
+        f.rows[compare].abilities = &use;
+        uint32_t want = lower_fixture_row(&f, MO_S_NAME, &order, NULL, 0, NULL);
+        f.rows[want].native = probe == 0 ? "Greater" : probe == 3 ? "Equal" : "Less";
+        uint32_t equal = lower_fixture_op(&f, MO_T_EQ, &f.bool_, compare, want);
+        uint32_t yes = lower_fixture_row(&f, MO_S_INT, &f.int_, "43", 0, NULL);
+        uint32_t no = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+        uint32_t arms[] = {equal, yes, no};
+        (void)lower_fixture_row(&f, MO_S_IF, &f.int_, NULL, 3, arms);
+        const char *names[] = {"some-before-none", "none-before-some", "some-order", "some-equal"};
+        struct mo_core *core = checked(&f, names[probe], "returned\n43\n");
+        if (core != NULL)
+            run(core, 43);
+        lower_fixture_free(&f);
+    }
+}
+
+static void test_list_order(void) {
+    for (uint32_t probe = 0; probe < 4; probe++) {
+        struct lower_fixture f;
+        lower_fixture_init(&f, "module Main\nfn main() : Int\n"
+                               "if [2, 7] < [2, 7, 0]: 47 else: 1\nend\n");
+        const struct mo_source_type *part = &f.int_;
+        struct mo_source_type list = {.kind = MO_SOURCE_NAMED,
+                                      .name = "List",
+                                      .module = UINT32_MAX,
+                                      .count = 1,
+                                      .arguments = &part};
+        uint32_t operands[2];
+        for (uint32_t i = 0; i < 2; i++) {
+            uint32_t count = probe == 0 ? (i == 0 ? 2u : 3u) : probe == 1 ? 2u : probe == 2 ? i : 0;
+            uint32_t values[3];
+            for (uint32_t j = 0; j < count; j++)
+                values[j] = lower_fixture_row(&f, MO_S_INT, &f.int_,
+                                              probe == 1 && j == 0   ? (i == 0 ? "2" : "7")
+                                              : probe == 1 && j == 1 ? (i == 0 ? "7" : "0")
+                                              : j == 0               ? "2"
+                                              : j == 1               ? "7"
+                                                                     : "0",
+                                              0, NULL);
+            operands[i] = lower_fixture_row(&f, MO_S_LIST, &list, NULL, count, values);
+        }
+        struct mo_ability_implementation integer = {
+            .ability = MO_SOURCE_ORDER, .kind = MO_ABILITY_NATIVE, .type = &f.int_};
+        const struct mo_ability_implementation *parts[] = {&integer};
+        struct mo_ability_implementation proof = {.ability = MO_SOURCE_ORDER,
+                                                  .kind = MO_ABILITY_DERIVED,
+                                                  .type = &list,
+                                                  .part_count = 1,
+                                                  .parts = parts};
+        struct mo_checked_ability_use use = {.operand = operands[0], .implementation = &proof};
+        uint32_t compare = lower_fixture_op(&f, probe == 3 ? MO_T_LE : MO_T_LT, &f.bool_,
+                                            operands[0], operands[1]);
+        f.rows[compare].ability_count = 1;
+        f.rows[compare].abilities = &use;
+        uint32_t yes = lower_fixture_row(&f, MO_S_INT, &f.int_, "47", 0, NULL);
+        uint32_t no = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+        uint32_t arms[] = {compare, yes, no};
+        (void)lower_fixture_row(&f, MO_S_IF, &f.int_, NULL, 3, arms);
+        const char *names[] = {"list-prefix", "list-first-part", "list-empty", "list-empty-equal"};
+        struct mo_core *core = checked(&f, names[probe], "returned\n47\n");
+        if (core != NULL)
+            run(core, 47);
+        lower_fixture_free(&f);
+    }
+}
+
+static void test_list_text(void) {
+    for (uint32_t count = 0; count <= 2; count += 2) {
+        struct lower_fixture f;
+        lower_fixture_init(&f, "module Main\nfn main() : Int\n"
+                               "if [\"z\", \"a\"].to_text == \"[\\\"z\\\", \\\"a\\\"]\": 53 "
+                               "else: 1\n# \"[]\"\nend\n");
+        const struct mo_source_type *part = &f.text_;
+        struct mo_source_type list = {.kind = MO_SOURCE_NAMED,
+                                      .name = "List",
+                                      .module = UINT32_MAX,
+                                      .count = 1,
+                                      .arguments = &part};
+        uint32_t values[2];
+        for (uint32_t i = 0; i < count; i++)
+            values[i] =
+                lower_fixture_row(&f, MO_S_TEXT, &f.text_, i == 0 ? "\"z\"" : "\"a\"", 0, NULL);
+        uint32_t value = lower_fixture_row(&f, MO_S_LIST, &list, NULL, count, values);
+        struct mo_ability_implementation element = {
+            .ability = MO_SOURCE_TEXT, .kind = MO_ABILITY_NATIVE, .type = &f.text_};
+        const struct mo_ability_implementation *parts[] = {&element};
+        struct mo_ability_implementation proof = {.ability = MO_SOURCE_TEXT,
+                                                  .kind = MO_ABILITY_DERIVED,
+                                                  .type = &list,
+                                                  .part_count = 1,
+                                                  .parts = parts};
+        struct mo_checked_ability_use use = {.operand = value, .implementation = &proof};
+        uint32_t text = lower_fixture_row(&f, MO_S_FIELD_ACCESS, &f.text_, NULL, 1, &value);
+        f.rows[text].native = "to_text";
+        f.rows[text].ability_count = 1;
+        f.rows[text].abilities = &use;
+        uint32_t expected = lower_fixture_row(
+            &f, MO_S_TEXT, &f.text_, count == 0 ? "\"[]\"" : "\"[\\\"z\\\", \\\"a\\\"]\"", 0, NULL);
+        uint32_t eq = lower_fixture_op(&f, MO_T_EQ, &f.bool_, text, expected);
+        uint32_t yes = lower_fixture_row(&f, MO_S_INT, &f.int_, "53", 0, NULL);
+        uint32_t no = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+        uint32_t arms[] = {eq, yes, no};
+        (void)lower_fixture_row(&f, MO_S_IF, &f.int_, NULL, 3, arms);
+        struct mo_core *core =
+            checked(&f, count == 0 ? "list-text-empty" : "list-text", "returned\n53\n");
+        if (core != NULL)
+            run(core, 53);
+        lower_fixture_free(&f);
+    }
+}
+
+static void test_constants(void) {
+    struct lower_fixture f;
+    lower_fixture_init(&f, "module Main\nb = read_a() + 7\na = 7\n"
+                           "fn read_a() : Int\na + 5\nend\nfn main() : Int\nb\nend\n");
+    f.program.function_count = f.declarations.count = 2;
+    f.symbols[1].name = "read_a";
+    uint32_t a_start = (uint32_t)(strstr(f.source, "a = 7") - f.source);
+    uint32_t b_start = (uint32_t)(strstr(f.source, "b = read_a() + 7") - f.source);
+    struct mo_syntax declarations[2] = {{.kind = MO_S_CONST, .span = {0, a_start, a_start + 5}},
+                                        {.kind = MO_S_CONST, .span = {0, b_start, b_start + 16}}};
+    struct mo_symbol symbols[2] = {{.name = "a", .declaration = &declarations[0]},
+                                   {.name = "b", .declaration = &declarations[1]}};
+    struct mo_checked_constant constants[2] = {{.symbol = &symbols[0], .type = &f.int_},
+                                               {.symbol = &symbols[1], .type = &f.int_}};
+    uint32_t seven = lower_fixture_row(&f, MO_S_INT, &f.int_, "7", 0, NULL);
+    constants[0].initializer = f.functions[0].body;
+    constants[0].initializer.root = seven;
+    uint32_t a = lower_fixture_row(&f, MO_S_NAME, &f.int_, NULL, 0, NULL);
+    f.rows[a].symbol = &symbols[0];
+    uint32_t five = lower_fixture_row(&f, MO_S_INT, &f.int_, "5", 0, NULL);
+    uint32_t sum = lower_fixture_op(&f, MO_T_PLUS, &f.int_, a, five);
+    f.functions[1].body = f.functions[0].body;
+    f.functions[1].body.root = sum;
+    uint32_t callee = lower_fixture_row(&f, MO_S_NAME, &f.function_types[1], NULL, 0, NULL);
+    f.rows[callee].symbol = &f.symbols[1];
+    uint32_t call = lower_fixture_row(&f, MO_S_CALL, &f.int_, NULL, 1, &callee);
+    f.rows[call].symbol = &f.symbols[1];
+    seven = lower_fixture_row(&f, MO_S_INT, &f.int_, "7", 0, NULL);
+    sum = lower_fixture_op(&f, MO_T_PLUS, &f.int_, call, seven);
+    constants[1].initializer = f.functions[0].body;
+    constants[1].initializer.root = sum;
+    uint32_t b = lower_fixture_row(&f, MO_S_NAME, &f.int_, NULL, 0, NULL);
+    f.rows[b].symbol = &symbols[1];
+    f.program.constant_count = 2;
+    f.program.constants = constants;
+    struct mo_core *core = checked(&f, "constants-through-call", "returned\n19\n");
+    if (core != NULL)
+        run(core, 19);
+    lower_fixture_free(&f);
+}
+
+static void test_specs(void) {
+    for (uint32_t probe = 0; probe < 4; probe++) {
+        struct lower_fixture f;
+        bool test = probe < 2, pass = probe % 2 == 0;
+        const char *source = test   ? pass ? "test \"a condition\"\nassert true\nend\n"
+                                           : "test \"a condition\"\nassert false\nend\n"
+                             : pass ? "example\ntrue\nend\n"
+                                    : "example\nfalse\nend\n";
+        char bytes[128];
+        int length =
+            snprintf(bytes, sizeof bytes, "module Main\nfn main() : Int\n7\nend\n%s", source);
+        MO_ASSERT(length > 0 && (size_t)length < sizeof bytes);
+        lower_fixture_init(&f, bytes);
+        (void)lower_fixture_row(&f, MO_S_INT, &f.int_, "7", 0, NULL);
+        struct mo_checked_body main = f.functions[0].body;
+        uint32_t condition = lower_fixture_row(&f, pass ? MO_S_TRUE : MO_S_FALSE, &f.bool_,
+                                               pass ? "true" : "false", 0, NULL);
+        if (test)
+            (void)lower_fixture_row(&f, MO_S_ASSERT, &f.unit_, NULL, 1, &condition);
+        const char *line = pass ? test ? "assert true" : "true" : test ? "assert false" : "false";
+        uint32_t start = (uint32_t)(strstr(bytes, line) - bytes);
+        struct mo_spec_text text = {.bytes = (const uint8_t *)line,
+                                    .length = (uint32_t)strlen(line),
+                                    .span = {0, start, start + (uint32_t)strlen(line)}};
+        struct mo_checked_spec spec = {.kind = test ? MO_SPEC_TEST : MO_SPEC_EXAMPLE,
+                                       .syntax = &f.syntax[condition],
+                                       .number = 1,
+                                       .subject = test ? UINT32_MAX : 0,
+                                       .text = text,
+                                       .wording = (const uint8_t *)"a condition",
+                                       .wording_length = 11,
+                                       .body = f.functions[0].body};
+        f.program.spec_count = 1;
+        f.program.specs = &spec;
+        f.functions[0].body = main;
+        const char *names[] = {"test-pass", "test-fail", "example-pass", "example-fail"};
+        const char *expected[] = {"returned\nUnit\n{\"test\":\"Main.test.1\"}\n",
+                                  "failed\nassertion failed\n{\"test\":\"Main.test.1\"}\n",
+                                  "returned\nUnit\n{\"test\":\"Main.main.example.1\"}\n",
+                                  "failed\nexample failed\n{\"test\":\"Main.main.example.1\"}\n"};
+        struct mo_core *core = checked(&f, names[probe], expected[probe]);
+        if (core != NULL)
+            run_outcome(core, test ? "Main.test.1" : "Main.main.example.1",
+                        pass ? MO_RETURNED : MO_FAILED, 0,
+                        pass   ? NULL
+                        : test ? "assertion failed"
+                               : "example failed");
+        lower_fixture_free(&f);
+    }
+}
+
+static void test_structural_failures(void) {
+    struct lower_fixture f;
+    lower_fixture_init(&f, "module Main\nfn main() : Int\n7\nend\n"
+                           "test \"snapshot operands\"\nvar n = 1\n"
+                           "assert n == (n += 1; n)\nend\n");
+    (void)lower_fixture_row(&f, MO_S_INT, &f.int_, "7", 0, NULL);
+    struct mo_checked_body main = f.functions[0].body;
+    f.bindings[0] = (struct mo_checked_binding){.name = "n", .type = &f.int_, .variable = true};
+    f.functions[0].body.binding_count = 1;
+    uint32_t one = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+    uint32_t bind = lower_fixture_bind(&f, 0, one, false);
+    uint32_t left = lower_fixture_read(&f, 0);
+    uint32_t read = lower_fixture_read(&f, 0);
+    uint32_t sum = lower_fixture_op(&f, MO_T_PLUS, &f.int_, read, one);
+    uint32_t write = lower_fixture_bind(&f, 0, sum, true);
+    uint32_t right = lower_fixture_read(&f, 0);
+    uint32_t sequence[] = {write, right};
+    uint32_t operand = lower_fixture_row(&f, MO_S_SEQUENCE, &f.int_, NULL, 2, sequence);
+    uint32_t eq = lower_fixture_op(&f, MO_T_EQ, &f.bool_, left, operand);
+    uint32_t assertion = lower_fixture_row(&f, MO_S_ASSERT, &f.unit_, NULL, 1, &eq);
+    uint32_t statements[] = {bind, assertion};
+    (void)lower_fixture_row(&f, MO_S_SEQUENCE, &f.unit_, NULL, 2, statements);
+    struct mo_checked_spec spec = {.kind = MO_SPEC_TEST,
+                                   .syntax = &f.syntax[assertion],
+                                   .number = 1,
+                                   .subject = UINT32_MAX,
+                                   .wording = (const uint8_t *)"snapshot operands",
+                                   .wording_length = 17,
+                                   .body = f.functions[0].body};
+    f.program.spec_count = 1;
+    f.program.specs = &spec;
+    f.functions[0].body = main;
+    struct mo_core *core = checked(&f, "structural-snapshots",
+                                   "failed\nleft 1:1,right 1:2,\n{\"test\":\"Main.test.1\"}\n");
+    if (core != NULL)
+        run_outcome(core, "Main.test.1", MO_FAILED, 0, "left 1:1,right 1:2,");
+    lower_fixture_free(&f);
+}
+
+static void test_structural_patterns(void) {
+    for (uint32_t probe = 0; probe < 4; probe++) {
+        struct lower_fixture f;
+        lower_fixture_init(&f, "module Main\nfn main() : Int\n7\nend\n"
+                               "test \"pattern input\"\nassert None is Some(n)\n"
+                               "assert Some(7) is Some(n)\nassert n == 7\n"
+                               "assert (Some(7), Some(7)) is (Some(n), Some(9))\nend\n");
+        uint32_t seven = lower_fixture_row(&f, MO_S_INT, &f.int_, "7", 0, NULL);
+        struct mo_checked_body main = f.functions[0].body;
+        const struct mo_source_type *argument = &f.int_;
+        struct mo_source_type option = {.kind = MO_SOURCE_NAMED,
+                                        .name = "Option",
+                                        .module = UINT32_MAX,
+                                        .count = 1,
+                                        .arguments = &argument};
+        const struct mo_source_type *fields[] = {&option, &option};
+        struct mo_source_type tuple = {.kind = MO_SOURCE_TUPLE, .count = 2, .arguments = fields};
+        f.bindings[0] = (struct mo_checked_binding){.name = "n", .type = &f.int_};
+        f.functions[0].body.binding_count = 1;
+        uint32_t value =
+            lower_fixture_row(&f, MO_S_CALL, &option, NULL, probe == 0 ? 0 : 1, &seven);
+        f.rows[value].native = probe == 0 ? "None" : "Some";
+        uint32_t nine = lower_fixture_row(&f, MO_S_INT, &f.int_, "9", 0, NULL);
+        struct mo_checked_pattern bind = {.kind = MO_PATTERN_BIND,
+                                          .syntax = &f.syntax[value],
+                                          .type = &f.int_,
+                                          .binding = &f.bindings[0]};
+        struct mo_checked_pattern literal = {
+            .kind = MO_PATTERN_LITERAL, .syntax = &f.syntax[nine], .type = &f.int_};
+        struct mo_checked_pattern_part capture = {0, &bind}, constant = {0, &literal};
+        struct mo_checked_pattern some = {.kind = MO_PATTERN_CONSTRUCTOR,
+                                          .syntax = &f.syntax[value],
+                                          .type = &option,
+                                          .constructor.builtin = "Some",
+                                          .part_count = 1,
+                                          .parts = &capture};
+        struct mo_checked_pattern some_nine = some;
+        some_nine.parts = &constant;
+        struct mo_checked_pattern_part parts[] = {{0, &some}, {1, &some_nine}};
+        struct mo_checked_pattern pair = {.kind = MO_PATTERN_TUPLE,
+                                          .syntax = &f.syntax[value],
+                                          .type = &tuple,
+                                          .part_count = 2,
+                                          .parts = parts};
+        if (probe == 3) {
+            uint32_t values[] = {value, value};
+            value = lower_fixture_row(&f, MO_S_TUPLE, &tuple, NULL, 2, values);
+        }
+        uint32_t is = lower_fixture_row(&f, MO_S_IS, &f.bool_, NULL, 1, &value);
+        f.rows[is].pattern = probe == 3 ? &pair : probe == 2 ? &some_nine : &some;
+        bool example = probe == 2, pass = probe == 1;
+        if (!example) {
+            uint32_t assertion = lower_fixture_row(&f, MO_S_ASSERT, &f.unit_, NULL, 1, &is);
+            if (pass) {
+                uint32_t n = lower_fixture_read(&f, 0);
+                uint32_t eq = lower_fixture_op(&f, MO_T_EQ, &f.bool_, n, seven);
+                uint32_t second = lower_fixture_row(&f, MO_S_ASSERT, &f.unit_, NULL, 1, &eq);
+                uint32_t statements[] = {assertion, second};
+                (void)lower_fixture_row(&f, MO_S_SEQUENCE, &f.unit_, NULL, 2, statements);
+            }
+        }
+        struct mo_checked_spec spec = {.kind = example ? MO_SPEC_EXAMPLE : MO_SPEC_TEST,
+                                       .syntax = &f.syntax[is],
+                                       .number = 1,
+                                       .subject = example ? 0 : UINT32_MAX,
+                                       .wording = (const uint8_t *)"pattern input",
+                                       .wording_length = 13,
+                                       .body = f.functions[0].body};
+        f.program.spec_count = 1;
+        f.program.specs = &spec;
+        f.functions[0].body = main;
+        const char *names[] = {"structural-is-none", "structural-is-scope", "structural-is-literal",
+                               "structural-is-nested"};
+        const char *expected[] = {
+            "failed\ninput 4:None,\n{\"test\":\"Main.test.1\"}\n",
+            "returned\nUnit\n{\"test\":\"Main.test.1\"}\n",
+            "failed\ninput 7:Some(7),\n{\"test\":\"Main.main.example.1\"}\n",
+            "failed\ninput 18:(Some(7), Some(7)),\n{\"test\":\"Main.test.1\"}\n"};
+        const char *details[] = {"input 4:None,", NULL, "input 7:Some(7),",
+                                 "input 18:(Some(7), Some(7)),"};
+        struct mo_core *core = checked(&f, names[probe], expected[probe]);
+        if (core != NULL)
+            run_outcome(core, example ? "Main.main.example.1" : "Main.test.1",
+                        pass ? MO_RETURNED : MO_FAILED, 0, details[probe]);
+        lower_fixture_free(&f);
+    }
+}
+
+static void test_structural_binary_text(void) {
+    for (uint32_t probe = 0; probe < 2; probe++) {
+        struct lower_fixture f;
+        lower_fixture_init(&f, "module Main\nfn main() : Int\n7\nend\n"
+                               "test \"binary detail\"\n"
+                               "assert \"é\\nright 0:,\\u{0}\" == \"\"\n"
+                               "assert \"é\".bytes == \"\".bytes\nend\n");
+        (void)lower_fixture_row(&f, MO_S_INT, &f.int_, "7", 0, NULL);
+        struct mo_checked_body main = f.functions[0].body;
+        struct mo_source_type bytes = f.text_;
+        bytes.name = "Bytes";
+        uint32_t left = lower_fixture_row(
+            &f, MO_S_TEXT, &f.text_, probe == 0 ? "\"é\\nright 0:,\\u{0}\"" : "\"é\"", 0, NULL);
+        uint32_t right = lower_fixture_row(&f, MO_S_TEXT, &f.text_, "\"\"", 0, NULL);
+        if (probe != 0) {
+            left = lower_fixture_row(&f, MO_S_FIELD_ACCESS, &bytes, NULL, 1, &left);
+            f.rows[left].native = "Text.bytes";
+            right = lower_fixture_row(&f, MO_S_FIELD_ACCESS, &bytes, NULL, 1, &right);
+            f.rows[right].native = "Text.bytes";
+        }
+        uint32_t eq = lower_fixture_op(&f, MO_T_EQ, &f.bool_, left, right);
+        struct mo_ability_implementation equal = {.kind = MO_ABILITY_NATIVE,
+                                                  .ability = MO_SOURCE_EQUAL,
+                                                  .type = probe == 0 ? &f.text_ : &bytes};
+        struct mo_checked_ability_use use = {.operand = left, .implementation = &equal};
+        f.rows[eq].ability_count = 1;
+        f.rows[eq].abilities = &use;
+        (void)lower_fixture_row(&f, MO_S_ASSERT, &f.unit_, NULL, 1, &eq);
+        struct mo_checked_spec spec = {.kind = MO_SPEC_TEST,
+                                       .syntax = &f.syntax[eq],
+                                       .number = 1,
+                                       .subject = UINT32_MAX,
+                                       .wording = (const uint8_t *)"binary detail",
+                                       .wording_length = 13,
+                                       .body = f.functions[0].body};
+        f.program.spec_count = 1;
+        f.program.specs = &spec;
+        f.functions[0].body = main;
+        const char *expected[] = {
+            "failed\n-\n{\"test\":\"Main.test.1\","
+            "\"detail\":\"left 13:é\\nright 0:,\\u0000,right 0:,\"}\n",
+            "failed\nleft 15:bytes[195, 169],right 7:bytes[],\n{\"test\":\"Main.test.1\"}\n"};
+        const char detail[] = "left 13:é\nright 0:,\0,right 0:,";
+        struct mo_core *core =
+            checked(&f, probe == 0 ? "structural-raw-text" : "structural-bytes", expected[probe]);
+        if (core != NULL) {
+            if (probe == 0)
+                run_outcome_bytes(core, "Main.test.1", MO_FAILED, 0, detail, sizeof detail - 1);
+            else
+                run_outcome(core, "Main.test.1", MO_FAILED, 0,
+                            "left 15:bytes[195, 169],right 7:bytes[],");
+        }
+        lower_fixture_free(&f);
+    }
+}
+
+static void test_structural_lazy_conditions(void) {
+    const enum mo_syntax_token operators[] = {MO_T_AND, MO_T_OR, MO_T_IMPLIES,
+                                              MO_T_AND, MO_T_OR, MO_T_IMPLIES};
+    for (uint32_t probe = 0; probe < 6; probe++) {
+        struct lower_fixture f;
+        lower_fixture_init(&f, "module Main\nfn main() : Int\n7\nend\n"
+                               "test \"lazy details\"\nassert (1 == 2 and 7 == 9)\n"
+                               "assert (1 == 2 or 7 == 7)\n"
+                               "assert (1 == 2 implies stop \"unreachable\")\nend\n");
+        uint32_t seven = lower_fixture_row(&f, MO_S_INT, &f.int_, "7", 0, NULL);
+        struct mo_checked_body main = f.functions[0].body;
+        uint32_t one = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+        uint32_t two = lower_fixture_row(&f, MO_S_INT, &f.int_, "2", 0, NULL);
+        uint32_t nine = lower_fixture_row(&f, MO_S_INT, &f.int_, "9", 0, NULL);
+        bool left_true = probe == 3 || probe == 5;
+        uint32_t left = lower_fixture_op(&f, MO_T_EQ, &f.bool_, one, left_true ? one : two);
+        uint32_t right = lower_fixture_op(&f, MO_T_EQ, &f.bool_, seven, probe == 1 ? seven : nine);
+        struct mo_syntax *children[1];
+        if (probe == 0 || probe == 2) {
+            uint32_t message =
+                lower_fixture_row(&f, MO_S_TEXT, &f.text_, "\"unreachable\"", 0, NULL);
+            right = lower_fixture_row(&f, MO_S_STOP, &f.bool_, NULL, 0, NULL);
+            children[0] = &f.syntax[message];
+            f.syntax[right].children = children;
+        }
+        uint32_t condition = lower_fixture_op(&f, operators[probe], &f.bool_, left, right);
+        f.rows[condition].or_kind =
+            operators[probe] == MO_T_OR ? MO_CHECK_OR_BOOL : MO_CHECK_OR_ABSENT;
+        condition = lower_fixture_row(&f, MO_S_GROUP, &f.bool_, NULL, 1, &condition);
+        bool example = probe % 2 != 0, pass = probe == 1 || probe == 2;
+        if (!example)
+            (void)lower_fixture_row(&f, MO_S_ASSERT, &f.unit_, NULL, 1, &condition);
+        struct mo_checked_spec spec = {.kind = example ? MO_SPEC_EXAMPLE : MO_SPEC_TEST,
+                                       .syntax = &f.syntax[condition],
+                                       .number = 1,
+                                       .subject = example ? 0 : UINT32_MAX,
+                                       .wording = (const uint8_t *)"lazy details",
+                                       .wording_length = 12,
+                                       .body = f.functions[0].body};
+        f.program.spec_count = 1;
+        f.program.specs = &spec;
+        f.functions[0].body = main;
+        const char *names[] = {"structural-and-left",     "structural-or-pass",
+                               "structural-implies-skip", "structural-and-right",
+                               "structural-or-right",     "structural-implies-right"};
+        const char *expected[] = {
+            "failed\nleft 1:1,right 1:2,\n{\"test\":\"Main.test.1\"}\n",
+            "returned\nUnit\n{\"test\":\"Main.main.example.1\"}\n",
+            "returned\nUnit\n{\"test\":\"Main.test.1\"}\n",
+            "failed\nleft 1:7,right 1:9,\n{\"test\":\"Main.main.example.1\"}\n",
+            "failed\nleft 1:7,right 1:9,\n{\"test\":\"Main.test.1\"}\n",
+            "failed\nleft 1:7,right 1:9,\n{\"test\":\"Main.main.example.1\"}\n"};
+        struct mo_core *core = checked(&f, names[probe], expected[probe]);
+        if (core != NULL)
+            run_outcome(core, example ? "Main.main.example.1" : "Main.test.1",
+                        pass ? MO_RETURNED : MO_FAILED, 0,
+                        pass         ? NULL
+                        : probe == 0 ? "left 1:1,right 1:2,"
+                                     : "left 1:7,right 1:9,");
+        lower_fixture_free(&f);
+    }
+}
+
+static void test_structural_customizers(void) {
+    for (uint32_t probe = 0; probe < 4; probe++) {
+        struct lower_fixture f;
+        lower_fixture_init(&f, "module Main\nstruct Box\nvalue: Int\nend\n"
+                               "fn main() : Int\n7\nend\n"
+                               "fn to_text(box: Box) : Text\nstop \"customizer ran\"\nend\n"
+                               "test \"no diagnostic callback\"\n"
+                               "assert Box(7) == Box(9)\nassert Box(7).to_text == \"\"\nend\n");
+        uint32_t seven = lower_fixture_row(&f, MO_S_INT, &f.int_, "7", 0, NULL);
+        struct mo_checked_body main = f.functions[0].body;
+        struct mo_syntax declaration = {.kind = MO_S_STRUCT, .span = f.function_syntax[0].span};
+        struct mo_symbol symbol = {.name = "Box", .declaration = &declaration};
+        struct mo_source_type box = {
+            .kind = MO_SOURCE_NAMED, .name = "Box", .declaration = &symbol};
+        struct mo_syntax field_name = {.text = (const uint8_t *)"value", .span = {0, 23, 28}};
+        struct mo_field_signature field = {.name = &field_name, .type = &f.int_};
+        const struct mo_field_signature *fields[] = {&field};
+        struct mo_data_signature data = {
+            .symbol = &symbol, .type = &box, .count = 1, .by_index = fields};
+        struct mo_signatures signatures = {.data_count = 1, .data = &data};
+        f.program.signatures = &signatures;
+        f.program.function_count = f.declarations.count = 2;
+        f.symbols[1].name = "to_text";
+        f.function_types[1].count = 2;
+        f.signature_parts[1][0] = &box;
+        f.signature_parts[1][1] = &f.text_;
+        f.bindings[0] = (struct mo_checked_binding){.name = "box", .type = &box};
+        const struct mo_checked_binding *parameter = &f.bindings[0];
+        f.functions[0].body.binding_count = 1;
+        f.functions[1].parameter_count = 1;
+        f.functions[1].parameters = &parameter;
+        uint32_t message =
+            lower_fixture_row(&f, MO_S_TEXT, &f.text_, "\"customizer ran\"", 0, NULL);
+        uint32_t stop = lower_fixture_row(&f, MO_S_STOP, &f.text_, NULL, 0, NULL);
+        struct mo_syntax *children[] = {&f.syntax[message]};
+        f.syntax[stop].children = children;
+        f.functions[1].body = f.functions[0].body;
+        uint32_t left = lower_fixture_row(&f, MO_S_CALL, &box, NULL, 1, &seven);
+        f.rows[left].symbol = &symbol;
+        uint32_t nine = lower_fixture_row(&f, MO_S_INT, &f.int_, "9", 0, NULL);
+        uint32_t right = lower_fixture_row(&f, MO_S_CALL, &box, NULL, 1, &nine);
+        f.rows[right].symbol = &symbol;
+        struct mo_ability_implementation proof = {.ability = MO_SOURCE_TEXT,
+                                                  .kind = MO_ABILITY_FUNCTION,
+                                                  .type = &box,
+                                                  .function = &f.symbols[1]};
+        struct mo_checked_ability_use use = {.operand = left, .implementation = &proof};
+        if (probe == 2) {
+            left = lower_fixture_row(&f, MO_S_FIELD_ACCESS, &f.text_, NULL, 1, &left);
+            f.rows[left].native = "to_text";
+            f.rows[left].ability_count = 1;
+            f.rows[left].abilities = &use;
+            right = lower_fixture_row(&f, MO_S_TEXT, &f.text_, "\"\"", 0, NULL);
+        }
+        uint32_t condition =
+            lower_fixture_op(&f, MO_T_EQ, &f.bool_, left, probe == 1 ? left : right);
+        uint32_t assertion = lower_fixture_row(&f, MO_S_ASSERT, &f.unit_, NULL, 1, &condition);
+        struct mo_checked_spec spec = {.kind = MO_SPEC_TEST,
+                                       .syntax = &f.syntax[assertion],
+                                       .number = 1,
+                                       .subject = UINT32_MAX,
+                                       .wording = (const uint8_t *)"no diagnostic callback",
+                                       .wording_length = 22,
+                                       .body = f.functions[0].body};
+        if (probe == 3) {
+            uint32_t statements[] = {assertion, seven};
+            (void)lower_fixture_row(&f, MO_S_SEQUENCE, &f.int_, NULL, 2, statements);
+        } else {
+            f.program.spec_count = 1;
+            f.program.specs = &spec;
+            f.functions[0].body = main;
+        }
+        const char *names[] = {"structural-custom-fail", "structural-custom-pass",
+                               "structural-custom-control", "structural-ordinary-stop"};
+        const char *expected[] = {
+            "failed\nleft 13:Box(value: 7),right 13:Box(value: 9),\n{\"test\":\"Main.test.1\"}\n",
+            "returned\nUnit\n{\"test\":\"Main.test.1\"}\n",
+            "stopped\ncustomizer ran\n{\"test\":\"Main.test.1\"}\n", "stopped\nassertion failed\n"};
+        struct mo_core *core = checked(&f, names[probe], expected[probe]);
+        if (core != NULL)
+            run_outcome(core, probe == 3 ? NULL : "Main.test.1",
+                        probe == 0   ? MO_FAILED
+                        : probe == 1 ? MO_RETURNED
+                                     : MO_STOPPED,
+                        0, probe == 0 ? "left 13:Box(value: 7),right 13:Box(value: 9)," : NULL);
+        lower_fixture_free(&f);
+    }
+}
+
+static void test_promises(void) {
+    const char *numbers[] = {"5", "2", "20"};
+    const int64_t answers[] = {0, 1, 2};
+    for (uint32_t probe = 0; probe < 3; probe++) {
+        struct lower_fixture f;
+        lower_fixture_init(
+            &f, "module Main\nfn main() : Int\n7\nend\nfn identity(input: Int) : Int\ninput\n"
+                "promise \"bounded result\"\nresult > input\nresult < 8\n"
+                "allows result: 5, input: 2\nforbids result: 2, input: 2\n"
+                "forbids result: 20, input: 2\nend\nend\n");
+        f.program.function_count = f.declarations.count = 2;
+        (void)lower_fixture_row(&f, MO_S_INT, &f.int_, "7", 0, NULL);
+        struct mo_checked_body main = f.functions[0].body;
+        f.bindings[0] = (struct mo_checked_binding){.name = "input", .type = &f.int_};
+        f.bindings[1] = (struct mo_checked_binding){.name = "result", .type = &f.int_};
+        const struct mo_checked_binding *parameters[] = {&f.bindings[0], &f.bindings[1]};
+        f.functions[1].parameter_count = 1;
+        f.functions[1].parameters = parameters;
+        f.function_types[1].count = 2;
+        f.signature_parts[1][0] = f.signature_parts[1][1] = &f.int_;
+        f.functions[0].body.binding_count = 1;
+        (void)lower_fixture_read(&f, 0);
+        f.functions[1].body = f.functions[0].body;
+        f.functions[0].body.binding_count = 2;
+        uint32_t result = lower_fixture_read(&f, 1), input = lower_fixture_read(&f, 0);
+        uint32_t first = lower_fixture_op(&f, MO_T_GT, &f.bool_, result, input);
+        result = lower_fixture_read(&f, 1);
+        uint32_t eight = lower_fixture_row(&f, MO_S_INT, &f.int_, "8", 0, NULL);
+        uint32_t last = lower_fixture_op(&f, MO_T_LT, &f.bool_, result, eight);
+        struct mo_checked_condition conditions[2] = {{.expression = first}, {.expression = last}};
+        const char *lines[] = {"result > input", "result < 8"};
+        for (uint32_t i = 0; i < 2; i++) {
+            uint32_t start = (uint32_t)(strstr(f.source, lines[i]) - f.source);
+            uint32_t length = (uint32_t)strlen(lines[i]);
+            conditions[i].text = (struct mo_spec_text){.bytes = (const uint8_t *)lines[i],
+                                                       .length = length,
+                                                       .span = {0, start, start + length}};
+        }
+        struct mo_checked_spec specs[2] = {{.kind = MO_SPEC_PROMISE,
+                                            .syntax = &f.syntax[first],
+                                            .subject = 1,
+                                            .number = 1,
+                                            .wording = (const uint8_t *)"bounded result",
+                                            .wording_length = 14,
+                                            .parameter_count = 2,
+                                            .parameters = parameters,
+                                            .body = f.functions[0].body,
+                                            .condition_count = 2,
+                                            .conditions = conditions},
+                                           {.kind = MO_SPEC_ANCHOR,
+                                            .subject = 1,
+                                            .promise = 0,
+                                            .number = probe == 2 ? 2 : 1,
+                                            .allows = probe == 0}};
+        uint32_t value = lower_fixture_row(&f, MO_S_INT, &f.int_, numbers[probe], 0, NULL);
+        input = lower_fixture_row(&f, MO_S_INT, &f.int_, "2", 0, NULL);
+        uint32_t values[] = {input, value};
+        specs[1].syntax = &f.syntax[value];
+        specs[1].body = f.functions[0].body;
+        specs[1].body.root = UINT32_MAX;
+        specs[1].value_count = 2;
+        specs[1].values = values;
+        specs[1].text = (struct mo_spec_text){.bytes = (const uint8_t *)numbers[probe],
+                                              .length = strlen(numbers[probe]),
+                                              .span = f.syntax[value].span};
+        f.program.spec_count = 2;
+        f.program.specs = specs;
+        f.functions[0].body = main;
+        const char *names[] = {"promise-allows", "promise-first", "promise-second"};
+        const char *calls[] = {"Main.identity.promise.1.allows.1",
+                               "Main.identity.promise.1.forbids.1",
+                               "Main.identity.promise.1.forbids.2"};
+        char expected[128];
+        int length = snprintf(expected, sizeof expected, "returned\n%lld\n{\"call\":\"%s\"}\n",
+                              (long long)answers[probe], calls[probe]);
+        MO_ASSERT(length > 0 && (size_t)length < sizeof expected);
+        struct mo_core *core = checked(&f, names[probe], expected);
+        if (core != NULL)
+            run_outcome(core, calls[probe], MO_RETURNED, answers[probe], NULL);
+        lower_fixture_free(&f);
+    }
+}
+
+static void test_record_text(void) {
+    struct lower_fixture f;
+    lower_fixture_init(&f, "module Main\nstruct Point\nx: Int\nlabel: Text\nend\n"
+                           "fn main() : Int\n"
+                           "if Point(label: \"v\", x: 7).to_text == \"Point(x: 7, label: "
+                           "\\\"v\\\")\": 29 else: 1\nend\n");
+    struct mo_syntax declaration = {.kind = MO_S_STRUCT, .span = f.function_syntax[0].span};
+    struct mo_symbol symbol = {.name = "Point", .declaration = &declaration};
+    struct mo_source_type type = {.kind = MO_SOURCE_NAMED, .name = "Point", .declaration = &symbol};
+    const char *field_names[] = {"x", "label"};
+    struct mo_syntax names[2];
+    struct mo_field_signature fields[2];
+    const struct mo_field_signature *indices[2];
+    const struct mo_source_type *types[] = {&f.int_, &f.text_};
+    struct mo_ability_implementation parts[2];
+    const struct mo_ability_implementation *proofs[2];
+    for (uint32_t i = 0; i < 2; i++) {
+        const char *at = strstr(f.source, field_names[i]);
+        names[i] = (struct mo_syntax){
+            .text = (const uint8_t *)field_names[i],
+            .span = {0, (uint32_t)(at - f.source),
+                     (uint32_t)(at - f.source) + (uint32_t)strlen(field_names[i])}};
+        fields[i] = (struct mo_field_signature){.name = &names[i], .type = types[i], .index = i};
+        indices[i] = &fields[i];
+        parts[i] = (struct mo_ability_implementation){
+            .ability = MO_SOURCE_TEXT, .kind = MO_ABILITY_NATIVE, .type = types[i]};
+        proofs[i] = &parts[i];
+    }
+    struct mo_data_signature data = {
+        .symbol = &symbol, .type = &type, .count = 2, .by_index = indices};
+    struct mo_signatures signatures = {.data_count = 1, .data = &data};
+    f.program.signatures = &signatures;
+    uint32_t label = lower_fixture_row(&f, MO_S_TEXT, &f.text_, "\"v\"", 0, NULL);
+    uint32_t label_arg = lower_fixture_row(&f, MO_S_NAMED_ARG, &f.text_, NULL, 1, &label);
+    f.rows[label_arg].field = 1;
+    uint32_t x = lower_fixture_row(&f, MO_S_INT, &f.int_, "7", 0, NULL);
+    uint32_t x_arg = lower_fixture_row(&f, MO_S_NAMED_ARG, &f.int_, NULL, 1, &x);
+    f.rows[x_arg].field = 0;
+    uint32_t payload[] = {label_arg, x_arg};
+    uint32_t value = lower_fixture_row(&f, MO_S_CALL, &type, NULL, 2, payload);
+    f.rows[value].symbol = &symbol;
+    struct mo_ability_implementation proof = {.ability = MO_SOURCE_TEXT,
+                                              .kind = MO_ABILITY_DERIVED,
+                                              .type = &type,
+                                              .part_count = 2,
+                                              .parts = proofs};
+    struct mo_checked_ability_use use = {.operand = value, .implementation = &proof};
+    uint32_t text = lower_fixture_row(&f, MO_S_FIELD_ACCESS, &f.text_, NULL, 1, &value);
+    f.rows[text].native = "to_text";
+    f.rows[text].ability_count = 1;
+    f.rows[text].abilities = &use;
+    uint32_t want =
+        lower_fixture_row(&f, MO_S_TEXT, &f.text_, "\"Point(x: 7, label: \\\"v\\\")\"", 0, NULL);
+    uint32_t equal = lower_fixture_op(&f, MO_T_EQ, &f.bool_, text, want);
+    uint32_t yes = lower_fixture_row(&f, MO_S_INT, &f.int_, "29", 0, NULL);
+    uint32_t no = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+    uint32_t arms[] = {equal, yes, no};
+    (void)lower_fixture_row(&f, MO_S_IF, &f.int_, NULL, 3, arms);
+    struct mo_core *core = checked(&f, "record-text", "returned\n29\n");
+    if (core != NULL)
+        run(core, 29);
     lower_fixture_free(&f);
 }
 
@@ -533,6 +1645,44 @@ static void test_native_refusal(void) {
         CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_LOWER_UNFINISHED);
         lower_fixture_free(&f);
     }
+}
+
+static void test_abstract_ability_refusal(void) {
+    struct lower_fixture f;
+    lower_fixture_init(&f,
+                       "module Main\nfn double(value: T) : T where T: Number\nvalue + value\nend\n"
+                       "fn main() : Int\ndouble(17)\nend\n");
+    f.program.function_count = f.declarations.count = 2;
+    f.symbols[1].name = "double";
+    struct mo_source_type parameter = {
+        .kind = MO_SOURCE_PARAMETER, .name = "T", .declaration = &f.symbols[1], .parameters = 1};
+    f.function_types[1].count = 2;
+    f.function_types[1].parameters = 1;
+    f.signature_parts[1][0] = f.signature_parts[1][1] = &parameter;
+    f.bindings[0] = (struct mo_checked_binding){.name = "value", .type = &parameter};
+    const struct mo_checked_binding *parameters[] = {&f.bindings[0]};
+    f.functions[1].parameter_count = 1;
+    f.functions[1].parameters = parameters;
+    f.functions[0].body.binding_count = 1;
+    uint32_t left = lower_fixture_read(&f, 0), right = lower_fixture_read(&f, 0);
+    uint32_t sum = lower_fixture_op(&f, MO_T_PLUS, &parameter, left, right);
+    struct mo_ability_implementation abstract = {
+        .ability = MO_SOURCE_NUMBER, .kind = MO_ABILITY_PARAMETER, .type = &parameter};
+    struct mo_checked_ability_use requirement = {.operand = left, .implementation = &abstract};
+    f.rows[sum].ability_count = 1;
+    f.rows[sum].abilities = &requirement;
+    f.functions[1].body = f.functions[0].body;
+    struct mo_type_argument argument = {&parameter, &f.int_};
+    uint32_t callee = lower_fixture_row(&f, MO_S_NAME, &f.function_types[1], NULL, 0, NULL);
+    f.rows[callee].symbol = &f.symbols[1];
+    uint32_t value = lower_fixture_row(&f, MO_S_INT, &f.int_, "17", 0, NULL);
+    uint32_t operands[] = {callee, value};
+    uint32_t call = lower_fixture_row(&f, MO_S_CALL, &f.int_, NULL, 2, operands);
+    f.rows[call].symbol = &f.symbols[1];
+    f.rows[call].arguments = (struct mo_type_arguments){1, &argument};
+    CHECK(mo_lower(&f.arena, &f.program, &f.sources, &f.diags) == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_LOWER_UNFINISHED);
+    lower_fixture_free(&f);
 }
 
 static void test_ignored_parameters(void) {
@@ -764,10 +1914,31 @@ int main(int argc, char **argv) {
     test_pattern_scope();
     test_loops();
     test_lambda();
+    test_captures();
+    test_option_or();
+    test_try_option();
+    test_try_result();
+    test_interpolation();
+    test_derived_text();
+    test_tuple_order();
+    test_float_compare();
+    test_choice_order();
+    test_list_order();
+    test_list_text();
+    test_constants();
+    test_specs();
+    test_structural_failures();
+    test_structural_patterns();
+    test_structural_binary_text();
+    test_structural_lazy_conditions();
+    test_structural_customizers();
+    test_promises();
+    test_record_text();
     test_text();
     test_result_entry();
     test_limits();
     test_native_refusal();
+    test_abstract_ability_refusal();
     test_ignored_parameters();
     test_substituted_depth();
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source, NULL) == 0);

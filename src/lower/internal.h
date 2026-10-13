@@ -8,17 +8,26 @@
 
 #include <setjmp.h>
 
+struct ability_binding {
+    const struct mo_source_type *parameter;
+    const struct mo_ability_implementation *proof;
+    const struct substitution *substitution;
+};
+
 struct substitution {
     uint32_t count;
     const struct mo_source_type **parameters;
     mo_core_ty *types;
+    uint32_t ability_count;
+    struct ability_binding *abilities;
 };
 
 struct instance {
     struct instance *next, *hash_next, *source_next;
     const struct mo_checked_function *source;
+    const struct mo_checked_spec *spec;
     struct substitution substitution;
-    uint32_t owner, depth, index;
+    uint32_t owner, depth, index, const_prefix;
     struct mo_core_fun fun;
     struct mo_core_fun_meta meta;
 };
@@ -35,6 +44,7 @@ struct data_instance {
 struct type_cache;
 struct canonical_type;
 struct type_frame;
+struct derived;
 struct lower_node {
     struct mo_core_expr expr; /* first, so every emitted Expr carries private provenance */
     struct mo_core_span span;
@@ -59,6 +69,12 @@ struct lowering {
     uint32_t cache_count, cache_slots, type_slots, instance_slots;
     struct instance **instance_index, **by_source, ***source_tails;
     const struct mo_checked_function **source_index;
+    struct derived *derived, **derived_tail, *derived_pending;
+    struct derived **derived_index;
+    uint32_t derived_count, derived_slots;
+    mo_core_consts constants;
+    struct instance *constant_bodies;
+    struct instance **specs;
 };
 
 _Noreturn void lower_refuse(struct lowering *p, uint16_t code, const char *message);
@@ -78,12 +94,23 @@ mo_core_ty lower_type(struct lowering *p, const struct mo_source_type *type,
                       const struct substitution *substitution);
 void lower_indices(struct lowering *p);
 mo_core_string lower_type_name(struct lowering *p, mo_core_ty type);
+uint64_t lower_type_hash(struct lowering *p, mo_core_ty type);
 struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symbol,
                                 struct mo_type_arguments arguments,
-                                const struct substitution *substitution, uint32_t owner,
+                                const struct substitution *substitution, uint32_t ability_count,
+                                const struct mo_checked_ability_use *abilities, uint32_t owner,
                                 uint32_t depth);
+void lower_proof(struct lowering *p, const struct mo_ability_implementation **proof,
+                 const struct substitution **substitution);
+struct instance *lower_customizer(struct lowering *p, const struct mo_ability_implementation *proof,
+                                  const struct substitution *substitution, uint32_t owner,
+                                  uint32_t depth);
 void lower_data(struct lowering *p, struct data_instance *instance);
 mo_core_ctors lower_ctors(struct lowering *p, mo_core_ty type);
+mo_core_expr lower_derived_text(struct lowering *p, const struct mo_ability_implementation *proof,
+                                const struct substitution *substitution, uint32_t owner,
+                                uint32_t depth, mo_core_expr value);
+void lower_derived_functions(struct lowering *p);
 
 mo_core_expr lower_expr(struct lowering *p, enum mo_core_expr_tag tag);
 mo_core_expr lower_var(struct lowering *p, mo_core_string name);
@@ -93,6 +120,12 @@ mo_core_expr lower_int(struct lowering *p, uint64_t value);
 mo_core_expr lower_prim(struct lowering *p, struct mo_core_prim prim, mo_core_expr_list args);
 mo_core_expr lower_child(mo_core_expr expr, size_t at);
 void lower_function(struct lowering *p, struct instance *instance);
+void lower_body(struct lowering *p, struct instance *instance, const struct mo_checked_body *source,
+                uint32_t parameter_count, const struct mo_checked_binding *const *parameters);
+mo_core_string lower_global_name(struct lowering *p, const struct mo_symbol *symbol);
+void lower_constants(struct lowering *p);
+void lower_constant_prefixes(struct lowering *p);
+void lower_specs(struct lowering *p);
 void lower_metadata(struct lowering *p, struct mo_core *core);
 
 #endif
