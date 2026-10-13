@@ -63,7 +63,7 @@ static MO_MUST_USE int flags(enum mo_path_mode mode) {
 }
 
 static MO_MUST_USE struct mo_file_error portable(int root, const char *path, enum mo_path_mode mode,
-                                                 struct mo_path_result *out);
+                                                 uint32_t *steps, struct mo_path_result *out);
 
 #if defined(MO_HAVE_OPENAT2)
 static MO_MUST_USE long beneath(int root, const char *path, bool links) {
@@ -78,8 +78,8 @@ static MO_MUST_USE long beneath(int root, const char *path, bool links) {
 }
 
 static MO_MUST_USE struct mo_file_error kernel(struct mo_host *host, int root, const char *path,
-                                               enum mo_path_mode mode, struct mo_path_result *out,
-                                               bool *handled) {
+                                               enum mo_path_mode mode, uint32_t *steps,
+                                               struct mo_path_result *out, bool *handled) {
     *handled = false;
     if (!host->kernel_probed) {
         long probe = beneath(root, ".", false);
@@ -113,7 +113,7 @@ static MO_MUST_USE struct mo_file_error kernel(struct mo_host *host, int root, c
          * opening the leaf for I/O, then pin beneath root with openat2.
          * This checks path semantics, not whole-lookup ancestry or a snapshot. */
         struct mo_path_result checked;
-        struct mo_file_error problem = portable(root, lookup, PATH_EXISTS, &checked);
+        struct mo_file_error problem = portable(root, lookup, PATH_EXISTS, steps, &checked);
         if (problem.status == FILE_NOT_FOUND)
             return (struct mo_file_error){.status = FILE_OK}; /* Creation uses the full walk. */
         if (problem.status != FILE_OK) {
@@ -218,9 +218,9 @@ static MO_MUST_USE struct mo_file_error replay(int root, const struct ancestor *
  * This is not a whole-lookup pre/post ancestry check. At most three temporary
  * descriptors are live, independent of depth; replay shares the work bound. */
 static MO_MUST_USE struct mo_file_error portable(int root, const char *path, enum mo_path_mode mode,
-                                                 struct mo_path_result *out) {
+                                                 uint32_t *steps, struct mo_path_result *out) {
     struct ancestor ancestors[MO_LIMIT_HOST_PATH_SIZE / 2 + 1];
-    uint32_t depth = 0, links = 0, races = 0, steps = 0;
+    uint32_t depth = 0, links = 0, races = 0;
     int current = root;
     char names[MO_LIMIT_HOST_PATH_SIZE], pending[MO_LIMIT_HOST_PATH_SIZE],
         component[MO_LIMIT_HOST_PATH_SIZE], target[MO_LIMIT_HOST_PATH_SIZE];
@@ -229,7 +229,7 @@ static MO_MUST_USE struct mo_file_error portable(int root, const char *path, enu
     bool trailing_slash = false;
     struct mo_file_error problem = {.status = FILE_OK};
     for (;;) {
-        if (!step(&steps)) {
+        if (!step(steps)) {
             problem =
                 (struct mo_file_error){.status = FILE_FAILED, .reason = "MO_LIMIT_PATH_STEPS"};
             break;
@@ -284,7 +284,7 @@ static MO_MUST_USE struct mo_file_error portable(int root, const char *path, enu
                         (struct mo_file_error){.status = FILE_NOT_ALLOWED, .containment = true};
                     break;
                 }
-                if (!step(&steps)) {
+                if (!step(steps)) {
                     problem = (struct mo_file_error){.status = FILE_FAILED,
                                                      .reason = "MO_LIMIT_PATH_STEPS"};
                     break;
@@ -299,7 +299,7 @@ static MO_MUST_USE struct mo_file_error portable(int root, const char *path, enu
             if (current != root)
                 mo_host_close(current);
             current = root;
-            problem = replay(root, ancestors, names, depth, &steps, &current);
+            problem = replay(root, ancestors, names, depth, steps, &current);
             if (problem.status != FILE_OK)
                 break;
             at = next;
@@ -425,15 +425,16 @@ struct mo_file_error mo_host_resolve(struct mo_host *host, int root, const char 
     MO_ASSERT(root >= 0);
     if (strlen(path) >= MO_LIMIT_HOST_PATH_SIZE)
         return (struct mo_file_error){.status = FILE_FAILED, .reason = "path too long"};
+    uint32_t steps = 0; /* Also shared by the Linux link check and its fallback. */
 #if defined(MO_HAVE_OPENAT2)
     if (!host->force_fallback) {
         bool handled;
-        struct mo_file_error problem = kernel(host, root, path, mode, out, &handled);
+        struct mo_file_error problem = kernel(host, root, path, mode, &steps, out, &handled);
         if (handled)
             return problem;
     }
 #else
     (void)host;
 #endif
-    return portable(root, path, mode, out);
+    return portable(root, path, mode, &steps, out);
 }

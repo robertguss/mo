@@ -8,8 +8,22 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdarg.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#if defined(__linux__)
+#include <sys/syscall.h>
+#if defined(__has_include)
+#if __has_include(<linux/openat2.h>)
+#include <linux/openat2.h>
+#endif
+#endif
+#endif
+#if defined(SYS_openat2) && defined(RESOLVE_BENEATH)
+#define MO_TEST_OPENAT2 1
+static bool seccomp = true;
+#endif
 
 static int root;
 static bool replace_ancestor;
@@ -28,6 +42,18 @@ ssize_t mo_host_resolver_readlink(int fd, const char *path, char *out, size_t le
 }
 
 long mo_host_resolver_syscall(long number, ...) {
+#if defined(MO_TEST_OPENAT2)
+    if (!seccomp) {
+        va_list args;
+        va_start(args, number);
+        int fd = va_arg(args, int);
+        const char *path = va_arg(args, const char *);
+        struct open_how *how = va_arg(args, struct open_how *);
+        size_t length = va_arg(args, size_t);
+        va_end(args);
+        return syscall(number, fd, path, how, length);
+    }
+#endif
     (void)number;
     errno = EPERM; /* A seccomp profile denying the feature probe. */
     return -1;
@@ -125,6 +151,35 @@ int main(void) {
     expect(&f, files, "d/replay",
            "Error(Failed(path: \"d/replay\", reason: \"MO_LIMIT_PATH_STEPS\"))");
     MO_ASSERT(unlinkat(root, "d/replay", 0) == 0);
+#if defined(MO_TEST_OPENAT2)
+    seccomp = false;
+    f.host.kernel_probed = false;
+    expect(&f, files, "marker", "Ok(\"kept\")");
+    if (f.host.kernel_available) {
+        /* Each portable pass takes 33 steps, within 64 separately, but
+         * creation must share the budget with the Linux expansion check. */
+        memcpy(replay_path + 62, "fresh", 6);
+        MO_ASSERT(symlinkat(replay_path, root, "create-budget") == 0);
+        struct mo_cell write_args[] = {files, host_text(&f, "create-budget"), host_text(&f, "new")};
+        unsigned before = descriptors();
+        MO_ASSERT(mo_host_call(&f.host, f.heap, MO_HOST_FILES_WRITE_TEXT, f.result_unit, write_args,
+                               &out, &error) == MO_HOST_RETURNED);
+        struct mo_buffer printed;
+        mo_buffer_init(&printed, 1024);
+        MO_ASSERT(mo_value_print(f.heap, f.result_unit, out, &printed));
+        const char *wanted =
+            "Error(Failed(path: \"create-budget\", reason: \"MO_LIMIT_PATH_STEPS\"))";
+        CHECK(printed.length == strlen(wanted) &&
+              memcmp(printed.bytes, wanted, printed.length) == 0);
+        mo_buffer_free(&printed);
+        mo_value_drop(f.heap, f.result_unit, out);
+        mo_value_drop(f.heap, f.types.text, write_args[1]);
+        mo_value_drop(f.heap, f.types.text, write_args[2]);
+        struct stat absent;
+        CHECK(fstatat(root, replay_path, &absent, AT_SYMLINK_NOFOLLOW) < 0 && errno == ENOENT);
+        CHECK(descriptors() == before && unlinkat(root, "create-budget", 0) == 0);
+    }
+#endif
     for (unsigned i = 64; i != 0; i--) {
         if (i == 63 || i == 64)
             MO_ASSERT(unlinkat(current, "marker", 0) == 0);
