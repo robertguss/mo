@@ -304,6 +304,16 @@ static inline struct mo_limits mo_limits_default(void) {
 /* The staged surface pipeline's one arena. E1054 while parsing, E1058 while checking. */
 #define MO_CLI_CHECK_SIZE (512 << 20)
 
+/* Promise input generation, not limits on program results. The caller can
+ * choose smaller budgets. Refusal leaves the sequence unchanged; tools may
+ * skip an oversized candidate or retry it with more heap. */
+#define MO_LIMIT_INPUT_DEPTH 256
+#define MO_LIMIT_INPUT_NODES 65536
+#define MO_LIMIT_INPUT_ELEMENTS 4096
+#define MO_LIMIT_INPUT_BYTES (1 << 20)
+#define MO_LIMIT_INPUT_WORK (64 << 20)
+#define MO_LIMIT_INPUT_METADATA (128 << 20)
+
 /* Diagnostics one run keeps. mo_diags_add refuses more, and counts them, so the run can say that
  * it stopped early (src/base/diag.h). */
 #define MO_LIMIT_DIAGNOSTICS 1000

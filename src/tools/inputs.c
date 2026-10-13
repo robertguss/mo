@@ -1,4 +1,4 @@
-#include "tools/inputs.h"
+#include "tools/inputs-internal.h"
 
 #include "base/hash.h"
 
@@ -7,7 +7,7 @@
 /* This key is public and fixed, not a process's private hash domain. */
 static const uint64_t input_key[2] = {UINT64_C(0x6d6f2d70726f6d69), UINT64_C(0x73652d696e707574)};
 
-static MO_MUST_USE uint64_t random_word(uint64_t *state) {
+uint64_t mo_input_random(uint64_t *state) {
     *state += UINT64_C(0x9e3779b97f4a7c15);
     uint64_t word = *state;
     word = (word ^ (word >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
@@ -21,29 +21,44 @@ struct mo_input_limits mo_input_limits_default(void) {
                                     .nodes = 4096,
                                     .elements = 1024,
                                     .bytes = 64 << 10,
-                                    .work = 1 << 20};
+                                    .work = 1 << 20,
+                                    .metadata = 64 << 20,
+                                    .prepare_work = MO_LIMIT_INPUT_WORK};
 }
 
 enum mo_input_result mo_inputs_init(struct mo_inputs *inputs, const struct mo_types *types,
                                     const uint32_t *parameters, uint32_t count, const char *promise,
-                                    size_t length, const struct mo_input_limits *limits) {
+                                    size_t length, const struct mo_input_limits *limits,
+                                    const struct mo_input_factory *factories,
+                                    uint32_t factory_count) {
     MO_ASSERT(inputs != NULL && types != NULL && types->finished && limits != NULL);
     MO_ASSERT(count <= MO_LIMIT_BYTECODE_PARAMETERS && (parameters != NULL || count == 0));
     MO_ASSERT(promise != NULL || length == 0);
-    *inputs = (struct mo_inputs){.types = types,
-                                 .limits = *limits,
-                                 .parameter_count = count,
-                                 .seed = mo_hash(input_key, promise, length)};
-    mo_arena_init(&inputs->arena, 64 << 20);
-    uint64_t product = 1;
+    MO_ASSERT(factories != NULL || factory_count == 0);
+    *inputs = (struct mo_inputs){.types = types, .limits = *limits, .parameter_count = count};
+    mo_arena_init(&inputs->arena, limits->metadata);
+    if (limits->depth > MO_LIMIT_INPUT_DEPTH || limits->nodes > MO_LIMIT_INPUT_NODES ||
+        limits->elements > MO_LIMIT_INPUT_ELEMENTS || limits->bytes > MO_LIMIT_INPUT_BYTES ||
+        limits->work > MO_LIMIT_INPUT_WORK || limits->metadata > MO_LIMIT_INPUT_METADATA ||
+        limits->prepare_work > MO_LIMIT_INPUT_WORK || length > limits->prepare_work) {
+        return MO_INPUT_LIMIT;
+    }
+    inputs->seed = mo_hash(input_key, promise, length);
     for (uint32_t i = 0; i < count; i++) {
         MO_ASSERT(parameters[i] < types->count);
         inputs->parameters[i] = parameters[i];
-        if (types->items[parameters[i]].kind != MO_TYPE_INT) {
-            return MO_INPUT_UNSUPPORTED;
-        }
-        inputs->counts[i] = 5;
-        product = product > limits->combinations / 5 ? limits->combinations : product * 5;
+    }
+    enum mo_input_result result = mo_input_prepare(inputs, factories, factory_count, length);
+    if (result != MO_INPUT_OK) {
+        return result;
+    }
+    uint64_t product = 1;
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t variants = inputs->info[parameters[i]].count;
+        MO_ASSERT(variants != 0);
+        inputs->counts[i] = variants;
+        product =
+            product > limits->combinations / variants ? limits->combinations : product * variants;
     }
     inputs->boundaries = (uint32_t)product;
     if (inputs->boundaries > limits->combinations) {
@@ -63,29 +78,24 @@ enum mo_input_result mo_inputs_next(struct mo_inputs *inputs, struct mo_heap *de
     if (inputs->ordinal == UINT64_MAX || (inputs->parameter_count == 0 && inputs->ordinal != 0)) {
         return MO_INPUT_DONE;
     }
-    if (inputs->parameter_count > inputs->limits.nodes ||
-        inputs->parameter_count > inputs->limits.work) {
-        return MO_INPUT_LIMIT;
-    }
-    struct mo_cell values[MO_LIMIT_BYTECODE_PARAMETERS];
+    uint32_t variants[MO_LIMIT_BYTECODE_PARAMETERS];
     uint64_t index = inputs->ordinal;
-    uint64_t state = inputs->seed + inputs->ordinal * UINT64_C(0x9e3779b97f4a7c15);
     bool boundary = inputs->ordinal < inputs->boundaries;
-    static const int64_t integers[] = {0, 1, -1, INT64_MIN, INT64_MAX};
     for (uint32_t i = inputs->parameter_count; i != 0;) {
         i--;
-        int64_t number;
-        if (boundary) {
-            number = integers[index % 5];
-            index /= 5;
-        } else {
-            uint64_t word = random_word(&state);
-            number = word <= INT64_MAX ? (int64_t)word : -1 - (int64_t)(UINT64_MAX - word);
-        }
-        values[i] = mo_cell_int(number);
+        variants[i] = (uint32_t)(index % inputs->counts[i]);
+        index /= inputs->counts[i];
     }
-    if (inputs->parameter_count != 0) {
-        memcpy(out, values, inputs->parameter_count * sizeof *out);
+    uint64_t size = boundary ? 0 : 1 + (inputs->ordinal - inputs->boundaries) / 4;
+    if (size > inputs->limits.elements) {
+        size = inputs->limits.elements;
+    }
+    uint64_t work = inputs->limits.work;
+    enum mo_input_result result = mo_input_build(
+        inputs, destination, NULL, boundary ? variants : NULL, (uint32_t)size,
+        inputs->seed + inputs->ordinal * UINT64_C(0x9e3779b97f4a7c15), NULL, &work, out);
+    if (result != MO_INPUT_OK) {
+        return result;
     }
     *kind = boundary ? MO_INPUT_BOUNDARY : MO_INPUT_RANDOM;
     inputs->ordinal++;
