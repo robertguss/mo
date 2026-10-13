@@ -441,6 +441,83 @@ static MO_MUST_USE struct mo_image *initialized(struct fixture *f) {
     }
     return image;
 }
+static void test_primitives(void) {
+    struct fixture f;
+    fixture_init(&f);
+    const uint32_t text_pair[] = {1, 1};
+    f.types[10] = (struct mo_type){
+        .kind = MO_TYPE_FUNCTION, .parameters = text_pair, .parameter_count = 2, .result = 1};
+    f.file.layout_count = 3;
+    const struct mo_parameter param = {1, MO_PARAMETER_BORROWED};
+    const uint32_t regs[] = {1, 1, 1, 1};
+    const uint32_t code[] = {MO_OP_DUP,
+                             1,
+                             0,
+                             MO_OP_DUP,
+                             2,
+                             0,
+                             MO_OP_PRIM | (2u << 16),
+                             3,
+                             MO_PRIM_TEXT_CONCAT,
+                             10,
+                             1,
+                             2,
+                             MO_OP_DROP,
+                             2,
+                             MO_OP_RET,
+                             3};
+    program(&f, 0, regs, 4, code, 16, 1);
+    f.functions[0].parameters = &param;
+    f.functions[0].parameter_count = 1;
+    const struct mo_bytecode_register_name names[] = {{1, 9, 0, 16}};
+    f.debug[0].names = names;
+    f.debug[0].name_count = 1;
+    struct mo_image *image = initialized(&f);
+    if (image == NULL)
+        return;
+    for (unsigned refused = 0; refused < 2; refused++) {
+        struct mo_limits limits = mo_limits_default();
+        if (refused != 0)
+            limits.heap_size = 4096;
+        struct mo_process *p = mo_process_new(image, &limits);
+        MO_ASSERT(p != NULL);
+        struct mo_heap *heap = mo_process_heap(p);
+        char bytes[2000];
+        memset(bytes, 'x', sizeof bytes);
+        struct mo_cell input, result = mo_cell_int(99);
+        CHECK(mo_value_text(heap, bytes, sizeof bytes, &input));
+        struct mo_defect defect;
+        enum mo_outcome outcome = mo_call(p, 0, &input, 1, &result, &defect);
+        CHECK(outcome == (refused != 0 ? MO_STOPPED : MO_RETURNED));
+        if (outcome != (refused != 0 ? MO_STOPPED : MO_RETURNED) ||
+            (refused != 0 && defect.limit_name == NULL)) {
+            CHECK(false);
+            mo_value_drop(heap, 1, input);
+            mo_process_free(p);
+            continue;
+        }
+        if (refused != 0) {
+            CHECK(outcome == MO_STOPPED && mo_cell_get_int(result) == 99);
+            CHECK(strcmp(defect.limit_name, "--max-heap") == 0 && defect.frames->pc == 6);
+            CHECK(mo_cell_get_ref(input)->count == 3);
+            struct mo_buffer report;
+            mo_buffer_init(&report, 1024);
+            CHECK(mo_render_defect(p, &defect, &report) && mo_buffer_append_byte(&report, 0));
+            CHECK(strstr((const char *)report.bytes, "x = \"xxxx") != NULL);
+            mo_buffer_free(&report);
+        } else {
+            CHECK(outcome == MO_RETURNED && mo_cell_get_ref(input)->count == 1);
+            size_t length;
+            const uint8_t *data = mo_value_data(result, &length);
+            CHECK(length == 4000 && memcmp(data, bytes, sizeof bytes) == 0 &&
+                  memcmp(data + sizeof bytes, bytes, sizeof bytes) == 0);
+            mo_value_drop(heap, 1, result);
+        }
+        mo_value_drop(heap, 1, input);
+        mo_process_free(p);
+    }
+    mo_image_free(image);
+}
 static void test_constants(void) {
     struct fixture f;
     fixture_init(&f);
@@ -1052,9 +1129,14 @@ static void test_defects(void) {
                                      1,           MO_OP_CONST,
                                      2,           2,
                                      MO_OP_RET,   2};
-            if (kind == 2)
+            struct mo_bytecode_constant constants[7];
+            if (kind == 2) {
+                memcpy(constants, f.file.constants, sizeof constants);
+                memset(constants[0].value.immediate, 0, 16);
+                constants[0].value.immediate[7] = 128;
+                f.file.constants = constants;
                 program(&f, 0, prim_types, 2, prim, 10, 0);
-            else {
+            } else {
                 f.functions[0].kind = MO_FUNCTION_TEST;
                 f.functions[0].spec_code = true;
                 program(&f, 0, host_types, 3, host, 14, 3);
@@ -1066,8 +1148,10 @@ static void test_defects(void) {
             MO_ASSERT(p != NULL);
             struct mo_cell out = mo_cell_int(99);
             CHECK(mo_call(p, 0, NULL, 0, &out, &defect) == MO_STOPPED);
-            CHECK(strstr(defect.reason, "dispatch unavailable") != NULL &&
-                  mo_cell_get_int(out) == 99);
+            CHECK(strcmp(defect.reason, kind == 2
+                                            ? "overflow: Int"
+                                            : "internal error: host dispatch unavailable") == 0 &&
+                  mo_cell_get_int(out) == 99 && defect.frames->pc == 3);
             mo_process_free(p);
             mo_image_free(image);
             continue;
@@ -2099,6 +2183,7 @@ int main(int argc, char **argv) {
     test_return();
     test_numbers();
     test_constants();
+    test_primitives();
     test_values();
     test_calls();
     test_initialization();

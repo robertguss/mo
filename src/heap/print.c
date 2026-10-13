@@ -252,16 +252,7 @@ bool mo_value_print(struct mo_heap *process, uint32_t type, struct mo_cell value
                                                         : NULL;
             if (name != NULL) {
                 size_t length = strlen(name);
-<<<<<<< HEAD
-                if (length > MO_LIMIT_HEAP_WORK - work) {
-                    ok = false;
-                    break;
-                }
-                work += length;
                 ok = quote(out, (const uint8_t *)name, length, 0);
-=======
-                ok = mo_buffer_append(out, name, length);
->>>>>>> 3ab44e9 (Bound primitive results by the runtime heap)
                 if (f->count == 0) {
                     depth--;
                     continue;

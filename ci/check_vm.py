@@ -21,7 +21,7 @@ from fractions import Fraction
 from check_codegen import closure_program, expression, global_program, reference_tail
 from check_core_check import VERSION, WORLD, parse, wire, program
 
-NEEDS_DISPATCH = {"needs primitive dispatch": 2, "needs host dispatch": 1}
+NEEDS_DISPATCH = {"needs primitive dispatch": 0, "needs host dispatch": 1}
 CODEGEN_UNSUPPORTED = 15
 
 
@@ -289,8 +289,7 @@ def main():
             path = root / f"literal-{i}.core"
             path.write_text(f'(core {VERSION} (Program () ((FunDecl "entry" () ({ty}) (lit ({literal})) "M" (function) 0)) () "entry" (noSource)))\n')
             generated.append(path)
-        # These compile on main but await dispatch. Keep them in the same runner
-        # so integration moves their exact Lean outcomes into the compared set.
+        # These exercise primitive dispatch through the compiled Core path.
         for name, ret, body in [
                 ("text-concat", "(text)", '(prim (text (concat)) ((lit (text "left")) (lit (text "right"))))'),
                 ("list-literal", "(list (int))", '(prim (list (int) (lit 2)) ((lit (int -17)) (lit (int 31))))')]:
