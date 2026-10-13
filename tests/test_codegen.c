@@ -451,6 +451,41 @@ static MO_MUST_USE const uint32_t *instruction(const struct mo_bytecode_function
     CHECK(false);
     return NULL;
 }
+static void test_globals(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b = compile(
+        &arena, "(Program () ((FunDecl \"start\" () (int) (global \"second\") \"M\" (function) 2) "
+                "(FunDecl \"read\" () (int) (global \"first\") \"M\" (function) 1)) "
+                "((ConstDecl \"first\" (int) (lit (int 17))) "
+                "(ConstDecl \"second\" (int) (call \"read\" ()))) \"start\" (noSource))");
+    if (b != NULL) {
+        CHECK(b->global_count == 2 && b->init_count == 2 && b->function_count == 6);
+        CHECK(string_is(b, b->modules[0].name, "%Core") && b->modules[0].global_count == 2);
+        CHECK(b->modules[0].globals[0] == 0 && b->modules[0].globals[1] == 1);
+        CHECK(string_is(b, b->globals[0].name, "first") &&
+              string_is(b, b->globals[1].name, "second"));
+        for (uint32_t i = 0; i < 2; i++) {
+            CHECK(b->globals[i].module == 0 && b->types[b->globals[i].type].kind == MO_TYPE_INT);
+            uint32_t init = b->init[i], value = init - 1;
+            const struct mo_bytecode_function *f = &b->functions[init];
+            const uint32_t expected[] = {MO_OP_CALL,  0, value,      MO_OP_SET_GLOBAL, i, 0,
+                                         MO_OP_CONST, 1, f->code[8], MO_OP_RET,        1};
+            CHECK(f->kind == MO_FUNCTION_INIT && !f->spec_code && f->parameter_count == 0);
+            CHECK(b->types[f->result_type].kind == MO_TYPE_UNIT);
+            CHECK(f->code_count == sizeof expected / sizeof expected[0] &&
+                  memcmp(f->code, expected, sizeof expected) == 0);
+            CHECK(b->types[b->constants[f->code[8]].type].kind == MO_TYPE_UNIT);
+        }
+        CHECK(string_is(b, b->functions[b->init[0]].name, "first.init"));
+        CHECK(string_is(b, b->functions[b->init[0] - 1].name, "first.init.%value"));
+        const uint32_t *read = instruction(&b->functions[0], MO_OP_GLOBAL, 0),
+                       *call = instruction(&b->functions[b->init[1] - 1], MO_OP_TAIL_CALL, 0);
+        if (read != NULL && call != NULL)
+            CHECK(read[2] == 1 && call[1] == 1);
+    }
+    mo_arena_free(&arena);
+}
 static void test_borrow_calls(void) {
     struct mo_arena arena;
     mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
@@ -934,6 +969,7 @@ int main(int argc, char **argv) {
     test_metadata();
     test_refusals();
     test_references();
+    test_globals();
     test_borrow_calls();
     test_aggregate_values();
     test_range_and_fail();
