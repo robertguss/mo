@@ -24,9 +24,9 @@ struct mo_module_set {
  * Errors return NULL, retaining sources and diagnostics. An unreadable entry
  * has an unavailable primary file (UINT32_MAX).
  * The entry's spelling must end in its reference 2.1 module path. */
-MO_MUST_USE struct mo_module_set *mo_load(struct mo_arena *arena, struct mo_sources *sources,
-                                          const char *entry, const char *library,
-                                          struct mo_diags *diags);
+MO_MUST_USE struct mo_module_set *mo_load_program(struct mo_arena *arena,
+                                                  struct mo_sources *sources, const char *entry,
+                                                  const char *library, struct mo_diags *diags);
 
 struct mo_symbol {
     const char *name;
@@ -77,7 +77,7 @@ MO_MUST_USE const struct mo_symbol *mo_find_symbol(const struct mo_module_scope 
 /* Indexes declarations, validates overload ownership, exposes public interfaces
  * and resolves explicit imports and their choice cases. NULL on error. Does not
  * check body names, types, uses of hidden insides or unused imports; those need
- * body checking. set must be a successful mo_load result, or its equivalent:
+ * body checking. set must be a successful mo_load_program result, or its equivalent:
  * complete syntax, valid target indices and an acyclic dependency order. */
 MO_MUST_USE struct mo_module_interfaces *
 mo_resolve_modules(struct mo_arena *arena, const struct mo_module_set *set, struct mo_diags *diags);

@@ -248,7 +248,7 @@ parsing the rest. It follows `use` lines to the files they name, and builds
 the module graph, refusing cycles. The library's modules (`lib/`) are found
 in the toolchain's own folder, and are always available.
 
-**The loading boundary.** `mo_load` takes an explicit library folder from
+**The loading boundary.** `mo_load_program` takes an explicit library folder from
 the caller, rather than locating the running executable. The tools supply
 the installed library's path; `NULL` permits a library-free fixture while
 `lib/` is being built. A supplied folder must exist. All its `.mo` files,
@@ -1110,9 +1110,9 @@ MO_MUST_USE bool mo_read_header(struct mo_arena *arena, const struct mo_sources 
                                 struct mo_header *header_out, struct mo_diags *diags);
 
 /* src/check/check.h: implemented loading and module interfaces; NULL with diagnostics. */
-MO_MUST_USE struct mo_module_set *mo_load(struct mo_arena *arena, struct mo_sources *sources,
-                                          const char *entry, const char *library,
-                                          struct mo_diags *diags);
+MO_MUST_USE struct mo_module_set *mo_load_program(struct mo_arena *arena, struct mo_sources *sources,
+                                                  const char *entry, const char *library,
+                                                  struct mo_diags *diags);
 MO_MUST_USE struct mo_module_interfaces *mo_resolve_modules(struct mo_arena *arena,
                                                             const struct mo_module_set *set,
                                                             struct mo_diags *diags);

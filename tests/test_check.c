@@ -18,7 +18,8 @@ static void load_graph(void) {
     MO_ASSERT(mo_sources_init(&sources));
     MO_ASSERT(mo_diags_init(&diags));
     mo_arena_init(&arena, 16 << 20);
-    struct mo_module_set *set = mo_load(&arena, &sources, "tests/check/load/main.mo", NULL, &diags);
+    struct mo_module_set *set =
+        mo_load_program(&arena, &sources, "tests/check/load/main.mo", NULL, &diags);
     CHECK(set != NULL && diags.count == 0);
     if (set != NULL) {
         CHECK(strcmp(set->root, "tests/check/load/") == 0);
@@ -40,8 +41,8 @@ static void interfaces(void) {
     MO_ASSERT(mo_sources_init(&sources));
     MO_ASSERT(mo_diags_init(&diags));
     mo_arena_init(&arena, 16 << 20);
-    struct mo_module_set *set =
-        mo_load(&arena, &sources, "tests/check/interfaces/main.mo", "tests/check/library", &diags);
+    struct mo_module_set *set = mo_load_program(&arena, &sources, "tests/check/interfaces/main.mo",
+                                                "tests/check/library", &diags);
     CHECK(set != NULL && diags.count == 0);
     if (set != NULL) {
         CHECK(set->count == 4);
@@ -188,7 +189,7 @@ static void corpus(void) {
         int n = snprintf(path, sizeof(path), "tests/check/diagnostics/%s", cases[i].input);
         MO_ASSERT(n > 0 && (size_t)n < sizeof(path));
         if (cases[i].loading)
-            CHECK(mo_load(&f.arena, &f.sources, path, NULL, &f.diags) == NULL);
+            CHECK(mo_load_program(&f.arena, &f.sources, path, NULL, &f.diags) == NULL);
         else {
             struct mo_module_syntax *modules[] = {
                 parse_file(&f, path), parse_file(&f, strcmp(cases[i].input, "e0047.mo") == 0
@@ -237,7 +238,7 @@ static void samples(void) {
         MO_ASSERT(n > 0 && (size_t)n < sizeof(path));
         struct fixture f;
         init(&f, 64 << 20);
-        struct mo_module_set *set = mo_load(&f.arena, &f.sources, path, NULL, &f.diags);
+        struct mo_module_set *set = mo_load_program(&f.arena, &f.sources, path, NULL, &f.diags);
         CHECK(set != NULL);
         if (set != NULL)
             CHECK(mo_resolve_modules(&f.arena, set, &f.diags) != NULL);
@@ -251,7 +252,7 @@ static void arena_limits(void) {
         struct fixture f;
         init(&f, limit);
         struct mo_module_set *set =
-            mo_load(&f.arena, &f.sources, "tests/check/load/main.mo", NULL, &f.diags);
+            mo_load_program(&f.arena, &f.sources, "tests/check/load/main.mo", NULL, &f.diags);
         if (set == NULL) {
             CHECK(f.diags.count == 1);
             CHECK(f.diags.items[0].code == MO_CODE_CHECK_NO_MEMORY ||
@@ -292,7 +293,7 @@ static void header_lookahead(void) {
     write_file(path, text, sizeof(text) - 1);
     struct fixture f;
     init(&f, 16 << 20);
-    CHECK(mo_load(&f.arena, &f.sources, path, NULL, &f.diags) == NULL);
+    CHECK(mo_load_program(&f.arena, &f.sources, path, NULL, &f.diags) == NULL);
     CHECK(f.diags.count == 1);
     finish(&f);
     MO_ASSERT(unlink(path) == 0);
@@ -302,8 +303,8 @@ static void header_lookahead(void) {
 static void library_collision(void) {
     struct fixture f;
     init(&f, 16 << 20);
-    CHECK(mo_load(&f.arena, &f.sources, "tests/check/load/main.mo", "tests/check/interfaces",
-                  &f.diags) == NULL);
+    CHECK(mo_load_program(&f.arena, &f.sources, "tests/check/load/main.mo",
+                          "tests/check/interfaces", &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_RESERVED);
     CHECK(f.diags.items[0].primary.span.file == 0);
     finish(&f);
@@ -330,7 +331,7 @@ static void path_policy(void) {
     MO_ASSERT(symlink(target, entry) == 0 && symlink(".", loop) == 0);
     struct fixture f;
     init(&f, 16 << 20);
-    struct mo_module_set *set = mo_load(&f.arena, &f.sources, entry, library, &f.diags);
+    struct mo_module_set *set = mo_load_program(&f.arena, &f.sources, entry, library, &f.diags);
     CHECK(set != NULL && f.diags.count == 0);
     if (set != NULL) {
         CHECK(strcmp(set->root, root) == 0);
@@ -341,7 +342,7 @@ static void path_policy(void) {
     /* A library source link is confined to the library, not the program root. */
     MO_ASSERT(unlink(support) == 0 && symlink(target, support) == 0);
     init(&f, 16 << 20);
-    CHECK(mo_load(&f.arena, &f.sources, entry, library, &f.diags) == NULL);
+    CHECK(mo_load_program(&f.arena, &f.sources, entry, library, &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_OUTSIDE_ROOT);
     CHECK(f.sources.count == 1);
     finish(&f);
@@ -372,28 +373,28 @@ static void confined_files(void) {
     MO_ASSERT(symlink(target, linked) == 0);
     struct fixture f;
     init(&f, 16 << 20);
-    CHECK(mo_load(&f.arena, &f.sources, normalized, NULL, &f.diags) == NULL);
+    CHECK(mo_load_program(&f.arena, &f.sources, normalized, NULL, &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_OUTSIDE_ROOT);
     CHECK(f.sources.count == 1 && strcmp(f.sources.files[0].path, entry) == 0);
     finish(&f);
     MO_ASSERT(unlink(linked) == 0);
     MO_ASSERT(symlink("/dev/stdin", linked) == 0);
     init(&f, 16 << 20);
-    CHECK(mo_load(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
+    CHECK(mo_load_program(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_OUTSIDE_ROOT);
     CHECK(f.sources.count == 1);
     finish(&f);
     MO_ASSERT(unlink(linked) == 0);
     MO_ASSERT(mkfifo(linked, 0600) == 0);
     init(&f, 16 << 20);
-    CHECK(mo_load(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
+    CHECK(mo_load_program(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_MISSING);
     CHECK(f.sources.count == 1);
     finish(&f);
     MO_ASSERT(unlink(linked) == 0);
     write_file(linked, linked_source, sizeof(linked_source) - 1);
     init(&f, 16 << 20);
-    struct mo_module_set *set = mo_load(&f.arena, &f.sources, normalized, NULL, &f.diags);
+    struct mo_module_set *set = mo_load_program(&f.arena, &f.sources, normalized, NULL, &f.diags);
     CHECK(set != NULL && f.diags.count == 0);
     if (set != NULL)
         CHECK(strcmp(f.sources.files[0].path, entry) == 0 && set->count == 2);
@@ -402,7 +403,7 @@ static void confined_files(void) {
     write_file(target, main_source, sizeof(main_source) - 1);
     MO_ASSERT(symlink(target, entry) == 0);
     init(&f, 16 << 20);
-    CHECK(mo_load(&f.arena, &f.sources, entry, NULL, &f.diags) != NULL);
+    CHECK(mo_load_program(&f.arena, &f.sources, entry, NULL, &f.diags) != NULL);
     CHECK(f.diags.count == 0);
     finish(&f);
     MO_ASSERT(unlink(entry) == 0 && unlink(linked) == 0 && unlink(target) == 0);
@@ -431,20 +432,20 @@ static void library_roots(void) {
     write_file(helper, program_source, sizeof(program_source) - 1);
     struct fixture f;
     init(&f, 16 << 20);
-    CHECK(mo_load(&f.arena, &f.sources, entry, library, &f.diags) == NULL);
+    CHECK(mo_load_program(&f.arena, &f.sources, entry, library, &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_LIBRARY_UNREADABLE);
     finish(&f);
     MO_ASSERT(mkdir(library, 0700) == 0);
     write_file(support, support_source, sizeof(support_source) - 1);
     init(&f, 16 << 20);
-    CHECK(mo_load(&f.arena, &f.sources, entry, library, &f.diags) == NULL);
+    CHECK(mo_load_program(&f.arena, &f.sources, entry, library, &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_MISSING);
     CHECK(f.diags.items[0].primary.span.file == 1);
     CHECK(strcmp(f.diags.items[0].primary.text, lib_helper) == 0);
     finish(&f);
     write_file(lib_helper, library_source, sizeof(library_source) - 1);
     init(&f, 16 << 20);
-    struct mo_module_set *set = mo_load(&f.arena, &f.sources, entry, library, &f.diags);
+    struct mo_module_set *set = mo_load_program(&f.arena, &f.sources, entry, library, &f.diags);
     CHECK(set != NULL && f.diags.count == 0);
     if (set != NULL) {
         CHECK(set->library[set->uses[0][0]]);
@@ -455,14 +456,14 @@ static void library_roots(void) {
     finish(&f);
     write_file(lib_helper, (const uint8_t *)"module Wrong\n", 13);
     init(&f, 16 << 20);
-    CHECK(mo_load(&f.arena, &f.sources, entry, library, &f.diags) == NULL);
+    CHECK(mo_load_program(&f.arena, &f.sources, entry, library, &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_NAME);
     CHECK(f.diags.items[0].primary.span.file == 1);
     finish(&f);
     const uint8_t json_source[] = "module Main\nuse Json\n";
     write_file(entry, json_source, sizeof(json_source) - 1);
     init(&f, 16 << 20);
-    CHECK(mo_load(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
+    CHECK(mo_load_program(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_MISSING);
     finish(&f);
     MO_ASSERT(unlink(entry) == 0 && unlink(helper) == 0 && unlink(support) == 0 &&
@@ -490,7 +491,7 @@ static void loading_labels(void) {
     write_file(third, (const uint8_t *)third_source, sizeof(third_source) - 1);
     struct fixture f;
     init(&f, 16 << 20);
-    CHECK(mo_load(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
+    CHECK(mo_load_program(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_CYCLE);
     if (f.diags.count == 1) {
         const struct mo_diag *diag = &f.diags.items[0];
@@ -508,7 +509,7 @@ static void loading_labels(void) {
     write_file(entry, (const uint8_t *)mismatch, sizeof(mismatch) - 1);
     write_file(xml, (const uint8_t *)"module XMLReader\n", 17);
     init(&f, 16 << 20);
-    CHECK(mo_load(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
+    CHECK(mo_load_program(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_NAME);
     if (f.diags.count == 1) {
         const struct mo_diag *diag = &f.diags.items[0];
@@ -520,7 +521,7 @@ static void loading_labels(void) {
     finish(&f);
     MO_ASSERT(unlink(xml) == 0);
     init(&f, 16 << 20);
-    CHECK(mo_load(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
+    CHECK(mo_load_program(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_MISSING);
     CHECK(strcmp(f.diags.items[0].primary.text, xml) == 0);
     finish(&f);
@@ -534,7 +535,7 @@ static void loading_labels(void) {
     write_file(entry, long_use.bytes, long_use.length);
     mo_buffer_free(&long_use);
     init(&f, 16 << 20);
-    CHECK(mo_load(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
+    CHECK(mo_load_program(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_PATH_TOO_LONG);
     CHECK(f.diags.items[0].primary.span.file == 0 && f.diags.items[0].primary.span.start == 16);
     finish(&f);
@@ -557,7 +558,7 @@ static void module_limit(void) {
     }
     struct fixture f;
     init(&f, 64 << 20);
-    struct mo_module_set *set = mo_load(&f.arena, &f.sources, entry, NULL, &f.diags);
+    struct mo_module_set *set = mo_load_program(&f.arena, &f.sources, entry, NULL, &f.diags);
     CHECK(set != NULL && f.diags.count == 0);
     if (set != NULL) {
         CHECK(set->count == MO_LIMIT_FILES);
@@ -571,7 +572,7 @@ static void module_limit(void) {
     MO_ASSERT(n > 0 && (size_t)n < sizeof(text));
     write_file(path, (const uint8_t *)text, (size_t)n);
     init(&f, 64 << 20);
-    CHECK(mo_load(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
+    CHECK(mo_load_program(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_TOO_MANY_FILES);
     finish(&f);
     for (uint32_t i = 0; i <= MO_LIMIT_FILES; i++) {
@@ -594,7 +595,7 @@ static void library_limit(void) {
     struct fixture f;
     init(&f, 64 << 20);
     struct mo_module_set *set =
-        mo_load(&f.arena, &f.sources, "tests/check/load/main.mo", folder, &f.diags);
+        mo_load_program(&f.arena, &f.sources, "tests/check/load/main.mo", folder, &f.diags);
     CHECK(set != NULL && f.diags.count == 0);
     if (set != NULL)
         CHECK(set->count == 3);
@@ -603,7 +604,8 @@ static void library_limit(void) {
     MO_ASSERT(n > 0 && (size_t)n < sizeof(path));
     write_file(path, NULL, 0);
     init(&f, 64 << 20);
-    CHECK(mo_load(&f.arena, &f.sources, "tests/check/load/main.mo", folder, &f.diags) == NULL);
+    CHECK(mo_load_program(&f.arena, &f.sources, "tests/check/load/main.mo", folder, &f.diags) ==
+          NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_LIBRARY_TOO_BIG);
     finish(&f);
     MO_ASSERT(unlink(path) == 0);
@@ -891,7 +893,7 @@ static void source_limits(void) {
     write_file(entry, bytes, MO_LIMIT_FILE_SIZE + 1);
     struct fixture f;
     init(&f, 64 << 20);
-    CHECK(mo_load(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
+    CHECK(mo_load_program(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_FILE_TOO_BIG);
     finish(&f);
     for (uint32_t i = 0; i < 8; i++) {
@@ -905,7 +907,7 @@ static void source_limits(void) {
         write_file(path, bytes, MO_LIMIT_FILE_SIZE);
     }
     init(&f, 64 << 20);
-    struct mo_module_set *set = mo_load(&f.arena, &f.sources, entry, NULL, &f.diags);
+    struct mo_module_set *set = mo_load_program(&f.arena, &f.sources, entry, NULL, &f.diags);
     CHECK(set != NULL && f.diags.count == 0);
     CHECK(f.sources.size == MO_LIMIT_PROGRAM_SIZE);
     finish(&f);
@@ -915,7 +917,7 @@ static void source_limits(void) {
     MO_ASSERT(n > 0 && (size_t)n < sizeof(path));
     write_file(path, (const uint8_t *)"module M8\n", 10);
     init(&f, 64 << 20);
-    CHECK(mo_load(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
+    CHECK(mo_load_program(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_PROGRAM_TOO_BIG);
     finish(&f);
     for (uint32_t i = 0; i < 9; i++) {
@@ -929,7 +931,7 @@ static void source_limits(void) {
     memset(long_path, 'x', sizeof(long_path) - 1);
     long_path[sizeof(long_path) - 1] = '\0';
     init(&f, 64 << 20);
-    CHECK(mo_load(&f.arena, &f.sources, long_path, NULL, &f.diags) == NULL);
+    CHECK(mo_load_program(&f.arena, &f.sources, long_path, NULL, &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_PATH_TOO_LONG);
     finish(&f);
 }

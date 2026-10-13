@@ -248,7 +248,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     struct mo_arena arena;
     MO_ASSERT(mo_sources_init(&sources) && mo_diags_init(&diags));
     mo_arena_init(&arena, limit);
-    struct mo_module_set *set = mo_load(&arena, &sources, files[0], library, &diags);
+    struct mo_module_set *set = mo_load_program(&arena, &sources, files[0], library, &diags);
     MO_ASSERT((set == NULL) == mo_diags_any(&diags));
     if (set != NULL)
         resolve(set, limit);
