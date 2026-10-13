@@ -830,7 +830,9 @@ static void function_signatures(void) {
     } else
         CHECK(false);
     bool succeeded = false, failed = false;
-    for (size_t limit = 0; limit <= 16384; limit += 16) {
+    /* Preparation now includes every native table signature. Keep the fine
+     * sweep through the original small allocations, then cross that table. */
+    for (size_t limit = 0; limit <= (1 << 20); limit += limit < 16384 ? 16u : 1024u) {
         struct mo_arena arena;
         mo_arena_init(&arena, limit);
         struct mo_signatures *out = mo_prepare_signatures(&arena, &set, names, &f.diags);

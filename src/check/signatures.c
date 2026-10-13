@@ -26,6 +26,7 @@ static const struct mo_builtin_case builtin_cases[] = {
     {"NotAllowed", "FileError", 20, 19, 4, 0, 1, 0, {"path", NULL}},
     {"NotText", "FileError", 21, 19, 4, 0, 1, 0, {"path", NULL}},
     {"Failed", "FileError", 22, 19, 4, 0, 2, 0, {"path", "reason"}},
+    {"Entry", "Entry", 23, 23, 1, 0, 2, 0, {"name", "kind"}},
 };
 
 static const struct native_text {
@@ -117,6 +118,7 @@ struct preparation {
     const struct mo_symbol *function;
     const struct mo_source_type *parameters[26];
     struct type_entry *root;
+    struct mo_signatures *signatures;
     struct mo_span span;
     uint32_t depth;
     bool failed;
@@ -475,6 +477,142 @@ static MO_MUST_USE int compare_fields(const void *a, const void *b) {
     return order != 0 ? order : x->index < y->index ? -1 : x->index > y->index ? 1 : 0;
 }
 
+/* Nominal masks reach a fixed point without expanding recursive layouts. */
+static MO_MUST_USE bool dependency_work(struct preparation *p) {
+    if (*p->signatures->work == MO_LIMIT_PROGRAM_CHECK_WORK)
+        return problem(p, MO_CODE_CHECK_PROGRAM_WORK, p->span,
+                       "the program needs too much signature-checking work", NULL);
+    (*p->signatures->work)++;
+    return true;
+}
+
+static MO_MUST_USE bool dependencies(struct preparation *p, const struct mo_source_type *type,
+                                     bool keys, uint32_t *out) {
+    if (!dependency_work(p))
+        return false;
+    if (type->parameters == 0)
+        return true;
+    if (type->kind == MO_SOURCE_PARAMETER) {
+        if (!keys)
+            *out |= type->parameters;
+        return true;
+    }
+    if (!keys && type->kind == MO_SOURCE_FUNCTION)
+        return true; /* The ability check rejects it independently of parameters. */
+    if (type->kind == MO_SOURCE_NAMED && type->declaration != NULL) {
+        uint32_t needed = 0;
+        const struct mo_data_signature *owner = NULL;
+        for (uint32_t i = 0; i < p->signatures->data_count; i++) {
+            if (!dependency_work(p))
+                return false;
+            const struct mo_data_signature *data = &p->signatures->data[i];
+            if (data->type->declaration == type->declaration) {
+                owner = data;
+                needed |= keys ? data->key_parameters : data->hash_parameters;
+            }
+        }
+        MO_ASSERT(owner != NULL);
+        for (uint32_t i = 0; i < type->count; i++) {
+            if ((needed & owner->type->arguments[i]->parameters) != 0 &&
+                !dependencies(p, type->arguments[i], false, out))
+                return false;
+        }
+    }
+    if (type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX && keys &&
+        (strcmp(type->name, "Map") == 0 || strcmp(type->name, "Set") == 0) &&
+        !dependencies(p, type->arguments[0], false, out))
+        return false;
+    for (uint32_t i = 0; i < type->count; i++)
+        if ((keys || type->declaration == NULL) && !dependencies(p, type->arguments[i], keys, out))
+            return false;
+    return true;
+}
+
+static MO_MUST_USE bool data_dependencies(struct preparation *p) {
+    bool changed;
+    do {
+        changed = false;
+        for (uint32_t i = 0; i < p->signatures->data_count; i++) {
+            struct mo_data_signature *data = &p->signatures->data[i];
+            p->span = data->symbol->declaration->span;
+            uint32_t hash = data->hash_parameters, keys = data->key_parameters;
+            for (uint32_t j = 0; j < data->count; j++)
+                if (!dependencies(p, data->fields[j].type, false, &hash) ||
+                    !dependencies(p, data->fields[j].type, true, &keys))
+                    return false;
+            changed = changed || hash != data->hash_parameters || keys != data->key_parameters;
+            data->hash_parameters = hash;
+            data->key_parameters = keys;
+        }
+    } while (changed);
+    return true;
+}
+
+static MO_MUST_USE bool requirements(struct preparation *p, const struct mo_source_type *type,
+                                     uint8_t out[26]) {
+    memset(out, 0, 26);
+    uint32_t keys = 0;
+    if (!dependencies(p, type, true, &keys))
+        return false;
+    for (unsigned i = 0; i < 26; i++)
+        if ((keys & (UINT32_C(1) << i)) != 0)
+            out[i] |= (uint8_t)(1u << MO_SOURCE_HASH);
+    const struct mo_syntax *where = p->function->declaration->children[3];
+    static const char *const names[] = {"Equal", "Hash", "Order", "Text", "Number"};
+    for (uint32_t i = 0; where != NULL && i < where->count; i++) {
+        const struct mo_syntax *name = where->children[i]->children[0];
+        const struct mo_syntax *ability = where->children[i]->children[1];
+        unsigned letter = (unsigned)(name->text[0] - 'A');
+        if (name->span.end - name->span.start != 1 || letter >= 26 ||
+            (type->parameters & (UINT32_C(1) << letter)) == 0)
+            return problem(p, MO_CODE_ABILITY_REQUIREMENT, name->span,
+                           "where doesn't name a type parameter in this signature",
+                           "A single capital letter in a signature is a type parameter, and where "
+                           "asks for abilities (reference 5.5).");
+        unsigned mask = 0;
+        for (unsigned j = 0; j < sizeof(names) / sizeof(names[0]); j++)
+            if (compare_name(ability, names[j]) == 0)
+                mask = 1u << j;
+        if (mask == 0)
+            return problem(
+                p, MO_CODE_ABILITY_REQUIREMENT, ability->span,
+                "where names an ability other than the five built in",
+                "Where asks for one of Equal, Hash, Order, Text or Number (reference 5.5).");
+        out[letter] |= (uint8_t)mask;
+    }
+    for (unsigned i = 0; i < 26; i++)
+        if ((out[i] & ((1u << MO_SOURCE_HASH) | (1u << MO_SOURCE_ORDER))) != 0)
+            out[i] |= (uint8_t)(1u << MO_SOURCE_EQUAL);
+    return true;
+}
+
+static MO_MUST_USE bool customizer(struct preparation *p, const struct mo_source_type *type) {
+    bool compare = strcmp(p->function->name, "compare") == 0;
+    if (!compare && strcmp(p->function->name, "to_text") != 0)
+        return true;
+    bool valid = type->count == (compare ? 3u : 2u);
+    const struct mo_source_type *receiver = valid ? type->arguments[0] : NULL;
+    const struct mo_source_type *result = type->arguments[type->count - 1];
+    valid = valid && receiver->kind == MO_SOURCE_NAMED && receiver->declaration != NULL &&
+            receiver->module == p->function->module &&
+            (!compare || type->arguments[1] == receiver) && result->kind == MO_SOURCE_NAMED &&
+            result->module == UINT32_MAX &&
+            strcmp(result->name, compare ? "Ordering" : "Text") == 0;
+    uint32_t parameters = 0;
+    for (uint32_t i = 0; valid && i < receiver->count; i++) {
+        const struct mo_source_type *argument = receiver->arguments[i];
+        valid = argument->kind == MO_SOURCE_PARAMETER && (parameters & argument->parameters) == 0;
+        parameters |= argument->parameters;
+    }
+    if (valid && parameters == type->parameters)
+        return true;
+    return problem(p, MO_CODE_ABILITY_CUSTOMIZER, p->function->declaration->children[0]->span,
+                   compare ? "compare doesn't have the type's order signature"
+                           : "to_text doesn't have the type's text signature",
+                   "A type customizes Order or Text in its own module with compare(T, T): Ordering "
+                   "or to_text(T): Text (reference 9.2).");
+}
+
 /* The table spells types in Mo. Add positional parameter names, then use the
  * real parser and annotation resolver; do not maintain a second type grammar.
  * Parsed token text belongs to the caller arena, not the temporary sources. */
@@ -553,7 +691,11 @@ static MO_MUST_USE bool native_signature(struct preparation *p, const struct nat
                                                   .module = UINT32_MAX,
                                                   .count = parameters->count + 1,
                                                   .arguments = arguments});
-    return out->type != NULL;
+    if (out->type == NULL)
+        return false;
+    if (!function)
+        out->type = arguments[0];
+    return requirements(p, out->type, out->requirements);
 }
 
 static MO_MUST_USE bool data_signature(struct preparation *p, const struct mo_symbol *symbol,
@@ -661,6 +803,7 @@ struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct
         return NULL;
     *work = 0;
     *out = (struct mo_signatures){.items = items, .data = data, .work = work};
+    p.signatures = out;
     for (uint32_t i = 0; i < interfaces->count; i++)
         for (uint32_t j = 0; j < interfaces->scopes[i].count; j++) {
             const struct mo_symbol *symbol = &interfaces->scopes[i].symbols[j];
@@ -671,6 +814,8 @@ struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct
                 out->data_count++;
             }
         }
+    if (!data_dependencies(&p))
+        goto failed;
     memset(p.parameters, 0, sizeof(p.parameters));
     for (uint32_t i = 0; i < interfaces->count; i++)
         for (uint32_t j = 0; j < interfaces->scopes[i].count; j++) {
@@ -699,7 +844,10 @@ struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct
                                                    .arguments = arguments});
             if (type == NULL || !question_name(&p, function->declaration->children[0], type))
                 goto failed;
-            out->items[out->count++] = (struct mo_function_signature){function, type};
+            struct mo_function_signature *signature = &out->items[out->count++];
+            *signature = (struct mo_function_signature){.function = function, .type = type};
+            if (!requirements(&p, type, signature->requirements) || !customizer(&p, type))
+                goto failed;
         }
     MO_ASSERT(out->count == count);
     out->native_count = (uint32_t)(sizeof(native_texts) / sizeof(native_texts[0]));

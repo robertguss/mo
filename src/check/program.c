@@ -1,3 +1,4 @@
+#include "check/abilities.h"
 #include "check/checked.h"
 
 #include "base/codes.h"
@@ -34,28 +35,6 @@ static MO_MUST_USE int source_order(const void *a, const void *b) {
     return left < right ? -1 : left > right ? 1 : 0;
 }
 
-/* Until Hash checking exists, no written Map/Set type is certified, including
- * nested annotations and fields of unused declarations. Syntax is a bounded
- * tree, unlike the shared and possibly nominally recursive type graphs. */
-static MO_MUST_USE bool checked_types(const struct mo_syntax *node, struct mo_diags *diags) {
-    if (node == NULL)
-        return true;
-    if (node->kind == MO_S_TYPE && node->children[0]->kind == MO_S_CAPNAME) {
-        const struct mo_syntax *name = node->children[0];
-        if (name->span.end - name->span.start == 3 &&
-            (memcmp(name->text, "Map", 3) == 0 || memcmp(name->text, "Set", 3) == 0)) {
-            bool kept = report(diags, MO_CODE_CHECK_UNFINISHED, node->span,
-                               "map-key and set-member Hash checking is not implemented", NULL);
-            (void)kept;
-            return false;
-        }
-    }
-    for (uint32_t i = 0; i < node->count; i++)
-        if (!checked_types(node->children[i], diags))
-            return false;
-    return true;
-}
-
 static MO_MUST_USE bool native_type(const struct mo_source_type *type, const char *name) {
     return type != NULL && type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX &&
            strcmp(type->name, name) == 0;
@@ -72,6 +51,41 @@ struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *
     struct mo_signatures *signatures = mo_prepare_signatures(arena, set, interfaces, diags);
     if (signatures == NULL)
         return NULL;
+    uint32_t work = 0;
+    struct mo_ability_context abilities = {
+        .arena = arena, .interfaces = interfaces, .signatures = signatures, .work = &work};
+    for (uint32_t i = 0; i < signatures->count; i++) {
+        work = 0;
+        if (!mo_check_type_abilities(&abilities, signatures->items[i].type)) {
+            bool kept =
+                report(diags, abilities.error, signatures->items[i].function->declaration->span,
+                       abilities.message, abilities.reason);
+            (void)kept;
+            return NULL;
+        }
+    }
+    for (uint32_t i = 0; i < signatures->data_count; i++) {
+        work = 0;
+        if (!mo_check_type_abilities(&abilities, signatures->data[i].type)) {
+            bool kept =
+                report(diags, abilities.error, signatures->data[i].symbol->declaration->span,
+                       abilities.message, abilities.reason);
+            (void)kept;
+            return NULL;
+        }
+        for (uint32_t j = 0; j < signatures->data[i].count; j++) {
+            const struct mo_field_signature *field = signatures->data[i].by_index[j];
+            if (!mo_check_type_abilities(&abilities, field->type)) {
+                bool kept =
+                    report(diags, abilities.error,
+                           field->name == NULL ? signatures->data[i].symbol->declaration->span
+                                               : field->name->span,
+                           abilities.message, abilities.reason);
+                (void)kept;
+                return NULL;
+            }
+        }
+    }
     struct mo_span span = set->modules[0]->span;
     for (uint32_t i = 0; i < set->count; i++) {
         const struct mo_module_syntax *module = set->modules[i];
@@ -91,8 +105,6 @@ struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *
                 return NULL;
             }
         }
-        if (!checked_types(items, diags))
-            return NULL;
     }
     struct mo_program *program =
         allocate(arena, diags, span, 1, sizeof(*program), _Alignof(struct mo_program));
@@ -110,20 +122,6 @@ struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *
     uint32_t main = UINT32_MAX;
     for (uint32_t i = 0; i < signatures->count; i++) {
         const struct mo_function_signature *fn = order[i];
-        const struct mo_syntax *where = fn->function->declaration->children[3];
-        if (fn->type->parameters != 0 || where != NULL) {
-            bool kept = report(diags, MO_CODE_CHECK_UNFINISHED, fn->function->declaration->span,
-                               "generic ability checking is not implemented", NULL);
-            (void)kept;
-            return NULL;
-        }
-        if (strcmp(fn->function->name, "compare") == 0 ||
-            strcmp(fn->function->name, "to_text") == 0) {
-            bool kept = report(diags, MO_CODE_CHECK_UNFINISHED, fn->function->declaration->span,
-                               "ability customizer checking is not implemented", NULL);
-            (void)kept;
-            return NULL;
-        }
         if (fn->function->module == 0 && strcmp(fn->function->name, "main") == 0)
             main = i;
         uint32_t index = (uint32_t)(fn - signatures->items);
@@ -190,5 +188,5 @@ struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *
                                              .result = unit ? MO_ENTRY_UNIT : MO_ENTRY_STATUS,
                                              .capability_count = functions[main].parameter_count,
                                              .capabilities = functions[main].parameters}};
-    return program;
+    return mo_check_recursion(arena, program, diags) ? program : NULL;
 }

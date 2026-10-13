@@ -111,6 +111,7 @@ struct mo_source_type {
 struct mo_function_signature {
     const struct mo_symbol *function;
     const struct mo_source_type *type;
+    uint8_t requirements[26]; /* ability mask per scoped A-Z parameter */
 };
 
 struct mo_field_signature {
@@ -129,6 +130,8 @@ struct mo_data_signature {
     uint32_t count;
     struct mo_field_signature *fields;          /* sorted by name; indices keep declaration order */
     const struct mo_field_signature **by_index; /* declaration order */
+    uint32_t hash_parameters;                   /* scoped parameters needed for structural Hash */
+    uint32_t key_parameters; /* implicit Hash requirements imposed by Map/Set fields */
     bool unnamed;
 };
 
@@ -231,8 +234,24 @@ enum mo_ability_implementation_kind {
  * FUNCTION is the selected declaring-module to_text/compare, even if hidden.
  * PARAMETER is an abstract requirement of a generic body; substitution selects
  * its concrete implementation before emitting Core. DERIVED parts follow
- * tuple/field/case declaration order. NATIVE is determined by ability and type.
- * Equal/Hash never select a user function. */
+ * tuple/field declaration order. Choices flatten every case's fields in
+ * case/field declaration order, not one proof per case: Option has only Some's
+ * payload; Result has Ok's payload then Error's. Empty cases contribute zero.
+ * List/Set have one element part; Map has key then value. NATIVE is determined
+ * by ability and type.
+ * Equal/Hash never select a user function.
+ *
+ * Every generic use's type-only abilities (operand UINT32_MAX) identify the
+ * callee's scoped parameter in mo_checked_ability_use.parameter; the pair
+ * (parameter, implementation->ability), never the concrete type alone, selects
+ * the replacement for a PARAMETER proof during monomorphization. FUNCTION
+ * parts carry the customizer's own requirement proofs, with corresponding
+ * scoped keys in part_parameters. For to_text(Box(T)) where T: Text, selecting
+ * Box(Int)'s customizer supplies its T -> Int substitution and a Text(Int)
+ * part keyed by that customizer's T. This also applies to entry.error_text.
+ * Hash/Order signatures include their implied Equal requirement. Graphs may
+ * recurse through nominal data; lowering memoizes them. DERIVED has no
+ * part_parameters: its parts are structural, not signature requirements. */
 struct mo_ability_implementation {
     enum mo_source_ability ability;
     enum mo_ability_implementation_kind kind;
@@ -241,6 +260,7 @@ struct mo_ability_implementation {
     struct mo_type_arguments arguments;
     uint32_t part_count;
     const struct mo_ability_implementation *const *parts;
+    const struct mo_source_type *const *part_parameters; /* FUNCTION requirement keys */
 };
 
 struct mo_checked_binding {
@@ -288,6 +308,8 @@ struct mo_checked_pattern {
     const struct mo_checked_binding *binding; /* BIND only */
     struct mo_constructor_ref constructor;
     struct mo_type_arguments arguments;
+    uint32_t ability_count;
+    const struct mo_checked_ability_use *abilities; /* keyed type-only constructor requirements */
     uint32_t part_count;
     const struct mo_checked_pattern_part *parts;
 };
@@ -332,6 +354,7 @@ struct mo_checked_lambda {
 struct mo_checked_ability_use {
     uint32_t operand; /* body row, or UINT32_MAX for a type-only generic-use requirement */
     const struct mo_ability_implementation *implementation;
+    const struct mo_source_type *parameter; /* scoped callee parameter; NULL for an operation */
 };
 
 /* Typed expression graph in written postorder. operands refer to earlier rows
