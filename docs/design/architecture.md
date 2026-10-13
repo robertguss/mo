@@ -941,15 +941,19 @@ gives the exact representation; this section gives the reasons.
 - **Heap objects** have an 8-byte header, a 32-bit reference count and a
   32-bit layout. Counts saturate: an object whose count would overflow
   becomes immortal and is never freed.
-- **Lists** are arrays with a length and a capacity, so `get` takes constant
-  time, and `append` on a list with one holder grows it in place, in amortized
-  constant time. Owned `concat` reserves the whole suffix before copying its
-  elements; prepend, slices, reverse and removal reuse unique storage. A
-  shared copy reserves exactly the requested elements, not the source's slack.
+- **Lists** are arrays with a live start, length and capacity, so `get` takes
+  constant time, and `append` on a list with one holder grows it in place, in
+  amortized constant time. Owned `concat` reserves the whole suffix before
+  copying its elements; prepend, slices, reverse and removal reuse unique
+  storage. A shared copy reserves exactly the requested elements, not the
+  source's slack.
   Below one quarter capacity, unique shrinking tries an exact buffer and
   transfers retained cells; on refusal it keeps its buffer and still succeeds.
-  A prepend, prefix drop or middle removal still moves the following cells in
-  linear time; repeated `drop(1)` or `remove_at(0)` is therefore quadratic.
+  Prefix drop advances the live start and compacts past half capacity;
+  repeated single-holder `drop(1)` or `remove_at(0)` is linear, plus element
+  destruction. Prepend reuses a dead prefix cell when available; otherwise it
+  moves the live cells. Middle removal still moves the following cells, so
+  repeated middle removal or prepending without a dead prefix is quadratic.
 - **Maps and sets** are insertion-ordered hash tables: an array of entries in
   insertion order, and an index table of positions, as in CPython's compact
   dictionaries. A removal leaves a tombstone, and the table is compacted when
@@ -1704,8 +1708,9 @@ make repeated `drop(1)` or `remove_at(0)` linear in the input size, plus element
 destruction. Shared/immortal copies contain only the live window. Append uses
 tail slack; prepend can reuse a dead prefix. All generic walks, printing and
 VM/host list views use the same live-element accessors. The million-element
-uncons primitive benchmark runs in the work gate; compiled single-holder
-uncons depends on codegen's dead-operand transfer, not on a heap change alone.
+primitive and compiled uncons benchmarks run in the work gate. Compiled
+single-holder traversal combines codegen's last-use transfer with the live
+window; neither change alone removes repeated suffix copies or moves.
 Set union plans missing keys and insertion slots before any mutation or count
 change, using scratch proportional to the right set and a sparse overlay of
 new slots rather than copying the left index. A singleton union uses the
@@ -1944,10 +1949,13 @@ preserving the original list. Both expansions use only existing
 instruction/primitive rows, with their declared ownership, and use the Core
 operation's span throughout. Arm-local reference registers are normalized at
 the uncons merge just like explicit Core branches.
-Walking a list of length \(n\) with repeated uncons still costs \(O(n^2)\):
-the runtime's current single-holder slice shifts the retained cells. Last-use
-transfer removes the compiler's extra holder; a constant-time single-holder
-List.drop remains a runtime prerequisite for linear traversal.
+Last-use transfer removes the compiler's extra holder, and the runtime's
+single-holder List.drop advances its live window instead of shifting the
+retained suffix. Walking a single-holder list of length \(n\) with repeated
+consuming uncons therefore has \(O(n)\) storage work, plus destruction of
+discarded references. Periodic compaction and contraction remain amortized.
+A still-live source or another holder requires a distinct tail copy to
+preserve its original contents; repeated such copies can still cost \(O(n^2)\).
 
 BigInt decimal literals become canonical little-endian magnitudes and signs;
 zero has no magnitude bytes. Canonical signed decimal digits are interned
