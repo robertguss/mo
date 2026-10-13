@@ -349,24 +349,40 @@ enum mo_input_result mo_input_scalar_build(struct mo_input_builder *builder,
                                            struct mo_cell *out) {
     const struct mo_input_factory *factory = builder->inputs->info[request->type].factory;
     if (factory != NULL) {
+        struct mo_input_limits remaining = builder->budget.left;
+        remaining.depth = request->remaining_depth;
+        struct mo_input_limits before = remaining;
+        enum mo_input_result result;
         if (request->mode == MO_INPUT_COPY) {
             if (request->edit != NULL) {
                 if (factory->shrink == NULL)
                     return MO_INPUT_DONE;
-                return factory->shrink(factory->context, builder->heap, request->source,
-                                       request->edit->variant, &builder->budget.left, out);
+                result = factory->shrink(factory->context, builder->heap, request->source,
+                                         request->edit->variant, &remaining, out);
+            } else {
+                if (factory->copy == NULL)
+                    return MO_INPUT_UNSUPPORTED;
+                result = factory->copy(factory->context, builder->heap, request->source, &remaining,
+                                       out);
             }
-            if (factory->copy == NULL)
-                return MO_INPUT_UNSUPPORTED;
-            return factory->copy(factory->context, builder->heap, request->source,
-                                 &builder->budget.left, out);
+        } else {
+            struct mo_input_request leaf = {
+                .kind = request->mode == MO_INPUT_PRNG ? MO_INPUT_RANDOM : MO_INPUT_BOUNDARY,
+                .boundary = request->mode == MO_INPUT_SAMPLE ? request->boundary : 0,
+                .size = builder->size,
+                .seed = mo_input_random(&builder->random)};
+            result = factory->build(factory->context, builder->heap, &leaf, &remaining, out);
         }
-        struct mo_input_request leaf = {
-            .kind = request->mode == MO_INPUT_PRNG ? MO_INPUT_RANDOM : MO_INPUT_BOUNDARY,
-            .boundary = request->mode == MO_INPUT_SAMPLE ? request->boundary : 0,
-            .size = builder->size,
-            .seed = mo_input_random(&builder->random)};
-        return factory->build(factory->context, builder->heap, &leaf, &builder->budget.left, out);
+        MO_ASSERT(remaining.nodes <= before.nodes && remaining.bytes <= before.bytes &&
+                  remaining.work <= before.work && remaining.depth == before.depth &&
+                  remaining.elements == before.elements &&
+                  remaining.combinations == before.combinations &&
+                  remaining.metadata == before.metadata &&
+                  remaining.prepare_work == before.prepare_work);
+        builder->budget.left.nodes = remaining.nodes;
+        builder->budget.left.bytes = remaining.bytes;
+        builder->budget.left.work = remaining.work;
+        return result;
     }
     enum mo_type_kind kind = builder->inputs->types->items[request->type].kind;
     return kind == MO_TYPE_TEXT || kind == MO_TYPE_BYTES || kind == MO_TYPE_BIGINT

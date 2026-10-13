@@ -80,6 +80,7 @@ static MO_MUST_USE enum mo_input_result frame_init(struct mo_input_builder *buil
             frame->request.mode = MO_INPUT_MINIMUM;
     }
     frame->leaf = info->factory != NULL || mo_input_scalar_count(type->kind) != 0;
+    frame->request.remaining_depth = inputs->limits.depth - depth + 1;
     if (frame->leaf)
         return MO_INPUT_OK;
     if (frame->request.mode == MO_INPUT_COPY) {

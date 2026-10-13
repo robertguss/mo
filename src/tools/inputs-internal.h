@@ -104,6 +104,7 @@ struct mo_input_value_request {
     uint32_t type;
     enum mo_input_mode mode;
     uint32_t boundary;
+    uint32_t remaining_depth;
     struct mo_cell source;
     const struct mo_input_edit *edit;
 };

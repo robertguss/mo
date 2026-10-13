@@ -42,8 +42,10 @@ struct mo_input_request {
 /* Later stages supply hidden-type builders, closures and fakes here. Entries
  * override an exact type index; boundary 0 is the minimum. Callbacks are
  * deterministic, honor the remaining limits, and return a valid owned cell
- * in destination, preserving out on refusal. The library counts an opaque
- * result as one node; callbacks bound its contents themselves. copy rebuilds
+ * in destination, preserving out on refusal. The library counts the root as
+ * one node; callbacks subtract child nodes, payload bytes and work from
+ * remaining, on refusal too. Other limits are read-only; depth is the space
+ * left on this path. copy rebuilds
  * a borrowed value in a possibly different heap, never retaining foreign
  * references. shrink returns DONE after its last candidate. Callback tables
  * and contexts outlive the generator. NULL copy/shrink disables shrinking
@@ -55,12 +57,12 @@ struct mo_input_factory {
     void *context;
     enum mo_input_result (*build)(void *context, struct mo_heap *destination,
                                   const struct mo_input_request *request,
-                                  const struct mo_input_limits *remaining, struct mo_cell *out);
+                                  struct mo_input_limits *remaining, struct mo_cell *out);
     enum mo_input_result (*copy)(void *context, struct mo_heap *destination, struct mo_cell source,
-                                 const struct mo_input_limits *remaining, struct mo_cell *out);
+                                 struct mo_input_limits *remaining, struct mo_cell *out);
     enum mo_input_result (*shrink)(void *context, struct mo_heap *destination,
                                    struct mo_cell source, uint32_t candidate,
-                                   const struct mo_input_limits *remaining, struct mo_cell *out);
+                                   struct mo_input_limits *remaining, struct mo_cell *out);
 };
 
 struct mo_input_type_info;

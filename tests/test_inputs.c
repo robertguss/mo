@@ -1,7 +1,10 @@
 #include "test.h"
 
 #include "heap_fixture.h"
+#include "input_values.h"
 #include "tools/inputs.h"
+
+#include <string.h>
 
 static void integer_inputs(void) {
     struct heap_fixture fixture;
@@ -35,6 +38,416 @@ static void integer_inputs(void) {
     }
     mo_inputs_free(&second);
     mo_inputs_free(&first);
+    limits.combinations = 0;
+    MO_ASSERT(mo_inputs_init(&first, &fixture.types, parameters, 2, "Example.fn.checkA", 17,
+                             &limits, NULL, 0) == MO_INPUT_OK);
+    MO_ASSERT(mo_inputs_init(&second, &fixture.types, parameters, 2, "Example.fn.checkB", 17,
+                             &limits, NULL, 0) == MO_INPUT_OK);
+    bool different = false;
+    for (unsigned i = 0; i < 16; i++) {
+        struct mo_cell a[2], b[2];
+        enum mo_input_kind ka, kb;
+        MO_ASSERT(mo_inputs_next(&first, heap, a, &ka) == MO_INPUT_OK);
+        MO_ASSERT(mo_inputs_next(&second, heap, b, &kb) == MO_INPUT_OK);
+        if (memcmp(a, b, sizeof a) != 0)
+            different = true;
+    }
+    CHECK(different);
+    mo_inputs_free(&second);
+    mo_inputs_free(&first);
+    mo_heap_free(heap);
+    mo_heap_image_free(fixture.image);
+    mo_arena_free(&fixture.arena);
+}
+
+static void scalar_boundaries(void) {
+    struct heap_fixture fixture;
+    heap_fixture_init(&fixture);
+    struct mo_limits heap_limits = mo_limits_default();
+    struct mo_heap *heap = mo_heap_new(fixture.image, &heap_limits);
+    MO_ASSERT(heap != NULL);
+    const enum mo_type_kind kinds[] = {MO_TYPE_DECIMAL, MO_TYPE_TIME, MO_TYPE_DURATION,
+                                       MO_TYPE_TEXT};
+    const int64_t times[] = {0, -INT64_C(62135596800000000), -INT64_C(62104060800000001),
+                             INT64_C(253370764800000000), INT64_C(253402300799999999)};
+    const int64_t durations[] = {0, INT64_MIN, INT64_MAX};
+    mo_i128 max = (mo_i128)(((mo_u128)1 << 127) - 1);
+    const mo_i128 decimals[] = {
+        0, 1, INT64_C(1000000000000000000), -INT64_C(1000000000000000000), -max, max};
+    const uint32_t counts[] = {6, 5, 3, 4};
+    struct mo_input_limits limits = mo_input_limits_default();
+    for (unsigned k = 0; k < sizeof kinds / sizeof kinds[0]; k++) {
+        uint32_t type = fixture.builtin[kinds[k]];
+        struct mo_inputs inputs;
+        MO_ASSERT(mo_inputs_init(&inputs, &fixture.types, &type, 1, "M.scalars", 9, &limits, NULL,
+                                 0) == MO_INPUT_OK);
+        for (uint32_t i = 0; i <= counts[k]; i++) {
+            struct mo_cell value;
+            enum mo_input_kind kind;
+            MO_ASSERT(mo_inputs_next(&inputs, heap, &value, &kind) == MO_INPUT_OK);
+            CHECK(kind == (i == counts[k] ? MO_INPUT_RANDOM : MO_INPUT_BOUNDARY));
+            if (i < counts[k]) {
+                if (kinds[k] == MO_TYPE_DECIMAL)
+                    CHECK(mo_cell_get_decimal(value) == decimals[i]);
+                else if (kinds[k] == MO_TYPE_TIME)
+                    CHECK(mo_cell_get_time(value) == times[i]);
+                else if (kinds[k] == MO_TYPE_DURATION)
+                    CHECK(mo_cell_get_duration(value) == durations[i]);
+                else {
+                    size_t length;
+                    const uint8_t *bytes = mo_value_data(value, &length);
+                    if (i == 0)
+                        CHECK(length == 0);
+                    else if (i == 1)
+                        CHECK(length == 1 && bytes[0] == 'a');
+                    else if (i == 2)
+                        CHECK(length == 2 && memcmp(bytes, "\xc3\xa9", 2) == 0);
+                    else {
+                        CHECK(length == 1024);
+                        for (size_t b = 0; b < length; b++)
+                            CHECK(bytes[b] == 'x');
+                    }
+                }
+                struct mo_input_extreme extreme = {.parameter = 99};
+                bool expected = kinds[k] == MO_TYPE_DECIMAL ? i >= 4
+                                : kinds[k] == MO_TYPE_TIME  ? i == 1 || i == 4
+                                                           : kinds[k] == MO_TYPE_DURATION && i != 0;
+                enum mo_input_result result = mo_inputs_extreme(&inputs, &value, 0, &extreme);
+                CHECK(result == (expected ? MO_INPUT_OK : MO_INPUT_DONE));
+                if (expected) {
+                    CHECK(extreme.parameter == 0 && extreme.type == kinds[k]);
+                    CHECK(extreme.end ==
+                          (i + 1 == counts[k] ? MO_INPUT_LARGEST : MO_INPUT_SMALLEST));
+                } else
+                    CHECK(extreme.parameter == 99);
+            }
+            mo_value_drop(heap, type, value);
+        }
+        mo_inputs_free(&inputs);
+    }
+    CHECK(mo_heap_objects(heap) == 0);
+    mo_heap_free(heap);
+    mo_heap_image_free(fixture.image);
+    mo_arena_free(&fixture.arena);
+}
+
+static void shrink_numbers(void) {
+    struct heap_fixture fixture;
+    heap_fixture_init(&fixture);
+    struct mo_limits heap_limits = mo_limits_default();
+    struct mo_heap *heap = mo_heap_new(fixture.image, &heap_limits);
+    MO_ASSERT(heap != NULL);
+    uint32_t parameters[] = {fixture.builtin[MO_TYPE_INT], fixture.builtin[MO_TYPE_INT]};
+    struct mo_input_limits limits = mo_input_limits_default();
+    struct mo_inputs inputs;
+    MO_ASSERT(mo_inputs_init(&inputs, &fixture.types, parameters, 2, "M.shrink", 8, &limits, NULL,
+                             0) == MO_INPUT_OK);
+    struct mo_cell best[] = {mo_cell_int(1000), mo_cell_int(-1000)};
+    struct mo_input_shrinker shrinker;
+    mo_input_shrink_init(&shrinker, &inputs, 200);
+    unsigned calls = 0;
+    for (;;) {
+        struct mo_cell candidate[2];
+        enum mo_input_result result = mo_input_shrink_next(&shrinker, best, heap, candidate);
+        if (result == MO_INPUT_DONE)
+            break;
+        MO_ASSERT(result == MO_INPUT_OK);
+        calls++;
+        bool fails = mo_cell_get_int(candidate[0]) >= 17 && mo_cell_get_int(candidate[1]) <= -23;
+        if (fails)
+            memcpy(best, candidate, sizeof best);
+        mo_input_shrink_feedback(&shrinker, fails);
+    }
+    CHECK(calls > 0 && calls < 200);
+    CHECK(mo_cell_get_int(best[0]) == 17 && mo_cell_get_int(best[1]) == -23);
+    mo_input_shrink_init(&shrinker, &inputs, 1);
+    struct mo_cell candidate[2];
+    MO_ASSERT(mo_input_shrink_next(&shrinker, best, heap, candidate) == MO_INPUT_OK);
+    mo_input_shrink_feedback(&shrinker, false);
+    CHECK(mo_input_shrink_next(&shrinker, best, heap, candidate) == MO_INPUT_DONE);
+    mo_inputs_free(&inputs);
+    mo_heap_free(heap);
+    mo_heap_image_free(fixture.image);
+    mo_arena_free(&fixture.arena);
+}
+
+static MO_MUST_USE bool has_beta(struct mo_cell value) {
+    size_t length;
+    const uint8_t *bytes = mo_value_data(value, &length);
+    for (size_t i = 1; i < length; i++) {
+        if (bytes[i - 1] == 0xce && bytes[i] == 0xb2)
+            return true;
+    }
+    return false;
+}
+
+static MO_MUST_USE bool record_fails(struct mo_cell value) {
+    if (!has_beta(mo_value_field(value, 0)))
+        return false;
+    struct mo_cell list = mo_value_field(value, 1);
+    for (uint32_t i = 0; i < mo_list_size(list); i++) {
+        struct mo_cell item;
+        MO_ASSERT(mo_list_get(list, i, &item));
+        if (has_beta(item))
+            return true;
+    }
+    return false;
+}
+
+static void shrink_record_across_heaps(void) {
+    struct heap_fixture fixture;
+    heap_fixture_init(&fixture);
+    struct mo_limits heap_limits = mo_limits_default();
+    struct mo_heap *heaps[] = {mo_heap_new(fixture.image, &heap_limits),
+                               mo_heap_new(fixture.image, &heap_limits)};
+    MO_ASSERT(heaps[0] != NULL && heaps[1] != NULL);
+    struct mo_input_limits limits = mo_input_limits_default();
+    struct mo_inputs inputs;
+    MO_ASSERT(mo_inputs_init(&inputs, &fixture.types, &fixture.record, 1, "M.record", 8, &limits,
+                             NULL, 0) == MO_INPUT_OK);
+    struct mo_cell elements[3], fields[2], best;
+    MO_ASSERT(mo_value_text(heaps[0], "discard", 7, &elements[0]));
+    MO_ASSERT(mo_value_text(heaps[0], "\xce\xb2\xce\xb2", 4, &elements[1]));
+    MO_ASSERT(mo_value_text(heaps[0], "also discard", 12, &elements[2]));
+    MO_ASSERT(mo_value_text(heaps[0], "left\xce\xb2right", 11, &fields[0]));
+    MO_ASSERT(mo_value_list(heaps[0], fixture.list, elements, 3, &fields[1]));
+    MO_ASSERT(mo_value_construct(heaps[0], fixture.record_layout, fields, 2, &best));
+    for (unsigned i = 0; i < 3; i++)
+        mo_value_drop(heaps[0], fixture.builtin[MO_TYPE_TEXT], elements[i]);
+    mo_value_drop(heaps[0], fixture.builtin[MO_TYPE_TEXT], fields[0]);
+    mo_value_drop(heaps[0], fixture.list, fields[1]);
+    struct mo_input_shrinker shrinker;
+    mo_input_shrink_init(&shrinker, &inputs, 200);
+    unsigned current = 0, calls = 0;
+    for (;;) {
+        struct mo_cell candidate;
+        size_t before = mo_heap_used(heaps[current]);
+        enum mo_input_result result =
+            mo_input_shrink_next(&shrinker, &best, heaps[1 - current], &candidate);
+        CHECK(mo_heap_used(heaps[current]) == before);
+        if (result == MO_INPUT_DONE)
+            break;
+        MO_ASSERT(result == MO_INPUT_OK);
+        calls++;
+        bool fails = record_fails(candidate);
+        if (fails) {
+            mo_value_drop(heaps[current], fixture.record, best);
+            current = 1 - current;
+            best = candidate;
+        } else
+            mo_value_drop(heaps[1 - current], fixture.record, candidate);
+        mo_input_shrink_feedback(&shrinker, fails);
+    }
+    CHECK(calls > 0 && calls < 200 && record_fails(best));
+    size_t length;
+    const uint8_t *bytes = mo_value_data(mo_value_field(best, 0), &length);
+    CHECK(length == 2 && memcmp(bytes, "\xce\xb2", 2) == 0);
+    struct mo_cell list = mo_value_field(best, 1), item;
+    CHECK(mo_list_size(list) == 1);
+    MO_ASSERT(mo_list_get(list, 0, &item));
+    bytes = mo_value_data(item, &length);
+    CHECK(length == 2 && memcmp(bytes, "\xce\xb2", 2) == 0);
+    mo_value_drop(heaps[current], fixture.record, best);
+    CHECK(mo_heap_objects(heaps[0]) == 0 && mo_heap_objects(heaps[1]) == 0);
+    mo_inputs_free(&inputs);
+    mo_heap_free(heaps[1]);
+    mo_heap_free(heaps[0]);
+    mo_heap_image_free(fixture.image);
+    mo_arena_free(&fixture.arena);
+}
+
+static void all_types(void) {
+    struct heap_fixture fixture;
+    heap_fixture_init(&fixture);
+    struct mo_limits heap_limits = mo_limits_default();
+    struct mo_heap *heap = mo_heap_new(fixture.image, &heap_limits);
+    MO_ASSERT(heap != NULL);
+    uint32_t types[32];
+    unsigned count = 0;
+    for (unsigned i = 0; i <= MO_TYPE_BIGINT; i++)
+        types[count++] = fixture.builtin[i];
+    const uint32_t composite[] = {
+        fixture.list,     fixture.map,    fixture.set,    fixture.integer_set, fixture.map_keys,
+        fixture.node,     fixture.option, fixture.tuple,  fixture.record,      fixture.tree,
+        fixture.int_pair, fixture.pairs,  fixture.forest, fixture.forest_set};
+    for (unsigned i = 0; i < sizeof composite / sizeof composite[0]; i++)
+        types[count++] = composite[i];
+    struct mo_input_limits limits = mo_input_limits_default();
+    for (unsigned t = 0; t < count; t++) {
+        struct mo_inputs inputs;
+        MO_ASSERT(mo_inputs_init(&inputs, &fixture.types, &types[t], 1, "M.types", 7, &limits, NULL,
+                                 0) == MO_INPUT_OK);
+        bool random = false;
+        unsigned boundaries = 0;
+        for (unsigned i = 0; i < 120; i++) {
+            struct mo_cell value;
+            enum mo_input_kind kind;
+            enum mo_input_result result = mo_inputs_next(&inputs, heap, &value, &kind);
+            if (result == MO_INPUT_LIMIT) {
+                mo_inputs_skip(&inputs);
+                continue;
+            }
+            MO_ASSERT(result == MO_INPUT_OK);
+            CHECK(input_value_typed(heap, &fixture.types, types[t], value));
+            if (kind == MO_INPUT_RANDOM)
+                random = true;
+            else {
+                CHECK(!random);
+                boundaries++;
+                if (types[t] == fixture.option && i < 4)
+                    CHECK(mo_cell_get_tag(value) == i);
+                if ((types[t] == fixture.node || types[t] == fixture.tree) && i < 2)
+                    CHECK(mo_cell_get_tag(value) == i);
+                if (types[t] == fixture.list && i < 3) {
+                    CHECK(mo_list_size(value) == (i == 2 ? 3 : i));
+                    if (i == 2) {
+                        static const char *const expected[] = {"", "a", "\xc3\xa9"};
+                        for (uint32_t e = 0; e < 3; e++) {
+                            struct mo_cell item;
+                            MO_ASSERT(mo_list_get(value, e, &item));
+                            size_t length;
+                            const uint8_t *bytes = mo_value_data(item, &length);
+                            CHECK(length == strlen(expected[e]) &&
+                                  (length == 0 || memcmp(bytes, expected[e], length) == 0));
+                        }
+                    }
+                }
+                if ((types[t] == fixture.set || types[t] == fixture.map ||
+                     types[t] == fixture.integer_set) &&
+                    i < 3)
+                    CHECK(mo_table_size(value) == (i == 2 ? 3 : i));
+            }
+            mo_value_drop(heap, types[t], value);
+            CHECK(mo_heap_objects(heap) == 0);
+        }
+        CHECK(random && boundaries != 0);
+        mo_inputs_free(&inputs);
+    }
+    mo_heap_free(heap);
+    mo_heap_image_free(fixture.image);
+    mo_arena_free(&fixture.arena);
+}
+
+static MO_MUST_USE enum mo_input_result text_factory(void *context, struct mo_heap *heap,
+                                                     const struct mo_input_request *request,
+                                                     struct mo_input_limits *remaining,
+                                                     struct mo_cell *out) {
+    (void)context;
+    (void)request;
+    if (remaining->bytes < 2 || remaining->work < 2)
+        return MO_INPUT_LIMIT;
+    remaining->bytes -= 2;
+    remaining->work -= 2;
+    return mo_value_text(heap, "zz", 2, out) ? MO_INPUT_OK : MO_INPUT_NO_MEMORY;
+}
+
+static void factory_budget(void) {
+    struct heap_fixture fixture;
+    heap_fixture_init(&fixture);
+    struct mo_limits heap_limits = mo_limits_default();
+    struct mo_heap *heap = mo_heap_new(fixture.image, &heap_limits);
+    MO_ASSERT(heap != NULL);
+    size_t baseline = mo_heap_used(heap);
+    uint32_t text = fixture.builtin[MO_TYPE_TEXT];
+    uint32_t parameters[] = {text, text};
+    struct mo_input_factory factory = {
+        .type = text, .boundaries = 1, .hashable = true, .build = text_factory};
+    struct mo_input_limits limits = mo_input_limits_default();
+    limits.bytes = 3;
+    struct mo_inputs inputs;
+    MO_ASSERT(mo_inputs_init(&inputs, &fixture.types, parameters, 2, "M.factory", 9, &limits,
+                             &factory, 1) == MO_INPUT_OK);
+    struct mo_cell out[] = {mo_cell_int(41), mo_cell_int(42)};
+    enum mo_input_kind kind = MO_INPUT_RANDOM;
+    CHECK(mo_inputs_next(&inputs, heap, out, &kind) == MO_INPUT_LIMIT);
+    CHECK(mo_cell_get_int(out[0]) == 41 && mo_cell_get_int(out[1]) == 42);
+    CHECK(kind == MO_INPUT_RANDOM && mo_heap_used(heap) == baseline);
+    mo_inputs_free(&inputs);
+    limits.bytes = 4;
+    MO_ASSERT(mo_inputs_init(&inputs, &fixture.types, parameters, 2, "M.factory", 9, &limits,
+                             &factory, 1) == MO_INPUT_OK);
+    MO_ASSERT(mo_inputs_next(&inputs, heap, out, &kind) == MO_INPUT_OK);
+    for (unsigned i = 0; i < 2; i++) {
+        size_t length;
+        const uint8_t *bytes = mo_value_data(out[i], &length);
+        CHECK(length == 2 && memcmp(bytes, "zz", 2) == 0);
+        mo_value_drop(heap, text, out[i]);
+    }
+    mo_inputs_free(&inputs);
+    CHECK(mo_heap_used(heap) == baseline);
+    mo_heap_free(heap);
+    mo_heap_image_free(fixture.image);
+    mo_arena_free(&fixture.arena);
+}
+
+static void limits_and_retry(void) {
+    struct heap_fixture fixture;
+    heap_fixture_init(&fixture);
+    struct mo_limits heap_limits = mo_limits_default();
+    struct mo_heap *heap = mo_heap_new(fixture.image, &heap_limits);
+    MO_ASSERT(heap != NULL);
+    struct mo_input_limits limits = mo_input_limits_default();
+    limits.combinations = 2;
+    struct mo_inputs inputs;
+    uint32_t text = fixture.builtin[MO_TYPE_TEXT];
+    MO_ASSERT(mo_inputs_init(&inputs, &fixture.types, &text, 1, "M.retry", 7, &limits, NULL, 0) ==
+              MO_INPUT_OK);
+    struct mo_cell out = mo_cell_int(41);
+    enum mo_input_kind kind = MO_INPUT_RANDOM;
+    size_t baseline = mo_heap_used(heap);
+    struct mo_scratch full;
+    mo_scratch_init(&full, heap);
+    MO_ASSERT(mo_scratch_resize(&full, NULL, 0, full.arena.limit - MO_ARENA_CHUNK_HEADER) != NULL);
+    size_t occupied = mo_heap_used(heap);
+    CHECK(mo_inputs_next(&inputs, heap, &out, &kind) == MO_INPUT_NO_MEMORY);
+    CHECK(mo_cell_get_int(out) == 41 && kind == MO_INPUT_RANDOM && mo_heap_used(heap) == occupied);
+    mo_scratch_free(&full);
+    MO_ASSERT(mo_inputs_next(&inputs, heap, &out, &kind) == MO_INPUT_OK);
+    size_t length;
+    const uint8_t *data = mo_value_data(out, &length);
+    (void)data;
+    CHECK(kind == MO_INPUT_BOUNDARY && length == 0);
+    mo_value_drop(heap, text, out);
+    MO_ASSERT(mo_inputs_next(&inputs, heap, &out, &kind) == MO_INPUT_OK);
+    data = mo_value_data(out, &length);
+    CHECK(kind == MO_INPUT_BOUNDARY && length == 1 && data[0] == 'a');
+    mo_value_drop(heap, text, out);
+    MO_ASSERT(mo_inputs_next(&inputs, heap, &out, &kind) == MO_INPUT_OK);
+    CHECK(kind == MO_INPUT_RANDOM);
+    mo_value_drop(heap, text, out);
+    mo_inputs_free(&inputs);
+    CHECK(mo_heap_used(heap) == baseline);
+    const uint32_t unsupported[] = {fixture.function, fixture.env,
+                                    fixture.capabilities[MO_CAP_FILES], fixture.no_hash_map};
+    limits = mo_input_limits_default();
+    for (unsigned i = 0; i < sizeof unsupported / sizeof unsupported[0]; i++) {
+        CHECK(mo_inputs_init(&inputs, &fixture.types, &unsupported[i], 1, "M.no", 4, &limits, NULL,
+                             0) == MO_INPUT_UNSUPPORTED);
+        mo_inputs_free(&inputs);
+    }
+    limits.work = 0;
+    MO_ASSERT(mo_inputs_init(&inputs, &fixture.types, &text, 1, "M.work", 6, &limits, NULL, 0) ==
+              MO_INPUT_OK);
+    out = mo_cell_int(41);
+    CHECK(mo_inputs_next(&inputs, heap, &out, &kind) == MO_INPUT_LIMIT);
+    CHECK(mo_cell_get_int(out) == 41 && mo_heap_used(heap) == baseline);
+    mo_inputs_free(&inputs);
+    limits = mo_input_limits_default();
+    limits.metadata = 0;
+    CHECK(mo_inputs_init(&inputs, &fixture.types, &text, 1, "M.no", 4, &limits, NULL, 0) ==
+          MO_INPUT_NO_MEMORY);
+    mo_inputs_free(&inputs);
+    limits = mo_input_limits_default();
+    limits.depth = MO_LIMIT_INPUT_DEPTH + 1;
+    CHECK(mo_inputs_init(&inputs, &fixture.types, &text, 1, "M.no", 4, &limits, NULL, 0) ==
+          MO_INPUT_LIMIT);
+    mo_inputs_free(&inputs);
+    limits = mo_input_limits_default();
+    MO_ASSERT(mo_inputs_init(&inputs, &fixture.types, NULL, 0, "M.unit", 6, &limits, NULL, 0) ==
+              MO_INPUT_OK);
+    CHECK(mo_inputs_next(&inputs, heap, NULL, &kind) == MO_INPUT_OK && kind == MO_INPUT_BOUNDARY);
+    CHECK(mo_inputs_next(&inputs, heap, NULL, &kind) == MO_INPUT_DONE);
+    mo_inputs_free(&inputs);
     mo_heap_free(heap);
     mo_heap_image_free(fixture.image);
     mo_arena_free(&fixture.arena);
@@ -100,6 +513,12 @@ static void recursive_boundaries(void) {
 
 int main(void) {
     integer_inputs();
+    scalar_boundaries();
+    shrink_numbers();
+    shrink_record_across_heaps();
+    all_types();
+    factory_budget();
+    limits_and_retry();
     minimal_tuple_without_heap();
     recursive_boundaries();
     return mo_test_report("promise inputs");
