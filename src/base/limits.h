@@ -138,6 +138,10 @@
  * a signed 32-bit int, but text error offsets must still fit u32. */
 #define MO_LIMIT_BYTECODE_TEXT_SIZE (UINT64_C(8) * MO_LIMIT_BYTECODE_SIZE)
 
+/* Decimal spelling of a shorthand BigInt. Larger magnitudes use the linear hex spelling;
+ * this bounds the repeated multiply-by-ten conversion independently of the binary limit. */
+#define MO_LIMIT_BYTECODE_BIGINT_DIGITS 4096
+
 /* Parameters of one bytecode function, including a closure's implicit env. One extra slot
  * holds a promise's result or a closure's env after the largest source signature. Runtime
  * function types may also have this many parameters, for generated promise signatures. */

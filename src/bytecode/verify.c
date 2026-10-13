@@ -580,7 +580,8 @@ static MO_MUST_USE bool function(struct flow *f) {
 
 bool mo_bytecode_verify(const struct mo_bytecode *file, const struct mo_types *types,
                         const uint32_t *code_offsets, size_t wire_size, struct mo_arena *arena,
-                        struct mo_verification *out, struct mo_load_error *error) {
+                        struct mo_verification *out, struct mo_bytecode_error_site *site,
+                        struct mo_load_error *error) {
     uint8_t *abilities = mo_bytecode_abilities(arena, file);
     struct layout_key *layouts = mo_arena_allocate_array(arena, file->layout_count, sizeof *layouts,
                                                          _Alignof(struct layout_key));
@@ -592,6 +593,8 @@ bool mo_bytecode_verify(const struct mo_bytecode *file, const struct mo_types *t
         const struct mo_type *t = &file->types[i];
         if ((t->kind == MO_TYPE_SET || t->kind == MO_TYPE_MAP) &&
             (abilities[t->parameters[0]] & MO_ABILITY_HASH) == 0) {
+            if (site != NULL)
+                *site = (struct mo_bytecode_error_site){MO_SECTION_TYPES, i};
             *error = (struct mo_load_error){20, "map/set key lacks Hash", MO_BYTECODE_INVALID};
             return false;
         }
@@ -607,6 +610,8 @@ bool mo_bytecode_verify(const struct mo_bytecode *file, const struct mo_types *t
             matches = fn->parameters[j].type == subject->parameters[j].type;
         }
         if (!matches || fn->parameters[subject->parameter_count].type != subject->result_type) {
+            if (site != NULL)
+                *site = (struct mo_bytecode_error_site){MO_SECTION_FUNCTIONS, i};
             *error = (struct mo_load_error){20, "promise parameters differ from subject",
                                             MO_BYTECODE_INVALID};
             return false;
@@ -626,6 +631,8 @@ bool mo_bytecode_verify(const struct mo_bytecode *file, const struct mo_types *t
         const struct mo_bytecode_constant *c = &file->constants[i];
         if (file->types[c->type].kind == MO_TYPE_FUNCTION &&
             layout(&lookup, c->type, c->value.function) == MO_NO_INDEX) {
+            if (site != NULL)
+                *site = (struct mo_bytecode_error_site){MO_SECTION_CONSTANTS, i};
             *error = (struct mo_load_error){20, "closure constant layout is missing",
                                             MO_BYTECODE_INVALID};
             return false;
@@ -634,7 +641,7 @@ bool mo_bytecode_verify(const struct mo_bytecode *file, const struct mo_types *t
     struct mo_verify_program program;
     struct mo_arena scratch;
     mo_arena_init(&scratch, mo_bytecode_work_budget(wire_size));
-    bool ok = mo_verify_program_init(&scratch, file, code_offsets, &program, error);
+    bool ok = mo_verify_program_init(&scratch, file, code_offsets, &program, site, error);
     for (uint32_t i = 0; i < file->function_count && ok; i++) {
         struct flow f = {
             .v = {file, &file->functions[i], abilities, code_offsets[i], error, types, layouts},

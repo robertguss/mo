@@ -447,8 +447,11 @@ struct mo_write_error {
 };
 
 struct mo_assemble_error {
-    uint32_t offset;    /* byte offset in the text, zero for no memory or an output limit */
-    const char *reason; /* static text */
+    /* Syntax/index failures point at the token or missing token's text-end position.
+     * Binary refusals map to the creating entry/operand; whole-table failures point at
+     * the section. Zero also denotes no memory or an output limit. */
+    uint32_t offset;
+    const char *reason; /* static expected syntax or violated verification rule */
 };
 
 /* Stream 3 implements these interfaces. out is an initialized, empty buffer owned by the

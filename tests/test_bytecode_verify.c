@@ -1,4 +1,5 @@
 #include "bytecode/verify.h"
+#include "bytecode_text.h"
 #include "test.h"
 
 #include <string.h>
@@ -171,6 +172,7 @@ static void expect_kind(struct fixture *t, const char *reason, uint32_t fn, uint
         CHECK(output.length == 0 && strcmp(we.reason, reason) == 0);
         CHECK(we.kind == error_kind);
     } else if (image != NULL) {
+        text_roundtrip(&wire);
         CHECK(mo_bytecode_write(mo_image_bytecode(image), &output, &we));
         CHECK(output.length == wire.length && memcmp(output.bytes, wire.bytes, wire.length) == 0);
         memset(wire.bytes, 0xa5, wire.length); /* image must not borrow any input */
@@ -1331,6 +1333,68 @@ static void linked_promise(void) {
     expect(&t, NULL, 0, 0);
 }
 
+static void worked_text(const struct mo_bytecode *file) {
+    struct mo_buffer texts[2], expected, printed, assembled;
+    mo_buffer_init(&texts[0], MO_LIMIT_BYTECODE_TEXT_SIZE);
+    mo_buffer_init(&texts[1], MO_LIMIT_BYTECODE_TEXT_SIZE);
+    mo_buffer_init(&expected, MO_LIMIT_BYTECODE_SIZE);
+    mo_buffer_init(&assembled, MO_LIMIT_BYTECODE_SIZE);
+    mo_buffer_init(&printed, MO_LIMIT_BYTECODE_TEXT_SIZE);
+    FILE *doc = fopen("docs/design/bytecode.md", "rb");
+    CHECK(doc != NULL);
+    bool section = false, fence = false;
+    unsigned count = 0;
+    if (doc != NULL) {
+        char line[4096];
+        while (fgets(line, sizeof line, doc) != NULL) {
+            if (strncmp(line, "### 10.4", 8) == 0)
+                break;
+            if (strncmp(line, "### 10.3", 8) == 0)
+                section = true;
+            if (!section)
+                continue;
+            if (strcmp(line, "```text\n") == 0) {
+                fence = true;
+                continue;
+            }
+            if (fence && strcmp(line, "```\n") == 0) {
+                fence = false;
+                count++;
+                continue;
+            }
+            if (fence && count < 2)
+                CHECK(mo_buffer_append_text(&texts[count], line));
+        }
+        CHECK(ferror(doc) == 0);
+        CHECK(fclose(doc) == 0);
+    }
+    CHECK(count == 2);
+    struct mo_write_error we;
+    struct mo_load_error le;
+    struct mo_assemble_error ae;
+    CHECK(mo_bytecode_write(file, &expected, &we));
+    CHECK(mo_bytecode_disassemble(expected.bytes, expected.length, &printed, &le));
+    CHECK(printed.length == texts[0].length &&
+          memcmp(printed.bytes, texts[0].bytes, printed.length) == 0);
+    for (unsigned i = 0; i < 2; i++) {
+        bool ok =
+            mo_bytecode_assemble((const char *)texts[i].bytes, texts[i].length, &assembled, &ae);
+        CHECK(ok);
+        if (!ok)
+            CHECK(fprintf(stderr, "worked text %u refused at %u: %s\n", i, ae.offset, ae.reason) >=
+                  0);
+        if (ok)
+            CHECK(assembled.length == expected.length &&
+                  memcmp(assembled.bytes, expected.bytes, expected.length) == 0);
+        mo_buffer_clear(&assembled);
+    }
+    mo_buffer_free(&printed);
+    mo_buffer_free(&assembled);
+    mo_buffer_free(&expected);
+    mo_buffer_free(&texts[1]);
+    mo_buffer_free(&texts[0]);
+}
+
 static void worked_examples(void) {
     /* Section 3's exact recursive Chain tables, completed with an owned closure body. */
     struct fixture t;
@@ -1555,6 +1619,7 @@ static void worked_examples(void) {
     t.debug[4] = (struct mo_bytecode_debug){
         .text = 19, .file = MO_NO_INDEX, .subject = 2, .expectation = MO_BYTECODE_FORBIDS};
     expect(&t, NULL, 0, 0);
+    worked_text(&t.file);
 }
 
 static void work_bound(void) {
@@ -1599,11 +1664,11 @@ static void work_bound(void) {
         mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
         CHECK(mo_bytecode_write(&t.file, &wire, &we));
         const struct mo_bytecode *f =
-            mo_bytecode_decode_info(&arena, wire.bytes, wire.length, &offsets, &view, &le);
+            mo_bytecode_decode_info(&arena, wire.bytes, wire.length, &offsets, &view, NULL, &le);
         CHECK(f != NULL);
         if (f != NULL) {
             struct mo_verification verified;
-            CHECK(mo_bytecode_verify(f, &view, offsets, wire.length, &arena, &verified, &le));
+            CHECK(mo_bytecode_verify(f, &view, offsets, wire.length, &arena, &verified, NULL, &le));
             uint64_t work = 0;
             CHECK(mo_bytecode_readable(f, &view, &verified, 0, offsets[0], 3 + n * 4, readable,
                                        &work, &le));
@@ -2054,9 +2119,9 @@ static void hostile_work(void) {
     mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
     CHECK(mo_bytecode_encode(&t.file, &wire, &we));
     const struct mo_bytecode *f =
-        mo_bytecode_decode_info(&arena, wire.bytes, wire.length, &offsets, &view, &le);
+        mo_bytecode_decode_info(&arena, wire.bytes, wire.length, &offsets, &view, NULL, &le);
     MO_ASSERT(f != NULL);
-    CHECK(mo_bytecode_verify(f, &view, offsets, wire.length, &arena, &verified, &le));
+    CHECK(mo_bytecode_verify(f, &view, offsets, wire.length, &arena, &verified, NULL, &le));
     uint64_t work = 0;
     CHECK(mo_bytecode_readable(f, &view, &verified, 0, offsets[0], pc - 2, readable, &work, &le));
     CHECK(work < UINT64_C(4) * (pc + count));

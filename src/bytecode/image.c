@@ -8,7 +8,9 @@ struct mo_image {
     struct mo_verification verified;
 };
 
-struct mo_image *mo_load(const uint8_t *bytes, size_t length, struct mo_load_error *error_out) {
+struct mo_image *mo_bytecode_load_site(const uint8_t *bytes, size_t length,
+                                       struct mo_bytecode_error_site *site,
+                                       struct mo_load_error *error_out) {
     MO_ASSERT(error_out != NULL && (bytes != NULL || length == 0));
     struct mo_arena arena;
     mo_arena_init(&arena, length <= MO_LIMIT_BYTECODE_SIZE ? mo_bytecode_work_budget(length) : 0);
@@ -16,9 +18,9 @@ struct mo_image *mo_load(const uint8_t *bytes, size_t length, struct mo_load_err
     struct mo_types types;
     struct mo_verification verified;
     struct mo_bytecode *file =
-        mo_bytecode_decode_info(&arena, bytes, length, &offsets, &types, error_out);
+        mo_bytecode_decode_info(&arena, bytes, length, &offsets, &types, site, error_out);
     if (file == NULL ||
-        !mo_bytecode_verify(file, &types, offsets, length, &arena, &verified, error_out)) {
+        !mo_bytecode_verify(file, &types, offsets, length, &arena, &verified, site, error_out)) {
         mo_arena_free(&arena);
         return NULL;
     }
@@ -30,6 +32,10 @@ struct mo_image *mo_load(const uint8_t *bytes, size_t length, struct mo_load_err
     }
     *image = (struct mo_image){arena, file, offsets, types, verified};
     return image;
+}
+
+struct mo_image *mo_load(const uint8_t *bytes, size_t length, struct mo_load_error *error_out) {
+    return mo_bytecode_load_site(bytes, length, NULL, error_out);
 }
 
 const struct mo_bytecode *mo_image_bytecode(const struct mo_image *image) {

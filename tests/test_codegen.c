@@ -1,5 +1,6 @@
 #include "base/codes.h"
 #include "bytecode/io.h"
+#include "bytecode_text.h"
 #include "codegen/codegen.h"
 #include "heap/types.h"
 #include "test.h"
@@ -35,8 +36,10 @@ static MO_MUST_USE struct mo_bytecode *compile(struct mo_arena *decoded, const c
                                                           : diags.items[0].message);
     CHECK(p != NULL && mo_compile(p, &second, &diags) == ok);
     CHECK(first.length == second.length);
-    if (ok)
+    if (ok) {
         CHECK(memcmp(first.bytes, second.bytes, first.length) == 0 && !mo_diags_any(&diags));
+        text_roundtrip(&first);
+    }
     mo_arena_free(&arena); /* Output and decoded data must not borrow Core's storage. */
     struct mo_load_error error;
     struct mo_bytecode *b =

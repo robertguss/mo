@@ -11,6 +11,7 @@ struct mo_verify_program {
 };
 MO_MUST_USE bool mo_verify_program_init(struct mo_arena *arena, const struct mo_bytecode *file,
                                         const uint32_t *code_offsets, struct mo_verify_program *out,
+                                        struct mo_bytecode_error_site *site,
                                         struct mo_load_error *error);
 
 #endif

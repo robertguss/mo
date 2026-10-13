@@ -98,7 +98,7 @@ static MO_MUST_USE const uint32_t *indices(struct reader *r, uint32_t *n, uint32
     return p;
 }
 
-static MO_MUST_USE bool utf8(const uint8_t *bytes, uint32_t length) {
+bool mo_bytecode_utf8(const uint8_t *bytes, uint32_t length) {
     for (uint32_t i = 0; i < length;) {
         uint32_t scalar = bytes[i++];
         unsigned n = 0;
@@ -146,7 +146,7 @@ static MO_MUST_USE const uint8_t *blob(struct reader *r, uint32_t *n, bool termi
             r->error->kind = MO_BYTECODE_LIMIT;
         }
     }
-    if (!r->failed && terminate && !utf8(r->bytes + r->offset, *n)) {
+    if (!r->failed && terminate && !mo_bytecode_utf8(r->bytes + r->offset, *n)) {
         r->field = (uint32_t)r->offset;
         refuse(r, "invalid UTF-8 string");
     }
@@ -492,8 +492,11 @@ static void sections(struct reader *r) {
 struct mo_bytecode *mo_bytecode_decode_info(struct mo_arena *arena, const uint8_t *bytes,
                                             size_t length, const uint32_t **code_offsets,
                                             struct mo_types *types_out,
+                                            struct mo_bytecode_error_site *site,
                                             struct mo_load_error *error) {
     MO_ASSERT(arena != NULL && error != NULL && (bytes != NULL || length == 0));
+    if (site != NULL)
+        *site = (struct mo_bytecode_error_site){MO_SECTION_COUNT, MO_BYTECODE_NO_INDEX};
     *error = (struct mo_load_error){.reason = "invalid header or bytecode size",
                                     .kind = length > MO_LIMIT_BYTECODE_SIZE ? MO_BYTECODE_LIMIT
                                                                             : MO_BYTECODE_INVALID};
@@ -554,6 +557,7 @@ struct mo_bytecode *mo_bytecode_decode_info(struct mo_arena *arena, const uint8_
         .names = &r.names,
         .code = r.code_positions,
         .debug = r.debug_positions,
+        .site = site,
         .wire_size = length};
     bool valid = mo_bytecode_validate(r.file, &info, error);
     if (valid && code_offsets != NULL) {
@@ -589,5 +593,5 @@ struct mo_bytecode *mo_bytecode_decode_info(struct mo_arena *arena, const uint8_
 
 struct mo_bytecode *mo_bytecode_decode(struct mo_arena *arena, const uint8_t *bytes, size_t length,
                                        struct mo_load_error *error) {
-    return mo_bytecode_decode_info(arena, bytes, length, NULL, NULL, error);
+    return mo_bytecode_decode_info(arena, bytes, length, NULL, NULL, NULL, error);
 }

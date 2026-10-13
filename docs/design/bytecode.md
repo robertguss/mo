@@ -1295,6 +1295,16 @@ named_operand = R | LABEL | AT | NAME | TYPE | LITERAL | T | L | K | G | F | P |
 
 `NAME` is a Mo qualified name, including type arguments for instantiations;
 `TYPE` is a Mo type or an indexed `T`, with `env(NAME)` for a closure's env.
+In symbolic names, spaces and tabs around type-argument punctuation are
+ignored, a comma is stored as comma-space and a colon as space-colon-space:
+`Wrapper(Int,Text)` and `Wrapper(Int, Text)` name the same declaration,
+as do `Box(fn(Int):Int)` and `Box(fn(Int) : Int)`. Other name bytes, including
+case, are unchanged. Seeds retain their bytes; a symbolic lookup of a seeded
+generic name uses this same normalized spelling. An index-shaped name (an
+index prefix followed entirely by digits) cannot be a symbolic type, function,
+global or module declaration; use indexed text to retain such names. Local
+field, case and parameter names are not references and may be index-shaped.
+Names such as `t1x` are symbolic names, not indices.
 A label is `@` followed by a name; a final label may mark the code's end for
 a variable range, but not a jump target. `registers` lists only additional
 registers, consecutively after explicit parameters and a closure's implicit
@@ -1325,20 +1335,43 @@ closure. Its type is the destination register's type, without
 conversion. Numeric literals are encoded as in 3.1; a float literal uses its
 binary64 value, `nan` the bits `0x7ff8000000000000`. Other NaN payloads need a
 seed. A `range` or choice literal is not a constant (3.1).
+For Byte, Int, Time and Duration, shorthand also accepts `0x` hexadecimal
+and `0b` binary digits, and underscores between digits, with the same sign
+and value bounds. Decimal keeps 10.1's exact decimal syntax. Float accepts
+decimal digits with an optional fraction and optional `e`/`E` exponent;
+an exponent may have `+` or `-`. Conversion uses the C numeric locale,
+independently of the caller's locale, and retains signed zero. Overflow and
+underflow produce the binary64 infinity or rounded value, respectively.
+Char accepts 10.1's `U+hex` or one single-quoted Unicode scalar, with escapes
+`\n`, `\r`, `\t`, `\0`, `\'`, `\"`, `\\` and `\u{hex}` (one to six
+hex digits). Text uses `Q` with exactly 10.1's escapes; Bytes uses `bytes HEX`.
+BigInt accepts a signed decimal integer or `bigint SIGN HEX`. Decimal BigInt
+spellings have at most `MO_LIMIT_BYTECODE_BIGINT_DIGITS` (4,096) digits,
+including leading zeros; they have no radix prefix or underscores. Conversion
+uses nine-digit chunks and base-2^32 limbs, keeping its bounded quadratic work
+small even in a text filled with maximum-length decimal literals.
+Larger values use the linear hex spelling, up to section 3's magnitude limit.
+Negative zero becomes zero. None of these shorthand spellings are printed
+by the disassembler in place of 10.1's canonical payloads.
 
 The assembler fills the tables in these steps:
 
 1. Copy the seeds. Reserve a fresh nominal type for each record or choice
    declaration, then indices for globals, functions and modules, each in its
    own declaration order. Seeded nominal types are already declared: do not
-   declare them again. Resolve names, including forward references. Ambiguous
-   or duplicate symbolic declarations are errors; use indexed text for files
-   with equal nominal names. Every global and function names its module with
+   declare them again. Resolve names, including forward references. Type,
+   function, global and module declarations have separate namespaces; a record
+   and a module may both be `Account`. Duplicate names within one namespace are
+   errors; use indexed text for files with equal nominal names. A name shared
+   by a type and a function is ambiguous only in an exposure list, and is refused
+   there. Every global and function names its module with
    `in`; modules are declared exactly once. No implicit module is added.
 2. Walk items in text order, headers before bodies, lists and instruction
    operands left to right. Visit a type's parameters before interning the
    enclosing type. Named nominal references use their reserved indices, not
-   a recursive walk of their fields. Intern other types on first encounter,
+   a recursive walk of their fields or name's type arguments. A reference to
+   `Column(Product)` neither interns nor requires a separate `Product` type.
+   Intern other types on first encounter,
    reusing a matching seed or earlier entry. Function headers visit explicit
    parameter types, result, captures, implicit env, then additional registers.
    A closure also interns its function type after its result type. Define the
@@ -1348,7 +1381,11 @@ The assembler fills the tables in these steps:
    its closure layout. After all types are defined, process requests in that
    order: append the layout with its definition's fields or captures if
    absent, or reuse the lowest matching index. Nothing else adds layouts.
-   A layout request does not visit its definition's types again. On a literal,
+   Cache the index by layout kind, type and case/function: a distinct layout's
+   fields or captures are read once, not once per operand. A layout request
+   does not visit its definition's types again. Validate literals at their
+   encounter (unless their indexed type is still forward), deferring only
+   constant pooling until complete types are known. On a literal,
    append a constant if absent; equality is its type index and exact encoded
    payload, not runtime equality. Reuse the lowest matching constant index.
 4. Intern strings at each encounter in the same walk: declaration names,
@@ -1364,6 +1401,8 @@ The assembler fills the tables in these steps:
 5. Encode instructions and resolve labels. Build each module's exposed-type
    and exposed-function arrays from its exposure list, in list order; a bare
    type hides its contents, `(..)` exposes them and is invalid on a function.
+   Parse the full instantiated name before peeling off a trailing `(..)`:
+   `Page(Int)` and `A.id(Int)` are bare exposures, not parameter lists.
    A global in the list is an error: module globals include all declarations
    with that `in` module, in global declaration order. There is at most one
    `init` item; its list gives exactly the initializer order, or is empty when
@@ -1690,14 +1729,31 @@ more than eight times the added binary bytes. Absent references are shorter;
 condition text remains a string index, with its bytes quoted only in the
 string section. Its at-most-fourfold byte escaping is unchanged.
 Their declarations are in
-`bytecode.h`; stream 3 implements them along with the writer. Each borrows its
+`bytecode.h`. Each borrows its
 input and requires an initialized, empty caller-owned buffer, which must not
 back the input. Invalid input, an output limit or no memory returns false,
 leaves the buffer empty (capacity may have grown), and fills the required
 error structure with static reason text. Assembly errors have a text byte
 offset; disassembly uses `mo_load_error` with an input byte offset. Offset zero
 denotes a failure not tied to an input byte, such as no memory or an output
-limit. First-use table construction is only for shorthand; it never
+limit. Syntax refusals point to the offending token or byte, or text end when
+a token is missing. Final-pool index refusals point to the reference token,
+including forward references. Loader/verifier refusals map the offending
+binary field or instruction back to its source token. Relational refusals
+whose binary offset is the payload start carry an internal section/entry site
+and point to that entry's indexed line or shorthand declaration/operand, not
+the first string in the file. A section-count refusal points to its section
+keyword (or an unpaired shorthand declaration). Their reason retains the
+loader's violated rule; this extra site does not change public binary offsets.
+Assembly uses wire-sized ceilings for encoded bytes and position tables,
+an arena budget derived from text length through `mo_bytecode_work_budget`,
+and `MO_LIMIT_NESTING_DEPTH` for nested types, names and literals. Incremental
+symbol/pool lookups use balanced ordered trees, not linear scans or unkeyed
+hashing; module-global arrays are built by buckets, and choice case offsets
+are indexed once. Apart from bounded numeric conversion and nesting, work is
+near-linear in text bytes plus generated wire bytes, with logarithmic lookup
+factors. Verification keeps section 9's own budgets.
+First-use table construction is only for shorthand; it never
 renumbers a seed or an indexed file.
 
 ## 11. Versions
