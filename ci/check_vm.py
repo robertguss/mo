@@ -24,6 +24,8 @@ from check_core_check import VERSION, WORLD, Atom, parse, wire, program
 NEEDS_DISPATCH = {"needs primitive dispatch": 0, "needs host dispatch": 0,
                   "needs capability fixture arguments": 0}
 CODEGEN_UNSUPPORTED = 0
+OWNED_OUTCOMES = 1024
+NESTED_LOOP_OUTCOMES = 2
 
 
 def canonical(report):
@@ -260,6 +262,78 @@ def permutation_program(i):
           (tuple ({result})))
         (jump "loop" ((lit (int {1 + i % 7})) {initial})))
       "Generated" (function) 0)) () "entry" (noSource))'''
+
+
+def owned_program(i):
+    """Nested operands, repeated aliases, captures and simultaneous loop transfers."""
+    concat = lambda a, b: f'(prim (text (concat)) ({a} {b}))'
+    x, y = '(var "x")', '(var "y")'
+    if i < 1000:
+        rng = random.Random(8128 + i)
+
+        def value(depth):
+            if depth == 0:
+                return rng.choice([x, y, '(lit (text ""))', '(lit (text " aβ "))'])
+            choice = rng.randrange(8)
+            a, b = value(depth - 1), value(depth - 1)
+            if choice == 0:
+                return concat(a, b)
+            if choice == 1:
+                return f'(let_ "y" {a} {concat(y, b)})'
+            if choice == 2:
+                flag = rng.choice(['true', 'false'])
+                return f'(if_ (lit (bool {flag})) {a} {b})'
+            if choice == 3:
+                return f'(proj {rng.randrange(2)} (tuple ({a} {b})))'
+            if choice == 4:
+                return f'(call "id" ({a}))'
+            if choice == 5:
+                return f'(prim (text (trim)) ({a}))'
+            if choice == 6:
+                joined = concat('(var "p")', '(var "q")')
+                return f'(app (lam (("p" (text)) ("q" (text))) {joined}) ({a} {b}))'
+            return f'(app (lam () {concat(a, b)}) ())'
+
+        body = value(4)
+    else:
+        count, keep = divmod(i - 1000, 2)
+        loop = f'''(join "loop" (("a" (text)) ("b" (text)) ("n" (int)))
+          (if_ (prim (eq (int)) ((var "n") (lit (int 0))))
+            {concat('(var "a")', '(var "b")')}
+            (jump "loop" ((var "b") {concat('(var "a")', '(lit (text "!"))')}
+              (prim (int (sub)) ((var "n") (lit (int 1)))))))
+          (jump "loop" ({x} {y} (lit (int {count})))))'''
+        result = concat('(var "z")', x) if keep else '(var "z")'
+        body = f'(let_ "z" {loop} {result})'
+    body = f'''(let_ "x" {concat('(lit (text "L"))', '(lit (text "!"))')}
+      (let_ "y" {concat('(lit (text "right"))', x)} {body}))'''
+    return f'''(Program () (
+      (FunDecl "entry" () (text) {body} "Generated" (function) 0)
+      (FunDecl "id" (("p" (text))) (text) (var "p") "Generated" (function) 0)
+    ) () "entry" (noSource))'''
+
+
+def nested_loop_program(levels, steps):
+    """Outer free references must propagate through nested backedges within the budget."""
+    empty = '(lit (text ""))'
+    for i in reversed(range(levels)):
+        counter = f'(var "n{i}")'
+        decrement = f'(prim (int (sub)) ({counter} (lit (int 1))))'
+        zero = ('(prim (text (concat)) ((var "text") (lit (text "w"))))' if i == 0 else
+                f'(jump "loop{i - 1}" ((prim (int (sub)) ((var "n{i - 1}") (lit (int 1))))))')
+        if i == levels - 1:
+            body = f'(jump "loop{i}" ({decrement}))'
+            for j in range(steps):
+                body = f'(let_ "v{j}" (prim (int (add)) ({counter} (lit (int {j})))) {body})'
+        else:
+            body = nested
+        body = f'(if_ (prim (eq (int)) ({counter} (lit (int 0)))) {zero} {body})'
+        # Establish a Text result even when every real path leaves the inner join.
+        nested = f'''(join "loop{i}" (("n{i}" (int))) {body}
+          (if_ (lit (bool false)) {empty} (jump "loop{i}" ((lit (int 1))))))'''
+    body = f'''(let_ "text" (prim (text (concat)) ((lit (text "done")) (lit (text "v"))))
+      {nested})'''
+    return f'(Program () ((FunDecl "entry" () (text) {body} "Generated" (function) 0)) () "entry" (noSource))'
 
 
 def operations(drivers, root, world):
@@ -538,6 +612,17 @@ def main():
             path = root / f'permutation-{i}.core'
             path.write_text(f'(core {VERSION} {permutation_program(i)})\n')
             generated.append(path)
+        for i in range(OWNED_OUTCOMES):
+            path = root / f'owned-{i}.core'
+            path.write_text(f'(core {VERSION} {owned_program(i)})\n')
+            generated.append(path)
+        nested_loops = [(85, 0), (16, 400)]
+        assert len(nested_loops) == NESTED_LOOP_OUTCOMES
+        for levels, steps in nested_loops:
+            path = root / f'nested-loops-{levels}-{steps}.core'
+            path.write_text(f'(core {VERSION} {nested_loop_program(levels, steps)})\n')
+            assert oracle(path, world) == ['returned', 'donevw']
+            generated.append(path)
         for i, (ty, literal) in enumerate([
                 ("unit", "unit"), ("bool", "bool true"), ("byte", "byte 255"),
                 ("int", "int -9223372036854775808"), ("float", "float 0x8000000000000000"),
@@ -592,6 +677,7 @@ def main():
                 matched += 1
             assert unsupported == CODEGEN_UNSUPPORTED, (driver, unsupported, CODEGEN_UNSUPPORTED)
             assert pending == NEEDS_DISPATCH, (driver, pending, NEEDS_DISPATCH)
+            assert matched == 1430 + OWNED_OUTCOMES + NESTED_LOOP_OUTCOMES, (driver, matched)
             print(f"vm differential: {driver}: {matched} outcomes match mocore; {unsupported} fixtures explicitly unsupported by codegen")
             for label, count in pending.items():
                 print(f"vm differential: {driver}: {label}: {count}")
