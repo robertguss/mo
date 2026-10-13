@@ -2106,8 +2106,8 @@ the permanent test checks that property and its VM result without timing gates.
 
 Preparation assigns monotonically numbered virtual temporaries and binders;
 the physical allocator recycles block-local lifetimes after pruning. Immediate
-slots are initialized before
-control splits so incoming states agree. All reference slots start undefined;
+slots are initialized before control splits so incoming states agree. All
+reference slots start undefined;
 there are no dummy Text, collection or function inhabitants. A live merge copies
 the result into its own slot, drops dead owners, and uses `clear` to normalize
 dead borrowed and moved slots to undefined. The result is owned when ownership
@@ -2188,7 +2188,8 @@ after their first definition and end no later than physical reassignment.
 
 Register scanning, allocation, inserted clears and relocation charge
 `MO_LIMIT_CODEGEN_REGISTER_WORK` (2^26) per function. Scratch is a separately
-bounded arena freed after each function; code growth stays within
+bounded arena freed after each function; rewritten code, including inserted
+clears, stays within `MO_LIMIT_FUNCTION_INSTRUCTIONS` and
 `MO_LIMIT_FUNCTION_CODE_WORDS`. Physical slot counts and their product with
 block counts are checked before the writer runs, giving E1013 or E1015, not
 E1057. Function splitting and cross-block recycling remain future work.

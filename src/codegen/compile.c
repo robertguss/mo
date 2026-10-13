@@ -3488,7 +3488,8 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
                 : allocation == MO_CODE_BYTECODE_TOO_BIG
                     ? "Function exceeds MO_LIMIT_FUNCTION_REGISTER_BLOCKS after recycling."
                 : allocation == MO_CODE_FUNCTION_TOO_LONG
-                    ? "Recycled code exceeds MO_LIMIT_FUNCTION_CODE_WORDS."
+                    ? "Recycled code exceeds MO_LIMIT_FUNCTION_INSTRUCTIONS or "
+                      "MO_LIMIT_FUNCTION_CODE_WORDS."
                 : allocation == MO_CODE_CODEGEN_REGISTER_WORK
                     ? "Register recycling exceeds MO_LIMIT_CODEGEN_REGISTER_WORK."
                     : "No memory for code generation's register recycling pass.");

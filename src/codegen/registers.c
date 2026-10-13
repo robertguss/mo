@@ -20,7 +20,7 @@ struct allocation {
     struct slot *slots;
     bool *starts;
     uint32_t *heads, *ends, *offsets, *code;
-    uint32_t count, used, capacity, block, clear;
+    uint32_t count, used, capacity, instructions, block, clear;
     uint64_t work;
     uint16_t error;
 };
@@ -179,12 +179,13 @@ static MO_MUST_USE bool scan(struct allocation *a, uint32_t prologue) {
 static MO_MUST_USE bool append(struct allocation *a, const uint32_t *words, uint32_t count) {
     if (!charge(a, count))
         return false;
-    if (count > a->capacity - a->used) {
+    if (a->instructions == MO_LIMIT_FUNCTION_INSTRUCTIONS || count > a->capacity - a->used) {
         a->error = MO_CODE_FUNCTION_TOO_LONG;
         return false;
     }
     memcpy(a->code + a->used, words, (size_t)count * sizeof *words);
     a->used += count;
+    a->instructions++;
     return true;
 }
 static MO_MUST_USE bool clear(struct allocation *a) {
