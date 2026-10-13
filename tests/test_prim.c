@@ -1,11 +1,175 @@
 #define _POSIX_C_SOURCE 200809L
+#include "codegen/codegen.h"
 #include "prim_oracle.h"
 #include "test.h"
+#include "vm/vm.h"
 
 #include <fenv.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+static void shared_text_history(void) {
+    struct prim_fixture f;
+    prim_fixture_init(&f, 1 << 20);
+    uint32_t type = f.builtin[MO_TYPE_TEXT];
+    struct mo_cell value, piece, history[48];
+    MO_ASSERT(mo_value_text(f.heap, "a", 1, &value) && mo_value_text(f.heap, "a", 1, &piece));
+    uint32_t count = 0;
+    while (count < 48) {
+        history[count++] = mo_value_dup(f.heap, type, value);
+        bool ok = mo_text_concat(f.heap, &value, piece);
+        CHECK(ok);
+        if (!ok)
+            break;
+    }
+    CHECK(count == 48 && mo_heap_used(f.heap) < (128 << 10));
+    for (uint32_t i = 0; i < count; i++) {
+        size_t length;
+        const uint8_t *bytes = mo_value_data(history[i], &length);
+        CHECK(length == (size_t)i + 1);
+        for (size_t j = 0; j < length; j++)
+            CHECK(bytes[j] == 'a');
+        mo_value_drop(f.heap, type, history[i]);
+    }
+    mo_value_drop(f.heap, type, value);
+    mo_value_drop(f.heap, type, piece);
+    CHECK(mo_heap_objects(f.heap) == 0);
+    prim_fixture_free(&f);
+}
+
+static void shared_copy_charge(void) {
+    struct prim_fixture f;
+    prim_fixture_init_type(&f, 1 << 20, MO_TYPE_TEXT);
+    uint32_t text = f.builtin[MO_TYPE_TEXT];
+    uint32_t list = f.types.items[f.signature[MO_PRIM_LIST_CONCAT]].result;
+    struct mo_cell value, piece, held, exact;
+    MO_ASSERT(mo_value_text(f.heap, "β🙂", 6, &piece));
+    MO_ASSERT(mo_value_text(f.heap, "β🙂", 6, &value));
+    MO_ASSERT(mo_text_concat(f.heap, &value, piece));
+    held = mo_value_dup(f.heap, text, value);
+    size_t before = mo_heap_used(f.heap);
+    MO_ASSERT(mo_text_concat(f.heap, &value, piece));
+    size_t copy_charge = mo_heap_used(f.heap) - before;
+    before = mo_heap_used(f.heap);
+    MO_ASSERT(mo_value_text(f.heap, "β🙂β🙂β🙂", 18, &exact));
+    CHECK(copy_charge == mo_heap_used(f.heap) - before);
+    size_t length;
+    const uint8_t *bytes = mo_value_data(value, &length);
+    CHECK(length == 18 && memcmp(bytes, "β🙂β🙂β🙂", 18) == 0);
+    bytes = mo_value_data(held, &length);
+    CHECK(length == 12 && memcmp(bytes, "β🙂β🙂", 12) == 0);
+    mo_value_drop(f.heap, text, held);
+    mo_value_drop(f.heap, text, value);
+    mo_value_drop(f.heap, text, exact);
+
+    struct mo_cell elements[10];
+    for (unsigned i = 0; i < 10; i++)
+        elements[i] = piece;
+    MO_ASSERT(mo_value_list(f.heap, list, elements, 8, &value));
+    MO_ASSERT(mo_list_append(f.heap, list, &value, piece));
+    held = mo_value_dup(f.heap, list, value);
+    before = mo_heap_used(f.heap);
+    MO_ASSERT(mo_list_append(f.heap, list, &value, piece));
+    copy_charge = mo_heap_used(f.heap) - before;
+    before = mo_heap_used(f.heap);
+    MO_ASSERT(mo_value_list(f.heap, list, elements, 10, &exact));
+    CHECK(copy_charge == mo_heap_used(f.heap) - before);
+    CHECK(mo_list_size(held) == 9 && mo_list_size(value) == 10);
+    mo_value_drop(f.heap, list, exact);
+    mo_value_drop(f.heap, list, value);
+    mo_value_drop(f.heap, list, held);
+    CHECK(mo_cell_get_ref(piece)->count == 1);
+    mo_value_drop(f.heap, text, piece);
+    CHECK(mo_heap_objects(f.heap) == 0);
+    prim_fixture_free(&f);
+}
+
+static void unique_contraction(void) {
+    for (unsigned full = 0; full < 2; full++) {
+        for (unsigned kind = 0; kind < 3; kind++) {
+            struct prim_fixture f;
+            prim_fixture_init_type(&f, 1 << 20, MO_TYPE_TEXT);
+            uint32_t text = f.builtin[MO_TYPE_TEXT];
+            uint32_t list = f.types.items[f.signature[MO_PRIM_LIST_CONCAT]].result;
+            struct mo_cell value, piece;
+            MO_ASSERT(mo_value_text(f.heap, "β", 2, &piece));
+            if (kind == 0) {
+                char bytes[4096];
+                memset(bytes, 'a', sizeof bytes);
+                memcpy(bytes + 32, "β", 2);
+                MO_ASSERT(mo_value_text(f.heap, bytes, sizeof bytes, &value));
+            } else {
+                struct mo_cell elements[256];
+                for (unsigned i = 0; i < 256; i++)
+                    elements[i] = piece;
+                MO_ASSERT(mo_value_list(f.heap, list, elements, 256, &value));
+            }
+            size_t before = mo_heap_used(f.heap);
+            struct mo_scratch scratch;
+            mo_scratch_init(&scratch, f.heap);
+            if (full != 0)
+                MO_ASSERT(mo_scratch_resize(&scratch, NULL, 0,
+                                            scratch.arena.limit - MO_ARENA_CHUNK_HEADER) != NULL);
+            size_t filled = mo_heap_used(f.heap);
+            if (kind == 0) {
+                MO_ASSERT(mo_text_slice(f.heap, &value, 32, 2));
+                size_t length;
+                const uint8_t *bytes = mo_value_data(value, &length);
+                CHECK(length == 2 && memcmp(bytes, "β", 2) == 0);
+            } else {
+                if (kind == 1)
+                    MO_ASSERT(mo_list_slice(f.heap, list, &value, 17, 1));
+                else
+                    while (mo_list_size(value) > 1)
+                        MO_ASSERT(mo_list_remove_at(f.heap, list, &value, 0));
+                struct mo_cell item;
+                MO_ASSERT(mo_list_get(value, 0, &item));
+                CHECK(mo_cell_get_ref(item) == mo_cell_get_ref(piece) &&
+                      mo_cell_get_ref(piece)->count == 2);
+            }
+            if (full != 0)
+                CHECK(mo_heap_used(f.heap) == filled);
+            else
+                CHECK(mo_heap_used(f.heap) + 3000 < before);
+            mo_scratch_free(&scratch);
+            mo_value_drop(f.heap, kind == 0 ? text : list, value);
+            CHECK(mo_cell_get_ref(piece)->count == 1);
+            mo_value_drop(f.heap, text, piece);
+            CHECK(mo_heap_objects(f.heap) == 0);
+            prim_fixture_free(&f);
+        }
+    }
+}
+
+static void growth_near_limit(void) {
+    struct prim_fixture f;
+    prim_fixture_init(&f, 4 << 20);
+    char *bytes = malloc(3 << 19);
+    MO_ASSERT(bytes != NULL);
+    memset(bytes, 'p', 3 << 19);
+    struct mo_cell filler, value, piece;
+    MO_ASSERT(mo_value_bytes(f.heap, (const uint8_t *)bytes, 3 << 19, &filler));
+    MO_ASSERT(mo_value_text(f.heap, bytes, 1 << 20, &value));
+    MO_ASSERT(mo_value_text(f.heap, "a", 1, &piece));
+    free(bytes);
+    MO_ASSERT(mo_text_concat(f.heap, &value, piece));
+    size_t grown = mo_heap_used(f.heap);
+    for (unsigned i = 1; i < 2000; i++)
+        MO_ASSERT(mo_text_concat(f.heap, &value, piece));
+    CHECK(mo_heap_used(f.heap) == grown);
+    size_t length;
+    const uint8_t *result = mo_value_data(value, &length);
+    CHECK(length == (1 << 20) + 2000);
+    for (size_t i = 0; i < length; i++)
+        CHECK(result[i] == (i < (1 << 20) ? 'p' : 'a'));
+    mo_value_drop(f.heap, f.builtin[MO_TYPE_BYTES], filler);
+    mo_value_drop(f.heap, f.builtin[MO_TYPE_TEXT], value);
+    mo_value_drop(f.heap, f.builtin[MO_TYPE_TEXT], piece);
+    CHECK(mo_heap_objects(f.heap) == 0);
+    prim_fixture_free(&f);
+}
 
 static void unchanged_trim(void) {
     struct prim_fixture f;
@@ -549,8 +713,68 @@ static void refusal_preserves_operands(void) {
     prim_fixture_free(&f);
 }
 
-/* These sizes distinguish constant-amortized updates and KMP from repeated
- * copies or rescanning long equal prefixes. ci/check_primitives.py times them. */
+/* Exercise the compiler's actual ownership decisions, not a C-only unique
+ * builder. Shared calls must also complete within the --work gate's budget. */
+static void vm_builder_work(uint32_t iterations) {
+    const char *source = "(core " MO_CORE_TEXT_VERSION " (Program () ((FunDecl \"go\" "
+                         "((\"acc\" (text)) (\"n\" (int))) (text) "
+                         "(if_ (prim (eq (int)) ((var \"n\") (lit (int 0)))) (var \"acc\") "
+                         "(call \"go\" ((prim (text (concat)) ((var \"acc\") (lit (text \"ab\")))) "
+                         "(prim (int (sub)) ((var \"n\") (lit (int 1))))))) "
+                         "\"Build\" (function) 0)) () \"go\" (noSource)))";
+    struct mo_arena arena;
+    struct mo_diags diags;
+    struct mo_buffer wire;
+    mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+    MO_ASSERT(mo_diags_init(&diags));
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_core *core = mo_core_parse(&arena, source, strlen(source), &diags);
+    bool ok = core != NULL && mo_compile(core, &wire, &diags);
+    CHECK(ok);
+    if (!ok && diags.count != 0)
+        CHECK(fprintf(stderr, "VM builder: %s\n", diags.items[0].message) > 0);
+    struct mo_load_error error;
+    struct mo_image *image = ok ? mo_load(wire.bytes, wire.length, &error) : NULL;
+    CHECK(image != NULL);
+    mo_buffer_free(&wire);
+    mo_diags_free(&diags);
+    mo_arena_free(&arena);
+    if (image == NULL)
+        return;
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    struct mo_process *process = mo_process_new(image, &limits);
+    MO_ASSERT(process != NULL);
+    struct mo_heap *heap = mo_process_heap(process);
+    struct mo_cell args[] = {mo_cell_unit(), mo_cell_int(iterations)}, out;
+    MO_ASSERT(mo_value_text(heap, "", 0, &args[0]));
+    struct timespec start, end;
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+    enum mo_outcome outcome = mo_call(process, 0, args, 2, &out, &defect);
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &end) == 0);
+    CHECK(outcome == MO_RETURNED);
+    if (outcome == MO_RETURNED) {
+        size_t length;
+        const uint8_t *bytes = mo_value_data(out, &length);
+        CHECK(length == (size_t)iterations * 2);
+        for (size_t i = 0; i < length; i++)
+            CHECK(bytes[i] == (i % 2 == 0 ? 'a' : 'b'));
+        const struct mo_bytecode *bytecode = mo_image_bytecode(image);
+        mo_value_drop(heap, bytecode->functions[0].result_type, out);
+    }
+    const struct mo_bytecode_function *function = &mo_image_bytecode(image)->functions[0];
+    if (function->parameters[0].ownership == MO_PARAMETER_BORROWED)
+        mo_value_drop(heap, function->parameters[0].type, args[0]);
+    double seconds =
+        (double)(end.tv_sec - start.tv_sec) + (double)(end.tv_nsec - start.tv_nsec) / 1e9;
+    MO_ASSERT(printf("Compiled VM Text builder (%u appends): %.6f s\n", iterations, seconds) > 0);
+    mo_process_free(process);
+    mo_image_free(image);
+}
+
+/* These sizes distinguish constant-amortized updates from repeated copies.
+ * ci/check_primitives.py times them together with the compiled VM builder. */
 static void reuse_work(void) {
     const enum mo_primitive_id ids[] = {MO_PRIM_TEXT_CONCAT, MO_PRIM_LIST_CONCAT,
                                         MO_PRIM_SET_UNION};
@@ -772,12 +996,18 @@ int main(int argc, char **argv) {
     }
     if (argc == 2 && strcmp(argv[1], "--work") == 0) {
         reuse_work();
+        vm_builder_work(30000);
         primitive_work();
         return mo_test_report("primitive work");
     }
     if (argc == 2 && strcmp(argv[1], "--reuse-work") == 0) {
         reuse_work();
+        vm_builder_work(30000);
         return mo_test_report("owned reuse work");
+    }
+    if (argc == 2 && strcmp(argv[1], "--vm-builder-work") == 0) {
+        vm_builder_work(100000);
+        return mo_test_report("compiled VM builder work");
     }
     MO_ASSERT(argc == 1);
     empty_constants_and_rounding();
@@ -788,6 +1018,10 @@ int main(int argc, char **argv) {
     text_split();
     collection_ownership();
     refusal_preserves_operands();
+    shared_text_history();
+    shared_copy_charge();
+    unique_contraction();
+    growth_near_limit();
     unchanged_trim();
     unique_reverse_without_space();
     unique_union_without_space();

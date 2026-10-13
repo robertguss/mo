@@ -100,8 +100,16 @@ static MO_MUST_USE bool cell(struct prim_fixture *f, uint32_t type, struct input
         }
         uint64_t width;
         MO_ASSERT(mo_unicode16_display_width(bytes, length, &width));
+        bool slack = byte(in) % 2 != 0 && length >= 32;
         if (!mo_value_text(f->heap, (const char *)bytes, length, out))
             return false;
+        /* Self-concat reserves four times the original bytes; retaining one
+         * quarter avoids contraction and exercises subsequent writes to slack. */
+        if (slack &&
+            (!mo_text_concat(f->heap, out, *out) || !mo_text_slice(f->heap, out, 0, length))) {
+            mo_value_drop(f->heap, type, *out);
+            return false;
+        }
         struct mo_cell result;
         const char *reason;
         MO_ASSERT(mo_prim_call(f->heap, &f->types, MO_PRIM_UNICODE16_DISPLAY_WIDTH,

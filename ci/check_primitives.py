@@ -444,6 +444,13 @@ def main():
                 operands = bytes(512) if variant == 0 else rng.randbytes(512)
                 (directory / f"{name}-{variant}").write_bytes(
                     bytes([i, variant & 1, variant // 3, variant % 3]) + operands)
+        # Text scalar encoding is twice its code point. Keep the first text
+        # at one quarter of self-concat's capacity, then append into its slack.
+        left = bytes([64]) + (ord('β') * 2).to_bytes(8, 'little') * 64 + bytes([1])
+        right = bytes([1]) + (ord('🙂') * 2).to_bytes(8, 'little') + bytes([0])
+        for holders in range(3):
+            (directory / f"TEXT_CONCAT-slack-{holders}").write_bytes(
+                bytes([ids.index('TEXT_CONCAT'), 0, 0, holders]) + left + right)
         return
     generated = list(cases()) + list(extended_cases())
     rows = re.findall(r'^PRIM\(\w+,\s*"([^"]+)",\s*"([^"]+)"',

@@ -121,8 +121,9 @@ MO_MUST_USE bool mo_list_prepend(struct mo_heap *process, uint32_t type, struct 
 MO_MUST_USE bool mo_list_concat(struct mo_heap *process, uint32_t type, struct mo_cell *list,
                                 struct mo_cell right);
 /* Valid ranges/indices are required. These consume *list only on success and
- * keep unchanged lists even when shared. Unique shrinking/reordering does not
- * allocate. concat's right operand may alias *list. */
+ * keep unchanged lists even when shared. Unique shrinking cannot fail: below
+ * one quarter capacity it tries an exact buffer, retaining storage on refusal.
+ * Unique reordering does not allocate. concat's right operand may alias *list. */
 MO_MUST_USE bool mo_list_slice(struct mo_heap *process, uint32_t type, struct mo_cell *list,
                                uint32_t start, uint32_t count);
 MO_MUST_USE bool mo_list_reverse(struct mo_heap *process, uint32_t type, struct mo_cell *list);
@@ -133,7 +134,8 @@ MO_MUST_USE bool mo_list_remove_at(struct mo_heap *process, uint32_t type, struc
  * it. Unique storage grows geometrically. slice's byte range must end at UTF-8
  * boundaries; both operations preserve valid UTF-8 without validating again.
  * On false every input, count and output is unchanged. Unchanged slices keep
- * the original object even when shared or immortal. */
+ * the original object even when shared or immortal. Unique slicing cannot
+ * fail; below one quarter capacity it tries best-effort exact contraction. */
 MO_MUST_USE bool mo_text_concat(struct mo_heap *process, struct mo_cell *text,
                                 struct mo_cell right);
 MO_MUST_USE bool mo_text_slice(struct mo_heap *process, struct mo_cell *text, size_t start,

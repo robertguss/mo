@@ -819,7 +819,11 @@ gives the exact representation; this section gives the reasons.
   time, and `append` on a list with one holder grows it in place, in amortized
   constant time. Owned `concat` reserves the whole suffix before copying its
   elements; prepend, slices, reverse and removal reuse unique storage. A
-  prepend or middle removal still moves the following cells, in linear time.
+  shared copy reserves exactly the requested elements, not the source's slack.
+  Below one quarter capacity, unique shrinking tries an exact buffer and
+  transfers retained cells; on refusal it keeps its buffer and still succeeds.
+  A prepend, prefix drop or middle removal still moves the following cells in
+  linear time; repeated `drop(1)` or `remove_at(0)` is therefore quadratic.
 - **Maps and sets** are insertion-ordered hash tables: an array of entries in
   insertion order, and an index table of positions, as in CPython's compact
   dictionaries. A removal leaves a tombstone, and the table is compacted when
@@ -830,7 +834,13 @@ gives the exact representation; this section gives the reasons.
   character count is computed when asked. Owned concatenation grows unique
   storage geometrically and copies just the new suffix between growths; two
   valid texts concatenate without another UTF-8 check. Slack is charged to the
-  heap and falls back to the exact requested size when slack would not fit.
+  heap. Unique growth requests twice the needed size (at least 32 bytes for
+  Text or four cells for List), bounded by the representation limit. If that
+  does not fit the remaining heap after the allocation header, it requests the
+  needed size plus half the remaining spare bytes, rounded down to whole cells
+  for List. A native `ENOMEM` refusal retries once at the exact needed size.
+  Shared Text copies have exactly the needed bytes, regardless of old capacity.
+  Unique Text shrinking uses the same best-effort quarter-capacity rule as List.
   Trims and prefix/suffix removal reuse unique storage, and unchanged trims
   keep the original object even when shared or immortal.
 - **Reference counting.** The compiler places `dup` and `drop` so that every
