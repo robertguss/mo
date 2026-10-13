@@ -138,6 +138,11 @@ compares them only on inputs within the limits. After an error, the parser
 resumes at the next line that can start a declaration or a statement, so one
 mistake gives one error.
 
+The lexers distinguish a lambda's parameter-list `)` from a call or group
+closer (D237). A following `[` can begin the lambda's one-line list body,
+but remains refused as indexing after calls and groups. Lambda parameters
+contain only names, `_` and commas, so this needs two flags and no stack.
+
 `mo format` prints the syntax tree back. The tree keeps every comment: a
 comment on its own line is attached to the next node at its indentation, or
 to the end of its scope if nothing follows. Blocks and multi-line lists,

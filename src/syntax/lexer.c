@@ -645,8 +645,9 @@ struct mo_token mo_syntax_next(struct mo_lex *lx) {
     else if (digit(c) || c == '"' || c == '\'')
         token.kind = scan_literal(lx);
     else if (c == '[' && !newline &&
-             (lx->last == MO_T_NAME || lx->last == MO_T_CAPNAME || lx->last == MO_T_RPAREN ||
-              lx->last == MO_T_RBRACK || lx->last == MO_T_TEXT || lx->last == MO_T_TEXT_TAIL)) {
+             (lx->last == MO_T_NAME || lx->last == MO_T_CAPNAME ||
+              (lx->last == MO_T_RPAREN && !lx->lambda_close) || lx->last == MO_T_RBRACK ||
+              lx->last == MO_T_TEXT || lx->last == MO_T_TEXT_TAIL)) {
         (void)lex_error(
             lx, MO_CODE_SOURCE_INDEX,
             "Mo has no indexing with [...]: items.get(i) and map.get(key) return an Option");
@@ -660,6 +661,13 @@ struct mo_token mo_syntax_next(struct mo_lex *lx) {
     } else
         token.kind = punctuation(lx);
 scanned:
+    /* Lambda parameters cannot nest: only names, _ and commas are allowed.
+     * Update once per scanned token, not again when returning pending tokens. */
+    lx->lambda_close = token.kind == MO_T_RPAREN && lx->lambda_parameters;
+    lx->lambda_parameters =
+        (token.kind == MO_T_LPAREN && lx->last == MO_T_FN) ||
+        (lx->lambda_parameters &&
+         (token.kind == MO_T_NAME || token.kind == MO_T_UNDERSCORE || token.kind == MO_T_COMMA));
     token.span.end = lx->pos;
     if (token.kind == MO_T_EOF && depth > 0) {
         (void)lex_error(lx, MO_CODE_SOURCE_TEXT, "an interpolation is closed with }");
@@ -701,6 +709,8 @@ void mo_syntax_resume(struct mo_lex *lx) {
     }
     lx->column = 1;
     lx->last = MO_T_EOF;
+    lx->lambda_parameters = false;
+    lx->lambda_close = false;
     lx->has_pending = false;
     lx->depth = 0;
     lx->recovery_end = 0;
