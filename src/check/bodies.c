@@ -70,6 +70,7 @@ struct emitted {
     const struct mo_source_type *generic;
     struct term *instantiated;
     struct term *pattern_type;
+    struct term *try_result;
     const struct mo_source_type *function_type;
     const uint8_t *requirements;
     struct term **parameters; /* compact A-Z substitution terms */
@@ -1851,6 +1852,40 @@ static MO_MUST_USE struct value binary(struct inference *p, enum mo_syntax_token
     return out;
 }
 
+static MO_MUST_USE struct value propagate(struct inference *p, struct value input) {
+    if (input.type == NULL)
+        return input;
+    bool option = named(input.type, "Option"), result = named(input.type, "Result");
+    if (!option && !result) {
+        bool reported = problem(p, MO_CODE_TRY_INPUT, p->span, "try needs a Result or an Option",
+                                "try takes the value out of an Ok or Some (reference 8.3).", NULL);
+        (void)reported;
+        return (struct value){0};
+    }
+    if (!named(p->result, option ? "Option" : "Result")) {
+        bool reported = problem(p, MO_CODE_TRY_RESULT, p->span,
+                                "try needs a function returning the same failure kind",
+                                "try works on a Result in a function returning Result, or on an "
+                                "Option in a function returning Option; otherwise handle the "
+                                "failure with case (reference 8.3).",
+                                NULL);
+        (void)reported;
+        return (struct value){0};
+    }
+    if (result) {
+        struct term *from = argument(p, input.type, 1), *to = argument(p, p->result, 1);
+        if (from == NULL || to == NULL || !unify_as(p, from, to, MO_CODE_RESULT_TYPE))
+            return (struct value){0};
+    }
+    struct value out =
+        graph(p, (struct value){.type = argument(p, input.type, 0), .never = input.never}, 1);
+    if (p->checked && out.type != NULL) {
+        out.graph->operands[0] = input.note;
+        out.graph->try_result = p->result;
+    }
+    return out;
+}
+
 static MO_MUST_USE struct mo_match_pattern *
 match_pattern(struct inference *p, const struct mo_syntax *node, struct term *type, uintptr_t key,
               uint32_t signature, uint32_t count, const char *name) {
@@ -2925,6 +2960,8 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         }
         return out;
     }
+    case MO_S_TRY:
+        return propagate(p, infer(p, node->children[0], NULL));
     case MO_S_NEGATE:
     case MO_S_NOT:
     case MO_S_PREFIX: {
@@ -2943,6 +2980,18 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             enum mo_syntax_token op = node->kind == MO_S_PREFIX ? node->children[i - 1]->token
                                       : node->kind == MO_S_NOT  ? MO_T_NOT
                                                                 : MO_T_MINUS;
+            if (op == MO_T_TRY) {
+                p->span = node->children[i - 1]->span;
+                v = propagate(p, v);
+                if (v.type == NULL)
+                    return v;
+                if (p->checked && i != 1) {
+                    if (!record(p, node->children[i - 1], v))
+                        return (struct value){0};
+                    v.note = p->last;
+                }
+                continue;
+            }
             struct term *wanted = op == MO_T_NOT ? native(p, "Bool", 0)
                                   : op == MO_T_MINUS
                                       ? (root(v.type)->shape.kind == MO_SOURCE_PARAMETER
@@ -2996,7 +3045,6 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     case MO_S_BINDER:
     case MO_S_ELSE:
     case MO_S_ARM:
-    case MO_S_TRY:
     case MO_S_NAMED_ARG:
     case MO_S_UNDERSCORE:
     case MO_S_REST:
@@ -3046,7 +3094,8 @@ static MO_MUST_USE struct value infer(struct inference *p, const struct mo_synta
         node->kind != MO_S_FOR && node->kind != MO_S_WHILE && node->kind != MO_S_BREAK &&
         node->kind != MO_S_CONTINUE && node->kind != MO_S_LIST && node->kind != MO_S_TUPLE &&
         node->kind != MO_S_POSITION && node->kind != MO_S_ADD_ASSIGN &&
-        node->kind != MO_S_SUB_ASSIGN && node->kind != MO_S_TEXT_INTERPOLATED) {
+        node->kind != MO_S_SUB_ASSIGN && node->kind != MO_S_TEXT_INTERPOLATED &&
+        node->kind != MO_S_TRY) {
         bool reported = unfinished(p);
         (void)reported;
         p->depth--;
@@ -4087,6 +4136,19 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
             if (!finish_operator(&p, n) || !finish_function_use(&p, g) ||
                 !finish_interpolation(&p, n))
                 goto failed;
+            if (g->try_result != NULL) {
+                struct mo_checked_try *try_ =
+                    allocate(&p, 1, sizeof(*try_), _Alignof(struct mo_checked_try));
+                if (try_ == NULL)
+                    goto failed;
+                const struct mo_source_type *result = finish_type(&p, g->try_result, 0);
+                if (result == NULL)
+                    goto failed;
+                *try_ = (struct mo_checked_try){
+                    .result = result,
+                    .failure = {.builtin = named(g->try_result, "Option") ? "None" : "Error"}};
+                g->output.try_ = try_;
+            }
             if (g->generic != NULL && g->generic->count != 0) {
                 const struct mo_source_type *actual = finish_type(&p, g->instantiated, 0);
                 if (actual == NULL ||

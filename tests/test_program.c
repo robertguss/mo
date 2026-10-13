@@ -870,6 +870,36 @@ static void option_or_graph(void) {
     free_fixture(&f);
 }
 
+static void try_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn next(value: Option(Int)) : Option(Int)\n"
+             "Some((try value) + 1)\nend\n"
+             "fn main() : Int\nnext(Some(4)) or 9\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_function *fn = &f.program->functions[0];
+        bool found = false;
+        for (uint32_t i = 0; i < fn->body.count; i++) {
+            const struct mo_checked_expression *row = &fn->body.items[i];
+            if (row->try_ == NULL)
+                continue;
+            MO_ASSERT(row->operand_count == 1);
+            CHECK(strcmp(row->type->name, "Int") == 0 && !row->never);
+            CHECK(strcmp(fn->body.items[row->operands[0]].type->name, "Option") == 0);
+            CHECK(strcmp(row->try_->result->name, "Option") == 0 &&
+                  row->try_->result->count == 1 &&
+                  strcmp(row->try_->result->arguments[0]->name, "Int") == 0);
+            CHECK(row->try_->failure.builtin != NULL &&
+                  strcmp(row->try_->failure.builtin, "None") == 0);
+            CHECK(row->try_->wrapper.symbol == NULL && row->try_->wrapper.builtin == NULL);
+            CHECK(row->try_->arguments.count == 0);
+            found = true;
+        }
+        CHECK(found);
+    }
+    free_fixture(&f);
+}
+
 static void lambda_graph(void) {
     struct fixture f;
     init(&f, "module Main\n"
@@ -1366,7 +1396,7 @@ static void rejected_stages(void) {
          MO_CODE_POLYMORPHIC_RECURSION},
         {"fn main() : Int\nx = 1\nf = fn() x end\nf()\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Int\nm = {\"a\": 1}\ncase m\n_: 1\nend\nend\n", MO_CODE_CHECK_UNFINISHED},
-        {"fn main() : Int\ntry Some(1)\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn main() : Int\ntry Some(1)\nend\n", MO_CODE_TRY_RESULT},
         {"fn main(console: Console)\nconsole.printed\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"value = 1\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Int\nexamples\n1 == 1\nend\n1\nend\n", MO_CODE_CHECK_UNFINISHED},
@@ -1657,6 +1687,7 @@ static void run(void *argument) {
     data_recursion();
     generic_lambdas();
     option_or_graph();
+    try_graph();
     lambda_graph();
     branch_graph();
     record_graph();
