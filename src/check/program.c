@@ -172,6 +172,7 @@ static MO_MUST_USE bool wording(struct mo_arena *arena, struct mo_diags *diags,
 }
 
 static MO_MUST_USE bool check_specs(struct mo_arena *arena, struct mo_program *program,
+                                    struct mo_constant_context *constants,
                                     struct mo_checked_spec *specs, uint32_t count,
                                     struct mo_diags *diags) {
     const struct mo_signatures *signatures = program->signatures;
@@ -198,8 +199,8 @@ static MO_MUST_USE bool check_specs(struct mo_arena *arena, struct mo_program *p
                     if (!copy_text(arena, diags, sources, line->span, &spec->text))
                         return false;
                     bool halt;
-                    if (!mo_check_spec_body(arena, program->interfaces, signatures, fn, spec, NULL,
-                                            diags, &halt) &&
+                    if (!mo_check_spec_body(arena, program->interfaces, signatures, constants, fn,
+                                            spec, NULL, diags, &halt) &&
                         halt)
                         return false;
                 }
@@ -235,8 +236,8 @@ static MO_MUST_USE bool check_specs(struct mo_arena *arena, struct mo_program *p
             promise->conditions = conditions;
             bool halt;
             const struct mo_syntax *anchors = item->children[2];
-            if (!mo_check_spec_body(arena, program->interfaces, signatures, fn, promise, conditions,
-                                    diags, &halt)) {
+            if (!mo_check_spec_body(arena, program->interfaces, signatures, constants, fn, promise,
+                                    conditions, diags, &halt)) {
                 if (halt)
                     return false;
                 index += anchors->count; /* Anchors depend on a valid promise context. */
@@ -257,8 +258,8 @@ static MO_MUST_USE bool check_specs(struct mo_arena *arena, struct mo_program *p
                                                  .allows = allow};
                 if (!copy_text(arena, diags, sources, line->span, &spec->text))
                     return false;
-                if (!mo_check_spec_body(arena, program->interfaces, signatures, fn, spec, NULL,
-                                        diags, &halt) &&
+                if (!mo_check_spec_body(arena, program->interfaces, signatures, constants, fn, spec,
+                                        NULL, diags, &halt) &&
                     halt)
                     return false;
             }
@@ -296,8 +297,8 @@ static MO_MUST_USE bool check_specs(struct mo_arena *arena, struct mo_program *p
             struct mo_symbol owner = {.name = "test", .module = module, .declaration = item};
             struct mo_function_signature context = {.function = &owner, .type = &type};
             bool halt;
-            if (!mo_check_spec_body(arena, program->interfaces, signatures, &context, spec, NULL,
-                                    diags, &halt) &&
+            if (!mo_check_spec_body(arena, program->interfaces, signatures, constants, &context,
+                                    spec, NULL, diags, &halt) &&
                 halt)
                 return false;
         }
@@ -374,12 +375,6 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
         }
         for (uint32_t j = 0; j < items->count; j++) {
             const struct mo_syntax *item = items->children[j];
-            if (item->kind == MO_S_CONST) {
-                bool kept = report(diags, MO_CODE_CHECK_UNFINISHED, item->span,
-                                   "constant checking is not implemented", NULL);
-                (void)kept;
-                return NULL;
-            }
             if (item->kind == MO_S_TEST) {
                 spec_count++;
                 if (set->sources == NULL) {
@@ -426,6 +421,9 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
     for (uint32_t i = 0; i < signatures->count; i++)
         order[i] = &signatures->items[i];
     qsort(order, signatures->count, sizeof(*order), source_order);
+    struct mo_constant_context constants;
+    if (!mo_check_constants(arena, interfaces, signatures, &constants, diags))
+        return NULL;
     uint32_t main = UINT32_MAX;
     for (uint32_t i = 0; i < signatures->count; i++) {
         const struct mo_function_signature *fn = order[i];
@@ -435,7 +433,8 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
             main = i;
         uint32_t index = (uint32_t)(fn - signatures->items);
         bool halt;
-        if (!mo_check_function(arena, interfaces, signatures, index, diags, &functions[i], &halt) &&
+        if (!mo_check_function(arena, interfaces, signatures, &constants, index, diags,
+                               &functions[i], &halt) &&
             halt)
             return NULL;
     }
@@ -498,13 +497,15 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
                                    .signatures = signatures,
                                    .function_count = signatures->count,
                                    .functions = functions,
+                                   .constant_count = constants.count,
+                                   .constants = constants.items,
                                    .entry = {.function = main,
                                              .result = unit ? MO_ENTRY_UNIT : MO_ENTRY_STATUS,
                                              .capability_count = functions[main].parameter_count,
                                              .capabilities = functions[main].parameters}};
     struct mo_checked_spec *specs =
         allocate(arena, diags, span, spec_count, sizeof(*specs), _Alignof(struct mo_checked_spec));
-    if (specs == NULL || !check_specs(arena, program, specs, spec_count, diags))
+    if (specs == NULL || !check_specs(arena, program, &constants, specs, spec_count, diags))
         return NULL;
     const struct mo_checked_spec **spec_order =
         allocate(arena, diags, span, spec_count, sizeof(*spec_order),
@@ -527,7 +528,9 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
     }
     program->spec_count = spec_count;
     program->specs = ordered_specs;
-    return mo_check_recursion(arena, program, diags) ? program : NULL;
+    if (!mo_check_recursion(arena, program, diags))
+        return NULL;
+    return mo_order_constants(arena, program, &constants, diags) ? program : NULL;
 }
 
 struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *set,

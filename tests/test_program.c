@@ -43,6 +43,36 @@ static void free_fixture(struct fixture *f) {
     mo_sources_free(&f->sources);
 }
 
+static void constant_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nanswer = base - 5\nbase = 13\nindependent = true\n"
+             "fn main() : Int\nanswer\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        CHECK(f.program->constant_count == 3);
+        MO_ASSERT(f.program->constant_count == 3);
+        const struct mo_checked_constant *base = &f.program->constants[0];
+        const struct mo_checked_constant *answer = &f.program->constants[1];
+        CHECK(strcmp(base->symbol->name, "base") == 0 && strcmp(base->type->name, "Int") == 0);
+        CHECK(strcmp(answer->symbol->name, "answer") == 0 &&
+              strcmp(answer->type->name, "Int") == 0);
+        CHECK(strcmp(f.program->constants[2].symbol->name, "independent") == 0);
+        const struct mo_checked_body *body = &answer->initializer;
+        MO_ASSERT(body->root < body->count);
+        const struct mo_checked_expression *root = &body->items[body->root];
+        CHECK(root->operation == MO_T_MINUS && root->type == answer->type);
+        MO_ASSERT(root->operand_count == 2);
+        CHECK(body->items[root->operands[0]].symbol == base->symbol &&
+              body->items[root->operands[1]].syntax->text[0] == '5');
+        const struct mo_checked_body *main = &f.program->functions[f.program->entry.function].body;
+        bool read = false;
+        for (uint32_t i = 0; i < main->count; i++)
+            read = read || main->items[i].symbol == answer->symbol;
+        CHECK(read);
+    }
+    free_fixture(&f);
+}
+
 static void example_graph(void) {
     struct fixture f;
     init(&f, "module Main\nfn plus(a: Int) : Int\nexamples\n"
@@ -1799,8 +1829,7 @@ static void rejected_stages(void) {
          "fn main()\nend\n",
          MO_CODE_TRY_WRAPPER},
         {"fn main(console: Console)\nconsole.printed\nend\n", MO_CODE_CHECK_UNFINISHED},
-        {"value = 1\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
-        {"value = 1\nfn main() : Int\nmissing\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"value = 1\nfn main() : Int\nmissing\nend\n", MO_CODE_NAME_UNKNOWN},
         {"fn main() : Int\nexamples\n1\nend\n1\nend\n", MO_CODE_CONDITION_TYPE},
         {"fn helper(a: Int) : Int\nexamples\na == a\nend\na\nend\nfn main()\nend\n",
          MO_CODE_NAME_UNKNOWN},
@@ -2135,6 +2164,7 @@ static void corpus(void) {
 
 static void run(void *argument) {
     (void)argument;
+    constant_graph();
     example_graph();
     promise_graph();
     generic_spec_graph();
