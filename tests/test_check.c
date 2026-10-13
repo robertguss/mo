@@ -3,6 +3,7 @@
 #include "base/buffer.h"
 #include "base/codes.h"
 #include "base/limits.h"
+#include "base/stack.h"
 #include "check/check.h"
 #include "test.h"
 
@@ -1064,7 +1065,8 @@ static void source_limits(void) {
     finish(&f);
 }
 
-int main(void) {
+static void run_tests(void *argument) {
+    (void)argument;
     load_graph();
     interfaces();
     corpus();
@@ -1085,5 +1087,9 @@ int main(void) {
     import_limit();
     import_scaling();
     source_limits();
+}
+
+int main(void) {
+    CHECK(mo_with_stack(MO_SOURCE_STACK_SIZE, run_tests, NULL) == 0);
     return mo_test_report("check");
 }

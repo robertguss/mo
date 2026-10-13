@@ -1,6 +1,7 @@
 #include "base/buffer.h"
 #include "base/codes.h"
 #include "base/limits.h"
+#include "base/stack.h"
 #include "check/check.h"
 #include "test.h"
 
@@ -866,7 +867,8 @@ static void work_limits(void) {
     mo_buffer_free(&source);
 }
 
-int main(void) {
+static void run_tests(void *argument) {
+    (void)argument;
     record_fields();
     field_assignment();
     choice_patterns();
@@ -896,5 +898,9 @@ int main(void) {
     repeated_signature();
     syntax_depth();
     work_limits();
+}
+
+int main(void) {
+    CHECK(mo_with_stack(MO_SOURCE_STACK_SIZE, run_tests, NULL) == 0);
     return mo_test_report("check bodies");
 }

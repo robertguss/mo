@@ -1,6 +1,7 @@
 #include "base/buffer.h"
 #include "base/codes.h"
 #include "base/limits.h"
+#include "base/stack.h"
 #include "check/check.h"
 
 #include <string.h>
@@ -227,9 +228,17 @@ done:
     mo_sources_free(&sources);
 }
 
-int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+struct input {
+    const uint8_t *data;
+    size_t size;
+};
+
+static void fuzz_input(void *argument) {
+    const struct input *input = argument;
+    const uint8_t *data = input->data;
+    size_t size = input->size;
     if (size > (1 << 20))
-        return 0;
+        return;
     uint8_t choice = size == 0 ? 0 : data[0];
     size_t limit = (choice & 1) != 0 ? (size_t)choice * (size == 0 ? 1 : size) : 16 << 20;
     check(data, size, limit, -1);
@@ -276,5 +285,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     MO_ASSERT(mo_buffer_append_text(&source, ")\nend\n"));
     check(source.bytes, source.length, limit, succeeds ? 1 : 0);
     mo_buffer_free(&source);
+}
+
+int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+    struct input input = {data, size};
+    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, fuzz_input, &input) == 0);
     return 0;
 }

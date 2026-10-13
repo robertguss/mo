@@ -133,6 +133,10 @@
  * A hostile program cannot multiply the per-function budget by its functions. */
 #define MO_LIMIT_PROGRAM_CHECK_WORK (UINT64_C(1) << 28)
 
+/* Reserved POSIX stack for source-stage execution, not an input restriction.
+ * Tests, fuzzing and tools use base/stack.h rather than platform thread defaults. */
+#define MO_SOURCE_STACK_SIZE (32 << 20)
+
 /* Registers of one function, its parameters included. The code generator refuses a function that
  * needs more: E1013. The loader refuses a function with more. */
 #define MO_LIMIT_FUNCTION_REGISTERS 65535

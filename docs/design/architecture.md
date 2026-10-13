@@ -301,6 +301,21 @@ use the existing base limits and their codes. E1101 refuses a module outside
 its root; E1102 reports an unreadable library folder without a language
 section citation.
 
+**Source-stage stack.** Tools, checker tests and the `fuzz_check` and
+`fuzz_bodies` targets run source work through `mo_with_stack` in
+`base/stack.h`. It sets a new POSIX thread's stack explicitly and joins it
+before returning; arenas, diagnostics and the shared work budget remain
+single-threaded. It returns a POSIX error number without running the callback
+if thread setup fails. It does not change the caller's stack limit or assume
+the platform's main-thread or secondary-thread default.
+The 255-call fixture containing the full precedence ladder first passed at
+7.75 MiB in clang's `-O0` debug build and 10.5 MiB with `-O1` ASan/UBSan on
+Linux x86-64, in a 256 KiB sweep; 7.5 MiB and 10.25 MiB respectively failed.
+`MO_SOURCE_STACK_SIZE` reserves 32 MiB, more than twice the larger measured
+minimum. Unused stack is reserved address space, not touched memory. Compiler
+flags and platform instrumentation can change these measurements; the deep
+checks run under the same explicit allowance in CI and fuzzing.
+
 ### 3.3 Names and types
 
 **Module interfaces precede bodies.** `mo_resolve_modules` indexes complete
@@ -420,10 +435,8 @@ charged to the caller arena (E1058), with no additional scratch arena.
 `MO_LIMIT_SOURCE_INFERENCE_DEPTH` allows sixteen inference frames per source
 nesting level plus eight function wrappers (E1106). A source level can retain
 the entire precedence ladder, not just a call and its argument. Flat chains
-remain iterative. The 255-call regression with every precedence level passed
-with a 6 MiB stack in clang's debug build and an 8 MiB stack under ASan/UBSan
-on Linux x86-64; 4 MiB and 6 MiB respectively failed. Callers should allow
-16 MiB under debug/sanitizers rather than relying on those measured minima.
+remain iterative. Callers use the explicit source-stage stack of section 3.2;
+the input depth bound is not a guarantee about a platform's default C stack.
 
 Non-lambda positional arguments constrain the callee before contextual lambdas,
 regardless of written order; output notes retain written postorder. Binder notes

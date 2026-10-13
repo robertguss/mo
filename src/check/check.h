@@ -180,8 +180,9 @@ struct mo_inferred_body {
  * E1105 bounds inferred type paths independently of source nesting; E1106
  * bounds recursive inference frames. The limits are in base/limits.h. All
  * temporary and result storage uses the caller arena, with E1058 on exhaustion.
- * Syntax and type walks use depth-bounded C recursion; allow 16 MiB of
- * stack under debug/sanitizers. No scratch allocation bypasses the caller arena. */
+ * Syntax and type walks use depth-bounded C recursion; run source stages via
+ * base/stack.h with MO_SOURCE_STACK_SIZE, not the platform's default stack.
+ * No scratch allocation bypasses the caller arena. */
 MO_MUST_USE struct mo_inferred_body *
 mo_infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
                   const struct mo_signatures *signatures, uint32_t function,

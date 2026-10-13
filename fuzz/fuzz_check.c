@@ -2,6 +2,8 @@
 
 #include "base/buffer.h"
 #include "base/codes.h"
+#include "base/limits.h"
+#include "base/stack.h"
 #include "check/check.h"
 
 #include <stdio.h>
@@ -223,9 +225,17 @@ static void generated(const uint8_t *data, size_t size, size_t limit) {
     mo_sources_free(&sources);
 }
 
-int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+struct input {
+    const uint8_t *data;
+    size_t size;
+};
+
+static void fuzz_input(void *argument) {
+    const struct input *input = argument;
+    const uint8_t *data = input->data;
+    size_t size = input->size;
     if (size > (1 << 16))
-        return 0;
+        return;
     setup();
     /* Three NUL-separated documents mutate a real graph. Ordinary .mo seeds
      * get Money and Another defaults so their imports reach resolution too. */
@@ -255,5 +265,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     mo_arena_free(&arena);
     mo_diags_free(&diags);
     mo_sources_free(&sources);
+}
+
+int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+    struct input input = {data, size};
+    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, fuzz_input, &input) == 0);
     return 0;
 }
