@@ -978,6 +978,12 @@ use the full constant prefix; an arena-backed work queue tightens functions
 reachable from initializer i to prefix i and propagates through calls and
 closure bodies. Metadata retains module/source order separately from init order,
 and initializer nodes carry the same span/binder/closure metadata as functions.
+Only zero-operand constant reads become Core globals; calls through a constant
+function value become applications, never constructor expressions. Core closures
+capture their creation prefix. A function-valued initializer whose body or
+adapter needs a later global currently refuses E1150 before Core is returned,
+including a named function alias. Lowering does not reorder the checked constants
+or invent an initialization dependency for merely creating a function.
 
 Tests and example lines are separate Unit spec functions with stable source
 ordinals, original wording/line bytes and declaration spans. Successful
