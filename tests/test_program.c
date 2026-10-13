@@ -1,3 +1,4 @@
+#include "base/buffer.h"
 #include "base/codes.h"
 #include "base/limits.h"
 #include "base/stack.h"
@@ -19,7 +20,7 @@ struct fixture {
 static void init(struct fixture *f, const char *text) {
     *f = (struct fixture){0};
     mo_arena_init(&f->syntax, 1 << 20);
-    mo_arena_init(&f->arena, 4 << 20);
+    mo_arena_init(&f->arena, 16 << 20);
     MO_ASSERT(mo_sources_init(&f->sources) && mo_diags_init(&f->diags));
     uint32_t file;
     struct mo_source_error error;
@@ -460,6 +461,115 @@ static void collection_graph(void) {
     free_fixture(&f);
 }
 
+static void rejected_stages(void) {
+    static const struct {
+        const char *source;
+        uint16_t code;
+    } cases[] = {
+        {"fn helper()\nend\n", MO_CODE_MAIN_CONTRACT},
+        {"fn main() : Text\n\"not an entry result\"\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn main(value: Int) : Int\nvalue\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn main() : Int\n0\nend\nfn main(console: Console)\nconsole.print(\"x\")\nend\n",
+         MO_CODE_OVERLOAD},
+        {"fn identity(value: T) : T\nvalue\nend\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn main() : Int\nx = 1\nf = fn() x end\nf()\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn main() : Int\nm = {\"a\": 1}\ncase m\n_: 1\nend\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn main() : Int\ntry Some(1)\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn main() : Int\nSome(1) or 0\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn main(console: Console)\nconsole.error(\"x\")\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"value = 1\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn main() : Int\nexamples\n1 == 1\nend\n1\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn helper() : Int\nmissing\nend\nfn main() : Int\n0\nend\n", MO_CODE_NAME_UNKNOWN},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, 4096);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\n"));
+        MO_ASSERT(mo_buffer_append_text(&source, cases[i].source));
+        MO_ASSERT(mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init(&f, (const char *)source.bytes);
+        CHECK(f.program == NULL);
+        CHECK(f.diags.count == 1 && f.diags.items[0].code == cases[i].code);
+        free_fixture(&f);
+        mo_buffer_free(&source);
+    }
+}
+
+static void depth_graph(void) {
+    struct mo_buffer source;
+    mo_buffer_init(&source, 32768);
+    MO_ASSERT(mo_buffer_append_text(
+        &source, "module Main\nfn run(a: Bool, b: Bool, c: Bool, d: Range, e: Int, "
+                 "f: Int, g: Int, h: fn(Bool) : Int) : Bool\n"));
+    for (uint32_t i = 0; i < MO_LIMIT_NESTING_DEPTH - 1; i++)
+        MO_ASSERT(mo_buffer_append_text(&source, "a implies b or c and not d == e .. f + g * -h("));
+    MO_ASSERT(mo_buffer_append_text(&source, "a"));
+    for (uint32_t i = 0; i < MO_LIMIT_NESTING_DEPTH - 1; i++)
+        MO_ASSERT(mo_buffer_append_text(&source, ")"));
+    MO_ASSERT(mo_buffer_append_text(&source, "\nend\nfn main()\nend\n"));
+    MO_ASSERT(mo_buffer_append_byte(&source, 0));
+    struct fixture f;
+    init(&f, (const char *)source.bytes);
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        CHECK(strcmp(body->items[body->root].type->name, "Bool") == 0);
+        for (uint32_t i = 0; i < body->count; i++)
+            for (uint32_t j = 0; j < body->items[i].operand_count; j++)
+                CHECK(body->items[i].operands[j] < i);
+    }
+    free_fixture(&f);
+    mo_buffer_free(&source);
+}
+
+static void allocation_failures(void) {
+    struct fixture f;
+    init(&f,
+         "module Main\nstruct Box\nvalue: Int\nend\n"
+         "fn main() : Int\nvar total = 0\nfor i in 0..3\ntotal += i\nend\n"
+         "box = Some(Box(value: total))\ncase box\nSome(Box(value: n)): n\nNone: 0\nend\nend\n");
+    MO_ASSERT(f.program != NULL && !mo_diags_any(&f.diags));
+    size_t used = f.arena.used;
+    uint32_t failures = 0, successes = 0;
+    for (size_t limit = 0; limit <= used + 128; limit += 128) {
+        mo_arena_free(&f.arena);
+        mo_arena_init(&f.arena, limit);
+        mo_diags_free(&f.diags);
+        MO_ASSERT(mo_diags_init(&f.diags));
+        f.program = mo_check(&f.arena, &f.set, &f.diags);
+        if (f.program == NULL) {
+            failures++;
+            CHECK(mo_diags_any(&f.diags));
+            for (uint32_t i = 0; i < f.diags.count; i++)
+                CHECK(f.diags.items[i].code == MO_CODE_CHECK_NO_MEMORY);
+        } else {
+            successes++;
+            CHECK(!mo_diags_any(&f.diags));
+        }
+    }
+    CHECK(failures != 0 && successes != 0);
+    free_fixture(&f);
+}
+
+static void corpus(void) {
+    static const char *const paths[] = {"fuzz/corpus/fuzz_program/loops.mo",
+                                        "fuzz/corpus/fuzz_program/patterns.mo",
+                                        "fuzz/corpus/fuzz_program/lambdas.mo"};
+    struct mo_sources sources;
+    MO_ASSERT(mo_sources_init(&sources));
+    for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+        uint32_t file;
+        struct mo_source_error error;
+        MO_ASSERT(mo_sources_add(&sources, paths[i], &file, &error));
+        struct fixture f;
+        init(&f, (const char *)sources.files[file].bytes);
+        CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+        free_fixture(&f);
+    }
+    mo_sources_free(&sources);
+}
+
 static void run(void *argument) {
     (void)argument;
     entry_graph();
@@ -471,6 +581,10 @@ static void run(void *argument) {
     loop_graph();
     builtin_graph();
     collection_graph();
+    rejected_stages();
+    depth_graph();
+    allocation_failures();
+    corpus();
 }
 
 int main(void) {

@@ -2246,8 +2246,9 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         bool logical =
             node->token == MO_T_AND || node->token == MO_T_OR || node->token == MO_T_IMPLIES;
         struct local *mark = p->locals;
-        struct value left = logical ? condition(p, node->children[0], node->token != MO_T_OR)
-                                    : infer(p, node->children[0], NULL);
+        struct value left = logical && node->token != MO_T_OR
+                                ? condition(p, node->children[0], true)
+                                : infer(p, node->children[0], NULL);
         struct value result = binary(p, node->token, left, node->children[1], expected);
         if (result.type == NULL || (logical && node->token != MO_T_AND && !leave(p, mark)))
             return (struct value){0};
@@ -2255,9 +2256,8 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     }
     case MO_S_BINARY_CHAIN: {
         enum mo_syntax_token op = node->children[1]->token;
-        bool logical = op == MO_T_AND || op == MO_T_OR;
-        struct value result = logical ? condition(p, node->children[0], op == MO_T_AND)
-                                      : infer(p, node->children[0], NULL);
+        struct value result = op == MO_T_AND ? condition(p, node->children[0], true)
+                                             : infer(p, node->children[0], NULL);
         for (uint32_t i = 1; i < node->count && result.type != NULL; i += 2) {
             result = binary(p, node->children[i]->token, result, node->children[i + 1], expected);
             if (p->checked && result.type != NULL && i + 2 < node->count) {

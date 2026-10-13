@@ -309,10 +309,12 @@ before returning; arenas, diagnostics and the shared work budget remain
 single-threaded. It returns a POSIX error number without running the callback
 if thread setup fails. It does not change the caller's stack limit or assume
 the platform's main-thread or secondary-thread default.
-The 255-call fixture containing the full precedence ladder first passed at
-7.75 MiB in clang's `-O0` debug build and 10.5 MiB with `-O1` ASan/UBSan on
-Linux x86-64, in a 256 KiB sweep; 7.5 MiB and 10.25 MiB respectively failed.
-`MO_SOURCE_STACK_SIZE` reserves 32 MiB, more than twice the larger measured
+The 255-call fixture containing the full precedence ladder, now producing a
+checked graph through `mo_check`, first passed at 16.25 MiB in clang's `-O0`
+debug build and 22.25 MiB with `-O1` ASan/UBSan on Linux x86-64, in a 256 KiB
+sweep; 16 MiB and 22 MiB respectively failed. Graph emission enlarges inference
+frames; the earlier inference-only minima were 7.75 MiB and 10.5 MiB.
+`MO_SOURCE_STACK_SIZE` reserves 48 MiB, more than twice the larger measured
 minimum. Unused stack is reserved address space, not touched memory. Compiler
 flags and platform instrumentation can change these measurements; the deep
 checks run under the same explicit allowance in CI and fuzzing.
@@ -1517,6 +1519,11 @@ Native method values, other host operations, generic functions, map expressions,
 imports, constants/specs and derived abilities
 still report E1103. Checking stops at the first failed stage or body; no staged
 inference result or partly filled program is returned as certified output.
+The whole-program corpus asserts resolved graphs and canonical binders, checks
+unfinished-stage rejection, sweeps arena limits and reaches maximum nesting.
+`fuzz_program` walks graph invariants and varies allocation budgets. Generated
+arithmetic controls also compare their graph's value with an independent
+calculation from input bytes, and require a type-changing control to be refused.
 
 Each named function has a typed expression graph in written postorder, explicit
 operand indices, a root, and typed canonical binders, including nested lambdas
