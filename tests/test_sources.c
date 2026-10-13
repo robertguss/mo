@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 /* Adds text as a file named test.mo, and returns its index. */
@@ -372,6 +373,24 @@ static void test_a_path_over_the_limit_is_refused(void) {
     mo_sources_free(&sources);
 }
 
+static void test_special_files_are_refused(void) {
+    struct mo_sources sources;
+    CHECK(mo_sources_init(&sources));
+    struct mo_source_error error;
+    uint32_t file = UINT32_MAX;
+    MO_ASSERT(mkfifo(path_of("pipe.mo"), 0600) == 0);
+    CHECK(!mo_sources_add(&sources, path_of("pipe.mo"), &file, &error));
+    CHECK(error.problem == MO_SOURCE_UNREADABLE);
+    CHECK(sources.count == 0 && file == UINT32_MAX);
+    MO_ASSERT(unlink(path_of("pipe.mo")) == 0);
+    MO_ASSERT(symlink("/dev/null", path_of("device.mo")) == 0);
+    CHECK(!mo_sources_add(&sources, path_of("device.mo"), &file, &error));
+    CHECK(error.problem == MO_SOURCE_UNREADABLE);
+    CHECK(sources.count == 0);
+    MO_ASSERT(unlink(path_of("device.mo")) == 0);
+    mo_sources_free(&sources);
+}
+
 static void remove_files(void) {
     const char *names[] = {"main.mo", "empty.mo", "long.mo", "exact.mo",
                            "over.mo", "small.mo", "one.mo"};
@@ -391,6 +410,7 @@ int main(void) {
     test_files_keep_their_path_and_bytes();
     test_a_path_over_the_limit_is_refused();
     if (make_folder()) {
+        test_special_files_are_refused();
         test_reading_files();
         test_a_file_over_the_limit_is_refused();
         test_a_program_over_the_limit_is_refused();
