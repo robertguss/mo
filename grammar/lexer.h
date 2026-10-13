@@ -25,11 +25,13 @@ struct lexer {
     const unsigned char *src;
     size_t len;
     size_t pos;
-    int line;          // 1-based, counted from the first line given to mo_lexer_init
-    int col;           // 1-based, counted in characters
-    int start_token;   // emitted before anything else, then 0
-    int last;          // the last token returned, 0 before the first
-    size_t last_start; // where the last token's text starts, and its length
+    int line;               // 1-based, counted from the first line given to mo_lexer_init
+    int col;                // 1-based, counted in characters
+    int start_token;        // emitted before anything else, then 0
+    int last;               // the last token returned, 0 before the first
+    bool lambda_parameters; // after fn(, followed only by names, _ and commas
+    bool lambda_close;      // the last scanned token closes lambda parameters
+    size_t last_start;      // where the last token's text starts, and its length
     size_t last_length;
     size_t previous_start; // the same for the token before it
     size_t previous_length;

@@ -646,8 +646,8 @@ static int scan(struct lexer *lx, struct node **value, int *line, int *col, bool
         return text_body(lx, value, *line, *col, false, open->triple, open->indent, false);
     }
     if (c == '[' && !*newline &&
-        (lx->last == NAME || lx->last == CAPNAME || lx->last == RPAREN || lx->last == RBRACK ||
-         lx->last == TEXT || lx->last == TEXT_TAIL)) {
+        (lx->last == NAME || lx->last == CAPNAME || (lx->last == RPAREN && !lx->lambda_close) ||
+         lx->last == RBRACK || lx->last == TEXT || lx->last == TEXT_TAIL)) {
         mo_lexer_error(lx, *line, *col,
                        "Mo has no indexing with [...]: items.get(i) and map.get(key) return an "
                        "Option");
@@ -892,6 +892,12 @@ int yylex(YYSTYPE *value, YYLTYPE *location, struct lexer *lx) {
         if (token == YYerror) {
             return YYerror;
         }
+        // Lambda parameters cannot nest: only names, _ and commas are allowed.
+        // Update once per scanned token, not again when returning pending tokens.
+        lx->lambda_close = token == RPAREN && lx->lambda_parameters;
+        lx->lambda_parameters =
+            (token == LPAREN && lx->last == FN) ||
+            (lx->lambda_parameters && (token == NAME || token == UNDERSCORE || token == COMMA));
         span_start = lx->token_start;
         span_length = lx->pos - lx->token_start;
         bool line_ends = false;

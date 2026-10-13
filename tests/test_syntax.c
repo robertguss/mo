@@ -578,7 +578,7 @@ static void review_recovery(void) {
         {"not a == b == c\n", 1, 0, true},
         {"a or b .. c .. d\n", 1, 0, true},
         {"ready and x is Some(y) == z\n", 1, 0, true},
-        {"f = fn(x) [x] end\n", 1, 0, true},
+        {"f = g(x)[x]\n", 1, 0, true},
         {"module M\nfn f()\nx = \"a #{ g(1\nend\nfn h()\n2\nend\nfn k()\n3\nend\n", 1, 3, false},
         {"module M\nfn f()\nif x = 1\n2\nend\n3\nend\nfn g()\n4\nend\n", 1, 2, false},
         {"module M\nfn f()\nfor x xs\n2\nend\n3\nend\nfn g()\n4\nend\n", 1, 2, false},
@@ -856,6 +856,48 @@ static void performance(void) {
     mo_buffer_free(&source);
 }
 
+static void lambda_lists(void) {
+    const char *good[] = {
+        "f = fn(x) [x, x] end\n",
+        "f = fn() [] end\n",
+        "xs.map(fn(x) [x, x] end)\n",
+        "f = fn(\n x,\n y\n) [x, y] end\n",
+        "f = fn(x) [fn(y) [x, y] end, x] end\n",
+        "f = fn(x) [g(x), (x)] end\n",
+        "f = fn(x)\n# a multi-line body\n[x]\nend\n",
+        "f = fn(x) \"#{[x].map(fn(y) [y] end)}\" end\n",
+        "fn visit(f: fn(List(Int)) : List(Int))\nend\n",
+    };
+    for (size_t i = 0; i < sizeof(good) / sizeof(good[0]); i++) {
+        struct fixture f;
+        init(&f, good[i], true);
+        CHECK(f.module != NULL && !mo_diags_any(&f.diags));
+        if (f.module != NULL && !mo_diags_any(&f.diags))
+            spans(&f, f.module->tree);
+        if (i == 0 && f.module != NULL && !mo_diags_any(&f.diags)) {
+            const struct mo_syntax *lambda = item(&f, 0)->children[1];
+            CHECK(lambda->kind == MO_S_LAMBDA);
+            CHECK(lambda->children[0]->count == 1);
+            CHECK(lambda->children[1]->kind == MO_S_LIST && lambda->children[1]->count == 2);
+        }
+        free_fixture(&f);
+    }
+    const char *bad[] = {"g(x)[x]\n",
+                         "(x)[x]\n",
+                         "(fn(x) [x] end)[0]\n",
+                         "f = fn(x) g(x)[x] end\n",
+                         "f = fn(x) [(x)[0]] end\n",
+                         "f = fn(x) [g(x)[0]] end\n"};
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        struct fixture f;
+        init(&f, bad[i], true);
+        CHECK(f.module != NULL && f.diags.count == 1);
+        if (f.diags.count == 1)
+            CHECK(f.diags.items[0].code == MO_CODE_SOURCE_INDEX);
+        free_fixture(&f);
+    }
+}
+
 int main(void) {
     shapes();
     declarations_and_statements();
@@ -868,6 +910,7 @@ int main(void) {
     review_recovery();
     arena_sweeps();
     nesting_and_chains();
+    lambda_lists();
     performance();
     return mo_test_report("test_syntax");
 }

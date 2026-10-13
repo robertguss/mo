@@ -24,6 +24,8 @@ struct mo_lex {
     uint32_t line;
     uint32_t column;
     enum mo_syntax_token last;
+    bool lambda_parameters; /* after fn(, followed only by names, _ and commas */
+    bool lambda_close;      /* the last scanned token closes lambda parameters */
     struct mo_token pending;
     bool has_pending;
     uint32_t depth;
