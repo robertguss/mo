@@ -220,6 +220,10 @@ static void corpus(void) {
         {"e0082.mo", "e0082.diag", SIGNATURES},
         {"e0083.mo", "e0083.diag", PROGRAM},
         {"e0084.mo", "e0084.diag", SIGNATURES},
+        {"e0085.mo", "e0085.diag", PROGRAM},
+        {"e0086.mo", "e0086.diag", PROGRAM},
+        {"e0087.mo", "e0087.diag", PROGRAM},
+        {"e0087-ambiguous.mo", "e0087-ambiguous.diag", PROGRAM},
         {"e0412.mo", "e0412.diag", BODIES},
         {"e1103.mo", "e1103.diag", BODIES},
     };

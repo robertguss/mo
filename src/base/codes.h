@@ -110,6 +110,9 @@
     X(82, ABILITY_CUSTOMIZER, "9.2")                                                               \
     X(83, POLYMORPHIC_RECURSION, "5.5")                                                            \
     X(84, DATA_RECURSION, "9.1")                                                                   \
+    X(85, TRY_INPUT, "8.3")                                                                        \
+    X(86, TRY_RESULT, "8.3")                                                                       \
+    X(87, TRY_WRAPPER, "8.3")                                                                      \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \

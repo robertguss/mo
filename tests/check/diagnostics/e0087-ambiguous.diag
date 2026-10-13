@@ -1,0 +1,6 @@
+E0087 8.3
+0:112..115
+try needs exactly one failure case holding Text as its unnamed value; found 2
+Keep exactly one case with this unnamed value; make the other matching cases use named fields, or handle the failure with case (reference 8.3).
+try needs exactly one failure case holding Text as its unnamed value; found 2
+fixes 0

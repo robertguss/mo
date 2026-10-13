@@ -808,22 +808,32 @@ static MO_MUST_USE bool requirements(struct preparation *p, const struct mo_sour
     return true;
 }
 
-static MO_MUST_USE bool customizer(struct preparation *p, const struct mo_source_type *type) {
-    bool compare = strcmp(p->function->name, "compare") == 0;
-    if (!compare && strcmp(p->function->name, "to_text") != 0)
+static MO_MUST_USE bool customizer_candidate(const struct mo_module_interfaces *interfaces,
+                                             const struct mo_symbol *function,
+                                             const struct mo_source_type *type) {
+    bool compare = strcmp(function->name, "compare") == 0;
+    if ((!compare && strcmp(function->name, "to_text") != 0) || type->count < 2)
+        return false;
+    const struct mo_source_type *receiver = type->arguments[0];
+    if (receiver->kind != MO_SOURCE_NAMED)
+        return false;
+    if (receiver->declaration != NULL && receiver->module == function->module)
         return true;
+    const struct mo_module_scope *scope = &interfaces->scopes[function->module];
+    /* FileError is native data with an explicitly trusted library customizer. */
+    return !compare && receiver->module == UINT32_MAX && strcmp(receiver->name, "FileError") == 0 &&
+           scope->library && strcmp(scope->name, "FileError") == 0;
+}
+
+static MO_MUST_USE bool customizer(struct preparation *p, const struct mo_source_type *type) {
+    if (!customizer_candidate(p->interfaces, p->function, type))
+        return true;
+    bool compare = strcmp(p->function->name, "compare") == 0;
     bool valid = type->count == (compare ? 3u : 2u);
-    const struct mo_source_type *receiver = valid ? type->arguments[0] : NULL;
+    const struct mo_source_type *receiver = type->arguments[0];
     const struct mo_source_type *result = type->arguments[type->count - 1];
-    const struct mo_module_scope *scope = &p->interfaces->scopes[p->function->module];
-    bool library = receiver != NULL && receiver->module == UINT32_MAX &&
-                   strcmp(receiver->name, "FileError") == 0 && scope->library &&
-                   strcmp(scope->name, "FileError") == 0 && !compare;
-    bool owned = receiver != NULL && receiver->declaration != NULL &&
-                 receiver->module == p->function->module;
-    valid = valid && receiver->kind == MO_SOURCE_NAMED && (owned || library) &&
-            (!compare || type->arguments[1] == receiver) && result->kind == MO_SOURCE_NAMED &&
-            result->module == UINT32_MAX &&
+    valid = valid && (!compare || type->arguments[1] == receiver) &&
+            result->kind == MO_SOURCE_NAMED && result->module == UINT32_MAX &&
             strcmp(result->name, compare ? "Ordering" : "Text") == 0;
     uint32_t parameters = 0;
     for (uint32_t i = 0; valid && i < receiver->count; i++) {
@@ -837,8 +847,7 @@ static MO_MUST_USE bool customizer(struct preparation *p, const struct mo_source
                    compare ? "compare doesn't have the type's order signature"
                            : "to_text doesn't have the type's text signature",
                    "A type customizes Order or Text in its own module with compare(T, T): Ordering "
-                   "or to_text(T): Text (reference 9.2). This stage reserves these names for "
-                   "customizers; it doesn't certify unrelated functions with these names.");
+                   "or to_text(T): Text (reference 9.2).");
 }
 
 /* The table spells types in Mo. Add positional parameter names, then use the
@@ -1122,8 +1131,8 @@ struct mo_signatures *mo_prepare_available_signatures(struct mo_arena *arena,
     if (out->customizers == NULL)
         goto failed;
     for (uint32_t i = 0; i < count; i++)
-        if (items[i].type != NULL && (strcmp(items[i].function->name, "to_text") == 0 ||
-                                      strcmp(items[i].function->name, "compare") == 0))
+        if (items[i].type != NULL &&
+            customizer_candidate(interfaces, items[i].function, items[i].type))
             out->customizers[out->customizer_count++] = &items[i];
     qsort(out->customizers, out->customizer_count, sizeof(*out->customizers), customizer_order);
     out->native_count = (uint32_t)(sizeof(native_texts) / sizeof(native_texts[0]));
