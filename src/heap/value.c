@@ -1,5 +1,6 @@
 #include "heap/internal.h"
 
+#include <errno.h>
 #include <string.h>
 
 /* Validate UTF-8 before allocating or changing ownership. */
@@ -52,6 +53,7 @@ static MO_MUST_USE bool byte_value(struct mo_heap *process, enum mo_type_kind ki
         return false;
     }
     if (kind == MO_TYPE_TEXT && !valid_utf8(bytes, length)) {
+        errno = EINVAL;
         return false;
     }
     size_t trailer = kind == MO_TYPE_BIGINT ? sizeof(uint64_t) : 0;

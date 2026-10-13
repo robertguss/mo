@@ -17,7 +17,8 @@ bool mo_state_new(struct mo_heap *process, const uint32_t *types, const struct m
     }
     for (uint32_t i = 0; i < count; i++) {
         if (types[i] >= process->types->count ||
-            (process->abilities[types[i]] & MO_ABILITY_EQUAL) == 0) {
+            ((process->abilities[types[i]] & MO_ABILITY_EQUAL) == 0 &&
+             process->types->items[types[i]].kind != MO_TYPE_CAPABILITY)) {
             return false;
         }
     }

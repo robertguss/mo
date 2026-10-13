@@ -154,6 +154,11 @@
  * (architecture 7, D236): Linux's own limit. */
 #define MO_LIMIT_PATH_LINKS 40
 
+/* Native filesystem resolver bytes, including NUL. Paths or expanded link
+ * targets past this produce Failed(path, "path too long"). Fake paths use
+ * charged dynamic storage instead, and are not constrained by OS path buffers. */
+#define MO_LIMIT_HOST_PATH_SIZE 4096
+
 /* Bytes in one bytecode file. */
 #define MO_LIMIT_BYTECODE_SIZE (256 << 20)
 

@@ -32,9 +32,18 @@ MO_MUST_USE enum mo_host_outcome mo_host_files(struct mo_host *host, struct mo_h
 MO_MUST_USE enum mo_host_outcome mo_host_console_fake(struct mo_host *host, struct mo_heap *heap,
                                                       uint32_t type, const struct mo_cell *input,
                                                       struct mo_cell *out);
+MO_MUST_USE enum mo_host_outcome mo_host_console_real(struct mo_heap *heap, uint32_t type,
+                                                      struct mo_cell *out);
 MO_MUST_USE enum mo_host_outcome mo_host_state_cap(struct mo_host *host, struct mo_heap *heap,
                                                    uint32_t type, bool fake, const uint32_t *types,
                                                    const struct mo_cell *values, uint32_t count,
                                                    struct mo_cell *out);
+MO_MUST_USE enum mo_host_outcome mo_host_random_new(struct mo_host *host, struct mo_heap *heap,
+                                                    uint32_t type, bool fake, uint64_t seed,
+                                                    struct mo_cell *out,
+                                                    struct mo_host_error *error);
+MO_MUST_USE enum mo_host_outcome mo_host_random(struct mo_host *host, struct mo_heap *heap,
+                                                uint32_t type, const struct mo_cell *args,
+                                                struct mo_cell *out, struct mo_host_error *error);
 
 #endif

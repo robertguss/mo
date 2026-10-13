@@ -178,7 +178,8 @@ void mo_value_drop(struct mo_heap *process, uint32_t type, struct mo_cell value)
  * field/element types, with counts matching the layout, case or captures.
  * Arrays may be NULL only when count is zero. out must not overlap input
  * arrays or hold an owned reference. text refuses invalid UTF-8. text, bytes
- * and bigint copy their input bytes; length is at most MO_LIMIT_VALUE_BYTES,
+ * and bigint use ENOSPC/ENOMEM for allocation refusal; invalid UTF-8 is EINVAL.
+ * They copy their input bytes; length is at most MO_LIMIT_VALUE_BYTES,
  * and a byte pointer may be NULL only when length is zero. bytes accepts every
  * byte sequence, including invalid UTF-8 and NUL. bigint uses base's shared
  * signs and bytecode 3.1's little-endian magnitude: ZERO iff length is zero;
@@ -251,7 +252,8 @@ MO_MUST_USE bool mo_value_make_immortal(struct mo_heap *process, uint32_t type,
                                         struct mo_cell value);
 
 /* Host storage, not host operations. A state shares typed mutable slots and
- * accepts only types with Equal (therefore no reachable function/capability).
+ * accepts Equal types, or capability parents of deferred real folder handles.
+ * The host must keep capability parent links acyclic. Fakes use Equal slots.
  * Its slot types never change; get borrows, set borrows its input. */
 struct mo_state;
 MO_MUST_USE bool mo_state_new(struct mo_heap *process, const uint32_t *types,

@@ -830,8 +830,17 @@ it is given. It never calls the operating system itself.
   when a component is a link, it reads it with `readlinkat`, refuses an
   absolute target, and resolves the target from the link's folder in the same
   way, refusing any step that would leave the root. Either way a path passes
-  through at most `MO_LIMIT_PATH_LINKS` links, and a race can't lead outside
-  the folder. `remove` unlinks its last component without following it, so it
+  through at most `MO_LIMIT_PATH_LINKS` links. The capability's folder is the
+  directory object held open, not its pathname. Each directory opened during
+  a lookup is authorized for that operation; `..`, including in a link target,
+  pops a recorded traversal ancestor and never climbs above that root object.
+  Mo's own resolution never leaves its directory-object authority through
+  links or `..`. Another process may rename an intermediate directory during
+  the lookup, which may then follow that object to its new location. Preventing
+  those concurrent reparentings is outside the portable guarantee; no POSIX
+  ancestry precheck or postcheck can make the namespace an atomic snapshot.
+  This is directory-object authority, as in Capsicum, WASI, cap-std and Go's
+  `os.Root`. `remove` unlinks its last component without following it, so it
   removes a link itself. A refused link gives `NotAllowed`, like any path that
   would leave the folder. Errors map to `FileError`: a missing file to
   `NotFound`, a refused path or permission to `NotAllowed`, invalid UTF-8 in
