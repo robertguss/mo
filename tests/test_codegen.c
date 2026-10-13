@@ -1799,7 +1799,7 @@ static void test_bigint_literals(void) {
     mo_arena_free(&arena);
 }
 static void test_bigint_limit(void) {
-    for (unsigned variant = 0; variant < 2; variant++) {
+    for (unsigned variant = 0; variant < 3; variant++) {
         struct mo_buffer text, out;
         struct mo_arena arena;
         struct mo_diags diags;
@@ -1816,11 +1816,12 @@ static void test_bigint_limit(void) {
         memset(digits, '9', sizeof digits);
         for (unsigned literal = 0; literal < (variant == 0 ? 1u : 4u); literal++) {
             CHECK(mo_buffer_append_text(&text, "(lit (bigInt "));
-            for (uint32_t at = 0; at < length;) {
-                size_t count = length - at < sizeof digits ? length - at : sizeof digits;
+            for (uint32_t at = 0; at < length - 1u;) {
+                size_t count = length - 1u - at < sizeof digits ? length - 1u - at : sizeof digits;
                 CHECK(mo_buffer_append(&text, digits, count));
                 at += (uint32_t)count;
             }
+            CHECK(mo_buffer_append_byte(&text, (uint8_t)('9' - (variant == 1 ? literal : 0u))));
             CHECK(mo_buffer_append_text(&text, "))"));
         }
         if (variant != 0)
@@ -1839,9 +1840,32 @@ static void test_bigint_limit(void) {
             p->metadata = (struct mo_core_metadata){
                 .source = true, .files = {&file, 1}, .modules = {&module, 1}, .funs = {&meta, 1}};
             CHECK(mo_core_check(p, &diags));
-            CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
-            CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_BIGINT_WORK);
-            if (diags.count == 1) {
+            bool ok = mo_compile(p, &out, &diags);
+            if (variant == 2) {
+                /* Repeating 10^131072 - 1 pays for one conversion, not four. */
+                CHECK(ok && !mo_diags_any(&diags));
+                struct mo_load_error error;
+                struct mo_bytecode *b =
+                    ok ? mo_bytecode_decode(&arena, out.bytes, out.length, &error) : NULL;
+                CHECK(b != NULL);
+                uint32_t positives = 0;
+                for (uint32_t i = 0; b != NULL && i < b->constant_count; i++) {
+                    const struct mo_bytecode_constant *k = &b->constants[i];
+                    if (b->types[k->type].kind != MO_TYPE_BIGINT ||
+                        k->value.bigint.sign != MO_BIGINT_POSITIVE)
+                        continue;
+                    positives++;
+                    /* ceil(log_256(10^131072)) bytes; the low 128 bits are all ones. */
+                    CHECK(k->value.bigint.magnitude.length == 54427);
+                    for (uint32_t j = 0; j < 16 && j < k->value.bigint.magnitude.length; j++)
+                        CHECK(k->value.bigint.magnitude.bytes[j] == 255);
+                }
+                CHECK(positives == 1);
+            } else {
+                CHECK(!ok && out.length == 0);
+                CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_BIGINT_WORK);
+            }
+            if (variant != 2 && diags.count == 1) {
                 const struct mo_diag *d = &diags.items[0];
                 CHECK(strstr(d->primary.text, "start: BigInt conversion exceeds") != NULL &&
                       strstr(d->message, "resource limit") != NULL);

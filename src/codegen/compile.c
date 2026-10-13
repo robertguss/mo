@@ -80,6 +80,7 @@ struct compiler {
     struct vector strings, constants, modules, constructors, ownership, edges, constraints;
     struct mo_codegen_index *string_index, *constant_index, *data_index, *fun_index, *global_index,
         *module_index, *builtin_index, *annotation_index, *operation_index;
+    struct mo_codegen_index *bigint_index[2];
     uint32_t *data, *files, *layouts;
     uint32_t range_int, function_count, function_capacity, unit_constant;
     struct mo_bytecode_global *globals;
@@ -770,6 +771,13 @@ static MO_MUST_USE uint32_t literal(struct compiler *c, mo_core_lit lit, uint32_
     if (*ty == MO_NO_INDEX)
         return MO_NO_INDEX;
     if (lit->tag == MO_CORE_LIT_BIG_INT) {
+        /* Checked decimal digits are canonical. Borrow their key and distinguish signs,
+         * so a repeated constant pays for neither conversion work nor conversion scratch. */
+        unsigned sign = lit->as.big_int.negative ? 1u : 0u;
+        mo_core_string digits = lit->as.big_int.digits;
+        struct mo_codegen_index *old = mo_codegen_find(c->bigint_index[sign], digits);
+        if (old != NULL)
+            return old->value;
         struct mo_bytecode_constant k = {.type = *ty};
         enum mo_codegen_bigint_problem status =
             mo_codegen_bigint(&c->arena, lit->as.big_int, &c->bigint_work, &k.value.bigint);
@@ -782,7 +790,10 @@ static MO_MUST_USE uint32_t literal(struct compiler *c, mo_core_lit lit, uint32_
                              : "No memory for BigInt literal conversion."))
                 return MO_NO_INDEX;
         }
-        return constant(c, k);
+        uint32_t id = constant(c, k);
+        if (id == MO_NO_INDEX || index_add(c, &c->bigint_index[sign], digits, id, false) == NULL)
+            return MO_NO_INDEX;
+        return id;
     }
     mo_u128 bits = 0;
     const mo_core_integer *integer = NULL;
