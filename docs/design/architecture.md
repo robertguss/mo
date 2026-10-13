@@ -302,8 +302,10 @@ its root; E1102 reports an unreadable library folder without a language
 section citation.
 
 **Source-stage stack.** Checker tests and the `fuzz_check` and `fuzz_bodies`
-targets run source work through `mo_with_stack` in `base/stack.h`; tools will
-use it when source commands are connected. It rounds the requested allowance
+targets run source work through `mo_with_stack` in `base/stack.h`. Tools run
+the whole compiler pipeline, including parsing and future lowering, Core
+checking and codegen, in one call with `MO_SOURCE_STACK_SIZE` (10).
+It rounds the requested allowance
 up to the POSIX page size, sets a new thread's stack explicitly and joins it
 before returning; arenas, diagnostics and the shared work budget remain
 single-threaded. It returns a POSIX error number without running the callback
@@ -1102,21 +1104,29 @@ error, with no success chatter. Headlines include the code and primary
 `path:line:column`; secondary spans name their own locations. Source rows
 use an ASCII `|` gutter. Locations count original characters as `diag.h`
 specifies, not display cells. Tabs expand to four-cell stops in the excerpt.
-Valid UTF-8 stays as written, including in paths, messages and fixed lines.
+The command sets only `LC_CTYPE` from the environment. When POSIX
+`nl_langinfo(CODESET)` identifies UTF-8, valid UTF-8 stays as written,
+including in paths, messages and fixed lines. Other encodings, or an
+unavailable requested locale, use ASCII escapes for every non-ASCII scalar
+in text diagnostics. Numeric parsing remains independent of the locale.
 Only controls, DEL, invalid bytes and the invisible/direction-changing scalars
-refused by reference 2.1 are escaped: ASCII controls and invalid bytes use
-`\xHH`, other refused scalars use `\u{hex}`. Tabs remain expanded spaces.
-Carets and clipping use `mo_unicode16_display_width` from `prim/prim.h`,
+refused by reference 2.1 are escaped in UTF-8 locales: ASCII controls and
+invalid bytes use `\xHH`, other refused scalars use `\u{hex}`. Tabs remain
+expanded spaces.
+Carets and clipping use `mo_unicode16_display_width` and
+`mo_unicode16_next_grapheme` from `prim/prim.h`,
 the same grapheme-aware Unicode 16 estimate as the library primitive;
 tools copy no Unicode tables and use no locale-dependent width APIs.
-Safe UTF-8 runs are measured together, not by summing scalar widths.
-Byte spans inside a scalar mark that scalar; a zero-width span still receives
-one caret. JSON's byte offsets and original character columns do not change.
-Long source rows show a window of at most 160 cells with up to twelve
-original characters before the span and `...` for omitted text.
-UTF-8 runs are clipped by binary search over scalar-boundary prefixes,
-not by repeatedly measuring every prefix. A clip does not leave a text base
-without the emoji selector that would increase its width.
+Validated safe UTF-8 runs are traversed once by complete grapheme clusters.
+For drawing, both span ends snap outward to cluster boundaries; a zero-width
+span still receives at least one caret. JSON's byte offsets and original
+character columns do not change. Clips never split a cluster or re-pair flags.
+Long source rows show a window of at most 160 cells and 4,096 excerpt bytes,
+including `...` elision markers but excluding gutter and label. A cluster
+that does not fit is omitted whole. Left context retains up to twelve complete
+clusters and 1,024 source bytes; a giant preceding cluster cannot hide the
+focus. Scanning and measuring take linear work, including zero-width runs;
+there is no prefix-width binary search or repeated whole-suffix scan.
 Long multi-line spans show the first two and last two rows. EOF insertions get
 one caret, even after a final newline. Reasons already contain the section
 citation; codes without a section print no reason. Fixes show their titles
@@ -1231,8 +1241,11 @@ An unavailable span (`file == UINT32_MAX`, or no retained source) keeps
 its `start` and `end`, but uses `null` for `file`, `line`, `column`,
 `end_line` and `end_column`; absent labels and fix titles are `null`.
 JSON strings preserve valid UTF-8 scalars. Quotes and backslashes are
-escaped; controls and each invalid UTF-8 byte use `\u00HH`. Invalid bytes
-thus become the corresponding U+00HH characters rather than malformed
+escaped; controls, DEL, C1 and the reference 2.1 refusal set use JSON Unicode
+escapes (`\uXXXX`, or a surrogate pair for supplementary scalars), so decoded
+content is unchanged but the encoded record cannot carry terminal controls.
+Each invalid UTF-8 byte uses `\u00HH`. JSON is UTF-8 regardless of locale.
+Invalid bytes thus become the corresponding U+00HH characters rather than malformed
 UTF-8; offsets still refer to unmodified source bytes. This is not a
 lossless path-byte codec when valid U+00HH also occurs; consumers must check
 decoded paths before rewriting files. Limit/implementation codes have both
@@ -1362,6 +1375,15 @@ The call allocates nothing, needs no heap, uses constant stack space and
 visits each scalar at most twice. It has no source-file or runtime value cap.
 CI compares it with the primitive on every UCD runner input and every Text
 generated by the primitive fuzzer; raw fuzz inputs also check refusal safety.
+`mo_unicode16_next_grapheme(bytes, length, length_out)` exposes the same
+boundary routine as `Unicode16.graphemes`, without allocation or tables in
+tools. Its input must be valid UTF-8 starting at a cluster boundary. It
+validates only the first cluster and one lookahead scalar, refusing an empty
+span or malformed bytes it encounters without changing the output. It does
+not validate the unvisited suffix. Repeated calls take linear work and
+constant stack. CI compares every split with the primitive on all 1,093
+GraphemeBreakTest vectors and generated fuzz Texts; the work gate also splits
+a million ASCII characters under the existing 20-second ceiling.
 Property, mapping and composition lookups are logarithmic in their table
 counts, with direct ASCII properties and algorithmic Hangul handling. Each
 scalar is visited a bounded number of times: segmentation keeps suffix

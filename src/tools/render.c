@@ -1,12 +1,16 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "tools/tools.h"
 
 #include "prim/prim.h"
 
+#include <langinfo.h>
 #include <string.h>
 
 struct writer {
     struct mo_buffer *out;
     bool ok;
+    bool utf8;
 };
 
 static void bytes(struct writer *w, const void *data, size_t length) {
@@ -61,6 +65,8 @@ static void hex(struct writer *w, uint32_t n, unsigned digits) {
         w->ok = mo_buffer_append_hex(w->out, n, digits);
 }
 
+static bool escaped(uint32_t c);
+
 static void json_string(struct writer *w, const char *s) {
     if (s == NULL) {
         text(w, "null");
@@ -74,9 +80,18 @@ static void json_string(struct writer *w, const char *s) {
         if (s[i] == '"' || s[i] == '\\') {
             text(w, "\\");
             bytes(w, s + i, 1);
-        } else if (value < 0x20 || value == UINT32_MAX) {
+        } else if (escaped(value)) {
+            if (value == UINT32_MAX)
+                value = (uint8_t)s[i];
             text(w, "\\u");
-            hex(w, (uint8_t)s[i], 4);
+            if (value <= 0xffff)
+                hex(w, value, 4);
+            else {
+                value -= 0x10000;
+                hex(w, 0xd800 + (value >> 10), 4);
+                text(w, "\\u");
+                hex(w, 0xdc00 + (value & 0x3ff), 4);
+            }
         } else {
             bytes(w, s + i, n);
         }
@@ -189,67 +204,39 @@ static uint32_t plain_width(const uint8_t *s, size_t length) {
     return width > UINT32_MAX ? UINT32_MAX : (uint32_t)width;
 }
 
-static size_t boundary_before(const uint8_t *s, size_t at) {
-    while (at != 0 && (s[at] & 0xc0) == 0x80)
-        at--;
-    return at;
-}
-
-/* Widths of successive Unicode16 prefixes are monotone. Binary search avoids
- * remeasuring every scalar prefix of a long combining-mark run. */
-static size_t fitting_prefix(const uint8_t *s, size_t length, uint32_t budget) {
-    size_t low = 0, high = length;
-    while (low < high) {
-        size_t mid = low + (high - low) / 2;
-        size_t end = mid;
-        while (end < length && (s[end] & 0xc0) == 0x80)
-            end++;
-        if (end == low) {
-            uint32_t value;
-            end += scalar(s + end, length - end, &value);
-        }
-        if (plain_width(s, end) <= budget)
-            low = end;
-        else
-            high = boundary_before(s, end - 1);
-    }
-    return low;
-}
-
 struct display_piece {
     size_t used;
     uint32_t width, value;
     bool plain;
 };
 
-/* A piece is one escape/tab or a whole safe UTF-8 run. Measuring runs, not
- * scalars, is essential for combining marks, flags, modifiers and keycaps. */
-static struct display_piece inspect(const uint8_t *s, size_t length, uint32_t cells,
-                                    uint32_t budget) {
+struct display_cursor {
+    const uint8_t *bytes;
+    size_t length, at, safe_end;
+};
+
+/* Cache the validated run's end: finding it anew for each cluster would make
+ * ASCII rows quadratic. A piece is one whole cluster or one escape/tab. */
+static struct display_piece inspect(struct display_cursor *c, uint32_t cells, bool utf8) {
+    const uint8_t *s = c->bytes + c->at;
+    size_t length = c->length - c->at;
     struct display_piece p = {0};
     p.used = scalar(s, length, &p.value);
-    if (!escaped(p.value)) {
+    if (!escaped(p.value) && (utf8 || p.value < 128)) {
         p.plain = true;
-        while (p.used < length) {
-            uint32_t value;
-            uint32_t n = scalar(s + p.used, length - p.used, &value);
-            if (escaped(value))
-                break;
-            p.used += n;
-        }
-        p.width = plain_width(s, p.used);
-        if (p.width > budget) {
-            size_t whole = p.used;
-            uint32_t whole_width = p.width;
-            p.used = fitting_prefix(s, whole, budget);
-            p.width = plain_width(s, p.used);
-            /* A selector can raise the final grapheme's width (heart/keycap).
-             * Do not clip between its base and selector just to fit a cell. */
-            if ((uint64_t)p.width + plain_width(s + p.used, whole - p.used) != whole_width) {
-                p.used = p.width == 0 ? 0 : fitting_prefix(s, p.used, p.width - 1);
-                p.width = plain_width(s, p.used);
+        if (c->safe_end <= c->at) {
+            c->safe_end = c->at + p.used;
+            while (c->safe_end < c->length) {
+                uint32_t value;
+                uint32_t n = scalar(c->bytes + c->safe_end, c->length - c->safe_end, &value);
+                if (escaped(value) || (!utf8 && value >= 128))
+                    break;
+                c->safe_end += n;
             }
         }
+        bool ok = mo_unicode16_next_grapheme(s, c->safe_end - c->at, &p.used);
+        MO_ASSERT(ok);
+        p.width = plain_width(s, p.used);
     } else {
         p.width = p.value == '\t'                           ? 4 - cells % 4
                   : p.value < 0x80 || p.value == UINT32_MAX ? 4u
@@ -257,8 +244,6 @@ static struct display_piece inspect(const uint8_t *s, size_t length, uint32_t ce
                   : p.value <= 0xFFFF                       ? 8u
                   : p.value <= 0xFFFFF                      ? 9u
                                                             : 10u;
-        if (p.width > budget)
-            p.used = 0;
     }
     return p;
 }
@@ -278,26 +263,16 @@ static void write_piece(struct writer *w, const uint8_t *s, struct display_piece
     }
 }
 
-static uint32_t cells_before(const uint8_t *s, uint32_t length) {
-    uint32_t cells = 0;
-    for (size_t at = 0; at < length;) {
-        struct display_piece p = inspect(s + at, length - at, cells, UINT32_MAX);
-        cells += p.width;
-        at += p.used;
-    }
-    return cells;
-}
-
 static void safe_text(struct writer *w, const char *s) {
     if (s == NULL)
         return;
-    size_t length = strlen(s);
+    struct display_cursor c = {.bytes = (const uint8_t *)s, .length = strlen(s)};
     uint32_t cells = 0;
-    for (size_t i = 0; w->ok && i < length;) {
-        struct display_piece p = inspect((const uint8_t *)s + i, length - i, cells, UINT32_MAX);
-        write_piece(w, (const uint8_t *)s + i, p);
+    while (w->ok && c.at < c.length) {
+        struct display_piece p = inspect(&c, cells, w->utf8);
+        write_piece(w, c.bytes + c.at, p);
         cells += p.width;
-        i += p.used;
+        c.at += p.used;
     }
 }
 
@@ -328,57 +303,63 @@ static void line_prefix(struct writer *w, uint32_t line, bool number) {
     text(w, " | ");
 }
 
-/* At most 160 displayed cells, with 12 source characters of leading context.
- * Marks intersecting scalars even when a byte span starts inside one. */
+/* At most 160 cells and 4096 excerpt bytes, including elision markers. Retain
+ * up to 12 complete clusters / 1024 bytes of context before a distant span.
+ * Drawing marks every intersecting cluster; the original byte span is intact. */
 static void source_line(struct writer *w, const uint8_t *s, uint32_t length, uint32_t line,
                         uint32_t start, uint32_t end, bool mark, const char *label) {
-    uint32_t at = 0, column = 0, focus = 0;
-    while (at < start && at < length) {
-        uint32_t v;
-        uint32_t n = scalar(s + at, length - at, &v);
-        if (n > start - at)
+    struct display_cursor c = {.bytes = s, .length = length};
+    size_t context[12];
+    uint32_t count = 0, focus_cells = 0;
+    while (c.at < start && c.at < length) {
+        struct display_piece p = inspect(&c, focus_cells, w->utf8);
+        if (p.used > start - c.at)
             break;
-        at += n;
-        focus++;
+        if (count == 12) {
+            memmove(context, context + 1, 11 * sizeof(context[0]));
+            count--;
+        }
+        context[count++] = c.at;
+        focus_cells += p.width;
+        c.at += p.used;
     }
-    uint32_t focus_cells = cells_before(s, at);
-    at = 0;
-    while (focus_cells > 100 && column + 12 < focus && at < length) {
-        uint32_t v;
-        at += scalar(s + at, length - at, &v);
-        column++;
+    size_t at = 0;
+    if (focus_cells > 100 || c.at > 1024) {
+        at = c.at;
+        for (uint32_t i = 0; i < count; i++) {
+            if (c.at - context[i] <= 1024) {
+                at = context[i];
+                break;
+            }
+        }
     }
+    c.at = at;
+    c.safe_end = at;
     line_prefix(w, line, true);
     uint32_t cells = 0, first = UINT32_MAX, last = 0;
+    size_t row_bytes = 0;
     if (at != 0) {
         text(w, "...");
         cells = 3;
+        row_bytes = 3;
     }
-    while (w->ok && at < length && cells < 148) {
-        struct display_piece p = inspect(s + at, length - at, cells, 148 - cells);
-        uint32_t used = (uint32_t)p.used;
-        if (used == 0)
+    while (w->ok && c.at < c.length && cells < 148) {
+        struct display_piece p = inspect(&c, cells, w->utf8);
+        size_t emitted = p.plain ? p.used : p.width;
+        if (p.width > 148 - cells || emitted > 4093 - row_bytes)
             break;
-        write_piece(w, s + at, p);
-        if ((at < end && at + used > start) || (start == end && at <= start && at + used > start)) {
-            uint32_t left = 0, right = p.width;
-            if (p.plain) {
-                size_t a = start > at ? start - at : 0;
-                size_t b = end < at + used ? end - at : used;
-                a = boundary_before(s + at, a);
-                while (b < used && (s[at + b] & 0xc0) == 0x80)
-                    b++;
-                left = plain_width(s + at, a);
-                right = plain_width(s + at, b);
-            }
+        write_piece(w, s + c.at, p);
+        if ((c.at < end && c.at + p.used > start) ||
+            (start == end && c.at <= start && c.at + p.used > start)) {
             if (first == UINT32_MAX)
-                first = cells + left;
-            last = cells + right;
+                first = cells;
+            last = cells + p.width;
         }
         cells += p.width;
-        at += used;
+        row_bytes += emitted;
+        c.at += p.used;
     }
-    if (at < length)
+    if (c.at < c.length)
         text(w, "...");
     if (first == UINT32_MAX) {
         first = cells;
@@ -526,7 +507,10 @@ bool mo_render_diagnostic(const struct mo_sources *sources, const struct mo_diag
     MO_ASSERT(sources != NULL && d != NULL && out != NULL);
     MO_ASSERT(out->limit <= MO_CLI_DIAGNOSTIC_SIZE);
     mo_buffer_clear(out);
-    struct writer w = {out, true};
+    const char *codeset = nl_langinfo(CODESET);
+    bool utf8 = strcmp(codeset, "UTF-8") == 0 || strcmp(codeset, "UTF8") == 0 ||
+                strcmp(codeset, "utf-8") == 0 || strcmp(codeset, "utf8") == 0;
+    struct writer w = {.out = out, .ok = true, .utf8 = utf8};
     if (json)
         json_diag(&w, sources, d);
     else {
@@ -567,7 +551,7 @@ bool mo_write_version(FILE *output, enum mo_command command) {
     MO_ASSERT(command == MO_COMMAND_CHECK || command == MO_COMMAND_TEST);
     struct mo_buffer buffer;
     mo_buffer_init(&buffer, MO_CLI_DIAGNOSTIC_SIZE);
-    struct writer w = {&buffer, true};
+    struct writer w = {.out = &buffer, .ok = true};
     text(&w, "{\"record\":\"version\",\"format\":\"1.0\",\"mo\":");
     json_string(&w, mo_version());
     text(&w, ",\"command\":");
@@ -597,7 +581,7 @@ int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command 
     }
     int status = mo_diags_any(diags) || dropped != 0 || !ok ? 1 : 0;
     mo_buffer_clear(&buffer);
-    struct writer w = {&buffer, true};
+    struct writer w = {.out = &buffer, .ok = true};
     if (json) {
         text(&w, "{\"record\":\"totals\",\"errors\":");
         unsigned_number(&w, written);

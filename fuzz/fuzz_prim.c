@@ -18,6 +18,21 @@ static MO_MUST_USE uint64_t word(struct input *in) {
     return value;
 }
 
+static void cluster_agreement(struct mo_cell text, struct mo_cell clusters) {
+    size_t length, at = 0;
+    const uint8_t *bytes = mo_value_data(text, &length);
+    for (uint32_t i = 0; i < mo_list_size(clusters); i++) {
+        struct mo_cell item;
+        MO_ASSERT(mo_list_get(clusters, i, &item));
+        size_t next, item_length;
+        MO_ASSERT(mo_unicode16_next_grapheme(bytes + at, length - at, &next));
+        const uint8_t *item_bytes = mo_value_data(item, &item_length);
+        MO_ASSERT(next == item_length && memcmp(bytes + at, item_bytes, next) == 0);
+        at += next;
+    }
+    MO_ASSERT(at == length);
+}
+
 static MO_MUST_USE bool cell(struct prim_fixture *f, uint32_t type, struct input *in,
                              unsigned depth, struct mo_cell *out) {
     MO_ASSERT(depth < 4);
@@ -108,6 +123,14 @@ static MO_MUST_USE bool cell(struct prim_fixture *f, uint32_t type, struct input
                                f->signature[MO_PRIM_UNICODE16_DISPLAY_WIDTH], out, &result,
                                &reason) == MO_PRIM_RETURNED);
         MO_ASSERT(reason == NULL && (uint64_t)mo_cell_get_int(result) == width);
+        enum mo_primitive_id id = MO_PRIM_UNICODE16_GRAPHEMES;
+        enum mo_prim_status status =
+            mo_prim_call(f->heap, &f->types, id, f->signature[id], out, &result, &reason);
+        if (status == MO_PRIM_RETURNED) {
+            cluster_agreement(*out, result);
+            mo_value_drop(f->heap, f->types.items[f->signature[id]].result, result);
+        } else
+            MO_ASSERT(status == MO_PRIM_OUT_OF_MEMORY);
         return true;
     }
     case MO_TYPE_BYTES:
@@ -171,6 +194,7 @@ static MO_MUST_USE bool cell(struct prim_fixture *f, uint32_t type, struct input
 static void unicode_laws(struct prim_fixture *f, enum mo_primitive_id id,
                          const struct mo_cell *args, struct mo_cell result) {
     if (id == MO_PRIM_UNICODE16_GRAPHEMES) {
+        cluster_agreement(args[0], result);
         size_t length, at = 0;
         const uint8_t *original = mo_value_data(args[0], &length);
         for (uint32_t i = 0; i < mo_list_size(result); i++) {
