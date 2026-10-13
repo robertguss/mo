@@ -69,7 +69,7 @@
  * recurse only up to this bound. E1006 for depth, E1016 for bytes/nodes/scratch, E1017 for arena
  * exhaustion. The byte limit covers both input and canonical output. Nodes also bound wide
  * lists and the printer's work on caller-built trees. */
-#define MO_LIMIT_CORE_DEPTH 256
+#define MO_LIMIT_CORE_DEPTH 4096
 #define MO_LIMIT_CORE_TEXT_SIZE (8 << 20)
 #define MO_LIMIT_CORE_NODES (1 << 20)
 #define MO_LIMIT_CORE_SCRATCH_SIZE (128 << 20)

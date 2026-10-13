@@ -1,9 +1,12 @@
 #include "base/codes.h"
+#include "base/stack.h"
 #include "bytecode/io.h"
 #include "bytecode_text.h"
 #include "codegen/codegen.h"
+#include "core_depth.h"
 #include "heap/types.h"
 #include "test.h"
+#include "vm/vm.h"
 
 #include <string.h>
 
@@ -2136,7 +2139,46 @@ static void test_join_metadata(void) {
     mo_diags_free(&diags);
     mo_arena_free(&arena);
 }
-int main(int argc, char **argv) {
+static void test_depth(void) {
+    for (unsigned form = 0; form < 2; form++) {
+        struct mo_arena arena;
+        struct mo_buffer out;
+        struct mo_diags diags;
+        mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+        mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+        CHECK(mo_diags_init(&diags));
+        struct mo_core *p = core_depth(&arena, 4096, form == 0);
+        bool ok = p != NULL && mo_compile(p, &out, &diags);
+        CHECK(ok && !mo_diags_any(&diags));
+        if (ok) {
+            struct mo_load_error error;
+            struct mo_image *image = mo_load(out.bytes, out.length, &error);
+            CHECK(image != NULL);
+            if (image != NULL) {
+                struct mo_limits limits = mo_limits_default();
+                struct mo_defect defect;
+                enum mo_outcome initialized = mo_image_init(image, &limits, &defect);
+                CHECK(initialized == MO_RETURNED);
+                struct mo_process *process =
+                    initialized == MO_RETURNED ? mo_process_new(image, &limits) : NULL;
+                CHECK(process != NULL);
+                if (process != NULL) {
+                    struct mo_cell result;
+                    enum mo_outcome outcome = mo_call(process, 0, NULL, 0, &result, &defect);
+                    CHECK(outcome == MO_RETURNED);
+                    if (outcome == MO_RETURNED)
+                        CHECK(mo_cell_get_int(result) == (form == 0 ? 7 : -7));
+                    mo_process_free(process);
+                }
+            }
+            mo_image_free(image);
+        }
+        mo_diags_free(&diags);
+        mo_buffer_free(&out);
+        mo_arena_free(&arena);
+    }
+}
+static MO_MUST_USE int tests(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--bigints") == 0)
         return corpus(argc - 1, argv + 1, true);
     if (argc > 1)
@@ -2178,5 +2220,20 @@ int main(int argc, char **argv) {
     test_merge();
     test_join();
     test_join_metadata();
+    test_depth();
     return mo_test_report("test_codegen");
+}
+struct arguments {
+    int argc, status;
+    char **argv;
+};
+static void run(void *argument) {
+    struct arguments *a = argument;
+    a->status = tests(a->argc, a->argv);
+}
+int main(int argc, char **argv) {
+    struct arguments a = {.argc = argc, .argv = argv};
+    int error = mo_with_stack(MO_SOURCE_STACK_SIZE, run, &a);
+    CHECK(error == 0);
+    return error == 0 ? a.status : mo_test_report("test_codegen stack");
 }

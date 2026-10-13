@@ -6,6 +6,7 @@
 #include "core/core.h"
 
 /* Borrows complete checked Core. out must be initialized, empty and independent of Core.
+ * Like the Core walkers, run this on MO_SOURCE_STACK_SIZE through mo_with_stack (base/stack.h).
  * Refusal appends a diagnostic and leaves out empty; capacity may have grown.
  * The staged compiler reports unimplemented Core forms explicitly, never omits their code.
  * E1201 permanently excludes representations that source lowering never produces (architecture 12).
