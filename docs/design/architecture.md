@@ -1797,6 +1797,7 @@ E1200 means the ordinary entry's full runtime name is not unique; arbitrary
 entry names are otherwise accepted. E1201 means a permanent representation
 exclusion from source lowering, not an unfinished feature or a resource limit.
 E1202 means decimal BigInt conversion exceeded its program-wide work budget.
+E1203 means reference liveness exceeded its per-function work budget.
 
 The first slice compiles immediate scalar literals, variables, lets, direct
 calls, if, stop, and choices with small immediate payloads. The second adds
@@ -1812,7 +1813,8 @@ comparisons, generic equality, primitive and host table calls, capability and
 collection types, and list/map literals. The sixth adds joins, jumps and
 reconverging reference-state normalization. The seventh adds List uncons and
 Range toText expansions and BigInt decimal literals; all 15 Core fixtures now
-compile. Register recycling and reuse remain unfinished optimizations. The
+compile. The eighth consumes owned operands at their last use. Register
+recycling and reuse remain unfinished optimizations. The
 sample fixtures and Core fuzz corpora are attempted in CI; unfinished forms,
 permanently excluded representations, entry-name collisions, resource limits
 and invalid compiler inputs are counted separately. E1201 inputs are skipped
@@ -1833,27 +1835,30 @@ Greater-than comparisons swap the resulting registers, not evaluation order;
 Float uses native less-than/less-or-equal, never negated comparisons, preserving
 NaN behaviour. Text, Bytes and BigInt use their compare rows and compare the
 Ordering result with Equal. Generic equality uses `equal` at the exact type.
-Owned reference operands get distinct copies; borrowed operands remain live
-through the instruction, and temporary owners are dropped only afterward.
+Owned references transfer directly at their last use; a still-live or borrowed
+source is duplicated when an instruction needs an owner. Repeated owned operands
+duplicate all but the last occurrence. An operand also read by a borrowed
+parameter stays live throughout the instruction and cannot transfer directly.
+All operand expressions finish before any transfer. Temporary owners not
+consumed by the instruction are dropped only afterward.
 This also preserves pre-instruction operands for a stopped call's report.
 Host tails include the borrowed capability; zero-argument fakes have no tail.
 Core's spec restrictions are retained and checked again by the verifier.
 
 Range toText reads the two endpoints once, converts each with Int.to_text and
 concatenates `start + ".." + end`, retaining the borrowed endpoint text until
-its last use. List uncons borrows its input and switches on List.first. None
-returns None without constructing a tail; Some extracts the head and runs
-List.drop on a distinct owned copy with count 1, then constructs Some((head,
-tail)). The original list remains usable. Both expansions use only existing
+its last use. List uncons takes an owned input and switches on List.first. None
+drops the input and returns None without constructing a tail; Some extracts the
+head and transfers the input to List.drop with count 1, then constructs
+Some((head, tail)). A still-live source gets a distinct copy before this expansion,
+preserving the original list. Both expansions use only existing
 instruction/primitive rows, with their declared ownership, and use the Core
 operation's span throughout. Arm-local reference registers are normalized at
 the uncons merge just like explicit Core branches.
-This staged expansion still copies every tail, including when the input list
-is dead afterward: walking a list of length \(n\) with repeated uncons costs
-\(O(n^2)\). Part 8's last-use transfer and a constant-time single-holder
-List.drop in the runtime are both required: the current single-holder slice
-still shifts the retained cells. A still-live input needs its distinct owned
-copy to preserve the original list.
+Walking a list of length \(n\) with repeated uncons still costs \(O(n^2)\):
+the runtime's current single-holder slice shifts the retained cells. Last-use
+transfer removes the compiler's extra holder; a constant-time single-holder
+List.drop remains a runtime prerequisite for linear traversal.
 
 BigInt decimal literals become canonical little-endian magnitudes and signs;
 zero has no magnitude bytes. Canonical signed decimal digits are interned
@@ -1979,10 +1984,34 @@ and call results require owners. Tail calls add argument-to-parameter edges
 as well as parameter-to-argument edges. A queue propagates each owned slot
 once, including across recursive calls; non-function kinds always own their
 reference parameters. This is conservative across merged aliases. Consuming
-operands get separate duplicates, even when two operands denote the same
-variable. Temporary owners are dropped after use; binders live through their
-lexical scope, and remaining owners are dropped before returns/tail calls.
+operands use backward reference liveness, independently of borrow inference.
+Lets, branch results, captures, constructors, calls, host/primitive operands,
+returns and jump staging move an existing owner when it dies at that transfer.
+Other uses duplicate it. Join free-variable sets grow monotonically to a fixed
+point, so a backedge keeps every register needed by the next iteration live.
+Lexical aliases retain separate holders until their own last uses. Temporary
+owners are dropped after use; remaining owners are dropped before returns/tail calls.
 Stop and fail abandon the frame through the outcome path, not normal cleanup.
+
+With runtime single-holder reuse, the VM builder
+`go(acc ++ "ab", n-1)` scales linearly. Clang `-O0 -g`, Linux x86-64, three
+fresh processes per size, an owned initial `"z"`, and the same loaded image
+gave these median call times in seconds (compile/load/init excluded):
+
+| Steps | Before last-use transfer | After |
+| --- | --- | --- |
+| 10,000 | 0.0221 | 0.0100 |
+| 25,000 | 0.0594 | 0.0235 |
+| 50,000 | 0.2252 | 0.0483 |
+| 100,000 | 0.6817 | 0.0937 |
+| 250,000 | — | 0.2281 |
+| 500,000 | — | 0.4615 |
+| 1,000,000 | — | 0.9552 |
+
+The same runtime was used on both sides; only the compiler changed. Every
+returned byte was checked as `"z"` followed by exactly the requested number
+of `"ab"` pairs. The recursive builder's bytecode has no `dup` or `drop`;
+the permanent test checks that property and its VM result without timing gates.
 
 The allocator still assigns monotonically numbered temporaries and binders;
 recycling remains for a later slice. Immediate slots are initialized before
@@ -1991,7 +2020,8 @@ there are no dummy Text, collection or function inhabitants. A live merge copies
 the result into its own slot, drops dead owners, and uses `clear` to normalize
 dead borrowed and moved slots to undefined. The result is owned when ownership
 inference requires it, borrowed otherwise, on every incoming edge. Outer lexical
-values retain their state. Stop, fail, returns and tail calls need no merge
+values that are live afterward retain their state; dead ones are normalized too.
+Stop, fail, returns and tail calls need no merge
 cleanup; their bookkeeping is restored for generating sibling paths.
 
 Joins have lexical label indices and distinct parameter slots. Parameters are
@@ -2000,7 +2030,7 @@ parameter names and inner-label shadowing. Result inference prefers the rest,
 then the body, following Core's checker without repeating preparation. An entry
 jump skips the body. Every Core jump evaluates and saves all arguments in order
 before changing any parameter, including immediate arguments, so swaps work.
-Reference arguments are owned copies; their staging slots use the declared
+Reference arguments move their owners or get owned copies; staging slots use the declared
 parameter types even when an argument stops. The edge then normalizes locals to
 the target declaration's lexical state, drops old parameters, transfers the saved
 values and clears moved reference staging slots. The first entry and all backedges
@@ -2017,7 +2047,10 @@ onto surviving instructions, and relocates name ranges, discarding empty ranges.
 Graph scratch is at most nine bytes per permitted function word plus arena
 headers, released per function; surviving output uses the compiler's arena.
 
-Preparation, inference and emission take a bounded number of walks. Ordered
+Preparation, borrow inference and emission use bounded walks. Reference liveness
+charges node/operand visits and register-set clearing, copying, union and edge scans
+to `MO_LIMIT_CODEGEN_LIVE_WORK` (2^26) per function, including fixed-point retries;
+exhaustion gives E1203 with empty output. Ordered
 AVL indices for strings, constants, declarations, lexical names and per-type constructors
 give logarithmic lookup; case emission never searches a declaration by a long
 type name. Recursion follows the checked Core depth bound; wide lists/arms
@@ -2029,15 +2062,19 @@ owners. A reversible log records only reference-state changes, bounded by twice
 marks restore and normalize only changed slots, once per edge, including borrowed
 loads and consuming instruction operands. Nested merges discard their local log
 and publish only the result's state change; sibling arms reuse the log's storage.
-There is no full register-table copy or scan per arm. Instruction expansion and
-Core's depth bound also bound bookkeeping work on nested jumps.
+Liveness separately keeps dense branch-after/work and join-entry sets. Their
+register-cell count is bounded before allocation by
+`MO_LIMIT_FUNCTION_REGISTER_BLOCKS`; the sets need at most three times that
+many bytes, plus one working set. Dead-reference normalization scans these
+sets under the same liveness work ceiling. Instruction expansion and Core's
+depth bound also bound bookkeeping work on nested jumps.
 Emission stops at instruction/register limits, even when cleanup expands code.
 The allocator counts basic blocks as it emits transfers and checks
 `MO_LIMIT_FUNCTION_REGISTER_BLOCKS` both when starting a block and when adding
 a register. E1015 names that limit before the writer runs. Register recycling
 and function splitting are not implemented yet, so this slice refuses a
 function that would cross the bound rather than emitting it for verification.
-The register-boundary test compiles a 65,533-element tuple at 65,535 registers
+The register-boundary test compiles a 65,534-element tuple at 65,535 registers
 in both an ordinary function and a constant value function, and refuses one
 more element with E1013. Its one basic block keeps the test
 independent of verification's registers × blocks bound. A separate case/tail-call
