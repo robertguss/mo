@@ -34,6 +34,33 @@ static MO_MUST_USE int source_order(const void *a, const void *b) {
     return left < right ? -1 : left > right ? 1 : 0;
 }
 
+/* Until Hash checking exists, no written Map/Set type is certified, including
+ * nested annotations and fields of unused declarations. Syntax is a bounded
+ * tree, unlike the shared and possibly nominally recursive type graphs. */
+static MO_MUST_USE bool checked_types(const struct mo_syntax *node, struct mo_diags *diags) {
+    if (node == NULL)
+        return true;
+    if (node->kind == MO_S_TYPE && node->children[0]->kind == MO_S_CAPNAME) {
+        const struct mo_syntax *name = node->children[0];
+        if (name->span.end - name->span.start == 3 &&
+            (memcmp(name->text, "Map", 3) == 0 || memcmp(name->text, "Set", 3) == 0)) {
+            bool kept = report(diags, MO_CODE_CHECK_UNFINISHED, node->span,
+                               "map-key and set-member Hash checking is not implemented", NULL);
+            (void)kept;
+            return false;
+        }
+    }
+    for (uint32_t i = 0; i < node->count; i++)
+        if (!checked_types(node->children[i], diags))
+            return false;
+    return true;
+}
+
+static MO_MUST_USE bool native_type(const struct mo_source_type *type, const char *name) {
+    return type != NULL && type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX &&
+           strcmp(type->name, name) == 0;
+}
+
 struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *set,
                             struct mo_diags *diags) {
     MO_ASSERT(arena != NULL && set != NULL && set->count != 0 && diags != NULL);
@@ -64,6 +91,8 @@ struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *
                 return NULL;
             }
         }
+        if (!checked_types(items, diags))
+            return NULL;
     }
     struct mo_program *program =
         allocate(arena, diags, span, 1, sizeof(*program), _Alignof(struct mo_program));
@@ -81,9 +110,17 @@ struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *
     uint32_t main = UINT32_MAX;
     for (uint32_t i = 0; i < signatures->count; i++) {
         const struct mo_function_signature *fn = order[i];
-        if (fn->type->parameters != 0) {
+        const struct mo_syntax *where = fn->function->declaration->children[3];
+        if (fn->type->parameters != 0 || where != NULL) {
             bool kept = report(diags, MO_CODE_CHECK_UNFINISHED, fn->function->declaration->span,
                                "generic ability checking is not implemented", NULL);
+            (void)kept;
+            return NULL;
+        }
+        if (strcmp(fn->function->name, "compare") == 0 ||
+            strcmp(fn->function->name, "to_text") == 0) {
+            bool kept = report(diags, MO_CODE_CHECK_UNFINISHED, fn->function->declaration->span,
+                               "ability customizer checking is not implemented", NULL);
             (void)kept;
             return NULL;
         }
@@ -93,30 +130,54 @@ struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *
         if (!mo_check_function(arena, interfaces, signatures, index, diags, &functions[i]))
             return NULL;
     }
-    if (main != UINT32_MAX && functions[main].parameter_count != 0) {
-        const struct mo_source_type *type = functions[main].parameters[0]->type;
-        if (functions[main].parameter_count != 1 || type->kind != MO_SOURCE_NAMED ||
-            type->module != UINT32_MAX || strcmp(type->name, "Console") != 0) {
-            bool kept = report(diags, MO_CODE_CHECK_UNFINISHED,
-                               functions[main].signature->function->declaration->span,
-                               "this main capability convention is not implemented", NULL);
+    if (main == UINT32_MAX) {
+        bool kept =
+            report(diags, MO_CODE_MAIN_CONTRACT, span, "the entry module has no main function",
+                   "main declares the program's entry (reference 11.2).");
+        (void)kept;
+        return NULL;
+    }
+    const struct mo_checked_function *entry = &functions[main];
+    struct mo_span entry_span = entry->signature->function->declaration->children[0]->span;
+    unsigned capabilities = 0;
+    static const char *const names[] = {"Args",      "Env",   "Console", "Files",
+                                        "ReadFiles", "Clock", "Random"};
+    for (uint32_t i = 0; i < entry->parameter_count; i++) {
+        unsigned capability = 0;
+        for (unsigned j = 0; j < sizeof(names) / sizeof(names[0]); j++)
+            if (native_type(entry->parameters[i]->type, names[j]))
+                capability = 1u << j;
+        if (capability == 0 || (capabilities & capability) != 0) {
+            bool kept =
+                report(diags, MO_CODE_MAIN_CONTRACT, entry_span, "main has an invalid signature",
+                       "main lists capabilities, at most one of each type "
+                       "(reference 11.2).");
             (void)kept;
             return NULL;
         }
+        capabilities |= capability;
     }
-    const struct mo_source_type *type = main == UINT32_MAX ? NULL : functions[main].signature->type;
-    const struct mo_source_type *result = type == NULL ? NULL : type->arguments[type->count - 1];
-    bool unit = result != NULL && result->kind == MO_SOURCE_NAMED && result->module == UINT32_MAX &&
-                strcmp(result->name, "Unit") == 0;
-    bool status = result != NULL && result->kind == MO_SOURCE_NAMED &&
-                  result->module == UINT32_MAX && strcmp(result->name, "Int") == 0;
+    const struct mo_source_type *type = entry->signature->type;
+    const struct mo_source_type *result = type->arguments[type->count - 1];
+    bool unit = native_type(result, "Unit"), status = native_type(result, "Int");
+    bool wrapped = native_type(result, "Result") && native_type(result->arguments[0], "Unit");
+    if (!unit && !status && !wrapped) {
+        bool kept =
+            report(diags, MO_CODE_MAIN_CONTRACT, entry_span, "main has an invalid signature",
+                   "main returns nothing, an Int, or Result(Unit, E) (reference 11.2).");
+        (void)kept;
+        return NULL;
+    }
+    if (entry->parameter_count > 1 ||
+        (entry->parameter_count == 1 && !native_type(entry->parameters[0]->type, "Console"))) {
+        bool kept = report(diags, MO_CODE_CHECK_UNFINISHED, entry_span,
+                           "this main capability convention is not implemented", NULL);
+        (void)kept;
+        return NULL;
+    }
     if (!unit && !status) {
-        bool kept = report(
-            diags, main == UINT32_MAX ? MO_CODE_MAIN_CONTRACT : MO_CODE_CHECK_UNFINISHED,
-            main == UINT32_MAX ? span : functions[main].signature->function->declaration->span,
-            main == UINT32_MAX ? "the entry module has no main function"
-                               : "this main result convention is not implemented",
-            main == UINT32_MAX ? "Main declares the program's entry (reference 11.2)." : NULL);
+        bool kept = report(diags, MO_CODE_CHECK_UNFINISHED, entry_span,
+                           "this main result convention is not implemented", NULL);
         (void)kept;
         return NULL;
     }

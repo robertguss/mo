@@ -14,6 +14,13 @@ fn positive(value: Option(Int)) : Int
     0
   end
 end
+fn classify(value: Int) : Int
+  case value
+    1 | 2: 10
+    -3: 20
+    _: 30
+  end
+end
 fn main() : Int
-  inspect(Ok(Some(4))) + positive(Some(3))
+  inspect(Ok(Some(4))) + positive(Some(3)) + classify(-3)
 end

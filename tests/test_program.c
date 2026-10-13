@@ -461,14 +461,179 @@ static void collection_graph(void) {
     free_fixture(&f);
 }
 
+static void literal_patterns(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn choose(x: Int) : Int\ncase x\n"
+             "1 | 2: 10\n-3: 20\n_: 30\nend\nend\nfn main() : Int\nchoose(1)\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        uint32_t literals = 0;
+        bool matched = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            CHECK(row->operation == MO_T_EOF);
+            if (row->syntax->kind == MO_S_INT) {
+                CHECK(row->syntax->span.end - row->syntax->span.start == 2);
+                literals++;
+            }
+            if (row->match != NULL) {
+                const struct mo_checked_match *match = row->match;
+                MO_ASSERT(match->arm_count == 3 && match->arms[0].pattern_count == 2);
+                const struct mo_checked_pattern *a = match->arms[0].patterns[0];
+                const struct mo_checked_pattern *b = match->arms[0].patterns[1];
+                const struct mo_checked_pattern *c = match->arms[1].patterns[0];
+                CHECK(a->kind == MO_PATTERN_LITERAL && a->syntax->text[0] == '1');
+                CHECK(b->kind == MO_PATTERN_LITERAL && b->syntax->text[0] == '2');
+                CHECK(c->kind == MO_PATTERN_LITERAL && c->syntax->kind == MO_S_NEGATE);
+                CHECK(strcmp(c->type->name, "Int") == 0);
+                matched = true;
+            }
+        }
+        CHECK(literals == 3 && matched);
+    }
+    free_fixture(&f);
+}
+
+static void ignored_binders(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn main() : Int\n(first, _) = (1, 2)\n"
+             "for _ in 0..3\nassert true\nend\nf = fn(_) 7 end\nf(first)\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        CHECK(body->binding_count == 2);
+        for (uint32_t i = 0; i < body->binding_count; i++)
+            CHECK(strcmp(body->bindings[i].name, "_") != 0);
+        bool loop = false, lambda = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->syntax->kind == MO_S_FOR) {
+                CHECK(row->binding == NULL && row->pattern->kind == MO_PATTERN_ANY);
+                loop = true;
+            }
+            if (row->lambda != NULL) {
+                MO_ASSERT(row->lambda->parameter_count == 1);
+                CHECK(row->lambda->parameters[0] == NULL);
+                CHECK(strcmp(row->type->arguments[0]->name, "Int") == 0);
+                lambda = true;
+            }
+        }
+        CHECK(loop && lambda);
+    }
+    free_fixture(&f);
+}
+
+static void constructor_exits(void) {
+    struct fixture f;
+    init(&f, "module Main\nstruct P\nx: Int\ny: Int\nend\n"
+             "fn make() : P\nP(y: stop \"a\", x: 1)\nend\n"
+             "fn failure() : FileError\nFailed(reason: \"oops\", path: stop \"b\")\nend\n"
+             "fn main()\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        uint32_t exits = 0, values = 0;
+        for (uint32_t fidx = 0; fidx < 2; fidx++) {
+            const struct mo_checked_body *body = &f.program->functions[fidx].body;
+            for (uint32_t i = 0; i < body->count; i++) {
+                const struct mo_checked_expression *row = &body->items[i];
+                if (row->syntax->kind != MO_S_NAMED_ARG)
+                    continue;
+                MO_ASSERT(row->operand_count == 1);
+                bool never = body->items[row->operands[0]].never;
+                CHECK(row->never == never);
+                if (never)
+                    exits++;
+                else
+                    values++;
+            }
+        }
+        CHECK(exits == 2 && values == 2);
+    }
+    free_fixture(&f);
+}
+
+static void wide_patterns(void) {
+    struct mo_buffer source;
+    mo_buffer_init(&source, 65536);
+    MO_ASSERT(mo_buffer_append_text(&source, "module Main\nstruct Wide\n"));
+    for (uint32_t i = 0; i < 1000; i++) {
+        MO_ASSERT(mo_buffer_append_text(&source, "field"));
+        MO_ASSERT(mo_buffer_append_uint(&source, i));
+        MO_ASSERT(mo_buffer_append_text(&source, i == 999 ? ": Text\n" : ": Int\n"));
+    }
+    MO_ASSERT(mo_buffer_append_text(&source, "end\nfn choose(value: Wide) : Int\ncase value\n"));
+    for (uint32_t i = 0; i < 150; i++) {
+        MO_ASSERT(mo_buffer_append_text(&source, "Wide(field0: "));
+        MO_ASSERT(mo_buffer_append_uint(&source, i));
+        MO_ASSERT(mo_buffer_append_text(&source, "): 10\n"));
+    }
+    MO_ASSERT(mo_buffer_append_text(&source, "_: 20\nend\nend\nfn main()\nend\n"));
+    MO_ASSERT(mo_buffer_append_byte(&source, 0));
+    struct fixture f;
+    init(&f, (const char *)source.bytes);
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        bool matched = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_match *match = body->items[i].match;
+            if (match == NULL)
+                continue;
+            MO_ASSERT(match->arm_count == 151);
+            for (uint32_t j = 0; j < 150; j++) {
+                const struct mo_checked_pattern *value = match->arms[j].patterns[0];
+                MO_ASSERT(value->part_count == 1000);
+                CHECK(value->parts[0].pattern->kind == MO_PATTERN_LITERAL);
+                CHECK(value->parts[1].pattern->kind == MO_PATTERN_ANY);
+                CHECK(strcmp(value->parts[1].pattern->type->name, "Int") == 0);
+                CHECK(strcmp(value->parts[999].pattern->type->name, "Text") == 0);
+            }
+            matched = true;
+        }
+        CHECK(matched);
+    }
+    free_fixture(&f);
+    mo_buffer_free(&source);
+}
+
 static void rejected_stages(void) {
     static const struct {
         const char *source;
         uint16_t code;
     } cases[] = {
         {"fn helper()\nend\n", MO_CODE_MAIN_CONTRACT},
-        {"fn main() : Text\n\"not an entry result\"\nend\n", MO_CODE_CHECK_UNFINISHED},
-        {"fn main(value: Int) : Int\nvalue\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn helper(x: Int) : Int where T: Bogus\nx\nend\nfn main()\nend\n",
+         MO_CODE_CHECK_UNFINISHED},
+        {"fn main() : Int where Q: Equal\n0\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn main() : Int where Int: Number\n0\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn helper(_x: Set(Float))\nend\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn helper(_x: Map(Float, Int))\nend\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn helper(_x: Set(fn(Int) : Int))\nend\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn helper(_x: Map(Console, Int))\nend\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"struct P\nx: Float\nend\nfn helper(_x: Map(P, Int))\nend\nfn main()\nend\n",
+         MO_CODE_CHECK_UNFINISHED},
+        {"struct P\nm: Map(Float, Int)\nend\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"enum E\nValue(Map(Float, Int))\nend\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn helper() : Set(Float)\nstop \"no set\"\nend\nfn main()\nend\n",
+         MO_CODE_CHECK_UNFINISHED},
+        {"fn helper(_x: List((Int, Set(Float))))\nend\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn helper(_f: fn(Map(Float, Int)) : Int)\nend\nfn main()\nend\n",
+         MO_CODE_CHECK_UNFINISHED},
+        {"fn helper(_x: Set(Int))\nend\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"struct P\nx: Int\nend\nfn compare(_a: P, _b: P) : Int\n0\nend\nfn main()\nend\n",
+         MO_CODE_CHECK_UNFINISHED},
+        {"struct P\nx: Int\nend\nfn to_text(_p: P) : Int\n0\nend\nfn main()\nend\n",
+         MO_CODE_CHECK_UNFINISHED},
+        {"fn main() : Text\n\"not an entry result\"\nend\n", MO_CODE_MAIN_CONTRACT},
+        {"fn main(value: Int) : Int\nvalue\nend\n", MO_CODE_MAIN_CONTRACT},
+        {"fn main(a: Console, b: Console)\na.print(\"a\")\nb.print(\"b\")\nend\n",
+         MO_CODE_MAIN_CONTRACT},
+        {"fn main(_args: Args)\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn main(_clock: Clock, _console: Console)\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn main() : Result(Unit, FileError)\nstop \"no result\"\nend\n",
+         MO_CODE_CHECK_UNFINISHED},
+        {"fn main() : Result(Int, FileError)\nstop \"bad result\"\nend\n", MO_CODE_MAIN_CONTRACT},
         {"fn main() : Int\n0\nend\nfn main(console: Console)\nconsole.print(\"x\")\nend\n",
          MO_CODE_OVERLOAD},
         {"fn identity(value: T) : T\nvalue\nend\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
@@ -581,6 +746,10 @@ static void run(void *argument) {
     loop_graph();
     builtin_graph();
     collection_graph();
+    literal_patterns();
+    ignored_binders();
+    constructor_exits();
+    wide_patterns();
     rejected_stages();
     depth_graph();
     allocation_failures();

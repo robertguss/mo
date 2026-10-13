@@ -1517,8 +1517,15 @@ takes no parameters or one Console. Direct `Console.print` reads its operation
 and named input type from `base/hostops.def`, with the receiver explicit.
 Native method values, other host operations, generic functions, map expressions,
 imports, constants/specs and derived abilities
-still report E1103. Checking stops at the first failed stage or body; no staged
-inference result or partly filled program is returned as certified output.
+still report E1103. Any `where` clause and any declared `compare` or `to_text`
+customizer are refused until ability checking exists, even on nongeneric
+functions. Written Map/Set types are refused in every annotation, including
+unused declarations and nested fields, until Hash requirements are checked.
+Invalid entry signatures report E0079: parameters must be capabilities without
+duplicate types, and the result must be Unit, Int or Result(Unit, E). Valid
+unfinished entry conventions still report E1103. Checking stops at the first
+failed stage or body; no staged inference result or partly filled program is
+returned as certified output.
 The whole-program corpus asserts resolved graphs and canonical binders, checks
 unfinished-stage rejection, sweeps arena limits and reaches maximum nesting.
 `fuzz_program` walks graph invariants and varies allocation budgets. Generated
@@ -1549,6 +1556,15 @@ have zero operands or one guard and target the nearest loop in the same function
 Case arms have separate scopes; alternatives share canonical binding pointers.
 An is row has one scrutinee operand and a normalized pattern, retaining 7.4's
 true-path scopes. Omitted record fields become explicit typed ANY patterns.
+These nodes are immutable and shared per declaring field and nominal
+instantiation; their syntax points at the field declaration. Checked pattern
+nodes and parts use ordinary node/arena budgets, not coverage's byte charging.
+The 150-arm, 1,000-field regression retains all fields without E1104.
+Pattern literals retain contextual range checks and normalized LITERAL metadata,
+but emit no executable expression rows, including for their unary minus.
+Ignored `_` has no binding entry. A lambda's ignored parameter slot is NULL,
+with positional arity and its type retained in the function type; an ignored
+for binder has NULL binding and an ANY pattern.
 Native case substitutions borrow immutable Option/Result parameter templates;
 their parameter owners have no source declaration. Parameter pointer identity,
 not its spelling, selects a substitution. Native payloads and declared payloads
@@ -1558,7 +1574,9 @@ a single binding pointer. Compound writes consume an explicit operator row,
 which borrows the assignment's syntax but isn't itself a write.
 A whole-var assignment has one value operand; a field update has its resolved
 target projection followed by its value, and retains the original base var.
-Projection rows retain the field path. Constructor operands keep written order:
+Projection rows retain the field path. A compound field write and its RHS
+operator both reference the same target projection row, which runs only once.
+Constructor operands keep written order:
 named-argument wrapper rows carry the declaration-order field index and forward
 one value; a single unnamed payload needs no wrapper. Ordinary calls have callee
 then argument operands. Native dot calls omit the callee, retaining its qualified

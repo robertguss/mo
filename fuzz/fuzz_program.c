@@ -73,7 +73,8 @@ static void graph(const struct mo_program *program) {
                 MO_ASSERT(row->lambda->body < i && row->lambda->number != 0 &&
                           row->lambda->capture_count == 0);
                 for (uint32_t j = 0; j < row->lambda->parameter_count; j++)
-                    binding(body, row->lambda->parameters[j]);
+                    if (row->lambda->parameters[j] != NULL)
+                        binding(body, row->lambda->parameters[j]);
             }
         }
     }

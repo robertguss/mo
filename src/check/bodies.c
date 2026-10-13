@@ -117,6 +117,13 @@ struct match_check {
     struct match_check *next;
 };
 
+struct pattern_defaults {
+    const struct mo_data_signature *data;
+    const struct mo_source_type *type;
+    const struct mo_checked_pattern **fields;
+    struct pattern_defaults *next;
+};
+
 struct inference {
     struct mo_arena *arena;
     struct mo_diags *diags;
@@ -128,6 +135,7 @@ struct inference {
     struct note *notes, *last;
     struct typed_pattern *patterns;
     struct match_check *matches;
+    struct pattern_defaults *defaults;
     struct term *result;
     struct mo_span span;
     struct mo_diag error;
@@ -721,7 +729,7 @@ static MO_MUST_USE bool record_binding(struct inference *p, const struct mo_synt
                                        struct term *type, bool variable) {
     if (!record(p, name, (struct value){.type = type, .binding = name}))
         return false;
-    if (p->checked) {
+    if (p->checked && name->kind != MO_S_UNDERSCORE) {
         p->last->binding = p->last;
         p->last->variable = variable;
         p->binding_count++;
@@ -1164,7 +1172,8 @@ static MO_MUST_USE struct value builtin_construct(struct inference *p,
             return (struct value){0};
         if (p->checked) {
             if (arg->kind == MO_S_NAMED_ARG) {
-                struct value supplied = graph(p, (struct value){.type = v.type}, 1);
+                struct value supplied =
+                    graph(p, (struct value){.type = v.type, .never = v.never}, 1);
                 if (supplied.type == NULL)
                     return supplied;
                 supplied.graph->output.field = index;
@@ -1249,7 +1258,8 @@ static MO_MUST_USE struct value construct(struct inference *p, const struct mo_d
             p->last->output.field = selected[i];
             if (p->checked) {
                 if (!data->unnamed) {
-                    struct value supplied = graph(p, (struct value){.type = v.type}, 1);
+                    struct value supplied =
+                        graph(p, (struct value){.type = v.type, .never = v.never}, 1);
                     if (supplied.type == NULL)
                         return supplied;
                     supplied.graph->output.field = selected[i]->index;
@@ -1838,7 +1848,12 @@ static MO_MUST_USE bool pattern_node(struct inference *p, const struct mo_syntax
                        "A pattern names a case or record, a literal, a tuple or a list "
                        "(reference 7.3).",
                        NULL);
+    /* Retain inference notes for contextual range checking, but no executable
+     * rows: the normalized LITERAL already carries this spelling and type. */
+    bool checked = p->checked;
+    p->checked = false;
     struct value literal_value = infer(p, node, type);
+    p->checked = checked;
     if (literal_value.type == NULL)
         return false;
     bool boolean = node->kind == MO_S_TRUE || node->kind == MO_S_FALSE;
@@ -2225,14 +2240,15 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         if (!assignment &&
             !(node->kind == MO_S_VAR ? bind(p, name, rhs.type, true) : binder(p, name, rhs.type)))
             return (struct value){0};
-        struct value result = graph(p,
-                                    (struct value){.type = native(p, "Unit", 0),
-                                                   .binding = assignment ? l->name : NULL,
-                                                   .bound = assignment                 ? l->binding
-                                                            : name->kind == MO_S_TUPLE ? NULL
-                                                                                       : p->last,
-                                                   .never = rhs.never},
-                                    1);
+        struct value result =
+            graph(p,
+                  (struct value){.type = native(p, "Unit", 0),
+                                 .binding = assignment ? l->name : NULL,
+                                 .bound = assignment                 ? l->binding
+                                          : name->kind == MO_S_TUPLE ? NULL
+                                                                     : p->last->binding,
+                                 .never = rhs.never},
+                  1);
         if (p->checked && result.type != NULL) {
             result.graph->operands[0] = rhs.note;
             result.graph->output.assignment = assignment;
@@ -2391,7 +2407,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             if (!bind(p, parameters->children[i], fn->arguments[i], false))
                 return (struct value){0};
             if (p->checked)
-                emitted.graph->lambda->parameters[i] = p->last;
+                emitted.graph->lambda->parameters[i] = p->last->binding;
         }
         struct value body = named(p->result, "Unit")
                                 ? discard(p, node->children[1])
@@ -2517,7 +2533,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             while (name->kind == MO_S_BINDER)
                 name = name->children[0];
             if (name->kind != MO_S_TUPLE)
-                binding = p->last;
+                binding = p->last->binding;
         }
         p->loops++;
         struct term *unit = native(p, "Unit", 0);
@@ -3130,20 +3146,11 @@ static MO_MUST_USE struct mo_checked_pattern *pattern_output(struct inference *p
                                                              const struct mo_source_type *type,
                                                              enum mo_checked_pattern_kind kind,
                                                              uint32_t count) {
-    uint64_t bytes = sizeof(struct mo_checked_pattern) +
-                     (uint64_t)count * sizeof(struct mo_checked_pattern_part);
-    if (bytes > MO_LIMIT_SOURCE_CHECK_WORK - p->work ||
-        bytes > MO_LIMIT_PROGRAM_CHECK_WORK - *p->signatures->work) {
-        bool reported =
-            problem(p,
-                    bytes > MO_LIMIT_SOURCE_CHECK_WORK - p->work ? MO_CODE_CHECK_WORK
-                                                                 : MO_CODE_CHECK_PROGRAM_WORK,
-                    syntax->span, "the typed patterns need too much storage", NULL, NULL);
-        (void)reported;
+    p->span = syntax->span;
+    /* Checked output has ordinary node/arena budgets. Only the coverage
+     * matrix charges bytes, to bound its retained combinatorial scratch. */
+    if (!work(p))
         return NULL;
-    }
-    p->work += (uint32_t)bytes;
-    *p->signatures->work += bytes;
     struct mo_checked_pattern *out =
         allocate(p, 1, sizeof(*out), _Alignof(struct mo_checked_pattern));
     if (out != NULL)
@@ -3164,6 +3171,38 @@ pattern_field_type(struct inference *p, const struct mo_data_signature *data,
     }
     struct term *type = annotation(p, data->by_index[index]->type, parameters, 0);
     return type == NULL ? NULL : finish_type(p, type, 0);
+}
+
+/* One immutable typed ANY per field and nominal instantiation. Omitted parts
+ * borrow these nodes, whose syntax points at the declaring field. */
+static MO_MUST_USE const struct mo_checked_pattern *const *
+pattern_defaults(struct inference *p, const struct mo_data_signature *data,
+                 const struct mo_source_type *type) {
+    for (struct pattern_defaults *at = p->defaults; at != NULL; at = at->next) {
+        if (!work(p))
+            return NULL;
+        if (at->data == data && at->type == type)
+            return at->fields;
+    }
+    struct pattern_defaults *out = allocate(p, 1, sizeof(*out), _Alignof(struct pattern_defaults));
+    const struct mo_checked_pattern **fields =
+        allocate(p, data->count, sizeof(*fields), _Alignof(const struct mo_checked_pattern *));
+    if (p->failed)
+        return NULL;
+    for (uint32_t i = 0; i < data->count; i++) {
+        const struct mo_field_signature *field = data->by_index[i];
+        const struct mo_source_type *field_type = pattern_field_type(p, data, type, i);
+        fields[i] =
+            field_type == NULL
+                ? NULL
+                : pattern_output(p, field->name == NULL ? data->symbol->declaration : field->name,
+                                 field_type, MO_PATTERN_ANY, 0);
+        if (fields[i] == NULL)
+            return NULL;
+    }
+    *out = (struct pattern_defaults){data, type, fields, p->defaults};
+    p->defaults = out;
+    return fields;
 }
 
 /* Normalize only decisions already retained by inference. The syntax-pointer
@@ -3301,12 +3340,11 @@ checked_pattern(struct inference *p, const struct mo_syntax *syntax,
     out->parts = parts;
     if (!type_arguments(p, data->type, type, &out->arguments))
         return NULL;
+    const struct mo_checked_pattern *const *defaults = pattern_defaults(p, data, type);
+    if (defaults == NULL)
+        return NULL;
     for (uint32_t i = 0; i < data->count; i++) {
-        const struct mo_source_type *field = pattern_field_type(p, data, type, i);
-        parts[i] = (struct mo_checked_pattern_part){
-            i, field == NULL ? NULL : pattern_output(p, syntax, field, MO_PATTERN_ANY, 0)};
-        if (parts[i].pattern == NULL)
-            return NULL;
+        parts[i] = (struct mo_checked_pattern_part){i, defaults[i]};
     }
     const struct mo_syntax *args = syntax->kind == MO_S_CALL      ? syntax->children[1]
                                    : syntax->kind == MO_S_POSTFIX ? syntax->children[2]->children[0]
@@ -3502,8 +3540,9 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
                 if (bound == NULL)
                     goto failed;
                 for (uint32_t i = 0; i < lambda->output.parameter_count; i++) {
-                    MO_ASSERT(lambda->parameters[i]->binding_index < binding_count);
-                    bound[i] = &bindings[lambda->parameters[i]->binding_index];
+                    const struct note *parameter = lambda->parameters[i];
+                    MO_ASSERT(parameter == NULL || parameter->binding_index < binding_count);
+                    bound[i] = parameter == NULL ? NULL : &bindings[parameter->binding_index];
                 }
                 lambda->output.parameters = bound;
                 lambda->output.body = operands[0];

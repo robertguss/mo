@@ -275,7 +275,10 @@ struct mo_checked_pattern_part {
 /* Named fields are in declaration order; omitted fields become ANY. A list is
  * normalized to empty (zero parts) or cons (two parts), including its rest.
  * Alternatives share canonical binding pointers, not just matching spellings.
- * LITERAL retains its source spelling and already range-checked contextual type. */
+ * Omitted-field ANY nodes are immutable and may be shared; their syntax names
+ * the declaring field. Ignored _ has no binding entry. LITERAL retains its
+ * source spelling and already range-checked contextual type, with no expression
+ * rows emitted for its spelling or unary minus. */
 struct mo_checked_pattern {
     enum mo_checked_pattern_kind kind;
     const struct mo_syntax *syntax;
@@ -317,6 +320,7 @@ struct mo_checked_try {
 struct mo_checked_lambda {
     uint32_t number; /* one-based source order within the containing function/constant/spec */
     uint32_t parameter_count;
+    /* NULL for _; its type is in the lambda expression's function type. */
     const struct mo_checked_binding *const *parameters;
     uint32_t body; /* expression index in the containing checked body */
     uint32_t capture_count;
@@ -350,7 +354,7 @@ struct mo_checked_ability_use {
  *
  * WHILE operands are condition/body; FOR operands are iterable/body. Both
  * return Unit. The body is lazy, and WHILE re-evaluates its condition each
- * round. FOR binding is its canonical element name, or NULL for a tuple;
+ * round. FOR binding is its canonical element name, or NULL for _ or a tuple;
  * pattern is the normalized element binder, including ignored/tuple slots.
  * BREAK/CONTINUE have zero operands or one guard, and target the nearest loop
  * in the same function/lambda. Match arms have their own binding scopes;
@@ -364,6 +368,8 @@ struct mo_checked_ability_use {
  * A field assignment has its target projection then its value, with binding
  * pointing at the base var. Projection operands recursively retain the field
  * path; do not mutate the projected value independently of that base var.
+ * For a compound field write, the same projection row is operand zero of both
+ * the write and its RHS operator. Evaluate it once, not once per reference.
  * Constructors have payload operands only, in written order. A NAMED_ARG
  * operand wraps its value and supplies its declaration-order field index.
  * An unnamed payload is the sole operand, at field zero. Field/projection
@@ -503,8 +509,11 @@ struct mo_program {
  * nongeneric functions, scalar expressions/operators, direct/indirect calls,
  * records/choices and fields, normalized patterns, tuples/lists, conditionals,
  * loops, early exits/asserts and noncapturing lambdas. Native support is direct Console.print; main
- * takes no parameters or one Console and returns Unit or Int. Other entry forms, imports,
- * constants/specs, generic functions, derived abilities and unfinished body forms return E1103.
+ * takes no parameters or one Console and returns Unit or Int. Invalid entry
+ * signatures report E0079; valid unfinished entry forms return E1103. Imports,
+ * constants/specs, generic functions, any where clause, ability customizers,
+ * written Map/Set types (Hash unchecked), derived abilities and unfinished body
+ * forms return E1103.
  * Future spec checking checks anchor typing, completeness and links but executes no source code:
  * tools compile/run anchors to verify their allows/forbids expectations before accepting a
  * command-line mo check. Unfinished stages must report E1103, not succeed. */
