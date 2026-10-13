@@ -749,10 +749,20 @@ static void partial_types(void) {
     MO_ASSERT(mo_types_declare(&types, MO_TYPE_RECORD, "Forest", &forest) == MO_TYPES_OK);
     struct mo_type_field again = {"again", loop};
     MO_ASSERT(mo_types_define_record(&types, loop, &again, 1) == MO_TYPES_OK);
+    uint32_t chain[300], previous = integer;
+    for (unsigned i = 0; i < 300; i++) {
+        uint32_t members[] = {previous, integer};
+        chain[i] = heap_intern(
+            &types,
+            (struct mo_type){.kind = MO_TYPE_TUPLE, .parameters = members, .parameter_count = 2});
+        previous = chain[i];
+    }
+    struct mo_type_field deep = {"deep", previous};
     struct mo_type_field fields[] = {{"number", integer}, {"loop", loop}};
     struct mo_type_case cases[] = {{.name = "Some", .fields = fields, .field_count = 2},
-                                   {.name = "None"}};
-    MO_ASSERT(mo_types_define_choice(&types, option, cases, 2) == MO_TYPES_OK);
+                                   {.name = "None"},
+                                   {.name = "Deep", .fields = &deep, .field_count = 1}};
+    MO_ASSERT(mo_types_define_choice(&types, option, cases, 3) == MO_TYPES_OK);
     uint32_t children = heap_intern(
         &types,
         (struct mo_type){.kind = MO_TYPE_LIST, .parameters = &forest, .parameter_count = 1});
@@ -769,6 +779,16 @@ static void partial_types(void) {
                                                               .parameters = empty_parameters,
                                                               .parameter_count = 2});
     MO_ASSERT(mo_types_finish(&types) == MO_TYPES_OK);
+    for (unsigned i = 0; i < 300; i++) {
+        uint32_t ignored =
+            heap_layout(&types, (struct mo_layout){.kind = MO_LAYOUT_TUPLE,
+                                                   .type = chain[i],
+                                                   .case_index = MO_NO_INDEX,
+                                                   .function = MO_NO_INDEX,
+                                                   .fields = types.items[chain[i]].parameters,
+                                                   .field_count = 2});
+        (void)ignored;
+    }
     /* Dead branches need no layout. Forest is the only constructible record. */
     uint32_t layout = heap_layout(&types, (struct mo_layout){.kind = MO_LAYOUT_RECORD,
                                                              .type = forest,

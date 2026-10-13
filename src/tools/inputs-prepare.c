@@ -199,7 +199,10 @@ static MO_MUST_USE uint32_t fields_depth(const struct mo_inputs *inputs,
 static MO_MUST_USE enum mo_input_result ranks(struct mo_inputs *inputs, const uint32_t *graph,
                                               uint32_t count, struct mo_input_budget *budget) {
     bool settled = false;
-    for (uint32_t pass = 0; pass <= MO_LIMIT_INPUT_DEPTH && !settled; pass++) {
+    /* The graph may have deep dead branches even when a root has a shallow
+     * inhabitant. Bound propagation by graph size and preparation work, not
+     * the depth of values we allow building. */
+    for (uint32_t pass = 0; pass <= count && !settled; pass++) {
         bool changed = false;
         for (uint32_t i = 0; i < count; i++) {
             struct mo_input_type_info *info = &inputs->info[graph[i]];
