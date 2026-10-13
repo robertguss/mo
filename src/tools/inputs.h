@@ -111,8 +111,8 @@ void mo_inputs_skip(struct mo_inputs *inputs);
  * destination. Retain it while testing it; on a still-failing verdict replace
  * best with it before the next step, otherwise drop it. feedback resumes at
  * the accepted node, retaining numeric distance and restarting structural
- * edits there. A refusal preserves the cursor and
- * output. The budget counts emitted candidates, not skipped equal values.
+ * edits there. A refusal preserves the cursor and output. The budget counts
+ * emitted candidates, not skipped equal values.
  * Timing and classification of stopped calls remain with the driver. */
 struct mo_input_shrinker {
     const struct mo_inputs *inputs;
@@ -138,7 +138,8 @@ struct mo_input_extreme {
     enum mo_input_end end;
 };
 /* Find the first Int/Decimal/Time/Duration extreme inside parameter, walking
- * fields and collection entries in order. DONE means none; out is unchanged
+ * fields and collection entries in order, including Range's Int endpoints
+ * (start before end). DONE means none; out is unchanged
  * unless OK. Overrides are opaque. No allocation and no ownership changes. */
 MO_MUST_USE enum mo_input_result mo_inputs_extreme(const struct mo_inputs *inputs,
                                                    const struct mo_cell *values, uint32_t parameter,

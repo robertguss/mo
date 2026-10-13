@@ -47,13 +47,35 @@ uint32_t mo_input_scalar_count(enum mo_type_kind kind) {
 uint32_t mo_input_skip_base(const struct mo_inputs *inputs, uint32_t type) {
     return inputs->info[type].factory == NULL &&
                    inputs->types->items[type].kind == MO_TYPE_CHOICE &&
-                   inputs->info[type].base_case != 0
+                   inputs->info[type].case_tags[0] != inputs->info[type].base_case
                ? 0
                : 1;
 }
 
-uint32_t mo_input_variants(const struct mo_inputs *inputs, uint32_t parent, uint32_t child) {
+uint32_t mo_input_variants(const struct mo_inputs *inputs, uint32_t parent, uint32_t field) {
+    const struct mo_input_type_info *container = &inputs->info[parent];
+    uint32_t child = container->children[field];
     const struct mo_input_type_info *info = &inputs->info[child];
+    if (container->depth > inputs->limits.depth || info->depth >= inputs->limits.depth ||
+        info->count == 0)
+        return 0;
+    enum mo_type_kind kind = inputs->types->items[parent].kind;
+    if ((kind == MO_TYPE_LIST || kind == MO_TYPE_MAP || kind == MO_TYPE_SET) &&
+        container->count == 1)
+        return 0;
+    if (kind == MO_TYPE_CHOICE) {
+        uint32_t low = 0, high = inputs->types->items[parent].case_count;
+        while (low < high) {
+            uint32_t middle = low + (high - low) / 2;
+            if (container->case_offsets[middle] <= field)
+                low = middle + 1;
+            else
+                high = middle;
+        }
+        MO_ASSERT(low != 0);
+        if (container->case_depths[low - 1] > inputs->limits.depth)
+            return 0;
+    }
     if (info->order != 0 && info->order < inputs->info[parent].order) {
         return info->count - mo_input_skip_base(inputs, child);
     }
@@ -118,7 +140,12 @@ static MO_MUST_USE enum mo_input_result edges(struct mo_inputs *inputs, uint32_t
                                                      sizeof(uint32_t), _Alignof(uint32_t));
         info->case_layouts = mo_arena_allocate_array(&inputs->arena, type->case_count,
                                                      sizeof(uint32_t), _Alignof(uint32_t));
-        if (info->case_offsets == NULL || info->case_layouts == NULL)
+        info->case_tags = mo_arena_allocate_array(&inputs->arena, type->case_count,
+                                                  sizeof(uint32_t), _Alignof(uint32_t));
+        info->case_depths = mo_arena_allocate_array(&inputs->arena, type->case_count,
+                                                    sizeof(uint32_t), _Alignof(uint32_t));
+        if (info->case_offsets == NULL || info->case_layouts == NULL || info->case_tags == NULL ||
+            info->case_depths == NULL)
             return MO_INPUT_NO_MEMORY;
         for (uint32_t i = 0; i < type->case_count; i++) {
             info->case_offsets[i] = (uint32_t)count;
@@ -213,18 +240,45 @@ static MO_MUST_USE enum mo_input_result ranks(struct mo_inputs *inputs, const ui
         }
         settled = !changed;
     }
-    for (uint32_t i = 0; i < count; i++) {
-        const struct mo_input_type_info *info = &inputs->info[graph[i]];
-        const struct mo_type *type = &inputs->types->items[graph[i]];
-        if (info->depth == MO_NO_INDEX)
-            return settled ? MO_INPUT_UNINHABITED : MO_INPUT_LIMIT;
-        if (info->depth > inputs->limits.depth)
+    if (!settled)
+        return MO_INPUT_LIMIT;
+    for (uint32_t i = 0; i < inputs->parameter_count; i++) {
+        uint32_t depth = inputs->info[inputs->parameters[i]].depth;
+        if (depth == MO_NO_INDEX)
+            return MO_INPUT_UNINHABITED;
+        if (depth > inputs->limits.depth)
             return MO_INPUT_LIMIT;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        struct mo_input_type_info *info = &inputs->info[graph[i]];
+        const struct mo_type *type = &inputs->types->items[graph[i]];
+        if (!mo_input_work(budget, (uint64_t)info->child_count + type->case_count + 1))
+            return MO_INPUT_LIMIT;
+        if (info->depth > inputs->limits.depth) {
+            info->count = 0;
+            continue;
+        }
+        if (info->factory != NULL)
+            continue;
+        if (type->kind == MO_TYPE_CHOICE) {
+            for (uint32_t c = 0; c < type->case_count; c++) {
+                info->case_depths[c] =
+                    fields_depth(inputs, info, info->case_offsets[c], info->case_offsets[c + 1]);
+                if (info->case_depths[c] <= inputs->limits.depth)
+                    info->case_tags[info->case_count++] = c;
+            }
+            info->count = info->case_count;
+        } else if (type->kind == MO_TYPE_LIST || type->kind == MO_TYPE_SET ||
+                   type->kind == MO_TYPE_MAP) {
+            for (uint32_t c = 0; c < info->child_count; c++)
+                if (inputs->info[info->children[c]].depth >= inputs->limits.depth)
+                    info->count = 1;
+        }
         if (info->factory == NULL && (type->kind == MO_TYPE_MAP || type->kind == MO_TYPE_SET) &&
             !inputs->info[type->parameters[0]].hashable)
             return MO_INPUT_UNSUPPORTED;
     }
-    return settled ? MO_INPUT_OK : MO_INPUT_LIMIT;
+    return MO_INPUT_OK;
 }
 
 struct count_frame {
@@ -260,8 +314,7 @@ static MO_MUST_USE enum mo_input_result counts(struct mo_inputs *inputs, const u
             }
             info->order = ++order;
             for (uint32_t c = 0; c < info->child_count; c++) {
-                uint64_t total = (uint64_t)info->count +
-                                 mo_input_variants(inputs, frame->type, info->children[c]);
+                uint64_t total = (uint64_t)info->count + mo_input_variants(inputs, frame->type, c);
                 info->count = total > UINT32_MAX ? UINT32_MAX : (uint32_t)total;
             }
             info->visit = 2;
@@ -337,7 +390,7 @@ enum mo_input_result mo_input_prepare(struct mo_inputs *inputs,
     for (uint32_t i = 0; i < count; i++) {
         const struct mo_type *type = &types->items[graph[i]];
         const struct mo_input_type_info *info = &inputs->info[graph[i]];
-        if (info->factory != NULL)
+        if (info->factory != NULL || info->depth > inputs->limits.depth)
             continue;
         if ((type->kind == MO_TYPE_RECORD || type->kind == MO_TYPE_TUPLE) &&
             info->layout == MO_NO_INDEX)
@@ -346,7 +399,8 @@ enum mo_input_result mo_input_prepare(struct mo_inputs *inputs,
             if (!mo_input_work(&budget, type->case_count))
                 return MO_INPUT_LIMIT;
             for (uint32_t c = 0; c < type->case_count; c++) {
-                if (mo_case_shape(types, graph[i], c) == MO_CASE_BOXED &&
+                if (info->case_depths[c] <= inputs->limits.depth &&
+                    mo_case_shape(types, graph[i], c) == MO_CASE_BOXED &&
                     info->case_layouts[c] == MO_NO_INDEX)
                     return MO_INPUT_UNSUPPORTED;
             }

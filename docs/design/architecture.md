@@ -1304,9 +1304,12 @@ then accepts it as the new failing input or drops it. The shrink call budget
 counts emitted candidates. Integer and fixed-point shrinking tries zero, then
 subtracts distances `abs(x) / 2^k` toward zero for increasing `k`, ending at a
 one-unit distance. Acceptance resumes at that node and distance; structural
-edits restart at the accepted node. The driver, not this library, decides whether a
-stopped call is a bug. Extreme detection walks a parameter and returns its
-first Int, Decimal, Time or Duration minimum/maximum; overrides are opaque.
+edits restart at the accepted node. Equal scalar candidates are skipped;
+BigInt tries zero, half and the predecessor magnitude without duplicates.
+The driver, not this library, decides whether a stopped call is a bug.
+Extreme detection walks a parameter and returns its first Int, Decimal, Time
+or Duration minimum/maximum, including Range's Int endpoints, start before
+end; overrides are opaque.
 
 Boundary order starts with the base tuple, then varies each parameter alone
 in declaration order, so a capped product does not hide later boundaries of
@@ -1329,8 +1332,13 @@ Bytes' empty/one-byte/1,024-byte values, and BigInt's 0/±1/±128-byte magnitude
 SipHash-1-3 in `base/hash.h` hashes the full name with the public fixed key
 `6d6f2d70726f6d69:73652d696e707574`. The same key hashes the little-endian
 16-byte pair of name seed and ordinal into each SplitMix64 starting state;
-adjacent inputs do not share shifted portions of a stream. Random sizes increase every four inputs,
-up to the collection-size budget; scalar bit widths and blob sizes grow too.
+adjacent inputs do not share shifted portions of a stream. Random sizes
+increase every four inputs, up to the collection-size budget. Shape and blob
+size divide by the number of children plus one on each descent, bounding
+nested branching. Immediate integer magnitudes still grow with the trial's
+global size. Random Decimals choose decimal digits and a fractional scale
+from 0 through 18, with overflow-checked growth into the representation's
+range; they do not stay near zero as raw small coefficients would.
 An allocation or generation-limit refusal preserves outputs and the ordinal;
 the caller may retry or explicitly skip it without changing later streams.
 Empty parameter lists have one input. Explicit-stack walks are bounded by
@@ -1338,8 +1346,12 @@ Empty parameter lists have one input. Explicit-stack walks are bounded by
 4,096 nodes, 1,024 entries per collection, 64 KiB total blob payload and
 1 Mi work units per input. Preparation has a separate 64 MiB arena and
 64 Mi work budget. Generic table construction reserves conservative work
-for collision probes and key-tree walks before entering the heap builder.
-Uninhabited types have their own refusal. Functions/env/capabilities without
+proportional to this table's child nodes and bytes for hashing and bounded
+paired collision/equality walks before entering the heap builder, not the
+whole input's cumulative size once per entry. Uninhabited root types have
+their own refusal. Uninhabitable or too-deep choice cases are excluded;
+collections with uninhabitable elements still generate empty values.
+Functions/env/capabilities without
 overrides, missing layouts and non-hashable keys are unsupported. Exact-index
 factory overrides are the future hidden-builder, closure and fake-capability seam; their trusted
 callbacks subtract child nodes, bytes and work from the same remaining budget

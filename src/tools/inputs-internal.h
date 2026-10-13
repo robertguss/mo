@@ -8,7 +8,10 @@ struct mo_input_type_info {
     uint32_t *children;
     uint32_t *case_offsets;
     uint32_t *case_layouts;
+    uint32_t *case_tags;
+    uint32_t *case_depths;
     uint32_t child_count;
+    uint32_t case_count;
     uint32_t count;
     uint32_t depth;
     uint32_t base_case;
@@ -70,7 +73,7 @@ MO_MUST_USE struct mo_cell mo_input_child(const struct mo_inputs *inputs,
                                           struct mo_input_walk_frame *frame, uint32_t *type);
 MO_MUST_USE uint32_t mo_input_skip_base(const struct mo_inputs *inputs, uint32_t type);
 MO_MUST_USE uint32_t mo_input_variants(const struct mo_inputs *inputs, uint32_t parent,
-                                       uint32_t child);
+                                       uint32_t field);
 MO_MUST_USE uint32_t mo_input_scalar_count(enum mo_type_kind kind);
 MO_MUST_USE uint64_t mo_input_random(uint64_t *state);
 MO_MUST_USE enum mo_input_result mo_input_prepare(struct mo_inputs *inputs,
@@ -104,6 +107,7 @@ struct mo_input_value_request {
     uint32_t type;
     enum mo_input_mode mode;
     uint32_t boundary;
+    uint32_t size;
     uint32_t remaining_depth;
     struct mo_cell source;
     const struct mo_input_edit *edit;

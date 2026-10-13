@@ -100,9 +100,56 @@ static void random_types(struct mo_types *types, struct input_bytes *in) {
     }
 }
 
+static MO_MUST_USE enum mo_input_result factory_text(struct mo_heap *heap, const uint8_t *bytes,
+                                                     size_t length,
+                                                     struct mo_input_limits *remaining,
+                                                     struct mo_cell *out) {
+    if (length > remaining->bytes || length > remaining->work)
+        return MO_INPUT_LIMIT;
+    remaining->bytes -= length;
+    remaining->work -= length;
+    return mo_value_text(heap, (const char *)bytes, length, out) ? MO_INPUT_OK : MO_INPUT_NO_MEMORY;
+}
+
+static MO_MUST_USE enum mo_input_result factory_build(void *context, struct mo_heap *heap,
+                                                      const struct mo_input_request *request,
+                                                      struct mo_input_limits *remaining,
+                                                      struct mo_cell *out) {
+    (void)context;
+    static const uint8_t text[] = "\xc3\xa9";
+    size_t length = request->kind == MO_INPUT_RANDOM ? (request->seed & 1) != 0 ? 2U : 0U
+                    : request->boundary != 0         ? 2U
+                                                     : 0U;
+    return factory_text(heap, text, length, remaining, out);
+}
+
+static MO_MUST_USE enum mo_input_result factory_copy(void *context, struct mo_heap *heap,
+                                                     struct mo_cell source,
+                                                     struct mo_input_limits *remaining,
+                                                     struct mo_cell *out) {
+    (void)context;
+    size_t length;
+    const uint8_t *bytes = mo_value_data(source, &length);
+    return factory_text(heap, bytes, length, remaining, out);
+}
+
+static MO_MUST_USE enum mo_input_result factory_shrink(void *context, struct mo_heap *heap,
+                                                       struct mo_cell source, uint32_t candidate,
+                                                       struct mo_input_limits *remaining,
+                                                       struct mo_cell *out) {
+    (void)context;
+    size_t length;
+    const uint8_t *bytes = mo_value_data(source, &length);
+    (void)bytes;
+    return candidate == 0 && length != 0 ? factory_text(heap, NULL, 0, remaining, out)
+                                         : MO_INPUT_DONE;
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     struct input_bytes bytes = {data, size, 0};
-    uint8_t selection[] = {next_byte(&bytes), next_byte(&bytes)};
+    uint8_t selection[2];
+    selection[0] = next_byte(&bytes);
+    selection[1] = next_byte(&bytes);
     uint32_t count = 1U + next_byte(&bytes) % 2U;
     struct mo_arena arena;
     mo_arena_init(&arena, 1 << 20);
@@ -111,6 +158,15 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     random_types(&types, &bytes);
     uint32_t parameters[] = {types.count - 1U - selection[0] % types.count,
                              types.count - 1U - selection[1] % types.count};
+    uint32_t factory_count = (selection[0] & 128) != 0 ? 1U : 0U;
+    struct mo_input_factory factory = {.type = MO_TYPE_TEXT,
+                                       .boundaries = 2,
+                                       .hashable = true,
+                                       .build = factory_build,
+                                       .copy = factory_copy,
+                                       .shrink = factory_shrink};
+    if (factory_count != 0)
+        parameters[0] = MO_TYPE_TEXT;
     struct mo_input_limits limits = mo_input_limits_default();
     limits.combinations = 16;
     limits.depth = 16;
@@ -118,10 +174,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     limits.elements = 8;
     limits.bytes = 4096;
     struct mo_inputs first, second;
-    enum mo_input_result result = mo_inputs_init(&first, &types, parameters, count,
-                                                 (const char *)data, size, &limits, NULL, 0);
-    enum mo_input_result other = mo_inputs_init(&second, &types, parameters, count,
-                                                (const char *)data, size, &limits, NULL, 0);
+    enum mo_input_result result =
+        mo_inputs_init(&first, &types, parameters, count, (const char *)data, size, &limits,
+                       &factory, factory_count);
+    enum mo_input_result other =
+        mo_inputs_init(&second, &types, parameters, count, (const char *)data, size, &limits,
+                       &factory, factory_count);
     MO_ASSERT(result == other);
     if (result == MO_INPUT_OK) {
         struct mo_limits heap_limits = mo_limits_default();
@@ -158,22 +216,45 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                           (left.length == 0 || memcmp(left.bytes, right.bytes, left.length) == 0));
                 mo_buffer_free(&right);
                 mo_buffer_free(&left);
+                struct mo_input_extreme ea = {.parameter = 99}, eb = {.parameter = 99};
+                result = mo_inputs_extreme(&first, a, p, &ea);
+                other = mo_inputs_extreme(&second, b, p, &eb);
+                MO_ASSERT(result == other);
+                MO_ASSERT(result == MO_INPUT_OK || result == MO_INPUT_DONE ||
+                          result == MO_INPUT_LIMIT);
+                if (result == MO_INPUT_OK)
+                    MO_ASSERT(ea.parameter == p && ea.parameter == eb.parameter &&
+                              ea.type == eb.type && ea.end == eb.end);
+                else
+                    MO_ASSERT(ea.parameter == 99 && eb.parameter == 99);
             }
             struct mo_input_shrinker shrinker;
-            mo_input_shrink_init(&shrinker, &first, 2);
-            struct mo_cell candidate[2];
-            result = mo_input_shrink_next(&shrinker, a, heaps[1], candidate);
-            if (result == MO_INPUT_OK) {
-                for (uint32_t p = 0; p < count; p++) {
-                    MO_ASSERT(input_value_typed(heaps[1], &types, parameters[p], candidate[p]));
-                    mo_value_drop(heaps[1], parameters[p], candidate[p]);
+            mo_input_shrink_init(&shrinker, &first, 4);
+            struct mo_heap *current = heaps[0];
+            for (unsigned step = 0; step < 4; step++) {
+                struct mo_heap *destination = heaps[1 - step % 2];
+                struct mo_cell candidate[2];
+                result = mo_input_shrink_next(&shrinker, a, destination, candidate);
+                if (result != MO_INPUT_OK) {
+                    MO_ASSERT(result == MO_INPUT_DONE || result == MO_INPUT_LIMIT ||
+                              result == MO_INPUT_NO_MEMORY);
+                    break;
                 }
-                mo_input_shrink_feedback(&shrinker, false);
-            } else
-                MO_ASSERT(result == MO_INPUT_DONE || result == MO_INPUT_LIMIT ||
-                          result == MO_INPUT_NO_MEMORY);
+                bool accept = step % 2 == 0;
+                for (uint32_t p = 0; p < count; p++) {
+                    MO_ASSERT(input_value_typed(destination, &types, parameters[p], candidate[p]));
+                    if (accept) {
+                        mo_value_drop(current, parameters[p], a[p]);
+                        a[p] = candidate[p];
+                    } else
+                        mo_value_drop(destination, parameters[p], candidate[p]);
+                }
+                if (accept)
+                    current = destination;
+                mo_input_shrink_feedback(&shrinker, accept);
+            }
             for (uint32_t p = 0; p < count; p++) {
-                mo_value_drop(heaps[0], parameters[p], a[p]);
+                mo_value_drop(current, parameters[p], a[p]);
                 mo_value_drop(heaps[1], parameters[p], b[p]);
             }
             MO_ASSERT(mo_heap_objects(heaps[0]) == 0 && mo_heap_objects(heaps[1]) == 0);

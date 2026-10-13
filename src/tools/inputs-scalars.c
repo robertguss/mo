@@ -150,10 +150,16 @@ enum mo_input_result mo_input_immediate_build(struct mo_input_builder *builder,
         if (copy) {
             value = smaller(mo_cell_get_decimal(request->source), variant);
         } else if (random) {
-            mo_u128 magnitude = (mo_u128)mo_input_random(&builder->random) << 64;
-            magnitude |= mo_input_random(&builder->random);
-            uint32_t bits = builder->size < 123 ? builder->size + 4 : 127;
-            magnitude &= ((mo_u128)1 << bits) - 1;
+            uint32_t cap = builder->size < 37 ? builder->size + 1 : 38;
+            uint32_t digits = 1 + (uint32_t)(mo_input_random(&builder->random) % cap);
+            uint32_t scale = (uint32_t)(mo_input_random(&builder->random) % 19);
+            mo_u128 magnitude = 0;
+            for (uint32_t d = 0; d < digits; d++)
+                magnitude = magnitude * 10 + mo_input_random(&builder->random) % 10;
+            /* A scale of 0 is integral; 18 retains the smallest step. Stop
+             * increasing the magnitude before the representation maximum. */
+            for (uint32_t d = scale; d < 18 && magnitude <= (mo_u128)max / 10; d++)
+                magnitude *= 10;
             value = (mo_i128)magnitude;
             if ((mo_input_random(&builder->random) & 1) != 0)
                 value = -value;
@@ -283,7 +289,7 @@ static MO_MUST_USE enum mo_input_result blob(struct mo_input_builder *builder,
         uint32_t index = request->mode == MO_INPUT_SAMPLE ? request->boundary : 0;
         bool random = request->mode == MO_INPUT_PRNG;
         if (random) {
-            uint64_t cap = (uint64_t)builder->size * (kind == MO_TYPE_BIGINT ? 16 : 4);
+            uint64_t cap = (uint64_t)request->size * (kind == MO_TYPE_BIGINT ? 16 : 4);
             if (cap > builder->budget.left.bytes)
                 cap = builder->budget.left.bytes;
             length = (size_t)(mo_input_random(&builder->random) % (cap + 1));
@@ -372,7 +378,7 @@ enum mo_input_result mo_input_scalar_build(struct mo_input_builder *builder,
             struct mo_input_request leaf = {
                 .kind = request->mode == MO_INPUT_PRNG ? MO_INPUT_RANDOM : MO_INPUT_BOUNDARY,
                 .boundary = request->mode == MO_INPUT_SAMPLE ? request->boundary : 0,
-                .size = builder->size,
+                .size = request->size,
                 .seed = mo_input_random(&builder->random)};
             result = factory->build(factory->context, builder->heap, &leaf, &remaining, out);
         }

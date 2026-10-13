@@ -12,6 +12,8 @@ struct build_frame {
     uint32_t tag;
     uint32_t special;
     uint32_t variant;
+    uint32_t nodes_before;
+    size_t bytes_before;
     bool leaf;
 };
 
@@ -48,11 +50,10 @@ static MO_MUST_USE enum mo_input_result special_field(struct mo_input_builder *b
     for (uint32_t i = 0; i < info->child_count; i++) {
         if (!mo_input_work(&builder->budget, 1))
             return MO_INPUT_LIMIT;
-        uint32_t skip = mo_input_skip_base(builder->inputs, info->children[i]);
-        uint32_t count = mo_input_variants(builder->inputs, frame->request.type, info->children[i]);
+        uint32_t count = mo_input_variants(builder->inputs, frame->request.type, i);
         if (index < count) {
             frame->special = i;
-            frame->variant = index + skip;
+            frame->variant = index + mo_input_skip_base(builder->inputs, info->children[i]);
             return MO_INPUT_OK;
         }
         index -= count;
@@ -70,6 +71,8 @@ static MO_MUST_USE enum mo_input_result frame_init(struct mo_input_builder *buil
     if (builder->budget.left.nodes == 0 || !mo_input_work(&builder->budget, 1))
         return MO_INPUT_LIMIT;
     builder->budget.left.nodes--;
+    frame->nodes_before = builder->budget.left.nodes;
+    frame->bytes_before = builder->budget.left.bytes;
     uint64_t node = builder->seen++;
     frame->special = MO_NO_INDEX;
     if (frame->request.mode == MO_INPUT_COPY && edit != NULL && !builder->edited &&
@@ -100,11 +103,11 @@ static MO_MUST_USE enum mo_input_result frame_init(struct mo_input_builder *buil
     } else if (type->kind == MO_TYPE_CHOICE) {
         frame->tag = info->base_case;
         if (frame->request.mode == MO_INPUT_SAMPLE) {
-            if (frame->request.boundary < type->case_count)
-                frame->tag = frame->request.boundary;
+            if (frame->request.boundary < info->case_count)
+                frame->tag = info->case_tags[frame->request.boundary];
             else {
                 enum mo_input_result result =
-                    special_field(builder, frame, frame->request.boundary - type->case_count);
+                    special_field(builder, frame, frame->request.boundary - info->case_count);
                 if (result != MO_INPUT_OK)
                     return result;
                 uint32_t low = 0, high = type->case_count;
@@ -120,19 +123,13 @@ static MO_MUST_USE enum mo_input_result frame_init(struct mo_input_builder *buil
                 frame->special -= info->case_offsets[frame->tag];
             }
         } else if (frame->request.mode == MO_INPUT_PRNG) {
-            uint32_t start = (uint32_t)(mo_input_random(&builder->random) % type->case_count);
+            uint32_t start = (uint32_t)(mo_input_random(&builder->random) % info->case_count);
             bool found = false;
-            for (uint32_t i = 0; i < type->case_count; i++) {
-                uint32_t tag = (start + i) % type->case_count;
-                if (!mo_input_work(&builder->budget, (uint64_t)type->cases[tag].field_count + 1))
+            for (uint32_t i = 0; i < info->case_count; i++) {
+                uint32_t tag = info->case_tags[(start + i) % info->case_count];
+                if (!mo_input_work(&builder->budget, 1))
                     return MO_INPUT_LIMIT;
-                bool fits = true;
-                for (uint32_t f = 0; f < type->cases[tag].field_count; f++) {
-                    if (inputs->info[type->cases[tag].fields[f].type].depth >
-                        inputs->limits.depth - depth)
-                        fits = false;
-                }
-                if (fits) {
+                if (info->case_depths[tag] <= frame->request.remaining_depth) {
                     frame->tag = tag;
                     found = true;
                     break;
@@ -161,7 +158,7 @@ static MO_MUST_USE enum mo_input_result frame_init(struct mo_input_builder *buil
                     return result;
             }
         } else if (frame->request.mode == MO_INPUT_PRNG) {
-            uint32_t maximum = builder->size;
+            uint32_t maximum = frame->request.size;
             if (maximum > builder->budget.left.nodes / type->parameter_count)
                 maximum = builder->budget.left.nodes / type->parameter_count;
             for (uint32_t p = 0; p < type->parameter_count; p++) {
@@ -208,6 +205,9 @@ static MO_MUST_USE bool next_child(struct mo_input_builder *builder, struct buil
     uint32_t index = frame->cursor++;
     out->type = field_type(builder->inputs, frame, index);
     out->mode = frame->request.mode == MO_INPUT_PRNG ? MO_INPUT_PRNG : MO_INPUT_MINIMUM;
+    /* Share shape/blob size among siblings and reduce it on every descent.
+     * Immediate numeric magnitudes still grow with the trial's global size. */
+    out->size = frame->request.size / (frame->count + 1);
     uint32_t parameter = type->kind == MO_TYPE_MAP                                 ? index % 2
                          : type->kind == MO_TYPE_LIST || type->kind == MO_TYPE_SET ? 0
                                                                                    : index;
@@ -237,11 +237,12 @@ static MO_MUST_USE enum mo_input_result finish(struct mo_input_builder *builder,
     MO_ASSERT(frame->filled == frame->count);
     bool ok;
     if (type->kind == MO_TYPE_MAP || type->kind == MO_TYPE_SET) {
-        /* Bound even adversarial collision/equality work in the generic table
-         * builder. Counts and payload bytes upper-bound the size of each key. */
-        uint64_t cost = (uint64_t)(builder->inputs->limits.nodes - builder->budget.left.nodes) +
-                        builder->inputs->limits.bytes - builder->budget.left.bytes + 1;
-        if (!mo_input_work(&builder->budget, cost * frame->count * MO_LIMIT_HEAP_PROBES))
+        /* Charge this table's child trees, not every previous root and not
+         * the whole table once per entry. Reserve paired equality walks and
+         * hashing for every bounded probe, including adversarial collisions. */
+        uint64_t cost = (uint64_t)(frame->nodes_before - builder->budget.left.nodes) +
+                        frame->bytes_before - builder->budget.left.bytes;
+        if (!mo_input_work(&builder->budget, cost * (2 * MO_LIMIT_HEAP_PROBES + 1)))
             return MO_INPUT_LIMIT;
         ok =
             type->kind == MO_TYPE_MAP
@@ -284,6 +285,7 @@ enum mo_input_result mo_input_build(const struct mo_inputs *inputs, struct mo_he
                                     : boundaries != NULL ? MO_INPUT_SAMPLE
                                                          : MO_INPUT_PRNG,
                             .boundary = boundaries == NULL ? 0 : boundaries[completed],
+                            .size = size,
                             .source = source == NULL ? mo_cell_unit() : source[completed]}};
             if (inputs->limits.depth == 0) {
                 result = MO_INPUT_LIMIT;

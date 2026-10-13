@@ -201,9 +201,24 @@ static MO_MUST_USE enum mo_input_result candidate(struct mo_input_walk *walk, ui
     case MO_TYPE_BIGINT: {
         size_t bytes;
         const uint8_t *data = mo_value_data(value, &bytes);
-        (void)data;
         if (bytes == 0)
             return MO_INPUT_DONE;
+        if (variant != 0 && variant < count) {
+            if (!mo_input_work(&walk->budget, bytes))
+                return MO_INPUT_LIMIT;
+            bool nonzero = false, same_half = true;
+            unsigned borrow = 1;
+            for (size_t i = 0; i < bytes; i++) {
+                uint8_t half =
+                    (uint8_t)((data[i] >> 1) | (i + 1 < bytes ? (unsigned)data[i + 1] << 7 : 0));
+                uint8_t less = (uint8_t)((unsigned)data[i] - borrow);
+                borrow = borrow != 0 && data[i] == 0 ? 1U : 0U;
+                nonzero = nonzero || (variant == 1 ? half : less) != 0;
+                same_half = same_half && half == less;
+            }
+            if (!nonzero || (variant == 2 && same_half))
+                return MO_INPUT_DONE;
+        }
         break;
     }
     case MO_TYPE_TEXT:
@@ -350,8 +365,15 @@ enum mo_input_result mo_inputs_extreme(const struct mo_inputs *inputs, const str
             continue;
         enum mo_type_kind kind = inputs->types->items[type].kind;
         enum mo_input_end end;
-        if (kind == MO_TYPE_INT || kind == MO_TYPE_DURATION) {
-            int64_t number = mo_cell_get_int(value);
+        if (kind == MO_TYPE_INT || kind == MO_TYPE_DURATION || kind == MO_TYPE_RANGE) {
+            int64_t number;
+            if (kind == MO_TYPE_RANGE) {
+                struct mo_range range = mo_cell_get_range(value);
+                number =
+                    range.start == INT64_MIN || range.start == INT64_MAX ? range.start : range.end;
+                kind = MO_TYPE_INT;
+            } else
+                number = mo_cell_get_int(value);
             if (number != INT64_MIN && number != INT64_MAX)
                 continue;
             end = number == INT64_MIN ? MO_INPUT_SMALLEST : MO_INPUT_LARGEST;

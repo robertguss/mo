@@ -530,6 +530,17 @@ static void limits_and_retry(void) {
                              0) == MO_INPUT_UNSUPPORTED);
         mo_inputs_free(&inputs);
     }
+    limits.depth = 1;
+    MO_ASSERT(mo_inputs_init(&inputs, &fixture.types, &fixture.option, 1, "M.shallow", 9, &limits,
+                             NULL, 0) == MO_INPUT_OK);
+    for (unsigned i = 0; i < 16; i++) {
+        MO_ASSERT(mo_inputs_next(&inputs, heap, &out, &kind) == MO_INPUT_OK);
+        CHECK(mo_cell_get_tag(out) == 0);
+        CHECK(kind == (i == 0 ? MO_INPUT_BOUNDARY : MO_INPUT_RANDOM));
+        mo_value_drop(heap, fixture.option, out);
+    }
+    mo_inputs_free(&inputs);
+    limits = mo_input_limits_default();
     limits.work = 0;
     MO_ASSERT(mo_inputs_init(&inputs, &fixture.types, &text, 1, "M.work", 6, &limits, NULL, 0) ==
               MO_INPUT_OK);
@@ -587,6 +598,232 @@ static void minimal_tuple_without_heap(void) {
     mo_arena_free(&fixture.arena);
 }
 
+static void random_growth(void) {
+    struct heap_fixture fixture;
+    heap_fixture_init(&fixture);
+    struct mo_limits heap_limits = mo_limits_default();
+    struct mo_heap *heap = mo_heap_new(fixture.image, &heap_limits);
+    MO_ASSERT(heap != NULL);
+    struct mo_input_limits limits = mo_input_limits_default();
+    uint32_t types[] = {fixture.map, fixture.integer_set, fixture.forest};
+    for (unsigned t = 0; t < 3; t++) {
+        struct mo_inputs inputs;
+        MO_ASSERT(mo_inputs_init(&inputs, &fixture.types, &types[t], 1, "M.growing", 9, &limits,
+                                 NULL, 0) == MO_INPUT_OK);
+        unsigned refused = 0;
+        uint32_t largest = 0;
+        for (unsigned trial = 0; trial < 1000; trial++) {
+            struct mo_cell value;
+            enum mo_input_kind kind;
+            enum mo_input_result result = mo_inputs_next(&inputs, heap, &value, &kind);
+            if (result != MO_INPUT_OK) {
+                refused++;
+                mo_inputs_skip(&inputs);
+                continue;
+            }
+            CHECK(input_value_typed(heap, &fixture.types, types[t], value));
+            if (t == 1 && mo_table_size(value) > largest)
+                largest = mo_table_size(value);
+            mo_value_drop(heap, types[t], value);
+        }
+        CHECK(refused == 0);
+        if (t == 1)
+            CHECK(largest > 150);
+        mo_inputs_free(&inputs);
+    }
+    CHECK(mo_heap_objects(heap) == 0);
+    mo_heap_free(heap);
+    mo_heap_image_free(fixture.image);
+    mo_arena_free(&fixture.arena);
+}
+
+static void decimal_magnitudes(void) {
+    struct heap_fixture fixture;
+    heap_fixture_init(&fixture);
+    struct mo_limits heap_limits = mo_limits_default();
+    struct mo_heap *heap = mo_heap_new(fixture.image, &heap_limits);
+    MO_ASSERT(heap != NULL);
+    struct mo_input_limits limits = mo_input_limits_default();
+    uint32_t decimal = fixture.builtin[MO_TYPE_DECIMAL];
+    struct mo_inputs inputs;
+    MO_ASSERT(mo_inputs_init(&inputs, &fixture.types, &decimal, 1, "M.decimal", 9, &limits, NULL,
+                             0) == MO_INPUT_OK);
+    unsigned positive = 0, negative = 0, fractional = 0, large = 0;
+    const mo_i128 unit = INT64_C(1000000000000000000);
+    for (unsigned trial = 0; trial < 200; trial++) {
+        struct mo_cell cell;
+        enum mo_input_kind kind;
+        MO_ASSERT(mo_inputs_next(&inputs, heap, &cell, &kind) == MO_INPUT_OK);
+        if (kind != MO_INPUT_RANDOM)
+            continue;
+        mo_i128 value = mo_cell_get_decimal(cell);
+        if (value > unit)
+            positive++;
+        if (value < -unit)
+            negative++;
+        if (value != 0 && value % unit != 0)
+            fractional++;
+        if (value > unit * 1000000 || value < -unit * 1000000)
+            large++;
+    }
+    CHECK(positive > 10 && negative > 10 && fractional > 10 && large > 10);
+    mo_inputs_free(&inputs);
+    mo_heap_free(heap);
+    mo_heap_image_free(fixture.image);
+    mo_arena_free(&fixture.arena);
+}
+
+static void range_extremes(void) {
+    struct heap_fixture fixture;
+    heap_fixture_init(&fixture);
+    struct mo_input_limits limits = mo_input_limits_default();
+    struct mo_inputs inputs;
+    uint32_t type = fixture.builtin[MO_TYPE_RANGE];
+    MO_ASSERT(mo_inputs_init(&inputs, &fixture.types, &type, 1, "M.range", 7, &limits, NULL, 0) ==
+              MO_INPUT_OK);
+    struct mo_cell value = mo_cell_range(42, INT64_MAX);
+    struct mo_input_extreme extreme = {.parameter = 99};
+    CHECK(mo_inputs_extreme(&inputs, &value, 0, &extreme) == MO_INPUT_OK);
+    CHECK(extreme.parameter == 0 && extreme.type == MO_TYPE_INT && extreme.end == MO_INPUT_LARGEST);
+    value = mo_cell_range(INT64_MIN, INT64_MAX);
+    CHECK(mo_inputs_extreme(&inputs, &value, 0, &extreme) == MO_INPUT_OK);
+    CHECK(extreme.end == MO_INPUT_SMALLEST);
+    value = mo_cell_range(-1, 1);
+    CHECK(mo_inputs_extreme(&inputs, &value, 0, &extreme) == MO_INPUT_DONE);
+    mo_inputs_free(&inputs);
+    mo_heap_image_free(fixture.image);
+    mo_arena_free(&fixture.arena);
+}
+
+static void bigint_candidates(void) {
+    struct heap_fixture fixture;
+    heap_fixture_init(&fixture);
+    struct mo_limits heap_limits = mo_limits_default();
+    struct mo_heap *heap = mo_heap_new(fixture.image, &heap_limits);
+    MO_ASSERT(heap != NULL);
+    struct mo_input_limits limits = mo_input_limits_default();
+    struct mo_inputs inputs;
+    uint32_t type = fixture.builtin[MO_TYPE_BIGINT];
+    MO_ASSERT(mo_inputs_init(&inputs, &fixture.types, &type, 1, "M.bigint", 8, &limits, NULL, 0) ==
+              MO_INPUT_OK);
+    for (unsigned magnitude = 1; magnitude <= 2; magnitude++) {
+        uint8_t byte = (uint8_t)magnitude;
+        struct mo_cell best;
+        MO_ASSERT(mo_value_bigint(heap, MO_BIGINT_POSITIVE, &byte, 1, &best));
+        struct mo_input_shrinker shrinker;
+        mo_input_shrink_init(&shrinker, &inputs, 10);
+        unsigned emitted = 0;
+        for (;;) {
+            struct mo_cell candidate;
+            enum mo_input_result result = mo_input_shrink_next(&shrinker, &best, heap, &candidate);
+            if (result == MO_INPUT_DONE)
+                break;
+            MO_ASSERT(result == MO_INPUT_OK);
+            size_t length;
+            const uint8_t *data = mo_value_data(candidate, &length);
+            CHECK(emitted == 0 ? length == 0 : length == 1 && data[0] == 1);
+            emitted++;
+            mo_value_drop(heap, type, candidate);
+            mo_input_shrink_feedback(&shrinker, false);
+        }
+        CHECK(emitted == magnitude);
+        mo_value_drop(heap, type, best);
+    }
+    CHECK(mo_heap_objects(heap) == 0);
+    mo_inputs_free(&inputs);
+    mo_heap_free(heap);
+    mo_heap_image_free(fixture.image);
+    mo_arena_free(&fixture.arena);
+}
+
+static void partial_types(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, 1 << 20);
+    struct mo_types types;
+    mo_types_init(&types, &arena);
+    uint32_t integer = heap_intern(&types, (struct mo_type){.kind = MO_TYPE_INT});
+    uint32_t text = heap_intern(&types, (struct mo_type){.kind = MO_TYPE_TEXT});
+    uint32_t loop, option, forest;
+    MO_ASSERT(mo_types_declare(&types, MO_TYPE_RECORD, "Loop", &loop) == MO_TYPES_OK);
+    MO_ASSERT(mo_types_declare(&types, MO_TYPE_CHOICE, "Option", &option) == MO_TYPES_OK);
+    MO_ASSERT(mo_types_declare(&types, MO_TYPE_RECORD, "Forest", &forest) == MO_TYPES_OK);
+    struct mo_type_field again = {"again", loop};
+    MO_ASSERT(mo_types_define_record(&types, loop, &again, 1) == MO_TYPES_OK);
+    struct mo_type_field fields[] = {{"number", integer}, {"loop", loop}};
+    struct mo_type_case cases[] = {{.name = "Some", .fields = fields, .field_count = 2},
+                                   {.name = "None"}};
+    MO_ASSERT(mo_types_define_choice(&types, option, cases, 2) == MO_TYPES_OK);
+    uint32_t children = heap_intern(
+        &types,
+        (struct mo_type){.kind = MO_TYPE_LIST, .parameters = &forest, .parameter_count = 1});
+    struct mo_type_field child_field = {"children", children};
+    MO_ASSERT(mo_types_define_record(&types, forest, &child_field, 1) == MO_TYPES_OK);
+    uint32_t parameters[] = {text, integer};
+    uint32_t map = heap_intern(
+        &types,
+        (struct mo_type){.kind = MO_TYPE_MAP, .parameters = parameters, .parameter_count = 2});
+    uint32_t empty_list = heap_intern(
+        &types, (struct mo_type){.kind = MO_TYPE_LIST, .parameters = &loop, .parameter_count = 1});
+    uint32_t empty_parameters[] = {integer, loop};
+    uint32_t empty_map = heap_intern(&types, (struct mo_type){.kind = MO_TYPE_MAP,
+                                                              .parameters = empty_parameters,
+                                                              .parameter_count = 2});
+    MO_ASSERT(mo_types_finish(&types) == MO_TYPES_OK);
+    /* Dead branches need no layout. Forest is the only constructible record. */
+    uint32_t layout = heap_layout(&types, (struct mo_layout){.kind = MO_LAYOUT_RECORD,
+                                                             .type = forest,
+                                                             .case_index = MO_NO_INDEX,
+                                                             .function = MO_NO_INDEX,
+                                                             .fields = &children,
+                                                             .field_count = 1});
+    (void)layout;
+    struct mo_limits heap_limits = mo_limits_default();
+    struct mo_heap_image *image = mo_heap_image_new(&types, &heap_limits);
+    MO_ASSERT(image != NULL);
+    struct mo_heap *heap = mo_heap_new(image, &heap_limits);
+    MO_ASSERT(heap != NULL);
+    struct mo_input_limits limits = mo_input_limits_default();
+    const uint32_t roots[] = {option, map, forest, empty_list, empty_map};
+    for (unsigned root = 0; root < 5; root++) {
+        struct mo_inputs inputs;
+        enum mo_input_result initialized =
+            mo_inputs_init(&inputs, &types, &roots[root], 1, "M.partial", 9, &limits, NULL, 0);
+        CHECK(initialized == MO_INPUT_OK);
+        if (initialized != MO_INPUT_OK) {
+            mo_inputs_free(&inputs);
+            continue;
+        }
+        for (unsigned trial = 0; trial < 200; trial++) {
+            struct mo_cell value;
+            enum mo_input_kind kind;
+            MO_ASSERT(mo_inputs_next(&inputs, heap, &value, &kind) == MO_INPUT_OK);
+            CHECK(input_value_typed(heap, &types, roots[root], value));
+            if (root == 0) {
+                CHECK(mo_cell_get_tag(value) == 1);
+                CHECK(kind == (trial == 0 ? MO_INPUT_BOUNDARY : MO_INPUT_RANDOM));
+            }
+            if (root >= 3) {
+                CHECK(kind == (trial == 0 ? MO_INPUT_BOUNDARY : MO_INPUT_RANDOM));
+                CHECK(root == 3 ? mo_list_size(value) == 0 : mo_table_size(value) == 0);
+            }
+            mo_value_drop(heap, roots[root], value);
+        }
+        mo_inputs_free(&inputs);
+    }
+    struct mo_inputs inputs;
+    CHECK(mo_inputs_init(&inputs, &types, &loop, 1, "M.loop", 6, &limits, NULL, 0) ==
+          MO_INPUT_UNINHABITED);
+    mo_inputs_free(&inputs);
+    limits.depth = 1;
+    CHECK(mo_inputs_init(&inputs, &types, &forest, 1, "M.deep", 6, &limits, NULL, 0) ==
+          MO_INPUT_LIMIT);
+    mo_inputs_free(&inputs);
+    CHECK(mo_heap_objects(heap) == 0);
+    mo_heap_free(heap);
+    mo_heap_image_free(image);
+    mo_arena_free(&arena);
+}
+
 static void recursive_boundaries(void) {
     struct heap_fixture fixture;
     heap_fixture_init(&fixture);
@@ -628,5 +865,10 @@ int main(void) {
     limits_and_retry();
     minimal_tuple_without_heap();
     recursive_boundaries();
+    random_growth();
+    decimal_magnitudes();
+    partial_types();
+    range_extremes();
+    bigint_candidates();
     return mo_test_report("promise inputs");
 }
