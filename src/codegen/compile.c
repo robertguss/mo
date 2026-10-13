@@ -904,6 +904,10 @@ static void activity(struct compiler *c, struct function *f, struct node *n, uns
     if (n->core->tag == MO_CORE_EXPR_CALL || n->core->tag == MO_CORE_EXPR_CON ||
         n->core->tag == MO_CORE_EXPR_TUPLE || n->core->tag == MO_CORE_EXPR_PROJ)
         n->activity |= reference(c, n->type);
+    /* Scalar reference slots start borrowed, but aggregate slots start undefined. A path-local
+     * global load changes the latter to borrowed even though it creates no frame owner. */
+    if (n->core->tag == MO_CORE_EXPR_GLOBAL && c->types.items[n->type].kind >= MO_TYPE_TUPLE)
+        n->activity |= reference(c, n->type);
     if (n->core->tag == MO_CORE_EXPR_IF || choice)
         n->activity |= reference(c, n->type) &&
                        ((struct ownership *)c->ownership.items)[flow_id(f, n->reg)].owned;
@@ -1233,7 +1237,7 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
                         local_owners |=
                             reference(c, ((struct reg *)f->regs.items)[arm->binds[j]].type);
                 if (local_owners)
-                    return unsupported(c, "Reconverging branches with path-local reference owners "
+                    return unsupported(c, "Reconverging branches with path-local reference states "
                                           "are not implemented yet.");
             }
         }

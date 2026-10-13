@@ -1145,6 +1145,9 @@ Tail branches support references. Reconverging branches support stable
 literal/variable results but refuse path-local owners with E1055, including
 owned nested merges or consumed reference call arguments. Dropping those
 owners alone would leave `moved` versus `undefined` states at the join.
+Path-local aggregate global loads likewise require normalization: their slots
+would join as `borrowed` versus `undefined`. Scalar global loads already have
+stable initialized states and can reconverge.
 The allocator must normalize those states before lifting this staged refusal.
 Register names run from the binder's write through its body (parameters
 through the function), not through temporary initialization.
@@ -1165,7 +1168,8 @@ a register. E1015 names that limit before the writer runs. Register recycling
 and function splitting are not implemented yet, so this slice refuses a
 function that would cross the bound rather than emitting it for verification.
 The register-boundary test compiles a 65,533-element tuple at 65,535 registers
-and refuses one more element with E1013. Its one basic block keeps the test
+in both an ordinary function and a constant value function, and refuses one
+more element with E1013. Its one basic block keeps the test
 independent of verification's registers × blocks bound. A separate case/tail-call
 test loads a file one slot below that product bound and checks the compiler's
 own E1015 refusal just above it.

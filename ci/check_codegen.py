@@ -70,6 +70,41 @@ def reference_tail(rng, depth):
     return f'(case_ (con (data "Pair") "Pair" ({value} {value})) (("Pair" ("x" "y") {a})))'
 
 
+def global_program(i):
+    rng = random.Random(104 + i)
+    ty, first, fallback = rng.choice([
+        ('(int)', '(lit (int 17))', '(lit (int -31))'),
+        ('(text)', '(lit (text "A\\u{0}🙂"))', '(lit (text "other"))'),
+        ('(bytes)', '(lit (bytes (0 128 255)))', '(lit (bytes (17 29)))'),
+        ('(range)', '(prim (range (make)) ((lit (int -7)) (lit (int 23))))',
+         '(prim (range (make)) ((lit (int 19)) (lit (int 2))))'),
+        ('(tuple ((text) (int)))', '(tuple ((lit (text "first")) (lit (int 37))))',
+         '(tuple ((lit (text "fallback")) (lit (int -9))))'),
+        ('(option (text))', '(con (option (text)) "Some" ((lit (text "first"))))',
+         '(con (option (text)) "None" ())'),
+    ])
+    second = rng.choice([
+        '(global "first")',
+        '(call "relay" ())',
+        f'(if_ (lit (bool false)) (global "first") {fallback})',
+        f'(case_ (con (option {ty}) "Some" ((global "first"))) '
+        f'(("None" () {fallback}) ("Some" ("value") (var "value"))))',
+        f'(let_ "value" (global "first") '
+        f'(if_ (lit (bool true)) (var "value") {fallback}))',
+    ])
+    # A stopping body must still produce a valid init wrapper, not an unreachable store.
+    if i % 17 == 0:
+        first = '(stop "initialization stopped")'
+    return f'''(Program () (
+      (FunDecl "start" () (tuple ({ty} {ty})) (global "third") "Generated" (function) 3)
+      (FunDecl "relay" () {ty} (global "first") "Generated" (function) 1)
+    ) (
+      (ConstDecl "first" {ty} {first})
+      (ConstDecl "second" {ty} {second})
+      (ConstDecl "third" (tuple ({ty} {ty})) (tuple ((global "first") (global "second"))))
+    ) "start" (noSource))'''
+
+
 def run(driver, paths):
     result = subprocess.run([driver, *map(str, paths)], text=True, capture_output=True, timeout=60)
     print(result.stdout, end="")
@@ -111,6 +146,10 @@ def main():
             ) () "{entry}" (noSource))'''
             path = pathlib.Path(directory) / f"reference-{i}.core"
             path.write_text(f"(core {version} {payload})\n")
+            generated.append(path)
+        for i in range(192):
+            path = pathlib.Path(directory) / f"globals-{i}.core"
+            path.write_text(f"(core {version} {global_program(i)})\n")
             generated.append(path)
         for driver in sys.argv[1:]:
             print(f"codegen: {driver}: {len(paths)} fixture/corpus inputs")

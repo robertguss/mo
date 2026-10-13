@@ -469,6 +469,9 @@ static void test_globals(void) {
             CHECK(b->globals[i].module == 0 && b->types[b->globals[i].type].kind == MO_TYPE_INT);
             uint32_t init = b->init[i], value = init - 1;
             const struct mo_bytecode_function *f = &b->functions[init];
+            CHECK(f->code_count == 11);
+            if (f->code_count != 11)
+                continue;
             const uint32_t expected[] = {MO_OP_CALL,  0, value,      MO_OP_SET_GLOBAL, i, 0,
                                          MO_OP_CONST, 1, f->code[8], MO_OP_RET,        1};
             CHECK(f->kind == MO_FUNCTION_INIT && !f->spec_code && f->parameter_count == 0);
@@ -484,6 +487,157 @@ static void test_globals(void) {
         if (read != NULL && call != NULL)
             CHECK(read[2] == 1 && call[1] == 1);
     }
+    mo_arena_free(&arena);
+}
+static void test_global_references_and_stop(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b = compile(
+        &arena,
+        "(Program () ((FunDecl \"start\" () (text) "
+        "(if_ (lit (bool true)) (global \"alias\") (global \"text\")) \"M\" (function) 2) "
+        "(FunDecl \"sink\" ((\"x\" (text))) (unit) (lit (unit)) \"M\" (function) 0) "
+        "(FunDecl \"borrow\" () (unit) (call \"sink\" ((global \"alias\"))) \"M\" (function) 2)) "
+        "((ConstDecl \"text\" (text) (lit (text \"A\\u{0}🙂\"))) "
+        "(ConstDecl \"alias\" (text) (global \"text\"))) \"start\" (noSource))");
+    if (b != NULL) {
+        const struct mo_bytecode_function *f = &b->functions[b->init[1] - 1];
+        const uint32_t *global = instruction(f, MO_OP_GLOBAL, 0),
+                       *dup = instruction(f, MO_OP_DUP, 0), *ret = instruction(f, MO_OP_RET, 0);
+        if (global != NULL && dup != NULL && ret != NULL)
+            CHECK(global[2] == 0 && dup[2] == global[1] && ret[1] == dup[1]);
+        CHECK(b->functions[1].parameters[0].ownership == MO_PARAMETER_BORROWED);
+        const uint32_t *tail = instruction(&b->functions[2], MO_OP_TAIL_CALL, 0),
+                       *read = instruction(&b->functions[2], MO_OP_GLOBAL, 0);
+        if (tail != NULL && read != NULL)
+            CHECK(tail[1] == 1 && tail[3] == read[1]);
+        for (uint32_t i = 0; i < b->function_count; i++) {
+            const struct mo_bytecode_function *fn = &b->functions[i];
+            for (uint32_t pc = 0; pc < fn->code_count;) {
+                const struct mo_opcode_info *op = mo_opcode_find(fn->code[pc] & MO_OPCODE_MASK);
+                CHECK(op != NULL && op->number != MO_OP_DROP);
+                if (op == NULL)
+                    break;
+                pc += 1u + op->fixed_count + (fn->code[pc] >> MO_OPCODE_VARIABLE_SHIFT);
+            }
+        }
+    }
+    mo_arena_free(&arena);
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    b = compile(&arena,
+                "(Program () ((FunDecl \"start\" () (tuple ((text) (int))) (global \"pair\") \"M\" "
+                "(function) 2)) ((ConstDecl \"text\" (text) (stop \"do not publish\")) "
+                "(ConstDecl \"pair\" (tuple ((text) (int))) "
+                "(if_ (lit (bool true)) (tuple ((global \"text\") (lit (int 31)))) "
+                "(tuple ((lit (text \"other\")) (lit (int -9))))))) \"start\" (noSource))");
+    if (b != NULL) {
+        CHECK(b->global_count == 2 && b->init_count == 2);
+        const struct mo_bytecode_function *f = &b->functions[b->init[0] - 1];
+        const uint32_t *stop = instruction(f, MO_OP_STOP, 0);
+        if (stop != NULL)
+            CHECK(stop + 2 == f->code + f->code_count);
+        CHECK(b->functions[b->init[0]].kind == MO_FUNCTION_INIT);
+        const uint32_t *store = instruction(&b->functions[b->init[0]], MO_OP_SET_GLOBAL, 0);
+        if (store != NULL)
+            CHECK(store[1] == 0);
+        const uint32_t *read = instruction(&b->functions[0], MO_OP_GLOBAL, 0),
+                       *dup = instruction(&b->functions[0], MO_OP_DUP, 0);
+        if (read != NULL && dup != NULL)
+            CHECK(read[2] == 1 && dup[2] == read[1]);
+    }
+    mo_arena_free(&arena);
+}
+static void test_global_metadata(void) {
+    struct mo_arena arena;
+    struct mo_diags diags;
+    struct mo_buffer out;
+    mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+    CHECK(mo_diags_init(&diags));
+    mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_core *p =
+        parse(&arena,
+              "(Program () ((FunDecl \"entry\" () (tuple ((text) (text))) (global \"third\") "
+              "\"Main\" (function) 3) "
+              "(FunDecl \"relay\" () (text) (global \"first\") \"Hidden\" (function) 1)) "
+              "((ConstDecl \"first\" (text) (let_ \"tmp\" (lit (text \"seed\")) (var \"tmp\"))) "
+              "(ConstDecl \"second\" (text) (call \"relay\" ())) "
+              "(ConstDecl \"third\" (tuple ((text) (text))) "
+              "(tuple ((global \"first\") (global \"second\"))))) \"entry\" (noSource))",
+              &diags);
+    if (p != NULL) {
+        mo_core_string files[] = {{"hidden.mo", 9}, {"main.mo", 7}};
+        uint32_t hidden_funs[] = {1}, main_funs[] = {0}, hidden_consts[] = {2, 0},
+                 main_consts[] = {1};
+        struct mo_core_module_meta modules[] = {
+            {.name = {"Hidden", 6}, .funs = {hidden_funs, 1}, .consts = {hidden_consts, 2}},
+            {.name = {"Main", 4},
+             .funs = {main_funs, 1},
+             .consts = {main_consts, 1},
+             .exposed_funs = {main_funs, 1}}};
+        struct mo_core_span read_span = {true, {1, 110, 120}};
+        struct mo_core_fun_meta funs[] = {
+            {.name = {"Main.start", 10}, .body = {.spans = {&read_span, 1}}},
+            {.name = {"Hidden.relay", 12}, .body = {.spans = {&read_span, 1}}}};
+        struct mo_core_span first_spans[] = {{true, {0, 20, 24}}, {0}, {true, {1, 30, 34}}},
+                            third_spans[] = {{true, {0, 80, 90}}, {0}, {true, {1, 90, 100}}};
+        struct mo_core_binding_meta binding = {0, 0, {"sourceName", 10}};
+        struct mo_core_const_meta consts[] = {
+            {.name = {"Hidden.first", 12},
+             .span = {true, {1, 5, 10}},
+             .body = {.spans = {first_spans, 3}, .bindings = {&binding, 1}}},
+            {.name = {"Main.second", 11},
+             .span = {true, {0, 40, 60}},
+             .body = {.spans = {&read_span, 1}}},
+            {.name = {"Hidden.third", 12}, .body = {.spans = {third_spans, 3}}}};
+        p->metadata = (struct mo_core_metadata){.source = true,
+                                                .files = {files, 2},
+                                                .modules = {modules, 2},
+                                                .funs = {funs, 2},
+                                                .consts = {consts, 3}};
+        bool ok = mo_compile(p, &out, &diags);
+        CHECK(ok && !mo_diags_any(&diags));
+        if (!ok && diags.count != 0)
+            (void)fprintf(stderr, "%s\n", diags.items[0].primary.text);
+        struct mo_load_error error;
+        struct mo_bytecode *b =
+            ok ? mo_bytecode_decode(&arena, out.bytes, out.length, &error) : NULL;
+        CHECK(b != NULL);
+        if (b != NULL) {
+            CHECK(b->global_count == 3 && b->init_count == 3 && b->function_count == 8);
+            CHECK(b->modules[0].global_count == 2 && b->modules[0].globals[0] == 2 &&
+                  b->modules[0].globals[1] == 0);
+            CHECK(b->modules[1].global_count == 1 && b->modules[1].globals[0] == 1 &&
+                  b->modules[1].function_count == 1 && b->modules[1].functions[0] == 0);
+            CHECK(b->globals[0].module == 0 && b->globals[1].module == 1 &&
+                  b->globals[2].module == 0 && string_is(b, b->globals[0].name, "Hidden.first"));
+            for (uint32_t i = 0; i < 3; i++) {
+                const uint32_t *store = instruction(&b->functions[b->init[i]], MO_OP_SET_GLOBAL, 0);
+                if (store != NULL)
+                    CHECK(store[1] == i);
+            }
+            uint32_t init = b->init[0], value = init - 1;
+            CHECK(string_is(b, b->functions[init].name, "Hidden.first.init"));
+            CHECK(string_is(b, b->functions[value].name, "Hidden.first.init.%value"));
+            const struct mo_bytecode_debug *d = &b->debug[value], *wrapper = &b->debug[init];
+            CHECK(string_is(b, d->file, "main.mo") && d->start == 5 && d->end == 10);
+            CHECK(wrapper->file == d->file && wrapper->start == 5 && wrapper->end == 10);
+            CHECK(d->name_count == 1 && string_is(b, d->names[0].name, "sourceName") &&
+                  d->names[0].code_start < d->names[0].code_end && wrapper->name_count == 0);
+            CHECK(wrapper->span_count == 2 && wrapper->spans[0].code_offset == 0 &&
+                  wrapper->spans[0].start == 20 &&
+                  string_is(b, wrapper->spans[0].file, "hidden.mo") &&
+                  wrapper->spans[1].code_offset == 3 && wrapper->spans[1].start == 5 &&
+                  string_is(b, wrapper->spans[1].file, "main.mo"));
+            bool cleared = false, remapped = false;
+            for (uint32_t i = 0; i < d->span_count; i++) {
+                cleared |= d->spans[i].file == MO_NO_INDEX;
+                remapped |= d->spans[i].start == 30 && string_is(b, d->spans[i].file, "main.mo");
+            }
+            CHECK(cleared && remapped);
+        }
+    }
+    mo_buffer_free(&out);
+    mo_diags_free(&diags);
     mo_arena_free(&arena);
 }
 static void test_borrow_calls(void) {
@@ -704,7 +858,7 @@ static void test_representation_refusals(void) {
 
 static void test_lowered_names(void) {
     const mo_core_string invalid[] = {{"", 0}, {"bad\0name", 8}};
-    for (size_t i = 0; i < 4; i++) {
+    for (size_t i = 0; i < 8; i++) {
         struct mo_arena arena;
         struct mo_diags diags;
         struct mo_buffer out;
@@ -717,14 +871,26 @@ static void test_lowered_names(void) {
                   "\"entry\" (noSource))",
                   &diags);
         if (p != NULL) {
+            struct mo_core_const constant = {
+                .name = {"M.seed", 6}, .ty = p->funs.items[0].ret, .body = p->funs.items[0].body};
             if (i < 2)
                 p->entry = p->funs.items[0].name = invalid[i];
-            else
+            else if (i < 4)
                 p->funs.items[0].module = invalid[i - 2];
+            else {
+                p->consts = (mo_core_consts){&constant, 1};
+                if (i < 6)
+                    constant.name = invalid[i - 4];
+                else {
+                    const char *entry = i == 6 ? "seed.init" : "seed.init.%value";
+                    p->entry = p->funs.items[0].name = (mo_core_string){entry, strlen(entry)};
+                }
+            }
             CHECK(mo_core_check(p, &diags));
             CHECK(!mo_compile(p, &out, &diags) && out.length == 0);
-            CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CODEGEN_REPRESENTATION &&
-                  strstr(diags.items[0].reason, "Empty or NUL") != NULL);
+            uint16_t code = i < 6 ? MO_CODE_CODEGEN_REPRESENTATION : MO_CODE_CODEGEN_ENTRY;
+            CHECK(diags.count == 1 && diags.items[0].code == code &&
+                  strstr(diags.items[0].reason, i < 6 ? "Empty or NUL" : "not unique") != NULL);
         }
         mo_buffer_free(&out);
         mo_diags_free(&diags);
@@ -747,7 +913,9 @@ static void test_lowered_names(void) {
 }
 
 static void test_register_limit(void) {
-    for (uint32_t extra = 0; extra < 2; extra++) {
+    for (uint32_t variant = 0; variant < 4; variant++) {
+        uint32_t extra = variant % 2;
+        bool global = variant >= 2;
         /* One basic block keeps this register boundary independent of verification's
          * registers × blocks limit. Tuple fields, result and return duplicate fill the frame. */
         uint32_t count = MO_LIMIT_FUNCTION_REGISTERS - 2u + extra;
@@ -769,6 +937,14 @@ static void test_register_limit(void) {
         struct mo_core *p = mo_core_parse(&arena, (const char *)text.bytes, text.length, &diags);
         CHECK(p != NULL);
         if (p != NULL) {
+            struct mo_core_const constant = {
+                .name = {"large", 5}, .ty = p->funs.items[0].ret, .body = p->funs.items[0].body};
+            struct mo_core_expr read = {.tag = MO_CORE_EXPR_GLOBAL, .as.global = {"large", 5}};
+            if (global) {
+                p->consts = (mo_core_consts){&constant, 1};
+                p->funs.items[0].body = &read;
+                p->funs.items[0].const_count = (mo_core_natural){.digits = {"1", 1}};
+            }
             bool ok = mo_compile(p, &out, &diags);
             CHECK(ok == (extra == 0));
             if (ok) {
@@ -776,7 +952,7 @@ static void test_register_limit(void) {
                 struct mo_image *image = mo_load(out.bytes, out.length, &error);
                 CHECK(image != NULL);
                 if (image != NULL) {
-                    CHECK(mo_image_bytecode(image)->functions[0].register_count ==
+                    CHECK(mo_image_bytecode(image)->functions[global ? 1 : 0].register_count ==
                           MO_LIMIT_FUNCTION_REGISTERS);
                     mo_image_free(image);
                 }
@@ -970,6 +1146,8 @@ int main(int argc, char **argv) {
     test_refusals();
     test_references();
     test_globals();
+    test_global_references_and_stop();
+    test_global_metadata();
     test_borrow_calls();
     test_aggregate_values();
     test_range_and_fail();
