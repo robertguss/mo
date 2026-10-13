@@ -121,7 +121,7 @@ static void record_fields(void) {
 
     init(&f,
          "module Main\nstruct Callback\nf: fn(Int) : Text\nend\n"
-         "fn run() : Text\nCallback(f: fn(n) if n == 1: \"a\" else: \"b\" end end).f(1)\nend\n",
+         "fn run() : Text\nCallback(f: fn(n) if n == 1: \"a\" else: \"b\" end).f(1)\nend\n",
          NULL);
     CHECK(body(&f, "run") != NULL && f.diags.count == 0);
     finish(&f);
