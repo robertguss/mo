@@ -559,9 +559,10 @@ some names by type:
   (reference 10.4).
 - **Promises and examples** are checked like functions returning `Bool`. An
   example line or a promise body becomes a spec function (`bytecode.md`
-  section 3.3). `mo check` evaluates the anchors by compiling them and calling
-  the promise's body on the VM, each in a fresh process, with `mo_call`
-  (section 8). Anchors may make fakes, as `Files.in_memory({}).read_only`.
+  section 3.3). The `mo check` command in tools evaluates the anchors by
+  compiling them and calling the promise's body on the VM, each in a fresh
+  process, with `mo_call` (section 8). Anchors may make fakes, as
+  `Files.in_memory({}).read_only`.
 
 ### 3.5 Diagnostics
 
@@ -1499,6 +1500,51 @@ does not reject a well-typed program merely for using one of these forms:
   changes once; each instruction constraint then takes constant time. No Lean
   rule is changed and compiler comparisons skip these permanent exclusions.
 
+**Checked-program contract, provisional.** `src/check/check.h` now defines the
+input to lowering, not an implemented whole-program checker. Its
+`mo_checked_*` records and `mo_program` are an in-memory interface; their layout
+may change while checking is completed. `mo_check` is declared but not yet
+implemented. No staged inference result may be presented as a checked program.
+A future successful call certifies every static rule and fills the entire
+contract; an unfinished stage reports E1103 instead of returning partial success.
+
+Each named function has a typed expression graph in written postorder, explicit
+operand indices, a root, and typed canonical binders, including nested lambdas
+and shared pattern-alternative names. Operator and postfix steps are explicit;
+assignment links its original `var`, not a new binding. Resolved symbols,
+native reference spellings, field indices and dot receivers remove lookup and
+dispatch from lowering. Scoped generic substitutions accompany every generic
+use. The selected ability implementation is native, derived, a declaring-module
+custom function, or an abstract requirement resolved during monomorphization.
+Types remain shared DAGs; ability graphs can be recursive through nominal
+data. Lowering memoizes them rather than expanding them.
+
+Checked patterns name their cases and declaration-order fields. Case arms keep
+source order and guards; coverage and the no-catch-all rule are already checked.
+`or` explicitly selects Bool or Option. `try` identifies its enclosing result,
+failure constructor and any unique wrapping case. Lambda records retain typed
+parameters, captures in first-use order and source-order numbers before lifting.
+Constants alone are dependency-ordered, with source-order ties. The entry names
+the entry module's `main`, its ordered capability parameters, result convention
+and the Text implementation for a returned failure.
+
+Examples, tests, promises and anchors keep their typed bodies, subject/promise
+links, source ordinals, decoded sentences and exact source text/spans. Promise
+conditions remain separate Bool rows, which lowering turns into the numbered
+Int answer of bytecode 3.3. An anchor has argument-value rows, not a tuple:
+`values` maps them to promise-parameter order while their graph retains written
+evaluation order. Lowering makes the promise call and returns its Int answer.
+`mo_check` types and links anchors but executes no source code; tools compile
+and run them before accepting their allows/forbids expectations. This keeps
+`check` dependent only on `syntax` and `base`.
+
+The result arena owns interfaces, signatures, types, binders, graphs and spec
+byte copies. The program borrows its loaded set and syntax, which must outlive
+it and remain unchanged. It borrows no source-store bytes. Original sources
+remain a separate argument to `mo_lower` for filenames and provenance; Core
+copies all metadata and borrows neither input. Counts, graph work, arena storage
+and source execution retain the base limits and explicit-stack policy.
+
 ```c
 /* src/base/diag.h: diagnostics, rendered as text or JSON by src/tools. */
 struct mo_span { uint32_t file; uint32_t start; uint32_t end; };     /* byte offsets */
@@ -1549,7 +1595,21 @@ MO_MUST_USE struct mo_inferred_body *mo_infer_function(struct mo_arena *arena,
                                                        const struct mo_module_interfaces *interfaces,
                                                        const struct mo_signatures *signatures,
                                                        uint32_t function, struct mo_diags *diags);
-/* Planned next: the whole program, checked, or NULL with diagnostics. */
+/* Provisional checked-program contract, defined in check.h. mo_check is
+ * declaration-only until all checking stages are implemented. */
+struct mo_program {
+    const struct mo_module_set *set; /* borrows loaded syntax */
+    const struct mo_module_interfaces *interfaces;
+    const struct mo_signatures *signatures;
+    uint32_t function_count;
+    const struct mo_checked_function *functions; /* typed bodies, binders and use decisions */
+    uint32_t constant_count;
+    const struct mo_checked_constant *constants; /* dependency order */
+    uint32_t spec_count;
+    const struct mo_checked_spec *specs; /* text, spans, conditions and links */
+    struct mo_checked_entry entry; /* main capabilities and result convention */
+};
+/* Eventually: lowering-ready program, or NULL with diagnostics; no partial success. */
 MO_MUST_USE struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *set,
                                         struct mo_diags *diags);
 
