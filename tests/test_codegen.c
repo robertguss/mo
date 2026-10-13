@@ -785,6 +785,32 @@ static void test_range_and_fail(void) {
             CHECK(fail[1] == 1);
     }
     mo_arena_free(&arena);
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    b = compile(&arena, "(Program () ((FunDecl \"main\" ((\"r\" (range))) (text) "
+                        "(prim (range (toText)) ((var \"r\"))) \"M\" (function) 0)) "
+                        "() \"main\" (noSource))");
+    if (b != NULL) {
+        const struct mo_bytecode_function *f = &b->functions[0];
+        const uint32_t *start = instruction(f, MO_OP_RANGE_START, 0),
+                       *end = instruction(f, MO_OP_RANGE_END, 0),
+                       *left = instruction(f, MO_OP_PRIM, 0),
+                       *right = instruction(f, MO_OP_PRIM, 1),
+                       *prefix = instruction(f, MO_OP_PRIM, 2),
+                       *suffix = instruction(f, MO_OP_PRIM, 3);
+        if (start != NULL && end != NULL && left != NULL && right != NULL && prefix != NULL &&
+            suffix != NULL) {
+            CHECK(start[2] == 0 && end[2] == 0 && left[2] == MO_PRIM_INT_TO_TEXT &&
+                  right[2] == MO_PRIM_INT_TO_TEXT && left[4] == start[1] && right[4] == end[1]);
+            CHECK(prefix[2] == MO_PRIM_TEXT_CONCAT && suffix[2] == MO_PRIM_TEXT_CONCAT &&
+                  prefix[4] == left[1] && suffix[4] == prefix[1] && suffix[5] == right[1]);
+            bool separator = false;
+            for (uint32_t i = 0; i < b->constant_count; i++)
+                separator |= b->types[b->constants[i].type].kind == MO_TYPE_TEXT &&
+                             string_is(b, b->constants[i].value.string, "..");
+            CHECK(separator);
+        }
+    }
+    mo_arena_free(&arena);
 }
 
 static void test_representation_refusals(void) {

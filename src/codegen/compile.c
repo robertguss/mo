@@ -651,8 +651,9 @@ static MO_MUST_USE mo_core_ty signature_type(struct compiler *c, const char **cu
 static MO_MUST_USE uint32_t operation_signature(struct compiler *c,
                                                 const struct mo_codegen_operation *op,
                                                 const mo_core_ty variables[4]) {
-    uint32_t key[6] = {(uint32_t)op->opcode, op->row,     MO_NO_INDEX,
-                       MO_NO_INDEX,          MO_NO_INDEX, MO_NO_INDEX};
+    uint32_t key[7] = {
+        (uint32_t)op->opcode,   op->row, MO_NO_INDEX, MO_NO_INDEX, MO_NO_INDEX, MO_NO_INDEX,
+        (uint32_t)op->expansion};
     for (uint32_t i = 0; i < 4; i++)
         if (variables[i] != NULL && (key[i + 2] = type(c, variables[i], 0)) == MO_NO_INDEX)
             return MO_NO_INDEX;
@@ -1340,6 +1341,27 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
             n->operation.compare ? scalar(c, MO_TYPE_BOOL) : c->types.items[n->signature].result;
         if (!children(c, f, n, expr->as.prim.args, MO_NO_INDEX, depth))
             return NULL;
+        if (n->operation.expansion == MO_CODEGEN_EXPAND_RANGE) {
+            n->bind_count = 6;
+            n->binds = allocate(c, n->bind_count, sizeof *n->binds);
+            n->cases = allocate(c, 2, sizeof *n->cases);
+            struct mo_codegen_operation convert = mo_codegen_primitive(MO_PRIM_INT_TO_TEXT),
+                                        concat = mo_codegen_primitive(MO_PRIM_TEXT_CONCAT);
+            if (n->binds == NULL || n->cases == NULL)
+                return NULL;
+            n->cases[0] = operation_signature(c, &convert, variables);
+            n->cases[1] = operation_signature(c, &concat, variables);
+            uint32_t integer = scalar(c, MO_TYPE_INT);
+            n->index = constant(c, (struct mo_bytecode_constant){
+                                       .type = n->type, .value.string = string(c, text(".."))});
+            if (n->cases[0] == MO_NO_INDEX || n->cases[1] == MO_NO_INDEX ||
+                integer == MO_NO_INDEX || n->index == MO_NO_INDEX)
+                return NULL;
+            for (uint32_t i = 0; i < n->bind_count; i++)
+                if ((n->binds[i] = register_add(c, f, i < 2 ? integer : n->type, MO_NO_INDEX)) ==
+                    MO_NO_INDEX)
+                    return NULL;
+        }
         if (n->operation.compare) {
             n->binds = allocate(c, 2, sizeof *n->binds);
             if (n->binds == NULL)
@@ -1568,7 +1590,7 @@ static MO_MUST_USE bool borrow_walk(struct compiler *c, struct function *f, stru
                 return false;
         }
         seed(c, own);
-    } else if (n->core->tag == MO_CORE_EXPR_PRIM && n->operation.opcode != MO_OP_INVALID) {
+    } else if (n->core->tag == MO_CORE_EXPR_PRIM) {
         for (uint32_t i = 0; i < n->count; i++)
             if (operation_owned(n, i))
                 seed(c, flow_id(f, n->children[i]->reg));
@@ -1923,6 +1945,38 @@ static MO_MUST_USE bool initialize(struct compiler *c, struct function *f, uint3
     return id != MO_NO_INDEX &&
            emit(c, f, c->declaration, MO_OP_CONST, fixed, 2, NULL, 0) != MO_NO_INDEX;
 }
+/* Expansion temporaries are private owners; the trusted row specifies which ones are consumed. */
+static MO_MUST_USE bool library(struct compiler *c, struct function *f, enum mo_primitive_id row,
+                                uint32_t signature, uint32_t result, const uint32_t *args,
+                                uint32_t count, struct mo_core_span source) {
+    struct mo_codegen_operation op = mo_codegen_primitive(row);
+    MO_ASSERT(count == c->types.items[signature].parameter_count);
+    for (uint32_t i = 0; i < count; i++)
+        if (op.params[i] == 'o' && reference(c, ((struct reg *)f->regs.items)[args[i]].type)) {
+            MO_ASSERT(((struct reg *)f->regs.items)[args[i]].owned);
+            owner_remove(f, args[i]);
+        }
+    const uint32_t fixed[] = {result, (uint32_t)row, signature};
+    if (emit(c, f, source, MO_OP_PRIM, fixed, 3, args, count) == MO_NO_INDEX)
+        return false;
+    if (reference(c, ((struct reg *)f->regs.items)[result].type))
+        owner_add(f, result);
+    return true;
+}
+static MO_MUST_USE bool range_text(struct compiler *c, struct function *f, struct node *n,
+                                   uint32_t value) {
+    const uint32_t start[] = {n->binds[0], value}, end[] = {n->binds[1], value},
+                   separator[] = {n->binds[4], n->index}, prefix[] = {n->binds[2], n->binds[4]},
+                   suffix[] = {n->binds[5], n->binds[3]};
+    return emit(c, f, n->span, MO_OP_RANGE_START, start, 2, NULL, 0) != MO_NO_INDEX &&
+           emit(c, f, n->span, MO_OP_RANGE_END, end, 2, NULL, 0) != MO_NO_INDEX &&
+           emit(c, f, n->span, MO_OP_CONST, separator, 2, NULL, 0) != MO_NO_INDEX &&
+           library(c, f, MO_PRIM_INT_TO_TEXT, n->cases[0], n->binds[2], n->binds, 1, n->span) &&
+           library(c, f, MO_PRIM_INT_TO_TEXT, n->cases[0], n->binds[3], n->binds + 1, 1, n->span) &&
+           library(c, f, MO_PRIM_TEXT_CONCAT, n->cases[1], n->binds[5], prefix, 2, n->span) &&
+           library(c, f, MO_PRIM_TEXT_CONCAT, n->cases[1], n->reg, suffix, 2, n->span) &&
+           drop(c, f, n->binds[3], n->span);
+}
 /* false through *live means a terminal path, not a compiler refusal. */
 static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct node *n, bool tail,
                                  unsigned depth, bool *live) {
@@ -2188,7 +2242,10 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
             if (regs[i] == MO_NO_INDEX)
                 return false;
         }
-        if (n->operation.literal != MO_CODEGEN_LITERAL_NONE) {
+        if (n->operation.expansion == MO_CODEGEN_EXPAND_RANGE) {
+            if (!range_text(c, f, n, regs[0]))
+                return false;
+        } else if (n->operation.literal != MO_CODEGEN_LITERAL_NONE) {
             bool map = n->operation.literal == MO_CODEGEN_LITERAL_MAP;
             uint32_t width = map ? 2 : 1;
             uint32_t builder = n->bind_count == 0 ? n->reg : n->binds[0];

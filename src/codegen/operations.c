@@ -216,8 +216,12 @@ bool mo_codegen_operation(const struct mo_core_prim *p, struct mo_codegen_operat
                        "fn(Range) : Int", "b");
             return true;
         }
-        if (p->as.range == MO_CORE_RANGE_OP_TO_TEXT)
-            return false;
+        if (p->as.range == MO_CORE_RANGE_OP_TO_TEXT) {
+            *out = (struct mo_codegen_operation){.signature = "fn(Range) : Text",
+                                                 .params = "b",
+                                                 .expansion = MO_CODEGEN_EXPAND_RANGE};
+            return true;
+        }
         row = p->as.range == MO_CORE_RANGE_OP_TO_LIST ? MO_PRIM_RANGE_TO_LIST
                                                       : MO_PRIM_RANGE_CONTAINS;
         break;
