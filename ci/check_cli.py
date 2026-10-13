@@ -4,6 +4,7 @@ import errno
 import json
 import os
 import pathlib
+import resource
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,36 @@ def records(result, command):
     assert items[-1]["status"] == result.returncode
     assert items[-1]["errors"] == len(items) - 2
     return items
+
+
+def source_stack(binary, folder):
+    # This fixture exercises the entire precedence ladder at the source-depth
+    # boundary, not only nested brackets. The process stack stays small while
+    # loading, parsing and inference must use the explicit source-work stack.
+    path = folder / "main.mo"
+    header = ("module Main\nfn run(a: Bool, b: Bool, c: Bool, d: Range, e: Int, "
+              "f: Int, g: Int, h: fn(Bool) : Int) : Bool\n")
+
+    def small_stack():
+        _, hard = resource.getrlimit(resource.RLIMIT_STACK)
+        resource.setrlimit(resource.RLIMIT_STACK, (4 << 20, hard))
+
+    for depth, status in ((255, 0), (256, 1)):
+        path.write_text(header + "a implies b or c and not d == e .. f + g * -h(" * depth
+                        + "a" + ")" * depth + "\nend\n")
+        for json_mode in (False, True):
+            result = subprocess.run(
+                [str(binary), "check", *(["--json"] if json_mode else []), str(path)],
+                cwd=root, capture_output=True, timeout=30, preexec_fn=small_stack)
+            assert result.returncode == status, (depth, json_mode, result.returncode, result.stderr)
+            if json_mode:
+                items = records(result, "check")
+                assert items[-1]["errors"] == status and items[-1]["dropped"] == 0
+                if status:
+                    assert items[1]["code"] == "E1006"
+            else:
+                assert not result.stdout
+                assert (b"E1006" in result.stderr) if status else not result.stderr
 
 
 flags = {
@@ -166,6 +197,7 @@ def check(binary):
     records(run(binary, ["check", "--json", "tests/cli/missing.mo"], 1), "check")
     with tempfile.TemporaryDirectory() as temp:
         folder = pathlib.Path(temp)
+        source_stack(binary, folder)
         path = folder / "main.mo"
         path.write_bytes(b"module Main\n\xff\n")
         d = records(run(binary, ["check", "--json", str(path)], 1), "check")[1]

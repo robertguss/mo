@@ -1066,10 +1066,13 @@ connect `mo_lower`, `mo_compile` and anchor evaluation; it never passes
 inference results to lowering. `run`, `test` (including `--list`), `format`,
 `fix` and `--emit` currently validate arguments then return status 1 with
 E1400, "this build cannot ... yet", without reading or rewriting files.
-E1400 is the tools' unavailable-stage code, not a language error. A TODO
-will connect stream 1's `mo_with_stack` and `MO_SOURCE_STACK_SIZE` (32 MiB)
-after checking part 3 merges, wrapping loading and parsing as well as checking;
-until then this build uses the caller's stack and changes no process limits.
+E1400 is the tools' unavailable-stage code, not a language error. Source work
+runs synchronously through `mo_with_stack` with `MO_SOURCE_STACK_SIZE`, covering
+loading and parsing as well as every checking stage. The callback joins before
+rendering or freeing its borrowed arenas and diagnostics. It changes no
+process-wide resource limits and follows changes to the shared stack allowance.
+Failure to prepare that stack reports E1401 with an unavailable location and
+the POSIX error as its label, in either text or JSON, and exits 1.
 
 **Source builds and documents.** `ci/embed_docs.py` (Python 3, portable to
 macOS) generates byte arrays under `build/generated/tools/embedded.h`.
