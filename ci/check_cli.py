@@ -43,6 +43,15 @@ def records(result, command):
     return items
 
 
+def runner(binary):
+    with tempfile.TemporaryDirectory(prefix="mo-runner-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        path.write_text('module Main\nfn main(console: Console) : Int\n'
+                        'console.print("hello 日本語")\n37\nend\n')
+        result = run(binary, ["run", str(path)], 37)
+        assert result.stdout == "hello 日本語\n".encode() and not result.stderr
+
+
 def source_stack(binary, folder):
     # This fixture exercises the entire precedence ladder at the source-depth
     # boundary, not only nested brackets. The process stack stays small while
@@ -92,6 +101,7 @@ flags = {
 def check(binary):
     driver = binary.parent / "tests/test_cli.test"
     faults = binary.parent / "tests/test_cli_faults.test"
+    runner(binary)
     items = records(run(faults, ["--json"], 1), "check")
     assert items[1]["code"] == "E1401" and items[-1]["dropped"] == 0
     assert items[1]["primary"]["file"] is None and items[1]["section"] is None

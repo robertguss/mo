@@ -59,8 +59,14 @@ MO_MUST_USE bool mo_render_diagnostic(const struct mo_sources *sources, const st
 MO_MUST_USE bool mo_write_version(FILE *output, enum mo_command command);
 MO_MUST_USE int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command command,
                                      const struct mo_sources *sources, struct mo_diags *diags);
-/* Runs only the front-end stages currently available. Owns no borrowed data
- * after returning. Future whole checking/lowering belongs at this boundary. */
+struct mo_process;
+struct mo_defect;
+/* Structural VM report with terminal-safe text escaping. Borrows the stopped
+ * process/image until returning, including initialization reports with NULL process. */
+MO_MUST_USE bool mo_write_defect(FILE *errors, const struct mo_process *process,
+                                 const struct mo_defect *defect);
+/* Whole checking and the certified lowering/runtime pipeline run inside one
+ * explicit source-stack call. Owns no borrowed data after returning. */
 MO_MUST_USE int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors);
 
 #endif
