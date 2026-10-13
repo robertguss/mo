@@ -588,6 +588,16 @@ struct mo_module_interfaces *mo_resolve_modules(struct mo_arena *arena,
         return NULL;
     memset(r.out->scopes, 0, (size_t)set->count * sizeof(*r.out->scopes));
     for (uint32_t i = 0; i < set->count; i++) {
+        struct mo_module_scope *scope = &r.out->scopes[i];
+        scope->library = set->library != NULL && set->library[i];
+        if (set->names != NULL) {
+            size_t length = strlen(set->names[i]) + 1;
+            char *name = allocate(&r, length, 1, 1);
+            if (name == NULL)
+                goto done;
+            memcpy(name, set->names[i], length);
+            scope->name = name;
+        }
         uint32_t before = diags->count;
         if (!declarations(&r, i) || !expose(&r, i))
             goto done;

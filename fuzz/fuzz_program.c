@@ -2,24 +2,71 @@
 #include "base/limits.h"
 #include "base/stack.h"
 #include "check/check.h"
+#include "check/native.h"
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 
-static void binding(const struct mo_checked_body *body, const struct mo_checked_binding *value) {
+static void binding(const struct mo_checked_body *body, const struct mo_checked_binding *value,
+                    uint32_t parameters) {
     uintptr_t offset = (uintptr_t)value - (uintptr_t)body->bindings;
     MO_ASSERT(offset % sizeof(*value) == 0 && offset / sizeof(*value) < body->binding_count);
-    MO_ASSERT(value->type != NULL && value->type->parameters == 0);
+    MO_ASSERT(value->type != NULL && (value->type->parameters & ~parameters) == 0);
 }
 
-static void pattern(const struct mo_checked_body *body, const struct mo_checked_pattern *value,
-                    uint32_t depth) {
+static void requirements(const struct mo_program *program,
+                         const struct mo_type_arguments *arguments, uint32_t count,
+                         const struct mo_checked_ability_use *uses) {
+    for (uint32_t i = 0; i < count; i++) {
+        const struct mo_checked_ability_use *use = &uses[i];
+        if (use->operand != UINT32_MAX)
+            continue;
+        MO_ASSERT(use->parameter != NULL && use->implementation != NULL);
+        bool found = false;
+        for (uint32_t j = 0; j < arguments->count; j++)
+            found = found || arguments->items[j].parameter == use->parameter;
+        MO_ASSERT(found);
+        for (uint32_t j = 0; j < i; j++)
+            MO_ASSERT(uses[j].operand != UINT32_MAX || use->parameter != uses[j].parameter ||
+                      use->implementation->ability != uses[j].implementation->ability);
+    }
+    const struct mo_signatures *s = program->signatures;
+    for (uint32_t i = 0; i < arguments->count; i++) {
+        const struct mo_source_type *parameter = arguments->items[i].parameter;
+        const struct mo_symbol *owner = parameter->declaration;
+        unsigned letter = (unsigned)(parameter->name[0] - 'A'), mask = 0;
+        MO_ASSERT(letter < 26);
+        for (uint32_t j = 0; j < s->count; j++)
+            if (s->items[j].function == owner)
+                mask = s->items[j].requirements[letter];
+        for (uint32_t j = 0; j < s->native_count; j++)
+            if (&s->native[j].owner == owner)
+                mask = s->native[j].requirements[letter];
+        for (uint32_t j = 0; j < s->data_count; j++)
+            if (s->data[j].type->declaration == owner &&
+                (s->data[j].key_parameters & parameter->parameters) != 0)
+                mask = (1u << MO_SOURCE_HASH) | (1u << MO_SOURCE_EQUAL);
+        for (unsigned ability = 0; ability < 5; ability++) {
+            uint32_t found = 0;
+            for (uint32_t j = 0; j < count; j++)
+                found += uses[j].operand == UINT32_MAX && uses[j].parameter == parameter &&
+                                 uses[j].implementation->ability == (enum mo_source_ability)ability
+                             ? 1u
+                             : 0u;
+            MO_ASSERT(found == ((mask & (1u << ability)) != 0 ? 1u : 0u));
+        }
+    }
+}
+
+static void pattern(const struct mo_program *program, const struct mo_checked_body *body,
+                    const struct mo_checked_pattern *value, uint32_t parameters, uint32_t depth) {
     MO_ASSERT(depth < MO_LIMIT_SOURCE_TYPE_DEPTH);
     /* A flat source list becomes a cons spine; don't recurse down that spine. */
     while (value != NULL) {
-        MO_ASSERT(value->type != NULL && value->type->parameters == 0);
+        MO_ASSERT(value->type != NULL && (value->type->parameters & ~parameters) == 0);
+        requirements(program, &value->arguments, value->ability_count, value->abilities);
         if (value->kind == MO_PATTERN_BIND) {
             MO_ASSERT(value->binding != NULL);
-            binding(body, value->binding);
+            binding(body, value->binding, parameters);
         }
         const struct mo_checked_pattern *tail = NULL;
         for (uint32_t i = 0; i < value->part_count; i++) {
@@ -27,7 +74,7 @@ static void pattern(const struct mo_checked_body *body, const struct mo_checked_
             if (value->kind == MO_PATTERN_LIST && value->parts[i].index == 1)
                 tail = value->parts[i].pattern;
             else
-                pattern(body, value->parts[i].pattern, depth + 1);
+                pattern(program, body, value->parts[i].pattern, parameters, depth + 1);
         }
         value = tail;
     }
@@ -38,35 +85,41 @@ static void graph(const struct mo_program *program) {
     for (uint32_t f = 0; f < program->function_count; f++) {
         const struct mo_checked_function *function = &program->functions[f];
         const struct mo_checked_body *body = &function->body;
+        uint32_t parameters = function->signature->type->parameters;
         MO_ASSERT(body->root < body->count);
         for (uint32_t i = 0; i < function->parameter_count; i++)
-            binding(body, function->parameters[i]);
+            binding(body, function->parameters[i], parameters);
         for (uint32_t i = 0; i < body->count; i++) {
             const struct mo_checked_expression *row = &body->items[i];
-            MO_ASSERT(row->syntax != NULL && row->type != NULL && row->type->parameters == 0);
+            MO_ASSERT(row->syntax != NULL && row->type != NULL &&
+                      (row->type->parameters & ~parameters) == 0);
             for (uint32_t j = 0; j < row->operand_count; j++)
                 MO_ASSERT(row->operands[j] < i);
             if (row->binding != NULL)
-                binding(body, row->binding);
+                binding(body, row->binding, parameters);
             if (row->assignment)
                 MO_ASSERT(row->binding != NULL && row->binding->variable);
             if (row->receiver != UINT32_MAX)
                 MO_ASSERT(row->receiver < i);
-            for (uint32_t j = 0; j < row->ability_count; j++)
-                MO_ASSERT(row->abilities[j].operand < i &&
-                          row->abilities[j].implementation != NULL);
+            requirements(program, &row->arguments, row->ability_count, row->abilities);
+            for (uint32_t j = 0; j < row->ability_count; j++) {
+                const struct mo_checked_ability_use *use = &row->abilities[j];
+                if (use->operand != UINT32_MAX)
+                    MO_ASSERT(use->operand < i && use->parameter == NULL &&
+                              use->implementation != NULL);
+            }
             for (uint32_t j = 0; j < row->arguments.count; j++)
                 MO_ASSERT(row->arguments.items[j].parameter->kind == MO_SOURCE_PARAMETER &&
-                          row->arguments.items[j].type->parameters == 0);
+                          (row->arguments.items[j].type->parameters & ~parameters) == 0);
             if (row->pattern != NULL)
-                pattern(body, row->pattern, 0);
+                pattern(program, body, row->pattern, parameters, 0);
             if (row->match != NULL) {
                 MO_ASSERT(row->match->scrutinee < i);
                 for (uint32_t j = 0; j < row->match->arm_count; j++) {
                     const struct mo_checked_arm *arm = &row->match->arms[j];
                     MO_ASSERT(arm->body < i && (arm->guard == UINT32_MAX || arm->guard < i));
                     for (uint32_t k = 0; k < arm->pattern_count; k++)
-                        pattern(body, arm->patterns[k], 0);
+                        pattern(program, body, arm->patterns[k], parameters, 0);
                 }
             }
             if (row->lambda != NULL) {
@@ -74,7 +127,7 @@ static void graph(const struct mo_program *program) {
                           row->lambda->capture_count == 0);
                 for (uint32_t j = 0; j < row->lambda->parameter_count; j++)
                     if (row->lambda->parameters[j] != NULL)
-                        binding(body, row->lambda->parameters[j]);
+                        binding(body, row->lambda->parameters[j], parameters);
             }
         }
     }

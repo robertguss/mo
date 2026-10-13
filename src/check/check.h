@@ -56,6 +56,8 @@ struct mo_module_alias {
 };
 
 struct mo_module_scope {
+    const char *name; /* arena-owned dotted name; NULL for an unnamed synthetic module set */
+    bool library;
     uint32_t count;
     struct mo_symbol *symbols; /* sorted by name, then source position */
     uint32_t imported_count;
@@ -111,10 +113,12 @@ struct mo_source_type {
 struct mo_function_signature {
     const struct mo_symbol *function;
     const struct mo_source_type *type;
+    uint8_t requirements[26]; /* ability mask per scoped A-Z parameter */
 };
 
 struct mo_field_signature {
-    const struct mo_syntax *name; /* NULL for a case's single unnamed value */
+    const struct mo_syntax *name;       /* NULL for a case's single unnamed value */
+    const struct mo_syntax *annotation; /* the written field type */
     const struct mo_source_type *type;
     uint32_t index; /* declaration order */
 };
@@ -129,6 +133,8 @@ struct mo_data_signature {
     uint32_t count;
     struct mo_field_signature *fields;          /* sorted by name; indices keep declaration order */
     const struct mo_field_signature **by_index; /* declaration order */
+    uint32_t hash_parameters;                   /* scoped parameters needed for structural Hash */
+    uint32_t key_parameters; /* implicit Hash requirements imposed by Map/Set fields */
     bool unnamed;
 };
 
@@ -138,6 +144,12 @@ struct mo_signatures {
     uint64_t *work; /* shared program budget, initialized by preparation; single-threaded */
     uint32_t data_count;
     struct mo_data_signature *data; /* module order, then interface symbol order */
+    uint32_t native_count;
+    struct mo_native_signature *native; /* private prepared table interfaces */
+    uint32_t nominal_count, customizer_count;
+    struct mo_nominal_signature *nominals;            /* private owner index and dependency masks */
+    const struct mo_function_signature **customizers; /* private receiver index */
+    bool recovering; /* private diagnostic recovery; never true in a published preparation */
 };
 
 /* Prepares all named function signatures, including abstract generic parameters
@@ -226,11 +238,29 @@ enum mo_ability_implementation_kind {
 };
 
 /* A shared graph, possibly recursive for nominal data; lower memoizes it.
+ * Checking bounds dependency paths by MO_LIMIT_SOURCE_ABILITY_DEPTH (E1108),
+ * independently of the height of a surface type's arguments.
  * FUNCTION is the selected declaring-module to_text/compare, even if hidden.
  * PARAMETER is an abstract requirement of a generic body; substitution selects
  * its concrete implementation before emitting Core. DERIVED parts follow
- * tuple/field/case declaration order. NATIVE is determined by ability and type.
- * Equal/Hash never select a user function. */
+ * tuple/field declaration order. Choices flatten every case's fields in
+ * case/field declaration order, not one proof per case: Option has only Some's
+ * payload; Result has Ok's payload then Error's. Empty cases contribute zero.
+ * List/Set have one element part; Map has key then value. NATIVE is determined
+ * by ability and type.
+ * Equal/Hash never select a user function.
+ *
+ * Every generic use's type-only abilities (operand UINT32_MAX) identify the
+ * callee's scoped parameter in mo_checked_ability_use.parameter; the pair
+ * (parameter, implementation->ability), never the concrete type alone, selects
+ * the replacement for a PARAMETER proof during monomorphization. FUNCTION
+ * parts carry the customizer's own requirement proofs, with corresponding
+ * scoped keys in part_parameters. For to_text(Box(T)) where T: Text, selecting
+ * Box(Int)'s customizer supplies its T -> Int substitution and a Text(Int)
+ * part keyed by that customizer's T. This also applies to entry.error_text.
+ * Hash/Order signatures include their implied Equal requirement. Graphs may
+ * recurse through nominal data; lowering memoizes them. DERIVED has no
+ * part_parameters: its parts are structural, not signature requirements. */
 struct mo_ability_implementation {
     enum mo_source_ability ability;
     enum mo_ability_implementation_kind kind;
@@ -239,6 +269,7 @@ struct mo_ability_implementation {
     struct mo_type_arguments arguments;
     uint32_t part_count;
     const struct mo_ability_implementation *const *parts;
+    const struct mo_source_type *const *part_parameters; /* FUNCTION requirement keys */
 };
 
 struct mo_checked_binding {
@@ -286,6 +317,8 @@ struct mo_checked_pattern {
     const struct mo_checked_binding *binding; /* BIND only */
     struct mo_constructor_ref constructor;
     struct mo_type_arguments arguments;
+    uint32_t ability_count;
+    const struct mo_checked_ability_use *abilities; /* keyed type-only constructor requirements */
     uint32_t part_count;
     const struct mo_checked_pattern_part *parts;
 };
@@ -330,6 +363,7 @@ struct mo_checked_lambda {
 struct mo_checked_ability_use {
     uint32_t operand; /* body row, or UINT32_MAX for a type-only generic-use requirement */
     const struct mo_ability_implementation *implementation;
+    const struct mo_source_type *parameter; /* scoped callee parameter; NULL for an operation */
 };
 
 /* Typed expression graph in written postorder. operands refer to earlier rows
@@ -375,9 +409,17 @@ struct mo_checked_ability_use {
  * An unnamed payload is the sole operand, at field zero. Field/projection
  * rows have one base operand and field's resolved index.
  *
- * Ordinary calls have callee first, then positional arguments. Native dot
- * calls omit a callee row; native names the selected operation and operands
- * begin with its explicit receiver. receiver is that row index, not a slot.
+ * Ordinary calls have callee first, then positional arguments. Source dot
+ * calls have selected callee, receiver, then explicit arguments; a function
+ * field is projected first and called as an ordinary callee, with no inserted
+ * receiver. Native dot calls omit a callee row; native names the operation,
+ * and operands begin with its receiver. receiver is that row index, not a slot.
+ * Ability dot calls use native "to_text" or "compare", receiver first and no
+ * callee row; their Text/Order use identifies the receiver. Interpolation has
+ * only hole operands, in written order, each with a Text use keyed by its row.
+ * Evaluate and convert each hole before evaluating the next. Literal fragments
+ * remain in syntax.children (HEAD/hole/MID/.../TAIL), not executable rows;
+ * lowering decodes them using the whole triple-quoted text's indentation.
  * Lambdas have one lazy body operand, also named by lambda->body.
  *
  * Intermediate flat operator rows borrow the operator TOKEN's syntax. A
@@ -506,14 +548,14 @@ struct mo_program {
  * the certified subset or NULL with diagnostics, never
  * a partially certified result. set must satisfy mo_resolve_modules' input
  * contract. Use the explicit source-stage stack. The current skeleton supports
- * nongeneric functions, scalar expressions/operators, direct/indirect calls,
- * records/choices and fields, normalized patterns, tuples/lists, conditionals,
- * loops, early exits/asserts and noncapturing lambdas. Native support is direct Console.print; main
- * takes no parameters or one Console and returns Unit or Int. Invalid entry
- * signatures report E0079; valid unfinished entry forms return E1103. Imports,
- * constants/specs, generic functions, any where clause, ability customizers,
- * written Map/Set types (Hash unchecked), derived abilities and unfinished body
- * forms return E1103.
+ * generic functions with scoped requirement proofs, scalar expressions/operators, direct/indirect
+ * calls, records/choices and fields, normalized patterns, tuples/lists, conditionals, loops, early
+ * exits/asserts and noncapturing lambdas. Native signatures use the shared tables; operators,
+ * ability dot calls and interpolation retain native/derived/custom/parameter proofs. Source
+ * dot/overload dispatch and loaded library calls retain the selected symbols. Written Map/Set
+ * types require Hash. main takes no parameters or one Console and returns Unit or Int.
+ * Invalid entry signatures report E0079; valid unfinished entry forms return E1103. Imports,
+ * constants/specs and unfinished body forms return E1103.
  * Future spec checking checks anchor typing, completeness and links but executes no source code:
  * tools compile/run anchors to verify their allows/forbids expectations before accepting a
  * command-line mo check. Unfinished stages must report E1103, not succeed. */

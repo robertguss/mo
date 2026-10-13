@@ -1,0 +1,6 @@
+E0083 5.5
+0:30..43
+a generic recursion builds a bigger type: grow calls grow in a type-parameter cycle
+A generic function can't reach itself with a bigger type built from its parameter (reference 5.5).
+a generic recursion builds a bigger type: grow calls grow in a type-parameter cycle
+fixes 0
