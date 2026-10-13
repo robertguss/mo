@@ -8,7 +8,12 @@
  * Each row gives the code's number, a short identifier, and the section of the reference it cites,
  * as a string such as "8.3". Codes up to E0999 are the language's errors, and each cites the rule
  * it enforces. Codes from E1000 are implementation errors: limits (src/base/limits.h) and
- * interchange formats, which the reference doesn't state, so they cite no section: NULL. */
+ * interchange formats, which the reference doesn't state, so they cite no section: NULL.
+ *
+ * Codes up to E1060 were registered as each part arrived. New implementation codes take the
+ * next free number in their part's block, so parts built at the same time never collide: the
+ * front end (check, lower) E1100 to E1199, code generation E1200 to E1299, bytecode, heap and
+ * VM E1300 to E1399, and the tools E1400 to E1499. */
 #ifndef MO_CODES_H
 #define MO_CODES_H
 
