@@ -747,6 +747,8 @@ operations, map literals, constants and spec code); E1151 is arena exhaustion, E
 shared allocation-byte/step or Core-node bound, and E1153 the source-type,
 instantiation or generated Core path bound. `MO_LIMIT_LOWER_WORK` bounds all
 allocation bytes and work independently of the caller's arena allowance.
+Structural Core type heights are checked after generic substitution, not only
+at the template's source depth; an over-deep concrete result refuses with E1153.
 Numeric immediates fold unary minus before building Core scalars, including
 Int's minimum. Float literals convert in a private C numeric locale with
 nearest-even rounding, then restore the caller's rounding state. Text literals
@@ -786,7 +788,9 @@ exposure into the Core arena, including constants, wrappers, library
 instances and lifted-name provenance. Spec/anonymous-function numbers follow
 source order before rewrites. Every rewritten body gets exactly one optional
 span per Expr in preorder; synthesized nodes inherit the responsible source
-construct's span. Generated binders have no source name. Repeated SSA/loop
+construct's span. Generated binders have no source name. Ignored `_` parameter
+slots retain their signature type and argument position but have no source
+binding or binder name. Repeated SSA/loop
 binders retain their original name at distinct node/slot identities.
 Lowering supplies correct promise signatures/line correspondence and links
 anchors to promises and promises to their ordinary subjects. Module ownership

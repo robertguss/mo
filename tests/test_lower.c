@@ -516,6 +516,104 @@ static void test_limits(void) {
     lower_fixture_free(&f);
 }
 
+static void test_ignored_parameters(void) {
+    struct lower_fixture f;
+    lower_fixture_init(&f, "module Main\nfn identity(_: Int) : Int\n"
+                           "f = fn(_)\n17\nend\nf(41)\nend\n"
+                           "fn main() : Int\nidentity(9)\nend\n");
+    f.program.function_count = f.declarations.count = 2;
+    f.function_types[1].count = 2;
+    f.signature_parts[1][0] = f.signature_parts[1][1] = &f.int_;
+    const struct mo_checked_binding *parameters[] = {NULL};
+    f.functions[1].parameter_count = 1;
+    f.functions[1].parameters = parameters;
+    uint32_t body = lower_fixture_row(&f, MO_S_INT, &f.int_, "17", 0, NULL);
+    struct mo_checked_lambda lambda = {
+        .parameter_count = 1, .parameters = parameters, .body = body};
+    uint32_t value = lower_fixture_row(&f, MO_S_LAMBDA, &f.function_types[1], NULL, 1, &body);
+    f.rows[value].lambda = &lambda;
+    uint32_t forty_one = lower_fixture_row(&f, MO_S_INT, &f.int_, "41", 0, NULL);
+    uint32_t application[] = {value, forty_one};
+    f.functions[1].body.root = lower_fixture_row(&f, MO_S_CALL, &f.int_, NULL, 2, application);
+    f.functions[1].body.count = f.count;
+    uint32_t callee = lower_fixture_row(&f, MO_S_NAME, &f.function_types[1], NULL, 0, NULL);
+    f.rows[callee].symbol = &f.symbols[1];
+    uint32_t nine = lower_fixture_row(&f, MO_S_INT, &f.int_, "9", 0, NULL);
+    uint32_t arguments[] = {callee, nine};
+    uint32_t call = lower_fixture_row(&f, MO_S_CALL, &f.int_, NULL, 2, arguments);
+    f.rows[call].symbol = &f.symbols[1];
+    struct mo_core *core = checked(&f, "ignored-parameters", "returned\n17\n");
+    if (core != NULL) {
+        CHECK(!core->metadata.funs.items[1].body.params.items[0].some);
+        run(core, 17);
+    }
+    lower_fixture_free(&f);
+}
+
+static void test_substituted_depth(void) {
+    /* Substitution deepens this generic result without deepening its template. */
+    for (uint32_t depth = MO_LIMIT_CORE_DEPTH - 3; depth < MO_LIMIT_CORE_DEPTH; depth += 2) {
+        struct lower_fixture f;
+        lower_fixture_init(&f, "module Main\nfn widen(_value: T) : List(T)\n[]\nend\n"
+                               "fn main() : Int\nwiden([])\n0\nend\n");
+        f.program.function_count = f.declarations.count = 2;
+        struct mo_source_type parameter = {.kind = MO_SOURCE_PARAMETER,
+                                           .name = "T",
+                                           .declaration = &f.symbols[1],
+                                           .parameters = 1};
+        const struct mo_source_type *part = &parameter;
+        struct mo_source_type result = {.kind = MO_SOURCE_NAMED,
+                                        .name = "List",
+                                        .module = UINT32_MAX,
+                                        .count = 1,
+                                        .arguments = &part,
+                                        .parameters = 1};
+        f.function_types[1].count = 2;
+        f.function_types[1].parameters = 1;
+        f.signature_parts[1][0] = &parameter;
+        f.signature_parts[1][1] = &result;
+        f.bindings[0] = (struct mo_checked_binding){.name = "_value", .type = &parameter};
+        const struct mo_checked_binding *parameters[] = {&f.bindings[0]};
+        f.functions[1].parameter_count = f.functions[1].body.binding_count = 1;
+        f.functions[1].parameters = parameters;
+        f.functions[1].body.root = lower_fixture_row(&f, MO_S_LIST, &result, NULL, 0, NULL);
+        f.functions[1].body.count = 1;
+        struct mo_source_type types[MO_LIMIT_CORE_DEPTH + 1];
+        const struct mo_source_type *parts[MO_LIMIT_CORE_DEPTH];
+        types[0] = f.int_;
+        for (uint32_t i = 1; i <= depth + 1; i++) {
+            parts[i - 1] = &types[i - 1];
+            types[i] = (struct mo_source_type){.kind = MO_SOURCE_NAMED,
+                                               .name = "List",
+                                               .module = UINT32_MAX,
+                                               .count = 1,
+                                               .arguments = &parts[i - 1],
+                                               .height = i};
+        }
+        uint32_t callee = lower_fixture_row(&f, MO_S_NAME, &f.function_types[1], NULL, 0, NULL);
+        f.rows[callee].symbol = &f.symbols[1];
+        uint32_t value = lower_fixture_row(&f, MO_S_LIST, &types[depth], NULL, 0, NULL);
+        uint32_t arguments[] = {callee, value};
+        uint32_t call = lower_fixture_row(&f, MO_S_CALL, &types[depth + 1], NULL, 2, arguments);
+        struct mo_type_argument argument = {&parameter, &types[depth]};
+        f.rows[call].symbol = &f.symbols[1];
+        f.rows[call].arguments = (struct mo_type_arguments){1, &argument};
+        uint32_t zero = lower_fixture_row(&f, MO_S_INT, &f.int_, "0", 0, NULL);
+        uint32_t statements[] = {call, zero};
+        (void)lower_fixture_row(&f, MO_S_SEQUENCE, &f.int_, NULL, 2, statements);
+        struct mo_core *core = mo_lower(&f.arena, &f.program, &f.sources, &f.diags);
+        if (depth == MO_LIMIT_CORE_DEPTH - 3) {
+            CHECK(core != NULL && !mo_diags_any(&f.diags));
+            if (core != NULL)
+                MO_ASSERT(mo_core_check(core, &f.diags));
+        } else {
+            CHECK(core == NULL);
+            CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_LOWER_DEPTH);
+        }
+        lower_fixture_free(&f);
+    }
+}
+
 int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "--corpus") == 0)
         corpus = argv[2];
@@ -531,5 +629,7 @@ int main(int argc, char **argv) {
     test_text();
     test_result_entry();
     test_limits();
+    test_ignored_parameters();
+    test_substituted_depth();
     return mo_test_report("lower");
 }

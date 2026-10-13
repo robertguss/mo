@@ -12,6 +12,7 @@ struct canonical_type {
     struct canonical_type *next;
     mo_core_string name;
     mo_core_ty type;
+    uint32_t height;
 };
 
 static mo_core_ty cached(struct lowering *p, const struct mo_source_type *source,
@@ -149,8 +150,22 @@ static mo_core_ty make_type(struct lowering *p, const struct mo_source_type *sou
         if (lower_same(c->name, name))
             return c->type;
     }
+    uint32_t height = 0;
+    if (t->tag != MO_CORE_TY_DATA)
+        for (uint32_t i = 0; i < source->count; i++) {
+            struct canonical_type *argument = p->types;
+            while (argument != NULL && argument->type != args[i]) {
+                lower_work(p, 1);
+                argument = argument->next;
+            }
+            MO_ASSERT(argument != NULL);
+            if (height <= argument->height)
+                height = argument->height + 1;
+        }
+    if (height >= MO_LIMIT_CORE_DEPTH)
+        lower_refuse(p, MO_CODE_LOWER_DEPTH, "substituted type exceeds the Core path limit");
     struct canonical_type *c = LOWER_NEW(p, struct canonical_type, 1);
-    *c = (struct canonical_type){p->types, name, t};
+    *c = (struct canonical_type){p->types, name, t, height};
     p->types = c;
     if (t->tag == MO_CORE_TY_DATA) {
         struct data_instance *d = LOWER_NEW(p, struct data_instance, 1);

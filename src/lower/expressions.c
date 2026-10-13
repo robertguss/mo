@@ -992,9 +992,11 @@ static void row_task(struct body *b, struct task t) {
         binder_slots(b, e, r->lambda->parameter_count);
         for (uint32_t i = 0; i < r->lambda->parameter_count; i++) {
             const struct mo_checked_binding *parameter = r->lambda->parameters[i];
-            e->as.lam.params.items[i] =
-                (struct mo_core_param){binding_name(b, parameter), type(b, parameter->type)};
-            binder(b, e, i, parameter);
+            e->as.lam.params.items[i] = (struct mo_core_param){
+                parameter == NULL ? lower_fresh(p) : binding_name(b, parameter),
+                type(b, r->type)->as.fn.params.items[i]};
+            if (parameter != NULL)
+                binder(b, e, i, parameter);
         }
         ((struct lower_node *)e)->closure =
             lower_concat(p, b->instance->meta.name, ".fn.", lower_number(p, r->lambda->number));
@@ -1064,9 +1066,11 @@ void lower_function(struct lowering *p, struct instance *instance) {
     for (size_t i = 0; i < instance->fun.params.count; i++) {
         const struct mo_checked_binding *parameter = instance->source->parameters[i];
         instance->fun.params.items[i] =
-            (struct mo_core_param){binding_name(&b, parameter), type(&b, parameter->type)};
-        instance->meta.body.params.items[i] =
-            (struct mo_core_name){true, lower_text(p, parameter->name)};
+            (struct mo_core_param){parameter == NULL ? lower_fresh(p) : binding_name(&b, parameter),
+                                   signature->as.fn.params.items[i]};
+        if (parameter != NULL)
+            instance->meta.body.params.items[i] =
+                (struct mo_core_name){true, lower_text(p, parameter->name)};
     }
     if (returns(&b, b.source->root)) {
         struct continuation *ret = continuation(&b, K_JUMP);
