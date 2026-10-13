@@ -78,11 +78,10 @@ struct function {
     struct function *parent, *root;
     struct mo_core_span declaration;
     uint32_t lambda_number, closure_type;
-    uint32_t preorder, instructions, blocks, owned, mark;
+    uint32_t preorder, instructions, owned, mark;
     uint32_t live_count, live_cells, reference_count;
     uint32_t *references;
     uint64_t live_work;
-    bool next_block;
 };
 struct compiler {
     const struct mo_core *core;
@@ -886,14 +885,12 @@ static MO_MUST_USE uint32_t register_add(struct compiler *c, struct function *f,
     if (ty == MO_NO_INDEX)
         return MO_NO_INDEX;
     uint32_t id = f->regs.count;
-    struct reg *r = append(c, &f->regs, 1, MO_LIMIT_FUNCTION_REGISTERS, MO_CODE_TOO_MANY_REGISTERS);
+    /* Virtual slots share the ownership graph's bound. The encoded register and
+     * register × block limits apply to the physical allocation, after pruning. */
+    struct reg *r =
+        append(c, &f->regs, 1, MO_LIMIT_CODEGEN_OWNERSHIP_SLOTS, MO_CODE_CODEGEN_MEMORY);
     if (r == NULL)
         return MO_NO_INDEX;
-    if ((uint64_t)f->regs.count * f->blocks > MO_LIMIT_FUNCTION_REGISTER_BLOCKS) {
-        if (!problem(c, MO_CODE_BYTECODE_TOO_BIG,
-                     "Function exceeds MO_LIMIT_FUNCTION_REGISTER_BLOCKS."))
-            return MO_NO_INDEX;
-    }
     uint32_t flow = c->ownership.count;
     struct ownership *o =
         append(c, &c->ownership, 1, MO_LIMIT_CODEGEN_OWNERSHIP_SLOTS, MO_CODE_CODEGEN_MEMORY);
@@ -2065,17 +2062,6 @@ static MO_MUST_USE uint32_t emit(struct compiler *c, struct function *f, struct 
                      "Function exceeds MO_LIMIT_FUNCTION_INSTRUCTIONS."))
             return MO_NO_INDEX;
     }
-    /* Every target this allocator emits begins just after a transfer instruction. */
-    if (f->instructions == 0 || f->next_block) {
-        f->blocks++;
-        if ((uint64_t)f->regs.count * f->blocks > MO_LIMIT_FUNCTION_REGISTER_BLOCKS) {
-            if (!problem(c, MO_CODE_BYTECODE_TOO_BIG,
-                         "Function exceeds MO_LIMIT_FUNCTION_REGISTER_BLOCKS."))
-                return MO_NO_INDEX;
-        }
-    }
-    f->next_block = op == MO_OP_JUMP || op == MO_OP_BRANCH || op == MO_OP_SWITCH ||
-                    (op >= MO_OP_TAIL_CALL && op <= MO_OP_FAIL);
     uint32_t offset = f->code.count;
     uint32_t *words =
         append(c, &f->code, 1 + n + count, MO_LIMIT_FUNCTION_CODE_WORDS, MO_CODE_FUNCTION_TOO_LONG);
