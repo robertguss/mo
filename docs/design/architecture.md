@@ -639,22 +639,30 @@ once, whatever the counts say. So a stop or a failure in the middle of a
 function leaks nothing. Constants live in the image, made immortal, and
 every process shares them.
 
-`heap` supplies `mo_heap_new(types, limits)` as the heap-only process context
-for C value builders. It borrows the sealed type and layout tables, which
-must remain stable for its lifetime. Execution frames, image loading and
-outcomes remain `vm`'s work. The image keeps a separate initialization heap;
-making a module constant immortal walks its entire immutable graph, even
-when the root's count had already saturated. Processes never free image
-allocations.
+`heap` supplies a separate `struct mo_heap` owned by the VM's process, created
+with `mo_heap_new(image, limits)`. Execution frames, loading and outcomes
+remain `vm`'s work. A shared `struct mo_heap_image`, prepared once per run,
+borrows finished types and holds abilities, the sorted layout index, secret
+hash/index domains and its initialization heap. Layouts may be appended after
+types finish; refresh before publishing the image for parallel execution.
+New process heaps perform no entropy reads, type walks or layout sorting.
+Making a module constant immortal computes reachable structural hash caches
+before freezing the whole immutable graph, even for a saturated root. It can
+fail for memory without changing counts; published image caches never change.
+Processes never free image allocations or cache captureless closures locally.
 
-The heap limit counts native allocation prefixes, value storage, layout and
-ability indices, and temporary walk arenas, including their chunk overhead.
-Caller-owned type tables and output buffers are outside this limit. Scratch
-also has a named cap and is reclaimed after each generic operation. Heap
-teardown releases native handles as well as value memory; a host release
-callback cannot inspect children, which teardown may already have reclaimed.
-Printing that exceeds a resource bound preserves the output and lets the
-defect renderer use `<value unavailable>` rather than trigger another stop.
+Each process heap limit counts its fixed heap context, native allocation
+prefixes, value storage and temporary walk arenas, including chunk overhead.
+The image budget counts shared indices and its initialization heap together.
+Caller-owned types and output buffers are outside these limits, as is system
+allocator bookkeeping. Scratch uses the remaining heap and is reclaimed after
+each generic operation; equality, ordering and hashing have no separate work
+cap. The current charged prefix and actual tuple cost are in bytecode 2.4.
+Heap teardown releases native handles as well as values; release callbacks
+cannot inspect children, which teardown may already have reclaimed. Printing
+uses a small C-stack frame buffer before requesting scratch, so scalars and
+shallow values remain printable at a full heap. A refusal preserves output
+and lets the defect renderer use `<value unavailable>` instead of another stop.
 
 - **`mo run`** initializes the image, makes a process and calls the entry
   function (4.3). It exits with `main`'s status. On a stop, it prints the
@@ -1103,29 +1111,42 @@ MO_MUST_USE int mo_run(struct mo_image *image, const struct mo_run_options *opti
 /* src/heap/heap.h: C ownership is type-directed. Both operations are infallible, copy/do nothing
  * for immediates, and follow bytecode 2.4's immortal and saturating counts. dup returns another
  * owned cell without consuming its input; drop consumes one owned cell without C recursion. */
-MO_MUST_USE struct mo_cell mo_value_dup(struct mo_process *process, uint32_t type, struct mo_cell value);
-void mo_value_drop(struct mo_process *process, uint32_t type, struct mo_cell value);
+struct mo_heap_image; /* Shared run metadata; its initialization heap owns image values. */
+struct mo_heap;       /* A separate, fixed-size context owned by struct mo_process. */
+MO_MUST_USE struct mo_heap_image *mo_heap_image_new(const struct mo_types *types, const struct mo_limits *limits);
+MO_MUST_USE bool mo_heap_image_refresh(struct mo_heap_image *image);
+MO_MUST_USE struct mo_heap *mo_heap_image_constants(struct mo_heap_image *image);
+void mo_heap_image_free(struct mo_heap_image *image);
+MO_MUST_USE struct mo_heap *mo_heap_new(struct mo_heap_image *image, const struct mo_limits *limits);
+void mo_heap_free(struct mo_heap *heap);
+MO_MUST_USE struct mo_cell mo_value_dup(struct mo_heap *heap, uint32_t type, struct mo_cell value);
+void mo_value_drop(struct mo_heap *heap, uint32_t type, struct mo_cell value);
 /* Building generated inputs borrows input cells and duplicates references kept. Successful
  * results are owned in the process heap; false leaves inputs and out unchanged. Byte builders
  * copy at most MO_LIMIT_STRING_SIZE bytes; NULL is allowed only for zero length. Bytes accepts
  * any sequence. BigInt uses base.h's sign enum and bytecode 3.1's canonical magnitude; invalid
  * signs/magnitudes, lengths past the limit and allocation/heap-limit failure return false. */
-MO_MUST_USE bool mo_value_text(struct mo_process *process, const char *utf8, size_t length, struct mo_cell *out);
-MO_MUST_USE bool mo_value_bytes(struct mo_process *process, const uint8_t *bytes, size_t length, struct mo_cell *out);
-MO_MUST_USE bool mo_value_bigint(struct mo_process *process, enum mo_bigint_sign sign,
+MO_MUST_USE bool mo_value_text(struct mo_heap *heap, const char *utf8, size_t length, struct mo_cell *out);
+MO_MUST_USE bool mo_value_bytes(struct mo_heap *heap, const uint8_t *bytes, size_t length, struct mo_cell *out);
+MO_MUST_USE bool mo_value_bigint(struct mo_heap *heap, enum mo_bigint_sign sign,
                                  const uint8_t *magnitude, size_t length, struct mo_cell *out);
-MO_MUST_USE bool mo_value_construct(struct mo_process *process, uint32_t layout, const struct mo_cell *fields,
+MO_MUST_USE bool mo_value_construct(struct mo_heap *heap, uint32_t layout, const struct mo_cell *fields,
                                     uint32_t count, struct mo_cell *out);
-MO_MUST_USE bool mo_value_case(struct mo_process *process, uint32_t type, uint32_t tag, const struct mo_cell *fields,
+MO_MUST_USE bool mo_value_case(struct mo_heap *heap, uint32_t type, uint32_t tag, const struct mo_cell *fields,
                                uint32_t count, struct mo_cell *out);
-MO_MUST_USE bool mo_value_list(struct mo_process *process, uint32_t type, const struct mo_cell *elements,
+MO_MUST_USE bool mo_value_list(struct mo_heap *heap, uint32_t type, const struct mo_cell *elements,
                                uint32_t count, struct mo_cell *out);
-MO_MUST_USE bool mo_value_map(struct mo_process *process, uint32_t type, const struct mo_cell *keys,
+MO_MUST_USE bool mo_value_map(struct mo_heap *heap, uint32_t type, const struct mo_cell *keys,
                               const struct mo_cell *values, uint32_t count, struct mo_cell *out);
-MO_MUST_USE bool mo_value_set(struct mo_process *process, uint32_t type, const struct mo_cell *elements,
+MO_MUST_USE bool mo_value_set(struct mo_heap *heap, uint32_t type, const struct mo_cell *elements,
                               uint32_t count, struct mo_cell *out);
-MO_MUST_USE bool mo_value_closure(struct mo_process *process, uint32_t function, const struct mo_cell *captures,
+MO_MUST_USE bool mo_value_closure(struct mo_heap *heap, uint32_t function, const struct mo_cell *captures,
                                   uint32_t count, struct mo_cell *out);
+/* The VM's _owned construct/case/closure/reuse variants transfer field ownership
+ * on success, without a dup/drop pair; failure preserves fields, tokens and out. */
+MO_MUST_USE bool mo_value_construct_owned(struct mo_heap *heap, uint32_t layout,
+    const struct mo_cell *fields, uint32_t count, struct mo_cell *out);
+MO_MUST_USE bool mo_value_make_immortal(struct mo_heap *heap, uint32_t type, struct mo_cell value);
 
 /* src/host/host.h: a fake for mo test's generated inputs, as its constructor would make it
  * from contents, such as Files.in_memory's map. */
@@ -1154,6 +1175,14 @@ the CBMC proofs, within a time budget for the CI orb.
 - **Packed lists.** Every element is a 16-byte cell, so a `List(Int)` uses
   twice the memory it needs. Packing lists of small immediates is decided
   with the benchmark.
+- **Process-owned chunks with size classes.** Could chunk teardown replace
+  per-object teardown links while retaining checked heap accounting and
+  context-free value recovery? The current allocator charges a 56-byte prefix
+  plus the 8-byte header: `build/clang/debug/tests/test_heap.test --bench` allocated one million
+  `(Int, Int)` tuples for 96,000,000 charged bytes in 0.077 s (Clang `-O0`,
+  Linux x64 orb). Compare charged bytes, throughput, fragmentation, reuse and
+  teardown against that baseline before replacing the allocator. No uncharged
+  allocation ledger or claim of a 40-byte allocation is part of this version.
 - **Text's character count** is computed on each call. Caching it costs a word
   per text; decide with the benchmark.
 - **Unicode16** needs tables generated from the Unicode Character Database

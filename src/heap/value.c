@@ -43,7 +43,7 @@ static MO_MUST_USE bool valid_utf8(const uint8_t *bytes, size_t length) {
     return true;
 }
 
-static MO_MUST_USE bool byte_value(struct mo_process *process, enum mo_type_kind kind,
+static MO_MUST_USE bool byte_value(struct mo_heap *process, enum mo_type_kind kind,
                                    const uint8_t *bytes, size_t length, uint32_t auxiliary,
                                    struct mo_cell *out) {
     MO_ASSERT(process != NULL && out != NULL);
@@ -54,13 +54,16 @@ static MO_MUST_USE bool byte_value(struct mo_process *process, enum mo_type_kind
     if (kind == MO_TYPE_TEXT && !valid_utf8(bytes, length)) {
         return false;
     }
-    struct mo_allocation *allocation =
-        mo_heap_allocate(process, process->builtins[kind], MO_BUILTIN_LAYOUT(kind), length);
+    size_t trailer = kind == MO_TYPE_BIGINT ? sizeof(uint64_t) : 0;
+    struct mo_allocation *allocation = mo_heap_allocate(process, process->builtins[kind],
+                                                        MO_BUILTIN_LAYOUT(kind), length + trailer);
     if (allocation == NULL) {
         return false;
     }
     allocation->length = (uint32_t)length;
-    allocation->auxiliary = auxiliary;
+    if (trailer != 0) {
+        memcpy((uint8_t *)allocation->cells + length, &auxiliary, sizeof auxiliary);
+    }
     if (length != 0) {
         memcpy(allocation->cells, bytes, length);
     }
@@ -68,17 +71,16 @@ static MO_MUST_USE bool byte_value(struct mo_process *process, enum mo_type_kind
     return true;
 }
 
-bool mo_value_text(struct mo_process *process, const char *utf8, size_t length,
-                   struct mo_cell *out) {
+bool mo_value_text(struct mo_heap *process, const char *utf8, size_t length, struct mo_cell *out) {
     return byte_value(process, MO_TYPE_TEXT, (const uint8_t *)utf8, length, 0, out);
 }
 
-bool mo_value_bytes(struct mo_process *process, const uint8_t *bytes, size_t length,
+bool mo_value_bytes(struct mo_heap *process, const uint8_t *bytes, size_t length,
                     struct mo_cell *out) {
     return byte_value(process, MO_TYPE_BYTES, bytes, length, 0, out);
 }
 
-bool mo_value_bigint(struct mo_process *process, enum mo_bigint_sign sign, const uint8_t *magnitude,
+bool mo_value_bigint(struct mo_heap *process, enum mo_bigint_sign sign, const uint8_t *magnitude,
                      size_t length, struct mo_cell *out) {
     if (length > MO_LIMIT_STRING_SIZE || (length != 0 && magnitude == NULL) ||
         (sign != MO_BIGINT_ZERO && sign != MO_BIGINT_POSITIVE && sign != MO_BIGINT_NEGATIVE) ||
@@ -99,14 +101,21 @@ const uint8_t *mo_value_data(struct mo_cell value, size_t *length) {
     return (const uint8_t *)allocation->cells;
 }
 
+uint32_t mo_bigint_sign(const struct mo_allocation *value) {
+    uint32_t sign;
+    memcpy(&sign, (const uint8_t *)value->cells + value->length, sizeof sign);
+    return sign;
+}
+
 struct mo_cell mo_value_field(struct mo_cell value, uint32_t field) {
     struct mo_allocation *allocation = mo_heap_allocation(mo_cell_get_ref(value));
     MO_ASSERT(field < allocation->length);
     return allocation->cells[field];
 }
 
-bool mo_value_construct(struct mo_process *process, uint32_t layout, const struct mo_cell *fields,
-                        uint32_t count, struct mo_cell *out) {
+static MO_MUST_USE bool construct(struct mo_heap *process, uint32_t layout,
+                                  const struct mo_cell *fields, uint32_t count, bool owned,
+                                  struct mo_cell *out) {
     MO_ASSERT(process != NULL && out != NULL);
     if (layout >= process->types->layout_count || (count != 0 && fields == NULL)) {
         return false;
@@ -122,15 +131,27 @@ bool mo_value_construct(struct mo_process *process, uint32_t layout, const struc
     }
     allocation->length = count;
     for (uint32_t i = 0; i < count; i++) {
-        allocation->cells[i] = mo_value_dup(process, fixed->fields[i], fields[i]);
+        allocation->cells[i] =
+            owned ? fields[i] : mo_value_dup(process, fixed->fields[i], fields[i]);
     }
     struct mo_cell result = mo_cell_ref(&allocation->object);
     *out = fixed->kind == MO_LAYOUT_CASE ? mo_cell_case(fixed->case_index, result) : result;
     return true;
 }
 
-bool mo_value_case(struct mo_process *process, uint32_t type, uint32_t tag,
-                   const struct mo_cell *fields, uint32_t count, struct mo_cell *out) {
+bool mo_value_construct(struct mo_heap *process, uint32_t layout, const struct mo_cell *fields,
+                        uint32_t count, struct mo_cell *out) {
+    return construct(process, layout, fields, count, false, out);
+}
+
+bool mo_value_construct_owned(struct mo_heap *process, uint32_t layout,
+                              const struct mo_cell *fields, uint32_t count, struct mo_cell *out) {
+    return construct(process, layout, fields, count, true, out);
+}
+
+static MO_MUST_USE bool case_value(struct mo_heap *process, uint32_t type, uint32_t tag,
+                                   const struct mo_cell *fields, uint32_t count, bool owned,
+                                   struct mo_cell *out) {
     MO_ASSERT(process != NULL && out != NULL);
     if (type >= process->types->count || process->types->items[type].kind != MO_TYPE_CHOICE ||
         tag >= process->types->items[type].case_count || (count != 0 && fields == NULL) ||
@@ -140,19 +161,32 @@ bool mo_value_case(struct mo_process *process, uint32_t type, uint32_t tag,
     enum mo_case_shape shape = mo_case_shape(process->types, type, tag);
     if (shape == MO_CASE_BOXED) {
         struct mo_layout_lookup *layout = mo_heap_layout(process, 0, type, tag);
-        return layout != NULL && mo_value_construct(process, layout->index, fields, count, out);
+        return layout != NULL && construct(process, layout->index, fields, count, owned, out);
     }
     struct mo_cell payload = mo_cell_unit();
     if (shape != MO_CASE_EMPTY) {
-        payload =
-            mo_value_dup(process, process->types->items[type].cases[tag].fields[0].type, fields[0]);
+        payload = owned
+                      ? fields[0]
+                      : mo_value_dup(process, process->types->items[type].cases[tag].fields[0].type,
+                                     fields[0]);
     }
     *out = mo_cell_case(tag, payload);
     return true;
 }
 
-bool mo_value_closure(struct mo_process *process, uint32_t function, const struct mo_cell *captures,
-                      uint32_t count, struct mo_cell *out) {
+bool mo_value_case(struct mo_heap *process, uint32_t type, uint32_t tag,
+                   const struct mo_cell *fields, uint32_t count, struct mo_cell *out) {
+    return case_value(process, type, tag, fields, count, false, out);
+}
+
+bool mo_value_case_owned(struct mo_heap *process, uint32_t type, uint32_t tag,
+                         const struct mo_cell *fields, uint32_t count, struct mo_cell *out) {
+    return case_value(process, type, tag, fields, count, true, out);
+}
+
+static MO_MUST_USE bool closure(struct mo_heap *process, uint32_t function,
+                                const struct mo_cell *captures, uint32_t count, bool owned,
+                                struct mo_cell *out) {
     MO_ASSERT(process != NULL && out != NULL);
     if (count != 0 && captures == NULL) {
         return false;
@@ -176,20 +210,26 @@ bool mo_value_closure(struct mo_process *process, uint32_t function, const struc
         return false;
     }
     allocation->length = count;
-    allocation->auxiliary = function;
     for (uint32_t j = 0; j < count; j++) {
-        allocation->cells[j] = mo_value_dup(process, layout->fields[j], captures[j]);
+        allocation->cells[j] =
+            owned ? captures[j] : mo_value_dup(process, layout->fields[j], captures[j]);
     }
-    if (count == 0) {
-        allocation->object.count = MO_IMMORTAL_COUNT;
-        allocation->deep_immortal = true;
-        entry->constant = &allocation->object;
-    }
+    MO_ASSERT(count != 0); /* Captureless closures were initialized with the image. */
     *out = mo_cell_ref(&allocation->object);
     return true;
 }
 
-bool mo_value_list(struct mo_process *process, uint32_t type, const struct mo_cell *elements,
+bool mo_value_closure(struct mo_heap *process, uint32_t function, const struct mo_cell *captures,
+                      uint32_t count, struct mo_cell *out) {
+    return closure(process, function, captures, count, false, out);
+}
+
+bool mo_value_closure_owned(struct mo_heap *process, uint32_t function,
+                            const struct mo_cell *captures, uint32_t count, struct mo_cell *out) {
+    return closure(process, function, captures, count, true, out);
+}
+
+bool mo_value_list(struct mo_heap *process, uint32_t type, const struct mo_cell *elements,
                    uint32_t count, struct mo_cell *out) {
     MO_ASSERT(process != NULL && out != NULL);
     if (type >= process->types->count || process->types->items[type].kind != MO_TYPE_LIST ||
@@ -202,7 +242,6 @@ bool mo_value_list(struct mo_process *process, uint32_t type, const struct mo_ce
         return false;
     }
     allocation->length = count;
-    allocation->capacity = count;
     uint32_t element_type = process->types->items[type].parameters[0];
     for (uint32_t i = 0; i < count; i++) {
         allocation->cells[i] = mo_value_dup(process, element_type, elements[i]);
@@ -228,12 +267,13 @@ bool mo_list_get(struct mo_cell list, uint32_t index, struct mo_cell *out) {
     return true;
 }
 
-static MO_MUST_USE struct mo_allocation *list_room(struct mo_process *process, uint32_t type,
+static MO_MUST_USE struct mo_allocation *list_room(struct mo_heap *process, uint32_t type,
                                                    struct mo_allocation *old, uint32_t needed) {
-    if (old->object.count == 1 && needed <= old->capacity) {
+    uint32_t capacity =
+        (uint32_t)((old->size - offsetof(struct mo_allocation, cells)) / sizeof(struct mo_cell));
+    if (old->object.count == 1 && needed <= capacity) {
         return old;
     }
-    uint32_t capacity = old->capacity;
     if (needed > capacity) {
         capacity =
             capacity > MO_LIMIT_COLLECTION_SIZE / 2 ? MO_LIMIT_COLLECTION_SIZE : capacity * 2;
@@ -250,7 +290,6 @@ static MO_MUST_USE struct mo_allocation *list_room(struct mo_process *process, u
         return NULL;
     }
     copy->length = old->length;
-    copy->capacity = capacity;
     uint32_t element_type = process->types->items[type].parameters[0];
     for (uint32_t i = 0; i < old->length; i++) {
         copy->cells[i] = mo_value_dup(process, element_type, old->cells[i]);
@@ -258,7 +297,7 @@ static MO_MUST_USE struct mo_allocation *list_room(struct mo_process *process, u
     return copy;
 }
 
-bool mo_list_append(struct mo_process *process, uint32_t type, struct mo_cell *list,
+bool mo_list_append(struct mo_heap *process, uint32_t type, struct mo_cell *list,
                     struct mo_cell element) {
     MO_ASSERT(process != NULL && list != NULL && type < process->types->count);
     MO_ASSERT(process->types->items[type].kind == MO_TYPE_LIST);
@@ -281,7 +320,7 @@ bool mo_list_append(struct mo_process *process, uint32_t type, struct mo_cell *l
     return true;
 }
 
-bool mo_list_set(struct mo_process *process, uint32_t type, struct mo_cell *list, uint32_t index,
+bool mo_list_set(struct mo_heap *process, uint32_t type, struct mo_cell *list, uint32_t index,
                  struct mo_cell element) {
     MO_ASSERT(process != NULL && list != NULL && type < process->types->count);
     MO_ASSERT(process->types->items[type].kind == MO_TYPE_LIST);

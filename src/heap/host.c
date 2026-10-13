@@ -9,7 +9,7 @@ static MO_MUST_USE struct mo_allocation *state_allocation(struct mo_state *state
     return a;
 }
 
-bool mo_state_new(struct mo_process *process, const uint32_t *types, const struct mo_cell *values,
+bool mo_state_new(struct mo_heap *process, const uint32_t *types, const struct mo_cell *values,
                   uint32_t count, struct mo_state **out) {
     MO_ASSERT(process != NULL && out != NULL);
     if (count > MO_LIMIT_FIELDS || (count != 0 && (types == NULL || values == NULL))) {
@@ -48,7 +48,7 @@ struct mo_state *mo_state_dup(struct mo_state *state) {
     return state;
 }
 
-void mo_state_drop(struct mo_process *process, struct mo_state *state) {
+void mo_state_drop(struct mo_heap *process, struct mo_state *state) {
     if (state != NULL) {
         struct mo_allocation *a = state_allocation(state);
         mo_heap_drop_object(process, &a->object);
@@ -61,7 +61,7 @@ struct mo_cell mo_state_get(struct mo_state *state, uint32_t index) {
     return a->cells[index];
 }
 
-void mo_state_set(struct mo_process *process, struct mo_state *state, uint32_t index,
+void mo_state_set(struct mo_heap *process, struct mo_state *state, uint32_t index,
                   struct mo_cell value) {
     struct mo_allocation *a = state_allocation(state);
     MO_ASSERT(index < a->length);
@@ -71,7 +71,7 @@ void mo_state_set(struct mo_process *process, struct mo_state *state, uint32_t i
     a->cells[index] = held;
 }
 
-bool mo_value_capability(struct mo_process *process, uint32_t type,
+bool mo_value_capability(struct mo_heap *process, uint32_t type,
                          const struct mo_capability_info *info, struct mo_cell *out) {
     MO_ASSERT(process != NULL && info != NULL && out != NULL);
     if (type >= process->types->count || process->types->items[type].kind != MO_TYPE_CAPABILITY ||

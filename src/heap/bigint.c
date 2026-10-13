@@ -7,7 +7,7 @@
 enum { DECIMAL_BASE = 1000000000, MULTIPLY_LEAF = 16, MULTIPLY_DEPTH = 24 };
 
 static MO_MUST_USE bool charge(size_t *work, size_t amount) {
-    if (amount > MO_LIMIT_HEAP_WORK - *work) {
+    if (amount > MO_LIMIT_BIGINT_TEXT_WORK - *work) {
         return false;
     }
     *work += amount;
@@ -100,9 +100,11 @@ static MO_MUST_USE bool normalize(mo_i128 *digits, size_t count, size_t *work) {
     return true;
 }
 
-bool mo_bigint_text(struct mo_process *process, struct mo_cell value, struct mo_buffer *out,
-                    size_t *work) {
+bool mo_bigint_text(struct mo_heap *process, struct mo_cell value, struct mo_buffer *out) {
     struct mo_allocation *allocation = mo_heap_allocation(mo_cell_get_ref(value));
+    if (allocation->length > MO_LIMIT_BIGINT_TEXT_BYTES) {
+        return false;
+    }
     if (allocation->length == 0) {
         return mo_buffer_append_byte(out, '0');
     }
@@ -132,23 +134,24 @@ bool mo_bigint_text(struct mo_process *process, struct mo_cell value, struct mo_
     }
     power[0] = 294967296;
     power[1] = 4;
-    bool ok = charge(work, 2 * chunks);
+    size_t work = 0;
+    bool ok = charge(&work, 2 * chunks);
     for (size_t stride = 2; ok && stride < 2 * chunks; stride *= 2) {
         for (size_t offset = 0; ok && offset < 2 * chunks; offset += 2 * stride) {
-            ok = multiply(current + offset + stride, power, next + offset, stride, scratch, work);
+            ok = multiply(current + offset + stride, power, next + offset, stride, scratch, &work);
             if (ok) {
                 for (size_t i = 0; i < stride; i++) {
                     next[offset + i] += current[offset + i];
                 }
-                ok = normalize(next + offset, 2 * stride, work);
+                ok = normalize(next + offset, 2 * stride, &work);
             }
         }
         mo_i128 *swap = current;
         current = next;
         next = swap;
         if (ok && 2 * stride < 2 * chunks) {
-            ok = multiply(power, power, product, stride, scratch, work) &&
-                 normalize(product, 2 * stride, work);
+            ok = multiply(power, power, product, stride, scratch, &work) &&
+                 normalize(product, 2 * stride, &work);
             if (ok) {
                 memcpy(power, product, 2 * stride * sizeof *power);
             }
@@ -158,7 +161,7 @@ bool mo_bigint_text(struct mo_process *process, struct mo_cell value, struct mo_
     while (length != 0 && current[length - 1] == 0) {
         length--;
     }
-    if (ok && allocation->auxiliary == MO_BIGINT_NEGATIVE) {
+    if (ok && mo_bigint_sign(allocation) == MO_BIGINT_NEGATIVE) {
         ok = mo_buffer_append_byte(out, '-');
     }
     if (ok) {

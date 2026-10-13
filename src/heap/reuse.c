@@ -2,7 +2,7 @@
 
 #include <string.h>
 
-struct mo_token mo_value_reset(struct mo_process *process, uint32_t type, struct mo_cell value) {
+struct mo_token mo_value_reset(struct mo_heap *process, uint32_t type, struct mo_cell value) {
     struct mo_object *object = mo_value_object(process->types, type, value);
     MO_ASSERT(object != NULL && object->layout < process->types->layout_count);
     const struct mo_layout *layout = &process->types->layouts[object->layout];
@@ -23,8 +23,9 @@ struct mo_token mo_value_reset(struct mo_process *process, uint32_t type, struct
     return token;
 }
 
-bool mo_value_reuse(struct mo_process *process, struct mo_token *token,
-                    const struct mo_cell *fields, uint32_t count, struct mo_cell *out) {
+static MO_MUST_USE bool reuse(struct mo_heap *process, struct mo_token *token,
+                              const struct mo_cell *fields, uint32_t count, bool owned,
+                              struct mo_cell *out) {
     MO_ASSERT(process != NULL && token != NULL && out != NULL);
     if (token->layout >= process->types->layout_count || (count != 0 && fields == NULL)) {
         return false;
@@ -34,7 +35,9 @@ bool mo_value_reuse(struct mo_process *process, struct mo_token *token,
         return false;
     }
     if (token->memory == NULL) {
-        if (!mo_value_construct(process, token->layout, fields, count, out)) {
+        bool ok = owned ? mo_value_construct_owned(process, token->layout, fields, count, out)
+                        : mo_value_construct(process, token->layout, fields, count, out);
+        if (!ok) {
             return false;
         }
     } else {
@@ -42,7 +45,7 @@ bool mo_value_reuse(struct mo_process *process, struct mo_token *token,
         MO_ASSERT(a->object.count == 1 && a->object.layout == token->layout && a->length == 0);
         a->length = count;
         for (uint32_t i = 0; i < count; i++) {
-            a->cells[i] = mo_value_dup(process, layout->fields[i], fields[i]);
+            a->cells[i] = owned ? fields[i] : mo_value_dup(process, layout->fields[i], fields[i]);
         }
         struct mo_cell reference = mo_cell_ref(&a->object);
         *out = layout->kind == MO_LAYOUT_CASE ? mo_cell_case(layout->case_index, reference)
@@ -52,7 +55,17 @@ bool mo_value_reuse(struct mo_process *process, struct mo_token *token,
     return true;
 }
 
-void mo_token_free(struct mo_process *process, struct mo_token *token) {
+bool mo_value_reuse(struct mo_heap *process, struct mo_token *token, const struct mo_cell *fields,
+                    uint32_t count, struct mo_cell *out) {
+    return reuse(process, token, fields, count, false, out);
+}
+
+bool mo_value_reuse_owned(struct mo_heap *process, struct mo_token *token,
+                          const struct mo_cell *fields, uint32_t count, struct mo_cell *out) {
+    return reuse(process, token, fields, count, true, out);
+}
+
+void mo_token_free(struct mo_heap *process, struct mo_token *token) {
     MO_ASSERT(process != NULL && token != NULL);
     if (token->memory != NULL) {
         struct mo_allocation *a = mo_heap_allocation(token->memory);
@@ -71,23 +84,37 @@ static void mark(const struct mo_types *types, uint32_t type, struct mo_cell val
     struct mo_allocation *a = mo_heap_allocation(object);
     MO_ASSERT(a->object.layout != MO_STATE_LAYOUT &&
               a->object.layout != MO_BUILTIN_LAYOUT(MO_TYPE_CAPABILITY));
-    if (a->deep_immortal) {
+    if (a->deep_immortal || a->preparing) {
         return;
     }
     MO_ASSERT(object->count != 0);
-    object->count = MO_IMMORTAL_COUNT;
-    a->deep_immortal = true;
+    a->preparing = true;
     a->pending = *pending;
     *pending = a;
 }
 
-void mo_value_make_immortal(struct mo_process *process, uint32_t type, struct mo_cell value) {
+bool mo_value_make_immortal(struct mo_heap *process, uint32_t type, struct mo_cell value) {
     MO_ASSERT(process != NULL);
-    struct mo_allocation *pending = NULL;
+    struct mo_allocation *pending = NULL, *visited = NULL;
+    bool ok = true;
     mark(process->types, type, value, &pending);
     while (pending != NULL) {
         struct mo_allocation *a = pending;
         pending = a->pending;
+        a->pending = visited;
+        visited = a;
+        if ((process->abilities[a->type] & MO_ABILITY_HASH) != 0) {
+            struct mo_cell cell = mo_cell_ref(&a->object);
+            if (a->object.layout < process->types->layout_count &&
+                process->types->layouts[a->object.layout].kind == MO_LAYOUT_CASE) {
+                cell = mo_cell_case(process->types->layouts[a->object.layout].case_index, cell);
+            }
+            uint64_t hash;
+            if (!mo_value_hash(process, a->type, cell, &hash)) {
+                ok = false;
+                break;
+            }
+        }
         if (a->object.layout < process->types->layout_count) {
             const struct mo_layout *layout = &process->types->layouts[a->object.layout];
             for (uint32_t i = 0; i < layout->field_count; i++) {
@@ -108,4 +135,22 @@ void mo_value_make_immortal(struct mo_process *process, uint32_t type, struct mo
             }
         }
     }
+    /* On failure undo only temporary marks; cached hashes remain valid. */
+    while (visited != NULL) {
+        struct mo_allocation *a = visited;
+        visited = a->pending;
+        a->pending = NULL;
+        a->preparing = false;
+        if (ok) {
+            a->object.count = MO_IMMORTAL_COUNT;
+            a->deep_immortal = true;
+        }
+    }
+    while (pending != NULL) {
+        struct mo_allocation *a = pending;
+        pending = a->pending;
+        a->pending = NULL;
+        a->preparing = false;
+    }
+    return ok;
 }

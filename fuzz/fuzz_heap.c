@@ -12,13 +12,37 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     heap_fixture_init(&fixture);
     struct mo_limits limits = mo_limits_default();
     limits.heap_size = 64 << 10;
-    struct mo_process *p = mo_heap_new(&fixture.types, &limits);
-    MO_ASSERT(p != NULL);
+    struct mo_heap *p = mo_heap_new(fixture.image, &limits),
+                   *q = mo_heap_new(fixture.image, &limits);
+    MO_ASSERT(p != NULL && q != NULL);
     size_t baseline = mo_heap_used(p);
     struct mo_cell values[32] = {0};
     uint32_t types[32];
     for (uint32_t i = 0; i < 32; i++) {
         types[i] = fixture.builtin[MO_TYPE_UNIT];
+    }
+    /* Start with distinct equal and unequal compound values. Even a short
+     * input reaches the walk rather than only the identical-cell fast path. */
+    for (uint32_t i = 0; i < 3; i++) {
+        types[i] = fixture.builtin[MO_TYPE_TEXT];
+        MO_ASSERT(mo_value_text(p, i == 2 ? "b" : "a", 1, &values[i]));
+        types[i + 3] = fixture.list;
+        MO_ASSERT(mo_value_list(p, fixture.list, &values[i], 1, &values[i + 3]));
+        types[i + 6] = fixture.map;
+        MO_ASSERT(mo_value_map(p, fixture.map, &values[i], &values[i + 3], 1, &values[i + 6]));
+        types[i + 9] = fixture.set;
+        MO_ASSERT(mo_value_set(p, fixture.set, &values[i], 1, &values[i + 9]));
+        types[i + 12] = fixture.map_keys;
+        MO_ASSERT(
+            mo_value_map(p, fixture.map_keys, &values[i + 6], &values[i], 1, &values[i + 12]));
+    }
+    for (uint32_t i = 3; i <= 12; i += 3) {
+        bool equal;
+        uint64_t a, b;
+        MO_ASSERT(mo_value_equal(p, types[i], values[i], values[i + 1], &equal) && equal);
+        MO_ASSERT(mo_value_hash(p, types[i], values[i], &a));
+        MO_ASSERT(mo_value_hash(q, types[i], values[i + 1], &b) && a == b);
+        MO_ASSERT(mo_value_equal(p, types[i], values[i], values[i + 2], &equal) && !equal);
     }
     size_t steps = size < 4096 ? size : 4096;
     for (size_t i = 0; i + 3 < steps; i += 4) {
@@ -28,7 +52,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         struct mo_cell unchanged = result;
         uint32_t type = types[src];
         bool built = false;
-        switch (data[i] % 20) {
+        switch (data[i] % 25) {
         case 0:
             type = fixture.builtin[MO_TYPE_TEXT];
             built = mo_value_text(p, (const char *)data + i + 2, 2, &result);
@@ -104,8 +128,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         case 14:
             if (types[src] == fixture.builtin[MO_TYPE_TEXT] && types[other] == fixture.list) {
                 struct mo_cell fields[] = {values[src], values[other]};
-                bool closure = data[i] % 20 == 13;
-                bool record = data[i] % 20 == 14;
+                bool closure = data[i] % 25 == 13;
+                bool record = data[i] % 25 == 14;
                 type = closure ? fixture.function : record ? fixture.record : fixture.tuple;
                 built = closure ? mo_value_closure(p, 7, fields, 2, &result)
                                 : mo_value_construct(
@@ -149,11 +173,21 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             break;
         case 18: {
             bool equal = true;
-            if (mo_value_equal(p, type, values[src], values[src], &equal)) {
-                MO_ASSERT(equal == (type != fixture.builtin[MO_TYPE_FLOAT] ||
-                                    !isnan(mo_cell_get_float(values[src]))));
-            } else {
-                MO_ASSERT(equal);
+            if (type == types[other] &&
+                mo_value_equal(p, type, values[src], values[other], &equal)) {
+                bool reverse;
+                MO_ASSERT(mo_value_equal(p, type, values[other], values[src], &reverse) &&
+                          reverse == equal);
+                uint64_t a, b;
+                if (equal && mo_value_hash(p, type, values[src], &a)) {
+                    MO_ASSERT(mo_value_hash(q, type, values[other], &b) && a == b);
+                }
+                int order;
+                if (mo_value_compare(p, type, values[src], values[other], &order)) {
+                    int reversed;
+                    MO_ASSERT(mo_value_compare(p, type, values[other], values[src], &reversed) &&
+                              order == -reversed);
+                }
             }
             uint64_t hash = 37;
             if (mo_value_hash(p, type, values[src], &hash)) {
@@ -182,6 +216,88 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             built = true;
             break;
         }
+        case 20:
+            type = fixture.tree;
+            if (types[src] == type && types[other] == type) {
+                struct mo_cell fields[] = {values[src], values[other]};
+                built = mo_value_case(p, type, 1, fields, 2, &result);
+            } else {
+                built = mo_value_case(p, type, 0, NULL, 0, &result);
+            }
+            break;
+        case 21:
+            type = fixture.map_keys;
+            if (types[src] == fixture.map && types[other] == fixture.builtin[MO_TYPE_TEXT]) {
+                built = mo_value_map(p, type, &values[src], &values[other], 1, &result);
+            }
+            break;
+        case 22: {
+            enum mo_type_kind kind = fixture.types.items[type].kind;
+            if (kind == MO_TYPE_MAP || kind == MO_TYPE_SET) {
+                uint32_t position = 0, count = 0;
+                struct mo_cell key, element;
+                while (mo_table_next(values[src], &position, &key, &element)) {
+                    bool found;
+                    struct mo_cell got;
+                    if (mo_table_get(p, type, values[src], key, &found, &got)) {
+                        MO_ASSERT(found && memcmp(got.bytes, element.bytes, sizeof got.bytes) == 0);
+                    }
+                    count++;
+                }
+                MO_ASSERT(count == mo_table_size(values[src]));
+                if (types[other] == fixture.types.items[type].parameters[0]) {
+                    bool found;
+                    struct mo_cell got;
+                    bool ok = mo_table_get(p, type, values[src], values[other], &found, &got);
+                    (void)ok;
+                    if (kind == MO_TYPE_MAP &&
+                        types[dst] == fixture.types.items[type].parameters[1]) {
+                        ok = mo_table_set(p, type, &values[src], values[other], values[dst]);
+                        (void)ok;
+                    }
+                }
+            }
+            break;
+        }
+        case 23: {
+            struct mo_heap *image = mo_heap_image_constants(fixture.image);
+            struct mo_cell text, list, map, copy;
+            char byte = (char)('a' + data[i + 1] % 26);
+            MO_ASSERT(mo_value_text(image, &byte, 1, &text));
+            MO_ASSERT(mo_value_list(image, fixture.list, &text, 1, &list));
+            MO_ASSERT(mo_value_map(image, fixture.map, &text, &list, 1, &map));
+            MO_ASSERT(mo_value_make_immortal(image, fixture.map, map));
+            uint64_t a, b;
+            MO_ASSERT(mo_value_hash(p, fixture.map, map, &a));
+            MO_ASSERT(mo_value_hash(q, fixture.map, map, &b) && a == b);
+            MO_ASSERT(mo_value_map(q, fixture.map, &text, &list, 1, &copy));
+            bool equal;
+            MO_ASSERT(mo_value_equal(q, fixture.map, map, copy, &equal) && equal);
+            mo_value_drop(q, fixture.map, copy);
+            copy = mo_value_dup(q, fixture.map, map);
+            if (mo_table_remove(q, fixture.map, &copy, text)) {
+                MO_ASSERT(mo_table_size(copy) == 0 && mo_table_size(map) == 1);
+            }
+            mo_value_drop(q, fixture.map, copy);
+            mo_value_drop(image, fixture.map, map);
+            mo_value_drop(image, fixture.list, list);
+            mo_value_drop(image, fixture.builtin[MO_TYPE_TEXT], text);
+            break;
+        }
+        case 24:
+            if (fixture.types.items[type].kind == MO_TYPE_LIST && mo_list_size(values[src]) <= 32) {
+                struct mo_cell items[32];
+                uint32_t count = mo_list_size(values[src]);
+                for (uint32_t j = 0; j < count; j++) {
+                    MO_ASSERT(mo_list_get(values[src], j, &items[j]));
+                }
+                built = mo_value_list(p, type, items, count, &result);
+                if (built) {
+                    bool equal;
+                    MO_ASSERT(mo_value_equal(p, type, values[src], result, &equal) && equal);
+                }
+            }
+            break;
         }
         if (built) {
             mo_value_drop(p, types[dst], values[dst]);
@@ -196,7 +312,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         mo_value_drop(p, types[i], values[i]);
     }
     MO_ASSERT(mo_heap_objects(p) == 0 && mo_heap_used(p) == baseline);
+    MO_ASSERT(mo_heap_objects(q) == 0 && mo_heap_used(q) == baseline);
     mo_heap_free(p);
+    mo_heap_free(q);
+    mo_heap_image_free(fixture.image);
     mo_arena_free(&fixture.arena);
     return 0;
 }

@@ -6,6 +6,7 @@
 struct heap_fixture {
     struct mo_arena arena;
     struct mo_types types;
+    struct mo_heap_image *image;
     uint32_t builtin[MO_TYPE_BIGINT + 1];
     uint32_t list;
     uint32_t map;
@@ -27,6 +28,8 @@ struct heap_fixture {
     uint32_t node_layout;
     uint32_t tuple_layout;
     uint32_t case_layout;
+    uint32_t int_pair, int_pair_layout, pairs;
+    uint32_t forest, forest_set, forest_layout;
 };
 
 static MO_MUST_USE uint32_t heap_intern(struct mo_types *types, struct mo_type type) {
@@ -102,7 +105,32 @@ static void heap_fixture_init(struct heap_fixture *fixture) {
     struct mo_type_case tree_cases[] = {
         {.name = "Leaf"}, {.name = "Branch", .fields = tree_fields, .field_count = 2}};
     MO_ASSERT(mo_types_define_choice(types, fixture->tree, tree_cases, 2) == MO_TYPES_OK);
+    uint32_t integers[] = {fixture->builtin[MO_TYPE_INT], fixture->builtin[MO_TYPE_INT]};
+    fixture->int_pair = heap_intern(
+        types,
+        (struct mo_type){.kind = MO_TYPE_TUPLE, .parameters = integers, .parameter_count = 2});
+    fixture->pairs = heap_intern(types, (struct mo_type){.kind = MO_TYPE_LIST,
+                                                         .parameters = &fixture->int_pair,
+                                                         .parameter_count = 1});
+    MO_ASSERT(mo_types_declare(types, MO_TYPE_RECORD, "Forest", &fixture->forest) == MO_TYPES_OK);
+    fixture->forest_set = heap_intern(types, (struct mo_type){.kind = MO_TYPE_SET,
+                                                              .parameters = &fixture->forest,
+                                                              .parameter_count = 1});
+    struct mo_type_field children = {"children", fixture->forest_set};
+    MO_ASSERT(mo_types_define_record(types, fixture->forest, &children, 1) == MO_TYPES_OK);
     MO_ASSERT(mo_types_finish(types) == MO_TYPES_OK);
+    fixture->int_pair_layout = heap_layout(types, (struct mo_layout){.kind = MO_LAYOUT_TUPLE,
+                                                                     .type = fixture->int_pair,
+                                                                     .case_index = MO_NO_INDEX,
+                                                                     .function = MO_NO_INDEX,
+                                                                     .fields = integers,
+                                                                     .field_count = 2});
+    fixture->forest_layout = heap_layout(types, (struct mo_layout){.kind = MO_LAYOUT_RECORD,
+                                                                   .type = fixture->forest,
+                                                                   .case_index = MO_NO_INDEX,
+                                                                   .function = MO_NO_INDEX,
+                                                                   .fields = &fixture->forest_set,
+                                                                   .field_count = 1});
     fixture->record_layout = heap_layout(types, (struct mo_layout){.kind = MO_LAYOUT_RECORD,
                                                                    .type = fixture->record,
                                                                    .case_index = MO_NO_INDEX,
@@ -146,6 +174,9 @@ static void heap_fixture_init(struct heap_fixture *fixture) {
                                                    .case_index = MO_NO_INDEX,
                                                    .function = 8});
     MO_ASSERT(layout != MO_NO_INDEX);
+    struct mo_limits limits = mo_limits_default();
+    fixture->image = mo_heap_image_new(types, &limits);
+    MO_ASSERT(fixture->image != NULL);
 }
 
 #endif

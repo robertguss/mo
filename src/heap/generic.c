@@ -41,27 +41,16 @@ static MO_MUST_USE bool compound(enum mo_type_kind kind) {
            kind == MO_TYPE_LIST || kind == MO_TYPE_MAP || kind == MO_TYPE_SET;
 }
 
-static MO_MUST_USE bool spend(size_t *work, size_t amount) {
-    if (amount > MO_LIMIT_HEAP_WORK - *work) {
-        return false;
-    }
-    *work += amount;
-    return true;
-}
-
-static MO_MUST_USE bool atomic_hash(struct mo_process *process, uint32_t type, struct mo_cell value,
-                                    const uint64_t key[2], size_t *work, uint64_t *out) {
+static MO_MUST_USE bool atomic_hash(struct mo_heap *process, uint32_t type, struct mo_cell value,
+                                    const uint64_t key[2], uint64_t *out) {
     uint64_t hash = mo_heap_mix(key, type, 0);
     enum mo_type_kind kind = process->types->items[type].kind;
     if (kind == MO_TYPE_TEXT || kind == MO_TYPE_BYTES || kind == MO_TYPE_BIGINT) {
         struct mo_allocation *a = mo_heap_allocation(mo_cell_get_ref(value));
-        if (!spend(work, a->length)) {
-            return false;
-        }
+        MO_ASSERT(!a->deep_immortal);
         hash = mo_heap_mix(key, hash, mo_heap_hash(key, a->cells, a->length));
-        hash = mo_heap_mix(key, hash, a->auxiliary);
+        hash = mo_heap_mix(key, hash, kind == MO_TYPE_BIGINT ? mo_bigint_sign(a) : 0);
         a->hash = hash;
-        memcpy(a->hash_key, key, sizeof a->hash_key);
         a->hash_valid = true;
     } else {
         hash = mo_heap_mix(key, hash, mo_heap_hash(key, value.bytes, 16));
@@ -86,10 +75,10 @@ static MO_MUST_USE bool grow_stack(struct mo_scratch *scratch, void **stack, siz
     if (count < *capacity) {
         return true;
     }
-    size_t next = *capacity == 0 ? 16 : *capacity * 2;
-    if (next > MO_LIMIT_HEAP_SCRATCH / element_size) {
+    if (*capacity > SIZE_MAX / 2 / element_size) {
         return false;
     }
+    size_t next = *capacity == 0 ? 16 : *capacity * 2;
     void *result =
         mo_scratch_resize(scratch, *stack, *capacity * element_size, next * element_size);
     if (result == NULL) {
@@ -100,9 +89,9 @@ static MO_MUST_USE bool grow_stack(struct mo_scratch *scratch, void **stack, siz
     return true;
 }
 
-bool mo_value_hash_key(struct mo_process *process, uint32_t type, struct mo_cell value,
-                       const uint64_t key[2], uint64_t *out) {
+bool mo_value_hash(struct mo_heap *process, uint32_t type, struct mo_cell value, uint64_t *out) {
     MO_ASSERT(process != NULL && type < process->types->count && out != NULL);
+    const uint64_t *key = process->hash_key;
     if ((process->abilities[type] & MO_ABILITY_HASH) == 0) {
         return false;
     }
@@ -112,19 +101,18 @@ bool mo_value_hash_key(struct mo_process *process, uint32_t type, struct mo_cell
         (root_kind != MO_TYPE_CHOICE ||
          mo_case_shape(process->types, type, mo_cell_get_tag(value)) == MO_CASE_BOXED)) {
         struct mo_allocation *a = mo_heap_allocation(root);
-        if (a->hash_valid && memcmp(a->hash_key, key, sizeof a->hash_key) == 0) {
+        if (a->hash_valid) {
             *out = a->hash;
             return true;
         }
     }
     if (!compound(root_kind)) {
-        size_t work = 0;
-        return atomic_hash(process, type, value, key, &work, out);
+        return atomic_hash(process, type, value, key, out);
     }
     struct mo_scratch scratch;
     mo_scratch_init(&scratch, process);
     void *storage = NULL;
-    size_t capacity = 0, depth = 0, work = 0;
+    size_t capacity = 0, depth = 0;
     bool ok = grow_stack(&scratch, &storage, &capacity, 0, sizeof(struct hash_frame));
     if (ok) {
         ((struct hash_frame *)storage)[depth++] = (struct hash_frame){.type = type, .value = value};
@@ -135,8 +123,8 @@ bool mo_value_hash_key(struct mo_process *process, uint32_t type, struct mo_cell
         struct hash_frame *f = &stack[depth - 1];
         enum mo_type_kind kind = process->types->items[f->type].kind;
         if (!f->entered) {
-            if (!spend(&work, 1) || kind == MO_TYPE_FLOAT || kind == MO_TYPE_FUNCTION ||
-                kind == MO_TYPE_ENV || kind == MO_TYPE_CAPABILITY) {
+            if (kind == MO_TYPE_FLOAT || kind == MO_TYPE_FUNCTION || kind == MO_TYPE_ENV ||
+                kind == MO_TYPE_CAPABILITY) {
                 ok = false;
                 break;
             }
@@ -145,8 +133,8 @@ bool mo_value_hash_key(struct mo_process *process, uint32_t type, struct mo_cell
                                    mo_case_shape(process->types, f->type,
                                                  mo_cell_get_tag(f->value)) == MO_CASE_BOXED)) {
                 f->cache = mo_heap_allocation(object);
-                if (f->cache->hash_valid &&
-                    memcmp(f->cache->hash_key, key, sizeof f->cache->hash_key) == 0) {
+                MO_ASSERT(!f->cache->deep_immortal || f->cache->hash_valid);
+                if (f->cache->hash_valid) {
                     result = f->cache->hash;
                     goto hash_done;
                 }
@@ -155,7 +143,7 @@ bool mo_value_hash_key(struct mo_process *process, uint32_t type, struct mo_cell
                 mo_heap_mix(key, f->type, kind == MO_TYPE_CHOICE ? mo_cell_get_tag(f->value) : 0);
             f->entered = true;
             if (!compound(kind)) {
-                ok = atomic_hash(process, f->type, f->value, key, &work, &result);
+                ok = atomic_hash(process, f->type, f->value, key, &result);
                 if (!ok) {
                     break;
                 }
@@ -170,8 +158,9 @@ bool mo_value_hash_key(struct mo_process *process, uint32_t type, struct mo_cell
             }
         }
         if (f->next == f->count) {
-            uint32_t count =
-                kind == MO_TYPE_MAP || kind == MO_TYPE_SET ? f->cache->active : f->count;
+            uint32_t count = kind == MO_TYPE_MAP || kind == MO_TYPE_SET
+                                 ? mo_table_info(f->cache)->active
+                                 : f->count;
             result = mo_heap_mix(key, f->hash, count);
             goto hash_done;
         }
@@ -185,9 +174,8 @@ bool mo_value_hash_key(struct mo_process *process, uint32_t type, struct mo_cell
         }
         continue;
     hash_done:
-        if (f->cache != NULL) {
+        if (f->cache != NULL && !f->cache->deep_immortal) {
             f->cache->hash = result;
-            memcpy(f->cache->hash_key, key, sizeof f->cache->hash_key);
             f->cache->hash_valid = true;
         }
         depth--;
@@ -214,9 +202,14 @@ bool mo_value_hash_key(struct mo_process *process, uint32_t type, struct mo_cell
     return ok;
 }
 
-bool mo_value_hash(struct mo_process *process, uint32_t type, struct mo_cell value, uint64_t *out) {
-    MO_ASSERT(process != NULL);
-    return mo_value_hash_key(process, type, value, process->hash_key, out);
+bool mo_value_index_hash(struct mo_heap *process, uint32_t type, struct mo_cell value,
+                         uint64_t *out) {
+    uint64_t hash;
+    if (!mo_value_hash(process, type, value, &hash)) {
+        return false;
+    }
+    *out = mo_heap_mix(process->image->index_key, type, hash);
+    return true;
 }
 
 static MO_MUST_USE int compare_i128(mo_i128 a, mo_i128 b) {
@@ -225,7 +218,7 @@ static MO_MUST_USE int compare_i128(mo_i128 a, mo_i128 b) {
 
 /* Equal on Float is deliberately different from compare on NaN. */
 static MO_MUST_USE bool scalar_compare(enum mo_type_kind kind, struct mo_cell a, struct mo_cell b,
-                                       bool order, size_t *work, int *out) {
+                                       bool order, int *out) {
     switch (kind) {
     case MO_TYPE_UNIT:
         *out = 0;
@@ -266,16 +259,13 @@ static MO_MUST_USE bool scalar_compare(enum mo_type_kind kind, struct mo_cell a,
         struct mo_allocation *x = mo_heap_allocation(mo_cell_get_ref(a));
         struct mo_allocation *y = mo_heap_allocation(mo_cell_get_ref(b));
         size_t common = x->length < y->length ? x->length : y->length;
-        if (!spend(work, common)) {
-            return false;
-        }
         if (kind == MO_TYPE_BIGINT) {
-            int xs = x->auxiliary == MO_BIGINT_NEGATIVE ? -1
-                     : x->auxiliary == MO_BIGINT_ZERO   ? 0
-                                                        : 1;
-            int ys = y->auxiliary == MO_BIGINT_NEGATIVE ? -1
-                     : y->auxiliary == MO_BIGINT_ZERO   ? 0
-                                                        : 1;
+            int xs = mo_bigint_sign(x) == MO_BIGINT_NEGATIVE ? -1
+                     : mo_bigint_sign(x) == MO_BIGINT_ZERO   ? 0
+                                                             : 1;
+            int ys = mo_bigint_sign(y) == MO_BIGINT_NEGATIVE ? -1
+                     : mo_bigint_sign(y) == MO_BIGINT_ZERO   ? 0
+                                                             : 1;
             *out = (xs > ys) - (xs < ys);
             if (*out == 0 && xs != 0) {
                 *out = compare_i128(x->length, y->length);
@@ -337,33 +327,34 @@ struct compare_memo {
     size_t count;
 };
 
-static MO_MUST_USE bool memo_slot(const struct compare_memo *memo, uint64_t hash, uint32_t type,
-                                  struct mo_cell left, struct mo_cell right, size_t *out) {
+static MO_MUST_USE size_t memo_slot(const struct compare_memo *memo, uint64_t hash, uint32_t type,
+                                    struct mo_cell left, struct mo_cell right) {
     size_t slot = (size_t)hash & (memo->capacity - 1);
-    for (unsigned probes = 0; probes < MO_LIMIT_HEAP_PROBES; probes++) {
+    for (;;) {
         const struct compare_memo_entry *e = &memo->entries[slot];
         if (!e->used ||
             (e->hash == hash && e->type == type && memcmp(e->left.bytes, left.bytes, 16) == 0 &&
              memcmp(e->right.bytes, right.bytes, 16) == 0)) {
-            *out = slot;
-            return true;
+            return slot;
         }
         slot = (slot + 1) & (memo->capacity - 1);
     }
-    return false;
 }
 
 static MO_MUST_USE bool memo_room(struct mo_scratch *scratch, struct compare_memo *memo) {
     if (memo->capacity != 0 && memo->count < memo->capacity / 2) {
         return true;
     }
-    size_t capacity = memo->capacity == 0 ? 32 : memo->capacity * 2;
-    if (capacity > MO_LIMIT_HEAP_SCRATCH / sizeof(struct compare_memo_entry)) {
+    if (memo->capacity > SIZE_MAX / 2 / sizeof(struct compare_memo_entry)) {
         return false;
     }
+    size_t capacity = memo->capacity == 0 ? 32 : memo->capacity * 2;
+    struct mo_scratch replacement;
+    mo_scratch_init(&replacement, scratch->process);
     struct compare_memo_entry *entries =
-        mo_scratch_resize(scratch, NULL, 0, capacity * sizeof(struct compare_memo_entry));
+        mo_scratch_resize(&replacement, NULL, 0, capacity * sizeof(struct compare_memo_entry));
     if (entries == NULL) {
+        mo_scratch_free(&replacement);
         return false;
     }
     memset(entries, 0, capacity * sizeof *entries);
@@ -371,13 +362,12 @@ static MO_MUST_USE bool memo_room(struct mo_scratch *scratch, struct compare_mem
     for (size_t i = 0; i < memo->capacity; i++) {
         const struct compare_memo_entry *e = &memo->entries[i];
         if (e->used) {
-            size_t slot;
-            if (!memo_slot(&next, e->hash, e->type, e->left, e->right, &slot)) {
-                return false;
-            }
+            size_t slot = memo_slot(&next, e->hash, e->type, e->left, e->right);
             next.entries[slot] = *e;
         }
     }
+    mo_scratch_free(scratch);
+    *scratch = replacement;
     *memo = next;
     return true;
 }
@@ -390,10 +380,7 @@ static MO_MUST_USE bool memo_store(struct mo_scratch *scratch, struct compare_me
     if (!memo_room(scratch, memo)) {
         return false;
     }
-    size_t slot;
-    if (!memo_slot(memo, f->memo_hash, f->type, f->left, f->right, &slot)) {
-        return false;
-    }
+    size_t slot = memo_slot(memo, f->memo_hash, f->type, f->left, f->right);
     if (!memo->entries[slot].used) {
         memo->count++;
     }
@@ -406,9 +393,8 @@ static MO_MUST_USE bool memo_store(struct mo_scratch *scratch, struct compare_me
     return true;
 }
 
-static MO_MUST_USE bool compare_values(struct mo_process *process, uint32_t type,
-                                       struct mo_cell left, struct mo_cell right, bool order,
-                                       int *out) {
+static MO_MUST_USE bool compare_values(struct mo_heap *process, uint32_t type, struct mo_cell left,
+                                       struct mo_cell right, bool order, int *out) {
     MO_ASSERT(process != NULL && type < process->types->count && out != NULL);
     if ((process->abilities[type] & (order ? MO_ABILITY_ORDER : MO_ABILITY_EQUAL)) == 0) {
         return false;
@@ -418,16 +404,15 @@ static MO_MUST_USE bool compare_values(struct mo_process *process, uint32_t type
         *out = 0;
         return true;
     }
-    size_t atomic_work = 0;
     if (!compound(process->types->items[type].kind)) {
-        return scalar_compare(process->types->items[type].kind, left, right, order, &atomic_work,
-                              out);
+        return scalar_compare(process->types->items[type].kind, left, right, order, out);
     }
-    struct mo_scratch scratch;
+    struct mo_scratch scratch, memo_scratch;
     mo_scratch_init(&scratch, process);
+    mo_scratch_init(&memo_scratch, process);
     void *storage = NULL;
     struct compare_memo memo = {0};
-    size_t capacity = 0, depth = 0, work = 0;
+    size_t capacity = 0, depth = 0;
     bool ok = grow_stack(&scratch, &storage, &capacity, 0, sizeof(struct compare_frame));
     if (ok) {
         ((struct compare_frame *)storage)[depth++] =
@@ -440,10 +425,6 @@ static MO_MUST_USE bool compare_values(struct mo_process *process, uint32_t type
         enum mo_type_kind kind = process->types->items[f->type].kind;
         uint32_t child_type = 0;
         struct mo_cell a = mo_cell_unit(), b = mo_cell_unit();
-        if (!spend(&work, 1)) {
-            ok = false;
-            break;
-        }
         if (f->stage == COMPARE_ENTER) {
             if ((process->abilities[f->type] & MO_ABILITY_HASH) != 0 &&
                 memcmp(f->left.bytes, f->right.bytes, 16) == 0) {
@@ -451,29 +432,31 @@ static MO_MUST_USE bool compare_values(struct mo_process *process, uint32_t type
                 goto compare_done;
             }
             if (!compound(kind)) {
-                ok = scalar_compare(kind, f->left, f->right, order, &work, &result);
+                ok = scalar_compare(kind, f->left, f->right, order, &result);
                 if (!ok) {
                     break;
                 }
                 goto compare_done;
             }
-            f->memoizable = true;
-            f->memo_hash = mo_heap_mix(
-                process->hash_key, f->type,
-                mo_heap_mix(process->hash_key, mo_heap_hash(process->hash_key, f->left.bytes, 16),
-                            mo_heap_hash(process->hash_key, f->right.bytes, 16)));
-            if (!memo_room(&scratch, &memo)) {
-                ok = false;
-                break;
-            }
-            size_t slot;
-            if (!memo_slot(&memo, f->memo_hash, f->type, f->left, f->right, &slot)) {
-                ok = false;
-                break;
-            }
-            if (memo.entries[slot].used) {
-                result = memo.entries[slot].result;
-                goto compare_done;
+            struct mo_object *left_object = mo_value_object(process->types, f->type, f->left);
+            struct mo_object *right_object = mo_value_object(process->types, f->type, f->right);
+            f->memoizable = (left_object != NULL && left_object->count != 1) ||
+                            (right_object != NULL && right_object->count != 1);
+            if (f->memoizable) {
+                f->memo_hash =
+                    mo_heap_mix(process->hash_key, f->type,
+                                mo_heap_mix(process->hash_key,
+                                            mo_heap_hash(process->hash_key, f->left.bytes, 16),
+                                            mo_heap_hash(process->hash_key, f->right.bytes, 16)));
+                if (!memo_room(&memo_scratch, &memo)) {
+                    ok = false;
+                    break;
+                }
+                size_t slot = memo_slot(&memo, f->memo_hash, f->type, f->left, f->right);
+                if (memo.entries[slot].used) {
+                    result = memo.entries[slot].result;
+                    goto compare_done;
+                }
             }
             if (kind == MO_TYPE_CHOICE) {
                 result = compare_i128(mo_cell_get_tag(f->left), mo_cell_get_tag(f->right));
@@ -488,7 +471,7 @@ static MO_MUST_USE bool compare_values(struct mo_process *process, uint32_t type
                 }
                 f->a = mo_heap_allocation(mo_cell_get_ref(f->left));
                 f->b = mo_heap_allocation(mo_cell_get_ref(f->right));
-                result = compare_i128(f->a->active, f->b->active);
+                result = compare_i128(mo_table_info(f->a)->active, mo_table_info(f->b)->active);
                 if (result != 0) {
                     goto compare_done;
                 }
@@ -524,20 +507,20 @@ static MO_MUST_USE bool compare_values(struct mo_process *process, uint32_t type
                 }
                 child_type = process->types->items[f->type].parameters[0];
                 /* Hash is a separate iterative walk, never an equality call. */
-                if (!mo_value_hash_key(process, child_type, f->a->cells[stride * f->next],
-                                       f->b->index_key, &f->hash)) {
+                if (!mo_value_index_hash(process, child_type, f->a->cells[stride * f->next],
+                                         &f->hash)) {
                     ok = false;
                     break;
                 }
-                f->slot = (uint32_t)(f->hash & (f->b->auxiliary - 1));
+                f->slot = (uint32_t)(f->hash & (mo_table_info(f->b)->slots - 1));
                 f->probes = 0;
                 f->stage = COMPARE_PROBE;
             }
             if (f->stage == COMPARE_PROBE) {
                 bool candidate = false;
-                while (f->probes++ < MO_LIMIT_HEAP_PROBES) {
+                while (f->probes++ < mo_table_info(f->b)->slots) {
                     uint32_t entry = mo_table_slots(f->b)[f->slot];
-                    f->slot = (f->slot + 1) & (f->b->auxiliary - 1);
+                    f->slot = (f->slot + 1) & (mo_table_info(f->b)->slots - 1);
                     if (entry == 0) {
                         result = 1;
                         goto compare_done;
@@ -570,7 +553,7 @@ static MO_MUST_USE bool compare_values(struct mo_process *process, uint32_t type
         }
         continue;
     compare_done:
-        if (!memo_store(&scratch, &memo, f, result)) {
+        if (!memo_store(&memo_scratch, &memo, f, result)) {
             ok = false;
             break;
         }
@@ -589,7 +572,7 @@ static MO_MUST_USE bool compare_values(struct mo_process *process, uint32_t type
                 break;
             }
             if (result != 0) {
-                if (!memo_store(&scratch, &memo, parent, result)) {
+                if (!memo_store(&memo_scratch, &memo, parent, result)) {
                     ok = false;
                     break;
                 }
@@ -603,6 +586,7 @@ static MO_MUST_USE bool compare_values(struct mo_process *process, uint32_t type
             break;
         }
     }
+    mo_scratch_free(&memo_scratch);
     mo_scratch_free(&scratch);
     if (ok) {
         *out = result;
@@ -610,7 +594,7 @@ static MO_MUST_USE bool compare_values(struct mo_process *process, uint32_t type
     return ok;
 }
 
-bool mo_value_equal(struct mo_process *process, uint32_t type, struct mo_cell left,
+bool mo_value_equal(struct mo_heap *process, uint32_t type, struct mo_cell left,
                     struct mo_cell right, bool *out) {
     MO_ASSERT(out != NULL);
     int result;
@@ -621,7 +605,7 @@ bool mo_value_equal(struct mo_process *process, uint32_t type, struct mo_cell le
     return true;
 }
 
-bool mo_value_compare(struct mo_process *process, uint32_t type, struct mo_cell left,
+bool mo_value_compare(struct mo_heap *process, uint32_t type, struct mo_cell left,
                       struct mo_cell right, int *out) {
     return compare_values(process, type, left, right, true, out);
 }

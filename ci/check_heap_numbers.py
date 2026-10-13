@@ -30,7 +30,8 @@ if len(expected) != len(bits):
     raise SystemExit(f"Lean returned {len(expected)} lines for {len(bits)} inputs")
 
 magnitudes = []
-for size in [1, 2, 3, 4, 5, 31, 32, 33, 63, 64, 65, 255, 256, 257, 4095, 4096, 4097, 32767]:
+for size in [1, 2, 3, 4, 5, 31, 32, 33, 63, 64, 65, 255, 256, 257, 4095, 4096, 4097,
+             32767, 65535, 65536, 65537, 262143, 262144]:
     magnitudes.extend([b"\xff" * size, b"\0" * (size - 1) + b"\x01"])
 for _ in range(96):
     size = rng.randrange(1, 2049)

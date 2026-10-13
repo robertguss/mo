@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include "heap_fixture.h"
 #include "test.h"
 
@@ -6,11 +7,12 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 static void test_values(struct heap_fixture *f) {
     struct mo_limits limits = mo_limits_default();
-    struct mo_process *p = mo_heap_new(&f->types, &limits);
+    struct mo_heap *p = mo_heap_new(f->image, &limits);
     MO_ASSERT(p != NULL);
     size_t baseline = mo_heap_used(p);
     uint32_t text = f->builtin[MO_TYPE_TEXT];
@@ -86,13 +88,13 @@ static void test_values(struct heap_fixture *f) {
     CHECK(mo_cell_get_ref(value)->count == MO_IMMORTAL_COUNT);
     mo_value_drop(p, text, duplicate);
     mo_value_drop(p, text, value);
-    CHECK(mo_heap_objects(p) == 2);
+    CHECK(mo_heap_objects(p) == 1);
     mo_heap_free(p);
 }
 
 static void test_lists(struct heap_fixture *f) {
     struct mo_limits limits = mo_limits_default();
-    struct mo_process *p = mo_heap_new(&f->types, &limits);
+    struct mo_heap *p = mo_heap_new(f->image, &limits);
     MO_ASSERT(p != NULL);
     struct mo_cell a, b, list;
     CHECK(mo_value_text(p, "first", 5, &a));
@@ -123,7 +125,7 @@ static void test_lists(struct heap_fixture *f) {
 
 static void test_deep_drop(struct heap_fixture *f) {
     struct mo_limits limits = mo_limits_default();
-    struct mo_process *p = mo_heap_new(&f->types, &limits);
+    struct mo_heap *p = mo_heap_new(f->image, &limits);
     MO_ASSERT(p != NULL);
     struct mo_cell node;
     CHECK(mo_value_case(p, f->node, 0, NULL, 0, &node));
@@ -145,7 +147,7 @@ static void test_deep_drop(struct heap_fixture *f) {
 static void test_limit(struct heap_fixture *f) {
     struct mo_limits limits = mo_limits_default();
     limits.heap_size = 4096;
-    struct mo_process *p = mo_heap_new(&f->types, &limits);
+    struct mo_heap *p = mo_heap_new(f->image, &limits);
     MO_ASSERT(p != NULL);
     struct mo_cell out = mo_cell_int(19);
     char bytes[4096] = {0};
@@ -169,7 +171,7 @@ static void test_limit(struct heap_fixture *f) {
 
 static void test_tables(struct heap_fixture *f) {
     struct mo_limits limits = mo_limits_default();
-    struct mo_process *p = mo_heap_new(&f->types, &limits);
+    struct mo_heap *p = mo_heap_new(f->image, &limits);
     MO_ASSERT(p != NULL);
     struct mo_cell keys[3], lists[3];
     const char *names[] = {"a", "b", "c"};
@@ -254,7 +256,7 @@ static void test_tables(struct heap_fixture *f) {
 
 static void test_generic(struct heap_fixture *f) {
     struct mo_limits limits = mo_limits_default();
-    struct mo_process *p = mo_heap_new(&f->types, &limits);
+    struct mo_heap *p = mo_heap_new(f->image, &limits);
     MO_ASSERT(p != NULL);
     bool equal;
     int order;
@@ -336,8 +338,7 @@ static void test_generic(struct heap_fixture *f) {
     mo_heap_free(p);
 }
 
-static void expect_text(struct mo_process *p, uint32_t type, struct mo_cell value,
-                        const char *text) {
+static void expect_text(struct mo_heap *p, uint32_t type, struct mo_cell value, const char *text) {
     struct mo_buffer out;
     mo_buffer_init(&out, MO_LIMIT_HEAP_WORK);
     CHECK(mo_value_print(p, type, value, &out));
@@ -347,7 +348,7 @@ static void expect_text(struct mo_process *p, uint32_t type, struct mo_cell valu
 
 static void test_reuse_and_images(struct heap_fixture *f) {
     struct mo_limits limits = mo_limits_default();
-    struct mo_process *p = mo_heap_new(&f->types, &limits);
+    struct mo_heap *p = mo_heap_new(f->image, &limits);
     MO_ASSERT(p != NULL);
     struct mo_cell text, list, record, result;
     CHECK(mo_value_text(p, "x", 1, &text));
@@ -391,11 +392,11 @@ static void test_reuse_and_images(struct heap_fixture *f) {
     /* Saturation alone must not masquerade as transitive image immortality. */
     mo_cell_get_ref(image)->count = MO_IMMORTAL_COUNT - 1;
     image = mo_value_dup(p, f->map, image);
-    mo_value_make_immortal(p, f->map, image);
+    CHECK(mo_value_make_immortal(p, f->map, image));
     CHECK(mo_cell_get_ref(text)->count == MO_IMMORTAL_COUNT &&
           mo_cell_get_ref(list)->count == MO_IMMORTAL_COUNT);
     CHECK(mo_value_hash(p, f->map, image, &a));
-    struct mo_process *q = mo_heap_new(&f->types, &limits);
+    struct mo_heap *q = mo_heap_new(f->image, &limits);
     MO_ASSERT(q != NULL);
     bool found;
     CHECK(mo_table_get(q, f->map, image, text, &found, &result) && found &&
@@ -427,7 +428,7 @@ static void test_reuse_and_images(struct heap_fixture *f) {
 
 static void test_adversarial(struct heap_fixture *f) {
     struct mo_limits limits = mo_limits_default();
-    struct mo_process *p = mo_heap_new(&f->types, &limits);
+    struct mo_heap *p = mo_heap_new(f->image, &limits);
     MO_ASSERT(p != NULL);
     struct mo_cell a, b;
     CHECK(mo_value_case(p, f->tree, 0, NULL, 0, &a));
@@ -450,8 +451,8 @@ static void test_adversarial(struct heap_fixture *f) {
     CHECK(mo_value_compare(p, f->tree, a, b, &order) && order == 0);
     CHECK(mo_value_hash(p, f->tree, a, &hash));
     CHECK(mo_value_hash(p, f->tree, b, &other) && hash == other);
-    mo_value_make_immortal(p, f->tree, a);
-    mo_value_make_immortal(p, f->tree, a);
+    CHECK(mo_value_make_immortal(p, f->tree, a));
+    CHECK(mo_value_make_immortal(p, f->tree, a));
     mo_value_drop(p, f->tree, b);
     struct mo_cell invalid, unchanged = mo_cell_int(71);
     invalid = unchanged;
@@ -461,26 +462,21 @@ static void test_adversarial(struct heap_fixture *f) {
     equal = true;
     CHECK(!mo_value_equal(p, f->no_equal_list, b, b, &equal) && equal);
     mo_value_drop(p, f->no_equal_list, b);
-    struct mo_cell keys[MO_LIMIT_HEAP_PROBES + 1];
-    uint32_t count = 0;
-    for (int64_t candidate = 0; count < MO_LIMIT_HEAP_PROBES + 1 && candidate < MO_LIMIT_HEAP_WORK;
-         candidate++) {
-        struct mo_cell key = mo_cell_int(candidate);
-        CHECK(mo_value_hash(p, f->builtin[MO_TYPE_INT], key, &hash));
-        if ((hash & 511) == 0) {
-            keys[count++] = key;
-        }
-    }
-    MO_ASSERT(count == MO_LIMIT_HEAP_PROBES + 1);
-    CHECK(!mo_value_set(p, f->integer_set, keys, count, &invalid));
-    CHECK(memcmp(invalid.bytes, unchanged.bytes, 16) == 0);
-    CHECK(mo_value_set(p, f->integer_set, keys, count - 1, &b));
-    bool found = true;
-    CHECK(!mo_table_get(p, f->integer_set, b, keys[count - 1], &found, &invalid));
-    CHECK(found && memcmp(invalid.bytes, unchanged.bytes, 16) == 0);
-    CHECK(!mo_table_set(p, f->integer_set, &b, keys[count - 1], keys[count - 1]));
-    CHECK(mo_table_size(b) == MO_LIMIT_HEAP_PROBES);
-    mo_value_drop(p, f->integer_set, b);
+    struct mo_buffer output;
+    mo_buffer_init(&output, 2 * MO_LIMIT_HEAP_WORK);
+    CHECK(mo_buffer_append_text(&output, "kept"));
+    CHECK(!mo_value_print(p, f->tree, a, &output));
+    CHECK(output.length == 4 && memcmp(output.bytes, "kept", 4) == 0);
+    uint8_t *magnitude = calloc(1, MO_LIMIT_BIGINT_TEXT_BYTES + 1);
+    MO_ASSERT(magnitude != NULL);
+    magnitude[MO_LIMIT_BIGINT_TEXT_BYTES] = 1;
+    MO_ASSERT(
+        mo_value_bigint(p, MO_BIGINT_POSITIVE, magnitude, MO_LIMIT_BIGINT_TEXT_BYTES + 1, &b));
+    CHECK(!mo_value_print(p, f->builtin[MO_TYPE_BIGINT], b, &output));
+    CHECK(output.length == 4 && memcmp(output.bytes, "kept", 4) == 0);
+    mo_value_drop(p, f->builtin[MO_TYPE_BIGINT], b);
+    free(magnitude);
+    mo_buffer_free(&output);
     mo_heap_free(p);
 }
 
@@ -498,7 +494,7 @@ static void close_descriptor(intptr_t handle) {
 
 static void test_host_storage(struct heap_fixture *f) {
     struct mo_limits limits = mo_limits_default();
-    struct mo_process *p = mo_heap_new(&f->types, &limits);
+    struct mo_heap *p = mo_heap_new(f->image, &limits);
     MO_ASSERT(p != NULL);
     struct mo_cell text, list, capability;
     CHECK(mo_value_text(p, "root", 4, &text));
@@ -560,7 +556,7 @@ static void test_host_storage(struct heap_fixture *f) {
 
 static void test_print(struct heap_fixture *f) {
     struct mo_limits limits = mo_limits_default();
-    struct mo_process *p = mo_heap_new(&f->types, &limits);
+    struct mo_heap *p = mo_heap_new(f->image, &limits);
     MO_ASSERT(p != NULL);
     expect_text(p, f->builtin[MO_TYPE_UNIT], mo_cell_unit(), "Unit");
     expect_text(p, f->builtin[MO_TYPE_BOOL], mo_cell_bool(false), "false");
@@ -621,14 +617,335 @@ static void test_print(struct heap_fixture *f) {
     mo_heap_free(p);
 }
 
+static void test_large_values(struct heap_fixture *f) {
+    struct mo_limits limits = mo_limits_default();
+    struct mo_heap *p = mo_heap_new(f->image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_arena inputs;
+    mo_arena_init(&inputs, 16 << 20);
+    struct mo_cell *items =
+        mo_arena_allocate_array(&inputs, 263000, sizeof *items, _Alignof(struct mo_cell));
+    MO_ASSERT(items != NULL);
+    bool equal;
+    int order;
+    uint64_t a_hash, b_hash;
+    struct mo_cell lists[2];
+    for (unsigned run = 0; run < 2; run++) {
+        for (uint32_t i = 0; i < 263000; i++) {
+            struct mo_cell fields[] = {mo_cell_int(i), mo_cell_int(-(int64_t)i - 7)};
+            MO_ASSERT(mo_value_construct_owned(p, f->int_pair_layout, fields, 2, &items[i]));
+        }
+        MO_ASSERT(mo_value_list(p, f->pairs, items, 263000, &lists[run]));
+        for (uint32_t i = 0; i < 263000; i++) {
+            mo_value_drop(p, f->int_pair, items[i]);
+        }
+    }
+    CHECK(mo_value_equal(p, f->pairs, lists[0], lists[1], &equal) && equal);
+    CHECK(mo_value_compare(p, f->pairs, lists[0], lists[1], &order) && order == 0);
+    for (unsigned run = 0; run < 2; run++) {
+        mo_value_drop(p, f->pairs, lists[run]);
+    }
+    char bytes[1000];
+    memset(bytes, 'x', sizeof bytes);
+    for (unsigned run = 0; run < 2; run++) {
+        for (uint32_t i = 0; i < 70000; i++) {
+            for (unsigned digit = 0; digit < 8; digit++) {
+                bytes[digit] = (char)('a' + ((i >> (4 * digit)) & 15));
+            }
+            MO_ASSERT(mo_value_text(p, bytes, sizeof bytes, &items[i]));
+        }
+        MO_ASSERT(mo_value_list(p, f->list, items, 70000, &lists[run]));
+        for (uint32_t i = 0; i < 70000; i++) {
+            mo_value_drop(p, f->builtin[MO_TYPE_TEXT], items[i]);
+        }
+    }
+    CHECK(mo_value_equal(p, f->list, lists[0], lists[1], &equal) && equal);
+    CHECK(mo_value_hash(p, f->list, lists[0], &a_hash));
+    CHECK(mo_value_hash(p, f->list, lists[1], &b_hash) && a_hash == b_hash);
+    for (unsigned run = 0; run < 2; run++) {
+        mo_value_drop(p, f->list, lists[run]);
+        MO_ASSERT(mo_value_case(p, f->node, 0, NULL, 0, &lists[run]));
+        for (unsigned i = 0; i < 150000; i++) {
+            struct mo_cell next;
+            MO_ASSERT(mo_value_case_owned(p, f->node, 1, &lists[run], 1, &next));
+            lists[run] = next;
+        }
+    }
+    CHECK(mo_value_equal(p, f->node, lists[0], lists[1], &equal) && equal);
+    CHECK(mo_value_compare(p, f->node, lists[0], lists[1], &order) && order == 0);
+    for (unsigned run = 0; run < 2; run++) {
+        mo_value_drop(p, f->node, lists[run]);
+    }
+    CHECK(mo_heap_objects(p) == 0);
+    mo_arena_free(&inputs);
+    mo_heap_free(p);
+}
+
+static void test_sparse_tables(struct heap_fixture *f) {
+    struct mo_limits limits = mo_limits_default();
+    limits.heap_size = 16 << 20;
+    struct mo_heap *p = mo_heap_new(f->image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_cell set;
+    MO_ASSERT(mo_value_set(p, f->integer_set, NULL, 0, &set));
+    for (int64_t i = 0; i < 100000; i++) {
+        struct mo_cell key = mo_cell_int(i);
+        MO_ASSERT(mo_table_set(p, f->integer_set, &set, key, key));
+    }
+    for (int64_t i = 1; i < 100000; i++) {
+        MO_ASSERT(mo_table_remove(p, f->integer_set, &set, mo_cell_int(i)));
+    }
+    CHECK(mo_table_size(set) == 1 && mo_heap_used(p) < 4096);
+    size_t before = mo_heap_used(p);
+    struct mo_cell copies[30];
+    for (unsigned i = 0; i < 30; i++) {
+        copies[i] = mo_value_dup(p, f->integer_set, set);
+        struct mo_cell key = mo_cell_int(100000 + i);
+        MO_ASSERT(mo_table_set(p, f->integer_set, &copies[i], key, key));
+        CHECK(mo_table_size(copies[i]) == 2 && mo_table_size(set) == 1);
+        uint32_t position = 0;
+        struct mo_cell got, element;
+        CHECK(mo_table_next(copies[i], &position, &got, &element) && mo_cell_get_int(got) == 0);
+        CHECK(mo_table_next(copies[i], &position, &got, &element) &&
+              mo_cell_get_int(got) == 100000 + i);
+        CHECK(!mo_table_next(copies[i], &position, &got, &element));
+    }
+    CHECK(mo_heap_used(p) - before < 64 << 10);
+    for (unsigned i = 0; i < 30; i++) {
+        mo_value_drop(p, f->integer_set, copies[i]);
+    }
+    mo_value_drop(p, f->integer_set, set);
+    CHECK(mo_heap_objects(p) == 0);
+    mo_heap_free(p);
+}
+
+static void test_full_heap(struct heap_fixture *f) {
+    struct mo_limits limits = mo_limits_default();
+    limits.heap_size = 16 << 10;
+    struct mo_heap *p = mo_heap_new(f->image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_cell nodes[2], text, list, set, padding;
+    for (unsigned run = 0; run < 2; run++) {
+        MO_ASSERT(mo_value_case(p, f->node, 0, NULL, 0, &nodes[run]));
+        for (unsigned i = 0; i < 40; i++) {
+            struct mo_cell next;
+            MO_ASSERT(mo_value_case_owned(p, f->node, 1, &nodes[run], 1, &next));
+            nodes[run] = next;
+        }
+    }
+    MO_ASSERT(mo_value_text(p, "x", 1, &text));
+    MO_ASSERT(mo_value_list(p, f->list, &text, 1, &list));
+    struct mo_cell keys[] = {mo_cell_int(1), mo_cell_int(2), mo_cell_int(3), mo_cell_int(4)};
+    MO_ASSERT(mo_value_set(p, f->integer_set, keys, 4, &set));
+    size_t before = mo_heap_used(p);
+    MO_ASSERT(mo_value_text(p, NULL, 0, &padding));
+    size_t header = mo_heap_used(p) - before;
+    mo_value_drop(p, f->builtin[MO_TYPE_TEXT], padding);
+    char bytes[16 << 10] = {0};
+    MO_ASSERT(mo_value_text(p, bytes, limits.heap_size - before - header, &padding));
+    CHECK(mo_heap_used(p) == limits.heap_size);
+    expect_text(p, f->builtin[MO_TYPE_INT], mo_cell_int(-71), "-71");
+    expect_text(p, f->builtin[MO_TYPE_FLOAT], mo_cell_float(-0.0), "-0");
+    expect_text(p, f->builtin[MO_TYPE_TEXT], text, "x");
+    expect_text(p, f->list, list, "[\"x\"]");
+    bool equal = true, found = true;
+    int order = 37;
+    uint64_t hash = 71;
+    CHECK(!mo_value_equal(p, f->node, nodes[0], nodes[1], &equal) && equal);
+    CHECK(!mo_value_compare(p, f->node, nodes[0], nodes[1], &order) && order == 37);
+    CHECK(!mo_value_hash(p, f->node, nodes[0], &hash) && hash == 71);
+    CHECK(!mo_value_make_immortal(p, f->node, nodes[0]));
+    CHECK(mo_cell_get_ref(mo_cell_get_payload(nodes[0]))->count == 1);
+    struct mo_cell out = mo_cell_int(91), absent = mo_cell_int(9);
+    CHECK(mo_table_get(p, f->integer_set, set, absent, &found, &out) && !found &&
+          mo_cell_get_int(out) == 91);
+    CHECK(mo_table_remove(p, f->integer_set, &set, absent));
+    CHECK(!mo_table_set(p, f->integer_set, &set, absent, absent) && mo_table_size(set) == 4);
+    struct mo_buffer buffer;
+    mo_buffer_init(&buffer, 1024);
+    CHECK(mo_buffer_append_text(&buffer, "kept"));
+    CHECK(!mo_value_print(p, f->node, nodes[0], &buffer));
+    CHECK(buffer.length == 4 && memcmp(buffer.bytes, "kept", 4) == 0);
+    mo_buffer_free(&buffer);
+    mo_value_drop(p, f->node, nodes[0]);
+    mo_value_drop(p, f->node, nodes[1]);
+    mo_value_drop(p, f->builtin[MO_TYPE_TEXT], padding);
+    mo_value_drop(p, f->integer_set, set);
+    mo_value_drop(p, f->list, list);
+    mo_value_drop(p, f->builtin[MO_TYPE_TEXT], text);
+    CHECK(mo_heap_objects(p) == 0);
+    mo_heap_free(p);
+}
+
+static void test_order_and_owned(struct heap_fixture *f) {
+    struct mo_limits limits = mo_limits_default();
+    struct mo_heap *p = mo_heap_new(f->image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_cell a, b, left, right;
+    uint32_t text = f->builtin[MO_TYPE_TEXT];
+    MO_ASSERT(mo_value_text(p, "\xc3\xa9", 2, &a));
+    MO_ASSERT(mo_value_text(p, "\xf0\x9f\x98\x80", 4, &b));
+    int order;
+    CHECK(mo_value_compare(p, text, a, b, &order) && order < 0);
+    struct mo_cell elements[] = {a, b};
+    MO_ASSERT(mo_value_list(p, f->list, elements, 1, &left));
+    MO_ASSERT(mo_value_list(p, f->list, elements, 2, &right));
+    CHECK(mo_value_compare(p, f->list, left, right, &order) && order < 0);
+    CHECK(mo_value_compare(p, f->list, right, left, &order) && order > 0);
+    mo_value_drop(p, f->list, left);
+    mo_value_drop(p, f->list, right);
+    MO_ASSERT(mo_value_case(p, f->option, 1, &(struct mo_cell){0}, 1, &left));
+    MO_ASSERT(mo_value_case(p, f->option, 2, &a, 1, &right));
+    CHECK(mo_value_compare(p, f->option, left, right, &order) && order < 0);
+    mo_value_drop(p, f->option, left);
+    mo_value_drop(p, f->option, right);
+    const uint8_t first[] = {0, 255}, second[] = {1};
+    MO_ASSERT(mo_value_bytes(p, first, sizeof first, &left));
+    MO_ASSERT(mo_value_bytes(p, second, sizeof second, &right));
+    CHECK(mo_value_compare(p, f->builtin[MO_TYPE_BYTES], left, right, &order) && order < 0);
+    mo_value_drop(p, f->builtin[MO_TYPE_BYTES], left);
+    mo_value_drop(p, f->builtin[MO_TYPE_BYTES], right);
+    mo_value_drop(p, text, a);
+    mo_value_drop(p, text, b);
+    for (unsigned kind = 0; kind < 3; kind++) {
+        MO_ASSERT(mo_value_text(p, "owned", 5, &a));
+        MO_ASSERT(mo_value_list(p, f->list, NULL, 0, &b));
+        struct mo_cell fields[] = {a, b};
+        uint32_t type = kind == 0 ? f->tuple : kind == 1 ? f->record : f->function;
+        bool built =
+            kind == 2 ? mo_value_closure_owned(p, 7, fields, 2, &left)
+                      : mo_value_construct_owned(p, kind == 0 ? f->tuple_layout : f->record_layout,
+                                                 fields, 2, &left);
+        MO_ASSERT(built);
+        CHECK(mo_cell_get_ref(a)->count == 1 && mo_cell_get_ref(b)->count == 1);
+        if (kind != 2) {
+            fields[0] = mo_value_dup(p, text, a);
+            fields[1] = mo_value_dup(p, f->list, b);
+            struct mo_token token = mo_value_reset(p, type, left);
+            MO_ASSERT(mo_value_reuse_owned(p, &token, fields, 2, &left));
+            CHECK(mo_cell_get_ref(a)->count == 1 && mo_cell_get_ref(b)->count == 1);
+        }
+        mo_value_drop(p, type, left);
+    }
+    MO_ASSERT(mo_value_text(p, "case", 4, &a));
+    MO_ASSERT(mo_value_case_owned(p, f->option, 2, &a, 1, &left));
+    CHECK(mo_cell_get_ref(a)->count == 1);
+    mo_value_drop(p, f->option, left);
+    uint32_t layout = heap_layout(&f->types, (struct mo_layout){.kind = MO_LAYOUT_CLOSURE,
+                                                                .type = f->function,
+                                                                .case_index = MO_NO_INDEX,
+                                                                .function = 99});
+    CHECK(layout != MO_NO_INDEX && mo_heap_image_refresh(f->image));
+    MO_ASSERT(mo_value_closure(p, 99, NULL, 0, &left));
+    CHECK(mo_heap_objects(p) == 0);
+    mo_heap_free(p);
+    p = mo_heap_new(f->image, &limits);
+    MO_ASSERT(p != NULL && mo_value_closure(p, 99, NULL, 0, &right));
+    CHECK(mo_cell_get_ref(left) == mo_cell_get_ref(right));
+    CHECK(mo_heap_objects(p) == 0);
+    mo_heap_free(p);
+}
+
+static MO_MUST_USE struct mo_cell forest_chain(struct heap_fixture *f, struct mo_heap *p,
+                                               struct mo_cell empty, unsigned depth) {
+    struct mo_cell tree;
+    MO_ASSERT(mo_value_construct(p, f->forest_layout, &empty, 1, &tree));
+    for (unsigned i = 0; i < depth; i++) {
+        struct mo_cell set, next;
+        if (i % 2 == 0) {
+            set = mo_value_dup(p, f->forest_set, empty);
+            MO_ASSERT(mo_table_set(p, f->forest_set, &set, tree, tree));
+        } else {
+            MO_ASSERT(mo_value_set(p, f->forest_set, &tree, 1, &set));
+        }
+        MO_ASSERT(mo_value_construct_owned(p, f->forest_layout, &set, 1, &next));
+        mo_value_drop(p, f->forest, tree);
+        tree = next;
+    }
+    return tree;
+}
+
+static void test_nested_keys(struct heap_fixture *f, bool benchmark) {
+    struct mo_limits limits = mo_limits_default();
+    struct mo_heap *p = mo_heap_new(f->image, &limits), *q = mo_heap_new(f->image, &limits);
+    MO_ASSERT(p != NULL && q != NULL);
+    struct mo_heap *image = mo_heap_image_constants(f->image);
+    struct mo_cell empty;
+    MO_ASSERT(mo_value_set(image, f->forest_set, NULL, 0, &empty));
+    MO_ASSERT(mo_value_make_immortal(image, f->forest_set, empty));
+    for (unsigned depth = 2000; depth <= (benchmark ? 16000U : 2000U); depth *= 2) {
+        struct mo_cell a = forest_chain(f, p, empty, depth), b = forest_chain(f, q, empty, depth);
+        struct timespec start, end;
+        MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+        bool equal;
+        CHECK(mo_value_equal(p, f->forest, a, b, &equal) && equal);
+        MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &end) == 0);
+        uint64_t h1, h2;
+        CHECK(mo_value_hash(p, f->forest, a, &h1));
+        CHECK(mo_value_hash(q, f->forest, b, &h2) && h1 == h2);
+        struct mo_cell set;
+        MO_ASSERT(mo_value_set(p, f->forest_set, &a, 1, &set));
+        bool found;
+        struct mo_cell got;
+        CHECK(mo_table_get(p, f->forest_set, set, b, &found, &got) && found);
+        if (benchmark) {
+            double seconds =
+                (double)(end.tv_sec - start.tv_sec) + (double)(end.tv_nsec - start.tv_nsec) / 1e9;
+            CHECK(printf("nested keys depth %u: equality %.6f s\n", depth, seconds) > 0);
+        }
+        mo_value_drop(p, f->forest_set, set);
+        mo_value_drop(p, f->forest, a);
+        mo_value_drop(q, f->forest, b);
+    }
+    CHECK(mo_heap_objects(p) == 0 && mo_heap_objects(q) == 0);
+    mo_heap_free(p);
+    mo_heap_free(q);
+}
+
+static MO_MUST_USE int benchmark_heap(struct heap_fixture *f) {
+    struct mo_limits limits = mo_limits_default();
+    struct mo_heap *p = mo_heap_new(f->image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_cell *pairs = malloc(1000000 * sizeof *pairs);
+    MO_ASSERT(pairs != NULL);
+    size_t before = mo_heap_used(p);
+    struct timespec start, end;
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+    struct mo_cell fields[] = {mo_cell_int(17), mo_cell_int(-9)};
+    for (unsigned i = 0; i < 1000000; i++) {
+        MO_ASSERT(mo_value_construct_owned(p, f->int_pair_layout, fields, 2, &pairs[i]));
+    }
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &end) == 0);
+    double seconds =
+        (double)(end.tv_sec - start.tv_sec) + (double)(end.tv_nsec - start.tv_nsec) / 1e9;
+    CHECK(printf("1000000 (Int, Int): %zu charged bytes, %.6f s allocation\n",
+                 mo_heap_used(p) - before, seconds) > 0);
+    for (unsigned i = 0; i < 1000000; i++) {
+        mo_value_drop(p, f->int_pair, pairs[i]);
+    }
+    free(pairs);
+    mo_heap_free(p);
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+    for (unsigned i = 0; i < 100000; i++) {
+        p = mo_heap_new(f->image, &limits);
+        MO_ASSERT(p != NULL);
+        mo_heap_free(p);
+    }
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &end) == 0);
+    seconds = (double)(end.tv_sec - start.tv_sec) + (double)(end.tv_nsec - start.tv_nsec) / 1e9;
+    CHECK(printf("100000 prepared-image heap creations: %.6f s\n", seconds) > 0);
+    test_nested_keys(f, true);
+    return mo_test_report("heap benchmark");
+}
+
 static MO_MUST_USE int number_driver(struct heap_fixture *f, bool bigint) {
     struct mo_limits limits = mo_limits_default();
-    struct mo_process *p = mo_heap_new(&f->types, &limits);
+    struct mo_heap *p = mo_heap_new(f->image, &limits);
     MO_ASSERT(p != NULL);
     struct mo_buffer out;
     mo_buffer_init(&out, MO_LIMIT_HEAP_WORK);
-    char line[65536];
-    uint8_t magnitude[32768];
+    char line[2 * MO_LIMIT_BIGINT_TEXT_BYTES + 2];
+    uint8_t magnitude[MO_LIMIT_BIGINT_TEXT_BYTES];
     while (fgets(line, sizeof line, stdin) != NULL) {
         struct mo_cell value;
         uint32_t type = f->builtin[bigint ? MO_TYPE_BIGINT : MO_TYPE_FLOAT];
@@ -682,7 +999,10 @@ int main(int argc, char **argv) {
     struct heap_fixture fixture;
     heap_fixture_init(&fixture);
     if (argc == 2) {
-        int status = number_driver(&fixture, strcmp(argv[1], "--bigint") == 0);
+        int status = strcmp(argv[1], "--bench") == 0
+                         ? benchmark_heap(&fixture)
+                         : number_driver(&fixture, strcmp(argv[1], "--bigint") == 0);
+        mo_heap_image_free(fixture.image);
         mo_arena_free(&fixture.arena);
         return status;
     }
@@ -696,6 +1016,12 @@ int main(int argc, char **argv) {
     test_reuse_and_images(&fixture);
     test_adversarial(&fixture);
     test_host_storage(&fixture);
+    test_large_values(&fixture);
+    test_sparse_tables(&fixture);
+    test_full_heap(&fixture);
+    test_order_and_owned(&fixture);
+    test_nested_keys(&fixture, false);
+    mo_heap_image_free(fixture.image);
     mo_arena_free(&fixture.arena);
     return mo_test_report("heap");
 }

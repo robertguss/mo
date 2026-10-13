@@ -148,17 +148,28 @@ immortal.
 
 The debug heap asserts all three (Architecture section 11).
 
-The C heap keeps private allocation links, byte accounting and hash caches
-before the eight-byte header. Fixed-layout cells immediately follow that
-header. Built-in layouts use `UINT32_MAX - mo_type_kind`, outside the file's
-layout indices. No native allocation bookkeeping enters a bytecode file.
-Heap teardown reclaims all allocations even after a stop or saturation.
-The heap-only `mo_heap_new(types, limits)` context borrows a finished type and
-layout table; the table must not change or end while that context lives.
-Boxed-case and closure builders use a sorted layout index, not repeated scans.
-There is one closure layout per function; ambiguous C tables refuse heap
-creation. Capture-less C closures are allocated once per heap and cached;
-the interpreter loads the image's already-built immortal closures.
+The C heap keeps a charged private prefix before the eight-byte header:
+teardown links, an iterative-walk link, the allocation size, one structural
+hash cache, type and length, and cache/initialization flags. On 64-bit hosts
+the prefix is 56 bytes; a two-field `(Int, Int)` tuple therefore charges
+96 bytes (56 + 8 + 32), not just its 40-byte header and fields. Table-only
+capacity, size and index metadata lives in its payload, not every object.
+These are requested allocation bytes; system allocator bookkeeping is not
+included. Fixed-layout cells immediately follow the object header. Built-in
+layouts use `UINT32_MAX - mo_type_kind`, outside the file's layout indices.
+No native allocation bookkeeping enters a bytecode file. Heap teardown
+reclaims all allocations even after a stop or saturation.
+
+The heap-only `mo_heap_new(image, limits)` context is separate from the VM's
+process. `mo_heap_image_new(types, limits)` prepares shared abilities, layout
+indices, secret domains and an initialization heap once per run. Types are
+finished and borrowed for its lifetime; layouts may still be appended during
+initialization. Refresh the index before publishing the image to concurrent
+processes. Boxed-case and closure builders use the sorted index. There is one
+closure layout per function; ambiguous C tables refuse image preparation.
+Capture-less closures are initialized once in the image heap, never cached
+in a process heap. Immortality preparation computes reachable hash caches
+before freezing them; failure leaves counts and immortality unchanged.
 Fake state uses the private layout `UINT32_MAX - 32`, not a source type.
 It holds typed mutable slots of ordinary values. Capability storage borrows
 the host's static operations table, owns its state and optional Text prefix,
@@ -922,24 +933,40 @@ not quadratic repeated division. Functions and environments print as
 the other capability names, without revealing native handles or addresses.
 Bytes print as `bytes[0, 255]`. Nested text escapes interpolation openers.
 
-Generic walks have work and scratch bounds in `limits.h`. Equality memoizes
-cell pairs to avoid exponential repeated walks of shared DAGs. Structural
-printing may refuse a work, scratch or output limit, preserving the caller's
-existing output. Defect renderers must show a fixed `<value unavailable>`
-fallback in that case, not stop or call Mo code. Output buffers belong to the
-C caller, outside the process heap, with their own explicit byte limit.
+Equality and ordering memoize pairs only when either object has more than
+one holder (including immortal counts). Hashing caches one structural hash
+per object. Unique trees need no pair memo; shared DAGs do not expand into
+exponential walks. Equality, ordering and hashing have no work cap. Scratch
+uses the remaining process heap; memo growth releases old arrays. For a type
+with the required ability, a failed generic operation means running out of
+memory, reported as that bug (reference 13.2), not an arbitrary walk limit.
 
-Map and set hashing uses SipHash-1-3 with a fresh secret 128-bit key per process,
-read from the operating system's random device; failure refuses process
-creation. Hashes are cached with their key, never treated as equality proofs.
-An image table retains its creation key for its index; process lookups and
-copy-on-write copies use that key even when their generic hash key differs.
-The index has at most half as many entries as slots. Every probe is bounded
-by `MO_LIMIT_HEAP_PROBES`; a longer collision sequence refuses the operation
-without changing its inputs. This bounds work even if a secret-key collision
-is found. Maps and sets keep insertion order, so the key never changes what
-a program computes. (`mo test`'s generator has its own hash, with a fixed
-key: Architecture section 10.1.)
+Structural printing retains `MO_LIMIT_HEAP_WORK`'s node/byte/output bound;
+BigInt conversion has a separate `MO_LIMIT_BIGINT_TEXT_WORK` budget and a
+256 KiB magnitude cap (`MO_LIMIT_BIGINT_TEXT_BYTES`). Larger BigInts remain
+valid values. Printing can also refuse scratch or caller output allocation,
+preserving existing output. Scalars and the first 16 frames use the C stack,
+so scalars and shallow values still print with a full process heap (BigInt
+conversion may require scratch). Defect renderers use `<value unavailable>`
+when printing refuses, without another stop or Mo call. Output buffers belong
+to the C caller, outside the process heap, with their own explicit byte limit.
+
+SipHash-1-3 uses a secret 128-bit seed obtained with `getentropy` once per VM
+run; entropy failure refuses image preparation. Distinct hash and index
+domains are derived from it. Structural hashes exposed to programs do not
+reveal the index domain; indices mix the structural hash with that domain.
+All processes and image tables use these same domains, including COW copies.
+Image hash caches are prepared during initialization and never written after
+publication. Hashes are never equality proofs.
+
+Indices are at most half full. Lookups and removals probe to an empty slot;
+they never refuse merely for crossing `MO_LIMIT_HEAP_PROBES`. An insertion
+that would cross that bound grows the index and retries, including during
+building and copying. Growth can refuse memory or the explicit index/collection
+size limits in `limits.h`, preserving inputs. Copies compact live entries and
+size storage from their count; sparse tables shrink at removal. Maps and sets
+keep insertion order, so secrets never change program results. (`mo test`'s
+generator has its own fixed hash key: Architecture section 10.1.)
 
 ## 9. Verification
 

@@ -138,7 +138,7 @@ static MO_MUST_USE unsigned char_bytes(uint32_t code, uint8_t bytes[4]) {
     return length;
 }
 
-static MO_MUST_USE bool scalar_text(struct mo_process *process, enum mo_type_kind kind,
+static MO_MUST_USE bool scalar_text(struct mo_heap *process, enum mo_type_kind kind,
                                     struct mo_cell value, bool nested, struct mo_buffer *out,
                                     size_t *work) {
     switch (kind) {
@@ -196,7 +196,7 @@ static MO_MUST_USE bool scalar_text(struct mo_process *process, enum mo_type_kin
         return mo_buffer_append_byte(out, ']');
     }
     case MO_TYPE_BIGINT:
-        return mo_bigint_text(process, value, out, work);
+        return mo_bigint_text(process, value, out);
     case MO_TYPE_FUNCTION:
         return mo_buffer_append_text(out, "<function>");
     case MO_TYPE_ENV:
@@ -226,17 +226,16 @@ struct print_frame {
     bool entered, emitted;
 };
 
-bool mo_value_print(struct mo_process *process, uint32_t type, struct mo_cell value,
+bool mo_value_print(struct mo_heap *process, uint32_t type, struct mo_cell value,
                     struct mo_buffer *out) {
     MO_ASSERT(process != NULL && type < process->types->count && out != NULL);
     size_t before = out->length, work = 0, capacity = 16, depth = 1;
     struct mo_scratch scratch;
     mo_scratch_init(&scratch, process);
-    struct print_frame *stack = mo_scratch_resize(&scratch, NULL, 0, capacity * sizeof *stack);
-    bool ok = stack != NULL;
-    if (ok) {
-        stack[0] = (struct print_frame){.type = type, .value = value};
-    }
+    struct print_frame local[16];
+    struct print_frame *stack = local;
+    bool ok = true;
+    stack[0] = (struct print_frame){.type = type, .value = value};
     while (ok && depth != 0) {
         if (work == MO_LIMIT_HEAP_WORK || out->length - before > MO_LIMIT_HEAP_WORK) {
             ok = false;
@@ -318,15 +317,19 @@ bool mo_value_print(struct mo_process *process, uint32_t type, struct mo_cell va
             mo_value_child(process->types, f->type, f->value, f->next++, &child_type);
         f->emitted = true;
         if (depth == capacity) {
-            if (capacity > MO_LIMIT_HEAP_SCRATCH / (2 * sizeof *stack)) {
+            if (capacity > SIZE_MAX / (2 * sizeof *stack)) {
                 ok = false;
                 break;
             }
-            struct print_frame *grown = mo_scratch_resize(&scratch, stack, capacity * sizeof *stack,
-                                                          2 * capacity * sizeof *stack);
+            struct print_frame *grown = mo_scratch_resize(
+                &scratch, stack == local ? NULL : stack,
+                stack == local ? 0 : capacity * sizeof *stack, 2 * capacity * sizeof *stack);
             if (grown == NULL) {
                 ok = false;
                 break;
+            }
+            if (stack == local) {
+                memcpy(grown, local, sizeof local);
             }
             stack = grown;
             capacity *= 2;

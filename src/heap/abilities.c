@@ -38,7 +38,7 @@ static void add_edge(struct ability_edge *edges, uint32_t *heads, uint32_t *next
     heads[child] = (*next)++;
 }
 
-bool mo_heap_abilities(struct mo_process *process) {
+bool mo_heap_abilities(struct mo_heap_image *process) {
     const struct mo_types *types = process->types;
     size_t edge_count = 0;
     size_t work = types->count;
@@ -64,13 +64,13 @@ bool mo_heap_abilities(struct mo_process *process) {
             return false;
         }
     }
-    struct mo_scratch scratch;
-    mo_scratch_init(&scratch, process);
+    struct mo_arena scratch;
+    mo_arena_init(&scratch, process->limit - process->used);
     size_t bytes =
         (size_t)types->count * 4 * sizeof(uint32_t) + edge_count * sizeof(struct ability_edge);
-    uint32_t *heads = mo_scratch_resize(&scratch, NULL, 0, bytes);
+    uint32_t *heads = mo_arena_allocate(&scratch, bytes, _Alignof(uint32_t));
     if (heads == NULL) {
-        mo_scratch_free(&scratch);
+        mo_arena_free(&scratch);
         return false;
     }
     uint32_t *queue = heads + types->count;
@@ -112,6 +112,6 @@ bool mo_heap_abilities(struct mo_process *process) {
             }
         }
     }
-    mo_scratch_free(&scratch);
+    mo_arena_free(&scratch);
     return true;
 }
