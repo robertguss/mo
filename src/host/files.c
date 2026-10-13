@@ -93,6 +93,7 @@ enum mo_host_outcome mo_host_file_error(struct mo_host *host, struct mo_heap *he
         break;
     }
     case FILE_OK:
+    default:
         MO_UNREACHABLE();
     }
     struct mo_cell value;
