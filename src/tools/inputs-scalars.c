@@ -168,9 +168,10 @@ enum mo_input_result mo_input_immediate_build(struct mo_input_builder *builder,
                 range.start = smaller(range.start, variant);
             else
                 range.end = smaller(range.end, variant - 3);
-        } else if (random)
-            range = (struct mo_range){integer(builder), integer(builder)};
-        else
+        } else if (random) {
+            range.start = integer(builder);
+            range.end = integer(builder);
+        } else
             range = ranges[index];
         result = mo_cell_range(range.start, range.end);
         break;

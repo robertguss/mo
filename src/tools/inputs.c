@@ -15,6 +15,16 @@ uint64_t mo_input_random(uint64_t *state) {
     return word ^ (word >> 31);
 }
 
+static MO_MUST_USE uint64_t input_stream(uint64_t seed, uint64_t ordinal) {
+    /* Advancing the starting state by SplitMix's step would overlap streams. */
+    uint8_t bytes[16];
+    for (unsigned i = 0; i < 8; i++) {
+        bytes[i] = (uint8_t)(seed >> (8 * i));
+        bytes[8 + i] = (uint8_t)(ordinal >> (8 * i));
+    }
+    return mo_hash(input_key, bytes, sizeof bytes);
+}
+
 struct mo_input_limits mo_input_limits_default(void) {
     return (struct mo_input_limits){.combinations = 200,
                                     .depth = 64,
@@ -91,9 +101,9 @@ enum mo_input_result mo_inputs_next(struct mo_inputs *inputs, struct mo_heap *de
         size = inputs->limits.elements;
     }
     uint64_t work = inputs->limits.work;
-    enum mo_input_result result = mo_input_build(
-        inputs, destination, NULL, boundary ? variants : NULL, (uint32_t)size,
-        inputs->seed + inputs->ordinal * UINT64_C(0x9e3779b97f4a7c15), NULL, &work, out);
+    enum mo_input_result result =
+        mo_input_build(inputs, destination, NULL, boundary ? variants : NULL, (uint32_t)size,
+                       input_stream(inputs->seed, inputs->ordinal), NULL, &work, out);
     if (result != MO_INPUT_OK) {
         return result;
     }

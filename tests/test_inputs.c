@@ -55,6 +55,21 @@ static void integer_inputs(void) {
     CHECK(different);
     mo_inputs_free(&second);
     mo_inputs_free(&first);
+    MO_ASSERT(mo_inputs_init(&first, &fixture.types, parameters, 2, "Example.stream", 14, &limits,
+                             NULL, 0) == MO_INPUT_OK);
+    int64_t previous = 0;
+    unsigned shifted = 0;
+    for (unsigned i = 0; i < 600; i++) {
+        struct mo_cell pair[2];
+        enum mo_input_kind kind;
+        MO_ASSERT(mo_inputs_next(&first, heap, pair, &kind) == MO_INPUT_OK);
+        if (i >= 300 && mo_cell_get_int(pair[0]) == previous)
+            shifted++;
+        previous = mo_cell_get_int(pair[1]);
+    }
+    /* Once Ints use all 64 bits, adjacent streams must not be shifted copies. */
+    CHECK(shifted < 4);
+    mo_inputs_free(&first);
     mo_heap_free(heap);
     mo_heap_image_free(fixture.image);
     mo_arena_free(&fixture.arena);
