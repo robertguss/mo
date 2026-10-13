@@ -264,11 +264,22 @@ struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *progra
                                  f->signature->function->module, 0);
     }
     for (struct instance *f = p->functions; f != NULL; f = f->next)
-        lower_function(p, f);
-    entry(p, main);
-    for (struct instance *f = p->functions; f != NULL; f = f->next)
-        if (f->source != NULL && f->fun.body == NULL)
+        if (f->source != NULL)
             lower_function(p, f);
+    entry(p, main);
+    for (;;) {
+        lower_derived_functions(p);
+        bool pending = false;
+        for (struct instance *f = p->functions; f != NULL; f = f->next) {
+            lower_work(p, 1);
+            if (f->source != NULL && f->fun.body == NULL) {
+                pending = true;
+                lower_function(p, f);
+            }
+        }
+        if (!pending)
+            break;
+    }
     for (struct data_instance *d = p->data; d != NULL; d = d->next)
         lower_data(p, d);
     struct mo_core *result = LOWER_NEW(p, struct mo_core, 1);

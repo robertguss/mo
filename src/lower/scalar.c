@@ -393,6 +393,8 @@ mo_core_expr lower_to_text(struct lowering *p, const struct mo_ability_implement
     MO_ASSERT(proof != NULL && proof->ability == MO_SOURCE_TEXT);
     if (proof->kind == MO_ABILITY_NATIVE)
         return lower_error_text(p, lower_type(p, proof->type, substitution), value);
+    if (proof->kind == MO_ABILITY_DERIVED)
+        return lower_derived_text(p, proof, substitution, owner, depth, value);
     if (proof->kind == MO_ABILITY_FUNCTION) {
         if (proof->part_count != 0)
             lower_refuse(p, MO_CODE_LOWER_UNFINISHED,

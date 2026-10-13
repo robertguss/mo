@@ -676,6 +676,50 @@ static void test_interpolation(void) {
     }
 }
 
+static void test_derived_text(void) {
+    struct lower_fixture f;
+    lower_fixture_init(
+        &f,
+        "module Main\nfn main() : Int\n"
+        "if (7, \"a\\n\", '\\n').to_text == \"(7, \\\"a\\\\n\\\", '\\\\n')\": 23 else: 1\nend\n");
+    struct mo_source_type char_ = f.int_;
+    char_.name = "Char";
+    const struct mo_source_type *types[] = {&f.int_, &f.text_, &char_};
+    struct mo_source_type tuple = {.kind = MO_SOURCE_TUPLE, .count = 3, .arguments = types};
+    uint32_t values[] = {lower_fixture_row(&f, MO_S_INT, &f.int_, "7", 0, NULL),
+                         lower_fixture_row(&f, MO_S_TEXT, &f.text_, "\"a\\n\"", 0, NULL),
+                         lower_fixture_row(&f, MO_S_CHAR, &char_, "'\\n'", 0, NULL)};
+    uint32_t value = lower_fixture_row(&f, MO_S_TUPLE, &tuple, NULL, 3, values);
+    struct mo_ability_implementation parts[3];
+    const struct mo_ability_implementation *pointers[3];
+    for (uint32_t i = 0; i < 3; i++) {
+        parts[i] = (struct mo_ability_implementation){
+            .ability = MO_SOURCE_TEXT, .kind = MO_ABILITY_NATIVE, .type = types[i]};
+        pointers[i] = &parts[i];
+    }
+    struct mo_ability_implementation proof = {.ability = MO_SOURCE_TEXT,
+                                              .kind = MO_ABILITY_DERIVED,
+                                              .type = &tuple,
+                                              .part_count = 3,
+                                              .parts = pointers};
+    struct mo_checked_ability_use use = {value, &proof};
+    uint32_t text = lower_fixture_row(&f, MO_S_FIELD_ACCESS, &f.text_, NULL, 1, &value);
+    f.rows[text].native = "to_text";
+    f.rows[text].ability_count = 1;
+    f.rows[text].abilities = &use;
+    uint32_t expected =
+        lower_fixture_row(&f, MO_S_TEXT, &f.text_, "\"(7, \\\"a\\\\n\\\", '\\\\n')\"", 0, NULL);
+    uint32_t eq = lower_fixture_op(&f, MO_T_EQ, &f.bool_, text, expected);
+    uint32_t yes = lower_fixture_row(&f, MO_S_INT, &f.int_, "23", 0, NULL);
+    uint32_t no = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+    uint32_t arms[] = {eq, yes, no};
+    (void)lower_fixture_row(&f, MO_S_IF, &f.int_, NULL, 3, arms);
+    struct mo_core *core = checked(&f, "derived-text", "returned\n23\n");
+    if (core != NULL)
+        run(core, 23);
+    lower_fixture_free(&f);
+}
+
 static void test_text(void) {
     struct lower_fixture f;
     lower_fixture_init(
@@ -1016,6 +1060,7 @@ int main(int argc, char **argv) {
     test_try_option();
     test_try_result();
     test_interpolation();
+    test_derived_text();
     test_text();
     test_result_entry();
     test_limits();

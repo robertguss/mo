@@ -859,6 +859,12 @@ indentation for every fragment. Each hole is evaluated and converted through its
 selected Text proof before the next hole is evaluated. The same conversion emits
 `to_text` calls and Result entry errors; unresolved generic PARAMETER proofs refuse
 E1150 until the checker publishes scoped requirement keys.
+Derived text helpers reserve a typed function before following the proof's
+parts, memoize concrete type/module pairs with a bounded hash index and drain
+a FIFO body queue. Tuple fields convert in declaration order; nested native
+Text/Char fields are quoted and escape slashes before newly inserted escapes,
+including controls and interpolation markers. Generated parameter metadata
+retains arity with absent source names.
 
 The initial CPS implementation conservatively passes every live outer var,
 not only changed vars, across a continuation join; expression joins also pass

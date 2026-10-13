@@ -274,6 +274,11 @@ and normalize CRLFs. Lowering binds each hole's text conversion before evaluatin
 the next hole, so a custom `to_text` that stops cannot be overtaken by a later
 hole's evaluation. Explicit `to_text`, interpolation and entry error printing
 use the same selected proof, rather than looking up a customizer again.
+Derived helpers reserve their function before following proof parts and use a
+bounded, memoized FIFO queue rather than C recursion. Tuple parts convert in
+declaration order. Native Text/Char parts are quoted within structural values;
+escaping processes original slashes first, then delimiters, interpolation
+markers and control characters, so newly inserted escapes are not doubled.
 
 The text functions of section 14 are primitives (`%text.lines`,
 `%text.split`, ...); see section 14 below.

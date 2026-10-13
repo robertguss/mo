@@ -35,6 +35,7 @@ struct data_instance {
 struct type_cache;
 struct canonical_type;
 struct type_frame;
+struct derived;
 struct lower_node {
     struct mo_core_expr expr; /* first, so every emitted Expr carries private provenance */
     struct mo_core_span span;
@@ -59,6 +60,9 @@ struct lowering {
     uint32_t cache_count, cache_slots, type_slots, instance_slots;
     struct instance **instance_index, **by_source, ***source_tails;
     const struct mo_checked_function **source_index;
+    struct derived *derived, **derived_tail, *derived_pending;
+    struct derived **derived_index;
+    uint32_t derived_count, derived_slots;
 };
 
 _Noreturn void lower_refuse(struct lowering *p, uint16_t code, const char *message);
@@ -84,6 +88,10 @@ struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symb
                                 uint32_t depth);
 void lower_data(struct lowering *p, struct data_instance *instance);
 mo_core_ctors lower_ctors(struct lowering *p, mo_core_ty type);
+mo_core_expr lower_derived_text(struct lowering *p, const struct mo_ability_implementation *proof,
+                                const struct substitution *substitution, uint32_t owner,
+                                uint32_t depth, mo_core_expr value);
+void lower_derived_functions(struct lowering *p);
 
 mo_core_expr lower_expr(struct lowering *p, enum mo_core_expr_tag tag);
 mo_core_expr lower_var(struct lowering *p, mo_core_string name);
