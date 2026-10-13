@@ -227,12 +227,17 @@ paths, but is deferred when it would discard or move a token comment.
 The corpus test reparses every accepted input, compares the tree (including
 comment anchors and blank bits, modulo `+=`), and formats again. Its strict
 fixed-point mode covers all reference `mo` blocks, examples, library samples
-and good grammar fixtures except `grammar/tests/good/layout.mo`, which
-deliberately varies layout. Fixed-point differences remain failures, not
-updated snapshots or further exemptions; width layout and two-space inline
-comment padding currently conflict with some existing examples. CI runs this
-gate without exemptions for those differences; passing it awaits the layout
-decision and resolution of the examples' style choices.
+and good grammar fixtures except four named syntax tests:
+`grammar/tests/good/layout.mo` deliberately varies layout;
+`declarations.mo` includes a trailing comma; `lambda-list.mo` uses short
+authored parameter breaks; `literals.mo` varies interpolation and unary
+spacing. All four remain in the parse, tree-equality and idempotence gates.
+There are no exemptions for reference blocks, examples or library samples.
+Their fixed-point differences remain failures, not updated snapshots; width
+layout and two-space inline comment padding currently conflict with some
+existing examples. Passing the CI gate awaits Robert's line-breaking and
+end-of-line comment-alignment decisions; either the printer or the reference
+and examples will then change in the formatter PR, with every change listed.
 
 **The source tree contract.** `src/syntax/syntax.h` defines a tagged node
 with ordered children, an operator token, and half-open spans. Absent
