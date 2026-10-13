@@ -324,8 +324,9 @@ def main():
                               "promise" if spec else "function")
             path = pathlib.Path(directory) / f"operation-{i}.core"
             path.write_text(f"(core {version} {payload})\n")
-            if prim.startswith(('(eq (fn ', '(eq (cap ', '(eq (data ')):
-                # Lean types these, but source lowering cannot produce runtime equality on them.
+            if prim.startswith(('(eq (fn ', '(eq (cap ', '(eq (data ', '(structural (data ')):
+                # Undeclared nominal types have no runtime layout. Equality on functions or
+                # capabilities also cannot come from lowering. The Core checker permits both.
                 excluded.append(path)
             else:
                 generated.append(path)
