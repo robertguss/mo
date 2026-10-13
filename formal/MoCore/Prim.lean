@@ -10,6 +10,7 @@
 -/
 import MoCore.Support.Time
 import MoCore.Support.Equiv
+import MoCore.Text.Structural
 
 namespace MoCore
 
@@ -787,7 +788,9 @@ def evalIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
 /-! ## Dispatch -/
 
 /-- Applies a primitive to its argument values in a world. -/
-def Prim.eval : Prim → List Value → World → Outcome
+def Prim.eval (p : Prim) (vs : List Value) (w : World)
+    (P : Program := {data := [], funs := []}) : Outcome :=
+  match p, vs, w with
   | .int op, vs, w => evalIntOp op vs w
   | .big op, vs, w => evalBigOp op vs w
   | .byte op, vs, w => evalByteOp op vs w
@@ -807,6 +810,10 @@ def Prim.eval : Prim → List Value → World → Outcome
   | .set _ op, vs, w => evalSetOp op vs w
   | .eq _, [a, b], w => .ok (.bool (Value.equiv a b)) w
   | .eq _, _, _ => wrongArgs "=="
+  | .structural t, [v], w => match Text.structural P t v false true with
+    | .ok s => .ok (.text s) w
+    | .error s => .stopped (.stop ("structural value: " ++ s)) w
+  | .structural _, _, _ => wrongArgs "structural"
   | .io op, vs, w => evalIoOp op vs w
 
 end MoCore

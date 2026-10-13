@@ -136,6 +136,7 @@ def primOut : Prim → Sexp
   | .map k v o => tag "map" [tyOut k, tyOut v, mapOut o]
   | .set t o => tag "set" [tyOut t, enumOut setOps o]
   | .eq t => tag "eq" [tyOut t]
+  | .structural t => tag "structural" [tyOut t]
   | .io o => tag "io" [ioOut o]
 def primIn : Sexp → Parse Prim
   | .node [.atom "int", o] => return .int (← enumIn intOps o)
@@ -155,6 +156,7 @@ def primIn : Sexp → Parse Prim
   | .node [.atom "map", k, v, o] => return .map (← tyIn k) (← tyIn v) (← mapIn o)
   | .node [.atom "set", t, o] => return .set (← tyIn t) (← enumIn setOps o)
   | .node [.atom "eq", t] => return .eq (← tyIn t)
+  | .node [.atom "structural", t] => return .structural (← tyIn t)
   | .node [.atom "io", o] => return .io (← ioIn o)
   | _ => throw "invalid primitive constructor or arity"
 

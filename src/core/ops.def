@@ -1,6 +1,8 @@
 /* Nullary operation constructors, in Lean order. The text is the wire spelling.
  * Keep this table laid out explicitly: clang-format repeatedly reindents adjacent X calls. */
 // clang-format off
+/* Top-level operations carrying one arbitrary type, rather than a family opcode. */
+#define MO_CORE_TYPED_OPS(X) X(EQ, eq, "eq") X(STRUCTURAL, structural, "structural")
 #define MO_CORE_INT_OPS(X) \
     X(ADD, "add") X(SUB, "sub") X(MUL, "mul") X(DIV, "div") X(REM, "rem") X(NEG, "neg") \
     X(ABS, "abs") X(MIN, "min") X(MAX, "max") X(POW, "pow") X(FLOOR_DIV, "floorDiv") \

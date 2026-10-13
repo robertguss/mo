@@ -18,6 +18,13 @@ Keys must be nonempty slash-separated components, none `.` or `..`. This
 check precedes folder discovery and collision checks; it doesn't normalize
 keys or change operation-path rules. No state or effect is added on refusal.
 World/CapState records still transport arbitrary stored keys losslessly.
+Version 0.8 also adds `(structural T)`, with signature `fn(T) : Text`, for
+spec failure details. It borrows its operand and shares the reference observer
+with reports, never a user-defined `to_text`. Unlike report transport, it uses
+D236's decimal Float form and opaque capability-kind names. Every well-typed
+Core value has a structural form, including Bytes, functions and capabilities;
+there is no `Text`, `Equal` or other ability requirement. A malformed low-level
+value passed outside a checked Run stops with `structural value: REASON`.
 Only 0.8 is accepted; 0.7, older and unknown versions are rejected.
 
 ### Earlier changes from 0.6
@@ -319,7 +326,8 @@ P := (int IntOp) | (big BigOp) | (byte ByteOp) | (dec DecOp)
    | (float FloatOp) | (not) | (cmp Base CmpOp) | (char CharOp)
    | (text TextOp) | (bytes BytesOp) | (range RangeOp) | (time TimeOp)
    | (unicode16 UnicodeOp)
-   | (list T ListOp) | (map T T MapOp) | (set T SetOp) | (eq T) | (io IoOp)
+   | (list T ListOp) | (map T T MapOp) | (set T SetOp) | (eq T)
+   | (structural T) | (io IoOp)
 ```
 
 Each name in the following table means a **nullary S-expression**, e.g.
@@ -625,7 +633,14 @@ the codec must not invent partial effects for it.
 
 `structural P T v` prints a value using its expected type and the program's
 data declarations. It never calls a custom `to_text`: a result comparison
-must see the fields. Its exact forms follow reference 9.2:
+must see the fields. The table describes report transport, which preserves
+Float bits and capability provenance. `(prim (structural T) (EXPR))` selects
+the same observer's reference-text mode: Float uses D236's shortest decimal
+(`nan`, `inf`, `-inf`, `0` and `-0` included), and capabilities print only their
+kind (`<Args>`, `<Env>`, `<Console>`, `<Files>`, `<ReadFiles>`, `<Clock>` or
+`<Random>`), without root or fake identity. Nested Text and Char use reference
+9.2's delimiter and C0/C1 control escapes; Text also escapes `#{` as `\#{`.
+Other shapes are shared:
 
 | Value | Structural spelling |
 | --- | --- |

@@ -270,6 +270,8 @@ static void test_operations(void) {
     mo_buffer_free(&payload);
     const char *extras[] = {"(not)",
                             "(eq (map (text) (list (byte))))",
+                            "(structural (map (text) (list (byte))))",
+                            "(structural (fn ((cap (files))) (unit)))",
                             "(list (byte) (lit 0))",
                             "(list (byte) (lit 9999999999999999999999999999))",
                             "(list (byte) (zip (text)))",

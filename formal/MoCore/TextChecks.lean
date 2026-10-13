@@ -47,7 +47,9 @@ def primitives : List Prim :=
     .take, .drop, .set, .removeAt, .uncons, .enumerate, .contains, .unique, .zip .char].map fun o => .list .byte o) ++
   (ioOps.map fun (_, o) => .io o) ++
   ([false, true].flatMap fun ro => [Prim.io (.readText ro), .io (.readBytes ro), .io (.list ro),
-    .io (.entries ro), .io (.«exists» ro), .io (.within ro)]) ++ [.not, .eq (.tuple [.int, .char]), .map .int .text (.lit 2)]
+    .io (.entries ro), .io (.«exists» ro), .io (.within ro)]) ++
+  [.not, .eq (.tuple [.int, .char]), .map .int .text (.lit 2),
+   .structural (.map .text (.list .byte)), .structural (.fn [.cap .files] .unit)]
 
 #guard primitives.all fun p =>
   match parseDocument (document (primOut p)) >>= primIn with

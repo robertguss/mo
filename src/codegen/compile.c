@@ -1361,6 +1361,8 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
             variables[0] = p->as.set.t;
         else if (p->tag == MO_CORE_PRIM_EQ)
             variables[0] = p->as.eq;
+        else if (p->tag == MO_CORE_PRIM_STRUCTURAL)
+            variables[0] = p->as.structural;
         n->signature = operation_signature(c, &n->operation, variables);
         if (n->signature == MO_NO_INDEX)
             return NULL;

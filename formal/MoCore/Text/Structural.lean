@@ -7,6 +7,17 @@ namespace MoCore.Text
 def delimited (a b : String) (ss : List String) : String :=
   a ++ String.intercalate ", " ss ++ b
 
+/-- Reference 9.2 escapes C0/C1 controls and interpolation, with the value's delimiter. -/
+def referenceQuote (s : String) (delimiter : Char) : String :=
+  let contents := String.join (s.toList.map fun c =>
+    match c with
+    | '\\' => "\\\\" | '\n' => "\\n" | '\r' => "\\r" | '\t' => "\\t"
+    | c => if c == delimiter then "\\" ++ String.singleton c
+      else if c.toNat < 32 || (127 ≤ c.toNat && c.toNat ≤ 159) then
+        "\\u{" ++ hex c.toNat ++ "}"
+      else String.singleton c)
+  String.singleton delimiter ++ contents.replace "#{" "\\#{" ++ String.singleton delimiter
+
 /-- Structural, not customized `to_text`. Reports retain their bit-level Float
 transport; referenceText selects reference 9.2's user-visible form. -/
 partial def structural (p : Program) (t : Ty) (v : Value) (nested : Bool := false)
@@ -17,11 +28,12 @@ partial def structural (p : Program) (t : Ty) (v : Value) (nested : Bool := fals
   | .float, .float b => pure (if referenceText then floatToText (Float.ofBits b) else "0x" ++ hex b.toNat 16)
   | .bool, .bool b => pure (if b then "true" else "false")
   | .text, .text s => pure (if nested then
-      if referenceText then (quote s).replace "#{" "\\#{" else quote s
+      if referenceText then referenceQuote s '"' else quote s
       else s)
   | .char, .char c =>
       let s := String.singleton c
-      pure (if nested then "'" ++ (if c == '\'' then "\\'" else if referenceText && c == '"' then "\"" else
+      pure (if nested && referenceText then referenceQuote s '\'' else if nested then
+        "'" ++ (if c == '\'' then "\\'" else
         (quote s).drop 1 |>.toString |>.dropEnd 1 |>.toString) ++ "'" else s)
   | .bytes, .bytes bs => pure (delimited "bytes[" "]" (bs.map toString))
   | .unit, .unit => pure "Unit"
@@ -48,7 +60,11 @@ partial def structural (p : Program) (t : Ty) (v : Value) (nested : Bool := fals
   | .fn _ _, .closure .. => pure "<function>"
   | .cap c, .cap d root fake =>
       if c != d then throw "capability type mismatch"
-      pure (valueOut (.cap c root fake)).render
+      pure (if referenceText then match c with
+        | .args => "<Args>" | .env => "<Env>" | .console => "<Console>"
+        | .files => "<Files>" | .readFiles => "<ReadFiles>"
+        | .clock => "<Clock>" | .random => "<Random>"
+        else (valueOut (.cap c root fake)).render)
   | _, _ => throw "value does not match result type"
 where
   tNameFields := match t with | .data _ | .fileError | .entry => true | _ => false

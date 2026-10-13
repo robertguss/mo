@@ -1985,9 +1985,10 @@ refuses malformed fake file keys at construction. The next minor version is
    checks every runtime primitive and arithmetic instruction's direct or
    composite route against both C and Lean codec tables. Aliases cover
    existing spelling differences and List.sum/comparisons are recipes.
-   Only TEXT_QUOTED, CHAR_QUOTED and TEXT_STRUCTURAL are explicitly exempt:
-   these existing lowering-generated text helpers remain unmodeled (3.4),
-   outside this numeric completion. Unknown primitives have no exemption.
+   TEXT_QUOTED and CHAR_QUOTED remain explicitly exempt (3.4), outside this
+   numeric completion. Core text 0.8 adds `(structural T)` for TEXT_STRUCTURAL;
+   it uses the reference structural observer, not user `to_text`.
+   Unknown primitives have no exemption.
    Regression mutations remove C-only, Lean-only and both operations.
 8. **Proof boundary.** Signatures, range checks and type safety are proved
    for every new operation; numerical functional correctness is tested,

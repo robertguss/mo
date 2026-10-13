@@ -174,7 +174,7 @@ def OutcomeOk (P : Program) (Δ : JCtx) (τ : Ty) : Outcome → Prop
 /-- A primitive respects its signature: given arguments of its argument types,
 it returns a value of its result type, or stops. -/
 def PrimSafe (P : Program) (p : Prim) : Prop :=
-  ∀ vs w, ValsTy P vs p.sig.1 → OutcomeOk P [] p.sig.2 (Prim.eval p vs w)
+  ∀ vs w, ValsTy P vs p.sig.1 → OutcomeOk P [] p.sig.2 (Prim.eval p vs w P)
 
 /-- Every primitive respects its signature. -/
 def PrimsSafe (P : Program) : Prop := ∀ p, PrimSafe P p

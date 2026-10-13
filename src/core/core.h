@@ -221,8 +221,10 @@ enum mo_core_prim_tag {
     MO_CORE_PRIM_LIST,
     MO_CORE_PRIM_MAP,
     MO_CORE_PRIM_SET,
-    MO_CORE_PRIM_EQ,
-    MO_CORE_PRIM_IO
+#define MO_CORE_TYPED_TAG(tag, member, text) MO_CORE_PRIM_##tag,
+    MO_CORE_TYPED_OPS(MO_CORE_TYPED_TAG)
+#undef MO_CORE_TYPED_TAG
+        MO_CORE_PRIM_IO
 };
 struct mo_core_prim {
     enum mo_core_prim_tag tag;
@@ -255,6 +257,7 @@ struct mo_core_prim {
             enum mo_core_set_op op;
         } set;
         mo_core_ty eq;
+        mo_core_ty structural;
         struct mo_core_io_op io;
     } as;
 };
