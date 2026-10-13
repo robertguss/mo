@@ -6,6 +6,7 @@
 #include "base/codes.h"
 #include "bytecode/bytecode.h"
 #include "codegen/abilities.h"
+#include "codegen/control.h"
 #include "codegen/index.h"
 #include "codegen/operations.h"
 #include "heap/types.h"
@@ -2957,6 +2958,9 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
         }
         if (c->error != 0)
             return false;
+        if (!mo_codegen_prune(&c->arena, fun, d))
+            return problem(c, MO_CODE_CODEGEN_MEMORY,
+                           "No memory for code generation's reachability pass.");
     }
     const struct mo_bytecode file = {.string_count = c->strings.count,
                                      .strings = c->strings.items,

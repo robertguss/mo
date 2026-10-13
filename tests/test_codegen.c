@@ -1747,6 +1747,19 @@ static void test_join(void) {
         }
     }
     mo_arena_free(&arena);
+    /* Self-jumps alone do not make a join reachable from the function entry. */
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    b = compile(&arena, "(Program () ((FunDecl \"start\" () (int) "
+                        "(join \"unused\" ((\"x\" (int))) (jump \"unused\" ((var \"x\"))) "
+                        "(lit (int 23))) \"M\" (function) 0)) () \"start\" (noSource))");
+    if (b != NULL) {
+        const struct mo_bytecode_function *f = &b->functions[0];
+        const uint32_t *ret = instruction(f, MO_OP_RET, 0);
+        CHECK(ret != NULL);
+        if (ret != NULL)
+            CHECK(ret == f->code + f->code_count - 2);
+    }
+    mo_arena_free(&arena);
 }
 int main(int argc, char **argv) {
     if (argc > 1)
