@@ -92,6 +92,11 @@
     X(64, DATA_PRIVATE, "10.2")                                                                    \
     X(65, FIELD_MISSING, "4.1")                                                                    \
     X(66, DATA_PARAMETERS, "9.1")                                                                  \
+    X(67, PATTERN_FIELDS, "7.3")                                                                   \
+    X(68, CASE_CATCH_ALL, "7.2")                                                                   \
+    X(69, PATTERN_ALTERNATIVES, "7.2")                                                             \
+    X(70, CASE_INCOMPLETE, "7.2")                                                                  \
+    X(71, PATTERN_CONSTRUCTOR, "7.3")                                                              \
     X(72, NOT_FUNCTION, "5.2")                                                                     \
     X(73, NOT_ITERABLE, "7.5")                                                                     \
     X(74, CONDITION_TYPE, "3.1")                                                                   \

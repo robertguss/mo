@@ -126,7 +126,8 @@ struct mo_data_signature {
     const struct mo_source_type *type; /* the record or owning choice */
     const struct mo_syntax *parameters;
     uint32_t count;
-    struct mo_field_signature *fields; /* sorted by name; indices keep declaration order */
+    struct mo_field_signature *fields;          /* sorted by name; indices keep declaration order */
+    const struct mo_field_signature **by_index; /* declaration order */
     bool unnamed;
 };
 
@@ -149,9 +150,10 @@ mo_prepare_signatures(struct mo_arena *arena, const struct mo_module_set *set,
 struct mo_inferred_expression {
     const struct mo_syntax *syntax;
     const struct mo_source_type *type;
-    const struct mo_syntax *binding; /* binder/parameter; assignment's original var binder */
+    const struct mo_syntax *binding;        /* binder/parameter; assignment's original var binder */
     const struct mo_symbol *symbol;         /* resolved function or constructor, otherwise NULL */
     const struct mo_field_signature *field; /* selected field or supplied named argument */
+    const char *builtin_case;               /* built-in constructor, otherwise NULL */
     bool never; /* every path leaves the current function or loop, or stops */
 };
 

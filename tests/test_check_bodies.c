@@ -88,6 +88,100 @@ static void record_fields(void) {
     finish(&f);
 }
 
+static void field_assignment(void) {
+    struct fixture f;
+    init(&f,
+         "module Main\nstruct Point\nx: Int\nend\nstruct Box\npoint: Point\nend\n"
+         "fn run() : Int\nvar box = Box(point: Point(x: 1))\n"
+         "box.point.x += 4\nbox.point.x = 9\nbox.point.x\nend\n",
+         NULL);
+    struct mo_inferred_body *out = body(&f, "run");
+    CHECK(out != NULL && f.diags.count == 0);
+    if (out != NULL)
+        CHECK(strcmp(out->items[out->count - 1].type->name, "Int") == 0);
+    finish(&f);
+}
+
+static void choice_patterns(void) {
+    struct fixture f;
+    init(&f,
+         "module Main\nenum Shape\nDot\nCircle(Decimal)\n"
+         "Rectangle(width: Decimal, height: Decimal)\nend\n"
+         "fn run(shape: Shape) : Decimal\ncase shape\nDot: 0\nCircle(r): 3 * r * r\n"
+         "Rectangle(height: h, width: w): w * h\nend\nend\n",
+         NULL);
+    struct mo_inferred_body *out = body(&f, "run");
+    CHECK(out != NULL && f.diags.count == 0);
+    if (out != NULL)
+        CHECK(strcmp(out->items[out->count - 1].type->name, "Decimal") == 0);
+    finish(&f);
+}
+
+static void pattern_scopes(void) {
+    struct fixture f;
+    init(&f,
+         "module Main\nenum Reply\nYes(Int)\nNo\nend\n"
+         "fn run(first: Reply, second: Reply) : Int\nvar total = 0\n"
+         "if first is Yes(n) and n > 0\ntotal += n\nend\n"
+         "if second is Yes(n)\ntotal += n\nend\n"
+         "assert first is Yes(m)\ntotal += m\n"
+         "assert second is Yes(k) implies k > 0\ntotal\nend\n",
+         NULL);
+    CHECK(body(&f, "run") != NULL && f.diags.count == 0);
+    finish(&f);
+}
+
+static void list_coverage(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn run(xs: List(Int)) : Int\ncase xs\n[]: 0\n[x]: x\nend\nend\n", NULL);
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CASE_INCOMPLETE);
+    if (f.diags.count == 1)
+        CHECK(strstr(f.diags.items[0].message, "missing: [_, _, .._]") != NULL);
+    finish(&f);
+}
+
+static void builtin_choices(void) {
+    struct fixture f;
+    init(&f,
+         "module Main\nfn run(flag: Bool) : Int\n"
+         "value = if flag: Some(3) else: None\ncase value\n"
+         "Some(n) if n > 0: n\nSome(_): 0\nNone: -1\nend\nend\n"
+         "fn nested() : Result(Option(Int), Text)\nOk(Some(1))\nend\n",
+         NULL);
+    CHECK(body(&f, "run") != NULL && f.diags.count == 0);
+    CHECK(body(&f, "nested") != NULL && f.diags.count == 0);
+    finish(&f);
+}
+
+static void byte_coverage(void) {
+    for (uint32_t count = 255; count <= 256; count++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, 16384);
+        MO_ASSERT(mo_buffer_append_text(
+            &source, "module Main\nfn run(value: Byte) : Int\ncase value\n0x00: 0\n"));
+        for (uint32_t i = 0; i < count; i++) {
+            if (i == 255)
+                MO_ASSERT(mo_buffer_append_text(&source, "0xff"));
+            else
+                MO_ASSERT(mo_buffer_append_uint(&source, i));
+            MO_ASSERT(mo_buffer_append_text(&source, ": 0\n"));
+        }
+        MO_ASSERT(mo_buffer_append_text(&source, "end\nend\n"));
+        MO_ASSERT(mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init(&f, (const char *)source.bytes, NULL);
+        CHECK((body(&f, "run") != NULL) == (count == 256));
+        if (count == 255) {
+            CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CASE_INCOMPLETE);
+            if (f.diags.count == 1)
+                CHECK(strstr(f.diags.items[0].message, "missing: 255") != NULL);
+        }
+        finish(&f);
+        mo_buffer_free(&source);
+    }
+}
+
 static void tuple_position(void) {
     struct fixture f;
     init(&f, "module Main\nfn run(pair: (Int, Text)) : Text\npair.1\nend\n", NULL);
@@ -735,6 +829,12 @@ static void work_limits(void) {
 
 int main(void) {
     record_fields();
+    field_assignment();
+    choice_patterns();
+    pattern_scopes();
+    list_coverage();
+    builtin_choices();
+    byte_coverage();
     question_name();
     tuple_position();
     inferred_uses();

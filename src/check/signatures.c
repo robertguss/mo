@@ -1,10 +1,48 @@
 #include "check/check.h"
+#include "check/data.h"
 
 #include "base/codes.h"
 #include "base/limits.h"
 
 #include <stdlib.h>
 #include <string.h>
+
+static const struct mo_builtin_case builtin_cases[] = {
+    {"Unit", "Unit", 6, 6, 1, 0, 0, 0, {NULL, NULL}},
+    {"None", "Option", 8, 8, 2, 1, 0, 0, {NULL, NULL}},
+    {"Some", "Option", 9, 8, 2, 1, 1, 0, {NULL, NULL}},
+    {"Ok", "Result", 10, 10, 2, 2, 1, 0, {NULL, NULL}},
+    {"Error", "Result", 11, 10, 2, 2, 1, 1, {NULL, NULL}},
+    {"Less", "Ordering", 12, 12, 3, 0, 0, 0, {NULL, NULL}},
+    {"Equal", "Ordering", 13, 12, 3, 0, 0, 0, {NULL, NULL}},
+    {"Greater", "Ordering", 14, 12, 3, 0, 0, 0, {NULL, NULL}},
+    {"File", "EntryKind", 15, 15, 4, 0, 0, 0, {NULL, NULL}},
+    {"Folder", "EntryKind", 16, 15, 4, 0, 0, 0, {NULL, NULL}},
+    {"Link", "EntryKind", 17, 15, 4, 0, 0, 0, {NULL, NULL}},
+    {"Other", "EntryKind", 18, 15, 4, 0, 0, 0, {NULL, NULL}},
+    {"NotFound", "FileError", 19, 19, 4, 0, 1, 0, {"path", NULL}},
+    {"NotAllowed", "FileError", 20, 19, 4, 0, 1, 0, {"path", NULL}},
+    {"NotText", "FileError", 21, 19, 4, 0, 1, 0, {"path", NULL}},
+    {"Failed", "FileError", 22, 19, 4, 0, 2, 0, {"path", "reason"}},
+};
+
+const struct mo_builtin_case *mo_builtin_case_by_name(const struct mo_syntax *name) {
+    if (name->kind != MO_S_CAPNAME)
+        return NULL;
+    size_t length = name->span.end - name->span.start;
+    for (size_t i = 0; i < sizeof(builtin_cases) / sizeof(builtin_cases[0]); i++)
+        if (strlen(builtin_cases[i].name) == length &&
+            memcmp(name->text, builtin_cases[i].name, length) == 0)
+            return &builtin_cases[i];
+    return NULL;
+}
+
+const struct mo_builtin_case *mo_builtin_case_by_key(uintptr_t key) {
+    for (size_t i = 0; i < sizeof(builtin_cases) / sizeof(builtin_cases[0]); i++)
+        if (builtin_cases[i].key == key)
+            return &builtin_cases[i];
+    return NULL;
+}
 
 struct type_entry {
     struct mo_source_type type;
@@ -443,6 +481,12 @@ static MO_MUST_USE bool data_signature(struct preparation *p, const struct mo_sy
                                "(reference 4).");
         }
     }
+    out->by_index =
+        allocate(p, count, sizeof(*out->by_index), _Alignof(const struct mo_field_signature *));
+    if (out->by_index == NULL)
+        return false;
+    for (uint32_t i = 0; i < count; i++)
+        out->by_index[items[i].index] = &items[i];
     return true;
 }
 
