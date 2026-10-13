@@ -77,7 +77,6 @@ MO_MUST_USE struct mo_layout_lookup *mo_heap_layout(struct mo_heap *process, uin
                                                     uint32_t first, uint32_t second);
 MO_MUST_USE bool mo_heap_abilities(struct mo_heap_image *image);
 
-MO_MUST_USE uint64_t mo_heap_hash(const uint64_t key[2], const void *bytes, size_t length);
 MO_MUST_USE uint64_t mo_heap_mix(const uint64_t key[2], uint64_t left, uint64_t right);
 MO_MUST_USE bool mo_value_index_hash(struct mo_heap *process, uint32_t type, struct mo_cell value,
                                      uint64_t *out);
