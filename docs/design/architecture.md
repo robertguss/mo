@@ -1357,10 +1357,10 @@ start. Rendering never changes files. Unavailable locations display
   last instants of the years 1 and 9999, and the epoch; for `Duration`, 0 and
   the extremes. The boundary inputs are the combinations of the parameters'
   boundaries, up to a limit.
-- **Random inputs** follow, from a generator seeded by the function's full
-  name, so every run of `mo test` tries the same inputs. Sizes grow as the run
-  goes on. The generator hashes with its own fixed key, not the VM's, which
-  changes from run to run (`bytecode.md` section 8).
+- **Random inputs** follow, from a generator seeded by the promise's full
+  name, not its subject's, so every run of `mo test` tries the same inputs.
+  Sizes grow as the run goes on. The generator hashes with its own fixed key,
+  not the VM's, which changes from run to run (`bytecode.md` section 8).
 - **Hidden types.** A type exposed without its insides is built only through
   calls to its module's exposed functions that return it, in sequences of up
   to four calls from generated arguments. A builder that returns
@@ -1385,6 +1385,77 @@ start. Rendering never changes files. Unavailable locations display
   fixes in words, since only the program's author knows which is right:
   return a failure for such inputs, or take a type whose module keeps its
   values in range (D234).
+
+**The input library, part 1.** `tools/inputs.h` takes the sealed image type
+table and parameter indices. It constructs owned cells through `heap`'s public
+builders, without calls or timing. The caller retains inputs while testing
+and supplies borrowed current inputs to the shrinker. Shrink candidates are
+deep copies in the destination heap, which may be a fresh process's heap;
+no reference into the old process is retained. The caller tests a candidate,
+then accepts it as the new failing input or drops it. The shrink call budget
+counts emitted candidates. Numeric shrinking tries zero first. Decimal then
+halves the coefficient's decimal digit count; BigInt shifts away half its
+magnitude bytes; Float reduces its exponent before its ordered magnitude bits.
+Integer, Decimal and BigInt subtract distances `abs(x) / 2^k` toward zero
+for increasing `k`, ending at one unit; Float uses the same distances on its
+exponent and then magnitude bits, ending at one ULP. Acceptance resumes at
+that node and distance within a pass; structural edits restart at the accepted
+node. A pass that accepted anything starts again at node zero with fresh
+distances, because changes to later nodes can make earlier rejections obsolete.
+Shrinking stops when a pass accepts nothing or the call budget runs out.
+Equal scalar candidates are skipped.
+The driver, not this library, decides whether a stopped call is a bug.
+Extreme detection walks a parameter and returns its first Int, Decimal, Time
+or Duration minimum/maximum, including Range's Int endpoints, start before
+end; overrides are opaque.
+
+Boundary order starts with the base tuple, then varies each parameter alone
+in declaration order, so a capped product does not hide later boundaries of
+early parameters. The remaining Cartesian tuples follow, last parameter
+fastest, without repeating the base or one-parameter tuples. A cap below
+`1 + sum(boundaries_per_parameter - 1)` truncates even this initial coverage.
+Records and tuples start with minimum fields,
+then vary one field at a time. Choices try every case with minimum fields,
+then field variations. Minimum inhabitants use the shallowest terminating
+choice case. Recursive back-edges add one non-minimum shell rather than an
+infinite expansion. Collections try zero, one and three boundary-derived
+elements; map/set deduplication can leave fewer distinct entries. Long Text
+is 1,024 ASCII `x` bytes; its short non-ASCII boundary is `é`. Time starts
+with the epoch, then the first and last microseconds of year 1 and year 9999.
+Other scalar boundaries include Bool's two values, Byte's 0/1/255, Char's
+surrogate-adjacent endpoints, Float's signed zeros, finite extremes,
+infinities, NaN and smallest subnormals, Range's empty/forward/reversed bounds,
+Bytes' empty/one-byte/1,024-byte values, and BigInt's 0/±1/±128-byte magnitudes.
+
+SipHash-1-3 in `base/hash.h` hashes the full name with the public fixed key
+`6d6f2d70726f6d69:73652d696e707574`. The same key hashes the little-endian
+16-byte pair of name seed and ordinal into each SplitMix64 starting state;
+adjacent inputs do not share shifted portions of a stream. Random sizes
+increase every four inputs, up to the collection-size budget. Shape and blob
+size divide by the number of children plus one on each descent, bounding
+nested branching. Immediate integer magnitudes still grow with the trial's
+global size. Random Decimals choose decimal digits and a fractional scale
+from 0 through 18, with overflow-checked growth into the representation's
+range; they do not stay near zero as raw small coefficients would.
+An allocation or generation-limit refusal preserves outputs and the ordinal;
+the caller may retry or explicitly skip it without changing later streams.
+Empty parameter lists have one input. Explicit-stack walks are bounded by
+`MO_LIMIT_INPUT_*`, with smaller caller budgets: defaults are depth 64,
+4,096 nodes, 1,024 entries per collection, 64 KiB total blob payload and
+1 Mi work units per input. Preparation has a separate 64 MiB arena and
+64 Mi work budget. Generic table construction reserves conservative work
+proportional to this table's child nodes and bytes for hashing and bounded
+paired collision/equality walks before entering the heap builder, not the
+whole input's cumulative size once per entry. Uninhabited root types have
+their own refusal. Uninhabitable or too-deep choice cases are excluded;
+collections with uninhabitable elements still generate empty values.
+Functions/env/capabilities without
+overrides, missing layouts and non-hashable keys are unsupported. Exact-index
+factory overrides are the future hidden-builder, closure and fake-capability seam; their trusted
+callbacks subtract child nodes, bytes and work from the same remaining budget
+and rebuild foreign cells instead of retaining them. Hidden visibility and
+the choice of factories remain with the driver. None of these later builders
+or the `mo_call` driver is implemented in part 1.
 
 ### 10.2 JSON output
 

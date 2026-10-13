@@ -1,5 +1,7 @@
 #include "heap/internal.h"
 
+#include "base/hash.h"
+
 #include <math.h>
 #include <string.h>
 
@@ -48,12 +50,12 @@ static MO_MUST_USE bool atomic_hash(struct mo_heap *process, uint32_t type, stru
     if (kind == MO_TYPE_TEXT || kind == MO_TYPE_BYTES || kind == MO_TYPE_BIGINT) {
         struct mo_allocation *a = mo_heap_allocation(mo_cell_get_ref(value));
         MO_ASSERT(!a->deep_immortal);
-        hash = mo_heap_mix(key, hash, mo_heap_hash(key, a->cells, a->length));
+        hash = mo_heap_mix(key, hash, mo_hash(key, a->cells, a->length));
         hash = mo_heap_mix(key, hash, kind == MO_TYPE_BIGINT ? mo_bigint_sign(a) : 0);
         a->hash = hash;
         a->hash_valid = true;
     } else {
-        hash = mo_heap_mix(key, hash, mo_heap_hash(key, value.bytes, 16));
+        hash = mo_heap_mix(key, hash, mo_hash(key, value.bytes, 16));
     }
     *out = hash;
     return true;
@@ -443,11 +445,10 @@ static MO_MUST_USE bool compare_values(struct mo_heap *process, uint32_t type, s
             f->memoizable = (left_object != NULL && left_object->count != 1) ||
                             (right_object != NULL && right_object->count != 1);
             if (f->memoizable) {
-                f->memo_hash =
-                    mo_heap_mix(process->hash_key, f->type,
-                                mo_heap_mix(process->hash_key,
-                                            mo_heap_hash(process->hash_key, f->left.bytes, 16),
-                                            mo_heap_hash(process->hash_key, f->right.bytes, 16)));
+                f->memo_hash = mo_heap_mix(
+                    process->hash_key, f->type,
+                    mo_heap_mix(process->hash_key, mo_hash(process->hash_key, f->left.bytes, 16),
+                                mo_hash(process->hash_key, f->right.bytes, 16)));
                 if (!memo_room(&memo_scratch, &memo)) {
                     ok = false;
                     break;
