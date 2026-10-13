@@ -1555,6 +1555,17 @@ limits the subsequent main. VM stack/depth/heap limits apply too. Diagnostic
 storage or process allocation failure halts anchor checking; semantic failures
 continue through the remaining anchors while diagnostics fit.
 
+**Source constants.** Tools consume the checker's closed, dependency-ordered
+constant carrier without reconstructing its dependencies. Image initialization
+evaluates every constant, including unused ones, before anchors or main can
+read globals (reference 10.4). Without anchors, plain `check` and both emissions
+validate initializer code but do not execute it. `run` initializes its image
+before starting main; an initializer stop is a runtime bug, exits 70 and never
+runs main. With anchors, initialization uses the same bounded certification
+path for checking, running and both emissions: a stop or instruction ceiling
+reports E1405 inability to check, not a satisfied forbids. It emits no artifact
+and runs neither anchors nor main. No new tools error code is needed.
+
 `test` (including `--list`) and `fix` still return E1400, "this build cannot
 ... yet". `test` checks the source's typing first; `fix` rewrites nothing.
 Executing examples/tests and generated-input promises is a separate tools stage;

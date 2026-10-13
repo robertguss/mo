@@ -274,6 +274,80 @@ def anchors(binary):
     print(f"{binary}: real source anchor truth, stops, bounds and nonexecution passed")
 
 
+def constants(binary):
+    # Forward diamond dependencies and a generic call must initialize before
+    # anchors read them. False examples/tests remain observations, not anchors.
+    source = ('module Main\nanswer = twice(left) + right\nright = second()\n'
+              'left = base + 2\nbase = 11\nfn second() : Int\nbase * 2\nend\n'
+              'fn twice(n: T) : T where T: Number, T: Equal\n'
+              'promise "doubles"\nresult == n + n\n'
+              'allows result: 26, n: left\nforbids n: left, result: 25\nend\n'
+              'examples\nfalse\nend\nn + n\nend\n'
+              'fn main(console: Console) : Int\nconsole.print(answer.to_text)\nanswer\nend\n'
+              'test "not run by check or run"\nassert false\nend\n')
+    anchor = ('fn identity(n: Int) : Int\npromise "identity"\nresult == n\n'
+              'allows n: 3, result: 3\nforbids result: 4, n: 3\nend\nn\nend\n')
+    with tempfile.TemporaryDirectory(prefix="mo-constants-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        path.write_text(source)
+        result = run(binary, ["check", str(path)], 0)
+        assert not result.stdout and not result.stderr
+        records(run(binary, ["check", "--json", str(path)], 0), "check")
+        result = run(binary, ["run", str(path)], 48)
+        assert result.stdout == b"48\n" and not result.stderr
+        for kind in ("core", "bytecode"):
+            result = run(binary, ["check", f"--emit={kind}", str(path)], 0)
+            assert result.stdout and not result.stderr
+            emitted = pathlib.Path(directory) / f"constants.{kind}"
+            emitted.write_bytes(result.stdout)
+            result = run(binary.parent / "tests/test_cli.test",
+                         [f"--roundtrip-{kind}", str(emitted)], 0)
+            assert not result.stdout and not result.stderr
+        path.write_text(source.replace("result: 26", "result: 27"))
+        items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+        assert items[1]["code"] == "E1405" and items[-1]["errors"] == 1
+        assert items[1]["primary"]["line"] == 12 and items[1]["secondary"][0]["line"] == 11
+        result = run(binary, ["run", str(path)], 1)
+        assert not result.stdout and b"an allows anchor was rejected" in result.stderr
+
+        # Even unused constants initialize before main. Without anchors, check
+        # and emission certify code but do not execute its initializers.
+        main = ('fn main(console: Console) : Int\n'
+                'console.print("main must not run")\n37\nend\n')
+        for initializer, functions, reason in (
+            ("1 / 0", "", "dividing by zero"),
+            ("spin()", "fn spin() : Int\nwhile true\nend\n0\nend\n",
+             "instruction budget exhausted"),
+        ):
+            base = "module Main\nunused = " + initializer + "\n" + functions + main
+            path.write_text(base)
+            result = run(binary, ["check", str(path)], 0)
+            assert not result.stdout and not result.stderr
+            records(run(binary, ["check", "--json", str(path)], 0), "check")
+            for kind in ("core", "bytecode"):
+                result = run(binary, ["check", f"--emit={kind}", str(path)], 0)
+                assert result.stdout and not result.stderr
+            if not functions:
+                result = run(binary, ["run", str(path)], 70)
+                assert not result.stdout and reason.encode() in result.stderr
+                assert b"Main.unused.init" in result.stderr and b"Main.main" not in result.stderr
+
+            # Initialization failure precedes both opposite expectations. It
+            # is inability to check, never rejection that satisfies forbids.
+            path.write_text(base + anchor)
+            items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+            assert items[-1]["errors"] == 1 and items[-1]["dropped"] == 0
+            diag = items[1]
+            assert diag["code"] == "E1405" and diag["headline"] == "an anchor could not be checked"
+            assert diag["primary"]["file"] is None and not diag["secondary"]
+            assert reason in diag["primary"]["label"] and "Main.unused.init" in diag["primary"]["label"]
+            for args in (["run"], ["check", "--emit=core"], ["check", "--emit=bytecode"]):
+                result = run(binary, [*args, str(path)], 1)
+                assert not result.stdout and b"E1405" in result.stderr
+                assert reason.encode() in result.stderr and b"Main.main" not in result.stderr
+    print(f"{binary}: source constant initialization, generic anchors and refusal boundaries passed")
+
+
 def filenames(binary):
     # The operating system accepts byte paths. Do not repair them into Text or
     # confuse filename indices with ordinary string-table indices.
@@ -371,6 +445,7 @@ def check(binary):
     faults = binary.parent / "tests/test_cli_faults.test"
     runner(binary)
     anchors(binary)
+    constants(binary)
     filenames(binary)
     items = records(run(faults, ["--json"], 1), "check")
     assert items[1]["code"] == "E1401" and items[-1]["dropped"] == 0
@@ -579,10 +654,10 @@ def check(binary):
                 expected = (b'module Main\na = 0' + b' ' * 51 + b'#' + b'c' * length +
                             b'\n' + b'b' * 50 + b' = 0  # short\n')
                 assert not result.stderr and path.read_bytes() == expected
-                # Constant checking is explicitly staged by the whole checker;
-                # formatting may not turn that into a successful certificate.
+                # A formatter fragment still has no entry. Supporting its
+                # constants must not silently waive whole-check's main rule.
                 result = run(binary, ["check", str(path)], 1)
-                assert b'E1103' in result.stderr
+                assert b'E0079' in result.stderr
         # Rename is observable: an existing reader and hard link keep the old
         # complete file, while the requested path gets the complete new file.
         source = b'module Main\n\n\nfn f()\nvar x=1\nx=x+2\nx\nend\n'
