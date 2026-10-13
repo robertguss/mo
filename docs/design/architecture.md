@@ -1629,21 +1629,40 @@ tail)). The original list remains usable. Both expansions use only existing
 instruction/primitive rows, with their declared ownership, and use the Core
 operation's span throughout. Arm-local reference registers are normalized at
 the uncons merge just like explicit Core branches.
+This staged expansion still copies every tail, including when the input list
+is dead afterward: walking a list of length \(n\) with repeated uncons costs
+\(O(n^2)\). Part 8's last-use transfer and a constant-time single-holder
+List.drop in the runtime are both required: the current single-holder slice
+still shifts the retained cells. A still-live input needs its distinct owned
+copy to preserve the original list.
 
 BigInt decimal literals become canonical little-endian magnitudes and signs;
-zero has no magnitude bytes. Constant interning includes type, sign and
-magnitude. Conversion groups nine decimal digits, combines them with powers
-of 10^9 in a balanced tree, and multiplies with Karatsuba using a 24-frame
-explicit stack. For n decimal digits, work is subquadratic, \(O(n^{\log_2 3})\),
+zero has no magnitude bytes. Canonical signed decimal digits are interned
+before conversion, so repeated literals pay once. The emitted constant is
+interned by type, sign and magnitude. Conversion groups nine decimal digits,
+combines them with powers of 10^9 in a balanced tree, and multiplies with
+Karatsuba using a 24-frame explicit stack. For n decimal digits, work is
+subquadratic, \(O(n^{\log_2 3})\),
 not repeated multiplication by ten. Scratch uses nine padded limb arrays of
-i128 coefficients, at most 144 MiB plus an arena header under the Core text
-limit, and is freed after each literal. The
-program-wide MO_LIMIT_CODEGEN_BIGINT_WORK (2^26) charges digit reads, limb
-operations and coefficient products. Exceeding it gives E1202 at the literal
+i128 coefficients and is freed after each literal. The program-wide
+MO_LIMIT_CODEGEN_BIGINT_WORK (2^26) charges digit reads, limb operations and
+coefficient products. Fixed coefficient work is predicted before allocating
+scratch, from the padded chunk count and multiplication costs
+\(M(n)=2n+n^2\) for leaf sizes up to 16 and \(M(n)=5n+3M(n/2)\) above that.
+The budget admits at most 147,456 decimal digits and 2.25 MiB of conversion
+scratch plus an arena header, rather than allocating the wire limit's 144 MiB
+for a literal certain to exceed the budget. Magnitude-dependent output work
+remains exact. Exceeding the budget gives E1202 at the literal
 span (or declaration fallback), leaves output empty and is a resource refusal,
 not a compiler bug. CI compares generated magnitudes/signs with Python across
 limb, nine-digit group and multiplication boundaries; it also requires every
 fixture and supported generated program to compile deterministically and verify.
+
+Core's metadata validator follows Lean's transport-shape contract. Codegen
+additionally checks that a linked promise's parameters match its subject's
+inputs followed by its result. Incompatible metadata cannot come from source
+lowering and is refused with E1201 before the verifying writer, not reported
+as compiler-produced invalid bytecode (E1057).
 
 FileError has the exact ordered cases and named Text fields of bytecode 9.
 Entry is the builtin record `(name: Text, kind: EntryKind)`, with its record
