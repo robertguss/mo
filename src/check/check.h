@@ -584,7 +584,10 @@ struct mo_program {
  * Tests are zero-parameter Unit bodies in their module, with decoded wording.
  * Anchors check names, completeness, typing and generic requirements. Their
  * arguments/abilities specialize the promise's scoped parameters, not a new scope.
- * Valid unfinished entry forms, imports, constants, spec-only capability
+ * Constants infer closed types from their initializers, independently of their
+ * uses, and are ordered through checked reads/calls/callbacks. Cycles are E0089;
+ * unresolved indirect-call or abstract callback dependencies remain E1103.
+ * Valid unfinished entry forms, imports, spec-only capability
  * operations and unfinished body forms return E1103.
  * Spec checking checks anchor typing, completeness and links but executes no source code:
  * tools compile/run anchors to verify their allows/forbids expectations before accepting a

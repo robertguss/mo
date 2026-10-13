@@ -148,6 +148,7 @@ struct inference {
     const struct mo_module_interfaces *interfaces;
     const struct mo_signatures *signatures;
     const struct mo_function_signature *function;
+    struct mo_constant_context *constants;
     struct mo_ability_context abilities;
     struct name_slot *names;
     struct local *locals, *all_locals;
@@ -1222,7 +1223,8 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
         (void)reported;
         return (struct value){0};
     }
-    if (s->declaration->kind != MO_S_FN) {
+    bool constant = s->declaration->kind == MO_S_CONST;
+    if (s->declaration->kind != MO_S_FN && !constant) {
         bool reported = unfinished(p);
         (void)reported;
         return (struct value){0};
@@ -1241,6 +1243,25 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
             return (struct value){0};
         }
         entry->module_use = node;
+    }
+    if (constant) {
+        if (p->constants == NULL) {
+            bool reported = unfinished(p);
+            (void)reported;
+            return (struct value){0};
+        }
+        struct mo_checked_constant *value = mo_constant_by_symbol(p->constants, s);
+        if (value->type == NULL) {
+            uint32_t index = (uint32_t)(value - p->constants->items);
+            p->failed = p->fatal = p->unavailable = true;
+            if (!p->constants->done[index]) {
+                p->constants->pending = value;
+                p->constants->pending_span = node->span;
+            }
+            return (struct value){0};
+        }
+        return graph(p, (struct value){.type = annotation(p, value->type, NULL, 0), .symbol = s},
+                     0);
     }
     if (count > 1)
         return deferred_function(p, node, s, count);
@@ -1906,6 +1927,15 @@ static MO_MUST_USE struct value propagate(struct inference *p, struct value inpu
                                           struct term *expected) {
     if (input.type == NULL)
         return input;
+    if (p->function->function->declaration->kind == MO_S_CONST && p->lambda == 0) {
+        bool reported = problem(p, MO_CODE_TRY_RESULT, p->span,
+                                "try has no enclosing function returning Option or Result",
+                                "try passes a failure upwards from the nearest function or "
+                                "anonymous function (reference 8.3).",
+                                NULL);
+        (void)reported;
+        return (struct value){0};
+    }
     struct value out = graph(
         p, (struct value){.type = expected == NULL ? fresh(p, 0) : expected, .never = input.never},
         1);
@@ -4358,7 +4388,7 @@ static MO_MUST_USE bool anchor_inputs(struct inference *p, const struct mo_synta
 
 static MO_MUST_USE struct mo_inferred_body *
 infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
-               const struct mo_signatures *signatures,
+               const struct mo_signatures *signatures, struct mo_constant_context *constants,
                const struct mo_function_signature *signature, struct mo_diags *diags,
                struct mo_checked_function *checked, bool *halt, struct mo_checked_spec *spec,
                struct mo_checked_condition *conditions) {
@@ -4371,11 +4401,13 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
     bool promise = spec != NULL && spec->kind == MO_SPEC_PROMISE;
     bool anchor = spec != NULL && spec->kind == MO_SPEC_ANCHOR;
     bool test = spec != NULL && spec->kind == MO_SPEC_TEST;
+    bool constant = syntax->kind == MO_S_CONST;
     struct inference p = {.arena = arena,
                           .diags = diags,
                           .interfaces = interfaces,
                           .signatures = signatures,
                           .function = signature,
+                          .constants = constants,
                           .checked = checked != NULL,
                           .span = written->span};
     p.abilities = (struct mo_ability_context){
@@ -4393,14 +4425,16 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
     struct term *fn = instance.type;
     if (fn == NULL)
         goto failed;
-    p.result = spec == NULL ? argument(&p, fn, fn->shape.count - 1)
-                            : native(&p, test ? "Unit" : "Bool", 0);
+    p.result = constant       ? fresh(&p, 0)
+               : spec == NULL ? argument(&p, fn, fn->shape.count - 1)
+                              : native(&p, test ? "Unit" : "Bool", 0);
     if (p.result == NULL)
         goto failed;
-    const struct mo_syntax *parameters = test ? NULL : syntax->children[1];
-    uint32_t parameter_count = spec == NULL ? parameters->count
-                               : promise    ? parameters->count + 1
-                                            : 0;
+    const struct mo_syntax *parameters = test || constant ? NULL : syntax->children[1];
+    uint32_t parameter_count = constant       ? 0
+                               : spec == NULL ? parameters->count
+                               : promise      ? parameters->count + 1
+                                              : 0;
     const struct mo_syntax **inputs = NULL;
     struct note **spec_notes = NULL;
     if (promise || anchor) {
@@ -4474,6 +4508,8 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
     } else if (spec != NULL)
         v = test ? discard(&p, written->children[1])
                  : infer_as(&p, written, p.result, MO_CODE_CONDITION_TYPE);
+    else if (constant)
+        v = infer_as(&p, syntax->children[1], p.result, MO_CODE_RESULT_TYPE);
     else
         v = named(p.result, "Unit")
                 ? discard(&p, syntax->children[5])
@@ -4695,6 +4731,8 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
     }
     return out;
 failed:
+    if (constants != NULL && constants->pending != NULL)
+        return NULL; /* The explicit constant driver resumes after its dependency. */
     if (!p.fatal && !finalized) {
         p.failed = false;
         p.partial = true;
@@ -4718,30 +4756,73 @@ struct mo_inferred_body *mo_infer_function(struct mo_arena *arena,
                                            uint32_t function, struct mo_diags *diags) {
     bool halt;
     MO_ASSERT(function < signatures->count);
-    return infer_function(arena, interfaces, signatures, &signatures->items[function], diags, NULL,
-                          &halt, NULL, NULL);
+    return infer_function(arena, interfaces, signatures, NULL, &signatures->items[function], diags,
+                          NULL, &halt, NULL, NULL);
 }
 
 bool mo_check_function(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
-                       const struct mo_signatures *signatures, uint32_t function,
+                       const struct mo_signatures *signatures,
+                       struct mo_constant_context *constants, uint32_t function,
                        struct mo_diags *diags, struct mo_checked_function *out, bool *halt) {
     MO_ASSERT(out != NULL && function < signatures->count);
-    return infer_function(arena, interfaces, signatures, &signatures->items[function], diags, out,
-                          halt, NULL, NULL) != NULL;
+    return infer_function(arena, interfaces, signatures, constants, &signatures->items[function],
+                          diags, out, halt, NULL, NULL) != NULL;
 }
 
 bool mo_check_spec_body(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
                         const struct mo_signatures *signatures,
+                        struct mo_constant_context *constants,
                         const struct mo_function_signature *signature, struct mo_checked_spec *spec,
                         struct mo_checked_condition *conditions, struct mo_diags *diags,
                         bool *halt) {
     MO_ASSERT(spec != NULL && spec->syntax != NULL);
     struct mo_checked_function checked;
-    if (infer_function(arena, interfaces, signatures, signature, diags, &checked, halt, spec,
-                       conditions) == NULL)
+    if (infer_function(arena, interfaces, signatures, constants, signature, diags, &checked, halt,
+                       spec, conditions) == NULL)
         return false;
     spec->body = checked.body;
     spec->parameter_count = checked.parameter_count;
     spec->parameters = checked.parameters;
+    return true;
+}
+
+bool mo_check_constant(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
+                       const struct mo_signatures *signatures,
+                       struct mo_constant_context *constants, struct mo_checked_constant *constant,
+                       struct mo_diags *diags, bool *halt) {
+    struct mo_source_type unit = {.kind = MO_SOURCE_NAMED, .name = "Unit", .module = UINT32_MAX};
+    const struct mo_source_type *result = &unit;
+    struct mo_source_type type = {.kind = MO_SOURCE_FUNCTION,
+                                  .name = "fn",
+                                  .count = 1,
+                                  .module = UINT32_MAX,
+                                  .arguments = &result,
+                                  .height = 1};
+    struct mo_function_signature context = {.function = constant->symbol, .type = &type};
+    struct mo_checked_function checked;
+    if (infer_function(arena, interfaces, signatures, constants, &context, diags, &checked, halt,
+                       NULL, NULL) == NULL)
+        return false;
+    const struct mo_source_type *value = checked.body.items[checked.body.root].type;
+    if (constant->symbol->name[constant->symbol->name_length - 1] == '?') {
+        const struct mo_source_type *answer =
+            value->kind == MO_SOURCE_FUNCTION ? value->arguments[value->count - 1] : value;
+        if (answer->kind != MO_SOURCE_NAMED || answer->module != UINT32_MAX ||
+            strcmp(answer->name, "Bool") != 0) {
+            bool kept = mo_diags_add(
+                diags, &(struct mo_diag){
+                           .code = MO_CODE_BOOL_NAME,
+                           .primary = {constant->symbol->declaration->children[0]->span,
+                                       "must be Bool or a function returning Bool"},
+                           .message = "a name ending in ? isn't a yes-or-no answer",
+                           .reason = "A name ending in ? is a Bool, or a function that returns "
+                                     "one (reference 2.3)."});
+            (void)kept;
+            *halt = diags->dropped != 0 && diags->count < MO_LIMIT_DIAGNOSTICS;
+            return false;
+        }
+    }
+    constant->initializer = checked.body;
+    constant->type = value;
     return true;
 }
