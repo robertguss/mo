@@ -228,6 +228,8 @@
     X(1202, CODEGEN_BIGINT_WORK, NULL)                                                             \
     /* Reference liveness exceeds its per-function work limit. */                                  \
     X(1203, CODEGEN_LIVE_WORK, NULL)                                                               \
+    /* Register recycling exceeds its per-function work limit. */                                  \
+    X(1204, CODEGEN_REGISTER_WORK, NULL)                                                           \
     /* The command requests a toolchain stage not implemented by this build. */                    \
     X(1400, TOOL_UNAVAILABLE, NULL)                                                                \
     /* The OS cannot prepare the explicit source-stage checking stack. */                          \

@@ -114,11 +114,9 @@ static void test_control(void) {
                         "(if_ (var \"b\") (lit (int 17)) (lit (int 29))) \"Control\" (function) "
                         "0)) () \"main\" (noSource))");
     if (b != NULL) {
-        const uint32_t expected[] = {MO_OP_CONST, 1,           2,  MO_OP_CONST, 2,
-                                     2,           MO_OP_CONST, 3,  2,           MO_OP_BRANCH,
-                                     0,           13,          18, MO_OP_CONST, 1,
-                                     0,           MO_OP_RET,   1,  MO_OP_CONST, 2,
-                                     1,           MO_OP_RET,   2};
+        const uint32_t expected[] = {
+            MO_OP_CONST, 1,         2, MO_OP_CONST, 1, 2, MO_OP_BRANCH, 0, 10, 15, MO_OP_CONST, 1,
+            0,           MO_OP_RET, 1, MO_OP_CONST, 1, 1, MO_OP_RET,    1};
         CHECK(b->functions[0].code_count == sizeof expected / sizeof expected[0]);
         CHECK(memcmp(b->functions[0].code, expected, sizeof expected) == 0);
         CHECK(b->constants[0].value.immediate[0] == 17 && b->constants[1].value.immediate[0] == 29);
@@ -134,27 +132,24 @@ static void test_control(void) {
                                      1,
                                      1,
                                      MO_OP_CONST,
-                                     2,
                                      1,
-                                     MO_OP_CONST,
-                                     3,
                                      1,
                                      MO_OP_SWITCH | (2u << 16),
                                      0,
-                                     13,
-                                     18,
+                                     10,
+                                     15,
                                      MO_OP_CONST,
                                      1,
                                      0,
                                      MO_OP_RET,
                                      1,
                                      MO_OP_CASE_FIELD,
-                                     2,
+                                     1,
                                      0,
                                      1,
                                      0,
                                      MO_OP_RET,
-                                     2};
+                                     1};
         CHECK(b->functions[0].code_count == sizeof expected / sizeof expected[0]);
         CHECK(memcmp(b->functions[0].code, expected, sizeof expected) == 0);
         CHECK(b->types[1].kind == MO_TYPE_CHOICE && b->types[1].case_count == 2);
@@ -1024,7 +1019,7 @@ static void test_join_refusal(void) {
                                            "(join \"loop\" ((\"n\" (int))) "));
         if (variant == 3) {
             CHECK(mo_buffer_append_text(&text, "(let_ \"padding\" (tuple ("));
-            for (uint32_t i = 0; i < MO_LIMIT_FUNCTION_REGISTERS - 3u; i++)
+            for (uint32_t i = 0; i < MO_LIMIT_FUNCTION_REGISTERS; i++)
                 CHECK(mo_buffer_append_text(&text, "(lit (int 0))"));
             CHECK(mo_buffer_append_text(&text, ")) "));
         }
@@ -1107,23 +1102,26 @@ static void test_register_limit(void) {
 }
 
 static void test_register_block_limit(void) {
-    /* This allocator needs count+3 registers and count+1 blocks. Wide tail-call operands
-     * give the verifier enough code words for its separate work budget at the product bound. */
+    /* Block-local lifetimes fit tiny frames even when the virtual-register product
+     * exceeds the bound. At the physical boundary, 255 ABI slots must stay pinned. */
     uint32_t boundary = 1;
     while ((uint64_t)(boundary + 4u) * (boundary + 2u) <= MO_LIMIT_FUNCTION_REGISTER_BLOCKS)
         boundary++;
-    for (uint32_t extra = 0; extra < 3; extra++) {
+    for (uint32_t extra = 0; extra < 5; extra++) {
         bool late_register = extra == 2;
+        bool physical = extra >= 3;
         uint32_t count = boundary + extra;
+        if (physical)
+            count = MO_LIMIT_FUNCTION_REGISTER_BLOCKS / 255u - 1u + extra - 3u;
         if (late_register) {
-            /* Repeated owned tail operands still need one duplicate per arm. The last
-             * duplicate crosses the bound within an existing block. */
+            /* Repeated owned tail operands need one duplicate per arm. Their virtual
+             * register product crossed the old bound within an existing block. */
             count = 1;
             while (UINT64_C(2) * (count + 2u) * (count + 2u) <= MO_LIMIT_FUNCTION_REGISTER_BLOCKS)
                 count++;
         }
         const char *value_type = late_register ? "(text)" : "(unit)";
-        uint32_t arity = late_register ? 2u : 100u;
+        uint32_t arity = late_register ? 2u : physical ? 16u : 100u;
         struct mo_buffer text, out;
         struct mo_arena arena;
         struct mo_diags diags;
@@ -1141,7 +1139,11 @@ static void test_register_block_limit(void) {
         CHECK(mo_buffer_append_text(&text, ")))((FunDecl \"main\" ((\"d\" (data \"D\")) "
                                            "(\"u\" "));
         CHECK(mo_buffer_append_text(&text, value_type));
-        CHECK(mo_buffer_append_text(&text, ")) "));
+        CHECK(mo_buffer_append_byte(&text, ')'));
+        if (physical)
+            for (uint32_t i = 2; i < 255; i++)
+                CHECK(mo_buffer_append_text(&text, "(\"unused\" (unit))"));
+        CHECK(mo_buffer_append_text(&text, ") "));
         CHECK(mo_buffer_append_text(&text, value_type));
         CHECK(mo_buffer_append_text(&text, " (case_ (var \"d\") ("));
         for (uint32_t i = 0; i < count; i++) {
@@ -1167,15 +1169,17 @@ static void test_register_block_limit(void) {
         if (p != NULL) {
             CHECK(mo_core_check(p, &diags));
             bool ok = mo_compile(p, &out, &diags);
-            CHECK(ok || extra != 0);
+            /* These exceed the old virtual-register product, but their block-local
+             * result and duplicate lifetimes fit a recycled physical frame. */
+            CHECK(ok == (extra != 4));
             if (ok) {
                 struct mo_load_error error;
                 struct mo_image *image = mo_load(out.bytes, out.length, &error);
                 CHECK(image != NULL && diags.count == 0);
                 if (image != NULL) {
-                    CHECK((uint64_t)mo_image_bytecode(image)->functions[0].register_count *
-                              (count + 1u) <=
-                          MO_LIMIT_FUNCTION_REGISTER_BLOCKS);
+                    uint32_t registers = mo_image_bytecode(image)->functions[0].register_count;
+                    CHECK(physical ? registers == 255 : registers <= 3);
+                    CHECK((uint64_t)registers * (count + 1u) <= MO_LIMIT_FUNCTION_REGISTER_BLOCKS);
                     mo_image_free(image);
                 }
             } else {
@@ -1259,7 +1263,8 @@ static MO_MUST_USE int corpus(int argc, char **argv, bool bigints) {
                             code == MO_CODE_TOO_MANY_REGISTERS ||
                             code == MO_CODE_FUNCTION_TOO_LONG || code == MO_CODE_BYTECODE_TOO_BIG ||
                             code == MO_CODE_CODEGEN_MEMORY || code == MO_CODE_CODEGEN_BIGINT_WORK ||
-                            code == MO_CODE_CODEGEN_LIVE_WORK;
+                            code == MO_CODE_CODEGEN_LIVE_WORK ||
+                            code == MO_CODE_CODEGEN_REGISTER_WORK;
                         if (code == MO_CODE_CODEGEN_ENTRY)
                             entry++;
                         else if (code == MO_CODE_CODEGEN_REPRESENTATION)
@@ -1465,7 +1470,7 @@ static void test_closure_metadata(void) {
                 argument_name |= string_is(b, n->name, "arg") && n->reg == 0 && n->code_start == 0;
                 capture_name |= field != NULL && string_is(b, n->name, "alpha") &&
                                 n->reg == field[1] &&
-                                n->code_start == (uint32_t)(field - b->functions[1].code) &&
+                                n->code_start == (uint32_t)(field - b->functions[1].code) + 4u &&
                                 n->code_end == b->functions[1].code_count;
             }
             CHECK(argument_name && capture_name);
@@ -1692,6 +1697,62 @@ static void test_primitive_ownership(void) {
         mo_buffer_free(&wire);
     }
     mo_arena_free(&arena);
+    /* A straight owned builder must recycle retired reference holders, not just scalars. */
+    struct mo_buffer payload;
+    mo_buffer_init(&payload, MO_LIMIT_CORE_TEXT_SIZE);
+    CHECK(mo_buffer_append_text(&payload, "(Program () ((FunDecl \"start\" () (text) "
+                                          "(let_ \"x\" (prim (text (concat)) "
+                                          "((lit (text \"z\")) (lit (text \"!\")))) "));
+    const uint32_t steps = 1024;
+    for (uint32_t i = 0; i < steps; i++)
+        CHECK(mo_buffer_append_text(&payload, "(let_ \"x\" (prim (text (concat)) "
+                                              "((var \"x\") (lit (text \"ab\")))) "));
+    CHECK(mo_buffer_append_text(&payload, "(var \"x\")"));
+    for (uint32_t i = 0; i <= steps; i++)
+        CHECK(mo_buffer_append_byte(&payload, ')'));
+    CHECK(mo_buffer_append_text(&payload, " \"M\" (function) 0)) () \"start\" (noSource))"));
+    CHECK(mo_buffer_append_byte(&payload, 0));
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    b = compile(&arena, (const char *)payload.bytes);
+    if (b != NULL) {
+        const struct mo_bytecode_function *f = &b->functions[0];
+        CHECK(f->register_count <= 8);
+        struct mo_buffer wire;
+        struct mo_write_error write_error;
+        struct mo_load_error load_error;
+        mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+        bool written = mo_bytecode_write(b, &wire, &write_error);
+        CHECK(written);
+        struct mo_image *image = written ? mo_load(wire.bytes, wire.length, &load_error) : NULL;
+        CHECK(image != NULL);
+        if (image != NULL) {
+            struct mo_limits limits = mo_limits_default();
+            struct mo_defect defect;
+            bool initialized = mo_image_init(image, &limits, &defect) == MO_RETURNED;
+            CHECK(initialized);
+            struct mo_process *p = initialized ? mo_process_new(image, &limits) : NULL;
+            CHECK(p != NULL);
+            if (p != NULL) {
+                struct mo_cell result;
+                enum mo_outcome outcome = mo_call(p, 0, NULL, 0, &result, &defect);
+                CHECK(outcome == MO_RETURNED);
+                if (outcome == MO_RETURNED) {
+                    size_t length;
+                    const uint8_t *bytes = mo_value_data(result, &length);
+                    CHECK(length == 2u + 2u * steps && bytes[0] == 'z' && bytes[1] == '!');
+                    for (size_t i = 2; i + 1 < length; i += 2)
+                        CHECK(bytes[i] == 'a' && bytes[i + 1] == 'b');
+                    mo_value_drop(mo_process_heap(p), f->result_type, result);
+                    CHECK(mo_heap_objects(mo_process_heap(p)) == 0);
+                }
+                mo_process_free(p);
+            }
+            mo_image_free(image);
+        }
+        mo_buffer_free(&wire);
+    }
+    mo_arena_free(&arena);
+    mo_buffer_free(&payload);
 }
 static void test_operation_order(void) {
     struct mo_arena arena;
@@ -2097,8 +2158,9 @@ static void test_merge(void) {
                     cleared_argument |= op->number == MO_OP_CLEAR && f->code[pc + 1] == call[3];
                     pc += 1u + op->fixed_count + (f->code[pc] >> MO_OPCODE_VARIABLE_SHIFT);
                 }
-                CHECK(cleared_argument && length[2] == MO_PRIM_TEXT_CHAR_COUNT &&
-                      length[4] != call[1]);
+                /* The normalized call-result slot may be recycled for the later
+                 * merged value; distinct virtual lifetimes need not have distinct slots. */
+                CHECK(cleared_argument && length[2] == MO_PRIM_TEXT_CHAR_COUNT);
             }
         }
         mo_arena_free(&arena);
@@ -2233,6 +2295,9 @@ static void test_depth(void) {
             struct mo_image *image = mo_load(out.bytes, out.length, &error);
             CHECK(image != NULL);
             if (image != NULL) {
+                /* These 4096-deep chains need one returned slot and at most two
+                 * alternating local slots, not a frame proportional to their depth. */
+                CHECK(mo_image_bytecode(image)->functions[0].register_count <= 3);
                 struct mo_limits limits = mo_limits_default();
                 struct mo_defect defect;
                 enum mo_outcome initialized = mo_image_init(image, &limits, &defect);
