@@ -1,0 +1,7 @@
+E0069 7.2
+0:66..70
+the alternatives don't bind the same names
+Arms with the same body share a line; their names must be visible throughout that body (reference 7.2).
+the alternatives bind different names
+secondary 0:61..62 declared here
+fixes 0

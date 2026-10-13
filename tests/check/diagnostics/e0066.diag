@@ -1,0 +1,6 @@
+E0066 9.1
+0:26..27
+a type parameter isn't a distinct single capital letter
+Your own types take type parameters, which are single capital letters (reference 9.1; names in reference 2.3).
+type parameters must be distinct single letters
+fixes 0

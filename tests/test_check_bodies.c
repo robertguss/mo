@@ -1,6 +1,7 @@
 #include "base/buffer.h"
 #include "base/codes.h"
 #include "base/limits.h"
+#include "base/stack.h"
 #include "check/check.h"
 #include "test.h"
 
@@ -72,6 +73,578 @@ static void question_name(void) {
     init(&f, "module Main\nfn run() : Int\nanswer? = 1\nanswer?\nend\n", NULL);
     CHECK(body(&f, "run") == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_BOOL_NAME);
+    finish(&f);
+}
+
+static void record_fields(void) {
+    struct fixture f;
+    init(&f,
+         "module Main\nstruct Point\nx: Decimal\ny: Decimal\nend\n"
+         "fn run() : Decimal\npoint = Point(y: 2, x: 1)\npoint.x + point.y\nend\n",
+         NULL);
+    struct mo_inferred_body *out = body(&f, "run");
+    CHECK(out != NULL && f.diags.count == 0);
+    if (out != NULL)
+        CHECK(strcmp(out->items[out->count - 1].type->name, "Decimal") == 0);
+    finish(&f);
+
+    init(&f,
+         "module Main\nstruct Box(T)\ntext: T\nindex: Int\nend\n"
+         "fn run() : Text\nbox = Box(index: 2, text: \"a\")\nbox.text\nend\n"
+         "enum Tree(T)\nLeaf\nNode(left: Tree(T), value: T, right: Tree(T))\nend\n"
+         "fn tree() : Tree(Int)\nNode(right: Leaf, value: 1, left: Leaf)\nend\n",
+         NULL);
+    out = body(&f, "run");
+    CHECK(out != NULL && f.diags.count == 0);
+    if (out != NULL) {
+        uint32_t fields = 0;
+        for (uint32_t i = 0; i < out->count; i++) {
+            const struct mo_inferred_expression *note = &out->items[i];
+            if (note->syntax->kind != MO_S_INT && note->syntax->kind != MO_S_TEXT)
+                continue;
+            CHECK(note->field != NULL);
+            if (note->field != NULL) {
+                CHECK(note->field->index == (fields == 0 ? 1u : 0u));
+                CHECK(strcmp(note->type->name, fields == 0 ? "Int" : "Text") == 0);
+            }
+            fields++;
+        }
+        CHECK(fields == 2);
+    }
+    out = body(&f, "tree");
+    CHECK(out != NULL && f.diags.count == 0);
+    if (out != NULL) {
+        const struct mo_source_type *type = out->items[out->count - 1].type;
+        CHECK(strcmp(type->name, "Tree") == 0 && type->count == 1);
+        CHECK(strcmp(type->arguments[0]->name, "Int") == 0);
+    }
+    finish(&f);
+
+    init(&f,
+         "module Main\nstruct Callback\nf: fn(Int) : Text\nend\n"
+         "fn run() : Text\nCallback(f: fn(n) if n == 1: \"a\" else: \"b\" end).f(1)\nend\n",
+         NULL);
+    CHECK(body(&f, "run") != NULL && f.diags.count == 0);
+    finish(&f);
+}
+
+static void contextual_fields(void) {
+    struct fixture f;
+    init(&f,
+         "module Main\nstruct Apply(T)\nvalue: T\nf: fn(T) : Int\nend\n"
+         "fn run() : Int\nrecord = Apply(f: (fn(p) p.0 end), value: (7, \"a\"))\n"
+         "record.f(record.value)\nend\n",
+         NULL);
+    struct mo_inferred_body *out = body(&f, "run");
+    CHECK(out != NULL && f.diags.count == 0);
+    if (out != NULL) {
+        uint32_t fields = 0;
+        for (uint32_t i = 0; i < out->count; i++) {
+            const struct mo_inferred_expression *note = &out->items[i];
+            if (note->field != NULL &&
+                (note->syntax->kind == MO_S_GROUP || note->syntax->kind == MO_S_TUPLE)) {
+                CHECK(note->field->index == (fields == 0 ? 1u : 0u));
+                fields++;
+            }
+        }
+        CHECK(fields == 2);
+        CHECK(strcmp(out->items[out->count - 1].type->name, "Int") == 0);
+    }
+    finish(&f);
+}
+
+static void field_assignment(void) {
+    struct fixture f;
+    init(&f,
+         "module Main\nstruct Point\nx: Int\nend\nstruct Box\npoint: Point\nend\n"
+         "fn run() : Int\nvar box = Box(point: Point(x: 1))\n"
+         "box.point.x += 4\nbox.point.x = 9\nbox.point.x\nend\n",
+         NULL);
+    struct mo_inferred_body *out = body(&f, "run");
+    CHECK(out != NULL && f.diags.count == 0);
+    if (out != NULL)
+        CHECK(strcmp(out->items[out->count - 1].type->name, "Int") == 0);
+    finish(&f);
+
+    const char *assignments[] = {"box.value += 2", "box.value = box.value + 2"};
+    for (size_t i = 0; i < sizeof(assignments) / sizeof(assignments[0]); i++) {
+        char source[256];
+        int n = snprintf(source, sizeof(source),
+                         "module Main\nstruct Box\nvalue: Byte\nend\nfn run()\n"
+                         "var box = Box(value: 1)\n%s\nassert box.value == 3\nend\n",
+                         assignments[i]);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(source));
+        init(&f, source, NULL);
+        CHECK(body(&f, "run") == NULL);
+        CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_BYTE_ARITHMETIC);
+        finish(&f);
+    }
+}
+
+static void choice_patterns(void) {
+    struct fixture f;
+    init(&f,
+         "module Main\nenum Shape\nDot\nCircle(Decimal)\n"
+         "Rectangle(width: Decimal, height: Decimal)\nend\n"
+         "fn run(shape: Shape) : Decimal\ncase shape\nDot: 0\nCircle(r): 3 * r * r\n"
+         "Rectangle(height: h, width: w): w * h\nend\nend\n",
+         NULL);
+    struct mo_inferred_body *out = body(&f, "run");
+    CHECK(out != NULL && f.diags.count == 0);
+    if (out != NULL)
+        CHECK(strcmp(out->items[out->count - 1].type->name, "Decimal") == 0);
+    finish(&f);
+
+    init(&f,
+         "module Main\nuse Shapes{Shape}\nfn run(shape: Shape) : Decimal\n"
+         "case shape\nShapes.Dot: 0\nShapes.Circle(r): r\n"
+         "Shapes.Rectangle(height: h, width: w): w * h\nend\nend\n",
+         "module Shapes\nexpose Shape(..)\nenum Shape\nDot\nCircle(Decimal)\n"
+         "Rectangle(width: Decimal, height: Decimal)\nend\n");
+    out = body(&f, "run");
+    CHECK(out != NULL && f.diags.count == 0);
+    if (out != NULL) {
+        bool bound = false;
+        for (uint32_t i = 0; i < out->count; i++)
+            if (out->items[i].syntax->kind == MO_S_NAME &&
+                out->items[i].syntax->span.end - out->items[i].syntax->span.start == 1 &&
+                out->items[i].syntax->text[0] == 'r') {
+                CHECK(out->items[i].binding != NULL);
+                bound = true;
+            }
+        CHECK(bound);
+    }
+    finish(&f);
+}
+
+static void qualified_patterns(void) {
+    const char *other = "module Shapes\nexpose Shape(..), Box(..)\nenum Shape\nDot\n"
+                        "Circle(Decimal)\nRectangle(width: Decimal, height: Decimal)\nend\n"
+                        "struct Box\npair: (Int, Bool)\nshapes: List(Shape)\nend\n";
+    const char *forms[] = {
+        "fn run(shape: Shape) : Int\ncase shape\nShapes.Circle(2.5): 1\nCircle(_): 3\n"
+        "Shapes.Dot: 0\nShapes.Rectangle(width: _, height: _): 2\nend\nend\n",
+        "fn run(shape: Shape) : Decimal\nif shape is Shapes.Circle(r): r else: 0\nend\n",
+        "fn run(xs: List(Shape)) : Int\ncase xs\n[]: 0\n[Shapes.Dot, .._rest]: 1\n"
+        "[Shapes.Circle(_), .._rest]: 2\n[Shapes.Rectangle(width: _, height: _), .._rest]: 3\n"
+        "end\nend\n",
+        "fn run(box: Box) : Int\nif box is Shapes.Box(pair: (x, _), shapes: [Shapes.Dot, .._]): "
+        "x else: 0\nend\n",
+        "fn run(shape: Shape) : Int\ncase shape\nShapes.Circle(_) | Shapes.Dot: 0\n"
+        "Shapes.Rectangle(width: _, height: _): 1\nend\nend\n",
+        "fn run(pair: (Shape, Bool)) : Int\ncase pair\n(Shapes.Dot, _): 0\n"
+        "(Shapes.Circle(_), _): 1\n(Shapes.Rectangle(width: _, height: _), _): 2\nend\nend\n",
+    };
+    for (size_t i = 0; i < sizeof(forms) / sizeof(forms[0]); i++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, 4096);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\nuse Shapes{Shape, Box}\n"));
+        MO_ASSERT(mo_buffer_append_text(&source, forms[i]));
+        MO_ASSERT(mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init(&f, (const char *)source.bytes, other);
+        CHECK(body(&f, "run") != NULL && f.diags.count == 0);
+        finish(&f);
+        mo_buffer_free(&source);
+    }
+    struct fixture f;
+    init(&f,
+         "module Main\nuse Shapes{Shape}\nfn run(shape: Shape, radius: Decimal) : Decimal\n"
+         "case shape\nShapes.Circle(radius): radius\nShapes.Dot: 0\n"
+         "Shapes.Rectangle(width: _, height: _): 0\nend\nend\n",
+         other);
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_BIND_REPEATED);
+    finish(&f);
+}
+
+static void data_errors(void) {
+    const struct {
+        const char *source;
+        uint16_t code;
+        bool preparation;
+    } cases[] = {
+        {"struct Point\nx: Int\nx: Int\nend\n", MO_CODE_FIELD_REPEATED, true},
+        {"struct Box(T, T)\nvalue: T\nend\n", MO_CODE_DATA_PARAMETERS, true},
+        {"struct Point\nx: Int\nend\nfn run() : Point\nPoint(y: 1)\nend\n", MO_CODE_DATA_ARGUMENTS,
+         false},
+        {"struct Point\nx: Int\nend\nfn run(point: Point) : Int\npoint.y\nend\n",
+         MO_CODE_FIELD_MISSING, false},
+        {"enum Reply\nYes(value: Int)\nNo\nend\nfn run(reply: Reply) : Int\n"
+         "case reply\nYes(n): n\nNo: 0\nend\nend\n",
+         MO_CODE_PATTERN_FIELDS, false},
+        {"fn run(reply: Option(Int)) : Int\ncase reply\n_: 0\nend\nend\n", MO_CODE_CASE_CATCH_ALL,
+         false},
+        {"fn run(reply: Option(Int)) : Int\ncase reply\nSome(n) | None: n\nend\nend\n",
+         MO_CODE_PATTERN_ALTERNATIVES, false},
+        {"fn run(flag: Bool) : Int\ncase flag\ntrue: 0\nend\nend\n", MO_CODE_CASE_INCOMPLETE,
+         false},
+        {"fn run(n: Int) : Int\ncase n\nInt: 0\n_: 1\nend\nend\n", MO_CODE_PATTERN_CONSTRUCTOR,
+         false},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char source[512];
+        int n = snprintf(source, sizeof(source), "module Main\n%s", cases[i].source);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(source));
+        struct fixture f;
+        init(&f, source, NULL);
+        if (cases[i].preparation)
+            CHECK(f.signatures == NULL);
+        else
+            CHECK(body(&f, "run") == NULL);
+        if (f.diags.count != 1 || f.diags.items[0].code != cases[i].code)
+            MO_ASSERT(fprintf(stderr, "data_errors[%zu]: expected E%04u, got %u diagnostics%s\n", i,
+                              cases[i].code, f.diags.count,
+                              f.diags.count == 0 ? "" : f.diags.items[0].message) >= 0);
+        CHECK(f.diags.count == 1 && f.diags.items[0].code == cases[i].code);
+        finish(&f);
+    }
+}
+
+static void hidden_data(void) {
+    const char *bodies[] = {"Box(value: 1).value", "box.value", "case box\nBox(value: n): n\nend"};
+    for (unsigned exposed = 0; exposed < 2; exposed++) {
+        char other[256];
+        int n = snprintf(other, sizeof(other),
+                         "module Shapes\nexpose Box%s\nstruct Box\nvalue: Int\nend\n",
+                         exposed == 0 ? "" : "(..)");
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(other));
+        for (size_t i = 0; i < sizeof(bodies) / sizeof(bodies[0]); i++) {
+            char source[256];
+            n = snprintf(source, sizeof(source),
+                         "module Main\nuse Shapes{Box}\nfn run(%s) : Int\n%s\nend\n",
+                         i == 0 ? "" : "box: Box", bodies[i]);
+            MO_ASSERT(n > 0 && (size_t)n < sizeof(source));
+            struct fixture f;
+            init(&f, source, other);
+            CHECK((body(&f, "run") != NULL) == (exposed != 0));
+            if (exposed == 0) {
+                CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_DATA_PRIVATE);
+                CHECK(f.diags.items[0].secondary_count == 1);
+                CHECK(f.diags.items[0].secondary[0].span.file == 1);
+            } else
+                CHECK(f.diags.count == 0);
+            finish(&f);
+        }
+    }
+}
+
+static void product_coverage(void) {
+    for (unsigned complete = 0; complete < 2; complete++) {
+        char source[512];
+        int n = snprintf(source, sizeof(source),
+                         "module Main\nfn run(pair: (Bool, Bool)) : Int\ncase pair\n"
+                         "(true, true): 0\n(true, false): 1\n(false, true): 2\n%send\nend\n",
+                         complete == 0 ? "" : "(false, false): 3\n");
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(source));
+        struct fixture f;
+        init(&f, source, NULL);
+        CHECK((body(&f, "run") != NULL) == (complete != 0));
+        if (complete == 0) {
+            CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CASE_INCOMPLETE);
+            CHECK(strstr(f.diags.items[0].message, "missing: (false, false)") != NULL);
+        } else
+            CHECK(f.diags.count == 0);
+        finish(&f);
+    }
+}
+
+static void coverage_cost(void) {
+    uint64_t small_work = 0;
+    for (unsigned large = 0; large < 2; large++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, MO_LIMIT_FILE_SIZE);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\nenum Color\nRed\nBlue\nend\n"));
+        for (uint32_t i = 0; large != 0 && i < 20000; i++) {
+            MO_ASSERT(mo_buffer_append_text(&source, "fn unrelated"));
+            MO_ASSERT(mo_buffer_append_uint(&source, i));
+            MO_ASSERT(mo_buffer_append_text(&source, "()\nend\n"));
+        }
+        MO_ASSERT(mo_buffer_append_text(&source, "fn run(value: (Bool"));
+        for (uint32_t i = 1; i < 10; i++)
+            MO_ASSERT(mo_buffer_append_text(&source, ", Bool"));
+        MO_ASSERT(mo_buffer_append_text(&source, ", Color)) : Int\ncase value\n"));
+        for (uint32_t i = 0; i <= 10; i++)
+            for (uint32_t color = 0; color < 2; color++) {
+                MO_ASSERT(mo_buffer_append_byte(&source, '('));
+                for (uint32_t j = 0; j < 10; j++)
+                    MO_ASSERT(mo_buffer_append_text(&source, i == 10  ? "false, "
+                                                             : i == j ? "true, "
+                                                                      : "_, "));
+                MO_ASSERT(mo_buffer_append_text(&source, color == 0 ? "Red): 0\n" : "Blue): 0\n"));
+            }
+        MO_ASSERT(mo_buffer_append_text(&source, "end\nend\n"));
+        MO_ASSERT(mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init_limit(&f, (const char *)source.bytes, NULL, 64 << 20);
+        CHECK(body(&f, "run") != NULL && f.diags.count == 0);
+        if (large == 0)
+            small_work = *f.signatures->work;
+        else
+            CHECK(*f.signatures->work == small_work);
+        finish(&f);
+        mo_buffer_free(&source);
+    }
+
+    /* Diagonal rows create many specialized matrices. Bytes retained by the
+     * coverage walk must hit work refusal long before a large arena is full. */
+    struct mo_buffer source;
+    mo_buffer_init(&source, 16384);
+    MO_ASSERT(mo_buffer_append_text(&source, "module Main\nfn run(value: (Bool"));
+    for (uint32_t i = 1; i < 20; i++)
+        MO_ASSERT(mo_buffer_append_text(&source, ", Bool"));
+    MO_ASSERT(mo_buffer_append_text(&source, ")) : Int\ncase value\n"));
+    for (uint32_t i = 0; i < 40; i++) {
+        MO_ASSERT(mo_buffer_append_byte(&source, '('));
+        for (uint32_t j = 0; j < 20; j++) {
+            if (j != 0)
+                MO_ASSERT(mo_buffer_append_text(&source, ", "));
+            MO_ASSERT(mo_buffer_append_text(&source, i / 2 != j   ? "_"
+                                                     : i % 2 == 0 ? "true"
+                                                                  : "false"));
+        }
+        MO_ASSERT(mo_buffer_append_text(&source, "): 0\n"));
+    }
+    MO_ASSERT(mo_buffer_append_text(&source, "end\nend\n"));
+    MO_ASSERT(mo_buffer_append_byte(&source, 0));
+    struct fixture f;
+    init_limit(&f, (const char *)source.bytes, NULL, 64 << 20);
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CHECK_WORK);
+    CHECK(f.arena.used < 2 * MO_LIMIT_SOURCE_CHECK_WORK);
+    finish(&f);
+    mo_buffer_free(&source);
+}
+
+static void missing_previews(void) {
+    struct fixture f;
+    init(&f,
+         "module Main\nenum Color\nRed\nGreen\nBlue\nBlack\nend\n"
+         "fn run(color: Color) : Int\ncase color\nRed: 0\nend\nend\n",
+         NULL);
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CASE_INCOMPLETE);
+    if (f.diags.count == 1)
+        CHECK(strstr(f.diags.items[0].message, "missing: Green | Blue | Black") != NULL);
+    finish(&f);
+    for (unsigned guarded = 0; guarded < 2; guarded++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, 4096);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\nenum Color\n"));
+        for (uint32_t i = 0; i < 12; i++) {
+            MO_ASSERT(mo_buffer_append_text(&source, "Shade"));
+            MO_ASSERT(mo_buffer_append_uint(&source, i));
+            MO_ASSERT(mo_buffer_append_byte(&source, '\n'));
+        }
+        MO_ASSERT(mo_buffer_append_text(&source, "end\nfn run(color: Color) : Int\ncase color\n"));
+        MO_ASSERT(
+            mo_buffer_append_text(&source, guarded == 0 ? "Shade0: 0\n" : "Shade0 if false: 0\n"));
+        MO_ASSERT(mo_buffer_append_text(&source, "end\nend\n"));
+        MO_ASSERT(mo_buffer_append_byte(&source, 0));
+        init(&f, (const char *)source.bytes, NULL);
+        CHECK(body(&f, "run") == NULL);
+        CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CASE_INCOMPLETE);
+        if (f.diags.count == 1) {
+            CHECK(strstr(f.diags.items[0].message, guarded == 0 ? "and 3 more" : "and 4 more") !=
+                  NULL);
+            CHECK((strstr(f.diags.items[0].message, "guards don't count toward coverage") !=
+                   NULL) == (guarded != 0));
+        }
+        finish(&f);
+        mo_buffer_free(&source);
+    }
+    init(&f, "module Main\nfn run(order: Ordering) : Int\ncase order\nLess: 0\nend\nend\n", NULL);
+    CHECK(body(&f, "run") == NULL);
+    if (f.diags.count == 1)
+        CHECK(strstr(f.diags.items[0].message, "missing: Equal | Greater") != NULL);
+    finish(&f);
+    init(&f, "module Main\nfn run(entry: Entry) : Bool\nentry is Entry(name: _, kind: File)\nend\n",
+         NULL);
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CHECK_UNFINISHED);
+    finish(&f);
+}
+
+static void pattern_scopes(void) {
+    struct fixture f;
+    init(&f,
+         "module Main\nenum Reply\nYes(Int)\nNo\nend\n"
+         "fn run(first: Reply, second: Reply) : Int\nvar total = 0\n"
+         "if first is Yes(n) and n > 0\ntotal += n\nend\n"
+         "if second is Yes(n)\ntotal += n\nend\n"
+         "assert first is Yes(m)\ntotal += m\n"
+         "assert second is Yes(k) implies k > 0\ntotal\nend\n",
+         NULL);
+    CHECK(body(&f, "run") != NULL && f.diags.count == 0);
+    finish(&f);
+    const char *expired = "module Main\nfn run(x: Option(Int)) : Int\n"
+                          "if not (x is Some(v))\nUnit\nend\nv\nend\n";
+    init(&f, expired, NULL);
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_NAME_UNKNOWN);
+    if (f.diags.count == 1) {
+        CHECK(f.diags.items[0].primary.span.start ==
+              (uint32_t)(strstr(expired, "\nv\n") + 1 - expired));
+        CHECK(f.diags.items[0].fix_count == 0);
+    }
+    finish(&f);
+}
+
+static void list_coverage(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn run(xs: List(Int)) : Int\ncase xs\n[]: 0\n[x]: x\nend\nend\n", NULL);
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CASE_INCOMPLETE);
+    if (f.diags.count == 1)
+        CHECK(strstr(f.diags.items[0].message, "missing: [_, _, .._]") != NULL);
+    finish(&f);
+}
+
+static void pattern_boundaries(void) {
+    struct mo_buffer source;
+    mo_buffer_init(&source, 1 << 20);
+    MO_ASSERT(mo_buffer_append_text(&source, "module Main\nfn run(value: (Bool"));
+    for (uint32_t i = 1; i < 4096; i++)
+        MO_ASSERT(mo_buffer_append_text(&source, i % 32 == 0 ? ",\nBool" : ", Bool"));
+    MO_ASSERT(mo_buffer_append_text(&source, ")) : Int\ncase value\n(_"));
+    for (uint32_t i = 1; i < 4096; i++)
+        MO_ASSERT(mo_buffer_append_text(&source, i % 32 == 0 ? ",\n_" : ", _"));
+    MO_ASSERT(mo_buffer_append_text(&source, "): 0\nend\nend\n"));
+    MO_ASSERT(mo_buffer_append_byte(&source, 0));
+    struct fixture f;
+    init(&f, (const char *)source.bytes, NULL);
+    CHECK(body(&f, "run") != NULL && f.diags.count == 0);
+    uint64_t cost = *f.signatures->work;
+    MO_ASSERT(cost > 0 && cost < MO_LIMIT_PROGRAM_CHECK_WORK);
+    *f.signatures->work = MO_LIMIT_PROGRAM_CHECK_WORK - cost;
+    CHECK(body(&f, "run") != NULL && f.diags.count == 0);
+    CHECK(*f.signatures->work == MO_LIMIT_PROGRAM_CHECK_WORK);
+    *f.signatures->work = MO_LIMIT_PROGRAM_CHECK_WORK - cost + 1;
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CHECK_PROGRAM_WORK);
+    finish(&f);
+    mo_buffer_free(&source);
+
+    mo_buffer_init(&source, 32768);
+    MO_ASSERT(mo_buffer_append_text(&source, "module Main\nenum Chain\nEnd\nNext(Chain)\nend\n"
+                                             "fn run(value: Chain) : Int\ncase value\n"));
+    for (uint32_t i = 0; i < MO_LIMIT_NESTING_DEPTH - 3; i++)
+        MO_ASSERT(mo_buffer_append_text(&source, "Next("));
+    MO_ASSERT(mo_buffer_append_text(&source, "_"));
+    for (uint32_t i = 0; i < MO_LIMIT_NESTING_DEPTH - 3; i++)
+        MO_ASSERT(mo_buffer_append_text(&source, ")"));
+    MO_ASSERT(mo_buffer_append_text(&source, ": 0\nNext(_): 1\nEnd: 2\nend\nend\n"));
+    MO_ASSERT(mo_buffer_append_byte(&source, 0));
+    init(&f, (const char *)source.bytes, NULL);
+    CHECK(body(&f, "run") != NULL && f.diags.count == 0);
+    finish(&f);
+    mo_buffer_free(&source);
+
+    init(&f,
+         "module Main\nfn run(value: Option(Int)) : Int\ncase value\n"
+         "Some(n) if n > 0: n\nNone: 0\nend\nend\n",
+         NULL);
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CASE_INCOMPLETE);
+    finish(&f);
+}
+
+static void builtin_choices(void) {
+    struct fixture f;
+    init(&f,
+         "module Main\nfn run(flag: Bool) : Int\n"
+         "value = if flag: Some(3) else: None\ncase value\n"
+         "Some(n) if n > 0: n\nSome(_): 0\nNone: -1\nend\nend\n"
+         "fn nested() : Result(Option(Int), Text)\nOk(Some(1))\nend\n",
+         NULL);
+    CHECK(body(&f, "run") != NULL && f.diags.count == 0);
+    CHECK(body(&f, "nested") != NULL && f.diags.count == 0);
+    finish(&f);
+}
+
+static void byte_coverage(void) {
+    for (uint32_t count = 255; count <= 256; count++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, 16384);
+        MO_ASSERT(mo_buffer_append_text(
+            &source, "module Main\nfn run(value: Byte) : Int\ncase value\n0x00: 0\n"));
+        for (uint32_t i = 0; i < count; i++) {
+            if (i == 255)
+                MO_ASSERT(mo_buffer_append_text(&source, "0xff"));
+            else
+                MO_ASSERT(mo_buffer_append_uint(&source, i));
+            MO_ASSERT(mo_buffer_append_text(&source, ": 0\n"));
+        }
+        MO_ASSERT(mo_buffer_append_text(&source, "end\nend\n"));
+        MO_ASSERT(mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init(&f, (const char *)source.bytes, NULL);
+        CHECK((body(&f, "run") != NULL) == (count == 256));
+        if (count == 255) {
+            CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CASE_INCOMPLETE);
+            if (f.diags.count == 1)
+                CHECK(strstr(f.diags.items[0].message, "missing: 255") != NULL);
+        }
+        finish(&f);
+        mo_buffer_free(&source);
+    }
+    for (unsigned broken = 0; broken < 2; broken++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, 16384);
+        MO_ASSERT(
+            mo_buffer_append_text(&source, "module Main\nfn run(b: Byte)\nvar x = 0\ncase x\n"));
+        for (uint32_t i = 0; i < 256; i++) {
+            MO_ASSERT(mo_buffer_append_uint(&source, i));
+            MO_ASSERT(mo_buffer_append_text(&source, ": Unit\n"));
+        }
+        MO_ASSERT(mo_buffer_append_text(&source, "end\n"));
+        if (broken != 0)
+            MO_ASSERT(mo_buffer_append_text(&source, "_y = missing_name\n"));
+        MO_ASSERT(mo_buffer_append_text(&source, "x = b\nend\n"));
+        MO_ASSERT(mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init(&f, (const char *)source.bytes, NULL);
+        CHECK((body(&f, "run") != NULL) == (broken == 0));
+        if (broken != 0)
+            CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_NAME_UNKNOWN);
+        finish(&f);
+        mo_buffer_free(&source);
+    }
+}
+
+static void named_pattern_fix(void) {
+    const char source[] = "module Main\nenum Reply\nYes(value: Int)\nNo\nend\n"
+                          "fn run(reply: Reply) : Int\ncase reply\nYes(n): n\nNo: 0\nend\nend\n";
+    struct fixture f;
+    init(&f, source, NULL);
+    CHECK(body(&f, "run") == NULL);
+    MO_ASSERT(f.diags.count == 1 && f.diags.items[0].fix_count == 1);
+    const struct mo_edit *edit = f.diags.items[0].fixes[0].edits;
+    struct mo_buffer fixed;
+    mo_buffer_init(&fixed, 1024);
+    MO_ASSERT(mo_buffer_append(&fixed, (const uint8_t *)source, edit->span.start));
+    MO_ASSERT(mo_buffer_append_text(&fixed, edit->replacement));
+    MO_ASSERT(mo_buffer_append_text(&fixed, source + edit->span.end));
+    MO_ASSERT(mo_buffer_append_byte(&fixed, 0));
+    finish(&f);
+    init(&f, (const char *)fixed.bytes, NULL);
+    CHECK(body(&f, "run") != NULL && f.diags.count == 0);
+    finish(&f);
+    mo_buffer_free(&fixed);
+    init(&f,
+         "module Main\nstruct Point\nx: Int\ny: Int\nend\n"
+         "fn run() : Point\nPoint(x: 1)\nend\n",
+         NULL);
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_DATA_ARGUMENTS);
+    if (f.diags.count == 1)
+        CHECK(strstr(f.diags.items[0].message, "missing field 'y'") != NULL);
+    finish(&f);
+    init(&f, "module Main\nfn run() : FileError\nFailed(path: \"x\")\nend\n", NULL);
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_DATA_ARGUMENTS);
+    if (f.diags.count == 1)
+        CHECK(strstr(f.diags.items[0].message, "missing field 'reason'") != NULL);
     finish(&f);
 }
 
@@ -391,6 +964,10 @@ static void source_order(void) {
         {"ready? = 1\n_keep = ready?\nmissing", "ready? =", MO_CODE_BOOL_NAME},
         {"if true\na = 1\nend\nmissing", "a =", MO_CODE_UNUSED_NAME},
         {"_xs = []\nmissing", "missing", MO_CODE_NAME_UNKNOWN},
+        {"a = case true\ntrue: 1\nend\nb = case false\nfalse: 2\nend\na + b", "case true",
+         MO_CODE_CASE_INCOMPLETE},
+        {"a = case true\ntrue: 1\nend\nb = 2\na", "case true", MO_CODE_CASE_INCOMPLETE},
+        {"_a = case true\ntrue: 1\nend\nmissing", "case true", MO_CODE_CASE_INCOMPLETE},
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         char source[512];
@@ -506,6 +1083,14 @@ static void unused_fix(void) {
     finish(&f);
     mo_buffer_free(&fixed);
     init(&f, "module Main\nfn run(value: Int, _value: Int) : Int\n2\nend\n", NULL);
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_UNUSED_NAME);
+    CHECK(f.diags.items[0].fix_count == 0);
+    finish(&f);
+    init(&f,
+         "module Main\nfn run(x: Option(Int)) : Int\ncase x\n"
+         "Some(n) | Some(n): 0\nNone: 1\nend\nend\n",
+         NULL);
     CHECK(body(&f, "run") == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_UNUSED_NAME);
     CHECK(f.diags.items[0].fix_count == 0);
@@ -720,7 +1305,24 @@ static void work_limits(void) {
     mo_buffer_free(&source);
 }
 
-int main(void) {
+static void run_tests(void *argument) {
+    (void)argument;
+    record_fields();
+    contextual_fields();
+    field_assignment();
+    choice_patterns();
+    qualified_patterns();
+    data_errors();
+    hidden_data();
+    product_coverage();
+    coverage_cost();
+    missing_previews();
+    pattern_scopes();
+    list_coverage();
+    pattern_boundaries();
+    builtin_choices();
+    byte_coverage();
+    named_pattern_fix();
     question_name();
     tuple_position();
     inferred_uses();
@@ -743,5 +1345,9 @@ int main(void) {
     repeated_signature();
     syntax_depth();
     work_limits();
+}
+
+int main(void) {
+    CHECK(mo_with_stack(MO_SOURCE_STACK_SIZE, run_tests, NULL) == 0);
     return mo_test_report("check bodies");
 }

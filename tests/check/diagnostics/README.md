@@ -15,6 +15,7 @@ expectations when its JSON renderer exists; these are not that wire format.
 Allocation and large generated limits are exercised in `test_check.c` and
 `test_check_bodies.c`, rather than storing megabytes of fixtures. Body errors
 cover names, unused values and failures, numeric ranges, and context-specific
-type mismatches with expected/found labels. Syntax diagnostics remain in the
+type mismatches with expected/found labels, record/case fields, hidden insides
+and pattern coverage. Syntax diagnostics remain in the
 syntax corpus. The staged body checker does not yet certify all language rules;
 `check.h` and architecture 3.3 list the remaining stages explicitly.

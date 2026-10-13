@@ -3,6 +3,7 @@
 #include "base/buffer.h"
 #include "base/codes.h"
 #include "base/limits.h"
+#include "base/stack.h"
 #include "check/check.h"
 #include "test.h"
 
@@ -196,6 +197,16 @@ static void corpus(void) {
         {"e0059.mo", "e0059.diag", BODIES},
         {"e0060.mo", "e0060.diag", BODIES},
         {"e0061.mo", "e0061.diag", BODIES},
+        {"e0062.mo", "e0062.diag", SIGNATURES},
+        {"e0063.mo", "e0063.diag", BODIES},
+        {"e0064.mo", "e0064.diag", BODIES},
+        {"e0065.mo", "e0065.diag", BODIES},
+        {"e0066.mo", "e0066.diag", SIGNATURES},
+        {"e0067.mo", "e0067.diag", BODIES},
+        {"e0068.mo", "e0068.diag", BODIES},
+        {"e0069.mo", "e0069.diag", BODIES},
+        {"e0070.mo", "e0070.diag", BODIES},
+        {"e0071.mo", "e0071.diag", BODIES},
         {"e0072.mo", "e0072.diag", BODIES},
         {"e0073.mo", "e0073.diag", BODIES},
         {"e0074.mo", "e0074.diag", BODIES},
@@ -1064,7 +1075,8 @@ static void source_limits(void) {
     finish(&f);
 }
 
-int main(void) {
+static void run_tests(void *argument) {
+    (void)argument;
     load_graph();
     interfaces();
     corpus();
@@ -1085,5 +1097,9 @@ int main(void) {
     import_limit();
     import_scaling();
     source_limits();
+}
+
+int main(void) {
+    CHECK(mo_with_stack(MO_SOURCE_STACK_SIZE, run_tests, NULL) == 0);
     return mo_test_report("check");
 }

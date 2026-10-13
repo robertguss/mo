@@ -1,0 +1,7 @@
+E0070 7.2
+0:37..46
+case doesn't cover every possible value; missing: false
+The arms must cover every possible value (reference 7.2).
+a possible value isn't covered
+secondary 0:42..46 matched value
+fixes 0

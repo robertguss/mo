@@ -112,15 +112,36 @@ struct mo_function_signature {
     const struct mo_source_type *type;
 };
 
+struct mo_field_signature {
+    const struct mo_syntax *name; /* NULL for a case's single unnamed value */
+    const struct mo_source_type *type;
+    uint32_t index; /* declaration order */
+};
+
+/* One record or choice case. Generic fields refer to parameters owned by the
+ * declaring type, not an implicit function parameter. Recursive fields retain
+ * nominal types; they never expand the record's layout. */
+struct mo_data_signature {
+    const struct mo_symbol *symbol;
+    const struct mo_source_type *type; /* the record or owning choice */
+    const struct mo_syntax *parameters;
+    uint32_t count;
+    struct mo_field_signature *fields;          /* sorted by name; indices keep declaration order */
+    const struct mo_field_signature **by_index; /* declaration order */
+    bool unnamed;
+};
+
 struct mo_signatures {
     uint32_t count;
     struct mo_function_signature *items; /* module order, then interface symbol order */
     uint64_t *work; /* shared program budget, initialized by preparation; single-threaded */
+    uint32_t data_count;
+    struct mo_data_signature *data; /* module order, then interface symbol order */
 };
 
 /* Prepares all named function signatures, including abstract generic parameters
- * and default Unit results. NULL with diagnostics on failure. This does not
- * check function bodies, abilities or fields; it is not a checked program.
+ * and default Unit results, and record/case field types. NULL with diagnostics
+ * on failure. This does not check function bodies or abilities; it is not a checked program.
  * Result types belong to arena and borrow interfaces, which must outlive them. */
 MO_MUST_USE struct mo_signatures *
 mo_prepare_signatures(struct mo_arena *arena, const struct mo_module_set *set,
@@ -129,9 +150,11 @@ mo_prepare_signatures(struct mo_arena *arena, const struct mo_module_set *set,
 struct mo_inferred_expression {
     const struct mo_syntax *syntax;
     const struct mo_source_type *type;
-    const struct mo_syntax *binding; /* binder/parameter; assignment's original var binder */
-    const struct mo_symbol *symbol;  /* resolved module function, otherwise NULL */
-    bool never;                      /* every path leaves the current function or loop, or stops */
+    const struct mo_syntax *binding;        /* binder/parameter; assignment's original var binder */
+    const struct mo_symbol *symbol;         /* resolved function or constructor, otherwise NULL */
+    const struct mo_field_signature *field; /* selected field or supplied named argument */
+    const char *builtin_case;               /* built-in constructor, otherwise NULL */
+    bool never; /* every path leaves the current function or loop, or stops */
 };
 
 struct mo_inferred_body {
@@ -143,7 +166,9 @@ struct mo_inferred_body {
 /* Infers one named function's body against its prepared signature. Local names,
  * positional calls, lambdas, scalar/collection expressions, variables and
  * control flow are supported. E1103 explicitly refuses unfinished forms.
- * This is not mo_check: fields/constructors/patterns, dot calls, abilities,
+ * Records, cases, fields and typed patterns check construction, hidden insides,
+ * exhaustiveness and the no-whole-arm choice catch-all rule. This is not
+ * mo_check: dot dispatch, abilities,
  * capability/capture flow, specs, constants, unused imports and main's contract
  * still need their checking stages, as do compile-time duplicate map keys.
  * Nonempty examples/promises return E1103. A success is not suitable for lowering.
@@ -157,8 +182,9 @@ struct mo_inferred_body {
  * E1105 bounds inferred type paths independently of source nesting; E1106
  * bounds recursive inference frames. The limits are in base/limits.h. All
  * temporary and result storage uses the caller arena, with E1058 on exhaustion.
- * Syntax and type walks use depth-bounded C recursion; allow 16 MiB of
- * stack under debug/sanitizers. No scratch allocation bypasses the caller arena. */
+ * Syntax and type walks use depth-bounded C recursion; run source stages via
+ * base/stack.h with MO_SOURCE_STACK_SIZE, not the platform's default stack.
+ * No scratch allocation bypasses the caller arena. */
 MO_MUST_USE struct mo_inferred_body *
 mo_infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
                   const struct mo_signatures *signatures, uint32_t function,

@@ -27,13 +27,14 @@ CSTD := -std=c17
 # Headers are included by their path in src/, which starts with their module, such as
 # "base/base.h".
 INCLUDES := -Isrc
+THREADS := -pthread
 WARNINGS := -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion \
 	-Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla \
 	-Wformat=2 -Wcast-qual -Wundef -Wnull-dereference
-COMMON := $(CSTD) $(INCLUDES) $(WARNINGS) -MMD -MP
-DEBUG := -O0 -g
-SANITIZE := -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all
-FUZZ := -O1 -g -fno-omit-frame-pointer -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all
+COMMON := $(CSTD) $(INCLUDES) $(WARNINGS) $(THREADS) -MMD -MP
+DEBUG := -O0 -g $(THREADS)
+SANITIZE := -O1 -g $(THREADS) -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all
+FUZZ := -O1 -g $(THREADS) -fno-omit-frame-pointer -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all
 LDLIBS += -lm
 
 # Each directory in src/ is a module (architecture section 2), and every C file in it is built.

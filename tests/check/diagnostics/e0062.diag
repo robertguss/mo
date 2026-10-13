@@ -1,0 +1,6 @@
+E0062 4
+0:32..33
+a record or case declares the same field twice
+Records and cases have named fields, each with one type (reference 4).
+this field is declared twice
+fixes 0

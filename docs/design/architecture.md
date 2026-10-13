@@ -301,6 +301,22 @@ use the existing base limits and their codes. E1101 refuses a module outside
 its root; E1102 reports an unreadable library folder without a language
 section citation.
 
+**Source-stage stack.** Checker tests and the `fuzz_check` and `fuzz_bodies`
+targets run source work through `mo_with_stack` in `base/stack.h`; tools will
+use it when source commands are connected. It rounds the requested allowance
+up to the POSIX page size, sets a new thread's stack explicitly and joins it
+before returning; arenas, diagnostics and the shared work budget remain
+single-threaded. It returns a POSIX error number without running the callback
+if thread setup fails. It does not change the caller's stack limit or assume
+the platform's main-thread or secondary-thread default.
+The 255-call fixture containing the full precedence ladder first passed at
+7.75 MiB in clang's `-O0` debug build and 10.5 MiB with `-O1` ASan/UBSan on
+Linux x86-64, in a 256 KiB sweep; 7.5 MiB and 10.25 MiB respectively failed.
+`MO_SOURCE_STACK_SIZE` reserves 32 MiB, more than twice the larger measured
+minimum. Unused stack is reserved address space, not touched memory. Compiler
+flags and platform instrumentation can change these measurements; the deep
+checks run under the same explicit allowance in CI and fuzzing.
+
 ### 3.3 Names and types
 
 **Module interfaces precede bodies.** `mo_resolve_modules` indexes complete
@@ -360,7 +376,18 @@ single-letter parameters; qualification always selects a nominal type.
 Implicit parameters belong to their function, and are abstract there, not
 shared with another function's same-spelled parameter. All storage uses the
 caller arena, with E1058 on exhaustion. This intermediate result checks no
-bodies, data fields or abilities and is not a checked program.
+bodies or abilities and is not a checked program. It also prepares record and
+choice-case field types. Each case retains its owning choice's nominal type;
+recursive fields retain that identity rather than expanding a layout.
+Explicit single-letter data parameters are scoped to their declaring type.
+Fields are indexed by name for binary lookup, with declaration-order indices
+for lowering. Constructor lambda fields receive constraints from ordinary
+arguments first, just as positional lambda arguments do. Output metadata keeps
+written evaluation order, not the order in which constraints were solved.
+Duplicate declared or supplied fields are refused without pairwise scans.
+Record/case construction and field reads check the owning type's `(..)`
+exposure before revealing its layout. Field metadata borrows syntax and is
+stored once in the declaring module, not copied into every importing module.
 
 **Local inference is a second intermediate result.** `mo_infer_function`
 checks one named body against prepared signatures, returning postorder
@@ -381,7 +408,7 @@ finalized, without inventing unresolved-type errors from the missing uses.
 Resource errors stop immediately and take priority. The caller can
 continue with independent bodies. Signature preparation currently stops at
 its first error too. E1103 explicitly refuses unfinished body forms; it does
-not silently accept them. Data fields, constructors and patterns, builtin/dot
+not silently accept them. Builtin/dot
 dispatch and delayed overload selection, abilities, polymorphic recursion,
 failure propagation, capture/capability flow, specs, constants, unused imports
 and the entry contract still need their stages. Compile-time duplicate map
@@ -389,6 +416,43 @@ keys (equal literals or repeated names, reference 3.8) are also still pending.
 Nonempty examples or promises are refused with E1103, never silently skipped.
 A successful intermediate body is not a `mo_program`, is not lowering-ready and does not certify those
 rules. `mo_check` will compose the stages and collect independent errors.
+
+**Typed data and patterns.** Construction names every declared field once, or
+supplies a case's single unnamed value. Reads retain the selected field's
+declaration index; field writes retain their original base `var` binder and
+cannot cross a function boundary. Compound assignment uses the same binary
+operand rules as its expanded assignment.
+Patterns resolve constructors and fields, share bindings across alternatives,
+and retain the scopes of `is`, `and` and `implies`. A whole-arm wildcard or name
+over a choice is refused even when guarded. Guarded rows never prove coverage:
+their conditions may be false. An iterative Maranget matrix checks tuples,
+records, choices, lists and literal domains, and reports a bounded missing-value
+preview, not a speculative edit. A missing choice partition lists up to eight
+absent cases in declaration order, then `and N more`; names longer than 128
+bytes are elided so the omitted count remains visible. Previews also have a
+4,000-byte ceiling. All-guarded cases explain that guards do not count toward
+coverage, listing the choice's cases or the missing domain. Qualified constructor
+patterns use the same resolution and binding rules as unqualified patterns.
+The literal fallback accepts only literals and negated numbers, never construction
+expressions. `Entry` patterns report E1103 until native record interfaces arrive.
+Byte patterns normalize numeric spelling after contextual typing and range
+checks, so all 256 values establish coverage.
+Matrix cells, partitions, sorting and witness rendering charge the existing
+body and program work budgets. Each allocated coverage byte also costs one work
+unit, bounding retained matrix storage independently of the caller's arena;
+arena exhaustion retains E1058. Missing-case previews are built only for a hole,
+using the choice's case index rather than its module's unrelated symbols.
+Explicit frames handle wide products and lists without increasing C stack depth. Coverage of
+completed matches before a later independent error participates in the same
+earliest-source-error selection as inference and unused-value checks, but a
+scrutinee left unresolved or defaulted during a failed walk cannot prove coverage.
+An attempted read outside a local's scope replaces that local's unused-name
+error, not an earlier independent error. Unused-name fixes are withheld for shared
+alternative binders; a single unnamed match of a single named field has a certain
+field-name insertion fix. Missing construction fields are named. Coverage errors
+mark the case header and its scrutinee, not the full arm block.
+E0062–E0071 cover duplicate fields, constructor arguments, hidden insides, missing
+fields, data parameters and pattern errors; each has a diagnostic corpus input.
 
 Inferred types are shared DAGs, not expanded trees. Consumers must memoize
 walks. Prepared annotations retain parameter masks and heights; monomorphic
@@ -411,10 +475,8 @@ charged to the caller arena (E1058), with no additional scratch arena.
 `MO_LIMIT_SOURCE_INFERENCE_DEPTH` allows sixteen inference frames per source
 nesting level plus eight function wrappers (E1106). A source level can retain
 the entire precedence ladder, not just a call and its argument. Flat chains
-remain iterative. The 255-call regression with every precedence level passed
-with a 6 MiB stack in clang's debug build and an 8 MiB stack under ASan/UBSan
-on Linux x86-64; 4 MiB and 6 MiB respectively failed. Callers should allow
-16 MiB under debug/sanitizers rather than relying on those measured minima.
+remain iterative. Callers use the explicit source-stage stack of section 3.2;
+the input depth bound is not a guarantee about a platform's default C stack.
 
 Non-lambda positional arguments constrain the callee before contextual lambdas,
 regardless of written order; output notes retain written postorder. Binder notes

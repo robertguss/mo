@@ -3,5 +3,5 @@ struct Point
   x: Int
 end
 fn run() : Point
-  Point(x: 1)
+  try Point(x: 1)
 end

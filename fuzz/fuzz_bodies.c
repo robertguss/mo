@@ -1,6 +1,7 @@
 #include "base/buffer.h"
 #include "base/codes.h"
 #include "base/limits.h"
+#include "base/stack.h"
 #include "check/check.h"
 
 #include <string.h>
@@ -149,9 +150,13 @@ static void check(const uint8_t *data, size_t size, size_t limit, int expected) 
             const struct mo_syntax *part = path->children[j];
             MO_ASSERT(mo_buffer_append(&helper, part->text, part->span.end - part->span.start));
         }
-        MO_ASSERT(mo_buffer_append_text(
-            &helper, "\nexpose identity, add\nfn identity(value: T) : T\nvalue\nend\n"
-                     "fn add(a: Int, b: Int) : Int\na + b\nend\n"));
+        MO_ASSERT(mo_buffer_append_text(&helper,
+                                        "\nexpose identity, add, Shape(..), Box(..)\n"
+                                        "enum Shape\nDot\nCircle(Decimal)\n"
+                                        "Rectangle(width: Decimal, height: Decimal)\nend\n"
+                                        "struct Box\npair: (Int, Bool)\nshapes: List(Shape)\nend\n"
+                                        "fn identity(value: T) : T\nvalue\nend\n"
+                                        "fn add(a: Int, b: Int) : Int\na + b\nend\n"));
         bool added = mo_sources_add_bytes(&sources, "helper.mo", helper.bytes, helper.length, &file,
                                           &problem);
         mo_buffer_free(&helper);
@@ -205,7 +210,8 @@ static void check(const uint8_t *data, size_t size, size_t limit, int expected) 
                 for (uint32_t j = 0; j < a->count; j++) {
                     const struct mo_inferred_expression *x = &a->items[j], *y = &b->items[j];
                     MO_ASSERT(x->syntax == y->syntax && x->binding == y->binding &&
-                              x->symbol == y->symbol && x->never == y->never);
+                              x->symbol == y->symbol && x->field == y->field &&
+                              text_equal(x->builtin_case, y->builtin_case) && x->never == y->never);
                     equal_type(&comparison, x->type, y->type, 0);
                 }
                 mo_arena_free(&comparison.arena);
@@ -227,9 +233,17 @@ done:
     mo_sources_free(&sources);
 }
 
-int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+struct input {
+    const uint8_t *data;
+    size_t size;
+};
+
+static void fuzz_input(void *argument) {
+    const struct input *input = argument;
+    const uint8_t *data = input->data;
+    size_t size = input->size;
     if (size > (1 << 20))
-        return 0;
+        return;
     uint8_t choice = size == 0 ? 0 : data[0];
     size_t limit = (choice & 1) != 0 ? (size_t)choice * (size == 0 ? 1 : size) : 16 << 20;
     check(data, size, limit, -1);
@@ -241,7 +255,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                                         "f = fn(x) x + 1 end\nf(2)",
                                         "var total = 0\nfor i in 0..3\ntotal += i\nend\ntotal",
                                         "apply(fn(p) p.0 end, (1, \"a\"))",
-                                        "Helpers.add(1, identity(2))"};
+                                        "Helpers.add(1, identity(2))",
+                                        "point = Point(y: 2, x: 1)\npoint.x",
+                                        "case Some(3)\nSome(n): n\nNone: 0\nend",
+                                        "case Hit(4)\nHit(n): n\nMiss: 0\nend"};
     static const char *const invalid[] = {"missing",
                                           "1 + true",
                                           "x = 1\nx = 2\nx",
@@ -252,15 +269,20 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                                           "(1, 2).3",
                                           "ready? = 1\nready?",
                                           "1\n2",
-                                          "Helpers.add(true, 2)"};
+                                          "Helpers.add(true, 2)",
+                                          "Point(z: 1, y: 2).x",
+                                          "case Some(1)\n_: 1\nend",
+                                          "case Hit(1)\nMiss: 0\nend"};
     bool succeeds = (choice & 2) == 0;
     uint8_t item = size < 2 ? 0 : data[1];
     struct mo_buffer source;
     mo_buffer_init(&source, 4096);
     MO_ASSERT(mo_buffer_append_text(
         &source, "module Main\nuse Helpers{identity}\n"
+                 "struct Point\nx: Int\ny: Int\nend\nenum Reply\nHit(Int)\nMiss\nend\n"
                  "fn apply(f: fn(T) : Int, p: T) : Int\nf(p)\nend\nfn run() : Int\n"));
-    const char *expression = succeeds ? valid[item % 9] : invalid[item % 11];
+    const char *expression = succeeds ? valid[item % (sizeof(valid) / sizeof(valid[0]))]
+                                      : invalid[item % (sizeof(invalid) / sizeof(invalid[0]))];
     MO_ASSERT(mo_buffer_append_text(&source, expression));
     MO_ASSERT(mo_buffer_append_text(&source, "\nend\n"));
     check(source.bytes, source.length, limit, succeeds ? 1 : 0);
@@ -276,5 +298,25 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     MO_ASSERT(mo_buffer_append_text(&source, ")\nend\n"));
     check(source.bytes, source.length, limit, succeeds ? 1 : 0);
     mo_buffer_free(&source);
+
+    /* Every subset has an independent four-value truth-table oracle. */
+    unsigned mask = (item & 15u) | 1u;
+    mo_buffer_init(&source, 4096);
+    MO_ASSERT(mo_buffer_append_text(&source,
+                                    "module Main\nfn run(pair: (Bool, Bool)) : Int\ncase pair\n"));
+    for (unsigned i = 0; i < 4; i++) {
+        if ((mask & (1u << i)) == 0)
+            continue;
+        MO_ASSERT(mo_buffer_append_text(&source, (i & 2) == 0 ? "(false, " : "(true, "));
+        MO_ASSERT(mo_buffer_append_text(&source, (i & 1) == 0 ? "false): 0\n" : "true): 1\n"));
+    }
+    MO_ASSERT(mo_buffer_append_text(&source, "end\nend\n"));
+    check(source.bytes, source.length, limit, mask == 15 ? 1 : 0);
+    mo_buffer_free(&source);
+}
+
+int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+    struct input input = {data, size};
+    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, fuzz_input, &input) == 0);
     return 0;
 }
