@@ -2,7 +2,7 @@
 """Compile checked Core fixtures/corpora and generated programs, twice.
 
 The staged compiler counts unsupported programs separately. Every generated program must
-compile through the writer (and its verifier once available), not merely get a stable refusal.
+compile through the verifying writer, not merely get a stable refusal or a resource limit.
 No Core evaluation: outcome comparison belongs to the VM stream.
 """
 
@@ -73,7 +73,7 @@ def run(driver, paths):
     print(result.stdout, end="")
     if result.returncode:
         raise AssertionError(f"{driver}: {result.stderr}")
-    counts = re.search(r"(\d+) compiled deterministically; (\d+) explicitly unsupported; (\d+) entry mismatches; (\d+) not checked programs", result.stdout)
+    counts = re.search(r"(\d+) compiled deterministically; (\d+) explicitly unsupported; (\d+) entry mismatches; (\d+) resource limits; (\d+) not checked programs", result.stdout)
     assert counts, result.stdout
     return tuple(map(int, counts.groups()))
 
@@ -111,7 +111,7 @@ def main():
         for driver in sys.argv[1:]:
             print(f"codegen: {driver}: {len(paths)} fixture/corpus inputs")
             run(driver, paths)
-            assert run(driver, generated) == (len(generated), 0, 0, 0), "a supported generated program was not compiled"
+            assert run(driver, generated) == (len(generated), 0, 0, 0, 0), "a supported generated program was not compiled"
     print(f"codegen: all generated programs compiled; corpus coverage reported separately ({time.monotonic() - started:.2f}s)")
 
 

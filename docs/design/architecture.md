@@ -1069,7 +1069,8 @@ function kinds and direct tail calls in every tail position it supports.
 Closures/application, globals/init, collections, other primitives/host operations,
 BigInt decimal literals, joins and reuse remain for subsequent slices. The
 sample fixtures and Core fuzz corpora are attempted in CI; unfinished forms,
-entry-name mismatches and invalid compiler inputs are counted separately.
+entry-name mismatches, resource limits and invalid compiler inputs are counted
+separately. Compiler-produced invalid bytecode still fails the corpus check.
 Generated programs within the slices must all compile, never merely refuse
 consistently.
 The writer structurally checks and fully verifies every compiled file.

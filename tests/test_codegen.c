@@ -751,7 +751,7 @@ static void test_register_block_limit(void) {
 /* Batch corpus driver: malformed documents and ill-typed programs are not compiler inputs.
  * Partial implementation refusals are counted distinctly, never passed off as compilation. */
 static MO_MUST_USE int corpus(int argc, char **argv) {
-    unsigned compiled = 0, unsupported = 0, entry = 0, rejected = 0;
+    unsigned compiled = 0, unsupported = 0, entry = 0, limited = 0, rejected = 0;
     for (int i = 1; i < argc; i++) {
         struct mo_sources sources;
         struct mo_source_error source_error;
@@ -789,16 +789,23 @@ static MO_MUST_USE int corpus(int argc, char **argv) {
                         compiled++;
                         CHECK(memcmp(first.bytes, second.bytes, first.length) == 0);
                     } else {
-                        if (diags.count != 0 && diags.items[0].code == MO_CODE_CODEGEN_ENTRY)
+                        uint16_t code = diags.count == 0 ? 0 : diags.items[0].code;
+                        bool limit = code == MO_CODE_TOO_MANY_REGISTERS ||
+                                     code == MO_CODE_FUNCTION_TOO_LONG ||
+                                     code == MO_CODE_BYTECODE_TOO_BIG ||
+                                     code == MO_CODE_CODEGEN_MEMORY;
+                        if (code == MO_CODE_CODEGEN_ENTRY)
                             entry++;
+                        else if (limit)
+                            limited++;
                         else
                             unsupported++;
                         CHECK(first.length == 0 && diags.count == 2 &&
-                              (diags.items[0].code == MO_CODE_CODEGEN_UNSUPPORTED ||
-                               diags.items[0].code == MO_CODE_CODEGEN_ENTRY));
-                        if (diags.count != 0 &&
-                            diags.items[0].code != MO_CODE_CODEGEN_UNSUPPORTED &&
-                            diags.items[0].code != MO_CODE_CODEGEN_ENTRY)
+                              diags.items[1].code == code &&
+                              (limit || code == MO_CODE_CODEGEN_UNSUPPORTED ||
+                               code == MO_CODE_CODEGEN_ENTRY));
+                        if (diags.count != 0 && !limit && code != MO_CODE_CODEGEN_UNSUPPORTED &&
+                            code != MO_CODE_CODEGEN_ENTRY)
                             (void)fprintf(stderr, "%s: %s\n", argv[i], diags.items[0].primary.text);
                     }
                     mo_buffer_free(&first);
@@ -814,9 +821,9 @@ static MO_MUST_USE int corpus(int argc, char **argv) {
         mo_sources_free(&sources);
     }
     (void)printf("codegen corpus: %u compiled deterministically; %u explicitly unsupported; %u "
-                 "entry mismatches; %u not "
+                 "entry mismatches; %u resource limits; %u not "
                  "checked programs\n",
-                 compiled, unsupported, entry, rejected);
+                 compiled, unsupported, entry, limited, rejected);
     return mo_test_report("test_codegen corpus");
 }
 int main(int argc, char **argv) {
