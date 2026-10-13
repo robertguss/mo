@@ -423,6 +423,107 @@ static MO_MUST_USE struct mo_image *initialized(struct fixture *f) {
     }
     return image;
 }
+static void test_constants(void) {
+    struct fixture f;
+    fixture_init(&f);
+    struct mo_type types[15];
+    memcpy(types, f.types, sizeof f.types);
+    types[11] = (struct mo_type){.kind = MO_TYPE_BIGINT};
+    types[12] = (struct mo_type){.kind = MO_TYPE_BYTES};
+    types[13] = (struct mo_type){.kind = MO_TYPE_DECIMAL};
+    const uint32_t fields[] = {11, 12, 13, 0};
+    types[14] = (struct mo_type){.kind = MO_TYPE_TUPLE, .parameters = fields, .parameter_count = 4};
+    f.file.types = types;
+    f.file.type_count = 15;
+    struct mo_layout layouts[5];
+    memcpy(layouts, f.file.layouts, 4 * sizeof *layouts);
+    layouts[2].fields = NULL;
+    layouts[2].field_count = 0;
+    layouts[4] =
+        (struct mo_layout){.kind = MO_LAYOUT_TUPLE, .type = 14, .fields = fields, .field_count = 4};
+    f.file.layouts = layouts;
+    f.file.layout_count = 5;
+    f.functions[3].capture_types = NULL;
+    f.functions[3].capture_count = 0;
+    const uint8_t magnitude[] = {0, 1}, bytes[] = {0, 128, 255};
+    const mo_i128 coefficient = ((mo_i128)1 << 100) + 17;
+    struct mo_bytecode_constant constants[11];
+    memcpy(constants, f.file.constants, 7 * sizeof *constants);
+    constants[7] =
+        (struct mo_bytecode_constant){.type = 11,
+                                      .encoding = MO_CONSTANT_BIGINT,
+                                      .value.bigint = {MO_BIGINT_NEGATIVE, {2, magnitude}}};
+    constants[8] = (struct mo_bytecode_constant){
+        .type = 12, .encoding = MO_CONSTANT_BYTES, .value.bytes = {3, bytes}};
+    constants[9] = (struct mo_bytecode_constant){.type = 13, .encoding = MO_CONSTANT_DECIMAL128};
+    for (unsigned i = 0; i < 16; i++)
+        constants[9].value.immediate[i] = (uint8_t)((mo_u128)coefficient >> (8 * i));
+    constants[10] = (struct mo_bytecode_constant){
+        .type = 6, .encoding = MO_CONSTANT_CLOSURE, .value.function = 3};
+    f.file.constants = constants;
+    f.file.constant_count = 11;
+    const uint32_t registers[] = {11, 12, 13, 6, 11, 12, 6, 0, 0, 14};
+    const uint32_t code[] = {MO_OP_CONST,
+                             0,
+                             7,
+                             MO_OP_CONST,
+                             1,
+                             8,
+                             MO_OP_CONST,
+                             2,
+                             9,
+                             MO_OP_CONST,
+                             3,
+                             10,
+                             MO_OP_DUP,
+                             4,
+                             0,
+                             MO_OP_DUP,
+                             5,
+                             1,
+                             MO_OP_DUP,
+                             6,
+                             3,
+                             MO_OP_CONST,
+                             7,
+                             0,
+                             MO_OP_CALL_CLOSURE | (1u << 16),
+                             8,
+                             6,
+                             7,
+                             MO_OP_CONSTRUCT | (4u << 16),
+                             9,
+                             4,
+                             4,
+                             5,
+                             2,
+                             8,
+                             MO_OP_RET,
+                             9};
+    program(&f, 0, registers, 10, code, sizeof code / sizeof code[0], 14);
+    struct mo_image *image = initialized(&f);
+    if (image == NULL)
+        return;
+    struct mo_limits limits = mo_limits_default();
+    struct mo_process *p = mo_process_new(image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_cell result;
+    struct mo_defect defect;
+    CHECK(mo_call(p, 0, NULL, 0, &result, &defect) == MO_RETURNED);
+    struct mo_cell big = mo_value_field(result, 0), data = mo_value_field(result, 1);
+    CHECK(mo_value_bigint_sign(big) == MO_BIGINT_NEGATIVE);
+    size_t length;
+    CHECK(memcmp(mo_value_data(big, &length), magnitude, sizeof magnitude) == 0 && length == 2);
+    CHECK(memcmp(mo_value_data(data, &length), bytes, sizeof bytes) == 0 && length == 3);
+    CHECK(mo_cell_get_ref(big)->count == MO_IMMORTAL_COUNT &&
+          mo_cell_get_ref(data)->count == MO_IMMORTAL_COUNT);
+    CHECK(mo_cell_get_decimal(mo_value_field(result, 2)) == coefficient &&
+          mo_cell_get_int(mo_value_field(result, 3)) == 7);
+    mo_value_drop(mo_process_heap(p), 14, result);
+    CHECK(mo_heap_objects(mo_process_heap(p)) == 0);
+    mo_process_free(p);
+    mo_image_free(image);
+}
 static void test_values(void) {
     struct fixture f;
     fixture_init(&f);
@@ -862,18 +963,27 @@ static void test_initialization(void) {
     const uint32_t closure[] = {MO_OP_GLOBAL, 2, 0, MO_OP_DROP, 1, MO_OP_RET, 2};
     program(&f, 1, indirect_types, 6, indirect, sizeof indirect / sizeof indirect[0], 3);
     program(&f, 3, closure_types, 3, closure, 7, 0);
+    const struct mo_bytecode_span caller_span = {13, 11, 20, 30}, callee_span = {0, 11, 40, 50};
+    f.debug[1].spans = &caller_span;
+    f.debug[1].span_count = 1;
+    f.debug[3].spans = &callee_span;
+    f.debug[3].span_count = 1;
     image = load(&f.file);
     if (image == NULL)
         return;
     CHECK(mo_image_init(image, &limits, &defect) == MO_STOPPED);
     CHECK(strcmp(defect.reason, "internal error: unset global") == 0);
     CHECK(defect.frames->function == 3 && defect.frames->previous->function == 1);
+    CHECK(defect.span.file == 11 && defect.span.start == 40 && defect.span.end == 50);
+    CHECK(defect.frames->previous->pc == 13 && defect.frames->previous->span.start == 20 &&
+          defect.frames->previous->span.end == 30);
     struct mo_defect again;
     CHECK(mo_image_init(image, &limits, &again) == MO_STOPPED && again.frames == defect.frames);
     CHECK(mo_process_new(image, &limits) == NULL);
     struct mo_buffer text;
     mo_buffer_init(&text, 1024);
-    CHECK(mo_render_defect(NULL, &defect, &text));
+    CHECK(mo_render_defect(NULL, &defect, &text) && mo_buffer_append_byte(&text, 0));
+    CHECK(strstr((const char *)text.bytes, "  at M (M.mo:40..50)\n  at M (M.mo:20..30)\n") != NULL);
     mo_buffer_free(&text);
     mo_image_free(image);
 }
@@ -1140,6 +1250,28 @@ static void test_scratch_and_fuel(void) {
     mo_buffer_free(&text);
     mo_process_free(p);
     mo_image_free(image);
+
+    const uint32_t init = 0;
+    const uint32_t init_types[] = {2, 3};
+    const uint32_t init_code[] = {MO_OP_CONST,      0, 5, MO_OP_BRANCH, 0, 3, 7, MO_OP_CONST, 1, 2,
+                                  MO_OP_SET_GLOBAL, 0, 1, MO_OP_RET,    1};
+    program(&f, 0, init_types, 2, init_code, 15, 3);
+    f.functions[0].kind = MO_FUNCTION_INIT;
+    f.file.init = &init;
+    f.file.init_count = 1;
+    f.globals[0] = (struct mo_bytecode_global){.type = 3, .name = 2};
+    f.file.globals = f.globals;
+    f.file.global_count = 1;
+    const struct mo_bytecode_module module = {.name = 0, .globals = &init, .global_count = 1};
+    f.file.modules = &module;
+    image = load(&f.file);
+    if (image == NULL)
+        return;
+    CHECK(mo_image_init_bounded(image, &limits, 10, &defect) == MO_STOPPED);
+    CHECK(strcmp(defect.reason, "internal error: instruction budget exhausted") == 0 &&
+          defect.frames->function == 0 && defect.frames->pc == 3);
+    CHECK(mo_process_new(image, &limits) == NULL);
+    mo_image_free(image);
 }
 
 /* Differential driver: execute compiler output, with no interpreter internals.
@@ -1270,6 +1402,7 @@ int main(int argc, char **argv) {
         corpus = argv[2];
     test_return();
     test_numbers();
+    test_constants();
     test_values();
     test_calls();
     test_initialization();

@@ -44,8 +44,8 @@ def parse(source):
             return result
         if token.startswith('"'):
             token = re.sub(
-                r"\\u\{([0-9a-fA-F]+)\}",
-                lambda m: json.dumps(chr(int(m[1], 16)))[1:-1],
+                r"\\\\|\\u\{([0-9a-fA-F]+)\}",
+                lambda m: m[0] if m[1] is None else json.dumps(chr(int(m[1], 16)))[1:-1],
                 token,
             )
             return json.loads(token)

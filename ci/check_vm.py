@@ -2,7 +2,7 @@
 """Execute supported compiler output and compare outcomes with the Lean model.
 
 The 15 original Core fixtures currently refuse in codegen; count them honestly.
-Generated zero-argument wrappers exercise all currently supported forms through
+Generated zero-argument wrappers exercise the supported forms through
 parse, check, compile, write, load, initialize and call, under each C toolchain.
 """
 
@@ -13,7 +13,7 @@ import sys
 import tempfile
 from fractions import Fraction
 
-from check_codegen import expression
+from check_codegen import expression, global_program, reference_tail
 from check_core_check import VERSION, WORLD, parse, wire
 
 
@@ -74,6 +74,8 @@ def decimals(drivers):
 def main():
     drivers = sys.argv[1:]
     assert drivers, "built test_vm drivers are required"
+    # A report quotes already-quoted structural text; retain literal escapes.
+    assert parse(wire(['"\0"', r'"\u{0}"'])) == ['"\0"', r'"\u{0}"']
     decimals(drivers)
     with tempfile.TemporaryDirectory(prefix="mo-vm-") as directory:
         root = pathlib.Path(directory)
@@ -98,9 +100,25 @@ def main():
             path = root / f"generated-{i}.core"
             path.write_text(f"(core {VERSION} {program})\n")
             generated.append(path)
+        for i in range(256):
+            body = reference_tail(random.Random(540 + i), i % 4)
+            flag = "true" if i % 2 else "false"
+            program = f'''(Program ((DataDecl "Pair" ((Ctor "Pair" (("a" (text)) ("b" (text))))))) (
+              (FunDecl "entry" () (text) (call "choose" ((lit (bool {flag})) (lit (text "input\\u{{0}}🙂")))) "Generated" (function) 0)
+              (FunDecl "choose" (("b" (bool)) ("x" (text))) (text) {body} "Generated" (function) 0)
+              (FunDecl "identity" (("x" (text))) (text) (var "x") "Generated" (function) 0)
+            ) () "entry" (noSource))'''
+            path = root / f"reference-{i}.core"
+            path.write_text(f"(core {VERSION} {program})\n")
+            generated.append(path)
+        for i in range(192):
+            path = root / f"global-{i}.core"
+            path.write_text(f"(core {VERSION} {global_program(i)})\n")
+            generated.append(path)
         for i, (ty, literal) in enumerate([
                 ("unit", "unit"), ("bool", "bool true"), ("byte", "byte 255"),
                 ("int", "int -9223372036854775808"), ("float", "float 0x8000000000000000"),
+                ("bytes", "bytes (0 128 255)"),
                 ("char", 'char "🙂"'), ("time", "time -1"), ("duration", "duration -1"),
                 ("decimal", "decimal -170141183460469231731687303715884105727")]):
             path = root / f"literal-{i}.core"
