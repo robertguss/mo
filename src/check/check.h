@@ -544,11 +544,11 @@ struct mo_program {
  * generic functions with scoped requirement proofs, scalar expressions/operators, direct/indirect
  * calls, records/choices and fields, normalized patterns, tuples/lists, conditionals, loops, early
  * exits/asserts and noncapturing lambdas. Native signatures use the shared tables; operators,
- * ability dot calls and interpolation retain native/derived/custom/parameter proofs. Written
- * Map/Set types require Hash. main takes no parameters or one Console and returns Unit or Int.
+ * ability dot calls and interpolation retain native/derived/custom/parameter proofs. Source
+ * dot/overload dispatch and loaded library calls retain the selected symbols. Written Map/Set
+ * types require Hash. main takes no parameters or one Console and returns Unit or Int.
  * Invalid entry signatures report E0079; valid unfinished entry forms return E1103. Imports,
- * constants/specs, user dot/overload dispatch and unfinished body
- * forms return E1103.
+ * constants/specs and unfinished body forms return E1103.
  * Future spec checking checks anchor typing, completeness and links but executes no source code:
  * tools compile/run anchors to verify their allows/forbids expectations before accepting a
  * command-line mo check. Unfinished stages must report E1103, not succeed. */
