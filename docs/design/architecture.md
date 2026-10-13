@@ -846,7 +846,7 @@ it is given. It never calls the operating system itself.
   checked during replay; a mismatch is a concurrent change reported transiently
   as `Failed(path, "changed while being used")`, not `NotAllowed`. Inode reuse
   under concurrent replacement cannot portably preserve exact ancestor identity.
-  The lookup-wide `MO_LIMIT_PATH_STEPS` budget (4,194,304 component steps,
+  The lookup-wide `MO_LIMIT_PATH_STEPS` budget (262,144 component steps,
   including replay) bounds the extra work; exhaustion gives
   `Failed(path, "MO_LIMIT_PATH_STEPS")`, a limit refusal, not a bug.
   Mo's own resolution never leaves its directory-object authority through
@@ -867,9 +867,14 @@ it is given. It never calls the operating system itself.
   refuse a non-regular, non-folder object with "not a regular file" rather
   than reading a device or blocking on a pipe. Linux pins the resolved object
   with `O_PATH` and classifies it before opening it for I/O, then reopens the
-  retained descriptor through `/proc/self/fd` with `O_NOCTTY`. Without procfs
+  retained descriptor through `/proc/self/fd` with `O_NOCTTY`. It checks the
+  reopened descriptor's device/inode against the pinned object before I/O;
+  a mismatch gives `Failed(path, "changed while being used")`, including when
+  a privileged process has substituted a different `/proc` mount. Without procfs
   it uses the portable resolver. Portable traversal uses search-only directory
   descriptors where the system supplies them (`O_SEARCH`, `O_EXEC` or `O_PATH`).
+  macOS headers older than 13 lack `O_SEARCH` and fall back to `O_RDONLY`, so
+  traversing a directory there also needs read permission.
   A trailing-slash link target is checked before creating a missing file.
   Outside these kind and native representation guards, failures carry the
   system's message.
@@ -893,9 +898,11 @@ it is given. It never calls the operating system itself.
   including deferred ones, count against `MO_LIMIT_OPEN_FOLDERS`; portable
   traversal keeps at most three temporary
   descriptors regardless of depth, and closes them when the operation ends.
-  At main's startup, `mo_host_start` raises the process's soft descriptor limit
-  towards `MO_LIMIT_OPEN_FOLDERS + 32`, never past its hard limit. A lower hard
-  limit can still refuse opening a handle or a temporary descriptor.
+  At main's startup, `mo_host_start` tries to raise the process's soft descriptor
+  limit towards `MO_LIMIT_OPEN_FOLDERS + 32`, never past its hard limit. The raise
+  is best-effort: a sandbox may deny it without preventing startup. The existing
+  soft limit or a lower hard limit can still refuse a later handle or temporary
+  descriptor through the ordinary file error.
 - **Console.** Main's startup calls `mo_host_start` once per context, before
   starting threads, to ignore process-wide `SIGPIPE`. C embedders calling real
   Console directly must call it, or arrange their own signal handling and

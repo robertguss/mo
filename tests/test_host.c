@@ -17,6 +17,7 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 static void test_console(struct heap_fixture *f) {
@@ -652,6 +653,79 @@ static void test_deep_path(bool portable) {
           close(root) == 0 && rmdir(temporary) == 0);
 }
 
+static void test_hostile_links(bool portable) {
+    enum { DEPTH = 500, LINKS = 40 };
+#if defined(__APPLE__)
+    enum { REPEATS = 190 }; /* Shorter native link targets still exhaust the replay budget. */
+#else
+    enum { REPEATS = 790 };
+#endif
+    char temporary[] = "/tmp/mo-host-hostile-XXXXXX";
+    MO_ASSERT(mkdtemp(temporary) != NULL);
+    int root = open(temporary, O_RDONLY | O_DIRECTORY | O_CLOEXEC), current = root;
+    MO_ASSERT(root >= 0);
+    char path[DEPTH * 2 + 8], target[MO_LIMIT_HOST_PATH_SIZE], name[16];
+    for (unsigned depth = 0; depth < DEPTH; depth++) {
+        MO_ASSERT(mkdirat(current, "d", 0700) == 0);
+        int next = openat(current, "d", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        MO_ASSERT(next >= 0);
+        if (current != root)
+            MO_ASSERT(close(current) == 0);
+        current = next;
+        memcpy(path + 2 * depth, "d/", 2);
+    }
+    memcpy(path + DEPTH * 2, "l0", 3);
+    MO_ASSERT(mkdirat(current, "b", 0700) == 0);
+    int marker = openat(current, "marker", O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    MO_ASSERT(marker >= 0 && write(marker, "kept", 4) == 4 && close(marker) == 0);
+    for (unsigned repeat = 0; repeat < REPEATS; repeat++)
+        memcpy(target + 5 * repeat, "b/../", 5);
+    for (unsigned link = 0; link < LINKS; link++) {
+        int n = snprintf(name, sizeof name, "l%u", link);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof name);
+        n = link + 1 == LINKS
+                ? snprintf(target + 5 * REPEATS, sizeof target - 5 * REPEATS, "marker")
+                : snprintf(target + 5 * REPEATS, sizeof target - 5 * REPEATS, "l%u", link + 1);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof target - 5 * REPEATS &&
+                  symlinkat(target, current, name) == 0);
+    }
+    struct host_fixture f;
+    host_fixture_init(&f, mo_limits_default().heap_size);
+    f.host.force_fallback = portable;
+    struct mo_cell files;
+    struct mo_host_error error;
+    MO_ASSERT(mo_host_real(&f.host, f.heap, f.capabilities[MO_CAP_FILES], NULL, root, &files,
+                           &error) == MO_HOST_RETURNED);
+    char expected[sizeof path + 80];
+    int n = snprintf(expected, sizeof expected,
+                     "Error(Failed(path: \"%s\", reason: \"MO_LIMIT_PATH_STEPS\"))", path);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof expected);
+    unsigned before = descriptors();
+    struct timespec start, end;
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+    expect(&f, MO_HOST_FILES_READ_TEXT, f.result_text, files, path, "", expected);
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &end) == 0);
+    double seconds =
+        (double)(end.tv_sec - start.tv_sec) + (double)(end.tv_nsec - start.tv_nsec) / 1000000000;
+    CHECK(printf("host hostile links (%s): %.3f s; depth %u, %u links, %u parent pairs per link\n",
+                 portable ? "portable" : "default", seconds, DEPTH, LINKS, REPEATS) > 0);
+    CHECK(descriptors() == before);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_FILES], files);
+    CHECK(mo_heap_objects(f.heap) == 0);
+    host_fixture_free(&f);
+    for (unsigned link = 0; link < LINKS; link++) {
+        n = snprintf(name, sizeof name, "l%u", link);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof name && unlinkat(current, name, 0) == 0);
+    }
+    CHECK(unlinkat(current, "b", AT_REMOVEDIR) == 0 && unlinkat(current, "marker", 0) == 0);
+    for (unsigned depth = DEPTH; depth != 0; depth--) {
+        int parent = openat(current, "..", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        MO_ASSERT(parent >= 0 && close(current) == 0 && unlinkat(parent, "d", AT_REMOVEDIR) == 0);
+        current = parent;
+    }
+    CHECK(close(current) == 0 && close(root) == 0 && rmdir(temporary) == 0);
+}
+
 static void test_large_input(bool portable) {
     char path[] = "/tmp/mo-host-large-XXXXXX";
     MO_ASSERT(mkdtemp(path) != NULL);
@@ -1017,6 +1091,8 @@ int main(int argc, char **argv) {
     test_nonblocking_console();
     test_deep_path(false);
     test_deep_path(true);
+    test_hostile_links(false);
+    test_hostile_links(true);
     test_large_input(false);
     test_large_input(true);
     test_clock_random();

@@ -149,6 +149,12 @@ static MO_MUST_USE struct mo_file_error kernel(struct mo_host *host, int root, c
             mo_host_close(fd);
             return (struct mo_file_error){.status = FILE_OK};
         }
+        struct stat reopened;
+        if (fstat(actual, &reopened) != 0)
+            problem = mo_host_errno(errno);
+        else if (reopened.st_dev != out->stat.st_dev || reopened.st_ino != out->stat.st_ino)
+            problem =
+                (struct mo_file_error){.status = FILE_FAILED, .reason = "changed while being used"};
         mo_host_close(fd);
         fd = actual;
     }

@@ -8,7 +8,9 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdarg.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -25,10 +27,35 @@
 static bool seccomp = true;
 #endif
 
+/* glibc's GNU declarations use an enum; POSIX and other libcs use int. */
+#if defined(__GLIBC__) && defined(_GNU_SOURCE)
+typedef __rlimit_resource_t resource_type;
+#else
+typedef int resource_type;
+#endif
+
 static int root;
-static bool replace_ancestor;
+static bool replace_ancestor, replace_reopen, deny_raise;
 MO_MUST_USE ssize_t mo_host_resolver_readlink(int fd, const char *path, char *out, size_t length);
 MO_MUST_USE long mo_host_resolver_syscall(long number, ...);
+MO_MUST_USE int mo_host_resolver_open(const char *path, int flags, ...);
+MO_MUST_USE int mo_host_resolver_setrlimit(resource_type resource, const struct rlimit *limit);
+
+int mo_host_resolver_open(const char *path, int flags, ...) {
+    MO_ASSERT((flags & O_CREAT) == 0);
+    if (replace_reopen && strncmp(path, "/proc/self/fd/", sizeof "/proc/self/fd/" - 1) == 0)
+        return openat(root, "substitute", flags);
+    return open(path, flags);
+}
+
+int mo_host_resolver_setrlimit(resource_type resource, const struct rlimit *limit) {
+    MO_ASSERT(resource == RLIMIT_NOFILE);
+    if (deny_raise) {
+        errno = EPERM;
+        return -1;
+    }
+    return setrlimit(resource, limit);
+}
 
 /* A real ancestor replacement at the link-read seam, not a forged stat result.
  * The old ancestor stays alive, so its inode cannot accidentally match the new. */
@@ -107,6 +134,20 @@ int main(void) {
     marker(root);
     /* EPERM at the feature probe must not refuse ordinary reads or exists. */
     expect(&f, files, "marker", "Ok(\"kept\")");
+    struct rlimit original;
+    struct sigaction previous;
+    MO_ASSERT(getrlimit(RLIMIT_NOFILE, &original) == 0 && original.rlim_cur >= 64 &&
+              sigaction(SIGPIPE, NULL, &previous) == 0);
+    struct rlimit lowered = original;
+    lowered.rlim_cur = 64;
+    MO_ASSERT(setrlimit(RLIMIT_NOFILE, &lowered) == 0);
+    deny_raise = true;
+    CHECK(mo_host_start(&f.host) == NULL);
+    deny_raise = false;
+    struct rlimit remaining;
+    CHECK(getrlimit(RLIMIT_NOFILE, &remaining) == 0 && remaining.rlim_cur == 64);
+    expect(&f, files, "marker", "Ok(\"kept\")");
+    MO_ASSERT(setrlimit(RLIMIT_NOFILE, &original) == 0 && sigaction(SIGPIPE, &previous, NULL) == 0);
     struct mo_cell args[] = {files, host_text(&f, "marker")}, out;
     CHECK(mo_host_call(&f.host, f.heap, MO_HOST_FILES_EXISTS, f.boolean, args, &out, &error) ==
               MO_HOST_RETURNED &&
@@ -156,6 +197,30 @@ int main(void) {
     f.host.kernel_probed = false;
     expect(&f, files, "marker", "Ok(\"kept\")");
     if (f.host.kernel_available) {
+        int substitute = openat(root, "substitute", O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+        MO_ASSERT(substitute >= 0 && write(substitute, "outside sentinel", 16) == 16);
+        replace_reopen = true;
+        expect(&f, files, "marker",
+               "Error(Failed(path: \"marker\", reason: \"changed while being used\"))");
+        struct mo_cell refused[] = {files, host_text(&f, "marker"), host_text(&f, "changed")};
+        unsigned before_reopen = descriptors();
+        MO_ASSERT(mo_host_call(&f.host, f.heap, MO_HOST_FILES_WRITE_TEXT, f.result_unit, refused,
+                               &out, &error) == MO_HOST_RETURNED);
+        CHECK(mo_cell_get_tag(out) == 1);
+        if (mo_cell_get_tag(out) == 1) {
+            struct mo_cell failure = mo_value_field(mo_cell_get_payload(out), 0);
+            CHECK(mo_cell_get_tag(failure) == 3);
+        }
+        mo_value_drop(f.heap, f.result_unit, out);
+        mo_value_drop(f.heap, f.types.text, refused[1]);
+        mo_value_drop(f.heap, f.types.text, refused[2]);
+        CHECK(descriptors() == before_reopen);
+        replace_reopen = false;
+        char sentinel[16];
+        CHECK(pread(substitute, sentinel, sizeof sentinel, 0) == 16 &&
+              memcmp(sentinel, "outside sentinel", 16) == 0);
+        expect(&f, files, "marker", "Ok(\"kept\")");
+        CHECK(close(substitute) == 0 && unlinkat(root, "substitute", 0) == 0);
         /* Each portable pass takes 33 steps, within 64 separately, but
          * creation must share the budget with the Linux expansion check. */
         memcpy(replay_path + 62, "fresh", 6);

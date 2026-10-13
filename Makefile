@@ -246,8 +246,10 @@ $(BUILD)/sanitize/tests/test_vm_faults.test: $(BUILD)/sanitize/tests/test_vm_fau
 
 # Only this test substitutes the resolver's native calls and lowers host read
 # limits. Heap builders and every other executable retain the production limits.
-HOST_RESOLVER_SOURCES := src/host/path.c src/host/console.c src/host/real-files.c
-HOST_RESOLVER_OPTIONS := -include tests/host_small_limits.h -Dreadlinkat=mo_host_resolver_readlink -Dsyscall=mo_host_resolver_syscall
+HOST_RESOLVER_SOURCES := src/host/path.c src/host/console.c src/host/real-files.c src/host/host.c
+HOST_RESOLVER_OPTIONS := -include tests/host_small_limits.h -Dreadlinkat=mo_host_resolver_readlink \
+	-Dsyscall=mo_host_resolver_syscall -Dopen=mo_host_resolver_open \
+	-Dsetrlimit=mo_host_resolver_setrlimit
 $(BUILD)/debug/host-resolver/%.o: src/%.c tests/host_small_limits.h Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) $(HOST_RESOLVER_OPTIONS) -c $< -o $@

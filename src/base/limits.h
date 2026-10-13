@@ -237,7 +237,7 @@
  * A refusal is Failed naming this limit, not a language bug. Test builds may
  * lower it to exercise exhaustion without millions of system calls. */
 #ifndef MO_LIMIT_PATH_STEPS
-#define MO_LIMIT_PATH_STEPS (1U << 22)
+#define MO_LIMIT_PATH_STEPS (1U << 18)
 #endif
 
 /* Type-ability preparation has a work cap. Runtime printing uses its caller's

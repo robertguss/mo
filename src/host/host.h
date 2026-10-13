@@ -28,9 +28,10 @@ struct mo_host {
 };
 void mo_host_init(struct mo_host *host, const struct mo_host_types *types);
 /* Before running main, once per context and before starting threads. Changes
- * process-wide SIGPIPE to ignored and raises the soft descriptor budget up to
+ * process-wide SIGPIPE to ignored and tries to raise the soft descriptor budget to
  * MO_LIMIT_OPEN_FOLDERS + 32 (never above its hard limit). C embedders calling
  * real Console directly must call this, or arrange SIGPIPE handling themselves.
+ * A refused raise leaves the current budget; later opens report exhaustion.
  * NULL on success, otherwise a static internal-stop reason. Prints never change
  * signal dispositions. Embedders may manage their descriptor budget themselves. */
 MO_MUST_USE const char *mo_host_start(struct mo_host *host);

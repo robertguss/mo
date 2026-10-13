@@ -18,8 +18,10 @@ const char *mo_host_start(struct mo_host *host) {
         wanted = budget.rlim_max;
     if (budget.rlim_cur < wanted) {
         budget.rlim_cur = wanted;
-        if (setrlimit(RLIMIT_NOFILE, &budget) != 0)
-            return "internal error: descriptor budget unavailable";
+        if (setrlimit(RLIMIT_NOFILE, &budget) != 0) {
+            /* Best effort: a sandbox may forbid the raise. Keep its existing
+             * budget; a later open reports descriptor exhaustion normally. */
+        }
     }
     struct sigaction action = {.sa_handler = SIG_IGN};
     if (sigemptyset(&action.sa_mask) != 0 || sigaction(SIGPIPE, &action, NULL) != 0)
