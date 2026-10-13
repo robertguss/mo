@@ -1139,6 +1139,11 @@ functions follow the same protocol. `<` and `>` test the returned constructor;
 `<=` is not Greater and `>=` is not Less. Native Float `compare` tests NaNs
 before its numeric comparisons: two NaNs give Equal, a NaN sorts after any
 number. This does not change direct scalar Float comparisons, which stay IEEE.
+Derived records and choices use exhaustive one-level cases on both operands.
+Different constructors order by declaration position without comparing fields;
+matching constructors compare fields using the same flattened proof offsets as
+derived Text. All generated cases and their field slots charge the lowerer's
+whole-program work budget; there is no recursive C proof or value walk.
 
 A derived order, for `Point` of 4.1:
 

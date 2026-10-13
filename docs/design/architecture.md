@@ -871,7 +871,9 @@ Text/Char fields are quoted and escape slashes before newly inserted escapes,
 including controls and interpolation markers. Generated parameter metadata
 retains arity with absent source names.
 Derived Order uses the same reservation queue, keyed additionally by ability.
-Tuple comparisons inspect parts left to right and continue only on Equal;
+Tuple/record comparisons inspect parts left to right and continue only on Equal;
+choice comparisons dispatch on both constructors, with different cases ordered
+by declaration position and matching cases comparing their flattened fields.
 selected custom compare functions replace structural ordering, not equality.
 Native Float `compare` orders NaNs after numbers and returns Equal for two NaNs,
 while direct scalar comparison operators retain IEEE behavior.

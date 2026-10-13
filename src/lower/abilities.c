@@ -267,16 +267,67 @@ static void fields_order(struct lowering *p, struct derived *d, uint32_t first,
 static void derive_order(struct lowering *p, struct derived *d) {
     p->span = d->span;
     struct instance *f = d->function;
-    if (d->type->tag != MO_CORE_TY_TUPLE)
-        lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "this derived order shape is not lowered yet");
-    size_t count = d->type->as.tuple.count;
-    MO_ASSERT(count == d->proof->part_count);
-    mo_core_expr_list left = args(p, count), right = args(p, count);
-    for (size_t i = 0; i < count; i++) {
-        left.items[i] = projection(p, lower_var(p, f->fun.params.items[0].name), i);
-        right.items[i] = projection(p, lower_var(p, f->fun.params.items[1].name), i);
+    if (d->type->tag == MO_CORE_TY_TUPLE) {
+        size_t count = d->type->as.tuple.count;
+        MO_ASSERT(count == d->proof->part_count);
+        mo_core_expr_list left = args(p, count), right = args(p, count);
+        for (size_t i = 0; i < count; i++) {
+            left.items[i] = projection(p, lower_var(p, f->fun.params.items[0].name), i);
+            right.items[i] = projection(p, lower_var(p, f->fun.params.items[1].name), i);
+        }
+        fields_order(p, d, 0, left, right, &f->fun.body);
+        return;
     }
-    fields_order(p, d, 0, left, right, &f->fun.body);
+    if (d->type->tag != MO_CORE_TY_DATA && d->type->tag != MO_CORE_TY_OPTION &&
+        d->type->tag != MO_CORE_TY_RESULT && d->type->tag != MO_CORE_TY_ORDERING &&
+        d->type->tag != MO_CORE_TY_FILE_ERROR && d->type->tag != MO_CORE_TY_ENTRY &&
+        d->type->tag != MO_CORE_TY_ENTRY_KIND)
+        lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "this derived order shape is not lowered yet");
+    mo_core_ctors ctors = lower_ctors(p, d->type);
+    mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CASE);
+    e->as.case_.expr = lower_var(p, f->fun.params.items[0].name);
+    e->as.case_.arms.count = ctors.count;
+    e->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, ctors.count);
+    f->fun.body = e;
+    uint32_t first = 0;
+    for (size_t i = 0; i < ctors.count; i++) {
+        lower_work(p, 1);
+        size_t count = ctors.items[i].fields.count;
+        struct mo_core_arm *a = &e->as.case_.arms.items[i];
+        a->ctor = ctors.items[i].name;
+        a->names.count = count;
+        a->names.items = LOWER_NEW(p, mo_core_string, count);
+        mo_core_expr_list left = args(p, count);
+        for (size_t k = 0; k < count; k++) {
+            a->names.items[k] = lower_fresh(p);
+            left.items[k] = lower_var(p, a->names.items[k]);
+        }
+        mo_core_expr other = lower_expr(p, MO_CORE_EXPR_CASE);
+        a->body = other;
+        other->as.case_.expr = lower_var(p, f->fun.params.items[1].name);
+        other->as.case_.arms.count = ctors.count;
+        other->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, ctors.count);
+        for (size_t j = 0; j < ctors.count; j++) {
+            lower_work(p, 1);
+            struct mo_core_arm *b = &other->as.case_.arms.items[j];
+            b->ctor = ctors.items[j].name;
+            b->names.count = ctors.items[j].fields.count;
+            b->names.items = LOWER_NEW(p, mo_core_string, b->names.count);
+            for (size_t k = 0; k < b->names.count; k++)
+                b->names.items[k] = lower_fresh(p);
+            if (i != j)
+                b->body = ordering(p, i < j ? "Less" : "Greater");
+            else {
+                mo_core_expr_list right = args(p, count);
+                for (size_t k = 0; k < count; k++)
+                    right.items[k] = lower_var(p, b->names.items[k]);
+                fields_order(p, d, first, left, right, &b->body);
+            }
+        }
+        MO_ASSERT(count <= UINT32_MAX - first);
+        first += (uint32_t)count;
+    }
+    MO_ASSERT(first == d->proof->part_count);
 }
 
 static void fields_text(struct lowering *p, struct derived *d, uint32_t first,

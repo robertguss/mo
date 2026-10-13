@@ -797,6 +797,57 @@ static void test_float_compare(void) {
     }
 }
 
+static void test_choice_order(void) {
+    for (uint32_t probe = 0; probe < 4; probe++) {
+        struct lower_fixture f;
+        lower_fixture_init(&f, "module Main\nfn main() : Int\n"
+                               "if Some(2).compare(Some(7)) == Less: 43 else: 1\nend\n");
+        const struct mo_source_type *part = &f.int_;
+        struct mo_source_type option = {.kind = MO_SOURCE_NAMED,
+                                        .name = "Option",
+                                        .module = UINT32_MAX,
+                                        .count = 1,
+                                        .arguments = &part};
+        struct mo_source_type order = f.int_;
+        order.name = "Ordering";
+        uint32_t operands[2];
+        for (uint32_t i = 0; i < 2; i++) {
+            bool some = probe == 2 || probe == 3 || (probe == 0 ? i == 0 : i == 1);
+            uint32_t value = 0;
+            if (some)
+                value = lower_fixture_row(&f, MO_S_INT, &f.int_, i == 0 || probe == 3 ? "2" : "7",
+                                          0, NULL);
+            operands[i] = lower_fixture_row(&f, MO_S_CALL, &option, NULL, some, &value);
+            f.rows[operands[i]].native = some ? "Some" : "None";
+        }
+        struct mo_ability_implementation integer = {
+            .ability = MO_SOURCE_ORDER, .kind = MO_ABILITY_NATIVE, .type = &f.int_};
+        const struct mo_ability_implementation *parts[] = {&integer};
+        struct mo_ability_implementation proof = {.ability = MO_SOURCE_ORDER,
+                                                  .kind = MO_ABILITY_DERIVED,
+                                                  .type = &option,
+                                                  .part_count = 1,
+                                                  .parts = parts};
+        struct mo_checked_ability_use use = {operands[0], &proof};
+        uint32_t compare = lower_fixture_row(&f, MO_S_CALL, &order, NULL, 2, operands);
+        f.rows[compare].native = "compare";
+        f.rows[compare].ability_count = 1;
+        f.rows[compare].abilities = &use;
+        uint32_t want = lower_fixture_row(&f, MO_S_NAME, &order, NULL, 0, NULL);
+        f.rows[want].native = probe == 0 ? "Greater" : probe == 3 ? "Equal" : "Less";
+        uint32_t equal = lower_fixture_op(&f, MO_T_EQ, &f.bool_, compare, want);
+        uint32_t yes = lower_fixture_row(&f, MO_S_INT, &f.int_, "43", 0, NULL);
+        uint32_t no = lower_fixture_row(&f, MO_S_INT, &f.int_, "1", 0, NULL);
+        uint32_t arms[] = {equal, yes, no};
+        (void)lower_fixture_row(&f, MO_S_IF, &f.int_, NULL, 3, arms);
+        const char *names[] = {"some-before-none", "none-before-some", "some-order", "some-equal"};
+        struct mo_core *core = checked(&f, names[probe], "returned\n43\n");
+        if (core != NULL)
+            run(core, 43);
+        lower_fixture_free(&f);
+    }
+}
+
 static void test_record_text(void) {
     struct lower_fixture f;
     lower_fixture_init(&f, "module Main\nstruct Point\nx: Int\nlabel: Text\nend\n"
@@ -1204,6 +1255,7 @@ int main(int argc, char **argv) {
     test_derived_text();
     test_tuple_order();
     test_float_compare();
+    test_choice_order();
     test_record_text();
     test_text();
     test_result_entry();
