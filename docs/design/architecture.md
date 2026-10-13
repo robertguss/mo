@@ -2137,6 +2137,8 @@ expressions and native/derived/custom operator proofs, direct/indirect calls,
 prepared native calls, record/choice construction and fields, normalized
 patterns, tuples/lists, conditionals, loops, early exits/asserts and noncapturing
 lambdas, dot/overload dispatch, Mo-library calls, ability dots and interpolation.
+Option defaults and Option/Result `try` are checked too, including unique
+failure wrapping and generic wrapper requirements.
 `main` returns Unit or Int and takes no parameters or one Console.
 Direct `Console.print` reads its operation
 and named input type from `base/hostops.def`, with the receiver explicit.
@@ -2257,9 +2259,28 @@ constructing a scalar, including Int's signed minimum.
 
 Checked patterns name their cases and declaration-order fields. Case arms keep
 source order and guards; coverage and the no-catch-all rule are already checked.
-`or` explicitly selects Bool or Option. `try` identifies its enclosing result,
-failure constructor and any unique wrapping case. Lambda records retain typed
-parameters, captures in first-use order and source-order numbers before lifting.
+`or` explicitly selects Bool or Option, with two operands and a lazy right
+operand. An Option default returns its payload, even when that payload is
+another Option; flat chains constrain only their final result. `never` depends
+on the mandatory left, not a stopping fallback. Deferred defaults and `try`
+solve alongside dot dispatch, before numeric defaults and final types.
+`try` has one input operand and identifies the nearest function/lambda result,
+failure constructor and any unique wrapping case. Input and enclosing success
+payloads need not match. Equal failure types propagate directly; an unconstrained
+whole error variable first unifies for direct propagation. Otherwise exactly
+one unnamed-field case must match the source error type after generic
+substitution and ordinary numeric defaults. Unknown payloads such as None's
+parameter can be constrained by that unique case; candidate matching does not
+bind them speculatively, and repeated variables must agree. Destination type
+arguments must already be determined by the signature or other uses.
+Wrapping requires the type's insides to be visible, like explicit
+construction. Named fields do not wrap. E0085/E0086 reject the wrong input/result
+family; E0087 names a missing or ambiguous wrapper. The selected wrapper retains
+its substitution and keyed type-only requirements in `mo_checked_try`; lowering
+does not search for cases or proofs. All deferred checks and type comparisons
+share the ordinary work/depth/arena limits and memoize shared type paths.
+Lambda records retain typed parameters, captures in first-use order and
+source-order numbers before lifting.
 Constants alone are dependency-ordered, with source-order ties. The entry names
 the entry module's `main`, its ordered capability parameters, result convention
 and the Text implementation for a returned failure.

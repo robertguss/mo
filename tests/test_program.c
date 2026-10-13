@@ -870,6 +870,48 @@ static void option_or_graph(void) {
     free_fixture(&f);
 }
 
+static void deferred_defaults(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn choose() : Bool\n"
+             "Some(Some(false)) or Some(true) or false or true\nend\n"
+             "fn main() : Int\nreader = fn(values) values.get(0) or 17 end\n"
+             "reader([3]) + (Some(8) or stop \"missing\")\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *choose = &f.program->functions[0].body;
+        uint32_t options = 0, bools = 0;
+        for (uint32_t i = 0; i < choose->count; i++) {
+            const struct mo_checked_expression *row = &choose->items[i];
+            if (row->operation != MO_T_OR)
+                continue;
+            if (row->or_kind == MO_CHECK_OR_OPTION) {
+                CHECK(strcmp(row->type->name, options == 0 ? "Option" : "Bool") == 0);
+                options++;
+            } else {
+                CHECK(row->or_kind == MO_CHECK_OR_BOOL && strcmp(row->type->name, "Bool") == 0);
+                bools++;
+            }
+            CHECK(!row->never);
+        }
+        CHECK(options == 2 && bools == 1);
+        const struct mo_checked_body *main = &f.program->functions[1].body;
+        uint32_t defaults = 0;
+        bool lazy = false;
+        for (uint32_t i = 0; i < main->count; i++) {
+            const struct mo_checked_expression *row = &main->items[i];
+            if (row->operation != MO_T_OR)
+                continue;
+            MO_ASSERT(row->operand_count == 2);
+            CHECK(row->or_kind == MO_CHECK_OR_OPTION && strcmp(row->type->name, "Int") == 0);
+            CHECK(!row->never);
+            lazy = lazy || main->items[row->operands[1]].never;
+            defaults++;
+        }
+        CHECK(defaults == 2 && lazy);
+    }
+    free_fixture(&f);
+}
+
 static void try_graph(void) {
     struct fixture f;
     init(&f, "module Main\nfn next(value: Option(Int)) : Option(Int)\n"
@@ -886,8 +928,7 @@ static void try_graph(void) {
             MO_ASSERT(row->operand_count == 1);
             CHECK(strcmp(row->type->name, "Int") == 0 && !row->never);
             CHECK(strcmp(fn->body.items[row->operands[0]].type->name, "Option") == 0);
-            CHECK(strcmp(row->try_->result->name, "Option") == 0 &&
-                  row->try_->result->count == 1 &&
+            CHECK(strcmp(row->try_->result->name, "Option") == 0 && row->try_->result->count == 1 &&
                   strcmp(row->try_->result->arguments[0]->name, "Int") == 0);
             CHECK(row->try_->failure.builtin != NULL &&
                   strcmp(row->try_->failure.builtin, "None") == 0);
@@ -896,6 +937,170 @@ static void try_graph(void) {
             found = true;
         }
         CHECK(found);
+    }
+    free_fixture(&f);
+    init(&f, "module Main\nenum Inner(T)\nBadInner(T)\nend\n"
+             "enum Outer(U)\nWrapped(Inner(U))\nDetail(name: Text)\nend\n"
+             "fn lift(value: Result(Int, Inner(T))) : Result(Text, Outer(T))\n"
+             "number = try value\nOk(number.to_text)\nend\n"
+             "fn main() : Int\ncase lift(Error(BadInner(true)))\n"
+             "Ok(text): text.byte_count\nError(Wrapped(BadInner(_))): 2\n"
+             "Error(Detail(name: _)): 3\nend\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_function *fn = &f.program->functions[0];
+        const struct mo_source_type *parameter =
+            fn->signature->type->arguments[0]->arguments[1]->arguments[0];
+        bool wrapped = false;
+        for (uint32_t i = 0; i < fn->body.count; i++) {
+            const struct mo_checked_try *try_ = fn->body.items[i].try_;
+            if (try_ == NULL)
+                continue;
+            CHECK(try_->failure.builtin != NULL && strcmp(try_->failure.builtin, "Error") == 0);
+            MO_ASSERT(try_->wrapper.symbol != NULL && try_->arguments.count == 1);
+            CHECK(strcmp(try_->wrapper.symbol->name, "Wrapped") == 0);
+            CHECK(strcmp(try_->arguments.items[0].parameter->declaration->name, "Outer") == 0);
+            CHECK(try_->arguments.items[0].type == parameter);
+            CHECK(strcmp(try_->result->arguments[0]->name, "Text") == 0);
+            wrapped = true;
+        }
+        CHECK(wrapped);
+    }
+    free_fixture(&f);
+    init(&f, "module Main\nenum Outer(T)\nWrapped(Set(T))\nend\n"
+             "fn lift(value: Result(Int, Set(T))) : Result(Text, Outer(T)) where T: Hash\n"
+             "number = try value\nOk(number.to_text)\nend\nfn main()\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_function *fn = &f.program->functions[0];
+        const struct mo_source_type *parameter =
+            fn->signature->type->arguments[0]->arguments[1]->arguments[0];
+        bool wrapped = false;
+        for (uint32_t i = 0; i < fn->body.count; i++) {
+            const struct mo_checked_try *try_ = fn->body.items[i].try_;
+            if (try_ == NULL)
+                continue;
+            MO_ASSERT(try_->wrapper.symbol != NULL && try_->arguments.count == 1);
+            CHECK(strcmp(try_->wrapper.symbol->name, "Wrapped") == 0);
+            CHECK(try_->arguments.items[0].type == parameter);
+            CHECK(try_->ability_count == 2);
+            for (uint32_t j = 0; j < try_->ability_count; j++) {
+                const struct mo_checked_ability_use *use = &try_->abilities[j];
+                CHECK(use->operand == UINT32_MAX &&
+                      use->parameter == try_->arguments.items[0].parameter);
+                CHECK(use->implementation->kind == MO_ABILITY_PARAMETER &&
+                      use->implementation->type == parameter);
+                CHECK(use->implementation->ability == MO_SOURCE_EQUAL ||
+                      use->implementation->ability == MO_SOURCE_HASH);
+            }
+            wrapped = true;
+        }
+        CHECK(wrapped);
+    }
+    free_fixture(&f);
+    init(&f, "module Main\nfn negate(value: Option(T)) : Option(T) where T: Number\n"
+             "Some(- try value)\nend\nfn main()\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        bool negated = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->operation != MO_T_MINUS)
+                continue;
+            MO_ASSERT(row->operand_count == 1 && row->ability_count == 1);
+            CHECK(row->type->kind == MO_SOURCE_PARAMETER);
+            CHECK(row->abilities[0].implementation->kind == MO_ABILITY_PARAMETER &&
+                  row->abilities[0].implementation->ability == MO_SOURCE_NUMBER);
+            CHECK(body->items[row->operands[0]].try_ != NULL);
+            negated = true;
+        }
+        CHECK(negated);
+    }
+    free_fixture(&f);
+}
+
+static void inferred_wrappers(void) {
+    struct fixture f;
+    init(&f, "module Main\nenum Outer\nWrong((Option(Int), Option(Bool)))\n"
+             "Wrapped((Option(Int), Option(Int)))\nScalar(Int)\nend\n"
+             "fn helper() : Result(Int, Outer)\nempty = None\nOk(try Error((empty, empty)))\n"
+             "end\nfn scalar() : Result(Int, Outer)\nOk(try Error(17))\nend\n"
+             "fn main()\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        bool wrapped = false, inferred = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->native != NULL && strcmp(row->native, "None") == 0) {
+                CHECK(strcmp(row->type->arguments[0]->name, "Int") == 0);
+                inferred = true;
+            }
+            if (row->try_ != NULL) {
+                MO_ASSERT(row->try_->wrapper.symbol != NULL);
+                CHECK(strcmp(row->try_->wrapper.symbol->name, "Wrapped") == 0);
+                wrapped = true;
+            }
+        }
+        CHECK(wrapped && inferred);
+        const struct mo_checked_body *scalar = &f.program->functions[1].body;
+        bool numbered = false;
+        for (uint32_t i = 0; i < scalar->count; i++) {
+            if (scalar->items[i].try_ == NULL)
+                continue;
+            MO_ASSERT(scalar->items[i].try_->wrapper.symbol != NULL);
+            CHECK(strcmp(scalar->items[i].try_->wrapper.symbol->name, "Scalar") == 0);
+            numbered = true;
+        }
+        CHECK(numbered);
+    }
+    free_fixture(&f);
+}
+
+static void try_contexts(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn direct(value: Result(Int, Text)) : Result(Text, Text)\n"
+             "n = try value\nOk(n.to_text)\nend\n"
+             "fn builtin(value: Result(Int, Int)) : Result(Text, Option(Int))\n"
+             "n = try value\nOk(n.to_text)\nend\n"
+             "fn nested(value: Option(Option(Int))) : Option(Int)\nSome(try try value)\nend\n"
+             "fn stopped() : Option(Int)\nSome(try stop \"unreachable\")\nend\n"
+             "fn main() : Int\nf = fn(value) Some((try value).to_text) end\n"
+             "(f(Some(12)) or \"\").byte_count\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        uint32_t tries = 0;
+        for (uint32_t j = 0; j < f.program->function_count; j++) {
+            const struct mo_checked_body *body = &f.program->functions[j].body;
+            for (uint32_t i = 0; i < body->count; i++) {
+                const struct mo_checked_expression *row = &body->items[i];
+                if (row->try_ == NULL)
+                    continue;
+                const struct mo_checked_try *try_ = row->try_;
+                MO_ASSERT(row->operand_count == 1 && row->operands[0] < i);
+                CHECK(row->never == body->items[row->operands[0]].never);
+                if (j == 0) {
+                    CHECK(strcmp(row->type->name, "Int") == 0);
+                    CHECK(strcmp(try_->result->arguments[0]->name, "Text") == 0);
+                    CHECK(try_->wrapper.symbol == NULL && try_->wrapper.builtin == NULL);
+                } else if (j == 1) {
+                    MO_ASSERT(try_->wrapper.builtin != NULL && try_->arguments.count == 1);
+                    CHECK(strcmp(try_->wrapper.builtin, "Some") == 0);
+                    CHECK(strcmp(try_->arguments.items[0].parameter->declaration->name, "Option") ==
+                          0);
+                    CHECK(strcmp(try_->arguments.items[0].type->name, "Int") == 0);
+                } else {
+                    CHECK(strcmp(try_->failure.builtin, "None") == 0);
+                    CHECK(strcmp(try_->result->name, "Option") == 0);
+                    CHECK(try_->wrapper.symbol == NULL && try_->wrapper.builtin == NULL);
+                    CHECK(strcmp(try_->result->arguments[0]->name, j == 4 ? "Text" : "Int") == 0);
+                    CHECK(row->never == (j == 3));
+                }
+                tries++;
+            }
+        }
+        CHECK(tries == 6);
     }
     free_fixture(&f);
 }
@@ -1397,6 +1602,30 @@ static void rejected_stages(void) {
         {"fn main() : Int\nx = 1\nf = fn() x end\nf()\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Int\nm = {\"a\": 1}\ncase m\n_: 1\nend\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Int\ntry Some(1)\nend\n", MO_CODE_TRY_RESULT},
+        {"fn helper() : Option(Int)\nSome(try 1)\nend\nfn main()\nend\n", MO_CODE_TRY_INPUT},
+        {"fn helper() : Option(Int)\nSome(try true)\nend\nfn main()\nend\n", MO_CODE_TRY_INPUT},
+        {"fn helper(value: Option(Int)) : Result(Int, Text)\nOk(try value)\nend\n"
+         "fn main()\nend\n",
+         MO_CODE_TRY_RESULT},
+        {"fn helper(value: Result(Int, Text)) : Option(Int)\nSome(try value)\nend\n"
+         "fn main()\nend\n",
+         MO_CODE_TRY_RESULT},
+        {"fn main() : Int\nf = fn(value) try value end\nf(Some(1)) + 1\nend\n", MO_CODE_TRY_RESULT},
+        {"enum Outer\nNamed(value: Text)\nend\n"
+         "fn helper(value: Result(Int, Text)) : Result(Int, Outer)\nOk(try value)\nend\n"
+         "fn main()\nend\n",
+         MO_CODE_TRY_WRAPPER},
+        {"enum Outer\nFirst(Text)\nSecond(Text)\nend\n"
+         "fn helper(value: Result(Int, Text)) : Result(Int, Outer)\nOk(try value)\nend\n"
+         "fn main()\nend\n",
+         MO_CODE_TRY_WRAPPER},
+        {"fn helper(value: Result(Int, T)) : Result(Int, U)\nOk(try value)\nend\n"
+         "fn main()\nend\n",
+         MO_CODE_TRY_WRAPPER},
+        {"enum Inner(T)\nBad(T)\nend\nenum Outer\nWrap(Inner(Bool))\nend\n"
+         "fn helper(value: Result(Int, Inner(Int))) : Result(Int, Outer)\nOk(try value)\nend\n"
+         "fn main()\nend\n",
+         MO_CODE_TRY_WRAPPER},
         {"fn main(console: Console)\nconsole.printed\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"value = 1\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Int\nexamples\n1 == 1\nend\n1\nend\n", MO_CODE_CHECK_UNFINISHED},
@@ -1616,7 +1845,11 @@ static void allocation_failures(void) {
         "fn main() : Int\nvar total = 0\nfor i in 0..3\ntotal += i\nend\n"
         "reader = fn(value) value.value end\ntotal = reader(Box(value: total))\n"
         "box = Some(Box(value: total))\n_rendered = \"#{box}\"\n"
-        "case box\nSome(Box(value: n)): n\nNone: 0\nend\nend\n"};
+        "case box\nSome(Box(value: n)): n\nNone: 0\nend\nend\n",
+        "module Main\nenum Outer(T)\nWrapped(Set(T))\nend\n"
+        "fn lift(value: Result(Int, Set(T))) : Result(Text, Outer(T)) where T: Hash\n"
+        "n = try value\nOk(n.to_text)\nend\n"
+        "fn main() : Int\nreader = fn(values) values.get(0) or 17 end\nreader([3])\nend\n"};
     for (size_t s = 0; s < sizeof(sources) / sizeof(sources[0]); s++) {
         struct fixture f;
         init(&f, sources[s]);
@@ -1649,9 +1882,9 @@ static void allocation_failures(void) {
 }
 
 static void corpus(void) {
-    static const char *const paths[] = {"fuzz/corpus/fuzz_program/loops.mo",
-                                        "fuzz/corpus/fuzz_program/patterns.mo",
-                                        "fuzz/corpus/fuzz_program/lambdas.mo"};
+    static const char *const paths[] = {
+        "fuzz/corpus/fuzz_program/loops.mo", "fuzz/corpus/fuzz_program/patterns.mo",
+        "fuzz/corpus/fuzz_program/lambdas.mo", "fuzz/corpus/fuzz_program/failures.mo"};
     struct mo_sources sources;
     MO_ASSERT(mo_sources_init(&sources));
     for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
@@ -1687,7 +1920,10 @@ static void run(void *argument) {
     data_recursion();
     generic_lambdas();
     option_or_graph();
+    deferred_defaults();
     try_graph();
+    inferred_wrappers();
+    try_contexts();
     lambda_graph();
     branch_graph();
     record_graph();

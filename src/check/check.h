@@ -342,12 +342,17 @@ enum mo_checked_or { MO_CHECK_OR_ABSENT, MO_CHECK_OR_BOOL, MO_CHECK_OR_OPTION };
 /* The source type decides Option versus Result. failure is None or Error in
  * the enclosing result; wrapper is absent for a direct propagation, or the
  * unique single-unnamed-field case selected by reference 8.3. Neither lower nor
- * codegen searches for a wrapper or chooses among candidates. */
+ * codegen searches for a wrapper or chooses among candidates. Successful input
+ * and enclosing result payloads need not have the same type. A generic wrapper
+ * carries its substitution and keyed type-only requirements, just like an
+ * explicit constructor; direct propagation has neither. */
 struct mo_checked_try {
     const struct mo_source_type *result; /* enclosing function/lambda result */
     struct mo_constructor_ref failure;
     struct mo_constructor_ref wrapper;
     struct mo_type_arguments arguments; /* wrapper substitution */
+    uint32_t ability_count;
+    const struct mo_checked_ability_use *abilities; /* keyed wrapper requirements, type-only */
 };
 
 struct mo_checked_lambda {
@@ -385,6 +390,12 @@ struct mo_checked_ability_use {
  * optional else body. RETURN has an optional guard first, then an optional
  * value; syntax distinguishes bare return from guarded bare return. Guards
  * run before the lazy value, even though the value is written first.
+ * OR has left/default operands, with a lazy right operand for both Bool and
+ * Option. An Option OR returns its payload type; its never flag comes from
+ * the mandatory left only. TRY has one input operand and try_ metadata; its
+ * failure returns from the nearest function/lambda, not the containing named
+ * function when inside a lambda. Neither form introduces constructor rows
+ * for its implicit failure/default paths.
  *
  * WHILE operands are condition/body; FOR operands are iterable/body. Both
  * return Unit. The body is lazy, and WHILE re-evaluates its condition each

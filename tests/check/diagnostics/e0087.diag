@@ -1,0 +1,6 @@
+E0087 8.3
+0:106..109
+try needs exactly one failure case holding Text as its unnamed value; found 0
+Add one case Wrap(E) to the function's failure type, where E is the source failure type; named fields don't wrap (reference 8.3).
+try needs exactly one failure case holding Text as its unnamed value; found 0
+fixes 0
