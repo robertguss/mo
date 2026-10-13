@@ -1052,6 +1052,75 @@ static void test_specs(void) {
     }
 }
 
+static void test_promises(void) {
+    const char *numbers[] = {"5", "2", "20"};
+    const int64_t answers[] = {0, 1, 2};
+    for (uint32_t probe = 0; probe < 3; probe++) {
+        struct lower_fixture f;
+        lower_fixture_init(&f,
+                           "module Main\nfn main() : Int\n7\n"
+                           "promise \"bounded result\"\nresult > 2\nresult < 8\n"
+                           "allows result: 5\nforbids result: 2\nforbids result: 20\nend\nend\n");
+        (void)lower_fixture_row(&f, MO_S_INT, &f.int_, "7", 0, NULL);
+        struct mo_checked_body main = f.functions[0].body;
+        f.bindings[0] = (struct mo_checked_binding){.name = "result", .type = &f.int_};
+        f.functions[0].body.binding_count = 1;
+        uint32_t result = lower_fixture_read(&f, 0);
+        uint32_t two = lower_fixture_row(&f, MO_S_INT, &f.int_, "2", 0, NULL);
+        uint32_t first = lower_fixture_op(&f, MO_T_GT, &f.bool_, result, two);
+        result = lower_fixture_read(&f, 0);
+        uint32_t eight = lower_fixture_row(&f, MO_S_INT, &f.int_, "8", 0, NULL);
+        uint32_t last = lower_fixture_op(&f, MO_T_LT, &f.bool_, result, eight);
+        struct mo_checked_condition conditions[2] = {{.expression = first}, {.expression = last}};
+        const char *lines[] = {"result > 2", "result < 8"};
+        for (uint32_t i = 0; i < 2; i++) {
+            uint32_t start = (uint32_t)(strstr(f.source, lines[i]) - f.source);
+            conditions[i].text = (struct mo_spec_text){
+                .bytes = (const uint8_t *)lines[i], .length = 10, .span = {0, start, start + 10}};
+        }
+        const struct mo_checked_binding *parameters[] = {&f.bindings[0]};
+        struct mo_checked_spec specs[2] = {{.kind = MO_SPEC_PROMISE,
+                                            .syntax = &f.syntax[first],
+                                            .subject = 0,
+                                            .number = 1,
+                                            .wording = (const uint8_t *)"bounded result",
+                                            .wording_length = 14,
+                                            .parameter_count = 1,
+                                            .parameters = parameters,
+                                            .body = f.functions[0].body,
+                                            .condition_count = 2,
+                                            .conditions = conditions},
+                                           {.kind = MO_SPEC_ANCHOR,
+                                            .subject = 0,
+                                            .promise = 0,
+                                            .number = probe == 2 ? 2 : 1,
+                                            .allows = probe == 0}};
+        uint32_t value = lower_fixture_row(&f, MO_S_INT, &f.int_, numbers[probe], 0, NULL);
+        specs[1].syntax = &f.syntax[value];
+        specs[1].body = f.functions[0].body;
+        specs[1].body.root = UINT32_MAX;
+        specs[1].value_count = 1;
+        specs[1].values = &value;
+        specs[1].text = (struct mo_spec_text){.bytes = (const uint8_t *)numbers[probe],
+                                              .length = strlen(numbers[probe]),
+                                              .span = f.syntax[value].span};
+        f.program.spec_count = 2;
+        f.program.specs = specs;
+        f.functions[0].body = main;
+        const char *names[] = {"promise-allows", "promise-first", "promise-second"};
+        const char *calls[] = {"Main.main.promise.1.allows.1", "Main.main.promise.1.forbids.1",
+                               "Main.main.promise.1.forbids.2"};
+        char expected[128];
+        int length = snprintf(expected, sizeof expected, "returned\n%lld\n{\"call\":\"%s\"}\n",
+                              (long long)answers[probe], calls[probe]);
+        MO_ASSERT(length > 0 && (size_t)length < sizeof expected);
+        struct mo_core *core = checked(&f, names[probe], expected);
+        if (core != NULL)
+            run_outcome(core, calls[probe], MO_RETURNED, answers[probe], NULL);
+        lower_fixture_free(&f);
+    }
+}
+
 static void test_record_text(void) {
     struct lower_fixture f;
     lower_fixture_init(&f, "module Main\nstruct Point\nx: Int\nlabel: Text\nend\n"
@@ -1464,6 +1533,7 @@ int main(int argc, char **argv) {
     test_list_text();
     test_constants();
     test_specs();
+    test_promises();
     test_record_text();
     test_text();
     test_result_entry();

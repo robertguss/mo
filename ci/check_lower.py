@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 
-from check_core_check import VERSION, WORLD, parse
+from check_core_check import VERSION, WORLD, parse, wire
 from check_vm import oracle
 
 
@@ -45,10 +45,30 @@ def main():
                 selection = json.loads(lines[2]) if len(lines) == 3 else {}
                 stderr = selection.get("stderr", [])
                 test = selection.get("test")
-                actual = oracle(path, world, test)
+                call = selection.get("call")
+                oracle_path = path
+                if call is not None:
+                    # The Lean CLI selects Unit tests/examples, not Int anchors.
+                    # Observe an anchor's exact answer through a spec adapter;
+                    # the unmodified document is checked by the C driver.
+                    document = parse(path.read_text())
+                    program = document[2]
+                    name = "%lower.anchor.answer"
+                    adapter = parse(f'''(FunDecl {wire(name)} () (unit)
+                        (fail (prim (int (toText)) ((call {wire(call)} ()))))
+                        "Main" (test) {len(program[3])})''')
+                    program[2].append(adapter)
+                    program[5] = parse("(noSource)")
+                    oracle_path = root / "anchor-probe.core"
+                    oracle_path.write_text(wire(document) + "\n")
+                    test = name
+                actual = oracle(oracle_path, world, test)
+                if call is not None:
+                    assert actual[0] == "failed", (path.name, actual)
+                    actual[0] = "returned"
                 assert actual == expected, (path.name, expected, actual)
                 if len(lines) == 3:
-                    command = ["formal/.lake/build/bin/mocore", str(path), str(world)]
+                    command = ["formal/.lake/build/bin/mocore", str(oracle_path), str(world)]
                     if test is not None:
                         command += ["--test", test]
                     report = subprocess.run(command,
@@ -58,8 +78,9 @@ def main():
                     assert effects[0] == "effects"
                     assert effects[2] == stderr, (path.name, effects)
                 checked += 1
-                command = ([str(vm), "--core", str(path)] if test is None else
-                           [str(driver.parent / "test_vm.test"), "--core-test", str(path), test])
+                target = call if call is not None else test
+                command = ([str(vm), "--core", str(path)] if target is None else
+                           [str(driver.parent / "test_vm.test"), "--core-test", str(path), target])
                 report = subprocess.run(command,
                                         capture_output=True, text=True, timeout=15)
                 if report.returncode == 77:

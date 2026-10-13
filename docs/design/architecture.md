@@ -901,6 +901,15 @@ conditions return Unit; an ordinary false condition calls `fail` rather than
 `stop`. Ordinary-function assertions still stop. Equality and pattern failure
 details refuse E1150 until the Core structural primitive lands; lowering must
 not substitute user Text conversions or silently omit their values.
+Promises evaluate condition lines in written order and return the first false
+line's one-based number, or zero after the final success; later lines do not
+run after a failure. Each promise's parameter metadata, subject link and exact
+condition text/spans survive in Core. Anchors evaluate argument roots in source
+postorder, then reorder the saved values into promise-parameter order for a
+single call. Their names include the promise ordinal before `.allows.N` or
+`.forbids.N`, preventing collisions between a subject's promises. Anchor
+metadata records the promise link and expectation; lowering does not execute it.
+Generic spec instances remain E1150 while their producer is staged.
 
 The initial CPS implementation conservatively passes every live outer var,
 not only changed vars, across a continuation join; expression joins also pass

@@ -1363,6 +1363,15 @@ generated inputs and the ordinary function's actual result; generation is
 outside this model. `promiseHolds` compares an answer with 0 for the samples'
 Boolean conditions.
 
+C lowering emits each checked condition exactly once, nested under the previous
+line's success branch. Promise names are `SUBJECT.promise.N`; anchors use that
+whole name followed by `.allows.N` or `.forbids.N`, so distinct promises cannot
+reuse a display name. Metadata preserves the ordinary subject/promise links,
+expectation and each original condition's bytes/span. Anchor value roots are
+evaluated by increasing checked postorder index (written order), saved once,
+and only then permuted to parameter order at the promise call. Generic spec
+instances currently refuse E1150 pending their checked producer.
+
 ```mo
 promise "a deposit adds exactly the amount"
   result is Ok(after) implies after.balance == account.balance + amount

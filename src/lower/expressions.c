@@ -1,5 +1,6 @@
 #include "lower/scalar.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 /* CPS is a work list, not C calls. A continuation may be shared by branches;
@@ -30,7 +31,12 @@ enum continuation_kind {
     K_OPTION,
     K_TRY,
     K_TEXT,
-    K_EXAMPLE
+    K_EXAMPLE,
+    K_PROMISE,
+    K_ANCHOR
+};
+struct anchor_value {
+    uint32_t expression, slot;
 };
 struct continuation {
     enum continuation_kind kind;
@@ -46,6 +52,7 @@ struct continuation {
     mo_core_string position;
     mo_core_ty position_type;
     const struct mo_checked_pattern *pattern;
+    const struct anchor_value *values;
 };
 enum task_kind { TASK_ROW, TASK_FINISH, TASK_CONDITION, TASK_PATTERN, TASK_ARM, TASK_COPY };
 struct task {
@@ -986,6 +993,47 @@ static void finish_task(struct body *b, struct task t) {
         *t.out = e;
         return;
     }
+    if (k->kind == K_PROMISE) {
+        const struct mo_checked_spec *spec = b->instance->spec;
+        p->span = spec->conditions[k->at].text.span;
+        mo_core_expr e = lower_expr(p, MO_CORE_EXPR_IF);
+        e->as.if_.cond = t.value;
+        e->as.if_.else_ = lower_int(p, (uint64_t)k->at + 1);
+        *t.out = e;
+        if (k->at + 1 == spec->condition_count)
+            e->as.if_.then_ = lower_int(p, 0);
+        else {
+            struct continuation *next = continuation(b, K_PROMISE);
+            next->at = k->at + 1;
+            emit(b, spec->conditions[next->at].expression, t.state, next, &e->as.if_.then_);
+        }
+        return;
+    }
+    if (k->kind == K_ANCHOR) {
+        const struct mo_checked_spec *spec = b->instance->spec;
+        mo_core_expr *out = t.out;
+        mo_core_expr value = t.value;
+        if (!atom(value)) {
+            mo_core_expr bound = let(b, lower_fresh(p), value);
+            *out = bound;
+            out = &bound->as.let_.body;
+            value = lower_var(p, bound->as.let_.name);
+        }
+        k->arguments.items[k->values[k->at].slot] = value;
+        if (k->at + 1 < spec->value_count) {
+            struct continuation *next = continuation(b, K_ANCHOR);
+            *next = *k;
+            next->at++;
+            emit(b, next->values[next->at].expression, t.state, next, out);
+        } else {
+            p->span = spec->syntax->span;
+            mo_core_expr call = lower_expr(p, MO_CORE_EXPR_CALL);
+            call->as.call.name = p->specs[spec->promise]->fun.name;
+            call->as.call.args = k->arguments;
+            *out = call;
+        }
+        return;
+    }
     if (k->kind == K_JUMP) {
         *t.out = jump(b, k, t.value);
         return;
@@ -1485,6 +1533,11 @@ static void row_task(struct body *b, struct task t) {
     emit(b, r->operands[skip], t.state, k, t.out);
 }
 
+static int anchor_order(const void *a, const void *b) {
+    const struct anchor_value *x = a, *y = b;
+    return (x->expression > y->expression) - (x->expression < y->expression);
+}
+
 void lower_body(struct lowering *p, struct instance *instance, const struct mo_checked_body *source,
                 uint32_t parameter_count, const struct mo_checked_binding *const *parameters) {
     struct body b = {.p = p, .instance = instance, .source = source};
@@ -1503,7 +1556,25 @@ void lower_body(struct lowering *p, struct instance *instance, const struct mo_c
         instance->meta.body.params.items[i] =
             (struct mo_core_name){true, lower_text(p, parameter->name)};
     }
-    if (instance->fun.kind == MO_CORE_EXAMPLE) {
+    if (instance->fun.kind == MO_CORE_ANCHOR) {
+        const struct mo_checked_spec *spec = instance->spec;
+        MO_ASSERT(spec->value_count != 0);
+        struct continuation *k = continuation(&b, K_ANCHOR);
+        struct anchor_value *values = LOWER_NEW(p, struct anchor_value, spec->value_count);
+        for (uint32_t i = 0; i < spec->value_count; i++) {
+            values[i] = (struct anchor_value){spec->values[i], i};
+            for (uint32_t n = spec->value_count; n != 0; n /= 2)
+                lower_work(p, 1);
+        }
+        qsort(values, spec->value_count, sizeof *values, anchor_order);
+        k->values = values;
+        k->arguments = arguments(&b, spec->value_count);
+        emit(&b, values[0].expression, (struct state){0}, k, &instance->fun.body);
+    } else if (instance->fun.kind == MO_CORE_PROMISE) {
+        MO_ASSERT(instance->spec->condition_count != 0);
+        emit(&b, instance->spec->conditions[0].expression, (struct state){0},
+             continuation(&b, K_PROMISE), &instance->fun.body);
+    } else if (instance->fun.kind == MO_CORE_EXAMPLE) {
         require_plain_condition(&b, b.source->root);
         emit(&b, b.source->root, (struct state){0}, continuation(&b, K_EXAMPLE),
              &instance->fun.body);
