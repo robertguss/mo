@@ -1030,8 +1030,10 @@ lists preserve source order even though constants are dependency-ordered.
 Compilation needs **only this Core document**. It validates metadata shape,
 retains provenance through lambda lifting/optimization, maps binder identities
 to register live ranges, and maps expression spans to instruction offsets.
-It interns filenames and remaps source-file indices to bytecode string
-indices. The image keeps declaration spans, condition text/spans and spec
+It copies `metadata.files` byte-for-byte into bytecode's separate filename
+table in source order, including unused and duplicate rows. Instruction spans,
+declaration spans and condition spans retain those source-file indices.
+The image keeps declaration spans, condition text/spans and spec
 links as well as exposure, so tools never reconstruct them from checked Mo
 syntax. `noSource` compiles with empty source debug tables/no exports; tools
 that need absent links report them unavailable (`formal/TEXT.md`).
@@ -2741,8 +2743,9 @@ MO_MUST_USE struct mo_core *mo_core_parse(struct mo_arena *arena, const char *te
                                           struct mo_diags *diags);
 
 /* src/codegen/codegen.h: the whole Core document, spec code and metadata included.
- * Validate metadata shape; derive debug ranges, remap file indices to filename strings,
- * preserve module exposure and spec links/lines. Never reopen sources or consult checked Mo. */
+ * Validate metadata shape; derive debug ranges, copy exact filename bytes in source order,
+ * retain file indices in the separate filename table, module exposure and spec links/lines.
+ * Never reopen sources or consult checked Mo. */
 MO_MUST_USE bool mo_compile(const struct mo_core *core, struct mo_buffer *bytecode_out, struct mo_diags *diags);
 
 /* src/bytecode/bytecode.h: writing and text tools borrow inputs. out is an initialized,
