@@ -296,16 +296,5 @@ struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *progra
     for (struct data_instance *d = p->data; d != NULL; d = d->next)
         result->data.items[i++] = d->data;
     lower_metadata(p, result);
-    /* The wire form includes list/schema wrappers absent from Expr height,
-     * and metadata contributes bytes/nodes. Check the actual public codec;
-     * release its independent storage before a refusal can longjmp. */
-    struct mo_buffer text;
-    mo_buffer_init(&text, MO_LIMIT_CORE_TEXT_SIZE);
-    bool printable = mo_core_print(result, &text);
-    size_t bytes = text.length;
-    mo_buffer_free(&text);
-    if (!printable)
-        lower_refuse(p, MO_CODE_LOWER_TEXT, "lowered Core cannot fit the text codec's bounds");
-    lower_work(p, bytes);
     return result;
 }

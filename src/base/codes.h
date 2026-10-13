@@ -220,8 +220,6 @@
     X(1152, LOWER_WORK, NULL)                                                                      \
     /* A source type, instantiation chain or generated Core path is too deep. */                   \
     X(1153, LOWER_DEPTH, NULL)                                                                     \
-    /* Lowered Core exceeds the canonical text codec's bounds or scratch allowance. */             \
-    X(1154, LOWER_TEXT, NULL)                                                                      \
     /* The ordinary entry's full runtime name is not unique in the image. */                       \
     X(1200, CODEGEN_ENTRY, NULL)                                                                   \
     /* Core uses a representation that source lowering never produces: a lowering bug. */          \

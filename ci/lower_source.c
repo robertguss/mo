@@ -122,10 +122,13 @@ static void run_source(void *argument) {
         }
         struct mo_buffer text;
         mo_buffer_init(&text, MO_LIMIT_CORE_TEXT_SIZE);
-        MO_ASSERT(mo_core_print(core, &text));
-        MO_ASSERT(fwrite(text.bytes, 1, text.length, stdout) == text.length);
+        if (mo_core_print(core, &text)) {
+            MO_ASSERT(fwrite(text.bytes, 1, text.length, stdout) == text.length);
+            input->result = 0;
+        } else
+            (void)fprintf(stderr, "E%04u: Core text exceeds the codec's resource bounds\n",
+                          MO_CODE_CORE_TEXT_LIMIT);
         mo_buffer_free(&text);
-        input->result = 0;
     } else {
         MO_ASSERT(diags.count != 0);
         for (uint32_t i = 0; i < diags.count; i++)

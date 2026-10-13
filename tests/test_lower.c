@@ -506,8 +506,16 @@ static void test_limits(void) {
     uint32_t last = zero;
     for (unsigned i = 0; i < 253; i++)
         last = lower_fixture_op(&f, MO_T_PLUS, &f.int_, last, one);
-    CHECK(mo_lower(&f.arena, &f.program, &f.sources, &f.diags) == NULL);
-    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_LOWER_TEXT);
+    struct mo_core *core = mo_lower(&f.arena, &f.program, &f.sources, &f.diags);
+    CHECK(core != NULL && !mo_diags_any(&f.diags));
+    if (core != NULL) {
+        MO_ASSERT(mo_core_check(core, &f.diags));
+        run(core, 253);
+        struct mo_buffer printed;
+        mo_buffer_init(&printed, MO_LIMIT_CORE_TEXT_SIZE);
+        CHECK(!mo_core_print(core, &printed)); /* Codec depth must not gate compilation. */
+        mo_buffer_free(&printed);
+    }
     mo_diags_free(&f.diags);
     MO_ASSERT(mo_diags_init(&f.diags));
     mo_arena_free(&f.arena);
@@ -622,14 +630,13 @@ static void test_substituted_depth(void) {
         uint32_t statements[] = {call, zero};
         (void)lower_fixture_row(&f, MO_S_SEQUENCE, &f.int_, NULL, 2, statements);
         struct mo_core *core = mo_lower(&f.arena, &f.program, &f.sources, &f.diags);
-        if (index == 0) {
+        if (index < 2) {
             CHECK(core != NULL && !mo_diags_any(&f.diags));
             if (core != NULL)
                 MO_ASSERT(mo_core_check(core, &f.diags));
         } else {
             CHECK(core == NULL);
-            CHECK(f.diags.count == 1 &&
-                  f.diags.items[0].code == (index == 1 ? MO_CODE_LOWER_TEXT : MO_CODE_LOWER_DEPTH));
+            CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_LOWER_DEPTH);
         }
         lower_fixture_free(&f);
     }
@@ -699,17 +706,47 @@ static void test_source(void *unused) {
         run(core, 80);
     mo_arena_free(&output);
     mo_diags_free(&diags);
+    for (uint32_t statements = MO_LIMIT_CORE_DEPTH - 8; statements <= MO_LIMIT_CORE_DEPTH;
+         statements++) {
+        mo_buffer_clear(&source);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\nfn main() : Int\nvar n = 0\n"));
+        for (uint32_t i = 0; i < statements; i++)
+            MO_ASSERT(mo_buffer_append_text(&source, "n += 1\n"));
+        MO_ASSERT(mo_buffer_append_text(&source, "n\nend\n"));
+        mo_arena_init(&output, MO_LIMIT_LOWER_WORK);
+        MO_ASSERT(mo_diags_init(&diags));
+        core = source_core(&output, &source, &diags);
+        if (statements < MO_LIMIT_CORE_DEPTH - 2) {
+            CHECK(core != NULL && !mo_diags_any(&diags));
+            if (core != NULL)
+                run(core, statements);
+        } else {
+            CHECK(core == NULL && diags.count == 1);
+            CHECK(diags.items[0].code == MO_CODE_LOWER_DEPTH);
+        }
+        mo_arena_free(&output);
+        mo_diags_free(&diags);
+    }
     mo_buffer_clear(&source);
     MO_ASSERT(mo_buffer_append_text(&source, "module Main\nfn main() : Int\n17\nend\n"));
-    for (uint32_t i = 0; i < 8000; i++) {
+    for (uint32_t i = 0; i < 10000; i++) {
         MO_ASSERT(mo_buffer_append_text(&source, "fn f"));
         MO_ASSERT(mo_buffer_append_uint(&source, i));
-        MO_ASSERT(mo_buffer_append_text(&source, "() : Int\n17\nend\n"));
+        MO_ASSERT(
+            mo_buffer_append_text(&source, "(a: Int, b: Int, c: Int) : Int\na + b + c\nend\n"));
     }
     mo_arena_init(&output, MO_LIMIT_LOWER_WORK);
     MO_ASSERT(mo_diags_init(&diags));
     core = source_core(&output, &source, &diags);
     CHECK(core != NULL && !mo_diags_any(&diags));
+    if (core != NULL) {
+        struct mo_buffer bytecode;
+        mo_buffer_init(&bytecode, MO_LIMIT_BYTECODE_SIZE);
+        CHECK(mo_compile(core, &bytecode, &diags));
+        mo_buffer_free(&bytecode);
+        mo_buffer_clear(&printed);
+        CHECK(!mo_core_print(core, &printed)); /* Metadata exceeds the codec node allowance. */
+    }
     mo_diags_free(&diags);
     mo_arena_free(&output);
     mo_buffer_free(&source);

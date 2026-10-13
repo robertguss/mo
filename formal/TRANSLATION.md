@@ -1071,14 +1071,17 @@ code across modules is accepted in Phase 2; later sharing must retain meaning.
 Concrete types and function instances use bounded hash indices, source
 function lookup uses a sorted index, and module metadata visits each owned
 instance directly. Concrete source types share a cache across substitutions.
+Index buckets and source-function ordering use names, declaration positions,
+program indices and canonical type hashes, never addresses; ASLR cannot change
+lowering's work-limit verdict. Native scalar leaves share cache entries across bodies.
 The C lowerer checks structural Core type height after substitution as well as
 source-template depth. `T` becoming a deep list can push `List(T)` over Core's
 path bound; that instantiation refuses with E1153 rather than returning invalid Core.
 The E1152 document bound counts canonical types and every unfolded expression
 occurrence across all function bodies, not just allocated expressions per body.
-Before returning, lowering also exercises the canonical printer. Its schema
-wrappers and metadata consume additional depth/nodes/bytes; exceeding those
-codec bounds or its scratch allowance refuses with E1154.
+The canonical printer has separate schema/metadata depth, node, byte and scratch
+bounds. Lowering does not exercise that codec: a compilable Core document need
+not fit its text form. Callers requesting text handle the printer's refusal.
 
 ### 9.2 The five abilities
 

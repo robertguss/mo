@@ -745,9 +745,11 @@ Queued function/data instances have no recursive C walk. E1150 refuses later
 forms (captures, try, Option or, interpolation, unsupported ability/native
 operations, map literals, constants and spec code); E1151 is arena exhaustion, E1152 the
 shared allocation-byte/step or Core-node bound, and E1153 the source-type,
-instantiation or generated Core path bound. E1154 refuses a document outside
-the canonical text codec's depth, node, byte or scratch allowance; lowering
-checks the actual printer before returning. `MO_LIMIT_LOWER_WORK` bounds all
+instantiation or generated Core path bound. Compilation is independent of the
+text codec: `mo_lower` does not print Core or apply the codec's smaller schema,
+metadata, byte or scratch bounds. Callers emitting Core text report the printer's
+own refusal at that boundary; it does not make a compilable program invalid.
+`MO_LIMIT_LOWER_WORK` bounds all
 allocation bytes and work independently of the caller's arena allowance.
 Structural Core type heights are checked after generic substitution, not only
 at the template's source depth; an over-deep concrete result refuses with E1153.

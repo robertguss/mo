@@ -36,9 +36,33 @@ static uint64_t text_hash(struct lowering *p, mo_core_string name) {
         hash = (hash ^ (uint8_t)name.bytes[i]) * UINT64_C(0x100000001b3);
     return hash;
 }
-static uint64_t source_hash(const struct mo_source_type *source,
+static uint64_t source_key(struct lowering *p, const struct mo_source_type *source) {
+    lower_work(p, 1);
+    uint64_t hash = mix(source->kind) ^ mix(source->module) ^ mix(source->count) ^
+                    mix(source->height) ^ mix(source->parameters);
+    if (source->name != NULL)
+        hash = mix(hash ^ text_hash(p, (mo_core_string){source->name, strlen(source->name)}));
+    if (source->declaration != NULL) {
+        const struct mo_symbol *symbol = source->declaration;
+        hash = mix(hash ^ symbol->module ^
+                   text_hash(p, (mo_core_string){symbol->name, strlen(symbol->name)}));
+        if (symbol->declaration != NULL)
+            hash = mix(hash ^ symbol->declaration->span.start);
+    }
+    return hash;
+}
+static uint64_t source_hash(struct lowering *p, const struct mo_source_type *source,
                             const struct substitution *substitution) {
-    return mix((uintptr_t)source) ^ mix((uintptr_t)substitution);
+    /* Bucket placement must not change with arena/ASLR addresses. Pointer
+     * identity still distinguishes scoped types and substitution environments. */
+    uint64_t hash = source_key(p, source);
+    for (uint32_t i = 0; i < source->count; i++)
+        hash = mix(hash ^ source_key(p, source->arguments[i]));
+    if (substitution != NULL)
+        for (uint32_t i = 0; i < substitution->count; i++)
+            hash = mix(hash ^ source_key(p, substitution->parameters[i]) ^
+                       ((struct canonical_type *)substitution->types[i])->hash);
+    return hash;
 }
 static mo_core_ty cached(struct lowering *p, const struct mo_source_type *source,
                          const struct substitution *substitution) {
@@ -46,11 +70,20 @@ static mo_core_ty cached(struct lowering *p, const struct mo_source_type *source
         substitution = NULL;
     if (p->cache_slots == 0)
         return NULL;
-    uint32_t at = bucket(source_hash(source, substitution), p->cache_slots);
+    uint32_t at = bucket(source_hash(p, source, substitution), p->cache_slots);
     for (struct type_cache *c = p->cache[at]; c != NULL; c = c->next) {
         lower_work(p, 1);
         if (c->source == source && c->substitution == substitution)
             return c->type;
+        /* Every body can own a distinct Int/Text/etc. leaf. Share their native
+         * cache entry instead of creating one same-key bucket per function. */
+        if (source->kind == MO_SOURCE_NAMED && source->module == UINT32_MAX && source->count == 0 &&
+            c->source->kind == MO_SOURCE_NAMED && c->source->module == UINT32_MAX &&
+            c->source->count == 0) {
+            lower_work(p, strlen(source->name));
+            if (strcmp(c->source->name, source->name) == 0)
+                return c->type;
+        }
     }
     return NULL;
 }
@@ -77,7 +110,7 @@ static void remember(struct lowering *p, const struct mo_source_type *source,
         p->cache = table;
         p->cache_slots = slots;
     }
-    uint64_t hash = source_hash(source, substitution);
+    uint64_t hash = source_hash(p, source, substitution);
     uint32_t at = bucket(hash, p->cache_slots);
     struct type_cache *c = LOWER_NEW(p, struct type_cache, 1);
     *c = (struct type_cache){p->cache[at], source, substitution, type, hash};
@@ -316,11 +349,16 @@ mo_core_ty lower_type(struct lowering *p, const struct mo_source_type *type,
     return answer;
 }
 
+static int symbol_order(const struct mo_symbol *left, const struct mo_symbol *right) {
+    if (left->module != right->module)
+        return left->module < right->module ? -1 : 1;
+    if (left->declaration->span.start != right->declaration->span.start)
+        return left->declaration->span.start < right->declaration->span.start ? -1 : 1;
+    return strcmp(left->name, right->name);
+}
 static int source_order(const void *a, const void *b) {
     const struct mo_checked_function *const *left = a, *const *right = b;
-    uintptr_t x = (uintptr_t)(*left)->signature->function;
-    uintptr_t y = (uintptr_t)(*right)->signature->function;
-    return (x > y) - (x < y);
+    return symbol_order((*left)->signature->function, (*right)->signature->function);
 }
 
 void lower_indices(struct lowering *p) {
@@ -331,17 +369,17 @@ void lower_indices(struct lowering *p) {
     for (uint32_t i = 0; i < count; i++) {
         p->source_index[i] = &p->program->functions[i];
         p->source_tails[i] = &p->by_source[i];
+        for (uint32_t n = count; n != 0; n /= 2)
+            lower_work(p, 1 + strlen(p->source_index[i]->signature->function->name));
     }
-    for (uint32_t n = count; n != 0; n /= 2)
-        lower_work(p, count);
     qsort(p->source_index, count, sizeof *p->source_index, source_order);
 }
 
-static uint64_t instance_hash(const struct mo_checked_function *source, uint32_t owner,
-                              uint32_t count, mo_core_ty const *types) {
-    uint64_t hash = mix((uintptr_t)source) ^ mix(owner);
+static uint64_t instance_hash(struct lowering *p, const struct mo_checked_function *source,
+                              uint32_t owner, uint32_t count, mo_core_ty const *types) {
+    uint64_t hash = mix((uint64_t)(source - p->program->functions)) ^ mix(owner);
     for (uint32_t i = 0; i < count; i++)
-        hash = mix(hash ^ (uintptr_t)types[i]);
+        hash = mix(hash ^ ((struct canonical_type *)types[i])->hash);
     return hash;
 }
 
@@ -354,7 +392,8 @@ struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symb
     while (lo < hi) {
         lower_work(p, 1);
         uint32_t mid = lo + (hi - lo) / 2;
-        if ((uintptr_t)p->source_index[mid]->signature->function < (uintptr_t)symbol)
+        lower_work(p, strlen(symbol->name));
+        if (symbol_order(p->source_index[mid]->signature->function, symbol) < 0)
             lo = mid + 1;
         else
             hi = mid;
@@ -376,7 +415,7 @@ struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symb
             if (f->source == NULL)
                 continue;
             uint32_t at = bucket(
-                instance_hash(f->source, f->owner, f->substitution.count, f->substitution.types),
+                instance_hash(p, f->source, f->owner, f->substitution.count, f->substitution.types),
                 slots);
             f->hash_next = table[at];
             table[at] = f;
@@ -385,7 +424,7 @@ struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symb
         p->instance_slots = slots;
     }
     uint32_t at =
-        bucket(instance_hash(source, instance_owner, arguments.count, types), p->instance_slots);
+        bucket(instance_hash(p, source, instance_owner, arguments.count, types), p->instance_slots);
     for (struct instance *f = p->instance_index[at]; f != NULL; f = f->hash_next) {
         lower_work(p, 1 + arguments.count);
         if (f->source != source || f->owner != instance_owner ||
