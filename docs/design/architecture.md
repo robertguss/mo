@@ -778,8 +778,9 @@ and lets the defect renderer use `<value unavailable>` instead of another stop.
 
 Frames live on the VM's own stack. The stack's size, the call depth and the
 heap's size have limits, and exceeding one is a bug with a report, not a
-crash. A tail call reuses its frame, so tail calls never grow the stack
-(reference 5.3).
+crash. A tail call reuses its frame, so a loop written as tail calls runs in
+constant stack (reference 5.3); a callee with more registers grows that frame
+(bytecode 5.2).
 
 ## 9. Hooks for later phases
 
