@@ -1,0 +1,6 @@
+E0058 7.5
+0:23..28
+break or continue is outside a loop
+Break leaves the loop and continue starts its next round (reference 7.5).
+no enclosing loop in this function
+fixes 0

@@ -135,7 +135,8 @@ static MO_MUST_USE bool add_symbol(struct resolver *r, struct mo_module_scope *s
     return true;
 }
 
-static MO_MUST_USE bool builtin(const char *name) {
+bool mo_source_builtin(const uint8_t *name, size_t length) {
+    MO_ASSERT(name != NULL);
     static const char *const names[] = {
         "Bool",       "Int",      "BigInt",    "Byte",  "Decimal",   "Float",     "Text",
         "Char",       "Bytes",    "Unit",      "List",  "Map",       "Set",       "Range",
@@ -145,7 +146,7 @@ static MO_MUST_USE bool builtin(const char *name) {
         "NotAllowed", "NotText",  "Failed",    "Entry", "EntryKind", "File",      "Folder",
         "Link",       "Other"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++)
-        if (strcmp(name, names[i]) == 0)
+        if (length == strlen(names[i]) && memcmp(name, names[i], length) == 0)
             return true;
     return false;
 }
@@ -249,7 +250,7 @@ static MO_MUST_USE bool declarations(struct resolver *r, uint32_t module) {
             functions = functions && symbol->declaration->kind == MO_S_FN;
             all_cases = all_cases && symbol->owner != UINT32_MAX;
         }
-        if (builtin(first->name)) {
+        if (mo_source_builtin((const uint8_t *)first->name, first->name_length)) {
             bool kept =
                 all_cases
                     ? error(
@@ -425,7 +426,7 @@ static MO_MUST_USE bool imports(struct resolver *r, uint32_t module) {
         char *alias = spelling(r, last);
         if (alias == NULL)
             return false;
-        if (builtin(alias)) {
+        if (mo_source_builtin((const uint8_t *)alias, strlen(alias))) {
             if (!reserved(r, last, alias))
                 return false;
         } else
@@ -441,7 +442,7 @@ static MO_MUST_USE bool imports(struct resolver *r, uint32_t module) {
             if (symbol == NULL && name == NULL)
                 return false;
             const char *text = symbol == NULL ? name : symbol->name;
-            if (builtin(text)) {
+            if (mo_source_builtin((const uint8_t *)text, strlen(text))) {
                 if (!reserved(r, node, text))
                     return false;
                 continue;

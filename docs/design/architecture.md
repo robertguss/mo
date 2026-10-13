@@ -347,6 +347,84 @@ borrow the loaded syntax, which must outlive them. Loading and interface
 checking are the first independently usable slice; `mo_check` and its
 typed program follow.
 
+**Signatures.** `mo_prepare_signatures` resolves the parameter and result
+annotations of every named function before its body is visited. Omitted
+results are `Unit`. Tuples and function types keep ordered arguments; a
+function type's last argument is its result. An AVL index interns types,
+so repeated annotation types have one identity within a preparation.
+Nominal types retain their module symbol, not just their printable name.
+Locally declared and explicitly imported types take precedence over implicit
+single-letter parameters; qualification always selects a nominal type.
+Implicit parameters belong to their function, and are abstract there, not
+shared with another function's same-spelled parameter. All storage uses the
+caller arena, with E1058 on exhaustion. This intermediate result checks no
+bodies, data fields or abilities and is not a checked program.
+
+**Local inference is a second intermediate result.** `mo_infer_function`
+checks one named body against prepared signatures, returning postorder
+expression metadata: types, local binder or module symbol, and whether all
+paths leave the function or loop or stop. An AVL lexical index restores
+visible bindings on scope exit, while retaining local/module name uses for
+the one-meaning rule. Union-find constraints preserve numeric literal choices
+until all uses are known. Named generic parameters remain abstract in their
+own body; each reference to a generic function gets fresh parameters.
+
+This stage supports positional and module-qualified function calls, contextual
+anonymous functions, scalar/list/map/tuple expressions, tuple projections,
+bindings, variables, conditionals, loops and early exits. It reports one
+independent error per body, choosing the earliest retained source span, so a
+dependent error cannot cascade. End-of-scope and final type checks retain the earliest candidate;
+after an inference failure only already-retained, earlier expressions are
+finalized, without inventing unresolved-type errors from the missing uses.
+Resource errors stop immediately and take priority. The caller can
+continue with independent bodies. Signature preparation currently stops at
+its first error too. E1103 explicitly refuses unfinished body forms; it does
+not silently accept them. Data fields, constructors and patterns, builtin/dot
+dispatch and delayed overload selection, abilities, polymorphic recursion,
+failure propagation, capture/capability flow, specs, constants, unused imports
+and the entry contract still need their stages. Compile-time duplicate map
+keys (equal literals or repeated names, reference 3.8) are also still pending.
+Nonempty examples or promises are refused with E1103, never silently skipped.
+A successful intermediate body is not a `mo_program`, is not lowering-ready and does not certify those
+rules. `mo_check` will compose the stages and collect independent errors.
+
+Inferred types are shared DAGs, not expanded trees. Consumers must memoize
+walks. Prepared annotations retain parameter masks and heights; monomorphic
+subterms, and rigid parameters in a function's own signature, are borrowed
+unchanged. Only generic subterms are instantiated, and frozen children are
+materialized lazily when a constraint needs them. Occurs checks skip frozen
+terms and visit each other shared term once per walk; output conversion
+caches each term and its longest leaf path. Source nesting cannot bound the
+types built by flat calls: `duplicate(T) : (T, T)` can double a type's apparent
+tree on every line. `MO_LIMIT_SOURCE_TYPE_DEPTH` caps paths at 256 nodes,
+including function values (E1105); cached subtrees retain their height when
+reused at greater depth. `MO_LIMIT_SOURCE_CHECK_WORK` caps term construction,
+unification, occurs checks, expression visits and output conversion at
+16,777,216 operations per function (E1104). `MO_LIMIT_PROGRAM_CHECK_WORK`
+caps their total at 268,435,456 (E1107), shared by all inference calls against
+one signature preparation. Checking is single-threaded; new preparation starts
+a new run. These errors are implementation limits, not language restrictions.
+All temporary and output storage is
+charged to the caller arena (E1058), with no additional scratch arena.
+`MO_LIMIT_SOURCE_INFERENCE_DEPTH` allows sixteen inference frames per source
+nesting level plus eight function wrappers (E1106). A source level can retain
+the entire precedence ladder, not just a call and its argument. Flat chains
+remain iterative. The 255-call regression with every precedence level passed
+with a 6 MiB stack in clang's debug build and an 8 MiB stack under ASan/UBSan
+on Linux x86-64; 4 MiB and 6 MiB respectively failed. Callers should allow
+16 MiB under debug/sanitizers rather than relying on those measured minima.
+
+Non-lambda positional arguments constrain the callee before contextual lambdas,
+regardless of written order; output notes retain written postorder. Binder notes
+carry types, and assignment notes point to the original var binder, including
+compound assignments. `+=` and `-=` use the same operand rules as their expanded
+forms. Unit contexts infer discarded tails without imposing Unit on their
+values, so unused values and ignored Results keep their specific diagnostics.
+Unused vars have no underscore fix: changing only the declaration could turn a
+later assignment into a new binding. Float literal validation compares source
+digits with the exact nearest-even overflow boundary, independently of host
+locale and rounding state; value conversion belongs to lowering.
+
 Type checking is **bidirectional**, one function body at a time. A signature
 is given, and the body is checked against it: an expression is either
 checked against an expected type or has its type inferred, and inferred types
@@ -1318,13 +1396,22 @@ MO_MUST_USE struct mo_module_syntax *mo_parse(struct mo_arena *arena, const stru
 MO_MUST_USE bool mo_read_header(struct mo_arena *arena, const struct mo_sources *sources, uint32_t file,
                                 struct mo_header *header_out, struct mo_diags *diags);
 
-/* src/check/check.h: implemented loading and module interfaces; NULL with diagnostics. */
+/* src/check/check.h: implemented intermediate stages; NULL with diagnostics.
+ * None of their successes is a lowering-ready checked program. */
 MO_MUST_USE struct mo_module_set *mo_load_program(struct mo_arena *arena, struct mo_sources *sources,
                                                   const char *entry, const char *library,
                                                   struct mo_diags *diags);
 MO_MUST_USE struct mo_module_interfaces *mo_resolve_modules(struct mo_arena *arena,
                                                             const struct mo_module_set *set,
                                                             struct mo_diags *diags);
+MO_MUST_USE struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena,
+                                                        const struct mo_module_set *set,
+                                                        const struct mo_module_interfaces *interfaces,
+                                                        struct mo_diags *diags);
+MO_MUST_USE struct mo_inferred_body *mo_infer_function(struct mo_arena *arena,
+                                                       const struct mo_module_interfaces *interfaces,
+                                                       const struct mo_signatures *signatures,
+                                                       uint32_t function, struct mo_diags *diags);
 /* Planned next: the whole program, checked, or NULL with diagnostics. */
 MO_MUST_USE struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *set,
                                         struct mo_diags *diags);

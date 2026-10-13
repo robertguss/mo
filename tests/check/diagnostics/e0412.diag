@@ -1,0 +1,6 @@
+E0412 8.3
+0:48..54
+a failure is ignored
+Mo never drops a failure silently (reference 8.3).
+handle this Result or pass its failure upward
+fixes 0

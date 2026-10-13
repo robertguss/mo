@@ -1,0 +1,6 @@
+E0072 5.2
+0:40..45
+a value that isn't a function is called
+A call applies a function to its arguments (reference 5.2).
+expected fn, found Text
+fixes 0

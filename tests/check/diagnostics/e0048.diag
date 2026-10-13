@@ -1,0 +1,6 @@
+E0048 10.3
+0:28..35
+a type name isn't in scope
+Use brings a module's exposed type names into scope (reference 10.3).
+not a type in scope
+fixes 0

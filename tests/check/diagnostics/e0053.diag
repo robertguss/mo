@@ -1,0 +1,6 @@
+E0053 3
+0:33..37
+values of different types are combined
+Comparing or combining values of different types is an error (reference 3).
+expected Int, found Bool
+fixes 0

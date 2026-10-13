@@ -1,0 +1,6 @@
+E0061 3.6
+0:51..52
+the tuple has no such part
+Tuple parts are read with .0, .1 and so on (reference 3.6).
+part index is outside this tuple
+fixes 0

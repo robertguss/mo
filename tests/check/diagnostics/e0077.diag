@@ -1,0 +1,6 @@
+E0077 5.2
+0:53..59
+an argument's type doesn't match its parameter
+A call passes each argument to its corresponding parameter (reference 5.2).
+expected Int, found Text
+fixes 0

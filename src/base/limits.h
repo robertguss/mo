@@ -113,6 +113,26 @@
  * Lowering stops at it: E1012. */
 #define MO_LIMIT_INSTANTIATION_DEPTH 64
 
+/* Nodes along one path in an inferred surface type, including instantiated
+ * function values. This independently bounds implicit growth on flat source:
+ * E1105. A shared subtree keeps its height, not just its first traversal depth. */
+#define MO_LIMIT_SOURCE_TYPE_DEPTH 256
+
+/* Each source nesting can retain the precedence ladder (implies, or, and, not,
+ * comparison/is, range, sum, product, negate, postfix) and statement/sequence
+ * wrappers. Sixteen frames per level plus the function wrappers bound inference
+ * independently of parser bookkeeping. E1106, never an assertion on input. */
+#define MO_LIMIT_SOURCE_INFERENCE_DEPTH (16 * MO_LIMIT_NESTING_DEPTH + 8)
+
+/* Type construction, unification, occurs checks and expression visits in one
+ * surface function. E1104 bounds generated constraints and shared type DAGs
+ * independently of the caller's arena limit. */
+#define MO_LIMIT_SOURCE_CHECK_WORK (1 << 24)
+
+/* Inference work shared by every body checked against one preparation, E1107.
+ * A hostile program cannot multiply the per-function budget by its functions. */
+#define MO_LIMIT_PROGRAM_CHECK_WORK (UINT64_C(1) << 28)
+
 /* Registers of one function, its parameters included. The code generator refuses a function that
  * needs more: E1013. The loader refuses a function with more. */
 #define MO_LIMIT_FUNCTION_REGISTERS 65535

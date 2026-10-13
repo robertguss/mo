@@ -1,0 +1,6 @@
+E0073 7.5
+0:32..33
+for is given a value that can't be iterated
+For walks a list, map, set or range (reference 7.5).
+for is given a value that can't be iterated
+fixes 0

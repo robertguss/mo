@@ -161,26 +161,50 @@ static void snapshot(struct mo_buffer *b, const struct mo_diag *diag) {
 }
 
 static void corpus(void) {
+    enum phase { INTERFACES, LOADING, SIGNATURES, BODIES };
     const struct {
         const char *input;
         const char *expected;
-        bool loading;
+        enum phase phase;
     } cases[] = {
-        {"e0034/main.mo", "e0034.diag", true},
-        {"e0035/main.mo", "e0035.diag", true},
-        {"e0036/main.mo", "e0036.diag", true},
-        {"e0037/json.mo", "e0037.diag", true},
-        {"e0038.mo", "e0038.diag", false},
-        {"e0038-import-repeat.mo", "e0038-import-repeat.diag", false},
-        {"e0039.mo", "e0039.diag", false},
-        {"e0040.mo", "e0040.diag", false},
-        {"e0041.mo", "e0041.diag", false},
-        {"e0042.mo", "e0042.diag", false},
-        {"e0043.mo", "e0043.diag", false},
-        {"e0044.mo", "e0044.diag", false},
-        {"e0045.mo", "e0045.diag", false},
-        {"e0046.mo", "e0046.diag", false},
-        {"e0047.mo", "e0047.diag", false},
+        {"e0034/main.mo", "e0034.diag", LOADING},
+        {"e0035/main.mo", "e0035.diag", LOADING},
+        {"e0036/main.mo", "e0036.diag", LOADING},
+        {"e0037/json.mo", "e0037.diag", LOADING},
+        {"e0038.mo", "e0038.diag", INTERFACES},
+        {"e0038-import-repeat.mo", "e0038-import-repeat.diag", INTERFACES},
+        {"e0039.mo", "e0039.diag", INTERFACES},
+        {"e0040.mo", "e0040.diag", INTERFACES},
+        {"e0041.mo", "e0041.diag", INTERFACES},
+        {"e0042.mo", "e0042.diag", INTERFACES},
+        {"e0043.mo", "e0043.diag", INTERFACES},
+        {"e0044.mo", "e0044.diag", INTERFACES},
+        {"e0045.mo", "e0045.diag", INTERFACES},
+        {"e0046.mo", "e0046.diag", INTERFACES},
+        {"e0047.mo", "e0047.diag", INTERFACES},
+        {"e0048.mo", "e0048.diag", SIGNATURES},
+        {"e0049.mo", "e0049.diag", SIGNATURES},
+        {"e0050.mo", "e0050.diag", BODIES},
+        {"e0051.mo", "e0051.diag", BODIES},
+        {"e0052.mo", "e0052.diag", BODIES},
+        {"e0053.mo", "e0053.diag", BODIES},
+        {"e0054.mo", "e0054.diag", BODIES},
+        {"e0055.mo", "e0055.diag", BODIES},
+        {"e0056.mo", "e0056.diag", BODIES},
+        {"e0057.mo", "e0057.diag", BODIES},
+        {"e0058.mo", "e0058.diag", BODIES},
+        {"e0059.mo", "e0059.diag", BODIES},
+        {"e0060.mo", "e0060.diag", BODIES},
+        {"e0061.mo", "e0061.diag", BODIES},
+        {"e0072.mo", "e0072.diag", BODIES},
+        {"e0073.mo", "e0073.diag", BODIES},
+        {"e0074.mo", "e0074.diag", BODIES},
+        {"e0075.mo", "e0075.diag", BODIES},
+        {"e0076.mo", "e0076.diag", BODIES},
+        {"e0077.mo", "e0077.diag", BODIES},
+        {"e0078.mo", "e0078.diag", BODIES},
+        {"e0412.mo", "e0412.diag", BODIES},
+        {"e1103.mo", "e1103.diag", BODIES},
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         struct fixture f;
@@ -188,7 +212,7 @@ static void corpus(void) {
         char path[256];
         int n = snprintf(path, sizeof(path), "tests/check/diagnostics/%s", cases[i].input);
         MO_ASSERT(n > 0 && (size_t)n < sizeof(path));
-        if (cases[i].loading)
+        if (cases[i].phase == LOADING)
             CHECK(mo_load_program(&f.arena, &f.sources, path, NULL, &f.diags) == NULL);
         else {
             struct mo_module_syntax *modules[] = {
@@ -203,7 +227,25 @@ static void corpus(void) {
                 targets[j] = 1;
             uint32_t *uses[] = {targets, NULL};
             struct mo_module_set set = {.count = 2, .modules = modules, .uses = uses};
-            CHECK(mo_resolve_modules(&f.arena, &set, &f.diags) == NULL);
+            struct mo_module_interfaces *names = mo_resolve_modules(&f.arena, &set, &f.diags);
+            if (cases[i].phase == INTERFACES)
+                CHECK(names == NULL);
+            else {
+                CHECK(names != NULL);
+                if (names != NULL) {
+                    struct mo_signatures *signatures =
+                        mo_prepare_signatures(&f.arena, &set, names, &f.diags);
+                    if (cases[i].phase == SIGNATURES)
+                        CHECK(signatures == NULL);
+                    else {
+                        MO_ASSERT(signatures != NULL);
+                        for (uint32_t j = 0; j < signatures->count; j++)
+                            if (signatures->items[j].function->module == 0 &&
+                                mo_infer_function(&f.arena, names, signatures, j, &f.diags) == NULL)
+                                break;
+                    }
+                }
+            }
         }
         CHECK(f.diags.count == 1 && f.diags.dropped == 0);
         if (f.diags.count == 1) {
@@ -240,8 +282,12 @@ static void samples(void) {
         init(&f, 64 << 20);
         struct mo_module_set *set = mo_load_program(&f.arena, &f.sources, path, NULL, &f.diags);
         CHECK(set != NULL);
-        if (set != NULL)
-            CHECK(mo_resolve_modules(&f.arena, set, &f.diags) != NULL);
+        if (set != NULL) {
+            struct mo_module_interfaces *names = mo_resolve_modules(&f.arena, set, &f.diags);
+            CHECK(names != NULL);
+            if (names != NULL)
+                CHECK(mo_prepare_signatures(&f.arena, set, names, &f.diags) != NULL);
+        }
         CHECK(f.diags.count == 0);
         finish(&f);
     }
@@ -735,6 +781,88 @@ static void name_rules(void) {
     }
 }
 
+static void function_signatures(void) {
+    const uint8_t text[] = "module Main\n"
+                           "fn identity(value: T) : T\nvalue\nend\n"
+                           "fn other(value: T) : T\nvalue\nend\n"
+                           "fn visit(value: fn(Int))\nvalue(1)\nend\n";
+    struct fixture f;
+    init(&f, 16 << 20);
+    struct mo_module_syntax *modules[] = {parse_bytes(&f, "main.mo", text, sizeof(text) - 1)};
+    uint32_t *uses[] = {NULL}, order[] = {0};
+    struct mo_module_set set = {.count = 1, .modules = modules, .uses = uses, .order = order};
+    struct mo_module_interfaces *names = mo_resolve_modules(&f.arena, &set, &f.diags);
+    MO_ASSERT(names != NULL);
+    struct mo_signatures *signatures = mo_prepare_signatures(&f.arena, &set, names, &f.diags);
+    CHECK(signatures != NULL && f.diags.count == 0);
+    if (signatures != NULL && signatures->count == 3) {
+        const struct mo_source_type *identity = signatures->items[0].type;
+        CHECK(strcmp(signatures->items[0].function->name, "identity") == 0);
+        CHECK(identity->kind == MO_SOURCE_FUNCTION && identity->count == 2);
+        CHECK(identity->arguments[0]->kind == MO_SOURCE_PARAMETER);
+        CHECK(strcmp(identity->arguments[0]->name, "T") == 0);
+        CHECK(identity->arguments[0] == identity->arguments[1]);
+        const struct mo_source_type *other = signatures->items[1].type;
+        CHECK(other->arguments[0] != identity->arguments[0]);
+        CHECK(other->arguments[0] == other->arguments[1]);
+        const struct mo_source_type *visit = signatures->items[2].type;
+        CHECK(visit->arguments[0]->kind == MO_SOURCE_FUNCTION);
+        CHECK(strcmp(visit->arguments[0]->arguments[1]->name, "Unit") == 0);
+        CHECK(visit->arguments[0]->arguments[1] == visit->arguments[1]);
+    } else
+        CHECK(false);
+    bool succeeded = false, failed = false;
+    for (size_t limit = 0; limit <= 16384; limit += 16) {
+        struct mo_arena arena;
+        mo_arena_init(&arena, limit);
+        struct mo_signatures *out = mo_prepare_signatures(&arena, &set, names, &f.diags);
+        if (out == NULL) {
+            failed = true;
+            CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CHECK_NO_MEMORY);
+        } else {
+            succeeded = true;
+            CHECK(f.diags.count == 0 && out->count == 3);
+            CHECK(out->items[0].type->arguments[0] == out->items[0].type->arguments[1]);
+            CHECK(strcmp(out->items[2].type->arguments[1]->name, "Unit") == 0);
+        }
+        mo_arena_free(&arena);
+        mo_diags_free(&f.diags);
+        MO_ASSERT(mo_diags_init(&f.diags));
+    }
+    CHECK(succeeded && failed);
+    finish(&f);
+}
+
+static void body_inference(void) {
+    const uint8_t text[] = "module Main\nfn add(value: Int) : Int\n"
+                           "total = value + 1\ntotal\nend\n";
+    struct fixture f;
+    init(&f, 16 << 20);
+    struct mo_module_syntax *modules[] = {parse_bytes(&f, "main.mo", text, sizeof(text) - 1)};
+    uint32_t *uses[] = {NULL};
+    struct mo_module_set set = {.count = 1, .modules = modules, .uses = uses};
+    struct mo_module_interfaces *names = mo_resolve_modules(&f.arena, &set, &f.diags);
+    MO_ASSERT(names != NULL);
+    struct mo_signatures *signatures = mo_prepare_signatures(&f.arena, &set, names, &f.diags);
+    MO_ASSERT(signatures != NULL);
+    struct mo_inferred_body *body = mo_infer_function(&f.arena, names, signatures, 0, &f.diags);
+    CHECK(body != NULL && f.diags.count == 0);
+    if (body != NULL) {
+        const struct mo_syntax *syntax = signatures->items[0].function->declaration->children[5];
+        const struct mo_syntax *binding = syntax->children[0]->children[0];
+        const struct mo_syntax *reference = syntax->children[1]->children[0];
+        bool found = false;
+        for (uint32_t i = 0; i < body->count; i++)
+            if (body->items[i].syntax == reference) {
+                CHECK(strcmp(body->items[i].type->name, "Int") == 0);
+                CHECK(body->items[i].binding == binding);
+                found = true;
+            }
+        CHECK(found);
+    }
+    finish(&f);
+}
+
 static void import_limit(void) {
     struct mo_buffer source;
     mo_buffer_init(&source, MO_LIMIT_FILE_SIZE);
@@ -952,6 +1080,8 @@ int main(void) {
     library_limit();
     independent_errors();
     name_rules();
+    function_signatures();
+    body_inference();
     import_limit();
     import_scaling();
     source_limits();

@@ -1,0 +1,6 @@
+E0060 3.3
+0:30..33
+a number literal doesn't fit its type
+A number literal takes its context's numeric type and must fit that type's range (reference 3.3).
+outside its inferred numeric range
+fixes 0

@@ -1,0 +1,6 @@
+E0050 6.1
+0:29..36
+a name isn't visible in this block
+A local name is visible from its binding to the end of its block (reference 6.1).
+not visible in this block
+fixes 0

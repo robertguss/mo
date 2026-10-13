@@ -1,0 +1,6 @@
+E0056 6.1
+0:23..24
+a result isn't used
+A result that isn't Unit and isn't used is an error (reference 6.1).
+not Unit and not used
+fixes 0
