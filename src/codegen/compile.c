@@ -6,6 +6,7 @@
 #include "base/codes.h"
 #include "bytecode/bytecode.h"
 #include "codegen/index.h"
+#include "codegen/operations.h"
 #include "heap/types.h"
 
 /* Arrays grow geometrically. Retained arena blocks cost less than twice the final capacity. */
@@ -36,6 +37,8 @@ struct node {
     uint32_t count, bind_count;
     struct node **children;
     uint32_t *binds, *cases;
+    struct mo_codegen_operation operation;
+    uint32_t signature;
     bool temporary, activity;
 };
 struct function {
@@ -56,7 +59,7 @@ struct compiler {
     struct mo_types types;
     struct vector strings, constants, modules, constructors, ownership, edges;
     struct mo_codegen_index *string_index, *constant_index, *data_index, *fun_index, *global_index,
-        *module_index, *builtin_index, *annotation_index;
+        *module_index, *builtin_index, *annotation_index, *operation_index;
     struct mo_codegen_index *closure_zeros[2];
     uint32_t *data, *files, *layouts;
     uint32_t range_int, function_count, function_capacity, unit_constant;
@@ -428,6 +431,171 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
     }
     return scalar(c, kind);
 }
+static MO_MUST_USE bool signature_take(const char **cursor, char ch) {
+    while (**cursor == ' ')
+        (*cursor)++;
+    if (**cursor != ch)
+        return false;
+    (*cursor)++;
+    return true;
+}
+/* Only the trusted .def templates are parsed, never a source signature or a type graph. */
+static MO_MUST_USE mo_core_ty signature_type(struct compiler *c, const char **cursor,
+                                             const mo_core_ty variables[4], unsigned depth) {
+    MO_ASSERT(depth < 16);
+    struct mo_core_ty *t = allocate(c, 1, sizeof *t);
+    if (t == NULL)
+        return NULL;
+    memset(t, 0, sizeof *t);
+    mo_core_ty arguments[MO_LIMIT_BYTECODE_PARAMETERS];
+    uint32_t count = 0;
+    if (signature_take(cursor, '(')) {
+        t->tag = MO_CORE_TY_TUPLE;
+    } else {
+        const char *start = *cursor;
+        while ((**cursor >= 'A' && **cursor <= 'Z') || (**cursor >= 'a' && **cursor <= 'z'))
+            (*cursor)++;
+        size_t length = (size_t)(*cursor - start);
+        if (length == 1) {
+            unsigned slot = *start == 'T' ? 0u : *start == 'U' ? 1u : *start == 'K' ? 2u : 3u;
+            MO_ASSERT((*start == 'T' || *start == 'U' || *start == 'K' || *start == 'V') &&
+                      variables[slot] != NULL);
+            return variables[slot];
+        }
+        static const struct {
+            const char *name;
+            enum mo_core_ty_tag tag;
+        } names[] = {{"Unit", MO_CORE_TY_UNIT},
+                     {"Bool", MO_CORE_TY_BOOL},
+                     {"Byte", MO_CORE_TY_BYTE},
+                     {"Int", MO_CORE_TY_INT},
+                     {"Float", MO_CORE_TY_FLOAT},
+                     {"Char", MO_CORE_TY_CHAR},
+                     {"Time", MO_CORE_TY_TIME},
+                     {"Duration", MO_CORE_TY_DURATION},
+                     {"Decimal", MO_CORE_TY_DECIMAL},
+                     {"Range", MO_CORE_TY_RANGE},
+                     {"Text", MO_CORE_TY_TEXT},
+                     {"Bytes", MO_CORE_TY_BYTES},
+                     {"BigInt", MO_CORE_TY_BIG_INT},
+                     {"List", MO_CORE_TY_LIST},
+                     {"Set", MO_CORE_TY_SET},
+                     {"Map", MO_CORE_TY_MAP},
+                     {"Option", MO_CORE_TY_OPTION},
+                     {"Result", MO_CORE_TY_RESULT},
+                     {"Ordering", MO_CORE_TY_ORDERING},
+                     {"Entry", MO_CORE_TY_ENTRY},
+                     {"FileError", MO_CORE_TY_FILE_ERROR}};
+        bool found = false;
+        for (size_t i = 0; i < sizeof names / sizeof *names; i++) {
+            if (strlen(names[i].name) == length && memcmp(start, names[i].name, length) == 0) {
+                t->tag = names[i].tag;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            static const char *const caps[] = {"Console", "Files", "ReadFiles", "Clock",
+                                               "Random",  "Args",  "Env"};
+            for (uint32_t i = 0; i < sizeof caps / sizeof *caps; i++)
+                if (strlen(caps[i]) == length && memcmp(start, caps[i], length) == 0) {
+                    t->tag = MO_CORE_TY_CAP;
+                    t->as.cap = allocate(c, 1, sizeof *t->as.cap);
+                    if (t->as.cap == NULL)
+                        return NULL;
+                    t->as.cap->tag = (enum mo_core_cap_tag)i;
+                    found = true;
+                    break;
+                }
+        }
+        MO_ASSERT(found);
+        if (t->tag != MO_CORE_TY_LIST && t->tag != MO_CORE_TY_SET && t->tag != MO_CORE_TY_MAP &&
+            t->tag != MO_CORE_TY_OPTION && t->tag != MO_CORE_TY_RESULT)
+            return t;
+        bool opened = signature_take(cursor, '(');
+        MO_ASSERT(opened);
+    }
+    do {
+        MO_ASSERT(count < MO_LIMIT_BYTECODE_PARAMETERS);
+        arguments[count] = signature_type(c, cursor, variables, depth + 1);
+        if (arguments[count++] == NULL)
+            return NULL;
+    } while (signature_take(cursor, ','));
+    bool closed = signature_take(cursor, ')');
+    MO_ASSERT(closed);
+    if (t->tag == MO_CORE_TY_TUPLE) {
+        t->as.tuple.items = allocate(c, count, sizeof *arguments);
+        if (t->as.tuple.items == NULL)
+            return NULL;
+        memcpy(t->as.tuple.items, arguments, (size_t)count * sizeof *arguments);
+        t->as.tuple.count = count;
+    } else if (t->tag == MO_CORE_TY_MAP || t->tag == MO_CORE_TY_RESULT) {
+        MO_ASSERT(count == 2);
+        if (t->tag == MO_CORE_TY_MAP) {
+            t->as.map.k = arguments[0];
+            t->as.map.v = arguments[1];
+        } else {
+            t->as.result.t = arguments[0];
+            t->as.result.e = arguments[1];
+        }
+    } else {
+        MO_ASSERT(count == 1);
+        if (t->tag == MO_CORE_TY_LIST)
+            t->as.list = arguments[0];
+        else if (t->tag == MO_CORE_TY_SET)
+            t->as.set = arguments[0];
+        else
+            t->as.option = arguments[0];
+    }
+    return t;
+}
+static MO_MUST_USE uint32_t operation_signature(struct compiler *c,
+                                                const struct mo_codegen_operation *op,
+                                                const mo_core_ty variables[4]) {
+    uint32_t key[6] = {(uint32_t)op->opcode, op->row,     MO_NO_INDEX,
+                       MO_NO_INDEX,          MO_NO_INDEX, MO_NO_INDEX};
+    for (uint32_t i = 0; i < 4; i++)
+        if (variables[i] != NULL && (key[i + 2] = type(c, variables[i], 0)) == MO_NO_INDEX)
+            return MO_NO_INDEX;
+    mo_core_string bytes = {(const char *)key, sizeof key};
+    struct mo_codegen_index *old = mo_codegen_find(c->operation_index, bytes);
+    if (old != NULL)
+        return old->value;
+    const char *cursor = op->signature;
+    uint32_t params[MO_LIMIT_BYTECODE_PARAMETERS], count = 0;
+    bool function = strncmp(cursor, "fn(", 3) == 0;
+    if (function) {
+        cursor += 3;
+        if (!signature_take(&cursor, ')')) {
+            do {
+                MO_ASSERT(count < MO_LIMIT_BYTECODE_PARAMETERS);
+                mo_core_ty t = signature_type(c, &cursor, variables, 0);
+                if (t == NULL || (params[count++] = type(c, t, 0)) == MO_NO_INDEX)
+                    return MO_NO_INDEX;
+            } while (signature_take(&cursor, ','));
+            bool closed = signature_take(&cursor, ')');
+            MO_ASSERT(closed);
+        }
+    }
+    uint32_t result = MO_NO_INDEX;
+    if (!function || signature_take(&cursor, ':')) {
+        mo_core_ty t = signature_type(c, &cursor, variables, 0);
+        if (t == NULL || (result = type(c, t, 0)) == MO_NO_INDEX)
+            return MO_NO_INDEX;
+    } else
+        result = scalar(c, MO_TYPE_UNIT);
+    uint32_t id = MO_NO_INDEX;
+    enum mo_type_problem status = mo_types_intern(&c->types,
+                                                  &(struct mo_type){.kind = MO_TYPE_FUNCTION,
+                                                                    .parameters = params,
+                                                                    .parameter_count = count,
+                                                                    .result = result},
+                                                  &id);
+    if (type_result(c, status, id) == MO_NO_INDEX ||
+        index_add(c, &c->operation_index, bytes, id, true) == NULL)
+        return MO_NO_INDEX;
+    return id;
+}
 static MO_MUST_USE uint32_t constant(struct compiler *c, struct mo_bytecode_constant value) {
     uint8_t key[20] = {0};
     memcpy(key, &value.type, sizeof value.type);
@@ -784,6 +952,8 @@ static MO_MUST_USE bool children(struct compiler *c, struct function *f, struct 
             child_type = c->types.items[n->type].cases[n->index].fields[i].type;
         else if (n->core->tag == MO_CORE_EXPR_IF)
             child_type = i == 0 ? scalar(c, MO_TYPE_BOOL) : expected;
+        else if (n->core->tag == MO_CORE_EXPR_PRIM && n->operation.opcode != MO_OP_INVALID)
+            child_type = c->types.items[n->signature].parameters[i];
         n->children[i] = prepare(c, f, xs.items[i], child_type, depth + 1);
         if (n->children[i] == NULL)
             return false;
@@ -1000,6 +1170,16 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         return n;
     case MO_CORE_EXPR_PRIM: {
         const struct mo_core_prim *p = &expr->as.prim.prim;
+        if (mo_codegen_operation(p, &n->operation)) {
+            const mo_core_ty variables[4] = {NULL};
+            n->signature = operation_signature(c, &n->operation, variables);
+            if (n->signature == MO_NO_INDEX)
+                return NULL;
+            n->type = c->types.items[n->signature].result;
+            if (!children(c, f, n, expr->as.prim.args, MO_NO_INDEX, depth))
+                return NULL;
+            break;
+        }
         if (p->tag != MO_CORE_PRIM_RANGE ||
             (p->as.range != MO_CORE_RANGE_OP_MAKE && p->as.range != MO_CORE_RANGE_OP_START &&
              p->as.range != MO_CORE_RANGE_OP_END)) {
@@ -1123,6 +1303,11 @@ static MO_MUST_USE bool borrow_walk(struct compiler *c, struct function *f, stru
                 return false;
         }
         seed(c, own);
+    } else if (n->core->tag == MO_CORE_EXPR_PRIM && n->operation.opcode != MO_OP_INVALID) {
+        for (uint32_t i = 0; i < n->count; i++)
+            if (n->operation.params[i] == 'o')
+                seed(c, flow_id(f, n->children[i]->reg));
+        seed(c, own);
     } else if (n->core->tag == MO_CORE_EXPR_LAM) {
         for (uint32_t i = 0; i < n->bind_count; i++)
             seed(c, flow_id(f, n->binds[i]));
@@ -1163,6 +1348,11 @@ static void activity(struct compiler *c, struct function *f, struct node *n, uns
     if (n->core->tag == MO_CORE_EXPR_APP ||
         (n->core->tag == MO_CORE_EXPR_LAM && n->bind_count != 0))
         n->activity = true;
+    if (n->core->tag == MO_CORE_EXPR_PRIM && n->operation.opcode != MO_OP_INVALID) {
+        n->activity |= reference(c, n->type);
+        for (uint32_t i = 0; i < n->count; i++)
+            n->activity |= n->operation.params[i] == 'o' && reference(c, n->children[i]->type);
+    }
     if (n->core->tag == MO_CORE_EXPR_CALL || n->core->tag == MO_CORE_EXPR_CON ||
         n->core->tag == MO_CORE_EXPR_TUPLE || n->core->tag == MO_CORE_EXPR_PROJ)
         n->activity |= reference(c, n->type);
@@ -1671,6 +1861,31 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
         break;
     }
     case MO_CORE_EXPR_PRIM: {
+        if (n->operation.opcode != MO_OP_INVALID) {
+            uint32_t *regs = allocate(c, n->count, sizeof *regs);
+            if (regs == NULL)
+                return false;
+            for (uint32_t i = 0; i < n->count; i++) {
+                if (!generate(c, f, n->children[i], false, depth + 1, live) || !*live)
+                    return c->error == 0;
+                regs[i] =
+                    argument(c, f, n->children[i]->reg, n->operation.params[i] == 'o', n->span);
+                if (regs[i] == MO_NO_INDEX)
+                    return false;
+            }
+            for (uint32_t i = 0; i < n->count; i++)
+                if (regs[i] != n->children[i]->reg)
+                    owner_remove(f, regs[i]);
+            const uint32_t fixed[] = {n->reg, n->operation.row, n->signature};
+            if (emit(c, f, n->span, n->operation.opcode, fixed, 3, regs, n->count) == MO_NO_INDEX)
+                return false;
+            if (reference(c, n->type))
+                owner_add(f, n->reg);
+            for (uint32_t i = 0; i < n->count; i++)
+                if (n->children[i]->temporary && !drop(c, f, n->children[i]->reg, n->span))
+                    return false;
+            break;
+        }
         uint32_t args[3] = {n->reg, 0, 0};
         for (uint32_t i = 0; i < n->count; i++) {
             if (!generate(c, f, n->children[i], false, depth + 1, live) || !*live)

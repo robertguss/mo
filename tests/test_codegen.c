@@ -1463,6 +1463,29 @@ static void test_shared_function_types(void) {
     mo_diags_free(&diags);
     mo_arena_free(&arena);
 }
+static void test_primitive_ownership(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b =
+        compile(&arena, "(Program () ((FunDecl \"start\" ((\"x\" (text))) (text) "
+                        "(prim (text (concat)) ((var \"x\") (var \"x\"))) \"M\" (function) 0)) "
+                        "() \"start\" (noSource))");
+    if (b != NULL) {
+        const struct mo_bytecode_function *f = &b->functions[0];
+        const uint32_t *call = instruction(f, MO_OP_PRIM, 0);
+        const uint32_t *dup = instruction(f, MO_OP_DUP, 0);
+        CHECK(f->parameters[0].ownership == MO_PARAMETER_OWNED);
+        if (call != NULL && dup != NULL) {
+            CHECK(call[2] == MO_PRIM_TEXT_CONCAT && call[4] == dup[1] && dup[2] == 0 &&
+                  call[5] == 0 && call[4] != call[5]);
+            const struct mo_type *t = &b->types[call[3]];
+            CHECK(t->kind == MO_TYPE_FUNCTION && t->parameter_count == 2 &&
+                  t->parameters[0] == f->parameters[0].type &&
+                  t->parameters[1] == f->parameters[0].type && t->result == f->result_type);
+        }
+    }
+    mo_arena_free(&arena);
+}
 int main(int argc, char **argv) {
     if (argc > 1)
         return corpus(argc, argv);
@@ -1489,5 +1512,6 @@ int main(int argc, char **argv) {
     test_spec_closure_metadata();
     test_closure_parameter_limit();
     test_shared_function_types();
+    test_primitive_ownership();
     return mo_test_report("test_codegen");
 }
