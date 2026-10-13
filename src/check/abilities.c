@@ -244,12 +244,20 @@ static MO_MUST_USE bool customizer(struct mo_ability_context *p,
             allocate(p, type->count, sizeof(*arguments), _Alignof(struct mo_type_argument));
         if (arguments == NULL)
             return false;
-        for (uint32_t j = 0; j < type->count; j++)
-            arguments[j] = (struct mo_type_argument){receiver->arguments[j], type->arguments[j]};
+        MO_ASSERT(type->count <= 26);
+        for (uint32_t j = 0; j < type->count; j++) {
+            struct mo_type_argument argument = {receiver->arguments[j], type->arguments[j]};
+            uint32_t at = j;
+            while (at > 0 && arguments[at - 1].parameter->name[0] > argument.parameter->name[0]) {
+                arguments[at] = arguments[at - 1];
+                at--;
+            }
+            arguments[at] = argument;
+        }
         out->arguments = (struct mo_type_arguments){type->count, arguments};
         uint32_t count = 0;
         for (uint32_t j = 0; j < type->count; j++) {
-            unsigned letter = (unsigned)(receiver->arguments[j]->name[0] - 'A');
+            unsigned letter = (unsigned)(arguments[j].parameter->name[0] - 'A');
             for (unsigned k = 0; k < 5; k++)
                 count += (fn->requirements[letter] & (1u << k)) != 0 ? 1u : 0u;
         }
@@ -264,12 +272,12 @@ static MO_MUST_USE bool customizer(struct mo_ability_context *p,
         out->part_parameters = parameters;
         uint32_t at = 0;
         for (uint32_t j = 0; j < type->count; j++) {
-            unsigned letter = (unsigned)(receiver->arguments[j]->name[0] - 'A');
+            unsigned letter = (unsigned)(arguments[j].parameter->name[0] - 'A');
             for (unsigned k = 0; k < 5; k++) {
                 if ((fn->requirements[letter] & (1u << k)) == 0)
                     continue;
-                parameters[at] = receiver->arguments[j];
-                parts[at] = prove(p, type->arguments[j], (enum mo_source_ability)k, 1);
+                parameters[at] = arguments[j].parameter;
+                parts[at] = prove(p, arguments[j].type, (enum mo_source_ability)k, 1);
                 if (parts[at++] == NULL)
                     return false;
             }
