@@ -499,6 +499,13 @@ MO_MUST_USE struct mo_image *mo_load(const uint8_t *bytes, size_t length,
  * mo_image_free, including across initialization and calls. Nothing is remapped. Tools read
  * kinds, signatures, debug text and module contents_exposed here to enumerate/generate specs. */
 MO_MUST_USE const struct mo_bytecode *mo_image_bytecode(const struct mo_image *image);
+/* The sealed runtime table retains file indices. Borrowed until image_free. */
+struct mo_types;
+MO_MUST_USE const struct mo_types *mo_image_types(const struct mo_image *image);
+/* The VM attaches its run state once, during serial initialization. The loader
+ * owns it thereafter and invokes release before freeing decoded tables. */
+MO_MUST_USE void *mo_image_runtime(const struct mo_image *image);
+void mo_image_attach_runtime(struct mo_image *image, void *runtime, void (*release)(void *));
 /* VM support for defect reports. Rerun this function's private dataflow and fill register_count
  * bools with readability immediately before pc. False on no memory, a bad function index or
  * non-boundary pc; error is required. image and readable are non-NULL. */

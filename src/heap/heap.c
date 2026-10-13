@@ -1,8 +1,10 @@
 #define _DEFAULT_SOURCE
 #include "heap/internal.h"
 
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/random.h>
 #include <unistd.h>
 
 static MO_MUST_USE int compare_lookup(const void *left, const void *right) {
@@ -70,6 +72,7 @@ struct mo_layout_lookup *mo_heap_layout(struct mo_heap *process, uint32_t catego
 struct mo_heap_image *mo_heap_image_new(const struct mo_types *types,
                                         const struct mo_limits *limits) {
     MO_ASSERT(types != NULL && types->finished && limits != NULL);
+    errno = ENOSPC;
     size_t baseline = sizeof(struct mo_heap_image) + types->count;
     if (limits->heap_size < baseline) {
         return NULL;
@@ -81,8 +84,10 @@ struct mo_heap_image *mo_heap_image_new(const struct mo_types *types,
     uint64_t secret[2];
     if (getentropy(secret, sizeof secret) != 0) {
         free(image);
+        errno = EIO;
         return NULL;
     }
+    errno = ENOSPC;
     for (unsigned i = 0; i < 2; i++) {
         image->hash_key[i] = mo_heap_mix(secret, 0x68617368, i);
         image->index_key[i] = mo_heap_mix(secret, 0x696e646578, i);
@@ -107,7 +112,9 @@ struct mo_heap_image *mo_heap_image_new(const struct mo_types *types,
     constant_limits.heap_size -= image->used;
     image->constants = mo_heap_new(image, &constant_limits);
     if (image->constants == NULL || !mo_heap_image_refresh(image)) {
+        int failure = errno;
         mo_heap_image_free(image);
+        errno = failure;
         return NULL;
     }
     return image;
@@ -123,6 +130,7 @@ bool mo_heap_image_refresh(struct mo_heap_image *image) {
         size_t bytes = (size_t)types->layout_count * sizeof(struct mo_layout_lookup);
         size_t old_bytes = (size_t)image->layout_count * sizeof(struct mo_layout_lookup);
         if (bytes > image->limit - image->used - image->constants->used) {
+            errno = ENOSPC;
             return false;
         }
         struct mo_layout_lookup *lookup = calloc(1, bytes);
@@ -204,6 +212,7 @@ struct mo_heap *mo_heap_image_constants(struct mo_heap_image *image) {
 struct mo_heap *mo_heap_new(struct mo_heap_image *image, const struct mo_limits *limits) {
     MO_ASSERT(image != NULL && limits != NULL);
     if (limits->heap_size < sizeof(struct mo_heap)) {
+        errno = ENOSPC;
         return NULL;
     }
     struct mo_heap *process = calloc(1, sizeof *process);
@@ -241,6 +250,7 @@ struct mo_allocation *mo_heap_allocate(struct mo_heap *process, uint32_t type, u
               (type < process->types->count || (type == MO_NO_INDEX && layout == MO_STATE_LAYOUT)));
     size_t header = offsetof(struct mo_allocation, cells);
     if (bytes > SIZE_MAX - header || header + bytes > process->limit - process->used) {
+        errno = ENOSPC;
         return NULL;
     }
     size_t size = header + bytes;
@@ -407,13 +417,17 @@ void mo_scratch_init(struct mo_scratch *scratch, struct mo_heap *process) {
 
 void mo_scratch_free(struct mo_scratch *scratch) {
     MO_ASSERT(scratch->process->used >= scratch->arena.used);
+    int failure = errno;
     scratch->process->used -= scratch->arena.used;
     mo_arena_free(&scratch->arena);
+    errno = failure;
 }
 
 void *mo_scratch_resize(struct mo_scratch *scratch, void *bytes, size_t old_size, size_t new_size) {
     size_t before = scratch->arena.used;
     scratch->arena.limit = before + scratch->process->limit - scratch->process->used;
+    /* Arena limit refusals don't set errno; POSIX malloc/realloc failures do. */
+    errno = ENOSPC;
     void *result =
         mo_arena_resize(&scratch->arena, bytes, old_size, new_size, _Alignof(max_align_t));
     scratch->process->used = scratch->process->used - before + scratch->arena.used;

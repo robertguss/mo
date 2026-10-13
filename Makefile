@@ -34,6 +34,7 @@ COMMON := $(CSTD) $(INCLUDES) $(WARNINGS) -MMD -MP
 DEBUG := -O0 -g
 SANITIZE := -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all
 FUZZ := -O1 -g -fno-omit-frame-pointer -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all
+LDLIBS += -lm
 
 # Each directory in src/ is a module (architecture section 2), and every C file in it is built.
 # src/tools/main.c is the mo command's main function, so only mo links it.
@@ -109,12 +110,14 @@ fuzz: $(FUZZERS)
 
 # A crash artifact fails the run that found it. Start with none, so that one saved by an
 # earlier run does not keep failing the runs after the bug is fixed.
-fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test $(BUILD)/debug/tests/test_bytecode_text.test
+fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test $(BUILD)/debug/tests/test_bytecode_text.test $(BUILD)/debug/tests/test_vm.test
 	@rm -rf $(FUZZ_BUILD)/artifacts
 	@mkdir -p $(FUZZ_BUILD)/artifacts
 	@mkdir -p $(FUZZ_BUILD)/bytecode-fixtures
 	$(BUILD)/debug/tests/test_bytecode_verify.test --corpus $(FUZZ_BUILD)/bytecode-fixtures
 	$(BUILD)/debug/tests/test_bytecode_text.test --corpus $(FUZZ_BUILD)/bytecode-fixtures
+	@mkdir -p $(FUZZ_BUILD)/vm-fixtures
+	$(BUILD)/debug/tests/test_vm.test --corpus $(FUZZ_BUILD)/vm-fixtures
 	@for f in $(FUZZERS); do \
 		base=$$(basename $$f); variants=small; \
 		if [ "$$base" = fuzz_bytecode_io ]; then variants="small large"; fi; \
@@ -122,6 +125,7 @@ fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test $(BUILD)/d
 			name=$$base; options=; \
 			if [ "$$base" = fuzz_bytecode_io ]; then options="-max_len=4096 -timeout=15"; fi; \
 			if [ "$$base" = fuzz_bytecode_text ]; then options="-max_len=16777216 -timeout=30"; fi; \
+			if [ "$$base" = fuzz_vm ]; then options="-max_len=65536 -timeout=15"; fi; \
 			if [ "$$variant" = large ]; then \
 				name=$${base}_large; options="-max_len=134217728 -timeout=30"; fi; \
 			corpus=$(FUZZ_BUILD)/corpus/$$name; \
@@ -130,6 +134,7 @@ fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test $(BUILD)/d
 			if [ -d fuzz/corpus/$$name ]; then cp -R fuzz/corpus/$$name/. $$corpus/; fi; \
 			if [ "$$base" = fuzz_bytecode_io ]; then cp $(FUZZ_BUILD)/bytecode-fixtures/*.bc $$corpus/; fi; \
 			if [ "$$base" = fuzz_bytecode_text ]; then cp $(FUZZ_BUILD)/bytecode-fixtures/* $$corpus/; fi; \
+			if [ "$$base" = fuzz_vm ]; then cp $(FUZZ_BUILD)/vm-fixtures/*.bc $(FUZZ_BUILD)/bytecode-fixtures/*.bc $$corpus/; fi; \
 			if [ "$$name" = fuzz_core_text ] || [ "$$name" = fuzz_core_check ] || [ "$$name" = fuzz_codegen ]; then \
 				cp tests/core/*.core fuzz/corpus/fuzz_core_text/*.core $$corpus/; fi; \
 			if [ "$$name" = fuzz_check ]; then cp tests/check/diagnostics/e*.mo $$corpus/; fi; \
@@ -204,23 +209,41 @@ $(SOURCE_LIST): FORCE
 	@echo '$(LIB_SOURCES)' | cmp -s - $@ || echo '$(LIB_SOURCES)' >$@
 
 $(BUILD)/debug/mo: $(call objects,$(BUILD)/debug,$(LIB_SOURCES) $(MAIN_SOURCE))
-	$(CC) $(DEBUG) $^ -o $@
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
 
 $(BUILD)/debug/module-path: $(BUILD)/debug/ci/module_path.o $(call objects,$(BUILD)/debug,$(BASE_SOURCES))
 	$(CC) $(DEBUG) $^ -o $@
 
 $(BUILD)/sanitize/mo: $(call objects,$(BUILD)/sanitize,$(LIB_SOURCES) $(MAIN_SOURCE))
-	$(CC) $(SANITIZE) $^ -o $@
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
 $(BUILD)/debug/tests/%.test: $(BUILD)/debug/tests/%.o $(call objects,$(BUILD)/debug,$(LIB_SOURCES))
-	$(CC) $(DEBUG) $^ -o $@
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
 
 $(BUILD)/sanitize/tests/%.test: $(BUILD)/sanitize/tests/%.o $(call objects,$(BUILD)/sanitize,$(LIB_SOURCES))
-	$(CC) $(SANITIZE) $^ -o $@
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
+# Fault injection only in the two translation units owning VM initialization
+# and heap allocation. Compile-time renaming also works with Apple's linker.
+VM_FAULT_SOURCES := src/heap/heap.c src/vm/image.c
+VM_FAULT_RENAMES := -Dcalloc=mo_vm_fault_calloc -Dgetentropy=mo_vm_fault_entropy
+$(BUILD)/debug/vm-faults/%.o: src/%.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) $(VM_FAULT_RENAMES) -c $< -o $@
+
+$(BUILD)/sanitize/vm-faults/%.o: src/%.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) $(VM_FAULT_RENAMES) -c $< -o $@
+
+$(BUILD)/debug/tests/test_vm_faults.test: $(BUILD)/debug/tests/test_vm_faults.o $(call objects,$(BUILD)/debug,$(filter-out $(VM_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/debug/vm-faults/%.o,$(VM_FAULT_SOURCES))
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/tests/test_vm_faults.test: $(BUILD)/sanitize/tests/test_vm_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out $(VM_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/vm-faults/%.o,$(VM_FAULT_SOURCES))
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
 $(FUZZ_BUILD)/bin/%: $(FUZZ_BUILD)/fuzz/%.o $(call objects,$(FUZZ_BUILD),$(LIB_SOURCES))
 	@mkdir -p $(dir $@)
-	$(FUZZ_CC) $(FUZZ) $^ -o $@
+	$(FUZZ_CC) $(FUZZ) $^ -o $@ $(LDLIBS)
 
 $(FUZZ_BUILD)/bin/fuzz_grammar: $(FUZZ_BUILD)/fuzz/fuzz_grammar.o $(call grammar_objects,$(FUZZ_BUILD))
 	@mkdir -p $(dir $@)
@@ -228,7 +251,7 @@ $(FUZZ_BUILD)/bin/fuzz_grammar: $(FUZZ_BUILD)/fuzz/fuzz_grammar.o $(call grammar
 
 $(FUZZ_BUILD)/bin/fuzz_syntax: $(FUZZ_BUILD)/fuzz/fuzz_syntax.o $(sort $(call grammar_objects,$(FUZZ_BUILD)) $(call objects,$(FUZZ_BUILD),$(LIB_SOURCES)))
 	@mkdir -p $(dir $@)
-	$(FUZZ_CC) $(FUZZ) $^ -o $@
+	$(FUZZ_CC) $(FUZZ) $^ -o $@ $(LDLIBS)
 
 $(FUZZ_BUILD)/fuzz/fuzz_syntax.o: fuzz/fuzz_syntax.c $(GRAMMAR_GENERATED)/mo.tab.h Makefile
 	@mkdir -p $(dir $@)
