@@ -873,7 +873,18 @@ static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
             else
                 hi = mid;
         }
-        if (lo == scope->alias_count || compare_text(prefix, scope->aliases[lo].name) != 0) {
+        const struct mo_module_scope *target =
+            lo < scope->alias_count && compare_text(prefix, scope->aliases[lo].name) == 0
+                ? &p->interfaces->scopes[scope->aliases[lo].module]
+                : NULL;
+        for (uint32_t i = 0; target == NULL && i < p->interfaces->count; i++) {
+            if (!work(p))
+                return NULL;
+            const struct mo_module_scope *library = &p->interfaces->scopes[i];
+            if (library->library && compare_text(prefix, library->name) == 0)
+                target = library;
+        }
+        if (target == NULL) {
             uint32_t meanings = 0;
             const struct mo_symbol *type = definition(p, prefix, NULL, &meanings);
             size_t length = prefix->span.end - prefix->span.start;
@@ -881,21 +892,20 @@ static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
                              (p->function->type->parameters &
                               (UINT32_C(1) << (unsigned)(prefix->text[0] - 'A'))) != 0;
             if (type != NULL || mo_source_builtin(prefix->text, length) || parameter)
-                return NULL; /* static type/builtin dispatch is a later stage */
+                return NULL; /* native dispatch follows in identifier */
             bool reported =
                 problem(p, MO_CODE_IMPORT_MISSING, prefix->span, "a module prefix isn't in scope",
                         "Use names the modules available to this file (reference 10.3).", NULL);
             (void)reported;
             return NULL;
         }
-        const struct mo_symbol *s =
-            find_symbol(&p->interfaces->scopes[scope->aliases[lo].module], name, count);
+        const struct mo_symbol *s = find_symbol(target, name, count);
         if (s != NULL && s->owner != UINT32_MAX) {
             const struct mo_symbol *owner = &p->interfaces->scopes[s->module].symbols[s->owner];
             if (owner->exported && !visible_data(p, owner))
                 return NULL;
         }
-        if (s != NULL && !s->exported) {
+        if (s != NULL && !s->exported && s->module != p->function->function->module) {
             bool reported = problem(p, MO_CODE_IMPORT_PRIVATE, name->span,
                                     "everything not on expose is private to the module",
                                     "Everything not on expose is private to the module "

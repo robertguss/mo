@@ -402,9 +402,11 @@ struct mo_checked_ability_use {
  * An unnamed payload is the sole operand, at field zero. Field/projection
  * rows have one base operand and field's resolved index.
  *
- * Ordinary calls have callee first, then positional arguments. Native dot
- * calls omit a callee row; native names the selected operation and operands
- * begin with its explicit receiver. receiver is that row index, not a slot.
+ * Ordinary calls have callee first, then positional arguments. Source dot
+ * calls have selected callee, receiver, then explicit arguments; a function
+ * field is projected first and called as an ordinary callee, with no inserted
+ * receiver. Native dot calls omit a callee row; native names the operation,
+ * and operands begin with its receiver. receiver is that row index, not a slot.
  * Ability dot calls use native "to_text" or "compare", receiver first and no
  * callee row; their Text/Order use identifies the receiver. Interpolation has
  * only hole operands, in written order, each with a Text use keyed by its row.

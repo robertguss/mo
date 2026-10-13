@@ -400,23 +400,41 @@ static void library_graph(void) {
     CHECK(f.program != NULL && !mo_diags_any(&f.diags));
     if (f.program != NULL) {
         const struct mo_checked_body *body = &f.program->functions[f.program->entry.function].body;
-        bool called = false;
+        bool called = false, static_call = false, custom = false;
         for (uint32_t i = 0; i < body->count; i++) {
             const struct mo_checked_expression *row = &body->items[i];
-            if (row->symbol == NULL || row->receiver == UINT32_MAX)
+            for (uint32_t j = 0; j < row->ability_count; j++) {
+                const struct mo_ability_implementation *proof = row->abilities[j].implementation;
+                if (strcmp(proof->type->name, "FileError") != 0)
+                    continue;
+                CHECK(proof->kind == MO_ABILITY_FUNCTION);
+                MO_ASSERT(proof->function != NULL);
+                const struct mo_module_scope *owner =
+                    &f.program->interfaces->scopes[proof->function->module];
+                CHECK(owner->library && strcmp(owner->name, "FileError") == 0);
+                CHECK(strcmp(proof->function->name, "to_text") == 0);
+                CHECK(proof->arguments.count == 0 && proof->part_count == 0);
+                custom = true;
+            }
+            if (row->symbol == NULL || row->operand_count == 0)
                 continue;
             CHECK(strcmp(row->symbol->name, "map") == 0);
             const struct mo_module_scope *scope =
                 &f.program->interfaces->scopes[row->symbol->module];
             CHECK(scope->library && strcmp(scope->name, "List") == 0);
             MO_ASSERT(row->operand_count == 3 && row->arguments.count == 2);
-            CHECK(row->receiver == row->operands[1]);
+            if (row->receiver == UINT32_MAX) {
+                CHECK(body->items[row->operands[1]].syntax->kind == MO_S_LIST);
+                static_call = true;
+            } else {
+                CHECK(row->receiver == row->operands[1]);
+                called = true;
+            }
             CHECK(body->items[row->operands[2]].lambda != NULL);
             CHECK(strcmp(row->arguments.items[0].type->name, "Int") == 0);
             CHECK(strcmp(row->arguments.items[1].type->name, "Int") == 0);
-            called = true;
         }
-        CHECK(called);
+        CHECK(called && static_call && custom);
     }
     free_fixture(&f);
 }
@@ -476,6 +494,40 @@ static void ability_graph(void) {
             ordered = true;
         }
         CHECK(ordered);
+    }
+    free_fixture(&f);
+}
+
+static void native_choice_abilities(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn main() : Int\n"
+             "_entry = Entry(name: \"a\", kind: File).to_text\n"
+             "if NotFound(path: \"a\") == Failed(path: \"a\", reason: \"b\"): 1 else: 0\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        bool entry = false, error = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            for (uint32_t j = 0; j < row->ability_count; j++) {
+                const struct mo_ability_implementation *proof = row->abilities[j].implementation;
+                if (strcmp(proof->type->name, "Entry") == 0) {
+                    CHECK(proof->kind == MO_ABILITY_DERIVED && proof->ability == MO_SOURCE_TEXT);
+                    MO_ASSERT(proof->part_count == 2);
+                    CHECK(strcmp(proof->parts[0]->type->name, "Text") == 0);
+                    CHECK(strcmp(proof->parts[1]->type->name, "EntryKind") == 0);
+                    entry = true;
+                }
+                if (strcmp(proof->type->name, "FileError") == 0) {
+                    CHECK(proof->kind == MO_ABILITY_DERIVED && proof->ability == MO_SOURCE_EQUAL);
+                    MO_ASSERT(proof->part_count == 5);
+                    for (uint32_t k = 0; k < proof->part_count; k++)
+                        CHECK(strcmp(proof->parts[k]->type->name, "Text") == 0);
+                    error = true;
+                }
+            }
+        }
+        CHECK(entry && error);
     }
     free_fixture(&f);
 }
@@ -1080,6 +1132,10 @@ static void rejected_stages(void) {
          MO_CODE_ABILITY_REQUIREMENT},
         {"fn main() : Int where Q: Equal\n0\nend\n", MO_CODE_ABILITY_REQUIREMENT},
         {"fn main() : Int where Int: Number\n0\nend\n", MO_CODE_ABILITY_REQUIREMENT},
+        {"fn message(error: FileError) : Text\nerror.to_text\nend\nfn main()\nend\n",
+         MO_CODE_CHECK_UNFINISHED},
+        {"fn to_text(_error: FileError) : Text\n\"fake\"\nend\nfn main()\nend\n",
+         MO_CODE_ABILITY_CUSTOMIZER},
         {"fn helper(c: Console) : Text\n\"#{c}\"\nend\nfn main()\nend\n", MO_CODE_ABILITY_MISSING},
         {"fn helper(bytes: Bytes) : Text\n\"#{bytes}\"\nend\nfn main()\nend\n",
          MO_CODE_ABILITY_MISSING},
@@ -1172,32 +1228,43 @@ static void depth_graph(void) {
 }
 
 static void allocation_failures(void) {
-    struct fixture f;
-    init(&f,
-         "module Main\nstruct Box\nvalue: Int\nend\n"
-         "fn main() : Int\nvar total = 0\nfor i in 0..3\ntotal += i\nend\n"
-         "box = Some(Box(value: total))\ncase box\nSome(Box(value: n)): n\nNone: 0\nend\nend\n");
-    MO_ASSERT(f.program != NULL && !mo_diags_any(&f.diags));
-    size_t used = f.arena.used;
-    uint32_t failures = 0, successes = 0;
-    for (size_t limit = 0; limit <= used + 128; limit += 128) {
-        mo_arena_free(&f.arena);
-        mo_arena_init(&f.arena, limit);
-        mo_diags_free(&f.diags);
-        MO_ASSERT(mo_diags_init(&f.diags));
-        f.program = mo_check(&f.arena, &f.set, &f.diags);
-        if (f.program == NULL) {
-            failures++;
-            CHECK(mo_diags_any(&f.diags));
-            for (uint32_t i = 0; i < f.diags.count; i++)
-                CHECK(f.diags.items[i].code == MO_CODE_CHECK_NO_MEMORY);
-        } else {
-            successes++;
-            CHECK(!mo_diags_any(&f.diags));
+    static const char *const sources[] = {
+        "module Main\nfn main()\nend\n",
+        "module Main\nstruct Box(T)\nvalue: T\nend\n"
+        "fn to_text(box: Box(T)) : Text where T: Text\n\"#{box.value}\"\nend\n"
+        "fn main() : Int\nvar total = 0\nfor i in 0..3\ntotal += i\nend\n"
+        "reader = fn(value) value.value end\ntotal = reader(Box(value: total))\n"
+        "box = Some(Box(value: total))\n_rendered = \"#{box}\"\n"
+        "case box\nSome(Box(value: n)): n\nNone: 0\nend\nend\n"};
+    for (size_t s = 0; s < sizeof(sources) / sizeof(sources[0]); s++) {
+        struct fixture f;
+        init(&f, sources[s]);
+        MO_ASSERT(f.program != NULL && !mo_diags_any(&f.diags));
+        size_t used = f.arena.used;
+        uint32_t failures = 0, successes = 0;
+        for (size_t limit = 0; limit <= used + 128; limit += 128) {
+            mo_arena_free(&f.arena);
+            mo_arena_init(&f.arena, limit);
+            mo_diags_free(&f.diags);
+            MO_ASSERT(mo_diags_init(&f.diags));
+            f.program = mo_check(&f.arena, &f.set, &f.diags);
+            if (f.program == NULL) {
+                failures++;
+                CHECK(mo_diags_any(&f.diags));
+                for (uint32_t i = 0; i < f.diags.count; i++) {
+                    CHECK(f.diags.items[i].code == MO_CODE_CHECK_NO_MEMORY);
+                    struct mo_span span = f.diags.items[i].primary.span;
+                    CHECK(span.file == f.module->span.file || span.file == UINT32_MAX);
+                    CHECK(span.start <= span.end && span.end <= strlen(sources[s]));
+                }
+            } else {
+                successes++;
+                CHECK(!mo_diags_any(&f.diags));
+            }
         }
+        CHECK(failures != 0 && successes != 0);
+        free_fixture(&f);
     }
-    CHECK(failures != 0 && successes != 0);
-    free_fixture(&f);
 }
 
 static void corpus(void) {
@@ -1231,6 +1298,7 @@ static void run(void *argument) {
     library_graph();
     entry_record();
     ability_graph();
+    native_choice_abilities();
     generic_graph();
     requirement_keys();
     lambda_graph();

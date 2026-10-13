@@ -1,0 +1,6 @@
+E0080 9.2
+0:12..44
+type Float doesn't have Hash
+An operation needs its type's ability; functions and capabilities have no abilities (reference 9.2).
+type Float doesn't have Hash
+fixes 0
