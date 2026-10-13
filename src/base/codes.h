@@ -247,7 +247,9 @@
     /* Formatting cannot read or atomically replace a regular source file. */                      \
     X(1402, TOOL_FORMAT_IO, NULL)                                                                  \
     /* The formatter's source stack, document, or output budget is unavailable. */                 \
-    X(1403, TOOL_FORMAT_LIMIT, NULL)
+    X(1403, TOOL_FORMAT_LIMIT, NULL)                                                               \
+    /* A compiled artifact cannot be loaded or emitted within tool output resources. */            \
+    X(1404, TOOL_PIPELINE, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */
 enum mo_code {

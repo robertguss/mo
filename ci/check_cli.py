@@ -43,21 +43,128 @@ def records(result, command):
     return items
 
 
+def small_stack():
+    _, hard = resource.getrlimit(resource.RLIMIT_STACK)
+    resource.setrlimit(resource.RLIMIT_STACK, (1 << 20, hard))
+
+
+def runner(binary):
+    with tempfile.TemporaryDirectory(prefix="mo-runner-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        path.write_text('module Main\nfn main(console: Console) : Int\n'
+                        'console.print("hello 日本語")\n37\nend\n')
+        result = run(binary, ["run", str(path)], 37)
+        assert result.stdout == "hello 日本語\n".encode() and not result.stderr
+        # Emission writes indexed text, not an opaque binary or an execution
+        # result. Both forms preserve the original filename and entry metadata.
+        core = run(binary, ["check", "--emit=core", str(path)], 0)
+        bytecode = run(binary, ["check", "--emit=bytecode", str(path)], 0)
+        assert core.stdout.startswith(b"(core ") and not core.stderr
+        assert b"Main.main.entry" in core.stdout and str(path).encode() in core.stdout
+        assert b"Main.main.entry" in bytecode.stdout and not bytecode.stderr
+        for name, result in (("core", core), ("bytecode", bytecode)):
+            emitted = pathlib.Path(directory) / f"program.{name}"
+            emitted.write_bytes(result.stdout)
+            decoded = run(binary.parent / "tests/test_cli.test",
+                          [f"--roundtrip-{name}", str(emitted)], 0)
+            assert not decoded.stdout and not decoded.stderr
+
+        for body, status, reason in (
+            ("fn main()\nend", 0, None),
+            ("fn main() : Int\n0\nend", 0, None),
+            ("fn main() : Int\n255\nend", 255, None),
+            ("fn main() : Int\n-1\nend", 70, b"exit status outside 0 to 255"),
+            ("fn main() : Int\n256\nend", 70, b"exit status outside 0 to 255"),
+            ("fn main() : Int\n9223372036854775807 + 1\nend", 70, b"overflow: Int"),
+            ('fn main()\nstop "chosen stop"\nend', 70, b"chosen stop"),
+        ):
+            path.write_text("module Main\n" + body + "\n")
+            result = run(binary, ["run", str(path)], status)
+            assert not result.stdout
+            if reason is None:
+                assert not result.stderr
+            else:
+                assert result.stderr.startswith(b"bug: ") and reason in result.stderr
+                assert str(path).encode() in result.stderr and b"Main.main" in result.stderr
+
+        # Tail calls replace a frame; a non-tail call must consume both limits.
+        for tail, status in ((True, 0), (False, 70)):
+            body = ("fn recurse(n: Int) : Int\nif n == 0: 0 else: "
+                    + ("" if tail else "1 + ") + "recurse(n - 1)\nend\n"
+                    "fn main() : Int\nrecurse(50)\nend")
+            path.write_text("module Main\n" + body + "\n")
+            for flag, value in (("--max-depth", "10"), ("--max-stack", "1KiB")):
+                result = run(binary, ["run", flag, value, str(path)], status)
+                assert not result.stdout
+                if tail:
+                    assert not result.stderr
+                else:
+                    assert flag.encode() in result.stderr and b"Main.recurse" in result.stderr
+        path.write_text("module Main\nfn main()\nend\n")
+        result = run(binary, ["run", "--max-heap", "1", str(path)], 70)
+        assert not result.stdout and b"--max-heap = 1" in result.stderr
+
+        # Loading/checking failure is never run as code. Missing main is an
+        # error even for check; an inference result alone is not a certificate.
+        for body, code in (("fn f() : Int\n3\nend", "E0079"),
+                           ('fn main() : Int\n"text"\nend', "E0078")):
+            path.write_text("module Main\n" + body + "\n")
+            for command in ("check", "run"):
+                result = run(binary, [command, str(path)], 1)
+                assert not result.stdout and code.encode() in result.stderr
+            items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+            assert items[1]["code"] == code and items[-1]["dropped"] == 0
+
+        # Every source stage, including lower/Core/codegen, shares the explicit
+        # source stack, while the caller has only 1 MiB. Nested arithmetic also
+        # checks that the running entry, not an arbitrary helper, was selected.
+        path.write_text("module Main\nfn main() : Int\n" + "1 + (" * 254
+                        + "1" + ")" * 254 + "\nend\n")
+        for args, status in ((["run", str(path)], 255),
+                             (["check", "--emit=core", str(path)], 0),
+                             (["check", "--emit=bytecode", str(path)], 0)):
+            result = subprocess.run([str(binary), *args], cwd=root, capture_output=True,
+                                    timeout=30, preexec_fn=small_stack)
+            assert result.returncode == status and not result.stderr, (args, result)
+
+        # Program output failing is a runtime bug, unlike guide's deliberate
+        # silent broken-pipe exit. It must not become SIGPIPE or tools status 1.
+        path.write_text('module Main\nfn main(console: Console)\nconsole.print("hello")\nend\n')
+        for args, status, reason in ((["run", str(path)], 70, b"bug: "),
+                                     (["check", "--emit=core", str(path)], 1, b"E1404")):
+            read_fd, write_fd = os.pipe()
+            os.close(read_fd)
+            try:
+                result = subprocess.run([str(binary), *args], cwd=root,
+                                        stdout=write_fd, stderr=subprocess.PIPE, timeout=30)
+                assert result.returncode == status and reason in result.stderr, result
+            finally:
+                os.close(write_fd)
+
+        # The VM's structural report is terminal-safe too, including detail
+        # bytes and paths. The escaped payload is not interpreted as control.
+        unsafe = pathlib.Path(directory) / "bad\u009b\u202e"
+        unsafe.mkdir()
+        path = unsafe / "main.mo"
+        path.write_text('module Main\nfn main()\nstop "\\u{1b}\\u{009b}\\u{202e} 日本語"\nend\n')
+        result = run(binary, ["run", str(path)], 70, env={**os.environ, "LC_ALL": "C"})
+        result.stderr.decode("ascii")
+        assert b"\\u{1b}" in result.stderr and b"\\u{9b}" in result.stderr
+        assert b"\\u{202e}" in result.stderr and b"\x1b" not in result.stderr
+    print(f"{binary}: real source check/run/emission, statuses, limits and defects passed")
+
+
 def source_stack(binary, folder):
     # This fixture exercises the entire precedence ladder at the source-depth
     # boundary, not only nested brackets. The process stack stays small while
-    # loading, parsing and inference must use the explicit source-work stack.
+    # loading, parsing and whole checking use the explicit source-work stack.
     path = folder / "main.mo"
     header = ("module Main\nfn run(a: Bool, b: Bool, c: Bool, d: Range, e: Int, "
               "f: Int, g: Int, h: fn(Bool) : Int) : Bool\n")
 
-    def small_stack():
-        _, hard = resource.getrlimit(resource.RLIMIT_STACK)
-        resource.setrlimit(resource.RLIMIT_STACK, (1 << 20, hard))
-
     for depth, status in ((255, 0), (256, 1)):
         path.write_text(header + "a implies b or c and not d == e .. f + g * -h(" * depth
-                        + "a" + ")" * depth + "\nend\n")
+                        + "a" + ")" * depth + "\nend\nfn main()\nend\n")
         for json_mode in (False, True):
             result = subprocess.run(
                 [str(binary), "check", *(["--json"] if json_mode else []), str(path)],
@@ -92,6 +199,7 @@ flags = {
 def check(binary):
     driver = binary.parent / "tests/test_cli.test"
     faults = binary.parent / "tests/test_cli_faults.test"
+    runner(binary)
     items = records(run(faults, ["--json"], 1), "check")
     assert items[1]["code"] == "E1401" and items[-1]["dropped"] == 0
     assert items[1]["primary"]["file"] is None and items[1]["section"] is None
@@ -139,9 +247,8 @@ def check(binary):
     else:
         result = run(binary, ["guide"], 1)
         assert not result.stdout and b"--reference" in result.stderr
-    for command in ("run", "test", "fix", "check"):
-        args = [command, *(["--emit=core"] if command == "check" else []), good]
-        result = run(binary, args, 1)
+    for command in ("test", "fix"):
+        result = run(binary, [command, good], 1)
         assert not result.stdout and b"this build cannot" in result.stderr
         assert result.stderr.count(b"<unavailable>") == 1
     items = records(run(binary, ["test", "--json", "--list", "--only", "No.match", good], 1), "test")
@@ -168,7 +275,7 @@ def check(binary):
             if command not in allowed:
                 mistake(args, f'flag is not accepted by this command: "{flag}"')
             else:
-                run(binary, args, 0 if flag == "--reference" or (command == "check" and flag == "--json") else 1)
+                run(binary, args, 1 if command == "test" else 0)
                 if flag != "--only":
                     mistake([command, flag, *value, flag, *value, *([] if command == "guide" else [good])])
         if value:
@@ -187,7 +294,7 @@ def check(binary):
         mistake(["test", flag, "18014398509481984KiB", good])
         for value in ("1", "1B", "1KiB", "1MiB", "1GiB", "18446744073709551615"):
             run(binary, ["test", flag, value, good], 1)
-    run(binary, ["run", good, "--bad", ""], 1)
+    run(binary, ["run", good, "--bad", ""], 0)
     run(binary, ["test", "--only", "a", "--only", "b", "--in", "Main", good], 1)
     run(binary, ["format", good, good], 0)
     run(binary, ["fix", good, good], 1)
@@ -201,9 +308,9 @@ def check(binary):
         assert result.returncode == 0 and not result.stderr
     finally:
         os.close(write_fd)
-    run(binary, ["run", good, "x" * 5000], 1)
-    run(binary, ["run", good, *(str(i) for i in range(300))], 1)
-    run(binary, ["run", good, *("x" * 4096 for _ in range(16))], 1)
+    run(binary, ["run", good, "x" * 5000], 0)
+    run(binary, ["run", good, *(str(i) for i in range(300))], 0)
+    run(binary, ["run", good, *("x" * 4096 for _ in range(16))], 0)
     for command in ("format", "fix"):
         run(binary, [command, *([good] * 4096)], 0 if command == "format" else 1)
     run(binary, ["test", *(["--only", "x"] * 128), good], 1)
@@ -276,7 +383,8 @@ def check(binary):
         # The printer must refuse rather than introduce a lexer limit error.
         for letter in (b'a', '界'.encode()):
             for length in (65532, 65533):
-                source = b'module Main\nfn f() : Text\n"' + letter * length + b'"\nend\n'
+                source = (b'module Main\nfn f() : Text\n"' + letter * length
+                          + b'"\nend\nfn main()\nend\n')
                 path.write_bytes(source)
                 result = run(binary, ["format", str(path)], 0 if length == 65532 else 1)
                 assert not result.stdout
@@ -299,7 +407,10 @@ def check(binary):
                 expected = (b'module Main\na = 0' + b' ' * 51 + b'#' + b'c' * length +
                             b'\n' + b'b' * 50 + b' = 0  # short\n')
                 assert not result.stderr and path.read_bytes() == expected
-                run(binary, ["check", str(path)], 0)
+                # Constant checking is explicitly staged by the whole checker;
+                # formatting may not turn that into a successful certificate.
+                result = run(binary, ["check", str(path)], 1)
+                assert b'E1103' in result.stderr
         # Rename is observable: an existing reader and hard link keep the old
         # complete file, while the requested path gets the complete new file.
         source = b'module Main\n\n\nfn f()\nvar x=1\nx=x+2\nx\nend\n'

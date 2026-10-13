@@ -4,10 +4,14 @@
 
 #include "base/codes.h"
 #include "base/stack.h"
+#include "bytecode/bytecode.h"
 #include "check/check.h"
+#include "codegen/codegen.h"
+#include "lower/lower.h"
 #include "prim/prim.h"
 #include "tools/embedded.h"
 #include "tools/format.h"
+#include "tools/run.h"
 
 #include <errno.h>
 #include <string.h>
@@ -35,28 +39,18 @@ struct pipeline_work {
     struct mo_arena *arena;
     struct mo_sources *sources;
     struct mo_diags *diags;
+    FILE *output, *errors;
+    int status;
 };
 
 static void execute_pipeline(void *argument) {
-    const struct pipeline_work *work = argument;
+    struct pipeline_work *work = argument;
     const struct mo_cli *cli = work->cli;
     struct mo_arena *arena = work->arena;
     struct mo_sources *sources = work->sources;
     struct mo_diags *diags = work->diags;
-    if (cli->emit != MO_EMIT_NONE) {
-        tool_error(diags, MO_CODE_TOOL_UNAVAILABLE, "this build cannot emit Core or bytecode yet",
-                   NULL);
-        return;
-    }
-    if (cli->command != MO_COMMAND_CHECK) {
-        const char *message = "this build cannot run programs yet";
-        if (cli->command == MO_COMMAND_TEST)
-            message = "this build cannot run or list tests yet";
-        if (cli->command == MO_COMMAND_FORMAT)
-            message = "this build cannot format files yet";
-        if (cli->command == MO_COMMAND_FIX)
-            message = "this build cannot apply fixes yet";
-        tool_error(diags, MO_CODE_TOOL_UNAVAILABLE, message, NULL);
+    if (cli->command == MO_COMMAND_FIX) {
+        tool_error(diags, MO_CODE_TOOL_UNAVAILABLE, "this build cannot apply fixes yet", NULL);
         return;
     }
     struct stat st;
@@ -69,45 +63,49 @@ static void execute_pipeline(void *argument) {
         mo_load_program(arena, sources, mo_cli_file(cli, 0), library, diags);
     if (set == NULL || mo_diags_any(diags))
         return;
-    struct mo_module_interfaces *interfaces = mo_resolve_modules(arena, set, diags);
-    if (interfaces == NULL || mo_diags_any(diags))
+    struct mo_program *program = mo_check(arena, set, diags);
+    if (program == NULL || mo_diags_any(diags))
         return;
-    struct mo_signatures *signatures = mo_prepare_signatures(arena, set, interfaces, diags);
-    if (signatures == NULL || mo_diags_any(diags))
+    /* Never certify unchecked anchors or fabricate test results. These paths
+     * wait for the checked-spec producer and the lowering/runner contract. */
+    if (cli->command == MO_COMMAND_TEST || program->spec_count != 0) {
+        tool_error(diags, MO_CODE_TOOL_UNAVAILABLE,
+                   "this build cannot execute specification code yet", NULL);
         return;
-    for (uint32_t i = 0; i < signatures->count; i++) {
-        /* Independent bodies keep reporting after the output cap. Giving the
-         * checker its own bounded diagnostics prevents a global retention
-         * refusal from stopping inference; only storage in diags is capped. */
-        struct mo_diags local;
-        if (!mo_diags_init(&local)) {
-            mo_diags_free(&local);
-            diags->dropped++;
-            break;
-        }
-        struct mo_inferred_body *body = mo_infer_function(arena, interfaces, signatures, i, &local);
-        MO_ASSERT(body != NULL || mo_diags_any(&local));
-        bool resource_failure = local.dropped != 0;
-        for (uint32_t j = 0; j < local.count; j++) {
-            uint16_t code = local.items[j].code;
-            if (code >= 1000 && code != MO_CODE_CHECK_UNFINISHED)
-                resource_failure = true;
-            bool added = mo_diags_add(diags, &local.items[j]);
-            if (!added)
-                MO_ASSERT(diags->dropped != 0);
-        }
-        diags->dropped += local.dropped;
-        mo_diags_free(&local);
-        /* Resource failure is not another independent body mistake. */
-        if (resource_failure)
-            break;
     }
-    /* Integration seam: replace the preparation/inference above with mo_check
-     * when it returns a whole checked program. Only that result may reach
-     * mo_lower -> Core checking -> mo_compile -> image initialization and
-     * promise anchors. Keep all those stages inside this one source-stack
-     * callback: Core checking and codegen can exceed the caller's C stack too.
-     * Local inference results deliberately cannot be passed to lowering. */
+    if (cli->command == MO_COMMAND_CHECK && cli->emit == MO_EMIT_NONE)
+        return;
+    struct mo_arena lowered;
+    mo_arena_init(&lowered, MO_LIMIT_LOWER_WORK);
+    struct mo_core *core = mo_lower(&lowered, program, sources, diags);
+    struct mo_buffer wire, printed;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    mo_buffer_init(&printed, cli->emit == MO_EMIT_CORE ? MO_LIMIT_CORE_TEXT_SIZE
+                                                       : MO_LIMIT_BYTECODE_TEXT_SIZE);
+    if (core == NULL || mo_diags_any(diags) || !mo_core_check(core, diags))
+        goto done;
+    if (cli->emit == MO_EMIT_CORE) {
+        if (!mo_core_print(core, &printed))
+            tool_error(diags, MO_CODE_TOOL_PIPELINE, "Core text exceeds its output budget", NULL);
+    } else {
+        if (!mo_compile(core, &wire, diags))
+            goto done;
+        if (cli->emit == MO_EMIT_BYTECODE) {
+            struct mo_load_error error;
+            if (!mo_bytecode_disassemble(wire.bytes, wire.length, &printed, &error))
+                tool_error(diags, MO_CODE_TOOL_PIPELINE, "bytecode text could not be emitted",
+                           error.reason);
+        } else
+            work->status = mo_run_program(cli, core, &wire, work->output, work->errors, diags);
+    }
+    if (cli->emit != MO_EMIT_NONE && !mo_diags_any(diags) &&
+        (fwrite(printed.bytes, 1, printed.length, work->output) != printed.length ||
+         fflush(work->output) != 0))
+        tool_error(diags, MO_CODE_TOOL_PIPELINE, "compiled output could not be written", NULL);
+done:
+    mo_buffer_free(&printed);
+    mo_buffer_free(&wire);
+    mo_arena_free(&lowered);
 }
 
 int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
@@ -155,7 +153,12 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
     }
     struct mo_arena arena;
     mo_arena_init(&arena, MO_CLI_CHECK_SIZE);
-    struct pipeline_work work = {cli, &arena, &sources, &diags};
+    struct pipeline_work work = {.cli = cli,
+                                 .arena = &arena,
+                                 .sources = &sources,
+                                 .diags = &diags,
+                                 .output = output,
+                                 .errors = errors};
     int error = mo_with_stack(MO_SOURCE_STACK_SIZE, execute_pipeline, &work);
     if (error != 0)
         tool_error(&diags, MO_CODE_TOOL_SOURCE_STACK, "could not prepare the source pipeline stack",
@@ -164,5 +167,5 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
     mo_arena_free(&arena);
     mo_sources_free(&sources);
     mo_diags_free(&diags);
-    return status;
+    return status != 0 ? status : work.status;
 }

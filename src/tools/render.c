@@ -3,6 +3,7 @@
 #include "tools/tools.h"
 
 #include "prim/prim.h"
+#include "vm/vm.h"
 
 #include <langinfo.h>
 #include <string.h>
@@ -545,6 +546,45 @@ bool mo_render_diagnostic(const struct mo_sources *sources, const struct mo_diag
 static bool write_buffer(FILE *stream, const struct mo_buffer *buffer) {
     return fwrite(buffer->bytes, 1, buffer->length, stream) == buffer->length &&
            fflush(stream) == 0;
+}
+
+bool mo_write_defect(FILE *errors, const struct mo_process *process,
+                     const struct mo_defect *defect) {
+    struct mo_buffer raw, shown;
+    mo_buffer_init(&raw, MO_LIMIT_DEFECT_TEXT_SIZE);
+    mo_buffer_init(&shown, MO_CLI_DIAGNOSTIC_SIZE);
+    bool complete = mo_render_defect(process, defect, &raw);
+    const char *codeset = nl_langinfo(CODESET);
+    struct writer w = {.out = &shown,
+                       .ok = true,
+                       .utf8 = strcmp(codeset, "UTF-8") == 0 || strcmp(codeset, "UTF8") == 0 ||
+                               strcmp(codeset, "utf-8") == 0 || strcmp(codeset, "utf8") == 0};
+    text(&w, "bug: ");
+    if (raw.length == 0) {
+        safe_text(&w, defect->reason);
+        text(&w, "\n");
+    } else {
+        struct display_cursor c = {.bytes = raw.bytes, .length = raw.length};
+        uint32_t cells = 0;
+        while (w.ok && c.at < c.length) {
+            if (c.bytes[c.at] == '\n') {
+                text(&w, "\n");
+                c.at++;
+                cells = 0;
+            } else {
+                struct display_piece p = inspect(&c, cells, w.utf8);
+                write_piece(&w, c.bytes + c.at, p);
+                cells += p.width;
+                c.at += p.used;
+            }
+        }
+    }
+    if (!complete)
+        text(&w, "  <report incomplete>\n");
+    bool ok = w.ok && write_buffer(errors, &shown);
+    mo_buffer_free(&shown);
+    mo_buffer_free(&raw);
+    return ok;
 }
 
 bool mo_write_version(FILE *output, enum mo_command command) {
