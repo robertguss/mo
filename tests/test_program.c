@@ -328,15 +328,24 @@ static void match_graph(void) {
 static void loop_graph(void) {
     struct fixture f;
     init(&f, "module Main\nfn main() : Int\nvar total = 0\n"
-             "for value in 2..5\ncontinue if value == 3\ntotal = total + value\nend\n"
+             "for value in 2..5\ncontinue if value == 3\ntotal += value\nend\n"
              "while total < 20\nbreak if total == 18\ntotal = total + 2\nend\ntotal\nend\n");
     CHECK(f.program != NULL && !mo_diags_any(&f.diags));
     if (f.program != NULL) {
         const struct mo_checked_body *body = &f.program->functions[0].body;
         uint32_t loops = 0, exits = 0;
+        bool compound = false;
         for (uint32_t i = 0; i < body->count; i++) {
             const struct mo_checked_expression *row = &body->items[i];
-            if (row->syntax->kind == MO_S_FOR || row->syntax->kind == MO_S_WHILE) {
+            if (row->syntax->kind == MO_S_ADD_ASSIGN && row->assignment) {
+                MO_ASSERT(row->binding != NULL && row->operand_count == 1);
+                const struct mo_checked_expression *sum = &body->items[row->operands[0]];
+                MO_ASSERT(sum->operand_count == 2);
+                CHECK(sum->operation == MO_T_PLUS);
+                CHECK(body->items[sum->operands[0]].binding == row->binding);
+                CHECK(strcmp(row->binding->name, "total") == 0);
+                compound = true;
+            } else if (row->syntax->kind == MO_S_FOR || row->syntax->kind == MO_S_WHILE) {
                 loops++;
                 MO_ASSERT(row->operand_count == 2 && row->operands[0] < i && row->operands[1] < i);
                 CHECK(strcmp(row->type->name, "Unit") == 0 && !row->never);
@@ -362,7 +371,91 @@ static void loop_graph(void) {
                 CHECK(!row->never && strcmp(body->items[row->operands[0]].type->name, "Bool") == 0);
             }
         }
-        CHECK(loops == 2 && exits == 2);
+        CHECK(loops == 2 && exits == 2 && compound);
+    }
+    free_fixture(&f);
+}
+
+static void builtin_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn choose(value: Option(Int)) : Int\ncase value\n"
+             "Some(n) | Some(n): n\nNone: 0\nend\nend\n"
+             "fn main() : Int\nchoose(Some(42))\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        bool matched = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_match *match = body->items[i].match;
+            if (match == NULL)
+                continue;
+            MO_ASSERT(match->arm_count == 2 && match->arms[0].pattern_count == 2);
+            const struct mo_checked_pattern *a = match->arms[0].patterns[0];
+            const struct mo_checked_pattern *b = match->arms[0].patterns[1];
+            CHECK(strcmp(a->constructor.builtin, "Some") == 0);
+            MO_ASSERT(a->part_count == 1 && b->part_count == 1 && a->arguments.count == 1);
+            CHECK(a->parts[0].pattern->binding == b->parts[0].pattern->binding);
+            CHECK(strcmp(a->parts[0].pattern->binding->name, "n") == 0);
+            CHECK(strcmp(a->arguments.items[0].type->name, "Int") == 0);
+            CHECK(strcmp(match->arms[1].patterns[0]->constructor.builtin, "None") == 0);
+            const struct mo_checked_body *main = &f.program->functions[1].body;
+            bool constructed = false;
+            for (uint32_t j = 0; j < main->count; j++) {
+                const struct mo_checked_expression *row = &main->items[j];
+                if (row->native == NULL || strcmp(row->native, "Some") != 0)
+                    continue;
+                MO_ASSERT(row->operand_count == 1 && row->arguments.count == 1);
+                CHECK(row->arguments.items[0].parameter == a->arguments.items[0].parameter);
+                CHECK(strcmp(row->arguments.items[0].type->name, "Int") == 0);
+                CHECK(main->items[row->operands[0]].syntax->kind == MO_S_INT);
+                constructed = true;
+            }
+            CHECK(constructed);
+            matched = true;
+        }
+        CHECK(matched);
+    }
+    free_fixture(&f);
+}
+
+static void collection_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn main() : Int\nvar total = 0\n"
+             "for (number, include?) in [(4, true), (9, false)]\n"
+             "if include?\ntotal = total + number\nend\nend\n"
+             "pair = (total, 99)\n(first, _) = pair\nfirst + pair.1\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        bool list = false, loop = false, destructured = false, projected = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->syntax->kind == MO_S_LIST) {
+                MO_ASSERT(row->operand_count == 2);
+                CHECK(body->items[row->operands[0]].syntax->kind == MO_S_TUPLE);
+                const struct mo_checked_expression *a = &body->items[row->operands[0]];
+                const struct mo_checked_expression *b = &body->items[row->operands[1]];
+                CHECK(body->items[a->operands[0]].syntax->text[0] == '4');
+                CHECK(body->items[b->operands[0]].syntax->text[0] == '9');
+                list = true;
+            } else if (row->syntax->kind == MO_S_FOR) {
+                MO_ASSERT(row->pattern != NULL && row->pattern->part_count == 2);
+                CHECK(row->binding == NULL && row->pattern->kind == MO_PATTERN_TUPLE);
+                CHECK(strcmp(row->pattern->parts[0].pattern->binding->name, "number") == 0);
+                CHECK(strcmp(row->pattern->parts[1].pattern->binding->name, "include?") == 0);
+                loop = true;
+            } else if (row->syntax->kind == MO_S_BIND && row->pattern != NULL) {
+                MO_ASSERT(row->pattern->part_count == 2 && row->operand_count == 1);
+                CHECK(row->binding == NULL && !row->assignment);
+                CHECK(strcmp(row->pattern->parts[0].pattern->binding->name, "first") == 0);
+                CHECK(row->pattern->parts[1].pattern->kind == MO_PATTERN_ANY);
+                destructured = true;
+            } else if (row->syntax->kind == MO_S_POSITION && row->field == 1) {
+                CHECK(row->operand_count == 1 && strcmp(row->type->name, "Int") == 0);
+                projected = true;
+            }
+        }
+        CHECK(list && loop && destructured && projected);
     }
     free_fixture(&f);
 }
@@ -376,6 +469,8 @@ static void run(void *argument) {
     record_graph();
     match_graph();
     loop_graph();
+    builtin_graph();
+    collection_graph();
 }
 
 int main(void) {

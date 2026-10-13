@@ -26,6 +26,51 @@ static const struct mo_builtin_case builtin_cases[] = {
     {"Failed", "FileError", 22, 19, 4, 0, 2, 0, {"path", "reason"}},
 };
 
+static const struct mo_symbol option_owner = {.name = "Option", .module = UINT32_MAX};
+static const struct mo_symbol result_owner = {.name = "Result", .module = UINT32_MAX};
+static const struct mo_source_type option_parameter = {.kind = MO_SOURCE_PARAMETER,
+                                                       .name = "T",
+                                                       .module = UINT32_MAX,
+                                                       .declaration = &option_owner,
+                                                       .parameters = UINT32_C(1) << 19};
+static const struct mo_source_type result_parameters[] = {
+    {.kind = MO_SOURCE_PARAMETER,
+     .name = "T",
+     .module = UINT32_MAX,
+     .declaration = &result_owner,
+     .parameters = UINT32_C(1) << 19},
+    {.kind = MO_SOURCE_PARAMETER,
+     .name = "E",
+     .module = UINT32_MAX,
+     .declaration = &result_owner,
+     .parameters = UINT32_C(1) << 4},
+};
+static const struct mo_source_type *const option_arguments[] = {&option_parameter};
+static const struct mo_source_type *const result_arguments[] = {&result_parameters[0],
+                                                                &result_parameters[1]};
+static const struct mo_source_type option_template = {.kind = MO_SOURCE_NAMED,
+                                                      .name = "Option",
+                                                      .module = UINT32_MAX,
+                                                      .count = 1,
+                                                      .arguments = option_arguments,
+                                                      .height = 1,
+                                                      .parameters = UINT32_C(1) << 19};
+static const struct mo_source_type result_template = {
+    .kind = MO_SOURCE_NAMED,
+    .name = "Result",
+    .module = UINT32_MAX,
+    .count = 2,
+    .arguments = result_arguments,
+    .height = 1,
+    .parameters = (UINT32_C(1) << 19) | (UINT32_C(1) << 4),
+};
+
+const struct mo_source_type *mo_builtin_template(const struct mo_builtin_case *data) {
+    return strcmp(data->type, "Option") == 0   ? &option_template
+           : strcmp(data->type, "Result") == 0 ? &result_template
+                                               : NULL;
+}
+
 const struct mo_builtin_case *mo_builtin_case_by_name(const struct mo_syntax *name) {
     if (name->kind != MO_S_CAPNAME)
         return NULL;

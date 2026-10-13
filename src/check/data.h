@@ -13,5 +13,8 @@ struct mo_builtin_case {
 
 MO_MUST_USE const struct mo_builtin_case *mo_builtin_case_by_name(const struct mo_syntax *name);
 MO_MUST_USE const struct mo_builtin_case *mo_builtin_case_by_key(uintptr_t key);
+/* Immutable Option/Result templates. Parameter pointers are scoped to their
+ * native type; their owner symbols have no source declaration. NULL otherwise. */
+MO_MUST_USE const struct mo_source_type *mo_builtin_template(const struct mo_builtin_case *data);
 
 #endif
