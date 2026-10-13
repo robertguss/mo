@@ -1229,9 +1229,11 @@ static void test_scratch_and_fuel(void) {
         return;
     struct mo_limits limits = mo_limits_default();
     struct mo_defect defect;
-    for (unsigned scenario = 0; scenario < 2; scenario++) {
-        if (scenario == 1)
-            limits.heap_size = 800;
+    /* Refuse the constructor with scratch available, then refuse its gather
+     * scratch itself. Both leave the register and destination untouched. */
+    for (unsigned scenario = 0; scenario < 3; scenario++) {
+        if (scenario != 0)
+            limits.heap_size = scenario == 1 ? 800 : 400;
         struct mo_process *p = mo_process_new(image, &limits);
         MO_ASSERT(p != NULL);
         struct mo_heap *heap = mo_process_heap(p);
