@@ -151,9 +151,20 @@ static MO_MUST_USE bool cell(struct prim_fixture *f, uint32_t type, struct input
             }
         }
         if (ok) {
-            if (t->kind == MO_TYPE_LIST)
+            if (t->kind == MO_TYPE_LIST) {
                 ok = mo_value_list(f->heap, type, a, count, out);
-            else if (t->kind == MO_TYPE_SET)
+                unsigned shape = byte(in) % 3;
+                if (ok && count != 0 && shape != 0) {
+                    /* Keep the same elements, either at exactly one quarter
+                     * capacity (slack) or below it (best-effort contraction). */
+                    for (unsigned i = 0; i < (shape == 1 ? 1U : 3U) && ok; i++)
+                        ok = mo_list_concat(f->heap, type, out, *out);
+                    if (ok)
+                        ok = mo_list_slice(f->heap, type, out, 0, count);
+                    if (!ok)
+                        mo_value_drop(f->heap, type, *out);
+                }
+            } else if (t->kind == MO_TYPE_SET)
                 ok = mo_value_set(f->heap, type, a, count, out);
             else if (t->kind == MO_TYPE_MAP)
                 ok = mo_value_map(f->heap, type, a, b, count, out);
