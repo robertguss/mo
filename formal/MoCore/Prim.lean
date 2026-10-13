@@ -176,13 +176,6 @@ def evalDecOp (op : DecOp) (vs : List Value) (w : World) : Outcome :=
   | .toFloat, [.decimal a] => .ok (.float (decToFloat a).toBits) w
   | _, _ => wrongArgs "Decimal primitive"
 
-/-- A float's text form. A float that is not a number is `nan`, and the
-infinities are `inf` and `-inf` (reference 9.2). Finite values use the same
-shortest decimal as `to_decimal`, with exact round-trip checks. -/
-def floatToText (x : Float) : String :=
-  if x.isNaN then "nan" else if x.isInf then (if x < 0 then "-inf" else "inf")
-  else shortestFloatText x.toBits
-
 def evalFloatOp (op : FloatOp) (vs : List Value) (w : World) : Outcome :=
   let f := Float.ofBits
   let ret (x : Float) : Outcome := .ok (.float x.toBits) w
