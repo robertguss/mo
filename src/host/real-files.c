@@ -150,7 +150,7 @@ static MO_MUST_USE enum mo_host_outcome read_file(struct mo_host *host, struct m
     bool ok = true;
     for (;;) {
         if (used == capacity) {
-            if (capacity == MO_LIMIT_STRING_SIZE) {
+            if (capacity == UINT32_MAX) {
                 uint8_t extra;
                 ssize_t n = read(fd, &extra, 1);
                 if (n < 0 && errno == EINTR)
@@ -159,13 +159,15 @@ static MO_MUST_USE enum mo_host_outcome read_file(struct mo_host *host, struct m
                     break;
                 if (n < 0)
                     problem = mo_host_errno(errno);
-                else
+                else {
+                    errno = ENOSPC;
                     ok = false;
+                }
                 break;
             }
-            size_t next = capacity == 0 ? 256 : capacity * 2;
-            if (next > MO_LIMIT_STRING_SIZE)
-                next = MO_LIMIT_STRING_SIZE;
+            size_t next = capacity == 0               ? 256
+                          : capacity > UINT32_MAX / 2 ? UINT32_MAX
+                                                      : capacity * 2;
             void *grown = mo_scratch_resize(&scratch, bytes, capacity, next);
             if (grown == NULL) {
                 ok = false;
@@ -273,8 +275,14 @@ static MO_MUST_USE enum mo_host_outcome listing(struct mo_host *host, struct mo_
         }
         struct mo_cell name;
         ok = mo_value_text(heap, entry->d_name, strlen(entry->d_name), &name);
-        if (!ok)
+        if (!ok) {
+            if (errno == EINVAL) {
+                problem = (struct mo_file_error){
+                    .status = FILE_FAILED, .reason = "folder contains a name that is not text"};
+                ok = true;
+            }
             break;
+        }
         ok = mo_list_append(heap, host->types->texts, &names, name);
         mo_value_drop(heap, host->types->text, name);
         if (ok)
@@ -378,7 +386,6 @@ enum mo_host_outcome mo_host_real_files_call(struct mo_host *host, struct mo_hea
     if (operation != MO_HOST_FILES_READ_ONLY) {
         size_t length;
         const uint8_t *bytes = mo_value_data(args[1], &length);
-        (void)bytes;
         if (length >= sizeof local) {
             path = mo_scratch_resize(&scratch, NULL, 0, length + 1);
             if (path == NULL) {
@@ -386,7 +393,9 @@ enum mo_host_outcome mo_host_real_files_call(struct mo_host *host, struct mo_hea
                 return MO_HOST_OUT_OF_MEMORY;
             }
         }
-        problem = mo_host_normalize(args[1], path);
+        problem = memchr(bytes, '\0', length) != NULL
+                      ? (struct mo_file_error){.status = FILE_NOT_ALLOWED}
+                      : mo_host_normalize(args[1], path, &length);
         if (problem.status != FILE_OK)
             path[0] = '\0';
     }

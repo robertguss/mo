@@ -2,11 +2,14 @@
 #include "host/host.h"
 #include "host_fixture.h"
 #include "test.h"
+#include "vm/vm.h"
 
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static void test_console(struct heap_fixture *f) {
@@ -177,6 +180,37 @@ static void pending_root(struct host_fixture *f, struct mo_cell files) {
     mo_value_drop(f->heap, f->capabilities[MO_CAP_FILES], child);
 }
 
+static void retained_folder(struct host_fixture *f, struct mo_cell files, int directory) {
+    expect(f, MO_HOST_FILES_MAKE_FOLDER, f->result_unit, files, "held", "", "Ok(Unit)");
+    expect(f, MO_HOST_FILES_WRITE_TEXT, f->result_unit, files, "held/a", "object", "Ok(Unit)");
+    CHECK(symlinkat("../a", directory, "held/escape") == 0);
+    struct mo_cell args[] = {files, host_text(f, "held")}, child, readonly;
+    struct mo_host_error error;
+    MO_ASSERT(mo_host_call(&f->host, f->heap, MO_HOST_FILES_WITHIN, f->capabilities[MO_CAP_FILES],
+                           args, &child, &error) == MO_HOST_RETURNED);
+    mo_value_drop(f->heap, f->types.text, args[1]);
+    MO_ASSERT(mo_host_call(&f->host, f->heap, MO_HOST_FILES_READ_ONLY,
+                           f->capabilities[MO_CAP_READ_FILES], &child, &readonly,
+                           &error) == MO_HOST_RETURNED);
+    char path[] = "/tmp/mo-host-move-XXXXXX";
+    MO_ASSERT(mkdtemp(path) != NULL);
+    int outside = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    MO_ASSERT(outside >= 0);
+    CHECK(renameat(directory, "held", outside, "moved") == 0);
+    expect(f, MO_HOST_FILES_READ_TEXT, f->result_text, child, "a", "", "Ok(\"object\")");
+    expect(f, MO_HOST_READFILES_READ_TEXT, f->result_text, readonly, "a", "", "Ok(\"object\")");
+    expect(f, MO_HOST_FILES_READ_TEXT, f->result_text, files, "held/a", "",
+           "Error(NotFound(path: \"held/a\"))");
+    expect(f, MO_HOST_FILES_READ_TEXT, f->result_text, child, "escape", "",
+           "Error(NotAllowed(path: \"escape\"))");
+    expect(f, MO_HOST_FILES_REMOVE, f->result_unit, child, "a", "", "Ok(Unit)");
+    expect(f, MO_HOST_FILES_REMOVE, f->result_unit, child, "escape", "", "Ok(Unit)");
+    mo_value_drop(f->heap, f->capabilities[MO_CAP_READ_FILES], readonly);
+    mo_value_drop(f->heap, f->capabilities[MO_CAP_FILES], child);
+    CHECK(unlinkat(outside, "moved", AT_REMOVEDIR) == 0);
+    CHECK(close(outside) == 0 && rmdir(path) == 0);
+}
+
 static void test_real_files(bool portable) {
     struct host_fixture f;
     host_fixture_init(&f, mo_limits_default().heap_size);
@@ -217,12 +251,108 @@ static void test_real_files(bool portable) {
                "Ok(\"hello!\")");
         expect(&f, MO_HOST_FILES_READ_TEXT, f.result_text, files, "../a", "",
                "Error(NotAllowed(path: \"../a\"))");
+        CHECK(mkfifoat(directory, "fifo", 0600) == 0);
+        expect(&f, MO_HOST_FILES_ENTRIES, f.result_entries, files, ".", "",
+               "Ok([Entry(name: \"a\", kind: File), Entry(name: \"absolute\", kind: Link), "
+               "Entry(name: \"deep\", kind: Folder), Entry(name: \"escape\", kind: Link), "
+               "Entry(name: \"fifo\", kind: Other), Entry(name: \"inside\", kind: Link), "
+               "Entry(name: \"slash\", kind: Link)])");
+        expect(&f, MO_HOST_FILES_READ_TEXT, f.result_text, files, "fifo", "",
+               "Error(Failed(path: \"fifo\", reason: \"not a regular file\"))");
+        CHECK(unlinkat(directory, "fifo", 0) == 0);
+        expect(&f, MO_HOST_FILES_WRITE_TEXT, f.result_unit, files, "deep", "",
+               "Error(Failed(path: \"deep\", reason: \"is a folder\"))");
+        expect(&f, MO_HOST_FILES_APPEND_TEXT, f.result_unit, files, "deep", "",
+               "Error(Failed(path: \"deep\", reason: \"is a folder\"))");
+        expect(&f, MO_HOST_FILES_REMOVE, f.result_unit, files, "deep", "",
+               "Error(Failed(path: \"deep\", reason: \"is a folder\"))");
+        expect(&f, MO_HOST_FILES_MAKE_FOLDER, f.result_unit, files, "a", "",
+               "Error(Failed(path: \"a\", reason: \"not a folder\"))");
         expect(&f, MO_HOST_FILES_REMOVE, f.result_unit, files, "escape", "", "Ok(Unit)");
         expect(&f, MO_HOST_FILES_READ_TEXT, f.result_text, files, "a", "", "Ok(\"hello!\")");
         expect(&f, MO_HOST_FILES_REMOVE, f.result_unit, files, "inside", "", "Ok(Unit)");
         expect(&f, MO_HOST_FILES_REMOVE, f.result_unit, files, "absolute", "", "Ok(Unit)");
         expect(&f, MO_HOST_FILES_REMOVE, f.result_unit, files, "slash", "", "Ok(Unit)");
+        for (unsigned i = 0; i <= MO_LIMIT_PATH_LINKS; i++) {
+            char name[32], target[32] = "a";
+            int n = snprintf(name, sizeof name, "link%u", i);
+            int t = i == MO_LIMIT_PATH_LINKS ? 1 : snprintf(target, sizeof target, "link%u", i + 1);
+            MO_ASSERT(n > 0 && (size_t)n < sizeof name && t > 0 && (size_t)t < sizeof target);
+            CHECK(symlinkat(target, directory, name) == 0);
+        }
+        expect(&f, MO_HOST_FILES_READ_TEXT, f.result_text, files, "link1", "", "Ok(\"hello!\")");
+        expect(&f, MO_HOST_FILES_READ_TEXT, f.result_text, files, "link0", "",
+               "Error(Failed(path: \"link0\", reason: \"too many links\"))");
+        for (unsigned i = 0; i <= MO_LIMIT_PATH_LINKS; i++) {
+            char name[32];
+            int n = snprintf(name, sizeof name, "link%u", i);
+            MO_ASSERT(n > 0 && (size_t)n < sizeof name);
+            CHECK(unlinkat(directory, name, 0) == 0);
+        }
+        char longest[MO_LIMIT_HOST_PATH_SIZE];
+        for (size_t i = 0; i < sizeof longest - 2; i += 2) {
+            longest[i] = '.';
+            longest[i + 1] = '/';
+        }
+        longest[sizeof longest - 2] = 'a';
+        longest[sizeof longest - 1] = '\0';
+        /* Some systems impose a smaller link-target bound than Mo's buffer. */
+        if (symlinkat(longest, directory, "longest") == 0) {
+            expect(&f, MO_HOST_FILES_READ_TEXT, f.result_text, files, "longest", "",
+                   "Ok(\"hello!\")");
+            CHECK(unlinkat(directory, "longest", 0) == 0);
+        } else
+            CHECK(errno == ENAMETOOLONG);
+        /* macOS starts with 256 descriptors. Let this test reach Mo's limit
+         * before the test process's unrelated descriptors reach the OS limit. */
+        struct rlimit original, raised;
+        MO_ASSERT(getrlimit(RLIMIT_NOFILE, &original) == 0);
+        raised = original;
+        if (raised.rlim_cur < MO_LIMIT_OPEN_FOLDERS + 32u) {
+            raised.rlim_cur = MO_LIMIT_OPEN_FOLDERS + 32u;
+            MO_ASSERT(setrlimit(RLIMIT_NOFILE, &raised) == 0);
+        }
+        struct mo_cell handles[MO_LIMIT_OPEN_FOLDERS - 1];
+        for (unsigned i = 0; i < MO_LIMIT_OPEN_FOLDERS - 1; i++)
+            MO_ASSERT(mo_host_call(&f.host, f.heap, MO_HOST_FILES_READ_ONLY,
+                                   f.capabilities[MO_CAP_READ_FILES], &files, &handles[i],
+                                   &error) == MO_HOST_RETURNED);
+        struct mo_cell refused = mo_cell_int(123);
+        CHECK(mo_host_call(&f.host, f.heap, MO_HOST_FILES_READ_ONLY,
+                           f.capabilities[MO_CAP_READ_FILES], &files, &refused,
+                           &error) == MO_HOST_BUG);
+        CHECK(mo_cell_get_int(refused) == 123 &&
+              strcmp(error.reason, "too many folders open at once") == 0 &&
+              f.host.open_folders == MO_LIMIT_OPEN_FOLDERS);
+        for (unsigned i = 0; i < MO_LIMIT_OPEN_FOLDERS - 1; i++)
+            mo_value_drop(f.heap, f.capabilities[MO_CAP_READ_FILES], handles[i]);
+        CHECK(setrlimit(RLIMIT_NOFILE, &original) == 0);
+        const uint8_t invalid[] = {0xff, 0, 0xc0};
+        int raw = openat(directory, "invalid", O_WRONLY | O_CREAT | O_CLOEXEC, 0600);
+        MO_ASSERT(raw >= 0);
+        CHECK(write(raw, invalid, sizeof invalid) == (ssize_t)sizeof invalid);
+        CHECK(close(raw) == 0);
+        expect(&f, MO_HOST_FILES_READ_TEXT, f.result_text, files, "invalid", "",
+               "Error(NotText(path: \"invalid\"))");
+        struct mo_cell raw_args[] = {files, host_text(&f, "invalid")}, read_bytes;
+        MO_ASSERT(mo_host_call(&f.host, f.heap, MO_HOST_FILES_READ_BYTES, f.result_bytes, raw_args,
+                               &read_bytes, &error) == MO_HOST_RETURNED);
+        size_t raw_size;
+        struct mo_cell data = mo_cell_get_payload(read_bytes);
+        CHECK(mo_cell_get_tag(read_bytes) == 0 &&
+              memcmp(mo_value_data(data, &raw_size), invalid, sizeof invalid) == 0 &&
+              raw_size == sizeof invalid);
+        mo_value_drop(f.heap, f.result_bytes, read_bytes);
+        mo_value_drop(f.heap, f.types.text, raw_args[1]);
+        CHECK(unlinkat(directory, "invalid", 0) == 0);
+        raw = openat(directory, "\xff", O_WRONLY | O_CREAT | O_CLOEXEC, 0600);
+        MO_ASSERT(raw >= 0);
+        CHECK(close(raw) == 0);
+        expect(&f, MO_HOST_FILES_LIST, f.result_names, files, ".", "",
+               "Error(Failed(path: \".\", reason: \"folder contains a name that is not text\"))");
+        CHECK(unlinkat(directory, "\xff", 0) == 0);
         pending_root(&f, files);
+        retained_folder(&f, files, directory);
         expect(&f, MO_HOST_FILES_REMOVE, f.result_unit, files, "a", "", "Ok(Unit)");
         mo_value_drop(f.heap, f.capabilities[MO_CAP_FILES], files);
         CHECK(mo_heap_objects(f.heap) == 0 && f.host.open_folders == 0);
@@ -301,11 +431,270 @@ static void test_clock_random(void) {
     CHECK(mo_cell_get_int(value) == 77 && strcmp(error.reason, "high not greater than low") == 0);
     mo_value_drop(f.heap, f.capabilities[MO_CAP_CLOCK], clock);
     mo_value_drop(f.heap, f.capabilities[MO_CAP_RANDOM], random);
+    MO_ASSERT(mo_host_real(&f.host, f.heap, f.capabilities[MO_CAP_CLOCK], NULL, -1, &clock,
+                           &error) == MO_HOST_RETURNED);
+    CHECK(mo_host_call(&f.host, f.heap, MO_HOST_CLOCK_NOW, f.time, &clock, &value, &error) ==
+          MO_HOST_RETURNED);
+    CHECK(mo_cell_get_time(value) >= INT64_C(-62135596800000000) &&
+          mo_cell_get_time(value) <= INT64_C(253402300799999999));
+    MO_ASSERT(mo_host_real(&f.host, f.heap, f.capabilities[MO_CAP_RANDOM], NULL, -1, &random,
+                           &error) == MO_HOST_RETURNED);
+    args[0] = random;
+    args[1] = mo_cell_int(INT64_MIN);
+    args[2] = mo_cell_int(INT64_MAX);
+    for (unsigned draw = 0; draw < 100; draw++) {
+        CHECK(mo_host_call(&f.host, f.heap, MO_HOST_RANDOM_INT, f.types.integer, args, &value,
+                           &error) == MO_HOST_RETURNED);
+        CHECK(mo_cell_get_int(value) < INT64_MAX);
+    }
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_CLOCK], clock);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_RANDOM], random);
     CHECK(mo_heap_objects(f.heap) == 0);
     host_fixture_free(&f);
 }
 
-int main(void) {
+static void test_empty_image(void) {
+    const char *source = "bytecode 0.1 shorthand\nmodule M exposes []\n";
+    struct mo_buffer wire;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_assemble_error assembly;
+    MO_ASSERT(mo_bytecode_assemble(source, strlen(source), &wire, &assembly));
+    struct mo_load_error error;
+    struct mo_image *image = mo_load(wire.bytes, wire.length, &error);
+    MO_ASSERT(image != NULL);
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    CHECK(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    struct mo_process *p = mo_process_new(image, &limits);
+    MO_ASSERT(p != NULL);
+    /* Capability storage can build Text even when the file has no types. */
+    struct mo_cell text;
+    CHECK(mo_value_text(mo_process_heap(p), "empty", 5, &text));
+    mo_value_drop(mo_process_heap(p), mo_process_host(p)->types->text, text);
+    CHECK(mo_heap_objects(mo_process_heap(p)) == 0);
+    mo_process_free(p);
+    mo_image_free(image);
+    mo_buffer_free(&wire);
+}
+
+static void test_main_capabilities(void) {
+    const char *source =
+        "bytecode 0.1 shorthand\nmodule M exposes [M.main]\n"
+        "function M.main(a: Args borrowed, e: Env borrowed, c: Console borrowed, "
+        "f: Files borrowed, ro: ReadFiles borrowed, t: Clock borrowed, n: Random borrowed) "
+        ": List(Text) function in M\n registers [r7: List(Text)]\n"
+        " host r7, Args.list, r0\n ret r7\nend\n";
+    struct mo_buffer wire;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_assemble_error assembly;
+    MO_ASSERT(mo_bytecode_assemble(source, strlen(source), &wire, &assembly));
+    struct mo_load_error load_error;
+    struct mo_image *image = mo_load(wire.bytes, wire.length, &load_error);
+    MO_ASSERT(image != NULL);
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    struct mo_process *p = mo_process_new(image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_heap *heap = mo_process_heap(p);
+    struct mo_host *host = mo_process_host(p);
+    struct mo_cell text, args, env, result;
+    MO_ASSERT(mo_value_text(heap, "first", 5, &text));
+    MO_ASSERT(mo_value_list(heap, host->types->texts, &text, 1, &args));
+    MO_ASSERT(mo_value_map(heap, host->types->files, NULL, NULL, 0, &env));
+    int folder = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    MO_ASSERT(folder >= 0);
+    for (unsigned call = 0; call < 2; call++) {
+        CHECK(mo_call_main(p, 0, &args, &env, folder, &result, &defect) == MO_RETURNED);
+        struct mo_cell item;
+        CHECK(mo_list_size(result) == 1);
+        MO_ASSERT(mo_list_get(result, 0, &item));
+        bool equal;
+        CHECK(mo_value_equal(heap, host->types->text, text, item, &equal) && equal);
+        mo_value_drop(heap, host->types->texts, result);
+        CHECK(host->open_folders == 2);
+        if (call == 0)
+            CHECK(close(folder) == 0); /* capabilities retain their own handles */
+    }
+    mo_value_drop(heap, host->types->text, text);
+    mo_value_drop(heap, host->types->texts, args);
+    mo_value_drop(heap, host->types->files, env);
+    mo_process_free(p);
+    mo_image_free(image);
+    mo_buffer_free(&wire);
+}
+
+static void test_vm_host_exhaustion(void) {
+    const char *source =
+        "bytecode 0.1 shorthand\n"
+        /* Host signatures require both boxed layouts; nominal declarations
+         * reserve t0/t1 before their Text field introduces t2. */
+        "layouts\n L0 case t0 3 [t2, t2]\n L1 case t1 1 [t0]\nend\n"
+        "choice FileError\n case NotFound(path: Text)\n"
+        " case NotAllowed(path: Text)\n case NotText(path: Text)\n"
+        " case Failed(path: Text, reason: Text)\nend\n"
+        "choice Result(Unit, FileError)\n case Ok(Unit)\n case Error(FileError)\nend\n"
+        "module M exposes []\n"
+        "function M.fake(m: Map(Text, Text) owned) : Int promise spec in M\n"
+        " registers [r1: Files, r2: Text, r3: Int, r4: Result(Unit, FileError)]\n"
+        " host r1, Files.in_memory, r0\n const r2, \"a/b/c/d/e/f/g/h/i/j/k/l\"\n"
+        " host r4, Files.make_folder, r1, r2\n drop r4\n drop r1\n"
+        " const r3, 37\n ret r3\nend\n";
+    struct mo_buffer wire;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_assemble_error assembly;
+    bool assembled = mo_bytecode_assemble(source, strlen(source), &wire, &assembly);
+    if (!assembled)
+        CHECK(fprintf(stderr, "assembly: %s at %u\n", assembly.reason, assembly.offset) > 0);
+    MO_ASSERT(assembled);
+    struct mo_load_error load_error;
+    struct mo_image *image = mo_load(wire.bytes, wire.length, &load_error);
+    MO_ASSERT(image != NULL);
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    unsigned constructor = 0, update = 0, returned = 0;
+    for (size_t size = 512; size <= 16384; size += 128) {
+        limits.heap_size = size;
+        struct mo_process *p = mo_process_new(image, &limits);
+        if (p == NULL)
+            continue;
+        struct mo_heap *heap = mo_process_heap(p);
+        const struct mo_host *host = mo_process_host(p);
+        struct mo_cell map, result = mo_cell_int(123);
+        if (!mo_value_map(heap, host->types->files, NULL, NULL, 0, &map)) {
+            mo_process_free(p);
+            continue;
+        }
+        enum mo_outcome outcome = mo_call(p, 0, &map, 1, &result, &defect);
+        if (outcome == MO_RETURNED) {
+            returned++;
+            CHECK(mo_cell_get_int(result) == 37 && mo_heap_objects(heap) == 0);
+        } else {
+            CHECK(outcome == MO_STOPPED && mo_cell_get_int(result) == 123 &&
+                  strcmp(defect.reason, "running out of memory") == 0 &&
+                  strcmp(defect.limit_name, "--max-heap") == 0);
+            bool readable[5];
+            MO_ASSERT(
+                mo_image_registers_readable(image, 0, defect.frames->pc, readable, &load_error));
+            if (defect.frames->pc == 0) {
+                constructor++;
+                CHECK(readable[0] && !readable[1] && !readable[2]);
+            } else {
+                update++;
+                CHECK(defect.frames->pc == 7 && !readable[0] && readable[1] && readable[2] &&
+                      !readable[4]);
+            }
+        }
+        mo_process_free(p);
+    }
+    CHECK(constructor != 0 && update != 0 && returned != 0);
+    mo_image_free(image);
+    mo_buffer_free(&wire);
+}
+
+static MO_MUST_USE struct mo_cell sequence_text(struct host_fixture *f, const char *hex) {
+    uint8_t bytes[1024];
+    size_t length = strcmp(hex, "-") == 0 ? 0 : strlen(hex) / 2;
+    MO_ASSERT(length <= sizeof bytes);
+    for (size_t i = 0; i < length; i++) {
+        unsigned byte;
+        MO_ASSERT(sscanf(hex + 2 * i, "%2x", &byte) == 1 && byte <= UINT8_MAX);
+        bytes[i] = (uint8_t)byte;
+    }
+    struct mo_cell value;
+    MO_ASSERT(mo_value_text(f->heap, (const char *)bytes, length, &value));
+    return value;
+}
+
+/* The Lean runner replays each prefix separately; this driver keeps the same
+ * capability objects across every operation, including retained snapshots. */
+static MO_MUST_USE int sequence(void) {
+    struct host_fixture f;
+    host_fixture_init(&f, mo_limits_default().heap_size);
+    struct mo_cell handles[32];
+    uint32_t types[32] = {0};
+    bool live[32] = {false};
+    unsigned operation, source, destination;
+    long long low, high;
+    char path[2049], text[2049];
+    int read;
+    while ((read = scanf("%u %u %u %2048s %2048s %lld %lld", &operation, &source, &destination,
+                         path, text, &low, &high)) == 7) {
+        MO_ASSERT(operation < MO_HOST_COUNT && source < 32 && destination < 32);
+        struct mo_cell p = sequence_text(&f, path), t = sequence_text(&f, text);
+        struct mo_cell args[] = {live[source] ? handles[source] : mo_cell_unit(), p, t};
+        uint32_t temporary_type = MO_NO_INDEX;
+        if (operation == MO_HOST_FILES_IN_MEMORY || operation == MO_HOST_ENV_OF) {
+            temporary_type = f.types.files;
+            struct mo_cell keys[] = {p, t}, values[] = {t, p};
+            MO_ASSERT(low >= 0 && low <= 2);
+            MO_ASSERT(mo_value_map(f.heap, temporary_type, keys, values, (uint32_t)low, &args[0]));
+        } else if (operation == MO_HOST_ARGS_OF || operation == MO_HOST_CONSOLE_FAKE_INPUT) {
+            temporary_type = f.types.texts;
+            struct mo_cell lines[] = {p, t};
+            MO_ASSERT(mo_value_list(f.heap, temporary_type, lines, 2, &args[0]));
+        } else if (operation == MO_HOST_CLOCK_FIXED)
+            args[0] = mo_cell_time((int64_t)low);
+        else if (operation == MO_HOST_RANDOM_SEEDED)
+            args[0] = mo_cell_int((int64_t)low);
+        else if (operation == MO_HOST_RANDOM_INT) {
+            args[1] = mo_cell_int((int64_t)low);
+            args[2] = mo_cell_int((int64_t)high);
+        } else if (operation == MO_HOST_CONSOLE_PRINT || operation == MO_HOST_CONSOLE_ERROR)
+            args[1] = t;
+        uint32_t type = host_result_type(&f, operation);
+        struct mo_cell result;
+        struct mo_host_error error;
+        enum mo_host_outcome outcome =
+            mo_host_call(&f.host, f.heap, operation, type, args, &result, &error);
+        struct mo_buffer printed;
+        mo_buffer_init(&printed, MO_LIMIT_STRING_SIZE);
+        if (outcome == MO_HOST_RETURNED) {
+            MO_ASSERT(mo_value_print(f.heap, type, result, &printed));
+            MO_ASSERT(printf("returned ") >= 0);
+        } else {
+            MO_ASSERT(outcome == MO_HOST_BUG);
+            MO_ASSERT(mo_buffer_append_text(&printed, error.reason));
+            if (error.has_detail) {
+                size_t length;
+                const uint8_t *bytes = mo_value_data(error.detail, &length);
+                MO_ASSERT(mo_buffer_append_text(&printed, ": ") &&
+                          mo_buffer_append(&printed, bytes, length));
+            }
+            MO_ASSERT(printf("stopped ") >= 0);
+        }
+        for (size_t i = 0; i < printed.length; i++)
+            MO_ASSERT(printf("%02x", (unsigned)printed.bytes[i]) >= 0);
+        MO_ASSERT(putchar('\n') != EOF);
+        mo_buffer_free(&printed);
+        if (temporary_type != MO_NO_INDEX && outcome != MO_HOST_RETURNED)
+            mo_value_drop(f.heap, temporary_type, args[0]);
+        if (outcome == MO_HOST_RETURNED) {
+            if (f.types.types.items[type].kind == MO_TYPE_CAPABILITY) {
+                if (live[destination])
+                    mo_value_drop(f.heap, types[destination], handles[destination]);
+                handles[destination] = result;
+                types[destination] = type;
+                live[destination] = true;
+            } else
+                mo_value_drop(f.heap, type, result);
+        }
+        mo_value_drop(f.heap, f.types.text, p);
+        mo_value_drop(f.heap, f.types.text, t);
+    }
+    MO_ASSERT(read == EOF);
+    for (unsigned i = 0; i < 32; i++)
+        if (live[i])
+            mo_value_drop(f.heap, types[i], handles[i]);
+    MO_ASSERT(mo_heap_objects(f.heap) == 0);
+    host_fixture_free(&f);
+    return 0;
+}
+
+int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "--sequence") == 0)
+        return sequence();
     struct heap_fixture fixture;
     heap_fixture_init(&fixture);
     test_console(&fixture);
@@ -315,6 +704,9 @@ int main(void) {
     test_real_files(true);
     test_real_console();
     test_clock_random();
+    test_empty_image();
+    test_main_capabilities();
+    test_vm_host_exhaustion();
     mo_heap_image_free(fixture.image);
     mo_arena_free(&fixture.arena);
     return mo_test_report("host");

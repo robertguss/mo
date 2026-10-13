@@ -132,4 +132,62 @@ static inline struct mo_cell host_text(struct host_fixture *f, const char *s) {
     return cell;
 }
 
+static inline uint32_t host_result_type(const struct host_fixture *f, uint32_t operation) {
+    switch (operation) {
+    case MO_HOST_ARGS_LIST:
+    case MO_HOST_CONSOLE_PRINTED:
+    case MO_HOST_CONSOLE_PRINTED_ERRORS:
+        return f->types.texts;
+    case MO_HOST_ARGS_OF:
+        return f->capabilities[MO_CAP_ARGS];
+    case MO_HOST_ENV_OF:
+        return f->capabilities[MO_CAP_ENV];
+    case MO_HOST_ENV_GET:
+    case MO_HOST_CONSOLE_READ_LINE:
+        return f->option;
+    case MO_HOST_CONSOLE_FAKE:
+    case MO_HOST_CONSOLE_FAKE_INPUT:
+        return f->capabilities[MO_CAP_CONSOLE];
+    case MO_HOST_CLOCK_FIXED:
+        return f->capabilities[MO_CAP_CLOCK];
+    case MO_HOST_CLOCK_NOW:
+        return f->time;
+    case MO_HOST_RANDOM_SEEDED:
+        return f->capabilities[MO_CAP_RANDOM];
+    case MO_HOST_RANDOM_INT:
+        return f->types.integer;
+    case MO_HOST_FILES_IN_MEMORY:
+    case MO_HOST_FILES_WITHIN:
+        return f->capabilities[MO_CAP_FILES];
+    case MO_HOST_FILES_READ_ONLY:
+    case MO_HOST_READFILES_WITHIN:
+        return f->capabilities[MO_CAP_READ_FILES];
+    case MO_HOST_FILES_READ_TEXT:
+    case MO_HOST_READFILES_READ_TEXT:
+        return f->result_text;
+    case MO_HOST_FILES_READ_BYTES:
+    case MO_HOST_READFILES_READ_BYTES:
+        return f->result_bytes;
+    case MO_HOST_FILES_LIST:
+    case MO_HOST_READFILES_LIST:
+        return f->result_names;
+    case MO_HOST_FILES_ENTRIES:
+    case MO_HOST_READFILES_ENTRIES:
+        return f->result_entries;
+    case MO_HOST_FILES_EXISTS:
+    case MO_HOST_READFILES_EXISTS:
+        return f->boolean;
+    case MO_HOST_CONSOLE_PRINT:
+    case MO_HOST_CONSOLE_ERROR:
+        return f->unit;
+    case MO_HOST_FILES_WRITE_TEXT:
+    case MO_HOST_FILES_APPEND_TEXT:
+    case MO_HOST_FILES_REMOVE:
+    case MO_HOST_FILES_MAKE_FOLDER:
+        return f->result_unit;
+    default:
+        MO_UNREACHABLE();
+    }
+}
+
 #endif

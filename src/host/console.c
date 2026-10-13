@@ -52,11 +52,14 @@ static MO_MUST_USE bool lossy(struct mo_heap *heap, struct mo_scratch *scratch,
     for (size_t at = 0; at < length;) {
         bool valid;
         size_t count = subpart(bytes + at, length - at, &valid);
-        size += valid ? count : 3;
+        size_t added = valid ? count : 3;
+        if (added > UINT32_MAX - size) {
+            errno = ENOSPC;
+            return false;
+        }
+        size += added;
         at += count;
     }
-    if (size > MO_LIMIT_STRING_SIZE)
-        return false;
     uint8_t *text = size == 0 ? NULL : mo_scratch_resize(scratch, NULL, 0, size);
     if (size != 0 && text == NULL)
         return false;
@@ -105,12 +108,14 @@ static MO_MUST_USE enum mo_host_outcome input(struct mo_host *host, struct mo_he
         size_t available = in->length - in->position;
         const uint8_t *end = memchr(start, '\n', available);
         size_t count = end == NULL ? available : (size_t)(end - start);
-        if (count > MO_LIMIT_STRING_SIZE - length)
+        if (count > UINT32_MAX - length) {
+            errno = ENOSPC;
             goto done;
+        }
         if (length + count > capacity) {
             size_t next = capacity == 0 ? 256 : capacity;
             while (next < length + count)
-                next *= 2;
+                next = next > UINT32_MAX / 2 ? UINT32_MAX : next * 2;
             void *grown = mo_scratch_resize(&scratch, bytes, capacity, next);
             if (grown == NULL)
                 goto done;

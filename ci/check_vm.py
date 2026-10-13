@@ -21,7 +21,7 @@ from fractions import Fraction
 from check_codegen import closure_program, expression, global_program, reference_tail
 from check_core_check import VERSION, WORLD, parse, wire, program
 
-NEEDS_DISPATCH = {"needs primitive dispatch": 0, "needs host dispatch": 1}
+NEEDS_DISPATCH = {"needs primitive dispatch": 0, "needs host dispatch": 0}
 CODEGEN_UNSUPPORTED = 15
 
 

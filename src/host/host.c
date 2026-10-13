@@ -57,7 +57,7 @@ enum mo_host_outcome mo_host_call(struct mo_host *host, struct mo_heap *heap, ui
     MO_ASSERT(host != NULL && heap != NULL && out != NULL && error != NULL);
     *error = (struct mo_host_error){0};
     if (operation == MO_HOST_CLOCK_FIXED)
-        return mo_host_state_cap(host, heap, type, true, &host->types->integer, args, 1, out);
+        return mo_host_state_cap(host, heap, type, true, &host->types->time, args, 1, out);
     if (operation == MO_HOST_RANDOM_SEEDED)
         return mo_host_random_new(host, heap, type, true, (uint64_t)mo_cell_get_int(args[0]), out,
                                   error);

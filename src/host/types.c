@@ -20,7 +20,7 @@ static MO_MUST_USE uint32_t add(struct mo_host_types *out, enum mo_type_kind kin
         (struct mo_type){.kind = kind,
                          .parameters = parameters == 0 ? NULL : out->parameters,
                          .parameter_count = parameters,
-                         .reference = kind != MO_TYPE_INT,
+                         .reference = kind >= MO_TYPE_TEXT,
                          .defined = true};
     return index;
 }
@@ -30,7 +30,8 @@ void mo_host_prepare_types(struct mo_host_types *out, const struct mo_types *sou
     MO_ASSERT(out != NULL && source != NULL && source->finished && storage != NULL);
     memset(out, 0, sizeof *out);
     out->types = *source;
-    memcpy(storage, source->items, (size_t)source->count * sizeof *storage);
+    if (source->count != 0)
+        memcpy(storage, source->items, (size_t)source->count * sizeof *storage);
     out->types.items = storage;
     out->types.capacity = source->count + MO_HOST_PRIVATE_TYPES;
     out->types.arena = NULL;
@@ -45,6 +46,7 @@ void mo_host_prepare_types(struct mo_host_types *out, const struct mo_types *sou
             out->capabilities[source->items[i].capability] = i;
     }
     out->integer = add(out, MO_TYPE_INT, 0);
+    out->time = add(out, MO_TYPE_TIME, 0);
     out->text = add(out, MO_TYPE_TEXT, 0);
     out->parameters[0] = out->parameters[1] = out->text;
     out->texts = add(out, MO_TYPE_LIST, 1);

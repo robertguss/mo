@@ -69,7 +69,9 @@ static MO_MUST_USE struct mo_file_error kernel(int root, const char *path, enum 
     } while (opened < 0 && errno == EINTR);
     if (opened < 0) {
         int number = errno;
-        if (number == ENOSYS || number == EINVAL || number == EAGAIN)
+        /* ELOOP can also mean a procfs magic link. Replay portably to distinguish
+         * a refused absolute target from an actual forty-link exhaustion. */
+        if (number == ENOSYS || number == EINVAL || number == EAGAIN || number == ELOOP)
             return (struct mo_file_error){.status = FILE_OK};
         *handled = true;
         return mo_host_errno(number);
@@ -176,7 +178,9 @@ static MO_MUST_USE struct mo_file_error portable(int root, const char *path, enu
                 problem = (struct mo_file_error){.status = FILE_FAILED, .reason = "too many links"};
                 break;
             }
-            ssize_t n = readlinkat(ancestors[depth], component, target, sizeof target - 1);
+            /* readlinkat writes no terminator. A full buffer means refusal;
+             * one byte less still fits pending with its terminator. */
+            ssize_t n = readlinkat(ancestors[depth], component, target, sizeof target);
             if (n < 0) {
                 if (errno == EINVAL && races++ < MO_LIMIT_PATH_LINKS)
                     continue;
@@ -189,8 +193,7 @@ static MO_MUST_USE struct mo_file_error portable(int root, const char *path, enu
                 problem.status = FILE_NOT_ALLOWED;
                 break;
             }
-            if (length == sizeof target - 1 ||
-                length + (rest != 0 ? 1 : 0) + rest >= sizeof pending) {
+            if (length + (rest != 0 ? 1 : 0) + rest >= sizeof pending) {
                 problem = (struct mo_file_error){.status = FILE_FAILED, .reason = "path too long"};
                 break;
             }

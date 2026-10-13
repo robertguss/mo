@@ -1,12 +1,13 @@
 #include "host/files.h"
 
+#include <errno.h>
 #include <string.h>
 
 static MO_MUST_USE bool contains(struct mo_host *host, struct mo_heap *heap, uint32_t type,
-                                 struct mo_cell table, const char *path, bool *found,
+                                 struct mo_cell table, const char *path, size_t length, bool *found,
                                  struct mo_cell *value) {
     struct mo_cell key;
-    if (!mo_value_text(heap, path, strlen(path), &key))
+    if (!mo_value_text(heap, path, length, &key))
         return false;
     bool ok = mo_table_get(heap, type, table, key, found, value);
     mo_value_drop(heap, host->types->text, key);
@@ -14,13 +15,13 @@ static MO_MUST_USE bool contains(struct mo_host *host, struct mo_heap *heap, uin
 }
 
 static MO_MUST_USE bool folder(struct mo_host *host, struct mo_heap *heap, struct mo_cell folders,
-                               const char *path, bool *found) {
-    if (path[0] == '\0') {
+                               const char *path, size_t length, bool *found) {
+    if (length == 0) {
         *found = true;
         return true;
     }
     struct mo_cell unused;
-    return contains(host, heap, host->types->folders, folders, path, found, &unused);
+    return contains(host, heap, host->types->folders, folders, path, length, found, &unused);
 }
 
 static MO_MUST_USE bool add_prefixes(struct mo_host *host, struct mo_heap *heap,
@@ -98,8 +99,9 @@ enum mo_host_outcome mo_host_files_fake(struct mo_host *host, struct mo_heap *he
 
 /* Scan stored key bytes once instead of allocating and hashing every path
  * prefix. Deep paths cannot turn one lookup into quadratic prefix work. */
-static MO_MUST_USE bool blocked(const struct mo_capability_info *info, const char *path) {
-    size_t length = strlen(path), root_length;
+static MO_MUST_USE bool blocked(const struct mo_capability_info *info, const char *path,
+                                size_t length) {
+    size_t root_length;
     const uint8_t *root = mo_value_data(info->prefix, &root_length);
     uint32_t position = 0;
     struct mo_cell key, unused;
@@ -116,13 +118,14 @@ static MO_MUST_USE bool blocked(const struct mo_capability_info *info, const cha
 static MO_MUST_USE enum mo_host_outcome derived(struct mo_host *host, struct mo_heap *heap,
                                                 uint32_t type,
                                                 const struct mo_capability_info *info,
-                                                const char *path, bool valid, struct mo_cell *out) {
+                                                const char *path, size_t length, bool valid,
+                                                struct mo_cell *out) {
     struct mo_capability_info copy = *info;
     enum mo_capability cap = host->types->types.items[type].capability;
     copy.operations = &mo_host_operations[true][cap];
     copy.read_only = cap == MO_CAP_READ_FILES;
     copy.has_prefix = valid;
-    if (valid && !mo_value_text(heap, path, strlen(path), &copy.prefix))
+    if (valid && !mo_value_text(heap, path, length, &copy.prefix))
         return MO_HOST_OUT_OF_MEMORY;
     bool ok = mo_value_capability(heap, type, &copy, out);
     if (valid)
@@ -133,12 +136,11 @@ static MO_MUST_USE enum mo_host_outcome derived(struct mo_host *host, struct mo_
 static MO_MUST_USE enum mo_host_outcome listing(struct mo_host *host, struct mo_heap *heap,
                                                 uint32_t type,
                                                 const struct mo_capability_info *info,
-                                                const char *path, struct mo_cell *out) {
+                                                const char *path, size_t n, struct mo_cell *out) {
     struct mo_cell unique;
     if (!mo_value_set(heap, host->types->folders, NULL, 0, &unique))
         return MO_HOST_OUT_OF_MEMORY;
     bool ok = true;
-    size_t n = strlen(path);
     for (uint32_t slot = 0; slot < 2 && ok; slot++) {
         uint32_t position = 0;
         struct mo_cell key, unused;
@@ -235,14 +237,20 @@ static MO_MUST_USE enum mo_host_outcome call(struct mo_host *host, struct mo_hea
         return mo_value_capability(heap, type, &copy, out) ? MO_HOST_RETURNED
                                                            : MO_HOST_OUT_OF_MEMORY;
     }
-    struct mo_file_error problem = mo_host_normalize(args[1], normalized);
+    size_t length = 0;
+    struct mo_file_error problem = mo_host_normalize(args[1], normalized, &length);
     if (!info->has_prefix)
         problem = (struct mo_file_error){.status = FILE_NOT_ALLOWED};
-    if (problem.status == FILE_OK)
-        problem = mo_host_join(info->prefix, normalized, path);
+    if (problem.status == FILE_OK) {
+        length = mo_host_join(info->prefix, normalized, length, path);
+        if (length > UINT32_MAX) {
+            errno = ENOSPC;
+            return MO_HOST_OUT_OF_MEMORY;
+        }
+    }
     bool within = operation == MO_HOST_FILES_WITHIN || operation == MO_HOST_READFILES_WITHIN;
     if (within)
-        return derived(host, heap, type, info, path, problem.status == FILE_OK, out);
+        return derived(host, heap, type, info, path, length, problem.status == FILE_OK, out);
     bool exists = operation == MO_HOST_FILES_EXISTS || operation == MO_HOST_READFILES_EXISTS;
     if (problem.status != FILE_OK) {
         if (exists) {
@@ -251,7 +259,7 @@ static MO_MUST_USE enum mo_host_outcome call(struct mo_host *host, struct mo_hea
         }
         return mo_host_file_error(host, heap, type, args[1], problem, out);
     }
-    bool block = blocked(info, path), root_folder, is_folder, is_file;
+    bool block = blocked(info, path, length), root_folder, is_folder, is_file;
     struct mo_cell folders = mo_state_get(info->state, 1), files = mo_state_get(info->state, 0),
                    value;
     size_t root_length;
@@ -261,8 +269,8 @@ static MO_MUST_USE enum mo_host_outcome call(struct mo_host *host, struct mo_hea
     struct mo_cell unused;
     if ((!root_folder &&
          !mo_table_get(heap, host->types->folders, folders, info->prefix, &root_folder, &unused)) ||
-        !folder(host, heap, folders, path, &is_folder) ||
-        !contains(host, heap, host->types->files, files, path, &is_file, &value))
+        !folder(host, heap, folders, path, length, &is_folder) ||
+        !contains(host, heap, host->types->files, files, path, length, &is_file, &value))
         return MO_HOST_OUT_OF_MEMORY;
     if (exists) {
         *out = mo_cell_bool(!block && root_folder && (is_folder || is_file));
@@ -283,14 +291,14 @@ static MO_MUST_USE enum mo_host_outcome call(struct mo_host *host, struct mo_hea
         return mo_host_file_error(host, heap, type, args[1], problem, out);
     if (operation == MO_HOST_FILES_LIST || operation == MO_HOST_READFILES_LIST ||
         operation == MO_HOST_FILES_ENTRIES || operation == MO_HOST_READFILES_ENTRIES)
-        return listing(host, heap, type, info, path, out);
+        return listing(host, heap, type, info, path, length, out);
     if (operation == MO_HOST_FILES_MAKE_FOLDER) {
         struct mo_cell result;
         enum mo_host_outcome outcome = mo_host_file_ok(host, heap, type, mo_cell_unit(), &result);
         if (outcome != MO_HOST_RETURNED)
             return outcome;
         struct mo_cell staged = mo_value_dup(heap, host->types->folders, folders);
-        bool ok = add_prefixes(host, heap, &staged, (const uint8_t *)path, strlen(path), true);
+        bool ok = add_prefixes(host, heap, &staged, (const uint8_t *)path, length, true);
         if (ok)
             mo_state_set(heap, info->state, 1, staged);
         mo_value_drop(heap, host->types->folders, staged);
@@ -302,21 +310,20 @@ static MO_MUST_USE enum mo_host_outcome call(struct mo_host *host, struct mo_hea
         return MO_HOST_RETURNED;
     }
     if (operation == MO_HOST_FILES_WRITE_TEXT || operation == MO_HOST_FILES_APPEND_TEXT) {
-        char *end = strrchr(path, '/');
-        if (end == NULL)
-            end = path;
-        char saved = *end;
-        *end = '\0';
+        size_t parent_length = length;
+        while (parent_length != 0 && path[parent_length - 1] != '/')
+            parent_length--;
+        if (parent_length != 0)
+            parent_length--;
         bool parent_exists;
-        bool parent_ok = folder(host, heap, folders, path, &parent_exists);
-        *end = saved;
+        bool parent_ok = folder(host, heap, folders, path, parent_length, &parent_exists);
         if (!parent_ok)
             return MO_HOST_OUT_OF_MEMORY;
         if (!parent_exists)
             return mo_host_file_error(host, heap, type, args[1],
                                       (struct mo_file_error){.status = FILE_NOT_FOUND}, out);
         struct mo_cell key;
-        if (!mo_value_text(heap, path, strlen(path), &key))
+        if (!mo_value_text(heap, path, length, &key))
             return MO_HOST_OUT_OF_MEMORY;
         struct mo_cell text = args[2];
         bool appended = operation == MO_HOST_FILES_APPEND_TEXT && is_file;
@@ -325,8 +332,12 @@ static MO_MUST_USE enum mo_host_outcome call(struct mo_host *host, struct mo_hea
             const uint8_t *pa = mo_value_data(value, &a), *pb = mo_value_data(text, &b);
             struct mo_scratch scratch;
             mo_scratch_init(&scratch, heap);
-            uint8_t *bytes =
-                a + b > MO_LIMIT_STRING_SIZE ? NULL : mo_scratch_resize(&scratch, NULL, 0, a + b);
+            if (b > UINT32_MAX - a) {
+                mo_value_drop(heap, host->types->text, key);
+                errno = ENOSPC;
+                return MO_HOST_OUT_OF_MEMORY;
+            }
+            uint8_t *bytes = a + b == 0 ? NULL : mo_scratch_resize(&scratch, NULL, 0, a + b);
             bool ok = a + b == 0 || bytes != NULL;
             if (ok) {
                 if (a != 0)
@@ -360,17 +371,17 @@ static MO_MUST_USE enum mo_host_outcome call(struct mo_host *host, struct mo_hea
                                   (struct mo_file_error){.status = FILE_NOT_FOUND}, out);
     if (operation == MO_HOST_FILES_REMOVE) {
         struct mo_cell key;
-        if (!mo_value_text(heap, path, strlen(path), &key))
+        if (!mo_value_text(heap, path, length, &key))
             return MO_HOST_OUT_OF_MEMORY;
         bool ok = mo_table_remove(heap, host->types->files, mo_state_slot(info->state, 0), key);
         mo_value_drop(heap, host->types->text, key);
         return ok ? mo_host_file_ok(host, heap, type, mo_cell_unit(), out) : MO_HOST_OUT_OF_MEMORY;
     }
     if (operation == MO_HOST_FILES_READ_BYTES || operation == MO_HOST_READFILES_READ_BYTES) {
-        size_t length;
-        const uint8_t *bytes = mo_value_data(value, &length);
+        size_t data_length;
+        const uint8_t *bytes = mo_value_data(value, &data_length);
         struct mo_cell data;
-        if (!mo_value_bytes(heap, bytes, length, &data))
+        if (!mo_value_bytes(heap, bytes, data_length, &data))
             return MO_HOST_OUT_OF_MEMORY;
         enum mo_host_outcome outcome = mo_host_file_ok(host, heap, type, data, out);
         uint32_t payload =
@@ -395,7 +406,11 @@ enum mo_host_outcome mo_host_fake_files_call(struct mo_host *host, struct mo_hea
         const uint8_t *root = mo_value_data(info->prefix, &root_length);
         (void)root;
     }
-    MO_ASSERT(length <= MO_LIMIT_STRING_SIZE && root_length <= MO_LIMIT_STRING_SIZE);
+    MO_ASSERT(length <= UINT32_MAX && root_length <= UINT32_MAX);
+    if (length > (SIZE_MAX - 3 - root_length) / 2) {
+        errno = ENOSPC;
+        return MO_HOST_OUT_OF_MEMORY;
+    }
     struct mo_scratch scratch;
     mo_scratch_init(&scratch, heap);
     char *storage = mo_scratch_resize(&scratch, NULL, 0, 2 * length + root_length + 3);

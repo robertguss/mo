@@ -4,6 +4,7 @@
 
 #include "bytecode/bytecode.h"
 #include "heap/heap.h"
+#include "host/host.h"
 
 enum mo_outcome { MO_RETURNED, MO_STOPPED, MO_FAILED };
 struct mo_process;
@@ -44,6 +45,9 @@ MO_MUST_USE struct mo_process *mo_process_new(const struct mo_image *image,
                                               const struct mo_limits *limits);
 void mo_process_free(struct mo_process *process);
 MO_MUST_USE struct mo_heap *mo_process_heap(struct mo_process *process);
+/* C harness I/O descriptors and portable-resolution selection. The context
+ * belongs to the process; descriptors are borrowed and must outlive its calls. */
+MO_MUST_USE struct mo_host *mo_process_host(struct mo_process *process);
 MO_MUST_USE size_t mo_process_stack_used(const struct mo_process *process);
 /* Direct FUNCTION/spec calls only. INIT is invoked by image_init; closures by
  * call_closure. Owned parameters transfer on every outcome, borrowed ones do
@@ -53,6 +57,14 @@ MO_MUST_USE size_t mo_process_stack_used(const struct mo_process *process);
 MO_MUST_USE enum mo_outcome mo_call(struct mo_process *process, uint32_t function,
                                     const struct mo_cell *arguments, uint32_t argument_count,
                                     struct mo_cell *result_out, struct mo_defect *defect_out);
+/* main's parameters are capabilities. Make each declared real kind once per
+ * process and retain it until teardown. args and env are borrowed List(Text)
+ * and Map(Text,Text) cells from this heap, needed only if main declares them;
+ * folder is a borrowed directory descriptor for Files/ReadFiles. */
+MO_MUST_USE enum mo_outcome mo_call_main(struct mo_process *process, uint32_t function,
+                                         const struct mo_cell *args, const struct mo_cell *env,
+                                         int folder, struct mo_cell *result_out,
+                                         struct mo_defect *defect_out);
 /* C harness hook, not a Mo resource limit. Default is unlimited. Exhaustion
  * produces an internal stop before the next instruction (for bounded fuzzing). */
 void mo_process_instruction_limit(struct mo_process *process, uint64_t instructions);

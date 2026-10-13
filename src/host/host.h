@@ -5,10 +5,10 @@
 #include "base/hostops.h"
 #include "heap/heap.h"
 
-#define MO_HOST_PRIVATE_TYPES 5
+#define MO_HOST_PRIVATE_TYPES 6
 struct mo_host_types {
     struct mo_types types;
-    uint32_t integer, text, texts, folders, files;
+    uint32_t integer, time, text, texts, folders, files;
     uint32_t capabilities[MO_CAP_RANDOM + 1];
     uint32_t parameters[2];
 };

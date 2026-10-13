@@ -811,7 +811,10 @@ it is given. It never calls the operating system itself.
 
 - **Real capabilities** are made once, by the runtime, for `main`: exactly
   the ones `main` declares, from the process's arguments, environment and
-  start folder (reference 11.2).
+  start folder (reference 11.2). `mo_call_main` caches each declared kind in
+  the process, so a later call keeps the same state and open directory object.
+  Its C caller supplies borrowed argument/environment values and a directory
+  descriptor; construction retains them before that caller releases them.
 - **Fakes** are made by the fake constructors, which only spec code may call:
   `Console.fake()`, `Files.in_memory(...)` and the rest (reference 12.4). A
   fake's state is a mutable object shared by every handle on that fake. So a
@@ -848,18 +851,43 @@ it is given. It never calls the operating system itself.
   own, the same on every system and in fakes: "not a folder" where a folder
   was needed, "is a folder" where a file was, and "too many links"; the VM
   checks a path's kind itself rather than trusting `errno`, since systems
-  differ, as macOS's `unlink` of a folder gives `EPERM`. Any other failure
-  carries the system's message.
-  `list` sorts names by their bytes, which is the order of their characters.
+  differ, as macOS's `unlink` of a folder gives `EPERM`. Real reads and writes
+  refuse a non-regular, non-folder object with "not a regular file" rather
+  than reading a device or blocking on a pipe. Outside these kind and native
+  representation guards, failures carry the system's message.
+  Native resolution uses at most `MO_LIMIT_HOST_PATH_SIZE` bytes, including
+  the terminator; an expanded path past it gives `Failed(path, "path too long")`.
+  POSIX cannot name a file with NUL, so real paths containing it are refused
+  with `NotAllowed`. Fakes keep exact Text bytes, including NUL, as Core does,
+  and use charged dynamic path storage rather than the native path bound.
+  `list` sorts names by their bytes, which is the order of their characters;
+  `entries` classifies children without following their links. An invalid
+  UTF-8 name gives `Failed(path, "folder contains a name that is not text")`,
+  rather than a lossy name that cannot identify that entry.
+  A missing narrowed root retains its parent capability and binds when that
+  parent later makes the folder. Every retained parent is older than its
+  child, preserving acyclicity. Once bound, the handle keeps that directory
+  object. Persistent real handles, including deferred ones, count against
+  `MO_LIMIT_OPEN_FOLDERS`; temporary traversal descriptors are bounded by the
+  native path length and closed when the operation ends.
 - **Console.** The runtime ignores `SIGPIPE`. Writing to a closed output
   returns `EPIPE`, which is a bug with status 70: "printing to an output that
-  is gone" (reference 13.2).
+  is gone" (reference 13.2). A real print appends a line feed; a fake records
+  the unchanged argument as one list entry. Real input replaces each maximal
+  invalid UTF-8 subpart with U+FFFD and removes LF or CRLF, not a bare CR.
 - **Random.** `Random.seeded(n)` and the real `Random` use xoshiro256**,
   seeded through SplitMix64. `int(low, high)` uses Lemire's method, which is
   unbiased. So a seeded sequence is the same on every machine, and stays so
   within a major version.
 - **Clock.** The real clock reads the system's real-time clock, in
-  microseconds. `Clock.fixed(t)` always returns `t`.
+  microseconds, and stops if it is outside the years 1 to 9999.
+  `Clock.fixed(t)` always returns `t`.
+
+Host refusal leaves operand cells and ownership unchanged; only a successful
+operation consumes the owned arguments in `hostops.def`. Fake updates commit
+only after all allocations succeed. Real I/O cannot be rolled back: partial
+writes, input consumption, directory binding and earlier `make_folder` steps
+may remain after a refusal. The capability still exists for the defect report.
 
 The library is written in Mo wherever it can be (condition 4 of D207). C
 implements only what Mo can't express or must be fast: arithmetic and
@@ -923,7 +951,11 @@ Processes never free image allocations or cache captureless closures locally.
 Each process heap limit counts its process and fixed heap contexts, native allocation
 prefixes, value storage and temporary walk arenas, including chunk overhead.
 The image budget counts runtime cells/flags, its initializer context, shared
-indices and its initialization heap together. Native stack reservation is
+indices and its initialization heap together. Host preparation copies the
+sealed type table and adds any absent private Int, Time, Text, List(Text),
+Set(Text) and Map(Text, Text) types for capability storage; original indices
+and layouts never change. That stable table is charged to the image budget
+and shared by its heaps, not allocated once per process. Native stack reservation is
 charged separately to the stack limit, including growth slack.
 Caller-owned types and output buffers are outside these limits, as is system
 allocator bookkeeping. Scratch uses the remaining heap and is reclaimed after

@@ -54,8 +54,11 @@ static MO_MUST_USE enum mo_outcome initialize(struct mo_image *image,
         return runtime->outcome;
     }
     const struct mo_bytecode *file = mo_image_bytecode(image);
+    const struct mo_types *source = mo_image_types(image);
+    size_t type_bytes = ((size_t)source->count + MO_HOST_PRIVATE_TYPES) * sizeof(struct mo_type);
     size_t cells = (size_t)file->constant_count + file->global_count;
-    size_t bytes = sizeof *runtime + cells * sizeof(struct mo_cell) + file->global_count;
+    size_t bytes =
+        sizeof *runtime + type_bytes + cells * sizeof(struct mo_cell) + file->global_count;
     if (bytes > limits->heap_size || (runtime = calloc(1, bytes)) == NULL) {
         *defect_out =
             (struct mo_defect){.reason = "running out of memory",
@@ -65,13 +68,16 @@ static MO_MUST_USE enum mo_outcome initialize(struct mo_image *image,
         return MO_STOPPED;
     }
     runtime->outcome = MO_STOPPED;
-    runtime->constants = (struct mo_cell *)(runtime + 1);
+    struct mo_type *storage = (struct mo_type *)(runtime + 1);
+    mo_host_prepare_types(&runtime->host_types, source, storage);
+    runtime->constants = (struct mo_cell *)((uint8_t *)storage + type_bytes);
     runtime->globals = runtime->constants + file->constant_count;
     runtime->set = (bool *)(runtime->globals + file->global_count);
     struct mo_process *p = &runtime->initializer;
     p->image = image;
     p->file = file;
-    p->types = mo_image_types(image);
+    p->types = &runtime->host_types.types;
+    mo_host_init(&p->host, &runtime->host_types);
     p->runtime = runtime;
     p->limits = *limits;
     p->bounded = bounded;

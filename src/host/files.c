@@ -18,10 +18,10 @@ struct mo_file_error mo_host_errno(int number) {
     return (struct mo_file_error){.status = FILE_FAILED, .number = number};
 }
 
-struct mo_file_error mo_host_normalize(struct mo_cell value, char *out) {
+struct mo_file_error mo_host_normalize(struct mo_cell value, char *out, size_t *size) {
     size_t length;
     const uint8_t *bytes = mo_value_data(value, &length);
-    if (length == 0 || memchr(bytes, '\0', length) != NULL)
+    if (length == 0)
         return (struct mo_file_error){.status = FILE_NOT_ALLOWED};
     size_t written = 0, at = 0;
     while (at < length) {
@@ -47,19 +47,19 @@ struct mo_file_error mo_host_normalize(struct mo_cell value, char *out) {
         at = end + 1;
     }
     out[written] = '\0';
+    *size = written;
     return (struct mo_file_error){.status = FILE_OK};
 }
 
-struct mo_file_error mo_host_join(struct mo_cell prefix, const char *path, char *out) {
+size_t mo_host_join(struct mo_cell prefix, const char *path, size_t length, char *out) {
     size_t root_length;
     const uint8_t *root = mo_value_data(prefix, &root_length);
-    size_t length = strlen(path);
     size_t separator = root_length != 0 && length != 0 ? 1 : 0;
     memcpy(out, root, root_length);
     if (separator != 0)
         out[root_length] = '/';
     memcpy(out + root_length + separator, path, length + 1);
-    return (struct mo_file_error){.status = FILE_OK};
+    return root_length + separator + length;
 }
 
 enum mo_host_outcome mo_host_file_error(struct mo_host *host, struct mo_heap *heap, uint32_t type,

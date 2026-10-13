@@ -33,8 +33,8 @@ struct mo_path_result {
 MO_MUST_USE struct mo_file_error mo_host_errno(int number);
 /* out holds value's byte length plus NUL, or prefix length + path length + 2.
  * Fake paths have no OS pathname bound. Callers charge this dynamic storage. */
-MO_MUST_USE struct mo_file_error mo_host_normalize(struct mo_cell value, char *out);
-MO_MUST_USE struct mo_file_error mo_host_join(struct mo_cell prefix, const char *path, char *out);
+MO_MUST_USE struct mo_file_error mo_host_normalize(struct mo_cell value, char *out, size_t *length);
+MO_MUST_USE size_t mo_host_join(struct mo_cell prefix, const char *path, size_t length, char *out);
 MO_MUST_USE struct mo_file_error mo_host_resolve(struct mo_host *host, int root, const char *path,
                                                  enum mo_path_mode mode,
                                                  struct mo_path_result *out);
