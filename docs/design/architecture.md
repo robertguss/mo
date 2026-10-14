@@ -1646,6 +1646,16 @@ leaf's span. Failed observations do not become source diagnostics: `errors`
 stays zero unless a compiler/tool error was found, while `failed`/`stopped`
 independently force status 1. Selected unsupported promises are never omitted.
 
+**Captured closures in observations.** Tools use the same certified pipeline
+for by-value captures and returned closures (4.3), without constructing environments
+or reconstructing checker bindings. A returned closure may outlive both its
+factory and an intermediate closure call. Copying a var into an immutable name
+before capturing it preserves that snapshot across later writes to the var;
+capturing the later-written var itself refuses E0092 before any observation.
+Failures retain the enclosing assert span, and stops retain the closure's original
+source span, full stack and readable captured values through the existing visitor.
+This integration changes no observation names, selection, outcomes or JSON fields.
+
 Stopped results retain their original defect span and all stack frames. Variables
 belong to the stopping frame, in bytecode debug-name order. The VM's public
 borrowed visitor establishes readability and lifetime; tools never inspect private
