@@ -908,6 +908,22 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
         }
         return e;
     }
+    if (r->native != NULL) {
+        static const struct {
+            const char *name;
+            enum mo_core_int_op operation;
+        } natives[] = {{"Int.abs", MO_CORE_INT_OP_ABS},
+                       {"Int.min", MO_CORE_INT_OP_MIN},
+                       {"Int.max", MO_CORE_INT_OP_MAX}};
+        for (size_t i = 0; i < sizeof natives / sizeof natives[0]; i++) {
+            lower_work(p, 1);
+            if (strcmp(r->native, natives[i].name) == 0)
+                return lower_prim(p,
+                                  (struct mo_core_prim){.tag = MO_CORE_PRIM_INT,
+                                                       .as.int_ = natives[i].operation},
+                                  args);
+        }
+    }
     if (r->native != NULL && strcmp(r->native, "Console.print") == 0)
         return lower_prim(
             p, (struct mo_core_prim){.tag = MO_CORE_PRIM_IO, .as.io.tag = MO_CORE_IO_OP_PRINT},
