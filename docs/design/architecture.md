@@ -1878,6 +1878,23 @@ start. Rendering never changes files. Unavailable locations display
   return a failure for such inputs, or take a type whose module keeps its
   values in range (D234).
 
+**Monotonic promise deadlines (D242, option B).** Tools starts one absolute
+`CLOCK_MONOTONIC` deadline per promise, shared by generation, all subject and
+condition calls, and shrinking. The ordinary budget counts subject trials,
+not condition calls or nested calls; shrinking has at most 200 additional
+subject trials, never a fresh time allowance. The clock callback records
+expiry separately from a failed clock read. Time or calls exhausted between
+completed trials ends search normally. An interrupted unresolved trial is
+E1404/status 1, with no invented observation outcome. Interrupted shrinking
+keeps the last fully confirmed failing tuple, result and condition; a cancelled
+candidate never replaces it. A clock failure is E1404 even when a failure was
+already confirmed. Genuine Mo stops/failures retain their meaning.
+The VM's separately owned controlled-call seam is clock-free; tools uses its
+terminal cancellation result, not instruction fuel or a fabricated Mo defect.
+Native/blocked operations may overshoot. Ordinary observations, image
+initialization and hard process isolation are outside this policy. The clock
+is prepared independently of the pending exact VM transfer/runner integration.
+
 **The input library, part 1.** `tools/inputs.h` takes the sealed image type
 table and parameter indices. It constructs owned cells through `heap`'s public
 builders, without calls or timing. The caller retains inputs while testing

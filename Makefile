@@ -279,6 +279,22 @@ $(BUILD)/debug/tests/test_cli_faults.test: $(BUILD)/debug/tests/test_cli_faults.
 $(BUILD)/sanitize/tests/test_cli_faults.test: $(BUILD)/sanitize/tests/test_cli_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out src/tools/execute.c,$(LIB_SOURCES))) $(BUILD)/sanitize/cli-faults/execute.o
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
+# The promise clock uses the same portable POSIX-edge substitution as above.
+# No production injection flags, environment variables or linker interposition.
+$(BUILD)/debug/cli-clock/deadline.o: src/tools/deadline.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -Dclock_gettime=mo_cli_deadline_clock -c $< -o $@
+
+$(BUILD)/sanitize/cli-clock/deadline.o: src/tools/deadline.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) -Dclock_gettime=mo_cli_deadline_clock -c $< -o $@
+
+$(BUILD)/debug/tests/test_deadline.test: $(BUILD)/debug/tests/test_deadline.o $(call objects,$(BUILD)/debug,$(filter-out src/tools/deadline.c,$(LIB_SOURCES))) $(BUILD)/debug/cli-clock/deadline.o
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/tests/test_deadline.test: $(BUILD)/sanitize/tests/test_deadline.o $(call objects,$(BUILD)/sanitize,$(filter-out src/tools/deadline.c,$(LIB_SOURCES))) $(BUILD)/sanitize/cli-clock/deadline.o
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
 $(BUILD)/debug/lower-source: $(BUILD)/debug/ci/lower_source.o $(call objects,$(BUILD)/debug,$(LIB_SOURCES))
 	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
 
