@@ -118,6 +118,7 @@
     X(90, LAMBDA_WRITE, "5.6")                                                                     \
     X(91, CAPABILITY_CAPTURE, "11.4")                                                              \
     X(92, CAPTURE_ASSIGNMENT, "5.6")                                                               \
+    X(93, UNUSED_IMPORT, "6.1")                                                                    \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \

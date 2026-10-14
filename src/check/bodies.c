@@ -1076,6 +1076,15 @@ static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
             (void)reported;
             return NULL;
         }
+        if (s != NULL && lo < scope->alias_count &&
+            compare_text(prefix, scope->aliases[lo].name) == 0 &&
+            !mo_use_import(p->signatures, p->function->function->module,
+                           scope->aliases[lo].origin)) {
+            bool reported = problem(p, MO_CODE_CHECK_PROGRAM_WORK, name->span,
+                                    "the program needs too much import-checking work", NULL, NULL);
+            (void)reported;
+            return NULL;
+        }
         return s;
     }
     const struct mo_symbol *s = find_symbol(scope, name, count);
@@ -1091,6 +1100,12 @@ static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
     }
     if (lo == scope->imported_count || compare_text(name, scope->imported[lo].name) != 0)
         return NULL;
+    if (!mo_use_import(p->signatures, p->function->function->module, scope->imported[lo].origin)) {
+        bool reported = problem(p, MO_CODE_CHECK_PROGRAM_WORK, name->span,
+                                "the program needs too much import-checking work", NULL, NULL);
+        (void)reported;
+        return NULL;
+    }
     *count = scope->imported[lo].count;
     return scope->imported[lo].symbols;
 }

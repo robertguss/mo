@@ -152,6 +152,8 @@ struct mo_signatures {
     uint32_t nominal_count, customizer_count;
     struct mo_nominal_signature *nominals;            /* private owner index and dependency masks */
     const struct mo_function_signature **customizers; /* private receiver index */
+    uint32_t import_count;
+    struct mo_import_usage *imports; /* private written-origin usage, independent of symbols */
     bool recovering; /* private diagnostic recovery; never true in a published preparation */
 };
 
@@ -587,7 +589,9 @@ struct mo_program {
  * Constants infer closed types from their initializers, independently of their
  * uses, and are ordered through checked reads/calls/callbacks. Cycles are E0089;
  * unresolved indirect-call or abstract callback dependencies remain E1103.
- * Valid unfinished entry forms, imports, spec-only capability
+ * Imports retain declaring symbol/type identities and count annotation/value references;
+ * unused written module/name routes report E0093 after successful body/spec checking.
+ * Valid unfinished entry forms, spec-only capability
  * operations and unfinished body forms return E1103.
  * Spec checking checks anchor typing, completeness and links but executes no source code:
  * tools compile/run anchors to verify their allows/forbids expectations before accepting a

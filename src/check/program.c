@@ -42,6 +42,31 @@ static MO_MUST_USE bool native_type(const struct mo_source_type *type, const cha
            strcmp(type->name, name) == 0;
 }
 
+static MO_MUST_USE bool check_imports(const struct mo_signatures *signatures,
+                                      struct mo_diags *diags) {
+    bool valid = true;
+    for (uint32_t i = 0; i < signatures->import_count; i++) {
+        const struct mo_import_usage *use = &signatures->imports[i];
+        if (*signatures->work == MO_LIMIT_PROGRAM_CHECK_WORK) {
+            bool kept = report(diags, MO_CODE_CHECK_PROGRAM_WORK, use->origin->span,
+                               "the program needs too much import-checking work", NULL);
+            (void)kept;
+            return false;
+        }
+        (*signatures->work)++;
+        if (use->used || (use->parent == i && use->origin->children[1] != NULL))
+            continue;
+        struct mo_span span = use->parent == i ? use->origin->children[0]->span : use->origin->span;
+        if (!report(diags, MO_CODE_UNUSED_IMPORT, span,
+                    use->parent == i ? "an imported module is unused"
+                                     : "an imported name is unused",
+                    "Unused imports are errors (reference 6.1)."))
+            return false;
+        valid = false;
+    }
+    return valid;
+}
+
 static MO_MUST_USE int spec_source_order(const void *a, const void *b) {
     const struct mo_checked_spec *x = *(const struct mo_checked_spec *const *)a;
     const struct mo_checked_spec *y = *(const struct mo_checked_spec *const *)b;
@@ -367,12 +392,6 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
     for (uint32_t i = 0; i < set->count; i++) {
         const struct mo_module_syntax *module = set->modules[i];
         const struct mo_syntax *items = module->tree->children[1];
-        if (module->header.uses->count != 0) {
-            bool kept = report(diags, MO_CODE_CHECK_UNFINISHED, module->header.uses->span,
-                               "unused import checking is not implemented", NULL);
-            (void)kept;
-            return NULL;
-        }
         for (uint32_t j = 0; j < items->count; j++) {
             const struct mo_syntax *item = items->children[j];
             if (item->kind == MO_S_TEST) {
@@ -529,6 +548,8 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
     program->spec_count = spec_count;
     program->specs = ordered_specs;
     if (!mo_check_recursion(arena, program, diags))
+        return NULL;
+    if (!check_imports(signatures, diags))
         return NULL;
     return mo_order_constants(arena, program, &constants, diags) ? program : NULL;
 }

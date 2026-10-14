@@ -4,6 +4,17 @@
 
 #include "check/check.h"
 
+struct mo_import_usage {
+    const struct mo_syntax *origin;
+    uint32_t module, parent;
+    bool used;
+};
+
+/* Credits only the import route selected by the ordinary name/type lookup.
+ * False exhausts the shared program budget; the caller emits its resource error. */
+MO_MUST_USE bool mo_use_import(const struct mo_signatures *signatures, uint32_t module,
+                               const struct mo_syntax *origin);
+
 struct mo_nominal_signature {
     const struct mo_source_type *type;
     uint32_t field_count;

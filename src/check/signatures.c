@@ -11,6 +11,27 @@
 #include <stdlib.h>
 #include <string.h>
 
+bool mo_use_import(const struct mo_signatures *signatures, uint32_t module,
+                   const struct mo_syntax *origin) {
+    uint32_t lo = 0, hi = signatures->import_count;
+    while (lo < hi) {
+        if (*signatures->work == MO_LIMIT_PROGRAM_CHECK_WORK)
+            return false;
+        (*signatures->work)++;
+        uint32_t mid = lo + (hi - lo) / 2;
+        const struct mo_import_usage *at = &signatures->imports[mid];
+        if (at->module < module ||
+            (at->module == module && at->origin->span.start < origin->span.start))
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    MO_ASSERT(lo < signatures->import_count && signatures->imports[lo].origin == origin);
+    signatures->imports[lo].used = true;
+    signatures->imports[signatures->imports[lo].parent].used = true;
+    return true;
+}
+
 static MO_MUST_USE int symbol_order(const struct mo_symbol *a, const struct mo_symbol *b) {
     if (a->module != b->module)
         return a->module < b->module ? -1 : 1;
@@ -419,6 +440,13 @@ static MO_MUST_USE const struct mo_symbol *definition(struct preparation *p,
             p->failed = true;
             return NULL;
         }
+        if (symbol != NULL &&
+            !mo_use_import(p->signatures, p->function->module, scope->aliases[lo].origin)) {
+            bool reported = problem(p, MO_CODE_CHECK_PROGRAM_WORK, name->span,
+                                    "the program needs too much import-checking work", NULL);
+            (void)reported;
+            return NULL;
+        }
         return symbol;
     }
     const struct mo_symbol *symbol = lookup(scope, name);
@@ -432,9 +460,15 @@ static MO_MUST_USE const struct mo_symbol *definition(struct preparation *p,
         else
             hi = mid;
     }
-    return lo < scope->imported_count && compare_name(name, scope->imported[lo].name) == 0
-               ? scope->imported[lo].symbols
-               : NULL;
+    if (lo == scope->imported_count || compare_name(name, scope->imported[lo].name) != 0)
+        return NULL;
+    if (!mo_use_import(p->signatures, p->function->module, scope->imported[lo].origin)) {
+        bool reported = problem(p, MO_CODE_CHECK_PROGRAM_WORK, name->span,
+                                "the program needs too much import-checking work", NULL);
+        (void)reported;
+        return NULL;
+    }
+    return scope->imported[lo].symbols;
 }
 
 static MO_MUST_USE const struct mo_source_type *resolve(struct preparation *p,
@@ -1088,6 +1122,38 @@ struct mo_signatures *mo_prepare_available_signatures(struct mo_arena *arena,
     *work = 0;
     *out = (struct mo_signatures){.items = items, .data = data, .work = work};
     p.signatures = out;
+    uint32_t import_count = 0;
+    for (uint32_t i = 0; i < set->count; i++) {
+        const struct mo_syntax *uses = set->modules[i]->header.uses;
+        for (uint32_t j = 0; j < uses->count; j++) {
+            const struct mo_syntax *names = uses->children[j]->children[1];
+            uint32_t added = 1 + (names == NULL ? 0 : names->count);
+            if (added > MO_LIMIT_PROGRAM_CHECK_WORK - *work) {
+                bool reported = problem(&p, MO_CODE_CHECK_PROGRAM_WORK, uses->children[j]->span,
+                                        "the program needs too much import-checking work", NULL);
+                (void)reported;
+                return NULL;
+            }
+            *work += added;
+            import_count += added;
+        }
+    }
+    out->imports =
+        allocate(&p, import_count, sizeof(*out->imports), _Alignof(struct mo_import_usage));
+    if (out->imports == NULL)
+        return NULL;
+    for (uint32_t i = 0; i < set->count; i++) {
+        const struct mo_syntax *uses = set->modules[i]->header.uses;
+        for (uint32_t j = 0; j < uses->count; j++) {
+            const struct mo_syntax *use = uses->children[j], *names = use->children[1];
+            uint32_t parent = out->import_count;
+            out->imports[out->import_count++] = (struct mo_import_usage){use, i, parent, false};
+            for (uint32_t k = 0; names != NULL && k < names->count; k++)
+                out->imports[out->import_count++] =
+                    (struct mo_import_usage){names->children[k], i, parent, false};
+        }
+    }
+    MO_ASSERT(out->import_count == import_count);
     for (uint32_t i = 0; i < interfaces->count; i++)
         for (uint32_t j = 0; j < interfaces->scopes[i].count; j++) {
             const struct mo_symbol *symbol = &interfaces->scopes[i].symbols[j];

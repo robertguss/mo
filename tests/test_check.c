@@ -356,6 +356,52 @@ static void write_file(const char *path, const uint8_t *bytes, size_t length) {
     MO_ASSERT(fclose(file) == 0);
 }
 
+static void imported_function(void) {
+    char folder[] = "/tmp/mo-imports-XXXXXX";
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    char main_path[128], other_path[128];
+    int n = snprintf(main_path, sizeof(main_path), "%s/main.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(main_path));
+    n = snprintf(other_path, sizeof(other_path), "%s/shapes.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(other_path));
+    const char main_source[] = "module Main\nuse Shapes{Shape, make, area}\n"
+                               "fn measure(value: Shape) : Int\narea(value)\nend\n"
+                               "fn main() : Int\nmeasure(make(19))\nend\n";
+    const char other_source[] = "module Shapes\nexpose Shape(..), make, area\n"
+                                "struct Shape\nvalue: Int\nend\n"
+                                "fn make(value: Int) : Shape\nShape(value: value)\nend\n"
+                                "fn area(value: Shape) : Int\nvalue.value\nend\n";
+    write_file(main_path, (const uint8_t *)main_source, sizeof(main_source) - 1);
+    write_file(other_path, (const uint8_t *)other_source, sizeof(other_source) - 1);
+    struct fixture f;
+    init(&f, MO_CLI_CHECK_SIZE);
+    struct mo_module_set *set = mo_load_program(&f.syntax, &f.sources, main_path, NULL, &f.diags);
+    MO_ASSERT(set != NULL && f.diags.count == 0);
+    struct mo_program *program = mo_check(&f.arena, set, &f.diags);
+    CHECK(program != NULL && f.diags.count == 0);
+    if (program != NULL) {
+        const struct mo_module_scope *owner = &program->interfaces->scopes[1];
+        const struct mo_symbol *shape = mo_find_symbol(owner, (const uint8_t *)"Shape", 5);
+        MO_ASSERT(shape != NULL);
+        const struct mo_checked_function *measure = NULL;
+        for (uint32_t i = 0; i < program->function_count; i++)
+            if (strcmp(program->functions[i].signature->function->name, "measure") == 0)
+                measure = &program->functions[i];
+        MO_ASSERT(measure != NULL);
+        CHECK(measure->signature->type->arguments[0]->declaration == shape);
+        bool saw_area = false;
+        const struct mo_checked_body *body = &measure->body;
+        for (uint32_t i = 0; i < body->count; i++)
+            if (body->items[i].symbol != NULL && strcmp(body->items[i].symbol->name, "area") == 0) {
+                saw_area = true;
+                CHECK(body->items[i].symbol == mo_find_symbol(owner, (const uint8_t *)"area", 4));
+            }
+        CHECK(saw_area);
+    }
+    finish(&f);
+    MO_ASSERT(unlink(main_path) == 0 && unlink(other_path) == 0 && rmdir(folder) == 0);
+}
+
 static void captured_parameter(void) {
     char folder[] = "/tmp/mo-captures-XXXXXX";
     MO_ASSERT(mkdtemp(folder) != NULL);
@@ -1317,6 +1363,7 @@ static void run_tests(void *argument) {
     interfaces();
     corpus();
     samples();
+    imported_function();
     captured_parameter();
     capture_sources();
     arena_limits();
