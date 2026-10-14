@@ -4,6 +4,17 @@
 
 #include "check/check.h"
 
+struct mo_import_usage {
+    const struct mo_syntax *origin;
+    uint32_t module, parent;
+    bool used;
+};
+
+/* Credits only the import route selected by the ordinary name/type lookup.
+ * False exhausts the shared program budget; the caller emits its resource error. */
+MO_MUST_USE bool mo_use_import(const struct mo_signatures *signatures, uint32_t module,
+                               const struct mo_syntax *origin);
+
 struct mo_nominal_signature {
     const struct mo_source_type *type;
     uint32_t field_count;
@@ -19,7 +30,7 @@ struct mo_nominal_signature {
 MO_MUST_USE struct mo_signatures *
 mo_prepare_available_signatures(struct mo_arena *arena, const struct mo_module_set *set,
                                 const struct mo_module_interfaces *interfaces,
-                                struct mo_diags *diags);
+                                struct mo_diags *diags, bool checked);
 MO_MUST_USE bool mo_signature_type_available(const struct mo_signatures *signatures,
                                              const struct mo_source_type *type);
 
