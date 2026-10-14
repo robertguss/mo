@@ -435,6 +435,27 @@ def imports(binary):
     print(f"{binary}: imported aliases, observation owners, stopped spans and unused-import preflight passed")
 
 
+def generic_imports(binary):
+    # The caller's A/Z keys deliberately reverse the callee's Z/A keys.
+    # The alias must carry the callee signature and the caller's actual proofs.
+    source = ('module Main\nuse Calc\n'
+              'fn relay(value: A, tag: Z) : A where A: Number, Z: Text\n'
+              'f = Calc.choose\nf(value, tag)\nend\n'
+              'fn main() : Int\nrelay(13, true) * 3 + relay(17, false)\nend\n')
+    calc = ('module Calc\nexpose choose\n'
+            'fn choose(value: Z, tag: A) : Z where Z: Number, A: Text\n'
+            'if "#{tag}" == "true": value + value else: value\nend\n')
+    with tempfile.TemporaryDirectory(prefix="mo-cli-generic-imports-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        path.write_text(source)
+        (path.parent / "calc.mo").write_text(calc)
+        checked = run(binary, ["check", str(path)], 0)
+        assert not checked.stdout and not checked.stderr
+        result = run(binary, ["run", str(path)], 95)
+        assert not result.stdout and not result.stderr
+    print(f"{binary}: imported generic aliases retain callee keys and caller proofs")
+
+
 def small_stack():
     _, hard = resource.getrlimit(resource.RLIMIT_STACK)
     resource.setrlimit(resource.RLIMIT_STACK, (1 << 20, hard))
@@ -894,6 +915,7 @@ def check(binary):
     observations(binary)
     captures(binary)
     imports(binary)
+    generic_imports(binary)
     items = records(run(faults, ["--json"], 1), "check")
     assert items[1]["code"] == "E1401" and items[-1]["dropped"] == 0
     assert items[1]["primary"]["file"] is None and items[1]["section"] is None
