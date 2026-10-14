@@ -860,6 +860,15 @@ static const struct mo_ability_implementation *ability(struct body *b,
     lower_refuse(b->p, MO_CODE_LOWER_UNFINISHED, "this operation has no selected ability proof");
 }
 
+static bool direct_function(struct body *b, const struct mo_checked_expression *r) {
+    if (r->symbol == NULL || r->symbol->declaration->kind != MO_S_FN)
+        return false;
+    if (r->operand_count == 0)
+        return true; /* A function-value adapter invokes its own declaration. */
+    const struct mo_checked_expression *callee = row(b, r->operands[0]);
+    return callee->operand_count == 0 && callee->symbol == r->symbol;
+}
+
 static mo_core_expr application(struct body *b, const struct mo_checked_expression *r,
                                 mo_core_expr_list args) {
     struct lowering *p = b->p;
@@ -981,7 +990,7 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                 .op = {.tag = MO_CORE_LIST_OP_LIT, .as.lit.digits = lower_number(p, args.count)}}};
         return lower_prim(p, prim, args);
     }
-    if (r->symbol != NULL && r->symbol->declaration->kind == MO_S_FN) {
+    if (direct_function(b, r)) {
         struct instance *f = lower_instance(p, r->symbol, r->arguments, &b->instance->substitution,
                                             r->ability_count, r->abilities, b->instance->owner,
                                             b->instance->depth + (r->arguments.count != 0));
@@ -990,7 +999,8 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
         e->as.call.args = args;
         return e;
     }
-    if ((r->symbol != NULL && r->symbol->declaration->kind != MO_S_CONST) ||
+    if ((r->symbol != NULL && r->symbol->declaration->kind != MO_S_CONST &&
+         r->symbol->declaration->kind != MO_S_FN) ||
         (r->native != NULL && strchr(r->native, '.') == NULL)) {
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CON);
         e->as.con.ty = result;
@@ -1602,7 +1612,7 @@ static void row_task(struct body *b, struct task t) {
         finish(b, e, t.state, t.continuation, t.out);
         return;
     }
-    uint32_t skip = r->symbol != NULL && r->symbol->declaration->kind == MO_S_FN ? 1 : 0;
+    uint32_t skip = direct_function(b, r) ? 1 : 0;
     /* An ordinary namespace call retains its native function-value callee;
      * a native receiver dot call has only the receiver and explicit arguments. */
     if (r->native != NULL && strchr(r->native, '.') != NULL && r->receiver == UINT32_MAX &&
