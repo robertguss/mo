@@ -96,6 +96,20 @@ by lowering; its debug name stays the source spelling. Functions keep their name
 has several functions of one name (5.1), or a type customizes `to_text`, the
 lowering qualifies the name: `LineError.to_text`.
 
+Nongeneric imports introduce no Core operation. Both `Shapes.make(19)` and an
+explicitly imported `make(19)` call the selected declaring function `Shapes.make`.
+Likewise a returned record retains its declaring nominal name `Shapes.Box`,
+even through a third module; an importing module's own `Box` is a different type.
+Lowering consumes the checked symbol and `type.declaration` pointers, interpreting
+choice owner/case indices in that declaration's module scope. It does not resolve
+import spellings again or consume the checker's private import-use bookkeeping.
+Core module ownership, exports (including opaque versus exposed contents), source
+file indices, declaration/body spans and spec wording retain the declaring source.
+Nongeneric source calls, first-class references, records, choices and snapshots
+use the existing translation rules unchanged. Foreign generic uses, constant
+reads and direct imported initializer references remain explicit checker E1103;
+this integration does not add a new Core representation or reorder constants.
+
 ## 3. Values and types
 
 | Mo | Core type | Core value |

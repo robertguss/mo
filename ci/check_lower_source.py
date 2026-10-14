@@ -408,6 +408,120 @@ REFUSALS = {
     "native_pow": "answer = handler(2, 3)\nhandler = Int.pow\nfn main() : Int\nanswer + 30\nend",
 }
 
+# These are actual loader inputs, not synthetic symbol tables. Unequal values,
+# field layouts and case orders distinguish declaring owners from importers.
+MODULE_CASES = {
+    "routes": ({
+        "main.mo": "module Main\nuse Shapes{make, score}\nfn main() : Int\n"
+                   "f = score\nf(make(3), 11) + Shapes.score(Shapes.make(5), 2)\nend\n",
+        "shapes.mo": "module Shapes\nexpose Box(..), make, score\nstruct Box\nvalue: Int\nend\n"
+                     "fn make(value: Int) : Box\nBox(value: value)\nend\n"
+                     "fn score(box: Box, extra: Int) : Int\nbox.value * 7 + extra\nend\n",
+    }, {None: ["returned", "69"]}),
+    "owners": ({
+        "main.mo": "module Main\nuse Left\nuse Right\nfn main() : Int\n"
+                   "if Left.pick() is Left.One and Right.pick() is Right.Zero\n"
+                   "Left.make(3).value * 10 + Right.make(29).other\nelse\n1\nend\nend\n",
+        "left.mo": "module Left\nexpose Box(..), Choice(..), make, pick\n"
+                   "struct Box\nvalue: Int\nend\nenum Choice\nZero\nOne\nend\n"
+                   "fn make(value: Int) : Box\nBox(value: value)\nend\n"
+                   "fn pick() : Choice\nOne\nend\n",
+        "right.mo": "module Right\nexpose Box(..), Choice(..), make, pick\n"
+                    "enum Choice\nOne\nZero\nend\nstruct Box\nother: Int\nend\n"
+                    "fn make(value: Int) : Box\nBox(other: value)\nend\n"
+                    "fn pick() : Choice\nZero\nend\n",
+    }, {None: ["returned", "59"]}),
+    "transitive": ({
+        "main.mo": "module Main\nuse Relay\nfn main() : Int\nRelay.forward(17).value\nend\n",
+        "relay.mo": "module Relay\nexpose forward\nuse Origin{Box, build}\n"
+                    "fn forward(value: Int) : Box\nbuild(value + 6)\nend\n",
+        "origin.mo": "module Origin\nexpose Box(..), build\nstruct Box\nvalue: Int\nend\n"
+                     "fn build(value: Int) : Box\nBox(value: value)\nend\n",
+    }, {None: ["returned", "23"]}),
+    "snapshot": ({
+        "main.mo": "module Main\nuse Store{Box, make, read}\n"
+                   "fn snapshot(box: Box) : fn() : Int\nfn() read(box) end\nend\n"
+                   "fn main() : Int\nvar box = make(3)\naction = snapshot(box)\n"
+                   "box.value += 19\naction() * 10 + box.value\nend\n",
+        "store.mo": "module Store\nexpose Box(..), make, read\nstruct Box\nvalue: Int\nend\n"
+                    "fn make(value: Int) : Box\nBox(value: value)\nend\n"
+                    "fn read(box: Box) : Int\nbox.value\nend\n",
+    }, {None: ["returned", "52"]}),
+    "opaque": ({
+        "main.mo": "module Main\nuse Store{Token, open, read}\n"
+                   "fn keep(token: Token) : Token\ntoken\nend\n"
+                   "fn main() : Int\nread(keep(open(37)))\nend\n",
+        "store.mo": "module Store\nexpose Token, open, read\nstruct Token\nvalue: Int\nend\n"
+                    "fn open(value: Int) : Token\nToken(value: value)\nend\n"
+                    "fn read(token: Token) : Int\ntoken.value\nend\n",
+    }, {None: ["returned", "37"]}),
+    "specs": ({
+        "main.mo": "module Main\nuse Math{score}\ntest \"imported failure\"\n"
+                   "assert score(3, 11) == 33\nend\nfn main() : Int\nscore(3, 11)\nend\n",
+        "math.mo": "module Math\nexpose score\nfn score(left: Int, right: Int) : Int\n"
+                   "examples\nscore(3, 11) == 32\nend\nleft * 7 + right\nend\n",
+    }, {None: ["returned", "32"], "Math.score.example.1": ["returned", "Unit"],
+        "Main.test.1": ["failed", "left 2:32,right 2:33,"]}),
+}
+
+
+def check_modules(driver, vm, root, world):
+    checked = 0
+    for name, (files, selections) in MODULE_CASES.items():
+        folder = root / name
+        folder.mkdir()
+        for filename, text in files.items():
+            (folder / filename).write_text(text)
+        result = subprocess.run([str(driver), str(folder / "main.mo")], capture_output=True,
+                                text=True, timeout=30)
+        assert result.returncode == 0, (name, result.stderr)
+        path = folder / "lower.core"
+        path.write_text(result.stdout)
+        program = parse(result.stdout)[2]
+        metadata = program[-1]
+        assert metadata[0] == "Metadata", name
+        originals = [pathlib.Path(p).read_bytes() for p in metadata[1]]
+        assert {pathlib.Path(p).name for p in metadata[1]} == set(files), name
+        for module in metadata[2]:
+            for index in module[3]:
+                fun, meta = program[2][int(index)], metadata[3][int(index)]
+                assert fun[5] == module[1], (name, module, fun)
+                if fun[1].startswith("%"):
+                    continue
+                span = meta[2][1]
+                original = originals[int(span[1])]
+                assert original.startswith(f"module {module[1]}\n".encode()), (name, meta)
+                start, end = int(span[2]), int(span[3])
+                assert 0 <= start < end <= len(original), (name, meta)
+                header = original[start:end].split(b"\n", 1)[0]
+                if fun[6][0] == "example":
+                    assert meta[3] == ["some", original[start:end].decode()], (name, meta)
+                else:
+                    assert header.startswith((b"fn ", b"test ")), (name, header)
+                for optional in meta[4][1]:
+                    if optional[0] == "some":
+                        node = optional[1]
+                        assert node[1] == span[1], (name, meta, node)
+                        assert 0 <= int(node[2]) <= int(node[3]) <= len(original), (name, node)
+            exposed = [program[2][int(i)][1] for i in module[6]]
+            assert all(n.startswith(module[1] + ".") for n in exposed), (name, exposed)
+        if name == "owners":
+            assert {data[1] for data in program[1]} == {
+                "Left.Box", "Right.Box", "Left.Choice", "Right.Choice"}, program[1]
+        if name == "transitive":
+            assert [data[1] for data in program[1]] == ["Origin.Box"], program[1]
+        if name == "opaque":
+            store = next(module for module in metadata[2] if module[1] == "Store")
+            assert store[5] == [["0", "false"]], store
+        for target, expected in selections.items():
+            assert oracle(path, world, target) == expected, (name, target)
+            runner = vm if target is None else vm.parent / "tests/test_vm.test"
+            assert run(str(runner), path, target) == expected, (name, target)
+            checked += 1
+    print(f"lower modules: {len(MODULE_CASES)} loaded programs; {checked} expected outcomes "
+          "match Lean/original-document VM; declaring owners, exports and spans retained")
+
+
 for count in (4, 8, 16):
     CASES[f"linear_bool_{count}"] = (
         "fn main() : Int\nx = false\n" + "\n".join(
@@ -500,6 +614,7 @@ def main():
         root = pathlib.Path(directory)
         world = root / "world.core"
         world.write_text(f"(core {VERSION} {WORLD})\n")
+        check_modules(driver, vm, root, world)
         for name, (body, status) in CASES.items():
             source = root / "main.mo"
             source.write_text("module Main\n" + body + "\n")

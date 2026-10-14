@@ -450,6 +450,28 @@ clashes, detected before case expansion; a repeated name in one use list
 has a deletion fix. Other clashes suggest qualification without rewriting
 uses whose intended binding is unknown.
 
+Signature and body lookup credit their selected import's original syntax,
+not the declaring symbol's module or spelling. A private signature-owned
+usage index records written module uses and explicit names; expanded choice
+cases share their type's import origin. Annotation references count as uses.
+The final certification audit reports E0093 (6.1) for an unused plain module
+use or each unused explicit name, without a second module diagnostic for
+the same name list. Qualified references credit the module route, not an
+unused unqualified name. A dot call found in its receiver's declaring module
+does not read a redundant explicit-name import either. Names beginning with
+`_` remain unused on purpose. The audit runs after successful body/spec checks,
+so dependent unused-import errors do not obscure an earlier source refusal.
+The usage index is sorted by importing module and written offset; binary
+lookups and the final linear audit spend the shared program work budget.
+No symbol or nominal type identity is rewritten.
+
+This checked-source slice certifies nongeneric application-module imports.
+Cross-application generic function values, written generic nominal annotations,
+generic construction/projection, constant reads and direct initializer calls
+remain explicit E1103 routes. Partial signature/inference APIs and the already
+supported implicit library routes retain their previous behavior. No new
+cross-module constant ordering or generic proof carrier is introduced.
+
 Interface work is bounded by source declarations and imported names, not
 pairwise name scans. Each choice's case indices are computed once in its
 declaring module, in declaration order. Imports borrow the existing names
@@ -893,6 +915,18 @@ Hash indices memoize concrete types and function instances; concrete source
 types do not depend on an instance's substitution pointer. Source-function
 lookup uses a sorted index, and metadata traverses per-declaration instance
 lists rather than a module/declaration/instance cross product.
+
+Nongeneric source imports use the checker's selected declaration symbols and
+`type.declaration` identities directly. Choice owner/case indices are interpreted
+in the declaring symbol's module scope, not the importing scope. Qualified and
+explicitly imported routes therefore share function/data instances; same-spelled
+types from different declaring modules remain distinct. Module metadata keeps
+declaration ownership/exposure and original file indices, including transitive
+nominal results, opaque layouts and imported specs. The private import-use index
+is checker bookkeeping, not a lowering input. No import-specific resolver or
+dependency reordering is added. Foreign generic values/nominal uses, constant
+reads and direct imported initializer references remain checker E1103; Maps and
+the other existing staged routes are unchanged.
 
 Core lookup/display names retain the declaring module and source name;
 overloads add `@Receiver`. Generic function code is keyed by (requesting
@@ -2637,7 +2671,7 @@ rather than supplying an unproven order or reporting a guessed cycle.
 `main` returns Unit or Int and takes no parameters or one Console.
 Direct `Console.print` reads its operation
 and named input type from `base/hostops.def`, with the receiver explicit.
-Map expressions and imports still report E1103.
+Map expressions still report E1103.
 Spec-only capability operations also remain staged. `where`
 validates scoped parameters and the five abilities; customizers must have their declaring
 type's Text/Ordering signature. A generic customizer covers the whole nominal
