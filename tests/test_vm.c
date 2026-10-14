@@ -9,8 +9,11 @@
 #include "vm/vm.h"
 
 #include <math.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "vm_run.h"
 
@@ -1426,6 +1429,301 @@ static MO_MUST_USE struct mo_image *assemble(const char *source) {
     return image;
 }
 
+struct call_budget {
+    uint64_t remaining, polls;
+};
+
+static MO_MUST_USE bool keep_running(void *context) {
+    struct call_budget *budget = context;
+    MO_ASSERT(budget->polls != UINT64_MAX);
+    budget->polls++;
+    if (budget->remaining == 0)
+        return false;
+    budget->remaining--;
+    return true;
+}
+
+static void test_controlled_entry(void) {
+    struct mo_image *image =
+        assemble("bytecode 0.2 shorthand\nmodule M exposes [M.accept]\n"
+                 "function M.accept(x: Text owned, y: Text borrowed) : Text function in M\n"
+                 " registers [r2: Text]\n drop r0\n dup r2, r1\n ret r2\nend\n");
+    if (image == NULL)
+        return;
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect = {.reason = "untouched", .limit = 987};
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    for (unsigned mode = 0; mode < 5; mode++) {
+        struct mo_limits bounded = limits;
+        if (mode == 1 || mode == 2)
+            bounded.stack_size = 0;
+        struct mo_process *p = mo_process_new(image, &bounded);
+        MO_ASSERT(p != NULL);
+        if (mode >= 3)
+            mo_process_instruction_limit(p, 0);
+        struct mo_heap *heap = mo_process_heap(p);
+        struct mo_cell arguments[2];
+        MO_ASSERT(mo_value_text(heap, "owned", 5, &arguments[0]) &&
+                  mo_value_text(heap, "borrowed", 8, &arguments[1]));
+        const struct mo_cell sentinel = mo_cell_int(981);
+        struct mo_cell result = sentinel;
+        uint8_t original_defect[sizeof defect];
+        memcpy(original_defect, &defect, sizeof defect);
+        struct call_budget budget = {.remaining = mode < 2 ? 0 : mode == 4 ? 2 : 1};
+        enum mo_controlled_outcome outcome =
+            mo_call_controlled(p, 0, arguments, 2, keep_running, &budget, &result, &defect);
+        bool cancelled = mode != 2 && mode != 4;
+        CHECK(outcome == (cancelled ? MO_CONTROL_CANCELLED : MO_CONTROL_STOPPED));
+        CHECK(budget.polls == (mode >= 3 ? 2u : 1u));
+        CHECK(memcmp(result.bytes, sentinel.bytes, sizeof result.bytes) == 0);
+        if (cancelled)
+            CHECK(memcmp(&defect, original_defect, sizeof defect) == 0);
+        else
+            CHECK(!defect.has_detail && defect.process == p &&
+                  (defect.frames == NULL) == (mode == 2));
+        /* Refusal at entry beats stack reservation; refusal at dispatch beats
+         * harness exhaustion. Allowed reservation/exhaustion are genuine stops. */
+        CHECK((mo_process_stack_used(p) == 0) == (mode < 3));
+        CHECK(mo_heap_objects(heap) == (mode < 3 ? 1u : 2u) &&
+              mo_cell_get_ref(arguments[1])->count == 1);
+        mo_process_free(p);
+    }
+    mo_image_free(image);
+}
+
+/* The predicate's stack context must not survive a successful call. */
+static MO_MUST_USE enum mo_controlled_outcome controlled_return(struct mo_process *p,
+                                                                const struct mo_cell *arguments,
+                                                                struct mo_cell *result,
+                                                                struct mo_defect *defect) {
+    struct call_budget budget = {.remaining = 4}; /* entry, DROP, DUP, RET */
+    enum mo_controlled_outcome outcome =
+        mo_call_controlled(p, 0, arguments, 2, keep_running, &budget, result, defect);
+    CHECK(budget.polls == 4);
+    return outcome;
+}
+
+static void test_controlled_return(void) {
+    struct mo_image *image =
+        assemble("bytecode 0.2 shorthand\nmodule M exposes [M.accept]\n"
+                 "function M.accept(x: Text owned, y: Text borrowed) : Text function in M\n"
+                 " registers [r2: Text]\n drop r0\n dup r2, r1\n ret r2\nend\n");
+    if (image == NULL)
+        return;
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect = {.reason = "untouched", .limit = 876};
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    for (uint64_t allowed = 0; allowed <= 4; allowed++) {
+        struct mo_process *p = mo_process_new(image, &limits);
+        MO_ASSERT(p != NULL);
+        struct mo_heap *heap = mo_process_heap(p);
+        struct mo_cell arguments[2];
+        MO_ASSERT(mo_value_text(heap, "owned", 5, &arguments[0]) &&
+                  mo_value_text(heap, "borrowed", 8, &arguments[1]));
+        const struct mo_cell sentinel = mo_cell_int(-943);
+        struct mo_cell result = sentinel;
+        uint8_t original_defect[sizeof defect];
+        memcpy(original_defect, &defect, sizeof defect);
+        struct call_budget budget = {.remaining = allowed};
+        enum mo_controlled_outcome outcome =
+            mo_call_controlled(p, 0, arguments, 2, keep_running, &budget, &result, &defect);
+        CHECK(outcome == (allowed == 4 ? MO_CONTROL_RETURNED : MO_CONTROL_CANCELLED));
+        CHECK(budget.polls == (allowed == 4 ? 4 : allowed + 1));
+        CHECK(memcmp(&defect, original_defect, sizeof defect) == 0);
+        CHECK(mo_heap_objects(heap) == (allowed == 1 ? 2u : 1u));
+        CHECK(mo_cell_get_ref(arguments[1])->count == (allowed >= 3 ? 2u : 1u));
+        if (outcome == MO_CONTROL_RETURNED) {
+            size_t length;
+            const uint8_t *bytes = mo_value_data(result, &length);
+            CHECK(length == 8 && memcmp(bytes, "borrowed", 8) == 0);
+            mo_value_drop(heap, mo_image_bytecode(image)->functions[0].result_type, result);
+            CHECK(mo_process_stack_used(p) == 0 && mo_cell_get_ref(arguments[1])->count == 1);
+            /* Alternate ordinary and controlled calls after the callback's
+             * stack context returns, with the same retained borrowed input. */
+            for (unsigned call = 0; call < 3; call++) {
+                MO_ASSERT(mo_value_text(heap, "next", 4, &arguments[0]));
+                if (call == 1)
+                    CHECK(mo_call(p, 0, arguments, 2, &result, &defect) == MO_RETURNED);
+                else
+                    CHECK(controlled_return(p, arguments, &result, &defect) == MO_CONTROL_RETURNED);
+                CHECK(mo_cell_get_ref(result) == mo_cell_get_ref(arguments[1]) &&
+                      memcmp(&defect, original_defect, sizeof defect) == 0);
+                mo_value_drop(heap, mo_image_bytecode(image)->functions[0].result_type, result);
+                CHECK(mo_heap_objects(heap) == 1 && mo_cell_get_ref(arguments[1])->count == 1);
+            }
+        } else
+            CHECK(memcmp(result.bytes, sentinel.bytes, sizeof result.bytes) == 0);
+        mo_process_free(p);
+    }
+    mo_image_free(image);
+}
+
+static void test_controlled_loops(void) {
+    const char *const sources[] = {
+        "bytecode 0.2 shorthand\nmodule M exposes [M.loop]\n"
+        "function M.loop(x: Text owned, y: Text borrowed) : Unit function in M\n"
+        " registers []\n drop r0\n @loop:\n jump @loop\nend\n",
+        "bytecode 0.2 shorthand\nmodule M exposes [M.outer]\n"
+        "function M.outer(x: Text owned, y: Text borrowed) : Unit function in M\n"
+        " registers [r2: Unit]\n call r2, M.loop, r0, r1\n ret r2\nend\n"
+        "function M.loop(x: Text owned, y: Text borrowed) : Unit function in M\n"
+        " registers []\n drop r0\n @loop:\n jump @loop\nend\n",
+        "bytecode 0.2 shorthand\nmodule M exposes [M.outer]\n"
+        "function M.outer(x: Text owned, y: Text borrowed) : Unit function in M\n"
+        " registers []\n tail_call M.loop, r0, r1\nend\n"
+        "function M.loop(x: Text owned, y: Text borrowed) : Unit function in M\n"
+        " registers []\n drop r0\n @loop:\n jump @loop\nend\n"};
+    for (unsigned kind = 0; kind < sizeof sources / sizeof sources[0]; kind++) {
+        struct mo_image *image = assemble(sources[kind]);
+        if (image == NULL)
+            continue;
+        struct mo_limits limits = mo_limits_default();
+        struct mo_defect defect = {.reason = "untouched", .limit = 765};
+        MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+        for (uint64_t allowed = 1; allowed <= 17; allowed++) {
+            struct mo_process *p = mo_process_new(image, &limits);
+            MO_ASSERT(p != NULL);
+            /* A broken polling implementation must fail, not hang the suite.
+             * This harness stop is not the controlled call's budget. */
+            mo_process_instruction_limit(p, 200);
+            struct mo_heap *heap = mo_process_heap(p);
+            struct mo_cell arguments[2];
+            MO_ASSERT(mo_value_text(heap, "owned", 5, &arguments[0]) &&
+                      mo_value_text(heap, "borrowed", 8, &arguments[1]));
+            const struct mo_cell sentinel = mo_cell_int(-654);
+            struct mo_cell result = sentinel;
+            uint8_t original_defect[sizeof defect];
+            memcpy(original_defect, &defect, sizeof defect);
+            struct call_budget budget = {.remaining = allowed};
+            CHECK(mo_call_controlled(p, 0, arguments, 2, keep_running, &budget, &result, &defect) ==
+                  MO_CONTROL_CANCELLED);
+            CHECK(budget.polls == allowed + 1 &&
+                  memcmp(result.bytes, sentinel.bytes, sizeof result.bytes) == 0 &&
+                  memcmp(&defect, original_defect, sizeof defect) == 0);
+            /* After the leaf DROP, neither a suspended caller nor tail reuse
+             * may keep the transferred Text alive or drop it twice. */
+            bool dropped = allowed >= (kind == 0 ? 2u : 3u);
+            CHECK(mo_heap_objects(heap) == (dropped ? 1u : 2u) &&
+                  mo_cell_get_ref(arguments[1])->count == 1);
+            size_t length;
+            const uint8_t *bytes = mo_value_data(arguments[1], &length);
+            CHECK(length == 8 && memcmp(bytes, "borrowed", 8) == 0);
+            CHECK(mo_process_stack_used(p) > 0);
+            mo_process_free(p);
+        }
+        mo_image_free(image);
+    }
+}
+
+static void test_controlled_defects(void) {
+    const char *const sources[] = {
+        "bytecode 0.2 shorthand\nmodule M exposes [M.stop]\n"
+        "function M.stop() : Unit function in M\n registers [r0: Text]\n"
+        " const r0, \"genuine\"\n stop r0\nend\n",
+        "bytecode 0.2 shorthand\nmodule M exposes []\n"
+        "function M.failure() : Unit test spec in M\n registers [r0: Text]\n"
+        " const r0, \"genuine\"\n fail r0\nend\n"};
+    for (unsigned kind = 0; kind < sizeof sources / sizeof sources[0]; kind++) {
+        struct mo_image *image = assemble(sources[kind]);
+        if (image == NULL)
+            continue;
+        struct mo_limits limits = mo_limits_default();
+        struct mo_defect defect = {.reason = "untouched", .limit = 543};
+        MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+        for (uint64_t allowed = 2; allowed <= 3; allowed++) {
+            struct mo_process *p = mo_process_new(image, &limits);
+            MO_ASSERT(p != NULL);
+            const struct mo_cell sentinel = mo_cell_int(-432);
+            struct mo_cell result = sentinel;
+            uint8_t original_defect[sizeof defect];
+            memcpy(original_defect, &defect, sizeof defect);
+            struct call_budget budget = {.remaining = allowed};
+            enum mo_controlled_outcome outcome =
+                mo_call_controlled(p, 0, NULL, 0, keep_running, &budget, &result, &defect);
+            CHECK(budget.polls == 3 &&
+                  memcmp(result.bytes, sentinel.bytes, sizeof result.bytes) == 0);
+            if (allowed == 2) {
+                CHECK(outcome == MO_CONTROL_CANCELLED &&
+                      memcmp(&defect, original_defect, sizeof defect) == 0);
+            } else {
+                /* The next poll would refuse, but a produced defect is final. */
+                CHECK(outcome == (kind == 0 ? MO_CONTROL_STOPPED : MO_CONTROL_FAILED));
+                if (outcome == MO_CONTROL_STOPPED || outcome == MO_CONTROL_FAILED) {
+                    CHECK(defect.process == p && defect.has_detail && defect.frames != NULL &&
+                          defect.frames->function == 0 && defect.frames->previous == NULL);
+                    if (defect.has_detail) {
+                        size_t length;
+                        const uint8_t *bytes = mo_value_data(defect.detail, &length);
+                        CHECK(length == 7 && memcmp(bytes, "genuine", 7) == 0);
+                    }
+                }
+            }
+            mo_process_free(p);
+        }
+        mo_image_free(image);
+    }
+}
+
+static MO_MUST_USE bool unexpected_poll(void *context) {
+    (void)context;
+    _exit(97);
+}
+
+static void test_controlled_preconditions(void) {
+    struct mo_image *image =
+        assemble("bytecode 0.2 shorthand\nglobal M.g: Unit in M\ninit [M.initializer]\n"
+                 "module M exposes [M.identity]\n"
+                 "function M.identity(x: Int owned) : Int function in M\n"
+                 " registers []\n ret r0\nend\n"
+                 "function M.closed(x: Int owned) : Int closure in M captures [Int]\n"
+                 " registers [r2: Int]\n field r2, r1, 0\n drop r1\n ret r2\nend\n"
+                 "function M.initializer() : Unit init in M\n"
+                 " registers [r0: Unit]\n const r0, ()\n set_global M.g, r0\n ret r0\nend\n");
+    if (image == NULL)
+        return;
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    struct mo_process *p = mo_process_new(image, &limits);
+    MO_ASSERT(p != NULL);
+    for (unsigned mode = 0; mode < 11; mode++) {
+        MO_ASSERT(fflush(NULL) == 0);
+        pid_t child = fork();
+        MO_ASSERT(child >= 0);
+        if (child == 0) {
+            if (freopen("/dev/null", "w", stderr) == NULL)
+                _exit(96);
+            struct mo_cell argument = mo_cell_int(17), result = mo_cell_int(29);
+            if (mode == 7 || mode == 8) {
+                struct call_budget budget = {0};
+                MO_ASSERT(mo_call_controlled(p, 0, &argument, 1, keep_running, &budget, &result,
+                                             &defect) == MO_CONTROL_CANCELLED);
+                if (mode == 7) {
+                    enum mo_outcome outcome = mo_call(p, 0, &argument, 1, &result, &defect);
+                    _exit((int)outcome);
+                }
+            }
+            uint32_t function = 0;
+            if (mode == 1)
+                function = 3; /* out of range */
+            else if (mode == 9)
+                function = 1; /* closure */
+            else if (mode == 10)
+                function = 2; /* initializer */
+            enum mo_controlled_outcome outcome = mo_call_controlled(
+                mode == 0 ? NULL : p, function, mode == 2 || mode == 10 ? NULL : &argument,
+                mode == 3 || mode == 10 ? 0 : 1, mode == 6 ? NULL : unexpected_poll, NULL,
+                mode == 4 ? NULL : &result, mode == 5 ? NULL : &defect);
+            _exit((int)outcome);
+        }
+        int status;
+        MO_ASSERT(waitpid(child, &status, 0) == child);
+        CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+    }
+    mo_process_free(p);
+    mo_image_free(image);
+}
+
 struct variable_capture {
     struct mo_defect_variable values[8];
     uint32_t count;
@@ -2550,6 +2848,11 @@ int main(int argc, char **argv) {
     test_defects();
     test_borrowing();
     test_scratch_and_fuel();
+    test_controlled_entry();
+    test_controlled_return();
+    test_controlled_loops();
+    test_controlled_defects();
+    test_controlled_preconditions();
     test_stopped_variables();
     test_variable_frames();
     test_variable_reuse();

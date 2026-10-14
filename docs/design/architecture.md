@@ -1416,6 +1416,25 @@ heap-limit report. Attachment precedes building literals and running init
 functions; a later failure remains permanent. Successful initialization frees
 its native VM stack; failed initialization retains it for the defect report.
 
+**Controlled calls (D242).** `mo_call_controlled` leaves `mo_call` and its
+three outcomes unchanged. Its separate outcomes are returned, stopped,
+failed and cancelled. The caller supplies a required bounded, non-reentrant
+`keep_running(context)`, borrowed only during the synchronous call. The VM
+checks call preconditions before polling at entry, before reserving a frame,
+and before every bytecode instruction, including nested calls, tail calls
+and `RET`. False cancels before that instruction or harness instruction
+exhaustion. A genuine defect already produced remains a stop or failure.
+Cancellation is terminal, not a yield; it writes neither result nor defect
+and does not fabricate a language stop. Owned parameters transfer on every
+outcome, even before frame entry; borrowed inputs keep their ownership.
+Normal process teardown reclaims the cancelled call. Only a return writes
+the owned result; a stop or failure retains its genuine defect report.
+Callbacks must not mutate, free or resume VM/heap/value state. The VM has no
+clock: tools own the monotonic deadline and distinguish expiry from clock
+failure. Native primitive/host work, allocation/drop and blocked I/O do not
+poll, so this is cooperative interruption, not a hard wall-clock bound.
+Initialization and ordinary observations are not controlled by this API.
+
 `heap` supplies a separate `struct mo_heap` owned by the VM's process, created
 with `mo_heap_new(image, limits)`. Execution frames, loading and outcomes
 remain `vm`'s work. A shared `struct mo_heap_image`, prepared once per run,
