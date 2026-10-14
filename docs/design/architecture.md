@@ -916,6 +916,18 @@ types do not depend on an instance's substitution pointer. Source-function
 lookup uses a sorted index, and metadata traverses per-declaration instance
 lists rather than a module/declaration/instance cross product.
 
+Nongeneric source imports use the checker's selected declaration symbols and
+`type.declaration` identities directly. Choice owner/case indices are interpreted
+in the declaring symbol's module scope, not the importing scope. Qualified and
+explicitly imported routes therefore share function/data instances; same-spelled
+types from different declaring modules remain distinct. Module metadata keeps
+declaration ownership/exposure and original file indices, including transitive
+nominal results, opaque layouts and imported specs. The private import-use index
+is checker bookkeeping, not a lowering input. No import-specific resolver or
+dependency reordering is added. Foreign generic values/nominal uses, constant
+reads and direct imported initializer references remain checker E1103; Maps and
+the other existing staged routes are unchanged.
+
 Core lookup/display names retain the declaring module and source name;
 overloads add `@Receiver`. Generic function code is keyed by (requesting
 module, defining declaration, concrete type list), with names such as

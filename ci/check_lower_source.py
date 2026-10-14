@@ -500,8 +500,9 @@ def check_modules(driver, vm, root, world):
                     assert header.startswith((b"fn ", b"test ")), (name, header)
                 for optional in meta[4][1]:
                     if optional[0] == "some":
-                        span = optional[1]
-                        assert 0 <= int(span[2]) <= int(span[3]) <= len(originals[int(span[1])]), (name, span)
+                        node = optional[1]
+                        assert node[1] == span[1], (name, meta, node)
+                        assert 0 <= int(node[2]) <= int(node[3]) <= len(original), (name, node)
             exposed = [program[2][int(i)][1] for i in module[6]]
             assert all(n.startswith(module[1] + ".") for n in exposed), (name, exposed)
         if name == "owners":

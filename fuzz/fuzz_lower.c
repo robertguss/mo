@@ -13,7 +13,8 @@ static void source_specs(void *argument) {
     const struct source_input *input = argument;
     struct mo_buffer text;
     mo_buffer_init(&text, 4096);
-    MO_ASSERT(mo_buffer_append_text(&text, "module Main\ncomputed = source + 1\nsource = "));
+    MO_ASSERT(mo_buffer_append_text(
+        &text, "module Main\nuse Peer{Box, build, read}\ncomputed = source + 1\nsource = "));
     MO_ASSERT(mo_buffer_append_uint(&text, input->size == 0 ? 0 : input->bytes[0]));
     MO_ASSERT(mo_buffer_append_text(
         &text, "\nmagnitude = Int.abs\nlow = Int.min\nhigh = Int.max\n"
@@ -22,6 +23,7 @@ static void source_specs(void *argument) {
                "fn(extra) fn() base + extra end end\nend\n"
                "fn wrap(action: fn(Int) : Int) : fn(Int) : Int\n"
                "fn(value) action(value) end\nend\n"
+               "fn snapshot(box: Box) : fn() : Int\nfn() read(box) end\nend\n"
                "fn pair(left: Z, right: A) : (Z, A) "
                "where Z: Number, Z: Equal, A: Equal\n"
                "promise \"scoped requirements\"\nresult.0 == left + left\nresult.1 == right\n"));
@@ -50,6 +52,8 @@ static void source_specs(void *argument) {
                                            "assert make(source)(computed)() == source + computed\n"
                                            "assert make(1.25)(2.5)() == 3.75\n"
                                            "assert wrap(magnitude)(-source) == source\n"
+                                           "assert snapshot(build(source))() == source\n"
+                                           "assert Peer.read(Peer.build(computed)) == computed\n"
                                            "assert (reader() or 9) == 1\nend\n"
                                            "fn main() : Int\n17\nend\n"));
     struct mo_arena frontend, output;
@@ -61,18 +65,30 @@ static void source_specs(void *argument) {
     uint32_t file;
     struct mo_source_error error;
     MO_ASSERT(mo_sources_add_bytes(&sources, "main.mo", text.bytes, text.length, &file, &error));
-    struct mo_module_syntax *module = mo_parse(&frontend, &sources, file, &diags);
-    MO_ASSERT(module != NULL && !mo_diags_any(&diags));
-    const char *name = "Main";
-    struct mo_module_set set = {
-        .count = 1, .modules = &module, .names = &name, .sources = &sources};
+    struct mo_module_syntax *modules[2] = {mo_parse(&frontend, &sources, file, &diags), NULL};
+    static const uint8_t peer[] =
+        "module Peer\nexpose Box(..), build, read\nstruct Box\nvalue: Int\nend\n"
+        "fn build(value: Int) : Box\nBox(value: value)\nend\n"
+        "fn read(box: Box) : Int\nbox.value\nend\n";
+    MO_ASSERT(mo_sources_add_bytes(&sources, "peer.mo", peer, sizeof peer - 1, &file, &error));
+    modules[1] = mo_parse(&frontend, &sources, file, &diags);
+    MO_ASSERT(modules[0] != NULL && modules[1] != NULL && !mo_diags_any(&diags));
+    const char *names[] = {"Main", "Peer"};
+    uint32_t order[] = {1, 0}, target = 1;
+    uint32_t *uses[] = {&target, NULL};
+    struct mo_module_set set = {.count = 2,
+                                .modules = modules,
+                                .names = names,
+                                .order = order,
+                                .uses = uses,
+                                .sources = &sources};
     struct mo_program *program = mo_check(&frontend, &set, &diags);
     MO_ASSERT(program != NULL && !mo_diags_any(&diags));
     struct mo_core *core = mo_lower(&output, program, &sources, &diags);
     MO_ASSERT(core != NULL && !mo_diags_any(&diags));
     mo_arena_free(&frontend);
     mo_sources_free(&sources);
-    MO_ASSERT(mo_core_check(core, &diags)); /* Captures/spec metadata after frontend release. */
+    MO_ASSERT(mo_core_check(core, &diags)); /* Imports/captures/specs after frontend release. */
     struct mo_buffer wire;
     mo_buffer_init(&wire, MO_LIMIT_CORE_TEXT_SIZE);
     MO_ASSERT(mo_core_print(core, &wire));
