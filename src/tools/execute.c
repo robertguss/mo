@@ -181,9 +181,10 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
         diags.dropped = 1;
         if (cli->json && !version)
             version = mo_write_version(output, cli->command);
-        int status = cli->json && !version ? 1
-                                           : mo_write_diagnostics(output, errors, cli->json,
-                                                                  cli->command, &sources, &diags);
+        int status = cli->json && !version
+                         ? 1
+                         : mo_write_diagnostics(output, errors, cli->json, cli->command, &sources,
+                                                &diags, NULL);
         mo_sources_free(&sources);
         mo_diags_free(&diags);
         return status;
@@ -211,7 +212,8 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
     } else if (cli->json && !work.version && !mo_write_version(output, cli->command))
         status = 1;
     else
-        status = mo_write_diagnostics(output, errors, cli->json, cli->command, &sources, &diags);
+        status =
+            mo_write_diagnostics(output, errors, cli->json, cli->command, &sources, &diags, NULL);
     mo_arena_free(&arena);
     mo_sources_free(&sources);
     mo_diags_free(&diags);

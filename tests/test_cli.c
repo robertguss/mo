@@ -434,7 +434,8 @@ static void omission(void) {
     free(large);
     FILE *stream = tmpfile();
     MO_ASSERT(stream != NULL);
-    CHECK(mo_write_diagnostics(stream, stderr, true, MO_COMMAND_CHECK, &sources, &diags) == 1);
+    CHECK(mo_write_diagnostics(stream, stderr, true, MO_COMMAND_CHECK, &sources, &diags, NULL) ==
+          1);
     rewind(stream);
     char line[256] = {0};
     CHECK(fgets(line, sizeof(line), stream) != NULL);
@@ -458,7 +459,8 @@ static void sorted_output(void) {
     MO_ASSERT(mo_diags_add(&diags, &d));
     FILE *stream = tmpfile();
     MO_ASSERT(stream != NULL);
-    CHECK(mo_write_diagnostics(stream, stderr, true, MO_COMMAND_CHECK, &sources, &diags) == 1);
+    CHECK(mo_write_diagnostics(stream, stderr, true, MO_COMMAND_CHECK, &sources, &diags, NULL) ==
+          1);
     rewind(stream);
     const char *order[] = {"\"headline\":\"first at tie\"", "\"headline\":\"second at tie\"",
                            "\"headline\":\"late\""};

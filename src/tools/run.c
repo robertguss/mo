@@ -31,8 +31,8 @@ static uint32_t entry(const struct mo_core *core, const struct mo_bytecode *file
     MO_UNREACHABLE(); /* Successful compilation preserves the checked entry. */
 }
 
-static struct mo_span source_span(const struct mo_bytecode *file, const struct mo_sources *sources,
-                                  uint32_t path, uint32_t start, uint32_t end) {
+struct mo_span mo_runtime_span(const struct mo_bytecode *file, const struct mo_sources *sources,
+                               uint32_t path, uint32_t start, uint32_t end) {
     if (path != MO_NO_INDEX) {
         const struct mo_bytecode_bytes *name = &file->files[path];
         for (uint32_t i = 0; i < sources->count; i++)
@@ -51,13 +51,13 @@ static bool anchor_error(const struct mo_bytecode *file, const struct mo_sources
     struct mo_label condition;
     if (function != MO_NO_INDEX) {
         const struct mo_bytecode_debug *debug = &file->debug[function];
-        diag.primary.span = source_span(file, sources, debug->file, debug->start, debug->end);
+        diag.primary.span = mo_runtime_span(file, sources, debug->file, debug->start, debug->end);
         if (line > 0) {
             const struct mo_bytecode_debug *promise = &file->debug[debug->subject];
             MO_ASSERT((uint64_t)line <= promise->line_count);
             const struct mo_bytecode_spec_line *failed = &promise->lines[(uint32_t)line - 1];
             condition = (struct mo_label){
-                source_span(file, sources, failed->file, failed->start, failed->end),
+                mo_runtime_span(file, sources, failed->file, failed->start, failed->end),
                 "this promise condition was false"};
             diag.secondary = &condition;
             diag.secondary_count = 1;
@@ -83,8 +83,8 @@ static bool anchor_stopped(const struct mo_bytecode *file, const struct mo_sourc
 
 /* Each anchor is an independent observation of its promise, never a call of
  * the subject. The image is shared; all process heaps and frames are fresh. */
-static bool check_anchors(struct mo_image *image, const struct mo_cli *cli,
-                          const struct mo_sources *sources, struct mo_diags *diags) {
+bool mo_check_anchors(struct mo_image *image, const struct mo_cli *cli,
+                      const struct mo_sources *sources, struct mo_diags *diags) {
     const struct mo_bytecode *file = mo_image_bytecode(image);
     for (uint32_t i = 0; i < file->function_count; i++) {
         if (file->functions[i].kind != MO_FUNCTION_ANCHOR)
@@ -219,7 +219,7 @@ int mo_run_program(const struct mo_cli *cli, const struct mo_core *core,
         }
         goto done;
     }
-    if (!check_anchors(image, cli, sources, diags)) {
+    if (!mo_check_anchors(image, cli, sources, diags)) {
         status = 1;
         goto done;
     }

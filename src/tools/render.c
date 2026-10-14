@@ -626,7 +626,8 @@ bool mo_write_version(FILE *output, enum mo_command command) {
 }
 
 int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command command,
-                         const struct mo_sources *sources, struct mo_diags *diags) {
+                         const struct mo_sources *sources, struct mo_diags *diags,
+                         const struct mo_test_totals *totals) {
     mo_diags_sort(diags);
     uint32_t written = 0;
     uint64_t dropped = diags->dropped;
@@ -642,7 +643,10 @@ int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command 
         if (ok)
             written++;
     }
-    int status = mo_diags_any(diags) || dropped != 0 || !ok ? 1 : 0;
+    struct mo_test_totals counts = totals == NULL ? (struct mo_test_totals){0} : *totals;
+    int status =
+        mo_diags_any(diags) || dropped != 0 || !ok || counts.failed != 0 || counts.stopped != 0 ? 1
+                                                                                                : 0;
     mo_buffer_clear(&buffer);
     struct writer w = {.out = &buffer, .ok = true};
     if (json) {
@@ -650,8 +654,14 @@ int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command 
         unsigned_number(&w, written);
         text(&w, ",\"dropped\":");
         unsigned_number(&w, dropped);
-        if (command == MO_COMMAND_TEST)
-            text(&w, ",\"passed\":0,\"failed\":0,\"stopped\":0");
+        if (command == MO_COMMAND_TEST) {
+            text(&w, ",\"passed\":");
+            unsigned_number(&w, counts.passed);
+            text(&w, ",\"failed\":");
+            unsigned_number(&w, counts.failed);
+            text(&w, ",\"stopped\":");
+            unsigned_number(&w, counts.stopped);
+        }
         text(&w, ",\"status\":");
         unsigned_number(&w, (uint32_t)status);
         text(&w, "}\n");
@@ -661,6 +671,16 @@ int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command 
     }
     if (ok && buffer.length != 0)
         ok = w.ok && write_buffer(json ? output : errors, &buffer);
+    if (ok && !json && (counts.passed != 0 || counts.failed != 0 || counts.stopped != 0)) {
+        mo_buffer_clear(&buffer);
+        unsigned_number(&w, counts.passed);
+        text(&w, " passed, ");
+        unsigned_number(&w, counts.failed);
+        text(&w, " failed, ");
+        unsigned_number(&w, counts.stopped);
+        text(&w, " stopped\n");
+        ok = w.ok && write_buffer(output, &buffer);
+    }
     mo_buffer_free(&buffer);
     if (!ok) {
         (void)fputs("mo: could not write diagnostics\n", errors);

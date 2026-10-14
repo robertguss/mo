@@ -53,12 +53,17 @@ MO_MUST_USE const char *mo_version_line(void);
  * Missing files (including UINT32_MAX) are unavailable, not source indices. */
 MO_MUST_USE bool mo_render_diagnostic(const struct mo_sources *sources, const struct mo_diag *diag,
                                       bool json, struct mo_buffer *out);
+struct mo_test_totals {
+    uint32_t passed, failed, stopped;
+};
 /* Writes and flushes each complete record. Sorts diagnostics in place. Returns
  * 0 on success, 1 on diagnostics/drops/output failure. Text goes to errors,
- * JSON exclusively to output. JSON's version must have been written first. */
+ * JSON exclusively to output. JSON's version must have been written first.
+ * Optional test totals also determine status; NULL means no observations ran. */
 MO_MUST_USE bool mo_write_version(FILE *output, enum mo_command command);
 MO_MUST_USE int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command command,
-                                     const struct mo_sources *sources, struct mo_diags *diags);
+                                     const struct mo_sources *sources, struct mo_diags *diags,
+                                     const struct mo_test_totals *totals);
 struct mo_process;
 struct mo_defect;
 /* Structural VM report with terminal-safe text escaping. Borrows the stopped
