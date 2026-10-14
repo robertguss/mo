@@ -106,9 +106,12 @@ import spellings again or consume the checker's private import-use bookkeeping.
 Core module ownership, exports (including opaque versus exposed contents), source
 file indices, declaration/body spans and spec wording retain the declaring source.
 Nongeneric source calls, first-class references, records, choices and snapshots
-use the existing translation rules unchanged. Foreign generic uses, constant
-reads and direct imported initializer references remain explicit checker E1103;
-this integration does not add a new Core representation or reorder constants.
+use the existing translation rules unchanged. Certified imported generic
+function calls/values likewise reuse section 9's instances and scoped proofs,
+including returned/captured references and three-module propagation. Foreign
+generic nominal written annotation/construction/projection, constant reads and
+direct imported initializer references remain explicit checker E1103; this
+integration does not add a new Core representation or reorder constants.
 
 ## 3. Values and types
 
@@ -1149,6 +1152,14 @@ iteratively under the ability-path/work bounds. A composite proof for `List(U)`
 passed from `relay(U)` to `show(T)` retains relay's substitution for its parts,
 not show's unrelated T. FUNCTION parts use `part_parameters` to bind the
 customizer's own requirements; receiver parameter order need not be alphabetical.
+Imported calls use those same callee-owned keys and caller-supplied proof
+environments; sharing structurally equal actual-type proofs does not merge the
+keys or require pointer-equal actual types. Requesting ownership and defining
+file provenance are separate: `Main::Lib.offset(Int)` and
+`Bridge::Lib.offset(Int)` have different owners but retain Lib's declaration/body
+spans. Generated derived helpers retain their responsible use span, not a
+fictional source declaration. Only defining-module instances can appear in that
+module's exposed-function list; importing requester copies gain no export.
 Recursive derived graphs reserve helpers before walking parts. Missing keys
 refuse E1150, including Number/Equal operations that could otherwise be guessed
 from their substituted type. Native Order proofs preserve direct scalar

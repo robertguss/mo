@@ -462,6 +462,70 @@ MODULE_CASES = {
                    "examples\nscore(3, 11) == 32\nend\nleft * 7 + right\nend\n",
     }, {None: ["returned", "32"], "Math.score.example.1": ["returned", "Unit"],
         "Main.test.1": ["failed", "left 2:32,right 2:33,"]}),
+    "generic_keys": ({
+        "main.mo": "module Main\nuse Calc\n"
+                   "fn relay(value: A, tag: Z) : A where A: Number, Z: Text\n"
+                   "f = Calc.choose\nf(value, tag)\nend\n"
+                   "fn main() : Int\nrelay(13, true) * 3 + relay(17, false)\nend\n",
+        "calc.mo": "module Calc\nexpose choose\n"
+                   "fn choose(value: Z, tag: A) : Z where Z: Number, A: Text\n"
+                   "if \"#{tag}\" == \"true\": value + value else: value\nend\n",
+    }, {None: ["returned", "95"]}),
+    "generic_equal_actuals": ({
+        "main.mo": "module Main\nuse Calc{pair}\nfn main() : Int\n"
+                   "f = pair\n(a, b) = f(3, 17)\n(c, d) = pair(1.25, 19)\n"
+                   "if c == 2.5 and d == 57: a * 10 + b else: 1\nend\n",
+        "calc.mo": "module Calc\nexpose pair\n"
+                   "fn pair(left: Z, right: A) : (Z, A) where Z: Number, A: Number\n"
+                   "(left + left, right + right + right)\nend\n",
+    }, {None: ["returned", "111"]}),
+    "generic_proofs": ({
+        "main.mo": "module Main\nuse Calc\nstruct Pair(Z, A)\nfirst: Z\nsecond: A\nend\n"
+                   "fn to_text(pair: Pair(U, T)) : Text where U: Text, T: Text\n"
+                   "\"[#{pair.first}|#{pair.second}]\"\nend\nstruct Box\nvalue: Int\nend\n"
+                   "fn compare(a: Box, b: Box) : Ordering\n"
+                   "if a.value < b.value: Greater else: Less\nend\n"
+                   "fn main() : Int\np = Pair(first: true, second: 19)\n"
+                   "if Calc.show(p) == \"[true|19]\" "
+                   "and Calc.show(Pair(first: p, second: false)) == \"[[true|19]|false]\" "
+                   "and Calc.show([p]) == \"[[true|19]]\" "
+                   "and Calc.keep([3, 17]) == [3, 17] "
+                   "and Calc.ordered(Box(value: 3), Box(value: 17)) == false: 47 else: 1\nend\n",
+        "calc.mo": "module Calc\nexpose show, keep, ordered\n"
+                   "fn show(value: T) : Text where T: Text\n\"#{value}\"\nend\n"
+                   "fn keep(value: T) : T where T: Hash\n"
+                   "if value == value: value else: value\nend\n"
+                   "fn ordered(a: T, b: T) : Bool where T: Order\na < b\nend\n",
+    }, {None: ["returned", "47"]}),
+    "generic_escaped": ({
+        "main.mo": "module Main\nuse Calc\nuse Bridge{relay, concrete}\n"
+                   "fn wrap(f: fn(Int) : fn(Int) : Int, base: Int) : fn(Int) : Int\n"
+                   "fn(extra) f(base)(extra) end\nend\nfn main() : Int\n"
+                   "factory = Calc.offset\na = relay(3)\nb = concrete(5)\nc = wrap(factory, 17)\n"
+                   "if Calc.offset(1.25)(2.5) == 3.75: a(11) + b(7) + c(29) else: 1\nend\n",
+        "calc.mo": "module Calc\nexpose offset\n"
+                   "fn offset(value: T) : fn(T) : T where T: Number\n"
+                   "fn(extra) value + extra end\nend\n",
+        "bridge.mo": "module Bridge\nexpose relay, concrete\nuse Calc{offset}\n"
+                     "fn relay(value: U) : fn(U) : U where U: Number\nf = offset\nf(value)\nend\n"
+                     "fn concrete(value: Int) : fn(Int) : Int\noffset(value)\nend\n",
+    }, {None: ["returned", "72"]}),
+    "generic_specs": ({
+        "main.mo": "module Main\nuse Calc\ntest \"imported generic failure\"\n"
+                   "assert Calc.twice(3) == 7\nend\nfn main() : Int\n17\nend\n",
+        "calc.mo": "module Calc\nexpose twice\n"
+                   "fn twice(value: T) : T where T: Number\n"
+                   "examples\ntwice(3) == 6\nend\nvalue + value\nend\n",
+    }, {None: ["returned", "17"], "Calc.twice.example.1": ["returned", "Unit"],
+        "Main.test.1": ["failed", "left 1:6,right 1:7,"]}),
+    "generic_scalars": ({
+        "main.mo": "module Main\nuse Calc\nfn probe(big: BigInt, float: Float) : Int\n"
+                   "if Calc.twice(big) == 36893488147419103232 and Calc.twice(float) == -3.0 "
+                   "and Calc.twice(1.25) == 2.5: 83 else: 1\nend\n"
+                   "fn main() : Int\nprobe(0x10000000000000000, -1.5)\nend\n",
+        "calc.mo": "module Calc\nexpose twice\n"
+                   "fn twice(value: T) : T where T: Number\nvalue + value\nend\n",
+    }, {None: ["returned", "83"]}),
 }
 
 
@@ -490,13 +554,16 @@ def check_modules(driver, vm, root, world):
                     continue
                 span = meta[2][1]
                 original = originals[int(span[1])]
-                assert original.startswith(f"module {module[1]}\n".encode()), (name, meta)
+                declaring = original.split(b"\n", 1)[0].decode().removeprefix("module ")
+                generated = ".%" in fun[1]
+                prefix = (module[1] + "::" + declaring if "::" in fun[1] else module[1])
+                assert fun[1].startswith(prefix + "."), (name, module, meta)
                 start, end = int(span[2]), int(span[3])
                 assert 0 <= start < end <= len(original), (name, meta)
                 header = original[start:end].split(b"\n", 1)[0]
                 if fun[6][0] == "example":
                     assert meta[3] == ["some", original[start:end].decode()], (name, meta)
-                else:
+                elif not generated:
                     assert header.startswith((b"fn ", b"test ")), (name, header)
                 for optional in meta[4][1]:
                     if optional[0] == "some":
@@ -504,7 +571,8 @@ def check_modules(driver, vm, root, world):
                         assert node[1] == span[1], (name, meta, node)
                         assert 0 <= int(node[2]) <= int(node[3]) <= len(original), (name, node)
             exposed = [program[2][int(i)][1] for i in module[6]]
-            assert all(n.startswith(module[1] + ".") for n in exposed), (name, exposed)
+            assert all(n.startswith((module[1] + ".", module[1] + "::" + module[1] + "."))
+                       for n in exposed), (name, exposed)
         if name == "owners":
             assert {data[1] for data in program[1]} == {
                 "Left.Box", "Right.Box", "Left.Choice", "Right.Choice"}, program[1]
@@ -513,6 +581,11 @@ def check_modules(driver, vm, root, world):
         if name == "opaque":
             store = next(module for module in metadata[2] if module[1] == "Store")
             assert store[5] == [["0", "false"]], store
+        if name == "generic_escaped":
+            names = [fun[1] for fun in program[2]]
+            for instance in ("Main::Calc.offset(Int)", "Bridge::Calc.offset(Int)",
+                             "Main::Calc.offset(Decimal)", "Main::Bridge.relay(Int)"):
+                assert names.count(instance) == 1, (name, instance, names)
         for target, expected in selections.items():
             assert oracle(path, world, target) == expected, (name, target)
             runner = vm if target is None else vm.parent / "tests/test_vm.test"

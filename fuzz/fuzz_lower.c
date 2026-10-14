@@ -14,7 +14,8 @@ static void source_specs(void *argument) {
     struct mo_buffer text;
     mo_buffer_init(&text, 4096);
     MO_ASSERT(mo_buffer_append_text(
-        &text, "module Main\nuse Peer{Box, build, read}\ncomputed = source + 1\nsource = "));
+        &text,
+        "module Main\nuse Peer{Box, build, read, spread}\ncomputed = source + 1\nsource = "));
     MO_ASSERT(mo_buffer_append_uint(&text, input->size == 0 ? 0 : input->bytes[0]));
     MO_ASSERT(mo_buffer_append_text(
         &text, "\nmagnitude = Int.abs\nlow = Int.min\nhigh = Int.max\n"
@@ -54,6 +55,10 @@ static void source_specs(void *argument) {
                                            "assert wrap(magnitude)(-source) == source\n"
                                            "assert snapshot(build(source))() == source\n"
                                            "assert Peer.read(Peer.build(computed)) == computed\n"
+                                           "assert Peer.choose(source, true) == source + source\n"
+                                           "assert Peer.choose(1.25, false) == 1.25\n"
+                                           "assert spread(source, computed) == "
+                                           "(source + source, computed + computed + computed)\n"
                                            "assert (reader() or 9) == 1\nend\n"
                                            "fn main() : Int\n17\nend\n"));
     struct mo_arena frontend, output;
@@ -67,9 +72,13 @@ static void source_specs(void *argument) {
     MO_ASSERT(mo_sources_add_bytes(&sources, "main.mo", text.bytes, text.length, &file, &error));
     struct mo_module_syntax *modules[2] = {mo_parse(&frontend, &sources, file, &diags), NULL};
     static const uint8_t peer[] =
-        "module Peer\nexpose Box(..), build, read\nstruct Box\nvalue: Int\nend\n"
+        "module Peer\nexpose Box(..), build, read, choose, spread\nstruct Box\nvalue: Int\nend\n"
         "fn build(value: Int) : Box\nBox(value: value)\nend\n"
-        "fn read(box: Box) : Int\nbox.value\nend\n";
+        "fn read(box: Box) : Int\nbox.value\nend\n"
+        "fn choose(value: Z, tag: A) : Z where Z: Number, A: Text\n"
+        "if \"#{tag}\" == \"true\": value + value else: value\nend\n"
+        "fn spread(left: Z, right: A) : (Z, A) where Z: Number, A: Number\n"
+        "(left + left, right + right + right)\nend\n";
     MO_ASSERT(mo_sources_add_bytes(&sources, "peer.mo", peer, sizeof peer - 1, &file, &error));
     modules[1] = mo_parse(&frontend, &sources, file, &diags);
     MO_ASSERT(modules[0] != NULL && modules[1] != NULL && !mo_diags_any(&diags));
