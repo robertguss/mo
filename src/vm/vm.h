@@ -76,6 +76,40 @@ MO_MUST_USE enum mo_outcome mo_call_main(struct mo_process *process, uint32_t fu
 /* C harness hook, not a Mo resource limit. Default is unlimited. Exhaustion
  * produces an internal stop before the next instruction (for bounded fuzzing). */
 void mo_process_instruction_limit(struct mo_process *process, uint64_t instructions);
+/* Exact image name bytes (length authoritative), file type index and borrowed
+ * cell. The view itself lasts only for the callback; its contents belong to
+ * the stopped process/image and never transfer ownership. */
+struct mo_defect_variable {
+    const struct mo_defect_frame *frame;
+    const uint8_t *name;
+    size_t name_length;
+    uint32_t type;
+    struct mo_cell value;
+};
+enum mo_defect_variables_result {
+    MO_DEFECT_VARIABLES_COMPLETE,
+    MO_DEFECT_VARIABLES_LIMIT,
+    MO_DEFECT_VARIABLES_STOPPED,
+    MO_DEFECT_VARIABLES_UNAVAILABLE
+};
+/* NULL process selects defect->process, including initialization failures.
+ * Visit frames top first, names in debug-table order, after replay and live
+ * state/lifetime filtering. count bounds delivered variables; work charges
+ * each frame/name and reserves (registers + code words + 32) *
+ * (MO_LIMIT_VERIFY_WORK_PER_WORD + 1) before each replay. This conservatively
+ * bounds replay, its boundary scan and readability initialization; callback
+ * printing/work needs the caller's own budget.
+ * False from visit returns STOPPED; exhausted budgets return LIMIT; failed
+ * replay/allocation returns UNAVAILABLE, never an empty COMPLETE. Any prefix
+ * already delivered remains valid; COMPLETE with no callbacks means no names.
+ * No value is duplicated. Copied cells/names/frames remain borrowed until
+ * process_free (image_free for initialization), with C-owned borrowed call
+ * arguments kept alive too. Callbacks may print structurally with
+ * mo_value_print, never user Text customizers; they must not mutate/free the
+ * process or values, resume execution or reenter this visitor. */
+MO_MUST_USE enum mo_defect_variables_result mo_visit_defect_variables(
+    const struct mo_process *process, const struct mo_defect *defect, uint32_t count, uint64_t work,
+    bool (*visit)(const struct mo_defect_variable *variable, void *context), void *context);
 /* NULL process selects defect->process, including an initialization defect.
  * Append at most MO_LIMIT_DEFECT_TEXT_SIZE bytes, reason and top frame first.
  * Long stacks elide middle frames; details truncate; variables are best-effort
