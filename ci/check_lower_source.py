@@ -534,6 +534,53 @@ MODULE_CASES = {
         "shapes.mo": "module Shapes\nexpose Pair(..)\nstruct Pair(Z, A)\n"
                      "first: Z\nsecond: A\nend\n",
     }, {None: ["returned", "37"]}),
+    "nominal_owners": ({
+        "main.mo": "module Main\nuse Left\nuse Right\n"
+                   "fn left(value: Left.Choice(Int, Bool)) : Int\ncase value\n"
+                   "Left.Value(pair: p): if p.second: p.first * 10 + 7 else: p.first - 3\n"
+                   "Left.Empty: 1\nend\nend\n"
+                   "fn right(value: Right.Choice(Int, Bool)) : Int\ncase value\n"
+                   "Right.Empty: 2\nRight.Value(p): if p.first: p.second * 2 + 5 else: 3\nend\nend\n"
+                   "fn main() : Int\n"
+                   "left(Left.Value(pair: Left.Pair(second: true, first: 3))) + "
+                   "right(Right.Value(Right.Pair(second: 17, first: true))) + "
+                   "left(Left.Empty) + right(Right.Empty)\nend\n",
+        "left.mo": "module Left\nexpose Pair(..), Choice(..)\n"
+                   "struct Pair(Z, A)\nfirst: Z\nsecond: A\nend\n"
+                   "enum Choice(Z, A)\nEmpty\nValue(pair: Pair(Z, A))\nend\n",
+        "right.mo": "module Right\nexpose Pair(..), Choice(..)\n"
+                    "enum Choice(Z, A)\nValue(Pair(Z, A))\nEmpty\nend\n"
+                    "struct Pair(Z, A)\nfirst: A\nsecond: Z\nend\n",
+    }, {None: ["returned", "79"]}),
+    "nominal_instances": ({
+        "main.mo": "module Main\nuse Shapes{Pair}\nuse Bridge\n"
+                   "fn relay(pair: Pair(A, Z)) : Pair(A, Z) where A: Number\n"
+                   "Shapes.bump(pair)\nend\nfn main() : Int\n"
+                   "a = relay(Pair(second: true, first: 3))\n"
+                   "b = Shapes.bump(Pair(first: 7, second: 11))\n"
+                   "c = Shapes.bump(Pair(first: 1.25, second: 19))\n"
+                   "d = Bridge.entry()\ne = Shapes.bump(Shapes.bump(Pair(first: 3, second: true)))\n"
+                   "if c.first == 2.5 and c.second == 19 and a.second and not d.second\n"
+                   "a.first * 10 + b.first + b.second + d.first + e.first\nelse\n1\nend\nend\n",
+        "shapes.mo": "module Shapes\nexpose Pair(..), bump\nstruct Pair(Z, A)\n"
+                     "first: Z\nsecond: A\nend\n"
+                     "fn bump(pair: Pair(Z, A)) : Pair(Z, A) where Z: Number\n"
+                     "examples\nbump(Pair(first: 3, second: true)).first == 6\nend\n"
+                     "Pair(second: pair.second, first: pair.first + pair.first)\nend\n",
+        "bridge.mo": "module Bridge\nexpose entry\nuse Shapes{Pair, bump}\n"
+                     "fn relay(pair: Pair(T, U)) : Pair(T, U) where T: Number\nbump(pair)\nend\n"
+                     "fn entry() : Pair(Int, Bool)\nrelay(Pair(first: 5, second: false))\nend\n",
+    }, {None: ["returned", "107"], "Shapes.bump.example.1": ["returned", "Unit"]}),
+    "nominal_opaque": ({
+        "main.mo": "module Main\nuse Store{Token, read}\nuse Bridge{forward}\n"
+                   "fn keep(token: Token(Int)) : Token(Int)\ntoken\nend\n"
+                   "fn main() : Int\nread(keep(forward(43)))\nend\n",
+        "bridge.mo": "module Bridge\nexpose forward\nuse Store{Token, open}\n"
+                     "fn forward(value: Int) : Token(Int)\nopen(value)\nend\n",
+        "store.mo": "module Store\nexpose Token, open, read\nstruct Token(T)\nvalue: T\nend\n"
+                    "fn open(value: T) : Token(T)\nToken(value: value)\nend\n"
+                    "fn read(token: Token(T)) : T\ntoken.value\nend\n",
+    }, {None: ["returned", "43"]}),
 }
 
 
@@ -555,6 +602,8 @@ def check_modules(driver, vm, root, world):
         originals = [pathlib.Path(p).read_bytes() for p in metadata[1]]
         assert {pathlib.Path(p).name for p in metadata[1]} == set(files), name
         for module in metadata[2]:
+            for index in module[2]:
+                assert program[1][int(index)][1].startswith(module[1] + "."), (name, module)
             for index in module[3]:
                 fun, meta = program[2][int(index)], metadata[3][int(index)]
                 assert fun[5] == module[1], (name, module, fun)
@@ -594,6 +643,26 @@ def check_modules(driver, vm, root, world):
             for instance in ("Main::Calc.offset(Int)", "Bridge::Calc.offset(Int)",
                              "Main::Calc.offset(Decimal)", "Main::Bridge.relay(Int)"):
                 assert names.count(instance) == 1, (name, instance, names)
+        if name == "nominal_written":
+            assert [data[1] for data in program[1]] == ["Shapes.Pair(Int, Bool)"], program[1]
+            assert program[1][0][2] == [["Ctor", "Pair", [["first", ["int"]],
+                                                        ["second", ["bool"]]]]], program[1]
+        if name == "nominal_owners":
+            assert {data[1] for data in program[1]} == {
+                "Left.Pair(Int, Bool)", "Left.Choice(Int, Bool)",
+                "Right.Pair(Int, Bool)", "Right.Choice(Int, Bool)"}, program[1]
+        if name == "nominal_instances":
+            assert {data[1] for data in program[1]} == {
+                "Shapes.Pair(Int, Bool)", "Shapes.Pair(Int, Int)",
+                "Shapes.Pair(Decimal, Int)"}, program[1]
+            names = [fun[1] for fun in program[2]]
+            for instance in ("Main::Shapes.bump(Bool, Int)", "Bridge::Shapes.bump(Bool, Int)"):
+                assert names.count(instance) == 1, (name, instance, names)
+            assert sum(fun[6][0] == "example" for fun in program[2]) == 1, (name, names)
+        if name == "nominal_opaque":
+            assert [data[1] for data in program[1]] == ["Store.Token(Int)"], program[1]
+            store = next(module for module in metadata[2] if module[1] == "Store")
+            assert store[5] == [["0", "false"]], store
         for target, expected in selections.items():
             assert oracle(path, world, target) == expected, (name, target)
             runner = vm if target is None else vm.parent / "tests/test_vm.test"
