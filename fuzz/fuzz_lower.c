@@ -15,11 +15,11 @@ static void source_specs(void *argument) {
     mo_buffer_init(&text, 4096);
     MO_ASSERT(mo_buffer_append_text(
         &text, "module Main\nuse Peer{Box, Pair, Choice, build, read, spread}\n"
-               "computed = source + 1\nsource = "));
+               "computed = source + Peer.base + 1\nsource = "));
     MO_ASSERT(mo_buffer_append_uint(&text, input->size == 0 ? 0 : input->bytes[0]));
     MO_ASSERT(mo_buffer_append_text(
         &text, "\nmagnitude = Int.abs\nlow = Int.min\nhigh = Int.max\n"
-               "reader = fn() Some(try Some(1)) end\n"
+               "reader = fn() Some(try Some(1)) end\nbuilder = Peer.build\n"
                "fn make(base: T) : fn(T) : fn() : T where T: Number\n"
                "fn(extra) fn() base + extra end end\nend\n"
                "fn wrap(action: fn(Int) : Int) : fn(Int) : Int\n"
@@ -48,7 +48,7 @@ static void source_specs(void *argument) {
     MO_ASSERT(mo_buffer_append_text(&text, "end\n(left + left, right)\nend\n"
                                            "test \"late concrete use\"\n"
                                            "assert pair(3, false) == (6, false)\n"
-                                           "assert computed == source + 1\n"
+                                           "assert computed == source + Peer.base + 1\n"
                                            "assert magnitude(-source) == source\n"
                                            "assert Int.min(-source, 7) == low(7, -source)\n"
                                            "assert source.max(-7) == high(-7, source)\n"
@@ -56,6 +56,7 @@ static void source_specs(void *argument) {
                                            "assert make(1.25)(2.5)() == 3.75\n"
                                            "assert wrap(magnitude)(-source) == source\n"
                                            "assert snapshot(build(source))() == source\n"
+                                           "assert snapshot(builder(source))() == source\n"
                                            "assert Peer.read(Peer.build(computed)) == computed\n"
                                            "assert Peer.choose(source, true) == source + source\n"
                                            "assert Peer.choose(1.25, false) == 1.25\n"
@@ -78,7 +79,8 @@ static void source_specs(void *argument) {
     MO_ASSERT(mo_sources_add_bytes(&sources, "main.mo", text.bytes, text.length, &file, &error));
     struct mo_module_syntax *modules[2] = {mo_parse(&frontend, &sources, file, &diags), NULL};
     static const uint8_t peer[] =
-        "module Peer\nexpose Box(..), Pair(..), Choice(..), build, read, choose, spread\n"
+        "module Peer\nexpose Box(..), Pair(..), Choice(..), build, read, choose, spread, base\n"
+        "base = 7\n"
         "struct Box\nvalue: Int\nend\nstruct Pair(Z, A)\nfirst: Z\nsecond: A\nend\n"
         "enum Choice(T)\nVacant\nHit(T)\nend\n"
         "fn build(value: Int) : Box\nBox(value: value)\nend\n"

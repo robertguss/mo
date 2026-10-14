@@ -952,9 +952,12 @@ dependency reordering is added. Certified imported generic function calls and
 values reuse the existing instance/proof machinery below, including captured,
 returned and higher-order references. Certified foreign generic nominal written
 annotations, construction, projection and choice patterns use those same
-declaring identities and layouts. Foreign constant reads and direct imported
-initializer references remain checker E1103; Maps and the other existing
-staged routes are unchanged.
+declaring identities and layouts. Certified foreign constant reads and direct
+imported initializer calls/function values use the same resolved symbols and
+constant prefixes below; imports do not add exports or change initialization
+order. Unresolved higher-order/returned/anonymous initializer calls and executed
+abstract Text/Order dependencies remain checker E1103; Maps and the other
+existing staged routes are unchanged.
 
 Core lookup/display names retain the declaring module and source name;
 overloads add `@Receiver`. Generic function code is keyed by (requesting
@@ -1071,6 +1074,13 @@ use the full constant prefix; an arena-backed work queue tightens functions
 reachable from initializer i to prefix i and propagates through calls and
 closure bodies. Metadata retains module/source order separately from init order,
 and initializer nodes carry the same span/binder/closure metadata as functions.
+Global names and initializer metadata owners come from the constant's declaring
+symbol/module, including same-spelled foreign constants. Initializer body spans
+and lifted closure names likewise retain that source, not the importer's file.
+The source corpus pins independent ready ties in a transitive diamond and
+first-stop order, as well as owned generic nominal/captured Text values after
+frontend release. A numerically successful metadata-owner mutation must still
+fail the provenance audit.
 Only zero-operand constant reads become Core globals; calls through a constant
 function value become applications, never constructor expressions. Core closures
 capture their creation prefix. A function-valued initializer whose body or
