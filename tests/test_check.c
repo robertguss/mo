@@ -402,6 +402,75 @@ static void imported_function(void) {
     MO_ASSERT(unlink(main_path) == 0 && unlink(other_path) == 0 && rmdir(folder) == 0);
 }
 
+static void imported_generic(void) {
+    char folder[] = "/tmp/mo-generic-imports-XXXXXX", main_path[128], other_path[128];
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    int n = snprintf(main_path, sizeof(main_path), "%s/main.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(main_path));
+    n = snprintf(other_path, sizeof(other_path), "%s/numbers.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(other_path));
+    const char other[] = "module Numbers\nexpose twice\n"
+                         "fn twice(value: T) : T where T: Number\nvalue + value\nend\n";
+    write_file(other_path, (const uint8_t *)other, sizeof(other) - 1);
+    for (unsigned required = 0; required < 2; required++) {
+        char main[512];
+        n = snprintf(main, sizeof(main),
+                     "module Main\nuse Numbers{twice}\n"
+                     "fn relay(value: T) : T%s\ntwice(value)\nend\n"
+                     "fn main() : Int\nrelay(19)\nend\n",
+                     required != 0 ? " where T: Number" : "");
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(main));
+        write_file(main_path, (const uint8_t *)main, (size_t)n);
+        struct fixture f;
+        init(&f, MO_CLI_CHECK_SIZE);
+        struct mo_module_set *set =
+            mo_load_program(&f.syntax, &f.sources, main_path, NULL, &f.diags);
+        MO_ASSERT(set != NULL && !mo_diags_any(&f.diags));
+        struct mo_program *program = mo_check(&f.arena, set, &f.diags);
+        if (required == 0) {
+            CHECK(program == NULL && f.diags.count == 1 &&
+                  f.diags.items[0].code == MO_CODE_ABILITY_MISSING);
+        } else {
+            CHECK(program != NULL && !mo_diags_any(&f.diags));
+            if (program != NULL) {
+                const struct mo_symbol *twice =
+                    mo_find_symbol(&program->interfaces->scopes[1], (const uint8_t *)"twice", 5);
+                const struct mo_checked_function *callee = NULL, *caller = NULL;
+                for (uint32_t i = 0; i < program->function_count; i++) {
+                    const struct mo_checked_function *fn = &program->functions[i];
+                    if (fn->signature->function == twice)
+                        callee = fn;
+                    else if (strcmp(fn->signature->function->name, "relay") == 0)
+                        caller = fn;
+                }
+                MO_ASSERT(callee != NULL && caller != NULL);
+                const struct mo_source_type *key = callee->signature->type->arguments[0];
+                const struct mo_source_type *actual = caller->signature->type->arguments[0];
+                CHECK(key != actual && key->declaration == twice &&
+                      actual->declaration == caller->signature->function);
+                bool found = false;
+                for (uint32_t i = 0; i < caller->body.count; i++) {
+                    const struct mo_checked_expression *row = &caller->body.items[i];
+                    if (row->symbol != twice)
+                        continue;
+                    MO_ASSERT(row->arguments.count == 1 && row->ability_count == 1);
+                    CHECK(row->arguments.items[0].parameter == key &&
+                          row->arguments.items[0].type == actual);
+                    CHECK(row->abilities[0].parameter == key &&
+                          row->abilities[0].operand == UINT32_MAX &&
+                          row->abilities[0].implementation->kind == MO_ABILITY_PARAMETER &&
+                          row->abilities[0].implementation->ability == MO_SOURCE_NUMBER &&
+                          row->abilities[0].implementation->type == actual);
+                    found = true;
+                }
+                CHECK(found);
+            }
+        }
+        finish(&f);
+    }
+    MO_ASSERT(unlink(main_path) == 0 && unlink(other_path) == 0 && rmdir(folder) == 0);
+}
+
 static void import_sources(void) {
     static const char library[] =
         "module Shapes\nexpose Shape(..), make, area, Token, open, read, Choice(..), pick, _extra\n"
@@ -500,9 +569,8 @@ static void import_sources(void) {
          "use Shapes\nstruct Shape\nvalue: Int\nend\n"
          "fn main() : Int\nShapes.area(Shape(value: 19))\nend\n",
          NULL, NULL, MO_CODE_TYPE_MISMATCH},
-        {"generic function staged", "use Shapes{identity}\nfn main() : Int\nidentity(19)\nend\n",
-         "module Shapes\nexpose identity\nfn identity(value: T) : T\nvalue\nend\n", NULL,
-         MO_CODE_CHECK_UNFINISHED},
+        {"generic function", "use Shapes{identity}\nfn main() : Int\nidentity(19)\nend\n",
+         "module Shapes\nexpose identity\nfn identity(value: T) : T\nvalue\nend\n", NULL, 0},
         {"generic annotation staged",
          "use Shapes{Box}\nfn keep(value: Box(Int)) : Box(Int)\n"
          "value\nend\nfn main()\nend\n",
@@ -1564,6 +1632,7 @@ static void run_tests(void *argument) {
     corpus();
     samples();
     imported_function();
+    imported_generic();
     import_sources();
     import_cap();
     captured_parameter();

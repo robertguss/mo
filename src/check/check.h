@@ -591,8 +591,10 @@ struct mo_program {
  * unresolved indirect-call or abstract callback dependencies remain E1103.
  * Imports retain declaring symbol/type identities and count annotation/value references;
  * unused written module/name routes report E0093 after successful body/spec checking.
- * Cross-application generic values/nominal annotations and constant reads/direct
- * initializer calls remain E1103. Existing implicit library routes are unchanged.
+ * Imported generic functions use their declaring signature's parameter keys and
+ * the caller's actual-type ability proofs, as local uses do. Foreign generic nominal
+ * annotations/layouts and constant reads/direct initializer references remain E1103.
+ * Existing implicit library routes are unchanged.
  * Valid unfinished entry forms, spec-only capability
  * operations and unfinished body forms return E1103.
  * Spec checking checks anchor typing, completeness and links but executes no source code:

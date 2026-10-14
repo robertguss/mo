@@ -407,12 +407,17 @@ The usage index is sorted by importing module and written offset; binary
 lookups and the final linear audit spend the shared program work budget.
 No symbol or nominal type identity is rewritten.
 
-This checked-source slice certifies nongeneric application-module imports.
-Cross-application generic function values, written generic nominal annotations,
-generic construction/projection, constant reads and direct initializer calls
-remain explicit E1103 routes. Partial signature/inference APIs and the already
+Imported generic function calls and values use the same instantiation as local
+functions: substitutions and type-only ability-use keys belong to the selected
+declaring signature; their implementations prove the caller's actual types.
+Two modules' same-spelled parameters are distinct, including when an actual
+type is itself a caller parameter. Neither imports nor first-class function
+values rewrite those owners or introduce another proof carrier.
+Written foreign generic nominal annotations, generic construction/projection,
+foreign constant reads and direct initializer function references remain
+explicit E1103 routes. Partial signature/inference APIs and the already
 supported implicit library routes retain their previous behavior. No new
-cross-module constant ordering or generic proof carrier is introduced.
+cross-module constant ordering is introduced.
 
 Interface work is bounded by source declarations and imported names, not
 pairwise name scans. Each choice's case indices are computed once in its
