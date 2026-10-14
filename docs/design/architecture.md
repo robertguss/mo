@@ -1773,20 +1773,24 @@ Failures retain the enclosing assert span, and stops retain the closure's origin
 source span, full stack and readable captured values through the existing visitor.
 This integration changes no observation names, selection, outcomes or JSON fields.
 
-**Imported declarations in tools.** Certified nongeneric and generic-function
-imports use that same whole-program pipeline, with canonical declaring symbols and types;
-tools do not reconstruct bindings from written import names. Listed aliases and
-qualified calls therefore reach the same declaration. Observation names and
+**Imported declarations in tools.** Certified nongeneric, generic-function and
+generic nominal imports use that same whole-program pipeline, with canonical
+declaring symbols and types; tools do not reconstruct bindings from written
+import names. Listed aliases and qualified calls therefore reach the same
+declaration. Observation names and
 `--in MODULE` use the declaring module, not the importing entry module. Failed
 assertions retain the caller's source location; a stopped imported closure retains
 its original module's span and the complete cross-module stack. The whole-program
 unused-import audit precedes selection, including `--list`, so E0093 at the written
 name takes precedence over an unknown selector and suppresses all observations and
 both emitted artifacts. Imports used only in tests count as used. No new tools
-code or JSON field is required. Generic nominal annotations/construction/projection,
-foreign constant reads and direct imported initializer references remain the
-checker's E1103 staging routes (3.2), as do broad Text-only abstract captures.
-This consumer slice does not widen those boundaries or settle promise deadlines.
+code or JSON field is required. Imported generic nominal annotations,
+construction, projection and choice patterns retain the defining data module's
+canonical layout, declaration-ordered keys and exposure; requester-owned function
+instances do not give importers data exports (3.2, 4.3). Foreign constant reads
+and direct imported initializer references remain the checker's E1103 staging routes,
+as do broad Text-only abstract captures. Nominal imports do not widen the scalar
+promise-input boundary or change the settled monotonic deadline policy (10.1).
 
 Generic substitutions retain the callee signature's scoped keys; actual ability
 proofs retain the caller environment, including its customizers. Requester-owned
