@@ -356,6 +356,36 @@ static void write_file(const char *path, const uint8_t *bytes, size_t length) {
     MO_ASSERT(fclose(file) == 0);
 }
 
+static void captured_parameter(void) {
+    char folder[] = "/tmp/mo-captures-XXXXXX";
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    char path[128];
+    int length = snprintf(path, sizeof(path), "%s/main.mo", folder);
+    MO_ASSERT(length > 0 && (size_t)length < sizeof(path));
+    const char source[] = "module Main\nfn make(value: Int) : fn() : Int\n"
+                          "fn() value + value end\nend\nfn main() : Int\nmake(19)()\nend\n";
+    write_file(path, (const uint8_t *)source, sizeof(source) - 1);
+    struct fixture f;
+    init(&f, 64 << 20);
+    struct mo_module_set *set = mo_load_program(&f.syntax, &f.sources, path, NULL, &f.diags);
+    MO_ASSERT(set != NULL && f.diags.count == 0);
+    struct mo_program *program = mo_check(&f.arena, set, &f.diags);
+    CHECK(program != NULL && f.diags.count == 0);
+    if (program != NULL) {
+        const struct mo_checked_function *make = &program->functions[0];
+        const struct mo_checked_lambda *lambda = NULL;
+        for (uint32_t i = 0; i < make->body.count; i++)
+            if (make->body.items[i].lambda != NULL)
+                lambda = make->body.items[i].lambda;
+        MO_ASSERT(lambda != NULL);
+        CHECK(lambda->capture_count == 1);
+        if (lambda->capture_count == 1)
+            CHECK(lambda->captures[0] == make->parameters[0]);
+    }
+    finish(&f);
+    MO_ASSERT(unlink(path) == 0 && rmdir(folder) == 0);
+}
+
 static void header_lookahead(void) {
     char folder[] = "/tmp/mo-check-header-XXXXXX";
     MO_ASSERT(mkdtemp(folder) != NULL);
@@ -1099,6 +1129,7 @@ static void run_tests(void *argument) {
     interfaces();
     corpus();
     samples();
+    captured_parameter();
     arena_limits();
     header_lookahead();
     library_collision();

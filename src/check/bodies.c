@@ -55,6 +55,15 @@ struct local {
 struct emitted_lambda {
     struct mo_checked_lambda output;
     struct note **parameters;
+    struct emitted_lambda *parent;
+    struct capture *captures;
+    uint32_t depth;
+};
+
+struct capture {
+    struct local *local;
+    struct mo_span use;
+    struct capture *next;
 };
 
 struct emitted_match {
@@ -159,6 +168,7 @@ struct inference {
     struct dispatch *dispatches, *last_dispatch;
     struct failure_check *failures;
     struct type_pair *equal_types;
+    struct emitted_lambda *lambda_frame;
     struct term *result;
     struct mo_span span;
     struct mo_diag error;
@@ -848,6 +858,43 @@ static MO_MUST_USE bool leave(struct inference *p, struct local *mark) {
     return true;
 }
 
+static MO_MUST_USE bool capture_local(struct inference *p, struct local *local,
+                                      struct mo_span use) {
+    for (struct emitted_lambda *lambda = p->lambda_frame;
+         lambda != NULL && local->function < lambda->depth; lambda = lambda->parent) {
+        struct capture **at = &lambda->captures;
+        while (*at != NULL && (*at)->local != local) {
+            if (!work(p))
+                return false;
+            at = &(*at)->next;
+        }
+        struct capture *value = *at;
+        if (value != NULL) {
+            if (value->use.start <= use.start)
+                continue;
+            *at = value->next;
+        } else {
+            if (lambda->output.capture_count == MO_LIMIT_FIELDS)
+                return problem(p, MO_CODE_TOO_MANY_FIELDS, use,
+                               "an anonymous function captures too many values", NULL, NULL);
+            value = allocate(p, 1, sizeof(*value), _Alignof(struct capture));
+            if (value == NULL)
+                return false;
+            lambda->output.capture_count++;
+        }
+        *value = (struct capture){.local = local, .use = use};
+        at = &lambda->captures;
+        while (*at != NULL && (*at)->use.start < use.start) {
+            if (!work(p))
+                return false;
+            at = &(*at)->next;
+        }
+        value->next = *at;
+        *at = value;
+    }
+    return true;
+}
+
 static MO_MUST_USE const struct mo_symbol *
 find_symbol(const struct mo_module_scope *scope, const struct mo_syntax *name, uint32_t *count) {
     const struct mo_symbol *s =
@@ -1152,9 +1199,8 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
         struct name_slot *s = slot(p, node, false);
         if (s != NULL && s->active != NULL) {
             if (p->checked && s->active->function != p->lambda) {
-                bool reported = unfinished(p);
-                (void)reported;
-                return (struct value){0};
+                if (!capture_local(p, s->active, node->span))
+                    return (struct value){0};
             }
             s->active->used = true;
             return (struct value){
@@ -2811,12 +2857,17 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             if (p->failed)
                 return (struct value){0};
             *lambda = (struct emitted_lambda){.output = {.parameter_count = parameters->count},
-                                              .parameters = notes};
+                                              .parameters = notes,
+                                              .parent = p->lambda_frame,
+                                              .depth = p->lambda + 1};
             emitted.graph->lambda = lambda;
             p->lambda_count++;
         }
         struct local *mark = p->locals;
         struct term *old_result = p->result;
+        struct emitted_lambda *old_frame = p->lambda_frame;
+        if (p->checked)
+            p->lambda_frame = emitted.graph->lambda;
         uint32_t old_loops = p->loops;
         p->loops = 0;
         p->lambda++;
@@ -2833,6 +2884,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         if (body.type == NULL || !leave(p, mark))
             return (struct value){0};
         p->result = old_result;
+        p->lambda_frame = old_frame;
         p->loops = old_loops;
         p->lambda--;
         if (p->checked)
@@ -3434,6 +3486,24 @@ static MO_MUST_USE bool finish_notes(struct inference *p, struct mo_inferred_exp
     }
     MO_ASSERT(p->partial || i == p->count);
     return p->error.code == 0;
+}
+
+static MO_MUST_USE bool finish_captures(struct inference *p) {
+    for (struct note *n = p->notes; n != NULL; n = n->next) {
+        if (n->graph == NULL || n->graph->lambda == NULL)
+            continue;
+        for (struct capture *c = n->graph->lambda->captures; c != NULL; c = c->next) {
+            p->span = c->use;
+            const struct mo_source_type *type = c->local->binding->output.type;
+            MO_ASSERT(type != NULL);
+            bool scalar = type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX &&
+                          (strcmp(type->name, "Int") == 0 || strcmp(type->name, "Text") == 0 ||
+                           strcmp(type->name, "Bool") == 0);
+            if (c->local->variable || (!scalar && type->kind != MO_SOURCE_FUNCTION))
+                return unfinished(p);
+        }
+    }
+    return true;
 }
 
 /* Check only complete, independently typed matches before any retained error.
@@ -4534,6 +4604,8 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
     }
     if (p.error.code != 0)
         goto failed;
+    if (!finish_captures(&p))
+        goto failed;
     if (checked != NULL) {
         struct mo_checked_expression *rows =
             allocate(&p, p.count, sizeof(*rows), _Alignof(struct mo_checked_expression));
@@ -4684,6 +4756,18 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
                     bound[i] = parameter == NULL ? NULL : &bindings[parameter->binding_index];
                 }
                 lambda->output.parameters = bound;
+                const struct mo_checked_binding **captures =
+                    allocate(&p, lambda->output.capture_count, sizeof(*captures),
+                             _Alignof(const struct mo_checked_binding *));
+                if (captures == NULL)
+                    goto failed;
+                uint32_t at = 0;
+                for (const struct capture *c = lambda->captures; c != NULL; c = c->next) {
+                    MO_ASSERT(c->local->binding->binding_index < binding_count);
+                    captures[at++] = &bindings[c->local->binding->binding_index];
+                }
+                MO_ASSERT(at == lambda->output.capture_count);
+                lambda->output.captures = captures;
                 lambda->output.body = operands[0];
                 g->output.lambda = &lambda->output;
             }
