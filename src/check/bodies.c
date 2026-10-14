@@ -46,6 +46,7 @@ struct local {
     struct local *previous;
     struct local *next;
     struct note *binding;
+    struct capture_write *writes;
     uint32_t function;
     uint32_t pattern_group, pattern_alternative;
     bool variable;
@@ -56,7 +57,11 @@ struct emitted_lambda {
     struct mo_checked_lambda output;
     struct note **parameters;
     struct emitted_lambda *parent;
+    struct emitted_lambda *next;
     struct capture *captures;
+    const struct mo_syntax *syntax;
+    struct capture_loop *loop;
+    struct capture_path *path;
     uint32_t depth;
 };
 
@@ -64,6 +69,23 @@ struct capture {
     struct local *local;
     struct mo_span use;
     struct capture *next;
+};
+
+struct capture_loop {
+    const struct mo_syntax *syntax;
+    struct capture_loop *parent;
+};
+
+struct capture_path {
+    const struct mo_syntax *group;
+    uint32_t arm;
+    struct capture_path *parent;
+};
+
+struct capture_write {
+    const struct mo_syntax *syntax, *target;
+    struct capture_path *path;
+    struct capture_write *next;
 };
 
 struct emitted_match {
@@ -168,7 +190,9 @@ struct inference {
     struct dispatch *dispatches, *last_dispatch;
     struct failure_check *failures;
     struct type_pair *equal_types;
-    struct emitted_lambda *lambda_frame;
+    struct emitted_lambda *lambda_frame, *lambdas;
+    struct capture_loop *capture_loop;
+    struct capture_path *capture_path;
     struct term *result;
     struct mo_span span;
     struct mo_diag error;
@@ -236,6 +260,9 @@ static MO_MUST_USE bool problem(struct inference *p, uint16_t code, struct mo_sp
         : code == MO_CODE_CALL_ARGUMENTS       ? "pass one positional argument per parameter"
         : code == MO_CODE_UNUSED_VALUE         ? "not Unit and not used"
         : code == MO_CODE_NOT_VARIABLE         ? "no assignable var here"
+        : code == MO_CODE_LAMBDA_WRITE         ? "an anonymous function can't assign a var"
+        : code == MO_CODE_CAPABILITY_CAPTURE   ? "pass capabilities as parameters instead"
+        : code == MO_CODE_CAPTURE_ASSIGNMENT   ? "copy this value into a name first"
         : code == MO_CODE_EXIT_OUTSIDE_LOOP    ? "no enclosing loop in this function"
         : code == MO_CODE_LITERAL_RANGE        ? "outside its inferred numeric range"
         : code == MO_CODE_TUPLE_POSITION       ? "part index is outside this tuple"
@@ -249,9 +276,11 @@ static MO_MUST_USE bool problem(struct inference *p, uint16_t code, struct mo_sp
         : code == MO_CODE_CASE_INCOMPLETE      ? "a possible value isn't covered"
         : code == MO_CODE_PATTERN_CONSTRUCTOR  ? "not a record or case constructor"
                                                : message;
-    p->secondary = (struct mo_label){
-        previous == NULL ? span : previous->span,
-        code == MO_CODE_BIND_REPEATED ? "the other meaning of this name" : "declared here"};
+    p->secondary =
+        (struct mo_label){previous == NULL ? span : previous->span,
+                          code == MO_CODE_BIND_REPEATED        ? "the other meaning of this name"
+                          : code == MO_CODE_CAPTURE_ASSIGNMENT ? "assigned here"
+                                                               : "declared here"};
     p->error = (struct mo_diag){.code = code,
                                 .primary = {span, label},
                                 .message = message,
@@ -892,6 +921,31 @@ static MO_MUST_USE bool capture_local(struct inference *p, struct local *local,
         value->next = *at;
         *at = value;
     }
+    return true;
+}
+
+static MO_MUST_USE bool capture_write(struct inference *p, struct local *local,
+                                      const struct mo_syntax *syntax,
+                                      const struct mo_syntax *target) {
+    if (!p->checked)
+        return true;
+    struct capture_write *write = allocate(p, 1, sizeof(*write), _Alignof(struct capture_write));
+    if (write == NULL)
+        return false;
+    *write = (struct capture_write){syntax, target, p->capture_path, local->writes};
+    local->writes = write;
+    return true;
+}
+
+static MO_MUST_USE bool capture_path(struct inference *p, const struct mo_syntax *group,
+                                     uint32_t arm) {
+    if (!p->checked)
+        return true;
+    struct capture_path *path = allocate(p, 1, sizeof(*path), _Alignof(struct capture_path));
+    if (path == NULL)
+        return false;
+    *path = (struct capture_path){group, arm, p->capture_path};
+    p->capture_path = path;
     return true;
 }
 
@@ -2376,6 +2430,7 @@ static MO_MUST_USE struct value match(struct inference *p, const struct mo_synta
     bool never = true;
     for (uint32_t i = 0; i < arms->count; i++) {
         struct local *mark = p->locals;
+        struct capture_path *old_path = p->capture_path;
         const struct mo_syntax *arm = arms->children[i], *alternatives = arm->children[0];
         uint32_t group = ++p->pattern_group;
         for (uint32_t j = 0; j < alternatives->count; j++) {
@@ -2411,9 +2466,12 @@ static MO_MUST_USE struct value match(struct inference *p, const struct mo_synta
                 emitted.graph->operands[operand++] = guard.note;
             }
         }
+        if (!capture_path(p, node, i))
+            return (struct value){0};
         struct value body = infer(p, arm->children[2], result);
         if (body.type == NULL || !leave(p, mark))
             return (struct value){0};
+        p->capture_path = old_path;
         if (p->checked) {
             emitted.graph->match->arms[i].body = operand;
             emitted.graph->operands[operand++] = body.note;
@@ -2449,10 +2507,14 @@ static MO_MUST_USE struct value conditional(struct inference *p, const struct mo
         return (struct value){0};
     if (p->checked)
         emitted.graph->operands[operand++] = test.note;
+    struct capture_path *old_path = p->capture_path;
+    if (!capture_path(p, node, 0))
+        return (struct value){0};
     struct value branch = has_else ? infer_as(p, node->children[1], result, p->node_expectation)
                                    : discard(p, node->children[1]);
     if (branch.type == NULL || !leave(p, mark))
         return (struct value){0};
+    p->capture_path = old_path;
     if (p->checked)
         emitted.graph->operands[operand++] = branch.note;
     bool never = has_else && branch.never;
@@ -2468,9 +2530,12 @@ static MO_MUST_USE struct value conditional(struct inference *p, const struct mo
                 emitted.graph->operands[operand++] = test.note;
         }
         const struct mo_syntax *body = part->children[part->kind == MO_S_ELSE ? 0 : 1];
+        if (!capture_path(p, node, i + 1))
+            return (struct value){0};
         branch = has_else ? infer_as(p, body, result, p->node_expectation) : discard(p, body);
         if (branch.type == NULL || !leave(p, mark))
             return (struct value){0};
+        p->capture_path = old_path;
         if (p->checked)
             emitted.graph->operands[operand++] = branch.note;
         never = never && branch.never;
@@ -2615,6 +2680,17 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                 (void)reported;
                 return (struct value){0};
             }
+            if (p->lambda != 0) {
+                bool reported = problem(p, MO_CODE_LAMBDA_WRITE, name->span,
+                                        "an anonymous function can't assign a var",
+                                        "An anonymous function can read names in scope, but can't "
+                                        "assign a var (reference 5.6).",
+                                        variable->name);
+                (void)reported;
+                return (struct value){0};
+            }
+            if (!capture_write(p, variable, node, name))
+                return (struct value){0};
             struct value target = infer(p, name, NULL);
             if (target.type == NULL)
                 return (struct value){0};
@@ -2678,6 +2754,17 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             (void)reported;
             return (struct value){0};
         }
+        if (assignment && p->lambda != 0) {
+            bool reported = problem(p, MO_CODE_LAMBDA_WRITE, name->span,
+                                    "an anonymous function can't assign a var",
+                                    "An anonymous function can read names in scope, but can't "
+                                    "assign a var (reference 5.6).",
+                                    l->name);
+            (void)reported;
+            return (struct value){0};
+        }
+        if (assignment && !capture_write(p, l, node, name))
+            return (struct value){0};
         struct value target = {0};
         if (assignment) {
             target = (struct value){.type = l->type, .binding = l->name, .bound = l->binding};
@@ -2859,7 +2946,12 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             *lambda = (struct emitted_lambda){.output = {.parameter_count = parameters->count},
                                               .parameters = notes,
                                               .parent = p->lambda_frame,
+                                              .next = p->lambdas,
+                                              .syntax = node,
+                                              .loop = p->capture_loop,
+                                              .path = p->capture_path,
                                               .depth = p->lambda + 1};
+            p->lambdas = lambda;
             emitted.graph->lambda = lambda;
             p->lambda_count++;
         }
@@ -2868,6 +2960,8 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         struct emitted_lambda *old_frame = p->lambda_frame;
         if (p->checked)
             p->lambda_frame = emitted.graph->lambda;
+        struct capture_loop *old_loop = p->capture_loop;
+        p->capture_loop = NULL;
         uint32_t old_loops = p->loops;
         p->loops = 0;
         p->lambda++;
@@ -2885,6 +2979,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             return (struct value){0};
         p->result = old_result;
         p->lambda_frame = old_frame;
+        p->capture_loop = old_loop;
         p->loops = old_loops;
         p->lambda--;
         if (p->checked)
@@ -2963,6 +3058,16 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         struct note *binding = NULL;
         struct term *element = NULL;
         uint32_t body_index = node->kind == MO_S_FOR ? 2 : 1;
+        struct capture_loop *old_loop = p->capture_loop;
+        struct capture_loop *loop = NULL;
+        if (p->checked) {
+            loop = allocate(p, 1, sizeof(*loop), _Alignof(struct capture_loop));
+            if (loop == NULL)
+                return (struct value){0};
+            *loop = (struct capture_loop){node, old_loop};
+            if (node->kind == MO_S_WHILE)
+                p->capture_loop = loop;
+        }
         struct value test = node->kind == MO_S_WHILE ? condition(p, node->children[0], true)
                                                      : infer(p, node->children[1], NULL);
         if (test.type == NULL)
@@ -3005,11 +3110,13 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             if (name->kind != MO_S_TUPLE)
                 binding = p->last->binding;
         }
+        p->capture_loop = loop;
         p->loops++;
         struct term *unit = native(p, "Unit", 0);
         struct value body =
             unit == NULL ? (struct value){0} : discard(p, node->children[body_index]);
         p->loops--;
+        p->capture_loop = old_loop;
         if (body.type == NULL || !leave(p, mark))
             return (struct value){0};
         struct value out = graph(p, (struct value){.type = unit, .bound = binding}, 2);
@@ -3488,22 +3595,119 @@ static MO_MUST_USE bool finish_notes(struct inference *p, struct mo_inferred_exp
     return p->error.code == 0;
 }
 
-static MO_MUST_USE bool finish_captures(struct inference *p) {
-    for (struct note *n = p->notes; n != NULL; n = n->next) {
-        if (n->graph == NULL || n->graph->lambda == NULL)
-            continue;
-        for (struct capture *c = n->graph->lambda->captures; c != NULL; c = c->next) {
-            p->span = c->use;
-            const struct mo_source_type *type = c->local->binding->output.type;
-            MO_ASSERT(type != NULL);
-            bool scalar = type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX &&
-                          (strcmp(type->name, "Int") == 0 || strcmp(type->name, "Text") == 0 ||
-                           strcmp(type->name, "Bool") == 0);
-            if (c->local->variable || (!scalar && type->kind != MO_SOURCE_FUNCTION))
-                return unfinished(p);
+static MO_MUST_USE bool capture_type(struct inference *p, const struct mo_source_type *type,
+                                     bool *capability, bool *unknown, uint32_t depth) {
+    if (!work(p) || !type_depth(p, depth))
+        return false;
+    if (type->kind == MO_SOURCE_FUNCTION)
+        return true;
+    if (type->kind == MO_SOURCE_PARAMETER) {
+        const struct mo_function_signature *fn =
+            mo_function_signature_by_symbol(p->signatures, type->declaration);
+        unsigned letter = (unsigned)(type->name[0] - 'A');
+        MO_ASSERT(letter < 26);
+        /* Number is native-only. Custom Order/Text (including implied Equal)
+         * do not establish that a nominal value contains no capabilities. */
+        if (fn == NULL || (fn->requirements[letter] & (1u << MO_SOURCE_NUMBER)) == 0)
+            *unknown = true;
+        return true;
+    }
+    if (type->kind == MO_SOURCE_NAMED && type->declaration != NULL) {
+        const struct mo_nominal_signature *owner =
+            mo_nominal_signature_by_symbol(p->signatures, type->declaration);
+        MO_ASSERT(owner != NULL);
+        *capability = *capability || owner->holds_capability;
+        for (uint32_t i = 0; i < type->count; i++)
+            if ((owner->capture_parameters & owner->type->arguments[i]->parameters) != 0 &&
+                !capture_type(p, type->arguments[i], capability, unknown, depth + 1))
+                return false;
+        return true;
+    }
+    static const char *const capabilities[] = {"Args",      "Env",   "Console", "Files",
+                                               "ReadFiles", "Clock", "Random"};
+    for (uint32_t i = 0; i < sizeof(capabilities) / sizeof(capabilities[0]); i++)
+        if (type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX &&
+            strcmp(type->name, capabilities[i]) == 0)
+            *capability = true;
+    for (uint32_t i = 0; i < type->count; i++)
+        if (!capture_type(p, type->arguments[i], capability, unknown, depth + 1))
+            return false;
+    return true;
+}
+
+static MO_MUST_USE bool capture_assignment(struct inference *p, const struct emitted_lambda *lambda,
+                                           const struct capture *capture) {
+    if (!capture->local->variable)
+        return true;
+    for (const struct capture_write *w = capture->local->writes; w != NULL; w = w->next) {
+        bool repeated = false;
+        for (const struct capture_loop *loop = lambda->loop; loop != NULL; loop = loop->parent) {
+            if (!work(p))
+                return false;
+            struct mo_span span = loop->syntax->span;
+            repeated = repeated ||
+                       (capture->local->name->span.start < span.start &&
+                        w->syntax->span.start >= span.start && w->syntax->span.start < span.end);
         }
+        /* Assignment takes effect after its RHS, which may make this lambda. */
+        if (!repeated && w->syntax->span.end <= lambda->syntax->span.start)
+            continue;
+        bool exclusive = false;
+        if (!repeated)
+            for (const struct capture_path *a = lambda->path; a != NULL; a = a->parent)
+                for (const struct capture_path *b = w->path; b != NULL; b = b->parent) {
+                    if (!work(p))
+                        return false;
+                    exclusive = exclusive || (a->group == b->group && a->arm != b->arm);
+                }
+        if (exclusive)
+            continue;
+        return problem(p, MO_CODE_CAPTURE_ASSIGNMENT, capture->use,
+                       "an anonymous function reads a var assigned after it is made",
+                       "Copy the value into a name first; later rounds of an enclosing loop "
+                       "also count as later assignments (reference 5.6).",
+                       w->target);
     }
     return true;
+}
+
+static MO_MUST_USE bool finish_captures(struct inference *p) {
+    for (struct emitted_lambda *lambda = p->lambdas; lambda != NULL; lambda = lambda->next) {
+        for (struct capture *c = lambda->captures; c != NULL; c = c->next) {
+            p->span = c->use;
+            if (p->partial && c->use.start >= p->error.primary.span.start)
+                continue;
+            const struct mo_source_type *type = c->local->binding->output.type;
+            if (type == NULL) {
+                MO_ASSERT(p->error.code != 0);
+                continue;
+            }
+            bool capability = false, unknown = false;
+            if (!capture_type(p, type, &capability, &unknown, 0))
+                return false;
+            if (capability) {
+                bool reported = problem(p, MO_CODE_CAPABILITY_CAPTURE, c->use,
+                                        "an anonymous function can't capture a capability",
+                                        "Anonymous functions can't capture capabilities, or values "
+                                        "holding them (reference 11.4).",
+                                        c->local->name);
+                (void)reported;
+            } else if (unknown) {
+                bool reported =
+                    problem(p, MO_CODE_CHECK_UNFINISHED, c->use,
+                            "this generic capture's capability membership isn't checked",
+                            "The staged checker cannot certify an abstract captured "
+                            "value without a capability-free type.",
+                            NULL);
+                (void)reported;
+            } else if (!capture_assignment(p, lambda, c) && p->fatal)
+                return false;
+            if (p->fatal)
+                return false;
+            p->failed = false;
+        }
+    }
+    return p->error.code == 0;
 }
 
 /* Check only complete, independently typed matches before any retained error.
@@ -4602,9 +4806,9 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
         mo_diags_sort(diags);
         return NULL;
     }
-    if (p.error.code != 0)
-        goto failed;
     if (!finish_captures(&p))
+        goto failed;
+    if (p.error.code != 0)
         goto failed;
     if (checked != NULL) {
         struct mo_checked_expression *rows =
@@ -4826,6 +5030,10 @@ failed:
             *halt = true;
             mo_diags_sort(diags);
             return NULL;
+        }
+        if (!p.fatal) {
+            bool captures_valid = finish_captures(&p);
+            (void)captures_valid;
         }
     }
     emit_problem(&p);

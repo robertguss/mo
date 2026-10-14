@@ -115,6 +115,9 @@
     X(87, TRY_WRAPPER, "8.3")                                                                      \
     X(88, ANCHOR_ARGUMENTS, "12.2")                                                                \
     X(89, CONSTANT_CYCLE, "10.4")                                                                  \
+    X(90, LAMBDA_WRITE, "5.6")                                                                     \
+    X(91, CAPABILITY_CAPTURE, "11.4")                                                              \
+    X(92, CAPTURE_ASSIGNMENT, "5.6")                                                               \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \

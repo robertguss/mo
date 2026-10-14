@@ -676,6 +676,43 @@ static MO_MUST_USE bool dependencies(struct preparation *p, const struct mo_sour
     return true;
 }
 
+static MO_MUST_USE bool capture_dependencies(struct preparation *p,
+                                             const struct mo_source_type *type,
+                                             uint32_t *parameters, bool *capability) {
+    if (!dependency_work(p))
+        return false;
+    if (type->kind == MO_SOURCE_PARAMETER) {
+        *parameters |= type->parameters;
+        return true;
+    }
+    if (type->kind == MO_SOURCE_FUNCTION)
+        return true; /* Parameter/result types aren't values stored in a function. */
+    if (type->kind == MO_SOURCE_NAMED && type->declaration != NULL) {
+        const struct mo_nominal_signature *owner =
+            mo_nominal_signature_by_symbol(p->signatures, type->declaration);
+        if (owner == NULL) {
+            MO_ASSERT(p->signatures->recovering);
+            return true;
+        }
+        *capability = *capability || owner->holds_capability;
+        for (uint32_t i = 0; i < type->count; i++)
+            if ((owner->capture_parameters & owner->type->arguments[i]->parameters) != 0 &&
+                !capture_dependencies(p, type->arguments[i], parameters, capability))
+                return false;
+        return true;
+    }
+    static const char *const capabilities[] = {"Args",      "Env",   "Console", "Files",
+                                               "ReadFiles", "Clock", "Random"};
+    for (uint32_t i = 0; i < sizeof(capabilities) / sizeof(capabilities[0]); i++)
+        if (type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX &&
+            strcmp(type->name, capabilities[i]) == 0)
+            *capability = true;
+    for (uint32_t i = 0; i < type->count; i++)
+        if (!capture_dependencies(p, type->arguments[i], parameters, capability))
+            return false;
+    return true;
+}
+
 struct dependent {
     uint32_t data;
     struct dependent *next;
@@ -685,8 +722,7 @@ static MO_MUST_USE bool watch_dependencies(struct preparation *p, const struct m
                                            uint32_t data, struct dependent **watchers) {
     if (!dependency_work(p))
         return false;
-    if (type->parameters == 0 && !p->signatures->recovering)
-        return true;
+    /* Closed recursive layouts can still acquire capability membership. */
     if (type->kind == MO_SOURCE_NAMED && type->declaration != NULL) {
         const struct mo_nominal_signature *owner =
             mo_nominal_signature_by_symbol(p->signatures, type->declaration);
@@ -740,20 +776,26 @@ static MO_MUST_USE bool data_dependencies(struct preparation *p) {
         struct mo_nominal_signature *owner = &s->nominals[owner_index];
         bool invalid = owner->invalid;
         uint32_t hash = data->hash_parameters, keys = data->key_parameters;
+        uint32_t captures = owner->capture_parameters;
+        bool capability = owner->holds_capability;
         for (uint32_t j = 0; j < data->count; j++) {
             if (!mo_signature_type_available(s, data->fields[j].type))
                 owner->invalid = true;
             if (!dependencies(p, data->fields[j].type, false, &hash) ||
-                !dependencies(p, data->fields[j].type, true, &keys))
+                !dependencies(p, data->fields[j].type, true, &keys) ||
+                !capture_dependencies(p, data->fields[j].type, &captures, &capability))
                 return false;
         }
         data->hash_parameters = hash;
         data->key_parameters = keys;
         if (owner->invalid == invalid && (hash & ~owner->hash_parameters) == 0 &&
-            (keys & ~owner->key_parameters) == 0)
+            (keys & ~owner->key_parameters) == 0 && captures == owner->capture_parameters &&
+            capability == owner->holds_capability)
             continue;
         owner->hash_parameters |= hash;
         owner->key_parameters |= keys;
+        owner->capture_parameters = captures;
+        owner->holds_capability = capability;
         for (const struct dependent *edge = watchers[owner_index]; edge != NULL;
              edge = edge->next) {
             if (!dependency_work(p))
