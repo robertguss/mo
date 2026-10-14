@@ -595,6 +595,140 @@ def promise_selection(binary):
         assert items[-1]['passed'] == 2 and items[-1]['errors'] == 0
 
 
+def imported_constants(binary):
+    with tempfile.TemporaryDirectory(prefix='mo-imported-constants-') as directory:
+        path = pathlib.Path(directory) / 'main.mo'
+        origin = path.parent / 'origin.mo'
+        origin.write_text('module Origin\nexpose base, greeting, handler\nbase = 13\n'
+                          'greeting = "λ\\u{0}owned"\nhandler = make(13)\n'
+                          'fn make(offset: Int) : fn(Int) : Int\n'
+                          'fn(extra) base + offset + extra end\nend\n'
+                          'test "declaring constant observation"\nassert handler(3) == 29\nend\n')
+        path.write_text('module Main\nuse Origin{base, greeting, handler}\n'
+                        'fn probe(_values: List(Text)) : Int\npromise "foreign constant closure"\n'
+                        'result == 52\nallows _values: ["owned"], result: 52\n'
+                        'forbids _values: ["é"], result: 53\nend\n'
+                        'Origin.base + base + handler(0)\nend\n'
+                        'test "foreign owned text"\nassert greeting == "λ\\u{0}owned"\nend\n'
+                        'fn main() : Int\nprobe(["main"])\nend\n')
+        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        assert [r['name'] for r in items[1:-1]] == [
+            'Main.probe.promise.1', 'Main.test.1', 'Origin.test.1']
+        assert items[-1]['passed'] == 3 and items[-1]['errors'] == 0
+        assert items[3]['span']['file'] == str(origin)
+        result = run(binary, ['run', str(path)], 52)
+        assert not result.stdout and not result.stderr
+
+        # A direct imported call has certified initializer dependencies. Calling
+        # the returned closure inside an initializer remains a separate refusal.
+        origin.write_text('module Origin\nexpose base, greeting, evaluate, freeze\nbase = 13\n'
+                          'greeting = "λ\\u{0}owned"\nfn evaluate(n: Int) : Int\nn + base * 2\nend\n'
+                          'fn freeze(value: Text) : fn() : Text\nfn() value end\nend\n')
+        bridge = path.parent / 'bridge.mo'
+        bridge.write_text('module Bridge\nexpose answer, snapshot, probe\n'
+                          'use Origin{base, greeting, evaluate, freeze}\n'
+                          'answer = evaluate(3) + base\nsnapshot = freeze(greeting)\n'
+                          'fn probe(_values: Option(List(Text))) : Int\n'
+                          'promise "dependency initializer"\nresult == 42\n'
+                          'allows _values: Some(["owned"]), result: 42\n'
+                          'forbids _values: None, result: 43\nend\nanswer\nend\n')
+        path.write_text('module Main\nuse Bridge{answer, snapshot, probe}\n'
+                        'test "dependency constants"\nassert answer == 42\n'
+                        'assert snapshot() == "λ\\u{0}owned"\nend\n'
+                        'fn main() : Int\nprobe(None)\nend\n')
+        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        assert [r['name'] for r in items[1:-1]] == ['Main.test.1', 'Bridge.probe.promise.1']
+        assert items[-1]['passed'] == 2 and items[-1]['errors'] == 0
+        assert items[2]['span']['file'] == str(bridge)
+        result = run(binary, ['run', str(path)], 42)
+        assert not result.stdout and not result.stderr
+        for codec in ('core', 'bytecode'):
+            emitted = run(binary, ['check', '--emit=' + codec, str(path)], 0)
+            artifact = path.parent / ('initialized.' + codec)
+            artifact.write_bytes(emitted.stdout)
+            run(binary.parent / 'tests/test_cli.test', ['--roundtrip-' + codec, str(artifact)], 0)
+
+        # The subject returns an imported owned nominal constant. The smallest
+        # failure needs true, not the minimum false; its original second line
+        # and Unicode/NUL result survive copying and shrinking in fresh heaps.
+        source = ('module Origin\nexpose Pair(..), packet, probe\nstruct Pair(Z, A)\n'
+                  'zeta: Z\nalpha: A\nend\npacket = Pair(alpha: false, zeta: "λ\\u{0}owned")\n'
+                  'snapshot = fn() packet.zeta end\n'
+                  'fn probe(_value: Pair(Text, Bool), _values: List(Text)) : Pair(Text, Bool)\n'
+                  'promise "retained imported constant"\nresult.zeta == snapshot()\n'
+                  'result.alpha == _value.alpha\n'
+                  'allows _values: [], _value: Pair(zeta: "anchor", alpha: false), result: packet\n'
+                  'forbids _value: Pair(alpha: true, zeta: "é"), _values: ["owned"], result: packet\n'
+                  'end\npacket\nend\n')
+        origin.write_text(source)
+        path.write_text('module Main\nuse Origin{Pair, packet, probe}\n'
+                        'test "initialized owned constant"\n'
+                        'assert packet.zeta == "λ\\u{0}owned" and not packet.alpha\nend\n'
+                        'fn main() : Int\nif not probe(Pair(zeta: "main", alpha: false), []).alpha: 37 else: 1\nend\n')
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        failure = items[2]
+        assert items[1]['name'] == 'Main.test.1' and items[1]['outcome'] == 'passed'
+        assert failure['name'] == 'Origin.probe.promise.1' and failure['outcome'] == 'failed'
+        assert failure['input'] == [{'name': '_value', 'value': 'Pair(zeta: "", alpha: true)'},
+                                    {'name': '_values', 'value': '[]'}]
+        assert failure['result'] == r'Pair(zeta: "λ\u{0}owned", alpha: false)'
+        predicate = b'result.alpha == _value.alpha'
+        start = source.encode().index(predicate)
+        assert failure['line']['file'] == str(origin)
+        assert (failure['line']['start'], failure['line']['end']) == (start, start + len(predicate))
+        assert items[-1]['passed'] == items[-1]['failed'] == 1 and items[-1]['errors'] == 0
+        result = run(binary, ['run', str(path)], 37)
+        assert not result.stdout and not result.stderr
+        for codec in ('core', 'bytecode'):
+            emitted = run(binary, ['check', '--emit=' + codec, str(path)], 0)
+            artifact = path.parent / ('owned-constant.' + codec)
+            artifact.write_bytes(emitted.stdout)
+            run(binary.parent / 'tests/test_cli.test', ['--roundtrip-' + codec, str(artifact)], 0)
+
+        # Initialization is before anchors/observations and outside the promise
+        # clock. Unsupported selected inputs must still refuse before it.
+        origin.write_text('module Origin\nexpose seed\nseed = abort()\nlater = second()\n'
+                          'fn abort() : Int\nstop "foreign initializer stopped"\nend\n'
+                          'fn second() : Int\nstop "later initializer stopped"\nend\n')
+        ordinary = ('test "not counted after stopped initializer"\nassert true\nend\n'
+                    'fn main() : Int\nseed\nend\n')
+        promise = ('fn probe(_values: List(Text)) : Int\n'
+                   'promise "initialization precedes promise"\nresult == 13\n'
+                   'allows _values: ["owned"], result: 13\nforbids _values: [], result: 14\n'
+                   'end\nseed\nend\n')
+        for supported in (True, False):
+            body = promise if supported else promise.replace('List(Text)', 'Option(Console)').replace(
+                '_values: ["owned"]', '_values: None').replace('_values: []', '_values: None')
+            path.write_text('module Main\nuse Origin{seed}\n' + body + ordinary)
+            listed = records(run(binary, ['test', '--json', '--list', '--max-heap', '1',
+                                           '--seconds', '1', str(path)], 0), 'test')
+            assert [r['name'] for r in listed[1:-1]] == ['Main.probe.promise.1', 'Main.test.1']
+            items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+            assert len(items) == 3 and items[1]['code'] == ('E1406' if supported else 'E1400')
+            assert all(items[-1][key] == 0 for key in ('passed', 'failed', 'stopped'))
+            if supported:
+                clock = binary.parent / 'tests/test_deadline.test'
+                timed = records(run(clock, ['start-failure', 'test', '--json', '--seconds', '1',
+                                             str(path)], 1), 'test')
+                assert timed[1]['code'] == 'E1406'
+                assert items[1]['primary']['file'] == str(origin)
+                assert 'foreign initializer stopped' in items[1]['primary']['label']
+                assert 'later initializer stopped' not in items[1]['primary']['label']
+            else:
+                selected = records(run(binary, ['test', '--json', '--only', 'Main.test.1',
+                                                str(path)], 1), 'test')
+                assert selected[1]['code'] == 'E1406'
+        path.write_text('module Main\nuse Origin{seed}\n' + ordinary)
+        records(run(binary, ['check', '--json', str(path)], 0), 'check')
+        for codec in ('core', 'bytecode'):
+            result = run(binary, ['check', '--emit=' + codec, str(path)], 0)
+            assert result.stdout and not result.stderr
+        result = run(binary, ['run', str(path)], 70)
+        assert not result.stdout and b'foreign initializer stopped' in result.stderr
+        assert b'later initializer stopped' not in result.stderr and b'Main.main' not in result.stderr
+    print(f'{binary}: imported constants, composite retained values and initializer/preflight boundaries passed')
+
+
 def observations(binary):
     with tempfile.TemporaryDirectory(prefix="mo-observations-") as directory:
         path = pathlib.Path(directory) / "main.mo"
@@ -1560,6 +1694,7 @@ def check(binary):
     composite_promises(binary)
     composite_deadlines(binary)
     promise_selection(binary)
+    imported_constants(binary)
     items = records(run(faults, ["--json"], 1), "check")
     assert items[1]["code"] == "E1401" and items[-1]["dropped"] == 0
     assert items[1]["primary"]["file"] is None and items[1]["section"] is None

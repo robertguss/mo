@@ -1689,6 +1689,10 @@ evaluates every constant, including unused ones, before anchors or main can
 read globals (reference 10.4). Ordinary calls required by an initializer run;
 merely creating a function value does not execute its body. Without anchors,
 plain `check` and both emissions validate initializer code but do not execute it.
+Certified foreign reads and imported initializer calls/function values use this
+same carrier and image. Their declaring owners, source spans and owned values
+remain intact; imports do not change dependency order or the creation prefix
+available to a deferred function (3.4, 4.3).
 `run` initializes its image before main; an initializer stop is a runtime bug,
 exits 70 and never runs main. With anchors, initialization uses the same bounded
 certification path for checking, running and both emissions: a stop or instruction ceiling
@@ -1823,9 +1827,12 @@ both emitted artifacts. Imports used only in tests count as used. No new tools
 code or JSON field is required. Imported generic nominal annotations,
 construction, projection and choice patterns retain the defining data module's
 canonical layout, declaration-ordered keys and exposure; requester-owned function
-instances do not give importers data exports (3.2, 4.3). Foreign constant reads
-and direct imported initializer references remain the checker's E1103 staging routes,
-as do broad Text-only abstract captures. Closed exposed nominal inputs use the
+instances do not give importers data exports (3.2, 4.3). Certified foreign constant
+reads and imported initializer calls/function values retain the same declaring
+identities and checked dependency order. Unresolved higher-order, returned or
+anonymous initializer calls and executed abstract Text/Order dependencies remain
+checker E1103; later-global deferred functions remain lower E1150. Broad Text-only
+abstract captures remain staged too. Closed exposed nominal inputs use the
 structural promise eligibility above; imports do not change the settled
 monotonic deadline policy (10.1).
 
