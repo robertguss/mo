@@ -556,9 +556,9 @@ static void capture_sources(void) {
                                          : program == NULL && f.diags.count == 1 &&
                                                f.diags.items[0].code == cases[i].code;
         if (!passed)
-            fprintf(stderr, "capture source %s: expected E%04u, found E%04u\n", cases[i].name,
-                    (unsigned)cases[i].code,
-                    f.diags.count == 0 ? 0u : (unsigned)f.diags.items[0].code);
+            MO_ASSERT(fprintf(stderr, "capture source %s: expected E%04u, found E%04u\n",
+                              cases[i].name, (unsigned)cases[i].code,
+                              f.diags.count == 0 ? 0u : (unsigned)f.diags.items[0].code) >= 0);
         CHECK(passed);
         if (cases[i].site != NULL && f.diags.count != 0) {
             const char *site = strstr(source, cases[i].site);

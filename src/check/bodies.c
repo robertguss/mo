@@ -891,6 +891,8 @@ static MO_MUST_USE bool capture_local(struct inference *p, struct local *local,
                                       struct mo_span use) {
     for (struct emitted_lambda *lambda = p->lambda_frame;
          lambda != NULL && local->function < lambda->depth; lambda = lambda->parent) {
+        if (!work(p))
+            return false;
         struct capture **at = &lambda->captures;
         while (*at != NULL && (*at)->local != local) {
             if (!work(p))
@@ -3640,6 +3642,8 @@ static MO_MUST_USE bool capture_assignment(struct inference *p, const struct emi
     if (!capture->local->variable)
         return true;
     for (const struct capture_write *w = capture->local->writes; w != NULL; w = w->next) {
+        if (!work(p))
+            return false;
         bool repeated = false;
         for (const struct capture_loop *loop = lambda->loop; loop != NULL; loop = loop->parent) {
             if (!work(p))
@@ -3653,7 +3657,7 @@ static MO_MUST_USE bool capture_assignment(struct inference *p, const struct emi
         if (!repeated && w->syntax->span.end <= lambda->syntax->span.start)
             continue;
         bool exclusive = false;
-        if (!repeated)
+        if (!repeated && w->path != NULL)
             for (const struct capture_path *a = lambda->path; a != NULL; a = a->parent)
                 for (const struct capture_path *b = w->path; b != NULL; b = b->parent) {
                     if (!work(p))

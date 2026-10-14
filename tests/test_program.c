@@ -1578,6 +1578,30 @@ static void capture_graph(void) {
     free_fixture(&f);
 }
 
+static void capture_work(void) {
+    static const uint32_t counts[] = {6000, 9000};
+    for (uint32_t kind = 0; kind < 2; kind++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, MO_LIMIT_FILE_SIZE);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\nfn main()\nvar count = 0\n"));
+        for (uint32_t i = 0; i < 2000; i++)
+            MO_ASSERT(mo_buffer_append_text(&source, "count += 1\n"));
+        for (uint32_t i = 0; i < counts[kind]; i++)
+            MO_ASSERT(mo_buffer_append_text(&source, "_f") && mo_buffer_append_uint(&source, i) &&
+                      mo_buffer_append_text(&source, " = fn() count end\n"));
+        MO_ASSERT(mo_buffer_append_text(&source, "end\n") && mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init(&f, (const char *)source.bytes);
+        if (kind == 0)
+            CHECK(f.program != NULL && f.diags.count == 0);
+        else
+            CHECK(f.program == NULL && f.diags.count == 1 &&
+                  f.diags.items[0].code == MO_CODE_CHECK_WORK);
+        free_fixture(&f);
+        mo_buffer_free(&source);
+    }
+}
+
 static void branch_graph(void) {
     struct fixture f;
     init(&f, "module Main\nfn choose(flag: Bool) : Int\n"
@@ -2453,6 +2477,7 @@ static void run(void *argument) {
     try_contexts();
     lambda_graph();
     capture_graph();
+    capture_work();
     branch_graph();
     record_graph();
     match_graph();
