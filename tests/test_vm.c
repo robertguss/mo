@@ -1426,6 +1426,67 @@ static MO_MUST_USE struct mo_image *assemble(const char *source) {
     return image;
 }
 
+struct variable_capture {
+    struct mo_defect_variable values[8];
+    uint32_t count;
+    bool stop;
+};
+
+static MO_MUST_USE bool capture_variable(const struct mo_defect_variable *variable, void *context) {
+    struct variable_capture *capture = context;
+    MO_ASSERT(capture->count < 8);
+    capture->values[capture->count++] = *variable;
+    return !capture->stop;
+}
+
+static void test_stopped_variables(void) {
+    struct mo_image *image =
+        assemble("bytecode 0.2 shorthand\nmodule M exposes [M.observe]\n"
+                 "function M.observe(x: Text borrowed) : Unit function in M\n"
+                 " registers [r1: Text, r2: Int, r3: Int]\n"
+                 " variables [(r2, \"stale\", @start, @new),"
+                 " (r0, \"exact\\x0aβ\", @start, @end),"
+                 " (r2, \"shadow\", @new, @end), (r1, \"reason\", @start, @end),"
+                 " (r3, \"undefined\", @start, @end)]\n"
+                 " @start:\n const r2, 11\n clear r2\n @new:\n const r2, -37\n"
+                 " const r1, \"halt\"\n stop r1\n @end:\nend\n");
+    if (image == NULL)
+        return;
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    struct mo_process *p = mo_process_new(image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_heap *heap = mo_process_heap(p);
+    struct mo_cell argument, result;
+    MO_ASSERT(mo_value_text(heap, "a\0b", 3, &argument));
+    MO_ASSERT(mo_call(p, 0, &argument, 1, &result, &defect) == MO_STOPPED);
+    struct variable_capture capture = {0};
+    CHECK(mo_visit_defect_variables(NULL, &defect, 8, UINT64_MAX, capture_variable, &capture) ==
+          MO_DEFECT_VARIABLES_COMPLETE);
+    CHECK(capture.count == 3);
+    if (capture.count == 3) {
+        const char exact[] = "exact\nβ";
+        CHECK(capture.values[0].frame == defect.frames &&
+              capture.values[0].name_length == sizeof exact - 1 &&
+              memcmp(capture.values[0].name, exact, sizeof exact - 1) == 0);
+        CHECK(capture.values[0].type == mo_image_bytecode(image)->functions[0].parameters[0].type &&
+              mo_cell_get_ref(capture.values[0].value) == mo_cell_get_ref(argument));
+        CHECK(capture.values[1].name_length == 6 &&
+              memcmp(capture.values[1].name, "shadow", 6) == 0 &&
+              mo_cell_get_int(capture.values[1].value) == -37);
+        CHECK(capture.values[2].name_length == 6 &&
+              memcmp(capture.values[2].name, "reason", 6) == 0);
+        size_t length;
+        const uint8_t *bytes = mo_value_data(capture.values[2].value, &length);
+        CHECK(length == 4 && memcmp(bytes, "halt", 4) == 0);
+    }
+    CHECK(mo_cell_get_ref(argument)->count == 1);
+    mo_value_drop(heap, mo_image_bytecode(image)->functions[0].parameters[0].type, argument);
+    mo_process_free(p);
+    mo_image_free(image);
+}
+
 static void test_clear(void) {
     struct mo_image *image =
         assemble("bytecode 0.2 shorthand\nmodule M exposes [M.clear]\n"
@@ -2315,6 +2376,7 @@ int main(int argc, char **argv) {
     test_defects();
     test_borrowing();
     test_scratch_and_fuel();
+    test_stopped_variables();
     test_clear();
     test_bounded_report();
     test_filename_bytes();

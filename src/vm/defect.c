@@ -248,6 +248,95 @@ static MO_MUST_USE bool frame_text(const struct mo_bytecode *file,
     return mo_buffer_append_byte(out, '\n');
 }
 
+/* Never inspect cells after a failed replay, even if it filled part of the
+ * readability vector before refusing. */
+static MO_MUST_USE bool *variables_readable(const struct mo_process *process,
+                                            const struct mo_vm_frame *frame) {
+    const struct mo_bytecode_function *fn = &process->file->functions[frame->function];
+    bool *readable = calloc(fn->register_count, sizeof *readable);
+    struct mo_load_error error;
+    if (readable == NULL || !mo_image_registers_readable(process->image, frame->function, frame->pc,
+                                                         readable, &error)) {
+        free(readable);
+        return NULL;
+    }
+    return readable;
+}
+
+static MO_MUST_USE bool variable_visible(const struct mo_process *process,
+                                         struct mo_vm_frame *frame,
+                                         const struct mo_bytecode_register_name *name,
+                                         const bool *readable) {
+    if (name->code_start > frame->pc || name->code_end <= frame->pc || !readable[name->reg])
+        return false;
+    /* A suspended caller is still at its call instruction, but owned operands
+     * have already transferred. Replay alone describes the pre-call state. */
+    uint8_t state = mo_vm_states(process, frame)[name->reg];
+    return state == VM_VALUE || state == VM_BORROWED || state == VM_OWNED;
+}
+
+enum mo_defect_variables_result mo_visit_defect_variables(
+    const struct mo_process *process, const struct mo_defect *defect, uint32_t count, uint64_t work,
+    bool (*visit)(const struct mo_defect_variable *variable, void *context), void *context) {
+    MO_ASSERT(defect != NULL && defect->reason != NULL && visit != NULL);
+    if (process == NULL)
+        process = defect->process;
+    MO_ASSERT(process == defect->process);
+    if (defect->frames == NULL)
+        return MO_DEFECT_VARIABLES_COMPLETE;
+    MO_ASSERT(process != NULL && process->terminal && defect->frames == process->defect.frames);
+    size_t offset = process->top;
+    while (offset != SIZE_MAX) {
+        if (work == 0)
+            return MO_DEFECT_VARIABLES_LIMIT;
+        work--;
+        struct mo_vm_frame *frame = (struct mo_vm_frame *)(process->stack + offset);
+        offset = frame->previous;
+        const struct mo_bytecode_debug *debug = &process->file->debug[frame->function];
+        if (debug->name_count == 0)
+            continue;
+        const struct mo_bytecode_function *fn = &process->file->functions[frame->function];
+        uint64_t replay = ((uint64_t)fn->register_count + fn->code_count + 32) *
+                          (MO_LIMIT_VERIFY_WORK_PER_WORD + 1u);
+        if (replay > work)
+            return MO_DEFECT_VARIABLES_LIMIT;
+        work -= replay;
+        bool *readable = variables_readable(process, frame);
+        if (readable == NULL)
+            return MO_DEFECT_VARIABLES_UNAVAILABLE;
+        enum mo_defect_variables_result result = MO_DEFECT_VARIABLES_COMPLETE;
+        for (uint32_t i = 0; i < debug->name_count; i++) {
+            if (work == 0) {
+                result = MO_DEFECT_VARIABLES_LIMIT;
+                break;
+            }
+            work--;
+            const struct mo_bytecode_register_name *name = &debug->names[i];
+            if (!variable_visible(process, frame, name, readable))
+                continue;
+            if (count == 0) {
+                result = MO_DEFECT_VARIABLES_LIMIT;
+                break;
+            }
+            count--;
+            const struct mo_bytecode_string *spelling = &process->file->strings[name->name];
+            struct mo_defect_variable variable = {.frame = &frame->trace,
+                                                  .name = spelling->bytes,
+                                                  .name_length = spelling->length,
+                                                  .type = fn->register_types[name->reg],
+                                                  .value = mo_vm_cells(frame)[name->reg]};
+            if (!visit(&variable, context)) {
+                result = MO_DEFECT_VARIABLES_STOPPED;
+                break;
+            }
+        }
+        free(readable);
+        if (result != MO_DEFECT_VARIABLES_COMPLETE)
+            return result;
+    }
+    return MO_DEFECT_VARIABLES_COMPLETE;
+}
+
 bool mo_render_defect(const struct mo_process *process, const struct mo_defect *defect,
                       struct mo_buffer *out) {
     MO_ASSERT(defect != NULL && defect->reason != NULL && out != NULL);
@@ -323,18 +412,14 @@ bool mo_render_defect(const struct mo_process *process, const struct mo_defect *
         struct mo_vm_frame *f = (struct mo_vm_frame *)(process->stack + process->top);
         const struct mo_bytecode_function *fn = &process->file->functions[f->function];
         const struct mo_bytecode_debug *debug = &process->file->debug[f->function];
-        bool *readable = malloc((size_t)fn->register_count * sizeof(bool));
-        struct mo_load_error error;
-        if (readable == NULL ||
-            !mo_image_registers_readable(process->image, f->function, f->pc, readable, &error)) {
+        bool *readable = variables_readable(process, f);
+        if (readable == NULL) {
             ok = mo_buffer_append_text(out, "  <variables unavailable>\n");
         } else {
             for (uint32_t i = 0; ok && i < debug->name_count; i++) {
                 const struct mo_bytecode_register_name *name = &debug->names[i];
-                if (name->code_start > f->pc || name->code_end <= f->pc || !readable[name->reg])
+                if (!variable_visible(process, f, name, readable))
                     continue;
-                uint8_t state = mo_vm_states(process, f)[name->reg];
-                MO_ASSERT(state == VM_VALUE || state == VM_BORROWED || state == VM_OWNED);
                 if (out->limit - out->length < 128) {
                     ok = false;
                     break;
