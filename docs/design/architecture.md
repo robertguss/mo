@@ -480,9 +480,10 @@ retain explicit parameter declaration order, not alphabetical order; choice
 constructors use their owning choice's keys, not new case-owned parameters.
 Named constructor operands keep written evaluation order and declaration-order
 field indices. Exposure still decides whether fields/cases are visible.
-Foreign constant reads and direct initializer function references remain
-explicit E1103 routes. Partial signature/inference APIs, regularity checks and
-the already supported implicit library routes retain their previous behavior.
+Foreign constant reads and initializer function references retain those same
+declaring identities and import-use origins; constant certification follows 3.4.
+Partial signature/inference APIs, regularity checks and the already supported
+implicit library routes retain their previous behavior.
 No new cross-module constant ordering or lowering carrier is introduced.
 
 Interface work is bounded by source declarations and imported names, not
@@ -749,7 +750,17 @@ some names by type:
   over a choice type is checked on top of it.
 - **Constants** may refer to each other in any order within the program, and
   are computed in the order of their dependencies. A cycle is an error
-  (reference 10.4).
+  (reference 10.4). Foreign reads use the same program-wide symbol index and
+  pending-type stack as local reads; each initializer decides its own closed
+  type before uses can constrain it. Direct imported calls and known stored
+  function aliases use the existing checked call graph, including executed
+  customizers. Function creation does not execute its body, and type-only
+  ability requirements add no execution dependencies. Independent ties retain
+  module discovery/declaration order, not import completion or symbol spelling.
+  Loading still refuses module cycles; checked value/call cycles report E0089.
+  Unresolved higher-order calls and executed abstract Text/Order dependencies
+  remain E1103. Certification does not promise a later-global closure
+  representation: lowering can still refuse that separate E1150 boundary.
 - **Promises and examples** are checked like functions returning `Bool`. An
   example line or a promise body becomes a spec function (`bytecode.md`
   section 3.3). The `mo check` command in tools evaluates the anchors by
@@ -941,9 +952,12 @@ dependency reordering is added. Certified imported generic function calls and
 values reuse the existing instance/proof machinery below, including captured,
 returned and higher-order references. Certified foreign generic nominal written
 annotations, construction, projection and choice patterns use those same
-declaring identities and layouts. Foreign constant reads and direct imported
-initializer references remain checker E1103; Maps and the other existing
-staged routes are unchanged.
+declaring identities and layouts. Certified foreign constant reads and direct
+imported initializer calls/function values use the same resolved symbols and
+constant prefixes below; imports do not add exports or change initialization
+order. Unresolved higher-order/returned/anonymous initializer calls and executed
+abstract Text/Order dependencies remain checker E1103; Maps and the other
+existing staged routes are unchanged.
 
 Core lookup/display names retain the declaring module and source name;
 overloads add `@Receiver`. Generic function code is keyed by (requesting
@@ -1060,6 +1074,13 @@ use the full constant prefix; an arena-backed work queue tightens functions
 reachable from initializer i to prefix i and propagates through calls and
 closure bodies. Metadata retains module/source order separately from init order,
 and initializer nodes carry the same span/binder/closure metadata as functions.
+Global names and initializer metadata owners come from the constant's declaring
+symbol/module, including same-spelled foreign constants. Initializer body spans
+and lifted closure names likewise retain that source, not the importer's file.
+The source corpus pins independent ready ties in a transitive diamond and
+first-stop order, as well as owned generic nominal/captured Text values after
+frontend release. A numerically successful metadata-owner mutation must still
+fail the provenance audit.
 Only zero-operand constant reads become Core globals; calls through a constant
 function value become applications, never constructor expressions. Core closures
 capture their creation prefix. A function-valued initializer whose body or

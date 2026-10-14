@@ -1298,7 +1298,15 @@ independently of the dependency-ordered Core declarations.
 Calls through constant function values translate to `app (global name) args`;
 only leaf reads translate to `global name`. Core lambdas retain the prefix at
 creation, even when their bodies are not executed during initialization. The
-current C lowerer refuses E1150 if an initializer's deferred lambda or named
+same rule applies to certified foreign reads and direct imported initializer
+calls/function values: the checked declaring symbol supplies `Lib.seed`, not an
+importer-local `Main.seed`. Initializer ownership, body spans and lifted closure
+names retain that declaring source independently of dependency order; no
+importer export is synthesized. Owned generic nominal/Text values cross this
+boundary without changing layouts or capture carriers. Unresolved higher-order,
+returned or anonymous initializer calls and executed abstract Text/Order
+dependencies still refuse checker E1103 rather than emitting incomplete Core.
+The current C lowerer refuses E1150 if an initializer's deferred lambda or named
 function adapter needs a global outside that prefix. A bounded name index and
 the existing call work queue detect this before returning Core. The checked
 constant order remains unchanged: constructing a function does not acquire a

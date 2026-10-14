@@ -598,7 +598,9 @@ struct mo_program {
  * the caller's actual-type ability proofs, as local uses do. Imported generic data
  * annotations/construction/fields/patterns retain their declaring nominal identity
  * and declaration-ordered parameter keys; hidden insides remain private.
- * Foreign constant reads/direct initializer references remain E1103.
+ * Foreign constant reads and initializer calls/values keep declaring symbols,
+ * closed inferred types and the same checked dependency order as local uses.
+ * Making a function value does not execute its body or its type-only proofs.
  * Existing implicit library routes are unchanged.
  * Valid unfinished entry forms, spec-only capability
  * operations and unfinished body forms return E1103.
