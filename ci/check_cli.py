@@ -328,30 +328,271 @@ def composite_promises(binary):
         assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
             ('Main.probe.promise.1', 'passed'), ('Main.test.1', 'passed')]
         assert items[-1]['passed'] == 2 and items[-1]['errors'] == 0
+        for codec in ('core', 'bytecode'):
+            emitted = run(binary, ['check', '--emit=' + codec, str(path)], 0)
+            artifact = path.parent / ('composite.' + codec)
+            artifact.write_bytes(emitted.stdout)
+            run(binary.parent / 'tests/test_cli.test', ['--roundtrip-' + codec, str(artifact)], 0)
+
+        # Declaration order is not alphabetical or parameter-letter order.
+        # Two independent predicates pin both false-line locations and the
+        # owned tuple result, not merely that composite generation ran.
+        (path.parent / 'shapes.mo').write_text(
+            'module Shapes\nexpose Pair(..)\nstruct Pair(Z, A)\nzeta: Z\nalpha: A\nend\n')
+        source = ('module Main\nuse Shapes{Pair}\n'
+                  'fn probe(value: Pair(Text, Int), _suffix: Text) : (Text, Int)\n'
+                  'promise "ordered owned fields"\nresult.1 == value.alpha + 17\n'
+                  'result.0 != "é" or _suffix != ""\n'
+                  'allows _suffix: "tail", value: Pair(alpha: 3, zeta: "é"), result: ("é", 20)\n'
+                  'forbids value: Pair(zeta: "é", alpha: 3), _suffix: "", result: ("é", 20)\nend\n'
+                  '(value.zeta, value.alpha + 17)\nend\n'
+                  'test "after promise"\nassert true\nend\nfn main()\nend\n')
+        path.write_text(source)
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        result = items[1]
+        assert result['input'] == [{'name': 'value', 'value': 'Pair(zeta: "é", alpha: 0)'},
+                                    {'name': '_suffix', 'value': '""'}]
+        assert result['result'] == '("é", 17)' and result['outcome'] == 'failed'
+        predicate = 'result.0 != "é" or _suffix != ""'
+        start = source.encode().index(predicate.encode())
+        assert (result['line']['start'], result['line']['end']) == (start, start + len(predicate.encode()))
+        assert items[-1]['failed'] == items[-1]['passed'] == 1 and items[-1]['errors'] == 0
+        source = source.replace('result.1 == value.alpha + 17', 'result.1 == value.alpha + 18')
+        source = source.replace('result: ("é", 20)\nforbids', 'result: ("é", 21)\nforbids')
+        path.write_text(source)
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['input'] == [{'name': 'value', 'value': 'Pair(zeta: "", alpha: 0)'},
+                                    {'name': '_suffix', 'value': '""'}]
+        assert items[1]['result'] == '("", 17)'
+        predicate = 'result.1 == value.alpha + 18'
+        start = source.encode().index(predicate.encode())
+        assert (items[1]['line']['start'], items[1]['line']['end']) == (start, start + len(predicate))
+
+        # Lists must actually execute empty, single and several-element
+        # boundaries. A pass from an empty-only generator cannot satisfy this.
+        for pattern, expected in (('[]', '[]'), ('[_]', '[""]'),
+                                   ('[_, _, _]', '["", "a", "é"]')):
+            source = ('module Main\nfn probe(value: List(Text)) : Int\n'
+                      'promise "list boundaries"\nresult == 7\n'
+                      'allows value: ["owned", "é"], result: 7\n'
+                      'forbids value: [], result: 8\nend\ncase value\n' +
+                      pattern + ': stop "chosen list shape"\n_: 7\nend\nend\nfn main()\nend\n')
+            path.write_text(source)
+            items = records(run(binary, ['test', '--json', '--calls', '3', str(path)], 1), 'test')
+            assert items[1]['outcome'] == 'stopped' and items[1]['input'] == [
+                {'name': 'value', 'value': expected}]
+            assert items[1]['defect']['detail'] == 'chosen list shape'
+
+        # Public builtin choices cover every case and shrink owned asymmetric
+        # payloads; rejecting a payload must never become a None/Ok-only pass.
+        cases = [
+            ('Option(Text)', 'Some("owned")', 'None', 'result is Some(_)', 'None'),
+            ('Option(Text)', 'Some("owned")', 'Some("é")', 'result != Some("é")', 'Some("é")'),
+            ('Result((Text, Int), List(Text))', 'Error(["owned"])', 'Ok(("é", 0))',
+             'result != Ok(("é", 0))', 'Ok(("é", 0))'),
+            ('Result((Text, Int), List(Text))', 'Ok(("owned", 13))', 'Error(["é"])',
+             'result != Error(["é"])', 'Error(["é"])'),
+        ]
+        for type_, allowed, forbidden, predicate, expected in cases:
+            source = ('module Main\n' + f'fn probe(value: {type_}) : {type_}\n'
+                      f'promise "public choice payloads"\n{predicate}\n'
+                      f'allows value: {allowed}, result: {allowed}\n'
+                      f'forbids value: {forbidden}, result: {forbidden}\nend\n'
+                      'value\nend\nfn main()\nend\n')
+            path.write_text(source)
+            items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+            assert items[1]['outcome'] == 'failed' and items[1]['input'] == [
+                {'name': 'value', 'value': expected}]
+            assert items[1]['result'] == expected and items[-1]['errors'] == 0
+
+        # The minimum recursive inhabitant is End even though declared last.
+        # Shrinking a depth violation must retain two nodes, not truncate to a
+        # passing End or recurse forever through the template's back edge.
+        source = ('module Main\nenum Chain(T)\nNode(value: T, next: Chain(T))\nEnd\nend\n'
+                  'fn depth(value: Chain(Text)) : Int\ncase value\n'
+                  'End: 0\nNode(next: rest): 1 + depth(rest)\nend\nend\n'
+                  'fn probe(value: Chain(Text)) : Int\npromise "short chain"\nresult < 2\n'
+                  'allows value: Node(value: "owned", next: End), result: 1\n'
+                  'forbids value: End, result: 2\nend\ndepth(value)\nend\nfn main()\nend\n')
+        path.write_text(source)
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['outcome'] == 'failed' and items[1]['input'] == [
+            {'name': 'value', 'value': 'Node(value: "", next: Node(value: "", next: End))'}]
+        assert items[1]['result'] == '2' and items[-1]['errors'] == 0
+
+        # Every declared case, including named multi-field payloads, must be
+        # reached. Recursive Lists add a finite non-minimum shell, not just [].
+        declarations = 'enum Choice\nQuiet\nNumber(Int)\nOwned(Text)\nPacket(zeta: Text, alpha: Bool)\nend\n'
+        cases = [(declarations, 'Choice', 'Quiet', 'Quiet', 'Quiet'),
+                 (declarations, 'Choice', 'Quiet', 'Number(_)', 'Number(0: 0)'),
+                 (declarations, 'Choice', 'Quiet', 'Owned(_)', 'Owned(0: "")'),
+                 (declarations, 'Choice', 'Quiet', 'Packet(zeta: _, alpha: _)',
+                  'Packet(zeta: "", alpha: false)'),
+                 ('enum Forest\nBranch(List(Forest))\nBud(Text)\nend\n', 'Forest',
+                  'Bud("owned")', 'Branch([_])', 'Branch(0: [Branch(0: [])])')]
+        for declarations, type_, anchor, pattern, expected in cases:
+            source = ('module Main\n' + declarations + f'fn probe(value: {type_}) : Int\n'
+                      'promise "all case boundaries"\nresult == 7\n'
+                      f'allows value: {anchor}, result: 7\nforbids value: {anchor}, result: 8\nend\n'
+                      f'if value is {pattern}\nstop "chosen case"\nend\n7\nend\nfn main()\nend\n')
+            path.write_text(source)
+            items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+            assert items[1]['outcome'] == 'stopped' and items[1]['input'] == [
+                {'name': 'value', 'value': expected}]
+            assert items[1]['defect']['detail'] == 'chosen case' and items[-1]['errors'] == 0
+
+        # The source inventory belongs to the declaring module, even with
+        # concrete nominal inputs reached through an importing entry module.
+        (path.parent / 'shapes.mo').write_text(
+            'module Shapes\nexpose Pair(..), probe\nstruct Pair(Z, A)\nzeta: Z\nalpha: A\nend\n'
+            'fn probe(value: Pair(Text, Int)) : Int\npromise "declaring module"\nresult == value.alpha\n'
+            'allows value: Pair(zeta: "owned", alpha: 13), result: 13\n'
+            'forbids value: Pair(zeta: "é", alpha: 29), result: 31\nend\nvalue.alpha + 1\nend\n')
+        path.write_text('module Main\nuse Shapes\nfn main() : Int\n'
+                        'Shapes.probe(Shapes.Pair(zeta: "main", alpha: 33))\nend\n')
+        items = records(run(binary, ['test', '--json', '--list', '--max-heap', '1', str(path)], 0), 'test')
+        assert [r['name'] for r in items[1:-1]] == ['Shapes.probe.promise.1']
+        span = items[1]['span']
+        assert span['file'] == str(path.parent / 'shapes.mo')
+        items = records(run(binary, ['test', '--json', '--in', 'Shapes', str(path)], 1), 'test')
+        assert items[1]['span'] == span and items[1]['result'] == '1'
+        assert items[1]['input'] == [{'name': 'value', 'value': 'Pair(zeta: "", alpha: 0)'}]
+        assert items[1]['line']['file'] == span['file'] and items[-1]['errors'] == 0
+
+
+def composite_deadlines(binary):
+    clock = binary.parent / 'tests/test_deadline.test'
+    loop = 'var spin = 0\nwhile spin == 0\nspin = 0\nend\n'
+    tail = 'test "after promise"\nassert true\nend\nfn main()\nstop "main ran"\nend\n'
+    with tempfile.TemporaryDirectory(prefix='mo-composite-deadlines-') as directory:
+        path = pathlib.Path(directory) / 'main.mo'
+        for where in ('subject', 'condition', 'stop'):
+            operation = 'stop "composite candidate stopped"\n' if where == 'stop' else loop
+            source = ('module Main\nstruct Packet\nzeta: Text\nalpha: (Text, Int)\nend\n'
+                      'struct Box\nvalue: (Text, (Text, Int))\nmark: Int\nend\n'
+                      'fn to_text(_value: Box) : Text\nstop "renderer called customizer"\nend\n'
+                      'fn verdict(value: Packet, answer: Box) : Bool\n' +
+                      ('if value.zeta.byte_count > 2 and value.zeta.byte_count < 1024\n' + operation +
+                       'end\n' if where != 'subject' else '') +
+                      'answer.value.0 == value.zeta and answer.value.0.byte_count < 1024\nend\n'
+                      'fn probe(value: Packet) : Box\npromise "retained composite failure"\n'
+                      'result.value == (value.zeta, value.alpha)\nverdict(value, result)\n'
+                      'allows value: Packet(alpha: ("owned", 13), zeta: "ok"), '
+                      'result: Box(mark: 17, value: ("ok", ("owned", 13)))\n'
+                      'forbids value: Packet(zeta: "ok", alpha: ("owned", 13)), '
+                      'result: Box(value: ("bad", ("tail", 29)), mark: 31)\nend\n' +
+                      ('if value.zeta.byte_count > 2 and value.zeta.byte_count < 1024\n' + operation +
+                       'end\n' if where == 'subject' else '') +
+                      'Box(value: (value.zeta, value.alpha), mark: 17)\nend\n')
+            path.write_text(source + tail)
+            for mode in (('fixed',) if where == 'stop' else ('expiry', 'failure')):
+                items = records(run(clock, [mode, 'test', '--json', '--seconds',
+                                             '2' if mode == 'failure' else '1', str(path)], 1), 'test')
+                result = items[1]
+                length = 512 if where == 'stop' else 1024
+                text = '"' + 'x' * length + '"'
+                packet = f'Packet(zeta: {text}, alpha: ("", 0))'
+                box = f'Box(value: ({text}, ("", 0)), mark: 17)'
+                assert result['input'] == [{'name': 'value', 'value': packet}]
+                assert items[2]['name'] == 'Main.test.1' and items[2]['outcome'] == 'passed'
+                if where == 'stop':
+                    assert result['outcome'] == 'stopped' and 'result' not in result and 'line' not in result
+                    defect = result['defect']
+                    assert defect['detail'] == 'composite candidate stopped'
+                    assert defect['variables'] == [{'name': 'value', 'value': packet},
+                                                    {'name': 'answer', 'value': box}]
+                    assert [frame['function'] for frame in defect['stack']] == [
+                        'Main.verdict', 'Main.probe.promise.1']
+                    start = source.encode().index(b'stop "composite candidate stopped"')
+                    assert (defect['span']['start'], defect['span']['end']) == (start, start + 34)
+                    assert items[-1]['stopped'] == 1 and items[-1]['failed'] == 0
+                else:
+                    assert result['outcome'] == 'failed' and result['result'] == box
+                    start = source.encode().index(b'verdict(value, result)')
+                    assert (result['line']['start'], result['line']['end']) == (start, start + 22)
+                    assert items[-1]['failed'] == 1 and items[-1]['stopped'] == 0
+                assert [r['code'] for r in items if r['record'] == 'diagnostic'] == (
+                    ['E1404'] if mode == 'failure' else [])
+
+        path.write_text('module Main\nfn probe(_value: List(Text)) : Int\n'
+                        'promise "unresolved composite"\nresult == 7\n'
+                        'allows _value: ["owned"], result: 7\nforbids _value: [], result: 8\nend\n' +
+                        loop + '7\nend\n' + tail)
+        items = records(run(clock, ['expiry', 'test', '--json', '--seconds', '1', str(path)], 1), 'test')
+        assert [r['name'] for r in items if r['record'] == 'result'] == ['Main.test.1']
+        assert items[-1] == {'record': 'totals', 'errors': 1, 'dropped': 0, 'passed': 1,
+                             'failed': 0, 'stopped': 0, 'status': 1}
+        assert items[-2]['code'] == 'E1404'
 
 
 def promise_selection(binary):
+    opaque = 'expose Box\nstruct Box\nvalue: Int\nend\n'
     cases = [
-        ('List(Int)', '[3]', ''),
-        ('(Int, Text)', '(3, "owned")', ''),
-        ('Box', 'Box(value: 3)', 'struct Box\nvalue: Int\nend\n'),
         ('fn(Int) : Int', 'identity', 'fn identity(value: Int) : Int\nvalue\nend\n'),
+        ('List(fn(Int) : Int)', '[identity]', 'fn identity(value: Int) : Int\nvalue\nend\n'),
+        ('Box', 'Box(value: 3)', opaque),
+        ('List(Box)', '[]', opaque),
+        ('Option(Box)', 'None', opaque),
+        ('Result(Int, Box)', 'Ok(13)', opaque),
+        ('Choice', 'Open', opaque + 'enum Choice\nOpen\nClosed(Box)\nend\n'),
+        ('(Text, Box)', '("owned", Box(value: 3))', opaque),
+        ('Option(Map(Text, Int))', 'None', ''),
+        ('Option(Set(Int))', 'None', ''),
+        ('Option(Console)', 'None', ''),
+        ('Box', 'make(3)', 'use Shapes{Box, make}\n'),
+        ('List(Shapes.Box)', '[]', 'use Shapes\n'),
+        ('Shapes.Box', 'Shapes.make(3)',
+         'expose Box(..)\nuse Shapes\nstruct Box\nother: Text\nend\n'),
     ]
     with tempfile.TemporaryDirectory(prefix='mo-promise-selection-') as directory:
         path = pathlib.Path(directory) / 'main.mo'
+        (path.parent / 'shapes.mo').write_text(
+            'module Shapes\nexpose Box, make\nstruct Box\nvalue: Int\nend\n'
+            'fn make(value: Int) : Box\nBox(value: value)\nend\n')
         for type_, input_, declarations in cases:
-            path.write_text('module Main\n' + declarations +
-                            'seed = crash()\nfn crash() : Int\nstop "must not initialize"\nend\n'
+            initializer = 'seed = crash()\nfn crash() : Int\nstop "must not initialize"\nend\n'
+            source = ('module Main\n' + declarations + initializer +
                             'test "first observation"\nassert true\nend\n'
+                            'fn supported(value: List(Text)) : List(Text)\n'
+                            'promise "supported first"\nresult == value\n'
+                            'allows value: ["owned"], result: ["owned"]\n'
+                            'forbids value: [], result: ["é"]\nend\nvalue\nend\n'
                             f'fn probe(_value: {type_}) : Int\npromise "seven"\nresult == 7\n'
                             f'allows _value: {input_}, result: 7\nforbids _value: {input_}, result: 8\nend\n'
                             '7\nend\nfn main()\nstop "main ran"\nend\n')
+            path.write_text(source)
             items = records(run(binary, ['test', '--json', '--list', '--max-heap', '1', str(path)], 0), 'test')
-            assert [r['name'] for r in items[1:-1]] == ['Main.test.1', 'Main.probe.promise.1']
+            assert [r['name'] for r in items[1:-1]] == [
+                'Main.test.1', 'Main.supported.promise.1', 'Main.probe.promise.1']
             items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
             assert len(items) == 3 and items[1]['code'] == 'E1400'
             assert items[1]['primary']['label'] == 'Main.probe.promise.1'
             assert items[-1]['passed'] == items[-1]['failed'] == items[-1]['stopped'] == 0
+            # Selection, not the mere presence of a deferred promise, controls
+            # preflight. Initialization is reached for ordinary-only selection.
+            items = records(run(binary, ['test', '--json', '--only', 'Main.test.1', str(path)], 1), 'test')
+            assert items[1]['code'] == 'E1406' and items[-1]['passed'] == 0
+            path.write_text(source.replace(initializer, ''))
+            items = records(run(binary, ['test', '--json', '--only', 'Main.test.1', str(path)], 0), 'test')
+            assert items[1]['outcome'] == 'passed' and items[-1]['passed'] == 1
+
+        # Same-module written access to exported opaque fields remains legal;
+        # only structural generation is refused. A private local type is not
+        # accidentally classified as exported opaque.
+        source = ('module Main\nexpose Box\nstruct Box\nvalue: Int\nend\n'
+                  'fn probe(value: Box) : Int\npromise "visible only to source"\nresult == value.value\n'
+                  'allows value: Box(value: 13), result: 13\n'
+                  'forbids value: Box(value: 13), result: 14\nend\nvalue.value\nend\n'
+                  'test "own fields"\nassert Box(value: 13).value == 13\nend\nfn main()\nend\n')
+        path.write_text(source)
+        records(run(binary, ['check', '--json', str(path)], 0), 'check')
+        items = records(run(binary, ['test', '--json', '--only', 'Main.test.1', str(path)], 0), 'test')
+        assert items[-1]['passed'] == 1
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['code'] == 'E1400' and items[-1]['passed'] == 0
+        path.write_text(source.replace('expose Box\n', ''))
+        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        assert items[-1]['passed'] == 2 and items[-1]['errors'] == 0
 
 
 def observations(binary):
@@ -1317,6 +1558,7 @@ def check(binary):
     promise_deadlines(binary)
     promise_shrinking(binary)
     composite_promises(binary)
+    composite_deadlines(binary)
     promise_selection(binary)
     items = records(run(faults, ["--json"], 1), "check")
     assert items[1]["code"] == "E1401" and items[-1]["dropped"] == 0
