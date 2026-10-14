@@ -1586,7 +1586,9 @@ globals use the same path as other source code. A deferred lambda or named
 function adapter needing a later global refuses E1150 during lowering (4.3),
 even when called only after initialization. Supporting that lazy body does not
 justify changing the checker's dependency order or adding false execution edges.
-Native function aliases such as `Int.abs` remain a separate E1150 staging route.
+Inventoried `Int.abs`, `Int.min` and `Int.max` scalar callables, including aliases,
+now execute through the existing primitive adapters (4.3). Other numeric native
+function aliases such as `Int.pow` remain a separate E1150 staging route.
 Tools render these refusals and suppress both artifacts; they do not treat
 them as invalid compiler Core or runtime bugs.
 
@@ -1637,6 +1639,19 @@ enclosing source `assert`, not a reconstructed condition or the last executed
 leaf's span. Failed observations do not become source diagnostics: `errors`
 stays zero unless a compiler/tool error was found, while `failed`/`stopped`
 independently force status 1. Selected unsupported promises are never omitted.
+
+Stopped results retain their original defect span and all stack frames. Variables
+belong to the stopping frame, in bytecode debug-name order. The VM's public
+borrowed visitor establishes readability and lifetime; tools never inspect private
+register layouts or parse human defect text. Each traversal has a 4,096-variable
+and 64 Mi work ceiling, including ancestor traversal; any incomplete traversal
+refuses the whole result with E1404. Structural value printing executes no Mo code,
+uses at most 4,096 bytes per value, and substitutes `<value unavailable>` if a
+value cannot be printed within its scratch/output budget. Text and Char variables
+use quoted literal spellings. Each complete result fits 1 MiB, including escaping,
+or is refused whole; no result field is truncated. Selection/name construction
+has a 64 Mi work budget and image binding a 64 MiB scratch arena, under the
+existing source/spec and bytecode count limits.
 
 Source work runs synchronously through `mo_with_stack` with
 `MO_SOURCE_STACK_SIZE`, covering load, parse, check, lower, Core check, codegen
@@ -1868,7 +1883,10 @@ records may be added, and readers ignore what they don't know.
   body that was false; and `calls`, how many calls were tried. A stopped one
   adds `defect`, the defect report of section 8: `reason`, `span`, `stack`,
   each frame's `function` and `span`, and `variables`, each a `name` and
-  `value`; and for a promise, the `input` it stopped on, and `extreme`, when
+  `value`. Optional `detail` preserves the stop's original Text payload;
+  optional `limit` has `name` (such as `"--max-depth"`) and `value`, a decimal
+  string. These additive fields preserve the reason's established meaning.
+  For a promise, the `input` it stopped on, and `extreme`, when
   that input holds one of its type's extremes: the parameter's `name` and the
   extreme's `description`, such as `"Decimal's largest value"`.
 - **`totals`**, always last: `errors`, the diagnostics written, and
@@ -1910,8 +1928,9 @@ UTF-8; offsets still refer to unmodified source bytes. This is not a
 lossless path-byte codec when valid U+00HH also occurs; consumers must check
 decoded paths before rewriting files. Limit/implementation codes have both
 `reason` and `section` null, even when the stage supplies explanatory reason
-text; their explanation belongs in headline/label. Test stubs produce
-version, E1400 diagnostic and totals with all test counts zero.
+text; their explanation belongs in headline/label. A selected promise's unavailable
+runner produces version, E1400 diagnostic and totals with all test counts zero;
+ordinary examples/tests produce their actual result records.
 
 If `count` in `examples/wc.mo` miscounted words, `mo test --json
 examples/wc.mo` would write these lines, with the four results that pass

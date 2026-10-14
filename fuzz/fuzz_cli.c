@@ -161,6 +161,19 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         if (canonical && size <= 128 && span.file != UINT32_MAX && limit >= 16384)
             MO_ASSERT(rendered); /* A small valid byte-counted detail must not be rejected. */
     }
+    /* Frameless resource stops still have real payload bytes, an unavailable
+     * runtime location and optional numeric limit, never fabricated variables. */
+    result.outcome = MO_STOPPED;
+    defect.reason = copy;
+    defect.limit_name = canonical ? copy : NULL;
+    defect.limit = start;
+    defect.span = (struct mo_vm_span){MO_NO_INDEX, start, end};
+    for (unsigned json = 0; json < 2; json++) {
+        rendered = mo_render_test_result(&sources, &result, json != 0, &out);
+        MO_ASSERT(rendered || out.length == 0);
+        if (size <= 128 && limit >= 16384)
+            MO_ASSERT(rendered);
+    }
     mo_value_drop(heap, text, defect.detail);
     mo_buffer_free(&detail);
     mo_heap_free(heap);

@@ -112,6 +112,13 @@ def observations(binary):
                         'fn main()\nstop "main ran"\nend\n')
         listed = records(run(binary, ["test", "--json", "--list", str(path)], 0), "test")
         assert [r["name"] for r in listed[1:-1]] == ["Main.keep.promise.1", "Main.test.1"]
+        original = path.read_text()
+        path.write_text(original.replace('allows value: 3, result: 3', 'allows value: 3, result: 4'))
+        listed = records(run(binary, ["test", "--json", "--list", str(path)], 0), "test")
+        assert [r["name"] for r in listed[1:-1]] == ["Main.keep.promise.1", "Main.test.1"]
+        anchored = records(run(binary, ["test", "--json", "--only", "Main.test.1", str(path)], 1), "test")
+        assert anchored[1]["code"] == "E1405" and anchored[-1]["passed"] == 0
+        path.write_text(original)
         refused = records(run(binary, ["test", "--json", str(path)], 1), "test")
         assert len(refused) == 3 and refused[1]["code"] == "E1400"
         assert refused[1]["primary"]["label"] == "Main.keep.promise.1"
@@ -165,6 +172,101 @@ def observations(binary):
                 assert len(items) == 3 and items[1]["code"] == "E1404"
                 assert items[-1]["passed"] == 0 and items[-1]["errors"] == 1
             assert items[-1]["failed"] == 1 and items[-1]["stopped"] == 0
+
+        # A bug ends only its fresh process. main is never the test entry, and
+        # neither a stop nor a failure may hide the following successful test.
+        source = ('module Main\nfn divide(n: Int) : Int\nexamples\ndivide(7) == 0\nend\n'
+                  'n / 0\nend\ntest "after stop"\nassert true\nend\n'
+                  'test "failed after stop"\nassert 17 == 29\nend\n'
+                  'fn main()\nstop "main must not run"\nend\n')
+        path.write_text(source)
+        items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        assert [r["outcome"] for r in items[1:-1]] == ["stopped", "passed", "failed"]
+        defect = items[1]["defect"]
+        start = source.index("n / 0")
+        assert defect["reason"] == "dividing by zero"
+        assert defect["span"] == {"file": str(path), "start": start, "end": start + 5,
+                                   "line": 6, "column": 1, "end_line": 6, "end_column": 6}
+        assert [f["function"] for f in defect["stack"]] == ["Main.divide", "Main.divide.example.1"]
+        assert defect["variables"] == [{"name": "n", "value": "7"}]
+        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                             "passed": 1, "failed": 1, "stopped": 1, "status": 1}
+        text = run(binary, ["test", str(path)], 1)
+        assert not text.stderr and b"bug: dividing by zero" in text.stdout
+        assert b"n = 7" in text.stdout and b"main must not run" not in text.stdout
+        assert text.stdout.endswith(b"1 passed, 1 failed, 1 stopped\n")
+
+        # Depth/stack exhaustion is a stopped result, not a failed assertion or
+        # source diagnostic. A succeeding process follows under the same bound.
+        path.write_text('module Main\nfn descend(n: Int) : Int\n'
+                        'if n == 0: 0 else: 1 + descend(n - 1)\nend\n'
+                        'test "limited"\nassert descend(30) == 30\nend\n'
+                        'test "fresh process"\nassert true\nend\nfn main()\nend\n')
+        for flag, value in (("--max-depth", "10"), ("--max-stack", "1KiB")):
+            items = records(run(binary, ["test", "--json", flag, value, str(path)], 1), "test")
+            assert [r["outcome"] for r in items[1:-1]] == ["stopped", "passed"]
+            assert items[1]["defect"]["reason"] == "out of stack"
+            assert items[1]["defect"]["limit"] == {"name": flag, "value": "10" if value == "10" else "1024"}
+            assert all(f["span"]["file"] == str(path) for f in items[1]["defect"]["stack"])
+            assert items[-1]["passed"] == items[-1]["stopped"] == 1 and items[-1]["errors"] == 0
+
+        # Original stop payloads retain NUL/newline, while both encodings remain
+        # terminal-safe. Native scalar overflow uses the same stopped route.
+        path.write_text('module Main\nhandler = Int.abs\ntest "native overflow"\n'
+                        'assert handler(-9223372036854775808) == 0\nend\n'
+                        'test "explicit stop"\nstop "λ\\u{0}\\n\\u{1b}"\nend\n'
+                        'test "after both"\nassert true\nend\nfn main()\nend\n')
+        items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        assert [r["outcome"] for r in items[1:-1]] == ["stopped", "stopped", "passed"]
+        assert items[1]["defect"]["reason"] == "overflow: Int"
+        assert items[2]["defect"]["reason"] == "stop" and items[2]["defect"]["detail"] == "λ\0\n\x1b"
+        assert items[-1]["stopped"] == 2 and items[-1]["errors"] == 0
+        text = run(binary, ["test", str(path)], 1, env={**os.environ, "LC_ALL": "C"})
+        text.stdout.decode("ascii")
+        assert not text.stderr and b"\\x00\\x0a\\x1b" in text.stdout and b"\x1b" not in text.stdout
+
+        # Values not yet read remain reportable; the unassigned n does not.
+        # Quoting is structural, including interpolation and quote escapes,
+        # and cannot execute the source Box Text implementation.
+        path.write_text(r'''module Main
+struct Box
+value: Int
+end
+fn to_text(_box: Box) : Text
+stop "renderer called"
+end
+fn crash(label: Text, mark: Char, box: Box) : Int
+n = 7 / 0
+n + label.byte_count + mark.to_text.byte_count + box.value
+end
+test "quoted variables"
+outer = 11
+assert crash("λ\u{0}\n\"\#{0}", '\'', Box(value: 7)) + outer == 0
+end
+fn main()
+end
+''')
+        items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        assert items[1]["defect"]["variables"] == [
+            {"name": "label", "value": r'"λ\u{0}\n\"\#{0}"'},
+            {"name": "mark", "value": r"'\''"},
+            {"name": "box", "value": "Box(value: 7)"}]
+        assert items[1]["defect"]["reason"] == "dividing by zero" and items[-1]["errors"] == 0
+        for length in (4094, 4095):
+            path.write_text('module Main\nfn crash(label: Text) : Int\nn = 7 / 0\n'
+                            'n + label.byte_count\nend\ntest "print budget"\n'
+                            'assert crash("' + 'x' * length + '") == 0\nend\nfn main()\nend\n')
+            items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+            expected = '"' + 'x' * length + '"' if length == 4094 else "<value unavailable>"
+            assert items[1]["defect"]["variables"] == [{"name": "label", "value": expected}]
+            assert items[-1]["stopped"] == 1 and items[-1]["errors"] == 0
+
+        # Compiler certification's instruction ceiling is not an ordinary-test
+        # deadline, and --calls/--seconds are promise-only budgets.
+        path.write_text('module Main\ntest "long ordinary computation"\nvar n = 0\n'
+                        'while n < 5000001\nn += 1\nend\nassert n == 5000001\nend\nfn main()\nend\n')
+        items = records(run(binary, ["test", "--json", "--calls", "1", "--seconds", "1", str(path)], 0), "test")
+        assert items[1]["outcome"] == "passed" and items[-1]["passed"] == 1
 
         # Exact owning module, not a prefix of a nested module's name.
         nested = pathlib.Path(directory) / "main" / "child.mo"
@@ -488,6 +590,9 @@ def constants(binary):
              'fn main() : Int\nanswer + (reader() or 9)\nend\n', 14),
             ('base = 13\nhandler = fn() base end\n'
              'fn main() : Int\nhandler() + 24\nend\n', 37),
+            ('answer = handler(-7)\nhandler = Int.abs\n'
+             'fn main() : Int\nanswer + 30\nend\n', 37),
+            ('fn main() : Int\nInt.min(7, -11) * 2 + Int.max(-11, 7) + 68\nend\n', 53),
         ):
             path.write_text("module Main\n" + body)
             result = run(binary, ["check", str(path)], 0)
@@ -506,7 +611,7 @@ def constants(binary):
 
         # A lazy body is not an initialization dependency. Neither a lambda,
         # a named adapter nor a self-alias may access beyond its creation prefix.
-        # Native function values are a separate unfinished lowering route.
+        # Int.pow is separate from the supported abs/min/max native routes.
         for body, reason in (
             ('handler = fn() base end\nbase = 13\n'
              'fn main() : Int\nhandler() + 24\nend\n', "deferred function"),
@@ -515,7 +620,7 @@ def constants(binary):
              "deferred function"),
             ('handler = first\nfn first() : Int\nhandler()\nend\n'
              'fn main() : Int\n17\nend\n', "deferred function"),
-            ('answer = handler(-7)\nhandler = Int.abs\n'
+            ('answer = handler(2, 3)\nhandler = Int.pow\n'
              'fn main() : Int\nanswer + 30\nend\n', "native call"),
         ):
             path.write_text("module Main\n" + body)

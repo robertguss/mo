@@ -643,12 +643,93 @@ static void equality_failure(struct writer *w, const struct mo_defect *defect, b
     }
 }
 
+/* heap's root Text/Char spelling is unquoted. Defect variables use literals,
+ * without asking a source to_text function to execute on a stopped process. */
+static void structural_literal(struct writer *w, const struct mo_buffer *raw, uint8_t delimiter) {
+    bytes(w, &delimiter, 1);
+    for (size_t i = 0; w->ok && i < raw->length;) {
+        uint32_t value;
+        uint32_t n = scalar(raw->bytes + i, raw->length - i, &value);
+        MO_ASSERT(value != UINT32_MAX);
+        if (value == '\n' || value == '\r' || value == '\t') {
+            text(w, value == '\n' ? "\\n" : value == '\r' ? "\\r" : "\\t");
+        } else if (value == delimiter || value == '\\' ||
+                   (value == '#' && i + 1 < raw->length && raw->bytes[i + 1] == '{')) {
+            text(w, "\\");
+            bytes(w, raw->bytes + i, n);
+        } else if (escaped(value)) {
+            text(w, "\\u{");
+            hex(w, value, 1);
+            text(w, "}");
+        } else
+            bytes(w, raw->bytes + i, n);
+        i += n;
+    }
+    bytes(w, &delimiter, 1);
+}
+
+struct stopped_variables {
+    struct writer *writer;
+    const struct mo_test_result *result;
+    bool json, first;
+};
+
+static bool stopped_variable(const struct mo_defect_variable *variable, void *context) {
+    struct stopped_variables *variables = context;
+    const struct mo_test_result *result = variables->result;
+    if (variable->frame != result->defect->frames)
+        return true; /* The wire schema's variables belong to the stopping frame. */
+    struct mo_buffer raw, literal;
+    mo_buffer_init(&raw, 4096);
+    mo_buffer_init(&literal, 4096);
+    bool printed =
+        mo_value_print(mo_process_heap(result->process), variable->type, variable->value, &raw);
+    struct mo_buffer *value = &raw;
+    enum mo_type_kind kind = result->file->types[variable->type].kind;
+    if (printed && (kind == MO_TYPE_TEXT || kind == MO_TYPE_CHAR)) {
+        struct writer w = {.out = &literal, .ok = true};
+        structural_literal(&w, &raw, kind == MO_TYPE_TEXT ? '"' : '\'');
+        printed = w.ok;
+        value = &literal;
+    }
+    if (!printed) {
+        mo_buffer_clear(&raw);
+        printed = mo_buffer_append_text(&raw, "<value unavailable>");
+        value = &raw;
+    }
+    struct writer *w = variables->writer;
+    w->ok = w->ok && printed;
+    if (variables->json) {
+        if (!variables->first)
+            text(w, ",");
+        text(w, "{\"name\":");
+        json_bytes(w, variable->name, variable->name_length);
+        text(w, ",\"value\":");
+        json_bytes(w, value->bytes, value->length);
+        text(w, "}");
+    } else {
+        text(w, "  ");
+        safe_bytes(w, variable->name, variable->name_length);
+        text(w, " = ");
+        safe_bytes(w, value->bytes, value->length);
+        text(w, "\n");
+    }
+    variables->first = false;
+    mo_buffer_free(&literal);
+    mo_buffer_free(&raw);
+    return w->ok;
+}
+
 static void stopped_variables(struct writer *w, const struct mo_test_result *result, bool json) {
-    (void)json;
-    /* TODO: replace with the VM owner's bounded borrowed variable visitor.
-     * A process-allocation refusal really has no frames or variables. */
-    if (result->defect->frames != NULL)
-        w->ok = false;
+    if (!w->ok || result->defect->frames == NULL)
+        return; /* Process-allocation refusal really has no variables. */
+    struct stopped_variables variables = {w, result, json, true};
+    enum mo_defect_variables_result outcome =
+        mo_visit_defect_variables(result->process, result->defect, MO_CLI_TEST_VARIABLES,
+                                  MO_CLI_TEST_WORK, stopped_variable, &variables);
+    /* Never manufacture an empty success when replay could not establish the
+     * readable values, nor publish a partial list after a resource refusal. */
+    w->ok = w->ok && outcome == MO_DEFECT_VARIABLES_COMPLETE;
 }
 
 static void stopped_result(struct writer *w, const struct mo_sources *sources,
