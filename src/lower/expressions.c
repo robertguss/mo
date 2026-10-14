@@ -41,7 +41,7 @@ struct continuation {
     enum continuation_kind kind;
     struct continuation *next;
     const struct mo_checked_expression *row;
-    uint32_t at;
+    uint32_t at, skip;
     mo_core_string name;
     const struct mo_checked_binding *binding;
     mo_core_expr_list arguments;
@@ -908,6 +908,22 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
         }
         return e;
     }
+    if (r->native != NULL) {
+        static const struct {
+            const char *name;
+            enum mo_core_int_op operation;
+        } natives[] = {{"Int.abs", MO_CORE_INT_OP_ABS},
+                       {"Int.min", MO_CORE_INT_OP_MIN},
+                       {"Int.max", MO_CORE_INT_OP_MAX}};
+        for (size_t i = 0; i < sizeof natives / sizeof natives[0]; i++) {
+            lower_work(p, 1);
+            if (strcmp(r->native, natives[i].name) == 0)
+                return lower_prim(
+                    p,
+                    (struct mo_core_prim){.tag = MO_CORE_PRIM_INT, .as.int_ = natives[i].operation},
+                    args);
+        }
+    }
     if (r->native != NULL && strcmp(r->native, "Console.print") == 0)
         return lower_prim(
             p, (struct mo_core_prim){.tag = MO_CORE_PRIM_IO, .as.io.tag = MO_CORE_IO_OP_PRINT},
@@ -1257,7 +1273,7 @@ static void finish_task(struct body *b, struct task t) {
         return;
     }
     MO_ASSERT(k->kind == K_ARGUMENTS);
-    uint32_t skip = k->row->symbol != NULL && k->row->symbol->declaration->kind == MO_S_FN ? 1 : 0;
+    uint32_t skip = k->skip;
     bool direct = !k->diagnostic && atom(t.value);
     /* A mutable read must be snapped before a later inline assignment. Plain
      * names/literals cannot assign, so x += 1 needs only its actual SSA let. */
@@ -1598,6 +1614,7 @@ static void row_task(struct body *b, struct task t) {
     }
     struct continuation *k = continuation(b, K_ARGUMENTS);
     k->row = r;
+    k->skip = skip;
     k->next = t.continuation;
     k->name = lower_fresh(p);
     k->arguments = arguments(b, r->operand_count - skip);

@@ -1872,6 +1872,18 @@ static void test_source_constants(void *unused) {
         run(core, 14);
     mo_arena_free(&output);
     mo_diags_free(&diags);
+    mo_arena_init(&output, MO_LIMIT_LOWER_WORK);
+    MO_ASSERT(mo_diags_init(&diags));
+    mo_buffer_clear(&source);
+    MO_ASSERT(mo_buffer_append_text(&source,
+                                    "module Main\nanswer = handler(-7)\nhandler = Int.abs\n"
+                                    "fn main() : Int\nanswer + 30\nend\n"));
+    core = source_core(&output, &source, &diags);
+    CHECK(core != NULL && !mo_diags_any(&diags));
+    if (core != NULL)
+        run(core, 37);
+    mo_arena_free(&output);
+    mo_diags_free(&diags);
     const char *deferred[] = {
         "handler = fn() base end\nbase = 13\nfn main() : Int\nhandler() + 24\nend\n",
         ("answer = handler()\nhandler = first\nbase = 13\n"
