@@ -415,6 +415,81 @@ static MO_MUST_USE bool same_source_type(const struct mo_source_type *a,
     return true;
 }
 
+static void imported_nominal(void) {
+    char folder[] = "/tmp/mo-nominal-import-XXXXXX", path[128], other[128];
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    int n = snprintf(path, sizeof(path), "%s/main.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(path));
+    n = snprintf(other, sizeof(other), "%s/shapes.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(other));
+    const char main[] = "module Main\nuse Shapes{Pair}\n"
+                        "fn score(pair: Pair(Int, Bool)) : Int\n"
+                        "if pair.second: pair.first * 10 + 7 else: pair.first - 3\nend\n"
+                        "fn main() : Int\nscore(Pair(second: true, first: 3))\nend\n";
+    const char shapes[] = "module Shapes\nexpose Pair(..)\n"
+                          "struct Pair(Z, A)\nfirst: Z\nsecond: A\nend\n";
+    write_file(path, (const uint8_t *)main, sizeof(main) - 1);
+    write_file(other, (const uint8_t *)shapes, sizeof(shapes) - 1);
+    struct fixture f;
+    init(&f, MO_CLI_CHECK_SIZE);
+    struct mo_module_set *set = mo_load_program(&f.syntax, &f.sources, path, NULL, &f.diags);
+    MO_ASSERT(set != NULL && !mo_diags_any(&f.diags));
+    struct mo_program *program = mo_check(&f.arena, set, &f.diags);
+    mo_sources_free(&f.sources);
+    CHECK(program != NULL && !mo_diags_any(&f.diags));
+    if (program != NULL) {
+        const struct mo_symbol *pair =
+            mo_find_symbol(&program->interfaces->scopes[1], (const uint8_t *)"Pair", 4);
+        MO_ASSERT(program->signatures->data_count == 1 && pair != NULL);
+        const struct mo_data_signature *data = &program->signatures->data[0];
+        CHECK(data->symbol == pair && data->type->declaration == pair);
+        MO_ASSERT(data->type->count == 2);
+        CHECK(strcmp(data->type->arguments[0]->name, "Z") == 0 &&
+              strcmp(data->type->arguments[1]->name, "A") == 0);
+        CHECK(data->type->arguments[0]->declaration == pair &&
+              data->type->arguments[1]->declaration == pair);
+        bool constructed = false;
+        uint32_t projections = 0;
+        for (uint32_t i = 0; i < program->function_count; i++) {
+            const struct mo_checked_function *fn = &program->functions[i];
+            if (strcmp(fn->signature->function->name, "score") == 0)
+                CHECK(fn->signature->type->arguments[0]->declaration == pair);
+            for (uint32_t j = 0; j < fn->body.count; j++) {
+                const struct mo_checked_expression *row = &fn->body.items[j];
+                if (row->symbol == pair) {
+                    MO_ASSERT(row->operand_count == 2 && row->arguments.count == 2);
+                    CHECK(row->type->declaration == pair && row->syntax->span.file == 0);
+                    CHECK(fn->body.items[row->operands[0]].field == 1 &&
+                          fn->body.items[row->operands[1]].field == 0);
+                    constructed = true;
+                } else if (strcmp(fn->signature->function->name, "score") == 0 &&
+                           row->field != UINT32_MAX) {
+                    MO_ASSERT(row->operand_count == 1 && row->arguments.count == 2);
+                    CHECK(fn->body.items[row->operands[0]].type->declaration == pair);
+                    CHECK(row->field < 2 &&
+                          strcmp(row->type->name, row->field == 0 ? "Int" : "Bool") == 0);
+                    projections++;
+                } else {
+                    continue;
+                }
+                for (uint32_t k = 0; k < 2; k++) {
+                    CHECK(row->arguments.items[k].parameter == data->type->arguments[k]);
+                    CHECK(strcmp(row->arguments.items[k].type->name, k == 0 ? "Int" : "Bool") == 0);
+                }
+            }
+        }
+        CHECK(constructed && projections == 3);
+    } else {
+        MO_ASSERT(f.diags.count != 0);
+        MO_ASSERT(fprintf(stderr, "nominal import: E%04u %u:%u..%u %s\n",
+                          (unsigned)f.diags.items[0].code, f.diags.items[0].primary.span.file,
+                          f.diags.items[0].primary.span.start, f.diags.items[0].primary.span.end,
+                          f.diags.items[0].message) > 0);
+    }
+    finish(&f);
+    MO_ASSERT(unlink(path) == 0 && unlink(other) == 0 && rmdir(folder) == 0);
+}
+
 static void imported_generic(void) {
     char folder[] = "/tmp/mo-generic-imports-XXXXXX", main_path[128], other_path[128];
     MO_ASSERT(mkdtemp(folder) != NULL);
@@ -758,16 +833,14 @@ static void import_sources(void) {
          NULL, NULL, MO_CODE_TYPE_MISMATCH},
         {"generic function", "use Shapes{identity}\nfn main() : Int\nidentity(19)\nend\n",
          "module Shapes\nexpose identity\nfn identity(value: T) : T\nvalue\nend\n", NULL, 0},
-        {"generic annotation staged",
+        {"generic annotation",
          "use Shapes{Box}\nfn keep(value: Box(Int)) : Box(Int)\n"
          "value\nend\nfn main()\nend\n",
-         "module Shapes\nexpose Box(..)\nstruct Box(T)\nvalue: T\nend\n", NULL,
-         MO_CODE_CHECK_UNFINISHED},
-        {"generic construction staged",
+         "module Shapes\nexpose Box(..)\nstruct Box(T)\nvalue: T\nend\n", NULL, 0},
+        {"generic construction",
          "use Shapes{Box}\nfn main() : Int\n"
          "Box(value: 19).value\nend\n",
-         "module Shapes\nexpose Box(..)\nstruct Box(T)\nvalue: T\nend\n", NULL,
-         MO_CODE_CHECK_UNFINISHED},
+         "module Shapes\nexpose Box(..)\nstruct Box(T)\nvalue: T\nend\n", NULL, 0},
         {"imported constant staged", "use Shapes{answer}\nfn main() : Int\nanswer\nend\n",
          "module Shapes\nexpose answer\nanswer = 19\n", NULL, MO_CODE_CHECK_UNFINISHED},
         {"initializer import staged",
@@ -1819,6 +1892,7 @@ static void run_tests(void *argument) {
     corpus();
     samples();
     imported_function();
+    imported_nominal();
     imported_generic();
     generic_import_sources();
     import_sources();

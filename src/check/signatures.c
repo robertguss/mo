@@ -585,13 +585,6 @@ static MO_MUST_USE const struct mo_source_type *resolve_type(struct preparation 
         (void)reported;
         return NULL;
     }
-    if (p->checked && symbol != NULL && symbol->module != p->function->module &&
-        !p->interfaces->scopes[symbol->module].library && arity != 0) {
-        bool reported = problem(p, MO_CODE_CHECK_UNFINISHED, name->span,
-                                "generic nominal imports remain staged", NULL);
-        (void)reported;
-        return NULL;
-    }
     const struct mo_source_type **arguments =
         count == 0
             ? NULL
