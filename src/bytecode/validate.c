@@ -558,7 +558,7 @@ static MO_MUST_USE bool source_span(const struct validation *v, uint32_t file, u
                                     uint32_t end) {
     return file == MO_BYTECODE_NO_INDEX
                ? start == 0 && end == 0
-               : named(v, file) && start <= end && end <= MO_LIMIT_FILE_SIZE;
+               : file < v->file->file_count && start <= end && end <= MO_LIMIT_FILE_SIZE;
 }
 
 /* Each span, register name and condition line occupies sixteen wire bytes. The file bound

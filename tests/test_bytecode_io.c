@@ -226,10 +226,12 @@ static const struct mo_bytecode_module modules[] = {{.name = 11,
                                                      .function_count = 1,
                                                      .globals = module_globals,
                                                      .global_count = 1}};
-static const struct mo_bytecode_span spans[] = {{0, 19, 13, 24}, {4, MO_BYTECODE_NO_INDEX, 0, 0}};
+static const struct mo_bytecode_bytes files[] = {STRING("wc.mo"), STRING("unused-\xff.mo"),
+                                                 STRING("unused-\\xff.mo")};
+static const struct mo_bytecode_span spans[] = {{0, 0, 13, 24}, {4, MO_BYTECODE_NO_INDEX, 0, 0}};
 /* Unsorted, adjacent reuse of the same register; sorting must not change the wire order. */
 static const struct mo_bytecode_register_name names[] = {{0, 20, 4, 8}, {0, 3, 0, 4}};
-static const struct mo_bytecode_spec_line lines[] = {{19, 101, 110, 21},
+static const struct mo_bytecode_spec_line lines[] = {{0, 101, 110, 21},
                                                      {MO_BYTECODE_NO_INDEX, 0, 0, 22}};
 static const struct mo_bytecode_debug debug[] = {
     {.text = MO_BYTECODE_NO_INDEX, .file = MO_BYTECODE_NO_INDEX, .subject = MO_BYTECODE_NO_INDEX},
@@ -238,22 +240,22 @@ static const struct mo_bytecode_debug debug[] = {
      .names = names,
      .name_count = 2,
      .text = MO_BYTECODE_NO_INDEX,
-     .file = 19,
+     .file = 0,
      .start = 11,
      .end = 31,
      .subject = MO_BYTECODE_NO_INDEX},
     {.text = MO_BYTECODE_NO_INDEX, .file = MO_BYTECODE_NO_INDEX, .subject = MO_BYTECODE_NO_INDEX},
     {.text = 22, .file = MO_BYTECODE_NO_INDEX, .subject = MO_BYTECODE_NO_INDEX},
-    {.text = 21, .file = 19, .start = 35, .end = 63, .subject = MO_BYTECODE_NO_INDEX},
+    {.text = 21, .file = 0, .start = 35, .end = 63, .subject = MO_BYTECODE_NO_INDEX},
     {.text = 21,
-     .file = 19,
+     .file = 0,
      .start = 100,
      .end = 140,
      .subject = 1,
      .lines = lines,
      .line_count = 2},
     {.text = 22,
-     .file = 19,
+     .file = 0,
      .start = 141,
      .end = 150,
      .subject = 5,
@@ -276,6 +278,8 @@ static const struct mo_bytecode fixture = {.strings = strings,
                                            .function_count = ARRAY_COUNT(functions),
                                            .modules = modules,
                                            .module_count = ARRAY_COUNT(modules),
+                                           .files = files,
+                                           .file_count = ARRAY_COUNT(files),
                                            .debug = debug,
                                            .debug_count = ARRAY_COUNT(debug)};
 
@@ -288,10 +292,14 @@ static void equal_structure(const struct mo_bytecode *a, const struct mo_bytecod
           a->layout_count == b->layout_count && a->constant_count == b->constant_count &&
           a->global_count == b->global_count && a->init_count == b->init_count &&
           a->function_count == b->function_count && a->module_count == b->module_count &&
-          a->debug_count == b->debug_count);
+          a->debug_count == b->debug_count && a->file_count == b->file_count);
     for (uint32_t i = 0; i < a->string_count; i++) {
         CHECK(a->strings[i].length == b->strings[i].length);
         CHECK(equal_bytes(a->strings[i].bytes, b->strings[i].bytes, a->strings[i].length));
+    }
+    for (uint32_t i = 0; i < a->file_count; i++) {
+        CHECK(a->files[i].length == b->files[i].length);
+        CHECK(equal_bytes(a->files[i].bytes, b->files[i].bytes, a->files[i].length));
     }
     for (uint32_t i = 0; i < a->type_count; i++) {
         const struct mo_type *x = &a->types[i], *y = &b->types[i];
@@ -427,13 +435,13 @@ static void test_empty(void) {
     struct mo_write_error error;
     mo_buffer_init(&out, 1024);
     CHECK(mo_bytecode_encode(&file, &out, &error));
-    CHECK(out.length == 56);
-    CHECK(memcmp(out.bytes, "MOBC\0\0\1\0\0\0\0\0", 12) == 0);
+    CHECK(out.length == 60);
+    CHECK(memcmp(out.bytes, "MOBC\0\0\2\0\0\0\0\0", 12) == 0);
     for (size_t i = 20; i < out.length; i++) {
         CHECK(out.bytes[i] == 0);
     }
     mo_buffer_free(&out);
-    mo_buffer_init(&out, 55);
+    mo_buffer_init(&out, 59);
     CHECK(!mo_bytecode_encode(&file, &out, &error));
     CHECK(out.length == 0 && error.reason != NULL);
     CHECK(error.kind == MO_BYTECODE_LIMIT);
@@ -756,9 +764,7 @@ static void test_refusals(void) {
 }
 
 static void test_debug_metadata(void) {
-    BAD_TABLE(debug, 1, file, ARRAY_COUNT(strings), "invalid declaration span");
-    BAD_TABLE(debug, 1, file, 22, "invalid declaration span");
-    BAD_TABLE(debug, 1, file, 21, "invalid declaration span");
+    BAD_TABLE(debug, 1, file, ARRAY_COUNT(files), "invalid declaration span");
     BAD_TABLE(debug, 1, file, MO_BYTECODE_NO_INDEX, "invalid declaration span");
     BAD_TABLE(debug, 0, start, 1, "invalid declaration span");
     BAD_TABLE(debug, 0, end, 1, "invalid declaration span");
@@ -783,11 +789,7 @@ static void test_debug_metadata(void) {
 
     struct mo_bytecode_spec_line bad_lines[ARRAY_COUNT(lines)];
     memcpy(bad_lines, lines, sizeof bad_lines);
-    bad_lines[0].file = ARRAY_COUNT(strings);
-    BAD_TABLE(debug, 5, lines, bad_lines, "invalid condition line");
-    bad_lines[0].file = 22;
-    BAD_TABLE(debug, 5, lines, bad_lines, "invalid condition line");
-    bad_lines[0].file = 21;
+    bad_lines[0].file = ARRAY_COUNT(files);
     BAD_TABLE(debug, 5, lines, bad_lines, "invalid condition line");
     bad_lines[0].file = MO_BYTECODE_NO_INDEX;
     BAD_TABLE(debug, 5, lines, bad_lines, "invalid condition line");
@@ -820,7 +822,7 @@ static void test_debug_metadata(void) {
     ds[1].end = MO_LIMIT_FILE_SIZE; /* a zero-length declaration at the limit */
     round_trip(&f);
     ds[1] = debug[1];
-    const struct mo_bytecode_span cleared[] = {{0, MO_BYTECODE_NO_INDEX, 0, 0}, {4, 19, 25, 30}};
+    const struct mo_bytecode_span cleared[] = {{0, MO_BYTECODE_NO_INDEX, 0, 0}, {4, 0, 25, 30}};
     ds[1].spans = cleared;
     round_trip(&f); /* attribution clears, then resumes at a later instruction */
     for (uint32_t i = 0; i < ARRAY_COUNT(ds); i++) {
@@ -831,10 +833,10 @@ static void test_debug_metadata(void) {
     round_trip(&f); /* noSource has no spec text, links, conditions or expectations */
 
     /* Independent wire words for the final promise, anchor and source-less closure entries. */
-    const uint32_t tail[] = {0,  0,          21,         19,  100,        140,        1, 0,  2,
-                             19, 101,        110,        21,  UINT32_MAX, 0,          0, 22, 0,
-                             0,  22,         19,         141, 150,        5,          1, 0,  0,
-                             0,  UINT32_MAX, UINT32_MAX, 0,   0,          UINT32_MAX, 0, 0};
+    const uint32_t tail[] = {0, 0,          21,         0,   100,        140,        1, 0,  2,
+                             0, 101,        110,        21,  UINT32_MAX, 0,          0, 22, 0,
+                             0, 22,         0,          141, 150,        5,          1, 0,  0,
+                             0, UINT32_MAX, UINT32_MAX, 0,   0,          UINT32_MAX, 0, 0};
     struct mo_buffer expected, out;
     struct mo_write_error error;
     mo_buffer_init(&expected, 1024);
@@ -849,7 +851,7 @@ static void test_debug_metadata(void) {
         CHECK(equal_bytes(out.bytes + offset, expected.bytes, expected.length));
         const size_t slots[] = {3, 4, 6, 7, 8, 9, 10, 12, 24, 34};
         const uint32_t values[] = {
-            ARRAY_COUNT(strings), 141, 0, 1, MO_LIMIT_DEBUG_ENTRIES + 1U, ARRAY_COUNT(strings), 111,
+            ARRAY_COUNT(files),   141, 0, 1, MO_LIMIT_DEBUG_ENTRIES + 1U, ARRAY_COUNT(files), 111,
             MO_BYTECODE_NO_INDEX, 3,   1};
         const char *reasons[] = {"invalid declaration span",
                                  "invalid declaration span",
@@ -900,7 +902,8 @@ static void test_wire_refusals(void) {
     }
     const uint32_t limits[] = {MO_LIMIT_STRINGS,   MO_LIMIT_TYPES,   MO_LIMIT_LAYOUTS,
                                MO_LIMIT_CONSTANTS, MO_LIMIT_GLOBALS, MO_LIMIT_INITS,
-                               MO_LIMIT_FUNCTIONS, MO_LIMIT_MODULES, MO_LIMIT_FUNCTIONS};
+                               MO_LIMIT_FUNCTIONS, MO_LIMIT_MODULES, MO_LIMIT_FILES,
+                               MO_LIMIT_FUNCTIONS};
     for (size_t i = 0; i < sizeof limits / sizeof limits[0]; i++) {
         replace_word(&out, 20 + i * 4, limits[i] + 1U);
         checksum(&out);
@@ -915,7 +918,7 @@ static void test_wire_refusals(void) {
     checksum(&out);
     CHECK(mo_buffer_append_byte(&out, 0));
     checksum(&out);
-    refuse_reason(out.bytes, out.length, "trailing bytes", 56);
+    refuse_reason(out.bytes, out.length, "trailing bytes", 60);
     out.length--;
     checksum(&out);
     struct mo_arena no_memory;
@@ -930,11 +933,12 @@ static void test_wire_refusals(void) {
 
     /* A record naming the second of two identical strings is structurally noncanonical. */
     static const uint8_t duplicate_name[] = {
-        'M', 'O', 'B', 'C', 0, 0, 1, 0,   0, 0, 0, 0, 0,  0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 0,
+        'M', 'O', 'B', 'C', 0, 0, 2, 0,   0, 0, 0, 0, 0,  0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 0,
         0,   0,   'x', 1,   0, 0, 0, 'x', 1, 0, 0, 0, 17, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0,   0,   0,   0,   0, 0, 0, 0,   0, 0, 0, 0, 0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     mo_buffer_init(&out, 1024);
     CHECK(mo_buffer_append(&out, duplicate_name, sizeof duplicate_name));
+    CHECK(mo_buffer_append_le32(&out, 0)); /* files */
     checksum(&out);
     refuse_reason(out.bytes, out.length, "name does not use lowest string index", 42);
     replace_word(&out, 42, 0);
@@ -983,9 +987,10 @@ static void test_worked_encoding(void) {
         2,          3,  7,                /* registers Chain, env */
         2,          71, 0,                /* ret r0: deliberately not type-verified in this task */
         1,          0,  0, 0,          0, /* module Chain with no exports or globals */
+        0,                                /* files */
         1,          0,  0, UINT32_MAX,    /* debug: empty span/name arrays, no text */
         UINT32_MAX, 0,  0, UINT32_MAX, 0, 0}; /* no source or links/lines */
-    const uint8_t header[20] = {'M', 'O', 'B', 'C', 0, 0, 1, 0};
+    const uint8_t header[20] = {'M', 'O', 'B', 'C', 0, 0, 2, 0};
     struct mo_buffer expected, actual;
     mo_buffer_init(&expected, 4096);
     mo_buffer_init(&actual, 4096);
@@ -1167,6 +1172,66 @@ static void test_utf8(void) {
     copy[21] = strings[21];
     copy[21].length = MO_LIMIT_STRING_SIZE + 1U;
     expect_write_reason(&f, "invalid array or count past limit");
+}
+
+static void test_filename_table(void) {
+    struct mo_buffer wire;
+    struct mo_write_error we;
+    struct mo_load_error le;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode_bytes rows[MO_LIMIT_FILES];
+    for (uint32_t i = 0; i < MO_LIMIT_FILES; i++)
+        rows[i] = (struct mo_bytecode_bytes)STRING("\xff");
+    struct mo_bytecode file = {.files = rows, .file_count = MO_LIMIT_FILES};
+    CHECK(mo_bytecode_write(&file, &wire, &we));
+    struct mo_image *image = mo_load(wire.bytes, wire.length, &le);
+    CHECK(image != NULL);
+    if (image != NULL) {
+        memset(wire.bytes, 0, wire.length);
+        const struct mo_bytecode *b = mo_image_bytecode(image);
+        CHECK(b->file_count == MO_LIMIT_FILES);
+        for (uint32_t i = 0; i < b->file_count; i++)
+            CHECK(b->files[i].length == 1 && b->files[i].bytes[0] == 0xff);
+        mo_image_free(image);
+    }
+    mo_buffer_clear(&wire);
+    file.file_count++;
+    CHECK(!mo_bytecode_write(&file, &wire, &we) && wire.length == 0 &&
+          we.kind == MO_BYTECODE_LIMIT);
+    file.file_count = 1;
+    const struct mo_bytecode_bytes bad[] = {
+        STRING(""), STRING("a\0b"), {MO_LIMIT_STRING_SIZE + 1U, (const uint8_t *)"x"}};
+    for (uint32_t i = 0; i < ARRAY_COUNT(bad); i++) {
+        rows[0] = bad[i];
+        CHECK(!mo_bytecode_write(&file, &wire, &we) && wire.length == 0);
+        CHECK(we.kind == (i == 2 ? MO_BYTECODE_LIMIT : MO_BYTECODE_INVALID));
+    }
+    struct mo_arena arena;
+    mo_arena_init(&arena, 2 * (size_t)MO_LIMIT_STRING_SIZE);
+    uint8_t *long_path = mo_arena_allocate(&arena, MO_LIMIT_STRING_SIZE, 1);
+    CHECK(long_path != NULL);
+    if (long_path != NULL) {
+        memset(long_path, 0xff, MO_LIMIT_STRING_SIZE);
+        rows[0] = (struct mo_bytecode_bytes){MO_LIMIT_STRING_SIZE, long_path};
+        CHECK(mo_bytecode_write(&file, &wire, &we));
+        image = mo_load(wire.bytes, wire.length, &le);
+        CHECK(image != NULL);
+        if (image != NULL) {
+            const struct mo_bytecode_bytes *path = &mo_image_bytecode(image)->files[0];
+            CHECK(path->length == MO_LIMIT_STRING_SIZE &&
+                  memcmp(path->bytes, long_path, MO_LIMIT_STRING_SIZE) == 0);
+            mo_image_free(image);
+        }
+        mo_buffer_clear(&wire);
+    }
+    mo_arena_free(&arena);
+    rows[0] = (struct mo_bytecode_bytes)STRING("\xc3");
+    CHECK(mo_bytecode_write(&file, &wire, &we));
+    /* Old binary versions remain refused, even with the new section layout. */
+    wire.bytes[6] = 1;
+    CHECK(mo_load(wire.bytes, wire.length, &le) == NULL && le.offset == 6 &&
+          le.kind == MO_BYTECODE_INVALID);
+    mo_buffer_free(&wire);
 }
 
 static void test_limits_and_caches(void) {
@@ -1389,7 +1454,7 @@ static void test_large_tables(void) {
     uint32_t layout_count = 43 + 4 + 60 + (n - 2) * 20;
     reject_word(&out, layout_count, MO_LIMIT_LAYOUTS + 1U, "count past limit or remaining bytes",
                 layout_count);
-    uint32_t module_count = (uint32_t)out.length - 4 - (16 + MO_LIMIT_MODULE_NAMES * 8);
+    uint32_t module_count = (uint32_t)out.length - 8 - (16 + MO_LIMIT_MODULE_NAMES * 8);
     reject_word(&out, module_count + 4, MO_LIMIT_MODULE_NAMES + 1U,
                 "count past limit or remaining bytes", module_count + 4);
     /* Equal type exports are refused even when they disagree on visibility. */
@@ -1425,7 +1490,7 @@ static void test_large_names(void) {
     round_trip(&f); /* names are shared, not copied once per nominal identity */
     struct mo_buffer out;
     mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
-    const uint8_t header[20] = {'M', 'O', 'B', 'C', 0, 0, 1, 0};
+    const uint8_t header[20] = {'M', 'O', 'B', 'C', 0, 0, 2, 0};
     CHECK(mo_buffer_append(&out, header, sizeof header));
     CHECK(mo_buffer_append_le32(&out, 1));
     CHECK(mo_buffer_append_le32(&out, MO_LIMIT_STRING_SIZE));
@@ -1438,7 +1503,7 @@ static void test_large_names(void) {
         CHECK(mo_buffer_append_le32(&out, 0));
         CHECK(mo_buffer_append_le32(&out, 0));
     }
-    for (unsigned i = 0; i < 7; i++) {
+    for (unsigned i = 0; i < 8; i++) {
         CHECK(mo_buffer_append_le32(&out, 0));
     }
     checksum(&out);
@@ -1654,6 +1719,9 @@ static MO_MUST_USE struct fixture_positions fixture_positions(void) {
     next += 4 + 16 + modules[0].type_count * 8 +
             (modules[0].function_count + modules[0].global_count) * 4;
     next += 4;
+    for (uint32_t i = 0; i < ARRAY_COUNT(files); i++)
+        next += 4 + files[i].length;
+    next += 4;
     for (uint32_t i = 0; i < ARRAY_COUNT(debug); i++) {
         p.debug[i] = next;
         next += 36 + (debug[i].span_count + debug[i].name_count + debug[i].line_count) * 16;
@@ -1755,7 +1823,7 @@ static void test_refusal_details(void) {
 
     /* The last scalar payload is short, but the advertised count's minimum still fits. */
     mo_buffer_init(&out, 1024);
-    const uint8_t header[20] = {'M', 'O', 'B', 'C', 0, 0, 1, 0};
+    const uint8_t header[20] = {'M', 'O', 'B', 'C', 0, 0, 2, 0};
     CHECK(mo_buffer_append(&out, header, sizeof header));
     const uint32_t prefix[] = {0, 1, 3, 0, 1, 0};
     for (uint32_t i = 0; i < ARRAY_COUNT(prefix); i++) {
@@ -1843,6 +1911,7 @@ int main(void) {
     test_worked_encoding();
     test_literal_boundaries();
     test_utf8();
+    test_filename_table();
     test_limits_and_caches();
     test_large_tables();
     test_large_names();

@@ -12,6 +12,7 @@
 #include "tools/embedded.h"
 #include "tools/format.h"
 #include "tools/run.h"
+#include "tools/tests.h"
 
 #include <errno.h>
 #include <string.h>
@@ -40,6 +41,9 @@ struct pipeline_work {
     struct mo_sources *sources;
     struct mo_diags *diags;
     FILE *output, *errors;
+    const char *mistake;
+    bool version;
+    struct mo_test_totals totals;
     int status;
 };
 
@@ -66,13 +70,49 @@ static void execute_pipeline(void *argument) {
     struct mo_program *program = mo_check(arena, set, diags);
     if (program == NULL || mo_diags_any(diags))
         return;
-    /* Never certify unchecked anchors or fabricate test results. These paths
-     * wait for the checked-spec producer and the lowering/runner contract. */
-    if (cli->command == MO_COMMAND_TEST || program->spec_count != 0) {
-        tool_error(diags, MO_CODE_TOOL_UNAVAILABLE,
-                   "this build cannot execute specification code yet", NULL);
-        return;
+    /* Test observations are separate from the compiler's anchor checks. */
+    struct mo_test_selection *selection = NULL;
+    if (cli->command == MO_COMMAND_TEST) {
+        selection = mo_select_tests(arena, program, cli, diags);
+        if (selection == NULL)
+            return;
+        if (selection->mistake != NULL) {
+            work->mistake = selection->mistake;
+            return;
+        }
+        if (cli->json) {
+            work->version = mo_write_version(work->output, cli->command);
+            if (!work->version) {
+                work->status = 1;
+                return;
+            }
+        }
+        if (cli->list) {
+            for (uint32_t i = 0; i < selection->count; i++)
+                if (!mo_write_test(work->output, cli->json, sources, &selection->items[i])) {
+                    tool_error(diags, MO_CODE_TOOL_PIPELINE, "test inventory could not be written",
+                               NULL);
+                    break;
+                }
+            return;
+        }
+        /* Refuse the entire selection before starting it, never a partial green
+         * run that quietly omitted selected promises (including unused templates). */
+        for (uint32_t i = 0; i < selection->count; i++)
+            if (selection->items[i].source->kind == MO_SPEC_PROMISE) {
+                struct mo_diag diag = {.code = MO_CODE_TOOL_UNAVAILABLE,
+                                       .message =
+                                           "this build cannot execute generated-input promises yet",
+                                       .primary = {selection->items[i].source->syntax->span,
+                                                   selection->items[i].name}};
+                bool added = mo_diags_add(diags, &diag);
+                (void)added;
+                return;
+            }
     }
+    bool anchors = false;
+    for (uint32_t i = 0; i < program->spec_count; i++)
+        anchors |= program->specs[i].kind == MO_SPEC_ANCHOR;
     struct mo_arena lowered;
     mo_arena_init(&lowered, MO_LIMIT_LOWER_WORK);
     struct mo_core *core = mo_lower(&lowered, program, sources, diags);
@@ -83,21 +123,30 @@ static void execute_pipeline(void *argument) {
     if (core == NULL || mo_diags_any(diags) || !mo_core_check(core, diags))
         goto done;
     /* Plain check validates lowering too, but never executes the user's main. */
-    if (cli->command == MO_COMMAND_CHECK && cli->emit == MO_EMIT_NONE)
+    if (cli->command == MO_COMMAND_CHECK && cli->emit == MO_EMIT_NONE && !anchors)
         goto done;
+    if (anchors || cli->command == MO_COMMAND_RUN || cli->command == MO_COMMAND_TEST ||
+        cli->emit == MO_EMIT_BYTECODE) {
+        if (!mo_compile(core, &wire, diags))
+            goto done;
+    }
+    if (cli->command == MO_COMMAND_TEST) {
+        mo_test_program(cli, selection, &wire, sources, work->output, diags, &work->totals);
+        goto done;
+    }
+    if (anchors || cli->command == MO_COMMAND_RUN) {
+        work->status = mo_run_program(cli, core, &wire, sources, work->output, work->errors, diags);
+        if (work->status != 0 || mo_diags_any(diags))
+            goto done;
+    }
     if (cli->emit == MO_EMIT_CORE) {
         if (!mo_core_print(core, &printed))
             tool_error(diags, MO_CODE_TOOL_PIPELINE, "Core text exceeds its output budget", NULL);
-    } else {
-        if (!mo_compile(core, &wire, diags))
-            goto done;
-        if (cli->emit == MO_EMIT_BYTECODE) {
-            struct mo_load_error error;
-            if (!mo_bytecode_disassemble(wire.bytes, wire.length, &printed, &error))
-                tool_error(diags, MO_CODE_TOOL_PIPELINE, "bytecode text could not be emitted",
-                           error.reason);
-        } else
-            work->status = mo_run_program(cli, core, &wire, work->output, work->errors, diags);
+    } else if (cli->emit == MO_EMIT_BYTECODE) {
+        struct mo_load_error error;
+        if (!mo_bytecode_disassemble(wire.bytes, wire.length, &printed, &error))
+            tool_error(diags, MO_CODE_TOOL_PIPELINE, "bytecode text could not be emitted",
+                       error.reason);
     }
     if (cli->emit != MO_EMIT_NONE && !mo_diags_any(diags) &&
         (fwrite(printed.bytes, 1, printed.length, work->output) != printed.length ||
@@ -135,7 +184,8 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
         struct mo_format_options options = {100, display_width};
         return mo_format_files(cli, options, errors);
     }
-    if (cli->json && !mo_write_version(output, cli->command)) {
+    bool version = cli->json && cli->command != MO_COMMAND_TEST;
+    if (version && !mo_write_version(output, cli->command)) {
         (void)fputs("mo: could not write version record\n", errors);
         return 1;
     }
@@ -146,8 +196,12 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
     if (!have_sources || !have_diags) {
         /* The failed initializers still prepare their arenas for freeing. */
         diags.dropped = 1;
-        int status =
-            mo_write_diagnostics(output, errors, cli->json, cli->command, &sources, &diags);
+        if (cli->json && !version)
+            version = mo_write_version(output, cli->command);
+        int status = cli->json && !version
+                         ? 1
+                         : mo_write_diagnostics(output, errors, cli->json, cli->command, &sources,
+                                                &diags, NULL);
         mo_sources_free(&sources);
         mo_diags_free(&diags);
         return status;
@@ -159,12 +213,24 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
                                  .sources = &sources,
                                  .diags = &diags,
                                  .output = output,
-                                 .errors = errors};
+                                 .errors = errors,
+                                 .version = version};
     int error = mo_with_stack(MO_SOURCE_STACK_SIZE, execute_pipeline, &work);
     if (error != 0)
         tool_error(&diags, MO_CODE_TOOL_SOURCE_STACK, "could not prepare the source pipeline stack",
                    strerror(error));
-    int status = mo_write_diagnostics(output, errors, cli->json, cli->command, &sources, &diags);
+    int status;
+    if (work.mistake != NULL) {
+        (void)fprintf(errors, "%s\n", work.mistake);
+        status = 2;
+    } else if (cli->json && !work.version && work.status != 0) {
+        (void)fputs("mo: could not write version record\n", errors);
+        status = 1;
+    } else if (cli->json && !work.version && !mo_write_version(output, cli->command))
+        status = 1;
+    else
+        status = mo_write_diagnostics(output, errors, cli->json, cli->command, &sources, &diags,
+                                      &work.totals);
     mo_arena_free(&arena);
     mo_sources_free(&sources);
     mo_diags_free(&diags);

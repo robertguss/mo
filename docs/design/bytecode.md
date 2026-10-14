@@ -1,4 +1,4 @@
-# Mo Bytecode v0.1
+# Mo Bytecode v0.2
 
 **Draft, 12 October 2026, revised after a second review.** This is the
 contract between Mo's compiler and its virtual machine, part of Architecture
@@ -193,12 +193,12 @@ exactly once, without accessing children or reentering the heap.
 
 ## 3. The file
 
-All integers are little-endian. A file is a header, then nine sections in this
+All integers are little-endian. A file is a header, then ten sections in this
 order, each a 32-bit count followed by its entries.
 
 ```text
 header      magic "MOBC", format version (major and minor, 16 bits each),
-            flags (32 bits, zero in v0.1), checksum (FNV-1a, 64 bits, of
+            flags (32 bits, zero in v0.2), checksum (FNV-1a, 64 bits, of
             everything after the header)
 strings     UTF-8 strings: names, text constants, and the text of tests and
             example lines
@@ -211,7 +211,8 @@ init        the init functions, in the order they run (3.2)
 functions   the function table (3.3)
 modules     each module's name, its exposed types and functions, and its
             constants (3.2)
-debug       spans, file names and register names (3.4)
+files       exact nonempty/non-NUL filename bytes, not UTF-8 strings (3.4)
+debug       spans, declaration/condition locations and register names (3.4)
 ```
 
 The checksum detects truncation and corruption. It's no defense against an
@@ -224,6 +225,11 @@ boolean is a little-endian `u32`, except literal payload bytes and the `u32`
 code words. Booleans are 0 or 1. Arrays are a count followed by entries; there
 is no alignment padding, section directory, entry length or trailing data.
 Strings are a byte length followed by UTF-8 bytes, without a terminator.
+Filenames use the same length/bytes encoding but permit arbitrary non-NUL
+bytes. There are at most `MO_LIMIT_FILES` rows, each at most
+`MO_LIMIT_STRING_SIZE` bytes. They are metadata, not runtime Bytes constants.
+Binary and both text codecs accept only version 0.2, rejecting 0.1 and any
+other major/minor; there is no compatibility inference from section contents.
 `UINT32_MAX` (`ff ff ff ff`, `MO_BYTECODE_NO_INDEX`) marks an absent optional
 index, never a table entry. Type and layout entries use the per-kind forms
 below, not the memory representation of `struct mo_type` or `struct mo_layout`.
@@ -494,8 +500,9 @@ For every function there is:
 - a promise's condition lines, each with a span and verbatim text, in source
   order. Its result n > 0 selects condition n − 1.
 
-File names are strings. The VM needs this section to report bugs, and Phase 4
-needs it to show a running program.
+File names are exact byte strings in the separate `files` section. The VM
+needs debug metadata to report bugs, and Phase 4 needs it to show a running
+program.
 
 **Provenance.** Lowering fills the compiler metadata in Core's program
 document (`formal/TEXT.md`); code generation never consults the checked
@@ -505,8 +512,10 @@ ranges after allocation. Lambda lifting carries these tables into closure
 code. Generated instructions use their responsible expression/declaration
 span. Constants' metadata supplies init names/spans; full function/closure
 names are supplied by lowering, numbered in source order (3.5). Core's file
-indices are `mo_sources` indices; the compiler interns each filename and
-remaps them to this file's **string** indices, not source-file indices.
+indices are `mo_sources` indices; the compiler copies `metadata.files` to
+the separate filename-byte table in original source order, including unused
+and duplicate rows. All three debug location kinds retain those indices and
+exact bytes. No source filename is normalized, converted to Text or reopened.
 Module metadata supplies exports, `contents_exposed` and all global owners.
 Complete Core data declarations already supply structural type/field/case
 names; no second surface type table is required.
@@ -514,15 +523,17 @@ names; no second surface type table is required.
 **Encoding.** Each debug entry is: span array, register-name array, text
 string index, declaration file/start/end, subject function index, anchor
 expectation (`NOT_ANCHOR = 0`, `ALLOWS = 1`, `FORBIDS = 2`), condition-line
-array. Each condition entry is file/start/end/text; files and texts are string
-indices. An absent declaration/condition file is `MO_BYTECODE_NO_INDEX`, with
+array. Each condition entry is file/start/end/text; files index the filename
+table and texts index ordinary strings. An absent declaration/condition file is `MO_BYTECODE_NO_INDEX`, with
 start/end zero. Code-span entries use that same sentinel to clear source
 attribution until the next entry, rather than inheriting the previous source
 span for genuinely source-less instructions. All other spans have valid
 files and `start ≤ end`. Every
-array, and their total, obeys `MO_LIMIT_DEBUG_ENTRIES`. This extends the Phase
-2 draft v0.1 debug encoding before a writer/VM implements it; Core's wire
-version advances independently.
+array, and their total, obeys `MO_LIMIT_DEBUG_ENTRIES`. The dedicated filename
+section advances bytecode to 0.2; Core's wire version advances independently.
+Core 0.8 direct C metadata accepts raw paths, but its UTF-8 text printer
+cannot yet emit raw-byte filenames. This bytecode change does not repair that
+separate Core text seam.
 
 Core's explicit `noSource` form has empty span/name arrays, absent text and
 declaration span, no links/conditions and `NOT_ANCHOR`; no exports are
@@ -543,6 +554,10 @@ strictly increasing instruction offsets. Every present source span has a
 nonempty NUL-free file name and `start <= end <= MO_LIMIT_FILE_SIZE`; an
 absent file uses `MO_BYTECODE_NO_INDEX` with start/end zero, including a
 code span that clears attribution.
+The loaded image owns all filename bytes independently of the input buffer.
+Defect rendering preserves valid UTF-8 scalars, escapes controls and literal
+backslashes, and spells each invalid byte as `\xhh`; path newlines cannot
+become report separators. Thus byte FF and literal ASCII `\xff` remain distinct.
 Register-name ranges are nonempty, half-open word ranges, with both endpoints
 at instruction boundaries (the end may equal the function's code length).
 Ranges of one register never overlap; array order itself is unrestricted.
@@ -1207,19 +1222,19 @@ index rule; other string references retain the index written.
 The grammar below is line-based. Each entry, instruction and keyword line
 ends with a newline. `;` starts a comment outside quotes. In the grammar,
 `list(X)` means `"[" [ X { "," X } ] "]"`; it is not a text keyword.
-`U` is a decimal `u32`. `S`, `T`, `L`, `K`, `G`, `I`, `F`, `M` and `D` are
-`s`, `t`, `L`, `k`, `g`, `i`, `f`, `m` and `d` followed by a decimal index.
+`U` is a decimal `u32`. `S`, `T`, `L`, `K`, `G`, `I`, `F`, `M`, `PATH` and `D` are
+`s`, `t`, `L`, `k`, `g`, `i`, `f`, `m`, ASCII uppercase `P` and `d` followed by a decimal index.
 `R` is `r` followed by a register number; `AT` is `@` followed by a code word
 offset, not an instruction number. `OPT_S` is `S` or `-` (absent, not an
-empty string); `OPT_F` is `F` or `-`. Both absent references encode
+empty string); `OPT_F` is `F` or `-`; `OPT_PATH` is `PATH` or `-`. Absent references encode
 `MO_BYTECODE_NO_INDEX`, never an index spelled with that numeric value.
 All counts and byte lengths are derived from the lists and
 payloads. No decoded-only fields are written.
 
 ```text
 file        = indexed | shorthand
-indexed     = "bytecode 0.1 indexed"
-              strings types layouts constants globals init functions modules debug
+indexed     = "bytecode 0.2 indexed"
+              strings types layouts constants globals init functions modules files debug
 strings     = "strings" { S Q } "end"
 types       = "types" { T type_body } "end"
 type_body   = SIMPLE
@@ -1249,13 +1264,14 @@ operand     = R | T | L | K | G | F | P | H | AT | U
 modules     = "modules" { M S "types" list(export)
               "functions" list(F) "globals" list(G) } "end"
 export      = "(" T "," BOOL ")"
+files       = "files" { PATH ( HEX | Q ) } "end"
 debug       = "debug" { D "spans" list(span) "variables" list(variable)
               "text" OPT_S "declaration" location "subject" OPT_F
               "expectation" EXPECTATION "lines" list(spec_line) } "end"
-location    = "(" OPT_S "," U "," U ")"
-span        = "(" AT "," OPT_S "," U "," U ")"
+location    = "(" OPT_PATH "," U "," U ")"
+span        = "(" AT "," OPT_PATH "," U "," U ")"
 variable    = "(" R "," S "," AT "," AT ")"
-spec_line   = "(" OPT_S "," U "," U "," S ")"
+spec_line   = "(" OPT_PATH "," U "," U "," S ")"
 EXPECTATION = "none" | "allows" | "forbids"
 ```
 
@@ -1316,7 +1332,9 @@ implicit `env`. Parameters list only explicit arguments. Module type exports
 pair the type with `contents_exposed`: `0` for `T`, `1` for `T(..)`.
 Module globals list all globals, not just exposed names. Debug entry `dN`
 belongs to function `fN`; every function has one, including empty metadata.
-Span tuples are code offset, optional file string, start byte and end byte.
+Filename rows print canonically as lowercase `hex"..."`, including UTF-8 paths;
+the assembler also accepts `Q` when its decoded bytes are valid UTF-8.
+Span tuples are code offset, optional filename index, start byte and end byte.
 `(@N, -, 0, 0)` clears source attribution from word N until the next span
 entry or code end; it is retained even beside another absent/equal span.
 Variable tuples are register, name string, inclusive start word and exclusive
@@ -1340,16 +1358,16 @@ to preserve.
 ### 10.2 Shorthand
 
 Shorthand uses Mo type syntax, symbolic instruction operands and literals.
-It may start with **pool seeds**: indexed strings, types, layouts and
-constants sections, in that order, each optional. Seeds are complete prefixes
+It may start with **pool seeds**: indexed strings, types, layouts, constants
+and files sections, in that order, each optional. Seeds are complete prefixes
 with consecutive indices; they may refer forward to later seeds or named
 declarations through their eventual indices. They are retained unchanged.
 No indexed globals, init, functions, modules or debug sections occur in
 shorthand, and no shorthand items occur in indexed text.
 
 ```text
-shorthand   = "bytecode 0.1 shorthand"
-              [ strings ] [ types ] [ layouts ] [ constants ] { item }
+shorthand   = "bytecode 0.2 shorthand"
+              [ strings ] [ types ] [ layouts ] [ constants ] [ files ] { item }
 item        = nominal | global_decl | init_decl | function_decl | module_decl
 nominal     = "record" NAME { named_field } "end"
             | "choice" NAME { "case" NAME [ "(" named_fields ")" ] } "end"
@@ -1369,7 +1387,7 @@ function_decl = "function" NAME "(" [ params ] ")" ":" TYPE KIND [ "spec" ]
 params      = NAME ":" TYPE OWNERSHIP { "," NAME ":" TYPE OWNERSHIP }
 named_reg   = R ":" TYPE
 named_variable = "(" R "," Q "," LABEL "," LABEL ")"
-named_file  = Q | "-"
+named_file  = Q | HEX | PATH | "-"
 named_location = "(" named_file "," U "," U ")"
 named_subject = NAME | F | "-"
 named_spec_line = "(" named_file "," U "," U "," Q ")"
@@ -1476,9 +1494,10 @@ The assembler fills the tables in these steps:
    payload, not runtime equality. Reuse the lowest matching constant index.
 4. Intern strings at each encounter in the same walk: declaration names,
    then field/case names, function parameter names, variable names, spec text,
-   declaration files, condition files/text, code-span files and text literals
-   as they occur, lists left to right and files before texts within a condition.
-   Absent files add no string. Types supplied by seeds do not
+   condition text and text literals. Intern filename bytes separately at
+   declaration, condition and code-span locations, reusing the lowest
+   byte-identical filename row or appending after file seeds. `PATH` references
+   do not insert rows; absence inserts nothing into either pool. Types supplied by seeds do not
    create strings on symbolic lookup. Reuse the lowest byte-identical string
    index; otherwise append. Module references in `in` do not create strings;
    neither do other symbolic lookups. A module's declaration creates its name.
@@ -1520,7 +1539,7 @@ links. Declarations and conditions include both present and absent locations.
 This is the canonical indexed text:
 
 ```text
-bytecode 0.1 indexed
+bytecode 0.2 indexed
 strings
   s0 "unused"
   s1 "Hidden"
@@ -1638,11 +1657,14 @@ end
 modules
   m0 s4 types [(t4, 0), (t5, 1)] functions [f1] globals []
 end
+files
+  P0 hex"64656d6f2e6d6f"
+end
 debug
-  d0 spans [(@0, s8, 10, 20), (@3, -, 0, 0)] variables [(r0, s6, @3, @21)] text s7 declaration (s8, 0, 21) subject - expectation none lines []
-  d1 spans [] variables [] text - declaration (s8, 22, 39) subject - expectation none lines []
-  d2 spans [] variables [] text s13 declaration (s8, 40, 90) subject f1 expectation none lines [(s8, 50, 60, s14), (-, 0, 0, s15)]
-  d3 spans [] variables [] text s17 declaration (s8, 91, 110) subject f2 expectation allows lines []
+  d0 spans [(@0, P0, 10, 20), (@3, -, 0, 0)] variables [(r0, s6, @3, @21)] text s7 declaration (P0, 0, 21) subject - expectation none lines []
+  d1 spans [] variables [] text - declaration (P0, 22, 39) subject - expectation none lines []
+  d2 spans [] variables [] text s13 declaration (P0, 40, 90) subject f1 expectation none lines [(P0, 50, 60, s14), (-, 0, 0, s15)]
+  d3 spans [] variables [] text s17 declaration (P0, 91, 110) subject f2 expectation allows lines []
   d4 spans [] variables [] text s19 declaration (-, 0, 0) subject f2 expectation forbids lines []
 end
 ```
@@ -1654,12 +1676,17 @@ In `Demo.identity`, `registers []` adds no registers beyond parameter `r0`.
 The shorthand spells out metadata defaults here to show their indexed form.
 
 ```text
-bytecode 0.1 shorthand
+bytecode 0.2 shorthand
 strings
   s0 "unused"
   s1 "Hidden"
   s2 "Visible"
   s3 "value"
+  s4 "Demo"
+  s5 "Demo.test.1"
+  s6 "answer"
+  s7 "keeps the answer"
+  s8 "demo.mo"
 end
 types
   t0 unit
@@ -1801,7 +1828,7 @@ The assembler and disassembler live in `src/bytecode`.
 bounded by `MO_LIMIT_BYTECODE_SIZE`.
 `mo_bytecode_disassemble(bytes, length, out, error_out)` verifies its input
 before writing canonical indexed text. Text input and output are bounded by
-`MO_LIMIT_BYTECODE_TEXT_SIZE` (2 GiB in v0.1), eight times the binary limit:
+`MO_LIMIT_BYTECODE_TEXT_SIZE` (2 GiB in v0.2), eight times the binary limit:
 quoting and instruction names expand bytes. The canonical spelling above
 fits within eight times the binary file's length, so every verified file's
 text fits and text byte offsets still fit `u32`. Noncanonical input past the
@@ -1844,7 +1871,7 @@ renumbers a seed or an indexed file.
 
 ## 11. Versions
 
-The format's version is 0.1. In Phase 2 the same build writes and reads a file,
+The format's version is 0.2. In Phase 2 the same build writes and reads a file,
 so the loader accepts only its own version. Phase 5's upgrades need files
 built by one version to load in another, and decide then what stays
 compatible.

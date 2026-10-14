@@ -347,6 +347,7 @@ static void fixture_init(struct fixture *f) {
         {1, (const uint8_t *)"b"}, {3, (const uint8_t *)"Box"},    {1, (const uint8_t *)"A"},
         {1, (const uint8_t *)"B"}, {1, (const uint8_t *)"C"},      {1, (const uint8_t *)"D"},
         {1, (const uint8_t *)"x"}, {6, (const uint8_t *)"hidden"}, {4, (const uint8_t *)"M.mo"}};
+    static const struct mo_bytecode_bytes files[] = {{4, (const uint8_t *)"M.mo"}};
     static const uint32_t pair[] = {0, 1}, integers[] = {0, 0}, text[] = {1}, integer[] = {0};
     static const struct mo_type_field fields[] = {{"a", 0}, {"b", 1}}, one_int[] = {{NULL, 0}},
                                       one_text[] = {{NULL, 1}};
@@ -416,6 +417,8 @@ static void fixture_init(struct fixture *f) {
                                                     .code_count = 4};
     f->file = (struct mo_bytecode){.strings = strings,
                                    .string_count = 12,
+                                   .files = files,
+                                   .file_count = 1,
                                    .types = f->types,
                                    .type_count = 11,
                                    .layouts = layouts,
@@ -1065,7 +1068,7 @@ static void test_initialization(void) {
     const uint32_t closure[] = {MO_OP_GLOBAL, 2, 0, MO_OP_DROP, 1, MO_OP_RET, 2};
     program(&f, 1, indirect_types, 6, indirect, sizeof indirect / sizeof indirect[0], 3);
     program(&f, 3, closure_types, 3, closure, 7, 0);
-    const struct mo_bytecode_span caller_span = {13, 11, 20, 30}, callee_span = {0, 11, 40, 50};
+    const struct mo_bytecode_span caller_span = {13, 0, 20, 30}, callee_span = {0, 0, 40, 50};
     f.debug[1].spans = &caller_span;
     f.debug[1].span_count = 1;
     f.debug[3].spans = &callee_span;
@@ -1076,7 +1079,7 @@ static void test_initialization(void) {
     CHECK(mo_image_init(image, &limits, &defect) == MO_STOPPED);
     CHECK(strcmp(defect.reason, "internal error: unset global") == 0);
     CHECK(defect.frames->function == 3 && defect.frames->previous->function == 1);
-    CHECK(defect.span.file == 11 && defect.span.start == 40 && defect.span.end == 50);
+    CHECK(defect.span.file == 0 && defect.span.start == 40 && defect.span.end == 50);
     CHECK(defect.frames->previous->pc == 13 && defect.frames->previous->span.start == 20 &&
           defect.frames->previous->span.end == 30);
     struct mo_defect again;
@@ -1169,7 +1172,7 @@ static void test_defects(void) {
             continue;
         }
         program(&f, 0, types, 7, code, 22, 3);
-        const struct mo_bytecode_span spans[] = {{0, 11, 10, 20}, {20, MO_NO_INDEX, 0, 0}};
+        const struct mo_bytecode_span spans[] = {{0, 0, 10, 20}, {20, MO_NO_INDEX, 0, 0}};
         const struct mo_bytecode_register_name names[] = {
             {0, 9, 0, 22}, {1, 10, 0, 22}, {3, 10, 0, 22}, {4, 10, 0, 22}, {6, 10, 0, 22}};
         f.debug[0].spans = spans;
@@ -1423,9 +1426,233 @@ static MO_MUST_USE struct mo_image *assemble(const char *source) {
     return image;
 }
 
+struct variable_capture {
+    struct mo_defect_variable values[8];
+    uint32_t count;
+    bool stop;
+};
+
+static MO_MUST_USE bool capture_variable(const struct mo_defect_variable *variable, void *context) {
+    struct variable_capture *capture = context;
+    MO_ASSERT(capture->count < 8);
+    capture->values[capture->count++] = *variable;
+    return !capture->stop;
+}
+
+static void test_stopped_variables(void) {
+    struct mo_image *image =
+        assemble("bytecode 0.2 shorthand\nmodule M exposes [M.observe]\n"
+                 "function M.observe(x: Text borrowed) : Unit function in M\n"
+                 " registers [r1: Text, r2: Int, r3: Int]\n"
+                 " variables [(r2, \"shadow\", @start, @new),"
+                 " (r0, \"exact\\x0aβ\", @start, @end),"
+                 " (r2, \"shadow\", @new, @end), (r1, \"reason\", @start, @end),"
+                 " (r3, \"undefined\", @start, @end)]\n"
+                 " @start:\n const r2, 11\n clear r2\n @new:\n const r2, -37\n"
+                 " const r1, \"halt\"\n stop r1\n @end:\nend\n");
+    if (image == NULL)
+        return;
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    struct mo_process *p = mo_process_new(image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_heap *heap = mo_process_heap(p);
+    struct mo_cell argument, result;
+    MO_ASSERT(mo_value_text(heap, "a\0b", 3, &argument));
+    MO_ASSERT(mo_call(p, 0, &argument, 1, &result, &defect) == MO_STOPPED);
+    struct variable_capture capture = {0};
+    CHECK(mo_visit_defect_variables(NULL, &defect, 8, UINT64_MAX, capture_variable, &capture) ==
+          MO_DEFECT_VARIABLES_COMPLETE);
+    CHECK(capture.count == 3);
+    if (capture.count == 3) {
+        const char exact[] = "exact\nβ";
+        CHECK(capture.values[0].frame == defect.frames &&
+              capture.values[0].name_length == sizeof exact - 1 &&
+              memcmp(capture.values[0].name, exact, sizeof exact - 1) == 0);
+        CHECK(capture.values[0].type == mo_image_bytecode(image)->functions[0].parameters[0].type &&
+              mo_cell_get_ref(capture.values[0].value) == mo_cell_get_ref(argument));
+        CHECK(capture.values[1].name_length == 6 &&
+              memcmp(capture.values[1].name, "shadow", 6) == 0 &&
+              mo_cell_get_int(capture.values[1].value) == -37);
+        CHECK(capture.values[2].name_length == 6 &&
+              memcmp(capture.values[2].name, "reason", 6) == 0);
+        size_t length;
+        const uint8_t *bytes = mo_value_data(capture.values[2].value, &length);
+        CHECK(length == 4 && memcmp(bytes, "halt", 4) == 0);
+        struct mo_buffer printed;
+        mo_buffer_init(&printed, 64);
+        CHECK(mo_value_print(heap, capture.values[0].type, capture.values[0].value, &printed));
+        CHECK(printed.length == 3 && memcmp(printed.bytes, "a\0b", 3) == 0);
+        mo_buffer_free(&printed);
+    }
+    capture = (struct variable_capture){.stop = true};
+    CHECK(mo_visit_defect_variables(p, &defect, 8, UINT64_MAX, capture_variable, &capture) ==
+          MO_DEFECT_VARIABLES_STOPPED);
+    CHECK(capture.count == 1);
+    for (uint32_t count = 0; count <= 3; count++) {
+        capture = (struct variable_capture){0};
+        CHECK(
+            mo_visit_defect_variables(p, &defect, count, UINT64_MAX, capture_variable, &capture) ==
+            (count == 3 ? MO_DEFECT_VARIABLES_COMPLETE : MO_DEFECT_VARIABLES_LIMIT));
+        CHECK(capture.count == count);
+    }
+    const struct mo_bytecode_function *fn = &mo_image_bytecode(image)->functions[0];
+    uint64_t replay =
+        ((uint64_t)fn->register_count + fn->code_count + 32) * (MO_LIMIT_VERIFY_WORK_PER_WORD + 1u);
+    const uint64_t budgets[] = {0, replay, replay + 1, replay + 5, replay + 6};
+    const uint32_t delivered[] = {0, 0, 0, 3, 3};
+    for (unsigned i = 0; i < sizeof budgets / sizeof budgets[0]; i++) {
+        capture = (struct variable_capture){0};
+        CHECK(mo_visit_defect_variables(p, &defect, 8, budgets[i], capture_variable, &capture) ==
+              (i == 4 ? MO_DEFECT_VARIABLES_COMPLETE : MO_DEFECT_VARIABLES_LIMIT));
+        CHECK(capture.count == delivered[i]);
+    }
+    struct mo_buffer human;
+    mo_buffer_init(&human, 1024);
+    CHECK(mo_render_defect(p, &defect, &human));
+    const char expected[] = "stop\n  at M.observe\n  detail: halt\n"
+                            "  exact\\nβ = \"a\\u{0}b\"\n  shadow = -37\n  reason = \"halt\"\n";
+    CHECK(human.length == sizeof expected - 1 &&
+          memcmp(human.bytes, expected, sizeof expected - 1) == 0);
+    mo_buffer_free(&human);
+    CHECK(mo_cell_get_ref(argument)->count == 1);
+    mo_value_drop(heap, mo_image_bytecode(image)->functions[0].parameters[0].type, argument);
+    mo_process_free(p);
+    mo_image_free(image);
+}
+
+static void test_variable_frames(void) {
+    struct mo_image *image =
+        assemble("bytecode 0.2 shorthand\nmodule M exposes [M.outer]\n"
+                 "function M.outer(x: Text owned, y: Text borrowed) : Unit function in M\n"
+                 " registers [r2: Unit]\n variables [(r0, \"transferred\", @start, @end),"
+                 " (r1, \"caller\", @start, @end), (r2, \"undefined\", @start, @end)]\n"
+                 " @start:\n call r2, M.inner, r0, r1\n ret r2\n @end:\nend\n"
+                 "function M.inner(x: Text owned, y: Text borrowed) : Unit function in M\n"
+                 " registers [r2: Text]\n variables [(r0, \"moved\", @start, @end),"
+                 " (r1, \"callee\", @start, @end), (r2, \"reason\", @start, @end)]\n"
+                 " @start:\n move r2, r0\n stop r2\n @end:\nend\n");
+    if (image == NULL)
+        return;
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    struct mo_process *p = mo_process_new(image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_heap *heap = mo_process_heap(p);
+    struct mo_cell args[2], result;
+    MO_ASSERT(mo_value_text(heap, "owned", 5, &args[0]));
+    MO_ASSERT(mo_value_text(heap, "borrowed", 8, &args[1]));
+    MO_ASSERT(mo_call(p, 0, args, 2, &result, &defect) == MO_STOPPED);
+    struct variable_capture capture = {0};
+    CHECK(mo_visit_defect_variables(p, &defect, 8, UINT64_MAX, capture_variable, &capture) ==
+          MO_DEFECT_VARIABLES_COMPLETE);
+    CHECK(capture.count == 3);
+    if (capture.count == 3) {
+        CHECK(capture.values[0].frame == defect.frames && capture.values[0].name_length == 6 &&
+              memcmp(capture.values[0].name, "callee", 6) == 0 &&
+              mo_cell_get_ref(capture.values[0].value) == mo_cell_get_ref(args[1]));
+        CHECK(capture.values[1].frame == defect.frames && capture.values[1].name_length == 6 &&
+              memcmp(capture.values[1].name, "reason", 6) == 0 &&
+              mo_cell_get_ref(capture.values[1].value) == mo_cell_get_ref(args[0]));
+        CHECK(capture.values[2].frame == defect.frames->previous &&
+              capture.values[2].name_length == 6 &&
+              memcmp(capture.values[2].name, "caller", 6) == 0 &&
+              mo_cell_get_ref(capture.values[2].value) == mo_cell_get_ref(args[1]));
+    }
+    CHECK(mo_cell_get_ref(args[0])->count == 1 && mo_cell_get_ref(args[1])->count == 1);
+    struct mo_buffer human;
+    mo_buffer_init(&human, 1024);
+    CHECK(mo_render_defect(p, &defect, &human));
+    const char expected[] = "stop\n  at M.inner\n  detail: owned\n  at M.outer\n"
+                            "  callee = \"borrowed\"\n  reason = \"owned\"\n";
+    CHECK(human.length == sizeof expected - 1 &&
+          memcmp(human.bytes, expected, sizeof expected - 1) == 0);
+    mo_buffer_free(&human);
+    mo_value_drop(heap, mo_image_bytecode(image)->functions[0].parameters[1].type, args[1]);
+    mo_process_free(p);
+    mo_image_free(image);
+}
+
+static void test_variable_reuse(void) {
+    struct mo_image *image =
+        assemble("bytecode 0.2 shorthand\nrecord Box\n value: Int\nend\n"
+                 "module M exposes [M.reuse]\nfunction M.reuse() : Unit function in M\n"
+                 " registers [r0: Int, r1: Box, r2: Box, r3: Text]\n"
+                 " variables [(r1, \"retired\", @start, @new),"
+                 " (r2, \"token\", @start, @end), (r1, \"rebuilt\", @new, @end),"
+                 " (r3, \"reason\", @start, @end)]\n"
+                 " @start:\n const r0, 13\n construct r1, Box, r0\n reset r2, r1\n"
+                 " const r0, 29\n @new:\n reuse r1, r2, Box, r0\n"
+                 " const r3, \"reuse\"\n stop r3\n @end:\nend\n");
+    if (image == NULL)
+        return;
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    for (unsigned run = 0; run < 2; run++) {
+        struct mo_process *p = mo_process_new(image, &limits);
+        MO_ASSERT(p != NULL);
+        if (run == 0)
+            mo_process_instruction_limit(p, 4);
+        struct mo_cell result;
+        MO_ASSERT(mo_call(p, 0, NULL, 0, &result, &defect) == MO_STOPPED);
+        struct variable_capture capture = {0};
+        CHECK(mo_visit_defect_variables(p, &defect, 8, UINT64_MAX, capture_variable, &capture) ==
+              MO_DEFECT_VARIABLES_COMPLETE);
+        CHECK(capture.count == (run == 0 ? 0 : 2));
+        if (run == 1 && capture.count == 2) {
+            CHECK(capture.values[0].name_length == 7 &&
+                  memcmp(capture.values[0].name, "rebuilt", 7) == 0 &&
+                  mo_cell_get_int(mo_value_field(capture.values[0].value, 0)) == 29);
+            struct mo_buffer text;
+            mo_buffer_init(&text, 64);
+            CHECK(mo_value_print(mo_process_heap(p), capture.values[0].type,
+                                 capture.values[0].value, &text));
+            CHECK(text.length == 14 && memcmp(text.bytes, "Box(value: 29)", 14) == 0);
+            mo_buffer_free(&text);
+        }
+        mo_process_free(p);
+    }
+    mo_image_free(image);
+}
+
+static void test_initializer_variables(void) {
+    struct mo_image *image = assemble(
+        "bytecode 0.2 shorthand\nglobal M.g: Int in M\ninit [M.init]\n"
+        "module M exposes []\nfunction M.init() : Unit init in M\n"
+        " registers [r0: Int, r1: Text]\n variables [(r0, \"initialized\", @start, @end)]\n"
+        " @start:\n const r0, 43\n set_global M.g, r0\n"
+        " const r1, \"initialization\"\n stop r1\n @end:\nend\n");
+    if (image == NULL)
+        return;
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    limits.heap_size = 0;
+    CHECK(mo_image_init(image, &limits, &defect) == MO_STOPPED);
+    CHECK(defect.process == NULL && defect.frames == NULL);
+    struct variable_capture capture = {0};
+    CHECK(mo_visit_defect_variables(NULL, &defect, 0, 0, capture_variable, &capture) ==
+          MO_DEFECT_VARIABLES_COMPLETE);
+    CHECK(capture.count == 0);
+    limits = mo_limits_default();
+    CHECK(mo_image_init(image, &limits, &defect) == MO_STOPPED);
+    CHECK(defect.process != NULL && defect.frames != NULL);
+    CHECK(mo_visit_defect_variables(NULL, &defect, 8, UINT64_MAX, capture_variable, &capture) ==
+          MO_DEFECT_VARIABLES_COMPLETE);
+    CHECK(capture.count == 1);
+    if (capture.count == 1)
+        CHECK(capture.values[0].name_length == 11 &&
+              memcmp(capture.values[0].name, "initialized", 11) == 0 &&
+              mo_cell_get_int(capture.values[0].value) == 43 &&
+              capture.values[0].frame == defect.frames);
+    mo_image_free(image);
+}
+
 static void test_clear(void) {
     struct mo_image *image =
-        assemble("bytecode 0.1 shorthand\nmodule M exposes [M.clear]\n"
+        assemble("bytecode 0.2 shorthand\nmodule M exposes [M.clear]\n"
                  "function M.clear(x: Text borrowed, n: Int owned) : Unit function in M\n"
                  " registers [r2: Text, r3: Int, r4: Text, r5: Text]\n"
                  " variables [(r0, \"cleared\", @start, @end),"
@@ -1460,6 +1687,17 @@ static void test_clear(void) {
     CHECK(strstr((const char *)report.bytes, "cleared") == NULL);
     CHECK(strstr((const char *)report.bytes, "  reason = \"clear stop\"\n") != NULL);
     mo_buffer_free(&report);
+    struct variable_capture capture = {0};
+    CHECK(mo_visit_defect_variables(p, &defect, 8, UINT64_MAX, capture_variable, &capture) ==
+          MO_DEFECT_VARIABLES_COMPLETE);
+    CHECK(capture.count == 1);
+    if (capture.count == 1) {
+        CHECK(capture.values[0].name_length == 6 &&
+              memcmp(capture.values[0].name, "reason", 6) == 0);
+        size_t length;
+        const uint8_t *bytes = mo_value_data(capture.values[0].value, &length);
+        CHECK(length == 10 && memcmp(bytes, "clear stop", 10) == 0);
+    }
     mo_value_drop(heap, mo_image_bytecode(image)->functions[0].register_types[0], args[0]);
     mo_process_free(p);
     mo_image_free(image);
@@ -1467,7 +1705,7 @@ static void test_clear(void) {
 
 static void test_bounded_report(void) {
     struct mo_image *image =
-        assemble("bytecode 0.1 shorthand\nmodule M exposes [M.loop]\n"
+        assemble("bytecode 0.2 shorthand\nmodule M exposes [M.loop]\n"
                  "function M.loop() : Unit function in M\n registers [r0: Unit]\n"
                  " call r0, M.loop\n ret r0\nend\n");
     if (image == NULL)
@@ -1508,9 +1746,11 @@ static void test_bounded_report(void) {
     memset(function_name, 'N', sizeof function_name);
     memset(file_name, 'F', sizeof file_name);
     strings[0] = (struct mo_bytecode_string){sizeof function_name, function_name};
-    strings[11] = (struct mo_bytecode_string){sizeof file_name, file_name};
+    const struct mo_bytecode_bytes path = {sizeof file_name, file_name};
+    f.file.files = &path;
+    f.file.file_count = 1;
     f.file.strings = strings;
-    const struct mo_bytecode_span span = {.file = 11, .start = 7, .end = 19};
+    const struct mo_bytecode_span span = {.file = 0, .start = 7, .end = 19};
     f.debug[0].spans = &span;
     f.debug[0].span_count = 1;
     image = initialized(&f);
@@ -1547,6 +1787,63 @@ static void test_bounded_report(void) {
     mo_image_free(image);
 }
 
+static void test_filename_bytes(void) {
+    const struct {
+        const char *bytes, *rendered;
+    } cases[] = {
+        {"utf8-é🙂.mo", "utf8-é🙂.mo"},
+        {"byte-\xff.mo", "byte-\\xff.mo"},
+        {"literal-\\xff.mo", "literal-\\\\xff.mo"},
+        {"broken-\xc3", "broken-\\xc3"},
+        {"control-\n\t\r\x1b\x7f\xc2\x80", "control-\\n\\t\\r\\u{1b}\\u{7f}\\u{80}"},
+        {"\xe0\x9f\xbf\xed\xa0\x80\xf4\x90\x80\x80",
+         "\\xe0\\x9f\\xbf\\xed\\xa0\\x80\\xf4\\x90\\x80\\x80"},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        struct fixture f;
+        fixture_init(&f);
+        uint8_t bytes[64];
+        size_t length = strlen(cases[i].bytes);
+        MO_ASSERT(length <= sizeof bytes);
+        memcpy(bytes, cases[i].bytes, length);
+        const struct mo_bytecode_bytes path = {(uint32_t)length, bytes};
+        f.file.files = &path;
+        f.file.file_count = 1;
+        const uint32_t type = 1, code[] = {MO_OP_CONST, 0, 1, MO_OP_STOP, 0};
+        program(&f, 0, &type, 1, code, sizeof code / sizeof code[0], 3);
+        const struct mo_bytecode_span span = {.code_offset = 3, .file = 0, .start = 3, .end = 9};
+        f.debug[0].spans = &span;
+        f.debug[0].span_count = 1;
+        struct mo_image *image = initialized(&f);
+        if (image == NULL)
+            continue;
+        memset(bytes, 0, length); /* Image filenames must not borrow the writer's bytes. */
+        const struct mo_bytecode *b = mo_image_bytecode(image);
+        CHECK(b->file_count == 1 && b->files[0].length == length &&
+              memcmp(b->files[0].bytes, cases[i].bytes, length) == 0);
+        struct mo_limits limits = mo_limits_default();
+        struct mo_process *p = mo_process_new(image, &limits);
+        MO_ASSERT(p != NULL);
+        struct mo_cell result;
+        struct mo_defect defect;
+        CHECK(mo_call(p, 0, NULL, 0, &result, &defect) == MO_STOPPED);
+        CHECK(defect.span.file == 0 && defect.span.start == 3 && defect.span.end == 9);
+        struct mo_buffer text, expected;
+        mo_buffer_init(&text, 256);
+        mo_buffer_init(&expected, 256);
+        CHECK(mo_buffer_append_text(&expected, "stop\n  at M ("));
+        CHECK(mo_buffer_append_text(&expected, cases[i].rendered));
+        CHECK(mo_buffer_append_text(&expected, ":3..9)\n  detail: stop\n"));
+        CHECK(mo_render_defect(p, &defect, &text));
+        CHECK(text.length == expected.length &&
+              memcmp(text.bytes, expected.bytes, text.length) == 0);
+        mo_buffer_free(&text);
+        mo_buffer_free(&expected);
+        mo_process_free(p);
+        mo_image_free(image);
+    }
+}
+
 static void test_report_buffers(void) {
     struct fixture f;
     fixture_init(&f);
@@ -1561,9 +1858,11 @@ static void test_report_buffers(void) {
     struct mo_bytecode_string strings[12];
     memcpy(strings, f.file.strings, sizeof strings);
     strings[0] = (struct mo_bytecode_string){3, (const uint8_t *)"M.f"};
-    strings[11] = (struct mo_bytecode_string){4, (const uint8_t *)"m.mo"};
+    const struct mo_bytecode_bytes path = {4, (const uint8_t *)"m.mo"};
+    f.file.files = &path;
+    f.file.file_count = 1;
     f.file.strings = strings;
-    const struct mo_bytecode_span span = {.file = 11, .start = 1, .end = 2};
+    const struct mo_bytecode_span span = {.file = 0, .start = 1, .end = 2};
     f.debug[0].spans = &span;
     f.debug[0].span_count = 1;
     struct mo_image *image = initialized(&f);
@@ -1728,7 +2027,7 @@ static void test_report_names(void) {
 
 static void test_tail_growth_and_later_stop(void) {
     struct mo_image *image =
-        assemble("bytecode 0.1 shorthand\nmodule M exposes [M.start]\n"
+        assemble("bytecode 0.2 shorthand\nmodule M exposes [M.start]\n"
                  "function M.start(x: Int owned) : Int function in M\n registers []\n"
                  " tail_call M.larger, r0\nend\n"
                  "function M.larger(x: Int owned) : Int function in M\n"
@@ -1756,7 +2055,7 @@ static void test_tail_growth_and_later_stop(void) {
     }
     mo_image_free(image);
     image = assemble(
-        "bytecode 0.1 shorthand\nmodule M exposes [M.later]\n"
+        "bytecode 0.2 shorthand\nmodule M exposes [M.later]\n"
         "function M.later(ok: Bool owned) : Unit function in M\n registers [r1: Unit, r2: Text]\n"
         " branch r0, @ok, @bad\n@ok:\n const r1, ()\n ret r1\n"
         "@bad:\n const r2, \"later\"\n stop r2\nend\n");
@@ -2251,8 +2550,13 @@ int main(int argc, char **argv) {
     test_defects();
     test_borrowing();
     test_scratch_and_fuel();
+    test_stopped_variables();
+    test_variable_frames();
+    test_variable_reuse();
+    test_initializer_variables();
     test_clear();
     test_bounded_report();
+    test_filename_bytes();
     test_report_buffers();
     test_report_chars();
     test_report_names();

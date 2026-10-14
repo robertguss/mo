@@ -301,10 +301,11 @@ $(BUILD)/debug/tests/test_vm.test: $(BUILD)/debug/tests/test_vm.o $(call objects
 $(BUILD)/sanitize/tests/test_vm.test: $(BUILD)/sanitize/tests/test_vm.o $(call objects,$(BUILD)/sanitize,$(filter-out src/host/host.c,$(LIB_SOURCES))) $(BUILD)/sanitize/vm-run/host.o
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
-# Fault injection only in the two translation units owning VM initialization
-# and heap allocation. Compile-time renaming also works with Apple's linker.
-VM_FAULT_SOURCES := src/heap/heap.c src/vm/image.c
-VM_FAULT_RENAMES := -Dcalloc=mo_vm_fault_calloc -Dgetentropy=mo_vm_fault_entropy
+# Fault injection only in VM initialization, reporting and heap allocation.
+# Compile-time renaming also works with Apple's linker.
+VM_FAULT_SOURCES := src/heap/heap.c src/vm/image.c src/vm/defect.c
+VM_FAULT_RENAMES := -Dcalloc=mo_vm_fault_calloc -Dgetentropy=mo_vm_fault_entropy \
+	-Dmo_image_registers_readable=mo_vm_fault_readable
 $(BUILD)/debug/vm-faults/%.o: src/%.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) $(VM_FAULT_RENAMES) -c $< -o $@

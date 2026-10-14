@@ -1064,8 +1064,10 @@ source declarations. Constants retain source order here despite dependency order
 Compilation needs **only this Core document**. It validates metadata shape,
 retains provenance through lambda lifting/optimization, maps binder identities
 to register live ranges, and maps expression spans to instruction offsets.
-It interns filenames and remaps source-file indices to bytecode string
-indices. The image keeps declaration spans, condition text/spans and spec
+It copies `metadata.files` byte-for-byte into bytecode's separate filename
+table in source order, including unused and duplicate rows. Instruction spans,
+declaration spans and condition spans retain those source-file indices.
+The image keeps declaration spans, condition text/spans and spec
 links as well as exposure, so tools never reconstruct them from checked Mo
 syntax. `noSource` compiles with empty source debug tables/no exports; tools
 that need absent links report them unavailable (`formal/TEXT.md`).
@@ -1495,8 +1497,8 @@ or flag.
 
 `--json` and `--emit` cannot be combined. Test selections may combine:
 `--only`'s names are intersected with `--in`'s module. `--list` accepts
-budgets but will not consume them. Matching is deferred until the test stage
-exists; the current stub never claims that a selection matched. Limits are
+budgets but will not consume them. Source-inventory matching precedes execution
+and JSON publication, as described below. Limits are
 positive ASCII decimal integers without signs, spaces or fractions; leading
 zeros are accepted. Byte sizes accept bare bytes or the exact suffixes `B`,
 `KiB`, `MiB`, `GiB` (powers of 1024); counts and seconds accept no suffix,
@@ -1522,8 +1524,9 @@ checking on exhaustion).
 
 Only a successful certificate reaches `mo_lower` and `mo_core_check`, including
 for plain `check`; an unfinished lowering stage cannot be silently accepted.
-Plain checking never executes the user's `main`. `run` and bytecode emission
-then call `mo_compile`. Lowering has its own 256 MiB work arena; the wire and
+Plain checking never executes the user's `main`, examples or tests. `run`,
+bytecode emission, and checking a program with anchors then call `mo_compile`.
+Lowering has its own 256 MiB work arena; the wire and
 text buffers use their format limits. `--emit=core` prints checked
 Core text; `--emit=bytecode` prints indexed bytecode text after compiling and
 loading its format. E1404 reports artifact loading or output failure.
@@ -1541,11 +1544,120 @@ the call and report. File capabilities borrow the starting-folder descriptor.
 The current source producer still stages Args/Env/file/other entry forms and
 Result returns; those consumer paths await source-level certification controls.
 
-`test` (including `--list`) and `fix` still return E1400, "this build cannot
-... yet". `test` checks the source first; `fix` rewrites nothing. A program with
-certified specs also reports E1400 until tools can execute anchors: no command
-claims those expectations passed. E1400 is an unavailable-stage code, not a
-language error.
+**Executable anchor checks.** Typing a promise is not proof of its allows/forbids
+expectations. After loading and initializing one image, tools call each anchor
+with `mo_call` in a fresh process. An answer of zero satisfies `allows` and
+violates `forbids`; a positive condition number does the opposite. These calls
+use the anchor's saved input/result values, not an execution of the ordinary
+subject. `run` creates its separate main process on the same image only after
+all anchors pass. Both emission forms validate anchors before writing an
+artifact, including Core emission. Generic anchors use the same loop: lowering
+supplies concrete promise/anchor functions with the checked subject-scoped
+type and ability requirements. Tools execute every emitted anchor, including
+distinct concrete types, and resolve its failed-condition span through its
+concrete promise link rather than a source declaration index.
+
+E1405 reports an expectation violation or an anchor that could not be executed.
+It marks the anchor and, for a rejected allows, the first false condition.
+The expectation label cites reference 12.2; this tools code has no section/reason
+fields. A stopped report is rendered structurally and copied into diagnostics
+before the process or initializing image is freed. Source paths are matched
+from bytecode 0.2's separate `files` byte table to the retained source store by
+exact length and bytes, not through the UTF-8 runtime string table. Invalid
+UTF-8 paths therefore support checking, running, bytecode emission and anchor
+locations without filename rewriting. The Core 0.8 text printer's raw-path
+refusal remains separate and unresolved. JSON's existing nonlossless `file`
+representation in 10.2 is unchanged pending approval of an exact-byte field.
+Each anchor call, and image initialization for these checks, has a compiler
+work ceiling of 16 Mi instructions (`MO_CLI_ANCHOR_INSTRUCTIONS`). Exhaustion
+refuses certification, never concludes the expectation was false, and never
+limits the subsequent main. VM stack/depth/heap limits apply too. Diagnostic
+storage or process allocation failure halts anchor checking; semantic failures
+continue through the remaining anchors while diagnostics fit.
+
+**Source constants.** Tools consume the checker's closed, dependency-ordered
+constant carrier without reconstructing its dependencies. Image initialization
+evaluates every constant, including unused ones, before anchors or main can
+read globals (reference 10.4). Ordinary calls required by an initializer run;
+merely creating a function value does not execute its body. Without anchors,
+plain `check` and both emissions validate initializer code but do not execute it.
+`run` initializes its image before main; an initializer stop is a runtime bug,
+exits 70 and never runs main. With anchors, initialization uses the same bounded
+certification path for checking, running and both emissions: a stop or instruction ceiling
+reports E1405 inability to check, not a satisfied forbids. It emits no artifact
+and runs neither anchors nor main. No new tools error code is needed.
+
+Calls through constant function values and closures with already available
+globals use the same path as other source code. A deferred lambda or named
+function adapter needing a later global refuses E1150 during lowering (4.3),
+even when called only after initialization. Supporting that lazy body does not
+justify changing the checker's dependency order or adding false execution edges.
+Inventoried `Int.abs`, `Int.min` and `Int.max` scalar callables, including aliases,
+now execute through the existing primitive adapters (4.3). Other numeric native
+function aliases such as `Int.pow` remain a separate E1150 staging route.
+Tools render these refusals and suppress both artifacts; they do not treat
+them as invalid compiler Core or runtime bugs.
+
+**Source observation inventory.** `test --list` checks the whole source program,
+then lists its examples, promises and tests without lowering or loading an image.
+Initialization, main, anchors and observations never execute, even with accepted
+one-byte/one-call budgets. The inventory includes unused generic promise templates;
+it is not a scan of whichever concrete functions lowering happened to emit.
+Names use the source module/subject and original one-based kind ordinal (3.5 of
+`bytecode.md`); overloaded subjects retain lowering's nominal `@Receiver` suffix.
+Promise templates have the source subject name, not a particular monomorphized
+instance's internal name. Anchors are compiler checks, not selectable observations.
+Records follow the checked program's module/source order and use the exact full
+specification span. Text listing writes one full name per line to stdout.
+Repeated `--only` names form a union, deduplicated, intersected with exact owning
+`--in MODULE` (not a module-name prefix). Each requested `--only` must exist in
+the source inventory, even if another requested name exists. Unknown names or an
+empty intersection are exit-2 command mistakes with one stderr line and no stdout.
+Whole-program source errors precede name resolution. Test JSON delays its version
+until selection is resolved, so even `--json` command mistakes write no records.
+`fix` still returns E1400 and rewrites nothing. Generated-input promises remain
+a separate runner seam: a selection containing any promise refuses E1400 before
+initialization or any observation, rather than reporting a partial run as passed.
+Successful anchor validation does not claim those observations passed.
+E1400 is an unavailable-stage code, not a language error.
+
+**Ordinary observations.** Selected zero-argument examples and tests compile
+through the certified Core/bytecode pipeline. Tools verify all selected names
+exist with the right kind before initialization, initialize one shared image,
+and validate its anchors as for `check`. E1406 reports initialization stopping:
+the whole file fails, its defect is retained in the diagnostic, and no
+observation is counted. Each observation then runs in a fresh process under
+the accepted stack/depth/heap limits, never by calling the entry wrapper/main.
+Failure or stopping ends that process, not the remaining selection. Returning
+Unit passes; `fail` fails; a runtime bug stops. Structural reporting finishes
+before freeing the process. No compiler anchor instruction ceiling limits an
+ordinary observation. `--calls` and `--seconds` remain promise budgets; this
+slice accepts but does not consume them for ordinary examples/tests.
+Text results and their final passed/failed/stopped counts go to stdout;
+source/tool diagnostics go to stderr. JSON uses only stdout. Per-observation
+microseconds use POSIX's monotonic clock, covering fresh process creation and
+execution but excluding image initialization, anchors and report rendering.
+Counts include attempted observations even if reporting subsequently fails;
+such a failure diagnoses E1404 and stops the runner with status 1.
+Failed equality details are decoded by their canonical byte counts, preserving
+embedded NUL, newlines and delimiter-looking text. Failed tests report the exact
+enclosing source `assert`, not a reconstructed condition or the last executed
+leaf's span. Failed observations do not become source diagnostics: `errors`
+stays zero unless a compiler/tool error was found, while `failed`/`stopped`
+independently force status 1. Selected unsupported promises are never omitted.
+
+Stopped results retain their original defect span and all stack frames. Variables
+belong to the stopping frame, in bytecode debug-name order. The VM's public
+borrowed visitor establishes readability and lifetime; tools never inspect private
+register layouts or parse human defect text. Each traversal has a 4,096-variable
+and 64 Mi work ceiling, including ancestor traversal; any incomplete traversal
+refuses the whole result with E1404. Structural value printing executes no Mo code,
+uses at most 4,096 bytes per value, and substitutes `<value unavailable>` if a
+value cannot be printed within its scratch/output budget. Text and Char variables
+use quoted literal spellings. Each complete result fits 1 MiB, including escaping,
+or is refused whole; no result field is truncated. Selection/name construction
+has a 64 Mi work budget and image binding a 64 MiB scratch arena, under the
+existing source/spec and bytecode count limits.
 
 Source work runs synchronously through `mo_with_stack` with
 `MO_SOURCE_STACK_SIZE`, covering load, parse, check, lower, Core check, codegen
@@ -1777,7 +1889,10 @@ records may be added, and readers ignore what they don't know.
   body that was false; and `calls`, how many calls were tried. A stopped one
   adds `defect`, the defect report of section 8: `reason`, `span`, `stack`,
   each frame's `function` and `span`, and `variables`, each a `name` and
-  `value`; and for a promise, the `input` it stopped on, and `extreme`, when
+  `value`. Optional `detail` preserves the stop's original Text payload;
+  optional `limit` has `name` (such as `"--max-depth"`) and `value`, a decimal
+  string. These additive fields preserve the reason's established meaning.
+  For a promise, the `input` it stopped on, and `extreme`, when
   that input holds one of its type's extremes: the parameter's `name` and the
   extreme's `description`, such as `"Decimal's largest value"`.
 - **`totals`**, always last: `errors`, the diagnostics written, and
@@ -1801,8 +1916,9 @@ either presentation. Fields are never truncated to manufacture a record.
 Errors or drops imply status 1; `errors` counts records actually written.
 Output failure exits 1 too; an output that refuses bytes cannot be promised
 a totals record. SIGPIPE is ignored so broken pipes take this failure path.
-Each complete record is written and flushed immediately. Version precedes
-loading; diagnostics follow the stages in one globally position-sorted
+Each complete record is written and flushed immediately. Check's version precedes
+loading; test defers it until selection succeeds (or source diagnostics exist),
+so a selection mistake cannot leave a version record. Diagnostics follow the stages in one globally position-sorted
 batch; totals come last. Text is likewise flushed per diagnostic.
 
 An unavailable span (`file == UINT32_MAX`, or no retained source) keeps
@@ -1818,8 +1934,9 @@ UTF-8; offsets still refer to unmodified source bytes. This is not a
 lossless path-byte codec when valid U+00HH also occurs; consumers must check
 decoded paths before rewriting files. Limit/implementation codes have both
 `reason` and `section` null, even when the stage supplies explanatory reason
-text; their explanation belongs in headline/label. Test stubs produce
-version, E1400 diagnostic and totals with all test counts zero.
+text; their explanation belongs in headline/label. A selected promise's unavailable
+runner produces version, E1400 diagnostic and totals with all test counts zero;
+ordinary examples/tests produce their actual result records.
 
 If `count` in `examples/wc.mo` miscounted words, `mo test --json
 examples/wc.mo` would write these lines, with the four results that pass
@@ -2772,8 +2889,9 @@ MO_MUST_USE struct mo_core *mo_core_parse(struct mo_arena *arena, const char *te
                                           struct mo_diags *diags);
 
 /* src/codegen/codegen.h: the whole Core document, spec code and metadata included.
- * Validate metadata shape; derive debug ranges, remap file indices to filename strings,
- * preserve module exposure and spec links/lines. Never reopen sources or consult checked Mo. */
+ * Validate metadata shape; derive debug ranges, copy exact filename bytes in source order,
+ * retain file indices in the separate filename table, module exposure and spec links/lines.
+ * Never reopen sources or consult checked Mo. */
 MO_MUST_USE bool mo_compile(const struct mo_core *core, struct mo_buffer *bytecode_out, struct mo_diags *diags);
 
 /* src/bytecode/bytecode.h: writing and text tools borrow inputs. out is an initialized,

@@ -3,7 +3,7 @@
 #include <string.h>
 
 bool mo_short_index(struct mo_bytecode_string name) {
-    if (name.length < 2 || strchr("stLkgifmdrph", name.bytes[0]) == NULL)
+    if (name.length < 2 || strchr("stLkgifmPdrph", name.bytes[0]) == NULL)
         return false;
     for (uint32_t i = 1; i < name.length; i++)
         if (name.bytes[i] < '0' || name.bytes[i] > '9')
@@ -96,6 +96,7 @@ bool mo_short_lookup(struct mo_shorthand *s, enum mo_bytecode_section section,
                                                "expected initializer",
                                                "expected declared function",
                                                "expected declared module",
+                                               "expected filename",
                                                "expected debug entry"};
         mo_text_refuse(s->r, source, expected[section]);
         return false;
@@ -156,6 +157,33 @@ bool mo_short_string(struct mo_shorthand *s, struct mo_bytecode_string bytes, ui
     bool ok = mo_text_word(r, bytes.length, source) &&
               mo_text_bytes(r, bytes.bytes, bytes.length, source) &&
               mo_short_pool(s, MO_SECTION_STRINGS, source, out);
+    mo_buffer_free(&r->raw);
+    mo_buffer_free(&r->positions);
+    r->raw = saved;
+    r->positions = positions;
+    return ok;
+}
+
+bool mo_short_file(struct mo_shorthand *s, struct mo_bytecode_string bytes, uint32_t source,
+                   uint32_t *out) {
+    struct mo_text_reader *r = s->r;
+    struct mo_text_index *found = mo_text_find(s->files, bytes);
+    if (found != NULL) {
+        *out = found->value;
+        return true;
+    }
+    struct mo_buffer saved = r->raw, positions = r->positions;
+    mo_buffer_init(&r->raw, MO_LIMIT_BYTECODE_SIZE);
+    mo_buffer_init(&r->positions, 2 * (size_t)MO_LIMIT_BYTECODE_SIZE);
+    *out = r->tables[MO_SECTION_FILES].count;
+    bool ok = mo_text_word(r, bytes.length, source) &&
+              mo_text_bytes(r, bytes.bytes, bytes.length, source) &&
+              mo_text_save(r, MO_SECTION_FILES, *out, source);
+    if (ok) {
+        const struct mo_text_entry *e = &r->tables[MO_SECTION_FILES].entries[*out];
+        ok = mo_text_insert(r, &s->files, (struct mo_bytecode_string){e->length - 4, e->bytes + 4},
+                            *out) != NULL;
+    }
     mo_buffer_free(&r->raw);
     mo_buffer_free(&r->positions);
     r->raw = saved;
@@ -248,11 +276,19 @@ static MO_MUST_USE bool reserve(struct mo_shorthand *s) {
                 return false;
         }
         bool registers = body == MO_SECTION_FUNCTIONS && mo_text_is(r, "registers");
+        bool span = body == MO_SECTION_FUNCTIONS && mo_text_is(r, "span");
+        bool locations = body == MO_SECTION_FUNCTIONS &&
+                         (mo_text_is(r, "declaration") || mo_text_is(r, "lines"));
         struct mo_text_token previous = {0};
         while (r->token.kind != 'n' && r->token.kind != 0 && !r->failed) {
             struct mo_text_token token = r->token;
             uint32_t unused;
-            if (token.kind == 'q') {
+            bool path = (span && previous.kind == 'w') || (locations && previous.kind == '(');
+            if (path && (token.kind == 'q' || token.kind == 'x')) {
+                struct mo_bytecode_string bytes;
+                if (!mo_text_quote(r, &bytes) || !mo_short_file(s, bytes, token.start, &unused))
+                    return false;
+            } else if (token.kind == 'q') {
                 struct mo_bytecode_string bytes;
                 if (!mo_text_quote(r, &bytes) || !mo_short_string(s, bytes, token.start, &unused))
                     return false;
@@ -449,6 +485,14 @@ bool mo_text_shorthand(struct mo_text_reader *r) {
             if (mo_text_insert(r, &s.pools[i], key, j) == NULL)
                 return false;
         }
+    }
+    if (mo_text_is(r, "files") && !mo_text_indexed_section(r, MO_SECTION_FILES))
+        return false;
+    for (uint32_t i = 0; i < r->tables[MO_SECTION_FILES].count; i++) {
+        const struct mo_text_entry *e = &r->tables[MO_SECTION_FILES].entries[i];
+        if (mo_text_insert(r, &s.files, (struct mo_bytecode_string){e->length - 4, e->bytes + 4},
+                           i) == NULL)
+            return false;
     }
     uint32_t seed_types = r->tables[MO_SECTION_TYPES].count;
     struct mo_text_token first = r->token;
