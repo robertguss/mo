@@ -416,6 +416,47 @@ MODULE_CASES = {
                    "fn main() : Int\nanswer\nend\n",
         "lib.mo": "module Lib\nexpose seed\nseed = 13\n",
     }, {None: ["returned", "102"]}),
+    "import_initializer_routes": ({
+        "main.mo": "module Main\nuse Calc{evaluate, score}\n"
+                   "direct = evaluate(3)\nhandler = score\nindirect = handler(17)\nseed = 11\n"
+                   "lazy = fn() 1 / 0 end\nfn main() : Int\ndirect + indirect + seed\nend\n",
+        "calc.mo": "module Calc\nexpose evaluate, score\nseed = 13\n"
+                   "fn evaluate(n: Int) : Int\nn + seed * 2\nend\n"
+                   "fn score(n: Int) : Int\nn * 7 + 11\nend\n",
+    }, {None: ["returned", "170"]}),
+    "import_constant_diamond": ({
+        "main.mo": "module Main\nuse Left\nuse Right\n"
+                   "answer = Left.value * 3 + Right.value + spare\nspare = 5\n"
+                   "fn main() : Int\nanswer\nend\n",
+        "left.mo": "module Left\nexpose value\nuse Origin\n"
+                   "value = Origin.seed * 2 + independent\nindependent = 11\ntag = 17\n",
+        "right.mo": "module Right\nexpose value\nuse Origin\n"
+                    "value = Origin.seed + Origin.other * 2\n",
+        "origin.mo": "module Origin\nexpose seed, other\nseed = 13\nother = 19\n",
+    }, {None: ["returned", "167"]}),
+    "import_constant_owned": ({
+        "main.mo": "module Main\nuse Shapes{Pair, make, snapshot}\n"
+                   "packet = make(\"λ\\u{0}owned\", true)\nreader = snapshot(packet)\n"
+                   "fn flag(pair: Pair(Text, Bool)) : Bool\npair.second\nend\n"
+                   "fn main() : Int\n"
+                   "if reader() == \"λ\\u{0}owned\" and flag(packet): 43 else: 1\nend\n",
+        "shapes.mo": "module Shapes\nexpose Pair(..), make, snapshot\n"
+                     "struct Pair(Z, A)\nfirst: Z\nsecond: A\nend\n"
+                     "fn make(value: Z, flag: A) : Pair(Z, A)\n"
+                     "Pair(second: flag, first: value)\nend\n"
+                     "fn snapshot(pair: Pair(Text, Bool)) : fn() : Text\nfn() pair.first end\nend\n",
+    }, {None: ["returned", "43"]}),
+    "import_initializer_stop": ({
+        "main.mo": "module Main\nuse Fallback\nuse Source\n"
+                   "answer = Source.abort()\nlater = Fallback.abort()\n"
+                   "test \"not initialized by listing\"\nassert true\nend\n"
+                   "fn main() : Int\nstop \"main ran\"\nend\n",
+        "source.mo": "module Source\nexpose abort\nfn abort() : Int\n"
+                     "stop \"imported initializer\"\nend\n",
+        "fallback.mo": "module Fallback\nexpose abort\nfn abort() : Int\n"
+                       "stop \"later initializer\"\nend\n",
+    }, {None: ["stopped", "imported initializer"],
+        "Main.test.1": ["stopped", "imported initializer"]}),
     "routes": ({
         "main.mo": "module Main\nuse Shapes{make, score}\nfn main() : Int\n"
                    "f = score\nf(make(3), 11) + Shapes.score(Shapes.make(5), 2)\nend\n",
@@ -609,6 +650,28 @@ def check_modules(driver, vm, root, world):
         for module in metadata[2]:
             for index in module[2]:
                 assert program[1][int(index)][1].startswith(module[1] + "."), (name, module)
+            constant_starts = []
+            for index in module[4]:
+                declaration, meta = program[3][int(index)], metadata[4][int(index)]
+                assert declaration[1] == meta[1] and meta[1].startswith(module[1] + "."), (
+                    name, module, meta)
+                span = meta[2][1]
+                original = originals[int(span[1])]
+                assert original.split(b"\n", 1)[0].decode() == "module " + module[1], (
+                    name, module, meta)
+                start, end = int(span[2]), int(span[3])
+                assert 0 <= start < end <= len(original), (name, meta)
+                assert original[start:end].startswith(meta[1].rsplit(".", 1)[1].encode() + b" ="), (
+                    name, meta)
+                constant_starts.append(start)
+                for optional in meta[3][1]:
+                    if optional[0] == "some":
+                        node = optional[1]
+                        assert node[1] == span[1], (name, meta, node)
+                        assert 0 <= int(node[2]) <= int(node[3]) <= len(original), (name, node)
+                assert all(closure[1].startswith(meta[1] + ".") for closure in meta[3][4]), (
+                    name, meta)
+            assert constant_starts == sorted(constant_starts), (name, module, constant_starts)
             for index in module[3]:
                 fun, meta = program[2][int(index)], metadata[3][int(index)]
                 assert fun[5] == module[1], (name, module, fun)
@@ -635,6 +698,19 @@ def check_modules(driver, vm, root, world):
             exposed = [program[2][int(i)][1] for i in module[6]]
             assert all(n.startswith((module[1] + ".", module[1] + "::" + module[1] + "."))
                        for n in exposed), (name, exposed)
+        if name == "import_constant_diamond":
+            assert [constant[1] for constant in program[3]] == [
+                "Main.spare", "Left.independent", "Left.tag", "Origin.seed", "Left.value",
+                "Origin.other", "Right.value", "Main.answer"], program[3]
+        if name == "import_initializer_stop":
+            assert [constant[1] for constant in program[3]] == ["Main.answer", "Main.later"], program[3]
+        if name == "import_constant_owned":
+            assert [data[1] for data in program[1]] == ["Shapes.Pair(Text, Bool)"], program[1]
+            main = next(module for module in metadata[2] if module[1] == "Main")
+            shapes = next(module for module in metadata[2] if module[1] == "Shapes")
+            assert not main[2] and not main[5] and shapes[5] == [["0", "true"]], metadata[2]
+            snapshot = next(meta for meta in metadata[3] if meta[1] == "Shapes.snapshot")
+            assert [closure[1] for closure in snapshot[4][4]] == ["Shapes.snapshot.fn.1"], snapshot
         if name == "owners":
             assert {data[1] for data in program[1]} == {
                 "Left.Box", "Right.Box", "Left.Choice", "Right.Choice"}, program[1]
