@@ -54,7 +54,8 @@ static MO_MUST_USE bool check_imports(const struct mo_signatures *signatures,
             return false;
         }
         (*signatures->work)++;
-        if (use->used || (use->parent == i && use->origin->children[1] != NULL))
+        if (use->used || (use->parent == i && use->origin->children[1] != NULL) ||
+            (use->parent != i && use->origin->text[0] == '_'))
             continue;
         struct mo_span span = use->parent == i ? use->origin->children[0]->span : use->origin->span;
         if (!report(diags, MO_CODE_UNUSED_IMPORT, span,
@@ -341,7 +342,7 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
     if (interfaces == NULL)
         return NULL;
     struct mo_signatures *signatures =
-        mo_prepare_available_signatures(arena, set, interfaces, diags);
+        mo_prepare_available_signatures(arena, set, interfaces, diags, true);
     if (signatures == NULL)
         return NULL;
     uint32_t work = 0;

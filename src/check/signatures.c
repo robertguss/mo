@@ -259,7 +259,7 @@ struct preparation {
     struct mo_signatures *signatures;
     struct mo_span span, native_span;
     uint32_t depth;
-    bool failed, native;
+    bool failed, native, checked;
 };
 
 static MO_MUST_USE bool problem(struct preparation *p, uint16_t code, struct mo_span span,
@@ -445,6 +445,7 @@ static MO_MUST_USE const struct mo_symbol *definition(struct preparation *p,
             bool reported = problem(p, MO_CODE_CHECK_PROGRAM_WORK, name->span,
                                     "the program needs too much import-checking work", NULL);
             (void)reported;
+            p->failed = true;
             return NULL;
         }
         return symbol;
@@ -466,6 +467,7 @@ static MO_MUST_USE const struct mo_symbol *definition(struct preparation *p,
         bool reported = problem(p, MO_CODE_CHECK_PROGRAM_WORK, name->span,
                                 "the program needs too much import-checking work", NULL);
         (void)reported;
+        p->failed = true;
         return NULL;
     }
     return scope->imported[lo].symbols;
@@ -580,6 +582,13 @@ static MO_MUST_USE const struct mo_source_type *resolve_type(struct preparation 
             problem(p, MO_CODE_TYPE_ARGUMENTS, node->span, "a type's type parameters don't match",
                     "List(T), Map(K, V) and declared generic types take type "
                     "parameters (reference 9.1).");
+        (void)reported;
+        return NULL;
+    }
+    if (p->checked && symbol != NULL && symbol->module != p->function->module &&
+        !p->interfaces->scopes[symbol->module].library && arity != 0) {
+        bool reported = problem(p, MO_CODE_CHECK_UNFINISHED, name->span,
+                                "generic nominal imports remain staged", NULL);
         (void)reported;
         return NULL;
     }
@@ -1097,11 +1106,14 @@ static MO_MUST_USE bool data_signature(struct preparation *p, const struct mo_sy
 struct mo_signatures *mo_prepare_available_signatures(struct mo_arena *arena,
                                                       const struct mo_module_set *set,
                                                       const struct mo_module_interfaces *interfaces,
-                                                      struct mo_diags *diags) {
+                                                      struct mo_diags *diags, bool checked) {
     MO_ASSERT(arena != NULL && set != NULL && interfaces != NULL && diags != NULL);
     MO_ASSERT(interfaces->count == set->count && set->count <= MO_LIMIT_FILES);
-    struct preparation p = {
-        .arena = arena, .interfaces = interfaces, .diags = diags, .span = {UINT32_MAX, 0, 0}};
+    struct preparation p = {.arena = arena,
+                            .interfaces = interfaces,
+                            .diags = diags,
+                            .span = {UINT32_MAX, 0, 0},
+                            .checked = checked};
     uint32_t count = 0, data_count = 0;
     for (uint32_t i = 0; i < interfaces->count; i++)
         for (uint32_t j = 0; j < interfaces->scopes[i].count; j++) {
@@ -1263,6 +1275,7 @@ failed:
 struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct mo_module_set *set,
                                             const struct mo_module_interfaces *interfaces,
                                             struct mo_diags *diags) {
-    struct mo_signatures *out = mo_prepare_available_signatures(arena, set, interfaces, diags);
+    struct mo_signatures *out =
+        mo_prepare_available_signatures(arena, set, interfaces, diags, false);
     return mo_diags_any(diags) ? NULL : out;
 }

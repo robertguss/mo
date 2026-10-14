@@ -30,7 +30,7 @@ struct mo_nominal_signature {
 MO_MUST_USE struct mo_signatures *
 mo_prepare_available_signatures(struct mo_arena *arena, const struct mo_module_set *set,
                                 const struct mo_module_interfaces *interfaces,
-                                struct mo_diags *diags);
+                                struct mo_diags *diags, bool checked);
 MO_MUST_USE bool mo_signature_type_available(const struct mo_signatures *signatures,
                                              const struct mo_source_type *type);
 

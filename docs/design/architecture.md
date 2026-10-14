@@ -399,7 +399,20 @@ cases share their type's import origin. Annotation references count as uses.
 The final certification audit reports E0093 (6.1) for an unused plain module
 use or each unused explicit name, without a second module diagnostic for
 the same name list. Qualified references credit the module route, not an
-unused unqualified name. No symbol or nominal type identity is rewritten.
+unused unqualified name. A dot call found in its receiver's declaring module
+does not read a redundant explicit-name import either. Names beginning with
+`_` remain unused on purpose. The audit runs after successful body/spec checks,
+so dependent unused-import errors do not obscure an earlier source refusal.
+The usage index is sorted by importing module and written offset; binary
+lookups and the final linear audit spend the shared program work budget.
+No symbol or nominal type identity is rewritten.
+
+This checked-source slice certifies nongeneric application-module imports.
+Cross-application generic function values, written generic nominal annotations,
+generic construction/projection, constant reads and direct initializer calls
+remain explicit E1103 routes. Partial signature/inference APIs and the already
+supported implicit library routes retain their previous behavior. No new
+cross-module constant ordering or generic proof carrier is introduced.
 
 Interface work is bounded by source declarations and imported names, not
 pairwise name scans. Each choice's case indices are computed once in its

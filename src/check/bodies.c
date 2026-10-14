@@ -992,12 +992,19 @@ static MO_MUST_USE const struct mo_data_signature *data_type(struct inference *p
 }
 
 static MO_MUST_USE bool visible_data(struct inference *p, const struct mo_symbol *owner) {
-    if (owner->module == p->function->function->module || owner->insides)
+    if (owner->module == p->function->function->module)
         return true;
-    return problem(p, MO_CODE_DATA_PRIVATE, p->span, "the type's fields or cases are hidden",
-                   "Outside its module a type exposed without (..) can't be built, taken apart "
-                   "or have its fields read (reference 10.2).",
-                   owner->declaration->children[0]);
+    if (!owner->insides)
+        return problem(p, MO_CODE_DATA_PRIVATE, p->span, "the type's fields or cases are hidden",
+                       "Outside its module a type exposed without (..) can't be built, taken apart "
+                       "or have its fields read (reference 10.2).",
+                       owner->declaration->children[0]);
+    const struct mo_syntax *parameters = owner->declaration->children[1];
+    if (p->checked && !p->interfaces->scopes[owner->module].library && parameters != NULL &&
+        parameters->count != 0)
+        return problem(p, MO_CODE_CHECK_UNFINISHED, p->span,
+                       "generic nominal imports remain staged", NULL, NULL);
+    return true;
 }
 
 static MO_MUST_USE const struct mo_field_signature *find_field(const struct mo_data_signature *data,
@@ -1197,6 +1204,16 @@ static MO_MUST_USE struct value declared_function(struct inference *p, const str
         p->failed = p->fatal = p->unavailable = true;
         return (struct value){0};
     }
+    if (p->checked && s->module != p->function->function->module &&
+        !p->interfaces->scopes[s->module].library &&
+        (signature->type->parameters != 0 ||
+         p->function->function->declaration->kind == MO_S_CONST)) {
+        bool reported =
+            problem(p, MO_CODE_CHECK_UNFINISHED, p->span,
+                    "generic imports and imported initializer calls remain staged", NULL, NULL);
+        (void)reported;
+        return (struct value){0};
+    }
     struct value out = function_value(p, signature->type, signature->requirements);
     out.symbol = s;
     return out;
@@ -1362,7 +1379,8 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
         entry->module_use = node;
     }
     if (constant) {
-        if (p->constants == NULL) {
+        if (p->constants == NULL || (p->checked && s->module != p->function->function->module &&
+                                     !p->interfaces->scopes[s->module].library)) {
             bool reported = unfinished(p);
             (void)reported;
             return (struct value){0};

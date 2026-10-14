@@ -402,6 +402,164 @@ static void imported_function(void) {
     MO_ASSERT(unlink(main_path) == 0 && unlink(other_path) == 0 && rmdir(folder) == 0);
 }
 
+static void import_sources(void) {
+    static const char library[] =
+        "module Shapes\nexpose Shape(..), make, area, Token, open, read, Choice(..), pick, _extra\n"
+        "struct Shape\nvalue: Int\nend\nstruct Token\nvalue: Int\nend\n"
+        "enum Choice\nLeft\nRight\nend\nstruct Hidden\nvalue: Int\nend\n"
+        "fn make(value: Int) : Shape\nShape(value: value)\nend\n"
+        "fn area(value: Shape) : Int\nvalue.value\nend\n"
+        "fn open(value: Int) : Token\nToken(value: value)\nend\n"
+        "fn read(value: Token) : Int\nvalue.value\nend\n"
+        "fn pick() : Choice\nLeft\nend\nfn secret() : Int\n71\nend\n"
+        "fn _extra() : Int\n73\nend\n";
+    static const struct {
+        const char *name, *source, *other, *site;
+        uint16_t code;
+    } cases[] = {
+        {"qualified calls", "use Shapes\nfn main() : Int\nShapes.area(Shapes.make(19))\nend\n",
+         NULL, NULL, 0},
+        {"explicit calls", "use Shapes{make, area}\nfn main() : Int\narea(make(19))\nend\n", NULL,
+         NULL, 0},
+        {"explicit annotation",
+         "use Shapes{Shape}\nfn keep(value: Shape) : Shape\nvalue\nend\n"
+         "fn main() : Int\n0\nend\n",
+         NULL, NULL, 0},
+        {"qualified annotation",
+         "use Shapes\nfn keep(value: Shapes.Shape) : Shapes.Shape\n"
+         "value\nend\nfn main() : Int\n0\nend\n",
+         NULL, NULL, 0},
+        {"field annotation",
+         "use Shapes{Shape}\nstruct Wrap\nvalue: Shape\nend\n"
+         "fn main() : Int\n0\nend\n",
+         NULL, NULL, 0},
+        {"constructor", "use Shapes{Shape}\nfn main() : Int\nShape(value: 19).value\nend\n", NULL,
+         NULL, 0},
+        {"qualified constructor",
+         "use Shapes\nfn main() : Int\nShapes.Shape(value: 19).value\nend\n", NULL, NULL, 0},
+        {"first class",
+         "use Shapes{make, area}\nfn main() : Int\n"
+         "build = make\nmeasure = area\nmeasure(build(19))\nend\n",
+         NULL, NULL, 0},
+        {"case credits type",
+         "use Shapes{Choice}\nfn main() : Int\n"
+         "case Left\nLeft: 13\nRight: 29\nend\nend\n",
+         NULL, NULL, 0},
+        {"qualified cases",
+         "use Shapes\nfn main() : Int\ncase Shapes.pick()\n"
+         "Shapes.Left: 13\nShapes.Right: 29\nend\nend\n",
+         NULL, NULL, 0},
+        {"opaque factory",
+         "use Shapes{Token, open, read}\nfn inspect(value: Token) : Int\n"
+         "read(value)\nend\nfn main() : Int\ninspect(open(19))\nend\n",
+         NULL, NULL, 0},
+        {"test only",
+         "use Shapes\ntest \"import\"\n"
+         "assert Shapes.area(Shapes.make(19)) == 19\nend\nfn main()\nend\n",
+         NULL, NULL, 0},
+        {"example only",
+         "use Shapes\nfn answer() : Int\nexamples\n"
+         "answer() == Shapes.area(Shapes.make(19))\nend\n19\nend\n"
+         "fn main() : Int\nanswer()\nend\n",
+         NULL, NULL, 0},
+        {"purposefully unused", "use Shapes{_extra}\nfn main()\nend\n", NULL, NULL, 0},
+        {"unused module", "use Shapes\nfn main()\nend\n", NULL, "Shapes\n", MO_CODE_UNUSED_IMPORT},
+        {"unused name", "use Shapes{Shape, make, area}\nfn main() : Int\narea(make(19))\nend\n",
+         NULL, "Shape,", MO_CODE_UNUSED_IMPORT},
+        {"qualification does not read listed name",
+         "use Shapes{make}\n"
+         "fn main() : Int\nShapes.area(Shapes.make(19))\nend\n",
+         NULL, "make}", MO_CODE_UNUSED_IMPORT},
+        {"local spelling does not read import",
+         "use Shapes{area}\n"
+         "fn main() : Int\narea = 19\narea\nend\n",
+         NULL, "area}", MO_CODE_UNUSED_IMPORT},
+        {"dot owner does not read listed name",
+         "use Shapes{make, area}\n"
+         "fn main() : Int\nmake(19).area\nend\n",
+         NULL, "area}", MO_CODE_UNUSED_IMPORT},
+        {"private function", "use Shapes\nfn main() : Int\nShapes.secret()\nend\n", NULL,
+         "secret()", MO_CODE_IMPORT_PRIVATE},
+        {"private explicit name", "use Shapes{secret}\nfn main() : Int\nsecret()\nend\n", NULL,
+         "secret}", MO_CODE_IMPORT_PRIVATE},
+        {"private type",
+         "use Shapes\nfn keep(value: Shapes.Hidden) : Shapes.Hidden\nvalue\nend\n"
+         "fn main()\nend\n",
+         NULL, "Shapes.Hidden", MO_CODE_IMPORT_PRIVATE},
+        {"opaque construction",
+         "use Shapes{Token, read}\nfn main() : Int\n"
+         "read(Token(value: 19))\nend\n",
+         NULL, NULL, MO_CODE_DATA_PRIVATE},
+        {"opaque field", "use Shapes{open}\nfn main() : Int\nopen(19).value\nend\n", NULL,
+         "value\n", MO_CODE_DATA_PRIVATE},
+        {"opaque pattern",
+         "use Shapes{Token, open}\nfn main() : Int\n"
+         "case open(19)\nToken(value: n): n\nend\nend\n",
+         NULL, NULL, MO_CODE_DATA_PRIVATE},
+        {"distinct nominal owners",
+         "use Shapes\nstruct Shape\nvalue: Int\nend\n"
+         "fn main() : Int\nShapes.area(Shape(value: 19))\nend\n",
+         NULL, NULL, MO_CODE_TYPE_MISMATCH},
+        {"generic function staged", "use Shapes{identity}\nfn main() : Int\nidentity(19)\nend\n",
+         "module Shapes\nexpose identity\nfn identity(value: T) : T\nvalue\nend\n", NULL,
+         MO_CODE_CHECK_UNFINISHED},
+        {"generic annotation staged",
+         "use Shapes{Box}\nfn keep(value: Box(Int)) : Box(Int)\n"
+         "value\nend\nfn main()\nend\n",
+         "module Shapes\nexpose Box(..)\nstruct Box(T)\nvalue: T\nend\n", NULL,
+         MO_CODE_CHECK_UNFINISHED},
+        {"generic construction staged",
+         "use Shapes{Box}\nfn main() : Int\n"
+         "Box(value: 19).value\nend\n",
+         "module Shapes\nexpose Box(..)\nstruct Box(T)\nvalue: T\nend\n", NULL,
+         MO_CODE_CHECK_UNFINISHED},
+        {"imported constant staged", "use Shapes{answer}\nfn main() : Int\nanswer\nend\n",
+         "module Shapes\nexpose answer\nanswer = 19\n", NULL, MO_CODE_CHECK_UNFINISHED},
+        {"initializer import staged",
+         "use Shapes{value}\nanswer = value()\n"
+         "fn main() : Int\nanswer\nend\n",
+         "module Shapes\nexpose value\nfn value() : Int\n19\nend\n", NULL,
+         MO_CODE_CHECK_UNFINISHED},
+    };
+    char folder[] = "/tmp/mo-import-sources-XXXXXX";
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    char path[128], other[128];
+    int n = snprintf(path, sizeof(path), "%s/main.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(path));
+    n = snprintf(other, sizeof(other), "%s/shapes.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(other));
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char source[2048];
+        n = snprintf(source, sizeof(source), "module Main\n%s", cases[i].source);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(source));
+        const char *text = cases[i].other == NULL ? library : cases[i].other;
+        write_file(path, (const uint8_t *)source, (size_t)n);
+        write_file(other, (const uint8_t *)text, strlen(text));
+        struct fixture f;
+        init(&f, MO_CLI_CHECK_SIZE);
+        struct mo_module_set *set = mo_load_program(&f.syntax, &f.sources, path, NULL, &f.diags);
+        struct mo_program *program = set == NULL ? NULL : mo_check(&f.arena, set, &f.diags);
+        bool passed = cases[i].code == 0 ? program != NULL && !mo_diags_any(&f.diags)
+                                         : program == NULL && f.diags.count == 1 &&
+                                               f.diags.items[0].code == cases[i].code;
+        if (!passed)
+            MO_ASSERT(fprintf(stderr, "import source %s: expected E%04u, found E%04u (%u errors)\n",
+                              cases[i].name, (unsigned)cases[i].code,
+                              f.diags.count == 0 ? 0u : (unsigned)f.diags.items[0].code,
+                              f.diags.count) >= 0);
+        CHECK(passed);
+        if (cases[i].site != NULL && f.diags.count != 0) {
+            const char *site = strstr(source, cases[i].site);
+            MO_ASSERT(site != NULL);
+            CHECK(f.diags.items[0].primary.span.file == 0 &&
+                  f.diags.items[0].primary.span.start == (uint32_t)(site - source));
+        }
+        finish(&f);
+    }
+    printf("import sources: %zu public load/check controls\n", sizeof(cases) / sizeof(cases[0]));
+    MO_ASSERT(unlink(path) == 0 && unlink(other) == 0 && rmdir(folder) == 0);
+}
+
 static void captured_parameter(void) {
     char folder[] = "/tmp/mo-captures-XXXXXX";
     MO_ASSERT(mkdtemp(folder) != NULL);
@@ -1364,6 +1522,7 @@ static void run_tests(void *argument) {
     corpus();
     samples();
     imported_function();
+    import_sources();
     captured_parameter();
     capture_sources();
     arena_limits();
