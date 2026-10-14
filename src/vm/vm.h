@@ -76,7 +76,7 @@ MO_MUST_USE enum mo_outcome mo_call_main(struct mo_process *process, uint32_t fu
 /* C harness hook, not a Mo resource limit. Default is unlimited. Exhaustion
  * produces an internal stop before the next instruction (for bounded fuzzing). */
 void mo_process_instruction_limit(struct mo_process *process, uint64_t instructions);
-/* Exact image name bytes (not NUL terminated), file type index and borrowed
+/* Exact image name bytes (length authoritative), file type index and borrowed
  * cell. The view itself lasts only for the callback; its contents belong to
  * the stopped process/image and never transfer ownership. */
 struct mo_defect_variable {
@@ -97,7 +97,8 @@ enum mo_defect_variables_result {
  * state/lifetime filtering. count bounds delivered variables; work charges
  * each frame/name and reserves (registers + code words + 32) *
  * (MO_LIMIT_VERIFY_WORK_PER_WORD + 1) before each replay. This conservatively
- * bounds replay, its boundary scan and readability initialization.
+ * bounds replay, its boundary scan and readability initialization; callback
+ * printing/work needs the caller's own budget.
  * False from visit returns STOPPED; exhausted budgets return LIMIT; failed
  * replay/allocation returns UNAVAILABLE, never an empty COMPLETE. Any prefix
  * already delivered remains valid; COMPLETE with no callbacks means no names.
