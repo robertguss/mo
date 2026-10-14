@@ -1690,6 +1690,21 @@ Failures retain the enclosing assert span, and stops retain the closure's origin
 source span, full stack and readable captured values through the existing visitor.
 This integration changes no observation names, selection, outcomes or JSON fields.
 
+**Imported declarations in tools.** Certified nongeneric imports use that same
+whole-program pipeline, with the checker's canonical declaring symbols and types;
+tools do not reconstruct bindings from written import names. Listed aliases and
+qualified calls therefore reach the same declaration. Observation names and
+`--in MODULE` use the declaring module, not the importing entry module. Failed
+assertions retain the caller's source location; a stopped imported closure retains
+its original module's span and the complete cross-module stack. The whole-program
+unused-import audit precedes selection, including `--list`, so E0093 at the written
+name takes precedence over an unknown selector and suppresses all observations and
+both emitted artifacts. Imports used only in tests count as used. No new tools
+code or JSON field is required. Foreign generic function values, generic nominal
+annotations/construction/projection, foreign constant reads and direct imported
+initializer references remain the checker's E1103 staging routes (3.2); this
+consumer slice does not widen those boundaries or settle promise deadlines.
+
 Stopped results retain their original defect span and all stack frames. Variables
 belong to the stopping frame, in bytecode debug-name order. The VM's public
 borrowed visitor establishes readability and lifetime; tools never inspect private

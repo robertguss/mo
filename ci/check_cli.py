@@ -344,20 +344,95 @@ def captures(binary):
 def imports(binary):
     # Aliasing a listed import and qualifying the same declaration must agree;
     # asymmetric arguments distinguish canonical binding from swapped inputs.
-    source = ('module Main\nuse Shapes{make, score}\nfn main() : Int\n'
+    source = ('module Main\nuse Shapes{make, score, ratio}\n'
+              'test "imported aliases"\nf = score\n'
+              'assert f(make(3), 11) + Shapes.score(Shapes.make(5), 2) == 69\nend\n'
+              'test "wrong imported answer"\nassert score(make(3), 11) == 31\nend\n'
+              'test "imported escaped stop"\naction = ratio(17)\nassert action(0) == 1\nend\n'
+              'test "after stop"\nassert score(make(2), 3) == 17\nend\n'
+              'fn main() : Int\n'
               'f = score\nf(make(3), 11) + Shapes.score(Shapes.make(5), 2)\nend\n')
-    shapes = ('module Shapes\nexpose Box(..), make, score\nstruct Box\nvalue: Int\nend\n'
+    shapes = ('module Shapes\nexpose Box(..), make, score, ratio\nstruct Box\nvalue: Int\nend\n'
               'fn make(value: Int) : Box\nBox(value: value)\nend\n'
-              'fn score(box: Box, extra: Int) : Int\nbox.value * 7 + extra\nend\n')
+              'fn score(box: Box, extra: Int) : Int\nexamples\nscore(make(3), 11) == 32\nend\n'
+              'box.value * 7 + extra\nend\n'
+              'fn ratio(base: Int) : fn(Int) : Int\nfn(value) base / value end\nend\n'
+              'test "module snapshot"\nvar count = 13\ncopy = count\n'
+              'show = fn() copy * 3 end\ncount += 7\nassert show() + count == 59\nend\n')
     with tempfile.TemporaryDirectory(prefix="mo-cli-imports-") as directory:
         path = pathlib.Path(directory) / "main.mo"
+        owner = path.parent / "shapes.mo"
         path.write_text(source)
-        (path.parent / "shapes.mo").write_text(shapes)
+        owner.write_text(shapes)
         checked = run(binary, ["check", str(path)], 0)
         assert not checked.stdout and not checked.stderr
+        # --in uses the declaration's module, not the importing entry module.
+        listed = records(run(binary, ["test", "--json", "--list", "--in", "Shapes", str(path)], 0), "test")
+        assert [r["name"] for r in listed[1:-1]] == ["Shapes.score.example.1", "Shapes.test.1"]
+        start = shapes.index("score(make(3), 11) == 32")
+        assert listed[1]["span"] == {"file": str(owner), "start": start, "end": start + 24,
+                                      "line": 11, "column": 1, "end_line": 11, "end_column": 25}
+        start = shapes.index('test "module snapshot"')
+        assert listed[2]["span"] == {"file": str(owner), "start": start, "end": len(shapes) - 1,
+                                      "line": 18, "column": 1, "end_line": 24, "end_column": 4}
+        assert all(listed[-1][key] == 0 for key in ("errors", "passed", "failed", "stopped"))
+        selected = records(run(binary, ["test", "--json", "--in", "Shapes",
+                                        "--only", "Shapes.test.1", "--only", "Shapes.score.example.1",
+                                        "--only", "Shapes.test.1", str(path)], 0), "test")
+        assert [r["name"] for r in selected[1:-1]] == ["Shapes.score.example.1", "Shapes.test.1"]
+        assert all(r["outcome"] == "passed" for r in selected[1:-1])
+        assert selected[-1]["passed"] == 2 and selected[-1]["errors"] == 0
+        for selectors in (["--in", "Shapes", "--only", "Main.test.1"], ["--in", "Shape"]):
+            mistake = run(binary, ["test", "--json", *selectors, str(path)], 2)
+            assert not mistake.stdout and mistake.stderr.count(b"\n") == 1
+        items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        by_name = {r["name"]: r for r in items[1:-1]}
+        assert {name: r["outcome"] for name, r in by_name.items()} == {
+            "Main.test.1": "passed", "Main.test.2": "failed", "Main.test.3": "stopped",
+            "Main.test.4": "passed", "Shapes.score.example.1": "passed", "Shapes.test.1": "passed"}
+        failed = by_name["Main.test.2"]
+        assert (failed["left"], failed["right"]) == ("32", "31")
+        start = source.index("assert score(make(3), 11) == 31")
+        assert failed["line"] == {"file": str(path), "start": start, "end": start + 31,
+                                   "line": 8, "column": 1, "end_line": 8, "end_column": 32}
+        defect = by_name["Main.test.3"]["defect"]
+        start = shapes.index("base / value")
+        assert defect["reason"] == "dividing by zero"
+        assert defect["span"] == {"file": str(owner), "start": start, "end": start + 12,
+                                   "line": 16, "column": 11, "end_line": 16, "end_column": 23}
+        assert [f["function"] for f in defect["stack"]] == ["Shapes.ratio.fn.1", "Main.test.3"]
+        assert [f["span"]["file"] for f in defect["stack"]] == [str(owner), str(path)]
+        assert defect["variables"] == [{"name": "base", "value": "17"}, {"name": "value", "value": "0"}]
+        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                             "passed": 4, "failed": 1, "stopped": 1, "status": 1}
+        text = run(binary, ["test", str(path)], 1)
+        assert not text.stderr and text.stdout.endswith(b"4 passed, 1 failed, 1 stopped\n")
+        assert b"base = 17" in text.stdout and b"shapes.mo:16:11" in text.stdout
         result = run(binary, ["run", str(path)], 69)
         assert not result.stdout and not result.stderr
-    print(f"{binary}: canonical imported aliases and qualified calls passed")
+        for codec in ("core", "bytecode"):
+            emitted = run(binary, ["check", f"--emit={codec}", str(path)], 0)
+            assert emitted.stdout and not emitted.stderr
+            artifact = path.parent / f"imports.{codec}"
+            artifact.write_bytes(emitted.stdout)
+            decoded = run(binary.parent / "tests/test_cli.test", [f"--roundtrip-{codec}", str(artifact)], 0)
+            assert not decoded.stdout and not decoded.stderr
+        # ratio is used only by a test. Removing that test must diagnose the
+        # original listed import before resolving even a deliberately bad name.
+        path.write_text(source.replace('test "imported escaped stop"\naction = ratio(17)\n'
+                                       'assert action(0) == 1\nend\n', ''))
+        rejected = records(run(binary, ["test", "--json", "--list", "--only", "Typo.test.1", str(path)], 1), "test")
+        assert rejected[1]["code"] == "E0093" and rejected[1]["section"] == "6.1"
+        assert {key: rejected[1]["primary"][key] for key in
+                ("file", "start", "end", "line", "column", "end_line", "end_column")} == {
+                    "file": str(path), "start": 36, "end": 41, "line": 2, "column": 25,
+                    "end_line": 2, "end_column": 30}
+        assert rejected[-1] == {"record": "totals", "errors": 1, "dropped": 0,
+                                "passed": 0, "failed": 0, "stopped": 0, "status": 1}
+        for command in (["check"], ["run"], ["check", "--emit=core"], ["check", "--emit=bytecode"]):
+            rejected_text = run(binary, [*command, str(path)], 1)
+            assert not rejected_text.stdout and b"E0093" in rejected_text.stderr
+    print(f"{binary}: imported aliases, observation owners, stopped spans and unused-import preflight passed")
 
 
 def small_stack():
