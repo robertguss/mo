@@ -356,6 +356,224 @@ static void write_file(const char *path, const uint8_t *bytes, size_t length) {
     MO_ASSERT(fclose(file) == 0);
 }
 
+static void captured_parameter(void) {
+    char folder[] = "/tmp/mo-captures-XXXXXX";
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    char path[128];
+    int length = snprintf(path, sizeof(path), "%s/main.mo", folder);
+    MO_ASSERT(length > 0 && (size_t)length < sizeof(path));
+    const char source[] = "module Main\nfn make(value: Int) : fn() : Int\n"
+                          "fn() value + value end\nend\nfn main() : Int\nmake(19)()\nend\n";
+    write_file(path, (const uint8_t *)source, sizeof(source) - 1);
+    struct fixture f;
+    init(&f, 64 << 20);
+    struct mo_module_set *set = mo_load_program(&f.syntax, &f.sources, path, NULL, &f.diags);
+    MO_ASSERT(set != NULL && f.diags.count == 0);
+    struct mo_program *program = mo_check(&f.arena, set, &f.diags);
+    CHECK(program != NULL && f.diags.count == 0);
+    if (program != NULL) {
+        const struct mo_checked_function *make = &program->functions[0];
+        const struct mo_checked_lambda *lambda = NULL;
+        for (uint32_t i = 0; i < make->body.count; i++)
+            if (make->body.items[i].lambda != NULL)
+                lambda = make->body.items[i].lambda;
+        MO_ASSERT(lambda != NULL);
+        CHECK(lambda->capture_count == 1);
+        if (lambda->capture_count == 1)
+            CHECK(lambda->captures[0] == make->parameters[0]);
+    }
+    finish(&f);
+    MO_ASSERT(unlink(path) == 0 && rmdir(folder) == 0);
+}
+
+static void capture_sources(void) {
+    static const struct {
+        const char *name, *source, *site;
+        uint16_t code;
+    } cases[] = {
+        {"copied snapshot",
+         "fn main() : Int\nvar count = 7\ncurrent = count\n"
+         "show = fn() current end\ncount += 19\nshow() * 100 + count\nend\n",
+         NULL, 0},
+        {"stable var",
+         "fn main() : Int\nvar count = 7\ncount += 19\n"
+         "show = fn() count end\nshow()\nend\n",
+         NULL, 0},
+        {"later write",
+         "fn main() : Int\nvar count = 7\nshow = fn() count end\n"
+         "count += 19\nshow()\nend\n",
+         "count end", MO_CODE_CAPTURE_ASSIGNMENT},
+        {"assignment RHS capture",
+         "fn invoke(action: fn() : Int) : Int\naction()\nend\n"
+         "fn main() : Int\nvar count = 7\ncount = invoke(fn() count end)\ncount\nend\n",
+         "count end", MO_CODE_CAPTURE_ASSIGNMENT},
+        {"transitive later write",
+         "fn main() : Int\nvar count = 7\n"
+         "show = fn() fn() count end end\ncount = 29\nshow()()\nend\n",
+         "count end", MO_CODE_CAPTURE_ASSIGNMENT},
+        {"previous loop write",
+         "fn main()\nvar count = 7\nfor _ in 0..3\n"
+         "count += 1\nshow = fn() count end\nassert show() > 0\nend\nend\n",
+         "count end", MO_CODE_CAPTURE_ASSIGNMENT},
+        {"per-round var",
+         "fn main()\nfor n in 0..3\nvar count = n\ncount += 1\n"
+         "show = fn() count end\nassert show() > 0\nend\nend\n",
+         NULL, 0},
+        {"per-round copy",
+         "fn main()\nvar count = 7\nfor _ in 0..3\ncurrent = count\n"
+         "show = fn() current end\ncount += 1\nassert show() > 0\nend\nend\n",
+         NULL, 0},
+        {"nested loop write",
+         "fn main()\nfor n in 0..3\nvar count = n\n"
+         "for _ in 0..2\ncount += 1\nshow = fn() count end\n"
+         "assert show() > 0\nend\nend\nend\n",
+         "count end", MO_CODE_CAPTURE_ASSIGNMENT},
+        {"exclusive branches",
+         "fn make(flag: Bool) : fn() : Int\nvar count = 7\n"
+         "if flag\nfn() count end\nelse\ncount += 19\nfn() count end\nend\n"
+         "end\nfn main() : Int\nmake(true)() + make(false)()\nend\n",
+         NULL, 0},
+        {"exclusive rounds",
+         "fn main()\nvar count = 7\nfor n in 0..3\n"
+         "if n == 0\nshow = fn() count end\nassert show() > 0\n"
+         "else\ncount += 1\nend\nend\nend\n",
+         "count end", MO_CODE_CAPTURE_ASSIGNMENT},
+        {"own var write", "fn main() : Int\nf = fn()\nvar n = 3\nn += 1\nn\nend\nf()\nend\n",
+         "n +=", MO_CODE_LAMBDA_WRITE},
+        {"own field write",
+         "struct Box\nvalue: Int\nend\nfn main() : Int\n"
+         "f = fn()\nvar box = Box(value: 3)\nbox.value = 7\nbox.value\n"
+         "end\nf()\nend\n",
+         "box.value =", MO_CODE_LAMBDA_WRITE},
+        {"outer write", "fn main() : Int\nvar n = 3\nf = fn()\nn = 7\nend\nf()\nn\nend\n", "n = 7",
+         MO_CODE_NOT_VARIABLE},
+        {"captured field update",
+         "struct Box\nvalue: Int\nend\nfn main() : Int\n"
+         "var box = Box(value: 3)\nf = fn() box.value end\n"
+         "box.value += 19\nf()\nend\n",
+         "box.value end", MO_CODE_CAPTURE_ASSIGNMENT},
+        {"copied record",
+         "struct Box\nvalue: Int\nend\nfn main() : Int\n"
+         "var box = Box(value: 3)\ncopy = box\nf = fn() copy.value end\n"
+         "box.value += 19\nf()\nend\n",
+         NULL, 0},
+        {"capability parameter",
+         "fn make() : fn(Console)\n"
+         "fn(console) console.print(\"ok\") end\nend\n"
+         "fn main(console: Console)\nmake()(console)\nend\n",
+         NULL, 0},
+        {"direct capability",
+         "fn main(console: Console)\n"
+         "f = fn() console.print(\"bad\") end\nf()\nend\n",
+         "console.print", MO_CODE_CAPABILITY_CAPTURE},
+        {"capture before body error",
+         "fn make(console: Console) : fn() : Text\n"
+         "fn()\nconsole.print(\"bad\")\nunknown\nend\nend\n"
+         "fn main()\nend\n",
+         "console.print", MO_CODE_CAPABILITY_CAPTURE},
+        {"stored capability",
+         "struct Holder\nconsole: Console\nend\n"
+         "fn make(holder: Holder) : fn()\n"
+         "fn() holder.console.print(\"bad\") end\nend\nfn main()\nend\n",
+         "holder.console", MO_CODE_CAPABILITY_CAPTURE},
+        {"stored generic",
+         "struct Box(T)\nvalue: T\nend\n"
+         "fn make(value: Box(Console)) : fn() : Box(Console)\n"
+         "fn() value end\nend\nfn main()\nend\n",
+         "value end", MO_CODE_CAPABILITY_CAPTURE},
+        {"recursive safe",
+         "enum Ring(T)\nEmpty\nNext(Ring(T))\nCell(T)\nend\n"
+         "fn make(value: Ring(Int)) : fn() : Ring(Int)\n"
+         "fn() value end\nend\nfn main()\nend\n",
+         NULL, 0},
+        {"recursive capability",
+         "enum Ring(T)\nEmpty\nNext(Ring(T))\nCell(T)\nend\n"
+         "fn make(value: Ring(Console)) : fn() : Ring(Console)\n"
+         "fn() value end\nend\nfn main()\nend\n",
+         "value end", MO_CODE_CAPABILITY_CAPTURE},
+        {"closed recursive capability",
+         "enum A\nNilA\nFromB(B)\nend\n"
+         "enum B\nNilB\nFromA(A)\nWithConsole(Console)\nend\n"
+         "fn make(value: A) : fn() : A\n"
+         "fn() value end\nend\nfn main()\nend\n",
+         "value end", MO_CODE_CAPABILITY_CAPTURE},
+        {"phantom capability",
+         "enum Mark(T)\nPresent\nend\n"
+         "fn make(value: Mark(Console)) : fn() : Mark(Console)\n"
+         "fn() value end\nend\nfn main()\nend\n",
+         NULL, 0},
+        {"list capability",
+         "fn make(value: List(Console)) : fn() : List(Console)\n"
+         "fn() value end\nend\nfn main()\nend\n",
+         "value end", MO_CODE_CAPABILITY_CAPTURE},
+        {"tuple capability",
+         "fn make(value: (Int, Option(Console))) : fn() : Int\n"
+         "fn() value.0 end\nend\nfn main()\nend\n",
+         "value.0", MO_CODE_CAPABILITY_CAPTURE},
+        {"function parameter types",
+         "fn make(action: fn(Console)) : fn(Console)\n"
+         "fn(console) action(console) end\nend\nfn main()\nend\n",
+         NULL, 0},
+        {"Number capture",
+         "fn make(value: T) : fn() : T where T: Number\n"
+         "fn() value end\nend\nfn main() : Int\nmake(13)()\nend\n",
+         NULL, 0},
+        {"nested Number capture",
+         "fn make(value: T) : fn(T) : fn() : T where T: Number\n"
+         "fn(extra) fn() value + extra end end\nend\n"
+         "fn main() : Int\nmake(13)(29)()\nend\n",
+         NULL, 0},
+        {"abstract capture",
+         "fn make(value: T) : fn() : T\n"
+         "fn() value end\nend\nfn main() : Int\nmake(13)()\nend\n",
+         "value end", MO_CODE_CHECK_UNFINISHED},
+        {"Text isn't capability-free",
+         "fn make(value: T) : fn() : Text where T: Text\n"
+         "fn() value.to_text end\nend\nfn main()\nend\n",
+         "value.to_text", MO_CODE_CHECK_UNFINISHED},
+        {"higher-order initializer",
+         "answer = invoke(fn() 13 end)\n"
+         "fn invoke(action: fn() : Int) : Int\naction()\nend\n"
+         "fn main() : Int\nanswer\nend\n",
+         NULL, MO_CODE_CHECK_UNFINISHED},
+    };
+    char folder[] = "/tmp/mo-capture-sources-XXXXXX";
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    char path[128];
+    int length = snprintf(path, sizeof(path), "%s/main.mo", folder);
+    MO_ASSERT(length > 0 && (size_t)length < sizeof(path));
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char source[4096];
+        length = snprintf(source, sizeof(source), "module Main\n%s", cases[i].source);
+        MO_ASSERT(length > 0 && (size_t)length < sizeof(source));
+        write_file(path, (const uint8_t *)source, (size_t)length);
+        struct fixture f;
+        init(&f, MO_CLI_CHECK_SIZE);
+        struct mo_module_set *set = mo_load_program(&f.syntax, &f.sources, path, NULL, &f.diags);
+        MO_ASSERT(set != NULL && f.diags.count == 0);
+        struct mo_program *program = mo_check(&f.arena, set, &f.diags);
+        bool passed = cases[i].code == 0 ? program != NULL && !mo_diags_any(&f.diags)
+                                         : program == NULL && f.diags.count == 1 &&
+                                               f.diags.items[0].code == cases[i].code;
+        if (!passed)
+            MO_ASSERT(fprintf(stderr, "capture source %s: expected E%04u, found E%04u\n",
+                              cases[i].name, (unsigned)cases[i].code,
+                              f.diags.count == 0 ? 0u : (unsigned)f.diags.items[0].code) >= 0);
+        CHECK(passed);
+        if (cases[i].site != NULL && f.diags.count != 0) {
+            const char *site = strstr(source, cases[i].site);
+            MO_ASSERT(site != NULL);
+            CHECK(f.diags.items[0].primary.span.start == (uint32_t)(site - source));
+            if (cases[i].code == MO_CODE_CAPTURE_ASSIGNMENT ||
+                cases[i].code == MO_CODE_CAPABILITY_CAPTURE)
+                CHECK(f.diags.items[0].secondary_count == 1);
+        }
+        finish(&f);
+    }
+    printf("capture sources: %zu public load/check controls\n", sizeof(cases) / sizeof(cases[0]));
+    MO_ASSERT(unlink(path) == 0 && rmdir(folder) == 0);
+}
+
 static void header_lookahead(void) {
     char folder[] = "/tmp/mo-check-header-XXXXXX";
     MO_ASSERT(mkdtemp(folder) != NULL);
@@ -1099,6 +1317,8 @@ static void run_tests(void *argument) {
     interfaces();
     corpus();
     samples();
+    captured_parameter();
+    capture_sources();
     arena_limits();
     header_lookahead();
     library_collision();

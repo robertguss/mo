@@ -1494,6 +1494,114 @@ static void lambda_graph(void) {
     free_fixture(&f);
 }
 
+static MO_MUST_USE const struct mo_checked_lambda *
+checked_lambda(const struct mo_checked_body *body, uint32_t number) {
+    for (uint32_t i = 0; i < body->count; i++)
+        if (body->items[i].lambda != NULL && body->items[i].lambda->number == number)
+            return body->items[i].lambda;
+    MO_ASSERT(false);
+    return NULL;
+}
+
+static void capture_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\n"
+             "fn invoke(f: fn() : Int, extra: Int) : Int\nf() + extra\nend\n"
+             "fn make(left: Int, right: Int) : fn() : Int\n"
+             "fn() invoke(fn() right + left + right end, left) end\nend\n"
+             "fn main() : Int\nmake(7, 23)()\nend\n");
+    CHECK(f.program != NULL && f.diags.count == 0);
+    if (f.program != NULL) {
+        const struct mo_checked_function *make = &f.program->functions[1];
+        for (uint32_t i = 1; i <= 2; i++) {
+            const struct mo_checked_lambda *lambda = checked_lambda(&make->body, i);
+            CHECK(lambda->capture_count == 2);
+            if (lambda->capture_count == 2) {
+                CHECK(lambda->captures[0] == make->parameters[1]);
+                CHECK(lambda->captures[1] == make->parameters[0]);
+            }
+        }
+    }
+    free_fixture(&f);
+
+    init(&f, "module Main\n"
+             "fn make(left: Int, right: Int) : fn(Int) : fn() : Int\n"
+             "fn(shift)\ntemp = left * 7\n"
+             "fn() right + temp + shift + left + right end\nend\nend\n"
+             "fn main() : Int\nmake(3, 29)(5)()\nend\n");
+    CHECK(f.program != NULL && f.diags.count == 0);
+    if (f.program != NULL) {
+        const struct mo_checked_function *make = &f.program->functions[0];
+        const struct mo_checked_lambda *outer = checked_lambda(&make->body, 1);
+        const struct mo_checked_lambda *inner = checked_lambda(&make->body, 2);
+        CHECK(outer->capture_count == 2 && inner->capture_count == 4);
+        if (outer->capture_count == 2 && inner->capture_count == 4) {
+            CHECK(outer->captures[0] == make->parameters[0]);
+            CHECK(outer->captures[1] == make->parameters[1]);
+            CHECK(inner->captures[0] == make->parameters[1]);
+            CHECK(strcmp(inner->captures[1]->name, "temp") == 0);
+            CHECK(inner->captures[2] == outer->parameters[0]);
+            CHECK(inner->captures[3] == make->parameters[0]);
+        }
+    }
+    free_fixture(&f);
+
+    init(&f, "module Main\nfn select(flag: Bool) : fn() : Int\n"
+             "if flag\nitem = 13\nfn() item end\n"
+             "else\nitem = 29\nfn() item end\nend\nend\n"
+             "fn main() : Int\nselect(true)() - select(false)()\nend\n");
+    CHECK(f.program != NULL && f.diags.count == 0);
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        const struct mo_checked_lambda *first = checked_lambda(body, 1);
+        const struct mo_checked_lambda *second = checked_lambda(body, 2);
+        MO_ASSERT(first->capture_count == 1 && second->capture_count == 1);
+        CHECK(first->captures[0] != second->captures[0]);
+        CHECK(strcmp(first->captures[0]->name, "item") == 0 &&
+              strcmp(second->captures[0]->name, "item") == 0);
+        CHECK(first->captures[0]->syntax->span.start < second->captures[0]->syntax->span.start);
+    }
+    free_fixture(&f);
+
+    init(&f, "module Main\nfn main() : Int\nvar count = 7\n"
+             "current = count\nf = fn() current end\ncount += 19\n"
+             "g = fn() count end\nf() * 100 + g()\nend\n");
+    CHECK(f.program != NULL && f.diags.count == 0);
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[f.program->entry.function].body;
+        const struct mo_checked_lambda *copied = checked_lambda(body, 1);
+        const struct mo_checked_lambda *stable = checked_lambda(body, 2);
+        MO_ASSERT(copied->capture_count == 1 && stable->capture_count == 1);
+        CHECK(strcmp(copied->captures[0]->name, "current") == 0 && !copied->captures[0]->variable);
+        CHECK(strcmp(stable->captures[0]->name, "count") == 0 && stable->captures[0]->variable);
+    }
+    free_fixture(&f);
+}
+
+static void capture_work(void) {
+    static const uint32_t counts[] = {6000, 9000};
+    for (uint32_t kind = 0; kind < 2; kind++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, MO_LIMIT_FILE_SIZE);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\nfn main()\nvar count = 0\n"));
+        for (uint32_t i = 0; i < 2000; i++)
+            MO_ASSERT(mo_buffer_append_text(&source, "count += 1\n"));
+        for (uint32_t i = 0; i < counts[kind]; i++)
+            MO_ASSERT(mo_buffer_append_text(&source, "_f") && mo_buffer_append_uint(&source, i) &&
+                      mo_buffer_append_text(&source, " = fn() count end\n"));
+        MO_ASSERT(mo_buffer_append_text(&source, "end\n") && mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init(&f, (const char *)source.bytes);
+        if (kind == 0)
+            CHECK(f.program != NULL && f.diags.count == 0);
+        else
+            CHECK(f.program == NULL && f.diags.count == 1 &&
+                  f.diags.items[0].code == MO_CODE_CHECK_WORK);
+        free_fixture(&f);
+        mo_buffer_free(&source);
+    }
+}
+
 static void branch_graph(void) {
     struct fixture f;
     init(&f, "module Main\nfn choose(flag: Bool) : Int\n"
@@ -1954,7 +2062,6 @@ static void rejected_stages(void) {
         {"fn grow(value: T)\ngrow([value])\nend\nfn main()\nend\n", MO_CODE_POLYMORPHIC_RECURSION},
         {"fn a(value: T)\nb([value])\nend\nfn b(value: U)\na(value)\nend\nfn main()\nend\n",
          MO_CODE_POLYMORPHIC_RECURSION},
-        {"fn main() : Int\nx = 1\nf = fn() x end\nf()\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Int\nm = {\"a\": 1}\ncase m\n_: 1\nend\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Int\ntry Some(1)\nend\n", MO_CODE_TRY_RESULT},
         {"fn helper() : Option(Int)\nSome(try 1)\nend\nfn main()\nend\n", MO_CODE_TRY_INPUT},
@@ -2369,6 +2476,8 @@ static void run(void *argument) {
     inferred_wrappers();
     try_contexts();
     lambda_graph();
+    capture_graph();
+    capture_work();
     branch_graph();
     record_graph();
     match_graph();

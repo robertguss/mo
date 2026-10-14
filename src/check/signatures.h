@@ -8,7 +8,9 @@ struct mo_nominal_signature {
     const struct mo_source_type *type;
     uint32_t field_count;
     uint32_t hash_parameters, key_parameters;
+    uint32_t capture_parameters; /* parameters stored in values, excluding phantom/function types */
     uint32_t case_count;
+    bool holds_capability;
     bool invalid;
 };
 

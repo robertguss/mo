@@ -2645,7 +2645,24 @@ its substitution and keyed type-only requirements in `mo_checked_try`; lowering
 does not search for cases or proofs. All deferred checks and type comparisons
 share the ordinary work/depth/arena limits and memoize shared type paths.
 Lambda records retain typed parameters, captures in first-use order and
-source-order numbers before lifting.
+source-order numbers before lifting. Captures point at the original checked
+binding, not its spelling or a new local; an enclosing lambda also captures
+bindings needed only by its nested lambdas. Written first-use order does not
+depend on inference's argument order. Lowering snapshots these values when
+the lambda is made, so escaped closures keep their parameters and local values.
+E0090 rejects writes to a lambda's own vars; outer-function writes retain
+E0057. E0091 rejects captured capabilities and types that store them. Private
+nominal dependency masks reach a fixed point across recursive records/choices;
+phantom parameters and function parameter/result types do not store handles.
+Abstract stored parameters without Number remain E1103: custom Text/Order and
+implied Equal proofs do not establish capability-free storage. No negative
+capability requirement or carrier/schema change is introduced.
+E0092 rejects a captured var with a later whole-value or field write, including
+a preceding write repeated by an enclosing loop. Vars declared inside that
+loop have a new binding lifetime each round. Disjoint if/case bodies do not
+write after one another in a single round; repeated enclosing rounds still
+count. Capture checks use original read/write spans and retain the earliest
+independent body diagnostic, including a capture before an unfinished body.
 Constants alone are dependency-ordered, with source-order ties. The entry names
 the entry module's `main`, its ordered capability parameters, result convention
 and the Text implementation for a returned failure.
