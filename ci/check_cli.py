@@ -278,6 +278,69 @@ end
     print(f"{binary}: source inventory, exact selections and list nonexecution passed")
 
 
+def captures(binary):
+    # Each returned closure outlives its creating frames. A provenance symbol
+    # must not turn the outer invocation back into a direct factory call.
+    source = ('module Main\nfn make(left: Int, right: Int) : fn(Int) : fn() : Int\n'
+              'held = right + 5\nfn(extra)\nfn() left * 7 + held + extra end\nend\nend\n'
+              'fn divide(base: Int) : fn(Int) : Int\nfn(value) base / value end\nend\n'
+              'test "escaped frames"\nassert make(3, 29)(5)() == 60\nend\n'
+              'test "explicit snapshot"\nvar count = 11\ncopy = count\n'
+              'show = fn() copy * 3 end\ncount += 5\nassert show() * 10 + count == 346\nend\n'
+              'test "wrong escaped answer"\naction = make(3, 29)(5)\nassert action() == 61\nend\n'
+              'test "escaped stop"\naction = divide(17)\nassert action(0) == 1\nend\n'
+              'test "after stop"\nassert make(5, 11)(2)() == 53\nend\n'
+              'fn main() : Int\nstop "main must not execute"\nend\n')
+    with tempfile.TemporaryDirectory(prefix="mo-cli-captures-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        path.write_text(source)
+        checked = run(binary, ["check", str(path)], 0)
+        assert not checked.stdout and not checked.stderr
+        items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        assert [r["name"] for r in items[1:-1]] == [f"Main.test.{n}" for n in range(1, 6)]
+        assert [r["outcome"] for r in items[1:-1]] == ["passed", "passed", "failed", "stopped", "passed"]
+        assert (items[3]["left"], items[3]["right"]) == ("60", "61")
+        start = source.index("assert action()")
+        assert items[3]["line"] == {"file": str(path), "start": start,
+                                    "end": start + len("assert action() == 61"),
+                                    "line": 23, "column": 1, "end_line": 23, "end_column": 22}
+        start = source.index("base / value")
+        defect = items[4]["defect"]
+        assert defect["reason"] == "dividing by zero"
+        assert defect["span"] == {"file": str(path), "start": start,
+                                   "end": start + len("base / value"),
+                                   "line": 9, "column": 11, "end_line": 9, "end_column": 23}
+        assert [f["function"] for f in defect["stack"]] == ["Main.divide.fn.1", "Main.test.4"]
+        assert defect["variables"] == [{"name": "base", "value": "17"}, {"name": "value", "value": "0"}]
+        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                             "passed": 3, "failed": 1, "stopped": 1, "status": 1}
+        text = run(binary, ["test", str(path)], 1)
+        assert not text.stderr and text.stdout.endswith(b"3 passed, 1 failed, 1 stopped\n")
+        assert b"main must not execute" not in text.stdout and b"base = 17" in text.stdout
+        selected = records(run(binary, ["test", "--json", "--only", "Main.test.5",
+                                        "--only", "Main.test.1", "--only", "Main.test.1",
+                                        str(path)], 0), "test")
+        assert [r["name"] for r in selected[1:-1]] == ["Main.test.1", "Main.test.5"]
+        assert selected[-1]["passed"] == 2
+        # Copying count is legal; capturing count itself across its later write
+        # is not a snapshot guarantee the checker can certify.
+        path.write_text(source.replace("copy = count\n", "").replace("fn() copy * 3 end", "fn() count * 3 end"))
+        rejected = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        assert rejected[1]["code"] == "E0092"
+        assert all(rejected[-1][key] == 0 for key in ("passed", "failed", "stopped"))
+        path.write_text(source.replace('stop "main must not execute"', 'make(3, 29)(5)()'))
+        result = run(binary, ["run", str(path)], 60)
+        assert not result.stdout and not result.stderr
+        for codec in ("core", "bytecode"):
+            emitted = run(binary, ["check", f"--emit={codec}", str(path)], 0)
+            assert emitted.stdout and not emitted.stderr
+            artifact = pathlib.Path(directory) / f"capture.{codec}"
+            artifact.write_bytes(emitted.stdout)
+            decoded = run(binary.parent / "tests/test_cli.test", [f"--roundtrip-{codec}", str(artifact)], 0)
+            assert not decoded.stdout and not decoded.stderr
+    print(f"{binary}: escaped captures, snapshots, stopped spans and codec roundtrips passed")
+
+
 def small_stack():
     _, hard = resource.getrlimit(resource.RLIMIT_STACK)
     resource.setrlimit(resource.RLIMIT_STACK, (1 << 20, hard))
@@ -735,6 +798,7 @@ def check(binary):
     constants(binary)
     filenames(binary)
     observations(binary)
+    captures(binary)
     items = records(run(faults, ["--json"], 1), "check")
     assert items[1]["code"] == "E1401" and items[-1]["dropped"] == 0
     assert items[1]["primary"]["file"] is None and items[1]["section"] is None
