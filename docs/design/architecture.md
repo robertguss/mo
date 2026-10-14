@@ -1712,8 +1712,8 @@ Failures retain the enclosing assert span, and stops retain the closure's origin
 source span, full stack and readable captured values through the existing visitor.
 This integration changes no observation names, selection, outcomes or JSON fields.
 
-**Imported declarations in tools.** Certified nongeneric imports use that same
-whole-program pipeline, with the checker's canonical declaring symbols and types;
+**Imported declarations in tools.** Certified nongeneric and generic-function
+imports use that same whole-program pipeline, with canonical declaring symbols and types;
 tools do not reconstruct bindings from written import names. Listed aliases and
 qualified calls therefore reach the same declaration. Observation names and
 `--in MODULE` use the declaring module, not the importing entry module. Failed
@@ -1722,10 +1722,21 @@ its original module's span and the complete cross-module stack. The whole-progra
 unused-import audit precedes selection, including `--list`, so E0093 at the written
 name takes precedence over an unknown selector and suppresses all observations and
 both emitted artifacts. Imports used only in tests count as used. No new tools
-code or JSON field is required. Foreign generic function values, generic nominal
-annotations/construction/projection, foreign constant reads and direct imported
-initializer references remain the checker's E1103 staging routes (3.2); this
-consumer slice does not widen those boundaries or settle promise deadlines.
+code or JSON field is required. Generic nominal annotations/construction/projection,
+foreign constant reads and direct imported initializer references remain the
+checker's E1103 staging routes (3.2), as do broad Text-only abstract captures.
+This consumer slice does not widen those boundaries or settle promise deadlines.
+
+Generic substitutions retain the callee signature's scoped keys; actual ability
+proofs retain the caller environment, including its customizers. Requester-owned
+instances do not change declaration-file ownership or source observation names.
+Source examples execute once each, including when callers use several concrete
+instances of the generic subject; `--only`/`--in` still select the source inventory.
+Stops may display an instance-qualified frame but retain the defining file's span.
+Missing actual abilities report source E0080 before selection, image initialization
+or observation execution; neither emission writes an artifact. Tools consume the
+existing checker/lower contracts without assuming pointer-equal cached proof types,
+adding exports to imported instances or reconstructing proof keys.
 
 Stopped results retain their original defect span and all stack frames. Variables
 belong to the stopping frame, in bytecode debug-name order. The VM's public

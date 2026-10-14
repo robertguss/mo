@@ -438,22 +438,107 @@ def imports(binary):
 def generic_imports(binary):
     # The caller's A/Z keys deliberately reverse the callee's Z/A keys.
     # The alias must carry the callee signature and the caller's actual proofs.
-    source = ('module Main\nuse Calc\n'
+    source = ('module Main\nuse Calc\nuse Bridge{forward, concrete}\n'
+              'struct Label\nvalue: Int\nend\n'
+              'fn to_text(label: Label) : Text\n"#{label.value * 3}"\nend\n'
               'fn relay(value: A, tag: Z) : A where A: Number, Z: Text\n'
               'f = Calc.choose\nf(value, tag)\nend\n'
+              'fn wrap(f: fn(Int) : fn(Int) : Int, base: Int) : fn(Int) : Int\n'
+              'fn(extra) f(base)(extra) end\nend\n'
+              'test "swapped keys"\nassert relay(13, true) * 3 + relay(17, false) == 95\nend\n'
+              'test "equal and mixed actuals"\nf = Calc.pair\n(a, b) = f(3, 17)\n'
+              '(c, d) = f(1.25, 19)\nassert a * 10 + b == 111\nassert c == 2.5 and d == 57\nend\n'
+              'test "caller customizer"\nassert Calc.show(Label(value: 7)) == "21"\nend\n'
+              'test "escaped generic frames"\nfactory = Calc.offset\na = forward(3)\n'
+              'b = concrete(5)\nc = wrap(factory, 17)\n'
+              'assert a(11) + b(7) + c(29) == 72\nassert Calc.offset(1.25)(2.5) == 3.75\nend\n'
+              'test "wrong generic answer"\naction = Calc.offset(3)\nassert action(11) == 15\nend\n'
+              'test "escaped generic stop"\naction = Calc.ratio(23)\nassert action(0) == 1\nend\n'
+              'test "after stop"\nf = Calc.twice\nassert f(17) == 34 and f(1.25) == 2.5\nend\n'
               'fn main() : Int\nrelay(13, true) * 3 + relay(17, false)\nend\n')
-    calc = ('module Calc\nexpose choose\n'
+    calc = ('module Calc\nexpose choose, pair, show, offset, ratio, twice\n'
             'fn choose(value: Z, tag: A) : Z where Z: Number, A: Text\n'
-            'if "#{tag}" == "true": value + value else: value\nend\n')
+            'if "#{tag}" == "true": value + value else: value\nend\n'
+            'fn pair(left: Z, right: A) : (Z, A) where Z: Number, A: Number\n'
+            '(left + left, right + right + right)\nend\n'
+            'fn show(value: T) : Text where T: Text\n"#{value}"\nend\n'
+            'fn offset(value: T) : fn(T) : T where T: Number\nfn(extra) value + extra end\nend\n'
+            'fn ratio(base: T) : fn(T) : T where T: Number\nfn(value) base / value end\nend\n'
+            'fn twice(value: T) : T where T: Number\nexamples\ntwice(3) == 6\ntwice(1.25) == 2.5\n'
+            'end\nvalue + value\nend\n')
+    bridge = ('module Bridge\nexpose forward, concrete\nuse Calc{offset}\n'
+              'fn forward(value: U) : fn(U) : U where U: Number\nf = offset\nf(value)\nend\n'
+              'fn concrete(value: Int) : fn(Int) : Int\noffset(value)\nend\n')
+
+    def expected_span(path, text, row):
+        # These fixture strings are ASCII: byte offsets and character columns
+        # are independently derived from their exact source, not compiler data.
+        start = text.index(row)
+        line = text.count('\n', 0, start) + 1
+        column = start - text.rfind('\n', 0, start)
+        return {"file": str(path), "start": start, "end": start + len(row),
+                "line": line, "column": column, "end_line": line, "end_column": column + len(row)}
+
     with tempfile.TemporaryDirectory(prefix="mo-cli-generic-imports-") as directory:
         path = pathlib.Path(directory) / "main.mo"
+        owner = path.parent / "calc.mo"
         path.write_text(source)
-        (path.parent / "calc.mo").write_text(calc)
+        owner.write_text(calc)
+        (path.parent / "bridge.mo").write_text(bridge)
         checked = run(binary, ["check", str(path)], 0)
         assert not checked.stdout and not checked.stderr
+        listed = records(run(binary, ["test", "--json", "--list", "--in", "Calc", str(path)], 0), "test")
+        assert [r["name"] for r in listed[1:-1]] == ["Calc.twice.example.1", "Calc.twice.example.2"]
+        for item, row in zip(listed[1:-1], ("twice(3) == 6", "twice(1.25) == 2.5")):
+            assert item["span"] == expected_span(owner, calc, row)
+        selected = records(run(binary, ["test", "--json", "--in", "Calc",
+                                        "--only", "Calc.twice.example.2", "--only", "Calc.twice.example.1",
+                                        "--only", "Calc.twice.example.2", str(path)], 0), "test")
+        assert [r["name"] for r in selected[1:-1]] == ["Calc.twice.example.1", "Calc.twice.example.2"]
+        assert all(r["outcome"] == "passed" for r in selected[1:-1])
+        assert selected[-1]["passed"] == 2 and selected[-1]["errors"] == 0
+        items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        by_name = {r["name"]: r for r in items[1:-1]}
+        assert {name: r["outcome"] for name, r in by_name.items()} == {
+            **{f"Main.test.{n}": "passed" for n in (1, 2, 3, 4, 7)},
+            "Main.test.5": "failed", "Main.test.6": "stopped",
+            "Calc.twice.example.1": "passed", "Calc.twice.example.2": "passed"}
+        failed = by_name["Main.test.5"]
+        assert (failed["left"], failed["right"]) == ("14", "15")
+        assert failed["line"] == expected_span(path, source, "assert action(11) == 15")
+        defect = by_name["Main.test.6"]["defect"]
+        assert defect["reason"] == "dividing by zero"
+        assert defect["span"] == expected_span(owner, calc, "base / value")
+        assert [f["function"] for f in defect["stack"]] == ["Main::Calc.ratio(Int).fn.1", "Main.test.6"]
+        assert [f["span"]["file"] for f in defect["stack"]] == [str(owner), str(path)]
+        assert defect["variables"] == [{"name": "base", "value": "23"}, {"name": "value", "value": "0"}]
+        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                             "passed": 7, "failed": 1, "stopped": 1, "status": 1}
+        text = run(binary, ["test", str(path)], 1)
+        assert not text.stderr and text.stdout.endswith(b"7 passed, 1 failed, 1 stopped\n")
+        assert b"base = 23" in text.stdout and b"Main::Calc.ratio(Int).fn.1" in text.stdout
         result = run(binary, ["run", str(path)], 95)
         assert not result.stdout and not result.stderr
-    print(f"{binary}: imported generic aliases retain callee keys and caller proofs")
+        for codec in ("core", "bytecode"):
+            emitted = run(binary, ["check", f"--emit={codec}", str(path)], 0)
+            assert emitted.stdout and not emitted.stderr
+            artifact = path.parent / f"generic-imports.{codec}"
+            artifact.write_bytes(emitted.stdout)
+            decoded = run(binary.parent / "tests/test_cli.test", [f"--roundtrip-{codec}", str(artifact)], 0)
+            assert not decoded.stdout and not decoded.stderr
+        # A missing actual ability is a source error, not a selection mistake;
+        # it must suppress all observations and artifacts before any execution.
+        path.write_text(source.replace('struct Label\n', 'struct Token\nvalue: Int\nend\nstruct Label\n')
+                        .replace('test "swapped keys"\n', 'test "missing actual ability"\n'
+                                 'f = Calc.choose\nassert f(Token(value: 3), true) == Token(value: 6)\nend\n'
+                                 'test "swapped keys"\n'))
+        rejected = records(run(binary, ["test", "--json", "--list", "--only", "Typo.test.1", str(path)], 1), "test")
+        assert rejected[1]["code"] == "E0080" and rejected[-1]["errors"] == 1
+        assert all(rejected[-1][key] == 0 for key in ("passed", "failed", "stopped"))
+        for command in (["check"], ["run"], ["check", "--emit=core"], ["check", "--emit=bytecode"]):
+            refused = run(binary, [*command, str(path)], 1)
+            assert not refused.stdout and b"E0080" in refused.stderr
+    print(f"{binary}: imported generic keys, caller proofs, source observations, stops and ability preflight passed")
 
 
 def small_stack():
