@@ -339,6 +339,10 @@ static inline struct mo_limits mo_limits_default(void) {
 #define MO_CLI_TEST_WORK (64 << 20)
 #define MO_CLI_TEST_VARIABLES 4096
 
+/* Architecture 10.1: additional subject trials after a false promise.
+ * --calls bounds the preceding search; both share the same deadline (D242). */
+#define MO_CLI_PROMISE_SHRINK_CALLS 200
+
 /* Promise input generation, not limits on program results. The caller can
  * choose smaller budgets. Refusal leaves the sequence unchanged; tools may
  * skip an oversized candidate or retry it with more heap. */

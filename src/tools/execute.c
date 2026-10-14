@@ -11,6 +11,7 @@
 #include "prim/prim.h"
 #include "tools/embedded.h"
 #include "tools/format.h"
+#include "tools/promises.h"
 #include "tools/run.h"
 #include "tools/tests.h"
 
@@ -97,18 +98,9 @@ static void execute_pipeline(void *argument) {
             return;
         }
         /* Refuse the entire selection before starting it, never a partial green
-         * run that quietly omitted selected promises (including unused templates). */
-        for (uint32_t i = 0; i < selection->count; i++)
-            if (selection->items[i].source->kind == MO_SPEC_PROMISE) {
-                struct mo_diag diag = {.code = MO_CODE_TOOL_UNAVAILABLE,
-                                       .message =
-                                           "this build cannot execute generated-input promises yet",
-                                       .primary = {selection->items[i].source->syntax->span,
-                                                   selection->items[i].name}};
-                bool added = mo_diags_add(diags, &diag);
-                (void)added;
-                return;
-            }
+         * run that quietly omitted unsupported promises (including templates). */
+        if (!mo_promises_supported(program, selection, diags))
+            return;
     }
     bool anchors = false;
     for (uint32_t i = 0; i < program->spec_count; i++)

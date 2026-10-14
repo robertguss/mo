@@ -3,6 +3,7 @@
 #include "tools/tests.h"
 
 #include "base/codes.h"
+#include "tools/promises.h"
 #include "tools/run.h"
 
 #include <errno.h>
@@ -143,15 +144,19 @@ static uint32_t *bind_observations(struct mo_arena *arena, const struct mo_bytec
         return NULL;
     for (uint32_t i = 0; i < selection->count; i++) {
         const struct mo_checked_spec *source = selection->items[i].source;
-        index[i] = (struct observation_index){
-            source->syntax->span,
-            source->kind == MO_SPEC_TEST ? MO_FUNCTION_TEST : MO_FUNCTION_EXAMPLE, i};
+        index[i] =
+            (struct observation_index){source->syntax->span,
+                                       source->kind == MO_SPEC_TEST      ? MO_FUNCTION_TEST
+                                       : source->kind == MO_SPEC_PROMISE ? MO_FUNCTION_PROMISE
+                                                                         : MO_FUNCTION_EXAMPLE,
+                                       i};
         functions[i] = MO_NO_INDEX;
     }
     qsort(index, selection->count, sizeof(*index), compare_observations);
     for (uint32_t i = 0; i < file->function_count; i++) {
         const struct mo_bytecode_function *function = &file->functions[i];
-        if (function->kind != MO_FUNCTION_TEST && function->kind != MO_FUNCTION_EXAMPLE)
+        if (function->kind != MO_FUNCTION_TEST && function->kind != MO_FUNCTION_EXAMPLE &&
+            function->kind != MO_FUNCTION_PROMISE)
             continue;
         const struct mo_bytecode_debug *debug = &file->debug[i];
         struct observation_index key = {
@@ -162,9 +167,11 @@ static uint32_t *bind_observations(struct mo_arena *arena, const struct mo_bytec
         if (match == NULL)
             continue;
         const struct mo_bytecode_string *full = &file->strings[function->name];
-        const char *selected = selection->items[match->selected].name;
-        if (function->parameter_count != 0 ||
-            file->types[function->result_type].kind != MO_TYPE_UNIT ||
+        const struct mo_observation *observation = &selection->items[match->selected];
+        const char *selected = observation->name;
+        bool promise = function->kind == MO_FUNCTION_PROMISE;
+        if (function->parameter_count != (promise ? observation->source->parameter_count : 0) ||
+            file->types[function->result_type].kind != (promise ? MO_TYPE_INT : MO_TYPE_UNIT) ||
             full->length != strlen(selected) || memcmp(full->bytes, selected, full->length) != 0 ||
             functions[match->selected] != MO_NO_INDEX)
             return NULL;
@@ -250,6 +257,11 @@ void mo_test_program(const struct mo_cli *cli, const struct mo_test_selection *s
     for (uint32_t i = 0; i < selection->count; i++) {
         const struct mo_observation *observation = &selection->items[i];
         uint32_t function = functions[i];
+        if (observation->source->kind == MO_SPEC_PROMISE) {
+            if (!mo_test_promise(cli, image, sources, observation, function, output, diags, totals))
+                break;
+            continue;
+        }
         struct timespec start, end;
         if (clock_gettime(CLOCK_MONOTONIC, &start) != 0) {
             report_error(diags, "could not measure test execution",

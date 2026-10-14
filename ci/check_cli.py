@@ -43,6 +43,22 @@ def records(result, command):
     return items
 
 
+def scalar_promises(binary):
+    with tempfile.TemporaryDirectory(prefix="mo-scalar-promises-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        source = ('module Main\nfn keep(value: Int) : Int\n'
+                  'promise "keeps its input"\nresult == value\n'
+                  'allows value: 3, result: 3\nforbids value: 3, result: 4\nend\n'
+                  'value\nend\ntest "after promise"\nassert true\nend\n'
+                  'fn main()\nstop "main ran"\nend\n')
+        path.write_text(source)
+        items = records(run(binary, ["test", "--json", str(path)], 0), "test")
+        assert [(r["name"], r["outcome"]) for r in items[1:-1]] == [
+            ("Main.keep.promise.1", "passed"), ("Main.test.1", "passed")]
+        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                             "passed": 2, "failed": 0, "stopped": 0, "status": 0}
+
+
 def observations(binary):
     with tempfile.TemporaryDirectory(prefix="mo-observations-") as directory:
         path = pathlib.Path(directory) / "main.mo"
@@ -1001,6 +1017,7 @@ def check(binary):
     captures(binary)
     imports(binary)
     generic_imports(binary)
+    scalar_promises(binary)
     items = records(run(faults, ["--json"], 1), "check")
     assert items[1]["code"] == "E1401" and items[-1]["dropped"] == 0
     assert items[1]["primary"]["file"] is None and items[1]["section"] is None

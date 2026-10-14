@@ -3,6 +3,7 @@
 #include "tools/tools.h"
 
 #include "prim/prim.h"
+#include "tools/promises.h"
 #include "tools/run.h"
 #include "tools/tests.h"
 #include "vm/vm.h"
@@ -668,6 +669,100 @@ static void structural_literal(struct writer *w, const struct mo_buffer *raw, ui
     bytes(w, &delimiter, 1);
 }
 
+static void promise_value(struct writer *w, const struct mo_test_result *result, uint32_t type,
+                          struct mo_cell cell, bool json) {
+    struct mo_buffer raw, literal;
+    mo_buffer_init(&raw, 4096);
+    mo_buffer_init(&literal, 4096);
+    bool printed = mo_value_print(mo_process_heap(result->process), type, cell, &raw);
+    struct mo_buffer *value = &raw;
+    enum mo_type_kind kind = result->file->types[type].kind;
+    if (printed && (kind == MO_TYPE_TEXT || kind == MO_TYPE_CHAR)) {
+        struct writer quoted = {.out = &literal, .ok = true};
+        structural_literal(&quoted, &raw, kind == MO_TYPE_TEXT ? '"' : '\'');
+        printed = quoted.ok;
+        value = &literal;
+    }
+    w->ok = w->ok && printed;
+    if (json)
+        json_bytes(w, value->bytes, value->length);
+    else
+        safe_bytes(w, value->bytes, value->length);
+    mo_buffer_free(&literal);
+    mo_buffer_free(&raw);
+}
+
+static const char *extreme_description(const struct mo_input_extreme *extreme) {
+    bool smallest = extreme->end == MO_INPUT_SMALLEST;
+    if (extreme->type == MO_TYPE_INT)
+        return smallest ? "Int's smallest value" : "Int's largest value";
+    if (extreme->type == MO_TYPE_DECIMAL)
+        return smallest ? "Decimal's smallest value" : "Decimal's largest value";
+    if (extreme->type == MO_TYPE_TIME)
+        return smallest ? "Time's smallest value" : "Time's largest value";
+    if (extreme->type == MO_TYPE_DURATION)
+        return smallest ? "Duration's smallest value" : "Duration's largest value";
+    MO_UNREACHABLE();
+}
+
+static void promise_result(struct writer *w, const struct mo_test_result *result, bool json) {
+    const struct mo_promise_result *promise = result->promise;
+    if (result->outcome == MO_RETURNED)
+        return;
+    const struct mo_checked_spec *spec = result->observation->source;
+    const struct mo_bytecode_function *subject = &result->file->functions[promise->subject];
+    if (json)
+        text(w, ",\"input\":[");
+    for (uint32_t i = 0; w->ok && i < subject->parameter_count; i++) {
+        const char *name = spec->parameters[i]->name;
+        if (json) {
+            if (i != 0)
+                text(w, ",");
+            text(w, "{\"name\":");
+            json_string(w, name);
+            text(w, ",\"value\":");
+        } else {
+            text(w, "  input ");
+            safe_text(w, name);
+            text(w, " = ");
+        }
+        promise_value(w, result, subject->parameters[i].type, promise->input[i], json);
+        text(w, json ? "}" : "\n");
+    }
+    if (json)
+        text(w, "]");
+    if (result->outcome == MO_FAILED) {
+        if (promise->has_value) {
+            text(w, json ? ",\"result\":" : "  result: ");
+            promise_value(w, result, subject->result_type, promise->value, json);
+            if (!json)
+                text(w, "\n");
+        }
+        text(w, json ? ",\"calls\":" : "  calls: ");
+        unsigned_number(w, promise->calls);
+        if (!json)
+            text(w, "\n");
+    }
+    if (promise->extreme != NULL) {
+        const char *name = spec->parameters[promise->extreme->parameter]->name;
+        const char *description = extreme_description(promise->extreme);
+        if (json) {
+            text(w, ",\"extreme\":{\"name\":");
+            json_string(w, name);
+            text(w, ",\"description\":");
+            json_string(w, description);
+            text(w, "}");
+        } else {
+            text(w, "  ");
+            safe_text(w, name);
+            text(w, " is ");
+            safe_text(w, description);
+            text(w, "\n  fix: return a failure for such inputs, or take a type whose module "
+                    "keeps its values in range (reference 12.2).\n");
+        }
+    }
+}
+
 struct stopped_variables {
     struct writer *writer;
     const struct mo_test_result *result;
@@ -838,16 +933,21 @@ bool mo_render_test_result(const struct mo_sources *sources, const struct mo_tes
         location(&w, sources, observation->source->syntax->span);
         text(&w, "\n");
     }
+    if (result->promise != NULL)
+        promise_result(&w, result, json);
     if (result->outcome == MO_FAILED) {
         equality_failure(&w, result->defect, json);
-        if (observation->source->kind == MO_SPEC_TEST) {
+        if (observation->source->kind == MO_SPEC_TEST ||
+            observation->source->kind == MO_SPEC_PROMISE) {
             if (result->line.file == UINT32_MAX)
                 w.ok = false; /* Never invent the failed assert's identity. */
             if (json) {
                 text(&w, ",\"line\":");
                 json_span(&w, sources, result->line, NULL, false);
             } else {
-                struct mo_label label = {result->line, "this assertion was false"};
+                struct mo_label label = {result->line, observation->source->kind == MO_SPEC_TEST
+                                                           ? "this assertion was false"
+                                                           : "this promise condition was false"};
                 text_label(&w, sources, &label);
             }
         } else if (!json) {

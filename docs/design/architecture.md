@@ -1690,10 +1690,10 @@ the source inventory, even if another requested name exists. Unknown names or an
 empty intersection are exit-2 command mistakes with one stderr line and no stdout.
 Whole-program source errors precede name resolution. Test JSON delays its version
 until selection is resolved, so even `--json` command mistakes write no records.
-`fix` still returns E1400 and rewrites nothing. Generated-input promises remain
-a separate runner seam: a selection containing any promise refuses E1400 before
-initialization or any observation, rather than reporting a partial run as passed.
-Successful anchor validation does not claim those observations passed.
+`fix` still returns E1400 and rewrites nothing. Generator preflight is selection-wide:
+an unsupported selected promise refuses E1400 before initialization or any
+observation, rather than reporting a partial run as passed. Successful anchor
+validation alone does not claim those observations passed.
 E1400 is an unavailable-stage code, not a language error.
 
 **Ordinary observations.** Selected zero-argument examples and tests compile
@@ -1720,6 +1720,36 @@ enclosing source `assert`, not a reconstructed condition or the last executed
 leaf's span. Failed observations do not become source diagnostics: `errors`
 stays zero unless a compiler/tool error was found, while `failed`/`stopped`
 independently force status 1. Selected unsupported promises are never omitted.
+
+**Scalar promise observations.** The bounded runner accepts nongeneric subjects
+with built-in Unit, Bool, Byte, Int, Float, Char, Time, Duration, Decimal, Range,
+Text, Bytes or BigInt inputs. Generic templates and composite, nominal/hidden,
+function and capability inputs remain unavailable, even if concrete instances
+exist elsewhere. This generator whitelist does not widen lowering's native-call
+support: subjects, conditions and anchors still refuse staged calls with E1150
+(for example Time.parse, Int.seconds, Bytes.size and Float.nan?). Listing still
+needs no generator or image. The runner uses
+`tools/inputs.h` unchanged, seeded by the full source promise name. Each trial
+uses a fresh process, retaining its tuple and returned result independently of
+the arguments consumed by subject and condition calls. A shrink candidate is
+deep-copied into its own process; no cell crosses heaps by reference.
+
+Zero from the condition function passes; a positive index selects the exact
+original false-condition span. Shrinking accepts completed false conditions.
+A genuine stopped shrink candidate instead reports that candidate's input,
+span, stack and extreme, then stops shrinking; it does not restore the prior
+false-condition result. Cancellation alone retains the last confirmed failure.
+An unresolved interrupted promise produces E1404 and no result/count for that
+promise, but later independent observations continue. A clock failure with a
+confirmed failure preserves its result and also reports E1404, never a pass.
+Generation/preparation refusal is tool inability, not a fabricated Mo stop.
+The existing JSON promise fields in 10.2 are filled without an outcome/schema
+extension. Failed-promise `calls` counts attempted subject invocations, search
+plus shrinking, including an interrupted shrink attempt. Values are printed
+structurally without executing customizers, at most 4,096 bytes per value and
+1 MiB per complete record; inability to print a complete value refuses the
+record with E1404 instead of truncating it. Promise timing includes generation
+and shrinking, excluding initialization, anchors and report rendering.
 
 **Captured closures in observations.** Tools use the same certified pipeline
 for by-value captures and returned closures (4.3), without constructing environments
@@ -1911,8 +1941,8 @@ already confirmed. Genuine Mo stops/failures retain their meaning.
 The VM's separately owned controlled-call seam is clock-free; tools uses its
 terminal cancellation result, not instruction fuel or a fabricated Mo defect.
 Native/blocked operations may overshoot. Ordinary observations, image
-initialization and hard process isolation are outside this policy. The clock
-is prepared independently of the pending exact VM transfer/runner integration.
+initialization and hard process isolation are outside this policy. Expiry before
+any trial completes reports inability rather than a zero-trial pass.
 
 **The input library, part 1.** `tools/inputs.h` takes the sealed image type
 table and parameter indices. It constructs owned cells through `heap`'s public
@@ -1982,8 +2012,8 @@ overrides, missing layouts and non-hashable keys are unsupported. Exact-index
 factory overrides are the future hidden-builder, closure and fake-capability seam; their trusted
 callbacks subtract child nodes, bytes and work from the same remaining budget
 and rebuild foreign cells instead of retaining them. Hidden visibility and
-the choice of factories remain with the driver. None of these later builders
-or the `mo_call` driver is implemented in part 1.
+the choice of factories remain with the driver. These later builders remain
+unimplemented; the scalar controlled-call driver uses no factory overrides.
 
 ### 10.2 JSON output
 
