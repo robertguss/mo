@@ -15,26 +15,148 @@ static void inability(struct mo_diags *diags, const struct mo_observation *obser
     (void)added;
 }
 
+/* Check the canonical source graph, not the spelling of imported types or
+ * runtime layouts (which deliberately contain no source visibility policy).
+ * All actual arguments are checked, so a data template's scoped parameters
+ * stand for eligible types without synthesizing substitutions. Visiting each
+ * canonical node once also closes regular recursive fields and shared DAGs. */
+struct eligibility {
+    struct mo_arena arena;
+    const struct mo_source_type **types;
+    size_t count, capacity;
+    size_t *work;
+    bool limited;
+};
+
+static bool input_work(struct eligibility *walk) {
+    if (*walk->work == 0) {
+        walk->limited = true;
+        return false;
+    }
+    (*walk->work)--;
+    return true;
+}
+
+static bool input_type(struct eligibility *walk, const struct mo_source_type *type) {
+    if (!input_work(walk))
+        return false;
+    for (size_t i = 0; i < walk->count; i++) {
+        if (!input_work(walk))
+            return false;
+        if (walk->types[i] == type)
+            return true;
+    }
+    if (walk->count == walk->capacity) {
+        size_t capacity = walk->capacity == 0 ? 32 : walk->capacity * 2;
+        void *grown =
+            mo_arena_resize(&walk->arena, walk->types, walk->capacity * sizeof(*walk->types),
+                            capacity * sizeof(*walk->types), _Alignof(void *));
+        if (grown == NULL) {
+            walk->limited = true;
+            return false;
+        }
+        walk->types = grown;
+        walk->capacity = capacity;
+    }
+    walk->types[walk->count++] = type;
+    return true;
+}
+
+static bool input_fields(struct eligibility *walk, const struct mo_signatures *signatures,
+                         const struct mo_symbol *symbol) {
+    uint32_t lo = 0, hi = signatures->data_count;
+    while (lo < hi) {
+        if (!input_work(walk))
+            return false;
+        uint32_t mid = lo + (hi - lo) / 2;
+        const struct mo_symbol *at = signatures->data[mid].symbol;
+        if (at->module < symbol->module ||
+            (at->module == symbol->module && (uintptr_t)at < (uintptr_t)symbol))
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    MO_ASSERT(lo < signatures->data_count && signatures->data[lo].symbol == symbol);
+    const struct mo_data_signature *data = &signatures->data[lo];
+    for (uint32_t i = 0; i < data->count; i++)
+        if (!input_type(walk, data->by_index[i]->type))
+            return false;
+    return true;
+}
+
+static bool input_supported(struct eligibility *walk, const struct mo_program *program,
+                            const struct mo_source_type *type, uint32_t module) {
+    if (!input_work(walk))
+        return false;
+    if (type->kind == MO_SOURCE_FUNCTION)
+        return false;
+    if (type->kind == MO_SOURCE_PARAMETER) {
+        /* Only data templates can introduce parameters in a closed subject. */
+        MO_ASSERT(type->declaration != NULL && type->declaration->declaration != NULL);
+        enum mo_syntax_kind kind = type->declaration->declaration->kind;
+        MO_ASSERT(kind == MO_S_STRUCT || kind == MO_S_ENUM);
+        return true;
+    }
+    if (type->kind == MO_SOURCE_NAMED) {
+        if (type->module == UINT32_MAX) {
+            static const char *const scalars[] = {"Unit", "Bool",  "Byte",     "Int",     "Float",
+                                                  "Char", "Time",  "Duration", "Decimal", "Range",
+                                                  "Text", "Bytes", "BigInt"};
+            bool supported = (type->count == 1 && (strcmp(type->name, "List") == 0 ||
+                                                   strcmp(type->name, "Option") == 0)) ||
+                             (type->count == 2 && strcmp(type->name, "Result") == 0);
+            for (size_t i = 0; type->count == 0 && i < sizeof scalars / sizeof scalars[0]; i++)
+                supported |= strcmp(type->name, scalars[i]) == 0;
+            if (!supported)
+                return false;
+        } else {
+            const struct mo_symbol *owner = type->declaration;
+            MO_ASSERT(owner != NULL && owner->module == type->module);
+            /* Exposed-opaque types require builders even in their own module.
+             * Unexported local data, unlike those types, is structural. */
+            if (!owner->insides && (owner->exported || owner->module != module))
+                return false;
+            bool choice = owner->declaration->kind == MO_S_ENUM;
+            uint32_t count = choice ? owner->case_count : 1;
+            for (uint32_t i = 0; i < count; i++) {
+                const struct mo_symbol *symbol =
+                    choice ? &program->interfaces->scopes[owner->module].symbols[owner->cases[i]]
+                           : owner;
+                if (!input_fields(walk, program->signatures, symbol))
+                    return false;
+            }
+        }
+    }
+    for (uint32_t i = 0; i < type->count; i++)
+        if (!input_type(walk, type->arguments[i]))
+            return false;
+    return true;
+}
+
 bool mo_promises_supported(const struct mo_program *program,
                            const struct mo_test_selection *selection, struct mo_diags *diags) {
-    static const char *const scalars[] = {"Unit", "Bool",  "Byte",     "Int",     "Float",
-                                          "Char", "Time",  "Duration", "Decimal", "Range",
-                                          "Text", "Bytes", "BigInt"};
+    size_t work = MO_CLI_TEST_WORK;
     for (uint32_t i = 0; i < selection->count; i++) {
         const struct mo_observation *observation = &selection->items[i];
         const struct mo_checked_spec *spec = observation->source;
         if (spec->kind != MO_SPEC_PROMISE)
             continue;
         const struct mo_checked_function *subject = &program->functions[spec->subject];
+        struct eligibility walk = {.work = &work};
+        mo_arena_init(&walk.arena, MO_CLI_TEST_SIZE);
         bool supported = subject->signature->type->parameters == 0;
-        for (uint32_t p = 0; supported && p < subject->parameter_count; p++) {
-            const struct mo_source_type *type = subject->parameters[p]->type;
-            supported = false;
-            if (type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX && type->count == 0)
-                for (size_t s = 0; s < sizeof scalars / sizeof scalars[0]; s++)
-                    supported |= strcmp(type->name, scalars[s]) == 0;
-        }
+        for (uint32_t p = 0; supported && p < subject->parameter_count; p++)
+            supported = input_type(&walk, subject->parameters[p]->type);
+        for (size_t p = 0; supported && p < walk.count; p++)
+            supported = input_supported(&walk, program, walk.types[p],
+                                        subject->signature->function->module);
+        mo_arena_free(&walk.arena);
         if (!supported) {
+            if (walk.limited) {
+                inability(diags, observation, "promise input preflight exceeds its resource budget",
+                          observation->name);
+                return false;
+            }
             struct mo_diag diag = {.code = MO_CODE_TOOL_UNAVAILABLE,
                                    .message = "this build cannot generate inputs for this promise",
                                    .primary = {spec->syntax->span, observation->name}};

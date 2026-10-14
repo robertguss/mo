@@ -1,4 +1,4 @@
-/* Scalar promise trials and retained reports. Generation stays in inputs.h. */
+/* Promise trials and retained reports. Generation stays in inputs.h. */
 #ifndef MO_TOOLS_PROMISES_H
 #define MO_TOOLS_PROMISES_H
 
@@ -16,7 +16,8 @@ struct mo_promise_result {
 };
 
 /* Refuse the entire selected set before initialization/observations. Listing
- * needs no generator. Nongeneric built-in scalar inputs only in this slice. */
+ * needs no generator. Closed scalars, tuples, Lists and visible data only;
+ * generic subjects, opaque builders and factory inputs remain unavailable. */
 MO_MUST_USE bool mo_promises_supported(const struct mo_program *program,
                                        const struct mo_test_selection *selection,
                                        struct mo_diags *diags);

@@ -1733,11 +1733,26 @@ leaf's span. Failed observations do not become source diagnostics: `errors`
 stays zero unless a compiler/tool error was found, while `failed`/`stopped`
 independently force status 1. Selected unsupported promises are never omitted.
 
-**Scalar promise observations.** The bounded runner accepts nongeneric subjects
+**Structural promise observations.** The bounded runner accepts nongeneric subjects
 with built-in Unit, Bool, Byte, Int, Float, Char, Time, Duration, Decimal, Range,
-Text, Bytes or BigInt inputs. Generic templates and composite, nominal/hidden,
-function and capability inputs remain unavailable, even if concrete instances
-exist elsewhere. This generator whitelist does not widen lowering's native-call
+Text, Bytes or BigInt inputs, composed through tuples, Lists, Option, Result
+and visible source records/choices, including closed imported generic data and
+regular recursion. Generic subjects, exposed-opaque types, function/capability
+inputs, Maps/Sets and factory wiring remain unavailable, even if concrete
+instances exist elsewhere. Preflight checks every payload of every case and
+every actual type argument, including phantom arguments. It walks canonical
+declaring symbols and declaration-ordered field templates, never import
+spellings or reconstructed parameter keys. Actual arguments are checked
+independently, so data-scoped template parameters require no synthesized
+substitution. A memoized iterative source graph closes recursive edges and
+shared DAGs; its comparisons, edges and lookups share 64 Mi work per selected
+set and each promise uses at most 64 MiB scratch, refusing E1404 on exhaustion.
+An explicitly exposed-opaque type requires builders even inside its defining
+module; an unexported local record/choice remains structural. Hidden nested
+payloads refuse the whole selection, even under List or Option; the generator
+may not silently cover only an empty list or one visible choice case. Listing
+and ordinary-only selection still require no generator. This eligibility check
+does not widen lowering's native-call
 support: subjects, conditions and anchors still refuse staged calls with E1150
 (for example Time.parse, Int.seconds, Bytes.size and Float.nan?). Listing still
 needs no generator or image. The runner uses
@@ -1789,8 +1804,9 @@ construction, projection and choice patterns retain the defining data module's
 canonical layout, declaration-ordered keys and exposure; requester-owned function
 instances do not give importers data exports (3.2, 4.3). Foreign constant reads
 and direct imported initializer references remain the checker's E1103 staging routes,
-as do broad Text-only abstract captures. Nominal imports do not widen the scalar
-promise-input boundary or change the settled monotonic deadline policy (10.1).
+as do broad Text-only abstract captures. Closed exposed nominal inputs use the
+structural promise eligibility above; imports do not change the settled
+monotonic deadline policy (10.1).
 
 Generic substitutions retain the callee signature's scoped keys; actual ability
 proofs retain the caller environment, including its customizers. Requester-owned
@@ -2029,7 +2045,7 @@ factory overrides are the future hidden-builder, closure and fake-capability sea
 callbacks subtract child nodes, bytes and work from the same remaining budget
 and rebuild foreign cells instead of retaining them. Hidden visibility and
 the choice of factories remain with the driver. These later builders remain
-unimplemented; the scalar controlled-call driver uses no factory overrides.
+unimplemented; the structural controlled-call driver uses no factory overrides.
 
 ### 10.2 JSON output
 

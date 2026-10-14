@@ -312,6 +312,24 @@ def promise_shrinking(binary):
             assert items[-1]['failed'] == 1 and items[-1]['stopped'] == 0
 
 
+def composite_promises(binary):
+    with tempfile.TemporaryDirectory(prefix='mo-composite-promises-') as directory:
+        path = pathlib.Path(directory) / 'main.mo'
+        (path.parent / 'shapes.mo').write_text(
+            'module Shapes\nexpose Pair(..)\nstruct Pair(Z, A)\nfirst: Z\nsecond: A\nend\n')
+        path.write_text('module Main\nuse Shapes{Pair}\n'
+                        'fn probe(value: Pair(List(Int), (Text, Bool))) : Bool\n'
+                        'promise "keeps the composite shape"\nresult == value.second.1\n'
+                        'allows value: Pair(second: ("owned", true), first: [3, 8]), result: true\n'
+                        'forbids value: Pair(first: [], second: ("é", false)), result: true\nend\n'
+                        'value.second.1\nend\ntest "after promise"\nassert true\nend\n'
+                        'fn main()\nstop "main ran"\nend\n')
+        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
+            ('Main.probe.promise.1', 'passed'), ('Main.test.1', 'passed')]
+        assert items[-1]['passed'] == 2 and items[-1]['errors'] == 0
+
+
 def promise_selection(binary):
     cases = [
         ('List(Int)', '[3]', ''),
@@ -1298,6 +1316,7 @@ def check(binary):
     promise_boundaries(binary)
     promise_deadlines(binary)
     promise_shrinking(binary)
+    composite_promises(binary)
     promise_selection(binary)
     items = records(run(faults, ["--json"], 1), "check")
     assert items[1]["code"] == "E1401" and items[-1]["dropped"] == 0
