@@ -58,6 +58,283 @@ def scalar_promises(binary):
         assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
                              "passed": 2, "failed": 0, "stopped": 0, "status": 0}
 
+        # Independent SipHash-1-3/SplitMix calculation: after the five Int
+        # boundaries these promises first generate 9 and -9, respectively.
+        source = 'module Main\nfn seeded(value: Int) : Int\n'
+        for sentence in ('first stream', 'second stream'):
+            source += (f'promise "{sentence}"\nresult == value\n'
+                       'allows value: 3, result: 3\nforbids value: 3, result: 4\nend\n')
+        source += ('if value == 9 or value == -9\nstop "random input"\nend\nvalue\nend\n'
+                   'fn main()\nstop "main ran"\nend\n')
+        path.write_text(source)
+        for _ in range(2):
+            items = records(run(binary, ['test', '--json', '--calls', '5', str(path)], 0), 'test')
+            assert [r['outcome'] for r in items[1:-1]] == ['passed', 'passed']
+            items = records(run(binary, ['test', '--json', '--calls', '6', str(path)], 1), 'test')
+            assert [r['input'] for r in items[1:-1]] == [
+                [{'name': 'value', 'value': '9'}], [{'name': 'value', 'value': '-9'}]]
+            assert [r['outcome'] for r in items[1:-1]] == ['stopped', 'stopped']
+
+        # Independently calculated unique Int at ordinal 200 (trial 201).
+        # This distinguishes the default 200 from an off-by-one/default drift.
+        target = '-1459837627065130'
+        path.write_text('module Main\nfn capped(value: Int) : Int\n'
+                        'promise "keeps input"\nresult == value\n'
+                        'allows value: 3, result: 3\nforbids value: 3, result: 4\nend\n'
+                        f'if value == {target}\nstop "trial 201"\nend\nvalue\nend\nfn main()\nend\n')
+        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        assert items[1]['outcome'] == 'passed'
+        items = records(run(binary, ['test', '--json', '--calls', '201', str(path)], 1), 'test')
+        assert items[1]['outcome'] == 'stopped' and items[1]['input'] == [
+            {'name': 'value', 'value': target}]
+
+
+def promise_boundaries(binary):
+    minimum, maximum = '-9223372036854775808', '9223372036854775807'
+    cases = [
+        ('unit', 'Unit', 'Unit', 'true', 'Unit'),
+        ('boolean', 'Bool', 'false', 'value', 'true'),
+        ('byte', 'Byte', '0', 'value == 255', '255'),
+        ('integer', 'Int', '13', f'value == {minimum}', minimum),
+        ('float', 'Float', '1.0', 'value > 1.0', '1.7976931348623157e308'),
+        ('character', 'Char', "'a'", "value == 'é'", "'é'"),
+        ('decimal', 'Decimal', '0.0', 'value > 1.0', '170141183460469231731.687303715884105727'),
+        ('range', 'Range', '0..3', f'value == ({minimum}..{maximum})', f'{minimum}..{maximum}'),
+        ('text', 'Text', '"ok"', 'value == "é"', '"é"'),
+        ('bigint', 'BigInt', '3', 'value > 0x10000000000000000', str((1 << 1024) - 1)),
+    ]
+    source = 'module Main\n'
+    for name, type_, example, predicate, _ in cases:
+        parameter = '_value' if name == 'unit' else 'value'
+        source += (f'fn {name}({parameter}: {type_}) : Int\n'
+                   f'promise "scalar boundary {name}"\nresult == 0\n'
+                   f'allows {parameter}: {example}, result: 0\n'
+                   f'forbids {parameter}: {example}, result: 1\nend\n'
+                   f'if {predicate}\nstop "boundary {name}"\nend\n0\nend\n')
+    source += 'test "after all boundaries"\nassert true\nend\nfn main()\nstop "main ran"\nend\n'
+    with tempfile.TemporaryDirectory(prefix='mo-promise-boundaries-') as directory:
+        path = pathlib.Path(directory) / 'main.mo'
+        path.write_text(source)
+        items = records(run(binary, ['test', '--json', '--calls', '6', str(path)], 1), 'test')
+        for result, (name, _, _, _, expected) in zip(items[1:-2], cases):
+            parameter = '_value' if name == 'unit' else 'value'
+            assert result['name'] == f'Main.{name}.promise.1' and result['outcome'] == 'stopped'
+            assert result['input'] == [{'name': parameter, 'value': expected}]
+            assert result['defect']['variables'] == [{'name': parameter, 'value': expected}]
+            defect = result['defect']
+            assert defect['reason'] == 'stop' and defect['detail'] == f'boundary {name}'
+            start = source.encode().index(f'stop "boundary {name}"'.encode())
+            assert (defect['span']['start'], defect['span']['end']) == (
+                start, start + len(f'stop "boundary {name}"'))
+            assert [f['function'] for f in defect['stack']] == [f'Main.{name}']
+        assert items[4]['extreme'] == {'name': 'value', 'description': "Int's smallest value"}
+        assert items[7]['extreme'] == {'name': 'value', 'description': "Decimal's largest value"}
+        assert items[8]['extreme'] == {'name': 'value', 'description': "Int's smallest value"}
+        assert items[-2]['outcome'] == 'passed'
+        assert items[-1] == {'record': 'totals', 'errors': 0, 'dropped': 0,
+                             'passed': 1, 'failed': 0, 'stopped': 10, 'status': 1}
+        text = run(binary, ['test', '--calls', '6', str(path)], 1)
+        assert not text.stderr and text.stdout.endswith(b'1 passed, 0 failed, 10 stopped\n')
+        assert b"Int's smallest value" in text.stdout and b"Decimal's largest value" in text.stdout
+        assert b'return a failure' in text.stdout and b'keeps its values in range' in text.stdout
+
+
+def promise_deadlines(binary):
+    clock = binary.parent / 'tests/test_deadline.test'
+    minimum = '-9223372036854775808'
+    loop = 'var spin = 0\nwhile spin == 0\nspin = 0\nend\n'
+    tail = 'test "after promise"\nassert true\nend\nfn main()\nstop "main ran"\nend\n'
+    with tempfile.TemporaryDirectory(prefix='mo-promise-deadlines-') as directory:
+        path = pathlib.Path(directory) / 'main.mo'
+
+        def observe(source, mode, seconds='1'):
+            path.write_text(source + tail)
+            return records(run(clock, [mode, 'test', '--json', '--seconds', seconds, str(path)], 1), 'test')
+
+        # Neither a nonreturning subject nor a nonreturning condition invents
+        # a promise outcome. Only the following independent test is counted.
+        subject = ('module Main\nfn probe(value: Int) : Int\n'
+                   'promise "returns input"\nresult == value\n'
+                   'allows value: 13, result: 13\nforbids value: 13, result: 14\nend\n'
+                   f'if value != 13\n{loop}end\nvalue\nend\n')
+        condition = ('module Main\nfn verdict(value: Int, answer: Int) : Bool\n'
+                     f'if value != 13 and answer == value\n{loop}end\nvalue == answer\nend\n'
+                     'fn probe(value: Int) : Int\npromise "returns input"\nverdict(value, result)\n'
+                     'allows value: 13, result: 13\nforbids value: 13, result: 14\nend\nvalue\nend\n')
+        for source in (subject, condition):
+            for mode in ('expiry', 'failure', 'start-failure'):
+                items = observe(source, mode, '2' if mode == 'failure' else '1')
+                assert [(r['name'], r['outcome']) for r in items if r['record'] == 'result'] == [
+                    ('Main.test.1', 'passed')]
+                diagnostic = [r for r in items if r['record'] == 'diagnostic']
+                assert len(diagnostic) == 1 and diagnostic[0]['code'] == 'E1404'
+                assert ('clock could not be read' in diagnostic[0]['headline']) == (mode != 'expiry')
+                assert items[-1] == {'record': 'totals', 'errors': 1, 'dropped': 0,
+                                     'passed': 1, 'failed': 0, 'stopped': 0, 'status': 1}
+        # Actual CLOCK_MONOTONIC cancellation, with run()'s 30-second safety
+        # watchdog. No fragile wall-duration threshold or instruction budget.
+        path.write_text(subject + tail)
+        items = records(run(binary, ['test', '--json', '--seconds', '1', str(path)], 1), 'test')
+        assert [r['code'] for r in items if r['record'] == 'diagnostic'] == ['E1404']
+        assert items[-1]['passed'] == 1 and items[-1]['failed'] == items[-1]['stopped'] == 0
+
+        # Finite calls each fit individually. Their cumulative work must not
+        # get a fresh deadline per call, condition or completed trial.
+        work = 'var n = 0\nwhile n < 37\nn += 1\nend\n'
+        finite = ('module Main\nfn verdict(value: Int, answer: Int) : Bool\n' + work +
+                  'value == answer\nend\nfn probe(value: Int) : Int\n'
+                  'promise "returns input"\nverdict(value, result)\n'
+                  'allows value: 13, result: 13\nforbids value: 13, result: 14\nend\n' + work +
+                  'value\nend\n')
+        items = observe(finite, 'expiry')
+        assert [r['code'] for r in items if r['record'] == 'diagnostic'] == ['E1404']
+        assert items[-1]['passed'] == 1 and items[-1]['failed'] == items[-1]['stopped'] == 0
+
+        # The old confirmed result is -31; the next candidate would return
+        # -47. Cancellation during its subject OR condition must keep all three
+        # old fields, whereas a genuine stopped condition reports the new input.
+        for where in ('subject', 'condition', 'stop'):
+            operation = 'stop "candidate stopped"\n' if where == 'stop' else loop
+            parameter = '_value' if where == 'subject' else 'value'
+            helper = (f'fn verdict({parameter}: Int, answer: Int) : Bool\n' +
+                      (f'if value < -1 and value != {minimum}\n{operation}end\n'
+                       if where != 'subject' else '') + 'answer >= 0\nend\n')
+            source = ('module Main\n' + helper + 'fn probe(value: Int) : Int\n'
+                      'promise "retains confirmed failure"\nresult <= 0\nverdict(value, result)\n'
+                      f'allows value: 13, result: 0\nforbids value: {minimum}, result: -31\nend\n' +
+                      (f'if value < -1 and value != {minimum}\n{operation}end\n'
+                       if where == 'subject' else '') +
+                      f'if value == {minimum}: -31 else if value < -1: -47 else: 0\nend\n')
+            for mode in (('fixed',) if where == 'stop' else ('expiry', 'failure')):
+                items = observe(source, mode, '2' if mode == 'failure' else '1')
+                result = items[1]
+                assert items[2]['name'] == 'Main.test.1' and items[2]['outcome'] == 'passed'
+                if where == 'stop':
+                    assert result['outcome'] == 'stopped' and 'result' not in result and 'line' not in result
+                    assert result['input'] == [{'name': 'value', 'value': '-4611686018427387904'}]
+                    assert result['defect']['detail'] == 'candidate stopped'
+                    assert [f['function'] for f in result['defect']['stack']] == [
+                        'Main.verdict', 'Main.probe.promise.1']
+                    assert result['defect']['variables'] == [
+                        {'name': 'value', 'value': '-4611686018427387904'}, {'name': 'answer', 'value': '-47'}]
+                    assert items[-1]['stopped'] == 1 and items[-1]['failed'] == 0
+                else:
+                    assert result['outcome'] == 'failed' and result['calls'] == 6
+                    assert result['input'] == [{'name': 'value', 'value': minimum}]
+                    assert result['result'] == '-31'
+                    start = source.encode().index(b'verdict(value, result)')
+                    assert (result['line']['start'], result['line']['end']) == (start, start + 22)
+                    assert items[-1]['failed'] == 1 and items[-1]['stopped'] == 0
+                diagnostics = [r['code'] for r in items if r['record'] == 'diagnostic']
+                assert diagnostics == (['E1404'] if mode == 'failure' else [])
+
+        # Finite shrink candidates fit individually but not cumulatively.
+        # The exact interruption point is not a language contract: it depends
+        # on bytecode instruction count. The true minimum is -2; expiry must
+        # retain an earlier confirmed tuple, not reset time until reaching -2.
+        source = ('module Main\nfn probe(value: Int) : Int\n'
+                  'promise "nonnegative result"\nresult >= 0\n'
+                  f'allows value: 13, result: 0\nforbids value: {minimum}, result: {minimum}\nend\n'
+                  f'if value < -1 and value != {minimum}\n{work}end\n'
+                  'if value < -1: value else: 0\nend\n')
+        items = observe(source, 'expiry')
+        result = items[1]
+        assert result['outcome'] == 'failed' and result['microseconds'] == 1000000
+        assert int(result['input'][0]['value']) < -2
+        assert result['result'] == result['input'][0]['value']
+        assert items[-1]['errors'] == 0 and items[-1]['failed'] == 1 and items[-1]['passed'] == 1
+
+
+def promise_shrinking(binary):
+    clock = binary.parent / 'tests/test_deadline.test'
+    tail = 'test "after promise"\nassert true\nend\nfn main()\nstop "main ran"\nend\n'
+    with tempfile.TemporaryDirectory(prefix='mo-promise-shrinking-') as directory:
+        path = pathlib.Path(directory) / 'main.mo'
+        source = ('module Main\nfn probe(value: Int) : Int\n'
+                  'promise "nonnegative answer"\nresult >= 0\n'
+                  'allows value: 3, result: 4\nforbids value: -2, result: -1\nend\n'
+                  'value + 1\nend\n')
+        path.write_text(source + tail)
+        items = records(run(clock, ['fixed', 'test', '--json', '--calls', '4', str(path)], 1), 'test')
+        assert items[1]['input'] == [{'name': 'value', 'value': '-2'}]
+        assert items[1]['result'] == '-1' and 4 < items[1]['calls'] <= 204
+        assert items[-1]['failed'] == items[-1]['passed'] == 1 and items[-1]['errors'] == 0
+        text = run(binary, ['test', '--calls', '4', str(path)], 1)
+        assert not text.stderr and b'input value = -2\n  result: -1\n' in text.stdout
+        assert b'this promise condition was false' in text.stdout
+
+        # This takes more than 200 candidates to minimize. The search cap is
+        # four subject calls; shrinking gets a separate 200, not four or 196.
+        threshold = '0x1' + '0' * 128
+        source = ('module Main\nfn probe(value: BigInt) : BigInt\n'
+                  f'promise "below threshold"\nresult < {threshold}\n'
+                  f'allows value: 3, result: 3\nforbids value: {threshold}, result: {threshold}\nend\n'
+                  'value\nend\n')
+        path.write_text(source + tail)
+        for calls, status in (('3', 0), ('4', 1)):
+            items = records(run(clock, ['fixed', 'test', '--json', '--calls', calls, str(path)], status), 'test')
+            result = items[1]
+            if status == 0:
+                assert result['outcome'] == 'passed'
+            else:
+                assert result['outcome'] == 'failed' and result['calls'] == 204
+                assert (1 << 512) < int(result['input'][0]['value']) < (1 << 1024) - 1
+                assert result['result'] == result['input'][0]['value']
+
+        # Owned input and structural result survive candidate/process teardown.
+        # Reporting must never execute the stopping source Text customizer.
+        source = ('module Main\nstruct Box\nvalue: Text\nend\n'
+                  'fn to_text(_value: Box) : Text\nstop "renderer called customizer"\nend\n'
+                  'fn probe(value: Text) : Box\npromise "avoids one text"\nresult.value != "é"\n'
+                  'allows value: "ok", result: Box(value: "ok")\n'
+                  'forbids value: "é", result: Box(value: "é")\nend\nBox(value: value)\nend\n')
+        path.write_text(source + tail)
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['input'] == [{'name': 'value', 'value': '"é"'}]
+        assert items[1]['result'] == 'Box(value: "é")' and items[1]['calls'] == 4
+        start = source.encode().index('result.value != "é"'.encode())
+        assert (items[1]['line']['start'], items[1]['line']['end']) == (start, start + 20)
+        assert items[-1]['stopped'] == 0 and items[-1]['failed'] == items[-1]['passed'] == 1
+
+        # Complete structural values include their quotes in the 4096-byte cap.
+        # A refused record is never truncated or emitted as invalid JSON.
+        for length in (4094, 4095):
+            path.write_text('module Main\nfn probe() : Text\npromise "small result"\n'
+                            'result == "ok"\nallows result: "ok"\nforbids result: "bad"\nend\n"' +
+                            'x' * length + '"\nend\n' + tail)
+            items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+            if length == 4094:
+                assert items[1]['result'] == '"' + 'x' * length + '"'
+                assert items[-1]['errors'] == 0 and items[-1]['passed'] == 1
+            else:
+                assert len(items) == 3 and items[1]['code'] == 'E1404'
+                assert items[-1]['errors'] == 1 and items[-1]['passed'] == 0
+            assert items[-1]['failed'] == 1 and items[-1]['stopped'] == 0
+
+
+def promise_selection(binary):
+    cases = [
+        ('List(Int)', '[3]', ''),
+        ('(Int, Text)', '(3, "owned")', ''),
+        ('Box', 'Box(value: 3)', 'struct Box\nvalue: Int\nend\n'),
+        ('fn(Int) : Int', 'identity', 'fn identity(value: Int) : Int\nvalue\nend\n'),
+    ]
+    with tempfile.TemporaryDirectory(prefix='mo-promise-selection-') as directory:
+        path = pathlib.Path(directory) / 'main.mo'
+        for type_, input_, declarations in cases:
+            path.write_text('module Main\n' + declarations +
+                            'seed = crash()\nfn crash() : Int\nstop "must not initialize"\nend\n'
+                            'test "first observation"\nassert true\nend\n'
+                            f'fn probe(_value: {type_}) : Int\npromise "seven"\nresult == 7\n'
+                            f'allows _value: {input_}, result: 7\nforbids _value: {input_}, result: 8\nend\n'
+                            '7\nend\nfn main()\nstop "main ran"\nend\n')
+            items = records(run(binary, ['test', '--json', '--list', '--max-heap', '1', str(path)], 0), 'test')
+            assert [r['name'] for r in items[1:-1]] == ['Main.test.1', 'Main.probe.promise.1']
+            items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+            assert len(items) == 3 and items[1]['code'] == 'E1400'
+            assert items[1]['primary']['label'] == 'Main.probe.promise.1'
+            assert items[-1]['passed'] == items[-1]['failed'] == items[-1]['stopped'] == 0
+
 
 def observations(binary):
     with tempfile.TemporaryDirectory(prefix="mo-observations-") as directory:
@@ -1018,6 +1295,10 @@ def check(binary):
     imports(binary)
     generic_imports(binary)
     scalar_promises(binary)
+    promise_boundaries(binary)
+    promise_deadlines(binary)
+    promise_shrinking(binary)
+    promise_selection(binary)
     items = records(run(faults, ["--json"], 1), "check")
     assert items[1]["code"] == "E1401" and items[-1]["dropped"] == 0
     assert items[1]["primary"]["file"] is None and items[1]["section"] is None
