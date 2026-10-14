@@ -3,6 +3,7 @@
 #include "tools/tools.h"
 
 #include "prim/prim.h"
+#include "tools/tests.h"
 #include "vm/vm.h"
 
 #include <langinfo.h>
@@ -546,6 +547,28 @@ bool mo_render_diagnostic(const struct mo_sources *sources, const struct mo_diag
 static bool write_buffer(FILE *stream, const struct mo_buffer *buffer) {
     return fwrite(buffer->bytes, 1, buffer->length, stream) == buffer->length &&
            fflush(stream) == 0;
+}
+
+bool mo_write_test(FILE *output, bool json, const struct mo_sources *sources,
+                   const struct mo_observation *observation) {
+    struct mo_buffer buffer;
+    mo_buffer_init(&buffer, MO_CLI_DIAGNOSTIC_SIZE);
+    struct writer w = {.out = &buffer, .ok = true};
+    if (json) {
+        text(&w, "{\"record\":\"test\",\"name\":");
+        json_string(&w, observation->name);
+        text(&w, ",\"kind\":");
+        json_string(&w, mo_observation_kind(observation->source->kind));
+        text(&w, ",\"span\":");
+        json_span(&w, sources, observation->source->syntax->span, NULL, false);
+        text(&w, "}\n");
+    } else {
+        safe_text(&w, observation->name);
+        text(&w, "\n");
+    }
+    bool ok = w.ok && write_buffer(output, &buffer);
+    mo_buffer_free(&buffer);
+    return ok;
 }
 
 bool mo_write_defect(FILE *errors, const struct mo_process *process,

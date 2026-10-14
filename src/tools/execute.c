@@ -12,6 +12,7 @@
 #include "tools/embedded.h"
 #include "tools/format.h"
 #include "tools/run.h"
+#include "tools/tests.h"
 
 #include <errno.h>
 #include <string.h>
@@ -40,6 +41,8 @@ struct pipeline_work {
     struct mo_sources *sources;
     struct mo_diags *diags;
     FILE *output, *errors;
+    const char *mistake;
+    bool version;
     int status;
 };
 
@@ -68,6 +71,29 @@ static void execute_pipeline(void *argument) {
         return;
     /* Test observations are separate from the compiler's anchor checks. */
     if (cli->command == MO_COMMAND_TEST) {
+        struct mo_test_selection *selection = mo_select_tests(arena, program, cli, diags);
+        if (selection == NULL)
+            return;
+        if (selection->mistake != NULL) {
+            work->mistake = selection->mistake;
+            return;
+        }
+        if (cli->json) {
+            work->version = mo_write_version(work->output, cli->command);
+            if (!work->version) {
+                work->status = 1;
+                return;
+            }
+        }
+        if (cli->list) {
+            for (uint32_t i = 0; i < selection->count; i++)
+                if (!mo_write_test(work->output, cli->json, sources, &selection->items[i])) {
+                    tool_error(diags, MO_CODE_TOOL_PIPELINE, "test inventory could not be written",
+                               NULL);
+                    break;
+                }
+            return;
+        }
         tool_error(diags, MO_CODE_TOOL_UNAVAILABLE,
                    "this build cannot execute specification code yet", NULL);
         return;
@@ -141,7 +167,8 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
         struct mo_format_options options = {100, display_width};
         return mo_format_files(cli, options, errors);
     }
-    if (cli->json && !mo_write_version(output, cli->command)) {
+    bool version = cli->json && cli->command != MO_COMMAND_TEST;
+    if (version && !mo_write_version(output, cli->command)) {
         (void)fputs("mo: could not write version record\n", errors);
         return 1;
     }
@@ -152,8 +179,11 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
     if (!have_sources || !have_diags) {
         /* The failed initializers still prepare their arenas for freeing. */
         diags.dropped = 1;
-        int status =
-            mo_write_diagnostics(output, errors, cli->json, cli->command, &sources, &diags);
+        if (cli->json && !version)
+            version = mo_write_version(output, cli->command);
+        int status = cli->json && !version ? 1
+                                           : mo_write_diagnostics(output, errors, cli->json,
+                                                                  cli->command, &sources, &diags);
         mo_sources_free(&sources);
         mo_diags_free(&diags);
         return status;
@@ -165,12 +195,23 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
                                  .sources = &sources,
                                  .diags = &diags,
                                  .output = output,
-                                 .errors = errors};
+                                 .errors = errors,
+                                 .version = version};
     int error = mo_with_stack(MO_SOURCE_STACK_SIZE, execute_pipeline, &work);
     if (error != 0)
         tool_error(&diags, MO_CODE_TOOL_SOURCE_STACK, "could not prepare the source pipeline stack",
                    strerror(error));
-    int status = mo_write_diagnostics(output, errors, cli->json, cli->command, &sources, &diags);
+    int status;
+    if (work.mistake != NULL) {
+        (void)fprintf(errors, "%s\n", work.mistake);
+        status = 2;
+    } else if (cli->json && !work.version && work.status != 0) {
+        (void)fputs("mo: could not write version record\n", errors);
+        status = 1;
+    } else if (cli->json && !work.version && !mo_write_version(output, cli->command))
+        status = 1;
+    else
+        status = mo_write_diagnostics(output, errors, cli->json, cli->command, &sources, &diags);
     mo_arena_free(&arena);
     mo_sources_free(&sources);
     mo_diags_free(&diags);

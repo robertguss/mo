@@ -1582,10 +1582,26 @@ Native function aliases such as `Int.abs` remain a separate E1150 staging route.
 Tools render these refusals and suppress both artifacts; they do not treat
 them as invalid compiler Core or runtime bugs.
 
-`test` (including `--list`) and `fix` still return E1400, "this build cannot
-... yet". `test` checks the source's typing first; `fix` rewrites nothing.
-Executing examples/tests and generated-input promises is a separate tools stage;
-successful anchor validation does not claim those observations passed.
+**Source observation inventory.** `test --list` checks the whole source program,
+then lists its examples, promises and tests without lowering or loading an image.
+Initialization, main, anchors and observations never execute, even with accepted
+one-byte/one-call budgets. The inventory includes unused generic promise templates;
+it is not a scan of whichever concrete functions lowering happened to emit.
+Names use the source module/subject and original one-based kind ordinal (3.5 of
+`bytecode.md`); overloaded subjects retain lowering's nominal `@Receiver` suffix.
+Promise templates have the source subject name, not a particular monomorphized
+instance's internal name. Anchors are compiler checks, not selectable observations.
+Records follow the checked program's module/source order and use the exact full
+specification span. Text listing writes one full name per line to stdout.
+Repeated `--only` names form a union, deduplicated, intersected with exact owning
+`--in MODULE` (not a module-name prefix). Each requested `--only` must exist in
+the source inventory, even if another requested name exists. Unknown names or an
+empty intersection are exit-2 command mistakes with one stderr line and no stdout.
+Whole-program source errors precede name resolution. Test JSON delays its version
+until selection is resolved, so even `--json` command mistakes write no records.
+`fix` and test execution still return E1400, "this build cannot ... yet";
+`fix` rewrites nothing. Generated-input promises remain a separate runner seam.
+Successful anchor validation does not claim those observations passed.
 E1400 is an unavailable-stage code, not a language error.
 
 Source work runs synchronously through `mo_with_stack` with
@@ -1842,8 +1858,9 @@ either presentation. Fields are never truncated to manufacture a record.
 Errors or drops imply status 1; `errors` counts records actually written.
 Output failure exits 1 too; an output that refuses bytes cannot be promised
 a totals record. SIGPIPE is ignored so broken pipes take this failure path.
-Each complete record is written and flushed immediately. Version precedes
-loading; diagnostics follow the stages in one globally position-sorted
+Each complete record is written and flushed immediately. Check's version precedes
+loading; test defers it until selection succeeds (or source diagnostics exist),
+so a selection mistake cannot leave a version record. Diagnostics follow the stages in one globally position-sorted
 batch; totals come last. Text is likewise flushed per diagnostic.
 
 An unavailable span (`file == UINT32_MAX`, or no retained source) keeps

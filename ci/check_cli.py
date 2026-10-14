@@ -39,8 +39,37 @@ def records(result, command):
     assert items[0] == {"record": "version", "format": "1.0", "mo": "0.0.0", "command": command}
     assert items[-1]["record"] == "totals"
     assert items[-1]["status"] == result.returncode
-    assert items[-1]["errors"] == len(items) - 2
+    assert items[-1]["errors"] == sum(item["record"] == "diagnostic" for item in items)
     return items
+
+
+def observations(binary):
+    with tempfile.TemporaryDirectory(prefix="mo-observations-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        path.write_text('module Main\nseed = abort()\nfn abort() : Int\n'
+                        'stop "initialization ran"\nend\ntest "not run"\n'
+                        'assert false\nend\nfn main()\nstop "main ran"\nend\n')
+        args = ["test", "--list", "--max-stack", "1", "--max-depth", "1",
+                "--max-heap", "1", "--calls", "1", "--seconds", "1", str(path)]
+        text = run(binary, args, 0)
+        assert text.stdout == b"Main.test.1\n" and not text.stderr
+        items = records(run(binary, [*args, "--json"], 0), "test")
+        assert len(items) == 3 and items[1] == {
+            "record": "test", "name": "Main.test.1", "kind": "test",
+            "span": {"file": str(path), "start": 74, "end": 105, "line": 6,
+                     "column": 1, "end_line": 8, "end_column": 4}}
+        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                             "passed": 0, "failed": 0, "stopped": 0, "status": 0}
+        for selectors in (["--only", "Main.test.1", "--only", "Main.test.1", "--in", "Main"],
+                          ["--only", "Main.test.1"]):
+            result = run(binary, ["test", "--list", *selectors, str(path)], 0)
+            assert result.stdout == b"Main.test.1\n" and not result.stderr
+        for selectors in (["--only", "Main.test"], ["--only", "Main.test.10"],
+                          ["--in", "Mai"], ["--in", "Main.Child"],
+                          ["--only", "Main.test.1", "--only", "Typo.test.1"]):
+            result = run(binary, ["test", "--list", "--json", *selectors, str(path)], 2)
+            assert not result.stdout and result.stderr.count(b"\n") == 1
+    print(f"{binary}: source inventory, exact selections and list nonexecution passed")
 
 
 def small_stack():
@@ -496,6 +525,7 @@ def check(binary):
     anchors(binary)
     constants(binary)
     filenames(binary)
+    observations(binary)
     items = records(run(faults, ["--json"], 1), "check")
     assert items[1]["code"] == "E1401" and items[-1]["dropped"] == 0
     assert items[1]["primary"]["file"] is None and items[1]["section"] is None
@@ -543,13 +573,12 @@ def check(binary):
     else:
         result = run(binary, ["guide"], 1)
         assert not result.stdout and b"--reference" in result.stderr
-    for command in ("test", "fix"):
+    for command in ("fix",):
         result = run(binary, [command, good], 1)
         assert not result.stdout and b"this build cannot" in result.stderr
         assert result.stderr.count(b"<unavailable>") == 1
-    items = records(run(binary, ["test", "--json", "--list", "--only", "No.match", good], 1), "test")
-    assert items[1]["code"] == "E1400" and items[1]["reason"] is None
-    assert all(items[-1][k] == 0 for k in ("passed", "failed", "stopped"))
+    result = run(binary, ["test", "--json", "--list", "--only", "No.match", good], 2)
+    assert not result.stdout and result.stderr.count(b"\n") == 1
 
     def mistake(args, message=None):
         r = run(binary, args, 2)
@@ -571,7 +600,7 @@ def check(binary):
             if command not in allowed:
                 mistake(args, f'flag is not accepted by this command: "{flag}"')
             else:
-                run(binary, args, 1 if command == "test" else 0)
+                run(binary, args, 2 if command == "test" else 0)
                 if flag != "--only":
                     mistake([command, flag, *value, flag, *value, *([] if command == "guide" else [good])])
         if value:
@@ -589,9 +618,9 @@ def check(binary):
     for flag in ("--max-stack", "--max-heap"):
         mistake(["test", flag, "18014398509481984KiB", good])
         for value in ("1", "1B", "1KiB", "1MiB", "1GiB", "18446744073709551615"):
-            run(binary, ["test", flag, value, good], 1)
+            run(binary, ["test", flag, value, good], 2)
     run(binary, ["run", good, "--bad", ""], 0)
-    run(binary, ["test", "--only", "a", "--only", "b", "--in", "Main", good], 1)
+    run(binary, ["test", "--only", "a", "--only", "b", "--in", "Main", good], 2)
     run(binary, ["format", good, good], 0)
     run(binary, ["fix", good, good], 1)
     for version in ("--version", "-V"):
@@ -609,10 +638,10 @@ def check(binary):
     run(binary, ["run", good, *("x" * 4096 for _ in range(16))], 0)
     for command in ("format", "fix"):
         run(binary, [command, *([good] * 4096)], 0 if command == "format" else 1)
-    run(binary, ["test", *(["--only", "x"] * 128), good], 1)
+    run(binary, ["test", *(["--only", "x"] * 128), good], 2)
     mistake(["test", *(["--only", "x"] * 129), good])
     mistake(["test", "--only", "x" * 4097, good])
-    run(binary, ["test", *(["--only", "x" * 4096] * 15), good], 1)
+    run(binary, ["test", *(["--only", "x" * 4096] * 15), good], 2)
     mistake(["test", *(["--only", "x" * 4096] * 16), good])
     # Unavailable locations, invalid source bytes, invalid POSIX path bytes,
     # and the -- delimiter are exercised against real files, not mocks.
