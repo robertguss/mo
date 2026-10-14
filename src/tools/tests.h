@@ -4,6 +4,7 @@
 
 #include "check/check.h"
 #include "tools/tools.h"
+#include "vm/vm.h"
 
 struct mo_observation {
     const char *name;
@@ -25,5 +26,27 @@ MO_MUST_USE struct mo_test_selection *mo_select_tests(struct mo_arena *arena,
 MO_MUST_USE const char *mo_observation_kind(enum mo_checked_spec_kind kind);
 MO_MUST_USE bool mo_write_test(FILE *output, bool json, const struct mo_sources *sources,
                                const struct mo_observation *observation);
+
+/* All result data is borrowed until the complete record is flushed. */
+struct mo_test_result {
+    const struct mo_observation *observation;
+    const struct mo_bytecode *file;
+    struct mo_process *process;
+    const struct mo_defect *defect;
+    enum mo_outcome outcome;
+    uint64_t microseconds;
+    struct mo_span line; /* original enclosing assert on test failure */
+};
+/* One complete bounded record, or false with the buffer empty. Never truncates
+ * a field to manufacture a record; all process views remain borrowed. */
+MO_MUST_USE bool mo_render_test_result(const struct mo_sources *sources,
+                                       const struct mo_test_result *result, bool json,
+                                       struct mo_buffer *out);
+MO_MUST_USE bool mo_write_test_result(FILE *output, bool json, const struct mo_sources *sources,
+                                      const struct mo_test_result *result);
+/* Selection has no promises (preflight), and is nonempty. Never enters main. */
+void mo_test_program(const struct mo_cli *cli, const struct mo_test_selection *selection,
+                     const struct mo_buffer *wire, const struct mo_sources *sources, FILE *output,
+                     struct mo_diags *diags, struct mo_test_totals *totals);
 
 #endif

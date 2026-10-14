@@ -333,6 +333,12 @@ static inline struct mo_limits mo_limits_default(void) {
  * This compiler work bound never limits the user's running main. */
 #define MO_CLI_ANCHOR_INSTRUCTIONS (16 << 20)
 
+/* Observation inventory/selection and image binding, not Mo execution limits.
+ * Result records use MO_CLI_DIAGNOSTIC_SIZE and never truncate fields. */
+#define MO_CLI_TEST_SIZE (64 << 20)
+#define MO_CLI_TEST_WORK (64 << 20)
+#define MO_CLI_TEST_VARIABLES 4096
+
 /* Promise input generation, not limits on program results. The caller can
  * choose smaller budgets. Refusal leaves the sequence unchanged; tools may
  * skip an oversized candidate or retry it with more heap. */

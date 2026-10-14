@@ -69,6 +69,110 @@ def observations(binary):
                           ["--only", "Main.test.1", "--only", "Typo.test.1"]):
             result = run(binary, ["test", "--list", "--json", *selectors, str(path)], 2)
             assert not result.stdout and result.stderr.count(b"\n") == 1
+        initialized = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        assert initialized[1]["code"] == "E1406"
+        assert "initialization ran" in initialized[1]["primary"]["label"]
+        assert all(initialized[-1][key] == 0 for key in ("passed", "failed", "stopped"))
+
+        source = ('module Main\nbase = 13\nfn plus(n: Int) : Int\nexamples\n'
+                  'plus(3) == 16\nend\nexamples\nplus(8) == 99\nend\nn + base\nend\n'
+                  'test "second assert"\nassert true\n'
+                  'assert "λ\\u{0}right 2:X,\\n" == "日本"\nend\n'
+                  'test "after failure"\nassert base == 13\nend\n'
+                  'fn main()\nstop "main ran"\nend\n')
+        path.write_text(source)
+        items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        expected = [("Main.plus.example.1", "example", "passed"),
+                    ("Main.plus.example.2", "example", "failed"),
+                    ("Main.test.1", "test", "failed"), ("Main.test.2", "test", "passed")]
+        assert [(r["name"], r["kind"], r["outcome"]) for r in items[1:-1]] == expected
+        assert all(type(r["microseconds"]) is int and r["microseconds"] >= 0 for r in items[1:-1])
+        assert items[2]["left"] == "21" and items[2]["right"] == "99"
+        assert items[3]["left"] == "λ\0right 2:X,\n" and items[3]["right"] == "日本"
+        assert items[3]["line"] == {"file": str(path), "start": 144, "end": 184,
+                                    "line": 14, "column": 1, "end_line": 14, "end_column": 36}
+        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                             "passed": 2, "failed": 2, "stopped": 0, "status": 1}
+        text = run(binary, ["test", str(path)], 1)
+        assert not text.stderr and text.stdout.endswith(b"2 passed, 2 failed, 0 stopped\n")
+        assert b"this example was false" in text.stdout and b"this assertion was false" in text.stdout
+        assert "λ\\x00right 2:X,\\x0a".encode() in text.stdout and b"main ran" not in text.stdout
+        selected = records(run(binary, ["test", "--json", "--only", "Main.test.2",
+                                        "--only", "Main.plus.example.1", "--only", "Main.test.2",
+                                        "--in", "Main", str(path)], 0), "test")
+        assert [r["name"] for r in selected[1:-1]] == ["Main.plus.example.1", "Main.test.2"]
+        assert selected[-1]["passed"] == 2 and selected[-1]["failed"] == selected[-1]["stopped"] == 0
+
+        # A generic promise with no ordinary instantiation must not disappear
+        # from either listing or unsupported-selection preflight.
+        path.write_text('module Main\nfn keep(value: T) : T where T: Equal\n'
+                        'promise "keeps input"\nresult == value\n'
+                        'allows value: 3, result: 3\nforbids value: 3, result: 4\nend\n'
+                        'value\nend\ntest "selected control"\nassert true\nend\n'
+                        'fn main()\nstop "main ran"\nend\n')
+        listed = records(run(binary, ["test", "--json", "--list", str(path)], 0), "test")
+        assert [r["name"] for r in listed[1:-1]] == ["Main.keep.promise.1", "Main.test.1"]
+        refused = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        assert len(refused) == 3 and refused[1]["code"] == "E1400"
+        assert refused[1]["primary"]["label"] == "Main.keep.promise.1"
+        assert all(refused[-1][key] == 0 for key in ("passed", "failed", "stopped"))
+        accepted = records(run(binary, ["test", "--json", "--only", "Main.test.1", str(path)], 0), "test")
+        assert len(accepted) == 3 and accepted[1]["outcome"] == "passed"
+        # The same promise selection must refuse before even an unused stopping
+        # initializer, and before an ordinary test that occurs first in source.
+        source = path.read_text().replace('test "selected control"\nassert true\nend\n', '')
+        path.write_text(source.replace('module Main\n', 'module Main\nseed = crash()\n'
+                                       'fn crash() : Int\nstop "must not initialize"\nend\n'
+                                       'test "selected control"\nassert true\nend\n'))
+        refused = records(run(binary, ["test", "--json", "--only", "Main.test.1",
+                                       "--only", "Main.keep.promise.1", str(path)], 1), "test")
+        assert len(refused) == 3 and refused[1]["code"] == "E1400"
+        assert all(refused[-1][key] == 0 for key in ("passed", "failed", "stopped"))
+
+        source = ('module Main\ntest "Bool, not equality"\nassert (\n  false\n)\nend\n'
+                  'test "after Bool failure"\nassert true\nend\nfn main()\nend\n')
+        path.write_text(source)
+        items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        assert items[1]["outcome"] == "failed" and items[2]["outcome"] == "passed"
+        assert "left" not in items[1] and "right" not in items[1]
+        start = source.index("assert (")
+        assert items[1]["line"] == {"file": str(path), "start": start,
+                                    "end": start + len("assert (\n  false\n)"),
+                                    "line": 3, "column": 1, "end_line": 5, "end_column": 2}
+
+        # Structural failure printing must not call the source Text customizer.
+        path.write_text('module Main\nstruct Box\nvalue: Int\nend\n'
+                        'fn to_text(_value: Box) : Text\nstop "renderer called"\nend\n'
+                        'fn same(value: Box) : Box\nexamples\nsame(Box(value: 7)) == Box(value: 9)\nend\n'
+                        'value\nend\nfn main()\nend\n')
+        items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        assert items[1]["outcome"] == "failed"
+        assert (items[1]["left"], items[1]["right"]) == ("Box(value: 7)", "Box(value: 9)")
+        assert items[-1]["failed"] == 1 and items[-1]["stopped"] == 0
+
+        # Record budgets reject a whole record, never truncated values or a
+        # fabricated passing observation. Counts retain the attempted failure.
+        for count, fits in ((17, True), (18, False)):
+            path.write_text('module Main\ntest "large structural side"\nvar value = "\\u{1}"\n'
+                            f'var n = 0\nwhile n < {count}\nvalue = "#{{value}}#{{value}}"\n'
+                            'n = n + 1\nend\nassert value == ""\nend\n'
+                            'test "after output"\nassert true\nend\nfn main()\nend\n')
+            items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+            if fits:
+                assert items[1]["left"] == "\1" * (1 << count) and items[1]["right"] == ""
+                assert items[-1]["passed"] == 1 and items[-1]["errors"] == 0
+            else:
+                assert len(items) == 3 and items[1]["code"] == "E1404"
+                assert items[-1]["passed"] == 0 and items[-1]["errors"] == 1
+            assert items[-1]["failed"] == 1 and items[-1]["stopped"] == 0
+
+        # Exact owning module, not a prefix of a nested module's name.
+        nested = pathlib.Path(directory) / "main" / "child.mo"
+        nested.parent.mkdir()
+        nested.write_text('module Main.Child\ntest "nested module"\nassert true\nend\nfn main()\nend\n')
+        assert run(binary, ["test", "--list", "--in", "Main.Child", str(nested)], 0).stdout == b"Main.Child.test.1\n"
+        result = run(binary, ["test", "--list", "--json", "--in", "Main", str(nested)], 2)
+        assert not result.stdout and result.stderr.count(b"\n") == 1
     print(f"{binary}: source inventory, exact selections and list nonexecution passed")
 
 

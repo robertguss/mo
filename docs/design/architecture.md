@@ -1483,8 +1483,8 @@ or flag.
 
 `--json` and `--emit` cannot be combined. Test selections may combine:
 `--only`'s names are intersected with `--in`'s module. `--list` accepts
-budgets but will not consume them. Matching is deferred until the test stage
-exists; the current stub never claims that a selection matched. Limits are
+budgets but will not consume them. Source-inventory matching precedes execution
+and JSON publication, as described below. Limits are
 positive ASCII decimal integers without signs, spaces or fractions; leading
 zeros are accepted. Byte sizes accept bare bytes or the exact suffixes `B`,
 `KiB`, `MiB`, `GiB` (powers of 1024); counts and seconds accept no suffix,
@@ -1599,10 +1599,36 @@ the source inventory, even if another requested name exists. Unknown names or an
 empty intersection are exit-2 command mistakes with one stderr line and no stdout.
 Whole-program source errors precede name resolution. Test JSON delays its version
 until selection is resolved, so even `--json` command mistakes write no records.
-`fix` and test execution still return E1400, "this build cannot ... yet";
-`fix` rewrites nothing. Generated-input promises remain a separate runner seam.
+`fix` still returns E1400 and rewrites nothing. Generated-input promises remain
+a separate runner seam: a selection containing any promise refuses E1400 before
+initialization or any observation, rather than reporting a partial run as passed.
 Successful anchor validation does not claim those observations passed.
 E1400 is an unavailable-stage code, not a language error.
+
+**Ordinary observations.** Selected zero-argument examples and tests compile
+through the certified Core/bytecode pipeline. Tools verify all selected names
+exist with the right kind before initialization, initialize one shared image,
+and validate its anchors as for `check`. E1406 reports initialization stopping:
+the whole file fails, its defect is retained in the diagnostic, and no
+observation is counted. Each observation then runs in a fresh process under
+the accepted stack/depth/heap limits, never by calling the entry wrapper/main.
+Failure or stopping ends that process, not the remaining selection. Returning
+Unit passes; `fail` fails; a runtime bug stops. Structural reporting finishes
+before freeing the process. No compiler anchor instruction ceiling limits an
+ordinary observation. `--calls` and `--seconds` remain promise budgets; this
+slice accepts but does not consume them for ordinary examples/tests.
+Text results and their final passed/failed/stopped counts go to stdout;
+source/tool diagnostics go to stderr. JSON uses only stdout. Per-observation
+microseconds use POSIX's monotonic clock, covering fresh process creation and
+execution but excluding image initialization, anchors and report rendering.
+Counts include attempted observations even if reporting subsequently fails;
+such a failure diagnoses E1404 and stops the runner with status 1.
+Failed equality details are decoded by their canonical byte counts, preserving
+embedded NUL, newlines and delimiter-looking text. Failed tests report the exact
+enclosing source `assert`, not a reconstructed condition or the last executed
+leaf's span. Failed observations do not become source diagnostics: `errors`
+stays zero unless a compiler/tool error was found, while `failed`/`stopped`
+independently force status 1. Selected unsupported promises are never omitted.
 
 Source work runs synchronously through `mo_with_stack` with
 `MO_SOURCE_STACK_SIZE`, covering load, parse, check, lower, Core check, codegen

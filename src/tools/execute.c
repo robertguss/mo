@@ -43,6 +43,7 @@ struct pipeline_work {
     FILE *output, *errors;
     const char *mistake;
     bool version;
+    struct mo_test_totals totals;
     int status;
 };
 
@@ -70,8 +71,9 @@ static void execute_pipeline(void *argument) {
     if (program == NULL || mo_diags_any(diags))
         return;
     /* Test observations are separate from the compiler's anchor checks. */
+    struct mo_test_selection *selection = NULL;
     if (cli->command == MO_COMMAND_TEST) {
-        struct mo_test_selection *selection = mo_select_tests(arena, program, cli, diags);
+        selection = mo_select_tests(arena, program, cli, diags);
         if (selection == NULL)
             return;
         if (selection->mistake != NULL) {
@@ -94,9 +96,19 @@ static void execute_pipeline(void *argument) {
                 }
             return;
         }
-        tool_error(diags, MO_CODE_TOOL_UNAVAILABLE,
-                   "this build cannot execute specification code yet", NULL);
-        return;
+        /* Refuse the entire selection before starting it, never a partial green
+         * run that quietly omitted selected promises (including unused templates). */
+        for (uint32_t i = 0; i < selection->count; i++)
+            if (selection->items[i].source->kind == MO_SPEC_PROMISE) {
+                struct mo_diag diag = {.code = MO_CODE_TOOL_UNAVAILABLE,
+                                       .message =
+                                           "this build cannot execute generated-input promises yet",
+                                       .primary = {selection->items[i].source->syntax->span,
+                                                   selection->items[i].name}};
+                bool added = mo_diags_add(diags, &diag);
+                (void)added;
+                return;
+            }
     }
     bool anchors = false;
     for (uint32_t i = 0; i < program->spec_count; i++)
@@ -113,9 +125,14 @@ static void execute_pipeline(void *argument) {
     /* Plain check validates lowering too, but never executes the user's main. */
     if (cli->command == MO_COMMAND_CHECK && cli->emit == MO_EMIT_NONE && !anchors)
         goto done;
-    if (anchors || cli->command == MO_COMMAND_RUN || cli->emit == MO_EMIT_BYTECODE) {
+    if (anchors || cli->command == MO_COMMAND_RUN || cli->command == MO_COMMAND_TEST ||
+        cli->emit == MO_EMIT_BYTECODE) {
         if (!mo_compile(core, &wire, diags))
             goto done;
+    }
+    if (cli->command == MO_COMMAND_TEST) {
+        mo_test_program(cli, selection, &wire, sources, work->output, diags, &work->totals);
+        goto done;
     }
     if (anchors || cli->command == MO_COMMAND_RUN) {
         work->status = mo_run_program(cli, core, &wire, sources, work->output, work->errors, diags);
@@ -212,8 +229,8 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
     } else if (cli->json && !work.version && !mo_write_version(output, cli->command))
         status = 1;
     else
-        status =
-            mo_write_diagnostics(output, errors, cli->json, cli->command, &sources, &diags, NULL);
+        status = mo_write_diagnostics(output, errors, cli->json, cli->command, &sources, &diags,
+                                      &work.totals);
     mo_arena_free(&arena);
     mo_sources_free(&sources);
     mo_diags_free(&diags);

@@ -253,7 +253,9 @@
     /* A compiled artifact cannot be loaded or emitted within tool output resources. */            \
     X(1404, TOOL_PIPELINE, NULL)                                                                   \
     /* An anchor's allows/forbids expectation fails, or its execution cannot complete. */          \
-    X(1405, TOOL_ANCHOR, NULL)
+    X(1405, TOOL_ANCHOR, NULL)                                                                     \
+    /* Image initialization stops before test observations can run. */                             \
+    X(1406, TOOL_TEST_INITIALIZATION, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */
 enum mo_code {
