@@ -474,11 +474,16 @@ values rewrite those owners or introduce another proof carrier. The existing
 proof cache shares structurally equal actual types; a proof's type pointer
 need not equal the use's actual-type pointer. Scoped parameter keys remain
 canonical; concrete-type pointer equality is not the substitution key.
-Written foreign generic nominal annotations, generic construction/projection,
-foreign constant reads and direct initializer function references remain
-explicit E1103 routes. Partial signature/inference APIs and the already
-supported implicit library routes retain their previous behavior. No new
-cross-module constant ordering is introduced.
+Imported generic nominal annotations, construction, field projection and
+choice patterns use the declaring type's canonical identity. Substitutions
+retain explicit parameter declaration order, not alphabetical order; choice
+constructors use their owning choice's keys, not new case-owned parameters.
+Named constructor operands keep written evaluation order and declaration-order
+field indices. Exposure still decides whether fields/cases are visible.
+Foreign constant reads and direct initializer function references remain
+explicit E1103 routes. Partial signature/inference APIs, regularity checks and
+the already supported implicit library routes retain their previous behavior.
+No new cross-module constant ordering or lowering carrier is introduced.
 
 Interface work is bounded by source declarations and imported names, not
 pairwise name scans. Each choice's case indices are computed once in its
