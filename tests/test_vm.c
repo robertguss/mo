@@ -1426,6 +1426,54 @@ static MO_MUST_USE struct mo_image *assemble(const char *source) {
     return image;
 }
 
+struct call_budget {
+    uint64_t remaining, polls;
+};
+
+static MO_MUST_USE bool keep_running(void *context) {
+    struct call_budget *budget = context;
+    MO_ASSERT(budget->polls != UINT64_MAX);
+    budget->polls++;
+    if (budget->remaining == 0)
+        return false;
+    budget->remaining--;
+    return true;
+}
+
+static void test_controlled_entry(void) {
+    struct mo_image *image =
+        assemble("bytecode 0.2 shorthand\nmodule M exposes [M.accept]\n"
+                 "function M.accept(x: Text owned, y: Text borrowed) : Text function in M\n"
+                 " registers [r2: Text]\n drop r0\n dup r2, r1\n ret r2\nend\n");
+    if (image == NULL)
+        return;
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect = {.reason = "untouched", .limit = 987};
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    struct mo_process *p = mo_process_new(image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_heap *heap = mo_process_heap(p);
+    struct mo_cell arguments[2];
+    MO_ASSERT(mo_value_text(heap, "owned", 5, &arguments[0]) &&
+              mo_value_text(heap, "borrowed", 8, &arguments[1]));
+    const struct mo_cell sentinel = mo_cell_int(981);
+    struct mo_cell result = sentinel;
+    uint8_t original_defect[sizeof defect];
+    memcpy(original_defect, &defect, sizeof defect);
+    struct call_budget budget = {0};
+    enum mo_controlled_outcome outcome =
+        mo_call_controlled(p, 0, arguments, 2, keep_running, &budget, &result, &defect);
+    CHECK(outcome == MO_CONTROL_CANCELLED && budget.polls == 1);
+    CHECK(memcmp(result.bytes, sentinel.bytes, sizeof result.bytes) == 0 &&
+          memcmp(&defect, original_defect, sizeof defect) == 0);
+    CHECK(mo_process_stack_used(p) == 0 && mo_heap_objects(heap) == 1 &&
+          mo_cell_get_ref(arguments[1])->count == 1);
+    if (outcome == MO_CONTROL_RETURNED)
+        mo_value_drop(heap, mo_image_bytecode(image)->functions[0].result_type, result);
+    mo_process_free(p);
+    mo_image_free(image);
+}
+
 struct variable_capture {
     struct mo_defect_variable values[8];
     uint32_t count;
@@ -2550,6 +2598,7 @@ int main(int argc, char **argv) {
     test_defects();
     test_borrowing();
     test_scratch_and_fuel();
+    test_controlled_entry();
     test_stopped_variables();
     test_variable_frames();
     test_variable_reuse();

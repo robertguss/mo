@@ -57,6 +57,28 @@ MO_MUST_USE size_t mo_process_stack_used(const struct mo_process *process);
 MO_MUST_USE enum mo_outcome mo_call(struct mo_process *process, uint32_t function,
                                     const struct mo_cell *arguments, uint32_t argument_count,
                                     struct mo_cell *result_out, struct mo_defect *defect_out);
+enum mo_controlled_outcome {
+    MO_CONTROL_RETURNED,
+    MO_CONTROL_STOPPED,
+    MO_CONTROL_FAILED,
+    MO_CONTROL_CANCELLED
+};
+/* mo_call's preconditions and ownership apply. keep_running is required,
+ * bounded and non-reentrant; it and context are borrowed only during this
+ * synchronous call. Poll after checking preconditions, before frame entry
+ * and before every instruction, including nested/tail calls and RET.
+ * False cancels before that instruction or harness exhaustion: CANCELLED is
+ * terminal, writes neither output and fabricates no defect. Owned parameters
+ * transfer even before frame entry; borrowed values retain their ownership.
+ * Free the cancelled process normally. RETURNED alone writes result_out;
+ * STOPPED/FAILED write defect_out and preserve the genuine defect.
+ * The callback must not mutate/free/resume the process, heap or values.
+ * The VM has no clock. Native operations, allocation/drop and blocking I/O
+ * do not poll and may overshoot; initialization is not controlled. */
+MO_MUST_USE enum mo_controlled_outcome
+mo_call_controlled(struct mo_process *process, uint32_t function, const struct mo_cell *arguments,
+                   uint32_t argument_count, bool (*keep_running)(void *context), void *context,
+                   struct mo_cell *result_out, struct mo_defect *defect_out);
 struct mo_main_capabilities {
     const struct mo_cell *values;
     uint32_t count;

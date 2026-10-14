@@ -152,22 +152,37 @@ void mo_process_instruction_limit(struct mo_process *process, uint64_t instructi
     process->instructions = instructions;
 }
 
-enum mo_outcome mo_call(struct mo_process *process, uint32_t function,
-                        const struct mo_cell *arguments, uint32_t argument_count,
-                        struct mo_cell *result_out, struct mo_defect *defect_out) {
+/* No frame owns these transferred arguments yet. */
+static void drop_arguments(struct mo_process *process, const struct mo_bytecode_function *fn,
+                           const struct mo_cell *arguments) {
+    for (uint32_t i = 0; i < fn->parameter_count; i++)
+        if (fn->parameters[i].ownership == MO_PARAMETER_OWNED)
+            mo_value_drop(process->heap, fn->parameters[i].type, arguments[i]);
+}
+
+static MO_MUST_USE enum mo_controlled_outcome
+call(struct mo_process *process, uint32_t function, const struct mo_cell *arguments,
+     uint32_t argument_count, bool (*keep_running)(void *context), void *context,
+     struct mo_cell *result_out, struct mo_defect *defect_out) {
     MO_ASSERT(process != NULL && !process->terminal && process->depth == 0 &&
               function < process->file->function_count && result_out != NULL && defect_out != NULL);
     const struct mo_bytecode_function *fn = &process->file->functions[function];
     MO_ASSERT(fn->kind != MO_FUNCTION_CLOSURE &&
               (fn->kind != MO_FUNCTION_INIT || !process->owns_heap) &&
               argument_count == fn->parameter_count && (arguments != NULL || argument_count == 0));
+    MO_ASSERT(process->keep_running == NULL && process->control_context == NULL);
+    if (keep_running != NULL && !keep_running(context)) {
+        drop_arguments(process, fn, arguments);
+        process->terminal = true;
+        return MO_CONTROL_CANCELLED;
+    }
+    process->keep_running = keep_running;
+    process->control_context = context;
+    process->cancelled = false;
     const char *limit = mo_vm_reserve(process, mo_vm_frame_size(fn->register_count), 1);
     enum mo_outcome outcome;
     if (limit != NULL) {
-        for (uint32_t i = 0; i < argument_count; i++) {
-            if (fn->parameters[i].ownership == MO_PARAMETER_OWNED)
-                mo_value_drop(process->heap, fn->parameters[i].type, arguments[i]);
-        }
+        drop_arguments(process, fn, arguments);
         bool native = strcmp(limit, "native memory") == 0;
         outcome = mo_vm_stop(process, native ? "running out of memory" : "out of stack",
                              native ? NULL : limit, false, mo_cell_unit(), MO_STOPPED);
@@ -175,9 +190,49 @@ enum mo_outcome mo_call(struct mo_process *process, uint32_t function,
         mo_vm_enter(process, function, arguments, mo_cell_unit(), false, false, 0, 0);
         outcome = mo_vm_execute(process, result_out);
     }
+    process->keep_running = NULL;
+    process->control_context = NULL;
+    if (process->cancelled) {
+        MO_ASSERT(outcome == MO_STOPPED && process->terminal);
+        return MO_CONTROL_CANCELLED;
+    }
     if (outcome != MO_RETURNED)
         *defect_out = process->defect;
-    return outcome;
+    switch (outcome) {
+    case MO_RETURNED:
+        return MO_CONTROL_RETURNED;
+    case MO_STOPPED:
+        return MO_CONTROL_STOPPED;
+    case MO_FAILED:
+        return MO_CONTROL_FAILED;
+    }
+    MO_UNREACHABLE();
+}
+
+enum mo_outcome mo_call(struct mo_process *process, uint32_t function,
+                        const struct mo_cell *arguments, uint32_t argument_count,
+                        struct mo_cell *result_out, struct mo_defect *defect_out) {
+    switch (
+        call(process, function, arguments, argument_count, NULL, NULL, result_out, defect_out)) {
+    case MO_CONTROL_RETURNED:
+        return MO_RETURNED;
+    case MO_CONTROL_STOPPED:
+        return MO_STOPPED;
+    case MO_CONTROL_FAILED:
+        return MO_FAILED;
+    case MO_CONTROL_CANCELLED:
+        MO_UNREACHABLE();
+    }
+    MO_UNREACHABLE();
+}
+
+enum mo_controlled_outcome
+mo_call_controlled(struct mo_process *process, uint32_t function, const struct mo_cell *arguments,
+                   uint32_t argument_count, bool (*keep_running)(void *context), void *context,
+                   struct mo_cell *result_out, struct mo_defect *defect_out) {
+    MO_ASSERT(keep_running != NULL);
+    return call(process, function, arguments, argument_count, keep_running, context, result_out,
+                defect_out);
 }
 
 enum mo_outcome mo_call_main(struct mo_process *process, uint32_t function,
