@@ -937,7 +937,15 @@ the same `.ref.ROW` lambda adapter as source functions and use the same call
 lowering, so taking a function value cannot bypass a native staging refusal.
 An ordinary namespace call retains that callee row in the checked graph;
 lowering skips the pure reference before passing its explicit arguments to the
-primitive. A native receiver dot call has no callee row to skip.
+primitive. The argument continuation retains that skip for every argument,
+including mutable-read snapshots. A native receiver dot call has no callee row
+to skip. `Int.abs`, `Int.min` and `Int.max` map directly to Core's existing Int
+primitives for namespace/receiver calls and first-class values, including constant
+aliases. The three-entry dispatch charges the lowering work budget. Arguments
+retain written evaluation order; `abs` of Int's minimum stops with Core's Int
+overflow, not a lowering refusal. Native adapters keep source spans/closure names
+and the existing creation-prefix restrictions. Other inventoried numeric natives
+remain E1150 unless already supported by another lowering route.
 Function instances retain requirement
 proofs keyed by the callee's scoped parameter and ability, together with the
 supplying instance's type/proof environment. PARAMETER replacement follows those

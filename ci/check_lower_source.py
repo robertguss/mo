@@ -164,6 +164,29 @@ CASES = {
                               "fn main() : Int\nif answer: 43 else: 1\nend", 43),
     "constant_chain": ("\n".join(f"c{i} = c{i + 1} + 1" for i in range(64)) +
                        "\nc64 = 3\nfn main() : Int\nc0\nend", 67),
+    "native_abs_constant": ("answer = handler(-7)\nhandler = Int.abs\n"
+                            "fn main() : Int\nanswer + 30\nend", 37),
+    "native_abs_routes": ("fn apply(f: fn(Int) : Int, n: Int) : Int\nf(n)\nend\n"
+                          "fn main() : Int\nn = -17\nhandler = Int.abs\n"
+                          "if Int.abs(n) == 17 and n.abs == 17 and handler(-17) == 17 "
+                          "and handler(0) == 0 and handler(19) == 19 "
+                          "and apply(Int.abs, -23) == 23: 41 else: 1\nend", 41),
+    "native_abs_boundary": ("fn main() : Int\nhandler = Int.abs\n"
+                            "if handler(-9223372036854775807) == 9223372036854775807 "
+                            "and Int.abs(9223372036854775807) == 9223372036854775807: 47 else: 1\nend", 47),
+    "native_min_max_routes": ("low = Int.min\nhigh = Int.max\n"
+                              "fn apply(f: fn(Int, Int) : Int, a: Int, b: Int) : Int\nf(a, b)\nend\n"
+                              "fn main() : Int\na = -11\n"
+                              "if Int.min(7, a) == -11 and a.min(7) == -11 "
+                              "and low(7, a) == -11 and low(a, 7) == -11 "
+                              "and high(7, a) == 7 and a.max(7) == 7 and Int.max(a, 7) == 7 "
+                              "and apply(Int.max, -8, -19) == -8 "
+                              "and apply(Int.min, 0, -9) == -9: 53 else: 1\nend", 53),
+    "native_min_max_boundary": ("fn main() : Int\na = -9223372036854775808\nb = 9223372036854775807\n"
+                                "if Int.max(a, b) == b and Int.min(b, a) == a "
+                                "and Int.min(0, a) == a and Int.max(b, 0) == b: 59 else: 1\nend", 59),
+    "native_alias_chain": ("handler = Int.abs\nalias = handler\nanswer = alias(-5) + alias(19) + handler(0)\n"
+                          "fn main() : Int\nanswer + 13\nend", 37),
 }
 
 SPEC_CASES = {
@@ -304,6 +327,32 @@ SPEC_CASES = {
                              "fn main() : Int\npending\nend", {
                                  None: ["stopped", "ready first"],
                              }),
+    "native_abs_overflow": ("handler = Int.abs\n"
+                            "test \"alias overflow\"\nassert handler(-9223372036854775808) == 0\nend\n"
+                            "test \"receiver overflow\"\nn = -9223372036854775808\nassert n.abs == 0\nend\n"
+                            "fn main() : Int\nInt.abs(-9223372036854775808)\nend", {
+                                None: ["stopped", "overflow: Int"],
+                                "Main.test.1": ["stopped", "overflow: Int"],
+                                "Main.test.2": ["stopped", "overflow: Int"],
+                            }),
+    "native_abs_initializer_overflow": ("unused = handler(-9223372036854775808)\nhandler = Int.abs\n"
+                                        "test \"not reached\"\nassert false\nend\n"
+                                        "fn main() : Int\n37\nend", {
+                                            None: ["stopped", "overflow: Int"],
+                                            "Main.test.1": ["stopped", "overflow: Int"],
+                                        }),
+    "native_argument_order": ("low = Int.min\nhigh = Int.max\n"
+                              "fn first() : Int\nstop \"first argument\"\nend\n"
+                              "fn second() : Int\nstop \"second argument\"\nend\n"
+                              "test \"alias min order\"\nassert low(first(), second()) == 0\nend\n"
+                              "test \"alias max order\"\nassert high(first(), second()) == 0\nend\n"
+                              "test \"receiver order\"\nassert first().max(second()) == 0\nend\n"
+                              "fn main() : Int\nInt.min(first(), second())\nend", {
+                                  None: ["stopped", "first argument"],
+                                  "Main.test.1": ["stopped", "first argument"],
+                                  "Main.test.2": ["stopped", "first argument"],
+                                  "Main.test.3": ["stopped", "first argument"],
+                              }),
 }
 
 REFUSALS = {
@@ -311,7 +360,7 @@ REFUSALS = {
     "deferred_alias": "answer = handler()\nhandler = first\nbase = 13\n"
                       "fn first() : Int\nbase\nend\nfn main() : Int\nanswer + 24\nend",
     "deferred_self_alias": "handler = first\nfn first() : Int\nhandler()\nend\nfn main() : Int\n17\nend",
-    "native_abs": "answer = handler(-7)\nhandler = Int.abs\nfn main() : Int\nanswer + 30\nend",
+    "native_pow": "answer = handler(2, 3)\nhandler = Int.pow\nfn main() : Int\nanswer + 30\nend",
 }
 
 for count in (4, 8, 16):

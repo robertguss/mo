@@ -1602,6 +1602,17 @@ Functions marked *prim* are primitives (`MoCore/Prim.lean`, typed by
 instantiated per type; *lowered* ones are a few lines of Core written in
 place; *not modeled* ones are not in this model yet.
 
+The C lowerer emits `prim (int (abs|min|max))` for the inventoried `Int.abs`,
+`Int.min` and `Int.max`, whether selected by a namespace call or receiver call.
+A first-class reference uses the existing typed lambda adapter with that same
+primitive body; a constant alias is an application of the stored function value.
+Namespace calls skip their pure callee row for every argument, not only the
+first; receiver calls start with the receiver. Both evaluate arguments once in
+written order. Int's minimum passed to `abs` raises the existing Int overflow.
+No new Core representation or producer dependency is introduced; adapters retain
+their source metadata and creation-prefix limits. This C subset does not imply
+that every library primitive in the model's table below is source-lowered yet.
+
 | Mo | In Core |
 | --- | --- |
 | `Int`: `+ - * / %`, unary `-`, `abs`, `min`, `max`, `pow`, `floor_div`, `floor_mod`, `checked_*`, `wrapping_*`, `saturating_*`, `to_decimal`, `to_float`, `to_big`, `to_char`, `to_byte`, `to_text`, `seconds` ... `days` | prim (`%int.*`) |

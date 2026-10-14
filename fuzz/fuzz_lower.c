@@ -16,7 +16,8 @@ static void source_specs(void *argument) {
     MO_ASSERT(mo_buffer_append_text(&text, "module Main\ncomputed = source + 1\nsource = "));
     MO_ASSERT(mo_buffer_append_uint(&text, input->size == 0 ? 0 : input->bytes[0]));
     MO_ASSERT(mo_buffer_append_text(
-        &text, "\nreader = fn() Some(try Some(1)) end\n"
+        &text, "\nmagnitude = Int.abs\nlow = Int.min\nhigh = Int.max\n"
+               "reader = fn() Some(try Some(1)) end\n"
                "fn pair(left: Z, right: A) : (Z, A) "
                "where Z: Number, Z: Equal, A: Equal\n"
                "promise \"scoped requirements\"\nresult.0 == left + left\nresult.1 == right\n"));
@@ -39,6 +40,9 @@ static void source_specs(void *argument) {
                                            "test \"late concrete use\"\n"
                                            "assert pair(3, false) == (6, false)\n"
                                            "assert computed == source + 1\n"
+                                           "assert magnitude(-source) == source\n"
+                                           "assert Int.min(-source, 7) == low(7, -source)\n"
+                                           "assert source.max(-7) == high(-7, source)\n"
                                            "assert (reader() or 9) == 1\nend\n"
                                            "fn main() : Int\n17\nend\n"));
     struct mo_arena frontend, output;
