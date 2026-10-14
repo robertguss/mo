@@ -411,6 +411,11 @@ REFUSALS = {
 # These are actual loader inputs, not synthetic symbol tables. Unequal values,
 # field layouts and case orders distinguish declaring owners from importers.
 MODULE_CASES = {
+    "import_constant_read": ({
+        "main.mo": "module Main\nuse Lib\nseed = 11\nanswer = Lib.seed * 7 + seed\n"
+                   "fn main() : Int\nanswer\nend\n",
+        "lib.mo": "module Lib\nexpose seed\nseed = 13\n",
+    }, {None: ["returned", "102"]}),
     "routes": ({
         "main.mo": "module Main\nuse Shapes{make, score}\nfn main() : Int\n"
                    "f = score\nf(make(3), 11) + Shapes.score(Shapes.make(5), 2)\nend\n",
