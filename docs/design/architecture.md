@@ -939,8 +939,9 @@ nominal results, opaque layouts and imported specs. The private import-use index
 is checker bookkeeping, not a lowering input. No import-specific resolver or
 dependency reordering is added. Certified imported generic function calls and
 values reuse the existing instance/proof machinery below, including captured,
-returned and higher-order references. Foreign generic nominal written
-annotations/construction/projection, constant reads and direct imported
+returned and higher-order references. Certified foreign generic nominal written
+annotations, construction, projection and choice patterns use those same
+declaring identities and layouts. Foreign constant reads and direct imported
 initializer references remain checker E1103; Maps and the other existing
 staged routes are unchanged.
 
@@ -954,7 +955,13 @@ Generic data instead has one canonical declaration per type list, owned by
 the defining module. Nongeneric data is retained even without an expression use.
 `Lib.make()` returning `Lib.Box(Int)` must return the same
 nominal type a requester-specialized function accepts; separate requester data
-names would make those values incompatible in Core. Anonymous names retain their
+names would make those values incompatible in Core. Data field substitution
+uses `source->declaration`'s record signature, or its first choice-case signature,
+with the declaring type's abstract keys in parameter declaration order. It does
+not borrow the importing function's A-Z keys or introduce case-owned parameters.
+The data owner remains `source->module`; all requester uses share each closed
+layout and its defining-module exposure, including opaque values passed through
+a third module. Importers acquire no data exports. Anonymous names retain their
 source ordinal as `.fn.N`; generated function-value adapters use `.ref.ROW`.
 
 Imported generic substitutions and type-only ability-use keys retain the

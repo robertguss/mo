@@ -14,8 +14,8 @@ static void source_specs(void *argument) {
     struct mo_buffer text;
     mo_buffer_init(&text, 4096);
     MO_ASSERT(mo_buffer_append_text(
-        &text,
-        "module Main\nuse Peer{Box, build, read, spread}\ncomputed = source + 1\nsource = "));
+        &text, "module Main\nuse Peer{Box, Pair, Choice, build, read, spread}\n"
+               "computed = source + 1\nsource = "));
     MO_ASSERT(mo_buffer_append_uint(&text, input->size == 0 ? 0 : input->bytes[0]));
     MO_ASSERT(mo_buffer_append_text(
         &text, "\nmagnitude = Int.abs\nlow = Int.min\nhigh = Int.max\n"
@@ -25,6 +25,8 @@ static void source_specs(void *argument) {
                "fn wrap(action: fn(Int) : Int) : fn(Int) : Int\n"
                "fn(value) action(value) end\nend\n"
                "fn snapshot(box: Box) : fn() : Int\nfn() read(box) end\nend\n"
+               "fn nominal(pair: Pair(Int, Bool), value: Choice(Int)) : Int\ncase value\n"
+               "Hit(n): if pair.second: pair.first + n else: n\nVacant: 0\nend\nend\n"
                "fn pair(left: Z, right: A) : (Z, A) "
                "where Z: Number, Z: Equal, A: Equal\n"
                "promise \"scoped requirements\"\nresult.0 == left + left\nresult.1 == right\n"));
@@ -59,6 +61,10 @@ static void source_specs(void *argument) {
                                            "assert Peer.choose(1.25, false) == 1.25\n"
                                            "assert spread(source, computed) == "
                                            "(source + source, computed + computed + computed)\n"
+                                           "assert nominal(Pair(second: true, first: source), "
+                                           "Hit(computed)) == source + computed\n"
+                                           "assert nominal(Pair(first: computed, second: false), "
+                                           "Vacant) == 0\n"
                                            "assert (reader() or 9) == 1\nend\n"
                                            "fn main() : Int\n17\nend\n"));
     struct mo_arena frontend, output;
@@ -72,7 +78,9 @@ static void source_specs(void *argument) {
     MO_ASSERT(mo_sources_add_bytes(&sources, "main.mo", text.bytes, text.length, &file, &error));
     struct mo_module_syntax *modules[2] = {mo_parse(&frontend, &sources, file, &diags), NULL};
     static const uint8_t peer[] =
-        "module Peer\nexpose Box(..), build, read, choose, spread\nstruct Box\nvalue: Int\nend\n"
+        "module Peer\nexpose Box(..), Pair(..), Choice(..), build, read, choose, spread\n"
+        "struct Box\nvalue: Int\nend\nstruct Pair(Z, A)\nfirst: Z\nsecond: A\nend\n"
+        "enum Choice(T)\nVacant\nHit(T)\nend\n"
         "fn build(value: Int) : Box\nBox(value: value)\nend\n"
         "fn read(box: Box) : Int\nbox.value\nend\n"
         "fn choose(value: Z, tag: A) : Z where Z: Number, A: Text\n"
