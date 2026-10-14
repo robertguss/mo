@@ -560,6 +560,48 @@ static void import_sources(void) {
     MO_ASSERT(unlink(path) == 0 && unlink(other) == 0 && rmdir(folder) == 0);
 }
 
+static void import_cap(void) {
+    char folder[] = "/tmp/mo-import-cap-XXXXXX", path[128], other[128];
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    int n = snprintf(path, sizeof(path), "%s/main.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(path));
+    n = snprintf(other, sizeof(other), "%s/shapes.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(other));
+    struct mo_buffer main, library, functions;
+    mo_buffer_init(&main, MO_LIMIT_FILE_SIZE);
+    mo_buffer_init(&library, MO_LIMIT_FILE_SIZE);
+    mo_buffer_init(&functions, MO_LIMIT_FILE_SIZE);
+    MO_ASSERT(mo_buffer_append_text(&main, "module Main\nuse Shapes{"));
+    MO_ASSERT(mo_buffer_append_text(&library, "module Shapes\nexpose "));
+    for (uint32_t i = 0; i < 1500; i++) {
+        if (i != 0)
+            MO_ASSERT(mo_buffer_append_text(&main, ", ") && mo_buffer_append_text(&library, ", "));
+        MO_ASSERT(mo_buffer_append_text(&main, "f") && mo_buffer_append_uint(&main, i) &&
+                  mo_buffer_append_text(&library, "f") && mo_buffer_append_uint(&library, i));
+        MO_ASSERT(mo_buffer_append_text(&functions, "fn f") &&
+                  mo_buffer_append_uint(&functions, i) &&
+                  mo_buffer_append_text(&functions, "() : Int\n19\nend\n"));
+    }
+    MO_ASSERT(mo_buffer_append_text(&main, "}\nfn main()\nend\n") &&
+              mo_buffer_append_text(&library, "\n") &&
+              mo_buffer_append(&library, functions.bytes, functions.length));
+    write_file(path, main.bytes, main.length);
+    write_file(other, library.bytes, library.length);
+    struct fixture f;
+    init(&f, MO_CLI_CHECK_SIZE);
+    struct mo_module_set *set = mo_load_program(&f.syntax, &f.sources, path, NULL, &f.diags);
+    MO_ASSERT(set != NULL && f.diags.count == 0);
+    CHECK(mo_check(&f.arena, set, &f.diags) == NULL);
+    CHECK(f.diags.count == 1000 && f.diags.dropped == 500);
+    for (uint32_t i = 0; i < f.diags.count; i++)
+        CHECK(f.diags.items[i].code == MO_CODE_UNUSED_IMPORT);
+    finish(&f);
+    mo_buffer_free(&main);
+    mo_buffer_free(&library);
+    mo_buffer_free(&functions);
+    MO_ASSERT(unlink(path) == 0 && unlink(other) == 0 && rmdir(folder) == 0);
+}
+
 static void captured_parameter(void) {
     char folder[] = "/tmp/mo-captures-XXXXXX";
     MO_ASSERT(mkdtemp(folder) != NULL);
@@ -1523,6 +1565,7 @@ static void run_tests(void *argument) {
     samples();
     imported_function();
     import_sources();
+    import_cap();
     captured_parameter();
     capture_sources();
     arena_limits();

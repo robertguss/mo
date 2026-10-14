@@ -61,7 +61,8 @@ static MO_MUST_USE bool check_imports(const struct mo_signatures *signatures,
         if (!report(diags, MO_CODE_UNUSED_IMPORT, span,
                     use->parent == i ? "an imported module is unused"
                                      : "an imported name is unused",
-                    "Unused imports are errors (reference 6.1)."))
+                    "Unused imports are errors (reference 6.1).") &&
+            diags->count < MO_LIMIT_DIAGNOSTICS)
             return false;
         valid = false;
     }
