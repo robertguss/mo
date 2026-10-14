@@ -412,7 +412,10 @@ functions: substitutions and type-only ability-use keys belong to the selected
 declaring signature; their implementations prove the caller's actual types.
 Two modules' same-spelled parameters are distinct, including when an actual
 type is itself a caller parameter. Neither imports nor first-class function
-values rewrite those owners or introduce another proof carrier.
+values rewrite those owners or introduce another proof carrier. The existing
+proof cache shares structurally equal actual types; a proof's type pointer
+need not equal the use's actual-type pointer. Scoped parameter keys remain
+canonical; concrete-type pointer equality is not the substitution key.
 Written foreign generic nominal annotations, generic construction/projection,
 foreign constant reads and direct initializer function references remain
 explicit E1103 routes. Partial signature/inference APIs and the already

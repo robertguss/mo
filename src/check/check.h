@@ -265,7 +265,10 @@ enum mo_ability_implementation_kind {
  * part keyed by that customizer's T. This also applies to entry.error_text.
  * Hash/Order signatures include their implied Equal requirement. Graphs may
  * recurse through nominal data; lowering memoizes them. DERIVED has no
- * part_parameters: its parts are structural, not signature requirements. */
+ * part_parameters: its parts are structural, not signature requirements.
+ * Proofs may be shared for structurally equal actual types: implementation.type
+ * need not be the same pointer as a use's substituted actual type. The scoped
+ * parameter keys, not concrete-type pointers, retain canonical identity. */
 struct mo_ability_implementation {
     enum mo_source_ability ability;
     enum mo_ability_implementation_kind kind;

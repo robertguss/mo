@@ -402,6 +402,19 @@ static void imported_function(void) {
     MO_ASSERT(unlink(main_path) == 0 && unlink(other_path) == 0 && rmdir(folder) == 0);
 }
 
+static MO_MUST_USE bool same_source_type(const struct mo_source_type *a,
+                                         const struct mo_source_type *b) {
+    if (a == b)
+        return true;
+    if (a->kind != b->kind || a->module != b->module || a->declaration != b->declaration ||
+        a->count != b->count || strcmp(a->name, b->name) != 0)
+        return false;
+    for (uint32_t i = 0; i < a->count; i++)
+        if (!same_source_type(a->arguments[i], b->arguments[i]))
+            return false;
+    return true;
+}
+
 static void imported_generic(void) {
     char folder[] = "/tmp/mo-generic-imports-XXXXXX", main_path[128], other_path[128];
     MO_ASSERT(mkdtemp(folder) != NULL);
@@ -412,13 +425,16 @@ static void imported_generic(void) {
     const char other[] = "module Numbers\nexpose twice\n"
                          "fn twice(value: T) : T where T: Number\nvalue + value\nend\n";
     write_file(other_path, (const uint8_t *)other, sizeof(other) - 1);
-    for (unsigned required = 0; required < 2; required++) {
+    for (unsigned variant = 0; variant < 4; variant++) {
         char main[512];
         n = snprintf(main, sizeof(main),
-                     "module Main\nuse Numbers{twice}\n"
-                     "fn relay(value: T) : T%s\ntwice(value)\nend\n"
+                     "module Main\nuse Numbers%s\n"
+                     "fn relay(value: T) : T%s\n%s\nend\n"
                      "fn main() : Int\nrelay(19)\nend\n",
-                     required != 0 ? " where T: Number" : "");
+                     variant == 3 ? "" : "{twice}", variant != 0 ? " where T: Number" : "",
+                     variant == 2   ? "apply = twice\napply(value)"
+                     : variant == 3 ? "Numbers.twice(value)"
+                                    : "twice(value)");
         MO_ASSERT(n > 0 && (size_t)n < sizeof(main));
         write_file(main_path, (const uint8_t *)main, (size_t)n);
         struct fixture f;
@@ -427,7 +443,7 @@ static void imported_generic(void) {
             mo_load_program(&f.syntax, &f.sources, main_path, NULL, &f.diags);
         MO_ASSERT(set != NULL && !mo_diags_any(&f.diags));
         struct mo_program *program = mo_check(&f.arena, set, &f.diags);
-        if (required == 0) {
+        if (variant == 0) {
             CHECK(program == NULL && f.diags.count == 1 &&
                   f.diags.items[0].code == MO_CODE_ABILITY_MISSING);
         } else {
@@ -469,6 +485,177 @@ static void imported_generic(void) {
         finish(&f);
     }
     MO_ASSERT(unlink(main_path) == 0 && unlink(other_path) == 0 && rmdir(folder) == 0);
+}
+
+static void generic_import_sources(void) {
+    static const char library[] =
+        "module Numbers\nexpose twice, identity, show, same, hashed, ordered, mix\n"
+        "fn twice(value: T) : T where T: Number\nvalue + value\nend\n"
+        "fn identity(value: T) : T\nvalue\nend\n"
+        "fn show(value: T) : Text where T: Text\n\"#{value}\"\nend\n"
+        "fn same(a: A, b: B) : Bool where A: Equal, B: Equal\na == a and b == b\nend\n"
+        "fn hashed(value: T) : T where T: Hash\nvalue\nend\n"
+        "fn ordered(a: T, b: T) : Bool where T: Order\na < b\nend\n"
+        "fn mix(first: Z, second: A) : Z where Z: Number, A: Text\n"
+        "_label = \"#{second}\"\nfirst + first\nend\n";
+    static const struct {
+        const char *name, *source;
+        uint16_t code;
+    } cases[] = {
+        {"Number scalars",
+         "fn big(value: BigInt) : BigInt\nNumbers.twice(value)\nend\n"
+         "fn decimal(value: Decimal) : Decimal\nNumbers.twice(value)\nend\n"
+         "fn float(value: Float) : Float\nNumbers.twice(value)\nend\n"
+         "fn main() : Int\nNumbers.twice(19)\nend\n",
+         0},
+        {"first-class return",
+         "fn make() : fn(Int) : Int\nNumbers.twice\nend\n"
+         "fn main() : Int\napply = make()\napply(19)\nend\n",
+         0},
+        {"fresh first-class references",
+         "fn main() : Int\na = Numbers.identity\nb = Numbers.identity\n"
+         "assert b(\"text\") == \"text\"\na(19)\nend\n",
+         0},
+        {"higher-order context",
+         "fn apply(action: fn(Int) : Int) : Int\naction(19)\nend\n"
+         "fn main() : Int\napply(Numbers.twice)\nend\n",
+         0},
+        {"permuted parameters",
+         "fn relay(first: U, second: T) : U where U: Number, T: Text\n"
+         "apply = Numbers.mix\napply(first, second)\nend\n"
+         "fn main() : Int\nassert Numbers.same(13, 29)\nrelay(19, true)\nend\n",
+         0},
+        {"derived and custom Text",
+         "struct Box(T)\nvalue: T\nend\n"
+         "fn to_text(box: Box(U)) : Text where U: Text\n\"[#{box.value}]\"\nend\n"
+         "fn relay(value: U) : Text where U: Text\nNumbers.show([value])\nend\n"
+         "fn main() : Int\nNumbers.show(Box(value: 19)).byte_count + relay(true).byte_count\nend\n",
+         0},
+        {"Hash Order and implied Equal",
+         "fn compare(value: U) : Bool where U: Order\nNumbers.same(value, value)\nend\n"
+         "fn main() : Int\nassert Numbers.ordered(13, 29) and compare(19)\n"
+         "Numbers.hashed(19)\nend\n",
+         0},
+        {"Bool lacks Number",
+         "fn bad(value: Bool) : Bool\nNumbers.twice(value)\nend\n"
+         "fn main() : Int\n0\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"Equal does not imply Number",
+         "fn bad(value: T) : T where T: Equal\nNumbers.twice(value)\nend\n"
+         "fn main() : Int\n0\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"first-class missing proof",
+         "fn bad() : fn(Bool) : Bool\nNumbers.twice\nend\n"
+         "fn main() : Int\n0\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"functions lack Equal",
+         "fn bad(value: fn(Int) : Int) : Bool\nNumbers.same(value, value)\nend\n"
+         "fn main() : Int\n0\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"capabilities lack Text",
+         "fn bad(value: Console) : Text\nNumbers.show(value)\nend\n"
+         "fn main() : Int\n0\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"Float lacks Hash",
+         "fn bad(value: Float) : Float\nNumbers.hashed(value)\nend\n"
+         "fn main() : Int\n0\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"Range lacks Order",
+         "fn bad(value: Range) : Bool\nNumbers.ordered(value, value)\nend\n"
+         "fn main() : Int\n0\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"Bytes lack Text",
+         "fn bad(value: Bytes) : Text\nNumbers.show(value)\nend\n"
+         "fn main() : Int\n0\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"generic direct initializer staged",
+         "answer = Numbers.twice(19)\nfn main() : Int\nanswer\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"generic initializer alias staged",
+         "handler = Numbers.twice\nfn main() : Int\nhandler(19)\nend\n", MO_CODE_CHECK_UNFINISHED},
+    };
+    char folder[] = "/tmp/mo-generic-sources-XXXXXX", path[128], other[128];
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    int n = snprintf(path, sizeof(path), "%s/main.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(path));
+    n = snprintf(other, sizeof(other), "%s/numbers.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(other));
+    write_file(other, (const uint8_t *)library, sizeof(library) - 1);
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char source[2048];
+        n = snprintf(source, sizeof(source), "module Main\nuse Numbers\n%s", cases[i].source);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(source));
+        write_file(path, (const uint8_t *)source, (size_t)n);
+        struct fixture f;
+        init(&f, MO_CLI_CHECK_SIZE);
+        struct mo_module_set *set = mo_load_program(&f.syntax, &f.sources, path, NULL, &f.diags);
+        struct mo_program *program = set == NULL ? NULL : mo_check(&f.arena, set, &f.diags);
+        bool passed = cases[i].code == 0 ? program != NULL && !mo_diags_any(&f.diags)
+                                         : program == NULL && f.diags.count == 1 &&
+                                               f.diags.items[0].code == cases[i].code;
+        if (!passed)
+            MO_ASSERT(fprintf(stderr,
+                              "generic import %s: expected E%04u, found E%04u (%u errors)\n",
+                              cases[i].name, (unsigned)cases[i].code,
+                              f.diags.count == 0 ? 0u : (unsigned)f.diags.items[0].code,
+                              f.diags.count) >= 0);
+        CHECK(passed);
+        if (program != NULL) {
+            for (uint32_t j = 0; j < program->function_count; j++) {
+                const struct mo_checked_function *fn = &program->functions[j];
+                for (uint32_t k = 0; k < fn->body.count; k++) {
+                    const struct mo_checked_expression *row = &fn->body.items[k];
+                    if (row->symbol == NULL || row->symbol->declaration->kind != MO_S_FN ||
+                        row->symbol->module == fn->signature->function->module)
+                        continue;
+                    for (uint32_t a = 0; a < row->arguments.count; a++)
+                        CHECK(row->arguments.items[a].parameter->declaration == row->symbol);
+                    for (uint32_t a = 0; a < row->ability_count; a++) {
+                        const struct mo_checked_ability_use *use = &row->abilities[a];
+                        bool keyed = false;
+                        for (uint32_t b = 0; b < row->arguments.count; b++) {
+                            const struct mo_type_argument *argument = &row->arguments.items[b];
+                            if (use->parameter == argument->parameter) {
+                                CHECK(use->operand == UINT32_MAX &&
+                                      same_source_type(use->implementation->type, argument->type));
+                                keyed = true;
+                            }
+                        }
+                        CHECK(keyed);
+                    }
+                    if (strcmp(row->symbol->name, "mix") == 0) {
+                        MO_ASSERT(row->arguments.count == 2 && row->ability_count == 2);
+                        for (uint32_t a = 0; a < 2; a++) {
+                            const struct mo_type_argument *argument = &row->arguments.items[a];
+                            bool text = strcmp(argument->parameter->name, "A") == 0;
+                            CHECK(strcmp(argument->parameter->name, text ? "A" : "Z") == 0);
+                            CHECK(argument->type == fn->signature->type->arguments[text ? 1 : 0]);
+                            CHECK(row->abilities[a].implementation->kind == MO_ABILITY_PARAMETER);
+                            CHECK(row->abilities[a].implementation->ability ==
+                                  (text ? MO_SOURCE_TEXT : MO_SOURCE_NUMBER));
+                        }
+                    }
+                    if (strcmp(row->symbol->name, "same") == 0) {
+                        MO_ASSERT(row->arguments.count == 2 && row->ability_count == 2);
+                        CHECK(row->abilities[0].parameter != row->abilities[1].parameter);
+                    }
+                    if (strcmp(row->symbol->name, "show") == 0 && row->ability_count != 0 &&
+                        row->abilities[0].implementation->kind == MO_ABILITY_FUNCTION) {
+                        const struct mo_ability_implementation *proof =
+                            row->abilities[0].implementation;
+                        MO_ASSERT(proof->part_count == 1 && proof->arguments.count == 1);
+                        CHECK(proof->function->module == fn->signature->function->module);
+                        CHECK(proof->part_parameters[0] == proof->arguments.items[0].parameter &&
+                              proof->part_parameters[0]->declaration == proof->function &&
+                              proof->part_parameters[0] != row->abilities[0].parameter);
+                    }
+                }
+            }
+        }
+        finish(&f);
+    }
+    printf("generic import sources: %zu public load/check controls\n",
+           sizeof(cases) / sizeof(cases[0]));
+    MO_ASSERT(unlink(path) == 0 && unlink(other) == 0 && rmdir(folder) == 0);
 }
 
 static void import_sources(void) {
@@ -1633,6 +1820,7 @@ static void run_tests(void *argument) {
     samples();
     imported_function();
     imported_generic();
+    generic_import_sources();
     import_sources();
     import_cap();
     captured_parameter();
