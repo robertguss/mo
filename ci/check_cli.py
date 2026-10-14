@@ -341,6 +341,25 @@ def captures(binary):
     print(f"{binary}: escaped captures, snapshots, stopped spans and codec roundtrips passed")
 
 
+def imports(binary):
+    # Aliasing a listed import and qualifying the same declaration must agree;
+    # asymmetric arguments distinguish canonical binding from swapped inputs.
+    source = ('module Main\nuse Shapes{make, score}\nfn main() : Int\n'
+              'f = score\nf(make(3), 11) + Shapes.score(Shapes.make(5), 2)\nend\n')
+    shapes = ('module Shapes\nexpose Box(..), make, score\nstruct Box\nvalue: Int\nend\n'
+              'fn make(value: Int) : Box\nBox(value: value)\nend\n'
+              'fn score(box: Box, extra: Int) : Int\nbox.value * 7 + extra\nend\n')
+    with tempfile.TemporaryDirectory(prefix="mo-cli-imports-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        path.write_text(source)
+        (path.parent / "shapes.mo").write_text(shapes)
+        checked = run(binary, ["check", str(path)], 0)
+        assert not checked.stdout and not checked.stderr
+        result = run(binary, ["run", str(path)], 69)
+        assert not result.stdout and not result.stderr
+    print(f"{binary}: canonical imported aliases and qualified calls passed")
+
+
 def small_stack():
     _, hard = resource.getrlimit(resource.RLIMIT_STACK)
     resource.setrlimit(resource.RLIMIT_STACK, (1 << 20, hard))
@@ -799,6 +818,7 @@ def check(binary):
     filenames(binary)
     observations(binary)
     captures(binary)
+    imports(binary)
     items = records(run(faults, ["--json"], 1), "check")
     assert items[1]["code"] == "E1401" and items[-1]["dropped"] == 0
     assert items[1]["primary"]["file"] is None and items[1]["section"] is None
