@@ -1199,15 +1199,6 @@ static MO_MUST_USE struct value declared_function(struct inference *p, const str
         p->failed = p->fatal = p->unavailable = true;
         return (struct value){0};
     }
-    if (p->checked && s->module != p->function->function->module &&
-        !p->interfaces->scopes[s->module].library &&
-        p->function->function->declaration->kind == MO_S_CONST) {
-        bool reported =
-            problem(p, MO_CODE_CHECK_UNFINISHED, p->span,
-                    "imported initializer function references remain staged", NULL, NULL);
-        (void)reported;
-        return (struct value){0};
-    }
     struct value out = function_value(p, signature->type, signature->requirements);
     out.symbol = s;
     return out;

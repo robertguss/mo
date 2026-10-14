@@ -464,6 +464,208 @@ static void imported_constants(void) {
     MO_ASSERT(unlink(path) == 0 && unlink(other) == 0 && rmdir(folder) == 0);
 }
 
+static void constant_import_sources(void) {
+    static const struct {
+        const char *name, *files[4], *order[8];
+        uint16_t code;
+    } cases[] = {
+        {"listed reads and aliases",
+         {"module Main\nuse Lib{seed}\ncopy = seed\nanswer = copy * 7\n"
+          "fn main() : Int\nanswer + seed\nend\n",
+          "module Lib\nexpose seed\nseed = 13\n"},
+         {"Lib.seed", "Main.copy", "Main.answer"},
+         0},
+        {"transitive qualified aliases",
+         {"module Main\nuse Bridge\nanswer = Bridge.copy + 11\nfn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose seed\nseed = 13\n",
+          "module Bridge\nexpose copy\nuse Lib\ncopy = Lib.seed * 7\n"},
+         {"Lib.seed", "Bridge.copy", "Main.answer"},
+         0},
+        {"diamond and ready ties",
+         {"module Main\nuse Lib\nuse Bridge\nanswer = Lib.value + Bridge.value\n"
+          "independent = 11\nfn main() : Int\nanswer + independent\nend\n",
+          "module Lib\nexpose value\nuse Leaf\nvalue = Leaf.seed * 7\n",
+          "module Bridge\nexpose value\nuse Leaf\nvalue = Leaf.seed - 3\n",
+          "module Leaf\nexpose seed\nseed = 13\n"},
+         {"Main.independent", "Leaf.seed", "Lib.value", "Bridge.value", "Main.answer"},
+         0},
+        {"call reaches a private later constant",
+         {"module Main\nuse Lib{read}\nanswer = read()\nindependent = 11\n"
+          "fn main() : Int\nanswer + independent\nend\n",
+          "module Lib\nexpose read\nfn read() : Int\nbase * 7\nend\nbase = 13\n"},
+         {"Main.independent", "Lib.base", "Main.answer"},
+         0},
+        {"stored function is invoked",
+         {"module Main\nuse Lib\nanswer = handler()\nhandler = Lib.read\n"
+          "fn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose read\nfn read() : Int\nbase * 7\nend\nbase = 13\n"},
+         {"Main.handler", "Lib.base", "Main.answer"},
+         0},
+        {"foreign stored function chain",
+         {"module Main\nuse Bridge{handler}\nanswer = handler()\nfn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose read\nfn read() : Int\nbase\nend\nbase = 13\n",
+          "module Bridge\nexpose handler\nuse Lib\nhandler = Lib.read\n"},
+         {"Bridge.handler", "Lib.base", "Main.answer"},
+         0},
+        {"constructing a function is not calling it",
+         {"module Main\nuse Lib\nhandler = Lib.read\nlambda = fn() Lib.base end\n"
+          "fn main() : Int\nhandler() + lambda()\nend\n",
+          "module Lib\nexpose read, base\nbase = 13\nfn read() : Int\nbase\nend\n"},
+         {"Main.handler", "Main.lambda", "Lib.base"},
+         0},
+        {"foreign anonymous function is not executed",
+         {"module Main\nuse Lib{handler}\ncopy = handler\nfn main() : Int\ncopy()\nend\n",
+          "module Lib\nexpose handler\nhandler = fn() base end\nbase = 13\n"},
+         {"Lib.handler", "Main.copy", "Lib.base"},
+         0},
+        {"known local alias in an imported body",
+         {"module Main\nuse Lib\nanswer = Lib.read()\nfn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose read\nbase = 13\nfn fetch() : Int\nbase\nend\n"
+          "fn read() : Int\nreader = fetch\nreader()\nend\n"},
+         {"Lib.base", "Main.answer"},
+         0},
+        {"owned generic nominal result",
+         {"module Main\nuse Lib\nanswer = Lib.make(13).value\ncopy = Lib.box\n"
+          "fn main() : Int\nanswer + copy.value.byte_count\nend\n",
+          "module Lib\nexpose Box(..), make, box\nstruct Box(T)\nvalue: T\nend\n"
+          "fn make(value: T) : Box(T)\nBox(value: value)\nend\nbox = Box(value: \"owned\")\n"},
+         {"Main.answer", "Lib.box", "Main.copy"},
+         0},
+        {"selected customizer execution dependency",
+         {"module Main\nuse Lib\nanswer = \"#{Lib.Label(value: 3)}\"\n"
+          "fn main() : Int\nanswer.byte_count\nend\n",
+          "module Lib\nexpose Label(..)\nstruct Label\nvalue: Int\nend\n"
+          "fn to_text(value: Label) : Text\n\"#{base}:#{value.value}\"\nend\nbase = 13\n"},
+         {"Lib.base", "Main.answer"},
+         0},
+        {"unused proof is not execution",
+         {"module Main\nuse Lib\nanswer = Lib.ignore(Lib.Label(value: 3))\n"
+          "fn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose Label(..), ignore\nstruct Label\nvalue: Int\nend\n"
+          "fn to_text(_value: Label) : Text\ncycle.to_text\nend\n"
+          "cycle = ignore(Label(value: 3))\n"
+          "fn ignore(_value: T) : Int where T: Text\n42\nend\n"},
+         {"Main.answer", "Lib.cycle"},
+         0},
+        {"private constant",
+         {"module Main\nuse Lib\nfn main() : Int\nLib.seed\nend\n", "module Lib\nseed = 13\n"},
+         {NULL},
+         MO_CODE_IMPORT_PRIVATE},
+        {"private initializer function",
+         {"module Main\nuse Lib\nanswer = Lib.read()\nfn main() : Int\nanswer\nend\n",
+          "module Lib\nfn read() : Int\n13\nend\n"},
+         {NULL},
+         MO_CODE_IMPORT_PRIVATE},
+        {"qualified read does not credit an unused listed name",
+         {"module Main\nuse Lib{seed}\nanswer = Lib.seed\nfn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose seed\nseed = 13\n"},
+         {NULL},
+         MO_CODE_UNUSED_IMPORT},
+        {"foreign value cannot be constrained by its user",
+         {"module Main\nuse Lib{values}\nfn wanted() : List(Int)\nvalues\nend\nfn main()\nend\n",
+          "module Lib\nexpose values\nvalues = []\n"},
+         {NULL},
+         MO_CODE_CANNOT_INFER},
+        {"imported call reaches a value cycle",
+         {"module Main\nuse Lib{read}\nanswer = read()\nfn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose read\nfirst = read()\nsecond = first + 1\n"
+          "fn read() : Int\nsecond\nend\n"},
+         {NULL},
+         MO_CODE_CONSTANT_CYCLE},
+        {"foreign aliases retain a cycle",
+         {"module Main\nuse Lib{handler}\nanswer = handler()\nfn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose handler\nhandler = read\nbase = handler()\n"
+          "fn read() : Int\nbase\nend\n"},
+         {NULL},
+         MO_CODE_CONSTANT_CYCLE},
+        {"module cycles are rejected by loading",
+         {"module Main\nexpose answer\nuse Lib\nanswer = Lib.seed\n"
+          "fn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose seed\nuse Main\nseed = Main.answer\n"},
+         {NULL},
+         MO_CODE_MODULE_CYCLE},
+        {"unresolved imported higher-order call",
+         {"module Main\nuse Lib\nanswer = Lib.apply(Lib.read)\n"
+          "fn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose apply, read\nfn apply(f: fn() : Int) : Int\nf()\nend\n"
+          "fn read() : Int\n13\nend\n"},
+         {NULL},
+         MO_CODE_CHECK_UNFINISHED},
+        {"unresolved anonymous initializer call",
+         {"module Main\nuse Lib\nanswer = Lib.handler()\nfn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose handler\nhandler = fn() 13 end\n"},
+         {NULL},
+         MO_CODE_CHECK_UNFINISHED},
+        {"abstract executed Text proof stays staged",
+         {"module Main\nuse Lib\nanswer = Lib.render(13)\n"
+          "fn main() : Int\nanswer.byte_count\nend\n",
+          "module Lib\nexpose render\nfn render(value: T) : Text where T: Text\n"
+          "value.to_text\nend\n"},
+         {NULL},
+         MO_CODE_CHECK_UNFINISHED},
+    };
+    const char *filenames[] = {"main.mo", "lib.mo", "bridge.mo", "leaf.mo"};
+    char folder[] = "/tmp/mo-constant-sources-XXXXXX", paths[4][128];
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    for (uint32_t i = 0; i < 4; i++) {
+        int n = snprintf(paths[i], sizeof(paths[i]), "%s/%s", folder, filenames[i]);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(paths[i]));
+    }
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        for (uint32_t j = 0; j < 4; j++)
+            if (cases[i].files[j] != NULL)
+                write_file(paths[j], (const uint8_t *)cases[i].files[j], strlen(cases[i].files[j]));
+        struct fixture f;
+        init(&f, MO_CLI_CHECK_SIZE);
+        struct mo_module_set *set =
+            mo_load_program(&f.syntax, &f.sources, paths[0], NULL, &f.diags);
+        struct mo_program *program = set == NULL ? NULL : mo_check(&f.arena, set, &f.diags);
+        mo_sources_free(&f.sources);
+        bool passed = cases[i].code == 0 ? program != NULL && !mo_diags_any(&f.diags)
+                                         : program == NULL && f.diags.count == 1 &&
+                                               f.diags.items[0].code == cases[i].code;
+        if (!passed)
+            MO_ASSERT(fprintf(stderr,
+                              "constant source %s: expected E%04u, found E%04u (%u errors)\n",
+                              cases[i].name, (unsigned)cases[i].code,
+                              f.diags.count == 0 ? 0u : (unsigned)f.diags.items[0].code,
+                              f.diags.count) >= 0);
+        CHECK(passed);
+        if (program != NULL) {
+            uint32_t count = 0;
+            while (count < 8 && cases[i].order[count] != NULL)
+                count++;
+            CHECK(program->constant_count == count);
+            for (uint32_t j = 0; j < program->constant_count; j++) {
+                const struct mo_checked_constant *constant = &program->constants[j];
+                const struct mo_symbol *symbol = constant->symbol;
+                const struct mo_module_scope *scope = &program->interfaces->scopes[symbol->module];
+                char name[128];
+                int n = snprintf(name, sizeof(name), "%s.%s", scope->name, symbol->name);
+                MO_ASSERT(n > 0 && (size_t)n < sizeof(name));
+                CHECK(j < count && strcmp(name, cases[i].order[j]) == 0);
+                CHECK(symbol ==
+                      mo_find_symbol(scope, (const uint8_t *)symbol->name, strlen(symbol->name)));
+                CHECK(constant->type->parameters == 0);
+                for (uint32_t k = 0; k < constant->initializer.count; k++) {
+                    const struct mo_checked_expression *row = &constant->initializer.items[k];
+                    CHECK(row->syntax->span.file == symbol->declaration->span.file);
+                    CHECK(row->type->parameters == 0);
+                    if (row->symbol != NULL && row->symbol->declaration->kind == MO_S_FN)
+                        for (uint32_t a = 0; a < row->arguments.count; a++)
+                            CHECK(row->arguments.items[a].parameter->declaration == row->symbol);
+                }
+            }
+        }
+        finish(&f);
+        for (uint32_t j = 0; j < 4; j++)
+            if (cases[i].files[j] != NULL)
+                MO_ASSERT(unlink(paths[j]) == 0);
+    }
+    printf("constant sources: %zu public load/check controls\n", sizeof(cases) / sizeof(cases[0]));
+    MO_ASSERT(rmdir(folder) == 0);
+}
+
 static void imported_nominal(void) {
     char folder[] = "/tmp/mo-nominal-import-XXXXXX", path[128], other[128];
     MO_ASSERT(mkdtemp(folder) != NULL);
@@ -806,10 +1008,10 @@ static void generic_import_sources(void) {
          "fn bad(value: Bytes) : Text\nNumbers.show(value)\nend\n"
          "fn main() : Int\n0\nend\n",
          MO_CODE_ABILITY_MISSING},
-        {"generic direct initializer staged",
-         "answer = Numbers.twice(19)\nfn main() : Int\nanswer\nend\n", MO_CODE_CHECK_UNFINISHED},
-        {"generic initializer alias staged",
-         "handler = Numbers.twice\nfn main() : Int\nhandler(19)\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"generic direct initializer", "answer = Numbers.twice(19)\nfn main() : Int\nanswer\nend\n",
+         0},
+        {"generic initializer alias needs a closed type",
+         "handler = Numbers.twice\nfn main() : Int\nhandler(19)\nend\n", MO_CODE_CANNOT_INFER},
     };
     char folder[] = "/tmp/mo-generic-sources-XXXXXX", path[128], other[128];
     MO_ASSERT(mkdtemp(folder) != NULL);
@@ -1055,11 +1257,10 @@ static void import_sources(void) {
          NULL, MO_CODE_DATA_RECURSION},
         {"imported constant", "use Shapes{answer}\nfn main() : Int\nanswer\nend\n",
          "module Shapes\nexpose answer\nanswer = 19\n", NULL, 0},
-        {"initializer import staged",
+        {"initializer import",
          "use Shapes{value}\nanswer = value()\n"
          "fn main() : Int\nanswer\nend\n",
-         "module Shapes\nexpose value\nfn value() : Int\n19\nend\n", NULL,
-         MO_CODE_CHECK_UNFINISHED},
+         "module Shapes\nexpose value\nfn value() : Int\n19\nend\n", NULL, 0},
     };
     char folder[] = "/tmp/mo-import-sources-XXXXXX";
     MO_ASSERT(mkdtemp(folder) != NULL);
@@ -2106,6 +2307,7 @@ static void run_tests(void *argument) {
     samples();
     imported_function();
     imported_constants();
+    constant_import_sources();
     imported_nominal();
     imported_choice();
     imported_generic();

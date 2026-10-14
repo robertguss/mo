@@ -422,9 +422,10 @@ retain explicit parameter declaration order, not alphabetical order; choice
 constructors use their owning choice's keys, not new case-owned parameters.
 Named constructor operands keep written evaluation order and declaration-order
 field indices. Exposure still decides whether fields/cases are visible.
-Foreign constant reads and direct initializer function references remain
-explicit E1103 routes. Partial signature/inference APIs, regularity checks and
-the already supported implicit library routes retain their previous behavior.
+Foreign constant reads and initializer function references retain those same
+declaring identities and import-use origins; constant certification follows 3.4.
+Partial signature/inference APIs, regularity checks and the already supported
+implicit library routes retain their previous behavior.
 No new cross-module constant ordering or lowering carrier is introduced.
 
 Interface work is bounded by source declarations and imported names, not
@@ -691,7 +692,17 @@ some names by type:
   over a choice type is checked on top of it.
 - **Constants** may refer to each other in any order within the program, and
   are computed in the order of their dependencies. A cycle is an error
-  (reference 10.4).
+  (reference 10.4). Foreign reads use the same program-wide symbol index and
+  pending-type stack as local reads; each initializer decides its own closed
+  type before uses can constrain it. Direct imported calls and known stored
+  function aliases use the existing checked call graph, including executed
+  customizers. Function creation does not execute its body, and type-only
+  ability requirements add no execution dependencies. Independent ties retain
+  module discovery/declaration order, not import completion or symbol spelling.
+  Loading still refuses module cycles; checked value/call cycles report E0089.
+  Unresolved higher-order calls and executed abstract Text/Order dependencies
+  remain E1103. Certification does not promise a later-global closure
+  representation: lowering can still refuse that separate E1150 boundary.
 - **Promises and examples** are checked like functions returning `Bool`. An
   example line or a promise body becomes a spec function (`bytecode.md`
   section 3.3). The `mo check` command in tools evaluates the anchors by
