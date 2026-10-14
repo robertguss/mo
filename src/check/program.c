@@ -500,13 +500,6 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
         (void)kept;
         return NULL;
     }
-    if (entry->parameter_count > 1 ||
-        (entry->parameter_count == 1 && !native_type(entry->parameters[0]->type, "Console"))) {
-        bool kept = report(diags, MO_CODE_CHECK_UNFINISHED, entry_span,
-                           "this main capability convention is not implemented", NULL);
-        (void)kept;
-        return NULL;
-    }
     if (!unit && !status) {
         bool kept = report(diags, MO_CODE_CHECK_UNFINISHED, entry_span,
                            "this main result convention is not implemented", NULL);

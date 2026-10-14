@@ -346,6 +346,17 @@ static void generic_spec_graph(void) {
     free_fixture(&f);
 }
 
+static void fake_specs(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn main(args: Args, console: Console)\n"
+             "console.print(args.list.first or \"world\")\nend\n"
+             "test \"fake handles keep their output\"\nconsole = Console.fake()\n"
+             "main(Args.of([\"Ada\", \"Grace\"]), console)\n"
+             "assert console.printed == [\"Ada\"]\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    free_fixture(&f);
+}
+
 static void spec_refusals(void) {
     static const struct {
         const char *values;
@@ -512,6 +523,18 @@ static void console_graph(void) {
             printed = true;
         }
         CHECK(printed);
+    }
+    free_fixture(&f);
+    init(&f, "module Main\nfn main(console: Console, _args: Args) : Int\n"
+             "console.print(\"two capabilities\")\n37\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        CHECK(f.program->entry.result == MO_ENTRY_STATUS);
+        CHECK(f.program->entry.capability_count == 2);
+        if (f.program->entry.capability_count == 2) {
+            CHECK(strcmp(f.program->entry.capabilities[0]->type->name, "Console") == 0);
+            CHECK(strcmp(f.program->entry.capabilities[1]->type->name, "Args") == 0);
+        }
     }
     free_fixture(&f);
 }
@@ -2052,8 +2075,6 @@ static void rejected_stages(void) {
         {"fn main(value: Int) : Int\nvalue\nend\n", MO_CODE_MAIN_CONTRACT},
         {"fn main(a: Console, b: Console)\na.print(\"a\")\nb.print(\"b\")\nend\n",
          MO_CODE_MAIN_CONTRACT},
-        {"fn main(_args: Args)\nend\n", MO_CODE_CHECK_UNFINISHED},
-        {"fn main(_clock: Clock, _console: Console)\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Result(Unit, FileError)\nstop \"no result\"\nend\n",
          MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Result(Int, FileError)\nstop \"bad result\"\nend\n", MO_CODE_MAIN_CONTRACT},
@@ -2451,6 +2472,7 @@ static void run(void *argument) {
     example_graph();
     promise_graph();
     generic_spec_graph();
+    fake_specs();
     spec_refusals();
     entry_graph();
     console_graph();

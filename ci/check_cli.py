@@ -1255,6 +1255,73 @@ def runner(binary):
                           [f"--roundtrip-{name}", str(emitted)], 0)
             assert not decoded.stdout and not decoded.stderr
 
+        # The shipped sample must work unchanged, including its fake-console
+        # test calling the same main that receives real command-line handles.
+        greeting = "examples/greet.mo"
+        checked = run(binary, ["check", greeting], 0)
+        assert not checked.stdout and not checked.stderr
+        for values, expected in (([], "world"), (["Ada", "Grace"], "Ada"),
+                                  (["日本語", "ignored"], "日本語"), (["--flag"], "--flag")):
+            result = run(binary, ["run", greeting, *values], 0)
+            assert result.stdout == f"Hello, {expected}!\n".encode() and not result.stderr
+        items = records(run(binary, ["test", "--json", greeting], 0), "test")
+        assert [(r["name"], r["outcome"]) for r in items[1:-1]] == [
+            ("Greet.greeting.example.1", "passed"),
+            ("Greet.greeting.example.2", "passed"), ("Greet.test.1", "passed")]
+        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                             "passed": 3, "failed": 0, "stopped": 0, "status": 0}
+
+        for parameters in ("_args: Args", "_clock: Clock, _console: Console"):
+            path.write_text(f"module Main\nfn main({parameters})\nend\n")
+            result = run(binary, ["run", str(path)], 0)
+            assert not result.stdout and not result.stderr
+
+        # Generic native aliases must use the instantiated element type.
+        # Spec-only aliases stay lexical to specs, including anchor values.
+        path.write_text('module Main\nfn first(values: List(T)) : Option(T)\nexamples\n'
+                        'first(Args.of(["Ada", "Grace"]).list) == Some("Ada")\nend\n'
+                        'pick = List.first\npick(values)\nend\n'
+                        'fn keep(value: Int) : Int\npromise "keeps input"\n'
+                        'result == value and Console.fake().printed == []\n'
+                        'allows value: (Args.of(["abcd"]).list.first or "").byte_count, result: 4\n'
+                        'forbids value: 4, result: 5\nend\nvalue\nend\n'
+                        'fn main(console: Console, _random: Random, _files: Files, _env: Env, '
+                        'args: Args, _read: ReadFiles, _clock: Clock) : Int\n'
+                        'console.print(first(args.list) or "world")\n17\nend\n'
+                        'test "fake aliases and snapshots"\n'
+                        'make = Console.fake\narguments = Args.of\nread = Args.list\n'
+                        'output = Console.printed\nconsole = make()\nalias = console\n'
+                        'args = arguments(["λ\\u{0}owned", "ignored"])\n'
+                        'console.print(first(read(args)) or "missing")\n'
+                        'before = output(console)\nalias.print("after")\n'
+                        'assert before == ["λ\\u{0}owned"]\n'
+                        'assert output(console) == ["λ\\u{0}owned", "after"]\n'
+                        'assert first([17, 29]) == Some(17)\n'
+                        'assert first([true, false]) == Some(true)\nend\n')
+        result = run(binary, ["run", str(path), "real", "ignored"], 17)
+        assert result.stdout == b"real\n" and not result.stderr
+        items = records(run(binary, ["test", "--json", str(path)], 0), "test")
+        assert [(r["name"], r["outcome"]) for r in items[1:-1]] == [
+            ("Main.first.example.1", "passed"), ("Main.keep.promise.1", "passed"),
+            ("Main.test.1", "passed")]
+        assert items[-1]["passed"] == 3 and items[-1]["errors"] == 0
+        for name in ("core", "bytecode"):
+            emitted = pathlib.Path(directory) / f"capabilities.{name}"
+            emitted.write_bytes(run(binary, ["check", f"--emit={name}", str(path)], 0).stdout)
+            decoded = run(binary.parent / "tests/test_cli.test",
+                          [f"--roundtrip-{name}", str(emitted)], 0)
+            assert not decoded.stdout and not decoded.stderr
+
+        for body in ('factory = Console.fake\nfn main()\nend',
+                     'factory = fn() Args.of([]) end\nfn main()\nend',
+                     'fn helper() : Console\nConsole.fake()\nend\n'
+                     'test "ordinary helper stays ordinary"\n_console = helper()\nend\n'
+                     'fn main()\nend',
+                     'fn main(console: Console)\n_printed = console.printed\nend'):
+            path.write_text("module Main\n" + body + "\n")
+            items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+            assert items[1]["code"] == "E1103" and items[-1]["errors"] == 1
+
         for body, status, reason in (
             ("fn main()\nend", 0, None),
             ("fn main() : Int\n0\nend", 0, None),

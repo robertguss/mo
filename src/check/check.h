@@ -579,7 +579,7 @@ struct mo_program {
  * unique error wrapping. Native signatures use the shared tables; operators,
  * ability dot calls and interpolation retain native/derived/custom/parameter proofs. Source
  * dot/overload dispatch and loaded library calls retain the selected symbols. Written Map/Set
- * types require Hash. main takes no parameters or one Console and returns Unit or Int.
+ * types require Hash. main takes distinct capabilities in written order and returns Unit or Int.
  * Missing main and invalid entry signatures report E0079; there is no certified absent entry.
  * Source example lines are zero-parameter Bool bodies, with their subject index,
  * per-subject ordinal and an arena-owned copy of their original bytes/span.
@@ -602,8 +602,9 @@ struct mo_program {
  * closed inferred types and the same checked dependency order as local uses.
  * Making a function value does not execute its body or its type-only proofs.
  * Existing implicit library routes are unchanged.
- * Valid unfinished entry forms, spec-only capability
- * operations and unfinished body forms return E1103.
+ * Spec-only capability operations are allowed only in spec bodies, including their lambdas;
+ * constants and ordinary functions still refuse them with E1103. Result entry conventions
+ * and unfinished body forms also return E1103.
  * Spec checking checks anchor typing, completeness and links but executes no source code:
  * tools compile/run anchors to verify their allows/forbids expectations before accepting a
  * command-line mo check. Unfinished stages must report E1103, not succeed. */

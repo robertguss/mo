@@ -937,6 +937,31 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
         return lower_prim(
             p, (struct mo_core_prim){.tag = MO_CORE_PRIM_IO, .as.io.tag = MO_CORE_IO_OP_PRINT},
             args);
+    if (r->native != NULL && strcmp(r->native, "Args.list") == 0)
+        return lower_prim(
+            p, (struct mo_core_prim){.tag = MO_CORE_PRIM_IO, .as.io.tag = MO_CORE_IO_OP_ARGS_LIST},
+            args);
+    if (r->native != NULL && strcmp(r->native, "Args.of") == 0)
+        return lower_prim(
+            p, (struct mo_core_prim){.tag = MO_CORE_PRIM_IO, .as.io.tag = MO_CORE_IO_OP_ARGS_OF},
+            args);
+    if (r->native != NULL && strcmp(r->native, "Console.fake") == 0)
+        return lower_prim(
+            p,
+            (struct mo_core_prim){.tag = MO_CORE_PRIM_IO, .as.io.tag = MO_CORE_IO_OP_CONSOLE_FAKE},
+            args);
+    if (r->native != NULL && strcmp(r->native, "Console.printed") == 0)
+        return lower_prim(
+            p, (struct mo_core_prim){.tag = MO_CORE_PRIM_IO, .as.io.tag = MO_CORE_IO_OP_PRINTED},
+            args);
+    if (r->native != NULL && strcmp(r->native, "List.first") == 0) {
+        mo_core_ty output = result->tag == MO_CORE_TY_FN ? result->as.fn.ret : result;
+        return lower_prim(p,
+                          (struct mo_core_prim){
+                              .tag = MO_CORE_PRIM_LIST,
+                              .as.list = {.t = output->as.option, .op.tag = MO_CORE_LIST_OP_FIRST}},
+                          args);
+    }
     if (r->native != NULL && strcmp(r->native, "Text.bytes") == 0)
         return lower_prim(
             p, (struct mo_core_prim){.tag = MO_CORE_PRIM_TEXT, .as.text = MO_CORE_TEXT_OP_BYTES},

@@ -553,7 +553,9 @@ owners live in the checking arena; temporary source bytes are released after
 parsing. Native identities remain qualified table spellings, not fake source
 module symbols. Static native calls retain a callee row; dot calls retain
 their receiver and arguments without a callee row. Spec-only host operations
-remain refused until the spec/capability stage exists.
+check only in examples, promises, anchors and tests, including their anonymous
+functions. Constants and ordinary functions still refuse them with E1103;
+calling an ordinary helper from a test does not change the helper's context.
 
 Collection annotations impose implicit Hash requirements, including through
 generic record and choice fields. Preparation computes parameter-dependency
@@ -927,6 +929,18 @@ Structural Core type heights are checked after generic substitution, not only
 at the template's source depth; an over-deep concrete result refuses with E1153.
 E1152 also bounds canonical types plus unfolded expression occurrences across
 all bodies together, matching Core's whole-document node allowance.
+
+**Capability-entry increment.** Unit/Int entries forward any distinct subset
+of Args, Env, Console, Files, ReadFiles, Clock and Random in main's written
+order, without extra authority. The existing tools/host entry path constructs
+only the requested handles. Args.list, Args.of, Console.fake and Console.printed
+lower to their existing Core IO primitives; List.first uses its instantiated
+element type. Native function values use inline lambdas, so spec-only operations
+retain their enclosing spec context rather than becoming ordinary global
+adapters. The unchanged greet sample runs with real Args/Console and its specs
+run with shared fake handles. Other native operations remain independently
+staged, as does the source checker's Result-return entry convention.
+
 Numeric immediates fold unary minus before building Core scalars, including
 Int's minimum. Float literals convert in a private C numeric locale with
 nearest-even rounding, then restore the caller's rounding state. Text literals
@@ -2842,11 +2856,14 @@ function value does not call it. Source-order ties use a minimum ready queue.
 Constant cycles are E0089 (10.4). Unresolved indirect calls and abstract
 Text/Order callback environments reached during initialization remain E1103,
 rather than supplying an unproven order or reporting a guessed cycle.
-`main` returns Unit or Int and takes no parameters or one Console.
+`main` returns Unit or Int and takes any distinct subset of the seven capability
+types, in written order (reference 11.2).
 Direct `Console.print` reads its operation
 and named input type from `base/hostops.def`, with the receiver explicit.
 Map expressions still report E1103.
-Spec-only capability operations also remain staged. `where`
+Spec-only capability operations check in spec bodies and their lambdas, never
+in constants or ordinary functions; unsupported lowering routes remain E1150.
+`where`
 validates scoped parameters and the five abilities; customizers must have their declaring
 type's Text/Ordering signature. A generic customizer covers the whole nominal
 type: every receiver type slot is a distinct scoped function parameter, in any
@@ -2879,7 +2896,7 @@ A growing edge within a cycle is E0083; permutations and concrete resets do not
 grow the cycle. Proof traversal memoizes recursive nominal graphs.
 Invalid entry signatures report E0079: parameters must be capabilities without
 duplicate types, and the result must be Unit, Int or Result(Unit, E). Valid
-unfinished entry conventions still report E1103. Checking stops at the first
+Result-return entry conventions still report E1103. Checking stops at the first
 unfinished stage or resource failure; independent body errors are retained in
 source order, with further errors counted after the diagnostic cap. No staged
 inference result or partly filled program is returned as certified output.

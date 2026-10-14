@@ -204,7 +204,7 @@ struct inference {
     uint16_t expectation, node_expectation;
     uint32_t count, binding_count, depth, loops, lambda, work, epoch;
     uint32_t pattern_group, pattern_depth, lambda_count;
-    bool checked;
+    bool checked, spec;
     bool keep_patterns;
     bool failed, fatal, partial, unavailable;
 };
@@ -1168,7 +1168,7 @@ static MO_MUST_USE struct value function_value(struct inference *p,
 
 static MO_MUST_USE struct value native_identifier(struct inference *p,
                                                   const struct mo_native_signature *signature) {
-    if (signature->spec_only) {
+    if (signature->spec_only && !p->spec) {
         bool reported = unfinished(p);
         (void)reported;
         return (struct value){0};
@@ -4704,6 +4704,7 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
                           .function = signature,
                           .constants = constants,
                           .checked = checked != NULL,
+                          .spec = spec != NULL,
                           .span = written->span};
     p.abilities = (struct mo_ability_context){
         .arena = arena, .interfaces = interfaces, .signatures = signatures, .work = &p.work};
