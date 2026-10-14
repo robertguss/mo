@@ -932,9 +932,12 @@ types from different declaring modules remain distinct. Module metadata keeps
 declaration ownership/exposure and original file indices, including transitive
 nominal results, opaque layouts and imported specs. The private import-use index
 is checker bookkeeping, not a lowering input. No import-specific resolver or
-dependency reordering is added. Foreign generic values/nominal uses, constant
-reads and direct imported initializer references remain checker E1103; Maps and
-the other existing staged routes are unchanged.
+dependency reordering is added. Certified imported generic function calls and
+values reuse the existing instance/proof machinery below, including captured,
+returned and higher-order references. Foreign generic nominal written
+annotations/construction/projection, constant reads and direct imported
+initializer references remain checker E1103; Maps and the other existing
+staged routes are unchanged.
 
 Core lookup/display names retain the declaring module and source name;
 overloads add `@Receiver`. Generic function code is keyed by (requesting
@@ -948,6 +951,17 @@ the defining module. Nongeneric data is retained even without an expression use.
 nominal type a requester-specialized function accepts; separate requester data
 names would make those values incompatible in Core. Anonymous names retain their
 source ordinal as `.fn.N`; generated function-value adapters use `.ref.ROW`.
+
+Imported generic substitutions and type-only ability-use keys retain the
+declaring signature's parameters, even when caller/callee letters coincide or
+their written parameter order differs. Actual-type proofs retain the caller's
+environment, including composite parts and customizers' own scoped keys.
+Structurally shared proof types need not be pointer-equal to the written actual
+type. The lowerer does not rename keys or rewrite the proof cache. Instance
+ownership is the requester; declaration/body spans remain the defining file.
+Derived helpers instead retain their responsible use span. Export lists include
+only instances owned by their declaring module, never requester copies of
+another module's exposed function.
 
 Capturing lambdas prefix their body with aliases of the checked captures in
 first-use order. Each alias's bound expression refers to the outer binding;
