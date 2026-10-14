@@ -1373,8 +1373,7 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
         entry->module_use = node;
     }
     if (constant) {
-        if (p->constants == NULL || (p->checked && s->module != p->function->function->module &&
-                                     !p->interfaces->scopes[s->module].library)) {
+        if (p->constants == NULL) {
             bool reported = unfinished(p);
             (void)reported;
             return (struct value){0};

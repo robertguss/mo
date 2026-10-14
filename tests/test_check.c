@@ -415,6 +415,55 @@ static MO_MUST_USE bool same_source_type(const struct mo_source_type *a,
     return true;
 }
 
+static void imported_constants(void) {
+    char folder[] = "/tmp/mo-constant-import-XXXXXX", path[128], other[128];
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    int n = snprintf(path, sizeof(path), "%s/main.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(path));
+    n = snprintf(other, sizeof(other), "%s/lib.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(other));
+    const char main[] = "module Main\nuse Lib\nseed = 11\nanswer = Lib.seed * 7 + seed\n"
+                        "fn main() : Int\nanswer\nend\n";
+    const char library[] = "module Lib\nexpose seed\nseed = 13\n";
+    write_file(path, (const uint8_t *)main, sizeof(main) - 1);
+    write_file(other, (const uint8_t *)library, sizeof(library) - 1);
+    struct fixture f;
+    init(&f, MO_CLI_CHECK_SIZE);
+    struct mo_module_set *set = mo_load_program(&f.syntax, &f.sources, path, NULL, &f.diags);
+    MO_ASSERT(set != NULL && !mo_diags_any(&f.diags));
+    struct mo_program *program = mo_check(&f.arena, set, &f.diags);
+    mo_sources_free(&f.sources);
+    CHECK(program != NULL && !mo_diags_any(&f.diags));
+    if (program != NULL) {
+        MO_ASSERT(program->constant_count == 3);
+        const struct mo_symbol *seeds[2];
+        for (uint32_t i = 0; i < 2; i++) {
+            seeds[i] = mo_find_symbol(&program->interfaces->scopes[i], (const uint8_t *)"seed", 4);
+            CHECK(program->constants[i].symbol == seeds[i]);
+        }
+        CHECK(seeds[0] != seeds[1]);
+        const struct mo_checked_constant *answer = &program->constants[2];
+        CHECK(strcmp(answer->symbol->name, "answer") == 0 && answer->symbol->module == 0);
+        CHECK(strcmp(answer->type->name, "Int") == 0 && answer->type->parameters == 0);
+        bool reads[2] = {false, false};
+        for (uint32_t i = 0; i < answer->initializer.count; i++) {
+            const struct mo_checked_expression *row = &answer->initializer.items[i];
+            CHECK(row->syntax->span.file == 0);
+            for (uint32_t j = 0; j < 2; j++)
+                reads[j] = reads[j] || row->symbol == seeds[j];
+        }
+        CHECK(reads[0] && reads[1]);
+    } else {
+        MO_ASSERT(f.diags.count != 0);
+        MO_ASSERT(fprintf(stderr, "constant import: E%04u %u:%u..%u %s\n",
+                          (unsigned)f.diags.items[0].code, f.diags.items[0].primary.span.file,
+                          f.diags.items[0].primary.span.start, f.diags.items[0].primary.span.end,
+                          f.diags.items[0].message) > 0);
+    }
+    finish(&f);
+    MO_ASSERT(unlink(path) == 0 && unlink(other) == 0 && rmdir(folder) == 0);
+}
+
 static void imported_nominal(void) {
     char folder[] = "/tmp/mo-nominal-import-XXXXXX", path[128], other[128];
     MO_ASSERT(mkdtemp(folder) != NULL);
@@ -1004,8 +1053,8 @@ static void import_sources(void) {
          "fn main()\nend\n",
          "module Shapes\nexpose Tree(..)\nstruct Tree(T)\nchildren: List(Tree(List(T)))\nend\n",
          NULL, MO_CODE_DATA_RECURSION},
-        {"imported constant staged", "use Shapes{answer}\nfn main() : Int\nanswer\nend\n",
-         "module Shapes\nexpose answer\nanswer = 19\n", NULL, MO_CODE_CHECK_UNFINISHED},
+        {"imported constant", "use Shapes{answer}\nfn main() : Int\nanswer\nend\n",
+         "module Shapes\nexpose answer\nanswer = 19\n", NULL, 0},
         {"initializer import staged",
          "use Shapes{value}\nanswer = value()\n"
          "fn main() : Int\nanswer\nend\n",
@@ -2056,6 +2105,7 @@ static void run_tests(void *argument) {
     corpus();
     samples();
     imported_function();
+    imported_constants();
     imported_nominal();
     imported_choice();
     imported_generic();
