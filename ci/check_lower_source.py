@@ -526,6 +526,14 @@ MODULE_CASES = {
         "calc.mo": "module Calc\nexpose twice\n"
                    "fn twice(value: T) : T where T: Number\nvalue + value\nend\n",
     }, {None: ["returned", "83"]}),
+    "nominal_written": ({
+        "main.mo": "module Main\nuse Shapes{Pair}\n"
+                   "fn score(pair: Pair(Int, Bool)) : Int\n"
+                   "if pair.second: pair.first * 10 + 7 else: pair.first - 3\nend\n"
+                   "fn main() : Int\nscore(Pair(second: true, first: 3))\nend\n",
+        "shapes.mo": "module Shapes\nexpose Pair(..)\nstruct Pair(Z, A)\n"
+                     "first: Z\nsecond: A\nend\n",
+    }, {None: ["returned", "37"]}),
 }
 
 
