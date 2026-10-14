@@ -18,6 +18,10 @@ static void source_specs(void *argument) {
     MO_ASSERT(mo_buffer_append_text(
         &text, "\nmagnitude = Int.abs\nlow = Int.min\nhigh = Int.max\n"
                "reader = fn() Some(try Some(1)) end\n"
+               "fn make(base: T) : fn(T) : fn() : T where T: Number\n"
+               "fn(extra) fn() base + extra end end\nend\n"
+               "fn wrap(action: fn(Int) : Int) : fn(Int) : Int\n"
+               "fn(value) action(value) end\nend\n"
                "fn pair(left: Z, right: A) : (Z, A) "
                "where Z: Number, Z: Equal, A: Equal\n"
                "promise \"scoped requirements\"\nresult.0 == left + left\nresult.1 == right\n"));
@@ -43,6 +47,9 @@ static void source_specs(void *argument) {
                                            "assert magnitude(-source) == source\n"
                                            "assert Int.min(-source, 7) == low(7, -source)\n"
                                            "assert source.max(-7) == high(-7, source)\n"
+                                           "assert make(source)(computed)() == source + computed\n"
+                                           "assert make(1.25)(2.5)() == 3.75\n"
+                                           "assert wrap(magnitude)(-source) == source\n"
                                            "assert (reader() or 9) == 1\nend\n"
                                            "fn main() : Int\n17\nend\n"));
     struct mo_arena frontend, output;
@@ -65,7 +72,7 @@ static void source_specs(void *argument) {
     MO_ASSERT(core != NULL && !mo_diags_any(&diags));
     mo_arena_free(&frontend);
     mo_sources_free(&sources);
-    MO_ASSERT(mo_core_check(core, &diags)); /* Including spec metadata after frontend release. */
+    MO_ASSERT(mo_core_check(core, &diags)); /* Captures/spec metadata after frontend release. */
     struct mo_buffer wire;
     mo_buffer_init(&wire, MO_LIMIT_CORE_TEXT_SIZE);
     MO_ASSERT(mo_core_print(core, &wire));

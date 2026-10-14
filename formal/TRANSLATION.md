@@ -675,6 +675,14 @@ closure creation snapshots that ordered free environment by value. Prefixes
 prevent CPS or pattern rewrites from changing the capture order; their source
 metadata keeps the capture names and the lambda's responsible span.
 
+The declaration symbol retained on a checked postfix call is provenance,
+not necessarily its call target. A call whose callee is a zero-operand reference
+to that declaration emits `call`; a call whose callee is another call emits
+`app`. For `make(19)()` the translation is `let %f = make(19) in app %f ()`,
+not a second call to `make`. The returned closure keeps its escaped parameter
+values after `make` returns. Named-function value adapters still call their
+own declarations; no new closure representation or constant dependency is needed.
+
 `return` and `try` inside an anonymous function leave that anonymous function
 (reference 5.6). The lowering puts its `%return` join point (5.1) inside the
 anonymous function's body, and Core couldn't do otherwise: `lam`'s body is

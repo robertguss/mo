@@ -914,6 +914,12 @@ environment, captured by value at closure creation, independent of later CPS
 rewrites. The aliases retain the captured source names and the lambda span.
 The checker owns capture legality, including capabilities and later var writes.
 
+A checked postfix call can retain its originating declaration symbol even
+when its callee is a returned closure. Only a zero-operand declaration reference
+as the callee permits a direct Core call; `make(19)()` evaluates `make(19)` once
+and applies that value. The same decision controls whether lowering skips the
+callee operand. It does not change closure snapshots or constant creation prefixes.
+
 Option `or` evaluates its left operand once and emits a one-level None/Some
 case; only None evaluates the fallback. `try` uses the same decision, or Ok/Error
 for Result, with the remaining expression confined to the success arm. Failure

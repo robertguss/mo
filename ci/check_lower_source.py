@@ -187,6 +187,38 @@ CASES = {
                                 "and Int.min(0, a) == a and Int.max(b, 0) == b: 59 else: 1\nend", 59),
     "native_alias_chain": ("handler = Int.abs\nalias = handler\nanswer = alias(-5) + alias(19) + handler(0)\n"
                           "fn main() : Int\nanswer + 13\nend", 37),
+    "capture_snapshot": ("fn main() : Int\nvar count = 7\ncurrent = count\n"
+                         "f = fn() current end\ncount += 19\ng = fn() count end\nf() * 10 + g()\nend", 96),
+    "capture_returned_parameter": ("fn make(value: Int) : fn() : Int\nfn() value + value end\nend\n"
+                                   "fn main() : Int\nmake(19)()\nend", 38),
+    "capture_nested_lifetimes": ("fn make(left: Int, right: Int) : fn(Int) : fn() : Int\n"
+                                 "fn(shift)\ntemp = left * 7\nfn() right + temp + shift + left + right end\nend\nend\n"
+                                 "fn main() : Int\nmake(3, 29)(5)()\nend", 87),
+    "capture_written_order": ("fn invoke(f: fn() : Int, extra: Int) : Int\nf() + extra\nend\n"
+                              "fn make(left: Int, right: Int) : fn() : Int\n"
+                              "fn() invoke(fn() right + left + right end, left) end\nend\n"
+                              "fn main() : Int\nmake(7, 23)()\nend", 60),
+    "capture_exclusive_scopes": ("fn select(flag: Bool) : fn() : Int\nif flag\nitem = 13\nfn() item end\n"
+                                 "else\nitem = 29\nfn() item end\nend\nend\n"
+                                 "fn main() : Int\nselect(true)() * 10 + select(false)()\nend", 159),
+    "capture_exclusive_writes": ("fn make(flag: Bool) : fn() : Int\nvar count = 7\nif flag\nfn() count end\n"
+                                 "else\ncount += 19\nfn() count end\nend\nend\n"
+                                 "fn main() : Int\nmake(true)() + make(false)()\nend", 33),
+    "capture_copied_record": ("struct Box\nvalue: Int\nend\nfn main() : Int\nvar box = Box(value: 3)\n"
+                              "copy = box\nf = fn() copy.value end\nbox.value += 19\nf() * 10 + box.value\nend", 52),
+    "capture_text_lifetime": ("fn make(prefix: Text) : fn(Int) : Text\nfn(n) \"#{prefix}/#{n}\" end\nend\n"
+                              "fn main() : Int\nif make(\"λ\")(17) == \"λ/17\": 43 else: 1\nend", 43),
+    "capture_generic_number": ("fn make(value: T) : fn(T) : fn() : T where T: Number\n"
+                               "fn(extra) fn() value + extra end end\nend\n"
+                               "fn main() : Int\nif make(1.25)(2.5)() == 3.75: make(13)(29)() else: 1\nend", 42),
+    "capture_nearest_try": ("fn make(base: Int) : fn(Option(Int)) : Option(Int)\n"
+                            "fn(value) Some(base + try value) end\nend\n"
+                            "fn main() : Int\naction = make(13)\n"
+                            "if action(Some(29)) == Some(42) and (action(None) or 7) == 7: 47 else: 1\nend", 47),
+    "capture_per_round": ("fn main() : Int\nvar total = 0\nfor n in 0..3\nvar count = n\ncount += 1\n"
+                          "show = fn() count end\ntotal += show()\nend\ntotal\nend", 6),
+    "capture_capability_parameter": ("fn make() : fn(Console)\nfn(console) console.print(\"ok\") end\nend\n"
+                                    "fn main(console: Console)\nmake()(console)\nend", 0),
 }
 
 SPEC_CASES = {
@@ -353,6 +385,19 @@ SPEC_CASES = {
                                   "Main.test.2": ["stopped", "first argument"],
                                   "Main.test.3": ["stopped", "first argument"],
                               }),
+    "capture_specs": ("fn make(base: T) : fn(T) : fn() : T where T: Number\nexamples\n"
+                      "make(13)(29)() == 42\nmake(1.25)(2.5)() == 3.75\nend\n"
+                      "fn(extra) fn() base + extra end end\nend\n"
+                      "test \"snapshot\"\nvar count = 7\ncopy = count\nshow = fn() copy end\n"
+                      "count += 19\nassert show() * 10 + count == 96\nend\n"
+                      "test \"captured failure\"\naction = make(13)(29)\nassert action() == 41\nend\n"
+                      "fn main() : Int\n17\nend", {
+                          None: ["returned", "17"],
+                          "Main.make.example.1": ["returned", "Unit"],
+                          "Main.make.example.2": ["returned", "Unit"],
+                          "Main.test.1": ["returned", "Unit"],
+                          "Main.test.2": ["failed", "left 2:42,right 2:41,"],
+                      }),
 }
 
 REFUSALS = {

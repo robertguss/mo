@@ -1912,9 +1912,10 @@ static void test_source_captures(void *unused) {
     MO_ASSERT(mo_diags_init(&diags));
     mo_buffer_init(&source, MO_LIMIT_FILE_SIZE);
     MO_ASSERT(mo_buffer_append_text(
-        &source, "module Main\nfn make(left: Int, right: Int) : fn(Int) : fn() : Int\n"
-                 "fn(shift)\ntemp = left * 7\nfn() right + temp + shift + left + right end\nend\nend\n"
-                 "fn main() : Int\nmake(3, 29)(5)()\nend\n"));
+        &source,
+        "module Main\nfn make(left: Int, right: Int) : fn(Int) : fn() : Int\n"
+        "fn(shift)\ntemp = left * 7\nfn() right + temp + shift + left + right end\nend\nend\n"
+        "fn main() : Int\nmake(3, 29)(5)()\nend\n"));
     struct mo_core *core = source_core(&output, &source, &diags);
     CHECK(core != NULL && !mo_diags_any(&diags));
     if (core != NULL)
