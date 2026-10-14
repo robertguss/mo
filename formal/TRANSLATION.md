@@ -108,9 +108,10 @@ file indices, declaration/body spans and spec wording retain the declaring sourc
 Nongeneric source calls, first-class references, records, choices and snapshots
 use the existing translation rules unchanged. Certified imported generic
 function calls/values likewise reuse section 9's instances and scoped proofs,
-including returned/captured references and three-module propagation. Foreign
-generic nominal written annotation/construction/projection, constant reads and
-direct imported initializer references remain explicit checker E1103; this
+including returned/captured references and three-module propagation. Certified
+foreign generic nominal annotations, constructors, fields and choice patterns
+reuse the declaring data layouts in sections 4 and 9. Foreign constant reads
+and direct imported initializer references remain explicit checker E1103; this
 integration does not add a new Core representation or reorder constants.
 
 ## 3. Values and types
@@ -1132,6 +1133,15 @@ A generic data declaration is canonical program-wide by (defining declaration,
 concrete type list) and owned by the defining module. If `Lib.make()` returns
 `Lib.Box(Int)`, a requester-specialized function must accept that same nominal
 type; making requester-specific data names would break the call's Core type.
+Written imported nominal uses retain that same declaration. Field substitution
+uses its record signature, or the first case's signature for a choice, with
+abstract keys in the type's explicit parameter declaration order rather than
+the importing function's A-Z order. Cases retain their choice owner's keys.
+Thus `Pair(Z, A)` used as `Pair(Int, Bool)` has Z = Int and A = Bool, regardless
+of caller parameter names. Each closed data layout is emitted once across
+requesters, and only its declaring module retains its data export/exposure.
+Opaque exports still have full Core layouts but cannot be constructed or
+projected by source importers; passing them through a third module adds no export.
 Generic function code is instead deduplicated by (requesting module, defining
 declaration, concrete type list). Thus Main and Other can own distinct copies
 `Main::Lib.identity(Int)` and `Other::Lib.identity(Int)`. Nested requests use

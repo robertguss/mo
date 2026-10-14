@@ -595,8 +595,10 @@ struct mo_program {
  * Imports retain declaring symbol/type identities and count annotation/value references;
  * unused written module/name routes report E0093 after successful body/spec checking.
  * Imported generic functions use their declaring signature's parameter keys and
- * the caller's actual-type ability proofs, as local uses do. Foreign generic nominal
- * annotations/layouts and constant reads/direct initializer references remain E1103.
+ * the caller's actual-type ability proofs, as local uses do. Imported generic data
+ * annotations/construction/fields/patterns retain their declaring nominal identity
+ * and declaration-ordered parameter keys; hidden insides remain private.
+ * Foreign constant reads/direct initializer references remain E1103.
  * Existing implicit library routes are unchanged.
  * Valid unfinished entry forms, spec-only capability
  * operations and unfinished body forms return E1103.

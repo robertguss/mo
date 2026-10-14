@@ -999,11 +999,6 @@ static MO_MUST_USE bool visible_data(struct inference *p, const struct mo_symbol
                        "Outside its module a type exposed without (..) can't be built, taken apart "
                        "or have its fields read (reference 10.2).",
                        owner->declaration->children[0]);
-    const struct mo_syntax *parameters = owner->declaration->children[1];
-    if (p->checked && !p->interfaces->scopes[owner->module].library && parameters != NULL &&
-        parameters->count != 0)
-        return problem(p, MO_CODE_CHECK_UNFINISHED, p->span,
-                       "generic nominal imports remain staged", NULL, NULL);
     return true;
 }
 
