@@ -462,6 +462,15 @@ MODULE_CASES = {
                    "examples\nscore(3, 11) == 32\nend\nleft * 7 + right\nend\n",
     }, {None: ["returned", "32"], "Math.score.example.1": ["returned", "Unit"],
         "Main.test.1": ["failed", "left 2:32,right 2:33,"]}),
+    "generic_keys": ({
+        "main.mo": "module Main\nuse Calc\n"
+                   "fn relay(value: A, tag: Z) : A where A: Number, Z: Text\n"
+                   "f = Calc.choose\nf(value, tag)\nend\n"
+                   "fn main() : Int\nrelay(13, true) * 3 + relay(17, false)\nend\n",
+        "calc.mo": "module Calc\nexpose choose\n"
+                   "fn choose(value: Z, tag: A) : Z where Z: Number, A: Text\n"
+                   "if \"#{tag}\" == \"true\": value + value else: value\nend\n",
+    }, {None: ["returned", "95"]}),
 }
 
 
@@ -490,7 +499,9 @@ def check_modules(driver, vm, root, world):
                     continue
                 span = meta[2][1]
                 original = originals[int(span[1])]
-                assert original.startswith(f"module {module[1]}\n".encode()), (name, meta)
+                declaring = original.split(b"\n", 1)[0].decode().removeprefix("module ")
+                prefix = (module[1] + "::" + declaring if "::" in fun[1] else module[1])
+                assert fun[1].startswith(prefix + "."), (name, module, meta)
                 start, end = int(span[2]), int(span[3])
                 assert 0 <= start < end <= len(original), (name, meta)
                 header = original[start:end].split(b"\n", 1)[0]
