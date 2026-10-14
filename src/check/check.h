@@ -265,7 +265,10 @@ enum mo_ability_implementation_kind {
  * part keyed by that customizer's T. This also applies to entry.error_text.
  * Hash/Order signatures include their implied Equal requirement. Graphs may
  * recurse through nominal data; lowering memoizes them. DERIVED has no
- * part_parameters: its parts are structural, not signature requirements. */
+ * part_parameters: its parts are structural, not signature requirements.
+ * Proofs may be shared for structurally equal actual types: implementation.type
+ * need not be the same pointer as a use's substituted actual type. The scoped
+ * parameter keys, not concrete-type pointers, retain canonical identity. */
 struct mo_ability_implementation {
     enum mo_source_ability ability;
     enum mo_ability_implementation_kind kind;
@@ -591,8 +594,10 @@ struct mo_program {
  * unresolved indirect-call or abstract callback dependencies remain E1103.
  * Imports retain declaring symbol/type identities and count annotation/value references;
  * unused written module/name routes report E0093 after successful body/spec checking.
- * Cross-application generic values/nominal annotations and constant reads/direct
- * initializer calls remain E1103. Existing implicit library routes are unchanged.
+ * Imported generic functions use their declaring signature's parameter keys and
+ * the caller's actual-type ability proofs, as local uses do. Foreign generic nominal
+ * annotations/layouts and constant reads/direct initializer references remain E1103.
+ * Existing implicit library routes are unchanged.
  * Valid unfinished entry forms, spec-only capability
  * operations and unfinished body forms return E1103.
  * Spec checking checks anchor typing, completeness and links but executes no source code:

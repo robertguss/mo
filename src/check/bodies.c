@@ -1206,11 +1206,10 @@ static MO_MUST_USE struct value declared_function(struct inference *p, const str
     }
     if (p->checked && s->module != p->function->function->module &&
         !p->interfaces->scopes[s->module].library &&
-        (signature->type->parameters != 0 ||
-         p->function->function->declaration->kind == MO_S_CONST)) {
+        p->function->function->declaration->kind == MO_S_CONST) {
         bool reported =
             problem(p, MO_CODE_CHECK_UNFINISHED, p->span,
-                    "generic imports and imported initializer calls remain staged", NULL, NULL);
+                    "imported initializer function references remain staged", NULL, NULL);
         (void)reported;
         return (struct value){0};
     }
