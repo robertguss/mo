@@ -377,11 +377,12 @@ static void coverage_cost(void) {
         MO_ASSERT(mo_buffer_append_byte(&source, 0));
         struct fixture f;
         init_limit(&f, (const char *)source.bytes, NULL, 64 << 20);
+        uint64_t prepared = *f.signatures->work;
         CHECK(body(&f, "run") != NULL && f.diags.count == 0);
         if (large == 0)
-            small_work = *f.signatures->work;
+            small_work = *f.signatures->work - prepared;
         else
-            CHECK(*f.signatures->work == small_work);
+            CHECK(*f.signatures->work - prepared == small_work);
         finish(&f);
         mo_buffer_free(&source);
     }
@@ -460,8 +461,8 @@ static void missing_previews(void) {
     finish(&f);
     init(&f, "module Main\nfn run(entry: Entry) : Bool\nentry is Entry(name: _, kind: File)\nend\n",
          NULL);
-    CHECK(body(&f, "run") == NULL);
-    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CHECK_UNFINISHED);
+    CHECK(body(&f, "run") != NULL);
+    CHECK(!mo_diags_any(&f.diags));
     finish(&f);
 }
 
@@ -513,8 +514,9 @@ static void pattern_boundaries(void) {
     MO_ASSERT(mo_buffer_append_byte(&source, 0));
     struct fixture f;
     init(&f, (const char *)source.bytes, NULL);
+    uint64_t prepared = *f.signatures->work;
     CHECK(body(&f, "run") != NULL && f.diags.count == 0);
-    uint64_t cost = *f.signatures->work;
+    uint64_t cost = *f.signatures->work - prepared;
     MO_ASSERT(cost > 0 && cost < MO_LIMIT_PROGRAM_CHECK_WORK);
     *f.signatures->work = MO_LIMIT_PROGRAM_CHECK_WORK - cost;
     CHECK(body(&f, "run") != NULL && f.diags.count == 0);
@@ -834,6 +836,46 @@ static void literal_ranges(void) {
     int n = snprintf(fraction, sizeof(fraction), "%s.999999999999999999", boundary);
     MO_ASSERT(n > 0 && (size_t)n < sizeof(fraction));
     number("Float", fraction, true);
+}
+
+/* A Number parameter is checked once for every instantiation, so its literal
+ * must fit Int, the narrowest Number type. */
+static void number_parameter_range(const char *body_text, bool valid) {
+    struct mo_buffer source;
+    mo_buffer_init(&source, 8192);
+    MO_ASSERT(mo_buffer_append_text(&source, "module Main\nfn run() : T where T: Number\n"));
+    MO_ASSERT(mo_buffer_append_text(&source, body_text));
+    MO_ASSERT(mo_buffer_append_text(&source, "\nend\n"));
+    MO_ASSERT(mo_buffer_append_byte(&source, 0));
+    struct fixture f;
+    init(&f, (const char *)source.bytes, NULL);
+    struct mo_inferred_body *out = body(&f, "run");
+    CHECK((out != NULL) == valid);
+    if (valid && out != NULL) {
+        CHECK(f.diags.count == 0);
+        CHECK(strcmp(out->items[out->count - 1].type->name, "T") == 0);
+    } else if (!valid)
+        CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_LITERAL_RANGE);
+    finish(&f);
+    mo_buffer_free(&source);
+}
+
+static void number_parameter_ranges(void) {
+    number_parameter_range("1", true);
+    number_parameter_range("9223372036854775807", true);
+    number_parameter_range("-9223372036854775808", true);
+    number_parameter_range("9223372036854775808", false);
+    number_parameter_range("-9223372036854775809", false);
+    number_parameter_range("170141183460469231731687303715884105728", false);
+
+    struct fixture f;
+    init(&f,
+         "module Main\nfn run() : T where T: Number\ng = fn()\n"
+         "9223372036854775808\nend\ng()\nend\n",
+         NULL);
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_LITERAL_RANGE);
+    finish(&f);
 }
 
 static void float_locale(void) {
@@ -1268,8 +1310,9 @@ static void syntax_depth(void) {
 static void work_limits(void) {
     struct fixture f;
     init(&f, "module Main\nfn run() : Int\n1\nend\n", NULL);
+    uint64_t prepared = *f.signatures->work;
     CHECK(body(&f, "run") != NULL);
-    uint64_t cost = *f.signatures->work;
+    uint64_t cost = *f.signatures->work - prepared;
     MO_ASSERT(cost > 0 && cost < MO_LIMIT_PROGRAM_CHECK_WORK);
     *f.signatures->work = MO_LIMIT_PROGRAM_CHECK_WORK - cost;
     CHECK(body(&f, "run") != NULL && f.diags.count == 0);
@@ -1298,9 +1341,10 @@ static void work_limits(void) {
     MO_ASSERT(mo_buffer_append_text(&source, "end\n"));
     MO_ASSERT(mo_buffer_append_byte(&source, 0));
     init_limit(&f, (const char *)source.bytes, NULL, 256 << 20);
+    prepared = *f.signatures->work;
     CHECK(body(&f, "run") == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CHECK_WORK);
-    CHECK(*f.signatures->work == MO_LIMIT_SOURCE_CHECK_WORK);
+    CHECK(*f.signatures->work - prepared == MO_LIMIT_SOURCE_CHECK_WORK);
     finish(&f);
     mo_buffer_free(&source);
 }
@@ -1328,6 +1372,7 @@ static void run_tests(void *argument) {
     inferred_uses();
     scope_errors();
     literal_ranges();
+    number_parameter_ranges();
     float_locale();
     assignment_equivalence();
     discarded_tails();

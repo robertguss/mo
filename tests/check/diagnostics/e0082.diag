@@ -1,0 +1,6 @@
+E0082 9.2
+0:35..42
+to_text doesn't have the type's text signature
+A type customizes Order or Text in its own module with compare(T, T): Ordering or to_text(T): Text (reference 9.2). This stage reserves these names for customizers; it doesn't certify unrelated functions with these names.
+to_text doesn't have the type's text signature
+fixes 0

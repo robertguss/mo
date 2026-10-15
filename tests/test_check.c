@@ -215,6 +215,11 @@ static void corpus(void) {
         {"e0077.mo", "e0077.diag", BODIES},
         {"e0078.mo", "e0078.diag", BODIES},
         {"e0079.mo", "e0079.diag", PROGRAM},
+        {"e0080.mo", "e0080.diag", PROGRAM},
+        {"e0081.mo", "e0081.diag", SIGNATURES},
+        {"e0082.mo", "e0082.diag", SIGNATURES},
+        {"e0083.mo", "e0083.diag", PROGRAM},
+        {"e0084.mo", "e0084.diag", SIGNATURES},
         {"e0412.mo", "e0412.diag", BODIES},
         {"e1103.mo", "e1103.diag", BODIES},
     };
@@ -442,7 +447,7 @@ static void confined_files(void) {
     CHECK(f.sources.count == 1 && strcmp(f.sources.files[0].path, entry) == 0);
     finish(&f);
     MO_ASSERT(unlink(linked) == 0);
-    MO_ASSERT(symlink("/dev/stdin", linked) == 0);
+    MO_ASSERT(symlink("/dev/null", linked) == 0);
     init(&f, 16 << 20);
     CHECK(mo_load_program(&f.arena, &f.sources, entry, NULL, &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_OUTSIDE_ROOT);
@@ -830,7 +835,9 @@ static void function_signatures(void) {
     } else
         CHECK(false);
     bool succeeded = false, failed = false;
-    for (size_t limit = 0; limit <= 16384; limit += 16) {
+    /* Preparation now includes every native table signature. Keep the fine
+     * sweep through the original small allocations, then cross that table. */
+    for (size_t limit = 0; limit <= (1 << 20); limit += limit < 16384 ? 16u : 1024u) {
         struct mo_arena arena;
         mo_arena_init(&arena, limit);
         struct mo_signatures *out = mo_prepare_signatures(&arena, &set, names, &f.diags);

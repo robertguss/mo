@@ -123,7 +123,7 @@ static MO_MUST_USE char *path_text(struct loader *l, const struct mo_syntax *pat
     if (result != NULL)
         memcpy(result, text, length + 1);
     return result;
-too_long : {
+too_long: {
     bool kept =
         report(l, MO_CODE_PATH_TOO_LONG, path->span, "a module's path is too long", NULL, NULL);
     (void)kept;
@@ -162,7 +162,7 @@ static MO_MUST_USE char *normal_path(struct loader *l, const char *path) {
     if (result != NULL)
         memcpy(result, text, length + 1);
     return result;
-too_long : {
+too_long: {
     bool kept = report(l, MO_CODE_PATH_TOO_LONG, (struct mo_span){UINT32_MAX, 0, 0},
                        "a source file's path is too long", NULL, NULL);
     (void)kept;

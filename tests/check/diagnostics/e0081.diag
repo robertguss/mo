@@ -1,0 +1,6 @@
+E0081 5.5
+0:44..45
+where doesn't name a type parameter in this signature
+A single capital letter in a signature is a type parameter, and where asks for abilities (reference 5.5).
+where doesn't name a type parameter in this signature
+fixes 0
