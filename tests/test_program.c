@@ -40,6 +40,47 @@ static void free_fixture(struct fixture *f) {
     mo_sources_free(&f->sources);
 }
 
+static void number_literal_bound(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn f(x: T) : T where T: Number\nx + 1\nend\n"
+             "fn main() : Int\nf(1)\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[1].body;
+        bool instantiated = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->syntax->kind != MO_S_CALL || row->arguments.count == 0)
+                continue;
+            CHECK(strcmp(row->arguments.items[0].type->name, "Int") == 0);
+            instantiated = true;
+        }
+        CHECK(instantiated);
+    }
+    free_fixture(&f);
+
+    const char *rejected[] = {
+        "module Main\nfn f(x: T) : T where T: Number\nx + 9223372036854775808\nend\n"
+        "fn main() : Int\nf(1)\nend\n",
+        "module Main\nfn f() : T where T: Number\n"
+        "170141183460469231731687303715884105728\nend\nfn main() : Int\nf()\nend\n",
+        "module Main\nfn f() : T where T: Number\n-9223372036854775809\nend\n"
+        "fn main() : Int\nf()\nend\n",
+    };
+    for (size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); i++) {
+        init(&f, rejected[i]);
+        CHECK(f.program == NULL);
+        CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_LITERAL_RANGE);
+        free_fixture(&f);
+    }
+
+    init(&f, "module Main\nfn f(x: T) : T where T: Number\nx + 1.5\nend\n"
+             "fn main() : Int\nf(1)\nend\n");
+    CHECK(f.program == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_TYPE_MISMATCH);
+    free_fixture(&f);
+}
+
 static void entry_graph(void) {
     struct fixture f;
     init(&f, "module Main\nfn identity(value: Int) : Int\n"
@@ -1597,6 +1638,7 @@ static void run(void *argument) {
     ability_graph();
     native_choice_abilities();
     generic_graph();
+    number_literal_bound();
     requirement_keys();
     data_recursion();
     generic_lambdas();

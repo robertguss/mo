@@ -3166,6 +3166,17 @@ static MO_MUST_USE bool finite_decimal(const struct mo_syntax *node) {
     return false;
 }
 
+/* A Number parameter is instantiated as Int, BigInt, Decimal and Float.
+ * The generic body is checked once, so a literal in that context must fit Int. */
+static MO_MUST_USE bool number_parameter(const struct inference *p,
+                                         const struct mo_source_type *type) {
+    if (type->kind != MO_SOURCE_PARAMETER || type->declaration != p->function->function ||
+        type->name[0] < 'A' || type->name[0] > 'Z' || type->name[1] != '\0')
+        return false;
+    return (p->function->requirements[(unsigned)(type->name[0] - 'A')] &
+            (1u << MO_SOURCE_NUMBER)) != 0;
+}
+
 static MO_MUST_USE bool literal(struct inference *p, const struct note *n) {
     const struct mo_syntax *node = n->output.syntax;
     if (node->kind != MO_S_INT && node->kind != MO_S_DECIMAL)
@@ -3200,7 +3211,7 @@ static MO_MUST_USE bool literal(struct inference *p, const struct note *n) {
             places++;
     }
     bool fits = !overflow;
-    if (strcmp(name, "Int") == 0)
+    if (strcmp(name, "Int") == 0 || number_parameter(p, n->output.type))
         fits = fits && magnitude <= (mo_u128)INT64_MAX + (n->negative ? 1u : 0u);
     else if (strcmp(name, "Byte") == 0)
         fits = fits && !n->negative && magnitude <= 255;

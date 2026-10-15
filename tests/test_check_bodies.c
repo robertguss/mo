@@ -838,6 +838,46 @@ static void literal_ranges(void) {
     number("Float", fraction, true);
 }
 
+/* A Number parameter is checked once for every instantiation, so its literal
+ * must fit Int, the narrowest Number type. */
+static void number_parameter_range(const char *body_text, bool valid) {
+    struct mo_buffer source;
+    mo_buffer_init(&source, 8192);
+    MO_ASSERT(mo_buffer_append_text(&source, "module Main\nfn run() : T where T: Number\n"));
+    MO_ASSERT(mo_buffer_append_text(&source, body_text));
+    MO_ASSERT(mo_buffer_append_text(&source, "\nend\n"));
+    MO_ASSERT(mo_buffer_append_byte(&source, 0));
+    struct fixture f;
+    init(&f, (const char *)source.bytes, NULL);
+    struct mo_inferred_body *out = body(&f, "run");
+    CHECK((out != NULL) == valid);
+    if (valid && out != NULL) {
+        CHECK(f.diags.count == 0);
+        CHECK(strcmp(out->items[out->count - 1].type->name, "T") == 0);
+    } else if (!valid)
+        CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_LITERAL_RANGE);
+    finish(&f);
+    mo_buffer_free(&source);
+}
+
+static void number_parameter_ranges(void) {
+    number_parameter_range("1", true);
+    number_parameter_range("9223372036854775807", true);
+    number_parameter_range("-9223372036854775808", true);
+    number_parameter_range("9223372036854775808", false);
+    number_parameter_range("-9223372036854775809", false);
+    number_parameter_range("170141183460469231731687303715884105728", false);
+
+    struct fixture f;
+    init(&f,
+         "module Main\nfn run() : T where T: Number\ng = fn()\n"
+         "9223372036854775808\nend\ng()\nend\n",
+         NULL);
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_LITERAL_RANGE);
+    finish(&f);
+}
+
 static void float_locale(void) {
     /* CI needs no installed foreign locale. A caller can supply a comma locale
      * to exercise the host's global state without changing the test inputs. */
@@ -1332,6 +1372,7 @@ static void run_tests(void *argument) {
     inferred_uses();
     scope_errors();
     literal_ranges();
+    number_parameter_ranges();
     float_locale();
     assignment_equivalence();
     discarded_tails();

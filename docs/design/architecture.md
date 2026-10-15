@@ -667,7 +667,9 @@ some names by type:
   type's range is an error: an `Int` beyond 64 bits, a `Byte` beyond 255, a
   `Decimal` with more than 18 places or beyond its range. So is a `Float`
   literal that doesn't round to a finite value. A literal with nothing to
-  decide its type is an `Int`, or a `Decimal`.
+  decide its type is an `Int`, or a `Decimal`. A literal whose context is a
+  `Number` parameter must fit `Int`, the narrowest `Number` type, because that
+  generic body is checked once and then instantiated as every `Number` type.
 - **`is` patterns** bind names where the test is known to be true: in the
   block it guards, after `and`, after `implies`, and after `assert`
   (reference 7.4). The checker tracks this through `and`, `implies` and
