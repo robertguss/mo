@@ -107,3 +107,23 @@ every totals record reports `dropped: 0`. Private matches the requested ceiling.
 - Regenerated `docs/status/sample-blockers.md` and merged architecture.
 
 No tasks C1, F5, LW5, or M1 started. No Language Reference changes. No PR merge.
+
+## Independent parent suite sweep
+
+After the failing Doctor, every built debug unit executable was run individually
+with its exit code/stdout/stderr recorded. This supplements the baseline; it does
+not turn either failed Doctor into a pass.
+
+- mo-main-parent: 33/35 suites passed. `test_check` exits 1 at the library path assertion; `test_host` aborts
+  at its Unix-domain socket bind setup (`tests/test_host.c:360`).
+- mo-private-parent: 34/36 suites passed. `test_check` exits 1 at the library path assertion; `test_host` aborts
+  at its Unix-domain socket bind setup (`tests/test_host.c:360`).
+
+The private debug `test_deadline` passes; no ASan deadline claim is made.
+Both parent `test_program`, `test_lower`, and `test_vm` suites pass. The VM-vs-Lean
+comparison has not run. Registry comparison finds no numeric code with different
+identifiers between the two parents, so no identity collision was detected.
+
+On the evidence-only PR branch, `bash ci/check.sh` exits 2 in its first build
+(`gcc` is Apple Clang here), on the existing enum warning. Later CI stages are
+unrun; there is no passing CI summary or merged-tree verification.
