@@ -1482,8 +1482,7 @@ static MO_MUST_USE struct value ability_function(struct inference *p, struct val
     return out;
 }
 
-/* Resolve a member without walking its explicit arguments. A method returns
- * its function type; a visible field returns its projection. */
+/* Choose the member before its explicit arguments are checked. */
 static MO_MUST_USE struct value member(struct inference *p, struct value v,
                                        const struct mo_syntax *name, bool *called) {
     *called = true;

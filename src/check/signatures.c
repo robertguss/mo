@@ -630,7 +630,6 @@ static MO_MUST_USE bool nominal_index(struct preparation *p) {
     return true;
 }
 
-/* Nominal masks reach a fixed point without expanding recursive layouts. */
 static MO_MUST_USE bool dependency_work(struct preparation *p) {
     if (*p->signatures->work == MO_LIMIT_PROGRAM_CHECK_WORK)
         return problem(p, MO_CODE_CHECK_PROGRAM_WORK, p->span,
@@ -707,6 +706,7 @@ static MO_MUST_USE bool watch_dependencies(struct preparation *p, const struct m
     return true;
 }
 
+/* Nominal masks reach a fixed point without expanding recursive layouts. */
 static MO_MUST_USE bool data_dependencies(struct preparation *p) {
     struct mo_signatures *s = p->signatures;
     if (s->data_count == 0)

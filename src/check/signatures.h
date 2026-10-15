@@ -1,4 +1,3 @@
-/* Prepared nominal owners and customizers, private to checking. */
 #ifndef MO_CHECK_SIGNATURES_H
 #define MO_CHECK_SIGNATURES_H
 

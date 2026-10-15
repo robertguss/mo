@@ -1,4 +1,3 @@
-/* Prepared signatures from the shared primitive and host tables. */
 #ifndef MO_CHECK_NATIVE_H
 #define MO_CHECK_NATIVE_H
 

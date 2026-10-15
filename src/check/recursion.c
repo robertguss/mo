@@ -1,4 +1,3 @@
-/* Instantiation dependencies, including function values and ability callbacks. */
 #include "check/checked.h"
 #include "check/signatures.h"
 

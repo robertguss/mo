@@ -117,8 +117,8 @@ struct mo_function_signature {
 };
 
 struct mo_field_signature {
-    const struct mo_syntax *name;       /* NULL for a case's single unnamed value */
-    const struct mo_syntax *annotation; /* the written field type */
+    const struct mo_syntax *name; /* NULL for a case's single unnamed value */
+    const struct mo_syntax *annotation;
     const struct mo_source_type *type;
     uint32_t index; /* declaration order */
 };
@@ -145,10 +145,10 @@ struct mo_signatures {
     uint32_t data_count;
     struct mo_data_signature *data; /* module order, then interface symbol order */
     uint32_t native_count;
-    struct mo_native_signature *native; /* private prepared table interfaces */
+    struct mo_native_signature *native;
     uint32_t nominal_count, customizer_count;
-    struct mo_nominal_signature *nominals;            /* private owner index and dependency masks */
-    const struct mo_function_signature **customizers; /* private receiver index */
+    struct mo_nominal_signature *nominals;
+    const struct mo_function_signature **customizers;
     bool recovering; /* private diagnostic recovery; never true in a published preparation */
 };
 
@@ -270,7 +270,7 @@ struct mo_ability_implementation {
     struct mo_type_arguments arguments;
     uint32_t part_count;
     const struct mo_ability_implementation *const *parts;
-    const struct mo_source_type *const *part_parameters; /* FUNCTION requirement keys */
+    const struct mo_source_type *const *part_parameters;
 };
 
 struct mo_checked_binding {
@@ -319,7 +319,7 @@ struct mo_checked_pattern {
     struct mo_constructor_ref constructor;
     struct mo_type_arguments arguments;
     uint32_t ability_count;
-    const struct mo_checked_ability_use *abilities; /* keyed type-only constructor requirements */
+    const struct mo_checked_ability_use *abilities;
     uint32_t part_count;
     const struct mo_checked_pattern_part *parts;
 };

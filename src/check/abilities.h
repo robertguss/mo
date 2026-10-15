@@ -1,4 +1,3 @@
-/* Ability proofs and collection-key constraints, private to checking. */
 #ifndef MO_CHECK_ABILITIES_H
 #define MO_CHECK_ABILITIES_H
 
