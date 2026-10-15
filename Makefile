@@ -59,7 +59,9 @@ GRAMMAR_SOURCES := grammar/lexer.c grammar/ast.c
 GRAMMAR_INCLUDES := -Igrammar -I$(GRAMMAR_GENERATED)
 # LR stack height can follow flat prefix chains, not source nesting. Its default
 # 10,000 states reject valid source; bound it by the input budget instead.
+# Bison sets yynerrs and does not read it when the grammar does not count errors.
 GRAMMAR_PARSER_WARNINGS := $(CSTD) $(INCLUDES) -Wall -Wextra -Werror -MMD -MP \
+	-Wno-unused-but-set-variable \
 	-include src/base/limits.h '-DYYMAXDEPTH=(4 * MO_LIMIT_FILE_SIZE)'
 grammar_objects = $(patsubst grammar/%.c,$(1)/grammar/%.o,$(GRAMMAR_SOURCES)) \
 	$(1)/grammar/mo.tab.o $(call objects,$(1),$(BASE_SOURCES))
