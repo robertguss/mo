@@ -59,7 +59,9 @@ GRAMMAR_SOURCES := grammar/lexer.c grammar/ast.c
 GRAMMAR_INCLUDES := -Igrammar -I$(GRAMMAR_GENERATED)
 # LR stack height can follow flat prefix chains, not source nesting. Its default
 # 10,000 states reject valid source; bound it by the input budget instead.
+# Bison sets yynerrs and does not read it when the grammar does not count errors.
 GRAMMAR_PARSER_WARNINGS := $(CSTD) $(INCLUDES) -Wall -Wextra -Werror -MMD -MP \
+	-Wno-unused-but-set-variable \
 	-include src/base/limits.h '-DYYMAXDEPTH=(4 * MO_LIMIT_FILE_SIZE)'
 grammar_objects = $(patsubst grammar/%.c,$(1)/grammar/%.o,$(GRAMMAR_SOURCES)) \
 	$(1)/grammar/mo.tab.o $(call objects,$(1),$(BASE_SOURCES))
@@ -157,7 +159,7 @@ fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test $(BUILD)/d
 			name=$$base; options=; \
 			if [ "$$base" = fuzz_bytecode_io ]; then options="-max_len=4096 -timeout=15"; fi; \
 			if [ "$$base" = fuzz_bytecode_text ]; then options="-max_len=16777216 -timeout=30"; fi; \
-			if [ "$$base" = fuzz_vm ]; then options="-max_len=65536 -timeout=15"; fi; \
+			if [ "$$base" = fuzz_vm ] || [ "$$base" = fuzz_bytecode_verify ]; then options="-max_len=65536 -timeout=15"; fi; \
 			if [ "$$variant" = large ]; then \
 				name=$${base}_large; options="-max_len=134217728 -timeout=30"; fi; \
 			corpus=$(FUZZ_BUILD)/corpus/$$name; \
@@ -166,7 +168,7 @@ fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test $(BUILD)/d
 			if [ -d fuzz/corpus/$$name ]; then cp -R fuzz/corpus/$$name/. $$corpus/; fi; \
 			if [ "$$base" = fuzz_bytecode_io ]; then cp $(FUZZ_BUILD)/bytecode-fixtures/*.bc $$corpus/; fi; \
 			if [ "$$base" = fuzz_bytecode_text ]; then cp $(FUZZ_BUILD)/bytecode-fixtures/* $$corpus/; fi; \
-			if [ "$$base" = fuzz_vm ]; then cp $(FUZZ_BUILD)/vm-fixtures/*.bc $(FUZZ_BUILD)/bytecode-fixtures/*.bc $$corpus/; fi; \
+			if [ "$$base" = fuzz_vm ] || [ "$$base" = fuzz_bytecode_verify ]; then cp $(FUZZ_BUILD)/vm-fixtures/*.bc $(FUZZ_BUILD)/bytecode-fixtures/*.bc $$corpus/; fi; \
 			if [ "$$name" = fuzz_core_text ] || [ "$$name" = fuzz_core_check ] || [ "$$name" = fuzz_codegen ]; then \
 				cp tests/core/*.core fuzz/corpus/fuzz_core_text/*.core $$corpus/; fi; \
 			if [ "$$name" = fuzz_check ]; then cp tests/check/diagnostics/e*.mo $$corpus/; fi; \
