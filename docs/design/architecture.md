@@ -552,10 +552,11 @@ finalized, without inventing unresolved-type errors from the missing uses.
 Resource errors stop immediately and take priority. The caller can
 continue with independent bodies. Signature preparation currently stops at
 its first error too. E1103 explicitly refuses unfinished body forms; it does
-not silently accept them. Builtin/dot
-dispatch and delayed overload selection, abilities, polymorphic recursion,
-failure propagation, capture/capability flow, specs, constants, unused imports
-and the entry contract still need their stages. Compile-time duplicate map
+not silently accept them. Dot dispatch and delayed overload selection
+finish in this walk. Ability proofs and polymorphic recursion are certified
+by `mo_check` (section 12), not by this intermediate result. Failure
+propagation, capture/capability flow, specs, constants, unused imports and
+the entry contract still need their stages. Compile-time duplicate map
 keys (equal literals or repeated names, reference 3.8) are also still pending.
 Nonempty examples or promises are refused with E1103, never silently skipped.
 A successful intermediate body is not a `mo_program`, is not lowering-ready and does not certify those

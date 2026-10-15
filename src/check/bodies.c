@@ -846,19 +846,7 @@ static MO_MUST_USE const struct mo_data_signature *data_type(struct inference *p
             return NULL;
         }
     }
-    uint32_t lo = 0, hi = p->signatures->data_count;
-    while (lo < hi) {
-        uint32_t mid = lo + (hi - lo) / 2;
-        const struct mo_symbol *at = p->signatures->data[mid].symbol;
-        if (at->module < symbol->module ||
-            (at->module == symbol->module && (uintptr_t)at < (uintptr_t)symbol))
-            lo = mid + 1;
-        else
-            hi = mid;
-    }
-    return lo < p->signatures->data_count && p->signatures->data[lo].symbol == symbol
-               ? &p->signatures->data[lo]
-               : NULL;
+    return mo_data_signature_by_symbol(p->signatures, symbol);
 }
 
 static MO_MUST_USE bool visible_data(struct inference *p, const struct mo_symbol *owner) {
@@ -1510,7 +1498,7 @@ static MO_MUST_USE struct value member(struct inference *p, struct value v,
             (compare_text(name, "name") == 0 || compare_text(name, "kind") == 0)) {
             *called = false;
             uint32_t index = compare_text(name, "name") == 0 ? 0u : 1u;
-            const struct mo_builtin_case *data = mo_builtin_case_by_key(23);
+            const struct mo_builtin_case *data = mo_builtin_case_by_type("Entry");
             struct value out = graph(
                 p, (struct value){.type = builtin_part(p, data, type, index), .never = v.never}, 1);
             if (p->checked && out.type != NULL) {

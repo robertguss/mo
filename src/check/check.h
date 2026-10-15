@@ -180,10 +180,11 @@ struct mo_inferred_body {
  * positional calls, lambdas, scalar/collection expressions, variables and
  * control flow are supported. E1103 explicitly refuses unfinished forms.
  * Records, cases, fields and typed patterns check construction, hidden insides,
- * exhaustiveness and the no-whole-arm choice catch-all rule. This is not
- * mo_check: dot dispatch, abilities,
- * capability/capture flow, specs, constants, unused imports and main's contract
- * still need their checking stages, as do compile-time duplicate map keys.
+ * exhaustiveness and the no-whole-arm choice catch-all rule. Dot dispatch and
+ * delayed overload selection finish in this walk. This is not mo_check: ability
+ * proofs and polymorphic recursion belong to that walk. Capability/capture flow,
+ * specs, constants, unused imports and main's contract still need their checking
+ * stages, as do compile-time duplicate map keys.
  * Nonempty examples/promises return E1103. A success is not suitable for lowering.
  * NULL with the earliest retained independent source error in this body; a resource
  * failure stops immediately and takes priority.
