@@ -202,6 +202,8 @@ static void constant_dependencies(void) {
          "fn first(n: Int) : Int\nn + base\nend\n",
          {"base", "answer"},
          2},
+        {"answer = [1, 2].map(fn(n) n + base end).sum\nbase = 13\n", {"base", "answer"}, 2},
+        {"value = [reader].append(reader).size\nfn reader() : Int\nvalue\nend\n", {"value"}, 1},
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         struct mo_buffer source;
@@ -240,6 +242,8 @@ static void constant_refusals(void) {
          "fn to_text(_label: Label) : Text\nvalue\nend\n",
          MO_CODE_CONSTANT_CYCLE},
         {"value = [1].map(reader).size\nfn reader(_n: Int) : Int\nvalue\nend\n",
+         MO_CODE_CONSTANT_CYCLE},
+        {"b = helper()\na = [1, 2].map(fn(x) x + b end).sum\nfn helper() : Int\na\nend\n",
          MO_CODE_CONSTANT_CYCLE},
         {"values = []\nfn read() : List(Int)\nvalues\nend\n", MO_CODE_CANNOT_INFER},
         {"reader = fn(x) x end\n", MO_CODE_CANNOT_INFER},

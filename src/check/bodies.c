@@ -1229,6 +1229,8 @@ static MO_MUST_USE bool missing_field(struct inference *p, struct mo_span span, 
 static MO_MUST_USE const struct mo_native_signature *
 native_definition(struct inference *p, const char *module, const struct mo_syntax *name) {
     for (uint32_t i = 0; i < p->interfaces->count; i++) {
+        if (!work(p))
+            return NULL;
         const struct mo_module_scope *scope = &p->interfaces->scopes[i];
         if (!scope->library || scope->name == NULL || strcmp(scope->name, module) != 0)
             continue;
