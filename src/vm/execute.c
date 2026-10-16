@@ -81,6 +81,13 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
         struct mo_vm_frame *f = mo_vm_frame(p);
         const struct mo_bytecode_function *fn = &p->file->functions[f->function];
         MO_ASSERT(f->pc < fn->code_count);
+        if (p->keep_running != NULL && !p->keep_running(p->control_context)) {
+            p->cancelled = true;
+            p->terminal = true;
+            /* The call boundary translates this private exit before writing
+             * either output. No Mo stop or defect has occurred. */
+            return MO_STOPPED;
+        }
         if (p->bounded) {
             if (p->instructions == 0)
                 return mo_vm_stop(p, "internal error: instruction budget exhausted", NULL, false,

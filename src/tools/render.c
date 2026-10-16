@@ -3,6 +3,10 @@
 #include "tools/tools.h"
 
 #include "prim/prim.h"
+#include "tools/promises.h"
+#include "tools/run.h"
+#include "tools/tests.h"
+#include "vm/vm.h"
 
 #include <langinfo.h>
 #include <string.h>
@@ -67,16 +71,11 @@ static void hex(struct writer *w, uint32_t n, unsigned digits) {
 
 static bool escaped(uint32_t c);
 
-static void json_string(struct writer *w, const char *s) {
-    if (s == NULL) {
-        text(w, "null");
-        return;
-    }
+static void json_bytes(struct writer *w, const uint8_t *s, size_t length) {
     text(w, "\"");
-    size_t length = strlen(s);
     for (size_t i = 0; w->ok && i < length;) {
         uint32_t value;
-        uint32_t n = scalar((const uint8_t *)s + i, length - i, &value);
+        uint32_t n = scalar(s + i, length - i, &value);
         if (s[i] == '"' || s[i] == '\\') {
             text(w, "\\");
             bytes(w, s + i, 1);
@@ -98,6 +97,13 @@ static void json_string(struct writer *w, const char *s) {
         i += n;
     }
     text(w, "\"");
+}
+
+static void json_string(struct writer *w, const char *s) {
+    if (s == NULL)
+        text(w, "null");
+    else
+        json_bytes(w, (const uint8_t *)s, strlen(s));
 }
 
 static bool available(const struct mo_sources *sources, struct mo_span span) {
@@ -263,10 +269,8 @@ static void write_piece(struct writer *w, const uint8_t *s, struct display_piece
     }
 }
 
-static void safe_text(struct writer *w, const char *s) {
-    if (s == NULL)
-        return;
-    struct display_cursor c = {.bytes = (const uint8_t *)s, .length = strlen(s)};
+static void safe_bytes(struct writer *w, const uint8_t *s, size_t length) {
+    struct display_cursor c = {.bytes = s, .length = length};
     uint32_t cells = 0;
     while (w->ok && c.at < c.length) {
         struct display_piece p = inspect(&c, cells, w->utf8);
@@ -274,6 +278,11 @@ static void safe_text(struct writer *w, const char *s) {
         cells += p.width;
         c.at += p.used;
     }
+}
+
+static void safe_text(struct writer *w, const char *s) {
+    if (s != NULL)
+        safe_bytes(w, (const uint8_t *)s, strlen(s));
 }
 
 static void location(struct writer *w, const struct mo_sources *sources, struct mo_span span) {
@@ -547,6 +556,463 @@ static bool write_buffer(FILE *stream, const struct mo_buffer *buffer) {
            fflush(stream) == 0;
 }
 
+bool mo_write_test(FILE *output, bool json, const struct mo_sources *sources,
+                   const struct mo_observation *observation) {
+    struct mo_buffer buffer;
+    mo_buffer_init(&buffer, MO_CLI_DIAGNOSTIC_SIZE);
+    struct writer w = {.out = &buffer, .ok = true};
+    if (json) {
+        text(&w, "{\"record\":\"test\",\"name\":");
+        json_string(&w, observation->name);
+        text(&w, ",\"kind\":");
+        json_string(&w, mo_observation_kind(observation->source->kind));
+        text(&w, ",\"span\":");
+        json_span(&w, sources, observation->source->syntax->span, NULL, false);
+        text(&w, "}\n");
+    } else {
+        safe_text(&w, observation->name);
+        text(&w, "\n");
+    }
+    bool ok = w.ok && write_buffer(output, &buffer);
+    mo_buffer_free(&buffer);
+    return ok;
+}
+
+struct failure_part {
+    const uint8_t *bytes;
+    size_t length;
+};
+
+/* Lower's structural failure protocol has byte lengths, not delimiters inside
+ * values. NUL, newlines and even another "right N:" remain ordinary value bytes. */
+static bool failure_part(const uint8_t **at, size_t *left, const char *label,
+                         struct failure_part *part) {
+    size_t prefix = strlen(label);
+    if (*left < prefix || memcmp(*at, label, prefix) != 0)
+        return false;
+    *at += prefix;
+    *left -= prefix;
+    size_t length = 0, digits = 0;
+    while (*left != 0 && **at >= '0' && **at <= '9') {
+        size_t digit = **at - (uint8_t)'0';
+        if (length > (SIZE_MAX - digit) / 10 || (digits != 0 && length == 0))
+            return false;
+        length = length * 10 + digit;
+        (*at)++;
+        (*left)--;
+        digits++;
+    }
+    if (digits == 0 || *left == 0 || **at != ':' || length >= *left)
+        return false;
+    (*at)++;
+    (*left)--;
+    *part = (struct failure_part){*at, length};
+    *at += length;
+    *left -= length;
+    if (*left == 0 || **at != ',')
+        return false;
+    (*at)++;
+    (*left)--;
+    return true;
+}
+
+static void equality_failure(struct writer *w, const struct mo_defect *defect, bool json) {
+    if (!defect->has_detail)
+        return;
+    size_t length;
+    const uint8_t *at = mo_value_data(defect->detail, &length);
+    const char prefix[] = "left ";
+    if (length < sizeof(prefix) - 1 || memcmp(at, prefix, sizeof(prefix) - 1) != 0)
+        return; /* Ordinary failed Bool assertion, not an equality. */
+    struct failure_part left, right;
+    if (!failure_part(&at, &length, "left ", &left) ||
+        !failure_part(&at, &length, "right ", &right) || length != 0) {
+        w->ok = false;
+        return;
+    }
+    if (json) {
+        text(w, ",\"left\":");
+        json_bytes(w, left.bytes, left.length);
+        text(w, ",\"right\":");
+        json_bytes(w, right.bytes, right.length);
+    } else {
+        text(w, "  left: ");
+        safe_bytes(w, left.bytes, left.length);
+        text(w, "\n  right: ");
+        safe_bytes(w, right.bytes, right.length);
+        text(w, "\n");
+    }
+}
+
+/* heap's root Text/Char spelling is unquoted. Defect variables use literals,
+ * without asking a source to_text function to execute on a stopped process. */
+static void structural_literal(struct writer *w, const struct mo_buffer *raw, uint8_t delimiter) {
+    bytes(w, &delimiter, 1);
+    for (size_t i = 0; w->ok && i < raw->length;) {
+        uint32_t value;
+        uint32_t n = scalar(raw->bytes + i, raw->length - i, &value);
+        MO_ASSERT(value != UINT32_MAX);
+        if (value == '\n' || value == '\r' || value == '\t') {
+            text(w, value == '\n' ? "\\n" : value == '\r' ? "\\r" : "\\t");
+        } else if (value == delimiter || value == '\\' ||
+                   (value == '#' && i + 1 < raw->length && raw->bytes[i + 1] == '{')) {
+            text(w, "\\");
+            bytes(w, raw->bytes + i, n);
+        } else if (escaped(value)) {
+            text(w, "\\u{");
+            hex(w, value, 1);
+            text(w, "}");
+        } else
+            bytes(w, raw->bytes + i, n);
+        i += n;
+    }
+    bytes(w, &delimiter, 1);
+}
+
+static void promise_value(struct writer *w, const struct mo_test_result *result, uint32_t type,
+                          struct mo_cell cell, bool json) {
+    struct mo_buffer raw, literal;
+    mo_buffer_init(&raw, 4096);
+    mo_buffer_init(&literal, 4096);
+    bool printed = mo_value_print(mo_process_heap(result->process), type, cell, &raw);
+    struct mo_buffer *value = &raw;
+    enum mo_type_kind kind = result->file->types[type].kind;
+    if (printed && (kind == MO_TYPE_TEXT || kind == MO_TYPE_CHAR)) {
+        struct writer quoted = {.out = &literal, .ok = true};
+        structural_literal(&quoted, &raw, kind == MO_TYPE_TEXT ? '"' : '\'');
+        printed = quoted.ok;
+        value = &literal;
+    }
+    w->ok = w->ok && printed;
+    if (json)
+        json_bytes(w, value->bytes, value->length);
+    else
+        safe_bytes(w, value->bytes, value->length);
+    mo_buffer_free(&literal);
+    mo_buffer_free(&raw);
+}
+
+static const char *extreme_description(const struct mo_input_extreme *extreme) {
+    bool smallest = extreme->end == MO_INPUT_SMALLEST;
+    if (extreme->type == MO_TYPE_INT)
+        return smallest ? "Int's smallest value" : "Int's largest value";
+    if (extreme->type == MO_TYPE_DECIMAL)
+        return smallest ? "Decimal's smallest value" : "Decimal's largest value";
+    if (extreme->type == MO_TYPE_TIME)
+        return smallest ? "Time's smallest value" : "Time's largest value";
+    if (extreme->type == MO_TYPE_DURATION)
+        return smallest ? "Duration's smallest value" : "Duration's largest value";
+    MO_UNREACHABLE();
+}
+
+static void promise_result(struct writer *w, const struct mo_test_result *result, bool json) {
+    const struct mo_promise_result *promise = result->promise;
+    if (result->outcome == MO_RETURNED)
+        return;
+    const struct mo_checked_spec *spec = result->observation->source;
+    const struct mo_bytecode_function *subject = &result->file->functions[promise->subject];
+    if (json)
+        text(w, ",\"input\":[");
+    for (uint32_t i = 0; w->ok && i < subject->parameter_count; i++) {
+        const char *name = spec->parameters[i]->name;
+        if (json) {
+            if (i != 0)
+                text(w, ",");
+            text(w, "{\"name\":");
+            json_string(w, name);
+            text(w, ",\"value\":");
+        } else {
+            text(w, "  input ");
+            safe_text(w, name);
+            text(w, " = ");
+        }
+        promise_value(w, result, subject->parameters[i].type, promise->input[i], json);
+        text(w, json ? "}" : "\n");
+    }
+    if (json)
+        text(w, "]");
+    if (result->outcome == MO_FAILED) {
+        if (promise->has_value) {
+            text(w, json ? ",\"result\":" : "  result: ");
+            promise_value(w, result, subject->result_type, promise->value, json);
+            if (!json)
+                text(w, "\n");
+        }
+        text(w, json ? ",\"calls\":" : "  calls: ");
+        unsigned_number(w, promise->calls);
+        if (!json)
+            text(w, "\n");
+    }
+    if (promise->extreme != NULL) {
+        const char *name = spec->parameters[promise->extreme->parameter]->name;
+        const char *description = extreme_description(promise->extreme);
+        if (json) {
+            text(w, ",\"extreme\":{\"name\":");
+            json_string(w, name);
+            text(w, ",\"description\":");
+            json_string(w, description);
+            text(w, "}");
+        } else {
+            text(w, "  ");
+            safe_text(w, name);
+            text(w, " is ");
+            safe_text(w, description);
+            text(w, "\n  fix: return a failure for such inputs, or take a type whose module "
+                    "keeps its values in range (reference 12.2).\n");
+        }
+    }
+}
+
+struct stopped_variables {
+    struct writer *writer;
+    const struct mo_test_result *result;
+    bool json, first;
+};
+
+static bool stopped_variable(const struct mo_defect_variable *variable, void *context) {
+    struct stopped_variables *variables = context;
+    const struct mo_test_result *result = variables->result;
+    if (variable->frame != result->defect->frames)
+        return true; /* The wire schema's variables belong to the stopping frame. */
+    struct mo_buffer raw, literal;
+    mo_buffer_init(&raw, 4096);
+    mo_buffer_init(&literal, 4096);
+    bool printed =
+        mo_value_print(mo_process_heap(result->process), variable->type, variable->value, &raw);
+    struct mo_buffer *value = &raw;
+    enum mo_type_kind kind = result->file->types[variable->type].kind;
+    if (printed && (kind == MO_TYPE_TEXT || kind == MO_TYPE_CHAR)) {
+        struct writer w = {.out = &literal, .ok = true};
+        structural_literal(&w, &raw, kind == MO_TYPE_TEXT ? '"' : '\'');
+        printed = w.ok;
+        value = &literal;
+    }
+    if (!printed) {
+        mo_buffer_clear(&raw);
+        printed = mo_buffer_append_text(&raw, "<value unavailable>");
+        value = &raw;
+    }
+    struct writer *w = variables->writer;
+    w->ok = w->ok && printed;
+    if (variables->json) {
+        if (!variables->first)
+            text(w, ",");
+        text(w, "{\"name\":");
+        json_bytes(w, variable->name, variable->name_length);
+        text(w, ",\"value\":");
+        json_bytes(w, value->bytes, value->length);
+        text(w, "}");
+    } else {
+        text(w, "  ");
+        safe_bytes(w, variable->name, variable->name_length);
+        text(w, " = ");
+        safe_bytes(w, value->bytes, value->length);
+        text(w, "\n");
+    }
+    variables->first = false;
+    mo_buffer_free(&literal);
+    mo_buffer_free(&raw);
+    return w->ok;
+}
+
+static void stopped_variables(struct writer *w, const struct mo_test_result *result, bool json) {
+    if (!w->ok || result->defect->frames == NULL)
+        return; /* Process-allocation refusal really has no variables. */
+    struct stopped_variables variables = {w, result, json, true};
+    enum mo_defect_variables_result outcome =
+        mo_visit_defect_variables(result->process, result->defect, MO_CLI_TEST_VARIABLES,
+                                  MO_CLI_TEST_WORK, stopped_variable, &variables);
+    /* Never manufacture an empty success when replay could not establish the
+     * readable values, nor publish a partial list after a resource refusal. */
+    w->ok = w->ok && outcome == MO_DEFECT_VARIABLES_COMPLETE;
+}
+
+static void stopped_result(struct writer *w, const struct mo_sources *sources,
+                           const struct mo_test_result *result, bool json) {
+    const struct mo_defect *defect = result->defect;
+    struct mo_span span = mo_runtime_span(result->file, sources, defect->span.file,
+                                          defect->span.start, defect->span.end);
+    if (json) {
+        text(w, ",\"defect\":{\"reason\":");
+        json_string(w, defect->reason);
+        if (defect->limit_name != NULL) {
+            text(w, ",\"limit\":{\"name\":");
+            json_string(w, defect->limit_name);
+            text(w, ",\"value\":\"");
+            unsigned_number(w, defect->limit);
+            text(w, "\"}");
+        }
+        if (defect->has_detail) {
+            size_t length;
+            const uint8_t *detail = mo_value_data(defect->detail, &length);
+            text(w, ",\"detail\":");
+            json_bytes(w, detail, length);
+        }
+        text(w, ",\"span\":");
+        json_span(w, sources, span, NULL, false);
+        text(w, ",\"stack\":[");
+    } else {
+        text(w, "  bug: ");
+        safe_text(w, defect->reason);
+        if (defect->limit_name != NULL) {
+            text(w, " (");
+            safe_text(w, defect->limit_name);
+            text(w, " = ");
+            unsigned_number(w, defect->limit);
+            text(w, ")");
+        }
+        text(w, "\n");
+        if (defect->has_detail) {
+            size_t length;
+            const uint8_t *detail = mo_value_data(defect->detail, &length);
+            text(w, "  detail: ");
+            safe_bytes(w, detail, length);
+            text(w, "\n");
+        }
+    }
+    bool first = true;
+    for (const struct mo_defect_frame *frame = defect->frames; w->ok && frame != NULL;
+         frame = frame->previous) {
+        const struct mo_bytecode_string *function =
+            &result->file->strings[result->file->functions[frame->function].name];
+        span = mo_runtime_span(result->file, sources, frame->span.file, frame->span.start,
+                               frame->span.end);
+        if (json) {
+            if (!first)
+                text(w, ",");
+            text(w, "{\"function\":");
+            json_bytes(w, function->bytes, function->length);
+            text(w, ",\"span\":");
+            json_span(w, sources, span, NULL, false);
+            text(w, "}");
+        } else {
+            text(w, "  at ");
+            safe_bytes(w, function->bytes, function->length);
+            text(w, "  ");
+            location(w, sources, span);
+            text(w, "\n");
+        }
+        first = false;
+    }
+    if (json)
+        text(w, "],\"variables\":[");
+    stopped_variables(w, result, json);
+    if (json)
+        text(w, "]}");
+}
+
+bool mo_render_test_result(const struct mo_sources *sources, const struct mo_test_result *result,
+                           bool json, struct mo_buffer *out) {
+    MO_ASSERT(out->limit <= MO_CLI_DIAGNOSTIC_SIZE);
+    mo_buffer_clear(out);
+    const char *codeset = nl_langinfo(CODESET);
+    struct writer w = {.out = out,
+                       .ok = true,
+                       .utf8 = strcmp(codeset, "UTF-8") == 0 || strcmp(codeset, "UTF8") == 0 ||
+                               strcmp(codeset, "utf-8") == 0 || strcmp(codeset, "utf8") == 0};
+    const struct mo_observation *observation = result->observation;
+    const char *outcome = result->outcome == MO_RETURNED ? "passed"
+                          : result->outcome == MO_FAILED ? "failed"
+                                                         : "stopped";
+    if (json) {
+        text(&w, "{\"record\":\"result\",\"name\":");
+        json_string(&w, observation->name);
+        text(&w, ",\"kind\":");
+        json_string(&w, mo_observation_kind(observation->source->kind));
+        text(&w, ",\"span\":");
+        json_span(&w, sources, observation->source->syntax->span, NULL, false);
+        text(&w, ",\"outcome\":");
+        json_string(&w, outcome);
+        text(&w, ",\"microseconds\":");
+        unsigned_number(&w, result->microseconds);
+    } else {
+        text(&w, outcome);
+        text(&w, " ");
+        safe_text(&w, observation->name);
+        text(&w, "  ");
+        location(&w, sources, observation->source->syntax->span);
+        text(&w, "\n");
+    }
+    if (result->promise != NULL)
+        promise_result(&w, result, json);
+    if (result->outcome == MO_FAILED) {
+        equality_failure(&w, result->defect, json);
+        if (observation->source->kind == MO_SPEC_TEST ||
+            observation->source->kind == MO_SPEC_PROMISE) {
+            if (result->line.file == UINT32_MAX)
+                w.ok = false; /* Never invent the failed assert's identity. */
+            if (json) {
+                text(&w, ",\"line\":");
+                json_span(&w, sources, result->line, NULL, false);
+            } else {
+                struct mo_label label = {result->line, observation->source->kind == MO_SPEC_TEST
+                                                           ? "this assertion was false"
+                                                           : "this promise condition was false"};
+                text_label(&w, sources, &label);
+            }
+        } else if (!json) {
+            struct mo_label label = {observation->source->syntax->span, "this example was false"};
+            text_label(&w, sources, &label);
+        }
+    } else if (result->outcome == MO_STOPPED) {
+        stopped_result(&w, sources, result, json);
+    }
+    if (json)
+        text(&w, "}\n");
+    if (!w.ok)
+        mo_buffer_clear(out);
+    return w.ok;
+}
+
+bool mo_write_test_result(FILE *output, bool json, const struct mo_sources *sources,
+                          const struct mo_test_result *result) {
+    struct mo_buffer buffer;
+    mo_buffer_init(&buffer, MO_CLI_DIAGNOSTIC_SIZE);
+    bool ok =
+        mo_render_test_result(sources, result, json, &buffer) && write_buffer(output, &buffer);
+    mo_buffer_free(&buffer);
+    return ok;
+}
+
+bool mo_write_defect(FILE *errors, const struct mo_process *process,
+                     const struct mo_defect *defect) {
+    struct mo_buffer raw, shown;
+    mo_buffer_init(&raw, MO_LIMIT_DEFECT_TEXT_SIZE);
+    mo_buffer_init(&shown, MO_CLI_DIAGNOSTIC_SIZE);
+    bool complete = mo_render_defect(process, defect, &raw);
+    const char *codeset = nl_langinfo(CODESET);
+    struct writer w = {.out = &shown,
+                       .ok = true,
+                       .utf8 = strcmp(codeset, "UTF-8") == 0 || strcmp(codeset, "UTF8") == 0 ||
+                               strcmp(codeset, "utf-8") == 0 || strcmp(codeset, "utf8") == 0};
+    text(&w, "bug: ");
+    if (raw.length == 0) {
+        safe_text(&w, defect->reason);
+        text(&w, "\n");
+    } else {
+        struct display_cursor c = {.bytes = raw.bytes, .length = raw.length};
+        uint32_t cells = 0;
+        while (w.ok && c.at < c.length) {
+            if (c.bytes[c.at] == '\n') {
+                text(&w, "\n");
+                c.at++;
+                cells = 0;
+            } else {
+                struct display_piece p = inspect(&c, cells, w.utf8);
+                write_piece(&w, c.bytes + c.at, p);
+                cells += p.width;
+                c.at += p.used;
+            }
+        }
+    }
+    if (!complete)
+        text(&w, "  <report incomplete>\n");
+    bool ok = w.ok && write_buffer(errors, &shown);
+    mo_buffer_free(&shown);
+    mo_buffer_free(&raw);
+    return ok;
+}
+
 bool mo_write_version(FILE *output, enum mo_command command) {
     MO_ASSERT(command == MO_COMMAND_CHECK || command == MO_COMMAND_TEST);
     struct mo_buffer buffer;
@@ -563,7 +1029,8 @@ bool mo_write_version(FILE *output, enum mo_command command) {
 }
 
 int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command command,
-                         const struct mo_sources *sources, struct mo_diags *diags) {
+                         const struct mo_sources *sources, struct mo_diags *diags,
+                         const struct mo_test_totals *totals) {
     mo_diags_sort(diags);
     uint32_t written = 0;
     uint64_t dropped = diags->dropped;
@@ -579,7 +1046,10 @@ int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command 
         if (ok)
             written++;
     }
-    int status = mo_diags_any(diags) || dropped != 0 || !ok ? 1 : 0;
+    struct mo_test_totals counts = totals == NULL ? (struct mo_test_totals){0} : *totals;
+    int status =
+        mo_diags_any(diags) || dropped != 0 || !ok || counts.failed != 0 || counts.stopped != 0 ? 1
+                                                                                                : 0;
     mo_buffer_clear(&buffer);
     struct writer w = {.out = &buffer, .ok = true};
     if (json) {
@@ -587,8 +1057,14 @@ int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command 
         unsigned_number(&w, written);
         text(&w, ",\"dropped\":");
         unsigned_number(&w, dropped);
-        if (command == MO_COMMAND_TEST)
-            text(&w, ",\"passed\":0,\"failed\":0,\"stopped\":0");
+        if (command == MO_COMMAND_TEST) {
+            text(&w, ",\"passed\":");
+            unsigned_number(&w, counts.passed);
+            text(&w, ",\"failed\":");
+            unsigned_number(&w, counts.failed);
+            text(&w, ",\"stopped\":");
+            unsigned_number(&w, counts.stopped);
+        }
         text(&w, ",\"status\":");
         unsigned_number(&w, (uint32_t)status);
         text(&w, "}\n");
@@ -598,6 +1074,16 @@ int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command 
     }
     if (ok && buffer.length != 0)
         ok = w.ok && write_buffer(json ? output : errors, &buffer);
+    if (ok && !json && (counts.passed != 0 || counts.failed != 0 || counts.stopped != 0)) {
+        mo_buffer_clear(&buffer);
+        unsigned_number(&w, counts.passed);
+        text(&w, " passed, ");
+        unsigned_number(&w, counts.failed);
+        text(&w, " failed, ");
+        unsigned_number(&w, counts.stopped);
+        text(&w, " stopped\n");
+        ok = w.ok && write_buffer(output, &buffer);
+    }
     mo_buffer_free(&buffer);
     if (!ok) {
         (void)fputs("mo: could not write diagnostics\n", errors);

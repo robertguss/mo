@@ -1,129 +1,131 @@
-# I1 merge verification and pending decision
+# I1 verification
 
-This draft records the reproducible baseline and language-rule question before
-reconciling the private checkpoint. It does not yet contain the requested merge
-commit and must not be merged. The same PR will carry the merge once the rule is
-settled; do not squash or rebase the accepted checkpoint history.
+I1 reconciles the accepted private Phase 2 checkpoint with main using a merge
+commit. The single draft PR is [#81](https://github.com/robertguss/mo/pull/81).
+Do not merge it: Robert approves merges (D241).
 
-## Revisions and workspace
+## Inputs and decision
 
-Full, non-shallow clone of `https://github.com/robertguss/mo.git`.
+- Main: `1c28e8bf9ef98a7c06a87be6f8617958077b5793`.
+- Private: `cf0f73bc2477dbc11e13f2a4630e90f6006ddfeb`.
+- Merge base: `3523c4af72188a86a2314c3db4fc14b3668c096d`.
+- Full history, not shallow: 22 commits unique to main, 136 unique to private.
+  All supplied revisions matched before resolution; 15 conflicted files matched.
+- Existing checkouts were untouched. A dedicated clone and detached parent
+  worktrees live under the task workspace.
+- Robert approved preserving main’s `compare`/`to_text` reservation and E0082
+  for unrelated helpers: “Yes proceed with that” (2026-10-15). The checker,
+  diagnostic golden and architecture retain that rule. Private helper-name
+  fixtures now assert E0082; generic/import/lowering fixtures use ordinary
+  helper names without changing the behavior they test.
 
-- main: `1c28e8bf9ef98a7c06a87be6f8617958077b5793`
-- private: `cf0f73bc2477dbc11e13f2a4630e90f6006ddfeb`
-- merge base: `3523c4af72188a86a2314c3db4fc14b3668c096d`
-- unique commits: 22 on main, 136 on private. All supplied revisions match.
-- Isolated clone plus detached parent worktrees; existing checkouts untouched.
-- `git merge --no-ff --no-commit origin/phase2/main-capability-entry-private`
-  reproduced the supplied 15 conflicted files. The diagnostic merge was aborted
-  before any conflict resolution, to publish this decision request first.
+Main’s abilities/generics, SCC recursion check and Number literal correction are
+retained. The private checkpoint supplies imports, constants/initializers,
+examples/tests/anchors, scalar/structural promises, captures, reports and
+capability entry. Independently created headers and recursion implementation
+were compared and reconciled; duplicate auto-merged declarations were removed.
+No numeric code has different identifiers between the parent registries.
+No error-code renumbering was necessary.
 
-## Pending language decision: customizer names
+## Untouched parent baseline
 
-Main's `customizer()` in `src/check/signatures.c` treats every function named
-`compare` or `to_text` as a customizer and rejects unrelated helper signatures
-with E0082. The private parent's `customizer_candidate()` recognizes a customizer
-only from a locally declared nominal first parameter (plus trusted FileError),
-and accepts unrelated helpers. The architecture and E0082 golden also disagree.
-This is user-visible behavior, not just a textual conflict.
+Following `.agents/skills/verify-mo/SKILL.md`, each parent was built and driven
+before conflict resolution. On the Mac:
 
-**Robert: should the merged checker retain main's reservation and E0082 for
-unrelated `compare`/`to_text` helpers, or retain the private checkpoint's acceptance
-of ordinary helpers?** Main is stated to be authoritative for abilities/generics;
-the private checkpoint also contains accepted behavior. Per the task's explicit
-stop-and-ask rule, no resolution of this language rule has been selected.
-No Language Reference edits are proposed.
+- `make test CC=clang`: exits 2 on both at an existing mixed-enum conditional
+  warning in `src/bytecode/assemble.c`. Homebrew Clang 22 reproduces it.
+- GCC 16’s unmodified build also fails because Darwin’s `mkdtemp` declaration
+  is hidden by the selected feature macros.
+- To obtain executable baselines without editing either parent:
+  `make -j6 test CC='clang -Wno-error=enum-compare-conditional -D_DARWIN_C_SOURCE'`.
+  Both build, then exit 2 at the pre-existing library path assertion in
+  `test_check` (main line 513, private line 1723).
+- Every debug test was then run independently: main 33/35 suites pass, private
+  34/36 pass. Both fail `test_check` and abort at sandboxed Unix socket setup in
+  `test_host`. Outside the sandbox, the host test gets past the socket and
+  reaches an invalid UTF-8 filename that the host filesystem rejects
+  with errno 92, Illegal byte sequence (independently reproduced outside the sandbox). These failures are not
+  attributed to the merge.
+- Both parent program/lowering/VM suites pass. Private’s debug deadline suite
+  passes. Neither parent Doctor is claimed green.
 
-Reproducer (saved as `main.mo`):
+Private greet, unchanged: check exits 0; run exits 0 and prints `Hello, Ada!`;
+test exits 0 with `3 passed, 0 failed, 0 stopped`. Main check exits 1/E1103;
+run and test exit 1/E1400. Every sample JSON totals record has `dropped: 0`.
+The complete before/after table is in [sample-blockers.md](sample-blockers.md).
 
-```mo
-module Main
-fn to_text(n: Int): Text
-  "#{n}"
-end
-fn main(): Int
-  to_text(7).byte_count
-end
-```
+## Recoverable platform issues
 
-`build/clang/debug/mo check --json <probe>/main.mo`: main exits 1 with E0082;
-private exits 0 with zero errors. Both report `dropped: 0`.
+The merged tree fixes both enum warnings with explicit `uint32_t` casts and
+adds Darwin’s declaration macro to the build flags. The path fixture compares
+against its canonical library path, preserving the loader’s existing behavior
+on `/tmp` versus `/private/tmp`. No warning, sanitizer or assertion is disabled.
+Merged Mac `make test CC=clang` now passes through checking and lowering-related
+suites, then reaches the same host socket/filesystem restrictions.
 
-## Parent verification using verify-mo
+A dedicated Ubuntu 24.04 AArch64 container on the connected Mac runs the full
+host suite on a Linux filesystem. It uses GCC, Clang 18, clang-tidy, Bison 3.8.2,
+CI’s documented clang-format 14, Python and pinned Lean 4.34.0. All 36 merged
+Clang debug suites pass there.
 
-Unmodified `make test CC=clang` exits 2 on both parents: existing
-`-Wenum-compare-conditional` in `src/bytecode/assemble.c` is an error on Apple
-Clang. Homebrew LLVM 22 reproduces it. GCC 16 also fails unmodified builds because
-`mkdtemp` is not declared with the selected Darwin feature macros.
-
-To obtain executable baselines without editing either parent's source:
+The first full Linux gate passed GCC/Clang tests but sanitizer linking exposed
+Ubuntu AArch64 Clang’s missing `__muloti4` when using the default GCC runtime.
+`nm` confirmed the symbol in Clang’s installed builtins archive. The complete
+gate is rerun with that archive added to normal linkage; checks are unchanged:
 
 ```sh
-make -j6 test CC='clang -Wno-error=enum-compare-conditional -D_DARWIN_C_SOURCE'
+runtime=$(clang --rtlib=compiler-rt --print-libgcc-file-name)
+export MAKEFLAGS="-j6 LDLIBS=-lm\\ $runtime"
+CI=1 bash ci/check.sh
 ```
 
-Both parents build, then exit 2 at the same pre-existing `test_check` assertion:
-`strcmp(f.diags.items[0].primary.text, lib_helper) == 0`, in `library_roots`
-(main line 513, private line 1723). Therefore neither Doctor baseline is green.
-These temporary compiler arguments are evidence qualifications, not repository
-changes or a claim that the standard gate passes.
+Full gate status: pending final rerun. GCC/Clang/ASan tests, CLI, Unicode,
+every fuzz target, grammar and Lean model/protocol checks passed. The first
+configured gate then stopped at Core fixture comparison because the initial
+Mac archive transfer left AppleDouble `._*` metadata files in the container.
+Their AppleDouble magic was verified before removing only those transfer
+artifacts; repository fixtures were retained. The complete gate is rerun from
+the beginning before this PR can be considered verified.
 
-Private parent, unchanged `examples/greet.mo`:
+## Focused merged behavior
 
-- `mo check examples/greet.mo`: exit 0.
-- `mo run examples/greet.mo Ada`: exit 0, `Hello, Ada!`.
-- `mo test examples/greet.mo`: exit 0, `3 passed, 0 failed, 0 stopped`.
+Executed on the Mac’s merged `build/clang/debug/mo`; raw command/exit/output
+records and the source fixtures are preserved in the task’s `evidence/` folder.
 
-Main: check exits 1/E1103; run and test exit 1/E1400.
+| Requirement | Observed result |
+| --- | --- |
+| Unchanged greet checks/runs/tests | exits 0; `Hello, Ada!`; 3 passed, 0 failed, 0 stopped |
+| Two-module import plus same/cross-module constants | main imports `Origin.base`, adds local constant, prints `20`; exit 0 |
+| Cyclic constants | `mo check --json` exits 1 with E0089, dropped 0 |
+| Captures, try, Option or, interpolation, constant and specs lower/run | combined probe checks, prints `9`, and passes both example/test observations |
+| Main accepts Args, Console, Files, Clock, Random and Env | six typed parameters are supplied; run with Ada prints `Ada`, exit 0 |
+| Examples and promise blocks check | combined spec probe and scalar promise check exit 0 |
+| Scalar promise execution | `mo test` exits 0; 1 passed, 0 failed, 0 stopped |
+| False List(Int) promise shrinks | `mo test --json` exits 1; input/result `[0]`, 3 calls, 1 failed, 0 stopped, 0 errors |
 
-## Sample diagnostic baseline
+The capability probe proves parameter delivery, not support for every operation:
+for example Clock.now lowering remains staged at E1150. No new operation was
+added by the reconciliation. The false-list test’s `[0]` is a minimal nonempty
+counterexample to the intentionally false “always empty” promise.
 
-Each count is the `errors` field of `mo check --json examples/<sample>`;
-every totals record reports `dropped: 0`. Private matches the requested ceiling.
+## Blast radius and scope
 
-| Sample | main | Private parent | Merged |
-| --- | ---: | ---: | --- |
-| account.mo | 3 | 1 | pending |
-| expenses.mo | 3 | 2 | pending |
-| find.mo | 2 | 1 | pending |
-| greet.mo | 1 | 0 | pending |
-| inventory.mo | 6 | 2 | pending |
-| job-queue.mo | 9 | 1 | pending |
-| json-query.mo | 10 | 1 | pending |
-| kv.mo | 6 | 1 | pending |
-| notes-tool.mo | 1 | 1 | pending |
-| rate-limit.mo | 3 | 1 | pending |
-| todo.mo | 6 | 1 | pending |
-| wc.mo | 2 | 2 | pending |
-| **Total** | **52** | **14** | **pending** |
+[i1-blast-radius.md](i1-blast-radius.md) records each reconciled function,
+callers, affected contracts, shared/reused-handle chains and executed coverage.
+Its safety claims are tied to real suites and the final gate, not compilation.
 
-## Verification still pending
+No tasks C1, F5, LW5 or M1 were started. Examples and the Language Reference
+are unchanged. No squash or rebase is used. The PR is not merged.
 
-- Merge conflict reconciliation and merge commit (blocked on language decision).
-- Blast-radius review per reconciled function (none reconciled yet).
-- Merged `bash ci/check.sh`, sanitizers, short fuzzing, VM-vs-Lean comparison.
-- Merged greet, sample counts, imports/constants/lambdas/try/Option/interpolation/
-  specs/capability-entry/promise/deadline/shrinking acceptance evidence.
-- Regenerated `docs/status/sample-blockers.md` and merged architecture.
+## Raw evidence locations
 
-No tasks C1, F5, LW5, or M1 started. No Language Reference changes. No PR merge.
+All paths are relative to the dedicated task workspace, outside the build tree:
 
-## Independent parent suite sweep
-
-After the failing Doctor, every built debug unit executable was run individually
-with its exit code/stdout/stderr recorded. This supplements the baseline; it does
-not turn either failed Doctor into a pass.
-
-- mo-main-parent: 33/35 suites passed. `test_check` exits 1 at the library path assertion; `test_host` aborts
-  at its Unix-domain socket bind setup (`tests/test_host.c:360`).
-- mo-private-parent: 34/36 suites passed. `test_check` exits 1 at the library path assertion; `test_host` aborts
-  at its Unix-domain socket bind setup (`tests/test_host.c:360`).
-
-The private debug `test_deadline` passes; no ASan deadline claim is made.
-Both parent `test_program`, `test_lower`, and `test_vm` suites pass. The VM-vs-Lean
-comparison has not run. Registry comparison finds no numeric code with different
-identifiers between the two parents, so no identity collision was detected.
-
-On the evidence-only PR branch, `bash ci/check.sh` exits 2 in its first build
-(`gcc` is Apple Clang here), on the existing enum warning. Later CI stages are
-unrun; there is no passing CI summary or merged-tree verification.
+- `evidence/main-clean-baseline.log`, `private-portable-baseline.log`.
+- `evidence/parent-suite-results.json`, parent sample JSON and customizer probe.
+- `evidence/merged-mac-test.log`, `linux-merged-unit.log`.
+- `evidence/linux-full-ci.log` (runtime-link failure) and
+  `linux-full-ci-runtime.log` (configured full gate).
+- `evidence/merged-samples.json`, `acceptance-results.json` and
+  `acceptance/*/main.mo` source fixtures.
+- `evidence/blast-radius-callsites.txt`, function inventory and registry comparison.

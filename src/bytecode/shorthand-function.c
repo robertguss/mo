@@ -55,12 +55,20 @@ static MO_MUST_USE bool quoted_index(struct function_reader *f, bool optional, u
     struct mo_bytecode_string bytes;
     return mo_text_quote(r, &bytes) && mo_short_string(f->s, bytes, source, out);
 }
+static MO_MUST_USE bool filename_index(struct function_reader *f, uint32_t *out) {
+    struct mo_text_reader *r = f->s->r;
+    uint32_t source = r->token.start;
+    if (mo_text_is(r, "-") || r->token.kind == 'w')
+        return mo_text_ref(r, 'P', true, out);
+    struct mo_bytecode_string bytes;
+    return mo_text_quote(r, &bytes) && mo_short_file(f->s, bytes, source, out);
+}
 static MO_MUST_USE bool location(struct function_reader *f, uint32_t *file, uint32_t *start,
                                  uint32_t *end) {
     struct mo_text_reader *r = f->s->r;
     uint32_t source = r->token.start;
-    if (!quoted_index(f, true, file) || !comma(r) || !mo_text_ref(r, 0, false, start) ||
-        !comma(r) || !mo_text_ref(r, 0, false, end))
+    if (!filename_index(f, file) || !comma(r) || !mo_text_ref(r, 0, false, start) || !comma(r) ||
+        !mo_text_ref(r, 0, false, end))
         return false;
     if (*start > *end || (*file == MO_BYTECODE_NO_INDEX && (*start != 0 || *end != 0))) {
         mo_text_refuse(r, source, "expected ordered location, or zero bounds for absent file");
@@ -315,7 +323,7 @@ static MO_MUST_USE bool library(struct function_reader *f, bool host, uint32_t *
     if (!mo_short_name(f->s, false, &name))
         return false;
     const char *const *items = host ? hosts : primitives;
-    uint32_t count = host ? MO_HOST_COUNT : MO_PRIM_COUNT;
+    uint32_t count = host ? (uint32_t)MO_HOST_COUNT : (uint32_t)MO_PRIM_COUNT;
     for (uint32_t i = 0; i < count; i++) {
         if (strlen(items[i]) == name.length && memcmp(items[i], name.bytes, name.length) == 0) {
             *out = i;
@@ -573,7 +581,7 @@ static MO_MUST_USE bool code(struct function_reader *f) {
         if (mo_text_is(r, "span")) {
             mo_text_next(r);
             uint32_t file, start, end;
-            if (!quoted_index(f, true, &file) || !mo_text_ref(r, 0, false, &start) ||
+            if (!filename_index(f, &file) || !mo_text_ref(r, 0, false, &start) ||
                 !mo_text_ref(r, 0, false, &end))
                 return false;
             if (start > end || (file == MO_BYTECODE_NO_INDEX && (start != 0 || end != 0)) ||

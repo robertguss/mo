@@ -91,7 +91,8 @@ struct compiler {
     struct mo_codegen_index *string_index, *constant_index, *data_index, *fun_index, *global_index,
         *module_index, *builtin_index, *annotation_index, *operation_index;
     struct mo_codegen_index *bigint_index[2];
-    uint32_t *data, *files, *layouts;
+    uint32_t *data, *layouts;
+    struct mo_bytecode_bytes *files;
     uint32_t range_int, function_count, function_capacity, unit_constant;
     struct mo_bytecode_global *globals;
     uint32_t *init;
@@ -1986,7 +1987,7 @@ static MO_MUST_USE struct mo_bytecode_span span(struct compiler *c, struct mo_co
                      "Source span exceeds the bytecode MO_LIMIT_FILE_SIZE bound."))
             return (struct mo_bytecode_span){.file = MO_NO_INDEX};
     }
-    return s.some ? (struct mo_bytecode_span){0, c->files[s.value.file], s.value.start, s.value.end}
+    return s.some ? (struct mo_bytecode_span){0, s.value.file, s.value.start, s.value.end}
                   : (struct mo_bytecode_span){.file = MO_NO_INDEX};
 }
 static MO_MUST_USE bool debug_add(struct compiler *c) {
@@ -2968,9 +2969,12 @@ static MO_MUST_USE bool declarations(struct compiler *c) {
     memset(c->bodies, 0, c->function_capacity * sizeof *c->bodies);
     memset(c->debug, 0, c->function_capacity * sizeof *c->debug);
     for (size_t i = 0; i < file_count; i++) {
-        c->files[i] = string(c, p->metadata.files.items[i]);
-        if (c->files[i] == MO_NO_INDEX)
-            return false;
+        mo_core_string path = p->metadata.files.items[i];
+        if (path.length > MO_LIMIT_STRING_SIZE)
+            return problem(c, MO_CODE_BYTECODE_TOO_BIG,
+                           "Filename exceeds the bytecode MO_LIMIT_STRING_SIZE bound.");
+        c->files[i] =
+            (struct mo_bytecode_bytes){(uint32_t)path.length, (const uint8_t *)path.bytes};
     }
     for (size_t i = 0; i < p->data.count; i++) {
         const char *n = name(c, p->data.items[i].name);
@@ -3494,24 +3498,27 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
                     ? "Register recycling exceeds MO_LIMIT_CODEGEN_REGISTER_WORK."
                     : "No memory for code generation's register recycling pass.");
     }
-    const struct mo_bytecode file = {.string_count = c->strings.count,
-                                     .strings = c->strings.items,
-                                     .type_count = c->types.count,
-                                     .types = c->types.items,
-                                     .layout_count = c->types.layout_count,
-                                     .layouts = c->types.layouts,
-                                     .constant_count = c->constants.count,
-                                     .constants = c->constants.items,
-                                     .global_count = (uint32_t)c->core->consts.count,
-                                     .globals = c->globals,
-                                     .init_count = (uint32_t)c->core->consts.count,
-                                     .init = c->init,
-                                     .function_count = c->function_count,
-                                     .functions = c->funs,
-                                     .module_count = c->modules.count,
-                                     .modules = c->modules.items,
-                                     .debug_count = c->function_count,
-                                     .debug = c->debug};
+    const struct mo_bytecode file = {
+        .string_count = c->strings.count,
+        .strings = c->strings.items,
+        .type_count = c->types.count,
+        .types = c->types.items,
+        .layout_count = c->types.layout_count,
+        .layouts = c->types.layouts,
+        .constant_count = c->constants.count,
+        .constants = c->constants.items,
+        .global_count = (uint32_t)c->core->consts.count,
+        .globals = c->globals,
+        .init_count = (uint32_t)c->core->consts.count,
+        .init = c->init,
+        .function_count = c->function_count,
+        .functions = c->funs,
+        .module_count = c->modules.count,
+        .modules = c->modules.items,
+        .file_count = c->core->metadata.source ? (uint32_t)c->core->metadata.files.count : 0,
+        .files = c->files,
+        .debug_count = c->function_count,
+        .debug = c->debug};
     struct mo_write_error error;
     struct mo_buffer encoded;
     mo_buffer_init(&encoded, MO_LIMIT_BYTECODE_SIZE);

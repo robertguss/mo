@@ -15,7 +15,7 @@ const struct mo_code_info *mo_code_find(uint32_t number) {
     switch (number) {
 #define MO_CODE_CASE(code, name, cited)                                                            \
     case code: {                                                                                   \
-        static const struct mo_code_info info = { code, #name, cited };                            \
+        static const struct mo_code_info info = {code, #name, cited};                              \
         return &info;                                                                              \
     }
         MO_CODES(MO_CODE_CASE)

@@ -111,8 +111,8 @@ bool mo_text_ref(struct mo_text_reader *r, char prefix, bool optional, uint32_t 
         "expected layout index LN",    "expected constant index kN", "expected global index gN",
         "expected init index iN",      "expected function index fN", "expected module index mN",
         "expected debug index dN",     "expected register rN",       "expected word offset @N",
-        "expected primitive index pN", "expected host index hN"};
-    static const char prefixes[] = "\0stLkgifmdr@ph";
+        "expected primitive index pN", "expected host index hN",     "expected filename index PN"};
+    static const char prefixes[] = "\0stLkgifmdr@phP";
     size_t which = 0;
     while (prefixes[which] != prefix) {
         which++;
@@ -212,7 +212,8 @@ bool mo_text_save(struct mo_text_reader *r, enum mo_bytecode_section section, ui
                   uint32_t source) {
     static const uint32_t limits[] = {MO_LIMIT_STRINGS,   MO_LIMIT_TYPES,   MO_LIMIT_LAYOUTS,
                                       MO_LIMIT_CONSTANTS, MO_LIMIT_GLOBALS, MO_LIMIT_INITS,
-                                      MO_LIMIT_FUNCTIONS, MO_LIMIT_MODULES, MO_LIMIT_FUNCTIONS};
+                                      MO_LIMIT_FUNCTIONS, MO_LIMIT_MODULES, MO_LIMIT_FILES,
+                                      MO_LIMIT_FUNCTIONS};
     struct mo_text_table *t = &r->tables[section];
     if (index > t->count || (!r->shorthand && index != t->count) || index >= limits[section]) {
         mo_text_refuse(r, source, "expected consecutive entry index within section limit");
@@ -296,15 +297,18 @@ bool mo_text_check_references(struct mo_text_reader *r, bool complete) {
                                            "",
                                            "",
                                            "expected primitive index in range",
-                                           "expected host index in range"};
+                                           "expected host index in range",
+                                           "expected filename index in final pool"};
     for (const struct mo_text_reference *ref = r->references; ref != NULL; ref = ref->next) {
         /* Shorthand's deferred operands can still append layouts and constants. All other
          * tables are complete before resolving those operands. */
         if (!complete && (ref->space == 3 || ref->space == 4))
             continue;
-        uint32_t bound = ref->space <= 9    ? r->tables[ref->space - 1].count
-                         : ref->space == 12 ? MO_PRIM_COUNT
-                                            : MO_HOST_COUNT;
+        uint32_t bound = ref->space == 14   ? r->tables[MO_SECTION_FILES].count
+                         : ref->space == 9  ? r->tables[MO_SECTION_DEBUG].count
+                         : ref->space < 9   ? r->tables[ref->space - 1].count
+                         : ref->space == 12 ? (uint32_t)MO_PRIM_COUNT
+                                            : (uint32_t)MO_HOST_COUNT;
         if (ref->index >= bound) {
             mo_text_refuse(r, ref->source, expected[ref->space]);
             return false;
@@ -316,7 +320,7 @@ bool mo_text_check_references(struct mo_text_reader *r, bool complete) {
 static MO_MUST_USE bool output(struct mo_text_reader *r, struct mo_buffer *out) {
     if (!mo_text_check_references(r, true))
         return false;
-    uint8_t header[MO_BYTECODE_HEADER_SIZE] = {'M', 'O', 'B', 'C', 0, 0, 1, 0};
+    uint8_t header[MO_BYTECODE_HEADER_SIZE] = {'M', 'O', 'B', 'C', 0, 0, MO_BYTECODE_MINOR, 0};
     if (r->wire_size > out->limit) {
         mo_text_refuse(r, 0, "bytecode output limit");
         return false;
@@ -379,7 +383,7 @@ bool mo_bytecode_assemble(const char *text, size_t length, struct mo_buffer *out
     mo_text_next(&r);
     bool ok = (r.token.kind != 'n' || mo_text_end_line(&r)) &&
               mo_text_take(&r, "bytecode", "expected bytecode header") &&
-              mo_text_take(&r, "0.1", "expected bytecode version 0.1");
+              mo_text_take(&r, "0.2", "expected bytecode version 0.2");
     if (ok) {
         r.shorthand = mo_text_is(&r, "shorthand");
         ok = mo_text_take(&r, r.shorthand ? "shorthand" : "indexed",

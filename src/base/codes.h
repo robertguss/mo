@@ -110,6 +110,15 @@
     X(82, ABILITY_CUSTOMIZER, "9.2")                                                               \
     X(83, POLYMORPHIC_RECURSION, "5.5")                                                            \
     X(84, DATA_RECURSION, "9.1")                                                                   \
+    X(85, TRY_INPUT, "8.3")                                                                        \
+    X(86, TRY_RESULT, "8.3")                                                                       \
+    X(87, TRY_WRAPPER, "8.3")                                                                      \
+    X(88, ANCHOR_ARGUMENTS, "12.2")                                                                \
+    X(89, CONSTANT_CYCLE, "10.4")                                                                  \
+    X(90, LAMBDA_WRITE, "5.6")                                                                     \
+    X(91, CAPABILITY_CAPTURE, "11.4")                                                              \
+    X(92, CAPTURE_ASSIGNMENT, "5.6")                                                               \
+    X(93, UNUSED_IMPORT, "6.1")                                                                    \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \
@@ -244,7 +253,13 @@
     /* Formatting cannot read or atomically replace a regular source file. */                      \
     X(1402, TOOL_FORMAT_IO, NULL)                                                                  \
     /* The formatter's source stack, document, or output budget is unavailable. */                 \
-    X(1403, TOOL_FORMAT_LIMIT, NULL)
+    X(1403, TOOL_FORMAT_LIMIT, NULL)                                                               \
+    /* A compiled artifact cannot be loaded or emitted within tool output resources. */            \
+    X(1404, TOOL_PIPELINE, NULL)                                                                   \
+    /* An anchor's allows/forbids expectation fails, or its execution cannot complete. */          \
+    X(1405, TOOL_ANCHOR, NULL)                                                                     \
+    /* Image initialization stops before test observations can run. */                             \
+    X(1406, TOOL_TEST_INITIALIZATION, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */
 enum mo_code {

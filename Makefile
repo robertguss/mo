@@ -28,6 +28,9 @@ CSTD := -std=c17
 # Headers are included by their path in src/, which starts with their module, such as
 # "base/base.h".
 INCLUDES := -Isrc -Ibuild/generated
+ifeq ($(shell uname -s),Darwin)
+INCLUDES += -D_DARWIN_C_SOURCE
+endif
 THREADS := -pthread
 WARNINGS := -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion \
 	-Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla \
@@ -281,6 +284,22 @@ $(BUILD)/debug/tests/test_cli_faults.test: $(BUILD)/debug/tests/test_cli_faults.
 $(BUILD)/sanitize/tests/test_cli_faults.test: $(BUILD)/sanitize/tests/test_cli_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out src/tools/execute.c,$(LIB_SOURCES))) $(BUILD)/sanitize/cli-faults/execute.o
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
+# The promise clock uses the same portable POSIX-edge substitution as above.
+# No production injection flags, environment variables or linker interposition.
+$(BUILD)/debug/cli-clock/deadline.o: src/tools/deadline.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -Dclock_gettime=mo_cli_deadline_clock -c $< -o $@
+
+$(BUILD)/sanitize/cli-clock/deadline.o: src/tools/deadline.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) -Dclock_gettime=mo_cli_deadline_clock -c $< -o $@
+
+$(BUILD)/debug/tests/test_deadline.test: $(BUILD)/debug/tests/test_deadline.o $(call objects,$(BUILD)/debug,$(filter-out src/tools/deadline.c,$(LIB_SOURCES))) $(BUILD)/debug/cli-clock/deadline.o
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/tests/test_deadline.test: $(BUILD)/sanitize/tests/test_deadline.o $(call objects,$(BUILD)/sanitize,$(filter-out src/tools/deadline.c,$(LIB_SOURCES))) $(BUILD)/sanitize/cli-clock/deadline.o
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
 $(BUILD)/debug/lower-source: $(BUILD)/debug/ci/lower_source.o $(call objects,$(BUILD)/debug,$(LIB_SOURCES))
 	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
 
@@ -303,10 +322,11 @@ $(BUILD)/debug/tests/test_vm.test: $(BUILD)/debug/tests/test_vm.o $(call objects
 $(BUILD)/sanitize/tests/test_vm.test: $(BUILD)/sanitize/tests/test_vm.o $(call objects,$(BUILD)/sanitize,$(filter-out src/host/host.c,$(LIB_SOURCES))) $(BUILD)/sanitize/vm-run/host.o
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
-# Fault injection only in the two translation units owning VM initialization
-# and heap allocation. Compile-time renaming also works with Apple's linker.
-VM_FAULT_SOURCES := src/heap/heap.c src/vm/image.c
-VM_FAULT_RENAMES := -Dcalloc=mo_vm_fault_calloc -Dgetentropy=mo_vm_fault_entropy
+# Fault injection only in VM initialization, reporting and heap allocation.
+# Compile-time renaming also works with Apple's linker.
+VM_FAULT_SOURCES := src/heap/heap.c src/vm/image.c src/vm/defect.c
+VM_FAULT_RENAMES := -Dcalloc=mo_vm_fault_calloc -Dgetentropy=mo_vm_fault_entropy \
+	-Dmo_image_registers_readable=mo_vm_fault_readable
 $(BUILD)/debug/vm-faults/%.o: src/%.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) $(VM_FAULT_RENAMES) -c $< -o $@

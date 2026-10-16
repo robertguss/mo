@@ -98,20 +98,24 @@ static void distinct(struct key *items, uint32_t count) {
     }
 }
 
-static void source(const struct mo_bytecode *f, const bool *flags, uint32_t file, uint32_t start,
-                   uint32_t end) {
-    MO_ASSERT(file == MO_BYTECODE_NO_INDEX ? start == 0 && end == 0
-                                           : file < f->string_count && flags[file] &&
-                                                 start <= end && end <= MO_LIMIT_FILE_SIZE);
+static void source(const struct mo_bytecode *f, uint32_t file, uint32_t start, uint32_t end) {
+    MO_ASSERT(file == MO_BYTECODE_NO_INDEX
+                  ? start == 0 && end == 0
+                  : file < f->file_count && start <= end && end <= MO_LIMIT_FILE_SIZE);
 }
 
 static void accepted_tables(const struct mo_bytecode *f, size_t size) {
-    MO_ASSERT(f->header.major == 0 && f->header.minor == 1 && f->header.flags == 0);
+    MO_ASSERT(f->header.major == 0 && f->header.minor == 2 && f->header.flags == 0);
     MO_ASSERT(f->string_count <= MO_LIMIT_STRINGS && f->type_count <= MO_LIMIT_TYPES &&
               f->layout_count <= MO_LIMIT_LAYOUTS && f->constant_count <= MO_LIMIT_CONSTANTS &&
               f->global_count <= MO_LIMIT_GLOBALS && f->function_count <= MO_LIMIT_FUNCTIONS &&
               f->module_count <= MO_LIMIT_MODULES && f->debug_count == f->function_count &&
-              f->init_count == f->global_count);
+              f->init_count == f->global_count && f->file_count <= MO_LIMIT_FILES);
+    for (uint32_t i = 0; i < f->file_count; i++) {
+        MO_ASSERT(f->files[i].length != 0 && f->files[i].length <= MO_LIMIT_STRING_SIZE);
+        for (uint32_t j = 0; j < f->files[i].length; j++)
+            MO_ASSERT(f->files[i].bytes[j] != 0);
+    }
     struct mo_arena arena;
     mo_arena_init(&arena, mo_bytecode_work_budget(size));
     bool *flags = allocate(&arena, f->string_count, sizeof *flags, _Alignof(bool));
@@ -406,7 +410,7 @@ static void accepted_tables(const struct mo_bytecode *f, size_t size) {
         MO_ASSERT(d->span_count <= MO_LIMIT_DEBUG_ENTRIES &&
                   d->name_count <= MO_LIMIT_DEBUG_ENTRIES &&
                   d->line_count <= MO_LIMIT_DEBUG_ENTRIES);
-        source(f, flags, d->file, d->start, d->end);
+        source(f, d->file, d->start, d->end);
         MO_ASSERT(d->text == MO_BYTECODE_NO_INDEX ||
                   (fn->kind >= MO_FUNCTION_TEST && d->text < f->string_count));
         MO_ASSERT(d->expectation >= MO_BYTECODE_NOT_ANCHOR &&
@@ -426,7 +430,7 @@ static void accepted_tables(const struct mo_bytecode *f, size_t size) {
             const struct mo_bytecode_span *s = &d->spans[j];
             MO_ASSERT(s->code_offset < fn->code_count &&
                       (j == 0 || d->spans[j - 1].code_offset < s->code_offset));
-            source(f, flags, s->file, s->start, s->end);
+            source(f, s->file, s->start, s->end);
         }
         for (uint32_t j = 0; j < d->name_count; j++) {
             const struct mo_bytecode_register_name *r = &d->names[j];
@@ -435,7 +439,7 @@ static void accepted_tables(const struct mo_bytecode *f, size_t size) {
         }
         for (uint32_t j = 0; j < d->line_count; j++) {
             const struct mo_bytecode_spec_line *line = &d->lines[j];
-            source(f, flags, line->file, line->start, line->end);
+            source(f, line->file, line->start, line->end);
             MO_ASSERT(line->text < f->string_count);
         }
     }

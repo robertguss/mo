@@ -227,7 +227,7 @@ static MO_MUST_USE bool module(struct mo_text_reader *r) {
 }
 
 static MO_MUST_USE bool location(struct mo_text_reader *r) {
-    return reference(r, 's', true) && punctuation(r, ",") && reference(r, 0, false) &&
+    return reference(r, 'P', true) && punctuation(r, ",") && reference(r, 0, false) &&
            punctuation(r, ",") && reference(r, 0, false);
 }
 static MO_MUST_USE bool span(struct mo_text_reader *r) {
@@ -262,12 +262,13 @@ static MO_MUST_USE bool debug(struct mo_text_reader *r) {
 
 bool mo_text_indexed_section(struct mo_text_reader *r, enum mo_bytecode_section section) {
     static const char *const names[] = {"strings", "types",     "layouts", "constants", "globals",
-                                        "init",    "functions", "modules", "debug"};
-    static const char prefixes[] = "stLkgifmd";
+                                        "init",    "functions", "modules", "files",     "debug"};
+    static const char prefixes[] = "stLkgifmPd";
     static const char *const expected[] = {
         "expected strings section",   "expected types section",   "expected layouts section",
         "expected constants section", "expected globals section", "expected init section",
-        "expected functions section", "expected modules section", "expected debug section"};
+        "expected functions section", "expected modules section", "expected files section",
+        "expected debug section"};
     r->tables[section].source = r->token.start;
     if (!mo_text_take(r, names[section], expected[section]) || !mo_text_end_line(r))
         return false;
@@ -312,6 +313,12 @@ bool mo_text_indexed_section(struct mo_text_reader *r, enum mo_bytecode_section 
         case MO_SECTION_MODULES:
             ok = module(r);
             break;
+        case MO_SECTION_FILES: {
+            struct mo_bytecode_string path;
+            ok = mo_text_quote(r, &path) && mo_text_word(r, path.length, source) &&
+                 mo_text_bytes(r, path.bytes, path.length, source);
+            break;
+        }
         case MO_SECTION_DEBUG:
             ok = debug(r);
             break;
