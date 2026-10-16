@@ -5,10 +5,11 @@ Regenerated from actual `mo check --json examples/<sample>.mo` output on
 Every totals record reports `dropped: 0`. Examples are unchanged.
 
 Map literals are accepted in all six affected samples. Checking reaches later
-independent functions and exposes existing library gaps. The requested
-**no-increase error-count criterion is not met**: four sample counts increase.
-This is pending acceptance clarification; diagnostics are retained and tasks C4/C5
-remain out of scope.
+independent functions and exposes existing library gaps. Four sample counts
+increase, for a total of 14→24. Robert approved accepting these documented newly
+exposed errors as an amendment to LW5’s original no-increase criterion, together
+with the bounded duplicate-key scope. Diagnostics are retained; tasks C4/C5 remain
+out of scope. See [lw5-verification.md](lw5-verification.md) for the approval record.
 
 ## Counts
 

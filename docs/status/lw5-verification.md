@@ -1,4 +1,4 @@
-# LW5 verification and pending decisions
+# LW5 verification and approved acceptance criteria
 
 LW5 starts from verified current main `bfcdedcd` (PR81 merged), in a dedicated
 clone and branch `lw5/map-literals`. Existing workspaces and I1 container files
@@ -26,32 +26,27 @@ are preserved. The Language Reference and examples are unchanged.
   bug message and exit status 70. Lean's `repeatedKey` stop is mapped to that
   existing message in the differential harness.
 
-## Pending user-visible decisions
+## Approved acceptance adjustments
 
-The user requested stopping to ask in the PR if the scope of “the compiler can
-see” needs a judgment. The draft therefore asks:
+Robert approved both proposed LW5 adjustments in the follow-up conversation:
+“I approve.” The approval answered the two recommendations together:
 
-> For LW5, should compile-time duplicate detection be limited to normalized
-> scalar literals and repeated bare names without an intervening possible
-> assignment, or should it also reject equal literal-valued constants, repeated
-> qualified names, Unit/case constructors, composite literal keys and folded
-> expressions? Recommendation: approve the implemented narrow boundary for LW5
-> and specify broader constant/expression analysis separately.
+1. Keep compile-time duplicate-key detection bounded to equal normalized scalar
+   literals and unchanged bare names for LW5. Constants, qualified names,
+   Unit/case constructors, composite keys and expression folding require a
+   separate decision; this follow-up adds no language support.
+2. Accept the documented newly exposed downstream sample errors. All six former
+   map diagnostics are cleared; the twelve-sample total is 14→24 with every
+   `dropped` value zero. Expenses rises 2→4, inventory 2→5, job-queue 1→3 and
+   json-query 1→4; other counts do not increase. Diagnostics are retained.
 
-That recommendation is pending, not an approved language decision. No dependent
-constant, qualified-name, constructor, composite-key or expression-folding work
-has been implemented, and this draft does not claim all LW5 acceptance criteria
-are complete.
+The original literal no-increase criterion is replaced by that approved sample
+acceptance adjustment. `Map.update`, `sort_by_desc`, `List.map`, `Option.or_fail`,
+Time arithmetic and unavailable FileError text remain outside LW5. See
+[sample-blockers.md](sample-blockers.md) for the complete current diagnostic table.
 
-The second question is whether to accept newly exposed sample diagnostics.
-All six former map diagnostics are cleared, but the twelve-sample total rises
-from 14 to 24 as independent downstream functions become reachable. Expenses
-rises 2→4, inventory 2→5, job-queue 1→3, json-query 1→4; other counts do not
-increase. `Map.update`, `sort_by_desc`, `List.map`, `Option.or_fail`, Time
-arithmetic and unavailable FileError text remain outside this task. Diagnostics
-have not been suppressed. See [sample-blockers.md](sample-blockers.md) for exact
-locations, codes and source lines. The no-increase criterion remains unmet
-pending Robert’s decision.
+LW5 is complete under these amended acceptance criteria. PR #82 remains draft
+and unmerged; Robert’s approval of these adjustments does not authorize merging.
 
 ## Baseline and supported workflow
 
@@ -99,9 +94,12 @@ Full gate final result: **PASS**, exit 0, no skips. The complete rerun ends:
   source-formatter fixed points pass.
 - The post-gate 591-file input manifest has zero mismatches with the Mac tree.
 
-The full gate verifies the implementation and tests; the final commit also
-updates these evidence documents. Sample-count acceptance and the duplicate
-visibility boundary remain pending decisions, despite the passing gate.
+The full gate verifies implementation commit `69d96b69a95a60c39982cb6c48c889b80faf2550`
+and all its tests. The approval follow-up changes only this verification record,
+the sample status and architecture prose. All 591 source/test/oracle/build inputs
+still match the passing gate’s SHA-256 manifest, so no functional recheck is
+required. The documentation diff is checked with `git diff --check`; the prior
+full-gate result is not represented as a fresh run on the documentation commit.
 
 ## Evidence and blast radius
 
@@ -129,5 +127,5 @@ Raw evidence lives outside the build tree in this task’s `evidence/` directory
   source/test/oracle/build inputs match by SHA-256, zero mismatches.
 - `linux-lw5-full-ci-attempt1.log` and the final full-gate log.
 
-The draft PR is not merged. Pending decisions above are remaining blockers to
-claiming LW5 complete; they do not prevent independent verification.
+Both acceptance adjustments are approved. There are no remaining LW5 blockers
+under the amended criteria. The draft PR is not merged.

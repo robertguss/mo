@@ -602,8 +602,8 @@ the entry contract still need their stages. Map literals reject unchanged repeat
 and equal scalar literals (reference 3.8), including normalized numeric spellings
 and decoded text/char escapes. A stable, budgeted merge of canonical keys retains
 the earliest repeated key and the first equal key for E0094. Constants, qualified
-names and expression folding are not evaluated for this comparison; broader
-visibility is an unresolved LW5 question recorded in its draft PR.
+names and expression folding are not evaluated for this comparison. Robert
+approved this bounded scope for LW5; broader visibility needs a separate decision.
 Nonempty examples or promises are refused with E1103, never silently skipped.
 A successful intermediate body is not a `mo_program`, is not lowering-ready and does not certify those
 rules. `mo_check` composes implemented stages for a certified subset; section 12
