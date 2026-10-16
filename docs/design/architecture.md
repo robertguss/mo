@@ -936,18 +936,22 @@ all bodies together, matching Core's whole-document node allowance.
 **Capability-entry increment.** Unit/Int entries forward any distinct subset
 of Args, Env, Console, Files, ReadFiles, Clock and Random in main's written
 order, without extra authority. The existing tools/host entry path constructs
-only the requested handles. Args.list, Args.of, Console.print, Console.error,
-Console.fake, Console.printed, Console.printed_errors, Files.in_memory,
-Files.read_only, Files.read_text and ReadFiles.read_text lower to their existing
-Core IO primitives; List.first, List.size, List.empty?, List.append and
-List.enumerate use their instantiated receiver element type; Text.bytes,
-Text.byte_count, Text.chars, Text.words, Text.pad_left, Text.starts_with?,
-Text.lines, Text.contains? and Text.ascii_lowercase lower to their Core Text
-primitives. Native function values use inline lambdas, so spec-only operations
-retain their enclosing spec context rather than becoming ordinary global
-adapters. The unchanged greet, find and wc samples run with real capabilities
-and their specs run with shared fake handles. Other native operations remain
-independently staged, as does the source checker's Result-return entry convention.
+only the requested handles. Args.list, Args.of, Clock.now, Clock.fixed,
+Console.print, Console.error, Console.fake, Console.printed,
+Console.printed_errors, Files.in_memory, Files.read_only, Files.read_text and
+ReadFiles.read_text lower to their existing Core IO primitives; Int.seconds,
+Int.milliseconds, Int.minutes, Int.hours and Int.days lower to their Core Int
+primitives; Time.checked_add, Time.parse, Duration.in_milliseconds and
+Duration.in_seconds lower to their Core Time primitives; List.first,
+List.size, List.empty?, List.append and List.enumerate use their instantiated
+receiver element type; Text.bytes, Text.byte_count, Text.chars, Text.words,
+Text.pad_left, Text.starts_with?, Text.lines, Text.contains? and
+Text.ascii_lowercase lower to their Core Text primitives. Native function values
+use inline lambdas, so spec-only operations retain their enclosing spec context
+rather than becoming ordinary global adapters. The unchanged greet, find and wc
+samples run with real capabilities and their specs run with shared fake handles.
+Other native operations remain independently staged, as does the source
+checker's Result-return entry convention.
 
 Numeric immediates fold unary minus before building Core scalars, including
 Int's minimum. Float literals convert in a private C numeric locale with

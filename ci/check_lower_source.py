@@ -764,6 +764,7 @@ for fixture, expected in {
     "map-native-routes": 0,
     "map-mutating-key": 0,
     "map-runtime-duplicate": ["stopped", "two keys of a map literal that turn out equal"],
+    "time-sub": 0,
 }.items():
     body = (pathlib.Path("tests/lower-source") / fixture / "main.mo").read_text()
     assert body.startswith("module Main\n")

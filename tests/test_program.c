@@ -2594,9 +2594,63 @@ static void corpus(void) {
     mo_sources_free(&sources);
 }
 
+static void time_arithmetic_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\n"
+             "fn scale(x: Decimal) : Decimal\n"
+             "x * 2\n"
+             "end\n"
+             "fn compute(a: Time, b: Time, d: Duration, n: Int) : (Duration, Time, Time, Duration, "
+             "Decimal)\n"
+             "diff = a - b\n"
+             "var shifted = a + d\n"
+             "shifted -= d\n"
+             "var span = (diff + d - d) * n\n"
+             "span += -d\n"
+             "(diff, a + d, shifted - d, span, 1.5.scale + 1)\n"
+             "end\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    free_fixture(&f);
+
+    static const struct {
+        const char *source;
+        uint16_t code;
+        const char *label;
+    } invalid[] = {
+        {"module Main\nfn bad(a: Time, b: Time) : Time\na + b\nend\n", MO_CODE_TYPE_MISMATCH,
+         "expected Duration, found Time"},
+        {"module Main\nfn bad(n: Int, d: Duration) : Int\nn * d\nend\n", MO_CODE_TYPE_MISMATCH,
+         "expected Int, found Duration"},
+        {"module Main\nfn bad(t: Time, n: Int) : Time\nt * n\nend\n", MO_CODE_NUMBER_ABILITY,
+         "expected Int or BigInt or Decimal or Float, found Time"},
+        {"module Main\nfn bad(t: Time) : Time\n-t\nend\n", MO_CODE_NUMBER_ABILITY,
+         "expected Int or BigInt or Decimal or Float, found Time"},
+        {"module Main\nfn bad(t: Time) : Text\n-(t - 1.seconds)\nend\n", MO_CODE_NUMBER_ABILITY,
+         "expected Int or BigInt or Decimal or Float, found Time"},
+        {"module Main\nfn bad() : Int\n-1.seconds\nend\n", MO_CODE_RESULT_TYPE,
+         "expected Int, found Duration"},
+        {"module Main\nfn bad(a: Time, b: Time) : Int\na - (b - 1.seconds)\nend\n",
+         MO_CODE_RESULT_TYPE, "expected Int, found Duration"},
+        {"module Main\nfn bad(t: Time) : Unit\n_f = fn(x) t - x end\nUnit\nend\n",
+         MO_CODE_CANNOT_INFER, "no use decides the type"},
+        {"module Main\nfn bad(a: Time, b: Time) : Duration\na / b\nend\n", MO_CODE_NUMBER_ABILITY,
+         "expected Int or BigInt or Decimal or Float, found Time"},
+    };
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
+        init(&f, invalid[i].source);
+        CHECK(f.program == NULL && f.diags.count == 1);
+        if (f.diags.count == 1) {
+            CHECK(f.diags.items[0].code == invalid[i].code);
+            CHECK(strcmp(f.diags.items[0].primary.text, invalid[i].label) == 0);
+        }
+        free_fixture(&f);
+    }
+}
+
 static void run(void *argument) {
     (void)argument;
     map_graph();
+    time_arithmetic_graph();
     constant_graph();
     constant_names();
     constant_context();

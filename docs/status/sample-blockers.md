@@ -1,35 +1,38 @@
-# Sample blockers after F7
+# Sample blockers after C3
 
 Regenerated from actual `mo check --json examples/<sample>.mo` output on
 `bfcdedcd` (I1/PR81), `75e6db61` (LW5/PR82), `02395dbd` (C7/PR83),
 `09f4c445` (F8/PR84), `1ac2fe8e` (C1/PR85), `0b8589ee` (C4/PR86),
-`a2924f53` (C5/PR87), `dab7da3a` (C8/PR88) and F7. Every totals record reports
-`dropped: 0`. Examples are unchanged.
+`a2924f53` (C5/PR87), `dab7da3a` (C8/PR88), `b9fbb0e1` (F7/PR89) and C3. Every
+totals record reports `dropped: 0`. Examples are unchanged.
 
-With `Text.words`, `Text.pad_left` and `Console.printed_errors` lowered to their
-Core primitives (`MO_CORE_TEXT_OP_WORDS`, `MO_CORE_TEXT_OP_PAD_LEFT`,
-`MO_CORE_IO_OP_PRINTED_ERRORS`):
-- `examples/wc.mo` checks (`0` errors), passes all 5 `mo test` items (4
-  examples and 1 `test` block), and runs end-to-end with `mo run`.
-- Total diagnostics across all 12 samples drop from 14 to 13.
+With `Time` and `Duration` arithmetic checked per Reference §3.9 (`Time - Time -> Duration`,
+`Time + Duration -> Time`, `Time - Duration -> Time`, `Duration + Duration -> Duration`,
+`Duration - Duration -> Duration`, `Duration * Int -> Duration`, `-Duration -> Duration`)
+and `Int` duration constructors, `Time`/`Duration` methods and `Clock` primitives
+lowered to their Core primitives:
+- `examples/rate-limit.mo` clears `E1103` at `66:14` (`now - bucket.updated`) and
+  exposes `E1150` at `66:13` (`Decimal.max` during anchor lowering).
+- Total diagnostics across all 12 samples remain 13, with 0 `E1103` errors left
+  in `examples/rate-limit.mo`.
 
 ## Counts
 
-| Sample | Main / I1 | LW5 | C7 | F8 | C1 | C4 | C5 | C8 | F7 | Change (C8→F7) |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| account.mo | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | +0 |
-| expenses.mo | 2 | 4 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | +0 |
-| find.mo | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
-| greet.mo | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
-| inventory.mo | 2 | 5 | 5 | 5 | 5 | 3 | 1 | 1 | 1 | +0 |
-| job-queue.mo | 1 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | 2 | +0 |
-| json-query.mo | 1 | 4 | 4 | 4 | 4 | 2 | 2 | 2 | 2 | +0 |
-| kv.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
-| notes-tool.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
-| rate-limit.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
-| todo.mo | 1 | 1 | 4 | 4 | 4 | 3 | 3 | 3 | 3 | +0 |
-| wc.mo | 2 | 2 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | -1 |
-| **Total** | **14** | **24** | **25** | **24** | **23** | **17** | **14** | **14** | **13** | **-1** |
+| Sample | Main / I1 | LW5 | C7 | F8 | C1 | C4 | C5 | C8 | F7 | C3 | Change (F7→C3) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| account.mo | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| expenses.mo | 2 | 4 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | 2 | +0 |
+| find.mo | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| greet.mo | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| inventory.mo | 2 | 5 | 5 | 5 | 5 | 3 | 1 | 1 | 1 | 1 | +0 |
+| job-queue.mo | 1 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | 2 | 2 | +0 |
+| json-query.mo | 1 | 4 | 4 | 4 | 4 | 2 | 2 | 2 | 2 | 2 | +0 |
+| kv.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
+| notes-tool.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
+| rate-limit.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
+| todo.mo | 1 | 1 | 4 | 4 | 4 | 3 | 3 | 3 | 3 | 3 | +0 |
+| wc.mo | 2 | 2 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | +0 |
+| **Total** | **14** | **24** | **25** | **24** | **23** | **17** | **14** | **14** | **13** | **13** | **+0** |
 
 ## Current diagnostics
 
@@ -44,7 +47,7 @@ Core primitives (`MO_CORE_TEXT_OP_WORDS`, `MO_CORE_TEXT_OP_PAD_LEFT`,
 | json-query.mo | 137:31 | E0050 | no visible function has this dot-call name | `value = try text.to_decimal.or_fail(BadNumber(at: at))` |
 | kv.mo | 79:30 | E0050 | no visible function has this dot-call name | `n = try seconds.to_int.or_fail(NotAnInteger(text: seconds))` |
 | notes-tool.mo | 45:22 | E1150 | this native call is not lowered yet | `query = input.query.trim.ascii_lowercase` |
-| rate-limit.mo | 66:14 | E1103 | this body rule is not implemented by the staged checker | `elapsed = (now - bucket.updated).in_seconds.max(0)` |
+| rate-limit.mo | 66:13 | E1150 | this native call is not lowered yet | `elapsed = (now - bucket.updated).in_seconds.max(0)` |
 | todo.mo | 71:45 | E0050 | no visible function has this dot-call name | `rest = try line.drop_prefix("[ ] ").or_fail(BadLine(number: index + 1))` |
 | todo.mo | 110:39 | E0050 | no visible function has this dot-call name | `var item = try items.get(n - 1).or_fail(NoSuchItem(number: n))` |
 | todo.mo | 120:42 | E0050 | no visible function has this dot-call name | `command = try parse_command(args.list).or_fail(Usage)` |
@@ -54,6 +57,8 @@ Core primitives (`MO_CORE_TEXT_OP_WORDS`, `MO_CORE_TEXT_OP_PAD_LEFT`,
 - account: passes `mo check` (including its anchors) with 0 errors.
 - find: passes `mo check`, `mo test` and `mo run` with 0 errors.
 - wc: passes `mo check`, `mo test` and `mo run` with 0 errors.
+- rate-limit: `E1103` on `now - bucket.updated` (`66:14`) clears; `E1150` on
+  `Decimal.max` (`66:13`) is exposed when lowering its anchors.
 - expenses: `Map.update` (`57:17`) and `List.sort_by_desc` (`91:8`) clear; only
   `Option.or_fail` (`41:37`) and `List.max` (`70:56`) remain.
 - inventory: `List.sort_by_desc` (`30:9`) and `Map.update` (`42:21`) clear; only
@@ -67,7 +72,6 @@ Core primitives (`MO_CORE_TEXT_OP_WORDS`, `MO_CORE_TEXT_OP_PAD_LEFT`,
   `120:42`) remains.
 - notes-tool: `E1150` on `Text.trim` (`45:22`).
 - kv: `Option.or_fail` (`79:30`).
-- rate-limit: Time arithmetic around `now - bucket.updated` (`66:14`).
 
 The existing `infer_function` sets `halt` for implementation codes (E1000 and
 above). Its replacement library errors E0050 allow `check_program` to continue
