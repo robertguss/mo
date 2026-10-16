@@ -1264,6 +1264,8 @@ def runner(binary):
                                   (["日本語", "ignored"], "日本語"), (["--flag"], "--flag")):
             result = run(binary, ["run", greeting, *values], 0)
             assert result.stdout == f"Hello, {expected}!\n".encode() and not result.stderr
+        greet_text = run(binary, ["test", greeting], 0)
+        assert not greet_text.stderr and greet_text.stdout.endswith(b"3 passed, 0 failed, 0 stopped\n")
         items = records(run(binary, ["test", "--json", greeting], 0), "test")
         assert [(r["name"], r["outcome"]) for r in items[1:-1]] == [
             ("Greet.greeting.example.1", "passed"),
@@ -2036,6 +2038,17 @@ def check(binary):
     assert b"E0079" in run(binary, ["run", library], 1).stderr
     tested_lib = records(run(binary, ["test", "--json", library], 0), "test")
     assert [(r["name"], r["outcome"]) for r in tested_lib[1:-1]] == [("Main.test.1", "passed")]
+    test_fixture = "tests/cli/test/main.mo"
+    listed_fixture = run(binary, ["test", "--json", "--list", test_fixture], 0)
+    assert listed_fixture.stdout == (root / "tests/cli/test/list.golden").read_bytes()
+    records(listed_fixture, "test")
+    ran_fixture = run(binary, ["test", "--json", test_fixture], 1)
+    ran_items = records(ran_fixture, "test")
+    for r in ran_items[1:-1]:
+        assert type(r["microseconds"]) is int and r["microseconds"] >= 0
+        r["microseconds"] = 0
+    normalized_json = "".join(json.dumps(r, separators=(",", ":")) + "\n" for r in ran_items).encode()
+    assert normalized_json == (root / "tests/cli/test/json.golden").read_bytes()
     for mode in ("text", "json"):
         result = run(driver, [f"--render-{mode}"], 0)
         assert not result.stderr
