@@ -52,7 +52,9 @@ jobs:
           pipx install clang-format==14.0.6
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      # -j runs the builds and the unit tests side by side; -Otarget keeps each
+      # test's output together.
       - name: Run every check
         run: |
           clang-format --version
-          CI=1 bash ci/check.sh
+          MAKEFLAGS="-j$(nproc) -Otarget" CI=1 bash ci/check.sh
