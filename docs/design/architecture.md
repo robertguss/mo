@@ -938,23 +938,30 @@ of Args, Env, Console, Files, ReadFiles, Clock and Random in main's written
 order, without extra authority. The existing tools/host entry path constructs
 only the requested handles. Args.list, Args.of, Clock.now, Clock.fixed,
 Console.print, Console.error, Console.fake, Console.printed,
-Console.printed_errors, Files.in_memory, Files.read_only, Files.read_text and
-ReadFiles.read_text lower to their existing Core IO primitives; Int.seconds,
-Int.milliseconds, Int.minutes, Int.hours and Int.days lower to their Core Int
-primitives; Decimal.abs, Decimal.min, Decimal.max, Decimal.floor, Decimal.ceil,
-Decimal.round, Decimal.to_int, Decimal.to_fixed and Decimal.to_float lower to
-their Core Decimal primitives; Time.checked_add, Time.parse,
-Duration.in_milliseconds and Duration.in_seconds lower to their Core Time
-primitives; List.first, List.size, List.empty?, List.append and List.enumerate
-use their instantiated receiver element type; Text.bytes, Text.byte_count,
-Text.chars, Text.words, Text.pad_left, Text.starts_with?, Text.lines,
-Text.contains? and Text.ascii_lowercase lower to their Core Text primitives.
-Native function values use inline lambdas, so spec-only operations retain their
-enclosing spec context rather than becoming ordinary global adapters. The
-unchanged greet, find, wc and rate-limit samples check cleanly, and their
-supported examples, anchors and tests run with real and fake capabilities.
-Other native operations remain independently staged, as does the source
-checker's Result-return entry convention.
+Console.printed_errors, Files.in_memory, Files.read_only, Files.read_text,
+Files.list, ReadFiles.read_text and ReadFiles.list lower to their existing Core
+IO primitives; Int.seconds, Int.milliseconds, Int.minutes, Int.hours and
+Int.days lower to their Core Int primitives; Decimal.abs, Decimal.min,
+Decimal.max, Decimal.floor, Decimal.ceil, Decimal.round, Decimal.to_int,
+Decimal.to_fixed and Decimal.to_float lower to their Core Decimal primitives;
+Time.checked_add, Time.parse, Duration.in_milliseconds and Duration.in_seconds
+lower to their Core Time primitives; List.first, List.last, List.get, List.size,
+List.empty?, List.append, List.prepend, List.concat, List.reverse, List.take,
+List.drop, List.set, List.remove_at, List.enumerate, List.contains? and
+List.unique use their instantiated receiver element type, and List.join lowers
+to Core's Text join primitive; Text.bytes, Text.byte_count, Text.char_count,
+Text.empty?, Text.chars, Text.from_chars, Text.words, Text.split, Text.trim,
+Text.trim_start, Text.trim_end, Text.pad_left, Text.pad_right,
+Text.starts_with?, Text.ends_with?, Text.drop_prefix, Text.drop_suffix,
+Text.replace, Text.repeat, Text.lines, Text.contains?, Text.ascii_lowercase,
+Text.ascii_uppercase, Text.to_int, Text.to_decimal and Text.to_float lower to
+their Core Text primitives. Native function values use inline lambdas, so
+spec-only operations retain their enclosing spec context rather than becoming
+ordinary global adapters. The unchanged greet, find, wc, rate-limit and
+notes-tool samples check cleanly, and their supported examples, anchors and
+tests run with real and fake capabilities. Other native operations remain
+independently staged, as does the source checker's Result-return entry
+convention.
 
 Numeric immediates fold unary minus before building Core scalars, including
 Int's minimum. Float literals convert in a private C numeric locale with

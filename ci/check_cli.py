@@ -1441,6 +1441,20 @@ def runner(binary):
             assert all(r.get("code") != "E0079" for r in items), (sample, items)
         assert run(binary, ["check", "examples/account.mo"], 0).stderr == b""
         assert b"E0079" in run(binary, ["run", "examples/account.mo"], 1).stderr
+        assert run(binary, ["check", "examples/notes-tool.mo"], 0).stderr == b""
+        records(run(binary, ["check", "--json", "examples/notes-tool.mo"], 0), "check")
+        assert b"E0079" in run(binary, ["run", "examples/notes-tool.mo"], 1).stderr
+        notes_tool_tests = records(
+            run(binary, ["test", "--json", "--only", "NotesTool.test.1",
+                         "--only", "NotesTool.test.2",
+                         "--only", "NotesTool.test.3",
+                         "examples/notes-tool.mo"], 0), "test")
+        assert [(r["name"], r["outcome"]) for r in notes_tool_tests[1:-1]] == [
+            ("NotesTool.test.1", "passed"),
+            ("NotesTool.test.2", "passed"),
+            ("NotesTool.test.3", "passed")]
+        assert notes_tool_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                                        "passed": 3, "failed": 0, "stopped": 0, "status": 0}
         assert run(binary, ["check", "examples/rate-limit.mo"], 0).stderr == b""
         records(run(binary, ["check", "--json", "examples/rate-limit.mo"], 0), "check")
         assert b"E0079" in run(binary, ["run", "examples/rate-limit.mo"], 1).stderr
@@ -1768,6 +1782,17 @@ def constants(binary):
              'else\n'
              '  0\n'
              'end\nend\n', 3),
+            ('trim_fn = Text.trim\n'
+             'join_fn = List.join\n'
+             'fn main() : Int\n'
+             'take_fn = List.take\n'
+             'parts = take_fn("  a.md,b.md,c.txt  ".trim.split(","), 2)\n'
+             'joined = join_fn(parts, ":")\n'
+             'if joined.ends_with?(".md") and not trim_fn(" x ").empty?\n'
+             '  "42".to_int or 0\n'
+             'else\n'
+             '  0\n'
+             'end\nend\n', 42),
         ):
             path.write_text("module Main\n" + body)
             result = run(binary, ["check", str(path)], 0)

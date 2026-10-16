@@ -1,39 +1,38 @@
-# Sample blockers after F16
+# Sample blockers after F14
 
 Regenerated from actual `mo check --json examples/<sample>.mo` output on
 `bfcdedcd` (I1/PR81), `75e6db61` (LW5/PR82), `02395dbd` (C7/PR83),
 `09f4c445` (F8/PR84), `1ac2fe8e` (C1/PR85), `0b8589ee` (C4/PR86),
 `a2924f53` (C5/PR87), `dab7da3a` (C8/PR88), `b9fbb0e1` (F7/PR89),
-`d7e3abfa` (C3/PR90) and F16. Every totals record reports `dropped: 0`. Examples
-are unchanged.
+`d7e3abfa` (C3/PR90), `bc0fff4c` (F16/PR91) and F14. Every totals record reports
+`dropped: 0`. Examples are unchanged.
 
-With `Decimal.abs`, `Decimal.min`, `Decimal.max`, `Decimal.floor`,
-`Decimal.ceil`, `Decimal.round`, `Decimal.to_int`, `Decimal.to_fixed` and
-`Decimal.to_float` lowered to their Core `MO_CORE_PRIM_DEC` primitives:
-- `examples/rate-limit.mo` clears `E1150` at `66:13` (`Decimal.max`) and passes
-  `mo check` (including its `allows` and `forbids` anchors) and its examples and
-  tests with 0 errors.
-- Total diagnostics across all 12 samples drop from 13 to 12, and 5 of 12
+With `Files.list`, `ReadFiles.list`, `List.join`, and the remaining `Text` and
+element-typed `List` primitives lowered to their Core primitives:
+- `examples/notes-tool.mo` clears `E1150` at `45:22` (`Text.trim`) and passes
+  `mo check` (including its `allows` and `forbids` anchors) and its tests with 0
+  errors.
+- Total diagnostics across all 12 samples drop from 12 to 11, and 6 of 12
   samples now pass `mo check` (`account.mo`, `find.mo`, `greet.mo`,
-  `rate-limit.mo`, `wc.mo`).
+  `notes-tool.mo`, `rate-limit.mo`, `wc.mo`).
 
 ## Counts
 
-| Sample | Main / I1 | LW5 | C7 | F8 | C1 | C4 | C5 | C8 | F7 | C3 | F16 | Change (C3→F16) |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| account.mo | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
-| expenses.mo | 2 | 4 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | 2 | 2 | +0 |
-| find.mo | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
-| greet.mo | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
-| inventory.mo | 2 | 5 | 5 | 5 | 5 | 3 | 1 | 1 | 1 | 1 | 1 | +0 |
-| job-queue.mo | 1 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | 2 | 2 | 2 | +0 |
-| json-query.mo | 1 | 4 | 4 | 4 | 4 | 2 | 2 | 2 | 2 | 2 | 2 | +0 |
-| kv.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
-| notes-tool.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
-| rate-limit.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | −1 |
-| todo.mo | 1 | 1 | 4 | 4 | 4 | 3 | 3 | 3 | 3 | 3 | 3 | +0 |
-| wc.mo | 2 | 2 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | +0 |
-| **Total** | **14** | **24** | **25** | **24** | **23** | **17** | **14** | **14** | **13** | **13** | **12** | **−1** |
+| Sample | Main / I1 | LW5 | C7 | F8 | C1 | C4 | C5 | C8 | F7 | C3 | F16 | F14 | Change (F16→F14) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| account.mo | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| expenses.mo | 2 | 4 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | 2 | 2 | 2 | +0 |
+| find.mo | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| greet.mo | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| inventory.mo | 2 | 5 | 5 | 5 | 5 | 3 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
+| job-queue.mo | 1 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | +0 |
+| json-query.mo | 1 | 4 | 4 | 4 | 4 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | +0 |
+| kv.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
+| notes-tool.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | −1 |
+| rate-limit.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | +0 |
+| todo.mo | 1 | 1 | 4 | 4 | 4 | 3 | 3 | 3 | 3 | 3 | 3 | 3 | +0 |
+| wc.mo | 2 | 2 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | +0 |
+| **Total** | **14** | **24** | **25** | **24** | **23** | **17** | **14** | **14** | **13** | **13** | **12** | **11** | **−1** |
 
 ## Current diagnostics
 
@@ -47,7 +46,6 @@ With `Decimal.abs`, `Decimal.min`, `Decimal.max`, `Decimal.floor`,
 | json-query.mo | 78:25 | E0050 | no visible function has this dot-call name | `c = try chars.get(at).or_fail(UnexpectedEnd)` |
 | json-query.mo | 137:31 | E0050 | no visible function has this dot-call name | `value = try text.to_decimal.or_fail(BadNumber(at: at))` |
 | kv.mo | 79:30 | E0050 | no visible function has this dot-call name | `n = try seconds.to_int.or_fail(NotAnInteger(text: seconds))` |
-| notes-tool.mo | 45:22 | E1150 | this native call is not lowered yet | `query = input.query.trim.ascii_lowercase` |
 | todo.mo | 71:45 | E0050 | no visible function has this dot-call name | `rest = try line.drop_prefix("[ ] ").or_fail(BadLine(number: index + 1))` |
 | todo.mo | 110:39 | E0050 | no visible function has this dot-call name | `var item = try items.get(n - 1).or_fail(NoSuchItem(number: n))` |
 | todo.mo | 120:42 | E0050 | no visible function has this dot-call name | `command = try parse_command(args.list).or_fail(Usage)` |
@@ -59,6 +57,8 @@ With `Decimal.abs`, `Decimal.min`, `Decimal.max`, `Decimal.floor`,
 - wc: passes `mo check`, `mo test` and `mo run` with 0 errors.
 - rate-limit: passes `mo check` (including its anchors) and its examples and
   tests with 0 errors.
+- notes-tool: passes `mo check` (including its anchors) and its tests with 0
+  errors.
 - expenses: `Map.update` (`57:17`) and `List.sort_by_desc` (`91:8`) clear; only
   `Option.or_fail` (`41:37`) and `List.max` (`70:56`) remain.
 - inventory: `List.sort_by_desc` (`30:9`) and `Map.update` (`42:21`) clear; only
@@ -70,7 +70,6 @@ With `Decimal.abs`, `Decimal.min`, `Decimal.max`, `Decimal.floor`,
   (`78:25`, `137:31`) remains.
 - todo: `.map(...)` at `85:9` clears; only `Option.or_fail` (`71:45`, `110:39`,
   `120:42`) remains.
-- notes-tool: `E1150` on `Text.trim` (`45:22`).
 - kv: `Option.or_fail` (`79:30`).
 
 The existing `infer_function` sets `halt` for implementation codes (E1000 and
