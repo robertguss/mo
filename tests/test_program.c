@@ -635,6 +635,17 @@ static void console_graph(void) {
         CHECK(f.program->entry.capability_count == 0 && f.program->entry.capabilities == NULL);
     }
     free_fixture(&f);
+    init(&f, "module Main\nfn main(files: ReadFiles) : Result(Unit, FileError)\n"
+             "_text = try files.read_text(\"notes\")\nOk(Unit)\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        CHECK(f.program->entry.result == MO_ENTRY_RESULT);
+        CHECK(f.program->entry.capability_count == 1);
+        CHECK(f.program->entry.error_text != NULL &&
+              f.program->entry.error_text->ability == MO_SOURCE_TEXT &&
+              strcmp(f.program->entry.error_text->type->name, "FileError") == 0);
+    }
+    free_fixture(&f);
 }
 
 static void native_graph(void) {
@@ -2209,8 +2220,8 @@ static void rejected_stages(void) {
         {"fn main(value: Int) : Int\nvalue\nend\n", MO_CODE_MAIN_CONTRACT},
         {"fn main(a: Console, b: Console)\na.print(\"a\")\nb.print(\"b\")\nend\n",
          MO_CODE_MAIN_CONTRACT},
-        {"fn main() : Result(Unit, FileError)\nstop \"no result\"\nend\n",
-         MO_CODE_CHECK_UNFINISHED},
+        {"fn main() : Result(Unit, Bytes)\nstop \"no text\"\nend\n", MO_CODE_ABILITY_MISSING},
+        {"fn main() : Result(Unit, T)\nstop \"generic result\"\nend\n", MO_CODE_MAIN_CONTRACT},
         {"fn main() : Result(Int, FileError)\nstop \"bad result\"\nend\n", MO_CODE_MAIN_CONTRACT},
         {"fn main() : Int\n0\nend\nfn main(console: Console)\nconsole.print(\"x\")\nend\n",
          MO_CODE_OVERLOAD},

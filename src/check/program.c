@@ -487,7 +487,8 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
         const struct mo_source_type *type = entry->signature->type;
         const struct mo_source_type *result = type->arguments[type->count - 1];
         bool unit = native_type(result, "Unit"), status = native_type(result, "Int");
-        bool wrapped = native_type(result, "Result") && native_type(result->arguments[0], "Unit");
+        bool wrapped = native_type(result, "Result") && native_type(result->arguments[0], "Unit") &&
+                       result->arguments[1]->parameters == 0;
         if (!unit && !status && !wrapped) {
             bool kept =
                 report(diags, MO_CODE_MAIN_CONTRACT, entry_span, "main has an invalid signature",
@@ -495,16 +496,27 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
             (void)kept;
             return NULL;
         }
-        if (!unit && !status) {
-            bool kept = report(diags, MO_CODE_CHECK_UNFINISHED, entry_span,
-                               "this main result convention is not implemented", NULL);
-            (void)kept;
-            return NULL;
+        const struct mo_ability_implementation *error_text = NULL;
+        if (wrapped) {
+            work = 0;
+            error_text = mo_prove_ability(&abilities, result->arguments[1], MO_SOURCE_TEXT);
+            if (error_text == NULL) {
+                const struct mo_syntax *annotation =
+                    entry->signature->function->declaration->children[2];
+                bool kept = report(diags, abilities.error,
+                                   annotation == NULL ? entry_span : annotation->span,
+                                   abilities.message, abilities.reason);
+                (void)kept;
+                return NULL;
+            }
         }
         checked_entry = (struct mo_checked_entry){.function = main,
-                                                  .result = unit ? MO_ENTRY_UNIT : MO_ENTRY_STATUS,
+                                                  .result = unit     ? MO_ENTRY_UNIT
+                                                            : status ? MO_ENTRY_STATUS
+                                                                     : MO_ENTRY_RESULT,
                                                   .capability_count = entry->parameter_count,
-                                                  .capabilities = entry->parameters};
+                                                  .capabilities = entry->parameters,
+                                                  .error_text = error_text};
     }
     *program = (struct mo_program){.set = set,
                                    .interfaces = interfaces,
