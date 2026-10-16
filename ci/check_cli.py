@@ -1385,6 +1385,29 @@ def runner(binary):
                 assert result.stderr.startswith(b"bug: ") and reason in result.stderr
                 assert str(path).encode() in result.stderr and b"Main.main" in result.stderr
 
+        for body, status, expected_stdout, expected_stderr in (
+            ("fn main() : Result(Unit, FileError)\nOk(Unit)\nend", 0, b"", b""),
+            ('fn main() : Result(Unit, FileError)\nError(NotFound(path: "notes.txt"))\nend',
+             1, b"", b"notes.txt: no such file\n"),
+            ('enum Problem\nBadInput(Text)\nend\n'
+             'fn to_text(p: Problem) : Text\ncase p\nBadInput(msg): "bad: #{msg}"\nend\nend\n'
+             'fn main(console: Console) : Result(Unit, Problem)\n'
+             'console.print("before")\nError(BadInput("flag"))\nend',
+             1, b"before\n", b"bad: flag\n"),
+        ):
+            path.write_text("module Main\n" + body + "\n")
+            checked = run(binary, ["check", str(path)], 0)
+            assert not checked.stdout and not checked.stderr
+            result = run(binary, ["run", str(path)], status)
+            assert result.stdout == expected_stdout and result.stderr == expected_stderr
+        for body, code in (
+            ("fn main() : Result(Unit, Bytes)\nOk(Unit)\nend", "E0080"),
+            ("fn main() : Result(Int, FileError)\nOk(0)\nend", "E0079"),
+        ):
+            path.write_text("module Main\n" + body + "\n")
+            items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+            assert items[1]["code"] == code and items[-1]["errors"] == 1
+
         # Tail calls replace a frame; a non-tail call must consume both limits.
         for tail, status in ((True, 0), (False, 70)):
             body = ("fn recurse(n: Int) : Int\nif n == 0: 0 else: "

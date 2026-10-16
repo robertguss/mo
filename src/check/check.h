@@ -580,9 +580,9 @@ struct mo_program {
  * unique error wrapping. Native signatures use the shared tables; operators,
  * ability dot calls and interpolation retain native/derived/custom/parameter proofs. Source
  * dot/overload dispatch and loaded library calls retain the selected symbols. Written Map/Set
- * types require Hash. main takes distinct capabilities in written order and returns Unit or Int.
- * Invalid entry signatures report E0079; a library module without main has
- * entry.function == UINT32_MAX.
+ * types require Hash. main takes distinct capabilities in written order and returns Unit, Int
+ * or Result(Unit, E) where E: Text. Invalid entry signatures report E0079 (or E0080 when E lacks
+ * Text); a library module without main has entry.function == UINT32_MAX.
  * Source example lines are zero-parameter Bool bodies, with their subject index,
  * per-subject ordinal and an arena-owned copy of their original bytes/span.
  * set.sources must cover the syntax's original file indices for spec checking.
@@ -605,8 +605,8 @@ struct mo_program {
  * Making a function value does not execute its body or its type-only proofs.
  * Existing implicit library routes are unchanged.
  * Spec-only capability operations are allowed only in spec bodies, including their lambdas;
- * constants and ordinary functions still refuse them with E1103. Result entry conventions
- * and unfinished body forms also return E1103.
+ * constants and ordinary functions still refuse them with E1103. Unfinished body forms also
+ * return E1103.
  * Spec checking checks anchor typing, completeness and links but executes no source code:
  * tools compile/run anchors to verify their allows/forbids expectations before accepting a
  * command-line mo check. Unfinished stages must report E1103, not succeed. */

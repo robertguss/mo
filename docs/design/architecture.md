@@ -2932,8 +2932,8 @@ in function and promise bodies.
 A growing edge within a cycle is E0083; permutations and concrete resets do not
 grow the cycle. Proof traversal memoizes recursive nominal graphs.
 Invalid entry signatures report E0079: parameters must be capabilities without
-duplicate types, and the result must be Unit, Int or Result(Unit, E). Valid
-Result-return entry conventions still report E1103. Checking stops at the first
+duplicate types, and the result must be Unit, Int or Result(Unit, E) where E has
+Text (missing Text on E reports E0080). Checking stops at the first
 unfinished stage or resource failure; independent body errors are retained in
 source order, with further errors counted after the diagnostic cap. No staged
 inference result or partly filled program is returned as certified output.
