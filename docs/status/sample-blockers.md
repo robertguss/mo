@@ -1,46 +1,44 @@
-# Sample blockers after C4
+# Sample blockers after C5
 
 Regenerated from actual `mo check --json examples/<sample>.mo` output on
 `bfcdedcd` (I1/PR81), `75e6db61` (LW5/PR82), `02395dbd` (C7/PR83),
-`09f4c445` (F8/PR84), `1ac2fe8e` (C1/PR85) and C4. Every totals record reports
-`dropped: 0`. Examples are unchanged.
+`09f4c445` (F8/PR84), `1ac2fe8e` (C1/PR85), `0b8589ee` (C4/PR86) and C5. Every
+totals record reports `dropped: 0`. Examples are unchanged.
 
-With `List.map` prepared in the checker's built-in signature tables and lowered
-directly to a Core `join` loop over `List.%uncons` and `List.append`:
-- Every `.map(...)` `E0050` across `examples/expenses.mo`, `examples/inventory.mo`,
-  `examples/job-queue.mo`, `examples/json-query.mo` and `examples/todo.mo` clears.
-- Clearing `.map(...)` in `expenses.mo` and `inventory.mo` lets `mo_check` reach
-  later lines in the same functions (`Option.or_fail`, `List.max`, and generic
-  capture capability checking in `pad_table`), reducing total diagnostics across
-  all 12 samples from 23 to 17.
+With `Map.update` and `List.sort_by_desc` prepared in the checker's built-in
+signature tables and lowered directly to Core (`Map.get`/`Map.set` case dispatch
+and bottom-up stable merge sort over `List.take`, `List.drop`, `List.%uncons`,
+`List.append`, `List.concat` and `lower_compare`):
+- `sums.update(...)` (`57:17`) and `rows.sort_by_desc(...)` (`91:8`) in
+  `examples/expenses.mo` clear completely.
+- `items.sort_by_desc(key).take(n)` (`30:9`) and `counts.update(...)` (`42:21`)
+  in `examples/inventory.mo` clear completely.
+- Total diagnostics across all 12 samples drop from 17 to 14.
 
 ## Counts
 
-| Sample | Main / I1 | LW5 | C7 | F8 | C1 | C4 | Change (C1→C4) |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| account.mo | 1 | 1 | 1 | 1 | 0 | 0 | +0 |
-| expenses.mo | 2 | 4 | 3 | 3 | 3 | 3 | +0 |
-| find.mo | 1 | 1 | 1 | 0 | 0 | 0 | +0 |
-| greet.mo | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
-| inventory.mo | 2 | 5 | 5 | 5 | 5 | 3 | -2 |
-| job-queue.mo | 1 | 3 | 3 | 3 | 3 | 2 | -1 |
-| json-query.mo | 1 | 4 | 4 | 4 | 4 | 2 | -2 |
-| kv.mo | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
-| notes-tool.mo | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
-| rate-limit.mo | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
-| todo.mo | 1 | 1 | 4 | 4 | 4 | 3 | -1 |
-| wc.mo | 2 | 2 | 1 | 1 | 1 | 1 | +0 |
-| **Total** | **14** | **24** | **25** | **24** | **23** | **17** | **-6** |
+| Sample | Main / I1 | LW5 | C7 | F8 | C1 | C4 | C5 | Change (C4→C5) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| account.mo | 1 | 1 | 1 | 1 | 0 | 0 | 0 | +0 |
+| expenses.mo | 2 | 4 | 3 | 3 | 3 | 3 | 2 | -1 |
+| find.mo | 1 | 1 | 1 | 0 | 0 | 0 | 0 | +0 |
+| greet.mo | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| inventory.mo | 2 | 5 | 5 | 5 | 5 | 3 | 1 | -2 |
+| job-queue.mo | 1 | 3 | 3 | 3 | 3 | 2 | 2 | +0 |
+| json-query.mo | 1 | 4 | 4 | 4 | 4 | 2 | 2 | +0 |
+| kv.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
+| notes-tool.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
+| rate-limit.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
+| todo.mo | 1 | 1 | 4 | 4 | 4 | 3 | 3 | +0 |
+| wc.mo | 2 | 2 | 1 | 1 | 1 | 1 | 1 | +0 |
+| **Total** | **14** | **24** | **25** | **24** | **23** | **17** | **14** | **-3** |
 
 ## Current diagnostics
 
 | Sample | Location | Code | Diagnostic | Source |
 | --- | --- | --- | --- | --- |
-| expenses.mo | 41:37 | E0050 | no visible function has this dot-call name | `amount = try amount_text.to_decimal.or_fail(NotANumber(line: number, text: amount_text))` |
-| expenses.mo | 57:17 | E0050 | no visible function has this dot-call name | `sums = sums.update(expense.category, 0, fn(sum) sum + expense.amount end)` |
-| expenses.mo | 70:56 | E0050 | no visible function has this dot-call name | `width = [left_header.display_width, names.max or 0].max or 0` |
-| inventory.mo | 30:9 | E0050 | no visible function has this dot-call name | `items.sort_by_desc(key).take(n)` |
-| inventory.mo | 42:21 | E0050 | no visible function has this dot-call name | `counts = counts.update(key(item), 0, fn(n) n + 1 end)` |
+| expenses.mo | 41:37 | E0050 | no visible function has this dot-call name | `value = try amount.to_decimal.or_fail(BadAmount(text: amount))` |
+| expenses.mo | 70:56 | E0050 | no visible function has this dot-call name | `name_width = names.map(fn(name) name.char_count end).max or 0` |
 | inventory.mo | 72:48 | E1103 | this generic capture's capability membership isn't checked | `laid_out = columns.map(fn(column) pad_column(rows, column) end)` |
 | job-queue.mo | 70:39 | E0050 | no visible function has this dot-call name | `until = try now.checked_add(length).or_fail(BadLease(length: length))` |
 | job-queue.mo | 135:32 | E0050 | no visible function has this dot-call name | `job = try queue.jobs.get(id).or_fail(NoSuchJob(id: id))` |
@@ -58,11 +56,11 @@ directly to a Core `join` loop over `List.%uncons` and `List.append`:
 
 - account: passes `mo check` (including its anchors) with 0 errors.
 - find: passes `mo check`, `mo test` and `mo run` with 0 errors.
-- expenses: `.map(...)` at `38:24` and `68:16` clears, revealing `Option.or_fail`
-  (`41:37`) and `List.max` (`70:56`), alongside `Map.update` (`57:17`).
-- inventory: `.map(...)` at `72:22`, `81:38` and `114:52` clears; `pad_table`
-  now reaches `E1103` on the generic `rows: List(T)` capture at `72:48`,
-  alongside `sort_by_desc` (`30:9`) and `Map.update` (`42:21`).
+- expenses: `Map.update` (`57:17`) and `List.sort_by_desc` (`91:8`) clear; only
+  `Option.or_fail` (`41:37`) and `List.max` (`70:56`) remain.
+- inventory: `List.sort_by_desc` (`30:9`) and `Map.update` (`42:21`) clear; only
+  `E1103` on the generic `rows: List(T)` capture in `pad_table` (`72:48`)
+  remains.
 - job-queue: `.map(...)` at `157:20` clears; only `Option.or_fail` (`70:39`,
   `135:32`) remains.
 - json-query: `.map(...)` at `211:21` and `228:19` clears; only `Option.or_fail`

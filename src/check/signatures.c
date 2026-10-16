@@ -171,6 +171,9 @@ static const struct native_text {
     {module, name, module "." name, signature, spec_only},
 #include "base/hostops.def"
     {"List", "map", "List.map", "fn(List(T), fn(T) : U) : List(U)", false},
+    {"List", "sort_by_desc", "List.sort_by_desc", "fn(List(T), fn(T) : K) : List(T) where K: Order",
+     false},
+    {"Map", "update", "Map.update", "fn(Map(K, V), K, V, fn(V) : V) : Map(K, V)", false},
 };
 
 static const struct mo_symbol option_owner = {.name = "Option", .module = UINT32_MAX};

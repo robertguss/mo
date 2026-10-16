@@ -203,6 +203,14 @@ static void constant_dependencies(void) {
          {"base", "answer"},
          2},
         {"answer = [1, 2].map(fn(n) n + base end).sum\nbase = 13\n", {"base", "answer"}, 2},
+        {"answer = {\"a\": 1}.update(\"a\", 0, fn(n) n + base end).get(\"a\") or 0\nbase = 13\n",
+         {"base", "answer"},
+         2},
+        {"answer = [Label(value: 3), Label(value: 4)].sort_by_desc(fn(x) x end).size\nbase = Less\n"
+         "struct Label\nvalue: Int\nend\n"
+         "fn compare(_a: Label, _b: Label) : Ordering\nbase\nend\n",
+         {"base", "answer"},
+         2},
         {"value = [reader].append(reader).size\nfn reader() : Int\nvalue\nend\n", {"value"}, 1},
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
@@ -244,6 +252,12 @@ static void constant_refusals(void) {
         {"value = [1].map(reader).size\nfn reader(_n: Int) : Int\nvalue\nend\n",
          MO_CODE_CONSTANT_CYCLE},
         {"b = helper()\na = [1, 2].map(fn(x) x + b end).sum\nfn helper() : Int\na\nend\n",
+         MO_CODE_CONSTANT_CYCLE},
+        {"value = {\"a\": 1}.update(\"a\", 0, reader).size\nfn reader(_n: Int) : Int\nvalue\nend\n",
+         MO_CODE_CONSTANT_CYCLE},
+        {"value = [Label(value: 3), Label(value: 4)].sort_by_desc(fn(x) x end).size\n"
+         "struct Label\nvalue: Int\nend\n"
+         "fn compare(_a: Label, _b: Label) : Ordering\nif value == 0: Less else: Equal\nend\n",
          MO_CODE_CONSTANT_CYCLE},
         {"values = []\nfn read() : List(Int)\nvalues\nend\n", MO_CODE_CANNOT_INFER},
         {"reader = fn(x) x end\n", MO_CODE_CANNOT_INFER},
@@ -656,12 +670,15 @@ static void native_graph(void) {
     }
     free_fixture(&f);
     init(&f, "module Main\nfn main() : Int\nset = Set.empty.add(4)\n"
-             "texts = [1, 2, 3].map(fn(x) x.to_text end)\n"
-             "if set.has?(4): List.map(texts, Text.byte_count).sum else: 0\nend\n");
+             "counts = {\"a\": 1}.update(\"a\", 0, fn(n) n + 1 end)\n"
+             "texts = [1, 2, 3].sort_by_desc(fn(x) x end).map(fn(x) x.to_text end)\n"
+             "if set.has?(4) and (counts.get(\"a\") or 0) == 2: List.map(texts, "
+             "Text.byte_count).sum else: 0\nend\n");
     CHECK(f.program != NULL && !mo_diags_any(&f.diags));
     if (f.program != NULL) {
         const struct mo_checked_body *body = &f.program->functions[0].body;
-        bool empty = false, sum = false, dot_map = false, qualified_map = false;
+        bool empty = false, sum = false, dot_map = false, qualified_map = false, update = false,
+             sort_desc = false;
         for (uint32_t i = 0; i < body->count; i++) {
             const struct mo_checked_expression *row = &body->items[i];
             if (row->native == NULL)
@@ -675,6 +692,19 @@ static void native_graph(void) {
                 CHECK(row->ability_count == 1 &&
                       row->abilities[0].implementation->ability == MO_SOURCE_NUMBER);
                 sum = true;
+            } else if (strcmp(row->native, "Map.update") == 0 &&
+                       row->type->kind != MO_SOURCE_FUNCTION) {
+                CHECK(strcmp(row->type->name, "Map") == 0 && row->arguments.count == 2);
+                CHECK(row->operand_count == 4 && row->receiver == row->operands[0] &&
+                      row->ability_count == 2);
+                update = true;
+            } else if (strcmp(row->native, "List.sort_by_desc") == 0 &&
+                       row->type->kind != MO_SOURCE_FUNCTION) {
+                CHECK(strcmp(row->type->name, "List") == 0 && row->arguments.count == 2);
+                CHECK(row->operand_count == 2 && row->receiver == row->operands[0] &&
+                      row->ability_count == 2 &&
+                      row->abilities[1].implementation->ability == MO_SOURCE_ORDER);
+                sort_desc = true;
             } else if (strcmp(row->native, "List.map") == 0 &&
                        row->type->kind != MO_SOURCE_FUNCTION) {
                 CHECK(strcmp(row->type->name, "List") == 0 && row->arguments.count == 2);
@@ -687,7 +717,7 @@ static void native_graph(void) {
                 }
             }
         }
-        CHECK(empty && sum && dot_map && qualified_map);
+        CHECK(empty && sum && dot_map && qualified_map && update && sort_desc);
     }
     free_fixture(&f);
 }
