@@ -1314,6 +1314,74 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                            set_args);
             return current;
         }
+        if (strcmp(r->native, "List.count") == 0) {
+            MO_ASSERT(args.count == 2);
+            mo_core_ty in_list =
+                r->operand_count == 0
+                    ? result->as.fn.params.items[0]
+                    : type(b,
+                           row(b, r->receiver == UINT32_MAX ? r->operands[0] : r->receiver)->type);
+            if (in_list->tag == MO_CORE_TY_FN)
+                in_list = in_list->as.fn.params.items[0];
+            mo_core_ty int_ty = result->tag == MO_CORE_TY_FN ? result->as.fn.ret : result;
+            MO_ASSERT(in_list->tag == MO_CORE_TY_LIST && int_ty->tag == MO_CORE_TY_INT);
+            mo_core_expr loop_join = lower_expr(p, MO_CORE_EXPR_JOIN);
+            loop_join->as.join.name = lower_fresh(p);
+            loop_join->as.join.params.count = 2;
+            loop_join->as.join.params.items = LOWER_NEW(p, struct mo_core_param, 2);
+            mo_core_string rem = lower_fresh(p), acc = lower_fresh(p);
+            loop_join->as.join.params.items[0] = (struct mo_core_param){rem, in_list};
+            loop_join->as.join.params.items[1] = (struct mo_core_param){acc, int_ty};
+            mo_core_expr start = lower_expr(p, MO_CORE_EXPR_JUMP);
+            start->as.jump.name = loop_join->as.join.name;
+            start->as.jump.args = arguments(b, 2);
+            start->as.jump.args.items[0] = args.items[0];
+            start->as.jump.args.items[1] = lower_int(p, 0);
+            loop_join->as.join.rest = start;
+            mo_core_expr select = lower_expr(p, MO_CORE_EXPR_CASE);
+            select->as.case_.expr =
+                unary(b,
+                      (struct mo_core_prim){
+                          .tag = MO_CORE_PRIM_LIST,
+                          .as.list = {.t = in_list->as.list, .op.tag = MO_CORE_LIST_OP_UNCONS}},
+                      lower_var(p, rem));
+            select->as.case_.arms.count = 2;
+            select->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+            select->as.case_.arms.items[0] =
+                (struct mo_core_arm){.ctor = lower_text(p, "None"), .body = lower_var(p, acc)};
+            struct mo_core_arm *some = &select->as.case_.arms.items[1];
+            some->ctor = lower_text(p, "Some");
+            some->names.count = 1;
+            some->names.items = LOWER_NEW(p, mo_core_string, 1);
+            mo_core_string pair = lower_fresh(p);
+            some->names.items[0] = pair;
+            mo_core_expr app = lower_expr(p, MO_CORE_EXPR_APP);
+            app->as.app.f = args.items[1];
+            app->as.app.args = arguments(b, 1);
+            app->as.app.args.items[0] = projection(b, lower_var(p, pair), 0);
+            mo_core_expr branch = lower_expr(p, MO_CORE_EXPR_IF);
+            branch->as.if_.cond = app;
+            mo_core_expr hit = lower_expr(p, MO_CORE_EXPR_JUMP);
+            hit->as.jump.name = loop_join->as.join.name;
+            hit->as.jump.args = arguments(b, 2);
+            hit->as.jump.args.items[0] = projection(b, lower_var(p, pair), 1);
+            mo_core_expr_list inc_args = arguments(b, 2);
+            inc_args.items[0] = lower_var(p, acc);
+            inc_args.items[1] = lower_int(p, 1);
+            hit->as.jump.args.items[1] = lower_prim(
+                p, (struct mo_core_prim){.tag = MO_CORE_PRIM_INT, .as.int_ = MO_CORE_INT_OP_ADD},
+                inc_args);
+            mo_core_expr miss = lower_expr(p, MO_CORE_EXPR_JUMP);
+            miss->as.jump.name = loop_join->as.join.name;
+            miss->as.jump.args = arguments(b, 2);
+            miss->as.jump.args.items[0] = projection(b, lower_var(p, pair), 1);
+            miss->as.jump.args.items[1] = lower_var(p, acc);
+            branch->as.if_.then_ = hit;
+            branch->as.if_.else_ = miss;
+            some->body = branch;
+            loop_join->as.join.body = select;
+            return loop_join;
+        }
         static const struct {
             const char *name;
             enum mo_core_list_op_tag operation;
@@ -1345,6 +1413,7 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
             enum mo_core_text_op operation;
         } texts[] = {{"Text.bytes", MO_CORE_TEXT_OP_BYTES},
                      {"Text.byte_count", MO_CORE_TEXT_OP_BYTE_COUNT},
+                     {"Text.chars", MO_CORE_TEXT_OP_CHARS},
                      {"Text.starts_with?", MO_CORE_TEXT_OP_STARTS_WITH},
                      {"Text.lines", MO_CORE_TEXT_OP_LINES},
                      {"Text.contains?", MO_CORE_TEXT_OP_CONTAINS},
