@@ -1,3 +1,3 @@
 {"record":"version","format":"1.0","mo":"0.0.0","command":"check"}
-{"record":"diagnostic","code":"E0048","headline":"a type name isn't in scope","reason":"Use brings a module's exposed type names into scope (reference 10.3).","section":"10.3","primary":{"file":"tests/cli/signatures/main.mo","start":26,"end":33,"line":2,"column":15,"end_line":2,"end_column":22,"label":"not a type in scope"},"secondary":[],"fixes":[]}
+{"record":"diagnostic","code":"E0048","headline":"a type name isn't in scope","reason":"Use brings a module's exposed type names into scope (reference 10.3).","section":"10.3","primary":{"file":"tests/cli/signatures/main.mo","file_bytes":"74657374732f636c692f7369676e6174757265732f6d61696e2e6d6f","start":26,"end":33,"line":2,"column":15,"end_line":2,"end_column":22,"label":"not a type in scope"},"secondary":[],"fixes":[]}
 {"record":"totals","errors":1,"dropped":0,"status":1}

@@ -742,7 +742,8 @@ def observations(binary):
         items = records(run(binary, [*args, "--json"], 0), "test")
         assert len(items) == 3 and items[1] == {
             "record": "test", "name": "Main.test.1", "kind": "test",
-            "span": {"file": str(path), "start": 74, "end": 105, "line": 6,
+            "span": {"file": str(path), "file_bytes": os.fsencode(path).hex(),
+                     "start": 74, "end": 105, "line": 6,
                      "column": 1, "end_line": 8, "end_column": 4}}
         assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
                              "passed": 0, "failed": 0, "stopped": 0, "status": 0}
@@ -775,7 +776,8 @@ def observations(binary):
         assert all(type(r["microseconds"]) is int and r["microseconds"] >= 0 for r in items[1:-1])
         assert items[2]["left"] == "21" and items[2]["right"] == "99"
         assert items[3]["left"] == "λ\0right 2:X,\n" and items[3]["right"] == "日本"
-        assert items[3]["line"] == {"file": str(path), "start": 144, "end": 184,
+        assert items[3]["line"] == {"file": str(path), "file_bytes": os.fsencode(path).hex(),
+                                    "start": 144, "end": 184,
                                     "line": 14, "column": 1, "end_line": 14, "end_column": 36}
         assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
                              "passed": 2, "failed": 2, "stopped": 0, "status": 1}
@@ -829,7 +831,8 @@ def observations(binary):
         assert items[1]["outcome"] == "failed" and items[2]["outcome"] == "passed"
         assert "left" not in items[1] and "right" not in items[1]
         start = source.index("assert (")
-        assert items[1]["line"] == {"file": str(path), "start": start,
+        assert items[1]["line"] == {"file": str(path), "file_bytes": os.fsencode(path).hex(),
+                                    "start": start,
                                     "end": start + len("assert (\n  false\n)"),
                                     "line": 3, "column": 1, "end_line": 5, "end_column": 2}
 
@@ -871,7 +874,8 @@ def observations(binary):
         defect = items[1]["defect"]
         start = source.index("n / 0")
         assert defect["reason"] == "dividing by zero"
-        assert defect["span"] == {"file": str(path), "start": start, "end": start + 5,
+        assert defect["span"] == {"file": str(path), "file_bytes": os.fsencode(path).hex(),
+                                   "start": start, "end": start + 5,
                                    "line": 6, "column": 1, "end_line": 6, "end_column": 6}
         assert [f["function"] for f in defect["stack"]] == ["Main.divide", "Main.divide.example.1"]
         assert defect["variables"] == [{"name": "n", "value": "7"}]
@@ -987,13 +991,15 @@ def captures(binary):
         assert [r["outcome"] for r in items[1:-1]] == ["passed", "passed", "failed", "stopped", "passed"]
         assert (items[3]["left"], items[3]["right"]) == ("60", "61")
         start = source.index("assert action()")
-        assert items[3]["line"] == {"file": str(path), "start": start,
+        assert items[3]["line"] == {"file": str(path), "file_bytes": os.fsencode(path).hex(),
+                                    "start": start,
                                     "end": start + len("assert action() == 61"),
                                     "line": 23, "column": 1, "end_line": 23, "end_column": 22}
         start = source.index("base / value")
         defect = items[4]["defect"]
         assert defect["reason"] == "dividing by zero"
-        assert defect["span"] == {"file": str(path), "start": start,
+        assert defect["span"] == {"file": str(path), "file_bytes": os.fsencode(path).hex(),
+                                   "start": start,
                                    "end": start + len("base / value"),
                                    "line": 9, "column": 11, "end_line": 9, "end_column": 23}
         assert [f["function"] for f in defect["stack"]] == ["Main.divide.fn.1", "Main.test.4"]
@@ -1056,10 +1062,12 @@ def imports(binary):
         listed = records(run(binary, ["test", "--json", "--list", "--in", "Shapes", str(path)], 0), "test")
         assert [r["name"] for r in listed[1:-1]] == ["Shapes.score.example.1", "Shapes.test.1"]
         start = shapes.index("score(make(3), 11) == 32")
-        assert listed[1]["span"] == {"file": str(owner), "start": start, "end": start + 24,
+        assert listed[1]["span"] == {"file": str(owner), "file_bytes": os.fsencode(owner).hex(),
+                                      "start": start, "end": start + 24,
                                       "line": 11, "column": 1, "end_line": 11, "end_column": 25}
         start = shapes.index('test "module snapshot"')
-        assert listed[2]["span"] == {"file": str(owner), "start": start, "end": len(shapes) - 1,
+        assert listed[2]["span"] == {"file": str(owner), "file_bytes": os.fsencode(owner).hex(),
+                                      "start": start, "end": len(shapes) - 1,
                                       "line": 18, "column": 1, "end_line": 24, "end_column": 4}
         assert all(listed[-1][key] == 0 for key in ("errors", "passed", "failed", "stopped"))
         selected = records(run(binary, ["test", "--json", "--in", "Shapes",
@@ -1079,12 +1087,14 @@ def imports(binary):
         failed = by_name["Main.test.2"]
         assert (failed["left"], failed["right"]) == ("32", "31")
         start = source.index("assert score(make(3), 11) == 31")
-        assert failed["line"] == {"file": str(path), "start": start, "end": start + 31,
+        assert failed["line"] == {"file": str(path), "file_bytes": os.fsencode(path).hex(),
+                                   "start": start, "end": start + 31,
                                    "line": 8, "column": 1, "end_line": 8, "end_column": 32}
         defect = by_name["Main.test.3"]["defect"]
         start = shapes.index("base / value")
         assert defect["reason"] == "dividing by zero"
-        assert defect["span"] == {"file": str(owner), "start": start, "end": start + 12,
+        assert defect["span"] == {"file": str(owner), "file_bytes": os.fsencode(owner).hex(),
+                                   "start": start, "end": start + 12,
                                    "line": 16, "column": 11, "end_line": 16, "end_column": 23}
         assert [f["function"] for f in defect["stack"]] == ["Shapes.ratio.fn.1", "Main.test.3"]
         assert [f["span"]["file"] for f in defect["stack"]] == [str(owner), str(path)]
@@ -1110,8 +1120,9 @@ def imports(binary):
         rejected = records(run(binary, ["test", "--json", "--list", "--only", "Typo.test.1", str(path)], 1), "test")
         assert rejected[1]["code"] == "E0093" and rejected[1]["section"] == "6.1"
         assert {key: rejected[1]["primary"][key] for key in
-                ("file", "start", "end", "line", "column", "end_line", "end_column")} == {
-                    "file": str(path), "start": 36, "end": 41, "line": 2, "column": 25,
+                ("file", "file_bytes", "start", "end", "line", "column", "end_line", "end_column")} == {
+                    "file": str(path), "file_bytes": os.fsencode(path).hex(),
+                    "start": 36, "end": 41, "line": 2, "column": 25,
                     "end_line": 2, "end_column": 30}
         assert rejected[-1] == {"record": "totals", "errors": 1, "dropped": 0,
                                 "passed": 0, "failed": 0, "stopped": 0, "status": 1}
@@ -1162,7 +1173,8 @@ def generic_imports(binary):
         start = text.index(row)
         line = text.count('\n', 0, start) + 1
         column = start - text.rfind('\n', 0, start)
-        return {"file": str(path), "start": start, "end": start + len(row),
+        return {"file": str(path), "file_bytes": os.fsencode(path).hex(),
+                "start": start, "end": start + len(row),
                 "line": line, "column": column, "end_line": line, "end_column": column + len(row)}
 
     with tempfile.TemporaryDirectory(prefix="mo-cli-generic-imports-") as directory:
@@ -1934,8 +1946,10 @@ def filenames(binary):
             diag = items[1]
             assert diag["code"] == "E1405" and diag["primary"]["line"] == 5
             assert diag["primary"]["file"].endswith("/main.mo")
+            assert diag["primary"]["file_bytes"] == path.hex()
             assert diag["primary"]["start"] == source.index(b"allows")
             assert diag["secondary"][0]["line"] == 4
+            assert diag["secondary"][0]["file_bytes"] == path.hex()
             assert diag["secondary"][0]["start"] == source.index(b"result == n")
         assert len(set(reports)) == len(reports)
     print(f"{binary}: exact filename-byte execution, bytecode and anchor locations passed")
@@ -2005,7 +2019,8 @@ def check(binary):
     imported_constants(binary)
     items = records(run(faults, ["--json"], 1), "check")
     assert items[1]["code"] == "E1401" and items[-1]["dropped"] == 0
-    assert items[1]["primary"]["file"] is None and items[1]["section"] is None
+    assert items[1]["primary"]["file"] is None and items[1]["primary"]["file_bytes"] is None
+    assert items[1]["section"] is None
     failure = run(faults, ["--text"], 1)
     assert not failure.stdout and b"E1401" in failure.stderr
     for stage in ("parse", "load", "modules", "signatures", "bodies", "program", "fix",
@@ -2057,8 +2072,10 @@ def check(binary):
             d = json.loads(result.stdout)
             assert d["primary"]["column"] == 2
             assert d["primary"]["file"] == 'badÿ"\\.mo'
+            assert d["primary"]["file_bytes"] == b'bad\xff"\\.mo'.hex()
             assert d["secondary"][0]["line"] == 7
-            assert d["secondary"][1]["file"] is None
+            assert d["secondary"][0]["file_bytes"] == b'bad\xff"\\.mo'.hex()
+            assert d["secondary"][1]["file"] is None and d["secondary"][1]["file_bytes"] is None
     escaped = json.loads(run(driver, ["--render-bytes"], 0).stdout)
     assert escaped["headline"] == "".join(chr(i) for i in range(1, 256))
     assert escaped["primary"]["label"] == "é界😀"
@@ -2165,6 +2182,7 @@ def check(binary):
         result = run(binary, ["check", "--json", str(path)], 1)
         assert b"\\u009b\\u202e\\udb40\\udc01" in result.stdout
         assert records(result, "check")[1]["primary"]["file"] == str(path)
+        assert records(result, "check")[1]["primary"]["file_bytes"] == os.fsencode(path).hex()
         unicode_folder = folder / "café"
         unicode_folder.mkdir()
         unicode_path = unicode_folder / "main.mo"
@@ -2177,6 +2195,7 @@ def check(binary):
         assert '-"José 日本語 😀"'.encode("utf-8") in result.stderr
         d = records(run(binary, ["check", "--json", str(unicode_path)], 1), "check")[1]
         assert d["primary"]["file"] == str(unicode_path)
+        assert d["primary"]["file_bytes"] == os.fsencode(unicode_path).hex()
         # The string occupies twelve original characters, not its byte length
         # or displayed width. Unary minus refuses this Text operand.
         assert d["primary"]["column"] == 4 and d["primary"]["end_column"] == 16
@@ -2193,10 +2212,19 @@ def check(binary):
                 raise
             print(f"{binary}: filesystem refuses non-UTF-8 names; path case skipped")
         else:
-            path = invalid / "main.mo"
+            path = invalid / "bad\udcff.mo"
             path.write_text("module Main\nfn run()\nunknown\nend\n")
             d = records(run(binary, ["check", "--json", str(path)], 1), "check")[1]
-            assert "badÿ" in d["primary"]["file"]
+            assert "badÿ/badÿ.mo" in d["primary"]["file"]
+            assert d["primary"]["file_bytes"] == os.fsencode(path).hex()
+            assert d["primary"]["file_bytes"].endswith(b"bad\xff/bad\xff.mo".hex())
+            valid_utf8 = folder / "badÿ" / "badÿ.mo"
+            valid_utf8.parent.mkdir()
+            valid_utf8.write_text("module Main\nfn run()\nunknown\nend\n")
+            d_utf8 = records(run(binary, ["check", "--json", str(valid_utf8)], 1), "check")[1]
+            assert d_utf8["primary"]["file"] == d["primary"]["file"]
+            assert d_utf8["primary"]["file_bytes"] == os.fsencode(valid_utf8).hex()
+            assert d_utf8["primary"]["file_bytes"] != d["primary"]["file_bytes"]
         path = folder / "main.mo"
         path.write_text("module Main\n" + "".join(f"fn f{i}()\nunknown\nend\n" for i in range(1500)))
         items = records(run(binary, ["check", "--json", str(path)], 1), "check")

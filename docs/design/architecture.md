@@ -2160,7 +2160,8 @@ records may be added, and readers ignore what they don't know.
   (`MO_LIMIT_DIAGNOSTICS`); for `mo test`, `passed`, `failed` and `stopped`;
   and `status`, the status `mo` exits with.
 
-A **span** is `file`, the path of the file; `start` and `end`, byte offsets
+A **span** is `file`, the path of the file; `file_bytes`, its exact path bytes
+in lowercase hexadecimal; `start` and `end`, byte offsets
 into it, `end` excluded; and `line` and `column` where it starts, and
 `end_line` and `end_column` where it ends, counted from 1, a column counting
 characters as messages do (`src/base/diag.h`). A labeled span adds `label`. A
@@ -2182,17 +2183,16 @@ so a selection mistake cannot leave a version record. Diagnostics follow the sta
 batch; totals come last. Text is likewise flushed per diagnostic.
 
 An unavailable span (`file == UINT32_MAX`, or no retained source) keeps
-its `start` and `end`, but uses `null` for `file`, `line`, `column`,
+its `start` and `end`, but uses `null` for `file`, `file_bytes`, `line`, `column`,
 `end_line` and `end_column`; absent labels and fix titles are `null`.
 JSON strings preserve valid UTF-8 scalars. Quotes and backslashes are
 escaped; controls, DEL, C1 and the reference 2.1 refusal set use JSON Unicode
 escapes (`\uXXXX`, or a surrogate pair for supplementary scalars), so decoded
 content is unchanged but the encoded record cannot carry terminal controls.
 Each invalid UTF-8 byte uses `\u00HH`. JSON is UTF-8 regardless of locale.
-Invalid bytes thus become the corresponding U+00HH characters rather than malformed
-UTF-8; offsets still refer to unmodified source bytes. This is not a
-lossless path-byte codec when valid U+00HH also occurs; consumers must check
-decoded paths before rewriting files. Limit/implementation codes have both
+Invalid bytes in `file` thus become the corresponding U+00HH characters rather than malformed
+UTF-8; `file_bytes` preserves the exact unmodified path bytes in lowercase hex,
+and offsets still refer to unmodified source bytes. Limit/implementation codes have both
 `reason` and `section` null, even when the stage supplies explanatory reason
 text; their explanation belongs in headline/label. A selected promise's unavailable
 runner produces version, E1400 diagnostic and totals with all test counts zero;
@@ -2204,7 +2204,7 @@ among them:
 
 ```json
 {"record":"version","format":"1.0","mo":"0.1.0","command":"test"}
-{"record":"result","name":"Wc.count.example.3","kind":"example","span":{"file":"examples/wc.mo","start":453,"end":513,"line":16,"column":5,"end_line":16,"end_column":65},"outcome":"failed","microseconds":41,"left":"Counts(lines: 0, words: 1, bytes: 10)","right":"Counts(lines: 0, words: 2, bytes: 10)"}
+{"record":"result","name":"Wc.count.example.3","kind":"example","span":{"file":"examples/wc.mo","file_bytes":"6578616d706c65732f77632e6d6f","start":453,"end":513,"line":16,"column":5,"end_line":16,"end_column":65},"outcome":"failed","microseconds":41,"left":"Counts(lines: 0, words: 1, bytes: 10)","right":"Counts(lines: 0, words: 2, bytes: 10)"}
 {"record":"totals","errors":0,"dropped":0,"passed":4,"failed":1,"stopped":0,"status":1}
 ```
 
