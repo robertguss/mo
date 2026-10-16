@@ -170,6 +170,7 @@ static const struct native_text {
 #define HOSTOP(id, module, name, signature, params, bugs, spec_only)                               \
     {module, name, module "." name, signature, spec_only},
 #include "base/hostops.def"
+    {"List", "count", "List.count", "fn(List(T), fn(T) : Bool) : Int", false},
     {"List", "map", "List.map", "fn(List(T), fn(T) : U) : List(U)", false},
     {"List", "sort_by_desc", "List.sort_by_desc", "fn(List(T), fn(T) : K) : List(T) where K: Order",
      false},

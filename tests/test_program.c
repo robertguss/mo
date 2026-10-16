@@ -211,6 +211,7 @@ static void constant_dependencies(void) {
          "fn compare(_a: Label, _b: Label) : Ordering\nbase\nend\n",
          {"base", "answer"},
          2},
+        {"answer = [1, 2, 3].count(fn(n) n > base end)\nbase = 1\n", {"base", "answer"}, 2},
         {"value = [reader].append(reader).size\nfn reader() : Int\nvalue\nend\n", {"value"}, 1},
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
@@ -258,6 +259,8 @@ static void constant_refusals(void) {
         {"value = [Label(value: 3), Label(value: 4)].sort_by_desc(fn(x) x end).size\n"
          "struct Label\nvalue: Int\nend\n"
          "fn compare(_a: Label, _b: Label) : Ordering\nif value == 0: Less else: Equal\nend\n",
+         MO_CODE_CONSTANT_CYCLE},
+        {"value = [1].count(reader)\nfn reader(_n: Int) : Bool\nvalue == 0\nend\n",
          MO_CODE_CONSTANT_CYCLE},
         {"values = []\nfn read() : List(Int)\nvalues\nend\n", MO_CODE_CANNOT_INFER},
         {"reader = fn(x) x end\n", MO_CODE_CANNOT_INFER},
@@ -671,14 +674,15 @@ static void native_graph(void) {
     free_fixture(&f);
     init(&f, "module Main\nfn main() : Int\nset = Set.empty.add(4)\n"
              "counts = {\"a\": 1}.update(\"a\", 0, fn(n) n + 1 end)\n"
+             "positives = [1, 2, 3].count(fn(x) x > 1 end)\n"
              "texts = [1, 2, 3].sort_by_desc(fn(x) x end).map(fn(x) x.to_text end)\n"
-             "if set.has?(4) and (counts.get(\"a\") or 0) == 2: List.map(texts, "
-             "Text.byte_count).sum else: 0\nend\n");
+             "if set.has?(4) and positives == 2 and (counts.get(\"a\") or 0) == 2: "
+             "List.map(texts, Text.byte_count).sum else: 0\nend\n");
     CHECK(f.program != NULL && !mo_diags_any(&f.diags));
     if (f.program != NULL) {
         const struct mo_checked_body *body = &f.program->functions[0].body;
         bool empty = false, sum = false, dot_map = false, qualified_map = false, update = false,
-             sort_desc = false;
+             sort_desc = false, list_count = false;
         for (uint32_t i = 0; i < body->count; i++) {
             const struct mo_checked_expression *row = &body->items[i];
             if (row->native == NULL)
@@ -692,6 +696,11 @@ static void native_graph(void) {
                 CHECK(row->ability_count == 1 &&
                       row->abilities[0].implementation->ability == MO_SOURCE_NUMBER);
                 sum = true;
+            } else if (strcmp(row->native, "List.count") == 0 &&
+                       row->type->kind != MO_SOURCE_FUNCTION) {
+                CHECK(strcmp(row->type->name, "Int") == 0 && row->arguments.count == 1);
+                CHECK(row->operand_count == 2 && row->receiver == row->operands[0]);
+                list_count = true;
             } else if (strcmp(row->native, "Map.update") == 0 &&
                        row->type->kind != MO_SOURCE_FUNCTION) {
                 CHECK(strcmp(row->type->name, "Map") == 0 && row->arguments.count == 2);
@@ -717,7 +726,7 @@ static void native_graph(void) {
                 }
             }
         }
-        CHECK(empty && sum && dot_map && qualified_map && update && sort_desc);
+        CHECK(empty && sum && dot_map && qualified_map && update && sort_desc && list_count);
     }
     free_fixture(&f);
 }
