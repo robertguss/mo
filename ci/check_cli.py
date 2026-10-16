@@ -1440,7 +1440,38 @@ def runner(binary):
             items = [json.loads(line) for line in result.stdout.splitlines()]
             assert all(r.get("code") != "E0079" for r in items), (sample, items)
         assert run(binary, ["check", "examples/account.mo"], 0).stderr == b""
+        records(run(binary, ["check", "--json", "examples/account.mo"], 0), "check")
         assert b"E0079" in run(binary, ["run", "examples/account.mo"], 1).stderr
+        account_tests = records(
+            run(binary, ["test", "--json",
+                         "--only", "Account.deposit.example.1",
+                         "--only", "Account.deposit.example.2",
+                         "--only", "Account.deposit.example.3",
+                         "--only", "Account.deposit.example.4",
+                         "--only", "Account.withdraw.example.1",
+                         "--only", "Account.withdraw.example.2",
+                         "--only", "Account.withdraw.example.3",
+                         "--only", "Account.withdraw.example.4",
+                         "--only", "Account.transfer.example.1",
+                         "--only", "Account.transfer.example.2",
+                         "--only", "Account.test.1",
+                         "--only", "Account.test.2",
+                         "examples/account.mo"], 0), "test")
+        assert [(r["name"], r["outcome"]) for r in account_tests[1:-1]] == [
+            ("Account.deposit.example.1", "passed"),
+            ("Account.deposit.example.2", "passed"),
+            ("Account.deposit.example.3", "passed"),
+            ("Account.deposit.example.4", "passed"),
+            ("Account.withdraw.example.1", "passed"),
+            ("Account.withdraw.example.2", "passed"),
+            ("Account.withdraw.example.3", "passed"),
+            ("Account.withdraw.example.4", "passed"),
+            ("Account.transfer.example.1", "passed"),
+            ("Account.transfer.example.2", "passed"),
+            ("Account.test.1", "passed"),
+            ("Account.test.2", "passed")]
+        assert account_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                                     "passed": 12, "failed": 0, "stopped": 0, "status": 0}
         assert run(binary, ["check", "examples/notes-tool.mo"], 0).stderr == b""
         records(run(binary, ["check", "--json", "examples/notes-tool.mo"], 0), "check")
         assert b"E0079" in run(binary, ["run", "examples/notes-tool.mo"], 1).stderr

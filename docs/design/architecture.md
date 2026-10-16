@@ -957,8 +957,8 @@ Text.replace, Text.repeat, Text.lines, Text.contains?, Text.ascii_lowercase,
 Text.ascii_uppercase, Text.to_int, Text.to_decimal and Text.to_float lower to
 their Core Text primitives. Native function values use inline lambdas, so
 spec-only operations retain their enclosing spec context rather than becoming
-ordinary global adapters. The unchanged greet, find, wc, rate-limit and
-notes-tool samples check cleanly, and their supported examples, anchors and
+ordinary global adapters. The unchanged greet, account, find, wc, rate-limit
+and notes-tool samples check cleanly, and their supported examples, anchors and
 tests run with real and fake capabilities. Other native operations remain
 independently staged, as does the source checker's Result-return entry
 convention.
