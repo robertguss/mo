@@ -1,79 +1,63 @@
-# Sample blockers after F11
+# Sample blockers after MO-31 (Option.or_fail)
 
 Regenerated from actual `mo check --json examples/<sample>.mo` output on
 `bfcdedcd` (I1/PR81), `75e6db61` (LW5/PR82), `02395dbd` (C7/PR83),
 `09f4c445` (F8/PR84), `1ac2fe8e` (C1/PR85), `0b8589ee` (C4/PR86),
 `a2924f53` (C5/PR87), `dab7da3a` (C8/PR88), `b9fbb0e1` (F7/PR89),
-`d7e3abfa` (C3/PR90), `bc0fff4c` (F16/PR91), `4cf4f81c` (F14/PR92) and F11. Every
-totals record reports `dropped: 0`. Examples are unchanged.
+`d7e3abfa` (C3/PR90), `bc0fff4c` (F16/PR91), `4cf4f81c` (F14/PR92),
+`41d6944` (F11/PR93) and MO-31. Every totals record reports `dropped: 0`.
+Examples are unchanged.
 
-With `examples/account.mo` checked and its 10 examples and 2 tests verified:
-- `examples/account.mo` passes `mo check` (including all 8 `allows` and `forbids`
-  anchors) and its 10 examples and 2 tests with 0 errors.
-- Total diagnostics across all 12 samples remain 11, and 6 of 12 samples pass
-  `mo check` (`account.mo`, `find.mo`, `greet.mo`, `notes-tool.mo`,
-  `rate-limit.mo`, `wc.mo`).
+With `Option.or_fail` checked, lowered and run:
+- All nine `Option.or_fail` diagnostics clear. Each of the six failing samples
+  now stops at exactly one diagnostic, none of them `or_fail`.
+- Total diagnostics across all 12 samples fall from 11 to 6, and 6 of 12
+  samples still pass `mo check` (`account.mo`, `find.mo`, `greet.mo`,
+  `notes-tool.mo`, `rate-limit.mo`, `wc.mo`).
+- `json-query.mo` now passes checking and stops in lowering (E1150).
 
 ## Counts
 
-| Sample | Main / I1 | LW5 | C7 | F8 | C1 | C4 | C5 | C8 | F7 | C3 | F16 | F14 | F11 | Change (F14→F11) |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| account.mo | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
-| expenses.mo | 2 | 4 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | +0 |
-| find.mo | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
-| greet.mo | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
-| inventory.mo | 2 | 5 | 5 | 5 | 5 | 3 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
-| job-queue.mo | 1 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | +0 |
-| json-query.mo | 1 | 4 | 4 | 4 | 4 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | +0 |
-| kv.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
-| notes-tool.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | +0 |
-| rate-limit.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | +0 |
-| todo.mo | 1 | 1 | 4 | 4 | 4 | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 3 | +0 |
-| wc.mo | 2 | 2 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | +0 |
-| **Total** | **14** | **24** | **25** | **24** | **23** | **17** | **14** | **14** | **13** | **13** | **12** | **11** | **11** | **+0** |
+| Sample | Main / I1 | LW5 | C7 | F8 | C1 | C4 | C5 | C8 | F7 | C3 | F16 | F14 | F11 | MO-31 | Change (F11→MO-31) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| account.mo | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| expenses.mo | 2 | 4 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 1 | -1 |
+| find.mo | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| greet.mo | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| inventory.mo | 2 | 5 | 5 | 5 | 5 | 3 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
+| job-queue.mo | 1 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 1 | -1 |
+| json-query.mo | 1 | 4 | 4 | 4 | 4 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 1 | -1 |
+| kv.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
+| notes-tool.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | +0 |
+| rate-limit.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | +0 |
+| todo.mo | 1 | 1 | 4 | 4 | 4 | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 1 | -2 |
+| wc.mo | 2 | 2 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| **Total** | **14** | **24** | **25** | **24** | **23** | **17** | **14** | **14** | **13** | **13** | **12** | **11** | **11** | **6** | **-5** |
 
 ## Current diagnostics
 
 | Sample | Location | Code | Diagnostic | Source |
 | --- | --- | --- | --- | --- |
-| expenses.mo | 41:37 | E0050 | no visible function has this dot-call name | `value = try amount.to_decimal.or_fail(BadAmount(text: amount))` |
 | expenses.mo | 70:56 | E0050 | no visible function has this dot-call name | `name_width = names.map(fn(name) name.char_count end).max or 0` |
 | inventory.mo | 72:48 | E1103 | this generic capture's capability membership isn't checked | `laid_out = columns.map(fn(column) pad_column(rows, column) end)` |
-| job-queue.mo | 70:39 | E0050 | no visible function has this dot-call name | `until = try now.checked_add(length).or_fail(BadLease(length: length))` |
-| job-queue.mo | 135:32 | E0050 | no visible function has this dot-call name | `job = try queue.jobs.get(id).or_fail(NoSuchJob(id: id))` |
-| json-query.mo | 78:25 | E0050 | no visible function has this dot-call name | `c = try chars.get(at).or_fail(UnexpectedEnd)` |
-| json-query.mo | 137:31 | E0050 | no visible function has this dot-call name | `value = try text.to_decimal.or_fail(BadNumber(at: at))` |
-| kv.mo | 79:30 | E0050 | no visible function has this dot-call name | `n = try seconds.to_int.or_fail(NotAnInteger(text: seconds))` |
-| todo.mo | 71:45 | E0050 | no visible function has this dot-call name | `rest = try line.drop_prefix("[ ] ").or_fail(BadLine(number: index + 1))` |
-| todo.mo | 110:39 | E0050 | no visible function has this dot-call name | `var item = try items.get(n - 1).or_fail(NoSuchItem(number: n))` |
-| todo.mo | 120:42 | E0050 | no visible function has this dot-call name | `command = try parse_command(args.list).or_fail(Usage)` |
+| job-queue.mo | 71:26 | E0050 | no visible function has this dot-call name | `case queue.jobs.values.find(fn(job) job.state == Ready end)` |
+| json-query.mo | 62:28 | E1150 | this native call is not lowered yet | `Some(c) if c == '-' or c.ascii_digit?: number_at(chars, at)` |
+| kv.mo | 90:29 | E0050 | no visible function has this dot-call name | `result.0.entries.values.all?(fn(entry) entry.expires is Some(at) implies at > now end)` |
+| todo.mo | 119:4 | E1103 | this main result convention is not implemented | `fn main(args: Args, console: Console, files: Files) : Result(Unit, TodoError)` |
 
 ## Newly exposed blockers
 
-- account: passes `mo check` (including its anchors) and its examples and tests
-  with 0 errors.
-- find: passes `mo check`, `mo test` and `mo run` with 0 errors.
-- wc: passes `mo check`, `mo test` and `mo run` with 0 errors.
-- rate-limit: passes `mo check` (including its anchors) and its examples and
-  tests with 0 errors.
-- notes-tool: passes `mo check` (including its anchors) and its tests with 0
-  errors.
-- expenses: `Map.update` (`57:17`) and `List.sort_by_desc` (`91:8`) clear; only
-  `Option.or_fail` (`41:37`) and `List.max` (`70:56`) remain.
-- inventory: `List.sort_by_desc` (`30:9`) and `Map.update` (`42:21`) clear; only
-  `E1103` on the generic `rows: List(T)` capture in `pad_table` (`72:48`)
-  remains.
-- job-queue: `.map(...)` at `157:20` clears; only `Option.or_fail` (`70:39`,
-  `135:32`) remains.
-- json-query: `.map(...)` at `211:21` and `228:19` clears; only `Option.or_fail`
-  (`78:25`, `137:31`) remains.
-- todo: `.map(...)` at `85:9` clears; only `Option.or_fail` (`71:45`, `110:39`,
-  `120:42`) remains.
-- kv: `Option.or_fail` (`79:30`).
+- expenses: `Option.or_fail` (`41:37`) clears; only `List.max` (`70:56`) remains.
+- inventory: unchanged; `E1103` on the generic `rows: List(T)` capture in
+  `pad_table` (`72:48`).
+- job-queue: both `Option.or_fail` calls clear, exposing `List.find` (`71:26`).
+- json-query: both `Option.or_fail` calls clear; the sample now checks and stops
+  in lowering at `Char.ascii_digit?` (`62:28`, E1150).
+- kv: `Option.or_fail` (`79:30`) clears, exposing `List.all?` (`90:29`).
+- todo: all three `Option.or_fail` calls clear, exposing `main` returning
+  `Result(Unit, E)` (`119:4`, E1103), which is F5 / MO-26.
 
-The existing `infer_function` sets `halt` for implementation codes (E1000 and
-above). Its replacement library errors E0050 allow `check_program` to continue
-through independent bodies. No diagnostic is hidden to keep the former totals.
+No diagnostic is hidden to keep the former totals.
 
 ## Regeneration and evidence
 

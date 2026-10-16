@@ -1385,6 +1385,54 @@ static void option_or_graph(void) {
     free_fixture(&f);
 }
 
+static void option_or_fail_graph(void) {
+    struct fixture f;
+    init(&f,
+         "module Main\nfn pick() : Result(Int, Text)\n"
+         "first = try Some(17).or_fail(\"none\")\nOption.or_fail([1].get(first), \"gone\")\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        bool dot = false, qualified = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->native == NULL || strcmp(row->native, "Option.or_fail") != 0 ||
+                row->type->kind == MO_SOURCE_FUNCTION)
+                continue;
+            CHECK(strcmp(row->type->name, "Result") == 0 && row->arguments.count == 2);
+            CHECK(strcmp(row->type->arguments[0]->name, "Int") == 0 &&
+                  strcmp(row->type->arguments[1]->name, "Text") == 0);
+            if (row->receiver != UINT32_MAX) {
+                CHECK(row->operand_count == 2 && row->receiver == row->operands[0]);
+                dot = true;
+            } else {
+                CHECK(row->operand_count == 3);
+                qualified = true;
+            }
+        }
+        CHECK(dot && qualified);
+    }
+    free_fixture(&f);
+    static const struct {
+        const char *source;
+        uint16_t code;
+    } refusals[] = {
+        {"fn f() : Result(Int, Text)\nSome(1).or_fail(3)\nend\n", MO_CODE_RESULT_TYPE},
+        {"fn f() : Result(Int, Text)\nSome(1).or_fail()\nend\n", MO_CODE_CALL_ARGUMENTS},
+    };
+    for (size_t i = 0; i < sizeof(refusals) / sizeof(refusals[0]); i++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, 4096);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\n") &&
+                  mo_buffer_append_text(&source, refusals[i].source) &&
+                  mo_buffer_append_byte(&source, 0));
+        init(&f, (const char *)source.bytes);
+        CHECK(f.program == NULL && f.diags.count == 1 && f.diags.items[0].code == refusals[i].code);
+        free_fixture(&f);
+        mo_buffer_free(&source);
+    }
+}
+
 static void deferred_defaults(void) {
     struct fixture f;
     init(&f, "module Main\nfn choose() : Bool\n"
@@ -2682,6 +2730,7 @@ static void run(void *argument) {
     data_recursion();
     generic_lambdas();
     option_or_graph();
+    option_or_fail_graph();
     deferred_defaults();
     try_graph();
     inferred_wrappers();
