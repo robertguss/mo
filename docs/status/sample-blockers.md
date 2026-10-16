@@ -1,39 +1,38 @@
-# Sample blockers after C7
+# Sample blockers after C7 and F8
 
 Regenerated from actual `mo check --json examples/<sample>.mo` output on
-`bfcdedcd` (I1/PR81), `75e6db61` (LW5/PR82) and the C7 implementation.
+`bfcdedcd` (I1/PR81), `75e6db61` (LW5/PR82), `02395dbd` (C7/PR83) and F8.
 Every totals record reports `dropped: 0`. Examples are unchanged.
 
 `FileError`'s text form (`PATH: no such file`, `PATH: not allowed`,
-`PATH: not text`, `PATH: REASON`) is accepted through check, lowering and run.
-All four `E1103 FileError's library text function is unavailable` diagnostics
-(`expenses.mo:92:34`, `find.mo:104:32`, `todo.mo:35:26`, `wc.mo:52:30`) are
-eliminated:
+`PATH: not text`, `PATH: REASON`) is accepted through check, lowering and run,
+and the native `IO`, `List` and `Text` operations used by `examples/find.mo`
+now lower to their existing Core primitives:
 - `expenses.mo` drops from 4 to 3 errors.
 - `wc.mo` drops from 2 to 1 error.
-- `find.mo` passes `mo_check` with 0 checker diagnostics and reaches `mo_lower`,
-  where `console.error` at `92:7` reports `E1150` (1 error total).
+- `find.mo` passes `mo check`, `mo test` (7 examples and 2 tests) and `mo run`
+  with 0 errors.
 - `todo.mo` clears the `E1103` halt in its first function (`to_text` at `35:26`),
   allowing `check_program` to check `parse_items`, `apply` and `main` and expose
   their existing `Option.or_fail` and `List.map` `E0050` diagnostics (1→4).
 
 ## Counts
 
-| Sample | Main / I1 | LW5 | C7 | Change (LW5→C7) |
-| --- | ---: | ---: | ---: | ---: |
-| account.mo | 1 | 1 | 1 | +0 |
-| expenses.mo | 2 | 4 | 3 | -1 |
-| find.mo | 1 | 1 | 1 | +0 |
-| greet.mo | 0 | 0 | 0 | +0 |
-| inventory.mo | 2 | 5 | 5 | +0 |
-| job-queue.mo | 1 | 3 | 3 | +0 |
-| json-query.mo | 1 | 4 | 4 | +0 |
-| kv.mo | 1 | 1 | 1 | +0 |
-| notes-tool.mo | 1 | 1 | 1 | +0 |
-| rate-limit.mo | 1 | 1 | 1 | +0 |
-| todo.mo | 1 | 1 | 4 | +3 |
-| wc.mo | 2 | 2 | 1 | -1 |
-| **Total** | **14** | **24** | **25** | **+1** |
+| Sample | Main / I1 | LW5 | C7 | F8 | Change (C7→F8) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| account.mo | 1 | 1 | 1 | 1 | +0 |
+| expenses.mo | 2 | 4 | 3 | 3 | +0 |
+| find.mo | 1 | 1 | 1 | 0 | -1 |
+| greet.mo | 0 | 0 | 0 | 0 | +0 |
+| inventory.mo | 2 | 5 | 5 | 5 | +0 |
+| job-queue.mo | 1 | 3 | 3 | 3 | +0 |
+| json-query.mo | 1 | 4 | 4 | 4 | +0 |
+| kv.mo | 1 | 1 | 1 | 1 | +0 |
+| notes-tool.mo | 1 | 1 | 1 | 1 | +0 |
+| rate-limit.mo | 1 | 1 | 1 | 1 | +0 |
+| todo.mo | 1 | 1 | 4 | 4 | +0 |
+| wc.mo | 2 | 2 | 1 | 1 | +0 |
+| **Total** | **14** | **24** | **25** | **24** | **-1** |
 
 ## Current diagnostics
 
@@ -43,7 +42,6 @@ eliminated:
 | expenses.mo | 38:24 | E0050 | no visible function has this dot-call name | `case line.split(",").map(fn(field) field.trim end)` |
 | expenses.mo | 57:17 | E0050 | no visible function has this dot-call name | `sums = sums.update(expense.category, 0, fn(sum) sum + expense.amount end)` |
 | expenses.mo | 68:16 | E0050 | no visible function has this dot-call name | `names = rows.map(fn(row) row.0 end)` |
-| find.mo | 92:7 | E1150 | this native call is not lowered yet | `console.error("find: #{problem}")` |
 | inventory.mo | 30:9 | E0050 | no visible function has this dot-call name | `items.sort_by_desc(key).take(n)` |
 | inventory.mo | 42:21 | E0050 | no visible function has this dot-call name | `counts = counts.update(key(item), 0, fn(n) n + 1 end)` |
 | inventory.mo | 72:22 | E0050 | no visible function has this dot-call name | `laid_out = columns.map(fn(column) pad_column(rows, column) end)` |
@@ -67,8 +65,7 @@ eliminated:
 
 ## Newly exposed blockers
 
-- find: passes `mo_check` completely; `mo_lower` reports `E1150` on
-  `Console.error` at `92:7`.
+- find: passes `mo check`, `mo test` and `mo run` with 0 errors.
 - todo: clearing `E1103` in `to_text` (`35:26`) allows `check_program` to
   continue into `parse_items`, `apply` and `main`, exposing `Option.or_fail`
   (`71:45`, `110:39`, `120:42`) and `List.map` (`85:9`).
