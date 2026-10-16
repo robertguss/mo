@@ -175,6 +175,7 @@ static const struct native_text {
     {"List", "sort_by_desc", "List.sort_by_desc", "fn(List(T), fn(T) : K) : List(T) where K: Order",
      false},
     {"Map", "update", "Map.update", "fn(Map(K, V), K, V, fn(V) : V) : Map(K, V)", false},
+    {"Option", "or_fail", "Option.or_fail", "fn(Option(T), E) : Result(T, E)", false},
 };
 
 static const struct mo_symbol option_owner = {.name = "Option", .module = UINT32_MAX};

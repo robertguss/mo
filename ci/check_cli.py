@@ -1587,6 +1587,8 @@ def map_literals(binary):
         "file-error-text": b"notes/a.md: no such file\n../secret: not allowed\nbin/app: not text\nout.txt: is a folder\nSome(notes/a.md: no such file)\n",
         "list-count": b"0/0/3/2/2/2/3\n",
         "list-map": b"[2, 4, 6]/[1, 2, 3]/[13, 14]/[0, 25]/[7, 8]\n",
+        "option-or-fail": b"Ok(1)/Error(Missing(name: \"z\"))\nOk(42)/Error(Empty)\n"
+                          b"Ok(3)/Error(Empty)\nOk(\"x\")/Error(7)\nmade eager\nOk(1)\n",
         "map-update-sort-desc": b"2/1,1/5,7/[3, 2, 1]/[\"abcd\", \"def\", \"bc\", \"a\"]/[\"top-a\", \"top-b\", \"mid-a\", \"mid-b\", \"first\", \"second\", \"third\"]/[5, 3, 2]\n",
         "map-literals": b"3/7/0/0/0/11\napples=3;pears=7;\n",
         "map-evaluation-order": b"key 2\nvalue 20\nkey 1\nvalue 10\n2=20\n1=10\nif effect\nwhile effect\n",

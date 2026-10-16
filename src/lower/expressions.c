@@ -1012,6 +1012,36 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                     p, (struct mo_core_prim){.tag = MO_CORE_PRIM_IO, .as.io = io[i].operation},
                     args);
         }
+        if (strcmp(r->native, "Option.or_fail") == 0) {
+            /* Both arguments are already evaluated (reference 8.1): e is
+             * computed even for Some, so only the case remains. */
+            MO_ASSERT(args.count == 2);
+            mo_core_ty out = result->tag == MO_CORE_TY_FN ? result->as.fn.ret : result;
+            MO_ASSERT(out->tag == MO_CORE_TY_RESULT);
+            mo_core_expr select = lower_expr(p, MO_CORE_EXPR_CASE);
+            select->as.case_.expr = args.items[0];
+            select->as.case_.arms.count = 2;
+            select->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+            mo_core_expr error = lower_expr(p, MO_CORE_EXPR_CON);
+            error->as.con.ty = out;
+            error->as.con.ctor = lower_text(p, "Error");
+            error->as.con.args = arguments(b, 1);
+            error->as.con.args.items[0] = args.items[1];
+            select->as.case_.arms.items[0] =
+                (struct mo_core_arm){.ctor = lower_text(p, "None"), .body = error};
+            struct mo_core_arm *some = &select->as.case_.arms.items[1];
+            some->ctor = lower_text(p, "Some");
+            some->names.count = 1;
+            some->names.items = LOWER_NEW(p, mo_core_string, 1);
+            some->names.items[0] = lower_fresh(p);
+            mo_core_expr ok = lower_expr(p, MO_CORE_EXPR_CON);
+            ok->as.con.ty = out;
+            ok->as.con.ctor = lower_text(p, "Ok");
+            ok->as.con.args = arguments(b, 1);
+            ok->as.con.args.items[0] = lower_var(p, some->names.items[0]);
+            some->body = ok;
+            return select;
+        }
         if (strcmp(r->native, "List.map") == 0) {
             MO_ASSERT(args.count == 2);
             mo_core_ty in_list =

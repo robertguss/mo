@@ -2920,6 +2920,10 @@ signatures, record their callback arguments and `Order`/`Text` parameter proofs
 in constant dependency ordering, and lower directly to Core (`join`/`case` loops
 over `List.%uncons`, `Int.add`, and `List.append`, bottom-up merge sort over
 `List.take`/`List.drop`/`lower_compare`, and `Map.get`/`Map.set` case dispatch).
+`Option.or_fail` takes the same native fallback until `lib/option.mo` exists: its
+two arguments are let-bound in order like any call's, so `e` is computed even
+for `Some` (reference 8.1), and it lowers to one `case` giving `Ok(v)` or
+`Error(e)`.
 Public lookup still
 requires expose; ability customizers need not be exposed. Entry's structural
 proof parts are Text then EntryKind; FileError's structural parts flatten its
