@@ -53,7 +53,7 @@ The full sanitizer/fuzz/grammar/Lean/dependency/library-map gate is recorded in
 | `src/check/signatures.c` / `mo_prepare_available_signatures` | Available signatures preserve recovery, customizer and import identities. | checker/lowering suites: pass |
 | `src/check/signatures.c` / `mo_prepare_signatures` | Public partial-preparation refusal remains intact. | checker/lowering suites: pass |
 | `src/check/recursion.c` / `mo_check_recursion` | Main’s SCC proof extends to generic promise bodies and callbacks. | checker/lowering suites: pass |
-| `fuzz/fuzz_program.c` / `graph` | Fuzz assertions now cover constants/specs as well as ordinary functions. | fuzz_program: pending full gate |
+| `fuzz/fuzz_program.c` / `graph` | Fuzz assertions now cover constants/specs as well as ordinary functions. | fuzz_program: pass |
 | `src/bytecode/assemble.c` / `mo_text_check_references` | Explicit numeric casts preserve primitive/host index bounds. | bytecode suites: pass |
 | `src/bytecode/shorthand-function.c` / `library` | Explicit numeric casts preserve primitive/host signature lookup. | bytecode suites: pass |
 
@@ -79,4 +79,4 @@ Assertions, explicit limits, checked results, arena allocation, and strict
 conversion warnings remain enabled. Sanitizers and every fuzz target run through
 the unchanged CI gate. The trusted core and bytecode verification boundary are
 unchanged; parser/Core/lowering/VM comparisons test the shared Lean protocol.
-Unexecuted gates must not be inferred from debug success; see the final run record.
+The full CI=1 gate exits 0 with no skips, including ASan/UBSan, every fuzz target, grammar, Lean comparisons, dependencies, library map, formatting and clang-tidy; see the final run record.

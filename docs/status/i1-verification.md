@@ -61,7 +61,9 @@ adds Darwin’s declaration macro to the build flags. The path fixture compares
 against its canonical library path, preserving the loader’s existing behavior
 on `/tmp` versus `/private/tmp`. No warning, sanitizer or assertion is disabled.
 Merged Mac `make test CC=clang` now passes through checking and lowering-related
-suites, then reaches the same host socket/filesystem restrictions.
+suites, then reaches the same host socket/filesystem restrictions. Native
+`make -j6 CC=gcc-16 all build/gcc-16/debug/tests/test_check.test` and the GCC
+checker suite both exit 0; GCC’s unchanged greet check/run/test also pass.
 
 A dedicated Ubuntu 24.04 AArch64 container on the connected Mac runs the full
 host suite on a Linux filesystem. It uses GCC, Clang 18, clang-tidy, Bison 3.8.2,
@@ -79,17 +81,56 @@ export MAKEFLAGS="-j6 LDLIBS=-lm\\ $runtime"
 CI=1 bash ci/check.sh
 ```
 
-Full gate status: pending final rerun. GCC/Clang/ASan tests, CLI, Unicode,
-every fuzz target, grammar and Lean model/protocol checks passed. The first
-configured gate then stopped at Core fixture comparison because the initial
-Mac archive transfer left AppleDouble `._*` metadata files in the container.
-Their AppleDouble magic was verified before removing only those transfer
-artifacts; repository fixtures were retained. The complete gate is rerun from
-the beginning before this PR can be considered verified.
+Full gate status: **PASS**, exit 0, no skips. The final configured run ends:
+
+```text
+==> All checks passed
+```
+
+- All 36 unit suites pass in GCC debug, Clang debug and ASan/UBSan builds.
+- Full CLI checks pass in all three builds, including scalar/structural promises,
+  deterministic deadline error/expiry cases and codec/report lifetime checks.
+- All 22 fuzz targets plus the large-bytecode variant pass: 23 runs at 5 seconds.
+- Grammar, pinned Lean model/proofs/protocol, Core fixtures and checker, heap
+  numeric comparisons, VM, lowering, primitive/host models and code generation pass.
+- Dependencies, library map, formatting, all 171 clang-tidy translation units and
+  source formatter fixed points pass.
+- VM/Lean: 2,495 outcomes agree in each of GCC, Clang and ASan/UBSan;
+  zero unsupported fixtures and zero unavailable dispatch cases.
+- Core checker: 4,471 cases agree in all three builds.
+
+The final gate covers merge commit `6f2c3b5e4033a49e00921129116b825bdc3edb4c`.
+Subsequent commits update only these status/evidence documents. The code,
+fixtures, oracle and CLI-document manifest is unchanged.
+
+Earlier configured verification stopped at Core fixture comparison because the
+initial Mac archive transfer left AppleDouble `._*` files in the container.
+All 518 removed files had verified AppleDouble magic; no repository fixture was
+removed or regenerated. The complete final gate was rerun from the beginning.
+
+## Oracle evidence
+
+After transfer cleanup, these commands exit 0 against the merged Linux tree:
+
+```sh
+sh ci/check_core_fixtures.sh
+PYTHONDONTWRITEBYTECODE=1 python3 ci/check_vm.py build/clang/debug/tests/test_vm.test
+make CC=clang build/clang/debug/lower-source
+PYTHONDONTWRITEBYTECODE=1 python3 ci/check_lower_source.py build/clang/debug/lower-source build/clang/debug/lower-source
+```
+
+- Core: 15 runs and 14 fuzz seeds match Lean byte for byte.
+- VM: 2,495 outcomes match mocore; zero unsupported fixtures and zero unavailable
+  primitive/host/capability dispatch cases.
+- Lowered source: 66 ordinary outcomes, 21 modules/27 outcomes and 19 spec
+  programs/53 outcomes match Lean/VM. Four explicitly deferred lowering cases
+  are checked as expected refusals, separately from matched outcomes.
+- The 746 code, fixture, oracle and CLI-document inputs in the container match
+  the task workspace by SHA-256; no mismatch.
 
 ## Focused merged behavior
 
-Executed on the Mac’s merged `build/clang/debug/mo`; raw command/exit/output
+Executed on both the Mac and Linux merged `build/clang/debug/mo`; raw command/exit/output
 records and the source fixtures are preserved in the task’s `evidence/` folder.
 
 | Requirement | Observed result |
@@ -104,8 +145,7 @@ records and the source fixtures are preserved in the task’s `evidence/` folder
 | False List(Int) promise shrinks | `mo test --json` exits 1; input/result `[0]`, 3 calls, 1 failed, 0 stopped, 0 errors |
 
 The capability probe proves parameter delivery, not support for every operation:
-for example Clock.now lowering remains staged at E1150. No new operation was
-added by the reconciliation. The false-list test’s `[0]` is a minimal nonempty
+for example Clock.now lowering remains staged at E1150. Reconciliation adds no operation beyond the private checkpoint. The false-list test’s `[0]` is a minimal nonempty
 counterexample to the intentionally false “always empty” promise.
 
 ## Blast radius and scope
@@ -125,7 +165,9 @@ All paths are relative to the dedicated task workspace, outside the build tree:
 - `evidence/parent-suite-results.json`, parent sample JSON and customizer probe.
 - `evidence/merged-mac-test.log`, `linux-merged-unit.log`.
 - `evidence/linux-full-ci.log` (runtime-link failure) and
-  `linux-full-ci-runtime.log` (configured full gate).
-- `evidence/merged-samples.json`, `acceptance-results.json` and
+  `linux-full-ci-runtime.log` (transfer-artifact failure), and
+  `linux-full-ci-final.log` (full rerun).
+- `evidence/merged-samples.json`, Mac/Linux `acceptance-results.json` and
   `acceptance/*/main.mo` source fixtures.
+- `evidence/linux-targeted-oracles.log`, compiler versions and source-manifest check.
 - `evidence/blast-radius-callsites.txt`, function inventory and registry comparison.
