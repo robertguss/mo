@@ -1000,7 +1000,9 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                   {"Files.in_memory", {MO_CORE_IO_OP_FILES_IN_MEMORY, false}},
                   {"Files.read_only", {MO_CORE_IO_OP_READ_ONLY, false}},
                   {"Files.read_text", {MO_CORE_IO_OP_READ_TEXT, false}},
+                  {"Files.list", {MO_CORE_IO_OP_LIST, false}},
                   {"ReadFiles.read_text", {MO_CORE_IO_OP_READ_TEXT, true}},
+                  {"ReadFiles.list", {MO_CORE_IO_OP_LIST, true}},
                   {"Clock.now", {MO_CORE_IO_OP_NOW, false}},
                   {"Clock.fixed", {MO_CORE_IO_OP_CLOCK_FIXED, false}}};
         for (size_t i = 0; i < sizeof io / sizeof io[0]; i++) {
@@ -1425,14 +1427,29 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
             loop_join->as.join.body = select;
             return loop_join;
         }
+        if (strcmp(r->native, "List.join") == 0)
+            return lower_prim(
+                p, (struct mo_core_prim){.tag = MO_CORE_PRIM_TEXT, .as.text = MO_CORE_TEXT_OP_JOIN},
+                args);
         static const struct {
             const char *name;
             enum mo_core_list_op_tag operation;
         } lists[] = {{"List.first", MO_CORE_LIST_OP_FIRST},
+                     {"List.last", MO_CORE_LIST_OP_LAST},
+                     {"List.get", MO_CORE_LIST_OP_GET},
                      {"List.size", MO_CORE_LIST_OP_SIZE},
                      {"List.empty?", MO_CORE_LIST_OP_IS_EMPTY},
                      {"List.append", MO_CORE_LIST_OP_APPEND},
-                     {"List.enumerate", MO_CORE_LIST_OP_ENUMERATE}};
+                     {"List.prepend", MO_CORE_LIST_OP_PREPEND},
+                     {"List.concat", MO_CORE_LIST_OP_CONCAT},
+                     {"List.reverse", MO_CORE_LIST_OP_REVERSE},
+                     {"List.take", MO_CORE_LIST_OP_TAKE},
+                     {"List.drop", MO_CORE_LIST_OP_DROP},
+                     {"List.set", MO_CORE_LIST_OP_SET},
+                     {"List.remove_at", MO_CORE_LIST_OP_REMOVE_AT},
+                     {"List.enumerate", MO_CORE_LIST_OP_ENUMERATE},
+                     {"List.contains?", MO_CORE_LIST_OP_CONTAINS},
+                     {"List.unique", MO_CORE_LIST_OP_UNIQUE}};
         for (size_t i = 0; i < sizeof lists / sizeof lists[0]; i++) {
             lower_work(p, 1);
             if (strcmp(r->native, lists[i].name) == 0) {
@@ -1456,13 +1473,30 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
             enum mo_core_text_op operation;
         } texts[] = {{"Text.bytes", MO_CORE_TEXT_OP_BYTES},
                      {"Text.byte_count", MO_CORE_TEXT_OP_BYTE_COUNT},
+                     {"Text.char_count", MO_CORE_TEXT_OP_CHAR_COUNT},
+                     {"Text.empty?", MO_CORE_TEXT_OP_IS_EMPTY},
                      {"Text.chars", MO_CORE_TEXT_OP_CHARS},
+                     {"Text.from_chars", MO_CORE_TEXT_OP_FROM_CHARS},
                      {"Text.words", MO_CORE_TEXT_OP_WORDS},
+                     {"Text.split", MO_CORE_TEXT_OP_SPLIT},
+                     {"Text.trim", MO_CORE_TEXT_OP_TRIM},
+                     {"Text.trim_start", MO_CORE_TEXT_OP_TRIM_START},
+                     {"Text.trim_end", MO_CORE_TEXT_OP_TRIM_END},
                      {"Text.pad_left", MO_CORE_TEXT_OP_PAD_LEFT},
+                     {"Text.pad_right", MO_CORE_TEXT_OP_PAD_RIGHT},
                      {"Text.starts_with?", MO_CORE_TEXT_OP_STARTS_WITH},
+                     {"Text.ends_with?", MO_CORE_TEXT_OP_ENDS_WITH},
+                     {"Text.drop_prefix", MO_CORE_TEXT_OP_DROP_PREFIX},
+                     {"Text.drop_suffix", MO_CORE_TEXT_OP_DROP_SUFFIX},
+                     {"Text.replace", MO_CORE_TEXT_OP_REPLACE},
+                     {"Text.repeat", MO_CORE_TEXT_OP_REPEAT},
                      {"Text.lines", MO_CORE_TEXT_OP_LINES},
                      {"Text.contains?", MO_CORE_TEXT_OP_CONTAINS},
-                     {"Text.ascii_lowercase", MO_CORE_TEXT_OP_LOWER}};
+                     {"Text.ascii_lowercase", MO_CORE_TEXT_OP_LOWER},
+                     {"Text.ascii_uppercase", MO_CORE_TEXT_OP_UPPER},
+                     {"Text.to_int", MO_CORE_TEXT_OP_TO_INT},
+                     {"Text.to_decimal", MO_CORE_TEXT_OP_TO_DECIMAL},
+                     {"Text.to_float", MO_CORE_TEXT_OP_TO_FLOAT}};
         for (size_t i = 0; i < sizeof texts / sizeof texts[0]; i++) {
             lower_work(p, 1);
             if (strcmp(r->native, texts[i].name) == 0)
