@@ -936,13 +936,33 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
             enum mo_core_int_op operation;
         } natives[] = {{"Int.abs", MO_CORE_INT_OP_ABS},
                        {"Int.min", MO_CORE_INT_OP_MIN},
-                       {"Int.max", MO_CORE_INT_OP_MAX}};
+                       {"Int.max", MO_CORE_INT_OP_MAX},
+                       {"Int.seconds", MO_CORE_INT_OP_SECONDS},
+                       {"Int.milliseconds", MO_CORE_INT_OP_MILLISECONDS},
+                       {"Int.minutes", MO_CORE_INT_OP_MINUTES},
+                       {"Int.hours", MO_CORE_INT_OP_HOURS},
+                       {"Int.days", MO_CORE_INT_OP_DAYS}};
         for (size_t i = 0; i < sizeof natives / sizeof natives[0]; i++) {
             lower_work(p, 1);
             if (strcmp(r->native, natives[i].name) == 0)
                 return lower_prim(
                     p,
                     (struct mo_core_prim){.tag = MO_CORE_PRIM_INT, .as.int_ = natives[i].operation},
+                    args);
+        }
+        static const struct {
+            const char *name;
+            enum mo_core_time_op operation;
+        } times[] = {{"Time.checked_add", MO_CORE_TIME_OP_CHECKED_ADD},
+                     {"Time.parse", MO_CORE_TIME_OP_PARSE},
+                     {"Duration.in_milliseconds", MO_CORE_TIME_OP_IN_MILLISECONDS},
+                     {"Duration.in_seconds", MO_CORE_TIME_OP_IN_SECONDS}};
+        for (size_t i = 0; i < sizeof times / sizeof times[0]; i++) {
+            lower_work(p, 1);
+            if (strcmp(r->native, times[i].name) == 0)
+                return lower_prim(
+                    p,
+                    (struct mo_core_prim){.tag = MO_CORE_PRIM_TIME, .as.time = times[i].operation},
                     args);
         }
     }
@@ -960,7 +980,9 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                   {"Files.in_memory", {MO_CORE_IO_OP_FILES_IN_MEMORY, false}},
                   {"Files.read_only", {MO_CORE_IO_OP_READ_ONLY, false}},
                   {"Files.read_text", {MO_CORE_IO_OP_READ_TEXT, false}},
-                  {"ReadFiles.read_text", {MO_CORE_IO_OP_READ_TEXT, true}}};
+                  {"ReadFiles.read_text", {MO_CORE_IO_OP_READ_TEXT, true}},
+                  {"Clock.now", {MO_CORE_IO_OP_NOW, false}},
+                  {"Clock.fixed", {MO_CORE_IO_OP_CLOCK_FIXED, false}}};
         for (size_t i = 0; i < sizeof io / sizeof io[0]; i++) {
             lower_work(p, 1);
             if (strcmp(r->native, io[i].name) == 0)

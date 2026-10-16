@@ -27,6 +27,7 @@ struct term {
     unsigned numeric;
     bool variable;
     bool partial_default;
+    bool deferred;
 };
 
 struct local;
@@ -160,6 +161,8 @@ struct failure_check {
     struct mo_span span;
     struct mo_constructor_ref wrapper;
     const struct mo_source_type *generic;
+    enum mo_syntax_token op;
+    uint16_t code;
     bool solved, never;
 };
 
@@ -739,6 +742,7 @@ static MO_MUST_USE bool unify(struct inference *p, struct term *a, struct term *
     }
     b->parent = a;
     a->numeric = numeric;
+    a->deferred = a->deferred || b->deferred;
     if (a->rank == b->rank)
         a->rank++;
     return true;
@@ -1340,6 +1344,7 @@ static MO_MUST_USE struct value deferred_function(struct inference *p, const str
     struct value out = graph(p, (struct value){.type = fresh(p, 0)}, 0);
     if (pending == NULL || out.type == NULL)
         return (struct value){0};
+    out.type->deferred = group == NULL;
     *pending = (struct dispatch){
         .name = name, .group = group, .count = count, .type = out.type, .graph = out.graph};
     if (p->last_dispatch == NULL)
@@ -2111,29 +2116,104 @@ static MO_MUST_USE struct value binary(struct inference *p, enum mo_syntax_token
                                                : a.type;
     if (operand == NULL || !unify_as(p, a.type, operand, logical ? MO_CODE_CONDITION_TYPE : 0))
         return (struct value){0};
+    struct term *right_type = operand;
+    struct term *result = logical || comparison ? native(p, "Bool", 0)
+                          : op == MO_T_DOTDOT   ? native(p, "Range", 0)
+                                                : operand;
+    struct value b = {0};
     if (!logical && !comparison && op != MO_T_DOTDOT) {
-        if (named(operand, "Time") || named(operand, "Duration") ||
-            (!p->checked && root(operand)->shape.kind == MO_SOURCE_PARAMETER)) {
+        if (!p->checked && (named(operand, "Time") || named(operand, "Duration") ||
+                            root(operand)->shape.kind == MO_SOURCE_PARAMETER)) {
             bool reported = unfinished(p);
             (void)reported;
             return (struct value){0};
         }
-        struct term *numeric = root(operand)->shape.kind == MO_SOURCE_PARAMETER
-                                   ? operand
-                                   : fresh(p, INT | BIG | DECIMAL | FLOAT);
-        if (numeric == NULL ||
-            !unify_as(p, operand, numeric,
-                      named(operand, "Byte") ? MO_CODE_BYTE_ARITHMETIC : MO_CODE_NUMBER_ABILITY))
-            return (struct value){0};
-        if (expected != NULL && !unify_as(p, operand, expected, p->node_expectation))
-            return (struct value){0};
+        if (named(operand, "Time") && (op == MO_T_PLUS || op == MO_T_MINUS)) {
+            struct term *duration = native(p, "Duration", 0);
+            if (duration == NULL)
+                return (struct value){0};
+            if (op == MO_T_PLUS) {
+                if (expected != NULL && !unify_as(p, operand, expected, p->node_expectation))
+                    return (struct value){0};
+                right_type = duration;
+            } else {
+                struct mo_span span = p->span;
+                b = infer(p, right, NULL);
+                if (b.type == NULL)
+                    return (struct value){0};
+                if (!root(b.type)->variable || root(b.type)->numeric != 0) {
+                    if (named(b.type, "Time")) {
+                        result = duration;
+                    } else {
+                        if (!unify(p, b.type, duration, 0))
+                            return (struct value){0};
+                        result = operand;
+                    }
+                    if (expected != NULL && !unify_as(p, result, expected, p->node_expectation))
+                        return (struct value){0};
+                } else {
+                    result = fresh(p, 0);
+                    struct failure_check *pending =
+                        allocate(p, 1, sizeof(*pending), _Alignof(struct failure_check));
+                    if (result == NULL || pending == NULL ||
+                        (expected != NULL && !unify(p, result, expected, 0)))
+                        return (struct value){0};
+                    root(result)->deferred = true;
+                    *pending = (struct failure_check){.next = p->failures,
+                                                      .input = operand,
+                                                      .fallback = b.type,
+                                                      .value = result,
+                                                      .op = MO_T_MINUS,
+                                                      .code = p->node_expectation,
+                                                      .span = span};
+                    p->failures = pending;
+                }
+            }
+        } else if (named(operand, "Duration") &&
+                   (op == MO_T_PLUS || op == MO_T_MINUS || op == MO_T_STAR)) {
+            if (expected != NULL && !unify_as(p, operand, expected, p->node_expectation))
+                return (struct value){0};
+            if (op == MO_T_STAR) {
+                right_type = native(p, "Int", 0);
+                if (right_type == NULL)
+                    return (struct value){0};
+            }
+        } else if (p->checked && (op == MO_T_PLUS || op == MO_T_MINUS || op == MO_T_STAR) &&
+                   root(operand)->variable && root(operand)->numeric == 0 &&
+                   root(operand)->deferred) {
+            struct mo_span span = p->span;
+            b = infer(p, right, NULL);
+            result = fresh(p, 0);
+            struct failure_check *pending =
+                allocate(p, 1, sizeof(*pending), _Alignof(struct failure_check));
+            if (b.type == NULL || result == NULL || pending == NULL ||
+                (expected != NULL && !unify(p, result, expected, 0)))
+                return (struct value){0};
+            root(result)->deferred = true;
+            *pending = (struct failure_check){.next = p->failures,
+                                              .input = operand,
+                                              .fallback = b.type,
+                                              .value = result,
+                                              .op = op,
+                                              .code = p->node_expectation,
+                                              .span = span};
+            p->failures = pending;
+        } else {
+            struct term *numeric = root(operand)->shape.kind == MO_SOURCE_PARAMETER
+                                       ? operand
+                                       : fresh(p, INT | BIG | DECIMAL | FLOAT);
+            if (numeric == NULL || !unify_as(p, operand, numeric,
+                                             named(operand, "Byte") ? MO_CODE_BYTE_ARITHMETIC
+                                                                    : MO_CODE_NUMBER_ABILITY))
+                return (struct value){0};
+            if (expected != NULL && !unify_as(p, operand, expected, p->node_expectation))
+                return (struct value){0};
+        }
     }
-    struct value b = logical ? condition(p, right, op == MO_T_AND) : infer(p, right, operand);
+    if (b.type == NULL)
+        b = logical ? condition(p, right, op == MO_T_AND) : infer(p, right, right_type);
     if (b.type == NULL)
         return (struct value){0};
-    struct term *result = logical || comparison ? native(p, "Bool", 0)
-                          : op == MO_T_DOTDOT   ? native(p, "Range", 0)
-                                                : operand;
     struct value out =
         graph(p, (struct value){.type = result, .never = a.never || (!logical && b.never)}, 2);
     if (p->checked && out.type != NULL) {
@@ -3379,22 +3459,46 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                 }
                 continue;
             }
-            struct term *wanted = op == MO_T_NOT ? native(p, "Bool", 0)
-                                  : op == MO_T_MINUS
-                                      ? (root(v.type)->shape.kind == MO_SOURCE_PARAMETER
-                                             ? v.type
-                                             : fresh(p, INT | BIG | DECIMAL | FLOAT))
-                                      : NULL;
-            if (wanted == NULL) {
+            if (op == MO_T_MINUS && !p->checked && named(v.type, "Duration")) {
                 bool reported = unfinished(p);
                 (void)reported;
                 return (struct value){0};
             }
-            uint16_t code = op == MO_T_NOT          ? MO_CODE_CONDITION_TYPE
-                            : named(v.type, "Byte") ? MO_CODE_BYTE_ARITHMETIC
-                                                    : MO_CODE_NUMBER_ABILITY;
-            if (!unify_as(p, v.type, wanted, code))
-                return (struct value){0};
+            if (op == MO_T_MINUS && p->checked && root(v.type)->variable &&
+                root(v.type)->numeric == 0 && root(v.type)->deferred) {
+                struct term *result = fresh(p, 0);
+                struct failure_check *pending =
+                    allocate(p, 1, sizeof(*pending), _Alignof(struct failure_check));
+                if (result == NULL || pending == NULL)
+                    return (struct value){0};
+                result->deferred = true;
+                *pending = (struct failure_check){.next = p->failures,
+                                                  .input = v.type,
+                                                  .value = result,
+                                                  .op = MO_T_MINUS,
+                                                  .code = i == 1 ? p->node_expectation : 0,
+                                                  .span = node->span};
+                p->failures = pending;
+                v.type = result;
+            } else {
+                struct term *wanted = op == MO_T_NOT ? native(p, "Bool", 0)
+                                      : op == MO_T_MINUS
+                                          ? ((p->checked && named(v.type, "Duration")) ||
+                                                     root(v.type)->shape.kind == MO_SOURCE_PARAMETER
+                                                 ? v.type
+                                                 : fresh(p, INT | BIG | DECIMAL | FLOAT))
+                                          : NULL;
+                if (wanted == NULL) {
+                    bool reported = unfinished(p);
+                    (void)reported;
+                    return (struct value){0};
+                }
+                uint16_t code = op == MO_T_NOT          ? MO_CODE_CONDITION_TYPE
+                                : named(v.type, "Byte") ? MO_CODE_BYTE_ARITHMETIC
+                                                        : MO_CODE_NUMBER_ABILITY;
+                if (!unify_as(p, v.type, wanted, code))
+                    return (struct value){0};
+            }
             if (p->checked) {
                 struct note *input = v.note;
                 v = graph(p, (struct value){.type = v.type, .never = v.never}, 1);
@@ -3967,6 +4071,10 @@ static MO_MUST_USE bool finish_operator(struct inference *p, struct note *note) 
             : MO_SOURCE_NUMBER;
     MO_ASSERT(graph->output.operand_count != 0 && graph->operands[0] != NULL);
     const struct mo_source_type *type = graph->operands[0]->output.type;
+    if (ability == MO_SOURCE_NUMBER && type->kind == MO_SOURCE_NAMED &&
+        type->module == UINT32_MAX &&
+        (strcmp(type->name, "Time") == 0 || strcmp(type->name, "Duration") == 0))
+        return true;
     p->span = note->output.syntax->span;
     const struct mo_ability_implementation *implementation =
         mo_prove_ability(&p->abilities, type, ability);
@@ -4241,7 +4349,8 @@ static MO_MUST_USE bool finish_wrapping(struct inference *p) {
         p->span = at->span;
         if (!work(p))
             return false;
-        if (at->fallback != NULL || named(at->input, "Option"))
+        if (at->op != MO_T_EOF || at->fallback != NULL || at->context == NULL ||
+            named(at->input, "Option"))
             continue;
         struct term *from = argument(p, at->input, 1), *to = argument(p, at->context, 1);
         if (from == NULL || to == NULL)
@@ -4628,6 +4737,70 @@ static MO_MUST_USE bool solve_failure(struct inference *p, struct failure_check 
                                       bool defaults) {
     p->span = at->span;
     struct term *input = root(at->input);
+    if (at->op != MO_T_EOF) {
+        if (input->variable && defaults && input->numeric != 0 && finish_type(p, input, 0) == NULL)
+            return false;
+        input = root(at->input);
+        struct term *right = at->fallback == NULL ? NULL : root(at->fallback);
+        if (at->fallback == NULL) {
+            if (input->variable)
+                return true;
+            if (!named(input, "Duration")) {
+                struct term *numeric = input->shape.kind == MO_SOURCE_PARAMETER
+                                           ? input
+                                           : fresh(p, INT | BIG | DECIMAL | FLOAT);
+                if (numeric == NULL || !unify_as(p, input, numeric,
+                                                 named(input, "Byte") ? MO_CODE_BYTE_ARITHMETIC
+                                                                      : MO_CODE_NUMBER_ABILITY))
+                    return false;
+            }
+            if (!unify_as(p, input, at->value, at->code))
+                return false;
+            at->solved = true;
+            return true;
+        }
+        if (named(input, "Time") && (at->op == MO_T_PLUS || at->op == MO_T_MINUS)) {
+            struct term *duration = native(p, "Duration", 0);
+            if (duration == NULL)
+                return false;
+            if (at->op == MO_T_PLUS) {
+                if (!unify(p, at->fallback, duration, 0) ||
+                    !unify_as(p, input, at->value, at->code))
+                    return false;
+                at->solved = true;
+                return true;
+            }
+            if (right->variable && right->numeric == 0)
+                return true;
+            bool diff = named(right, "Time");
+            if (!unify(p, at->fallback, diff ? input : duration, 0) ||
+                !unify_as(p, diff ? duration : input, at->value, at->code))
+                return false;
+            at->solved = true;
+            return true;
+        }
+        if (named(input, "Duration") &&
+            (at->op == MO_T_PLUS || at->op == MO_T_MINUS || at->op == MO_T_STAR)) {
+            struct term *wanted = at->op == MO_T_STAR ? native(p, "Int", 0) : input;
+            if (wanted == NULL || !unify(p, at->fallback, wanted, 0) ||
+                !unify_as(p, input, at->value, at->code))
+                return false;
+            at->solved = true;
+            return true;
+        }
+        if (input->variable)
+            return true;
+        struct term *numeric = input->shape.kind == MO_SOURCE_PARAMETER
+                                   ? input
+                                   : fresh(p, INT | BIG | DECIMAL | FLOAT);
+        if (numeric == NULL ||
+            !unify_as(p, input, numeric,
+                      named(input, "Byte") ? MO_CODE_BYTE_ARITHMETIC : MO_CODE_NUMBER_ABILITY) ||
+            !unify(p, at->fallback, input, 0) || !unify_as(p, input, at->value, at->code))
+            return false;
+        at->solved = true;
+        return true;
+    }
     if (at->fallback != NULL) {
         if (input->variable && defaults && input->numeric != 0 && finish_type(p, input, 0) == NULL)
             return false;
@@ -4763,6 +4936,36 @@ static MO_MUST_USE bool finish_dispatches(struct inference *p) {
         if (!progress && !defaults) {
             defaults = true;
             progress = true;
+        } else if (!progress) {
+            for (struct failure_check *at = p->failures; at != NULL; at = at->next) {
+                if (at->solved || at->op == MO_T_EOF)
+                    continue;
+                p->span = at->span;
+                if (at->op == MO_T_MINUS && named(at->input, "Time")) {
+                    struct term *value = root(at->value);
+                    if (!named(value, "Duration") && !named(value, "Time"))
+                        continue;
+                    struct term *duration = native(p, "Duration", 0);
+                    if (duration == NULL)
+                        return false;
+                    bool diff = named(value, "Duration");
+                    if (!unify(p, at->fallback, diff ? at->input : duration, 0) ||
+                        !unify_as(p, diff ? duration : at->input, at->value, at->code))
+                        return false;
+                    at->solved = true;
+                    progress = true;
+                    continue;
+                }
+                if (!root(at->input)->variable)
+                    continue;
+                struct term *numeric = fresh(p, INT | BIG | DECIMAL | FLOAT);
+                if (numeric == NULL || !unify_as(p, at->input, numeric, MO_CODE_NUMBER_ABILITY) ||
+                    (at->fallback != NULL && !unify(p, at->fallback, at->input, 0)) ||
+                    !unify_as(p, at->input, at->value, at->code))
+                    return false;
+                at->solved = true;
+                progress = true;
+            }
         }
     } while (progress);
     for (struct dispatch *at = p->dispatches; at != NULL; at = at->next)
@@ -4774,9 +4977,13 @@ static MO_MUST_USE bool finish_dispatches(struct inference *p) {
     for (struct failure_check *at = p->failures; at != NULL; at = at->next)
         if (!at->solved)
             return problem(p, MO_CODE_CANNOT_INFER, at->span,
-                           "no use decides this failure expression's type",
-                           "or needs Bool or Option, and try needs Option or Result in the "
-                           "enclosing function (reference 8).",
+                           at->op != MO_T_EOF ? "no use decides this expression's type"
+                                              : "no use decides this failure expression's type",
+                           at->op != MO_T_EOF
+                               ? "A function's signature gives its types; inside a body types "
+                                 "are inferred from all their uses (reference 5.1)."
+                               : "or needs Bool or Option, and try needs Option or Result in the "
+                                 "enclosing function (reference 8).",
                            NULL);
     return true;
 }
