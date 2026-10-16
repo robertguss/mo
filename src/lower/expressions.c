@@ -937,6 +937,7 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
         } natives[] = {{"Int.abs", MO_CORE_INT_OP_ABS},
                        {"Int.min", MO_CORE_INT_OP_MIN},
                        {"Int.max", MO_CORE_INT_OP_MAX},
+                       {"Int.checked_add", MO_CORE_INT_OP_CHECKED_ADD},
                        {"Int.seconds", MO_CORE_INT_OP_SECONDS},
                        {"Int.milliseconds", MO_CORE_INT_OP_MILLISECONDS},
                        {"Int.minutes", MO_CORE_INT_OP_MINUTES},
@@ -992,9 +993,11 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
             struct mo_core_io_op operation;
         } io[] = {{"Console.print", {MO_CORE_IO_OP_PRINT, false}},
                   {"Console.error", {MO_CORE_IO_OP_PRINT_ERROR, false}},
+                  {"Console.read_line", {MO_CORE_IO_OP_READ_LINE, false}},
                   {"Args.list", {MO_CORE_IO_OP_ARGS_LIST, false}},
                   {"Args.of", {MO_CORE_IO_OP_ARGS_OF, false}},
                   {"Console.fake", {MO_CORE_IO_OP_CONSOLE_FAKE, false}},
+                  {"Console.fake_input", {MO_CORE_IO_OP_CONSOLE_FAKE_INPUT, false}},
                   {"Console.printed", {MO_CORE_IO_OP_PRINTED, false}},
                   {"Console.printed_errors", {MO_CORE_IO_OP_PRINTED_ERRORS, false}},
                   {"Files.in_memory", {MO_CORE_IO_OP_FILES_IN_MEMORY, false}},
@@ -1389,6 +1392,61 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                            set_args);
             return current;
         }
+        if (strcmp(r->native, "List.all?") == 0) {
+            MO_ASSERT(args.count == 2);
+            mo_core_ty in_list =
+                r->operand_count == 0
+                    ? result->as.fn.params.items[0]
+                    : type(b,
+                           row(b, r->receiver == UINT32_MAX ? r->operands[0] : r->receiver)->type);
+            if (in_list->tag == MO_CORE_TY_FN)
+                in_list = in_list->as.fn.params.items[0];
+            mo_core_ty bool_ty = result->tag == MO_CORE_TY_FN ? result->as.fn.ret : result;
+            MO_ASSERT(in_list->tag == MO_CORE_TY_LIST && bool_ty->tag == MO_CORE_TY_BOOL);
+            mo_core_expr loop_join = lower_expr(p, MO_CORE_EXPR_JOIN);
+            loop_join->as.join.name = lower_fresh(p);
+            loop_join->as.join.params.count = 1;
+            loop_join->as.join.params.items = LOWER_NEW(p, struct mo_core_param, 1);
+            mo_core_string rem = lower_fresh(p);
+            loop_join->as.join.params.items[0] = (struct mo_core_param){rem, in_list};
+            mo_core_expr start = lower_expr(p, MO_CORE_EXPR_JUMP);
+            start->as.jump.name = loop_join->as.join.name;
+            start->as.jump.args = arguments(b, 1);
+            start->as.jump.args.items[0] = args.items[0];
+            loop_join->as.join.rest = start;
+            mo_core_expr select = lower_expr(p, MO_CORE_EXPR_CASE);
+            select->as.case_.expr =
+                unary(b,
+                      (struct mo_core_prim){
+                          .tag = MO_CORE_PRIM_LIST,
+                          .as.list = {.t = in_list->as.list, .op.tag = MO_CORE_LIST_OP_UNCONS}},
+                      lower_var(p, rem));
+            select->as.case_.arms.count = 2;
+            select->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+            select->as.case_.arms.items[0] =
+                (struct mo_core_arm){.ctor = lower_text(p, "None"), .body = lower_bool(p, true)};
+            struct mo_core_arm *some = &select->as.case_.arms.items[1];
+            some->ctor = lower_text(p, "Some");
+            some->names.count = 1;
+            some->names.items = LOWER_NEW(p, mo_core_string, 1);
+            mo_core_string pair = lower_fresh(p);
+            some->names.items[0] = pair;
+            mo_core_expr app = lower_expr(p, MO_CORE_EXPR_APP);
+            app->as.app.f = args.items[1];
+            app->as.app.args = arguments(b, 1);
+            app->as.app.args.items[0] = projection(b, lower_var(p, pair), 0);
+            mo_core_expr branch = lower_expr(p, MO_CORE_EXPR_IF);
+            branch->as.if_.cond = app;
+            mo_core_expr hit = lower_expr(p, MO_CORE_EXPR_JUMP);
+            hit->as.jump.name = loop_join->as.join.name;
+            hit->as.jump.args = arguments(b, 1);
+            hit->as.jump.args.items[0] = projection(b, lower_var(p, pair), 1);
+            branch->as.if_.then_ = hit;
+            branch->as.if_.else_ = lower_bool(p, false);
+            some->body = branch;
+            loop_join->as.join.body = select;
+            return loop_join;
+        }
         if (strcmp(r->native, "List.count") == 0) {
             MO_ASSERT(args.count == 2);
             mo_core_ty in_list =
@@ -1538,7 +1596,8 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
     }
     if (r->native != NULL &&
         (strcmp(r->native, "Map.get") == 0 || strcmp(r->native, "Map.set") == 0 ||
-         strcmp(r->native, "Map.size") == 0)) {
+         strcmp(r->native, "Map.remove") == 0 || strcmp(r->native, "Map.size") == 0 ||
+         strcmp(r->native, "Map.values") == 0)) {
         mo_core_ty receiver =
             r->operand_count == 0
                 ? result->as.fn.params.items[0]
@@ -1550,9 +1609,11 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
             .tag = MO_CORE_PRIM_MAP,
             .as.map = {.k = receiver->as.map.k,
                        .v = receiver->as.map.v,
-                       .op.tag = strcmp(r->native, "Map.get") == 0   ? MO_CORE_MAP_OP_GET
-                                 : strcmp(r->native, "Map.set") == 0 ? MO_CORE_MAP_OP_SET
-                                                                     : MO_CORE_MAP_OP_SIZE}};
+                       .op.tag = strcmp(r->native, "Map.get") == 0      ? MO_CORE_MAP_OP_GET
+                                 : strcmp(r->native, "Map.set") == 0    ? MO_CORE_MAP_OP_SET
+                                 : strcmp(r->native, "Map.remove") == 0 ? MO_CORE_MAP_OP_REMOVE
+                                 : strcmp(r->native, "Map.size") == 0   ? MO_CORE_MAP_OP_SIZE
+                                                                        : MO_CORE_MAP_OP_VALUES}};
         return lower_prim(p, prim, args);
     }
     if (r->native != NULL) {

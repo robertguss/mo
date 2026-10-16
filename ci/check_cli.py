@@ -1541,6 +1541,53 @@ def runner(binary):
             ("RateLimit.test.2", "passed")]
         assert rate_limit_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
                                         "passed": 5, "failed": 0, "stopped": 0, "status": 0}
+        assert run(binary, ["check", "examples/kv.mo"], 0).stderr == b""
+        records(run(binary, ["check", "--json", "examples/kv.mo"], 0), "check")
+        kv_run = subprocess.run([str(binary), "run", "examples/kv.mo"], cwd=root,
+                                input=b"SET a 1\nINCR a\nGET a\nFLY\n",
+                                capture_output=True, timeout=30)
+        assert kv_run.returncode == 0 and kv_run.stderr == b""
+        assert kv_run.stdout == b'OK\n(integer) 2\n"2"\n(error) unknown command FLY\n'
+        kv_tests = records(
+            run(binary, ["test", "--json",
+                         "--only", "Kv.parse.example.1",
+                         "--only", "Kv.parse.example.2",
+                         "--only", "Kv.parse.example.3",
+                         "--only", "Kv.parse.example.4",
+                         "--only", "Kv.parse.example.5",
+                         "--only", "Kv.parse.example.6",
+                         "--only", "Kv.parse.example.7",
+                         "--only", "Kv.increment.example.1",
+                         "--only", "Kv.increment.example.2",
+                         "--only", "Kv.increment.example.3",
+                         "--only", "Kv.increment.example.4",
+                         "--only", "Kv.expire.example.1",
+                         "--only", "Kv.expire.example.2",
+                         "--only", "Kv.expire.example.3",
+                         "--only", "Kv.expire.example.4",
+                         "--only", "Kv.test.1",
+                         "--only", "Kv.test.2",
+                         "examples/kv.mo"], 0), "test")
+        assert [(r["name"], r["outcome"]) for r in kv_tests[1:-1]] == [
+            ("Kv.parse.example.1", "passed"),
+            ("Kv.parse.example.2", "passed"),
+            ("Kv.parse.example.3", "passed"),
+            ("Kv.parse.example.4", "passed"),
+            ("Kv.parse.example.5", "passed"),
+            ("Kv.parse.example.6", "passed"),
+            ("Kv.parse.example.7", "passed"),
+            ("Kv.increment.example.1", "passed"),
+            ("Kv.increment.example.2", "passed"),
+            ("Kv.increment.example.3", "passed"),
+            ("Kv.increment.example.4", "passed"),
+            ("Kv.expire.example.1", "passed"),
+            ("Kv.expire.example.2", "passed"),
+            ("Kv.expire.example.3", "passed"),
+            ("Kv.expire.example.4", "passed"),
+            ("Kv.test.1", "passed"),
+            ("Kv.test.2", "passed")]
+        assert kv_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                                "passed": 17, "failed": 0, "stopped": 0, "status": 0}
 
         # Every source stage, including lower/Core/codegen, shares the explicit
         # source stack, while the caller has only 1 MiB. Nested arithmetic also
@@ -1585,6 +1632,7 @@ def map_literals(binary):
     fixtures = root / "tests/lower-source"
     for name, expected in {
         "file-error-text": b"notes/a.md: no such file\n../secret: not allowed\nbin/app: not text\nout.txt: is a folder\nSome(notes/a.md: no such file)\n",
+        "list-all": b"true/true/false/false/true/true/true\n",
         "list-count": b"0/0/3/2/2/2/3\n",
         "list-map": b"[2, 4, 6]/[1, 2, 3]/[13, 14]/[0, 25]/[7, 8]\n",
         "option-or-fail": b"Ok(1)/Error(Missing(name: \"z\"))\nOk(42)/Error(Empty)\n"
