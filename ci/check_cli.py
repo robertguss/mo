@@ -1382,16 +1382,45 @@ def runner(binary):
         result = run(binary, ["run", "--max-heap", "1", str(path)], 70)
         assert not result.stdout and b"--max-heap = 1" in result.stderr
 
-        # Loading/checking failure is never run as code. Missing main is an
-        # error even for check; an inference result alone is not a certificate.
-        for body, code in (("fn f() : Int\n3\nend", "E0079"),
-                           ('fn main() : Int\n"text"\nend', "E0078")):
-            path.write_text("module Main\n" + body + "\n")
-            for command in ("check", "run"):
-                result = run(binary, [command, str(path)], 1)
-                assert not result.stdout and code.encode() in result.stderr
-            items = records(run(binary, ["check", "--json", str(path)], 1), "check")
-            assert items[1]["code"] == code and items[-1]["dropped"] == 0
+        # Loading/checking failure is never run as code. Per D250, a module
+        # without main is a library module: check and test accept it, and E0079
+        # comes only from run.
+        path.write_text('module Main\nfn main() : Int\n"text"\nend\n')
+        for command in ("check", "run"):
+            result = run(binary, [command, str(path)], 1)
+            assert not result.stdout and b"E0078" in result.stderr
+        items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+        assert items[1]["code"] == "E0078" and items[-1]["dropped"] == 0
+
+        path.write_text('module Main\nexpose identity\nfn identity(a: Int) : Int\n'
+                        'examples\nidentity(5) == 5\nend\n'
+                        'promise "keeps input"\nresult == a\n'
+                        'allows a: 1, result: 1\nforbids a: 1, result: 2\nend\n'
+                        'a\nend\n'
+                        'test "library test item"\nassert identity(9) == 9\nend\n')
+        for extra in ([], ["--emit=core"], ["--emit=bytecode"]):
+            checked = run(binary, ["check", *extra, str(path)], 0)
+            assert not checked.stderr
+            if not extra:
+                assert not checked.stdout
+        records(run(binary, ["check", "--json", str(path)], 0), "check")
+        tested = records(run(binary, ["test", "--json", str(path)], 0), "test")
+        assert [(r["name"], r["outcome"]) for r in tested[1:-1]] == [
+            ("Main.identity.example.1", "passed"),
+            ("Main.identity.promise.1", "passed"),
+            ("Main.test.1", "passed")]
+        result = run(binary, ["run", str(path)], 1)
+        assert not result.stdout and b"E0079" in result.stderr
+        assert b"the entry module has no main function" in result.stderr
+
+        for sample in ("examples/account.mo", "examples/job-queue.mo",
+                       "examples/notes-tool.mo", "examples/rate-limit.mo"):
+            result = subprocess.run([str(binary), "check", "--json", sample],
+                                    cwd=root, capture_output=True, timeout=30)
+            items = [json.loads(line) for line in result.stdout.splitlines()]
+            assert all(r.get("code") != "E0079" for r in items), (sample, items)
+        assert run(binary, ["check", "examples/account.mo"], 0).stderr == b""
+        assert b"E0079" in run(binary, ["run", "examples/account.mo"], 1).stderr
 
         # Every source stage, including lower/Core/codegen, shares the explicit
         # source stack, while the caller has only 1 MiB. Nested arithmetic also
@@ -1846,7 +1875,8 @@ def check(binary):
     assert items[1]["primary"]["file"] is None and items[1]["section"] is None
     failure = run(faults, ["--text"], 1)
     assert not failure.stdout and b"E1401" in failure.stderr
-    for stage in ("parse", "load", "modules", "signatures", "bodies", "fix", "multiline"):
+    for stage in ("parse", "load", "modules", "signatures", "bodies", "program", "fix",
+                  "multiline"):
         path = f"tests/cli/{stage}/main.mo"
         for json_mode in (False, True):
             result = run(binary, ["check", *(["--json"] if json_mode else []), path], 1)
@@ -1867,6 +1897,14 @@ def check(binary):
     result = run(binary, ["check", good], 0)
     assert not result.stdout and not result.stderr
     records(run(binary, ["check", "--json", good], 0), "check")
+    library = "tests/cli/library/main.mo"
+    result = run(binary, ["check", library], 0)
+    assert not result.stdout and not result.stderr
+    run(binary, ["check", "--emit=bytecode", library], 0)
+    records(run(binary, ["check", "--json", library], 0), "check")
+    assert b"E0079" in run(binary, ["run", library], 1).stderr
+    tested_lib = records(run(binary, ["test", "--json", library], 0), "test")
+    assert [(r["name"], r["outcome"]) for r in tested_lib[1:-1]] == [("Main.test.1", "passed")]
     for mode in ("text", "json"):
         result = run(driver, [f"--render-{mode}"], 0)
         assert not result.stderr
@@ -2047,9 +2085,10 @@ def check(binary):
                 expected = (b'module Main\na = 0' + b' ' * 51 + b'#' + b'c' * length +
                             b'\n' + b'b' * 50 + b' = 0  # short\n')
                 assert not result.stderr and path.read_bytes() == expected
-                # A formatter fragment still has no entry. Supporting its
-                # constants must not silently waive whole-check's main rule.
-                result = run(binary, ["check", str(path)], 1)
+                # A constant-only library module checks cleanly (D250), while
+                # running it still requires main (E0079).
+                run(binary, ["check", str(path)], 0)
+                result = run(binary, ["run", str(path)], 1)
                 assert b'E0079' in result.stderr
         # Rename is observable: an existing reader and hard link keep the old
         # complete file, while the requested path gets the complete new file.

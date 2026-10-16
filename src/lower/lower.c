@@ -139,8 +139,8 @@ static mo_core_expr status(struct lowering *p, mo_core_expr value) {
 
 static void entry(struct lowering *p, struct instance *main) {
     const struct mo_checked_entry *checked = &p->program->entry;
-    const struct mo_symbol *symbol = main->source->signature->function;
-    p->span = symbol->declaration->span;
+    p->span = main != NULL ? main->source->signature->function->declaration->span
+                           : p->program->set->modules[0]->span;
     struct instance *wrapper = LOWER_NEW(p, struct instance, 1);
     wrapper->owner = 0;
     wrapper->index = p->function_count++;
@@ -152,8 +152,13 @@ static void entry(struct lowering *p, struct instance *main) {
     static const struct mo_source_type int_type = {
         .kind = MO_SOURCE_NAMED, .name = "Int", .module = UINT32_MAX};
     wrapper->fun.ret = lower_type(p, &int_type, NULL);
-    wrapper->meta.name = lower_concat(p, main->meta.name, ".", lower_text(p, "entry"));
+    wrapper->meta.name = lower_concat(p, main != NULL ? main->meta.name : wrapper->fun.module, ".",
+                                      lower_text(p, main != NULL ? "entry" : "%entry"));
     wrapper->meta.span = lower_span(p, p->span);
+    if (main == NULL) {
+        wrapper->fun.body = lower_int(p, 0);
+        return;
+    }
     wrapper->fun.params = main->fun.params;
     wrapper->meta.body.params = main->meta.body.params;
     mo_core_string console = {0};
@@ -241,7 +246,7 @@ struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *progra
                            .span.file = UINT32_MAX};
     if (setjmp(p->escape) != 0)
         return NULL;
-    if (program->function_count == 0)
+    if (program->set == NULL)
         lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "the checked entry function is unavailable");
     p->function_tail = &p->functions;
     p->data_tail = &p->data;
@@ -252,10 +257,13 @@ struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *progra
             if (type->parameters == 0)
                 (void)lower_type(p, type, NULL);
         }
-    MO_ASSERT(program->entry.function < program->function_count);
+    MO_ASSERT(program->entry.function == UINT32_MAX ||
+              program->entry.function < program->function_count);
     struct instance *main =
-        lower_instance(p, program->functions[program->entry.function].signature->function,
-                       (struct mo_type_arguments){0}, NULL, 0, NULL, 0, 0);
+        program->entry.function == UINT32_MAX
+            ? NULL
+            : lower_instance(p, program->functions[program->entry.function].signature->function,
+                             (struct mo_type_arguments){0}, NULL, 0, NULL, 0, 0);
     for (uint32_t i = 0; i < program->function_count; i++) {
         const struct mo_checked_function *f = &program->functions[i];
         if (f->signature->type->parameters == 0)

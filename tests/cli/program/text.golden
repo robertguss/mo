@@ -1,0 +1,7 @@
+error E0079: main has an invalid signature  tests/cli/program/main.mo:2:4
+
+  2 | fn main(value: Int) : Int
+    |    ^^^^ main has an invalid signature
+
+main lists capabilities, at most one of each type (reference 11.2).
+

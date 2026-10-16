@@ -71,6 +71,16 @@ static void execute_pipeline(void *argument) {
     struct mo_program *program = mo_check(arena, set, diags);
     if (program == NULL || mo_diags_any(diags))
         return;
+    if (cli->command == MO_COMMAND_RUN && program->entry.function == UINT32_MAX) {
+        const char *message = "the entry module has no main function";
+        struct mo_diag diag = {.code = MO_CODE_MAIN_CONTRACT,
+                               .primary = {set->modules[0]->span, message},
+                               .message = message,
+                               .reason = "main declares the program's entry (reference 11.2)."};
+        bool added = mo_diags_add(diags, &diag);
+        (void)added;
+        return;
+    }
     /* Test observations are separate from the compiler's anchor checks. */
     struct mo_test_selection *selection = NULL;
     if (cli->command == MO_COMMAND_TEST) {

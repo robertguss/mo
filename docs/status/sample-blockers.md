@@ -1,44 +1,41 @@
-# Sample blockers after C7 and F8
+# Sample blockers after C1
 
 Regenerated from actual `mo check --json examples/<sample>.mo` output on
-`bfcdedcd` (I1/PR81), `75e6db61` (LW5/PR82), `02395dbd` (C7/PR83) and F8.
-Every totals record reports `dropped: 0`. Examples are unchanged.
+`bfcdedcd` (I1/PR81), `75e6db61` (LW5/PR82), `02395dbd` (C7/PR83),
+`09f4c445` (F8/PR84) and C1. Every totals record reports `dropped: 0`.
+Examples are unchanged.
 
-`FileError`'s text form (`PATH: no such file`, `PATH: not allowed`,
-`PATH: not text`, `PATH: REASON`) is accepted through check, lowering and run,
-and the native `IO`, `List` and `Text` operations used by `examples/find.mo`
-now lower to their existing Core primitives:
-- `expenses.mo` drops from 4 to 3 errors.
-- `wc.mo` drops from 2 to 1 error.
-- `find.mo` passes `mo check`, `mo test` (7 examples and 2 tests) and `mo run`
-  with 0 errors.
-- `todo.mo` clears the `E1103` halt in its first function (`to_text` at `35:26`),
-  allowing `check_program` to check `parse_items`, `apply` and `main` and expose
-  their existing `Option.or_fail` and `List.map` `E0050` diagnostics (1→4).
+Per D250, a module without `main` is a library module: `mo check` and `mo test`
+accept it, and `E0079` is reported only by `mo run`:
+- `account.mo` drops from 1 to 0 errors and passes `mo check` (including its
+  anchors).
+- `job-queue.mo`, `notes-tool.mo` and `rate-limit.mo` get no `E0079` from
+  `mo check`.
+- `notes-tool.mo` now passes `mo_check` and reaches `mo_lower`, which reports
+  `E1150` on `input.query.trim` at `45:22` (handled by F14).
 
 ## Counts
 
-| Sample | Main / I1 | LW5 | C7 | F8 | Change (C7→F8) |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| account.mo | 1 | 1 | 1 | 1 | +0 |
-| expenses.mo | 2 | 4 | 3 | 3 | +0 |
-| find.mo | 1 | 1 | 1 | 0 | -1 |
-| greet.mo | 0 | 0 | 0 | 0 | +0 |
-| inventory.mo | 2 | 5 | 5 | 5 | +0 |
-| job-queue.mo | 1 | 3 | 3 | 3 | +0 |
-| json-query.mo | 1 | 4 | 4 | 4 | +0 |
-| kv.mo | 1 | 1 | 1 | 1 | +0 |
-| notes-tool.mo | 1 | 1 | 1 | 1 | +0 |
-| rate-limit.mo | 1 | 1 | 1 | 1 | +0 |
-| todo.mo | 1 | 1 | 4 | 4 | +0 |
-| wc.mo | 2 | 2 | 1 | 1 | +0 |
-| **Total** | **14** | **24** | **25** | **24** | **-1** |
+| Sample | Main / I1 | LW5 | C7 | F8 | C1 | Change (F8→C1) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| account.mo | 1 | 1 | 1 | 1 | 0 | -1 |
+| expenses.mo | 2 | 4 | 3 | 3 | 3 | +0 |
+| find.mo | 1 | 1 | 1 | 0 | 0 | +0 |
+| greet.mo | 0 | 0 | 0 | 0 | 0 | +0 |
+| inventory.mo | 2 | 5 | 5 | 5 | 5 | +0 |
+| job-queue.mo | 1 | 3 | 3 | 3 | 3 | +0 |
+| json-query.mo | 1 | 4 | 4 | 4 | 4 | +0 |
+| kv.mo | 1 | 1 | 1 | 1 | 1 | +0 |
+| notes-tool.mo | 1 | 1 | 1 | 1 | 1 | +0 |
+| rate-limit.mo | 1 | 1 | 1 | 1 | 1 | +0 |
+| todo.mo | 1 | 1 | 4 | 4 | 4 | +0 |
+| wc.mo | 2 | 2 | 1 | 1 | 1 | +0 |
+| **Total** | **14** | **24** | **25** | **24** | **23** | **-1** |
 
 ## Current diagnostics
 
 | Sample | Location | Code | Diagnostic | Source |
 | --- | --- | --- | --- | --- |
-| account.mo | 1:1 | E0079 | the entry module has no main function | `## The core of a bank account: deposits, withdrawals that can't overdraw, and` |
 | expenses.mo | 38:24 | E0050 | no visible function has this dot-call name | `case line.split(",").map(fn(field) field.trim end)` |
 | expenses.mo | 57:17 | E0050 | no visible function has this dot-call name | `sums = sums.update(expense.category, 0, fn(sum) sum + expense.amount end)` |
 | expenses.mo | 68:16 | E0050 | no visible function has this dot-call name | `names = rows.map(fn(row) row.0 end)` |
@@ -55,7 +52,7 @@ now lower to their existing Core primitives:
 | json-query.mo | 211:21 | E0050 | no visible function has this dot-call name | `lines = items.map(fn(item) "#{inner}#{pretty(item, inner)}" end)` |
 | json-query.mo | 228:19 | E0050 | no visible function has this dot-call name | `"\"#{text.chars.map(escape_char).join("")}\""` |
 | kv.mo | 79:30 | E0050 | no visible function has this dot-call name | `n = try seconds.to_int.or_fail(NotAnInteger(text: seconds))` |
-| notes-tool.mo | 1:1 | E0079 | the entry module has no main function | `## The handler of an MCP tool that searches Markdown notes. It is handed one` |
+| notes-tool.mo | 45:22 | E1150 | this native call is not lowered yet | `query = input.query.trim.ascii_lowercase` |
 | rate-limit.mo | 66:14 | E1103 | this body rule is not implemented by the staged checker | `elapsed = (now - bucket.updated).in_seconds.max(0)` |
 | todo.mo | 71:45 | E0050 | no visible function has this dot-call name | `rest = try line.drop_prefix("[ ] ").or_fail(BadLine(number: index + 1))` |
 | todo.mo | 85:9 | E0050 | no visible function has this dot-call name | `items.map(fn(item) "#{box(item)} #{item.text}\n" end).join("")` |
@@ -65,7 +62,10 @@ now lower to their existing Core primitives:
 
 ## Newly exposed blockers
 
+- account: passes `mo check` (including its anchors) with 0 errors.
 - find: passes `mo check`, `mo test` and `mo run` with 0 errors.
+- notes-tool: clearing `E0079` lets `mo check` reach `mo_lower`, exposing
+  `E1150` on `Text.trim` (`45:22`).
 - todo: clearing `E1103` in `to_text` (`35:26`) allows `check_program` to
   continue into `parse_items`, `apply` and `main`, exposing `Option.or_fail`
   (`71:45`, `110:39`, `120:42`) and `List.map` (`85:9`).
@@ -95,3 +95,4 @@ build/clang/debug/mo check --json examples/<sample>.mo
 Read `errors` from each totals record and assert `dropped == 0`. Historical
 LW5 and I1 verification records remain in [lw5-verification.md](lw5-verification.md)
 and [i1-verification.md](i1-verification.md).
+

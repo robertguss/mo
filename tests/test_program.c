@@ -601,6 +601,13 @@ static void console_graph(void) {
         }
     }
     free_fixture(&f);
+    init(&f, "module Lib\nexpose helper\nfn helper() : Int\n37\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        CHECK(f.program->entry.function == UINT32_MAX);
+        CHECK(f.program->entry.capability_count == 0 && f.program->entry.capabilities == NULL);
+    }
+    free_fixture(&f);
 }
 
 static void native_graph(void) {
@@ -2102,7 +2109,6 @@ static void rejected_stages(void) {
         const char *source;
         uint16_t code;
     } cases[] = {
-        {"fn helper()\nend\n", MO_CODE_MAIN_CONTRACT},
         {"fn helper(x: Int) : Int where T: Bogus\nx\nend\nfn main()\nend\n",
          MO_CODE_ABILITY_REQUIREMENT},
         {"fn main() : Int where Q: Equal\n0\nend\n", MO_CODE_ABILITY_REQUIREMENT},

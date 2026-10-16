@@ -538,7 +538,7 @@ struct mo_checked_spec {
 enum mo_checked_entry_result { MO_ENTRY_UNIT, MO_ENTRY_STATUS, MO_ENTRY_RESULT };
 
 struct mo_checked_entry {
-    uint32_t function; /* index in program.functions; main in set.modules[0] */
+    uint32_t function; /* index in program.functions; main in set.modules[0], or UINT32_MAX */
     enum mo_checked_entry_result result;
     uint32_t capability_count;
     const struct mo_checked_binding *const *capabilities; /* main parameters in written order */
@@ -581,7 +581,8 @@ struct mo_program {
  * ability dot calls and interpolation retain native/derived/custom/parameter proofs. Source
  * dot/overload dispatch and loaded library calls retain the selected symbols. Written Map/Set
  * types require Hash. main takes distinct capabilities in written order and returns Unit or Int.
- * Missing main and invalid entry signatures report E0079; there is no certified absent entry.
+ * Invalid entry signatures report E0079; a library module without main has
+ * entry.function == UINT32_MAX.
  * Source example lines are zero-parameter Bool bodies, with their subject index,
  * per-subject ordinal and an arena-owned copy of their original bytes/span.
  * set.sources must cover the syntax's original file indices for spec checking.

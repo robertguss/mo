@@ -83,7 +83,8 @@ static void pattern(const struct mo_program *program, const struct mo_checked_bo
 }
 
 static void graph(const struct mo_program *program) {
-    MO_ASSERT(program->entry.function < program->function_count);
+    MO_ASSERT(program->entry.function == UINT32_MAX ||
+              program->entry.function < program->function_count);
     uint32_t nonconstants = program->function_count + program->spec_count;
     for (uint32_t f = 0; f < nonconstants + program->constant_count; f++) {
         const struct mo_checked_function *function =
