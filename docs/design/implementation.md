@@ -80,11 +80,14 @@ better error messages, and is tested against this grammar. See
 
 ## CI
 
-CI runs in a dedicated Amp orb, on request (decisions D208 and D214). An
-implementation thread pushes its branch, opens a pull request and sends it to
-the CI orb, which runs that commit's `ci/check.sh` in a clean environment,
-comments the result on the pull request, and replies. Nothing runs on GitHub.
-See `ci/orb/README.md`.
+Run the full `CI=1 bash ci/check.sh` in the optional dedicated Amp CI orb or an
+equivalent verified Linux environment, such as a Docker container on the Mac.
+Robert removed the mandatory CI-orb prerequisite; all test, sanitizer, fuzz and
+formal gates remain required. Record the tested revision, commands, toolchain,
+exit status and retained log in the PR. Review and Robert’s merge authorization
+remain required, as do applicable GitHub checks and branch protection. For
+runner instructions and documentation-only evidence reuse, see
+`ci/orb/README.md`.
 
 ## Rust-era plans, replaced
 

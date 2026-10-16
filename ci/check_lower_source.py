@@ -753,6 +753,19 @@ def check_modules(driver, vm, root, world):
           "match Lean/original-document VM; declaring owners, exports and spans retained")
 
 
+for fixture, expected in {
+    "map-literals": 0,
+    "map-evaluation-order": 0,
+    "map-captures": 0,
+    "map-native-routes": 0,
+    "map-mutating-key": 0,
+    "map-runtime-duplicate": ["stopped", "two keys of a map literal that turn out equal"],
+}.items():
+    body = (pathlib.Path("tests/lower-source") / fixture / "main.mo").read_text()
+    assert body.startswith("module Main\n")
+    CASES[fixture] = (body[len("module Main\n"):], expected)
+
+
 for count in (4, 8, 16):
     CASES[f"linear_bool_{count}"] = (
         "fn main() : Int\nx = false\n" + "\n".join(
@@ -859,7 +872,7 @@ def main():
             assert metadata[0] == "Metadata"
             names = [closure[1] for fun in metadata[3] for closure in fun[4][4]]
             assert len(names) == len(set(names)), (name, "duplicate closure display names", names)
-            expected = ["returned", str(status)]
+            expected = ["returned", str(status)] if isinstance(status, int) else status
             actual = oracle(path, world)
             assert actual == expected, (name, expected, actual)
             actual = run(str(vm), path)

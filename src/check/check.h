@@ -189,7 +189,7 @@ struct mo_inferred_body {
  * delayed overload selection finish in this walk. This is not mo_check: ability
  * proofs and polymorphic recursion belong to that walk. Capability/capture flow,
  * specs, constants, unused imports and main's contract still need their checking
- * stages, as do compile-time duplicate map keys.
+ * stages. Equal scalar literals and repeated bare names in map literals are rejected.
  * Nonempty examples/promises return E1103. A success is not suitable for lowering.
  * NULL with the earliest retained independent source error in this body; a resource
  * failure stops immediately and takes priority.

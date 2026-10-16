@@ -598,8 +598,12 @@ not silently accept them. Dot dispatch and delayed overload selection
 finish in this walk. Ability proofs and polymorphic recursion are certified
 by `mo_check` (section 12), not by this intermediate result. Failure
 propagation, capture/capability flow, specs, constants, unused imports and
-the entry contract still need their stages. Compile-time duplicate map
-keys (equal literals or repeated names, reference 3.8) are also still pending.
+the entry contract still need their stages. Map literals reject unchanged repeated bare names
+and equal scalar literals (reference 3.8), including normalized numeric spellings
+and decoded text/char escapes. A stable, budgeted merge of canonical keys retains
+the earliest repeated key and the first equal key for E0094. Constants, qualified
+names and expression folding are not evaluated for this comparison. Robert
+approved this bounded scope for LW5; broader visibility needs a separate decision.
 Nonempty examples or promises are refused with E1103, never silently skipped.
 A successful intermediate body is not a `mo_program`, is not lowering-ready and does not certify those
 rules. `mo_check` composes implemented stages for a certified subset; section 12
@@ -916,7 +920,7 @@ not syntax inference. Explicit arena-backed task and continuation lists perform
 expression/pattern lowering; an explicit, memoized stack walks type DAGs.
 Queued function/data instances have no recursive C walk. E1150 refuses later
 forms (unsupported ability/native
-operations, map literals and spec code); E1151 is arena exhaustion, E1152 the
+operations and spec code); E1151 is arena exhaustion, E1152 the
 shared allocation-byte/step or Core-node bound, and E1153 the source-type,
 instantiation or generated Core path bound. Compilation is independent of the
 text codec: `mo_lower` does not print Core or apply the codec's smaller schema,
@@ -947,7 +951,10 @@ decode escapes and triple-text indentation/CRLFs into independently owned bytes.
 Arguments and list elements evaluate in written order. Atoms pass directly;
 mutable reads are snapshotted before later non-atomic arguments. Discarded
 Unit/atom statements need no additional let. List elements then pass to Core's
-`%list.lit` primitive. Map literal graphs remain staged with the checker.
+`%list.lit` primitive. Map graphs retain alternating key/value operands in source
+order and lower to Core's `%map.lit`; `get`, `set` and `size` route to existing
+Core map operations. A jump that ignores its Unit result still evaluates its
+last expression, so a loop's final call retains its effects.
 Hash indices memoize concrete types and function instances; concrete source
 types do not depend on an instance's substitution pointer. Source-function
 lookup uses a sorted index, and metadata traverses per-declaration instance
@@ -969,8 +976,8 @@ declaring identities and layouts. Certified foreign constant reads and direct
 imported initializer calls/function values use the same resolved symbols and
 constant prefixes below; imports do not add exports or change initialization
 order. Unresolved higher-order/returned/anonymous initializer calls and executed
-abstract Text/Order dependencies remain checker E1103; Maps and the other
-existing staged routes are unchanged.
+abstract Text/Order dependencies remain checker E1103; other existing staged
+routes are unchanged.
 
 Core lookup/display names retain the declaring module and source name;
 overloads add `@Receiver`. Generic function code is keyed by (requesting
@@ -2210,8 +2217,10 @@ among them:
 - path resolution in the host: never resolves outside the folder;
 - the formatter: formatting twice gives the same text, and keeps the tree.
 
-Every check runs through `ci/check.sh`, in the CI orb on request (D214). The
-Lean build (`make formal`) and CBMC need elan and CBMC in `.agents/setup`.
+Every check runs through `ci/check.sh`, in the optional CI orb (D214) or an
+equivalent verified Linux environment. The full gates remain required; merge
+verification and evidence rules are in `ci/orb/README.md`. The Lean build
+(`make formal`) and CBMC need elan and CBMC in `.agents/setup`.
 
 ## 12. Phase 2's streams and their interfaces
 

@@ -64,7 +64,8 @@ def oracle(path, world, test=None, effects=False):
             detail = ("time outside years 1 to 9999" if detail[1] == "a time outside the years 1 to 9999"
                       else f"overflow: {detail[1]}")
         else:
-            detail = {"divByZero": "dividing by zero"}[detail[0]]
+            detail = {"divByZero": "dividing by zero",
+                      "repeatedKey": "two keys of a map literal that turn out equal"}[detail[0]]
     outcome = canonical([str(report[0]), detail])
     return (outcome, report[2]) if effects else outcome
 

@@ -84,6 +84,29 @@ static void number_literal_bound(void) {
     free_fixture(&f);
 }
 
+static void map_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn main() : Int\nm = {\"a\": 1}\ncase m\n_: 1\nend\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[f.program->entry.function].body;
+        bool found = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->syntax->kind != MO_S_MAP)
+                continue;
+            CHECK(row->operand_count == 2);
+            if (row->operand_count == 2) {
+                CHECK(body->items[row->operands[0]].syntax->kind == MO_S_TEXT);
+                CHECK(body->items[row->operands[1]].syntax->kind == MO_S_INT);
+            }
+            found = true;
+        }
+        CHECK(found);
+    }
+    free_fixture(&f);
+}
+
 static void constant_graph(void) {
     struct fixture f;
     init(&f, "module Main\nanswer = base - 5\nbase = 13\nindependent = true\n"
@@ -2125,7 +2148,6 @@ static void rejected_stages(void) {
         {"fn grow(value: T)\ngrow([value])\nend\nfn main()\nend\n", MO_CODE_POLYMORPHIC_RECURSION},
         {"fn a(value: T)\nb([value])\nend\nfn b(value: U)\na(value)\nend\nfn main()\nend\n",
          MO_CODE_POLYMORPHIC_RECURSION},
-        {"fn main() : Int\nm = {\"a\": 1}\ncase m\n_: 1\nend\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Int\ntry Some(1)\nend\n", MO_CODE_TRY_RESULT},
         {"fn helper() : Option(Int)\nSome(try 1)\nend\nfn main()\nend\n", MO_CODE_TRY_INPUT},
         {"fn helper() : Option(Int)\nSome(try true)\nend\nfn main()\nend\n", MO_CODE_TRY_INPUT},
@@ -2505,6 +2527,7 @@ static void corpus(void) {
 
 static void run(void *argument) {
     (void)argument;
+    map_graph();
     constant_graph();
     constant_names();
     constant_context();
