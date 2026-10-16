@@ -92,7 +92,7 @@ static bool returns(struct body *b, uint32_t root) {
         if (!seen[i])
             continue;
         const struct mo_checked_expression *r = row(b, i);
-        if (r->syntax->kind == MO_S_RETURN || r->try_ != NULL)
+        if (r->syntax->kind == MO_S_RETURN || r->syntax->kind == MO_S_STOP || r->try_ != NULL)
             return true;
         if (r->lambda != NULL)
             continue;
@@ -953,6 +953,73 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                 return lower_prim(
                     p, (struct mo_core_prim){.tag = MO_CORE_PRIM_IO, .as.io = io[i].operation},
                     args);
+        }
+        if (strcmp(r->native, "List.map") == 0) {
+            MO_ASSERT(args.count == 2);
+            mo_core_ty in_list =
+                r->operand_count == 0
+                    ? result->as.fn.params.items[0]
+                    : type(b,
+                           row(b, r->receiver == UINT32_MAX ? r->operands[0] : r->receiver)->type);
+            if (in_list->tag == MO_CORE_TY_FN)
+                in_list = in_list->as.fn.params.items[0];
+            mo_core_ty out_list = result->tag == MO_CORE_TY_FN ? result->as.fn.ret : result;
+            MO_ASSERT(in_list->tag == MO_CORE_TY_LIST && out_list->tag == MO_CORE_TY_LIST);
+            mo_core_expr loop_join = lower_expr(p, MO_CORE_EXPR_JOIN);
+            loop_join->as.join.name = lower_fresh(p);
+            loop_join->as.join.params.count = 2;
+            loop_join->as.join.params.items = LOWER_NEW(p, struct mo_core_param, 2);
+            mo_core_string rem = lower_fresh(p), acc = lower_fresh(p);
+            loop_join->as.join.params.items[0] = (struct mo_core_param){rem, in_list};
+            loop_join->as.join.params.items[1] = (struct mo_core_param){acc, out_list};
+            mo_core_expr start = lower_expr(p, MO_CORE_EXPR_JUMP);
+            start->as.jump.name = loop_join->as.join.name;
+            start->as.jump.args = arguments(b, 2);
+            start->as.jump.args.items[0] = args.items[0];
+            struct mo_core_prim empty = {.tag = MO_CORE_PRIM_LIST, .as.list.t = out_list->as.list};
+            empty.as.list.op.tag = MO_CORE_LIST_OP_LIT;
+            empty.as.list.op.as.lit.digits = lower_text(p, "0");
+            start->as.jump.args.items[1] = lower_prim(p, empty, arguments(b, 0));
+            loop_join->as.join.rest = start;
+            mo_core_expr select = lower_expr(p, MO_CORE_EXPR_CASE);
+            select->as.case_.expr =
+                unary(b,
+                      (struct mo_core_prim){
+                          .tag = MO_CORE_PRIM_LIST,
+                          .as.list = {.t = in_list->as.list, .op.tag = MO_CORE_LIST_OP_UNCONS}},
+                      lower_var(p, rem));
+            select->as.case_.arms.count = 2;
+            select->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+            select->as.case_.arms.items[0] =
+                (struct mo_core_arm){.ctor = lower_text(p, "None"), .body = lower_var(p, acc)};
+            struct mo_core_arm *some = &select->as.case_.arms.items[1];
+            some->ctor = lower_text(p, "Some");
+            some->names.count = 1;
+            some->names.items = LOWER_NEW(p, mo_core_string, 1);
+            mo_core_string pair = lower_fresh(p);
+            some->names.items[0] = pair;
+            mo_core_expr app = lower_expr(p, MO_CORE_EXPR_APP);
+            app->as.app.f = args.items[1];
+            app->as.app.args = arguments(b, 1);
+            app->as.app.args.items[0] = projection(b, lower_var(p, pair), 0);
+            mo_core_expr mapped = let(b, lower_fresh(p), app);
+            some->body = mapped;
+            mo_core_expr again = lower_expr(p, MO_CORE_EXPR_JUMP);
+            again->as.jump.name = loop_join->as.join.name;
+            again->as.jump.args = arguments(b, 2);
+            again->as.jump.args.items[0] = projection(b, lower_var(p, pair), 1);
+            mo_core_expr_list append_args = arguments(b, 2);
+            append_args.items[0] = lower_var(p, acc);
+            append_args.items[1] = lower_var(p, mapped->as.let_.name);
+            again->as.jump.args.items[1] =
+                lower_prim(p,
+                           (struct mo_core_prim){.tag = MO_CORE_PRIM_LIST,
+                                                 .as.list = {.t = out_list->as.list,
+                                                             .op.tag = MO_CORE_LIST_OP_APPEND}},
+                           append_args);
+            mapped->as.let_.body = again;
+            loop_join->as.join.body = select;
+            return loop_join;
         }
         static const struct {
             const char *name;

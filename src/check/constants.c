@@ -214,7 +214,13 @@ static MO_MUST_USE bool callee(struct dependencies *p, const struct mo_checked_b
             }
         }
         if (row->operand_count == 0 && row->native != NULL) {
-            *target = UINT32_MAX;
+            bool higher_order = false;
+            if (row->type->kind == MO_SOURCE_FUNCTION)
+                for (uint32_t i = 0; i + 1 < row->type->count; i++)
+                    higher_order =
+                        higher_order || row->type->arguments[i]->kind == MO_SOURCE_FUNCTION;
+            if (!higher_order)
+                *target = UINT32_MAX;
             return true;
         }
         if (row->syntax->kind == MO_S_GROUP && row->operand_count == 1) {
@@ -318,6 +324,21 @@ static MO_MUST_USE bool body_edges(struct dependencies *p, uint32_t from,
                 p->vertices[from].span = span;
             } else if (target != UINT32_MAX && !add_edge(p, from, target, span))
                 return false;
+        }
+        if (row->native != NULL && row->operand_count != 0) {
+            uint32_t first = row->receiver == UINT32_MAX && callable ? 1u : 0u;
+            for (uint32_t i = first; i < row->operand_count; i++) {
+                if (body->items[row->operands[i]].type->kind != MO_SOURCE_FUNCTION)
+                    continue;
+                uint32_t target = UINT32_MAX - 1;
+                if (!callee(p, body, row->operands[i], &target))
+                    return false;
+                if (target == UINT32_MAX - 1) {
+                    p->vertices[from].unknown = true;
+                    p->vertices[from].span = span;
+                } else if (target != UINT32_MAX && !add_edge(p, from, target, span))
+                    return false;
+            }
         }
         for (uint32_t i = 0; i < row->ability_count; i++)
             if (row->abilities[i].operand != UINT32_MAX &&
