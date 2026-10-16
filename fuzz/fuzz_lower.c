@@ -1,7 +1,121 @@
 #include "../tests/lower_fixture.h"
 #include "base/codes.h"
+#include "base/stack.h"
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
+
+struct source_input {
+    const uint8_t *bytes;
+    size_t size;
+};
+
+static void source_specs(void *argument) {
+    const struct source_input *input = argument;
+    struct mo_buffer text;
+    mo_buffer_init(&text, 4096);
+    MO_ASSERT(mo_buffer_append_text(
+        &text, "module Main\nuse Peer{Box, Pair, Choice, build, read, spread}\n"
+               "computed = source + Peer.base + 1\nsource = "));
+    MO_ASSERT(mo_buffer_append_uint(&text, input->size == 0 ? 0 : input->bytes[0]));
+    MO_ASSERT(mo_buffer_append_text(
+        &text, "\nmagnitude = Int.abs\nlow = Int.min\nhigh = Int.max\n"
+               "reader = fn() Some(try Some(1)) end\nbuilder = Peer.build\n"
+               "fn make(base: T) : fn(T) : fn() : T where T: Number\n"
+               "fn(extra) fn() base + extra end end\nend\n"
+               "fn wrap(action: fn(Int) : Int) : fn(Int) : Int\n"
+               "fn(value) action(value) end\nend\n"
+               "fn snapshot(box: Box) : fn() : Int\nfn() read(box) end\nend\n"
+               "fn nominal(pair: Pair(Int, Bool), value: Choice(Int)) : Int\ncase value\n"
+               "Hit(n): if pair.second: pair.first + n else: n\nVacant: 0\nend\nend\n"
+               "fn pair(left: Z, right: A) : (Z, A) "
+               "where Z: Number, Z: Equal, A: Equal\n"
+               "promise \"scoped requirements\"\nresult.0 == left + left\nresult.1 == right\n"));
+    size_t count = input->size < 4 ? input->size : 4;
+    for (size_t i = 0; i <= count + 1; i++) {
+        uint8_t byte = i < count ? input->bytes[i] : 0;
+        bool decimal = (byte & 1) != 0, boolean = (byte & 2) != 0;
+        const char *right = boolean ? "true" : "\"λ\"";
+        MO_ASSERT(mo_buffer_append_text(&text, i == count + 1 ? "forbids result: ("
+                                                              : "allows result: (") &&
+                  mo_buffer_append_uint(&text, (uint32_t)byte * 2 + (i == count + 1)) &&
+                  mo_buffer_append_text(&text, decimal ? ".5, " : ", ") &&
+                  mo_buffer_append_text(&text, right) &&
+                  mo_buffer_append_text(&text, "), right: ") &&
+                  mo_buffer_append_text(&text, right) && mo_buffer_append_text(&text, ", left: ") &&
+                  mo_buffer_append_uint(&text, byte) &&
+                  mo_buffer_append_text(&text, decimal ? ".25\n" : "\n"));
+    }
+    MO_ASSERT(mo_buffer_append_text(&text, "end\n(left + left, right)\nend\n"
+                                           "test \"late concrete use\"\n"
+                                           "assert pair(3, false) == (6, false)\n"
+                                           "assert computed == source + Peer.base + 1\n"
+                                           "assert magnitude(-source) == source\n"
+                                           "assert Int.min(-source, 7) == low(7, -source)\n"
+                                           "assert source.max(-7) == high(-7, source)\n"
+                                           "assert make(source)(computed)() == source + computed\n"
+                                           "assert make(1.25)(2.5)() == 3.75\n"
+                                           "assert wrap(magnitude)(-source) == source\n"
+                                           "assert snapshot(build(source))() == source\n"
+                                           "assert snapshot(builder(source))() == source\n"
+                                           "assert Peer.read(Peer.build(computed)) == computed\n"
+                                           "assert Peer.choose(source, true) == source + source\n"
+                                           "assert Peer.choose(1.25, false) == 1.25\n"
+                                           "assert spread(source, computed) == "
+                                           "(source + source, computed + computed + computed)\n"
+                                           "assert nominal(Pair(second: true, first: source), "
+                                           "Hit(computed)) == source + computed\n"
+                                           "assert nominal(Pair(first: computed, second: false), "
+                                           "Vacant) == 0\n"
+                                           "assert (reader() or 9) == 1\nend\n"
+                                           "fn main() : Int\n17\nend\n"));
+    struct mo_arena frontend, output;
+    struct mo_sources sources;
+    struct mo_diags diags;
+    mo_arena_init(&frontend, 32 << 20);
+    mo_arena_init(&output, 32 << 20);
+    MO_ASSERT(mo_sources_init(&sources) && mo_diags_init(&diags));
+    uint32_t file;
+    struct mo_source_error error;
+    MO_ASSERT(mo_sources_add_bytes(&sources, "main.mo", text.bytes, text.length, &file, &error));
+    struct mo_module_syntax *modules[2] = {mo_parse(&frontend, &sources, file, &diags), NULL};
+    static const uint8_t peer[] =
+        "module Peer\nexpose Box(..), Pair(..), Choice(..), build, read, choose, spread, base\n"
+        "base = 7\n"
+        "struct Box\nvalue: Int\nend\nstruct Pair(Z, A)\nfirst: Z\nsecond: A\nend\n"
+        "enum Choice(T)\nVacant\nHit(T)\nend\n"
+        "fn build(value: Int) : Box\nBox(value: value)\nend\n"
+        "fn read(box: Box) : Int\nbox.value\nend\n"
+        "fn choose(value: Z, tag: A) : Z where Z: Number, A: Text\n"
+        "if \"#{tag}\" == \"true\": value + value else: value\nend\n"
+        "fn spread(left: Z, right: A) : (Z, A) where Z: Number, A: Number\n"
+        "(left + left, right + right + right)\nend\n";
+    MO_ASSERT(mo_sources_add_bytes(&sources, "peer.mo", peer, sizeof peer - 1, &file, &error));
+    modules[1] = mo_parse(&frontend, &sources, file, &diags);
+    MO_ASSERT(modules[0] != NULL && modules[1] != NULL && !mo_diags_any(&diags));
+    const char *names[] = {"Main", "Peer"};
+    uint32_t order[] = {1, 0}, target = 1;
+    uint32_t *uses[] = {&target, NULL};
+    struct mo_module_set set = {.count = 2,
+                                .modules = modules,
+                                .names = names,
+                                .order = order,
+                                .uses = uses,
+                                .sources = &sources};
+    struct mo_program *program = mo_check(&frontend, &set, &diags);
+    MO_ASSERT(program != NULL && !mo_diags_any(&diags));
+    struct mo_core *core = mo_lower(&output, program, &sources, &diags);
+    MO_ASSERT(core != NULL && !mo_diags_any(&diags));
+    mo_arena_free(&frontend);
+    mo_sources_free(&sources);
+    MO_ASSERT(mo_core_check(core, &diags)); /* Imports/captures/specs after frontend release. */
+    struct mo_buffer wire;
+    mo_buffer_init(&wire, MO_LIMIT_CORE_TEXT_SIZE);
+    MO_ASSERT(mo_core_print(core, &wire));
+    mo_buffer_free(&wire);
+    mo_arena_free(&output);
+    mo_diags_free(&diags);
+    mo_buffer_free(&text);
+}
 
 /* Generate the certified graph shapes, with fresh rows for every occurrence.
  * Every accepted document must check and print; a refusal there is a lower bug. */
@@ -159,5 +273,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                   code == MO_CODE_LOWER_NO_MEMORY);
     }
     lower_fixture_free(&f);
+    struct source_input input = {data, size};
+    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, source_specs, &input) == 0);
     return 0;
 }

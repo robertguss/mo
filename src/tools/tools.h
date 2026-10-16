@@ -53,14 +53,25 @@ MO_MUST_USE const char *mo_version_line(void);
  * Missing files (including UINT32_MAX) are unavailable, not source indices. */
 MO_MUST_USE bool mo_render_diagnostic(const struct mo_sources *sources, const struct mo_diag *diag,
                                       bool json, struct mo_buffer *out);
+struct mo_test_totals {
+    uint32_t passed, failed, stopped;
+};
 /* Writes and flushes each complete record. Sorts diagnostics in place. Returns
  * 0 on success, 1 on diagnostics/drops/output failure. Text goes to errors,
- * JSON exclusively to output. JSON's version must have been written first. */
+ * JSON exclusively to output. JSON's version must have been written first.
+ * Optional test totals also determine status; NULL means no observations ran. */
 MO_MUST_USE bool mo_write_version(FILE *output, enum mo_command command);
 MO_MUST_USE int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command command,
-                                     const struct mo_sources *sources, struct mo_diags *diags);
-/* Runs only the front-end stages currently available. Owns no borrowed data
- * after returning. Future whole checking/lowering belongs at this boundary. */
+                                     const struct mo_sources *sources, struct mo_diags *diags,
+                                     const struct mo_test_totals *totals);
+struct mo_process;
+struct mo_defect;
+/* Structural VM report with terminal-safe text escaping. Borrows the stopped
+ * process/image until returning, including initialization reports with NULL process. */
+MO_MUST_USE bool mo_write_defect(FILE *errors, const struct mo_process *process,
+                                 const struct mo_defect *defect);
+/* Whole checking and the certified lowering/runtime pipeline run inside one
+ * explicit source-stack call. Owns no borrowed data after returning. */
 MO_MUST_USE int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors);
 
 #endif

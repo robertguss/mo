@@ -1,3 +1,4 @@
+/* Instantiation dependencies, including function values and ability callbacks. */
 #include "check/checked.h"
 #include "check/signatures.h"
 
@@ -266,18 +267,25 @@ bool mo_check_recursion(struct mo_arena *arena, const struct mo_program *program
     if (p.failed)
         return false;
     memset(p.edges, 0, (size_t)count * sizeof(*p.edges));
-    for (uint32_t i = 0; i < program->function_count; i++) {
-        if (p.masks[i] == 0)
+    for (uint32_t i = 0; i < program->function_count + program->spec_count; i++) {
+        const struct mo_checked_spec *spec =
+            i < program->function_count ? NULL : &program->specs[i - program->function_count];
+        if (spec != NULL && spec->kind != MO_SPEC_PROMISE)
+            continue;
+        uint32_t caller = spec == NULL ? i : spec->subject;
+        MO_ASSERT(caller < program->function_count);
+        if (p.masks[caller] == 0)
             continue;
         p.seen = NULL;
-        const struct mo_checked_body *body = &program->functions[i].body;
+        const struct mo_checked_body *body =
+            spec == NULL ? &program->functions[caller].body : &spec->body;
         for (uint32_t j = 0; j < body->count; j++) {
             const struct mo_checked_expression *row = &body->items[j];
             p.span = row->syntax->span;
-            if (!work(&p) || !add(&p, i, row->symbol, &row->arguments))
+            if (!work(&p) || !add(&p, caller, row->symbol, &row->arguments))
                 return false;
             for (uint32_t k = 0; k < row->ability_count; k++)
-                if (!proofs(&p, i, row->abilities[k].implementation, 0))
+                if (!proofs(&p, caller, row->abilities[k].implementation, 0))
                     return false;
         }
     }

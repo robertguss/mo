@@ -123,7 +123,7 @@ static MO_MUST_USE char *path_text(struct loader *l, const struct mo_syntax *pat
     if (result != NULL)
         memcpy(result, text, length + 1);
     return result;
-too_long: {
+too_long : {
     bool kept =
         report(l, MO_CODE_PATH_TOO_LONG, path->span, "a module's path is too long", NULL, NULL);
     (void)kept;
@@ -162,7 +162,7 @@ static MO_MUST_USE char *normal_path(struct loader *l, const char *path) {
     if (result != NULL)
         memcpy(result, text, length + 1);
     return result;
-too_long: {
+too_long : {
     bool kept = report(l, MO_CODE_PATH_TOO_LONG, (struct mo_span){UINT32_MAX, 0, 0},
                        "a source file's path is too long", NULL, NULL);
     (void)kept;
@@ -575,7 +575,7 @@ static MO_MUST_USE struct mo_module_set *load(struct mo_arena *arena, struct mo_
     l.out = allocate(&l, 1, sizeof(*l.out), _Alignof(struct mo_module_set));
     if (l.out == NULL)
         return NULL;
-    *l.out = (struct mo_module_set){0};
+    *l.out = (struct mo_module_set){.sources = sources};
     l.items = allocate(&l, MO_LIMIT_FILES, sizeof(*l.items), _Alignof(struct loaded));
     l.out->modules =
         allocate(&l, MO_LIMIT_FILES, sizeof(*l.out->modules), _Alignof(struct mo_module_syntax *));

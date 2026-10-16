@@ -4,6 +4,8 @@
 #include "check/check.h"
 #include "check/native.h"
 
+#include <string.h>
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 
 static void binding(const struct mo_checked_body *body, const struct mo_checked_binding *value,
@@ -82,13 +84,59 @@ static void pattern(const struct mo_program *program, const struct mo_checked_bo
 
 static void graph(const struct mo_program *program) {
     MO_ASSERT(program->entry.function < program->function_count);
-    for (uint32_t f = 0; f < program->function_count; f++) {
-        const struct mo_checked_function *function = &program->functions[f];
-        const struct mo_checked_body *body = &function->body;
-        uint32_t parameters = function->signature->type->parameters;
-        MO_ASSERT(body->root < body->count);
-        for (uint32_t i = 0; i < function->parameter_count; i++)
-            binding(body, function->parameters[i], parameters);
+    uint32_t nonconstants = program->function_count + program->spec_count;
+    for (uint32_t f = 0; f < nonconstants + program->constant_count; f++) {
+        const struct mo_checked_function *function =
+            f < program->function_count ? &program->functions[f] : NULL;
+        const struct mo_checked_spec *spec = function == NULL && f < nonconstants
+                                                 ? &program->specs[f - program->function_count]
+                                                 : NULL;
+        const struct mo_checked_constant *constant =
+            f >= nonconstants ? &program->constants[f - nonconstants] : NULL;
+        const struct mo_checked_body *body = function != NULL ? &function->body
+                                             : spec != NULL   ? &spec->body
+                                                              : &constant->initializer;
+        uint32_t parameters = function != NULL ? function->signature->type->parameters
+                              : spec != NULL && spec->kind == MO_SPEC_PROMISE
+                                  ? program->functions[spec->subject].signature->type->parameters
+                                  : 0;
+        MO_ASSERT(body->root < body->count ||
+                  (spec != NULL && spec->kind == MO_SPEC_ANCHOR && body->root == UINT32_MAX));
+        if (function != NULL)
+            for (uint32_t i = 0; i < function->parameter_count; i++)
+                binding(body, function->parameters[i], parameters);
+        else if (spec != NULL) {
+            MO_ASSERT(spec->module < program->set->count && spec->number != 0);
+            MO_ASSERT(spec->subject < program->function_count ||
+                      (spec->kind == MO_SPEC_TEST && spec->subject == UINT32_MAX));
+            MO_ASSERT(spec->text.length == spec->text.span.end - spec->text.span.start);
+            for (uint32_t i = 0; i < spec->parameter_count; i++)
+                binding(body, spec->parameters[i], parameters);
+            if (spec->kind == MO_SPEC_ANCHOR) {
+                MO_ASSERT(spec->promise < program->spec_count &&
+                          program->specs[spec->promise].kind == MO_SPEC_PROMISE &&
+                          spec->value_count == program->specs[spec->promise].parameter_count);
+                requirements(program, &spec->arguments, spec->ability_count, spec->abilities);
+                for (uint32_t i = 0; i < spec->value_count; i++)
+                    MO_ASSERT(spec->values[i] < body->count);
+            } else {
+                MO_ASSERT(strcmp(body->items[body->root].type->name,
+                                 spec->kind == MO_SPEC_TEST ? "Unit" : "Bool") == 0);
+                for (uint32_t i = 0; i < spec->condition_count; i++) {
+                    const struct mo_checked_condition *condition = &spec->conditions[i];
+                    MO_ASSERT(condition->expression < body->count &&
+                              strcmp(body->items[condition->expression].type->name, "Bool") == 0 &&
+                              condition->text.length ==
+                                  condition->text.span.end - condition->text.span.start);
+                }
+            }
+        } else {
+            MO_ASSERT(constant->type == body->items[body->root].type &&
+                      constant->type->parameters == 0 &&
+                      constant->symbol->declaration->kind == MO_S_CONST);
+            for (uint32_t i = 0; i < f - nonconstants; i++)
+                MO_ASSERT(program->constants[i].symbol != constant->symbol);
+        }
         for (uint32_t i = 0; i < body->count; i++) {
             const struct mo_checked_expression *row = &body->items[i];
             MO_ASSERT(row->syntax != NULL && row->type != NULL &&
@@ -122,6 +170,28 @@ static void graph(const struct mo_program *program) {
                         pattern(program, body, arm->patterns[k], parameters, 0);
                 }
             }
+            if (row->operation == MO_T_OR) {
+                MO_ASSERT(row->operand_count == 2 &&
+                          row->never == body->items[row->operands[0]].never);
+                const struct mo_source_type *left = body->items[row->operands[0]].type;
+                MO_ASSERT(row->or_kind == MO_CHECK_OR_BOOL || row->or_kind == MO_CHECK_OR_OPTION);
+                MO_ASSERT(
+                    strcmp(left->name, row->or_kind == MO_CHECK_OR_BOOL ? "Bool" : "Option") == 0);
+            } else
+                MO_ASSERT(row->or_kind == MO_CHECK_OR_ABSENT);
+            if (row->try_ != NULL) {
+                MO_ASSERT(row->operand_count == 1);
+                const struct mo_source_type *input = body->items[row->operands[0]].type;
+                const struct mo_checked_try *try_ = row->try_;
+                bool option = strcmp(input->name, "Option") == 0;
+                MO_ASSERT(option || strcmp(input->name, "Result") == 0);
+                MO_ASSERT(strcmp(try_->result->name, input->name) == 0);
+                MO_ASSERT(strcmp(try_->failure.builtin, option ? "None" : "Error") == 0);
+                MO_ASSERT(row->never == body->items[row->operands[0]].never);
+                requirements(program, &try_->arguments, try_->ability_count, try_->abilities);
+                for (uint32_t j = 0; j < try_->arguments.count; j++)
+                    MO_ASSERT((try_->arguments.items[j].type->parameters & ~parameters) == 0);
+            }
             if (row->lambda != NULL) {
                 MO_ASSERT(row->lambda->body < i && row->lambda->number != 0 &&
                           row->lambda->capture_count == 0);
@@ -135,7 +205,9 @@ static void graph(const struct mo_program *program) {
 
 /* Only the generated arithmetic control uses this evaluator. Its expected
  * value is calculated from the bytes, not from the graph or its syntax. */
-static MO_MUST_USE int64_t arithmetic(const struct mo_checked_body *body) {
+static MO_MUST_USE int64_t arithmetic(const struct mo_program *program,
+                                      const struct mo_checked_body *body, uint32_t initialized,
+                                      const int64_t *constants) {
     int64_t values[64] = {0};
     MO_ASSERT(body->count <= 64);
     for (uint32_t i = 0; i < body->count; i++) {
@@ -143,6 +215,12 @@ static MO_MUST_USE int64_t arithmetic(const struct mo_checked_body *body) {
         if (row->syntax->kind == MO_S_INT) {
             for (uint32_t j = 0; j < row->syntax->span.end - row->syntax->span.start; j++)
                 values[i] = values[i] * 10 + (int64_t)(row->syntax->text[j] - '0');
+        } else if (row->symbol != NULL && row->symbol->declaration->kind == MO_S_CONST) {
+            uint32_t at = 0;
+            while (at < initialized && program->constants[at].symbol != row->symbol)
+                at++;
+            MO_ASSERT(at < initialized);
+            values[i] = constants[at];
         } else if (row->operation != MO_T_EOF) {
             MO_ASSERT(row->operand_count == 2);
             int64_t a = values[row->operands[0]], b = values[row->operands[1]];
@@ -179,15 +257,23 @@ static void check(const uint8_t *bytes, size_t size, size_t limit, int expected,
         goto done;
     reached = true;
     uint32_t order = 0, *uses = NULL;
-    struct mo_module_set set = {.count = 1, .modules = &module, .order = &order, .uses = &uses};
+    struct mo_module_set set = {
+        .count = 1, .modules = &module, .order = &order, .uses = &uses, .sources = &sources};
     struct mo_program *program = mo_check(&arena, &set, &diags);
     MO_ASSERT((program == NULL) == mo_diags_any(&diags));
     if (expected >= 0)
         MO_ASSERT((program != NULL) == (expected != 0));
     if (program != NULL) {
         graph(program);
-        if (expected == 1)
-            MO_ASSERT(arithmetic(&program->functions[program->entry.function].body) == result);
+        if (expected == 1) {
+            int64_t constants[8] = {0};
+            MO_ASSERT(program->constant_count <= 8);
+            for (uint32_t i = 0; i < program->constant_count; i++)
+                constants[i] =
+                    arithmetic(program, &program->constants[i].initializer, i, constants);
+            MO_ASSERT(arithmetic(program, &program->functions[program->entry.function].body,
+                                 program->constant_count, constants) == result);
+        }
     }
 done:
     MO_ASSERT(expected < 0 || reached);
@@ -224,6 +310,18 @@ static void run(void *argument) {
     MO_ASSERT(mo_buffer_append_uint(&source, values[3]));
     MO_ASSERT(mo_buffer_append_text(&source, "\nend\n"));
     int64_t result = ((int64_t)values[0] + values[1]) * values[2] - values[3];
+    check(source.bytes, source.length, 32 << 20, valid ? 1 : 0, result);
+    mo_buffer_clear(&source);
+    MO_ASSERT(
+        mo_buffer_append_text(&source, "module Main\nresult = (left + right) * factor - offset\n"));
+    static const char *const names[] = {"left", "right", "factor", "offset"};
+    for (uint32_t i = 4; i != 0; i--) {
+        MO_ASSERT(
+            mo_buffer_append_text(&source, names[i - 1]) && mo_buffer_append_text(&source, " = ") &&
+            mo_buffer_append_uint(&source, values[i - 1]) && mo_buffer_append_text(&source, "\n"));
+    }
+    MO_ASSERT(mo_buffer_append_text(&source, valid ? "fn main() : Int\nresult\nend\n"
+                                                   : "fn main() : Text\nresult\nend\n"));
     check(source.bytes, source.length, 32 << 20, valid ? 1 : 0, result);
     mo_buffer_free(&source);
 }

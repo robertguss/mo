@@ -450,6 +450,42 @@ clashes, detected before case expansion; a repeated name in one use list
 has a deletion fix. Other clashes suggest qualification without rewriting
 uses whose intended binding is unknown.
 
+Signature and body lookup credit their selected import's original syntax,
+not the declaring symbol's module or spelling. A private signature-owned
+usage index records written module uses and explicit names; expanded choice
+cases share their type's import origin. Annotation references count as uses.
+The final certification audit reports E0093 (6.1) for an unused plain module
+use or each unused explicit name, without a second module diagnostic for
+the same name list. Qualified references credit the module route, not an
+unused unqualified name. A dot call found in its receiver's declaring module
+does not read a redundant explicit-name import either. Names beginning with
+`_` remain unused on purpose. The audit runs after successful body/spec checks,
+so dependent unused-import errors do not obscure an earlier source refusal.
+The usage index is sorted by importing module and written offset; binary
+lookups and the final linear audit spend the shared program work budget.
+No symbol or nominal type identity is rewritten.
+
+Imported generic function calls and values use the same instantiation as local
+functions: substitutions and type-only ability-use keys belong to the selected
+declaring signature; their implementations prove the caller's actual types.
+Two modules' same-spelled parameters are distinct, including when an actual
+type is itself a caller parameter. Neither imports nor first-class function
+values rewrite those owners or introduce another proof carrier. The existing
+proof cache shares structurally equal actual types; a proof's type pointer
+need not equal the use's actual-type pointer. Scoped parameter keys remain
+canonical; concrete-type pointer equality is not the substitution key.
+Imported generic nominal annotations, construction, field projection and
+choice patterns use the declaring type's canonical identity. Substitutions
+retain explicit parameter declaration order, not alphabetical order; choice
+constructors use their owning choice's keys, not new case-owned parameters.
+Named constructor operands keep written evaluation order and declaration-order
+field indices. Exposure still decides whether fields/cases are visible.
+Foreign constant reads and initializer function references retain those same
+declaring identities and import-use origins; constant certification follows 3.4.
+Partial signature/inference APIs, regularity checks and the already supported
+implicit library routes retain their previous behavior.
+No new cross-module constant ordering or lowering carrier is introduced.
+
 Interface work is bounded by source declarations and imported names, not
 pairwise name scans. Each choice's case indices are computed once in its
 declaring module, in declaration order. Imports borrow the existing names
@@ -502,8 +538,12 @@ checks independent bodies despite later declaration errors, and sorts the
 combined diagnostics by source position. Invalid declarations and their nominal
 dependents suppress uses rather than inventing secondary type errors. A failed
 ability context is discarded, including provisional recursive proofs. Resource
-or diagnostic-storage failure stops the walk. Neither a partial preparation nor
-a partially checked program is published through the public interfaces.
+or diagnostic-storage failure stops the walk. Filling the diagnostic count alone
+does not stop independent body checks: later errors increment `dropped`. Body
+checking retains its failure kind privately so an unrecorded resource error still
+halts; staged forms stop before secondary body errors. Neither a partial
+preparation nor a partially checked program is published through the public
+interfaces.
 
 Native signatures are prepared once per checking run from `prims.def` and
 `hostops.def`. The checker adds positional parameter names to each table's Mo
@@ -513,7 +553,9 @@ owners live in the checking arena; temporary source bytes are released after
 parsing. Native identities remain qualified table spellings, not fake source
 module symbols. Static native calls retain a callee row; dot calls retain
 their receiver and arguments without a callee row. Spec-only host operations
-remain refused until the spec/capability stage exists.
+check only in examples, promises, anchors and tests, including their anonymous
+functions. Constants and ordinary functions still refuse them with E1103;
+calling an ordinary helper from a test does not change the helper's context.
 
 Collection annotations impose implicit Hash requirements, including through
 generic record and choice fields. Preparation computes parameter-dependency
@@ -709,7 +751,17 @@ some names by type:
   over a choice type is checked on top of it.
 - **Constants** may refer to each other in any order within the program, and
   are computed in the order of their dependencies. A cycle is an error
-  (reference 10.4).
+  (reference 10.4). Foreign reads use the same program-wide symbol index and
+  pending-type stack as local reads; each initializer decides its own closed
+  type before uses can constrain it. Direct imported calls and known stored
+  function aliases use the existing checked call graph, including executed
+  customizers. Function creation does not execute its body, and type-only
+  ability requirements add no execution dependencies. Independent ties retain
+  module discovery/declaration order, not import completion or symbol spelling.
+  Loading still refuses module cycles; checked value/call cycles report E0089.
+  Unresolved higher-order calls and executed abstract Text/Order dependencies
+  remain E1103. Certification does not promise a later-global closure
+  representation: lowering can still refuse that separate E1150 boundary.
 - **Promises and examples** are checked like functions returning `Bool`. An
   example line or a promise body becomes a spec function (`bytecode.md`
   section 3.3). The `mo check` command in tools evaluates the anchors by
@@ -844,14 +896,27 @@ examples. The ones a compiler is most likely to get wrong are:
   passed to source main; Unit/Int entries get no additional authority.
 - **`assert`** in a test, and each example line, become spec code that calls
   the `fail` instruction with the details: both sides of a failed `==`, or
-  the value that didn't match a failed `is`.
+  the value that didn't match a failed `is`. Operands are snapshotted once;
+  only the failure branch converts them with the borrowed
+  `Text.%structural` primitive. Diagnostic text never selects user `to_text`
+  or requires the Text ability, including for Equal-only types. Its forms
+  agree with `mo test --json`'s `left`, `right` and `input` values.
+  The detail envelope is `left N:VALUE,right M:VALUE,` for equality or
+  `input N:VALUE,` for a pattern mismatch: N/M are decimal UTF-8 byte counts,
+  with no leading zero except zero itself. VALUE is the unchanged structural
+  text, including any newline or NUL. The runner splits by byte counts, never
+  labels or line breaks, then displays those values or puts them in JSON.
+  Shared pattern failures are joins inside the input snapshot's scope. Lazy
+  conditions report the failing leaf that actually reaches failure: a false
+  left side of `or` or `implies` is not itself a failure. Other false Bool
+  conditions keep the fixed assertion/example detail.
 
 **Part 1 implementation.** `src/lower` consumes the normalized checked graph,
 not syntax inference. Explicit arena-backed task and continuation lists perform
 expression/pattern lowering; an explicit, memoized stack walks type DAGs.
 Queued function/data instances have no recursive C walk. E1150 refuses later
-forms (captures, try, Option or, interpolation, unsupported ability/native
-operations, map literals, constants and spec code); E1151 is arena exhaustion, E1152 the
+forms (unsupported ability/native
+operations, map literals and spec code); E1151 is arena exhaustion, E1152 the
 shared allocation-byte/step or Core-node bound, and E1153 the source-type,
 instantiation or generated Core path bound. Compilation is independent of the
 text codec: `mo_lower` does not print Core or apply the codec's smaller schema,
@@ -863,6 +928,18 @@ Structural Core type heights are checked after generic substitution, not only
 at the template's source depth; an over-deep concrete result refuses with E1153.
 E1152 also bounds canonical types plus unfolded expression occurrences across
 all bodies together, matching Core's whole-document node allowance.
+
+**Capability-entry increment.** Unit/Int entries forward any distinct subset
+of Args, Env, Console, Files, ReadFiles, Clock and Random in main's written
+order, without extra authority. The existing tools/host entry path constructs
+only the requested handles. Args.list, Args.of, Console.fake and Console.printed
+lower to their existing Core IO primitives; List.first uses its instantiated
+element type. Native function values use inline lambdas, so spec-only operations
+retain their enclosing spec context rather than becoming ordinary global
+adapters. The unchanged greet sample runs with real Args/Console and its specs
+run with shared fake handles. Other native operations remain independently
+staged, as does the source checker's Result-return entry convention.
+
 Numeric immediates fold unary minus before building Core scalars, including
 Int's minimum. Float literals convert in a private C numeric locale with
 nearest-even rounding, then restore the caller's rounding state. Text literals
@@ -876,6 +953,25 @@ types do not depend on an instance's substitution pointer. Source-function
 lookup uses a sorted index, and metadata traverses per-declaration instance
 lists rather than a module/declaration/instance cross product.
 
+Nongeneric source imports use the checker's selected declaration symbols and
+`type.declaration` identities directly. Choice owner/case indices are interpreted
+in the declaring symbol's module scope, not the importing scope. Qualified and
+explicitly imported routes therefore share function/data instances; same-spelled
+types from different declaring modules remain distinct. Module metadata keeps
+declaration ownership/exposure and original file indices, including transitive
+nominal results, opaque layouts and imported specs. The private import-use index
+is checker bookkeeping, not a lowering input. No import-specific resolver or
+dependency reordering is added. Certified imported generic function calls and
+values reuse the existing instance/proof machinery below, including captured,
+returned and higher-order references. Certified foreign generic nominal written
+annotations, construction, projection and choice patterns use those same
+declaring identities and layouts. Certified foreign constant reads and direct
+imported initializer calls/function values use the same resolved symbols and
+constant prefixes below; imports do not add exports or change initialization
+order. Unresolved higher-order/returned/anonymous initializer calls and executed
+abstract Text/Order dependencies remain checker E1103; Maps and the other
+existing staged routes are unchanged.
+
 Core lookup/display names retain the declaring module and source name;
 overloads add `@Receiver`. Generic function code is keyed by (requesting
 module, defining declaration, concrete type list), with names such as
@@ -886,8 +982,152 @@ Generic data instead has one canonical declaration per type list, owned by
 the defining module. Nongeneric data is retained even without an expression use.
 `Lib.make()` returning `Lib.Box(Int)` must return the same
 nominal type a requester-specialized function accepts; separate requester data
-names would make those values incompatible in Core. Anonymous names retain their
+names would make those values incompatible in Core. Data field substitution
+uses `source->declaration`'s record signature, or its first choice-case signature,
+with the declaring type's abstract keys in parameter declaration order. It does
+not borrow the importing function's A-Z keys or introduce case-owned parameters.
+The data owner remains `source->module`; all requester uses share each closed
+layout and its defining-module exposure, including opaque values passed through
+a third module. Importers acquire no data exports. Anonymous names retain their
 source ordinal as `.fn.N`; generated function-value adapters use `.ref.ROW`.
+
+Imported generic substitutions and type-only ability-use keys retain the
+declaring signature's parameters, even when caller/callee letters coincide or
+their written parameter order differs. Actual-type proofs retain the caller's
+environment, including composite parts and customizers' own scoped keys.
+Structurally shared proof types need not be pointer-equal to the written actual
+type. The lowerer does not rename keys or rewrite the proof cache. Instance
+ownership is the requester; declaration/body spans remain the defining file.
+Derived helpers instead retain their responsible use span. Export lists include
+only instances owned by their declaring module, never requester copies of
+another module's exposed function.
+
+Capturing lambdas prefix their body with aliases of the checked captures in
+first-use order. Each alias's bound expression refers to the outer binding;
+its body sees the local copy. This gives Core/codegen a first-use-ordered free
+environment, captured by value at closure creation, independent of later CPS
+rewrites. The aliases retain the captured source names and the lambda span.
+The checker owns capture legality, including capabilities and later var writes.
+
+A checked postfix call can retain its originating declaration symbol even
+when its callee is a returned closure. Only a zero-operand declaration reference
+as the callee permits a direct Core call; `make(19)()` evaluates `make(19)` once
+and applies that value. The same decision controls whether lowering skips the
+callee operand. It does not change closure snapshots or constant creation prefixes.
+
+Option `or` evaluates its left operand once and emits a one-level None/Some
+case; only None evaluates the fallback. `try` uses the same decision, or Ok/Error
+for Result, with the remaining expression confined to the success arm. Failure
+jumps to the containing function or lambda's return join. Lowering uses exactly
+the checked failure and wrapper constructors; the substituted enclosing error
+type supplies a wrapper's concrete nominal identity. No wrapper search remains.
+The selected generic wrapper's type-only requirements in `mo_checked_try`
+are resolved through the current instance's scoped proof environment before
+emission, just like an explicit constructor. An unresolved requirement refuses
+E1150; direct propagation has no wrapper substitution or requirements.
+
+Interpolation decodes HEAD/MID/TAIL fragments from the original syntax; only
+hole expressions have checked operands. Triple text uses the closing delimiter's
+indentation for every fragment. Each hole is evaluated and converted through its
+selected Text proof before the next hole is evaluated. The same conversion emits
+`to_text` calls and Result entry errors. Qualified native scalar `to_text` calls
+use that scalar conversion directly; ordinary same-name source helpers retain
+their selected source symbol. `Text.byte_count` emits Core's byte-count primitive,
+not a character count. Supported qualified natives used as function values get
+the same `.ref.ROW` lambda adapter as source functions and use the same call
+lowering, so taking a function value cannot bypass a native staging refusal.
+An ordinary namespace call retains that callee row in the checked graph;
+lowering skips the pure reference before passing its explicit arguments to the
+primitive. The argument continuation retains that skip for every argument,
+including mutable-read snapshots. A native receiver dot call has no callee row
+to skip. `Int.abs`, `Int.min` and `Int.max` map directly to Core's existing Int
+primitives for namespace/receiver calls and first-class values, including constant
+aliases. The three-entry dispatch charges the lowering work budget. Arguments
+retain written evaluation order; `abs` of Int's minimum stops with Core's Int
+overflow, not a lowering refusal. Native adapters keep source spans/closure names
+and the existing creation-prefix restrictions. Other inventoried numeric natives
+remain E1150 unless already supported by another lowering route.
+Function instances retain requirement
+proofs keyed by the callee's scoped parameter and ability, together with the
+supplying instance's type/proof environment. PARAMETER replacement follows those
+bindings iteratively, bounded by the ability-path and whole-lowering work limits;
+missing keys refuse E1150 rather than guessing from the concrete type. Selected
+customizers bind their own requirement keys from FUNCTION `part_parameters`.
+Derived parts retain the supplying environment, including caller parameters
+inside a composite type such as `List(T)`. Resolving a native Order proof preserves
+direct scalar operators (including Float's IEEE behavior), not total `compare`.
+Derived text helpers reserve a typed function before following the proof's
+parts, memoize concrete type/module pairs with a bounded hash index and drain
+a FIFO body queue. Tuple and record fields convert in declaration order; choice
+helpers use a one-level case, indexing proofs by flattened case/field order.
+Empty constructors print their bare name; other constructors print their name
+and fields, retaining declared field labels but not the positional `0` sentinel.
+Native FileError and Entry display their path/reason and path/kind labels.
+Nested native
+Text/Char fields are quoted and escape slashes before newly inserted escapes,
+including controls and interpolation markers. Generated parameter metadata
+retains arity with absent source names.
+List Text converts elements in order through a tail join, accumulates converted
+pieces in reverse, then reverses once and joins with `, ` inside square brackets.
+It does not repeatedly concatenate a growing text prefix.
+Derived Order uses the same reservation queue, keyed additionally by ability.
+Tuple/record comparisons inspect parts left to right and continue only on Equal;
+choice comparisons dispatch on both constructors, with different cases ordered
+by declaration position and matching cases comparing their flattened fields.
+Selected custom compare functions replace structural ordering, not equality.
+List Order uses a join over the remaining two lists: compare heads once, advance
+both tails only on Equal, and order an exhausted list before a nonempty one.
+Native Float `compare` orders NaNs after numbers and returns Equal for two NaNs,
+while direct scalar comparison operators retain IEEE behavior.
+
+Constants retain the checked dependency order and resolved global names.
+Their Core ConstDecl bodies become bytecode init functions, one per constant;
+lowering does not add duplicate ordinary `.init` functions. Functions normally
+use the full constant prefix; an arena-backed work queue tightens functions
+reachable from initializer i to prefix i and propagates through calls and
+closure bodies. Metadata retains module/source order separately from init order,
+and initializer nodes carry the same span/binder/closure metadata as functions.
+Global names and initializer metadata owners come from the constant's declaring
+symbol/module, including same-spelled foreign constants. Initializer body spans
+and lifted closure names likewise retain that source, not the importer's file.
+The source corpus pins independent ready ties in a transitive diamond and
+first-stop order, as well as owned generic nominal/captured Text values after
+frontend release. A numerically successful metadata-owner mutation must still
+fail the provenance audit.
+Only zero-operand constant reads become Core globals; calls through a constant
+function value become applications, never constructor expressions. Core closures
+capture their creation prefix. A function-valued initializer whose body or
+adapter needs a later global currently refuses E1150 before Core is returned,
+including a named function alias. Lowering does not reorder the checked constants
+or invent an initialization dependency for merely creating a function.
+
+Tests and example lines are separate Unit spec functions with stable source
+ordinals, original wording/line bytes and declaration spans. Successful
+conditions return Unit; an ordinary false condition calls `fail` rather than
+`stop`. Ordinary-function assertions still stop. Equality and pattern failures
+use Core's borrowed structural primitive and the byte-length envelope above;
+they never substitute user Text conversions or require diagnostic Text proofs.
+Promises evaluate condition lines in written order and return the first false
+line's one-based number, or zero after the final success; later lines do not
+run after a failure. Each promise's parameter metadata, subject link and exact
+condition text/spans survive in Core. Anchors evaluate argument roots in source
+postorder, then reorder the saved values into promise-parameter order for a
+single call. Their names include the promise ordinal before `.allows.N` or
+`.forbids.N`, preventing collisions between a subject's promises. Anchor
+metadata records the promise link and expectation; lowering does not execute it.
+Generic promises share one instance per concrete ordinary subject instance
+(type list and requesting module). Their type substitution and keyed ability
+environment are the subject's existing scope, never a fresh promise scope.
+An anchor supplies its checked type arguments and type-only requirement proofs
+to reserve that subject and calls the corresponding concrete promise. Instances
+discovered in examples, tests, promise bodies or customizers use the same bounded
+body queue; reserving before lowering bodies also permits same-instance recursion.
+Examples remain single zero-parameter specs even on generic subjects: concrete
+calls inside the example instantiate functions, not copies of the example.
+Promise spec text is its verbatim header; test text is decoded wording, as Core
+text and bytecode require. Conditions keep original bytes/spans independently.
+These translations certify neither an anchor's expectation nor the ordinary
+subject's result: tools must execute allows/forbids in fresh processes.
 
 The initial CPS implementation conservatively passes every live outer var,
 not only changed vars, across a continuation join; expression joins also pass
@@ -919,13 +1159,17 @@ binding or binder name. Repeated SSA/loop
 binders retain their original name at distinct node/slot identities.
 Lowering supplies correct promise signatures/line correspondence and links
 anchors to promises and promises to their ordinary subjects. Module ownership
-lists preserve source order even though constants are dependency-ordered.
+lists group ordinary/spec instances by original declaration position, preserving
+source order independently of discovery/call indices; synthesized helpers follow
+source declarations. Constants retain source order here despite dependency order.
 
 Compilation needs **only this Core document**. It validates metadata shape,
 retains provenance through lambda lifting/optimization, maps binder identities
 to register live ranges, and maps expression spans to instruction offsets.
-It interns filenames and remaps source-file indices to bytecode string
-indices. The image keeps declaration spans, condition text/spans and spec
+It copies `metadata.files` byte-for-byte into bytecode's separate filename
+table in source order, including unused and duplicate rows. Instruction spans,
+declaration spans and condition spans retain those source-file indices.
+The image keeps declaration spans, condition text/spans and spec
 links as well as exposure, so tools never reconstruct them from checked Mo
 syntax. `noSource` compiles with empty source debug tables/no exports; tools
 that need absent links report them unavailable (`formal/TEXT.md`).
@@ -1218,6 +1462,25 @@ heap-limit report. Attachment precedes building literals and running init
 functions; a later failure remains permanent. Successful initialization frees
 its native VM stack; failed initialization retains it for the defect report.
 
+**Controlled calls (D242).** `mo_call_controlled` leaves `mo_call` and its
+three outcomes unchanged. Its separate outcomes are returned, stopped,
+failed and cancelled. The caller supplies a required bounded, non-reentrant
+`keep_running(context)`, borrowed only during the synchronous call. The VM
+checks call preconditions before polling at entry, before reserving a frame,
+and before every bytecode instruction, including nested calls, tail calls
+and `RET`. False cancels before that instruction or harness instruction
+exhaustion. A genuine defect already produced remains a stop or failure.
+Cancellation is terminal, not a yield; it writes neither result nor defect
+and does not fabricate a language stop. Owned parameters transfer on every
+outcome, even before frame entry; borrowed inputs keep their ownership.
+Normal process teardown reclaims the cancelled call. Only a return writes
+the owned result; a stop or failure retains its genuine defect report.
+Callbacks must not mutate, free or resume VM/heap/value state. The VM has no
+clock: tools own the monotonic deadline and distinguish expiry from clock
+failure. Native primitive/host work, allocation/drop and blocked I/O do not
+poll, so this is cooperative interruption, not a hard wall-clock bound.
+Initialization and ordinary observations are not controlled by this API.
+
 `heap` supplies a separate `struct mo_heap` owned by the VM's process, created
 with `mo_heap_new(image, limits)`. Execution frames, loading and outcomes
 remain `vm`'s work. A shared `struct mo_heap_image`, prepared once per run,
@@ -1355,8 +1618,8 @@ or flag.
 
 `--json` and `--emit` cannot be combined. Test selections may combine:
 `--only`'s names are intersected with `--in`'s module. `--list` accepts
-budgets but will not consume them. Matching is deferred until the test stage
-exists; the current stub never claims that a selection matched. Limits are
+budgets but will not consume them. Source-inventory matching precedes execution
+and JSON publication, as described below. Limits are
 positive ASCII decimal integers without signs, spaces or fractions; leading
 zeros are accepted. Byte sizes accept bare bytes or the exact suffixes `B`,
 `KiB`, `MiB`, `GiB` (powers of 1024); counts and seconds accept no suffix,
@@ -1371,32 +1634,250 @@ not copied or capped by Mo: the OS's argument limits bound them, and the
 program's heap will bound arguments converted to Mo values. `mo_cli_file`
 indexes borrowed file lists across an optional `--` separator.
 
-**Current integration boundary.** `check` calls `mo_load_program`,
-`mo_resolve_modules`, `mo_prepare_signatures`, then `mo_infer_function`
-for every named function, retaining independent body errors. Each stage
-stops before the next on errors, including dropped diagnostics; body iteration
-stops on a resource error, but continues past independent source errors and
-unfinished forms, even after the output retention cap. Each body reports into
-its own bounded diagnostics, copied into the capped run's set and then freed;
-this keeps counting dropped errors without making the checker stop because
-the output is full. Its shared arena is bounded to 512 MiB (E1054 while parsing,
-E1058 while checking on exhaustion).
-Status 0 means only that
-these available stages found no error: constants, specs and the other rules
-listed in `check.h` are not whole-program checked. The seam in
-`tools/execute.c` will replace staged inference with `mo_check`, then
-connect `mo_lower`, `mo_compile` and anchor evaluation; it never passes
-inference results to lowering. `run`, `test` (including `--list`), `fix`
-and `--emit` currently validate arguments then return status 1 with
-E1400, "this build cannot ... yet", without reading or rewriting files.
-E1400 is the tools' unavailable-stage code, not a language error. Source work
-runs synchronously through `mo_with_stack` with `MO_SOURCE_STACK_SIZE`, covering
-loading, parsing and every checking stage in one pipeline callback. Lowering,
-Core checking and code generation must also be wired inside that callback, not
-after it returns: their accepted depths need more than a default C stack.
-The callback joins before rendering or freeing its borrowed arenas and
-diagnostics. It changes no
-process-wide resource limits and follows changes to the shared stack allowance.
+**Current integration boundary.** `check` calls `mo_load_program` and whole
+`mo_check`, never reconstructing a certificate from local inference. The entry
+module must contain `main`, including for `check`; absence reports E0079.
+Forms not yet certified by the producer return E1103 rather than a false
+success. Diagnostic collection, including independent bodies and count-cap
+drops, belongs to the checker; tools do not rerun partial checking behind it.
+The shared source arena is bounded to 512 MiB (E1054 while parsing, E1058 while
+checking on exhaustion).
+
+Only a successful certificate reaches `mo_lower` and `mo_core_check`, including
+for plain `check`; an unfinished lowering stage cannot be silently accepted.
+Plain checking never executes the user's `main`, examples or tests. `run`,
+bytecode emission, and checking a program with anchors then call `mo_compile`.
+Lowering has its own 256 MiB work arena; the wire and
+text buffers use their format limits. `--emit=core` prints checked
+Core text; `--emit=bytecode` prints indexed bytecode text after compiling and
+loading its format. E1404 reports artifact loading or output failure.
+`run` loads the verified bytecode, initializes its image, creates a process
+with the requested VM limits, and calls lowering's Int-returning entry wrapper
+through `mo_call_main`. The Core entry's full metadata name identifies that
+wrapper in bytecode; source function indices are not bytecode indices.
+Lowering owns the Unit/Int/Result exit convention and status-range checks.
+Program output goes to standard output, structural defect reports to standard
+error, and a runtime bug exits 70. Defect reports retain their stopped process
+or initializing image until rendering finishes, and apply terminal-safe text
+escaping, never user `to_text` customizers. Only requested Args/Env values are
+materialized in the process heap; their owned originals remain alive through
+the call and report. File capabilities borrow the starting-folder descriptor.
+The current source producer still stages Args/Env/file/other entry forms and
+Result returns; those consumer paths await source-level certification controls.
+
+**Executable anchor checks.** Typing a promise is not proof of its allows/forbids
+expectations. After loading and initializing one image, tools call each anchor
+with `mo_call` in a fresh process. An answer of zero satisfies `allows` and
+violates `forbids`; a positive condition number does the opposite. These calls
+use the anchor's saved input/result values, not an execution of the ordinary
+subject. `run` creates its separate main process on the same image only after
+all anchors pass. Both emission forms validate anchors before writing an
+artifact, including Core emission. Generic anchors use the same loop: lowering
+supplies concrete promise/anchor functions with the checked subject-scoped
+type and ability requirements. Tools execute every emitted anchor, including
+distinct concrete types, and resolve its failed-condition span through its
+concrete promise link rather than a source declaration index.
+
+E1405 reports an expectation violation or an anchor that could not be executed.
+It marks the anchor and, for a rejected allows, the first false condition.
+The expectation label cites reference 12.2; this tools code has no section/reason
+fields. A stopped report is rendered structurally and copied into diagnostics
+before the process or initializing image is freed. Source paths are matched
+from bytecode 0.2's separate `files` byte table to the retained source store by
+exact length and bytes, not through the UTF-8 runtime string table. Invalid
+UTF-8 paths therefore support checking, running, bytecode emission and anchor
+locations without filename rewriting. The Core 0.8 text printer's raw-path
+refusal remains separate and unresolved. JSON's existing nonlossless `file`
+representation in 10.2 is unchanged pending approval of an exact-byte field.
+Each anchor call, and image initialization for these checks, has a compiler
+work ceiling of 16 Mi instructions (`MO_CLI_ANCHOR_INSTRUCTIONS`). Exhaustion
+refuses certification, never concludes the expectation was false, and never
+limits the subsequent main. VM stack/depth/heap limits apply too. Diagnostic
+storage or process allocation failure halts anchor checking; semantic failures
+continue through the remaining anchors while diagnostics fit.
+
+**Source constants.** Tools consume the checker's closed, dependency-ordered
+constant carrier without reconstructing its dependencies. Image initialization
+evaluates every constant, including unused ones, before anchors or main can
+read globals (reference 10.4). Ordinary calls required by an initializer run;
+merely creating a function value does not execute its body. Without anchors,
+plain `check` and both emissions validate initializer code but do not execute it.
+Certified foreign reads and imported initializer calls/function values use this
+same carrier and image. Their declaring owners, source spans and owned values
+remain intact; imports do not change dependency order or the creation prefix
+available to a deferred function (3.4, 4.3).
+`run` initializes its image before main; an initializer stop is a runtime bug,
+exits 70 and never runs main. With anchors, initialization uses the same bounded
+certification path for checking, running and both emissions: a stop or instruction ceiling
+reports E1405 inability to check, not a satisfied forbids. It emits no artifact
+and runs neither anchors nor main. No new tools error code is needed.
+
+Calls through constant function values and closures with already available
+globals use the same path as other source code. A deferred lambda or named
+function adapter needing a later global refuses E1150 during lowering (4.3),
+even when called only after initialization. Supporting that lazy body does not
+justify changing the checker's dependency order or adding false execution edges.
+Inventoried `Int.abs`, `Int.min` and `Int.max` scalar callables, including aliases,
+now execute through the existing primitive adapters (4.3). Other numeric native
+function aliases such as `Int.pow` remain a separate E1150 staging route.
+Tools render these refusals and suppress both artifacts; they do not treat
+them as invalid compiler Core or runtime bugs.
+
+**Source observation inventory.** `test --list` checks the whole source program,
+then lists its examples, promises and tests without lowering or loading an image.
+Initialization, main, anchors and observations never execute, even with accepted
+one-byte/one-call budgets. The inventory includes unused generic promise templates;
+it is not a scan of whichever concrete functions lowering happened to emit.
+Names use the source module/subject and original one-based kind ordinal (3.5 of
+`bytecode.md`); overloaded subjects retain lowering's nominal `@Receiver` suffix.
+Promise templates have the source subject name, not a particular monomorphized
+instance's internal name. Anchors are compiler checks, not selectable observations.
+Records follow the checked program's module/source order and use the exact full
+specification span. Text listing writes one full name per line to stdout.
+Repeated `--only` names form a union, deduplicated, intersected with exact owning
+`--in MODULE` (not a module-name prefix). Each requested `--only` must exist in
+the source inventory, even if another requested name exists. Unknown names or an
+empty intersection are exit-2 command mistakes with one stderr line and no stdout.
+Whole-program source errors precede name resolution. Test JSON delays its version
+until selection is resolved, so even `--json` command mistakes write no records.
+`fix` still returns E1400 and rewrites nothing. Generator preflight is selection-wide:
+an unsupported selected promise refuses E1400 before initialization or any
+observation, rather than reporting a partial run as passed. Successful anchor
+validation alone does not claim those observations passed.
+E1400 is an unavailable-stage code, not a language error.
+
+**Ordinary observations.** Selected zero-argument examples and tests compile
+through the certified Core/bytecode pipeline. Tools verify all selected names
+exist with the right kind before initialization, initialize one shared image,
+and validate its anchors as for `check`. E1406 reports initialization stopping:
+the whole file fails, its defect is retained in the diagnostic, and no
+observation is counted. Each observation then runs in a fresh process under
+the accepted stack/depth/heap limits, never by calling the entry wrapper/main.
+Failure or stopping ends that process, not the remaining selection. Returning
+Unit passes; `fail` fails; a runtime bug stops. Structural reporting finishes
+before freeing the process. No compiler anchor instruction ceiling limits an
+ordinary observation. `--calls` and `--seconds` remain promise budgets; this
+slice accepts but does not consume them for ordinary examples/tests.
+Text results and their final passed/failed/stopped counts go to stdout;
+source/tool diagnostics go to stderr. JSON uses only stdout. Per-observation
+microseconds use POSIX's monotonic clock, covering fresh process creation and
+execution but excluding image initialization, anchors and report rendering.
+Counts include attempted observations even if reporting subsequently fails;
+such a failure diagnoses E1404 and stops the runner with status 1.
+Failed equality details are decoded by their canonical byte counts, preserving
+embedded NUL, newlines and delimiter-looking text. Failed tests report the exact
+enclosing source `assert`, not a reconstructed condition or the last executed
+leaf's span. Failed observations do not become source diagnostics: `errors`
+stays zero unless a compiler/tool error was found, while `failed`/`stopped`
+independently force status 1. Selected unsupported promises are never omitted.
+
+**Structural promise observations.** The bounded runner accepts nongeneric subjects
+with built-in Unit, Bool, Byte, Int, Float, Char, Time, Duration, Decimal, Range,
+Text, Bytes or BigInt inputs, composed through tuples, Lists, Option, Result
+and visible source records/choices, including closed imported generic data and
+regular recursion. Generic subjects, exposed-opaque types, function/capability
+inputs, Maps/Sets and factory wiring remain unavailable, even if concrete
+instances exist elsewhere. Preflight checks every payload of every case and
+every actual type argument, including phantom arguments. It walks canonical
+declaring symbols and declaration-ordered field templates, never import
+spellings or reconstructed parameter keys. Actual arguments are checked
+independently, so data-scoped template parameters require no synthesized
+substitution. A memoized iterative source graph closes recursive edges and
+shared DAGs; its comparisons, edges and lookups share 64 Mi work per selected
+set and each promise uses at most 64 MiB scratch, refusing E1404 on exhaustion.
+An explicitly exposed-opaque type requires builders even inside its defining
+module; an unexported local record/choice remains structural. Hidden nested
+payloads refuse the whole selection, even under List or Option; the generator
+may not silently cover only an empty list or one visible choice case. Listing
+and ordinary-only selection still require no generator. This eligibility check
+does not widen lowering's native-call
+support: subjects, conditions and anchors still refuse staged calls with E1150
+(for example Time.parse, Int.seconds, Bytes.size and Float.nan?). Listing still
+needs no generator or image. The runner uses
+`tools/inputs.h` unchanged, seeded by the full source promise name. Each trial
+uses a fresh process, retaining its tuple and returned result independently of
+the arguments consumed by subject and condition calls. A shrink candidate is
+deep-copied into its own process; no cell crosses heaps by reference.
+
+Zero from the condition function passes; a positive index selects the exact
+original false-condition span. Shrinking accepts completed false conditions.
+A genuine stopped shrink candidate instead reports that candidate's input,
+span, stack and extreme, then stops shrinking; it does not restore the prior
+false-condition result. Cancellation alone retains the last confirmed failure.
+An unresolved interrupted promise produces E1404 and no result/count for that
+promise, but later independent observations continue. A clock failure with a
+confirmed failure preserves its result and also reports E1404, never a pass.
+Generation/preparation refusal is tool inability, not a fabricated Mo stop.
+The existing JSON promise fields in 10.2 are filled without an outcome/schema
+extension. Failed-promise `calls` counts attempted subject invocations, search
+plus shrinking, including an interrupted shrink attempt. Values are printed
+structurally without executing customizers, at most 4,096 bytes per value and
+1 MiB per complete record; inability to print a complete value refuses the
+record with E1404 instead of truncating it. Promise timing includes generation
+and shrinking, excluding initialization, anchors and report rendering.
+
+**Captured closures in observations.** Tools use the same certified pipeline
+for by-value captures and returned closures (4.3), without constructing environments
+or reconstructing checker bindings. A returned closure may outlive both its
+factory and an intermediate closure call. Copying a var into an immutable name
+before capturing it preserves that snapshot across later writes to the var;
+capturing the later-written var itself refuses E0092 before any observation.
+Failures retain the enclosing assert span, and stops retain the closure's original
+source span, full stack and readable captured values through the existing visitor.
+This integration changes no observation names, selection, outcomes or JSON fields.
+
+**Imported declarations in tools.** Certified nongeneric, generic-function and
+generic nominal imports use that same whole-program pipeline, with canonical
+declaring symbols and types; tools do not reconstruct bindings from written
+import names. Listed aliases and qualified calls therefore reach the same
+declaration. Observation names and
+`--in MODULE` use the declaring module, not the importing entry module. Failed
+assertions retain the caller's source location; a stopped imported closure retains
+its original module's span and the complete cross-module stack. The whole-program
+unused-import audit precedes selection, including `--list`, so E0093 at the written
+name takes precedence over an unknown selector and suppresses all observations and
+both emitted artifacts. Imports used only in tests count as used. No new tools
+code or JSON field is required. Imported generic nominal annotations,
+construction, projection and choice patterns retain the defining data module's
+canonical layout, declaration-ordered keys and exposure; requester-owned function
+instances do not give importers data exports (3.2, 4.3). Certified foreign constant
+reads and imported initializer calls/function values retain the same declaring
+identities and checked dependency order. Unresolved higher-order, returned or
+anonymous initializer calls and executed abstract Text/Order dependencies remain
+checker E1103; later-global deferred functions remain lower E1150. Broad Text-only
+abstract captures remain staged too. Closed exposed nominal inputs use the
+structural promise eligibility above; imports do not change the settled
+monotonic deadline policy (10.1).
+
+Generic substitutions retain the callee signature's scoped keys; actual ability
+proofs retain the caller environment, including its customizers. Requester-owned
+instances do not change declaration-file ownership or source observation names.
+Source examples execute once each, including when callers use several concrete
+instances of the generic subject; `--only`/`--in` still select the source inventory.
+Stops may display an instance-qualified frame but retain the defining file's span.
+Missing actual abilities report source E0080 before selection, image initialization
+or observation execution; neither emission writes an artifact. Tools consume the
+existing checker/lower contracts without assuming pointer-equal cached proof types,
+adding exports to imported instances or reconstructing proof keys.
+
+Stopped results retain their original defect span and all stack frames. Variables
+belong to the stopping frame, in bytecode debug-name order. The VM's public
+borrowed visitor establishes readability and lifetime; tools never inspect private
+register layouts or parse human defect text. Each traversal has a 4,096-variable
+and 64 Mi work ceiling, including ancestor traversal; any incomplete traversal
+refuses the whole result with E1404. Structural value printing executes no Mo code,
+uses at most 4,096 bytes per value, and substitutes `<value unavailable>` if a
+value cannot be printed within its scratch/output budget. Text and Char variables
+use quoted literal spellings. Each complete result fits 1 MiB, including escaping,
+or is refused whole; no result field is truncated. Selection/name construction
+has a 64 Mi work budget and image binding a 64 MiB scratch arena, under the
+existing source/spec and bytecode count limits.
+
+Source work runs synchronously through `mo_with_stack` with
+`MO_SOURCE_STACK_SIZE`, covering load, parse, check, lower, Core check, codegen
+and execution in one callback. It joins before freeing borrowed arenas or
+diagnostics. It changes no process-wide resource limits and follows changes to
+the shared stack allowance.
 Failure to prepare that stack reports E1401 with an unavailable location and
 the POSIX error as its label, in either text or JSON, and exits 1.
 
@@ -1519,6 +2000,23 @@ start. Rendering never changes files. Unavailable locations display
   return a failure for such inputs, or take a type whose module keeps its
   values in range (D234).
 
+**Monotonic promise deadlines (D242, option B).** Tools starts one absolute
+`CLOCK_MONOTONIC` deadline per promise, shared by generation, all subject and
+condition calls, and shrinking. The ordinary budget counts subject trials,
+not condition calls or nested calls; shrinking has at most 200 additional
+subject trials, never a fresh time allowance. The clock callback records
+expiry separately from a failed clock read. Time or calls exhausted between
+completed trials ends search normally. An interrupted unresolved trial is
+E1404/status 1, with no invented observation outcome. Interrupted shrinking
+keeps the last fully confirmed failing tuple, result and condition; a cancelled
+candidate never replaces it. A clock failure is E1404 even when a failure was
+already confirmed. Genuine Mo stops/failures retain their meaning.
+The VM's separately owned controlled-call seam is clock-free; tools uses its
+terminal cancellation result, not instruction fuel or a fabricated Mo defect.
+Native/blocked operations may overshoot. Ordinary observations, image
+initialization and hard process isolation are outside this policy. Expiry before
+any trial completes reports inability rather than a zero-trial pass.
+
 **The input library, part 1.** `tools/inputs.h` takes the sealed image type
 table and parameter indices. It constructs owned cells through `heap`'s public
 builders, without calls or timing. The caller retains inputs while testing
@@ -1587,8 +2085,8 @@ overrides, missing layouts and non-hashable keys are unsupported. Exact-index
 factory overrides are the future hidden-builder, closure and fake-capability seam; their trusted
 callbacks subtract child nodes, bytes and work from the same remaining budget
 and rebuild foreign cells instead of retaining them. Hidden visibility and
-the choice of factories remain with the driver. None of these later builders
-or the `mo_call` driver is implemented in part 1.
+the choice of factories remain with the driver. These later builders remain
+unimplemented; the structural controlled-call driver uses no factory overrides.
 
 ### 10.2 JSON output
 
@@ -1622,7 +2120,10 @@ records may be added, and readers ignore what they don't know.
   body that was false; and `calls`, how many calls were tried. A stopped one
   adds `defect`, the defect report of section 8: `reason`, `span`, `stack`,
   each frame's `function` and `span`, and `variables`, each a `name` and
-  `value`; and for a promise, the `input` it stopped on, and `extreme`, when
+  `value`. Optional `detail` preserves the stop's original Text payload;
+  optional `limit` has `name` (such as `"--max-depth"`) and `value`, a decimal
+  string. These additive fields preserve the reason's established meaning.
+  For a promise, the `input` it stopped on, and `extreme`, when
   that input holds one of its type's extremes: the parameter's `name` and the
   extreme's `description`, such as `"Decimal's largest value"`.
 - **`totals`**, always last: `errors`, the diagnostics written, and
@@ -1646,8 +2147,9 @@ either presentation. Fields are never truncated to manufacture a record.
 Errors or drops imply status 1; `errors` counts records actually written.
 Output failure exits 1 too; an output that refuses bytes cannot be promised
 a totals record. SIGPIPE is ignored so broken pipes take this failure path.
-Each complete record is written and flushed immediately. Version precedes
-loading; diagnostics follow the stages in one globally position-sorted
+Each complete record is written and flushed immediately. Check's version precedes
+loading; test defers it until selection succeeds (or source diagnostics exist),
+so a selection mistake cannot leave a version record. Diagnostics follow the stages in one globally position-sorted
 batch; totals come last. Text is likewise flushed per diagnostic.
 
 An unavailable span (`file == UINT32_MAX`, or no retained source) keeps
@@ -1663,8 +2165,9 @@ UTF-8; offsets still refer to unmodified source bytes. This is not a
 lossless path-byte codec when valid U+00HH also occurs; consumers must check
 decoded paths before rewriting files. Limit/implementation codes have both
 `reason` and `section` null, even when the stage supplies explanatory reason
-text; their explanation belongs in headline/label. Test stubs produce
-version, E1400 diagnostic and totals with all test counts zero.
+text; their explanation belongs in headline/label. A selected promise's unavailable
+runner produces version, E1400 diagnostic and totals with all test counts zero;
+ordinary examples/tests produce their actual result records.
 
 If `count` in `examples/wc.mo` miscounted words, `mo test --json
 examples/wc.mo` would write these lines, with the four results that pass
@@ -2312,12 +2815,54 @@ emit typed graphs, rather than running a second name/type checker. It currently
 certifies generic functions and their keyed requirement proofs, scalar
 expressions and native/derived/custom operator proofs, direct/indirect calls,
 prepared native calls, record/choice construction and fields, normalized
-patterns, tuples/lists, conditionals, loops, early exits/asserts and noncapturing
+patterns, tuples/lists, conditionals, loops, early exits/asserts and capturing
 lambdas, dot/overload dispatch, Mo-library calls, ability dots and interpolation.
-`main` returns Unit or Int and takes no parameters or one Console.
+Option defaults and Option/Result `try` are checked too, including unique
+failure wrapping and generic wrapper requirements.
+Each source example line is checked through the same inference and graph
+emitter, as a zero-parameter Bool body in its subject's module. Examples retain
+the subject's function index and a per-subject ordinal across examples blocks;
+no subject parameters are brought into the example's scope. Their text/span
+names the original expression bytes, including internal whitespace, without a
+decoded or reconstructed spelling. `mo_module_set.sources` supplies those bytes
+only during checking; `mo_load_program` fills it and checking copies spec text
+into its arena. Synthetic callers with specs must supply equivalent sources.
+Examples have no numbered condition table: their Bool root is authoritative;
+only promise condition tables become bytecode condition metadata.
+Promises bind the subject's parameters in signature order and an implicit
+`result` last, using the subject's scoped generic parameters and requirements.
+The implicit binder borrows the first anchor's original `result` name, rather
+than inventing a source location. A promise need not refer to every parameter.
+Each Boolean line retains its original bytes/span and checked row index;
+the Bool root combines those rows with short-circuit `and` in written order.
+Anchor `values` index rows in promise-parameter order, while their body rows
+retain written evaluation order. Each generic anchor has `arguments` and
+type-only `abilities` keyed by the subject's scoped parameter plus ability,
+just as a call of that subject. Malformed anchor names or missing/repeated
+values are E0088 (12.2); anchor evaluation remains in tools, not checking.
+Tests are zero-parameter Unit bodies in their module and see its private names.
+Tests/promises keep both original header bytes and decoded wording, including
+UTF-8, embedded NUL and triple-quoted indentation. Specs follow module/source
+order; sorting remaps anchor links without changing source ordinals.
+Failure details require no Text proof and bypass customizers: lowering uses
+the structural form of Text.%structural, including for Equal-only types.
+Constants use the same inference and graph emitter. An unresolved constant
+read pauses its initializer; an explicit stack checks the dependency before
+resuming. Each initializer must decide its closed type without constraints
+from its uses. Dependency order follows the checked evaluation graphs,
+including ordinary calls and selected ability callbacks; merely making a
+function value does not call it. Source-order ties use a minimum ready queue.
+Constant cycles are E0089 (10.4). Unresolved indirect calls and abstract
+Text/Order callback environments reached during initialization remain E1103,
+rather than supplying an unproven order or reporting a guessed cycle.
+`main` returns Unit or Int and takes any distinct subset of the seven capability
+types, in written order (reference 11.2).
 Direct `Console.print` reads its operation
 and named input type from `base/hostops.def`, with the receiver explicit.
-Map expressions, imports and constants/specs still report E1103. `where`
+Map expressions still report E1103.
+Spec-only capability operations check in spec bodies and their lambdas, never
+in constants or ordinary functions; unsupported lowering routes remain E1150.
+`where`
 validates scoped parameters and the five abilities; customizers must have their declaring
 type's Text/Ordering signature. A generic customizer covers the whole nominal
 type: every receiver type slot is a distinct scoped function parameter, in any
@@ -2344,14 +2889,16 @@ five Text fields in case order. FileError's Text instead selects the trusted
 library module's to_text (design library); a missing implementation is E1103,
 not an invented native callback or structural fallback.
 Polymorphic recursion uses an explicit-stack SCC walk of scoped parameter
-dependencies from generic uses, including function values and ability callbacks.
+dependencies from generic uses, including function values and ability callbacks
+in function and promise bodies.
 A growing edge within a cycle is E0083; permutations and concrete resets do not
 grow the cycle. Proof traversal memoizes recursive nominal graphs.
 Invalid entry signatures report E0079: parameters must be capabilities without
 duplicate types, and the result must be Unit, Int or Result(Unit, E). Valid
-unfinished entry conventions still report E1103. Checking stops at the first
-failed stage or body; no staged inference result or partly filled program is
-returned as certified output.
+Result-return entry conventions still report E1103. Checking stops at the first
+unfinished stage or resource failure; independent body errors are retained in
+source order, with further errors counted after the diagnostic cap. No staged
+inference result or partly filled program is returned as certified output.
 The whole-program corpus asserts resolved graphs and canonical binders, checks
 unfinished-stage rejection, sweeps arena limits and reaches maximum nesting.
 `fuzz_program` walks graph invariants and varies allocation budgets. Generated
@@ -2434,9 +2981,45 @@ constructing a scalar, including Int's signed minimum.
 
 Checked patterns name their cases and declaration-order fields. Case arms keep
 source order and guards; coverage and the no-catch-all rule are already checked.
-`or` explicitly selects Bool or Option. `try` identifies its enclosing result,
-failure constructor and any unique wrapping case. Lambda records retain typed
-parameters, captures in first-use order and source-order numbers before lifting.
+`or` explicitly selects Bool or Option, with two operands and a lazy right
+operand. An Option default returns its payload, even when that payload is
+another Option; flat chains constrain only their final result. `never` depends
+on the mandatory left, not a stopping fallback. Deferred defaults and `try`
+solve alongside dot dispatch, before numeric defaults and final types.
+`try` has one input operand and identifies the nearest function/lambda result,
+failure constructor and any unique wrapping case. Input and enclosing success
+payloads need not match. Equal failure types propagate directly; an unconstrained
+whole error variable first unifies for direct propagation. Otherwise exactly
+one unnamed-field case must match the source error type after generic
+substitution and ordinary numeric defaults. Unknown payloads such as None's
+parameter can be constrained by that unique case; candidate matching does not
+bind them speculatively, and repeated variables must agree. Destination type
+arguments must already be determined by the signature or other uses.
+Wrapping requires the type's insides to be visible, like explicit
+construction. Named fields do not wrap. E0085/E0086 reject the wrong input/result
+family; E0087 names a missing or ambiguous wrapper. The selected wrapper retains
+its substitution and keyed type-only requirements in `mo_checked_try`; lowering
+does not search for cases or proofs. All deferred checks and type comparisons
+share the ordinary work/depth/arena limits and memoize shared type paths.
+Lambda records retain typed parameters, captures in first-use order and
+source-order numbers before lifting. Captures point at the original checked
+binding, not its spelling or a new local; an enclosing lambda also captures
+bindings needed only by its nested lambdas. Written first-use order does not
+depend on inference's argument order. Lowering snapshots these values when
+the lambda is made, so escaped closures keep their parameters and local values.
+E0090 rejects writes to a lambda's own vars; outer-function writes retain
+E0057. E0091 rejects captured capabilities and types that store them. Private
+nominal dependency masks reach a fixed point across recursive records/choices;
+phantom parameters and function parameter/result types do not store handles.
+Abstract stored parameters without Number remain E1103: custom Text/Order and
+implied Equal proofs do not establish capability-free storage. No negative
+capability requirement or carrier/schema change is introduced.
+E0092 rejects a captured var with a later whole-value or field write, including
+a preceding write repeated by an enclosing loop. Vars declared inside that
+loop have a new binding lifetime each round. Disjoint if/case bodies do not
+write after one another in a single round; repeated enclosing rounds still
+count. Capture checks use original read/write spans and retain the earliest
+independent body diagnostic, including a capture before an unfinished body.
 Constants alone are dependency-ordered, with source-order ties. The entry names
 the entry module's `main`, its ordered capability parameters, result convention
 and the Text implementation for a returned failure.
@@ -2540,8 +3123,9 @@ MO_MUST_USE struct mo_core *mo_core_parse(struct mo_arena *arena, const char *te
                                           struct mo_diags *diags);
 
 /* src/codegen/codegen.h: the whole Core document, spec code and metadata included.
- * Validate metadata shape; derive debug ranges, remap file indices to filename strings,
- * preserve module exposure and spec links/lines. Never reopen sources or consult checked Mo. */
+ * Validate metadata shape; derive debug ranges, copy exact filename bytes in source order,
+ * retain file indices in the separate filename table, module exposure and spec links/lines.
+ * Never reopen sources or consult checked Mo. */
 MO_MUST_USE bool mo_compile(const struct mo_core *core, struct mo_buffer *bytecode_out, struct mo_diags *diags);
 
 /* src/bytecode/bytecode.h: writing and text tools borrow inputs. out is an initialized,

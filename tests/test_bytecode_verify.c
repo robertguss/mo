@@ -130,7 +130,9 @@ static void parameter(struct fixture *t, uint32_t function, uint32_t count,
 }
 static MO_MUST_USE uint32_t position(const struct fixture *t, size_t length, uint32_t fn,
                                      uint32_t word) {
-    size_t tail = 24 + (size_t)t->file.function_count * 36;
+    size_t tail = 28 + (size_t)t->file.function_count * 36;
+    for (uint32_t i = 0; i < t->file.file_count; i++)
+        tail += 4 + t->file.files[i].length;
     tail += (size_t)t->module.global_count * 4 + (size_t)t->module.function_count * 4 +
             (size_t)t->module.type_count * 8;
     for (uint32_t i = fn + 1; i < t->file.function_count; i++) {
@@ -1657,6 +1659,9 @@ static void worked_examples(void) {
         {.kind = MO_LAYOUT_TUPLE, .type = 3, .fields = int_pair, .field_count = 2}};
     t.file.strings = demo_names;
     t.file.string_count = N(demo_names);
+    const struct mo_bytecode_bytes demo_files[] = {STR("demo.mo")};
+    t.file.files = demo_files;
+    t.file.file_count = N(demo_files);
     t.file.types = demo_types;
     t.file.type_count = N(demo_types);
     t.file.layouts = demo_layouts;
@@ -1757,29 +1762,29 @@ static void worked_examples(void) {
     t.module.function_count = N(exports);
     t.file.function_count = 5;
     t.file.debug_count = 5;
-    const struct mo_bytecode_span spans[] = {{0, 8, 10, 20}, {3, MO_NO_INDEX, 0, 0}};
+    const struct mo_bytecode_span spans[] = {{0, 0, 10, 20}, {3, MO_NO_INDEX, 0, 0}};
     const struct mo_bytecode_register_name answer[] = {{0, 6, 3, 21}};
-    const struct mo_bytecode_spec_line lines[] = {{8, 50, 60, 14}, {MO_NO_INDEX, 0, 0, 15}};
+    const struct mo_bytecode_spec_line lines[] = {{0, 50, 60, 14}, {MO_NO_INDEX, 0, 0, 15}};
     t.debug[0] = (struct mo_bytecode_debug){.spans = spans,
                                             .span_count = 2,
                                             .names = answer,
                                             .name_count = 1,
                                             .text = 7,
-                                            .file = 8,
+                                            .file = 0,
                                             .end = 21,
                                             .subject = MO_NO_INDEX};
-    t.debug[1].file = 8;
+    t.debug[1].file = 0;
     t.debug[1].start = 22;
     t.debug[1].end = 39;
     t.debug[2] = (struct mo_bytecode_debug){.text = 13,
-                                            .file = 8,
+                                            .file = 0,
                                             .start = 40,
                                             .end = 90,
                                             .subject = 1,
                                             .lines = lines,
                                             .line_count = 2};
     t.debug[3] = (struct mo_bytecode_debug){.text = 17,
-                                            .file = 8,
+                                            .file = 0,
                                             .start = 91,
                                             .end = 110,
                                             .subject = 2,

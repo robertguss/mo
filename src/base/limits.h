@@ -328,6 +328,21 @@ static inline struct mo_limits mo_limits_default(void) {
 /* The staged surface pipeline's one arena. E1054 while parsing, E1058 while checking. */
 #define MO_CLI_CHECK_SIZE (512 << 20)
 
+/* Compiler execution of each promise anchor, and initialization for that check.
+ * Exhaustion refuses the check with E1405, not a conclusion about the promise.
+ * This compiler work bound never limits the user's running main. */
+#define MO_CLI_ANCHOR_INSTRUCTIONS (16 << 20)
+
+/* Observation inventory/selection and image binding, not Mo execution limits.
+ * Result records use MO_CLI_DIAGNOSTIC_SIZE and never truncate fields. */
+#define MO_CLI_TEST_SIZE (64 << 20)
+#define MO_CLI_TEST_WORK (64 << 20)
+#define MO_CLI_TEST_VARIABLES 4096
+
+/* Architecture 10.1: additional subject trials after a false promise.
+ * --calls bounds the preceding search; both share the same deadline (D242). */
+#define MO_CLI_PROMISE_SHRINK_CALLS 200
+
 /* Promise input generation, not limits on program results. The caller can
  * choose smaller budgets. Refusal leaves the sequence unchanged; tools may
  * skip an oversized candidate or retry it with more heap. */

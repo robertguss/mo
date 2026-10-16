@@ -96,6 +96,24 @@ by lowering; its debug name stays the source spelling. Functions keep their name
 has several functions of one name (5.1), or a type customizes `to_text`, the
 lowering qualifies the name: `LineError.to_text`.
 
+Nongeneric imports introduce no Core operation. Both `Shapes.make(19)` and an
+explicitly imported `make(19)` call the selected declaring function `Shapes.make`.
+Likewise a returned record retains its declaring nominal name `Shapes.Box`,
+even through a third module; an importing module's own `Box` is a different type.
+Lowering consumes the checked symbol and `type.declaration` pointers, interpreting
+choice owner/case indices in that declaration's module scope. It does not resolve
+import spellings again or consume the checker's private import-use bookkeeping.
+Core module ownership, exports (including opaque versus exposed contents), source
+file indices, declaration/body spans and spec wording retain the declaring source.
+Nongeneric source calls, first-class references, records, choices and snapshots
+use the existing translation rules unchanged. Certified imported generic
+function calls/values likewise reuse section 9's instances and scoped proofs,
+including returned/captured references and three-module propagation. Certified
+foreign generic nominal annotations, constructors, fields and choice patterns
+reuse the declaring data layouts in sections 4 and 9. Foreign constant reads
+and direct imported initializer references remain explicit checker E1103; this
+integration does not add a new Core representation or reorder constants.
+
 ## 3. Values and types
 
 | Mo | Core type | Core value |
@@ -266,6 +284,31 @@ which interpolation calls too. So the two never differ. The Lean model doesn't
 generate `to_text[T]` yet, except a set's, `Lib.setText`, which takes as a
 parameter how an element is written inside another value; none of the
 samples needs it.
+
+In C lowering, interpolation's checked operands are only the hole expressions,
+in written order. Literal HEAD/MID/TAIL parts remain syntax and receive their own
+Core spans after decoding. Triple parts share the final delimiter's indentation
+and normalize CRLFs. Lowering binds each hole's text conversion before evaluating
+the next hole, so a custom `to_text` that stops cannot be overtaken by a later
+hole's evaluation. Explicit `to_text`, interpolation and entry error printing
+use the same selected proof, rather than looking up a customizer again.
+Derived helpers reserve their function before following proof parts and use a
+bounded, memoized FIFO queue rather than C recursion. Tuple parts convert in
+declaration order. Native Text/Char parts are quoted within structural values;
+escaping processes original slashes first, then delimiters, interpolation
+markers and control characters, so newly inserted escapes are not doubled.
+
+Qualified native scalar calls, such as `Int.to_text`, use the same scalar
+conversion as a selected native Text proof. A same-name ordinary source helper
+still calls its checked source symbol, so `to_text(7)` may return an Int while
+`29.to_text` returns Text in the same module. `Text.byte_count` lowers to
+`%text.byteCount`, counting UTF-8 bytes rather than characters. A supported
+qualified native used as a function value, such as `Int.to_text` or
+`Text.byte_count`, becomes a `.ref.ROW` lambda adapter (5.6) applying the same
+primitive to its parameters. Unsupported natives still refuse E1150 there.
+Namespace calls, such as `Int.to_text(29)`, retain a pure native callee row in
+the checked graph; lowering skips it before applying the primitive to the
+written arguments. Receiver dots, such as `29.to_text`, have no callee row.
 
 The text functions of section 14 are primitives (`%text.lines`,
 `%text.split`, ...); see section 14 below.
@@ -642,6 +685,21 @@ anonymous function may read a `var` only if nothing assigns the `var` after
 the function is made, including in a later round of a loop around it; the
 front end rejects the rest (reference 5.6), so a closure never has to choose
 between the value it was made with and a later one.
+
+The C lowerer prefixes a capturing lambda with local aliases in the checked
+first-use order: `fn() => let y = y in let x = x in ...`. Each right-hand
+name denotes the outer binding, before its local alias shadows it. Core's
+closure creation snapshots that ordered free environment by value. Prefixes
+prevent CPS or pattern rewrites from changing the capture order; their source
+metadata keeps the capture names and the lambda's responsible span.
+
+The declaration symbol retained on a checked postfix call is provenance,
+not necessarily its call target. A call whose callee is a zero-operand reference
+to that declaration emits `call`; a call whose callee is another call emits
+`app`. For `make(19)()` the translation is `let %f = make(19) in app %f ()`,
+not a second call to `make`. The returned closure keeps its escaped parameter
+values after `make` returns. Named-function value adapters still call their
+own declarations; no new closure representation or constant dependency is needed.
 
 `return` and `try` inside an anonymous function leave that anonymous function
 (reference 5.6). The lowering puts its `%return` join point (5.1) inside the
@@ -1027,6 +1085,20 @@ position. `try` on an `Option` works the same in a function returning an
 `Storage(FileError)`) and `notes-tool` (into `Unreadable(FileError)`) show
 both kinds.
 
+The C lowerer performs the naming and lazy continuation rewrite itself from
+the checked operand graph. It evaluates the input once, then emits a one-level
+case in native constructor order: None/Some or Ok/Error. Its failure arm jumps
+to the containing function or lambda's return join, even when more arithmetic
+or a constructor follows the `try`. The checker supplies the exact failure
+constructor and optional wrapper; lowering never searches for one. A wrapper's
+type is the substituted enclosing Result's error type, so generic nominal
+identity agrees with the checked result. Its checked type-only requirement uses
+(`operand = UINT32_MAX`, keyed by wrapper-scoped parameter and ability) must
+resolve in the supplying function instance's proof environment before emission;
+an unresolved proof refuses E1150. Direct propagation has no wrapper arguments
+or requirement uses. Option `or` similarly evaluates its
+default only in the None arm and passes Some's value to the continuation.
+
 ### 8.4 Can't happen
 
 `stop "reason"` is Core's `stop`; it fits any type:
@@ -1061,6 +1133,15 @@ A generic data declaration is canonical program-wide by (defining declaration,
 concrete type list) and owned by the defining module. If `Lib.make()` returns
 `Lib.Box(Int)`, a requester-specialized function must accept that same nominal
 type; making requester-specific data names would break the call's Core type.
+Written imported nominal uses retain that same declaration. Field substitution
+uses its record signature, or the first case's signature for a choice, with
+abstract keys in the type's explicit parameter declaration order rather than
+the importing function's A-Z order. Cases retain their choice owner's keys.
+Thus `Pair(Z, A)` used as `Pair(Int, Bool)` has Z = Int and A = Bool, regardless
+of caller parameter names. Each closed data layout is emitted once across
+requesters, and only its declaring module retains its data export/exposure.
+Opaque exports still have full Core layouts but cannot be constructed or
+projected by source importers; passing them through a third module adds no export.
 Generic function code is instead deduplicated by (requesting module, defining
 declaration, concrete type list). Thus Main and Other can own distinct copies
 `Main::Lib.identity(Int)` and `Other::Lib.identity(Int)`. Nested requests use
@@ -1074,6 +1155,25 @@ instance directly. Concrete source types share a cache across substitutions.
 Index buckets and source-function ordering use names, declaration positions,
 program indices and canonical type hashes, never addresses; ASLR cannot change
 lowering's work-limit verdict. Native scalar leaves share cache entries across bodies.
+Instances bind type-only requirement uses by (callee's scoped parameter, ability),
+not by concrete type. Each binding retains its selected proof and the supplying
+instance's type/proof environment. PARAMETER replacement follows these bindings
+iteratively under the ability-path/work bounds. A composite proof for `List(U)`
+passed from `relay(U)` to `show(T)` retains relay's substitution for its parts,
+not show's unrelated T. FUNCTION parts use `part_parameters` to bind the
+customizer's own requirements; receiver parameter order need not be alphabetical.
+Imported calls use those same callee-owned keys and caller-supplied proof
+environments; sharing structurally equal actual-type proofs does not merge the
+keys or require pointer-equal actual types. Requesting ownership and defining
+file provenance are separate: `Main::Lib.offset(Int)` and
+`Bridge::Lib.offset(Int)` have different owners but retain Lib's declaration/body
+spans. Generated derived helpers retain their responsible use span, not a
+fictional source declaration. Only defining-module instances can appear in that
+module's exposed-function list; importing requester copies gain no export.
+Recursive derived graphs reserve helpers before walking parts. Missing keys
+refuse E1150, including Number/Equal operations that could otherwise be guessed
+from their substituted type. Native Order proofs preserve direct scalar
+comparisons, notably IEEE Float operators rather than total `compare` ordering.
 The C lowerer checks structural Core type height after substitution as well as
 source-template depth. `T` becoming a deep list can push `List(T)` over Core's
 path bound; that instantiation refuses with E1153 rather than returning invalid Core.
@@ -1095,6 +1195,32 @@ type it is used at:
 | `Order` | for `Int`, `BigInt`, `Byte`, `Decimal`, `Float`, `Bool` (`false` first), `Char` and `Text` (by character code), `Bytes` (byte by byte, a sequence before any longer one it begins), `Time` and `Duration`, the primitives `%cmp.b.lt`, `le`, `gt`, `ge`, which follow IEEE for `Float`, as the bytecode's `lt` and `le` do (`bytecode.md` 4.4). For a tuple, a list, a record or a choice type, a Core function `compare[T]`: the module's own `compare`, or one the lowering derives (tuples part by part from the left; lists element by element, a list before a longer one it starts; records field by field and choice types case by case, in declaration order, so `None` before `Some`, `Ok` before `Error`, and `Less`, `Equal`, `Greater`). `Unit` has one value, which never comes before itself: `a < b` is `false` once both sides are computed. `sort`, `min`, `max`, `sort_by` and `sort_by_desc` are Core functions instantiated with it (`Lib.lt`), in which a `Float` that is "not a number" comes after every other float, as in the bytecode's `cmp_float`. Maps, sets and ranges have no order (reference 9.2). |
 | `Text` | the type's text form, as in 3.4, for `"#{x}"` and `x.to_text` alike. |
 | `Number` | the arithmetic primitives of the type; `sum` is the Core function `List.sum[T]`. |
+
+Derived record/choice text uses one-level constructor cases. Its proof parts are
+flattened in case/field declaration order, including zero parts for an empty case.
+Each field converts once in declaration order; argument spelling order only
+controls the earlier construction. Empty constructors print their bare names,
+others use `Name(field: value, ...)`, omitting labels for positional fields.
+Nested native Text and Char use source quoting, unlike top-level `to_text`.
+List Text uses a join over the remaining list and a reversed List(Text) of
+converted pieces. Each head converts once before advancing the tail. At
+exhaustion, reverse the pieces, `%text.join` with `, `, and surround with `[`/`]`.
+Nested Text/Char elements are quoted; an empty list prints `[]`.
+
+Derived tuple Order emits one Ordering case per part: Less and Greater return
+immediately, and Equal alone compares the next part. Selected custom Order
+functions follow the same protocol. `<` and `>` test the returned constructor;
+`<=` is not Greater and `>=` is not Less. Native Float `compare` tests NaNs
+before its numeric comparisons: two NaNs give Equal, a NaN sorts after any
+number. This does not change direct scalar Float comparisons, which stay IEEE.
+Derived records and choices use exhaustive one-level cases on both operands.
+Different constructors order by declaration position without comparing fields;
+matching constructors compare fields using the same flattened proof offsets as
+derived Text. All generated cases and their field slots charge the lowerer's
+whole-program work budget; there is no recursive C proof or value walk.
+List Order emits a recursive join with the two remaining lists as parameters.
+One-level `uncons` cases decide exhaustion; matching heads compare once and an
+Equal result jumps with both tails. A proper prefix sorts before its extension.
 
 A derived order, for `Point` of 4.1:
 
@@ -1144,9 +1270,9 @@ order is retained separately from their dependency-ordered declarations.
 ### 10.4 Constants
 
 A constant is `ConstDecl`: `const name : T = e`. A use is `global name`,
-not a function call. Lowering resolves global names and orders declarations
-by their dependencies, including dependencies through called functions
-(reference 10.4; bytecode 3.2 breaks ties by module then source order).
+not a function call. The checked program already orders declarations by their
+dependencies, including dependencies through called functions; lowering retains
+that order (reference 10.4; bytecode 3.2 breaks ties by module then source order).
 `initConsts` evaluates each once with an empty local environment and only
 the already computed globals, appends its value, then continues. A stop
 ends initialization before the entry or a test; no continuation runs.
@@ -1162,6 +1288,30 @@ prefix where they are made. Constants' names must be distinct, and their
 namespace is separate from local bindings; local shadowing cannot alter a
 resolved global read. Cycles and forward reads, direct or through calls,
 cannot pass these rules.
+The C lowerer starts ordinary functions at the full prefix and tightens a
+callee to the earliest constant initializer that can reach it. A bounded
+work queue propagates those restrictions through direct calls and generated
+function-value adapters, including calls nested in closures. Initializers are
+ConstDecl bodies, not duplicate ordinary functions; codegen emits their `.init`
+functions. Constant metadata carries source-order ownership and full body spans
+independently of the dependency-ordered Core declarations.
+Calls through constant function values translate to `app (global name) args`;
+only leaf reads translate to `global name`. Core lambdas retain the prefix at
+creation, even when their bodies are not executed during initialization. The
+same rule applies to certified foreign reads and direct imported initializer
+calls/function values: the checked declaring symbol supplies `Lib.seed`, not an
+importer-local `Main.seed`. Initializer ownership, body spans and lifted closure
+names retain that declaring source independently of dependency order; no
+importer export is synthesized. Owned generic nominal/Text values cross this
+boundary without changing layouts or capture carriers. Unresolved higher-order,
+returned or anonymous initializer calls and executed abstract Text/Order
+dependencies still refuse checker E1103 rather than emitting incomplete Core.
+The current C lowerer refuses E1150 if an initializer's deferred lambda or named
+function adapter needs a global outside that prefix. A bounded name index and
+the existing call work queue detect this before returning Core. The checked
+constant order remains unchanged: constructing a function does not acquire a
+false execution dependency. Supporting these later-global closures needs a
+separate representation decision, not a change to the producer's dependency walk.
 
 ```mo
 max_attempts = 3
@@ -1270,8 +1420,28 @@ this same boundary when they are added.
 Each line of an `examples` block is a zero-argument function of kind
 `example`, returning `Unit` on success or failing with a Text detail.
 Equality is `%eq` at the compared type. Lowering computes operands once and
-supplies their text forms as failure details; sample helpers use a fixed
-detail where deriving those forms isn't modeled yet.
+supplies their structural text forms as failure details, converting only on
+failure through the borrowed `Text.%structural`, never user `to_text`.
+Equal-only values need no Text proof. A failed `is` reports the same structural
+form for its snapshotted input. These forms agree with the test runner's JSON
+`left`, `right` and `input`. Core 0.8 supplies `(prim (structural T) (value))`.
+C lowering encodes each field as `LABEL N:VALUE,`, where LABEL is `left`,
+`right` or `input`, N is the canonical decimal UTF-8 byte count, and VALUE is
+the raw structural text. Equality concatenates left then right; `is` emits
+input alone. The runner splits by lengths, so embedded labels, commas, newlines
+and NUL cannot masquerade as fields. It displays the decoded values or puts
+them into the corresponding JSON fields. No quoting changes the observation.
+The structural result is bound once in the failure branch before taking its
+byte count and adding its payload. Pattern failure joins live inside the saved
+input's scope, and all one-level failure cases jump to that one join.
+
+Parentheses and expression statements forward the diagnostic condition.
+`and` reports its first false leaf; `or` reports its right false leaf only
+after the left is false; `implies` reports its right false leaf only after the
+left is true. A false left operand of `or`/`implies` must not fail prematurely.
+Other false Bool leaves keep the fixed assertion/example detail. Successful
+conditions never run structural conversion, and successful `assert ... is`
+bindings remain in scope for later statements. Ordinary assertions still stop.
 
 ```mo
 count("one two\nthree\n") == Counts(lines: 2, words: 3, bytes: 14)
@@ -1279,9 +1449,18 @@ count("one two\nthree\n") == Counts(lines: 2, words: 3, bytes: 14)
 
 ```
 example count.1() : Unit =
-  if %eq(count("one two\nthree\n"), Counts(2, 3, 14)) then Unit
-  else fail "count did not match the expected Counts"
+  let left = count("one two\nthree\n")
+  let right = Counts(2, 3, 14)
+  if %eq(left, right) then Unit
+  else
+    let l = %structural[Counts](left)
+    let r = %structural[Counts](right)
+    fail %text.concat(field("left", l), field("right", r))
 ```
+
+Here `field(label, text)` abbreviates
+`label ++ " " ++ %int.toText(%text.byteCount(text)) ++ ":" ++ text ++ ","`;
+it is concatenation of already-computed native text, never source `to_text`.
 
 ### 12.2 Promises
 
@@ -1294,6 +1473,29 @@ anchor must return 0, a `forbids` anchor a nonzero number. `mo test` supplies
 generated inputs and the ordinary function's actual result; generation is
 outside this model. `promiseHolds` compares an answer with 0 for the samples'
 Boolean conditions.
+
+C lowering emits each checked condition exactly once, nested under the previous
+line's success branch. Promise names are `SUBJECT.promise.N`; anchors use that
+whole name followed by `.allows.N` or `.forbids.N`, so distinct promises cannot
+reuse a display name. Metadata preserves the ordinary subject/promise links,
+expectation, verbatim promise header and each original condition's bytes/span.
+Anchor value roots are evaluated by increasing checked postorder index (written
+order), saved once, and only then permuted to parameter order at the promise call.
+
+Each concrete subject instance reserves its promises with the same scoped type
+and ability environment. An anchor's `arguments` and type-only `abilities`
+(operand `UINT32_MAX`, keyed by subject parameter and ability) select that subject
+instance; no fresh promise parameter scope or inferred diagnostic Text proof is
+introduced. A promise is memoized by source spec plus concrete subject instance,
+including the requesting module, before its body enters the bounded work queue.
+Its name uses the concrete subject's full instance name before `.promise.N`.
+Uses discovered in examples/tests and subsequent promise/customizer bodies also
+reserve the corresponding promises. Unused polymorphic templates emit no Core
+declaration. A generic subject's zero-parameter examples emit once, under its
+uninstantiated overload-qualified name, regardless of the body's concrete calls.
+Module ownership lists group all ordinary/spec instances by original source
+declaration order; call/link indices stay fixed. Tools execute anchors separately
+to check their expectations; typing and lowering alone do not establish truth.
 
 ```mo
 promise "a deposit adds exactly the amount"
@@ -1324,6 +1526,13 @@ matching arm and fails in the others. The test passes when it returns Unit.
 world, and no continuation runs. A bug while computing the detail remains a
 stop, not a failure. The sample helper `passes` lowers its Boolean condition
 to a Unit assertion in spec mode.
+
+C lowering names tests `MODULE.test.N` and examples
+`SUBJECT.example.N` from the checked source ordinals, not traversal order.
+Metadata retains decoded test wording, original example line bytes and the
+source span. Ordinary false conditions produce `assertion failed` or
+`example failed`; ordinary-function assertions remain stops. Equality/pattern
+details follow the structural-only rule above when Core supports it.
 
 ### 12.4 Fakes
 
@@ -1443,6 +1652,17 @@ Functions marked *prim* are primitives (`MoCore/Prim.lean`, typed by
 `Prim.sig`); *Core* functions are written in Core (`MoCore/Lib.lean`),
 instantiated per type; *lowered* ones are a few lines of Core written in
 place; *not modeled* ones are not in this model yet.
+
+The C lowerer emits `prim (int (abs|min|max))` for the inventoried `Int.abs`,
+`Int.min` and `Int.max`, whether selected by a namespace call or receiver call.
+A first-class reference uses the existing typed lambda adapter with that same
+primitive body; a constant alias is an application of the stored function value.
+Namespace calls skip their pure callee row for every argument, not only the
+first; receiver calls start with the receiver. Both evaluate arguments once in
+written order. Int's minimum passed to `abs` raises the existing Int overflow.
+No new Core representation or producer dependency is introduced; adapters retain
+their source metadata and creation-prefix limits. This C subset does not imply
+that every library primitive in the model's table below is source-lowered yet.
 
 | Mo | In Core |
 | --- | --- |

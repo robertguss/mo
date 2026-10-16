@@ -121,6 +121,10 @@ mo_core_string lower_type_name(struct lowering *p, mo_core_ty type) {
     lower_work(p, 1);
     return ((struct canonical_type *)type)->name;
 }
+uint64_t lower_type_hash(struct lowering *p, mo_core_ty type) {
+    lower_work(p, 1);
+    return ((struct canonical_type *)type)->hash;
+}
 static bool same_parameter(const struct mo_source_type *a, const struct mo_source_type *b) {
     return a == b || (a->kind == MO_SOURCE_PARAMETER && b->kind == MO_SOURCE_PARAMETER &&
                       a->declaration == b->declaration && a->module == b->module &&
@@ -364,11 +368,8 @@ static int source_order(const void *a, const void *b) {
 void lower_indices(struct lowering *p) {
     uint32_t count = p->program->function_count;
     p->source_index = LOWER_NEW(p, const struct mo_checked_function *, count);
-    p->by_source = LOWER_NEW(p, struct instance *, count);
-    p->source_tails = LOWER_NEW(p, struct instance **, count);
     for (uint32_t i = 0; i < count; i++) {
         p->source_index[i] = &p->program->functions[i];
-        p->source_tails[i] = &p->by_source[i];
         for (uint32_t n = count; n != 0; n /= 2)
             lower_work(p, 1 + strlen(p->source_index[i]->signature->function->name));
     }
@@ -383,9 +384,67 @@ static uint64_t instance_hash(struct lowering *p, const struct mo_checked_functi
     return hash;
 }
 
+void lower_proof(struct lowering *p, const struct mo_ability_implementation **proof,
+                 const struct substitution **substitution) {
+    for (uint32_t depth = 0; (*proof)->kind == MO_ABILITY_PARAMETER; depth++) {
+        lower_work(p, 1);
+        if (depth == MO_LIMIT_SOURCE_ABILITY_DEPTH)
+            lower_refuse(p, MO_CODE_LOWER_DEPTH, "ability substitution is nested too deeply");
+        const struct ability_binding *binding = NULL;
+        if (*substitution != NULL)
+            for (uint32_t i = 0; i < (*substitution)->ability_count; i++) {
+                lower_work(p, 1);
+                const struct ability_binding *candidate = &(*substitution)->abilities[i];
+                if (candidate->proof->ability == (*proof)->ability &&
+                    same_parameter(candidate->parameter, (*proof)->type)) {
+                    binding = candidate;
+                    break;
+                }
+            }
+        if (binding == NULL)
+            lower_refuse(p, MO_CODE_LOWER_UNFINISHED,
+                         "this generic requirement has no keyed implementation proof");
+        *proof = binding->proof;
+        *substitution = binding->substitution;
+    }
+}
+
+struct instance *lower_customizer(struct lowering *p, const struct mo_ability_implementation *proof,
+                                  const struct substitution *substitution, uint32_t owner,
+                                  uint32_t depth) {
+    MO_ASSERT(proof->kind == MO_ABILITY_FUNCTION);
+    struct mo_checked_ability_use *uses =
+        LOWER_NEW(p, struct mo_checked_ability_use, proof->part_count);
+    for (uint32_t i = 0; i < proof->part_count; i++) {
+        lower_work(p, 1);
+        uses[i] = (struct mo_checked_ability_use){.operand = UINT32_MAX,
+                                                  .implementation = proof->parts[i],
+                                                  .parameter = proof->part_parameters[i]};
+    }
+    return lower_instance(p, proof->function, proof->arguments, substitution, proof->part_count,
+                          uses, owner, depth + (proof->arguments.count != 0));
+}
+
+mo_core_string lower_function_name(struct lowering *p, const struct mo_symbol *symbol) {
+    mo_core_string name = lower_global_name(p, symbol);
+    /* Overload ownership is a nominal receiver, independent of discovery. */
+    if (symbol->receiver != UINT32_MAX) {
+        const struct mo_module_scope *scope = &p->program->interfaces->scopes[symbol->module];
+        const struct mo_symbol *group =
+            mo_find_symbol(scope, (const uint8_t *)symbol->name, strlen(symbol->name));
+        MO_ASSERT(group != NULL);
+        if (group->overload_count > 1) {
+            const struct mo_symbol *receiver = &scope->symbols[symbol->receiver];
+            name = lower_concat(p, name, "@", lower_text(p, receiver->name));
+        }
+    }
+    return name;
+}
+
 struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symbol,
                                 struct mo_type_arguments arguments,
-                                const struct substitution *substitution, uint32_t owner,
+                                const struct substitution *substitution, uint32_t ability_count,
+                                const struct mo_checked_ability_use *abilities, uint32_t owner,
                                 uint32_t depth) {
     MO_ASSERT(symbol != NULL);
     uint32_t lo = 0, hi = p->program->function_count;
@@ -448,20 +507,24 @@ struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symb
     f->substitution.parameters = LOWER_NEW(p, const struct mo_source_type *, arguments.count);
     for (uint32_t i = 0; i < arguments.count; i++)
         f->substitution.parameters[i] = arguments.items[i].parameter;
-    mo_core_string name = lower_concat(p, lower_text(p, p->program->set->names[symbol->module]),
-                                       ".", lower_text(p, symbol->name));
-    /* Overload ownership is a nominal receiver, independent of discovery. */
-    if (symbol->receiver != UINT32_MAX) {
-        const struct mo_module_scope *scope = &p->program->interfaces->scopes[symbol->module];
-        const struct mo_symbol *group =
-            mo_find_symbol(scope, (const uint8_t *)symbol->name, strlen(symbol->name));
-        MO_ASSERT(group != NULL);
-        if (group->overload_count > 1) {
-            const struct mo_symbol *receiver = &scope->symbols[symbol->receiver];
-            name = lower_concat(p, name, "@", lower_text(p, receiver->name));
-        }
+    for (uint32_t i = 0; i < ability_count; i++) {
+        lower_work(p, 1);
+        if (abilities[i].operand == UINT32_MAX)
+            f->substitution.ability_count++;
     }
-    name = applied_name(p, name, arguments.count, types);
+    f->substitution.abilities = LOWER_NEW(p, struct ability_binding, f->substitution.ability_count);
+    uint32_t requirement = 0;
+    for (uint32_t i = 0; i < ability_count; i++) {
+        lower_work(p, 1);
+        if (abilities[i].operand != UINT32_MAX)
+            continue;
+        const struct mo_ability_implementation *proof = abilities[i].implementation;
+        const struct substitution *environment = substitution;
+        lower_proof(p, &proof, &environment);
+        f->substitution.abilities[requirement++] =
+            (struct ability_binding){abilities[i].parameter, proof, environment};
+    }
+    mo_core_string name = applied_name(p, lower_function_name(p, symbol), arguments.count, types);
     if (arguments.count != 0)
         name = lower_concat(p, lower_text(p, p->program->set->names[owner]), "::", name);
     f->fun.name = name;
@@ -473,9 +536,6 @@ struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symb
     p->function_tail = &f->next;
     f->hash_next = p->instance_index[at];
     p->instance_index[at] = f;
-    size_t source_index = (size_t)(source - p->program->functions);
-    *p->source_tails[source_index] = f;
-    p->source_tails[source_index] = &f->source_next;
     return f;
 }
 

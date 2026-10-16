@@ -16,6 +16,9 @@ struct mo_module_set {
     const char **names;                /* dotted module names */
     bool *library;
     uint32_t **uses; /* one target index per use line, in header order */
+    /* Input to mo_check for exact spec text; need only outlive checking.
+     * May be NULL for a synthetic set without specifications. */
+    const struct mo_sources *sources;
 };
 
 /* Loads the entry and its transitive uses. sources must be initialized and empty.
@@ -117,8 +120,8 @@ struct mo_function_signature {
 };
 
 struct mo_field_signature {
-    const struct mo_syntax *name; /* NULL for a case's single unnamed value */
-    const struct mo_syntax *annotation;
+    const struct mo_syntax *name;       /* NULL for a case's single unnamed value */
+    const struct mo_syntax *annotation; /* the written field type */
     const struct mo_source_type *type;
     uint32_t index; /* declaration order */
 };
@@ -145,10 +148,12 @@ struct mo_signatures {
     uint32_t data_count;
     struct mo_data_signature *data; /* module order, then interface symbol order */
     uint32_t native_count;
-    struct mo_native_signature *native;
+    struct mo_native_signature *native; /* private prepared table interfaces */
     uint32_t nominal_count, customizer_count;
-    struct mo_nominal_signature *nominals;
-    const struct mo_function_signature **customizers;
+    struct mo_nominal_signature *nominals;            /* private owner index and dependency masks */
+    const struct mo_function_signature **customizers; /* private receiver index */
+    uint32_t import_count;
+    struct mo_import_usage *imports; /* private written-origin usage, independent of symbols */
     bool recovering; /* private diagnostic recovery; never true in a published preparation */
 };
 
@@ -261,7 +266,10 @@ enum mo_ability_implementation_kind {
  * part keyed by that customizer's T. This also applies to entry.error_text.
  * Hash/Order signatures include their implied Equal requirement. Graphs may
  * recurse through nominal data; lowering memoizes them. DERIVED has no
- * part_parameters: its parts are structural, not signature requirements. */
+ * part_parameters: its parts are structural, not signature requirements.
+ * Proofs may be shared for structurally equal actual types: implementation.type
+ * need not be the same pointer as a use's substituted actual type. The scoped
+ * parameter keys, not concrete-type pointers, retain canonical identity. */
 struct mo_ability_implementation {
     enum mo_source_ability ability;
     enum mo_ability_implementation_kind kind;
@@ -270,7 +278,7 @@ struct mo_ability_implementation {
     struct mo_type_arguments arguments;
     uint32_t part_count;
     const struct mo_ability_implementation *const *parts;
-    const struct mo_source_type *const *part_parameters;
+    const struct mo_source_type *const *part_parameters; /* FUNCTION requirement keys */
 };
 
 struct mo_checked_binding {
@@ -319,7 +327,7 @@ struct mo_checked_pattern {
     struct mo_constructor_ref constructor;
     struct mo_type_arguments arguments;
     uint32_t ability_count;
-    const struct mo_checked_ability_use *abilities;
+    const struct mo_checked_ability_use *abilities; /* keyed type-only constructor requirements */
     uint32_t part_count;
     const struct mo_checked_pattern_part *parts;
 };
@@ -343,12 +351,17 @@ enum mo_checked_or { MO_CHECK_OR_ABSENT, MO_CHECK_OR_BOOL, MO_CHECK_OR_OPTION };
 /* The source type decides Option versus Result. failure is None or Error in
  * the enclosing result; wrapper is absent for a direct propagation, or the
  * unique single-unnamed-field case selected by reference 8.3. Neither lower nor
- * codegen searches for a wrapper or chooses among candidates. */
+ * codegen searches for a wrapper or chooses among candidates. Successful input
+ * and enclosing result payloads need not have the same type. A generic wrapper
+ * carries its substitution and keyed type-only requirements, just like an
+ * explicit constructor; direct propagation has neither. */
 struct mo_checked_try {
     const struct mo_source_type *result; /* enclosing function/lambda result */
     struct mo_constructor_ref failure;
     struct mo_constructor_ref wrapper;
     struct mo_type_arguments arguments; /* wrapper substitution */
+    uint32_t ability_count;
+    const struct mo_checked_ability_use *abilities; /* keyed wrapper requirements, type-only */
 };
 
 struct mo_checked_lambda {
@@ -386,6 +399,12 @@ struct mo_checked_ability_use {
  * optional else body. RETURN has an optional guard first, then an optional
  * value; syntax distinguishes bare return from guarded bare return. Guards
  * run before the lazy value, even though the value is written first.
+ * OR has left/default operands, with a lazy right operand for both Bool and
+ * Option. An Option OR returns its payload type; its never flag comes from
+ * the mandatory left only. TRY has one input operand and try_ metadata; its
+ * failure returns from the nearest function/lambda, not the containing named
+ * function when inside a lambda. Neither form introduces constructor rows
+ * for its implicit failure/default paths.
  *
  * WHILE operands are condition/body; FOR operands are iterable/body. Both
  * return Unit. The body is lazy, and WHILE re-evaluates its condition each
@@ -503,10 +522,16 @@ struct mo_checked_spec {
     const struct mo_checked_binding *const *parameters; /* promise: subject params then result */
     struct mo_checked_body body; /* example/promise: Bool; test: Unit; anchor: value rows only */
     struct mo_type_arguments arguments; /* anchor's generic promise instantiation */
+    /* Anchor requirements: type-only uses, keyed by the subject's scoped
+     * parameters, just as a call of that subject. No Text proof for details. */
+    uint32_t ability_count;
+    const struct mo_checked_ability_use *abilities;
     uint32_t value_count;
-    const uint32_t *values; /* anchor value rows in promise-parameter order; empty otherwise */
+    /* Anchor values are indexed by promise-parameter order. Rows themselves
+     * retain written evaluation order, even when names are supplied out of order. */
+    const uint32_t *values;
     uint32_t condition_count;
-    const struct mo_checked_condition *conditions; /* promise lines/assertions, written order */
+    const struct mo_checked_condition *conditions; /* promise Bool lines, in written order */
     bool allows; /* anchor expectation only: true=allows, false=forbids */
 };
 
@@ -551,13 +576,37 @@ struct mo_program {
  * contract. Use the explicit source-stage stack. The current skeleton supports
  * generic functions with scoped requirement proofs, scalar expressions/operators, direct/indirect
  * calls, records/choices and fields, normalized patterns, tuples/lists, conditionals, loops, early
- * exits/asserts and noncapturing lambdas. Native signatures use the shared tables; operators,
+ * exits/asserts, capturing lambdas, lazy Option defaults and nearest-function/lambda try with
+ * unique error wrapping. Native signatures use the shared tables; operators,
  * ability dot calls and interpolation retain native/derived/custom/parameter proofs. Source
  * dot/overload dispatch and loaded library calls retain the selected symbols. Written Map/Set
- * types require Hash. main takes no parameters or one Console and returns Unit or Int.
- * Invalid entry signatures report E0079; valid unfinished entry forms return E1103. Imports,
- * constants/specs and unfinished body forms return E1103.
- * Future spec checking checks anchor typing, completeness and links but executes no source code:
+ * types require Hash. main takes distinct capabilities in written order and returns Unit or Int.
+ * Missing main and invalid entry signatures report E0079; there is no certified absent entry.
+ * Source example lines are zero-parameter Bool bodies, with their subject index,
+ * per-subject ordinal and an arena-owned copy of their original bytes/span.
+ * set.sources must cover the syntax's original file indices for spec checking.
+ * Promises bind subject parameters then implicit result, retain numbered Bool
+ * condition rows and original spans, and combine them with short-circuit and.
+ * Tests are zero-parameter Unit bodies in their module, with decoded wording.
+ * Anchors check names, completeness, typing and generic requirements. Their
+ * arguments/abilities specialize the promise's scoped parameters, not a new scope.
+ * Constants infer closed types from their initializers, independently of their
+ * uses, and are ordered through checked reads/calls/callbacks. Cycles are E0089;
+ * unresolved indirect-call or abstract callback dependencies remain E1103.
+ * Imports retain declaring symbol/type identities and count annotation/value references;
+ * unused written module/name routes report E0093 after successful body/spec checking.
+ * Imported generic functions use their declaring signature's parameter keys and
+ * the caller's actual-type ability proofs, as local uses do. Imported generic data
+ * annotations/construction/fields/patterns retain their declaring nominal identity
+ * and declaration-ordered parameter keys; hidden insides remain private.
+ * Foreign constant reads and initializer calls/values keep declaring symbols,
+ * closed inferred types and the same checked dependency order as local uses.
+ * Making a function value does not execute its body or its type-only proofs.
+ * Existing implicit library routes are unchanged.
+ * Spec-only capability operations are allowed only in spec bodies, including their lambdas;
+ * constants and ordinary functions still refuse them with E1103. Result entry conventions
+ * and unfinished body forms also return E1103.
+ * Spec checking checks anchor typing, completeness and links but executes no source code:
  * tools compile/run anchors to verify their allows/forbids expectations before accepting a
  * command-line mo check. Unfinished stages must report E1103, not succeed. */
 MO_MUST_USE struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *set,

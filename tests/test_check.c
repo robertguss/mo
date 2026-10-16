@@ -1,3 +1,4 @@
+#define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
 
 #include "base/buffer.h"
@@ -220,6 +221,10 @@ static void corpus(void) {
         {"e0082.mo", "e0082.diag", SIGNATURES},
         {"e0083.mo", "e0083.diag", PROGRAM},
         {"e0084.mo", "e0084.diag", SIGNATURES},
+        {"e0085.mo", "e0085.diag", PROGRAM},
+        {"e0086.mo", "e0086.diag", PROGRAM},
+        {"e0087.mo", "e0087.diag", PROGRAM},
+        {"e0087-ambiguous.mo", "e0087-ambiguous.diag", PROGRAM},
         {"e0412.mo", "e0412.diag", BODIES},
         {"e1103.mo", "e1103.diag", BODIES},
     };
@@ -350,6 +355,1212 @@ static void write_file(const char *path, const uint8_t *bytes, size_t length) {
     if (length != 0)
         MO_ASSERT(fwrite(bytes, 1, length, file) == length);
     MO_ASSERT(fclose(file) == 0);
+}
+
+static void imported_function(void) {
+    char folder[] = "/tmp/mo-imports-XXXXXX";
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    char main_path[128], other_path[128];
+    int n = snprintf(main_path, sizeof(main_path), "%s/main.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(main_path));
+    n = snprintf(other_path, sizeof(other_path), "%s/shapes.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(other_path));
+    const char main_source[] = "module Main\nuse Shapes{Shape, make, area}\n"
+                               "fn measure(value: Shape) : Int\narea(value)\nend\n"
+                               "fn main() : Int\nmeasure(make(19))\nend\n";
+    const char other_source[] = "module Shapes\nexpose Shape(..), make, area\n"
+                                "struct Shape\nvalue: Int\nend\n"
+                                "fn make(value: Int) : Shape\nShape(value: value)\nend\n"
+                                "fn area(value: Shape) : Int\nvalue.value\nend\n";
+    write_file(main_path, (const uint8_t *)main_source, sizeof(main_source) - 1);
+    write_file(other_path, (const uint8_t *)other_source, sizeof(other_source) - 1);
+    struct fixture f;
+    init(&f, MO_CLI_CHECK_SIZE);
+    struct mo_module_set *set = mo_load_program(&f.syntax, &f.sources, main_path, NULL, &f.diags);
+    MO_ASSERT(set != NULL && f.diags.count == 0);
+    struct mo_program *program = mo_check(&f.arena, set, &f.diags);
+    CHECK(program != NULL && f.diags.count == 0);
+    if (program != NULL) {
+        const struct mo_module_scope *owner = &program->interfaces->scopes[1];
+        const struct mo_symbol *shape = mo_find_symbol(owner, (const uint8_t *)"Shape", 5);
+        MO_ASSERT(shape != NULL);
+        const struct mo_checked_function *measure = NULL;
+        for (uint32_t i = 0; i < program->function_count; i++)
+            if (strcmp(program->functions[i].signature->function->name, "measure") == 0)
+                measure = &program->functions[i];
+        MO_ASSERT(measure != NULL);
+        CHECK(measure->signature->type->arguments[0]->declaration == shape);
+        bool saw_area = false;
+        const struct mo_checked_body *body = &measure->body;
+        for (uint32_t i = 0; i < body->count; i++)
+            if (body->items[i].symbol != NULL && strcmp(body->items[i].symbol->name, "area") == 0) {
+                saw_area = true;
+                CHECK(body->items[i].symbol == mo_find_symbol(owner, (const uint8_t *)"area", 4));
+            }
+        CHECK(saw_area);
+    }
+    finish(&f);
+    MO_ASSERT(unlink(main_path) == 0 && unlink(other_path) == 0 && rmdir(folder) == 0);
+}
+
+static MO_MUST_USE bool same_source_type(const struct mo_source_type *a,
+                                         const struct mo_source_type *b) {
+    if (a == b)
+        return true;
+    if (a->kind != b->kind || a->module != b->module || a->declaration != b->declaration ||
+        a->count != b->count || strcmp(a->name, b->name) != 0)
+        return false;
+    for (uint32_t i = 0; i < a->count; i++)
+        if (!same_source_type(a->arguments[i], b->arguments[i]))
+            return false;
+    return true;
+}
+
+static void imported_constants(void) {
+    char folder[] = "/tmp/mo-constant-import-XXXXXX", path[128], other[128];
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    int n = snprintf(path, sizeof(path), "%s/main.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(path));
+    n = snprintf(other, sizeof(other), "%s/lib.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(other));
+    const char main[] = "module Main\nuse Lib\nseed = 11\nanswer = Lib.seed * 7 + seed\n"
+                        "fn main() : Int\nanswer\nend\n";
+    const char library[] = "module Lib\nexpose seed\nseed = 13\n";
+    write_file(path, (const uint8_t *)main, sizeof(main) - 1);
+    write_file(other, (const uint8_t *)library, sizeof(library) - 1);
+    struct fixture f;
+    init(&f, MO_CLI_CHECK_SIZE);
+    struct mo_module_set *set = mo_load_program(&f.syntax, &f.sources, path, NULL, &f.diags);
+    MO_ASSERT(set != NULL && !mo_diags_any(&f.diags));
+    struct mo_program *program = mo_check(&f.arena, set, &f.diags);
+    mo_sources_free(&f.sources);
+    CHECK(program != NULL && !mo_diags_any(&f.diags));
+    if (program != NULL) {
+        MO_ASSERT(program->constant_count == 3);
+        const struct mo_symbol *seeds[2];
+        for (uint32_t i = 0; i < 2; i++) {
+            seeds[i] = mo_find_symbol(&program->interfaces->scopes[i], (const uint8_t *)"seed", 4);
+            CHECK(program->constants[i].symbol == seeds[i]);
+        }
+        CHECK(seeds[0] != seeds[1]);
+        const struct mo_checked_constant *answer = &program->constants[2];
+        CHECK(strcmp(answer->symbol->name, "answer") == 0 && answer->symbol->module == 0);
+        CHECK(strcmp(answer->type->name, "Int") == 0 && answer->type->parameters == 0);
+        bool reads[2] = {false, false};
+        for (uint32_t i = 0; i < answer->initializer.count; i++) {
+            const struct mo_checked_expression *row = &answer->initializer.items[i];
+            CHECK(row->syntax->span.file == 0);
+            for (uint32_t j = 0; j < 2; j++)
+                reads[j] = reads[j] || row->symbol == seeds[j];
+        }
+        CHECK(reads[0] && reads[1]);
+    } else {
+        MO_ASSERT(f.diags.count != 0);
+        MO_ASSERT(fprintf(stderr, "constant import: E%04u %u:%u..%u %s\n",
+                          (unsigned)f.diags.items[0].code, f.diags.items[0].primary.span.file,
+                          f.diags.items[0].primary.span.start, f.diags.items[0].primary.span.end,
+                          f.diags.items[0].message) > 0);
+    }
+    finish(&f);
+    MO_ASSERT(unlink(path) == 0 && unlink(other) == 0 && rmdir(folder) == 0);
+}
+
+static void constant_import_sources(void) {
+    static const struct {
+        const char *name, *files[4], *order[8];
+        uint16_t code;
+    } cases[] = {
+        {"listed reads and aliases",
+         {"module Main\nuse Lib{seed}\ncopy = seed\nanswer = copy * 7\n"
+          "fn main() : Int\nanswer + seed\nend\n",
+          "module Lib\nexpose seed\nseed = 13\n"},
+         {"Lib.seed", "Main.copy", "Main.answer"},
+         0},
+        {"transitive qualified aliases",
+         {"module Main\nuse Bridge\nanswer = Bridge.copy + 11\nfn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose seed\nseed = 13\n",
+          "module Bridge\nexpose copy\nuse Lib\ncopy = Lib.seed * 7\n"},
+         {"Lib.seed", "Bridge.copy", "Main.answer"},
+         0},
+        {"diamond and ready ties",
+         {"module Main\nuse Lib\nuse Bridge\nanswer = Lib.value + Bridge.value\n"
+          "independent = 11\nfn main() : Int\nanswer + independent\nend\n",
+          "module Lib\nexpose value\nuse Leaf\nvalue = Leaf.seed * 7\n",
+          "module Bridge\nexpose value\nuse Leaf\nvalue = Leaf.seed - 3\n",
+          "module Leaf\nexpose seed\nseed = 13\n"},
+         {"Main.independent", "Leaf.seed", "Lib.value", "Bridge.value", "Main.answer"},
+         0},
+        {"call reaches a private later constant",
+         {"module Main\nuse Lib{read}\nanswer = read()\nindependent = 11\n"
+          "fn main() : Int\nanswer + independent\nend\n",
+          "module Lib\nexpose read\nfn read() : Int\nbase * 7\nend\nbase = 13\n"},
+         {"Main.independent", "Lib.base", "Main.answer"},
+         0},
+        {"stored function is invoked",
+         {"module Main\nuse Lib\nanswer = handler()\nhandler = Lib.read\n"
+          "fn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose read\nfn read() : Int\nbase * 7\nend\nbase = 13\n"},
+         {"Main.handler", "Lib.base", "Main.answer"},
+         0},
+        {"foreign stored function chain",
+         {"module Main\nuse Bridge{handler}\nanswer = handler()\nfn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose read\nfn read() : Int\nbase\nend\nbase = 13\n",
+          "module Bridge\nexpose handler\nuse Lib\nhandler = Lib.read\n"},
+         {"Bridge.handler", "Lib.base", "Main.answer"},
+         0},
+        {"constructing a function is not calling it",
+         {"module Main\nuse Lib\nhandler = Lib.read\nlambda = fn() Lib.base end\n"
+          "fn main() : Int\nhandler() + lambda()\nend\n",
+          "module Lib\nexpose read, base\nbase = 13\nfn read() : Int\nbase\nend\n"},
+         {"Main.handler", "Main.lambda", "Lib.base"},
+         0},
+        {"foreign anonymous function is not executed",
+         {"module Main\nuse Lib{handler}\ncopy = handler\nfn main() : Int\ncopy()\nend\n",
+          "module Lib\nexpose handler\nhandler = fn() base end\nbase = 13\n"},
+         {"Lib.handler", "Main.copy", "Lib.base"},
+         0},
+        {"known local alias in an imported body",
+         {"module Main\nuse Lib\nanswer = Lib.read()\nfn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose read\nbase = 13\nfn fetch() : Int\nbase\nend\n"
+          "fn read() : Int\nreader = fetch\nreader()\nend\n"},
+         {"Lib.base", "Main.answer"},
+         0},
+        {"owned generic nominal result",
+         {"module Main\nuse Lib\nanswer = Lib.make(13).value\ncopy = Lib.box\n"
+          "fn main() : Int\nanswer + copy.value.byte_count\nend\n",
+          "module Lib\nexpose Box(..), make, box\nstruct Box(T)\nvalue: T\nend\n"
+          "fn make(value: T) : Box(T)\nBox(value: value)\nend\nbox = Box(value: \"owned\")\n"},
+         {"Main.answer", "Lib.box", "Main.copy"},
+         0},
+        {"selected customizer execution dependency",
+         {"module Main\nuse Lib\nanswer = \"#{Lib.Label(value: 3)}\"\n"
+          "fn main() : Int\nanswer.byte_count\nend\n",
+          "module Lib\nexpose Label(..)\nstruct Label\nvalue: Int\nend\n"
+          "fn to_text(value: Label) : Text\n\"#{base}:#{value.value}\"\nend\nbase = 13\n"},
+         {"Lib.base", "Main.answer"},
+         0},
+        {"unused proof is not execution",
+         {"module Main\nuse Lib\nanswer = Lib.ignore(Lib.Label(value: 3))\n"
+          "fn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose Label(..), ignore\nstruct Label\nvalue: Int\nend\n"
+          "fn to_text(_value: Label) : Text\ncycle.to_text\nend\n"
+          "cycle = ignore(Label(value: 3))\n"
+          "fn ignore(_value: T) : Int where T: Text\n42\nend\n"},
+         {"Main.answer", "Lib.cycle"},
+         0},
+        {"private constant",
+         {"module Main\nuse Lib\nfn main() : Int\nLib.seed\nend\n", "module Lib\nseed = 13\n"},
+         {NULL},
+         MO_CODE_IMPORT_PRIVATE},
+        {"private initializer function",
+         {"module Main\nuse Lib\nanswer = Lib.read()\nfn main() : Int\nanswer\nend\n",
+          "module Lib\nfn read() : Int\n13\nend\n"},
+         {NULL},
+         MO_CODE_IMPORT_PRIVATE},
+        {"qualified read does not credit an unused listed name",
+         {"module Main\nuse Lib{seed}\nanswer = Lib.seed\nfn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose seed\nseed = 13\n"},
+         {NULL},
+         MO_CODE_UNUSED_IMPORT},
+        {"foreign value cannot be constrained by its user",
+         {"module Main\nuse Lib{values}\nfn wanted() : List(Int)\nvalues\nend\nfn main()\nend\n",
+          "module Lib\nexpose values\nvalues = []\n"},
+         {NULL},
+         MO_CODE_CANNOT_INFER},
+        {"imported call reaches a value cycle",
+         {"module Main\nuse Lib{read}\nanswer = read()\nfn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose read\nfirst = read()\nsecond = first + 1\n"
+          "fn read() : Int\nsecond\nend\n"},
+         {NULL},
+         MO_CODE_CONSTANT_CYCLE},
+        {"foreign aliases retain a cycle",
+         {"module Main\nuse Lib{handler}\nanswer = handler()\nfn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose handler\nhandler = read\nbase = handler()\n"
+          "fn read() : Int\nbase\nend\n"},
+         {NULL},
+         MO_CODE_CONSTANT_CYCLE},
+        {"module cycles are rejected by loading",
+         {"module Main\nexpose answer\nuse Lib\nanswer = Lib.seed\n"
+          "fn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose seed\nuse Main\nseed = Main.answer\n"},
+         {NULL},
+         MO_CODE_MODULE_CYCLE},
+        {"unresolved imported higher-order call",
+         {"module Main\nuse Lib\nanswer = Lib.apply(Lib.read)\n"
+          "fn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose apply, read\nfn apply(f: fn() : Int) : Int\nf()\nend\n"
+          "fn read() : Int\n13\nend\n"},
+         {NULL},
+         MO_CODE_CHECK_UNFINISHED},
+        {"unresolved anonymous initializer call",
+         {"module Main\nuse Lib\nanswer = Lib.handler()\nfn main() : Int\nanswer\nend\n",
+          "module Lib\nexpose handler\nhandler = fn() 13 end\n"},
+         {NULL},
+         MO_CODE_CHECK_UNFINISHED},
+        {"abstract executed Text proof stays staged",
+         {"module Main\nuse Lib\nanswer = Lib.render(13)\n"
+          "fn main() : Int\nanswer.byte_count\nend\n",
+          "module Lib\nexpose render\nfn render(value: T) : Text where T: Text\n"
+          "value.to_text\nend\n"},
+         {NULL},
+         MO_CODE_CHECK_UNFINISHED},
+    };
+    const char *filenames[] = {"main.mo", "lib.mo", "bridge.mo", "leaf.mo"};
+    char folder[] = "/tmp/mo-constant-sources-XXXXXX", paths[4][128];
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    for (uint32_t i = 0; i < 4; i++) {
+        int n = snprintf(paths[i], sizeof(paths[i]), "%s/%s", folder, filenames[i]);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(paths[i]));
+    }
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        for (uint32_t j = 0; j < 4; j++)
+            if (cases[i].files[j] != NULL)
+                write_file(paths[j], (const uint8_t *)cases[i].files[j], strlen(cases[i].files[j]));
+        struct fixture f;
+        init(&f, MO_CLI_CHECK_SIZE);
+        struct mo_module_set *set =
+            mo_load_program(&f.syntax, &f.sources, paths[0], NULL, &f.diags);
+        struct mo_program *program = set == NULL ? NULL : mo_check(&f.arena, set, &f.diags);
+        mo_sources_free(&f.sources);
+        bool passed = cases[i].code == 0 ? program != NULL && !mo_diags_any(&f.diags)
+                                         : program == NULL && f.diags.count == 1 &&
+                                               f.diags.items[0].code == cases[i].code;
+        if (!passed)
+            MO_ASSERT(fprintf(stderr,
+                              "constant source %s: expected E%04u, found E%04u (%u errors)\n",
+                              cases[i].name, (unsigned)cases[i].code,
+                              f.diags.count == 0 ? 0u : (unsigned)f.diags.items[0].code,
+                              f.diags.count) >= 0);
+        CHECK(passed);
+        if (program != NULL) {
+            uint32_t count = 0;
+            while (count < 8 && cases[i].order[count] != NULL)
+                count++;
+            CHECK(program->constant_count == count);
+            for (uint32_t j = 0; j < program->constant_count; j++) {
+                const struct mo_checked_constant *constant = &program->constants[j];
+                const struct mo_symbol *symbol = constant->symbol;
+                const struct mo_module_scope *scope = &program->interfaces->scopes[symbol->module];
+                char name[128];
+                int n = snprintf(name, sizeof(name), "%s.%s", scope->name, symbol->name);
+                MO_ASSERT(n > 0 && (size_t)n < sizeof(name));
+                CHECK(j < count && strcmp(name, cases[i].order[j]) == 0);
+                CHECK(symbol ==
+                      mo_find_symbol(scope, (const uint8_t *)symbol->name, strlen(symbol->name)));
+                CHECK(constant->type->parameters == 0);
+                for (uint32_t k = 0; k < constant->initializer.count; k++) {
+                    const struct mo_checked_expression *row = &constant->initializer.items[k];
+                    CHECK(row->syntax->span.file == symbol->declaration->span.file);
+                    CHECK(row->type->parameters == 0);
+                    if (row->symbol != NULL && row->symbol->declaration->kind == MO_S_FN)
+                        for (uint32_t a = 0; a < row->arguments.count; a++)
+                            CHECK(row->arguments.items[a].parameter->declaration == row->symbol);
+                }
+            }
+        }
+        finish(&f);
+        for (uint32_t j = 0; j < 4; j++)
+            if (cases[i].files[j] != NULL)
+                MO_ASSERT(unlink(paths[j]) == 0);
+    }
+    printf("constant sources: %zu public load/check controls\n", sizeof(cases) / sizeof(cases[0]));
+    MO_ASSERT(rmdir(folder) == 0);
+}
+
+static void imported_nominal(void) {
+    char folder[] = "/tmp/mo-nominal-import-XXXXXX", path[128], other[128];
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    int n = snprintf(path, sizeof(path), "%s/main.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(path));
+    n = snprintf(other, sizeof(other), "%s/shapes.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(other));
+    const char main[] = "module Main\nuse Shapes{Pair}\n"
+                        "fn score(pair: Pair(Int, Bool)) : Int\n"
+                        "if pair.second: pair.first * 10 + 7 else: pair.first - 3\nend\n"
+                        "fn main() : Int\nscore(Pair(second: true, first: 3))\nend\n";
+    const char shapes[] = "module Shapes\nexpose Pair(..)\n"
+                          "struct Pair(Z, A)\nfirst: Z\nsecond: A\nend\n";
+    write_file(path, (const uint8_t *)main, sizeof(main) - 1);
+    write_file(other, (const uint8_t *)shapes, sizeof(shapes) - 1);
+    struct fixture f;
+    init(&f, MO_CLI_CHECK_SIZE);
+    struct mo_module_set *set = mo_load_program(&f.syntax, &f.sources, path, NULL, &f.diags);
+    MO_ASSERT(set != NULL && !mo_diags_any(&f.diags));
+    struct mo_program *program = mo_check(&f.arena, set, &f.diags);
+    mo_sources_free(&f.sources);
+    CHECK(program != NULL && !mo_diags_any(&f.diags));
+    if (program != NULL) {
+        const struct mo_symbol *pair =
+            mo_find_symbol(&program->interfaces->scopes[1], (const uint8_t *)"Pair", 4);
+        MO_ASSERT(program->signatures->data_count == 1 && pair != NULL);
+        const struct mo_data_signature *data = &program->signatures->data[0];
+        CHECK(data->symbol == pair && data->type->declaration == pair);
+        MO_ASSERT(data->type->count == 2);
+        CHECK(strcmp(data->type->arguments[0]->name, "Z") == 0 &&
+              strcmp(data->type->arguments[1]->name, "A") == 0);
+        CHECK(data->type->arguments[0]->declaration == pair &&
+              data->type->arguments[1]->declaration == pair);
+        bool constructed = false;
+        uint32_t projections = 0;
+        for (uint32_t i = 0; i < program->function_count; i++) {
+            const struct mo_checked_function *fn = &program->functions[i];
+            if (strcmp(fn->signature->function->name, "score") == 0)
+                CHECK(fn->signature->type->arguments[0]->declaration == pair);
+            for (uint32_t j = 0; j < fn->body.count; j++) {
+                const struct mo_checked_expression *row = &fn->body.items[j];
+                if (row->symbol == pair) {
+                    MO_ASSERT(row->operand_count == 2 && row->arguments.count == 2);
+                    CHECK(row->type->declaration == pair && row->syntax->span.file == 0);
+                    CHECK(fn->body.items[row->operands[0]].field == 1 &&
+                          fn->body.items[row->operands[1]].field == 0);
+                    constructed = true;
+                } else if (strcmp(fn->signature->function->name, "score") == 0 &&
+                           row->field != UINT32_MAX) {
+                    MO_ASSERT(row->operand_count == 1 && row->arguments.count == 2);
+                    CHECK(fn->body.items[row->operands[0]].type->declaration == pair);
+                    CHECK(row->field < 2 &&
+                          strcmp(row->type->name, row->field == 0 ? "Int" : "Bool") == 0);
+                    projections++;
+                } else {
+                    continue;
+                }
+                for (uint32_t k = 0; k < 2; k++) {
+                    CHECK(row->arguments.items[k].parameter == data->type->arguments[k]);
+                    CHECK(strcmp(row->arguments.items[k].type->name, k == 0 ? "Int" : "Bool") == 0);
+                }
+            }
+        }
+        CHECK(constructed && projections == 3);
+    } else {
+        MO_ASSERT(f.diags.count != 0);
+        MO_ASSERT(fprintf(stderr, "nominal import: E%04u %u:%u..%u %s\n",
+                          (unsigned)f.diags.items[0].code, f.diags.items[0].primary.span.file,
+                          f.diags.items[0].primary.span.start, f.diags.items[0].primary.span.end,
+                          f.diags.items[0].message) > 0);
+    }
+    finish(&f);
+    MO_ASSERT(unlink(path) == 0 && unlink(other) == 0 && rmdir(folder) == 0);
+}
+
+static void nominal_pattern(const struct mo_program *program,
+                            const struct mo_checked_pattern *pattern,
+                            const struct mo_checked_function *function) {
+    if (pattern->constructor.symbol != NULL) {
+        const struct mo_symbol *symbol = pattern->constructor.symbol;
+        const struct mo_module_scope *scope = &program->interfaces->scopes[symbol->module];
+        const struct mo_symbol *owner =
+            symbol->owner == UINT32_MAX ? symbol : &scope->symbols[symbol->owner];
+        const struct mo_data_signature *data = NULL;
+        for (uint32_t i = 0; i < program->signatures->data_count; i++)
+            if (program->signatures->data[i].symbol == symbol)
+                data = &program->signatures->data[i];
+        MO_ASSERT(data != NULL && data->type->count == 2 && pattern->arguments.count == 2);
+        CHECK(owner == mo_find_symbol(scope, (const uint8_t *)owner->name, strlen(owner->name)));
+        CHECK(pattern->type->declaration == owner && data->type->declaration == owner);
+        for (uint32_t i = 0; i < 2; i++) {
+            const struct mo_type_argument *argument = &pattern->arguments.items[i];
+            CHECK(argument->parameter == data->type->arguments[i] &&
+                  argument->parameter->declaration == owner);
+            CHECK(strcmp(argument->parameter->name, i == 0 ? "Z" : "A") == 0);
+            CHECK(same_source_type(argument->type, pattern->type->arguments[i]));
+            if (strcmp(function->signature->function->name, "relay") == 0) {
+                CHECK(argument->type->declaration == function->signature->function &&
+                      strcmp(argument->type->name, i == 0 ? "A" : "Z") == 0);
+            } else {
+                CHECK(strcmp(argument->type->name, i == 0 ? "Int" : "Bool") == 0);
+            }
+        }
+        if (strcmp(symbol->name, "Named") == 0 || strcmp(symbol->name, "Pair") == 0) {
+            MO_ASSERT(pattern->part_count == 2);
+            for (uint32_t i = 0; i < 2; i++) {
+                CHECK(pattern->parts[i].index == i);
+                CHECK(same_source_type(pattern->parts[i].pattern->type,
+                                       pattern->arguments.items[i].type));
+            }
+        }
+        CHECK(pattern->syntax->span.file == function->signature->function->module);
+    }
+    for (uint32_t i = 0; i < pattern->part_count; i++)
+        nominal_pattern(program, pattern->parts[i].pattern, function);
+}
+
+static void imported_choice(void) {
+    char folder[] = "/tmp/mo-choice-import-XXXXXX", path[128], other[128];
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    int n = snprintf(path, sizeof(path), "%s/main.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(path));
+    n = snprintf(other, sizeof(other), "%s/shapes.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(other));
+    const char main[] = "module Main\nuse Shapes{Choice, Pair}\n"
+                        "fn score(value: Choice(Int, Bool)) : Int\ncase value\n"
+                        "Named(second: flag, first: n): if flag: n * 10 + 7 else: n - 3\n"
+                        "Payload(Pair(first: n)): n\nVacant: 0\nend\nend\n"
+                        "fn relay(value: Choice(A, Z)) : A\ncase value\nNamed(first: n): n\n"
+                        "Payload(Pair(first: n)): n\nVacant: stop \"empty\"\nend\nend\n"
+                        "fn main() : Int\nassert relay(Named(second: 29, first: 13)) == 13\n"
+                        "score(Named(second: true, first: 3))\nend\n";
+    const char shapes[] =
+        "module Shapes\nexpose Choice(..), Pair(..)\n"
+        "struct Pair(Z, A)\nfirst: Z\nsecond: A\nend\n"
+        "enum Choice(Z, A)\nVacant\nNamed(first: Z, second: A)\nPayload(Pair(Z, A))\nend\n";
+    write_file(path, (const uint8_t *)main, sizeof(main) - 1);
+    write_file(other, (const uint8_t *)shapes, sizeof(shapes) - 1);
+    struct fixture f;
+    init(&f, MO_CLI_CHECK_SIZE);
+    struct mo_module_set *set = mo_load_program(&f.syntax, &f.sources, path, NULL, &f.diags);
+    MO_ASSERT(set != NULL && !mo_diags_any(&f.diags));
+    struct mo_program *program = mo_check(&f.arena, set, &f.diags);
+    mo_sources_free(&f.sources);
+    CHECK(program != NULL && !mo_diags_any(&f.diags));
+    if (program != NULL) {
+        const struct mo_module_scope *scope = &program->interfaces->scopes[1];
+        const struct mo_symbol *choice = mo_find_symbol(scope, (const uint8_t *)"Choice", 6);
+        MO_ASSERT(choice != NULL && choice->case_count == 3);
+        const char *cases[] = {"Vacant", "Named", "Payload"};
+        for (uint32_t i = 0; i < 3; i++) {
+            const struct mo_symbol *symbol = &scope->symbols[choice->cases[i]];
+            CHECK(strcmp(symbol->name, cases[i]) == 0 && &scope->symbols[symbol->owner] == choice);
+        }
+        uint32_t matches = 0, constructions = 0;
+        for (uint32_t i = 0; i < program->function_count; i++) {
+            const struct mo_checked_function *fn = &program->functions[i];
+            for (uint32_t j = 0; j < fn->body.count; j++) {
+                const struct mo_checked_expression *row = &fn->body.items[j];
+                if (row->symbol != NULL && strcmp(row->symbol->name, "Named") == 0) {
+                    MO_ASSERT(row->arguments.count == 2 && row->operand_count == 2);
+                    CHECK(row->arguments.items[0].parameter != row->arguments.items[1].parameter);
+                    CHECK(fn->body.items[row->operands[0]].field == 1 &&
+                          fn->body.items[row->operands[1]].field == 0);
+                    for (uint32_t k = 0; k < 2; k++)
+                        CHECK(row->arguments.items[k].parameter->declaration == choice);
+                    constructions++;
+                }
+                if (row->match == NULL)
+                    continue;
+                MO_ASSERT(row->match->arm_count == 3);
+                for (uint32_t k = 0; k < row->match->arm_count; k++) {
+                    const struct mo_checked_arm *arm = &row->match->arms[k];
+                    MO_ASSERT(arm->pattern_count == 1);
+                    nominal_pattern(program, arm->patterns[0], fn);
+                }
+                matches++;
+            }
+        }
+        CHECK(matches == 2 && constructions == 2);
+    } else {
+        MO_ASSERT(f.diags.count != 0);
+        MO_ASSERT(fprintf(stderr, "choice import: E%04u %s\n", (unsigned)f.diags.items[0].code,
+                          f.diags.items[0].message) > 0);
+    }
+    finish(&f);
+    MO_ASSERT(unlink(path) == 0 && unlink(other) == 0 && rmdir(folder) == 0);
+}
+
+static void imported_generic(void) {
+    char folder[] = "/tmp/mo-generic-imports-XXXXXX", main_path[128], other_path[128];
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    int n = snprintf(main_path, sizeof(main_path), "%s/main.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(main_path));
+    n = snprintf(other_path, sizeof(other_path), "%s/numbers.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(other_path));
+    const char other[] = "module Numbers\nexpose twice\n"
+                         "fn twice(value: T) : T where T: Number\nvalue + value\nend\n";
+    write_file(other_path, (const uint8_t *)other, sizeof(other) - 1);
+    for (unsigned variant = 0; variant < 4; variant++) {
+        char main[512];
+        n = snprintf(main, sizeof(main),
+                     "module Main\nuse Numbers%s\n"
+                     "fn relay(value: T) : T%s\n%s\nend\n"
+                     "fn main() : Int\nrelay(19)\nend\n",
+                     variant == 3 ? "" : "{twice}", variant != 0 ? " where T: Number" : "",
+                     variant == 2   ? "apply = twice\napply(value)"
+                     : variant == 3 ? "Numbers.twice(value)"
+                                    : "twice(value)");
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(main));
+        write_file(main_path, (const uint8_t *)main, (size_t)n);
+        struct fixture f;
+        init(&f, MO_CLI_CHECK_SIZE);
+        struct mo_module_set *set =
+            mo_load_program(&f.syntax, &f.sources, main_path, NULL, &f.diags);
+        MO_ASSERT(set != NULL && !mo_diags_any(&f.diags));
+        struct mo_program *program = mo_check(&f.arena, set, &f.diags);
+        if (variant == 0) {
+            CHECK(program == NULL && f.diags.count == 1 &&
+                  f.diags.items[0].code == MO_CODE_ABILITY_MISSING);
+        } else {
+            CHECK(program != NULL && !mo_diags_any(&f.diags));
+            if (program != NULL) {
+                const struct mo_symbol *twice =
+                    mo_find_symbol(&program->interfaces->scopes[1], (const uint8_t *)"twice", 5);
+                const struct mo_checked_function *callee = NULL, *caller = NULL;
+                for (uint32_t i = 0; i < program->function_count; i++) {
+                    const struct mo_checked_function *fn = &program->functions[i];
+                    if (fn->signature->function == twice)
+                        callee = fn;
+                    else if (strcmp(fn->signature->function->name, "relay") == 0)
+                        caller = fn;
+                }
+                MO_ASSERT(callee != NULL && caller != NULL);
+                const struct mo_source_type *key = callee->signature->type->arguments[0];
+                const struct mo_source_type *actual = caller->signature->type->arguments[0];
+                CHECK(key != actual && key->declaration == twice &&
+                      actual->declaration == caller->signature->function);
+                bool found = false;
+                for (uint32_t i = 0; i < caller->body.count; i++) {
+                    const struct mo_checked_expression *row = &caller->body.items[i];
+                    if (row->symbol != twice)
+                        continue;
+                    MO_ASSERT(row->arguments.count == 1 && row->ability_count == 1);
+                    CHECK(row->arguments.items[0].parameter == key &&
+                          row->arguments.items[0].type == actual);
+                    CHECK(row->abilities[0].parameter == key &&
+                          row->abilities[0].operand == UINT32_MAX &&
+                          row->abilities[0].implementation->kind == MO_ABILITY_PARAMETER &&
+                          row->abilities[0].implementation->ability == MO_SOURCE_NUMBER &&
+                          row->abilities[0].implementation->type == actual);
+                    found = true;
+                }
+                CHECK(found);
+            }
+        }
+        finish(&f);
+    }
+    MO_ASSERT(unlink(main_path) == 0 && unlink(other_path) == 0 && rmdir(folder) == 0);
+}
+
+static void generic_import_sources(void) {
+    static const char library[] =
+        "module Numbers\nexpose twice, identity, show, same, hashed, ordered, mix\n"
+        "fn twice(value: T) : T where T: Number\nvalue + value\nend\n"
+        "fn identity(value: T) : T\nvalue\nend\n"
+        "fn show(value: T) : Text where T: Text\n\"#{value}\"\nend\n"
+        "fn same(a: A, b: B) : Bool where A: Equal, B: Equal\na == a and b == b\nend\n"
+        "fn hashed(value: T) : T where T: Hash\nvalue\nend\n"
+        "fn ordered(a: T, b: T) : Bool where T: Order\na < b\nend\n"
+        "fn mix(first: Z, second: A) : Z where Z: Number, A: Text\n"
+        "_label = \"#{second}\"\nfirst + first\nend\n";
+    static const struct {
+        const char *name, *source;
+        uint16_t code;
+    } cases[] = {
+        {"Number scalars",
+         "fn big(value: BigInt) : BigInt\nNumbers.twice(value)\nend\n"
+         "fn decimal(value: Decimal) : Decimal\nNumbers.twice(value)\nend\n"
+         "fn float(value: Float) : Float\nNumbers.twice(value)\nend\n"
+         "fn main() : Int\nNumbers.twice(19)\nend\n",
+         0},
+        {"first-class return",
+         "fn make() : fn(Int) : Int\nNumbers.twice\nend\n"
+         "fn main() : Int\napply = make()\napply(19)\nend\n",
+         0},
+        {"fresh first-class references",
+         "fn main() : Int\na = Numbers.identity\nb = Numbers.identity\n"
+         "assert b(\"text\") == \"text\"\na(19)\nend\n",
+         0},
+        {"higher-order context",
+         "fn apply(action: fn(Int) : Int) : Int\naction(19)\nend\n"
+         "fn main() : Int\napply(Numbers.twice)\nend\n",
+         0},
+        {"permuted parameters",
+         "fn relay(first: U, second: T) : U where U: Number, T: Text\n"
+         "apply = Numbers.mix\napply(first, second)\nend\n"
+         "fn main() : Int\nassert Numbers.same(13, 29)\nrelay(19, true)\nend\n",
+         0},
+        {"derived and custom Text",
+         "struct Box(T)\nvalue: T\nend\n"
+         "fn to_text(box: Box(U)) : Text where U: Text\n\"[#{box.value}]\"\nend\n"
+         "fn relay(value: U) : Text where U: Text\nNumbers.show([value])\nend\n"
+         "fn main() : Int\nNumbers.show(Box(value: 19)).byte_count + relay(true).byte_count\nend\n",
+         0},
+        {"Hash Order and implied Equal",
+         "fn ordered_same(value: U) : Bool where U: Order\nNumbers.same(value, value)\nend\n"
+         "fn main() : Int\nassert Numbers.ordered(13, 29) and ordered_same(19)\n"
+         "Numbers.hashed(19)\nend\n",
+         0},
+        {"Bool lacks Number",
+         "fn bad(value: Bool) : Bool\nNumbers.twice(value)\nend\n"
+         "fn main() : Int\n0\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"Equal does not imply Number",
+         "fn bad(value: T) : T where T: Equal\nNumbers.twice(value)\nend\n"
+         "fn main() : Int\n0\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"first-class missing proof",
+         "fn bad() : fn(Bool) : Bool\nNumbers.twice\nend\n"
+         "fn main() : Int\n0\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"functions lack Equal",
+         "fn bad(value: fn(Int) : Int) : Bool\nNumbers.same(value, value)\nend\n"
+         "fn main() : Int\n0\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"capabilities lack Text",
+         "fn bad(value: Console) : Text\nNumbers.show(value)\nend\n"
+         "fn main() : Int\n0\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"Float lacks Hash",
+         "fn bad(value: Float) : Float\nNumbers.hashed(value)\nend\n"
+         "fn main() : Int\n0\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"Range lacks Order",
+         "fn bad(value: Range) : Bool\nNumbers.ordered(value, value)\nend\n"
+         "fn main() : Int\n0\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"Bytes lack Text",
+         "fn bad(value: Bytes) : Text\nNumbers.show(value)\nend\n"
+         "fn main() : Int\n0\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"generic direct initializer", "answer = Numbers.twice(19)\nfn main() : Int\nanswer\nend\n",
+         0},
+        {"generic initializer alias needs a closed type",
+         "handler = Numbers.twice\nfn main() : Int\nhandler(19)\nend\n", MO_CODE_CANNOT_INFER},
+    };
+    char folder[] = "/tmp/mo-generic-sources-XXXXXX", path[128], other[128];
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    int n = snprintf(path, sizeof(path), "%s/main.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(path));
+    n = snprintf(other, sizeof(other), "%s/numbers.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(other));
+    write_file(other, (const uint8_t *)library, sizeof(library) - 1);
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char source[2048];
+        n = snprintf(source, sizeof(source), "module Main\nuse Numbers\n%s", cases[i].source);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(source));
+        write_file(path, (const uint8_t *)source, (size_t)n);
+        struct fixture f;
+        init(&f, MO_CLI_CHECK_SIZE);
+        struct mo_module_set *set = mo_load_program(&f.syntax, &f.sources, path, NULL, &f.diags);
+        struct mo_program *program = set == NULL ? NULL : mo_check(&f.arena, set, &f.diags);
+        bool passed = cases[i].code == 0 ? program != NULL && !mo_diags_any(&f.diags)
+                                         : program == NULL && f.diags.count == 1 &&
+                                               f.diags.items[0].code == cases[i].code;
+        if (!passed)
+            MO_ASSERT(fprintf(stderr,
+                              "generic import %s: expected E%04u, found E%04u (%u errors)\n",
+                              cases[i].name, (unsigned)cases[i].code,
+                              f.diags.count == 0 ? 0u : (unsigned)f.diags.items[0].code,
+                              f.diags.count) >= 0);
+        CHECK(passed);
+        if (program != NULL) {
+            for (uint32_t j = 0; j < program->function_count; j++) {
+                const struct mo_checked_function *fn = &program->functions[j];
+                for (uint32_t k = 0; k < fn->body.count; k++) {
+                    const struct mo_checked_expression *row = &fn->body.items[k];
+                    if (row->symbol == NULL || row->symbol->declaration->kind != MO_S_FN ||
+                        row->symbol->module == fn->signature->function->module)
+                        continue;
+                    for (uint32_t a = 0; a < row->arguments.count; a++)
+                        CHECK(row->arguments.items[a].parameter->declaration == row->symbol);
+                    for (uint32_t a = 0; a < row->ability_count; a++) {
+                        const struct mo_checked_ability_use *use = &row->abilities[a];
+                        bool keyed = false;
+                        for (uint32_t b = 0; b < row->arguments.count; b++) {
+                            const struct mo_type_argument *argument = &row->arguments.items[b];
+                            if (use->parameter == argument->parameter) {
+                                CHECK(use->operand == UINT32_MAX &&
+                                      same_source_type(use->implementation->type, argument->type));
+                                keyed = true;
+                            }
+                        }
+                        CHECK(keyed);
+                    }
+                    if (strcmp(row->symbol->name, "mix") == 0) {
+                        MO_ASSERT(row->arguments.count == 2 && row->ability_count == 2);
+                        for (uint32_t a = 0; a < 2; a++) {
+                            const struct mo_type_argument *argument = &row->arguments.items[a];
+                            bool text = strcmp(argument->parameter->name, "A") == 0;
+                            CHECK(strcmp(argument->parameter->name, text ? "A" : "Z") == 0);
+                            CHECK(argument->type == fn->signature->type->arguments[text ? 1 : 0]);
+                            CHECK(row->abilities[a].implementation->kind == MO_ABILITY_PARAMETER);
+                            CHECK(row->abilities[a].implementation->ability ==
+                                  (text ? MO_SOURCE_TEXT : MO_SOURCE_NUMBER));
+                        }
+                    }
+                    if (strcmp(row->symbol->name, "same") == 0) {
+                        MO_ASSERT(row->arguments.count == 2 && row->ability_count == 2);
+                        CHECK(row->abilities[0].parameter != row->abilities[1].parameter);
+                    }
+                    if (strcmp(row->symbol->name, "show") == 0 && row->ability_count != 0 &&
+                        row->abilities[0].implementation->kind == MO_ABILITY_FUNCTION) {
+                        const struct mo_ability_implementation *proof =
+                            row->abilities[0].implementation;
+                        MO_ASSERT(proof->part_count == 1 && proof->arguments.count == 1);
+                        CHECK(proof->function->module == fn->signature->function->module);
+                        CHECK(proof->part_parameters[0] == proof->arguments.items[0].parameter &&
+                              proof->part_parameters[0]->declaration == proof->function &&
+                              proof->part_parameters[0] != row->abilities[0].parameter);
+                    }
+                }
+            }
+        }
+        finish(&f);
+    }
+    printf("generic import sources: %zu public load/check controls\n",
+           sizeof(cases) / sizeof(cases[0]));
+    MO_ASSERT(unlink(path) == 0 && unlink(other) == 0 && rmdir(folder) == 0);
+}
+
+static void import_sources(void) {
+    static const char library[] =
+        "module Shapes\nexpose Shape(..), make, area, Token, open, read, Choice(..), pick, _extra\n"
+        "struct Shape\nvalue: Int\nend\nstruct Token\nvalue: Int\nend\n"
+        "enum Choice\nLeft\nRight\nend\nstruct Hidden\nvalue: Int\nend\n"
+        "fn make(value: Int) : Shape\nShape(value: value)\nend\n"
+        "fn area(value: Shape) : Int\nvalue.value\nend\n"
+        "fn open(value: Int) : Token\nToken(value: value)\nend\n"
+        "fn read(value: Token) : Int\nvalue.value\nend\n"
+        "fn pick() : Choice\nLeft\nend\nfn secret() : Int\n71\nend\n"
+        "fn _extra() : Int\n73\nend\n";
+    static const char generic[] =
+        "module Shapes\nexpose Pair(..), Token, open, read\n"
+        "struct Pair(Z, A)\nfirst: Z\nsecond: A\nend\n"
+        "struct Token(T)\nvalue: T\nend\nstruct Hidden(T)\nvalue: T\nend\n"
+        "fn open(value: T) : Token(T)\nToken(value: value)\nend\n"
+        "fn read(value: Token(T)) : T\nvalue.value\nend\n"
+        "fn to_text(value: Token(U)) : Text where U: Text\n\"#{value.value}\"\nend\n";
+    static const struct {
+        const char *name, *source, *other, *site;
+        uint16_t code;
+    } cases[] = {
+        {"qualified calls", "use Shapes\nfn main() : Int\nShapes.area(Shapes.make(19))\nend\n",
+         NULL, NULL, 0},
+        {"explicit calls", "use Shapes{make, area}\nfn main() : Int\narea(make(19))\nend\n", NULL,
+         NULL, 0},
+        {"explicit annotation",
+         "use Shapes{Shape}\nfn keep(value: Shape) : Shape\nvalue\nend\n"
+         "fn main() : Int\n0\nend\n",
+         NULL, NULL, 0},
+        {"qualified annotation",
+         "use Shapes\nfn keep(value: Shapes.Shape) : Shapes.Shape\n"
+         "value\nend\nfn main() : Int\n0\nend\n",
+         NULL, NULL, 0},
+        {"field annotation",
+         "use Shapes{Shape}\nstruct Wrap\nvalue: Shape\nend\n"
+         "fn main() : Int\n0\nend\n",
+         NULL, NULL, 0},
+        {"constructor", "use Shapes{Shape}\nfn main() : Int\nShape(value: 19).value\nend\n", NULL,
+         NULL, 0},
+        {"qualified constructor",
+         "use Shapes\nfn main() : Int\nShapes.Shape(value: 19).value\nend\n", NULL, NULL, 0},
+        {"first class",
+         "use Shapes{make, area}\nfn main() : Int\n"
+         "build = make\nmeasure = area\nmeasure(build(19))\nend\n",
+         NULL, NULL, 0},
+        {"case credits type",
+         "use Shapes{Choice}\nfn main() : Int\n"
+         "case Left\nLeft: 13\nRight: 29\nend\nend\n",
+         NULL, NULL, 0},
+        {"qualified cases",
+         "use Shapes\nfn main() : Int\ncase Shapes.pick()\n"
+         "Shapes.Left: 13\nShapes.Right: 29\nend\nend\n",
+         NULL, NULL, 0},
+        {"opaque factory",
+         "use Shapes{Token, open, read}\nfn inspect(value: Token) : Int\n"
+         "read(value)\nend\nfn main() : Int\ninspect(open(19))\nend\n",
+         NULL, NULL, 0},
+        {"test only",
+         "use Shapes\ntest \"import\"\n"
+         "assert Shapes.area(Shapes.make(19)) == 19\nend\nfn main()\nend\n",
+         NULL, NULL, 0},
+        {"example only",
+         "use Shapes\nfn answer() : Int\nexamples\n"
+         "answer() == Shapes.area(Shapes.make(19))\nend\n19\nend\n"
+         "fn main() : Int\nanswer()\nend\n",
+         NULL, NULL, 0},
+        {"purposefully unused", "use Shapes{_extra}\nfn main()\nend\n", NULL, NULL, 0},
+        {"unused module", "use Shapes\nfn main()\nend\n", NULL, "Shapes\n", MO_CODE_UNUSED_IMPORT},
+        {"unused name", "use Shapes{Shape, make, area}\nfn main() : Int\narea(make(19))\nend\n",
+         NULL, "Shape,", MO_CODE_UNUSED_IMPORT},
+        {"qualification does not read listed name",
+         "use Shapes{make}\n"
+         "fn main() : Int\nShapes.area(Shapes.make(19))\nend\n",
+         NULL, "make}", MO_CODE_UNUSED_IMPORT},
+        {"local spelling does not read import",
+         "use Shapes{area}\n"
+         "fn main() : Int\narea = 19\narea\nend\n",
+         NULL, "area}", MO_CODE_UNUSED_IMPORT},
+        {"dot owner does not read listed name",
+         "use Shapes{make, area}\n"
+         "fn main() : Int\nmake(19).area\nend\n",
+         NULL, "area}", MO_CODE_UNUSED_IMPORT},
+        {"private function", "use Shapes\nfn main() : Int\nShapes.secret()\nend\n", NULL,
+         "secret()", MO_CODE_IMPORT_PRIVATE},
+        {"private explicit name", "use Shapes{secret}\nfn main() : Int\nsecret()\nend\n", NULL,
+         "secret}", MO_CODE_IMPORT_PRIVATE},
+        {"private type",
+         "use Shapes\nfn keep(value: Shapes.Hidden) : Shapes.Hidden\nvalue\nend\n"
+         "fn main()\nend\n",
+         NULL, "Shapes.Hidden", MO_CODE_IMPORT_PRIVATE},
+        {"opaque construction",
+         "use Shapes{Token, read}\nfn main() : Int\n"
+         "read(Token(value: 19))\nend\n",
+         NULL, NULL, MO_CODE_DATA_PRIVATE},
+        {"opaque field", "use Shapes{open}\nfn main() : Int\nopen(19).value\nend\n", NULL,
+         "value\n", MO_CODE_DATA_PRIVATE},
+        {"opaque pattern",
+         "use Shapes{Token, open}\nfn main() : Int\n"
+         "case open(19)\nToken(value: n): n\nend\nend\n",
+         NULL, NULL, MO_CODE_DATA_PRIVATE},
+        {"distinct nominal owners",
+         "use Shapes\nstruct Shape\nvalue: Int\nend\n"
+         "fn main() : Int\nShapes.area(Shape(value: 19))\nend\n",
+         NULL, NULL, MO_CODE_TYPE_MISMATCH},
+        {"generic function", "use Shapes{identity}\nfn main() : Int\nidentity(19)\nend\n",
+         "module Shapes\nexpose identity\nfn identity(value: T) : T\nvalue\nend\n", NULL, 0},
+        {"generic annotation",
+         "use Shapes{Box}\nfn keep(value: Box(Int)) : Box(Int)\n"
+         "value\nend\nfn main()\nend\n",
+         "module Shapes\nexpose Box(..)\nstruct Box(T)\nvalue: T\nend\n", NULL, 0},
+        {"generic construction",
+         "use Shapes{Box}\nfn main() : Int\n"
+         "Box(value: 19).value\nend\n",
+         "module Shapes\nexpose Box(..)\nstruct Box(T)\nvalue: T\nend\n", NULL, 0},
+        {"generic qualified nested annotation",
+         "use Shapes\nfn first(pair: Shapes.Pair(List(Int), (Bool, Int))) : List(Int)\n"
+         "pair.first\nend\nfn main() : Int\n"
+         "assert first(Shapes.Pair(second: (true, 7), first: [13])) == [13]\n19\nend\n",
+         generic, NULL, 0},
+        {"generic opaque flow and customizer",
+         "use Shapes{Token, open, read}\nfn keep(value: Token(Int)) : Token(Int)\nvalue\nend\n"
+         "fn main() : Int\nvalue = keep(open(13))\nassert \"#{value}\" == \"13\"\n"
+         "read(value)\nend\n",
+         generic, NULL, 0},
+        {"generic opaque construction",
+         "use Shapes{Token, read}\nfn main() : Int\nread(Token(value: 13))\nend\n", generic, NULL,
+         MO_CODE_DATA_PRIVATE},
+        {"generic opaque projection", "use Shapes{open}\nfn main() : Int\nopen(13).value\nend\n",
+         generic, "value\n", MO_CODE_DATA_PRIVATE},
+        {"generic opaque pattern",
+         "use Shapes{Token, open}\nfn main() : Int\ncase open(13)\nToken(value: n): n\nend\nend\n",
+         generic, NULL, MO_CODE_DATA_PRIVATE},
+        {"generic private annotation",
+         "use Shapes\nfn keep(value: Shapes.Hidden(Int)) : Shapes.Hidden(Int)\nvalue\nend\n"
+         "fn main()\nend\n",
+         generic, "Shapes.Hidden", MO_CODE_IMPORT_PRIVATE},
+        {"generic distinct nominal owners",
+         "use Shapes\nstruct Pair(Z, A)\nfirst: Z\nsecond: A\nend\n"
+         "fn wrong(value: Pair(Int, Bool)) : Shapes.Pair(Int, Bool)\nvalue\nend\n"
+         "fn main()\nend\n",
+         generic, NULL, MO_CODE_RESULT_TYPE},
+        {"generic wrong arity",
+         "use Shapes{Pair}\nfn keep(value: Pair(Int)) : Pair(Int)\nvalue\nend\n"
+         "fn main()\nend\n",
+         generic, NULL, MO_CODE_TYPE_ARGUMENTS},
+        {"generic missing field", "use Shapes{Pair}\nfn main() : Int\nPair(first: 13).first\nend\n",
+         generic, NULL, MO_CODE_DATA_ARGUMENTS},
+        {"generic regular recursion",
+         "use Shapes{Tree}\nfn keep(value: Tree(Int)) : Tree(Int)\nvalue\nend\n"
+         "fn main() : Int\nassert keep(Tree(children: [])) == Tree(children: [])\n19\nend\n",
+         "module Shapes\nexpose Tree(..)\nstruct Tree(T)\nchildren: List(Tree(T))\nend\n", NULL, 0},
+        {"generic growing recursion",
+         "use Shapes{Tree}\nfn keep(value: Tree(Int)) : Tree(Int)\nvalue\nend\n"
+         "fn main()\nend\n",
+         "module Shapes\nexpose Tree(..)\nstruct Tree(T)\nchildren: List(Tree(List(T)))\nend\n",
+         NULL, MO_CODE_DATA_RECURSION},
+        {"imported constant", "use Shapes{answer}\nfn main() : Int\nanswer\nend\n",
+         "module Shapes\nexpose answer\nanswer = 19\n", NULL, 0},
+        {"initializer import",
+         "use Shapes{value}\nanswer = value()\n"
+         "fn main() : Int\nanswer\nend\n",
+         "module Shapes\nexpose value\nfn value() : Int\n19\nend\n", NULL, 0},
+    };
+    char folder[] = "/tmp/mo-import-sources-XXXXXX";
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    char path[128], other[128];
+    int n = snprintf(path, sizeof(path), "%s/main.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(path));
+    n = snprintf(other, sizeof(other), "%s/shapes.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(other));
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char source[2048];
+        n = snprintf(source, sizeof(source), "module Main\n%s", cases[i].source);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(source));
+        const char *text = cases[i].other == NULL ? library : cases[i].other;
+        write_file(path, (const uint8_t *)source, (size_t)n);
+        write_file(other, (const uint8_t *)text, strlen(text));
+        struct fixture f;
+        init(&f, MO_CLI_CHECK_SIZE);
+        struct mo_module_set *set = mo_load_program(&f.syntax, &f.sources, path, NULL, &f.diags);
+        struct mo_program *program = set == NULL ? NULL : mo_check(&f.arena, set, &f.diags);
+        mo_sources_free(&f.sources);
+        bool passed = cases[i].code == 0 ? program != NULL && !mo_diags_any(&f.diags)
+                                         : program == NULL && f.diags.count == 1 &&
+                                               f.diags.items[0].code == cases[i].code;
+        if (!passed)
+            MO_ASSERT(fprintf(stderr, "import source %s: expected E%04u, found E%04u (%u errors)\n",
+                              cases[i].name, (unsigned)cases[i].code,
+                              f.diags.count == 0 ? 0u : (unsigned)f.diags.items[0].code,
+                              f.diags.count) >= 0);
+        CHECK(passed);
+        if (cases[i].site != NULL && f.diags.count != 0) {
+            const char *site = strstr(source, cases[i].site);
+            MO_ASSERT(site != NULL);
+            CHECK(f.diags.items[0].primary.span.file == 0 &&
+                  f.diags.items[0].primary.span.start == (uint32_t)(site - source));
+        }
+        finish(&f);
+    }
+    printf("import sources: %zu public load/check controls\n", sizeof(cases) / sizeof(cases[0]));
+    MO_ASSERT(unlink(path) == 0 && unlink(other) == 0 && rmdir(folder) == 0);
+}
+
+static void import_cap(void) {
+    char folder[] = "/tmp/mo-import-cap-XXXXXX", path[128], other[128];
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    int n = snprintf(path, sizeof(path), "%s/main.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(path));
+    n = snprintf(other, sizeof(other), "%s/shapes.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(other));
+    struct mo_buffer main, library, functions;
+    mo_buffer_init(&main, MO_LIMIT_FILE_SIZE);
+    mo_buffer_init(&library, MO_LIMIT_FILE_SIZE);
+    mo_buffer_init(&functions, MO_LIMIT_FILE_SIZE);
+    MO_ASSERT(mo_buffer_append_text(&main, "module Main\nuse Shapes{"));
+    MO_ASSERT(mo_buffer_append_text(&library, "module Shapes\nexpose "));
+    for (uint32_t i = 0; i < 1500; i++) {
+        if (i != 0)
+            MO_ASSERT(mo_buffer_append_text(&main, ", ") && mo_buffer_append_text(&library, ", "));
+        MO_ASSERT(mo_buffer_append_text(&main, "f") && mo_buffer_append_uint(&main, i) &&
+                  mo_buffer_append_text(&library, "f") && mo_buffer_append_uint(&library, i));
+        MO_ASSERT(mo_buffer_append_text(&functions, "fn f") &&
+                  mo_buffer_append_uint(&functions, i) &&
+                  mo_buffer_append_text(&functions, "() : Int\n19\nend\n"));
+    }
+    MO_ASSERT(mo_buffer_append_text(&main, "}\nfn main()\nend\n") &&
+              mo_buffer_append_text(&library, "\n") &&
+              mo_buffer_append(&library, functions.bytes, functions.length));
+    write_file(path, main.bytes, main.length);
+    write_file(other, library.bytes, library.length);
+    struct fixture f;
+    init(&f, MO_CLI_CHECK_SIZE);
+    struct mo_module_set *set = mo_load_program(&f.syntax, &f.sources, path, NULL, &f.diags);
+    MO_ASSERT(set != NULL && f.diags.count == 0);
+    CHECK(mo_check(&f.arena, set, &f.diags) == NULL);
+    CHECK(f.diags.count == 1000 && f.diags.dropped == 500);
+    for (uint32_t i = 0; i < f.diags.count; i++)
+        CHECK(f.diags.items[i].code == MO_CODE_UNUSED_IMPORT);
+    finish(&f);
+    mo_buffer_free(&main);
+    mo_buffer_free(&library);
+    mo_buffer_free(&functions);
+    MO_ASSERT(unlink(path) == 0 && unlink(other) == 0 && rmdir(folder) == 0);
+}
+
+static void captured_parameter(void) {
+    char folder[] = "/tmp/mo-captures-XXXXXX";
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    char path[128];
+    int length = snprintf(path, sizeof(path), "%s/main.mo", folder);
+    MO_ASSERT(length > 0 && (size_t)length < sizeof(path));
+    const char source[] = "module Main\nfn make(value: Int) : fn() : Int\n"
+                          "fn() value + value end\nend\nfn main() : Int\nmake(19)()\nend\n";
+    write_file(path, (const uint8_t *)source, sizeof(source) - 1);
+    struct fixture f;
+    init(&f, 64 << 20);
+    struct mo_module_set *set = mo_load_program(&f.syntax, &f.sources, path, NULL, &f.diags);
+    MO_ASSERT(set != NULL && f.diags.count == 0);
+    struct mo_program *program = mo_check(&f.arena, set, &f.diags);
+    CHECK(program != NULL && f.diags.count == 0);
+    if (program != NULL) {
+        const struct mo_checked_function *make = &program->functions[0];
+        const struct mo_checked_lambda *lambda = NULL;
+        for (uint32_t i = 0; i < make->body.count; i++)
+            if (make->body.items[i].lambda != NULL)
+                lambda = make->body.items[i].lambda;
+        MO_ASSERT(lambda != NULL);
+        CHECK(lambda->capture_count == 1);
+        if (lambda->capture_count == 1)
+            CHECK(lambda->captures[0] == make->parameters[0]);
+    }
+    finish(&f);
+    MO_ASSERT(unlink(path) == 0 && rmdir(folder) == 0);
+}
+
+static void capture_sources(void) {
+    static const struct {
+        const char *name, *source, *site;
+        uint16_t code;
+    } cases[] = {
+        {"copied snapshot",
+         "fn main() : Int\nvar count = 7\ncurrent = count\n"
+         "show = fn() current end\ncount += 19\nshow() * 100 + count\nend\n",
+         NULL, 0},
+        {"stable var",
+         "fn main() : Int\nvar count = 7\ncount += 19\n"
+         "show = fn() count end\nshow()\nend\n",
+         NULL, 0},
+        {"later write",
+         "fn main() : Int\nvar count = 7\nshow = fn() count end\n"
+         "count += 19\nshow()\nend\n",
+         "count end", MO_CODE_CAPTURE_ASSIGNMENT},
+        {"assignment RHS capture",
+         "fn invoke(action: fn() : Int) : Int\naction()\nend\n"
+         "fn main() : Int\nvar count = 7\ncount = invoke(fn() count end)\ncount\nend\n",
+         "count end", MO_CODE_CAPTURE_ASSIGNMENT},
+        {"transitive later write",
+         "fn main() : Int\nvar count = 7\n"
+         "show = fn() fn() count end end\ncount = 29\nshow()()\nend\n",
+         "count end", MO_CODE_CAPTURE_ASSIGNMENT},
+        {"previous loop write",
+         "fn main()\nvar count = 7\nfor _ in 0..3\n"
+         "count += 1\nshow = fn() count end\nassert show() > 0\nend\nend\n",
+         "count end", MO_CODE_CAPTURE_ASSIGNMENT},
+        {"per-round var",
+         "fn main()\nfor n in 0..3\nvar count = n\ncount += 1\n"
+         "show = fn() count end\nassert show() > 0\nend\nend\n",
+         NULL, 0},
+        {"per-round copy",
+         "fn main()\nvar count = 7\nfor _ in 0..3\ncurrent = count\n"
+         "show = fn() current end\ncount += 1\nassert show() > 0\nend\nend\n",
+         NULL, 0},
+        {"nested loop write",
+         "fn main()\nfor n in 0..3\nvar count = n\n"
+         "for _ in 0..2\ncount += 1\nshow = fn() count end\n"
+         "assert show() > 0\nend\nend\nend\n",
+         "count end", MO_CODE_CAPTURE_ASSIGNMENT},
+        {"exclusive branches",
+         "fn make(flag: Bool) : fn() : Int\nvar count = 7\n"
+         "if flag\nfn() count end\nelse\ncount += 19\nfn() count end\nend\n"
+         "end\nfn main() : Int\nmake(true)() + make(false)()\nend\n",
+         NULL, 0},
+        {"exclusive rounds",
+         "fn main()\nvar count = 7\nfor n in 0..3\n"
+         "if n == 0\nshow = fn() count end\nassert show() > 0\n"
+         "else\ncount += 1\nend\nend\nend\n",
+         "count end", MO_CODE_CAPTURE_ASSIGNMENT},
+        {"own var write", "fn main() : Int\nf = fn()\nvar n = 3\nn += 1\nn\nend\nf()\nend\n",
+         "n +=", MO_CODE_LAMBDA_WRITE},
+        {"own field write",
+         "struct Box\nvalue: Int\nend\nfn main() : Int\n"
+         "f = fn()\nvar box = Box(value: 3)\nbox.value = 7\nbox.value\n"
+         "end\nf()\nend\n",
+         "box.value =", MO_CODE_LAMBDA_WRITE},
+        {"outer write", "fn main() : Int\nvar n = 3\nf = fn()\nn = 7\nend\nf()\nn\nend\n", "n = 7",
+         MO_CODE_NOT_VARIABLE},
+        {"captured field update",
+         "struct Box\nvalue: Int\nend\nfn main() : Int\n"
+         "var box = Box(value: 3)\nf = fn() box.value end\n"
+         "box.value += 19\nf()\nend\n",
+         "box.value end", MO_CODE_CAPTURE_ASSIGNMENT},
+        {"copied record",
+         "struct Box\nvalue: Int\nend\nfn main() : Int\n"
+         "var box = Box(value: 3)\ncopy = box\nf = fn() copy.value end\n"
+         "box.value += 19\nf()\nend\n",
+         NULL, 0},
+        {"capability parameter",
+         "fn make() : fn(Console)\n"
+         "fn(console) console.print(\"ok\") end\nend\n"
+         "fn main(console: Console)\nmake()(console)\nend\n",
+         NULL, 0},
+        {"direct capability",
+         "fn main(console: Console)\n"
+         "f = fn() console.print(\"bad\") end\nf()\nend\n",
+         "console.print", MO_CODE_CAPABILITY_CAPTURE},
+        {"capture before body error",
+         "fn make(console: Console) : fn() : Text\n"
+         "fn()\nconsole.print(\"bad\")\nunknown\nend\nend\n"
+         "fn main()\nend\n",
+         "console.print", MO_CODE_CAPABILITY_CAPTURE},
+        {"stored capability",
+         "struct Holder\nconsole: Console\nend\n"
+         "fn make(holder: Holder) : fn()\n"
+         "fn() holder.console.print(\"bad\") end\nend\nfn main()\nend\n",
+         "holder.console", MO_CODE_CAPABILITY_CAPTURE},
+        {"stored generic",
+         "struct Box(T)\nvalue: T\nend\n"
+         "fn make(value: Box(Console)) : fn() : Box(Console)\n"
+         "fn() value end\nend\nfn main()\nend\n",
+         "value end", MO_CODE_CAPABILITY_CAPTURE},
+        {"recursive safe",
+         "enum Ring(T)\nEmpty\nNext(Ring(T))\nCell(T)\nend\n"
+         "fn make(value: Ring(Int)) : fn() : Ring(Int)\n"
+         "fn() value end\nend\nfn main()\nend\n",
+         NULL, 0},
+        {"recursive capability",
+         "enum Ring(T)\nEmpty\nNext(Ring(T))\nCell(T)\nend\n"
+         "fn make(value: Ring(Console)) : fn() : Ring(Console)\n"
+         "fn() value end\nend\nfn main()\nend\n",
+         "value end", MO_CODE_CAPABILITY_CAPTURE},
+        {"closed recursive capability",
+         "enum A\nNilA\nFromB(B)\nend\n"
+         "enum B\nNilB\nFromA(A)\nWithConsole(Console)\nend\n"
+         "fn make(value: A) : fn() : A\n"
+         "fn() value end\nend\nfn main()\nend\n",
+         "value end", MO_CODE_CAPABILITY_CAPTURE},
+        {"phantom capability",
+         "enum Mark(T)\nPresent\nend\n"
+         "fn make(value: Mark(Console)) : fn() : Mark(Console)\n"
+         "fn() value end\nend\nfn main()\nend\n",
+         NULL, 0},
+        {"list capability",
+         "fn make(value: List(Console)) : fn() : List(Console)\n"
+         "fn() value end\nend\nfn main()\nend\n",
+         "value end", MO_CODE_CAPABILITY_CAPTURE},
+        {"tuple capability",
+         "fn make(value: (Int, Option(Console))) : fn() : Int\n"
+         "fn() value.0 end\nend\nfn main()\nend\n",
+         "value.0", MO_CODE_CAPABILITY_CAPTURE},
+        {"function parameter types",
+         "fn make(action: fn(Console)) : fn(Console)\n"
+         "fn(console) action(console) end\nend\nfn main()\nend\n",
+         NULL, 0},
+        {"Number capture",
+         "fn make(value: T) : fn() : T where T: Number\n"
+         "fn() value end\nend\nfn main() : Int\nmake(13)()\nend\n",
+         NULL, 0},
+        {"nested Number capture",
+         "fn make(value: T) : fn(T) : fn() : T where T: Number\n"
+         "fn(extra) fn() value + extra end end\nend\n"
+         "fn main() : Int\nmake(13)(29)()\nend\n",
+         NULL, 0},
+        {"abstract capture",
+         "fn make(value: T) : fn() : T\n"
+         "fn() value end\nend\nfn main() : Int\nmake(13)()\nend\n",
+         "value end", MO_CODE_CHECK_UNFINISHED},
+        {"Text isn't capability-free",
+         "fn make(value: T) : fn() : Text where T: Text\n"
+         "fn() value.to_text end\nend\nfn main()\nend\n",
+         "value.to_text", MO_CODE_CHECK_UNFINISHED},
+        {"higher-order initializer",
+         "answer = invoke(fn() 13 end)\n"
+         "fn invoke(action: fn() : Int) : Int\naction()\nend\n"
+         "fn main() : Int\nanswer\nend\n",
+         NULL, MO_CODE_CHECK_UNFINISHED},
+    };
+    char folder[] = "/tmp/mo-capture-sources-XXXXXX";
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    char path[128];
+    int length = snprintf(path, sizeof(path), "%s/main.mo", folder);
+    MO_ASSERT(length > 0 && (size_t)length < sizeof(path));
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char source[4096];
+        length = snprintf(source, sizeof(source), "module Main\n%s", cases[i].source);
+        MO_ASSERT(length > 0 && (size_t)length < sizeof(source));
+        write_file(path, (const uint8_t *)source, (size_t)length);
+        struct fixture f;
+        init(&f, MO_CLI_CHECK_SIZE);
+        struct mo_module_set *set = mo_load_program(&f.syntax, &f.sources, path, NULL, &f.diags);
+        MO_ASSERT(set != NULL && f.diags.count == 0);
+        struct mo_program *program = mo_check(&f.arena, set, &f.diags);
+        bool passed = cases[i].code == 0 ? program != NULL && !mo_diags_any(&f.diags)
+                                         : program == NULL && f.diags.count == 1 &&
+                                               f.diags.items[0].code == cases[i].code;
+        if (!passed)
+            MO_ASSERT(fprintf(stderr, "capture source %s: expected E%04u, found E%04u\n",
+                              cases[i].name, (unsigned)cases[i].code,
+                              f.diags.count == 0 ? 0u : (unsigned)f.diags.items[0].code) >= 0);
+        CHECK(passed);
+        if (cases[i].site != NULL && f.diags.count != 0) {
+            const char *site = strstr(source, cases[i].site);
+            MO_ASSERT(site != NULL);
+            CHECK(f.diags.items[0].primary.span.start == (uint32_t)(site - source));
+            if (cases[i].code == MO_CODE_CAPTURE_ASSIGNMENT ||
+                cases[i].code == MO_CODE_CAPABILITY_CAPTURE)
+                CHECK(f.diags.items[0].secondary_count == 1);
+        }
+        finish(&f);
+    }
+    printf("capture sources: %zu public load/check controls\n", sizeof(cases) / sizeof(cases[0]));
+    MO_ASSERT(unlink(path) == 0 && rmdir(folder) == 0);
 }
 
 static void header_lookahead(void) {
@@ -510,7 +1721,12 @@ static void library_roots(void) {
     CHECK(mo_load_program(&f.arena, &f.sources, entry, library, &f.diags) == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_MISSING);
     CHECK(f.diags.items[0].primary.span.file == 1);
-    CHECK(strcmp(f.diags.items[0].primary.text, lib_helper) == 0);
+    char canonical_library[MO_LIMIT_PATH_SIZE + 1], expected_helper[MO_LIMIT_PATH_SIZE + 1];
+    MO_ASSERT(realpath(library, canonical_library) != NULL);
+    int expected_length =
+        snprintf(expected_helper, sizeof(expected_helper), "%s/helper.mo", canonical_library);
+    MO_ASSERT(expected_length > 0 && (size_t)expected_length < sizeof(expected_helper));
+    CHECK(strcmp(f.diags.items[0].primary.text, expected_helper) == 0);
     finish(&f);
     write_file(lib_helper, library_source, sizeof(library_source) - 1);
     init(&f, 16 << 20);
@@ -1095,6 +2311,17 @@ static void run_tests(void *argument) {
     interfaces();
     corpus();
     samples();
+    imported_function();
+    imported_constants();
+    constant_import_sources();
+    imported_nominal();
+    imported_choice();
+    imported_generic();
+    generic_import_sources();
+    import_sources();
+    import_cap();
+    captured_parameter();
+    capture_sources();
     arena_limits();
     header_lookahead();
     library_collision();

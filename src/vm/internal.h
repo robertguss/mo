@@ -25,6 +25,9 @@ struct mo_process {
     size_t used, capacity, top;
     uint32_t depth;
     uint64_t instructions;
+    bool (*keep_running)(void *context);
+    void *control_context;
+    bool cancelled;
     bool bounded, terminal, owns_heap;
     struct mo_defect defect;
 };

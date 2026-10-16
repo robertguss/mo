@@ -1,0 +1,6 @@
+E0085 8.3
+0:43..46
+try needs a Result or an Option
+try takes the value out of an Ok or Some (reference 8.3).
+try needs a Result or an Option
+fixes 0

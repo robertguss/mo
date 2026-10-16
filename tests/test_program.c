@@ -28,8 +28,11 @@ static void init(struct fixture *f, const char *text) {
                                    &file, &error));
     f->module = mo_parse(&f->syntax, &f->sources, file, &f->diags);
     MO_ASSERT(f->module != NULL && !mo_diags_any(&f->diags));
-    f->set = (struct mo_module_set){
-        .count = 1, .modules = &f->module, .order = &f->order, .uses = &f->uses};
+    f->set = (struct mo_module_set){.count = 1,
+                                    .modules = &f->module,
+                                    .order = &f->order,
+                                    .uses = &f->uses,
+                                    .sources = &f->sources};
     f->program = mo_check(&f->arena, &f->set, &f->diags);
 }
 
@@ -78,6 +81,369 @@ static void number_literal_bound(void) {
              "fn main() : Int\nf(1)\nend\n");
     CHECK(f.program == NULL);
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_TYPE_MISMATCH);
+    free_fixture(&f);
+}
+
+static void constant_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nanswer = base - 5\nbase = 13\nindependent = true\n"
+             "fn main() : Int\nanswer\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        CHECK(f.program->constant_count == 3);
+        MO_ASSERT(f.program->constant_count == 3);
+        const struct mo_checked_constant *base = &f.program->constants[0];
+        const struct mo_checked_constant *answer = &f.program->constants[1];
+        CHECK(strcmp(base->symbol->name, "base") == 0 && strcmp(base->type->name, "Int") == 0);
+        CHECK(strcmp(answer->symbol->name, "answer") == 0 &&
+              strcmp(answer->type->name, "Int") == 0);
+        CHECK(strcmp(f.program->constants[2].symbol->name, "independent") == 0);
+        const struct mo_checked_body *body = &answer->initializer;
+        MO_ASSERT(body->root < body->count);
+        const struct mo_checked_expression *root = &body->items[body->root];
+        CHECK(root->operation == MO_T_MINUS && root->type == answer->type);
+        MO_ASSERT(root->operand_count == 2);
+        CHECK(body->items[root->operands[0]].symbol == base->symbol &&
+              body->items[root->operands[1]].syntax->text[0] == '5');
+        const struct mo_checked_body *main = &f.program->functions[f.program->entry.function].body;
+        bool read = false;
+        for (uint32_t i = 0; i < main->count; i++)
+            read = read || main->items[i].symbol == answer->symbol;
+        CHECK(read);
+    }
+    free_fixture(&f);
+}
+
+static void constant_names(void) {
+    struct fixture f;
+    init(&f, "module Main\nnot_boolean? = 17\nfn main()\nend\n");
+    CHECK(f.program == NULL && f.diags.count == 1 && f.diags.items[0].code == MO_CODE_BOOL_NAME);
+    if (f.diags.count != 0)
+        CHECK(f.diags.items[0].primary.span.start == strlen("module Main\n") &&
+              f.diags.items[0].primary.span.end == strlen("module Main\nnot_boolean?"));
+    free_fixture(&f);
+    init(&f, "module Main\nready? = fn() 17 end\nfn main()\nend\n");
+    CHECK(f.program == NULL && f.diags.count == 1 && f.diags.items[0].code == MO_CODE_BOOL_NAME);
+    free_fixture(&f);
+    init(&f, "module Main\nready? = fn() false end\nfn main()\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    free_fixture(&f);
+}
+
+static void constant_context(void) {
+    struct fixture f;
+    init(&f, "module Main\nvalue = Some(try Some(1))\nfn main()\nend\n");
+    CHECK(f.program == NULL && f.diags.count == 1 && f.diags.items[0].code == MO_CODE_TRY_RESULT);
+    free_fixture(&f);
+    init(&f, "module Main\nreader = fn() Some(try Some(1)) end\nfn main()\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    free_fixture(&f);
+}
+
+static void constant_dependencies(void) {
+    static const struct {
+        const char *source;
+        const char *names[3];
+        uint32_t count;
+    } cases[] = {
+        {"answer = first()\nindependent = 7\nbase = 13\n"
+         "fn first() : Int\nsecond()\nend\nfn second() : Int\nbase - 5\nend\n",
+         {"independent", "base", "answer"},
+         3},
+        {"answer = first(2)\nbase = 13\n"
+         "fn first(n: Int) : Int\nif n == 0: base else: second(n - 1)\nend\n"
+         "fn second(n: Int) : Int\nfirst(n)\nend\n",
+         {"base", "answer"},
+         2},
+        {"answer = handler()\nhandler = first\nbase = 13\n"
+         "fn first() : Int\nbase\nend\n",
+         {"handler", "base", "answer"},
+         3},
+        {"answer = handler(-5)\nhandler = Int.abs\n", {"handler", "answer"}, 2},
+        {"answer = render()\nbase = \"label\"\nstruct Label\nvalue: Int\nend\n"
+         "fn to_text(label: Label) : Text\n\"#{base}#{label.value}\"\nend\n"
+         "fn render() : Text\n\"#{(Label(value: 3), [Label(value: 4)])}\"\nend\n",
+         {"base", "answer"},
+         2},
+        {"answer = Label(value: 3) < Label(value: 4)\nbase = Less\n"
+         "struct Label\nvalue: Int\nend\n"
+         "fn compare(_a: Label, _b: Label) : Ordering\nbase\nend\n",
+         {"base", "answer"},
+         2},
+        {"answer = ignore(Label(value: 3))\nstruct Label\nvalue: Int\nend\n"
+         "fn to_text(_label: Label) : Text\nanswer.to_text\nend\n"
+         "fn ignore(_value: T) : Int where T: Text\n42\nend\n",
+         {"answer"},
+         1},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, 4096);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\n") &&
+                  mo_buffer_append_text(&source, cases[i].source) &&
+                  mo_buffer_append_text(&source, "fn main()\nend\n") &&
+                  mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init(&f, (const char *)source.bytes);
+        CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+        if (f.program != NULL) {
+            CHECK(f.program->constant_count == cases[i].count);
+            for (uint32_t j = 0; j < f.program->constant_count && j < cases[i].count; j++) {
+                const struct mo_checked_constant *constant = &f.program->constants[j];
+                CHECK(strcmp(constant->symbol->name, cases[i].names[j]) == 0);
+                CHECK(constant->type->parameters == 0);
+            }
+        }
+        free_fixture(&f);
+        mo_buffer_free(&source);
+    }
+}
+
+static void constant_refusals(void) {
+    static const struct {
+        const char *source;
+        uint16_t code;
+    } cases[] = {
+        {"value = value\n", MO_CODE_CONSTANT_CYCLE},
+        {"first = second\nsecond = first\n", MO_CODE_CONSTANT_CYCLE},
+        {"value = reader()\nfn reader() : Int\nvalue\nend\n", MO_CODE_CONSTANT_CYCLE},
+        {"first = reader()\nsecond = first + 1\nfn reader() : Int\nsecond\nend\n",
+         MO_CODE_CONSTANT_CYCLE},
+        {"value = \"#{Label(value: 3)}\"\nstruct Label\nvalue: Int\nend\n"
+         "fn to_text(_label: Label) : Text\nvalue\nend\n",
+         MO_CODE_CONSTANT_CYCLE},
+        {"values = []\nfn read() : List(Int)\nvalues\nend\n", MO_CODE_CANNOT_INFER},
+        {"reader = fn(x) x end\n", MO_CODE_CANNOT_INFER},
+        {"value = 17\nfn read() : Byte\nvalue\nend\n", MO_CODE_RESULT_TYPE},
+        {"value = apply(reader)\nfn apply(f: fn() : Int) : Int\nf()\nend\n"
+         "fn reader() : Int\n1\nend\n",
+         MO_CODE_CHECK_UNFINISHED},
+        {"value = render(3)\nfn render(x: T) : Text where T: Text\nx.to_text\nend\n",
+         MO_CODE_CHECK_UNFINISHED},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, 4096);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\n") &&
+                  mo_buffer_append_text(&source, cases[i].source) &&
+                  mo_buffer_append_text(&source, "fn main()\nend\n") &&
+                  mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init(&f, (const char *)source.bytes);
+        CHECK(f.program == NULL && f.diags.count == 1 && f.diags.items[0].code == cases[i].code);
+        free_fixture(&f);
+        mo_buffer_free(&source);
+    }
+}
+
+static void constant_chain(void) {
+    const uint32_t count = 5000;
+    struct mo_buffer source;
+    mo_buffer_init(&source, 1 << 20);
+    MO_ASSERT(mo_buffer_append_text(&source, "module Main\n"));
+    for (uint32_t i = 0; i < count; i++) {
+        MO_ASSERT(mo_buffer_append_text(&source, "c") && mo_buffer_append_uint(&source, i) &&
+                  mo_buffer_append_text(&source, " = "));
+        if (i + 1 < count)
+            MO_ASSERT(mo_buffer_append_text(&source, "c") && mo_buffer_append_uint(&source, i + 1));
+        else
+            MO_ASSERT(mo_buffer_append_text(&source, "13"));
+        MO_ASSERT(mo_buffer_append_text(&source, "\n"));
+    }
+    MO_ASSERT(mo_buffer_append_text(&source, "fn main() : Int\nc0\nend\n") &&
+              mo_buffer_append_byte(&source, 0));
+    struct fixture f;
+    init(&f, (const char *)source.bytes);
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        CHECK(f.program->constant_count == count);
+        for (uint32_t i = 1; i < f.program->constant_count; i++) {
+            const struct mo_checked_constant *constant = &f.program->constants[i];
+            const struct mo_checked_body *body = &constant->initializer;
+            CHECK(body->items[body->root].symbol == f.program->constants[i - 1].symbol);
+        }
+    }
+    free_fixture(&f);
+    mo_buffer_free(&source);
+}
+
+static void example_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn plus(a: Int) : Int\nexamples\n"
+             "plus(3) == 4\nend\nexamples\nplus(8) == 9\nend\na + 1\nend\n"
+             "fn main() : Int\nexamples\nfalse\nend\nplus(2)\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        CHECK(f.program->spec_count == 3);
+        for (uint32_t i = 0; i < 2 && i < f.program->spec_count; i++) {
+            const struct mo_checked_spec *spec = &f.program->specs[i];
+            CHECK(spec->kind == MO_SPEC_EXAMPLE && spec->module == 0 && spec->subject == 0 &&
+                  spec->number == i + 1 && spec->promise == UINT32_MAX);
+            CHECK(spec->parameter_count == 0 && spec->condition_count == 0);
+            MO_ASSERT(spec->body.root < spec->body.count);
+            const struct mo_checked_expression *root = &spec->body.items[spec->body.root];
+            CHECK(strcmp(root->type->name, "Bool") == 0 && root->operation == MO_T_EQ);
+            MO_ASSERT(root->operand_count == 2);
+            const struct mo_checked_expression *call = &spec->body.items[root->operands[0]];
+            CHECK(call->symbol == f.program->functions[0].signature->function);
+            MO_ASSERT(call->operand_count == 2);
+            CHECK(spec->body.items[call->operands[1]].syntax->text[0] == (i == 0 ? '3' : '8'));
+            CHECK(spec->body.items[root->operands[1]].syntax->text[0] == (i == 0 ? '4' : '9'));
+            struct mo_span span = spec->text.span;
+            CHECK(spec->text.length == span.end - span.start);
+            CHECK(memcmp(spec->text.bytes, f.sources.files[span.file].bytes + span.start,
+                         spec->text.length) == 0);
+        }
+        if (f.program->spec_count == 3) {
+            const struct mo_checked_spec *spec = &f.program->specs[2];
+            CHECK(spec->subject == 1 && spec->number == 1);
+            MO_ASSERT(spec->body.root < spec->body.count);
+            CHECK(spec->body.items[spec->body.root].syntax->kind == MO_S_FALSE);
+        }
+        mo_sources_free(&f.sources);
+        const struct mo_checked_spec *first = &f.program->specs[0];
+        CHECK(first->text.length == 12 && memcmp(first->text.bytes, "plus(3) == 4", 12) == 0);
+        MO_ASSERT(mo_sources_init(&f.sources));
+    }
+    free_fixture(&f);
+}
+
+static void promise_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn ordered(a: Int, b: Int) : (Int, Int)\n"
+             "promise \"values stay\\nordered\"\nresult.0 <= result.1\n"
+             "result == (a, b) or result == (b, a)\n"
+             "allows result: (2, 5), b: 2, a: 5\n"
+             "forbids a: 5, result: (2, 2), b: 2\nend\n"
+             "if a <= b: (a, b) else: (b, a)\nend\nfn main()\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        CHECK(f.program->spec_count == 3);
+        const struct mo_checked_spec *promise = &f.program->specs[0];
+        CHECK(promise->kind == MO_SPEC_PROMISE && promise->subject == 0 && promise->number == 1);
+        CHECK(promise->parameter_count == 3 && promise->condition_count == 2);
+        CHECK(strcmp(promise->parameters[0]->name, "a") == 0 &&
+              strcmp(promise->parameters[1]->name, "b") == 0 &&
+              strcmp(promise->parameters[2]->name, "result") == 0);
+        CHECK(promise->wording_length == 19 &&
+              memcmp(promise->wording, "values stay\nordered", 19) == 0);
+        CHECK(promise->conditions[0].text.length == 20 &&
+              memcmp(promise->conditions[0].text.bytes, "result.0 <= result.1", 20) == 0);
+        CHECK(promise->body.items[promise->conditions[0].expression].operation == MO_T_LE);
+        CHECK(promise->body.items[promise->conditions[1].expression].operation == MO_T_OR);
+        for (uint32_t i = 1; i < 3; i++) {
+            const struct mo_checked_spec *anchor = &f.program->specs[i];
+            CHECK(anchor->kind == MO_SPEC_ANCHOR && anchor->promise == 0 && anchor->subject == 0 &&
+                  anchor->number == 1 && anchor->allows == (i == 1));
+            CHECK(anchor->body.root == UINT32_MAX && anchor->value_count == 3);
+            CHECK(anchor->body.items[anchor->values[0]].syntax->text[0] == '5');
+            CHECK(anchor->body.items[anchor->values[1]].syntax->text[0] == '2');
+            CHECK(anchor->body.items[anchor->values[2]].operand_count == 2);
+        }
+    }
+    free_fixture(&f);
+}
+
+static void generic_spec_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\n"
+             "test \"private \\u{3bb}\\u{0}\"\nassert twice(3) == 6\nend\n"
+             "fn twice(value: T) : T where T: Number, T: Equal\n"
+             "promise \"returns twice its input\"\nresult == value + value\n"
+             "allows result: 6, value: 3\nforbids value: 1.25, result: 2.0\nend\n"
+             "value + value\nend\nfn main()\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        CHECK(f.program->spec_count == 4);
+        const struct mo_checked_spec *test = &f.program->specs[0];
+        CHECK(test->kind == MO_SPEC_TEST && test->subject == UINT32_MAX && test->number == 1);
+        CHECK(test->wording_length == 11 && memcmp(test->wording, "private \xce\xbb\0", 11) == 0);
+        CHECK(strcmp(test->body.items[test->body.root].type->name, "Unit") == 0);
+        const struct mo_checked_spec *promise = &f.program->specs[1];
+        const struct mo_source_type *parameter =
+            f.program->functions[0].signature->type->arguments[0];
+        CHECK(promise->parameter_count == 2 && promise->parameters[0]->type == parameter &&
+              promise->parameters[1]->type == parameter);
+        const struct mo_checked_expression *condition =
+            &promise->body.items[promise->conditions[0].expression];
+        CHECK(condition->ability_count == 1 &&
+              condition->abilities[0].implementation->kind == MO_ABILITY_PARAMETER &&
+              condition->abilities[0].implementation->type == parameter);
+        for (uint32_t i = 2; i < 4; i++) {
+            const struct mo_checked_spec *anchor = &f.program->specs[i];
+            CHECK(anchor->promise == 1 && anchor->arguments.count == 1 &&
+                  anchor->ability_count == 2);
+            CHECK(anchor->arguments.items[0].parameter == parameter &&
+                  strcmp(anchor->arguments.items[0].type->name, i == 2 ? "Int" : "Decimal") == 0);
+            for (uint32_t j = 0; j < anchor->ability_count; j++) {
+                CHECK(anchor->abilities[j].parameter == parameter &&
+                      anchor->abilities[j].operand == UINT32_MAX &&
+                      anchor->abilities[j].implementation->kind == MO_ABILITY_NATIVE);
+            }
+        }
+        CHECK(f.program->specs[2].values[1] < f.program->specs[2].values[0]);
+        CHECK(f.program->specs[3].values[0] < f.program->specs[3].values[1]);
+    }
+    free_fixture(&f);
+}
+
+static void fake_specs(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn main(args: Args, console: Console)\n"
+             "console.print(args.list.first or \"world\")\nend\n"
+             "test \"fake handles keep their output\"\nconsole = Console.fake()\n"
+             "main(Args.of([\"Ada\", \"Grace\"]), console)\n"
+             "assert console.printed == [\"Ada\"]\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    free_fixture(&f);
+}
+
+static void spec_refusals(void) {
+    static const struct {
+        const char *values;
+        uint16_t code;
+    } cases[] = {
+        {"value: 3", MO_CODE_ANCHOR_ARGUMENTS},
+        {"result: 3", MO_CODE_ANCHOR_ARGUMENTS},
+        {"value: 3, result: 3, value: 4", MO_CODE_ANCHOR_ARGUMENTS},
+        {"value: 3, result: 3, extra: 4", MO_CODE_ANCHOR_ARGUMENTS},
+        {"value: true, result: 3", MO_CODE_ARGUMENT_TYPE},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, 4096);
+        MO_ASSERT(mo_buffer_append_text(&source,
+                                        "module Main\nfn identity(value: Int) : Int\n"
+                                        "promise \"keeps its input\"\nresult == value\nallows ") &&
+                  mo_buffer_append_text(&source, cases[i].values) &&
+                  mo_buffer_append_text(&source, "\nforbids value: 3, result: 4\nend\n"
+                                                 "value\nend\nfn main()\nend\n") &&
+                  mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init(&f, (const char *)source.bytes);
+        CHECK(f.program == NULL && f.diags.count == 1 && f.diags.items[0].code == cases[i].code);
+        free_fixture(&f);
+        mo_buffer_free(&source);
+    }
+    struct fixture f;
+    init(&f, "module Main\nfn identity(value: Int) : Int\n"
+             "promise \"not Boolean\"\nresult + value\nallows value: 1, result: 1\n"
+             "forbids value: 1, result: 2\nend\nvalue\nend\nfn main()\nend\n");
+    CHECK(f.program == NULL && f.diags.count == 1 &&
+          f.diags.items[0].code == MO_CODE_CONDITION_TYPE);
+    free_fixture(&f);
+    init(&f, "module Main\ntest \"not Boolean\"\nassert 17\nend\nfn main()\nend\n");
+    CHECK(f.program == NULL && f.diags.count == 1 &&
+          f.diags.items[0].code == MO_CODE_CONDITION_TYPE);
+    free_fixture(&f);
+    init(&f, "module Main\ntest \"verbatim indentation\"\nend\n"
+             "test \"\"\"\n  first\n    second\n  \"\"\"\nend\nfn main()\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_spec *spec = &f.program->specs[1];
+        CHECK(spec->number == 2 && spec->wording_length == 14 &&
+              memcmp(spec->wording, "first\n  second", 14) == 0);
+    }
     free_fixture(&f);
 }
 
@@ -198,6 +564,18 @@ static void console_graph(void) {
             printed = true;
         }
         CHECK(printed);
+    }
+    free_fixture(&f);
+    init(&f, "module Main\nfn main(console: Console, _args: Args) : Int\n"
+             "console.print(\"two capabilities\")\n37\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        CHECK(f.program->entry.result == MO_ENTRY_STATUS);
+        CHECK(f.program->entry.capability_count == 2);
+        if (f.program->entry.capability_count == 2) {
+            CHECK(strcmp(f.program->entry.capabilities[0]->type->name, "Console") == 0);
+            CHECK(strcmp(f.program->entry.capabilities[1]->type->name, "Args") == 0);
+        }
     }
     free_fixture(&f);
 }
@@ -328,6 +706,34 @@ static void ability_dot_graph(void) {
         CHECK(conversions == 2 && comparisons == 1);
     }
     free_fixture(&f);
+}
+
+static void customizer_helpers(void) {
+    struct fixture f;
+    static const char *const sources[] = {
+        "fn compare(a: Int, b: Int) : Bool\na == b\nend\n"
+        "fn main() : Int\nif compare(3, 4): 9 else: 7\nend\n",
+        "fn to_text(_n: Int) : Int\n7\nend\n"
+        "fn main() : Int\nto_text(1) + 2.to_text.byte_count\nend\n",
+        "fn to_text() : Int\n7\nend\nfn main() : Int\nto_text()\nend\n",
+        "fn compare() : Bool\ntrue\nend\nfn main() : Int\nif compare(): 7 else: 9\nend\n",
+        "fn to_text(x: T) : T\nx\nend\nfn main() : Int\nto_text(7)\nend\n",
+        "fn to_text(f: fn(Int) : Int) : Int\nf(7)\nend\n"
+        "fn main() : Int\nto_text(fn(x) x end)\nend\n",
+        "fn to_text(_error: FileError) : Text\n\"helper\"\nend\n"
+        "fn main() : Int\nto_text(NotFound(path: \"notes\")).byte_count\nend\n",
+    };
+    for (uint32_t i = 0; i < sizeof(sources) / sizeof(sources[0]); i++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, MO_LIMIT_FILE_SIZE);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\n") &&
+                  mo_buffer_append_text(&source, sources[i]) && mo_buffer_append_byte(&source, 0));
+        init(&f, (const char *)source.bytes);
+        CHECK(f.program == NULL && f.diags.count == 1 &&
+              f.diags.items[0].code == MO_CODE_ABILITY_CUSTOMIZER);
+        free_fixture(&f);
+        mo_buffer_free(&source);
+    }
 }
 
 static void method_graph(void) {
@@ -859,6 +1265,266 @@ static void generic_lambdas(void) {
     free_fixture(&f);
 }
 
+static void option_or_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn main() : Int\nSome(17) or 3\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        bool found = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->operation != MO_T_OR)
+                continue;
+            MO_ASSERT(row->operand_count == 2);
+            CHECK(row->or_kind == MO_CHECK_OR_OPTION);
+            CHECK(strcmp(row->type->name, "Int") == 0);
+            CHECK(strcmp(body->items[row->operands[0]].type->name, "Option") == 0);
+            CHECK(body->items[row->operands[1]].syntax->kind == MO_S_INT &&
+                  body->items[row->operands[1]].syntax->text[0] == '3');
+            CHECK(!row->never && row->ability_count == 0);
+            found = true;
+        }
+        CHECK(found);
+    }
+    free_fixture(&f);
+}
+
+static void deferred_defaults(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn choose() : Bool\n"
+             "Some(Some(false)) or Some(true) or false or true\nend\n"
+             "fn main() : Int\nreader = fn(values) values.get(0) or 17 end\n"
+             "reader([3]) + (Some(8) or stop \"missing\")\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *choose = &f.program->functions[0].body;
+        uint32_t options = 0, bools = 0;
+        for (uint32_t i = 0; i < choose->count; i++) {
+            const struct mo_checked_expression *row = &choose->items[i];
+            if (row->operation != MO_T_OR)
+                continue;
+            if (row->or_kind == MO_CHECK_OR_OPTION) {
+                CHECK(strcmp(row->type->name, options == 0 ? "Option" : "Bool") == 0);
+                options++;
+            } else {
+                CHECK(row->or_kind == MO_CHECK_OR_BOOL && strcmp(row->type->name, "Bool") == 0);
+                bools++;
+            }
+            CHECK(!row->never);
+        }
+        CHECK(options == 2 && bools == 1);
+        const struct mo_checked_body *main = &f.program->functions[1].body;
+        uint32_t defaults = 0;
+        bool lazy = false;
+        for (uint32_t i = 0; i < main->count; i++) {
+            const struct mo_checked_expression *row = &main->items[i];
+            if (row->operation != MO_T_OR)
+                continue;
+            MO_ASSERT(row->operand_count == 2);
+            CHECK(row->or_kind == MO_CHECK_OR_OPTION && strcmp(row->type->name, "Int") == 0);
+            CHECK(!row->never);
+            lazy = lazy || main->items[row->operands[1]].never;
+            defaults++;
+        }
+        CHECK(defaults == 2 && lazy);
+    }
+    free_fixture(&f);
+}
+
+static void try_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn next(value: Option(Int)) : Option(Int)\n"
+             "Some((try value) + 1)\nend\n"
+             "fn main() : Int\nnext(Some(4)) or 9\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_function *fn = &f.program->functions[0];
+        bool found = false;
+        for (uint32_t i = 0; i < fn->body.count; i++) {
+            const struct mo_checked_expression *row = &fn->body.items[i];
+            if (row->try_ == NULL)
+                continue;
+            MO_ASSERT(row->operand_count == 1);
+            CHECK(strcmp(row->type->name, "Int") == 0 && !row->never);
+            CHECK(strcmp(fn->body.items[row->operands[0]].type->name, "Option") == 0);
+            CHECK(strcmp(row->try_->result->name, "Option") == 0 && row->try_->result->count == 1 &&
+                  strcmp(row->try_->result->arguments[0]->name, "Int") == 0);
+            CHECK(row->try_->failure.builtin != NULL &&
+                  strcmp(row->try_->failure.builtin, "None") == 0);
+            CHECK(row->try_->wrapper.symbol == NULL && row->try_->wrapper.builtin == NULL);
+            CHECK(row->try_->arguments.count == 0);
+            found = true;
+        }
+        CHECK(found);
+    }
+    free_fixture(&f);
+    init(&f, "module Main\nenum Inner(T)\nBadInner(T)\nend\n"
+             "enum Outer(U)\nWrapped(Inner(U))\nDetail(name: Text)\nend\n"
+             "fn lift(value: Result(Int, Inner(T))) : Result(Text, Outer(T))\n"
+             "number = try value\nOk(number.to_text)\nend\n"
+             "fn main() : Int\ncase lift(Error(BadInner(true)))\n"
+             "Ok(text): text.byte_count\nError(Wrapped(BadInner(_))): 2\n"
+             "Error(Detail(name: _)): 3\nend\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_function *fn = &f.program->functions[0];
+        const struct mo_source_type *parameter =
+            fn->signature->type->arguments[0]->arguments[1]->arguments[0];
+        bool wrapped = false;
+        for (uint32_t i = 0; i < fn->body.count; i++) {
+            const struct mo_checked_try *try_ = fn->body.items[i].try_;
+            if (try_ == NULL)
+                continue;
+            CHECK(try_->failure.builtin != NULL && strcmp(try_->failure.builtin, "Error") == 0);
+            MO_ASSERT(try_->wrapper.symbol != NULL && try_->arguments.count == 1);
+            CHECK(strcmp(try_->wrapper.symbol->name, "Wrapped") == 0);
+            CHECK(strcmp(try_->arguments.items[0].parameter->declaration->name, "Outer") == 0);
+            CHECK(try_->arguments.items[0].type == parameter);
+            CHECK(strcmp(try_->result->arguments[0]->name, "Text") == 0);
+            wrapped = true;
+        }
+        CHECK(wrapped);
+    }
+    free_fixture(&f);
+    init(&f, "module Main\nenum Outer(T)\nWrapped(Set(T))\nend\n"
+             "fn lift(value: Result(Int, Set(T))) : Result(Text, Outer(T)) where T: Hash\n"
+             "number = try value\nOk(number.to_text)\nend\nfn main()\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_function *fn = &f.program->functions[0];
+        const struct mo_source_type *parameter =
+            fn->signature->type->arguments[0]->arguments[1]->arguments[0];
+        bool wrapped = false;
+        for (uint32_t i = 0; i < fn->body.count; i++) {
+            const struct mo_checked_try *try_ = fn->body.items[i].try_;
+            if (try_ == NULL)
+                continue;
+            MO_ASSERT(try_->wrapper.symbol != NULL && try_->arguments.count == 1);
+            CHECK(strcmp(try_->wrapper.symbol->name, "Wrapped") == 0);
+            CHECK(try_->arguments.items[0].type == parameter);
+            CHECK(try_->ability_count == 2);
+            for (uint32_t j = 0; j < try_->ability_count; j++) {
+                const struct mo_checked_ability_use *use = &try_->abilities[j];
+                CHECK(use->operand == UINT32_MAX &&
+                      use->parameter == try_->arguments.items[0].parameter);
+                CHECK(use->implementation->kind == MO_ABILITY_PARAMETER &&
+                      use->implementation->type == parameter);
+                CHECK(use->implementation->ability == MO_SOURCE_EQUAL ||
+                      use->implementation->ability == MO_SOURCE_HASH);
+            }
+            wrapped = true;
+        }
+        CHECK(wrapped);
+    }
+    free_fixture(&f);
+    init(&f, "module Main\nfn negate(value: Option(T)) : Option(T) where T: Number\n"
+             "Some(- try value)\nend\nfn main()\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        bool negated = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->operation != MO_T_MINUS)
+                continue;
+            MO_ASSERT(row->operand_count == 1 && row->ability_count == 1);
+            CHECK(row->type->kind == MO_SOURCE_PARAMETER);
+            CHECK(row->abilities[0].implementation->kind == MO_ABILITY_PARAMETER &&
+                  row->abilities[0].implementation->ability == MO_SOURCE_NUMBER);
+            CHECK(body->items[row->operands[0]].try_ != NULL);
+            negated = true;
+        }
+        CHECK(negated);
+    }
+    free_fixture(&f);
+}
+
+static void inferred_wrappers(void) {
+    struct fixture f;
+    init(&f, "module Main\nenum Outer\nWrong((Option(Int), Option(Bool)))\n"
+             "Wrapped((Option(Int), Option(Int)))\nScalar(Int)\nend\n"
+             "fn helper() : Result(Int, Outer)\nempty = None\nOk(try Error((empty, empty)))\n"
+             "end\nfn scalar() : Result(Int, Outer)\nOk(try Error(17))\nend\n"
+             "fn main()\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        bool wrapped = false, inferred = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->native != NULL && strcmp(row->native, "None") == 0) {
+                CHECK(strcmp(row->type->arguments[0]->name, "Int") == 0);
+                inferred = true;
+            }
+            if (row->try_ != NULL) {
+                MO_ASSERT(row->try_->wrapper.symbol != NULL);
+                CHECK(strcmp(row->try_->wrapper.symbol->name, "Wrapped") == 0);
+                wrapped = true;
+            }
+        }
+        CHECK(wrapped && inferred);
+        const struct mo_checked_body *scalar = &f.program->functions[1].body;
+        bool numbered = false;
+        for (uint32_t i = 0; i < scalar->count; i++) {
+            if (scalar->items[i].try_ == NULL)
+                continue;
+            MO_ASSERT(scalar->items[i].try_->wrapper.symbol != NULL);
+            CHECK(strcmp(scalar->items[i].try_->wrapper.symbol->name, "Scalar") == 0);
+            numbered = true;
+        }
+        CHECK(numbered);
+    }
+    free_fixture(&f);
+}
+
+static void try_contexts(void) {
+    struct fixture f;
+    init(&f, "module Main\nfn direct(value: Result(Int, Text)) : Result(Text, Text)\n"
+             "n = try value\nOk(n.to_text)\nend\n"
+             "fn builtin(value: Result(Int, Int)) : Result(Text, Option(Int))\n"
+             "n = try value\nOk(n.to_text)\nend\n"
+             "fn nested(value: Option(Option(Int))) : Option(Int)\nSome(try try value)\nend\n"
+             "fn stopped() : Option(Int)\nSome(try stop \"unreachable\")\nend\n"
+             "fn main() : Int\nf = fn(value) Some((try value).to_text) end\n"
+             "(f(Some(12)) or \"\").byte_count\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        uint32_t tries = 0;
+        for (uint32_t j = 0; j < f.program->function_count; j++) {
+            const struct mo_checked_body *body = &f.program->functions[j].body;
+            for (uint32_t i = 0; i < body->count; i++) {
+                const struct mo_checked_expression *row = &body->items[i];
+                if (row->try_ == NULL)
+                    continue;
+                const struct mo_checked_try *try_ = row->try_;
+                MO_ASSERT(row->operand_count == 1 && row->operands[0] < i);
+                CHECK(row->never == body->items[row->operands[0]].never);
+                if (j == 0) {
+                    CHECK(strcmp(row->type->name, "Int") == 0);
+                    CHECK(strcmp(try_->result->arguments[0]->name, "Text") == 0);
+                    CHECK(try_->wrapper.symbol == NULL && try_->wrapper.builtin == NULL);
+                } else if (j == 1) {
+                    MO_ASSERT(try_->wrapper.builtin != NULL && try_->arguments.count == 1);
+                    CHECK(strcmp(try_->wrapper.builtin, "Some") == 0);
+                    CHECK(strcmp(try_->arguments.items[0].parameter->declaration->name, "Option") ==
+                          0);
+                    CHECK(strcmp(try_->arguments.items[0].type->name, "Int") == 0);
+                } else {
+                    CHECK(strcmp(try_->failure.builtin, "None") == 0);
+                    CHECK(strcmp(try_->result->name, "Option") == 0);
+                    CHECK(try_->wrapper.symbol == NULL && try_->wrapper.builtin == NULL);
+                    CHECK(strcmp(try_->result->arguments[0]->name, j == 4 ? "Text" : "Int") == 0);
+                    CHECK(row->never == (j == 3));
+                }
+                tries++;
+            }
+        }
+        CHECK(tries == 6);
+    }
+    free_fixture(&f);
+}
+
 static void lambda_graph(void) {
     struct fixture f;
     init(&f, "module Main\n"
@@ -891,6 +1557,114 @@ static void lambda_graph(void) {
         CHECK(count == 2);
     }
     free_fixture(&f);
+}
+
+static MO_MUST_USE const struct mo_checked_lambda *
+checked_lambda(const struct mo_checked_body *body, uint32_t number) {
+    for (uint32_t i = 0; i < body->count; i++)
+        if (body->items[i].lambda != NULL && body->items[i].lambda->number == number)
+            return body->items[i].lambda;
+    MO_ASSERT(false);
+    return NULL;
+}
+
+static void capture_graph(void) {
+    struct fixture f;
+    init(&f, "module Main\n"
+             "fn invoke(f: fn() : Int, extra: Int) : Int\nf() + extra\nend\n"
+             "fn make(left: Int, right: Int) : fn() : Int\n"
+             "fn() invoke(fn() right + left + right end, left) end\nend\n"
+             "fn main() : Int\nmake(7, 23)()\nend\n");
+    CHECK(f.program != NULL && f.diags.count == 0);
+    if (f.program != NULL) {
+        const struct mo_checked_function *make = &f.program->functions[1];
+        for (uint32_t i = 1; i <= 2; i++) {
+            const struct mo_checked_lambda *lambda = checked_lambda(&make->body, i);
+            CHECK(lambda->capture_count == 2);
+            if (lambda->capture_count == 2) {
+                CHECK(lambda->captures[0] == make->parameters[1]);
+                CHECK(lambda->captures[1] == make->parameters[0]);
+            }
+        }
+    }
+    free_fixture(&f);
+
+    init(&f, "module Main\n"
+             "fn make(left: Int, right: Int) : fn(Int) : fn() : Int\n"
+             "fn(shift)\ntemp = left * 7\n"
+             "fn() right + temp + shift + left + right end\nend\nend\n"
+             "fn main() : Int\nmake(3, 29)(5)()\nend\n");
+    CHECK(f.program != NULL && f.diags.count == 0);
+    if (f.program != NULL) {
+        const struct mo_checked_function *make = &f.program->functions[0];
+        const struct mo_checked_lambda *outer = checked_lambda(&make->body, 1);
+        const struct mo_checked_lambda *inner = checked_lambda(&make->body, 2);
+        CHECK(outer->capture_count == 2 && inner->capture_count == 4);
+        if (outer->capture_count == 2 && inner->capture_count == 4) {
+            CHECK(outer->captures[0] == make->parameters[0]);
+            CHECK(outer->captures[1] == make->parameters[1]);
+            CHECK(inner->captures[0] == make->parameters[1]);
+            CHECK(strcmp(inner->captures[1]->name, "temp") == 0);
+            CHECK(inner->captures[2] == outer->parameters[0]);
+            CHECK(inner->captures[3] == make->parameters[0]);
+        }
+    }
+    free_fixture(&f);
+
+    init(&f, "module Main\nfn select(flag: Bool) : fn() : Int\n"
+             "if flag\nitem = 13\nfn() item end\n"
+             "else\nitem = 29\nfn() item end\nend\nend\n"
+             "fn main() : Int\nselect(true)() - select(false)()\nend\n");
+    CHECK(f.program != NULL && f.diags.count == 0);
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[0].body;
+        const struct mo_checked_lambda *first = checked_lambda(body, 1);
+        const struct mo_checked_lambda *second = checked_lambda(body, 2);
+        MO_ASSERT(first->capture_count == 1 && second->capture_count == 1);
+        CHECK(first->captures[0] != second->captures[0]);
+        CHECK(strcmp(first->captures[0]->name, "item") == 0 &&
+              strcmp(second->captures[0]->name, "item") == 0);
+        CHECK(first->captures[0]->syntax->span.start < second->captures[0]->syntax->span.start);
+    }
+    free_fixture(&f);
+
+    init(&f, "module Main\nfn main() : Int\nvar count = 7\n"
+             "current = count\nf = fn() current end\ncount += 19\n"
+             "g = fn() count end\nf() * 100 + g()\nend\n");
+    CHECK(f.program != NULL && f.diags.count == 0);
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &f.program->functions[f.program->entry.function].body;
+        const struct mo_checked_lambda *copied = checked_lambda(body, 1);
+        const struct mo_checked_lambda *stable = checked_lambda(body, 2);
+        MO_ASSERT(copied->capture_count == 1 && stable->capture_count == 1);
+        CHECK(strcmp(copied->captures[0]->name, "current") == 0 && !copied->captures[0]->variable);
+        CHECK(strcmp(stable->captures[0]->name, "count") == 0 && stable->captures[0]->variable);
+    }
+    free_fixture(&f);
+}
+
+static void capture_work(void) {
+    static const uint32_t counts[] = {6000, 9000};
+    for (uint32_t kind = 0; kind < 2; kind++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, MO_LIMIT_FILE_SIZE);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\nfn main()\nvar count = 0\n"));
+        for (uint32_t i = 0; i < 2000; i++)
+            MO_ASSERT(mo_buffer_append_text(&source, "count += 1\n"));
+        for (uint32_t i = 0; i < counts[kind]; i++)
+            MO_ASSERT(mo_buffer_append_text(&source, "_f") && mo_buffer_append_uint(&source, i) &&
+                      mo_buffer_append_text(&source, " = fn() count end\n"));
+        MO_ASSERT(mo_buffer_append_text(&source, "end\n") && mo_buffer_append_byte(&source, 0));
+        struct fixture f;
+        init(&f, (const char *)source.bytes);
+        if (kind == 0)
+            CHECK(f.program != NULL && f.diags.count == 0);
+        else
+            CHECK(f.program == NULL && f.diags.count == 1 &&
+                  f.diags.items[0].code == MO_CODE_CHECK_WORK);
+        free_fixture(&f);
+        mo_buffer_free(&source);
+    }
 }
 
 static void branch_graph(void) {
@@ -1307,8 +2081,6 @@ static void rejected_stages(void) {
         {"fn main() : Int where Int: Number\n0\nend\n", MO_CODE_ABILITY_REQUIREMENT},
         {"fn message(error: FileError) : Text\nerror.to_text\nend\nfn main()\nend\n",
          MO_CODE_CHECK_UNFINISHED},
-        {"fn to_text(_error: FileError) : Text\n\"fake\"\nend\nfn main()\nend\n",
-         MO_CODE_ABILITY_CUSTOMIZER},
         {"fn helper(c: Console) : Text\n\"#{c}\"\nend\nfn main()\nend\n", MO_CODE_ABILITY_MISSING},
         {"fn helper(bytes: Bytes) : Text\n\"#{bytes}\"\nend\nfn main()\nend\n",
          MO_CODE_ABILITY_MISSING},
@@ -1335,12 +2107,16 @@ static void rejected_stages(void) {
          MO_CODE_ABILITY_CUSTOMIZER},
         {"struct P\nx: Int\nend\nfn to_text(_p: P) : Int\n0\nend\nfn main()\nend\n",
          MO_CODE_ABILITY_CUSTOMIZER},
+        {"struct P\nx: Int\nend\nfn to_text(_p: P, c: Text) : Text\nc\nend\n"
+         "fn main()\nend\n",
+         MO_CODE_ABILITY_CUSTOMIZER},
+        {"struct P\nx: Int\nend\nfn compare(_a: P) : Ordering\nEqual\nend\n"
+         "fn main()\nend\n",
+         MO_CODE_ABILITY_CUSTOMIZER},
         {"fn main() : Text\n\"not an entry result\"\nend\n", MO_CODE_MAIN_CONTRACT},
         {"fn main(value: Int) : Int\nvalue\nend\n", MO_CODE_MAIN_CONTRACT},
         {"fn main(a: Console, b: Console)\na.print(\"a\")\nb.print(\"b\")\nend\n",
          MO_CODE_MAIN_CONTRACT},
-        {"fn main(_args: Args)\nend\n", MO_CODE_CHECK_UNFINISHED},
-        {"fn main(_clock: Clock, _console: Console)\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Result(Unit, FileError)\nstop \"no result\"\nend\n",
          MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Result(Int, FileError)\nstop \"bad result\"\nend\n", MO_CODE_MAIN_CONTRACT},
@@ -1349,13 +2125,41 @@ static void rejected_stages(void) {
         {"fn grow(value: T)\ngrow([value])\nend\nfn main()\nend\n", MO_CODE_POLYMORPHIC_RECURSION},
         {"fn a(value: T)\nb([value])\nend\nfn b(value: U)\na(value)\nend\nfn main()\nend\n",
          MO_CODE_POLYMORPHIC_RECURSION},
-        {"fn main() : Int\nx = 1\nf = fn() x end\nf()\nend\n", MO_CODE_CHECK_UNFINISHED},
         {"fn main() : Int\nm = {\"a\": 1}\ncase m\n_: 1\nend\nend\n", MO_CODE_CHECK_UNFINISHED},
-        {"fn main() : Int\ntry Some(1)\nend\n", MO_CODE_CHECK_UNFINISHED},
-        {"fn main() : Int\nSome(1) or 0\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn main() : Int\ntry Some(1)\nend\n", MO_CODE_TRY_RESULT},
+        {"fn helper() : Option(Int)\nSome(try 1)\nend\nfn main()\nend\n", MO_CODE_TRY_INPUT},
+        {"fn helper() : Option(Int)\nSome(try true)\nend\nfn main()\nend\n", MO_CODE_TRY_INPUT},
+        {"fn helper(value: Option(Int)) : Result(Int, Text)\nOk(try value)\nend\n"
+         "fn main()\nend\n",
+         MO_CODE_TRY_RESULT},
+        {"fn helper(value: Result(Int, Text)) : Option(Int)\nSome(try value)\nend\n"
+         "fn main()\nend\n",
+         MO_CODE_TRY_RESULT},
+        {"fn main() : Int\nf = fn(value) try value end\nf(Some(1)) + 1\nend\n", MO_CODE_TRY_RESULT},
+        {"enum Outer\nNamed(value: Text)\nend\n"
+         "fn helper(value: Result(Int, Text)) : Result(Int, Outer)\nOk(try value)\nend\n"
+         "fn main()\nend\n",
+         MO_CODE_TRY_WRAPPER},
+        {"enum Outer\nFirst(Text)\nSecond(Text)\nend\n"
+         "fn helper(value: Result(Int, Text)) : Result(Int, Outer)\nOk(try value)\nend\n"
+         "fn main()\nend\n",
+         MO_CODE_TRY_WRAPPER},
+        {"fn helper(value: Result(Int, T)) : Result(Int, U)\nOk(try value)\nend\n"
+         "fn main()\nend\n",
+         MO_CODE_TRY_WRAPPER},
+        {"enum Inner(T)\nBad(T)\nend\nenum Outer\nWrap(Inner(Bool))\nend\n"
+         "fn helper(value: Result(Int, Inner(Int))) : Result(Int, Outer)\nOk(try value)\nend\n"
+         "fn main()\nend\n",
+         MO_CODE_TRY_WRAPPER},
         {"fn main(console: Console)\nconsole.printed\nend\n", MO_CODE_CHECK_UNFINISHED},
-        {"value = 1\nfn main()\nend\n", MO_CODE_CHECK_UNFINISHED},
-        {"fn main() : Int\nexamples\n1 == 1\nend\n1\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"value = 1\nfn main() : Int\nmissing\nend\n", MO_CODE_NAME_UNKNOWN},
+        {"fn main() : Int\nexamples\n1\nend\n1\nend\n", MO_CODE_CONDITION_TYPE},
+        {"fn helper(a: Int) : Int\nexamples\na == a\nend\na\nend\nfn main()\nend\n",
+         MO_CODE_NAME_UNKNOWN},
+        {"fn grow(value: T) : Bool\npromise \"stays finite\"\ngrow([value])\n"
+         "allows value: 1, result: true\nforbids value: 2, result: false\nend\n"
+         "_used = value\ntrue\nend\nfn main()\nend\n",
+         MO_CODE_POLYMORPHIC_RECURSION},
         {"fn helper() : Int\nmissing\nend\nfn main() : Int\n0\nend\n", MO_CODE_NAME_UNKNOWN},
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
@@ -1423,6 +2227,16 @@ static void diagnostic_order(void) {
         mo_buffer_free(&source);
     }
     struct fixture f;
+    init(&f, "module Main\nfn zebra() : Int\nunknown\nend\n"
+             "fn alpha() : Int\nfalse\nend\n");
+    CHECK(f.program == NULL && f.diags.count == 2);
+    if (f.diags.count == 2) {
+        CHECK(f.diags.items[0].code == MO_CODE_NAME_UNKNOWN &&
+              f.diags.items[1].code == MO_CODE_RESULT_TYPE);
+        CHECK(mo_sources_position(&f.sources, 0, f.diags.items[0].primary.span.start).line == 3 &&
+              mo_sources_position(&f.sources, 0, f.diags.items[1].primary.span.start).line == 6);
+    }
+    free_fixture(&f);
     init(&f, "module Main\nfn main() : Int\nlater(1)\nend\n"
              "fn later(_x: Unknown) : Int\n0\nend\n");
     CHECK(f.program == NULL && f.diags.count == 1);
@@ -1449,6 +2263,54 @@ static void diagnostic_order(void) {
         CHECK(span.end - span.start == 5 && memcmp(source + span.start, "s < s", 5) == 0);
     }
     free_fixture(&f);
+}
+
+static void diagnostic_cap(void) {
+    struct mo_buffer source;
+    mo_buffer_init(&source, MO_LIMIT_FILE_SIZE);
+    MO_ASSERT(mo_buffer_append_text(&source, "module Main\n"));
+    for (uint32_t i = 0; i < 1500; i++) {
+        MO_ASSERT(mo_buffer_append_text(&source, "fn f") && mo_buffer_append_uint(&source, i) &&
+                  mo_buffer_append_text(&source, "()\nunknown\nend\n"));
+    }
+    MO_ASSERT(mo_buffer_append_byte(&source, 0));
+    struct fixture f;
+    init(&f, (const char *)source.bytes);
+    CHECK(f.program == NULL && f.diags.count == 1000 && f.diags.dropped == 500);
+    for (uint32_t i = 0; i < f.diags.count; i++)
+        CHECK(f.diags.items[i].code == MO_CODE_NAME_UNKNOWN);
+    size_t used = f.arena.used;
+    bool capped_resource = false;
+    for (size_t i = 32; i < 64; i++) {
+        mo_arena_free(&f.arena);
+        mo_arena_init(&f.arena, used * i / 64);
+        mo_diags_free(&f.diags);
+        MO_ASSERT(mo_diags_init(&f.diags));
+        f.program = mo_check(&f.arena, &f.set, &f.diags);
+        CHECK(f.program == NULL && mo_diags_any(&f.diags));
+        if (f.diags.count == MO_LIMIT_DIAGNOSTICS) {
+            /* A smaller arena can still finish by allocating smaller chunks.
+             * Exhaustion after the cap must stop before all remaining bodies. */
+            CHECK(f.diags.dropped > 0 && f.diags.dropped <= 500);
+            capped_resource = capped_resource || f.diags.dropped < 500;
+        } else if (f.diags.count != 0)
+            CHECK(f.diags.items[f.diags.count - 1].code == MO_CODE_CHECK_NO_MEMORY);
+    }
+    CHECK(capped_resource);
+    free_fixture(&f);
+    mo_buffer_clear(&source);
+    MO_ASSERT(mo_buffer_append_text(&source, "module Main\n"));
+    for (uint32_t i = 0; i < 1500; i++)
+        MO_ASSERT(mo_buffer_append_text(&source, "c") && mo_buffer_append_uint(&source, i) &&
+                  mo_buffer_append_text(&source, " = unknown\n"));
+    MO_ASSERT(mo_buffer_append_text(&source, "fn main()\nend\n") &&
+              mo_buffer_append_byte(&source, 0));
+    init(&f, (const char *)source.bytes);
+    CHECK(f.program == NULL && f.diags.count == 1000 && f.diags.dropped == 500);
+    for (uint32_t i = 0; i < f.diags.count; i++)
+        CHECK(f.diags.items[i].code == MO_CODE_NAME_UNKNOWN);
+    free_fixture(&f);
+    mo_buffer_free(&source);
 }
 
 static void ability_scaling(void) {
@@ -1572,7 +2434,24 @@ static void allocation_failures(void) {
         "fn main() : Int\nvar total = 0\nfor i in 0..3\ntotal += i\nend\n"
         "reader = fn(value) value.value end\ntotal = reader(Box(value: total))\n"
         "box = Some(Box(value: total))\n_rendered = \"#{box}\"\n"
-        "case box\nSome(Box(value: n)): n\nNone: 0\nend\nend\n"};
+        "case box\nSome(Box(value: n)): n\nNone: 0\nend\nend\n",
+        "module Main\nenum Outer(T)\nWrapped(Set(T))\nend\n"
+        "fn lift(value: Result(Int, Set(T))) : Result(Text, Outer(T)) where T: Hash\n"
+        "n = try value\nOk(n.to_text)\nend\n"
+        "fn main() : Int\nreader = fn(values) values.get(0) or 17 end\nreader([3])\nend\n",
+        "module Main\nfn twice(value: T) : T where T: Number\nexamples\n"
+        "twice(3) == 6\nend\nvalue + value\nend\n"
+        "fn main() : Int\ntwice(4)\nend\n",
+        "module Main\nfn twice(value: T) : T where T: Number, T: Equal\n"
+        "promise \"doubles\"\nresult == value + value\n"
+        "allows result: 6, value: 3\nforbids value: 2, result: 5\nend\n"
+        "value + value\nend\ntest \"private \\u{3bb}\"\nassert twice(4) == 8\nend\n"
+        "fn main()\nend\n",
+        "module Main\nanswer = twice(3)\nlabel = \"#{Label(value: answer)}\"\n"
+        "prefix = \"value\"\nstruct Label\nvalue: Int\nend\n"
+        "fn to_text(label: Label) : Text\n\"#{prefix}#{label.value}\"\nend\n"
+        "fn twice(value: T) : T where T: Number\nvalue + value\nend\n"
+        "fn main() : Int\nanswer\nend\n"};
     for (size_t s = 0; s < sizeof(sources) / sizeof(sources[0]); s++) {
         struct fixture f;
         init(&f, sources[s]);
@@ -1605,9 +2484,11 @@ static void allocation_failures(void) {
 }
 
 static void corpus(void) {
-    static const char *const paths[] = {"fuzz/corpus/fuzz_program/loops.mo",
-                                        "fuzz/corpus/fuzz_program/patterns.mo",
-                                        "fuzz/corpus/fuzz_program/lambdas.mo"};
+    static const char *const paths[] = {
+        "fuzz/corpus/fuzz_program/loops.mo",    "fuzz/corpus/fuzz_program/patterns.mo",
+        "fuzz/corpus/fuzz_program/lambdas.mo",  "fuzz/corpus/fuzz_program/failures.mo",
+        "fuzz/corpus/fuzz_program/examples.mo", "fuzz/corpus/fuzz_program/specs.mo",
+        "fuzz/corpus/fuzz_program/constants.mo"};
     struct mo_sources sources;
     MO_ASSERT(mo_sources_init(&sources));
     for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
@@ -1624,11 +2505,23 @@ static void corpus(void) {
 
 static void run(void *argument) {
     (void)argument;
+    constant_graph();
+    constant_names();
+    constant_context();
+    constant_dependencies();
+    constant_refusals();
+    constant_chain();
+    example_graph();
+    promise_graph();
+    generic_spec_graph();
+    fake_specs();
+    spec_refusals();
     entry_graph();
     console_graph();
     native_graph();
     interpolation_graph();
     ability_dot_graph();
+    customizer_helpers();
     method_graph();
     overload_graph();
     delayed_dot_graph();
@@ -1642,7 +2535,14 @@ static void run(void *argument) {
     requirement_keys();
     data_recursion();
     generic_lambdas();
+    option_or_graph();
+    deferred_defaults();
+    try_graph();
+    inferred_wrappers();
+    try_contexts();
     lambda_graph();
+    capture_graph();
+    capture_work();
     branch_graph();
     record_graph();
     match_graph();
@@ -1656,6 +2556,7 @@ static void run(void *argument) {
     rejected_stages();
     depth_graph();
     diagnostic_order();
+    diagnostic_cap();
     ability_scaling();
     ability_depth();
     allocation_failures();

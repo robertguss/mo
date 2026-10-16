@@ -39,25 +39,1679 @@ def records(result, command):
     assert items[0] == {"record": "version", "format": "1.0", "mo": "0.0.0", "command": command}
     assert items[-1]["record"] == "totals"
     assert items[-1]["status"] == result.returncode
-    assert items[-1]["errors"] == len(items) - 2
+    assert items[-1]["errors"] == sum(item["record"] == "diagnostic" for item in items)
     return items
+
+
+def scalar_promises(binary):
+    with tempfile.TemporaryDirectory(prefix="mo-scalar-promises-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        source = ('module Main\nfn keep(value: Int) : Int\n'
+                  'promise "keeps its input"\nresult == value\n'
+                  'allows value: 3, result: 3\nforbids value: 3, result: 4\nend\n'
+                  'value\nend\ntest "after promise"\nassert true\nend\n'
+                  'fn main()\nstop "main ran"\nend\n')
+        path.write_text(source)
+        items = records(run(binary, ["test", "--json", str(path)], 0), "test")
+        assert [(r["name"], r["outcome"]) for r in items[1:-1]] == [
+            ("Main.keep.promise.1", "passed"), ("Main.test.1", "passed")]
+        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                             "passed": 2, "failed": 0, "stopped": 0, "status": 0}
+
+        # Independent SipHash-1-3/SplitMix calculation: after the five Int
+        # boundaries these promises first generate 9 and -9, respectively.
+        source = 'module Main\nfn seeded(value: Int) : Int\n'
+        for sentence in ('first stream', 'second stream'):
+            source += (f'promise "{sentence}"\nresult == value\n'
+                       'allows value: 3, result: 3\nforbids value: 3, result: 4\nend\n')
+        source += ('if value == 9 or value == -9\nstop "random input"\nend\nvalue\nend\n'
+                   'fn main()\nstop "main ran"\nend\n')
+        path.write_text(source)
+        for _ in range(2):
+            items = records(run(binary, ['test', '--json', '--calls', '5', str(path)], 0), 'test')
+            assert [r['outcome'] for r in items[1:-1]] == ['passed', 'passed']
+            items = records(run(binary, ['test', '--json', '--calls', '6', str(path)], 1), 'test')
+            assert [r['input'] for r in items[1:-1]] == [
+                [{'name': 'value', 'value': '9'}], [{'name': 'value', 'value': '-9'}]]
+            assert [r['outcome'] for r in items[1:-1]] == ['stopped', 'stopped']
+
+        # Independently calculated unique Int at ordinal 200 (trial 201).
+        # This distinguishes the default 200 from an off-by-one/default drift.
+        target = '-1459837627065130'
+        path.write_text('module Main\nfn capped(value: Int) : Int\n'
+                        'promise "keeps input"\nresult == value\n'
+                        'allows value: 3, result: 3\nforbids value: 3, result: 4\nend\n'
+                        f'if value == {target}\nstop "trial 201"\nend\nvalue\nend\nfn main()\nend\n')
+        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        assert items[1]['outcome'] == 'passed'
+        items = records(run(binary, ['test', '--json', '--calls', '201', str(path)], 1), 'test')
+        assert items[1]['outcome'] == 'stopped' and items[1]['input'] == [
+            {'name': 'value', 'value': target}]
+
+
+def promise_boundaries(binary):
+    minimum, maximum = '-9223372036854775808', '9223372036854775807'
+    cases = [
+        ('unit', 'Unit', 'Unit', 'true', 'Unit'),
+        ('boolean', 'Bool', 'false', 'value', 'true'),
+        ('byte', 'Byte', '0', 'value == 255', '255'),
+        ('integer', 'Int', '13', f'value == {minimum}', minimum),
+        ('float', 'Float', '1.0', 'value > 1.0', '1.7976931348623157e308'),
+        ('character', 'Char', "'a'", "value == 'é'", "'é'"),
+        ('decimal', 'Decimal', '0.0', 'value > 1.0', '170141183460469231731.687303715884105727'),
+        ('range', 'Range', '0..3', f'value == ({minimum}..{maximum})', f'{minimum}..{maximum}'),
+        ('text', 'Text', '"ok"', 'value == "é"', '"é"'),
+        ('bigint', 'BigInt', '3', 'value > 0x10000000000000000', str((1 << 1024) - 1)),
+    ]
+    source = 'module Main\n'
+    for name, type_, example, predicate, _ in cases:
+        parameter = '_value' if name == 'unit' else 'value'
+        source += (f'fn {name}({parameter}: {type_}) : Int\n'
+                   f'promise "scalar boundary {name}"\nresult == 0\n'
+                   f'allows {parameter}: {example}, result: 0\n'
+                   f'forbids {parameter}: {example}, result: 1\nend\n'
+                   f'if {predicate}\nstop "boundary {name}"\nend\n0\nend\n')
+    source += 'test "after all boundaries"\nassert true\nend\nfn main()\nstop "main ran"\nend\n'
+    with tempfile.TemporaryDirectory(prefix='mo-promise-boundaries-') as directory:
+        path = pathlib.Path(directory) / 'main.mo'
+        path.write_text(source)
+        items = records(run(binary, ['test', '--json', '--calls', '6', str(path)], 1), 'test')
+        for result, (name, _, _, _, expected) in zip(items[1:-2], cases):
+            parameter = '_value' if name == 'unit' else 'value'
+            assert result['name'] == f'Main.{name}.promise.1' and result['outcome'] == 'stopped'
+            assert result['input'] == [{'name': parameter, 'value': expected}]
+            assert result['defect']['variables'] == [{'name': parameter, 'value': expected}]
+            defect = result['defect']
+            assert defect['reason'] == 'stop' and defect['detail'] == f'boundary {name}'
+            start = source.encode().index(f'stop "boundary {name}"'.encode())
+            assert (defect['span']['start'], defect['span']['end']) == (
+                start, start + len(f'stop "boundary {name}"'))
+            assert [f['function'] for f in defect['stack']] == [f'Main.{name}']
+        assert items[4]['extreme'] == {'name': 'value', 'description': "Int's smallest value"}
+        assert items[7]['extreme'] == {'name': 'value', 'description': "Decimal's largest value"}
+        assert items[8]['extreme'] == {'name': 'value', 'description': "Int's smallest value"}
+        assert items[-2]['outcome'] == 'passed'
+        assert items[-1] == {'record': 'totals', 'errors': 0, 'dropped': 0,
+                             'passed': 1, 'failed': 0, 'stopped': 10, 'status': 1}
+        text = run(binary, ['test', '--calls', '6', str(path)], 1)
+        assert not text.stderr and text.stdout.endswith(b'1 passed, 0 failed, 10 stopped\n')
+        assert b"Int's smallest value" in text.stdout and b"Decimal's largest value" in text.stdout
+        assert b'return a failure' in text.stdout and b'keeps its values in range' in text.stdout
+
+
+def promise_deadlines(binary):
+    clock = binary.parent / 'tests/test_deadline.test'
+    minimum = '-9223372036854775808'
+    loop = 'var spin = 0\nwhile spin == 0\nspin = 0\nend\n'
+    tail = 'test "after promise"\nassert true\nend\nfn main()\nstop "main ran"\nend\n'
+    with tempfile.TemporaryDirectory(prefix='mo-promise-deadlines-') as directory:
+        path = pathlib.Path(directory) / 'main.mo'
+
+        def observe(source, mode, seconds='1'):
+            path.write_text(source + tail)
+            return records(run(clock, [mode, 'test', '--json', '--seconds', seconds, str(path)], 1), 'test')
+
+        # Neither a nonreturning subject nor a nonreturning condition invents
+        # a promise outcome. Only the following independent test is counted.
+        subject = ('module Main\nfn probe(value: Int) : Int\n'
+                   'promise "returns input"\nresult == value\n'
+                   'allows value: 13, result: 13\nforbids value: 13, result: 14\nend\n'
+                   f'if value != 13\n{loop}end\nvalue\nend\n')
+        condition = ('module Main\nfn verdict(value: Int, answer: Int) : Bool\n'
+                     f'if value != 13 and answer == value\n{loop}end\nvalue == answer\nend\n'
+                     'fn probe(value: Int) : Int\npromise "returns input"\nverdict(value, result)\n'
+                     'allows value: 13, result: 13\nforbids value: 13, result: 14\nend\nvalue\nend\n')
+        for source in (subject, condition):
+            for mode in ('expiry', 'failure', 'start-failure'):
+                items = observe(source, mode, '2' if mode == 'failure' else '1')
+                assert [(r['name'], r['outcome']) for r in items if r['record'] == 'result'] == [
+                    ('Main.test.1', 'passed')]
+                diagnostic = [r for r in items if r['record'] == 'diagnostic']
+                assert len(diagnostic) == 1 and diagnostic[0]['code'] == 'E1404'
+                assert ('clock could not be read' in diagnostic[0]['headline']) == (mode != 'expiry')
+                assert items[-1] == {'record': 'totals', 'errors': 1, 'dropped': 0,
+                                     'passed': 1, 'failed': 0, 'stopped': 0, 'status': 1}
+        # Actual CLOCK_MONOTONIC cancellation, with run()'s 30-second safety
+        # watchdog. No fragile wall-duration threshold or instruction budget.
+        path.write_text(subject + tail)
+        items = records(run(binary, ['test', '--json', '--seconds', '1', str(path)], 1), 'test')
+        assert [r['code'] for r in items if r['record'] == 'diagnostic'] == ['E1404']
+        assert items[-1]['passed'] == 1 and items[-1]['failed'] == items[-1]['stopped'] == 0
+
+        # Finite calls each fit individually. Their cumulative work must not
+        # get a fresh deadline per call, condition or completed trial.
+        work = 'var n = 0\nwhile n < 37\nn += 1\nend\n'
+        finite = ('module Main\nfn verdict(value: Int, answer: Int) : Bool\n' + work +
+                  'value == answer\nend\nfn probe(value: Int) : Int\n'
+                  'promise "returns input"\nverdict(value, result)\n'
+                  'allows value: 13, result: 13\nforbids value: 13, result: 14\nend\n' + work +
+                  'value\nend\n')
+        items = observe(finite, 'expiry')
+        assert [r['code'] for r in items if r['record'] == 'diagnostic'] == ['E1404']
+        assert items[-1]['passed'] == 1 and items[-1]['failed'] == items[-1]['stopped'] == 0
+
+        # The old confirmed result is -31; the next candidate would return
+        # -47. Cancellation during its subject OR condition must keep all three
+        # old fields, whereas a genuine stopped condition reports the new input.
+        for where in ('subject', 'condition', 'stop'):
+            operation = 'stop "candidate stopped"\n' if where == 'stop' else loop
+            parameter = '_value' if where == 'subject' else 'value'
+            helper = (f'fn verdict({parameter}: Int, answer: Int) : Bool\n' +
+                      (f'if value < -1 and value != {minimum}\n{operation}end\n'
+                       if where != 'subject' else '') + 'answer >= 0\nend\n')
+            source = ('module Main\n' + helper + 'fn probe(value: Int) : Int\n'
+                      'promise "retains confirmed failure"\nresult <= 0\nverdict(value, result)\n'
+                      f'allows value: 13, result: 0\nforbids value: {minimum}, result: -31\nend\n' +
+                      (f'if value < -1 and value != {minimum}\n{operation}end\n'
+                       if where == 'subject' else '') +
+                      f'if value == {minimum}: -31 else if value < -1: -47 else: 0\nend\n')
+            for mode in (('fixed',) if where == 'stop' else ('expiry', 'failure')):
+                items = observe(source, mode, '2' if mode == 'failure' else '1')
+                result = items[1]
+                assert items[2]['name'] == 'Main.test.1' and items[2]['outcome'] == 'passed'
+                if where == 'stop':
+                    assert result['outcome'] == 'stopped' and 'result' not in result and 'line' not in result
+                    assert result['input'] == [{'name': 'value', 'value': '-4611686018427387904'}]
+                    assert result['defect']['detail'] == 'candidate stopped'
+                    assert [f['function'] for f in result['defect']['stack']] == [
+                        'Main.verdict', 'Main.probe.promise.1']
+                    assert result['defect']['variables'] == [
+                        {'name': 'value', 'value': '-4611686018427387904'}, {'name': 'answer', 'value': '-47'}]
+                    assert items[-1]['stopped'] == 1 and items[-1]['failed'] == 0
+                else:
+                    assert result['outcome'] == 'failed' and result['calls'] == 6
+                    assert result['input'] == [{'name': 'value', 'value': minimum}]
+                    assert result['result'] == '-31'
+                    start = source.encode().index(b'verdict(value, result)')
+                    assert (result['line']['start'], result['line']['end']) == (start, start + 22)
+                    assert items[-1]['failed'] == 1 and items[-1]['stopped'] == 0
+                diagnostics = [r['code'] for r in items if r['record'] == 'diagnostic']
+                assert diagnostics == (['E1404'] if mode == 'failure' else [])
+
+        # Finite shrink candidates fit individually but not cumulatively.
+        # The exact interruption point is not a language contract: it depends
+        # on bytecode instruction count. The true minimum is -2; expiry must
+        # retain an earlier confirmed tuple, not reset time until reaching -2.
+        source = ('module Main\nfn probe(value: Int) : Int\n'
+                  'promise "nonnegative result"\nresult >= 0\n'
+                  f'allows value: 13, result: 0\nforbids value: {minimum}, result: {minimum}\nend\n'
+                  f'if value < -1 and value != {minimum}\n{work}end\n'
+                  'if value < -1: value else: 0\nend\n')
+        items = observe(source, 'expiry')
+        result = items[1]
+        assert result['outcome'] == 'failed' and result['microseconds'] == 1000000
+        assert int(result['input'][0]['value']) < -2
+        assert result['result'] == result['input'][0]['value']
+        assert items[-1]['errors'] == 0 and items[-1]['failed'] == 1 and items[-1]['passed'] == 1
+
+
+def promise_shrinking(binary):
+    clock = binary.parent / 'tests/test_deadline.test'
+    tail = 'test "after promise"\nassert true\nend\nfn main()\nstop "main ran"\nend\n'
+    with tempfile.TemporaryDirectory(prefix='mo-promise-shrinking-') as directory:
+        path = pathlib.Path(directory) / 'main.mo'
+        source = ('module Main\nfn probe(value: Int) : Int\n'
+                  'promise "nonnegative answer"\nresult >= 0\n'
+                  'allows value: 3, result: 4\nforbids value: -2, result: -1\nend\n'
+                  'value + 1\nend\n')
+        path.write_text(source + tail)
+        items = records(run(clock, ['fixed', 'test', '--json', '--calls', '4', str(path)], 1), 'test')
+        assert items[1]['input'] == [{'name': 'value', 'value': '-2'}]
+        assert items[1]['result'] == '-1' and 4 < items[1]['calls'] <= 204
+        assert items[-1]['failed'] == items[-1]['passed'] == 1 and items[-1]['errors'] == 0
+        text = run(binary, ['test', '--calls', '4', str(path)], 1)
+        assert not text.stderr and b'input value = -2\n  result: -1\n' in text.stdout
+        assert b'this promise condition was false' in text.stdout
+
+        # This takes more than 200 candidates to minimize. The search cap is
+        # four subject calls; shrinking gets a separate 200, not four or 196.
+        threshold = '0x1' + '0' * 128
+        source = ('module Main\nfn probe(value: BigInt) : BigInt\n'
+                  f'promise "below threshold"\nresult < {threshold}\n'
+                  f'allows value: 3, result: 3\nforbids value: {threshold}, result: {threshold}\nend\n'
+                  'value\nend\n')
+        path.write_text(source + tail)
+        for calls, status in (('3', 0), ('4', 1)):
+            items = records(run(clock, ['fixed', 'test', '--json', '--calls', calls, str(path)], status), 'test')
+            result = items[1]
+            if status == 0:
+                assert result['outcome'] == 'passed'
+            else:
+                assert result['outcome'] == 'failed' and result['calls'] == 204
+                assert (1 << 512) < int(result['input'][0]['value']) < (1 << 1024) - 1
+                assert result['result'] == result['input'][0]['value']
+
+        # Owned input and structural result survive candidate/process teardown.
+        # Reporting must never execute the stopping source Text customizer.
+        source = ('module Main\nstruct Box\nvalue: Text\nend\n'
+                  'fn to_text(_value: Box) : Text\nstop "renderer called customizer"\nend\n'
+                  'fn probe(value: Text) : Box\npromise "avoids one text"\nresult.value != "é"\n'
+                  'allows value: "ok", result: Box(value: "ok")\n'
+                  'forbids value: "é", result: Box(value: "é")\nend\nBox(value: value)\nend\n')
+        path.write_text(source + tail)
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['input'] == [{'name': 'value', 'value': '"é"'}]
+        assert items[1]['result'] == 'Box(value: "é")' and items[1]['calls'] == 4
+        start = source.encode().index('result.value != "é"'.encode())
+        assert (items[1]['line']['start'], items[1]['line']['end']) == (start, start + 20)
+        assert items[-1]['stopped'] == 0 and items[-1]['failed'] == items[-1]['passed'] == 1
+
+        # Complete structural values include their quotes in the 4096-byte cap.
+        # A refused record is never truncated or emitted as invalid JSON.
+        for length in (4094, 4095):
+            path.write_text('module Main\nfn probe() : Text\npromise "small result"\n'
+                            'result == "ok"\nallows result: "ok"\nforbids result: "bad"\nend\n"' +
+                            'x' * length + '"\nend\n' + tail)
+            items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+            if length == 4094:
+                assert items[1]['result'] == '"' + 'x' * length + '"'
+                assert items[-1]['errors'] == 0 and items[-1]['passed'] == 1
+            else:
+                assert len(items) == 3 and items[1]['code'] == 'E1404'
+                assert items[-1]['errors'] == 1 and items[-1]['passed'] == 0
+            assert items[-1]['failed'] == 1 and items[-1]['stopped'] == 0
+
+
+def composite_promises(binary):
+    with tempfile.TemporaryDirectory(prefix='mo-composite-promises-') as directory:
+        path = pathlib.Path(directory) / 'main.mo'
+        (path.parent / 'shapes.mo').write_text(
+            'module Shapes\nexpose Pair(..)\nstruct Pair(Z, A)\nfirst: Z\nsecond: A\nend\n')
+        path.write_text('module Main\nuse Shapes{Pair}\n'
+                        'fn probe(value: Pair(List(Int), (Text, Bool))) : Bool\n'
+                        'promise "keeps the composite shape"\nresult == value.second.1\n'
+                        'allows value: Pair(second: ("owned", true), first: [3, 8]), result: true\n'
+                        'forbids value: Pair(first: [], second: ("é", false)), result: true\nend\n'
+                        'value.second.1\nend\ntest "after promise"\nassert true\nend\n'
+                        'fn main()\nstop "main ran"\nend\n')
+        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
+            ('Main.probe.promise.1', 'passed'), ('Main.test.1', 'passed')]
+        assert items[-1]['passed'] == 2 and items[-1]['errors'] == 0
+        for codec in ('core', 'bytecode'):
+            emitted = run(binary, ['check', '--emit=' + codec, str(path)], 0)
+            artifact = path.parent / ('composite.' + codec)
+            artifact.write_bytes(emitted.stdout)
+            run(binary.parent / 'tests/test_cli.test', ['--roundtrip-' + codec, str(artifact)], 0)
+
+        # Declaration order is not alphabetical or parameter-letter order.
+        # Two independent predicates pin both false-line locations and the
+        # owned tuple result, not merely that composite generation ran.
+        (path.parent / 'shapes.mo').write_text(
+            'module Shapes\nexpose Pair(..)\nstruct Pair(Z, A)\nzeta: Z\nalpha: A\nend\n')
+        source = ('module Main\nuse Shapes{Pair}\n'
+                  'fn probe(value: Pair(Text, Int), _suffix: Text) : (Text, Int)\n'
+                  'promise "ordered owned fields"\nresult.1 == value.alpha + 17\n'
+                  'result.0 != "é" or _suffix != ""\n'
+                  'allows _suffix: "tail", value: Pair(alpha: 3, zeta: "é"), result: ("é", 20)\n'
+                  'forbids value: Pair(zeta: "é", alpha: 3), _suffix: "", result: ("é", 20)\nend\n'
+                  '(value.zeta, value.alpha + 17)\nend\n'
+                  'test "after promise"\nassert true\nend\nfn main()\nend\n')
+        path.write_text(source)
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        result = items[1]
+        assert result['input'] == [{'name': 'value', 'value': 'Pair(zeta: "é", alpha: 0)'},
+                                    {'name': '_suffix', 'value': '""'}]
+        assert result['result'] == '("é", 17)' and result['outcome'] == 'failed'
+        predicate = 'result.0 != "é" or _suffix != ""'
+        start = source.encode().index(predicate.encode())
+        assert (result['line']['start'], result['line']['end']) == (start, start + len(predicate.encode()))
+        assert items[-1]['failed'] == items[-1]['passed'] == 1 and items[-1]['errors'] == 0
+        source = source.replace('result.1 == value.alpha + 17', 'result.1 == value.alpha + 18')
+        source = source.replace('result: ("é", 20)\nforbids', 'result: ("é", 21)\nforbids')
+        path.write_text(source)
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['input'] == [{'name': 'value', 'value': 'Pair(zeta: "", alpha: 0)'},
+                                    {'name': '_suffix', 'value': '""'}]
+        assert items[1]['result'] == '("", 17)'
+        predicate = 'result.1 == value.alpha + 18'
+        start = source.encode().index(predicate.encode())
+        assert (items[1]['line']['start'], items[1]['line']['end']) == (start, start + len(predicate))
+
+        # Lists must actually execute empty, single and several-element
+        # boundaries. A pass from an empty-only generator cannot satisfy this.
+        for pattern, expected in (('[]', '[]'), ('[_]', '[""]'),
+                                   ('[_, _, _]', '["", "a", "é"]')):
+            source = ('module Main\nfn probe(value: List(Text)) : Int\n'
+                      'promise "list boundaries"\nresult == 7\n'
+                      'allows value: ["owned", "é"], result: 7\n'
+                      'forbids value: [], result: 8\nend\ncase value\n' +
+                      pattern + ': stop "chosen list shape"\n_: 7\nend\nend\nfn main()\nend\n')
+            path.write_text(source)
+            items = records(run(binary, ['test', '--json', '--calls', '3', str(path)], 1), 'test')
+            assert items[1]['outcome'] == 'stopped' and items[1]['input'] == [
+                {'name': 'value', 'value': expected}]
+            assert items[1]['defect']['detail'] == 'chosen list shape'
+
+        # Public builtin choices cover every case and shrink owned asymmetric
+        # payloads; rejecting a payload must never become a None/Ok-only pass.
+        cases = [
+            ('Option(Text)', 'Some("owned")', 'None', 'result is Some(_)', 'None'),
+            ('Option(Text)', 'Some("owned")', 'Some("é")', 'result != Some("é")', 'Some("é")'),
+            ('Result((Text, Int), List(Text))', 'Error(["owned"])', 'Ok(("é", 0))',
+             'result != Ok(("é", 0))', 'Ok(("é", 0))'),
+            ('Result((Text, Int), List(Text))', 'Ok(("owned", 13))', 'Error(["é"])',
+             'result != Error(["é"])', 'Error(["é"])'),
+        ]
+        for type_, allowed, forbidden, predicate, expected in cases:
+            source = ('module Main\n' + f'fn probe(value: {type_}) : {type_}\n'
+                      f'promise "public choice payloads"\n{predicate}\n'
+                      f'allows value: {allowed}, result: {allowed}\n'
+                      f'forbids value: {forbidden}, result: {forbidden}\nend\n'
+                      'value\nend\nfn main()\nend\n')
+            path.write_text(source)
+            items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+            assert items[1]['outcome'] == 'failed' and items[1]['input'] == [
+                {'name': 'value', 'value': expected}]
+            assert items[1]['result'] == expected and items[-1]['errors'] == 0
+
+        # The minimum recursive inhabitant is End even though declared last.
+        # Shrinking a depth violation must retain two nodes, not truncate to a
+        # passing End or recurse forever through the template's back edge.
+        source = ('module Main\nenum Chain(T)\nNode(value: T, next: Chain(T))\nEnd\nend\n'
+                  'fn depth(value: Chain(Text)) : Int\ncase value\n'
+                  'End: 0\nNode(next: rest): 1 + depth(rest)\nend\nend\n'
+                  'fn probe(value: Chain(Text)) : Int\npromise "short chain"\nresult < 2\n'
+                  'allows value: Node(value: "owned", next: End), result: 1\n'
+                  'forbids value: End, result: 2\nend\ndepth(value)\nend\nfn main()\nend\n')
+        path.write_text(source)
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['outcome'] == 'failed' and items[1]['input'] == [
+            {'name': 'value', 'value': 'Node(value: "", next: Node(value: "", next: End))'}]
+        assert items[1]['result'] == '2' and items[-1]['errors'] == 0
+
+        # Every declared case, including named multi-field payloads, must be
+        # reached. Recursive Lists add a finite non-minimum shell, not just [].
+        declarations = 'enum Choice\nQuiet\nNumber(Int)\nOwned(Text)\nPacket(zeta: Text, alpha: Bool)\nend\n'
+        cases = [(declarations, 'Choice', 'Quiet', 'Quiet', 'Quiet'),
+                 (declarations, 'Choice', 'Quiet', 'Number(_)', 'Number(0: 0)'),
+                 (declarations, 'Choice', 'Quiet', 'Owned(_)', 'Owned(0: "")'),
+                 (declarations, 'Choice', 'Quiet', 'Packet(zeta: _, alpha: _)',
+                  'Packet(zeta: "", alpha: false)'),
+                 ('enum Forest\nBranch(List(Forest))\nBud(Text)\nend\n', 'Forest',
+                  'Bud("owned")', 'Branch([_])', 'Branch(0: [Branch(0: [])])')]
+        for declarations, type_, anchor, pattern, expected in cases:
+            source = ('module Main\n' + declarations + f'fn probe(value: {type_}) : Int\n'
+                      'promise "all case boundaries"\nresult == 7\n'
+                      f'allows value: {anchor}, result: 7\nforbids value: {anchor}, result: 8\nend\n'
+                      f'if value is {pattern}\nstop "chosen case"\nend\n7\nend\nfn main()\nend\n')
+            path.write_text(source)
+            items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+            assert items[1]['outcome'] == 'stopped' and items[1]['input'] == [
+                {'name': 'value', 'value': expected}]
+            assert items[1]['defect']['detail'] == 'chosen case' and items[-1]['errors'] == 0
+
+        # The source inventory belongs to the declaring module, even with
+        # concrete nominal inputs reached through an importing entry module.
+        (path.parent / 'shapes.mo').write_text(
+            'module Shapes\nexpose Pair(..), probe\nstruct Pair(Z, A)\nzeta: Z\nalpha: A\nend\n'
+            'fn probe(value: Pair(Text, Int)) : Int\npromise "declaring module"\nresult == value.alpha\n'
+            'allows value: Pair(zeta: "owned", alpha: 13), result: 13\n'
+            'forbids value: Pair(zeta: "é", alpha: 29), result: 31\nend\nvalue.alpha + 1\nend\n')
+        path.write_text('module Main\nuse Shapes\nfn main() : Int\n'
+                        'Shapes.probe(Shapes.Pair(zeta: "main", alpha: 33))\nend\n')
+        items = records(run(binary, ['test', '--json', '--list', '--max-heap', '1', str(path)], 0), 'test')
+        assert [r['name'] for r in items[1:-1]] == ['Shapes.probe.promise.1']
+        span = items[1]['span']
+        assert span['file'] == str(path.parent / 'shapes.mo')
+        items = records(run(binary, ['test', '--json', '--in', 'Shapes', str(path)], 1), 'test')
+        assert items[1]['span'] == span and items[1]['result'] == '1'
+        assert items[1]['input'] == [{'name': 'value', 'value': 'Pair(zeta: "", alpha: 0)'}]
+        assert items[1]['line']['file'] == span['file'] and items[-1]['errors'] == 0
+
+
+def composite_deadlines(binary):
+    clock = binary.parent / 'tests/test_deadline.test'
+    loop = 'var spin = 0\nwhile spin == 0\nspin = 0\nend\n'
+    tail = 'test "after promise"\nassert true\nend\nfn main()\nstop "main ran"\nend\n'
+    with tempfile.TemporaryDirectory(prefix='mo-composite-deadlines-') as directory:
+        path = pathlib.Path(directory) / 'main.mo'
+        for where in ('subject', 'condition', 'stop'):
+            operation = 'stop "composite candidate stopped"\n' if where == 'stop' else loop
+            source = ('module Main\nstruct Packet\nzeta: Text\nalpha: (Text, Int)\nend\n'
+                      'struct Box\nvalue: (Text, (Text, Int))\nmark: Int\nend\n'
+                      'fn to_text(_value: Box) : Text\nstop "renderer called customizer"\nend\n'
+                      'fn verdict(value: Packet, answer: Box) : Bool\n' +
+                      ('if value.zeta.byte_count > 2 and value.zeta.byte_count < 1024\n' + operation +
+                       'end\n' if where != 'subject' else '') +
+                      'answer.value.0 == value.zeta and answer.value.0.byte_count < 1024\nend\n'
+                      'fn probe(value: Packet) : Box\npromise "retained composite failure"\n'
+                      'result.value == (value.zeta, value.alpha)\nverdict(value, result)\n'
+                      'allows value: Packet(alpha: ("owned", 13), zeta: "ok"), '
+                      'result: Box(mark: 17, value: ("ok", ("owned", 13)))\n'
+                      'forbids value: Packet(zeta: "ok", alpha: ("owned", 13)), '
+                      'result: Box(value: ("bad", ("tail", 29)), mark: 31)\nend\n' +
+                      ('if value.zeta.byte_count > 2 and value.zeta.byte_count < 1024\n' + operation +
+                       'end\n' if where == 'subject' else '') +
+                      'Box(value: (value.zeta, value.alpha), mark: 17)\nend\n')
+            path.write_text(source + tail)
+            for mode in (('fixed',) if where == 'stop' else ('expiry', 'failure')):
+                items = records(run(clock, [mode, 'test', '--json', '--seconds',
+                                             '2' if mode == 'failure' else '1', str(path)], 1), 'test')
+                result = items[1]
+                length = 512 if where == 'stop' else 1024
+                text = '"' + 'x' * length + '"'
+                packet = f'Packet(zeta: {text}, alpha: ("", 0))'
+                box = f'Box(value: ({text}, ("", 0)), mark: 17)'
+                assert result['input'] == [{'name': 'value', 'value': packet}]
+                assert items[2]['name'] == 'Main.test.1' and items[2]['outcome'] == 'passed'
+                if where == 'stop':
+                    assert result['outcome'] == 'stopped' and 'result' not in result and 'line' not in result
+                    defect = result['defect']
+                    assert defect['detail'] == 'composite candidate stopped'
+                    assert defect['variables'] == [{'name': 'value', 'value': packet},
+                                                    {'name': 'answer', 'value': box}]
+                    assert [frame['function'] for frame in defect['stack']] == [
+                        'Main.verdict', 'Main.probe.promise.1']
+                    start = source.encode().index(b'stop "composite candidate stopped"')
+                    assert (defect['span']['start'], defect['span']['end']) == (start, start + 34)
+                    assert items[-1]['stopped'] == 1 and items[-1]['failed'] == 0
+                else:
+                    assert result['outcome'] == 'failed' and result['result'] == box
+                    start = source.encode().index(b'verdict(value, result)')
+                    assert (result['line']['start'], result['line']['end']) == (start, start + 22)
+                    assert items[-1]['failed'] == 1 and items[-1]['stopped'] == 0
+                assert [r['code'] for r in items if r['record'] == 'diagnostic'] == (
+                    ['E1404'] if mode == 'failure' else [])
+
+        path.write_text('module Main\nfn probe(_value: List(Text)) : Int\n'
+                        'promise "unresolved composite"\nresult == 7\n'
+                        'allows _value: ["owned"], result: 7\nforbids _value: [], result: 8\nend\n' +
+                        loop + '7\nend\n' + tail)
+        items = records(run(clock, ['expiry', 'test', '--json', '--seconds', '1', str(path)], 1), 'test')
+        assert [r['name'] for r in items if r['record'] == 'result'] == ['Main.test.1']
+        assert items[-1] == {'record': 'totals', 'errors': 1, 'dropped': 0, 'passed': 1,
+                             'failed': 0, 'stopped': 0, 'status': 1}
+        assert items[-2]['code'] == 'E1404'
+
+
+def promise_selection(binary):
+    opaque = 'expose Box\nstruct Box\nvalue: Int\nend\n'
+    cases = [
+        ('fn(Int) : Int', 'identity', 'fn identity(value: Int) : Int\nvalue\nend\n'),
+        ('List(fn(Int) : Int)', '[identity]', 'fn identity(value: Int) : Int\nvalue\nend\n'),
+        ('Box', 'Box(value: 3)', opaque),
+        ('List(Box)', '[]', opaque),
+        ('Option(Box)', 'None', opaque),
+        ('Result(Int, Box)', 'Ok(13)', opaque),
+        ('Choice', 'Open', opaque + 'enum Choice\nOpen\nClosed(Box)\nend\n'),
+        ('(Text, Box)', '("owned", Box(value: 3))', opaque),
+        ('Option(Map(Text, Int))', 'None', ''),
+        ('Option(Set(Int))', 'None', ''),
+        ('Option(Console)', 'None', ''),
+        ('Box', 'make(3)', 'use Shapes{Box, make}\n'),
+        ('List(Shapes.Box)', '[]', 'use Shapes\n'),
+        ('Shapes.Box', 'Shapes.make(3)',
+         'expose Box(..)\nuse Shapes\nstruct Box\nother: Text\nend\n'),
+    ]
+    with tempfile.TemporaryDirectory(prefix='mo-promise-selection-') as directory:
+        path = pathlib.Path(directory) / 'main.mo'
+        (path.parent / 'shapes.mo').write_text(
+            'module Shapes\nexpose Box, make\nstruct Box\nvalue: Int\nend\n'
+            'fn make(value: Int) : Box\nBox(value: value)\nend\n')
+        for type_, input_, declarations in cases:
+            initializer = 'seed = crash()\nfn crash() : Int\nstop "must not initialize"\nend\n'
+            source = ('module Main\n' + declarations + initializer +
+                            'test "first observation"\nassert true\nend\n'
+                            'fn supported(value: List(Text)) : List(Text)\n'
+                            'promise "supported first"\nresult == value\n'
+                            'allows value: ["owned"], result: ["owned"]\n'
+                            'forbids value: [], result: ["é"]\nend\nvalue\nend\n'
+                            f'fn probe(_value: {type_}) : Int\npromise "seven"\nresult == 7\n'
+                            f'allows _value: {input_}, result: 7\nforbids _value: {input_}, result: 8\nend\n'
+                            '7\nend\nfn main()\nstop "main ran"\nend\n')
+            path.write_text(source)
+            items = records(run(binary, ['test', '--json', '--list', '--max-heap', '1', str(path)], 0), 'test')
+            assert [r['name'] for r in items[1:-1]] == [
+                'Main.test.1', 'Main.supported.promise.1', 'Main.probe.promise.1']
+            items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+            assert len(items) == 3 and items[1]['code'] == 'E1400'
+            assert items[1]['primary']['label'] == 'Main.probe.promise.1'
+            assert items[-1]['passed'] == items[-1]['failed'] == items[-1]['stopped'] == 0
+            # Selection, not the mere presence of a deferred promise, controls
+            # preflight. Initialization is reached for ordinary-only selection.
+            items = records(run(binary, ['test', '--json', '--only', 'Main.test.1', str(path)], 1), 'test')
+            assert items[1]['code'] == 'E1406' and items[-1]['passed'] == 0
+            path.write_text(source.replace(initializer, ''))
+            items = records(run(binary, ['test', '--json', '--only', 'Main.test.1', str(path)], 0), 'test')
+            assert items[1]['outcome'] == 'passed' and items[-1]['passed'] == 1
+
+        # Same-module written access to exported opaque fields remains legal;
+        # only structural generation is refused. A private local type is not
+        # accidentally classified as exported opaque.
+        source = ('module Main\nexpose Box\nstruct Box\nvalue: Int\nend\n'
+                  'fn probe(value: Box) : Int\npromise "visible only to source"\nresult == value.value\n'
+                  'allows value: Box(value: 13), result: 13\n'
+                  'forbids value: Box(value: 13), result: 14\nend\nvalue.value\nend\n'
+                  'test "own fields"\nassert Box(value: 13).value == 13\nend\nfn main()\nend\n')
+        path.write_text(source)
+        records(run(binary, ['check', '--json', str(path)], 0), 'check')
+        items = records(run(binary, ['test', '--json', '--only', 'Main.test.1', str(path)], 0), 'test')
+        assert items[-1]['passed'] == 1
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['code'] == 'E1400' and items[-1]['passed'] == 0
+        path.write_text(source.replace('expose Box\n', ''))
+        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        assert items[-1]['passed'] == 2 and items[-1]['errors'] == 0
+
+
+def imported_constants(binary):
+    with tempfile.TemporaryDirectory(prefix='mo-imported-constants-') as directory:
+        path = pathlib.Path(directory) / 'main.mo'
+        origin = path.parent / 'origin.mo'
+        origin.write_text('module Origin\nexpose base, greeting, handler\nbase = 13\n'
+                          'greeting = "λ\\u{0}owned"\nhandler = make(13)\n'
+                          'fn make(offset: Int) : fn(Int) : Int\n'
+                          'fn(extra) base + offset + extra end\nend\n'
+                          'test "declaring constant observation"\nassert handler(3) == 29\nend\n')
+        path.write_text('module Main\nuse Origin{base, greeting, handler}\n'
+                        'fn probe(_values: List(Text)) : Int\npromise "foreign constant closure"\n'
+                        'result == 52\nallows _values: ["owned"], result: 52\n'
+                        'forbids _values: ["é"], result: 53\nend\n'
+                        'Origin.base + base + handler(0)\nend\n'
+                        'test "foreign owned text"\nassert greeting == "λ\\u{0}owned"\nend\n'
+                        'fn main() : Int\nprobe(["main"])\nend\n')
+        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        assert [r['name'] for r in items[1:-1]] == [
+            'Main.probe.promise.1', 'Main.test.1', 'Origin.test.1']
+        assert items[-1]['passed'] == 3 and items[-1]['errors'] == 0
+        assert items[3]['span']['file'] == str(origin)
+        result = run(binary, ['run', str(path)], 52)
+        assert not result.stdout and not result.stderr
+
+        # A direct imported call has certified initializer dependencies. Calling
+        # the returned closure inside an initializer remains a separate refusal.
+        origin.write_text('module Origin\nexpose base, greeting, evaluate, freeze\nbase = 13\n'
+                          'greeting = "λ\\u{0}owned"\nfn evaluate(n: Int) : Int\nn + base * 2\nend\n'
+                          'fn freeze(value: Text) : fn() : Text\nfn() value end\nend\n')
+        bridge = path.parent / 'bridge.mo'
+        bridge.write_text('module Bridge\nexpose answer, snapshot, probe\n'
+                          'use Origin{base, greeting, evaluate, freeze}\n'
+                          'answer = evaluate(3) + base\nsnapshot = freeze(greeting)\n'
+                          'fn probe(_values: Option(List(Text))) : Int\n'
+                          'promise "dependency initializer"\nresult == 42\n'
+                          'allows _values: Some(["owned"]), result: 42\n'
+                          'forbids _values: None, result: 43\nend\nanswer\nend\n')
+        path.write_text('module Main\nuse Bridge{answer, snapshot, probe}\n'
+                        'test "dependency constants"\nassert answer == 42\n'
+                        'assert snapshot() == "λ\\u{0}owned"\nend\n'
+                        'fn main() : Int\nprobe(None)\nend\n')
+        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        assert [r['name'] for r in items[1:-1]] == ['Main.test.1', 'Bridge.probe.promise.1']
+        assert items[-1]['passed'] == 2 and items[-1]['errors'] == 0
+        assert items[2]['span']['file'] == str(bridge)
+        result = run(binary, ['run', str(path)], 42)
+        assert not result.stdout and not result.stderr
+        for codec in ('core', 'bytecode'):
+            emitted = run(binary, ['check', '--emit=' + codec, str(path)], 0)
+            artifact = path.parent / ('initialized.' + codec)
+            artifact.write_bytes(emitted.stdout)
+            run(binary.parent / 'tests/test_cli.test', ['--roundtrip-' + codec, str(artifact)], 0)
+
+        # The subject returns an imported owned nominal constant. The smallest
+        # failure needs true, not the minimum false; its original second line
+        # and Unicode/NUL result survive copying and shrinking in fresh heaps.
+        source = ('module Origin\nexpose Pair(..), packet, probe\nstruct Pair(Z, A)\n'
+                  'zeta: Z\nalpha: A\nend\npacket = Pair(alpha: false, zeta: "λ\\u{0}owned")\n'
+                  'snapshot = fn() packet.zeta end\n'
+                  'fn probe(_value: Pair(Text, Bool), _values: List(Text)) : Pair(Text, Bool)\n'
+                  'promise "retained imported constant"\nresult.zeta == snapshot()\n'
+                  'result.alpha == _value.alpha\n'
+                  'allows _values: [], _value: Pair(zeta: "anchor", alpha: false), result: packet\n'
+                  'forbids _value: Pair(alpha: true, zeta: "é"), _values: ["owned"], result: packet\n'
+                  'end\npacket\nend\n')
+        origin.write_text(source)
+        path.write_text('module Main\nuse Origin{Pair, packet, probe}\n'
+                        'test "initialized owned constant"\n'
+                        'assert packet.zeta == "λ\\u{0}owned" and not packet.alpha\nend\n'
+                        'fn main() : Int\nif not probe(Pair(zeta: "main", alpha: false), []).alpha: 37 else: 1\nend\n')
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        failure = items[2]
+        assert items[1]['name'] == 'Main.test.1' and items[1]['outcome'] == 'passed'
+        assert failure['name'] == 'Origin.probe.promise.1' and failure['outcome'] == 'failed'
+        assert failure['input'] == [{'name': '_value', 'value': 'Pair(zeta: "", alpha: true)'},
+                                    {'name': '_values', 'value': '[]'}]
+        assert failure['result'] == r'Pair(zeta: "λ\u{0}owned", alpha: false)'
+        predicate = b'result.alpha == _value.alpha'
+        start = source.encode().index(predicate)
+        assert failure['line']['file'] == str(origin)
+        assert (failure['line']['start'], failure['line']['end']) == (start, start + len(predicate))
+        assert items[-1]['passed'] == items[-1]['failed'] == 1 and items[-1]['errors'] == 0
+        result = run(binary, ['run', str(path)], 37)
+        assert not result.stdout and not result.stderr
+        for codec in ('core', 'bytecode'):
+            emitted = run(binary, ['check', '--emit=' + codec, str(path)], 0)
+            artifact = path.parent / ('owned-constant.' + codec)
+            artifact.write_bytes(emitted.stdout)
+            run(binary.parent / 'tests/test_cli.test', ['--roundtrip-' + codec, str(artifact)], 0)
+
+        # Initialization is before anchors/observations and outside the promise
+        # clock. Unsupported selected inputs must still refuse before it.
+        origin.write_text('module Origin\nexpose seed\nseed = abort()\nlater = second()\n'
+                          'fn abort() : Int\nstop "foreign initializer stopped"\nend\n'
+                          'fn second() : Int\nstop "later initializer stopped"\nend\n')
+        ordinary = ('test "not counted after stopped initializer"\nassert true\nend\n'
+                    'fn main() : Int\nseed\nend\n')
+        promise = ('fn probe(_values: List(Text)) : Int\n'
+                   'promise "initialization precedes promise"\nresult == 13\n'
+                   'allows _values: ["owned"], result: 13\nforbids _values: [], result: 14\n'
+                   'end\nseed\nend\n')
+        for supported in (True, False):
+            body = promise if supported else promise.replace('List(Text)', 'Option(Console)').replace(
+                '_values: ["owned"]', '_values: None').replace('_values: []', '_values: None')
+            path.write_text('module Main\nuse Origin{seed}\n' + body + ordinary)
+            listed = records(run(binary, ['test', '--json', '--list', '--max-heap', '1',
+                                           '--seconds', '1', str(path)], 0), 'test')
+            assert [r['name'] for r in listed[1:-1]] == ['Main.probe.promise.1', 'Main.test.1']
+            items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+            assert len(items) == 3 and items[1]['code'] == ('E1406' if supported else 'E1400')
+            assert all(items[-1][key] == 0 for key in ('passed', 'failed', 'stopped'))
+            if supported:
+                clock = binary.parent / 'tests/test_deadline.test'
+                timed = records(run(clock, ['start-failure', 'test', '--json', '--seconds', '1',
+                                             str(path)], 1), 'test')
+                assert timed[1]['code'] == 'E1406'
+                assert items[1]['primary']['file'] == str(origin)
+                assert 'foreign initializer stopped' in items[1]['primary']['label']
+                assert 'later initializer stopped' not in items[1]['primary']['label']
+            else:
+                selected = records(run(binary, ['test', '--json', '--only', 'Main.test.1',
+                                                str(path)], 1), 'test')
+                assert selected[1]['code'] == 'E1406'
+        path.write_text('module Main\nuse Origin{seed}\n' + ordinary)
+        records(run(binary, ['check', '--json', str(path)], 0), 'check')
+        for codec in ('core', 'bytecode'):
+            result = run(binary, ['check', '--emit=' + codec, str(path)], 0)
+            assert result.stdout and not result.stderr
+        result = run(binary, ['run', str(path)], 70)
+        assert not result.stdout and b'foreign initializer stopped' in result.stderr
+        assert b'later initializer stopped' not in result.stderr and b'Main.main' not in result.stderr
+    print(f'{binary}: imported constants, composite retained values and initializer/preflight boundaries passed')
+
+
+def observations(binary):
+    with tempfile.TemporaryDirectory(prefix="mo-observations-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        path.write_text('module Main\nseed = abort()\nfn abort() : Int\n'
+                        'stop "initialization ran"\nend\ntest "not run"\n'
+                        'assert false\nend\nfn main()\nstop "main ran"\nend\n')
+        args = ["test", "--list", "--max-stack", "1", "--max-depth", "1",
+                "--max-heap", "1", "--calls", "1", "--seconds", "1", str(path)]
+        text = run(binary, args, 0)
+        assert text.stdout == b"Main.test.1\n" and not text.stderr
+        items = records(run(binary, [*args, "--json"], 0), "test")
+        assert len(items) == 3 and items[1] == {
+            "record": "test", "name": "Main.test.1", "kind": "test",
+            "span": {"file": str(path), "start": 74, "end": 105, "line": 6,
+                     "column": 1, "end_line": 8, "end_column": 4}}
+        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                             "passed": 0, "failed": 0, "stopped": 0, "status": 0}
+        for selectors in (["--only", "Main.test.1", "--only", "Main.test.1", "--in", "Main"],
+                          ["--only", "Main.test.1"]):
+            result = run(binary, ["test", "--list", *selectors, str(path)], 0)
+            assert result.stdout == b"Main.test.1\n" and not result.stderr
+        for selectors in (["--only", "Main.test"], ["--only", "Main.test.10"],
+                          ["--in", "Mai"], ["--in", "Main.Child"],
+                          ["--only", "Main.test.1", "--only", "Typo.test.1"]):
+            result = run(binary, ["test", "--list", "--json", *selectors, str(path)], 2)
+            assert not result.stdout and result.stderr.count(b"\n") == 1
+        initialized = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        assert initialized[1]["code"] == "E1406"
+        assert "initialization ran" in initialized[1]["primary"]["label"]
+        assert all(initialized[-1][key] == 0 for key in ("passed", "failed", "stopped"))
+
+        source = ('module Main\nbase = 13\nfn plus(n: Int) : Int\nexamples\n'
+                  'plus(3) == 16\nend\nexamples\nplus(8) == 99\nend\nn + base\nend\n'
+                  'test "second assert"\nassert true\n'
+                  'assert "λ\\u{0}right 2:X,\\n" == "日本"\nend\n'
+                  'test "after failure"\nassert base == 13\nend\n'
+                  'fn main()\nstop "main ran"\nend\n')
+        path.write_text(source)
+        items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        expected = [("Main.plus.example.1", "example", "passed"),
+                    ("Main.plus.example.2", "example", "failed"),
+                    ("Main.test.1", "test", "failed"), ("Main.test.2", "test", "passed")]
+        assert [(r["name"], r["kind"], r["outcome"]) for r in items[1:-1]] == expected
+        assert all(type(r["microseconds"]) is int and r["microseconds"] >= 0 for r in items[1:-1])
+        assert items[2]["left"] == "21" and items[2]["right"] == "99"
+        assert items[3]["left"] == "λ\0right 2:X,\n" and items[3]["right"] == "日本"
+        assert items[3]["line"] == {"file": str(path), "start": 144, "end": 184,
+                                    "line": 14, "column": 1, "end_line": 14, "end_column": 36}
+        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                             "passed": 2, "failed": 2, "stopped": 0, "status": 1}
+        text = run(binary, ["test", str(path)], 1)
+        assert not text.stderr and text.stdout.endswith(b"2 passed, 2 failed, 0 stopped\n")
+        assert b"this example was false" in text.stdout and b"this assertion was false" in text.stdout
+        assert "λ\\x00right 2:X,\\x0a".encode() in text.stdout and b"main ran" not in text.stdout
+        selected = records(run(binary, ["test", "--json", "--only", "Main.test.2",
+                                        "--only", "Main.plus.example.1", "--only", "Main.test.2",
+                                        "--in", "Main", str(path)], 0), "test")
+        assert [r["name"] for r in selected[1:-1]] == ["Main.plus.example.1", "Main.test.2"]
+        assert selected[-1]["passed"] == 2 and selected[-1]["failed"] == selected[-1]["stopped"] == 0
+
+        # A generic promise with no ordinary instantiation must not disappear
+        # from either listing or unsupported-selection preflight.
+        path.write_text('module Main\nfn keep(value: T) : T where T: Equal\n'
+                        'promise "keeps input"\nresult == value\n'
+                        'allows value: 3, result: 3\nforbids value: 3, result: 4\nend\n'
+                        'value\nend\ntest "selected control"\nassert true\nend\n'
+                        'fn main()\nstop "main ran"\nend\n')
+        listed = records(run(binary, ["test", "--json", "--list", str(path)], 0), "test")
+        assert [r["name"] for r in listed[1:-1]] == ["Main.keep.promise.1", "Main.test.1"]
+        original = path.read_text()
+        path.write_text(original.replace('allows value: 3, result: 3', 'allows value: 3, result: 4'))
+        listed = records(run(binary, ["test", "--json", "--list", str(path)], 0), "test")
+        assert [r["name"] for r in listed[1:-1]] == ["Main.keep.promise.1", "Main.test.1"]
+        anchored = records(run(binary, ["test", "--json", "--only", "Main.test.1", str(path)], 1), "test")
+        assert anchored[1]["code"] == "E1405" and anchored[-1]["passed"] == 0
+        path.write_text(original)
+        refused = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        assert len(refused) == 3 and refused[1]["code"] == "E1400"
+        assert refused[1]["primary"]["label"] == "Main.keep.promise.1"
+        assert all(refused[-1][key] == 0 for key in ("passed", "failed", "stopped"))
+        accepted = records(run(binary, ["test", "--json", "--only", "Main.test.1", str(path)], 0), "test")
+        assert len(accepted) == 3 and accepted[1]["outcome"] == "passed"
+        # The same promise selection must refuse before even an unused stopping
+        # initializer, and before an ordinary test that occurs first in source.
+        source = path.read_text().replace('test "selected control"\nassert true\nend\n', '')
+        path.write_text(source.replace('module Main\n', 'module Main\nseed = crash()\n'
+                                       'fn crash() : Int\nstop "must not initialize"\nend\n'
+                                       'test "selected control"\nassert true\nend\n'))
+        refused = records(run(binary, ["test", "--json", "--only", "Main.test.1",
+                                       "--only", "Main.keep.promise.1", str(path)], 1), "test")
+        assert len(refused) == 3 and refused[1]["code"] == "E1400"
+        assert all(refused[-1][key] == 0 for key in ("passed", "failed", "stopped"))
+
+        source = ('module Main\ntest "Bool, not equality"\nassert (\n  false\n)\nend\n'
+                  'test "after Bool failure"\nassert true\nend\nfn main()\nend\n')
+        path.write_text(source)
+        items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        assert items[1]["outcome"] == "failed" and items[2]["outcome"] == "passed"
+        assert "left" not in items[1] and "right" not in items[1]
+        start = source.index("assert (")
+        assert items[1]["line"] == {"file": str(path), "start": start,
+                                    "end": start + len("assert (\n  false\n)"),
+                                    "line": 3, "column": 1, "end_line": 5, "end_column": 2}
+
+        # Structural failure printing must not call the source Text customizer.
+        path.write_text('module Main\nstruct Box\nvalue: Int\nend\n'
+                        'fn to_text(_value: Box) : Text\nstop "renderer called"\nend\n'
+                        'fn same(value: Box) : Box\nexamples\nsame(Box(value: 7)) == Box(value: 9)\nend\n'
+                        'value\nend\nfn main()\nend\n')
+        items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        assert items[1]["outcome"] == "failed"
+        assert (items[1]["left"], items[1]["right"]) == ("Box(value: 7)", "Box(value: 9)")
+        assert items[-1]["failed"] == 1 and items[-1]["stopped"] == 0
+
+        # Record budgets reject a whole record, never truncated values or a
+        # fabricated passing observation. Counts retain the attempted failure.
+        for count, fits in ((17, True), (18, False)):
+            path.write_text('module Main\ntest "large structural side"\nvar value = "\\u{1}"\n'
+                            f'var n = 0\nwhile n < {count}\nvalue = "#{{value}}#{{value}}"\n'
+                            'n = n + 1\nend\nassert value == ""\nend\n'
+                            'test "after output"\nassert true\nend\nfn main()\nend\n')
+            items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+            if fits:
+                assert items[1]["left"] == "\1" * (1 << count) and items[1]["right"] == ""
+                assert items[-1]["passed"] == 1 and items[-1]["errors"] == 0
+            else:
+                assert len(items) == 3 and items[1]["code"] == "E1404"
+                assert items[-1]["passed"] == 0 and items[-1]["errors"] == 1
+            assert items[-1]["failed"] == 1 and items[-1]["stopped"] == 0
+
+        # A bug ends only its fresh process. main is never the test entry, and
+        # neither a stop nor a failure may hide the following successful test.
+        source = ('module Main\nfn divide(n: Int) : Int\nexamples\ndivide(7) == 0\nend\n'
+                  'n / 0\nend\ntest "after stop"\nassert true\nend\n'
+                  'test "failed after stop"\nassert 17 == 29\nend\n'
+                  'fn main()\nstop "main must not run"\nend\n')
+        path.write_text(source)
+        items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        assert [r["outcome"] for r in items[1:-1]] == ["stopped", "passed", "failed"]
+        defect = items[1]["defect"]
+        start = source.index("n / 0")
+        assert defect["reason"] == "dividing by zero"
+        assert defect["span"] == {"file": str(path), "start": start, "end": start + 5,
+                                   "line": 6, "column": 1, "end_line": 6, "end_column": 6}
+        assert [f["function"] for f in defect["stack"]] == ["Main.divide", "Main.divide.example.1"]
+        assert defect["variables"] == [{"name": "n", "value": "7"}]
+        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                             "passed": 1, "failed": 1, "stopped": 1, "status": 1}
+        text = run(binary, ["test", str(path)], 1)
+        assert not text.stderr and b"bug: dividing by zero" in text.stdout
+        assert b"n = 7" in text.stdout and b"main must not run" not in text.stdout
+        assert text.stdout.endswith(b"1 passed, 1 failed, 1 stopped\n")
+
+        # Depth/stack exhaustion is a stopped result, not a failed assertion or
+        # source diagnostic. A succeeding process follows under the same bound.
+        path.write_text('module Main\nfn descend(n: Int) : Int\n'
+                        'if n == 0: 0 else: 1 + descend(n - 1)\nend\n'
+                        'test "limited"\nassert descend(30) == 30\nend\n'
+                        'test "fresh process"\nassert true\nend\nfn main()\nend\n')
+        for flag, value in (("--max-depth", "10"), ("--max-stack", "1KiB")):
+            items = records(run(binary, ["test", "--json", flag, value, str(path)], 1), "test")
+            assert [r["outcome"] for r in items[1:-1]] == ["stopped", "passed"]
+            assert items[1]["defect"]["reason"] == "out of stack"
+            assert items[1]["defect"]["limit"] == {"name": flag, "value": "10" if value == "10" else "1024"}
+            assert all(f["span"]["file"] == str(path) for f in items[1]["defect"]["stack"])
+            assert items[-1]["passed"] == items[-1]["stopped"] == 1 and items[-1]["errors"] == 0
+
+        # Original stop payloads retain NUL/newline, while both encodings remain
+        # terminal-safe. Native scalar overflow uses the same stopped route.
+        path.write_text('module Main\nhandler = Int.abs\ntest "native overflow"\n'
+                        'assert handler(-9223372036854775808) == 0\nend\n'
+                        'test "explicit stop"\nstop "λ\\u{0}\\n\\u{1b}"\nend\n'
+                        'test "after both"\nassert true\nend\nfn main()\nend\n')
+        items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        assert [r["outcome"] for r in items[1:-1]] == ["stopped", "stopped", "passed"]
+        assert items[1]["defect"]["reason"] == "overflow: Int"
+        assert items[2]["defect"]["reason"] == "stop" and items[2]["defect"]["detail"] == "λ\0\n\x1b"
+        assert items[-1]["stopped"] == 2 and items[-1]["errors"] == 0
+        text = run(binary, ["test", str(path)], 1, env={**os.environ, "LC_ALL": "C"})
+        text.stdout.decode("ascii")
+        assert not text.stderr and b"\\x00\\x0a\\x1b" in text.stdout and b"\x1b" not in text.stdout
+
+        # Values not yet read remain reportable; the unassigned n does not.
+        # Quoting is structural, including interpolation and quote escapes,
+        # and cannot execute the source Box Text implementation.
+        path.write_text(r'''module Main
+struct Box
+value: Int
+end
+fn to_text(_box: Box) : Text
+stop "renderer called"
+end
+fn crash(label: Text, mark: Char, box: Box) : Int
+n = 7 / 0
+n + label.byte_count + mark.to_text.byte_count + box.value
+end
+test "quoted variables"
+outer = 11
+assert crash("λ\u{0}\n\"\#{0}", '\'', Box(value: 7)) + outer == 0
+end
+fn main()
+end
+''')
+        items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        assert items[1]["defect"]["variables"] == [
+            {"name": "label", "value": r'"λ\u{0}\n\"\#{0}"'},
+            {"name": "mark", "value": r"'\''"},
+            {"name": "box", "value": "Box(value: 7)"}]
+        assert items[1]["defect"]["reason"] == "dividing by zero" and items[-1]["errors"] == 0
+        for length in (4094, 4095):
+            path.write_text('module Main\nfn crash(label: Text) : Int\nn = 7 / 0\n'
+                            'n + label.byte_count\nend\ntest "print budget"\n'
+                            'assert crash("' + 'x' * length + '") == 0\nend\nfn main()\nend\n')
+            items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+            expected = '"' + 'x' * length + '"' if length == 4094 else "<value unavailable>"
+            assert items[1]["defect"]["variables"] == [{"name": "label", "value": expected}]
+            assert items[-1]["stopped"] == 1 and items[-1]["errors"] == 0
+
+        # Compiler certification's instruction ceiling is not an ordinary-test
+        # deadline, and --calls/--seconds are promise-only budgets.
+        path.write_text('module Main\ntest "long ordinary computation"\nvar n = 0\n'
+                        'while n < 5000001\nn += 1\nend\nassert n == 5000001\nend\nfn main()\nend\n')
+        items = records(run(binary, ["test", "--json", "--calls", "1", "--seconds", "1", str(path)], 0), "test")
+        assert items[1]["outcome"] == "passed" and items[-1]["passed"] == 1
+
+        # Exact owning module, not a prefix of a nested module's name.
+        nested = pathlib.Path(directory) / "main" / "child.mo"
+        nested.parent.mkdir()
+        nested.write_text('module Main.Child\ntest "nested module"\nassert true\nend\nfn main()\nend\n')
+        assert run(binary, ["test", "--list", "--in", "Main.Child", str(nested)], 0).stdout == b"Main.Child.test.1\n"
+        result = run(binary, ["test", "--list", "--json", "--in", "Main", str(nested)], 2)
+        assert not result.stdout and result.stderr.count(b"\n") == 1
+    print(f"{binary}: source inventory, exact selections and list nonexecution passed")
+
+
+def captures(binary):
+    # Each returned closure outlives its creating frames. A provenance symbol
+    # must not turn the outer invocation back into a direct factory call.
+    source = ('module Main\nfn make(left: Int, right: Int) : fn(Int) : fn() : Int\n'
+              'held = right + 5\nfn(extra)\nfn() left * 7 + held + extra end\nend\nend\n'
+              'fn divide(base: Int) : fn(Int) : Int\nfn(value) base / value end\nend\n'
+              'test "escaped frames"\nassert make(3, 29)(5)() == 60\nend\n'
+              'test "explicit snapshot"\nvar count = 11\ncopy = count\n'
+              'show = fn() copy * 3 end\ncount += 5\nassert show() * 10 + count == 346\nend\n'
+              'test "wrong escaped answer"\naction = make(3, 29)(5)\nassert action() == 61\nend\n'
+              'test "escaped stop"\naction = divide(17)\nassert action(0) == 1\nend\n'
+              'test "after stop"\nassert make(5, 11)(2)() == 53\nend\n'
+              'fn main() : Int\nstop "main must not execute"\nend\n')
+    with tempfile.TemporaryDirectory(prefix="mo-cli-captures-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        path.write_text(source)
+        checked = run(binary, ["check", str(path)], 0)
+        assert not checked.stdout and not checked.stderr
+        items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        assert [r["name"] for r in items[1:-1]] == [f"Main.test.{n}" for n in range(1, 6)]
+        assert [r["outcome"] for r in items[1:-1]] == ["passed", "passed", "failed", "stopped", "passed"]
+        assert (items[3]["left"], items[3]["right"]) == ("60", "61")
+        start = source.index("assert action()")
+        assert items[3]["line"] == {"file": str(path), "start": start,
+                                    "end": start + len("assert action() == 61"),
+                                    "line": 23, "column": 1, "end_line": 23, "end_column": 22}
+        start = source.index("base / value")
+        defect = items[4]["defect"]
+        assert defect["reason"] == "dividing by zero"
+        assert defect["span"] == {"file": str(path), "start": start,
+                                   "end": start + len("base / value"),
+                                   "line": 9, "column": 11, "end_line": 9, "end_column": 23}
+        assert [f["function"] for f in defect["stack"]] == ["Main.divide.fn.1", "Main.test.4"]
+        assert defect["variables"] == [{"name": "base", "value": "17"}, {"name": "value", "value": "0"}]
+        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                             "passed": 3, "failed": 1, "stopped": 1, "status": 1}
+        text = run(binary, ["test", str(path)], 1)
+        assert not text.stderr and text.stdout.endswith(b"3 passed, 1 failed, 1 stopped\n")
+        assert b"main must not execute" not in text.stdout and b"base = 17" in text.stdout
+        selected = records(run(binary, ["test", "--json", "--only", "Main.test.5",
+                                        "--only", "Main.test.1", "--only", "Main.test.1",
+                                        str(path)], 0), "test")
+        assert [r["name"] for r in selected[1:-1]] == ["Main.test.1", "Main.test.5"]
+        assert selected[-1]["passed"] == 2
+        # Copying count is legal; capturing count itself across its later write
+        # is not a snapshot guarantee the checker can certify.
+        path.write_text(source.replace("copy = count\n", "").replace("fn() copy * 3 end", "fn() count * 3 end"))
+        rejected = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        assert rejected[1]["code"] == "E0092"
+        assert all(rejected[-1][key] == 0 for key in ("passed", "failed", "stopped"))
+        path.write_text(source.replace('stop "main must not execute"', 'make(3, 29)(5)()'))
+        result = run(binary, ["run", str(path)], 60)
+        assert not result.stdout and not result.stderr
+        for codec in ("core", "bytecode"):
+            emitted = run(binary, ["check", f"--emit={codec}", str(path)], 0)
+            assert emitted.stdout and not emitted.stderr
+            artifact = pathlib.Path(directory) / f"capture.{codec}"
+            artifact.write_bytes(emitted.stdout)
+            decoded = run(binary.parent / "tests/test_cli.test", [f"--roundtrip-{codec}", str(artifact)], 0)
+            assert not decoded.stdout and not decoded.stderr
+    print(f"{binary}: escaped captures, snapshots, stopped spans and codec roundtrips passed")
+
+
+def imports(binary):
+    # Aliasing a listed import and qualifying the same declaration must agree;
+    # asymmetric arguments distinguish canonical binding from swapped inputs.
+    source = ('module Main\nuse Shapes{make, score, ratio}\n'
+              'test "imported aliases"\nf = score\n'
+              'assert f(make(3), 11) + Shapes.score(Shapes.make(5), 2) == 69\nend\n'
+              'test "wrong imported answer"\nassert score(make(3), 11) == 31\nend\n'
+              'test "imported escaped stop"\naction = ratio(17)\nassert action(0) == 1\nend\n'
+              'test "after stop"\nassert score(make(2), 3) == 17\nend\n'
+              'fn main() : Int\n'
+              'f = score\nf(make(3), 11) + Shapes.score(Shapes.make(5), 2)\nend\n')
+    shapes = ('module Shapes\nexpose Box(..), make, score, ratio\nstruct Box\nvalue: Int\nend\n'
+              'fn make(value: Int) : Box\nBox(value: value)\nend\n'
+              'fn score(box: Box, extra: Int) : Int\nexamples\nscore(make(3), 11) == 32\nend\n'
+              'box.value * 7 + extra\nend\n'
+              'fn ratio(base: Int) : fn(Int) : Int\nfn(value) base / value end\nend\n'
+              'test "module snapshot"\nvar count = 13\ncopy = count\n'
+              'show = fn() copy * 3 end\ncount += 7\nassert show() + count == 59\nend\n')
+    with tempfile.TemporaryDirectory(prefix="mo-cli-imports-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        owner = path.parent / "shapes.mo"
+        path.write_text(source)
+        owner.write_text(shapes)
+        checked = run(binary, ["check", str(path)], 0)
+        assert not checked.stdout and not checked.stderr
+        # --in uses the declaration's module, not the importing entry module.
+        listed = records(run(binary, ["test", "--json", "--list", "--in", "Shapes", str(path)], 0), "test")
+        assert [r["name"] for r in listed[1:-1]] == ["Shapes.score.example.1", "Shapes.test.1"]
+        start = shapes.index("score(make(3), 11) == 32")
+        assert listed[1]["span"] == {"file": str(owner), "start": start, "end": start + 24,
+                                      "line": 11, "column": 1, "end_line": 11, "end_column": 25}
+        start = shapes.index('test "module snapshot"')
+        assert listed[2]["span"] == {"file": str(owner), "start": start, "end": len(shapes) - 1,
+                                      "line": 18, "column": 1, "end_line": 24, "end_column": 4}
+        assert all(listed[-1][key] == 0 for key in ("errors", "passed", "failed", "stopped"))
+        selected = records(run(binary, ["test", "--json", "--in", "Shapes",
+                                        "--only", "Shapes.test.1", "--only", "Shapes.score.example.1",
+                                        "--only", "Shapes.test.1", str(path)], 0), "test")
+        assert [r["name"] for r in selected[1:-1]] == ["Shapes.score.example.1", "Shapes.test.1"]
+        assert all(r["outcome"] == "passed" for r in selected[1:-1])
+        assert selected[-1]["passed"] == 2 and selected[-1]["errors"] == 0
+        for selectors in (["--in", "Shapes", "--only", "Main.test.1"], ["--in", "Shape"]):
+            mistake = run(binary, ["test", "--json", *selectors, str(path)], 2)
+            assert not mistake.stdout and mistake.stderr.count(b"\n") == 1
+        items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        by_name = {r["name"]: r for r in items[1:-1]}
+        assert {name: r["outcome"] for name, r in by_name.items()} == {
+            "Main.test.1": "passed", "Main.test.2": "failed", "Main.test.3": "stopped",
+            "Main.test.4": "passed", "Shapes.score.example.1": "passed", "Shapes.test.1": "passed"}
+        failed = by_name["Main.test.2"]
+        assert (failed["left"], failed["right"]) == ("32", "31")
+        start = source.index("assert score(make(3), 11) == 31")
+        assert failed["line"] == {"file": str(path), "start": start, "end": start + 31,
+                                   "line": 8, "column": 1, "end_line": 8, "end_column": 32}
+        defect = by_name["Main.test.3"]["defect"]
+        start = shapes.index("base / value")
+        assert defect["reason"] == "dividing by zero"
+        assert defect["span"] == {"file": str(owner), "start": start, "end": start + 12,
+                                   "line": 16, "column": 11, "end_line": 16, "end_column": 23}
+        assert [f["function"] for f in defect["stack"]] == ["Shapes.ratio.fn.1", "Main.test.3"]
+        assert [f["span"]["file"] for f in defect["stack"]] == [str(owner), str(path)]
+        assert defect["variables"] == [{"name": "base", "value": "17"}, {"name": "value", "value": "0"}]
+        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                             "passed": 4, "failed": 1, "stopped": 1, "status": 1}
+        text = run(binary, ["test", str(path)], 1)
+        assert not text.stderr and text.stdout.endswith(b"4 passed, 1 failed, 1 stopped\n")
+        assert b"base = 17" in text.stdout and b"shapes.mo:16:11" in text.stdout
+        result = run(binary, ["run", str(path)], 69)
+        assert not result.stdout and not result.stderr
+        for codec in ("core", "bytecode"):
+            emitted = run(binary, ["check", f"--emit={codec}", str(path)], 0)
+            assert emitted.stdout and not emitted.stderr
+            artifact = path.parent / f"imports.{codec}"
+            artifact.write_bytes(emitted.stdout)
+            decoded = run(binary.parent / "tests/test_cli.test", [f"--roundtrip-{codec}", str(artifact)], 0)
+            assert not decoded.stdout and not decoded.stderr
+        # ratio is used only by a test. Removing that test must diagnose the
+        # original listed import before resolving even a deliberately bad name.
+        path.write_text(source.replace('test "imported escaped stop"\naction = ratio(17)\n'
+                                       'assert action(0) == 1\nend\n', ''))
+        rejected = records(run(binary, ["test", "--json", "--list", "--only", "Typo.test.1", str(path)], 1), "test")
+        assert rejected[1]["code"] == "E0093" and rejected[1]["section"] == "6.1"
+        assert {key: rejected[1]["primary"][key] for key in
+                ("file", "start", "end", "line", "column", "end_line", "end_column")} == {
+                    "file": str(path), "start": 36, "end": 41, "line": 2, "column": 25,
+                    "end_line": 2, "end_column": 30}
+        assert rejected[-1] == {"record": "totals", "errors": 1, "dropped": 0,
+                                "passed": 0, "failed": 0, "stopped": 0, "status": 1}
+        for command in (["check"], ["run"], ["check", "--emit=core"], ["check", "--emit=bytecode"]):
+            rejected_text = run(binary, [*command, str(path)], 1)
+            assert not rejected_text.stdout and b"E0093" in rejected_text.stderr
+    print(f"{binary}: imported aliases, observation owners, stopped spans and unused-import preflight passed")
+
+
+def generic_imports(binary):
+    # The caller's A/Z keys deliberately reverse the callee's Z/A keys.
+    # The alias must carry the callee signature and the caller's actual proofs.
+    source = ('module Main\nuse Calc\nuse Bridge{forward, concrete}\n'
+              'struct Label\nvalue: Int\nend\n'
+              'fn to_text(label: Label) : Text\n"#{label.value * 3}"\nend\n'
+              'fn relay(value: A, tag: Z) : A where A: Number, Z: Text\n'
+              'f = Calc.choose\nf(value, tag)\nend\n'
+              'fn wrap(f: fn(Int) : fn(Int) : Int, base: Int) : fn(Int) : Int\n'
+              'fn(extra) f(base)(extra) end\nend\n'
+              'test "swapped keys"\nassert relay(13, true) * 3 + relay(17, false) == 95\nend\n'
+              'test "equal and mixed actuals"\nf = Calc.pair\n(a, b) = f(3, 17)\n'
+              '(c, d) = f(1.25, 19)\nassert a * 10 + b == 111\nassert c == 2.5 and d == 57\nend\n'
+              'test "caller customizer"\nassert Calc.show(Label(value: 7)) == "21"\nend\n'
+              'test "escaped generic frames"\nfactory = Calc.offset\na = forward(3)\n'
+              'b = concrete(5)\nc = wrap(factory, 17)\n'
+              'assert a(11) + b(7) + c(29) == 72\nassert Calc.offset(1.25)(2.5) == 3.75\nend\n'
+              'test "wrong generic answer"\naction = Calc.offset(3)\nassert action(11) == 15\nend\n'
+              'test "escaped generic stop"\naction = Calc.ratio(23)\nassert action(0) == 1\nend\n'
+              'test "after stop"\nf = Calc.twice\nassert f(17) == 34 and f(1.25) == 2.5\nend\n'
+              'fn main() : Int\nrelay(13, true) * 3 + relay(17, false)\nend\n')
+    calc = ('module Calc\nexpose choose, pair, show, offset, ratio, twice\n'
+            'fn choose(value: Z, tag: A) : Z where Z: Number, A: Text\n'
+            'if "#{tag}" == "true": value + value else: value\nend\n'
+            'fn pair(left: Z, right: A) : (Z, A) where Z: Number, A: Number\n'
+            '(left + left, right + right + right)\nend\n'
+            'fn show(value: T) : Text where T: Text\n"#{value}"\nend\n'
+            'fn offset(value: T) : fn(T) : T where T: Number\nfn(extra) value + extra end\nend\n'
+            'fn ratio(base: T) : fn(T) : T where T: Number\nfn(value) base / value end\nend\n'
+            'fn twice(value: T) : T where T: Number\nexamples\ntwice(3) == 6\ntwice(1.25) == 2.5\n'
+            'end\nvalue + value\nend\n')
+    bridge = ('module Bridge\nexpose forward, concrete\nuse Calc{offset}\n'
+              'fn forward(value: U) : fn(U) : U where U: Number\nf = offset\nf(value)\nend\n'
+              'fn concrete(value: Int) : fn(Int) : Int\noffset(value)\nend\n')
+
+    def expected_span(path, text, row):
+        # These fixture strings are ASCII: byte offsets and character columns
+        # are independently derived from their exact source, not compiler data.
+        start = text.index(row)
+        line = text.count('\n', 0, start) + 1
+        column = start - text.rfind('\n', 0, start)
+        return {"file": str(path), "start": start, "end": start + len(row),
+                "line": line, "column": column, "end_line": line, "end_column": column + len(row)}
+
+    with tempfile.TemporaryDirectory(prefix="mo-cli-generic-imports-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        owner = path.parent / "calc.mo"
+        path.write_text(source)
+        owner.write_text(calc)
+        (path.parent / "bridge.mo").write_text(bridge)
+        checked = run(binary, ["check", str(path)], 0)
+        assert not checked.stdout and not checked.stderr
+        listed = records(run(binary, ["test", "--json", "--list", "--in", "Calc", str(path)], 0), "test")
+        assert [r["name"] for r in listed[1:-1]] == ["Calc.twice.example.1", "Calc.twice.example.2"]
+        for item, row in zip(listed[1:-1], ("twice(3) == 6", "twice(1.25) == 2.5")):
+            assert item["span"] == expected_span(owner, calc, row)
+        selected = records(run(binary, ["test", "--json", "--in", "Calc",
+                                        "--only", "Calc.twice.example.2", "--only", "Calc.twice.example.1",
+                                        "--only", "Calc.twice.example.2", str(path)], 0), "test")
+        assert [r["name"] for r in selected[1:-1]] == ["Calc.twice.example.1", "Calc.twice.example.2"]
+        assert all(r["outcome"] == "passed" for r in selected[1:-1])
+        assert selected[-1]["passed"] == 2 and selected[-1]["errors"] == 0
+        items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        by_name = {r["name"]: r for r in items[1:-1]}
+        assert {name: r["outcome"] for name, r in by_name.items()} == {
+            **{f"Main.test.{n}": "passed" for n in (1, 2, 3, 4, 7)},
+            "Main.test.5": "failed", "Main.test.6": "stopped",
+            "Calc.twice.example.1": "passed", "Calc.twice.example.2": "passed"}
+        failed = by_name["Main.test.5"]
+        assert (failed["left"], failed["right"]) == ("14", "15")
+        assert failed["line"] == expected_span(path, source, "assert action(11) == 15")
+        defect = by_name["Main.test.6"]["defect"]
+        assert defect["reason"] == "dividing by zero"
+        assert defect["span"] == expected_span(owner, calc, "base / value")
+        assert [f["function"] for f in defect["stack"]] == ["Main::Calc.ratio(Int).fn.1", "Main.test.6"]
+        assert [f["span"]["file"] for f in defect["stack"]] == [str(owner), str(path)]
+        assert defect["variables"] == [{"name": "base", "value": "23"}, {"name": "value", "value": "0"}]
+        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                             "passed": 7, "failed": 1, "stopped": 1, "status": 1}
+        text = run(binary, ["test", str(path)], 1)
+        assert not text.stderr and text.stdout.endswith(b"7 passed, 1 failed, 1 stopped\n")
+        assert b"base = 23" in text.stdout and b"Main::Calc.ratio(Int).fn.1" in text.stdout
+        result = run(binary, ["run", str(path)], 95)
+        assert not result.stdout and not result.stderr
+        for codec in ("core", "bytecode"):
+            emitted = run(binary, ["check", f"--emit={codec}", str(path)], 0)
+            assert emitted.stdout and not emitted.stderr
+            artifact = path.parent / f"generic-imports.{codec}"
+            artifact.write_bytes(emitted.stdout)
+            decoded = run(binary.parent / "tests/test_cli.test", [f"--roundtrip-{codec}", str(artifact)], 0)
+            assert not decoded.stdout and not decoded.stderr
+        # A missing actual ability is a source error, not a selection mistake;
+        # it must suppress all observations and artifacts before any execution.
+        path.write_text(source.replace('struct Label\n', 'struct Token\nvalue: Int\nend\nstruct Label\n')
+                        .replace('test "swapped keys"\n', 'test "missing actual ability"\n'
+                                 'f = Calc.choose\nassert f(Token(value: 3), true) == Token(value: 6)\nend\n'
+                                 'test "swapped keys"\n'))
+        rejected = records(run(binary, ["test", "--json", "--list", "--only", "Typo.test.1", str(path)], 1), "test")
+        assert rejected[1]["code"] == "E0080" and rejected[-1]["errors"] == 1
+        assert all(rejected[-1][key] == 0 for key in ("passed", "failed", "stopped"))
+        for command in (["check"], ["run"], ["check", "--emit=core"], ["check", "--emit=bytecode"]):
+            refused = run(binary, [*command, str(path)], 1)
+            assert not refused.stdout and b"E0080" in refused.stderr
+    print(f"{binary}: imported generic keys, caller proofs, source observations, stops and ability preflight passed")
+
+
+def small_stack():
+    _, hard = resource.getrlimit(resource.RLIMIT_STACK)
+    resource.setrlimit(resource.RLIMIT_STACK, (1 << 20, hard))
+
+
+def runner(binary):
+    with tempfile.TemporaryDirectory(prefix="mo-runner-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        path.write_text('module Main\nfn main(console: Console) : Int\n'
+                        'console.print("hello 日本語")\n37\nend\n')
+        checked = run(binary, ["check", str(path)], 0)
+        assert not checked.stdout and not checked.stderr
+        result = run(binary, ["run", str(path)], 37)
+        assert result.stdout == "hello 日本語\n".encode() and not result.stderr
+        # Emission writes indexed text, not an opaque binary or an execution
+        # result. Both forms preserve the original filename and entry metadata.
+        core = run(binary, ["check", "--emit=core", str(path)], 0)
+        bytecode = run(binary, ["check", "--emit=bytecode", str(path)], 0)
+        assert core.stdout.startswith(b"(core ") and not core.stderr
+        assert b"Main.main.entry" in core.stdout and str(path).encode() in core.stdout
+        assert b"Main.main.entry" in bytecode.stdout and not bytecode.stderr
+        for name, result in (("core", core), ("bytecode", bytecode)):
+            emitted = pathlib.Path(directory) / f"program.{name}"
+            emitted.write_bytes(result.stdout)
+            decoded = run(binary.parent / "tests/test_cli.test",
+                          [f"--roundtrip-{name}", str(emitted)], 0)
+            assert not decoded.stdout and not decoded.stderr
+
+        # The shipped sample must work unchanged, including its fake-console
+        # test calling the same main that receives real command-line handles.
+        greeting = "examples/greet.mo"
+        checked = run(binary, ["check", greeting], 0)
+        assert not checked.stdout and not checked.stderr
+        for values, expected in (([], "world"), (["Ada", "Grace"], "Ada"),
+                                  (["日本語", "ignored"], "日本語"), (["--flag"], "--flag")):
+            result = run(binary, ["run", greeting, *values], 0)
+            assert result.stdout == f"Hello, {expected}!\n".encode() and not result.stderr
+        items = records(run(binary, ["test", "--json", greeting], 0), "test")
+        assert [(r["name"], r["outcome"]) for r in items[1:-1]] == [
+            ("Greet.greeting.example.1", "passed"),
+            ("Greet.greeting.example.2", "passed"), ("Greet.test.1", "passed")]
+        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                             "passed": 3, "failed": 0, "stopped": 0, "status": 0}
+
+        for parameters in ("_args: Args", "_clock: Clock, _console: Console"):
+            path.write_text(f"module Main\nfn main({parameters})\nend\n")
+            result = run(binary, ["run", str(path)], 0)
+            assert not result.stdout and not result.stderr
+
+        # Generic native aliases must use the instantiated element type.
+        # Spec-only aliases stay lexical to specs, including anchor values.
+        path.write_text('module Main\nfn first(values: List(T)) : Option(T)\nexamples\n'
+                        'first(Args.of(["Ada", "Grace"]).list) == Some("Ada")\nend\n'
+                        'pick = List.first\npick(values)\nend\n'
+                        'fn keep(value: Int) : Int\npromise "keeps input"\n'
+                        'result == value and Console.fake().printed == []\n'
+                        'allows value: (Args.of(["abcd"]).list.first or "").byte_count, result: 4\n'
+                        'forbids value: 4, result: 5\nend\nvalue\nend\n'
+                        'fn main(console: Console, _random: Random, _files: Files, _env: Env, '
+                        'args: Args, _read: ReadFiles, _clock: Clock) : Int\n'
+                        'console.print(first(args.list) or "world")\n17\nend\n'
+                        'test "fake aliases and snapshots"\n'
+                        'make = Console.fake\narguments = Args.of\nread = Args.list\n'
+                        'output = Console.printed\nconsole = make()\nalias = console\n'
+                        'args = arguments(["λ\\u{0}owned", "ignored"])\n'
+                        'console.print(first(read(args)) or "missing")\n'
+                        'before = output(console)\nalias.print("after")\n'
+                        'assert before == ["λ\\u{0}owned"]\n'
+                        'assert output(console) == ["λ\\u{0}owned", "after"]\n'
+                        'assert first([17, 29]) == Some(17)\n'
+                        'assert first([true, false]) == Some(true)\nend\n')
+        result = run(binary, ["run", str(path), "real", "ignored"], 17)
+        assert result.stdout == b"real\n" and not result.stderr
+        items = records(run(binary, ["test", "--json", str(path)], 0), "test")
+        assert [(r["name"], r["outcome"]) for r in items[1:-1]] == [
+            ("Main.first.example.1", "passed"), ("Main.keep.promise.1", "passed"),
+            ("Main.test.1", "passed")]
+        assert items[-1]["passed"] == 3 and items[-1]["errors"] == 0
+        for name in ("core", "bytecode"):
+            emitted = pathlib.Path(directory) / f"capabilities.{name}"
+            emitted.write_bytes(run(binary, ["check", f"--emit={name}", str(path)], 0).stdout)
+            decoded = run(binary.parent / "tests/test_cli.test",
+                          [f"--roundtrip-{name}", str(emitted)], 0)
+            assert not decoded.stdout and not decoded.stderr
+
+        for body in ('factory = Console.fake\nfn main()\nend',
+                     'factory = fn() Args.of([]) end\nfn main()\nend',
+                     'fn helper() : Console\nConsole.fake()\nend\n'
+                     'test "ordinary helper stays ordinary"\n_console = helper()\nend\n'
+                     'fn main()\nend',
+                     'fn main(console: Console)\n_printed = console.printed\nend'):
+            path.write_text("module Main\n" + body + "\n")
+            items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+            assert items[1]["code"] == "E1103" and items[-1]["errors"] == 1
+
+        for body, status, reason in (
+            ("fn main()\nend", 0, None),
+            ("fn main() : Int\n0\nend", 0, None),
+            ("fn main() : Int\n255\nend", 255, None),
+            ("fn main() : Int\n-1\nend", 70, b"exit status outside 0 to 255"),
+            ("fn main() : Int\n256\nend", 70, b"exit status outside 0 to 255"),
+            ("fn main() : Int\n9223372036854775807 + 1\nend", 70, b"overflow: Int"),
+            ('fn main()\nstop "chosen stop"\nend', 70, b"chosen stop"),
+        ):
+            path.write_text("module Main\n" + body + "\n")
+            result = run(binary, ["run", str(path)], status)
+            assert not result.stdout
+            if reason is None:
+                assert not result.stderr
+            else:
+                assert result.stderr.startswith(b"bug: ") and reason in result.stderr
+                assert str(path).encode() in result.stderr and b"Main.main" in result.stderr
+
+        # Tail calls replace a frame; a non-tail call must consume both limits.
+        for tail, status in ((True, 0), (False, 70)):
+            body = ("fn recurse(n: Int) : Int\nif n == 0: 0 else: "
+                    + ("" if tail else "1 + ") + "recurse(n - 1)\nend\n"
+                    "fn main() : Int\nrecurse(50)\nend")
+            path.write_text("module Main\n" + body + "\n")
+            for flag, value in (("--max-depth", "10"), ("--max-stack", "1KiB")):
+                result = run(binary, ["run", flag, value, str(path)], status)
+                assert not result.stdout
+                if tail:
+                    assert not result.stderr
+                else:
+                    assert flag.encode() in result.stderr and b"Main.recurse" in result.stderr
+        path.write_text("module Main\nfn main()\nend\n")
+        result = run(binary, ["run", "--max-heap", "1", str(path)], 70)
+        assert not result.stdout and b"--max-heap = 1" in result.stderr
+
+        # Loading/checking failure is never run as code. Missing main is an
+        # error even for check; an inference result alone is not a certificate.
+        for body, code in (("fn f() : Int\n3\nend", "E0079"),
+                           ('fn main() : Int\n"text"\nend', "E0078")):
+            path.write_text("module Main\n" + body + "\n")
+            for command in ("check", "run"):
+                result = run(binary, [command, str(path)], 1)
+                assert not result.stdout and code.encode() in result.stderr
+            items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+            assert items[1]["code"] == code and items[-1]["dropped"] == 0
+
+        # Every source stage, including lower/Core/codegen, shares the explicit
+        # source stack, while the caller has only 1 MiB. Nested arithmetic also
+        # checks that the running entry, not an arbitrary helper, was selected.
+        path.write_text("module Main\nfn main() : Int\n" + "1 + (" * 254
+                        + "1" + ")" * 254 + "\nend\n")
+        for args, status in ((["run", str(path)], 255),
+                             (["check", "--emit=core", str(path)], 0),
+                             (["check", "--emit=bytecode", str(path)], 0)):
+            result = subprocess.run([str(binary), *args], cwd=root, capture_output=True,
+                                    timeout=30, preexec_fn=small_stack)
+            assert result.returncode == status and not result.stderr, (args, result)
+
+        # Program output failing is a runtime bug, unlike guide's deliberate
+        # silent broken-pipe exit. It must not become SIGPIPE or tools status 1.
+        path.write_text('module Main\nfn main(console: Console)\nconsole.print("hello")\nend\n')
+        for args, status, reason in ((["run", str(path)], 70, b"bug: "),
+                                     (["check", "--emit=core", str(path)], 1, b"E1404")):
+            read_fd, write_fd = os.pipe()
+            os.close(read_fd)
+            try:
+                result = subprocess.run([str(binary), *args], cwd=root,
+                                        stdout=write_fd, stderr=subprocess.PIPE, timeout=30)
+                assert result.returncode == status and reason in result.stderr, result
+            finally:
+                os.close(write_fd)
+
+        # The VM's structural report is terminal-safe too, including detail
+        # bytes and paths. The escaped payload is not interpreted as control.
+        unsafe = pathlib.Path(directory) / "bad\u009b\u202e"
+        unsafe.mkdir()
+        path = unsafe / "main.mo"
+        path.write_text('module Main\nfn main()\nstop "\\u{1b}\\u{009b}\\u{202e} 日本語"\nend\n')
+        result = run(binary, ["run", str(path)], 70, env={**os.environ, "LC_ALL": "C"})
+        result.stderr.decode("ascii")
+        assert b"\\u{1b}" in result.stderr and b"\\u{9b}" in result.stderr
+        assert b"\\u{202e}" in result.stderr and b"\x1b" not in result.stderr
+    print(f"{binary}: real source check/run/emission, statuses, limits and defects passed")
+
+
+def anchors(binary):
+    # Anchor truth is not a typing certificate. Reordered arguments, opposite
+    # expectations and a subject that stops expose distinct wrong consumers.
+    source = ('module Main\nfn twice(n: Int) : Int\n'
+              'promise "returns twice its input"\nresult == n + n\n'
+              'allows result: 6, n: 3\nforbids n: 4, result: 7\nend\n'
+              'if n >= 0: stop "subject must not run" else: n + n\nend\n'
+              'fn main(console: Console) : Int\nconsole.print("main")\n37\nend\n')
+    with tempfile.TemporaryDirectory(prefix="mo-anchors-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        path.write_text(source)
+        for args in (["check"], ["check", "--json"], ["check", "--emit=core"],
+                     ["check", "--emit=bytecode"]):
+            result = run(binary, [*args, str(path)], 0)
+            assert not result.stderr
+            if "--json" in args:
+                records(result, "check")
+            elif len(args) == 1:
+                assert not result.stdout
+            else:
+                assert b"Main.twice.promise.1.allows.1" in result.stdout
+        result = run(binary, ["run", str(path)], 37)
+        assert result.stdout == b"main\n" and not result.stderr
+
+        for allows, forbids in ((True, False), (False, True), (True, True)):
+            bad = source.replace("result: 6", "result: 5") if allows else source
+            if forbids:
+                bad = bad.replace("result: 7", "result: 8")
+            path.write_text(bad)
+            items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+            diags = items[1:-1]
+            assert len(diags) == allows + forbids
+            assert all(d["code"] == "E1405" for d in diags)
+            assert [d["primary"]["line"] for d in diags] == ([5] if allows else []) + ([6] if forbids else [])
+            if allows:
+                assert diags[0]["headline"] == "an allows anchor was rejected"
+                assert diags[0]["secondary"][0]["line"] == 4
+            if forbids:
+                assert diags[-1]["headline"] == "a forbids anchor was accepted"
+                assert not diags[-1]["secondary"]
+            for args in (["check"], ["run"], ["check", "--emit=core"],
+                         ["check", "--emit=bytecode"]):
+                result = run(binary, [*args, str(path)], 1)
+                assert not result.stdout and b"E1405" in result.stderr
+
+        # A second false condition must retain its own source line, while a
+        # rejected forbids may short-circuit before a later stop.
+        path.write_text(source.replace("result == n + n\n", "result == n + n\nn < 2\n"))
+        items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+        assert items[1]["primary"]["line"] == 6 and items[1]["secondary"][0]["line"] == 5
+        path.write_text(source.replace("result == n + n\n",
+                                       "result == n + n\nn == 3 or 1 / 0 == 0\n"))
+        records(run(binary, ["check", "--json", str(path)], 0), "check")
+
+        for operand, line, kind in (("n: 3", 5, "allows"), ("n: 4", 6, "forbids")):
+            path.write_text(source.replace(operand, "n: 1 / 0"))
+            items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+            assert items[1]["code"] == "E1405" and items[1]["primary"]["line"] == line
+            assert items[1]["headline"] == "an anchor could not be checked"
+            assert "dividing by zero" in items[1]["primary"]["label"]
+            assert f"Main.twice.promise.1.{kind}.1" in items[1]["primary"]["label"]
+            result = run(binary, ["run", str(path)], 1)
+            assert not result.stdout and b"could not be checked" in result.stderr
+
+        # Pure infinite computation is a compiler work refusal, not an accepted
+        # anchor. The subject's and main's runtime semantics are unchanged.
+        for operand in ("n: 3", "n: 4"):
+            path.write_text(source.replace(operand, "n: spin()")
+                            + "fn spin() : Int\nwhile true\nend\n0\nend\n")
+            items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+            assert items[1]["headline"] == "an anchor could not be checked"
+            assert "instruction budget exhausted" in items[1]["primary"]["label"]
+
+        # This non-tail computation needs more depth than an anchor's own
+        # tail call of its promise. A bound must stop certification before main.
+        path.write_text(source.replace("n: 3", "n: descend(3)")
+                        + "fn descend(n: Int) : Int\nif n == 0: 0 else: 1 + descend(n - 1)\nend\n")
+        records(run(binary, ["check", "--json", str(path)], 0), "check")
+        for flag in ("--max-stack", "--max-depth", "--max-heap"):
+            result = run(binary, ["run", flag, "1", str(path)], 1)
+            assert not result.stdout and b"E1405" in result.stderr
+            assert b"could not be checked" in result.stderr
+
+        # Both concrete promise instances must be certified. Ignoring the
+        # Decimal instance or attaching its diagnostic to the Int anchor fails.
+        generic = (source.replace("fn twice(n: Int) : Int\n",
+                                  "fn twice(n: T) : T where T: Number, T: Equal, T: Order\n")
+                   .replace("allows result: 6, n: 3\n",
+                            "allows result: 6, n: 3\nallows n: 1.25, result: 2.5\n")
+                   .replace("forbids n: 4, result: 7\n",
+                            "forbids n: 4, result: 7\nforbids result: 2.0, n: 1.25\n"))
+        path.write_text(generic)
+        records(run(binary, ["check", "--json", str(path)], 0), "check")
+        result = run(binary, ["run", str(path)], 37)
+        assert result.stdout == b"main\n" and not result.stderr
+        for kind in ("core", "bytecode"):
+            result = run(binary, ["check", f"--emit={kind}", str(path)], 0)
+            assert b"Main.twice(Decimal).promise.1" in result.stdout and not result.stderr
+
+        path.write_text(generic.replace("result: 2.5", "result: 2.0")
+                        .replace("result: 7", "result: 8"))
+        items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+        assert [d["code"] for d in items[1:-1]] == ["E1405", "E1405"]
+        assert [d["primary"]["line"] for d in items[1:-1]] == [6, 7]
+        assert items[1]["secondary"][0]["line"] == 4 and not items[2]["secondary"]
+        for args in (["run"], ["check", "--emit=core"], ["check", "--emit=bytecode"]):
+            result = run(binary, [*args, str(path)], 1)
+            assert not result.stdout and b"E1405" in result.stderr
+
+        # Checking types examples/tests but does not test their truth or run main.
+        path.write_text('module Main\nfn main()\nexamples\nfalse\nend\n'
+                        'stop "main must not run"\nend\ntest "not run by check"\nassert false\nend\n')
+        result = run(binary, ["check", str(path)], 0)
+        assert not result.stdout and not result.stderr
+        records(run(binary, ["check", "--json", str(path)], 0), "check")
+    print(f"{binary}: real source anchor truth, stops, bounds and nonexecution passed")
+
+
+def constants(binary):
+    # Forward diamond dependencies and a generic call must initialize before
+    # anchors read them. False examples/tests remain observations, not anchors.
+    source = ('module Main\nanswer = twice(left) + right\nright = second()\n'
+              'left = base + 2\nbase = 11\nfn second() : Int\nbase * 2\nend\n'
+              'fn twice(n: T) : T where T: Number, T: Equal\n'
+              'promise "doubles"\nresult == n + n\n'
+              'allows result: 26, n: left\nforbids n: left, result: 25\nend\n'
+              'examples\nfalse\nend\nn + n\nend\n'
+              'fn main(console: Console) : Int\nconsole.print(answer.to_text)\nanswer\nend\n'
+              'test "not run by check or run"\nassert false\nend\n')
+    anchor = ('fn identity(n: Int) : Int\npromise "identity"\nresult == n\n'
+              'allows n: 3, result: 3\nforbids result: 4, n: 3\nend\nn\nend\n')
+    with tempfile.TemporaryDirectory(prefix="mo-constants-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        path.write_text(source)
+        result = run(binary, ["check", str(path)], 0)
+        assert not result.stdout and not result.stderr
+        records(run(binary, ["check", "--json", str(path)], 0), "check")
+        result = run(binary, ["run", str(path)], 48)
+        assert result.stdout == b"48\n" and not result.stderr
+        for kind in ("core", "bytecode"):
+            result = run(binary, ["check", f"--emit={kind}", str(path)], 0)
+            assert result.stdout and not result.stderr
+            emitted = pathlib.Path(directory) / f"constants.{kind}"
+            emitted.write_bytes(result.stdout)
+            result = run(binary.parent / "tests/test_cli.test",
+                         [f"--roundtrip-{kind}", str(emitted)], 0)
+            assert not result.stdout and not result.stderr
+        path.write_text(source.replace("result: 26", "result: 27"))
+        items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+        assert items[1]["code"] == "E1405" and items[-1]["errors"] == 1
+        assert items[1]["primary"]["line"] == 12 and items[1]["secondary"][0]["line"] == 11
+        result = run(binary, ["run", str(path)], 1)
+        assert not result.stdout and b"an allows anchor was rejected" in result.stderr
+
+        # Even unused constants initialize before main. Without anchors, check
+        # and emission certify code but do not execute its initializers.
+        main = ('fn main(console: Console) : Int\n'
+                'console.print("main must not run")\n37\nend\n')
+        for initializer, functions, reason in (
+            ("1 / 0", "", "dividing by zero"),
+            ("spin()", "fn spin() : Int\nwhile true\nend\n0\nend\n",
+             "instruction budget exhausted"),
+        ):
+            base = "module Main\nunused = " + initializer + "\n" + functions + main
+            path.write_text(base)
+            result = run(binary, ["check", str(path)], 0)
+            assert not result.stdout and not result.stderr
+            records(run(binary, ["check", "--json", str(path)], 0), "check")
+            for kind in ("core", "bytecode"):
+                result = run(binary, ["check", f"--emit={kind}", str(path)], 0)
+                assert result.stdout and not result.stderr
+            if not functions:
+                result = run(binary, ["run", str(path)], 70)
+                assert not result.stdout and reason.encode() in result.stderr
+                assert b"Main.unused.init" in result.stderr and b"Main.main" not in result.stderr
+
+            # Initialization failure precedes both opposite expectations. It
+            # is inability to check, never rejection that satisfies forbids.
+            path.write_text(base + anchor)
+            items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+            assert items[-1]["errors"] == 1 and items[-1]["dropped"] == 0
+            diag = items[1]
+            assert diag["code"] == "E1405" and diag["headline"] == "an anchor could not be checked"
+            assert diag["primary"]["file"] is None and not diag["secondary"]
+            assert reason in diag["primary"]["label"] and "Main.unused.init" in diag["primary"]["label"]
+            for args in (["run"], ["check", "--emit=core"], ["check", "--emit=bytecode"]):
+                result = run(binary, [*args, str(path)], 1)
+                assert not result.stdout and b"E1405" in result.stderr
+                assert reason.encode() in result.stderr and b"Main.main" not in result.stderr
+
+        # Calling a constant function value is not another read of the value.
+        # An earlier-global alias and nearest-lambda try used to emit invalid
+        # Core; a permitted closure must not be rejected with deferred globals.
+        for body, status in (
+            ('base = 13\nhandler = first\nanswer = handler()\n'
+             'reader = fn() Some(try Some(1)) end\nfn first() : Int\nbase\nend\n'
+             'fn main() : Int\nanswer + (reader() or 9)\nend\n', 14),
+            ('base = 13\nhandler = fn() base end\n'
+             'fn main() : Int\nhandler() + 24\nend\n', 37),
+            ('answer = handler(-7)\nhandler = Int.abs\n'
+             'fn main() : Int\nanswer + 30\nend\n', 37),
+            ('fn main() : Int\nInt.min(7, -11) * 2 + Int.max(-11, 7) + 68\nend\n', 53),
+        ):
+            path.write_text("module Main\n" + body)
+            result = run(binary, ["check", str(path)], 0)
+            assert not result.stdout and not result.stderr
+            records(run(binary, ["check", "--json", str(path)], 0), "check")
+            result = run(binary, ["run", str(path)], status)
+            assert not result.stdout and not result.stderr
+            for kind in ("core", "bytecode"):
+                result = run(binary, ["check", f"--emit={kind}", str(path)], 0)
+                assert result.stdout and not result.stderr
+                emitted = pathlib.Path(directory) / f"constant-functions.{kind}"
+                emitted.write_bytes(result.stdout)
+                result = run(binary.parent / "tests/test_cli.test",
+                             [f"--roundtrip-{kind}", str(emitted)], 0)
+                assert not result.stdout and not result.stderr
+
+        # A lazy body is not an initialization dependency. Neither a lambda,
+        # a named adapter nor a self-alias may access beyond its creation prefix.
+        # Int.pow is separate from the supported abs/min/max native routes.
+        for body, reason in (
+            ('handler = fn() base end\nbase = 13\n'
+             'fn main() : Int\nhandler() + 24\nend\n', "deferred function"),
+            ('answer = handler()\nhandler = first\nbase = 13\n'
+             'fn first() : Int\nbase\nend\nfn main() : Int\nanswer + 24\nend\n',
+             "deferred function"),
+            ('handler = first\nfn first() : Int\nhandler()\nend\n'
+             'fn main() : Int\n17\nend\n', "deferred function"),
+            ('answer = handler(2, 3)\nhandler = Int.pow\n'
+             'fn main() : Int\nanswer + 30\nend\n', "native call"),
+        ):
+            path.write_text("module Main\n" + body)
+            items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+            assert items[-1]["errors"] == 1 and items[-1]["dropped"] == 0
+            assert items[1]["code"] == "E1150" and reason in items[1]["headline"]
+            for args in (["check"], ["run"], ["check", "--emit=core"],
+                         ["check", "--emit=bytecode"]):
+                result = run(binary, [*args, str(path)], 1)
+                assert not result.stdout and b"E1150" in result.stderr
+                assert reason.encode() in result.stderr and b"invalid compiler Core" not in result.stderr
+    print(f"{binary}: source constant initialization, generic anchors and refusal boundaries passed")
+
+
+def filenames(binary):
+    # The operating system accepts byte paths. Do not repair them into Text or
+    # confuse filename indices with ordinary string-table indices.
+    with tempfile.TemporaryDirectory(prefix="mo-filenames-") as directory:
+        reports = []
+        for raw, escaped in ((b"\xff", b"\\xff"), (b"\xc3", b"\\xc3"),
+                             ("ÿ".encode(), "ÿ".encode()),
+                             (b"\\xff", b"\\\\xff"), (b"line\n\\", b"line\\n\\\\")):
+            folder = os.fsencode(directory) + b"/" + raw
+            os.mkdir(folder)
+            path = folder + b"/main.mo"
+            with open(path, "wb") as file:
+                file.write(b"module Main\nfn main() : Int\n37\nend\n")
+            result = run(binary, ["check", path], 0)
+            assert not result.stdout and not result.stderr
+            result = run(binary, ["run", path], 37)
+            assert not result.stdout and not result.stderr
+            result = run(binary, ["check", "--emit=bytecode", path], 0)
+            assert not result.stderr and path.hex().encode() in result.stdout
+            emitted = pathlib.Path(directory) / "program.bytecode"
+            emitted.write_bytes(result.stdout)
+            run(binary.parent / "tests/test_cli.test", ["--roundtrip-bytecode", str(emitted)], 0)
+
+            with open(path, "wb") as file:
+                file.write(b'module Main\nfn main()\nstop "chosen stop"\nend\n')
+            result = run(binary, ["run", path], 70,
+                         env={**os.environ, "LC_ALL": utf8_locale})
+            result.stderr.decode("utf-8")
+            assert not result.stdout and b"chosen stop" in result.stderr
+            assert b"/" + escaped + b"/main.mo:" in result.stderr
+            reports.append(result.stderr)
+
+            # Anchor diagnostics must find both locations in the retained
+            # source store after codegen/load, even for invalid UTF-8 paths.
+            source = (b'module Main\nfn f(n: Int) : Int\npromise "identity"\n'
+                      b'result == n\nallows n: 3, result: 4\nforbids n: 3, result: 2\n'
+                      b'end\nn\nend\nfn main()\nend\n')
+            with open(path, "wb") as file:
+                file.write(source)
+            items = records(run(binary, ["check", "--json", path], 1), "check")
+            diag = items[1]
+            assert diag["code"] == "E1405" and diag["primary"]["line"] == 5
+            assert diag["primary"]["file"].endswith("/main.mo")
+            assert diag["primary"]["start"] == source.index(b"allows")
+            assert diag["secondary"][0]["line"] == 4
+            assert diag["secondary"][0]["start"] == source.index(b"result == n")
+        assert len(set(reports)) == len(reports)
+    print(f"{binary}: exact filename-byte execution, bytecode and anchor locations passed")
 
 
 def source_stack(binary, folder):
     # This fixture exercises the entire precedence ladder at the source-depth
     # boundary, not only nested brackets. The process stack stays small while
-    # loading, parsing and inference must use the explicit source-work stack.
+    # loading, parsing and whole checking use the explicit source-work stack.
     path = folder / "main.mo"
     header = ("module Main\nfn run(a: Bool, b: Bool, c: Bool, d: Range, e: Int, "
               "f: Int, g: Int, h: fn(Bool) : Int) : Bool\n")
 
-    def small_stack():
-        _, hard = resource.getrlimit(resource.RLIMIT_STACK)
-        resource.setrlimit(resource.RLIMIT_STACK, (1 << 20, hard))
-
     for depth, status in ((255, 0), (256, 1)):
         path.write_text(header + "a implies b or c and not d == e .. f + g * -h(" * depth
-                        + "a" + ")" * depth + "\nend\n")
+                        + "a" + ")" * depth + "\nend\nfn main()\nend\n")
         for json_mode in (False, True):
             result = subprocess.run(
                 [str(binary), "check", *(["--json"] if json_mode else []), str(path)],
@@ -92,6 +1746,22 @@ flags = {
 def check(binary):
     driver = binary.parent / "tests/test_cli.test"
     faults = binary.parent / "tests/test_cli_faults.test"
+    runner(binary)
+    anchors(binary)
+    constants(binary)
+    filenames(binary)
+    observations(binary)
+    captures(binary)
+    imports(binary)
+    generic_imports(binary)
+    scalar_promises(binary)
+    promise_boundaries(binary)
+    promise_deadlines(binary)
+    promise_shrinking(binary)
+    composite_promises(binary)
+    composite_deadlines(binary)
+    promise_selection(binary)
+    imported_constants(binary)
     items = records(run(faults, ["--json"], 1), "check")
     assert items[1]["code"] == "E1401" and items[-1]["dropped"] == 0
     assert items[1]["primary"]["file"] is None and items[1]["section"] is None
@@ -139,14 +1809,12 @@ def check(binary):
     else:
         result = run(binary, ["guide"], 1)
         assert not result.stdout and b"--reference" in result.stderr
-    for command in ("run", "test", "fix", "check"):
-        args = [command, *(["--emit=core"] if command == "check" else []), good]
-        result = run(binary, args, 1)
+    for command in ("fix",):
+        result = run(binary, [command, good], 1)
         assert not result.stdout and b"this build cannot" in result.stderr
         assert result.stderr.count(b"<unavailable>") == 1
-    items = records(run(binary, ["test", "--json", "--list", "--only", "No.match", good], 1), "test")
-    assert items[1]["code"] == "E1400" and items[1]["reason"] is None
-    assert all(items[-1][k] == 0 for k in ("passed", "failed", "stopped"))
+    result = run(binary, ["test", "--json", "--list", "--only", "No.match", good], 2)
+    assert not result.stdout and result.stderr.count(b"\n") == 1
 
     def mistake(args, message=None):
         r = run(binary, args, 2)
@@ -168,7 +1836,7 @@ def check(binary):
             if command not in allowed:
                 mistake(args, f'flag is not accepted by this command: "{flag}"')
             else:
-                run(binary, args, 0 if flag == "--reference" or (command == "check" and flag == "--json") else 1)
+                run(binary, args, 2 if command == "test" else 0)
                 if flag != "--only":
                     mistake([command, flag, *value, flag, *value, *([] if command == "guide" else [good])])
         if value:
@@ -186,9 +1854,9 @@ def check(binary):
     for flag in ("--max-stack", "--max-heap"):
         mistake(["test", flag, "18014398509481984KiB", good])
         for value in ("1", "1B", "1KiB", "1MiB", "1GiB", "18446744073709551615"):
-            run(binary, ["test", flag, value, good], 1)
-    run(binary, ["run", good, "--bad", ""], 1)
-    run(binary, ["test", "--only", "a", "--only", "b", "--in", "Main", good], 1)
+            run(binary, ["test", flag, value, good], 2)
+    run(binary, ["run", good, "--bad", ""], 0)
+    run(binary, ["test", "--only", "a", "--only", "b", "--in", "Main", good], 2)
     run(binary, ["format", good, good], 0)
     run(binary, ["fix", good, good], 1)
     for version in ("--version", "-V"):
@@ -201,15 +1869,15 @@ def check(binary):
         assert result.returncode == 0 and not result.stderr
     finally:
         os.close(write_fd)
-    run(binary, ["run", good, "x" * 5000], 1)
-    run(binary, ["run", good, *(str(i) for i in range(300))], 1)
-    run(binary, ["run", good, *("x" * 4096 for _ in range(16))], 1)
+    run(binary, ["run", good, "x" * 5000], 0)
+    run(binary, ["run", good, *(str(i) for i in range(300))], 0)
+    run(binary, ["run", good, *("x" * 4096 for _ in range(16))], 0)
     for command in ("format", "fix"):
         run(binary, [command, *([good] * 4096)], 0 if command == "format" else 1)
-    run(binary, ["test", *(["--only", "x"] * 128), good], 1)
+    run(binary, ["test", *(["--only", "x"] * 128), good], 2)
     mistake(["test", *(["--only", "x"] * 129), good])
     mistake(["test", "--only", "x" * 4097, good])
-    run(binary, ["test", *(["--only", "x" * 4096] * 15), good], 1)
+    run(binary, ["test", *(["--only", "x" * 4096] * 15), good], 2)
     mistake(["test", *(["--only", "x" * 4096] * 16), good])
     # Unavailable locations, invalid source bytes, invalid POSIX path bytes,
     # and the -- delimiter are exercised against real files, not mocks.
@@ -276,7 +1944,8 @@ def check(binary):
         # The printer must refuse rather than introduce a lexer limit error.
         for letter in (b'a', '界'.encode()):
             for length in (65532, 65533):
-                source = b'module Main\nfn f() : Text\n"' + letter * length + b'"\nend\n'
+                source = (b'module Main\nfn f() : Text\n"' + letter * length
+                          + b'"\nend\nfn main()\nend\n')
                 path.write_bytes(source)
                 result = run(binary, ["format", str(path)], 0 if length == 65532 else 1)
                 assert not result.stdout
@@ -299,7 +1968,10 @@ def check(binary):
                 expected = (b'module Main\na = 0' + b' ' * 51 + b'#' + b'c' * length +
                             b'\n' + b'b' * 50 + b' = 0  # short\n')
                 assert not result.stderr and path.read_bytes() == expected
-                run(binary, ["check", str(path)], 0)
+                # A formatter fragment still has no entry. Supporting its
+                # constants must not silently waive whole-check's main rule.
+                result = run(binary, ["check", str(path)], 1)
+                assert b'E0079' in result.stderr
         # Rename is observable: an existing reader and hard link keep the old
         # complete file, while the requested path gets the complete new file.
         source = b'module Main\n\n\nfn f()\nvar x=1\nx=x+2\nx\nend\n'

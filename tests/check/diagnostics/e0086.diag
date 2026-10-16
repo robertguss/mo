@@ -1,0 +1,6 @@
+E0086 8.3
+0:28..31
+try needs a function returning the same failure kind
+try works on a Result in a function returning Result, or on an Option in a function returning Option; otherwise handle the failure with case (reference 8.3).
+try needs a function returning the same failure kind
+fixes 0

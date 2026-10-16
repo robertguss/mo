@@ -11,6 +11,27 @@
 #include <stdlib.h>
 #include <string.h>
 
+bool mo_use_import(const struct mo_signatures *signatures, uint32_t module,
+                   const struct mo_syntax *origin) {
+    uint32_t lo = 0, hi = signatures->import_count;
+    while (lo < hi) {
+        if (*signatures->work == MO_LIMIT_PROGRAM_CHECK_WORK)
+            return false;
+        (*signatures->work)++;
+        uint32_t mid = lo + (hi - lo) / 2;
+        const struct mo_import_usage *at = &signatures->imports[mid];
+        if (at->module < module ||
+            (at->module == module && at->origin->span.start < origin->span.start))
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    MO_ASSERT(lo < signatures->import_count && signatures->imports[lo].origin == origin);
+    signatures->imports[lo].used = true;
+    signatures->imports[signatures->imports[lo].parent].used = true;
+    return true;
+}
+
 static MO_MUST_USE int symbol_order(const struct mo_symbol *a, const struct mo_symbol *b) {
     if (a->module != b->module)
         return a->module < b->module ? -1 : 1;
@@ -238,7 +259,7 @@ struct preparation {
     struct mo_signatures *signatures;
     struct mo_span span, native_span;
     uint32_t depth;
-    bool failed, native;
+    bool failed, native, checked;
 };
 
 static MO_MUST_USE bool problem(struct preparation *p, uint16_t code, struct mo_span span,
@@ -419,6 +440,14 @@ static MO_MUST_USE const struct mo_symbol *definition(struct preparation *p,
             p->failed = true;
             return NULL;
         }
+        if (symbol != NULL &&
+            !mo_use_import(p->signatures, p->function->module, scope->aliases[lo].origin)) {
+            bool reported = problem(p, MO_CODE_CHECK_PROGRAM_WORK, name->span,
+                                    "the program needs too much import-checking work", NULL);
+            (void)reported;
+            p->failed = true;
+            return NULL;
+        }
         return symbol;
     }
     const struct mo_symbol *symbol = lookup(scope, name);
@@ -432,9 +461,16 @@ static MO_MUST_USE const struct mo_symbol *definition(struct preparation *p,
         else
             hi = mid;
     }
-    return lo < scope->imported_count && compare_name(name, scope->imported[lo].name) == 0
-               ? scope->imported[lo].symbols
-               : NULL;
+    if (lo == scope->imported_count || compare_name(name, scope->imported[lo].name) != 0)
+        return NULL;
+    if (!mo_use_import(p->signatures, p->function->module, scope->imported[lo].origin)) {
+        bool reported = problem(p, MO_CODE_CHECK_PROGRAM_WORK, name->span,
+                                "the program needs too much import-checking work", NULL);
+        (void)reported;
+        p->failed = true;
+        return NULL;
+    }
+    return scope->imported[lo].symbols;
 }
 
 static MO_MUST_USE const struct mo_source_type *resolve(struct preparation *p,
@@ -630,6 +666,7 @@ static MO_MUST_USE bool nominal_index(struct preparation *p) {
     return true;
 }
 
+/* Nominal masks reach a fixed point without expanding recursive layouts. */
 static MO_MUST_USE bool dependency_work(struct preparation *p) {
     if (*p->signatures->work == MO_LIMIT_PROGRAM_CHECK_WORK)
         return problem(p, MO_CODE_CHECK_PROGRAM_WORK, p->span,
@@ -675,6 +712,43 @@ static MO_MUST_USE bool dependencies(struct preparation *p, const struct mo_sour
     return true;
 }
 
+static MO_MUST_USE bool capture_dependencies(struct preparation *p,
+                                             const struct mo_source_type *type,
+                                             uint32_t *parameters, bool *capability) {
+    if (!dependency_work(p))
+        return false;
+    if (type->kind == MO_SOURCE_PARAMETER) {
+        *parameters |= type->parameters;
+        return true;
+    }
+    if (type->kind == MO_SOURCE_FUNCTION)
+        return true; /* Parameter/result types aren't values stored in a function. */
+    if (type->kind == MO_SOURCE_NAMED && type->declaration != NULL) {
+        const struct mo_nominal_signature *owner =
+            mo_nominal_signature_by_symbol(p->signatures, type->declaration);
+        if (owner == NULL) {
+            MO_ASSERT(p->signatures->recovering);
+            return true;
+        }
+        *capability = *capability || owner->holds_capability;
+        for (uint32_t i = 0; i < type->count; i++)
+            if ((owner->capture_parameters & owner->type->arguments[i]->parameters) != 0 &&
+                !capture_dependencies(p, type->arguments[i], parameters, capability))
+                return false;
+        return true;
+    }
+    static const char *const capabilities[] = {"Args",      "Env",   "Console", "Files",
+                                               "ReadFiles", "Clock", "Random"};
+    for (uint32_t i = 0; i < sizeof(capabilities) / sizeof(capabilities[0]); i++)
+        if (type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX &&
+            strcmp(type->name, capabilities[i]) == 0)
+            *capability = true;
+    for (uint32_t i = 0; i < type->count; i++)
+        if (!capture_dependencies(p, type->arguments[i], parameters, capability))
+            return false;
+    return true;
+}
+
 struct dependent {
     uint32_t data;
     struct dependent *next;
@@ -684,8 +758,7 @@ static MO_MUST_USE bool watch_dependencies(struct preparation *p, const struct m
                                            uint32_t data, struct dependent **watchers) {
     if (!dependency_work(p))
         return false;
-    if (type->parameters == 0 && !p->signatures->recovering)
-        return true;
+    /* Closed recursive layouts can still acquire capability membership. */
     if (type->kind == MO_SOURCE_NAMED && type->declaration != NULL) {
         const struct mo_nominal_signature *owner =
             mo_nominal_signature_by_symbol(p->signatures, type->declaration);
@@ -706,7 +779,6 @@ static MO_MUST_USE bool watch_dependencies(struct preparation *p, const struct m
     return true;
 }
 
-/* Nominal masks reach a fixed point without expanding recursive layouts. */
 static MO_MUST_USE bool data_dependencies(struct preparation *p) {
     struct mo_signatures *s = p->signatures;
     if (s->data_count == 0)
@@ -740,20 +812,26 @@ static MO_MUST_USE bool data_dependencies(struct preparation *p) {
         struct mo_nominal_signature *owner = &s->nominals[owner_index];
         bool invalid = owner->invalid;
         uint32_t hash = data->hash_parameters, keys = data->key_parameters;
+        uint32_t captures = owner->capture_parameters;
+        bool capability = owner->holds_capability;
         for (uint32_t j = 0; j < data->count; j++) {
             if (!mo_signature_type_available(s, data->fields[j].type))
                 owner->invalid = true;
             if (!dependencies(p, data->fields[j].type, false, &hash) ||
-                !dependencies(p, data->fields[j].type, true, &keys))
+                !dependencies(p, data->fields[j].type, true, &keys) ||
+                !capture_dependencies(p, data->fields[j].type, &captures, &capability))
                 return false;
         }
         data->hash_parameters = hash;
         data->key_parameters = keys;
         if (owner->invalid == invalid && (hash & ~owner->hash_parameters) == 0 &&
-            (keys & ~owner->key_parameters) == 0)
+            (keys & ~owner->key_parameters) == 0 && captures == owner->capture_parameters &&
+            capability == owner->holds_capability)
             continue;
         owner->hash_parameters |= hash;
         owner->key_parameters |= keys;
+        owner->capture_parameters = captures;
+        owner->holds_capability = capability;
         for (const struct dependent *edge = watchers[owner_index]; edge != NULL;
              edge = edge->next) {
             if (!dependency_work(p))
@@ -1012,11 +1090,14 @@ static MO_MUST_USE bool data_signature(struct preparation *p, const struct mo_sy
 struct mo_signatures *mo_prepare_available_signatures(struct mo_arena *arena,
                                                       const struct mo_module_set *set,
                                                       const struct mo_module_interfaces *interfaces,
-                                                      struct mo_diags *diags) {
+                                                      struct mo_diags *diags, bool checked) {
     MO_ASSERT(arena != NULL && set != NULL && interfaces != NULL && diags != NULL);
     MO_ASSERT(interfaces->count == set->count && set->count <= MO_LIMIT_FILES);
-    struct preparation p = {
-        .arena = arena, .interfaces = interfaces, .diags = diags, .span = {UINT32_MAX, 0, 0}};
+    struct preparation p = {.arena = arena,
+                            .interfaces = interfaces,
+                            .diags = diags,
+                            .span = {UINT32_MAX, 0, 0},
+                            .checked = checked};
     uint32_t count = 0, data_count = 0;
     for (uint32_t i = 0; i < interfaces->count; i++)
         for (uint32_t j = 0; j < interfaces->scopes[i].count; j++) {
@@ -1037,6 +1118,38 @@ struct mo_signatures *mo_prepare_available_signatures(struct mo_arena *arena,
     *work = 0;
     *out = (struct mo_signatures){.items = items, .data = data, .work = work};
     p.signatures = out;
+    uint32_t import_count = 0;
+    for (uint32_t i = 0; i < set->count; i++) {
+        const struct mo_syntax *uses = set->modules[i]->header.uses;
+        for (uint32_t j = 0; j < uses->count; j++) {
+            const struct mo_syntax *names = uses->children[j]->children[1];
+            uint32_t added = 1 + (names == NULL ? 0 : names->count);
+            if (added > MO_LIMIT_PROGRAM_CHECK_WORK - *work) {
+                bool reported = problem(&p, MO_CODE_CHECK_PROGRAM_WORK, uses->children[j]->span,
+                                        "the program needs too much import-checking work", NULL);
+                (void)reported;
+                return NULL;
+            }
+            *work += added;
+            import_count += added;
+        }
+    }
+    out->imports =
+        allocate(&p, import_count, sizeof(*out->imports), _Alignof(struct mo_import_usage));
+    if (out->imports == NULL)
+        return NULL;
+    for (uint32_t i = 0; i < set->count; i++) {
+        const struct mo_syntax *uses = set->modules[i]->header.uses;
+        for (uint32_t j = 0; j < uses->count; j++) {
+            const struct mo_syntax *use = uses->children[j], *names = use->children[1];
+            uint32_t parent = out->import_count;
+            out->imports[out->import_count++] = (struct mo_import_usage){use, i, parent, false};
+            for (uint32_t k = 0; names != NULL && k < names->count; k++)
+                out->imports[out->import_count++] =
+                    (struct mo_import_usage){names->children[k], i, parent, false};
+        }
+    }
+    MO_ASSERT(out->import_count == import_count);
     for (uint32_t i = 0; i < interfaces->count; i++)
         for (uint32_t j = 0; j < interfaces->scopes[i].count; j++) {
             const struct mo_symbol *symbol = &interfaces->scopes[i].symbols[j];
@@ -1146,6 +1259,7 @@ failed:
 struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct mo_module_set *set,
                                             const struct mo_module_interfaces *interfaces,
                                             struct mo_diags *diags) {
-    struct mo_signatures *out = mo_prepare_available_signatures(arena, set, interfaces, diags);
+    struct mo_signatures *out =
+        mo_prepare_available_signatures(arena, set, interfaces, diags, false);
     return mo_diags_any(diags) ? NULL : out;
 }
