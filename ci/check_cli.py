@@ -1271,6 +1271,31 @@ def runner(binary):
         assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
                              "passed": 3, "failed": 0, "stopped": 0, "status": 0}
 
+        finding = "examples/find.mo"
+        checked = run(binary, ["check", finding], 0)
+        assert not checked.stdout and not checked.stderr
+        matched = run(binary, ["run", finding, "--count", "module Find", finding], 0)
+        assert matched.stdout == b"examples/find.mo: 1\n" and not matched.stderr
+        unmatched = run(binary, ["run", finding, "no-such-phrase-anywhere", finding], 1)
+        assert not unmatched.stdout and not unmatched.stderr
+        usage = run(binary, ["run", finding], 2)
+        assert not usage.stdout and usage.stderr == (
+            b"find: no phrase to find\n"
+            b"usage: find [--ignore-case] [--count] PHRASE FILE...\n")
+        items = records(run(binary, ["test", "--json", finding], 0), "test")
+        assert [(r["name"], r["outcome"]) for r in items[1:-1]] == [
+            ("Find.parse_args.example.1", "passed"),
+            ("Find.parse_args.example.2", "passed"),
+            ("Find.parse_args.example.3", "passed"),
+            ("Find.parse_args.example.4", "passed"),
+            ("Find.parse_args.example.5", "passed"),
+            ("Find.matches.example.1", "passed"),
+            ("Find.matches.example.2", "passed"),
+            ("Find.test.1", "passed"),
+            ("Find.test.2", "passed")]
+        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                             "passed": 9, "failed": 0, "stopped": 0, "status": 0}
+
         for parameters in ("_args: Args", "_clock: Clock, _console: Console"):
             path.write_text(f"module Main\nfn main({parameters})\nend\n")
             result = run(binary, ["run", str(path)], 0)

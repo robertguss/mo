@@ -933,34 +933,70 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                     args);
         }
     }
-    if (r->native != NULL && strcmp(r->native, "Console.print") == 0)
-        return lower_prim(
-            p, (struct mo_core_prim){.tag = MO_CORE_PRIM_IO, .as.io.tag = MO_CORE_IO_OP_PRINT},
-            args);
-    if (r->native != NULL && strcmp(r->native, "Args.list") == 0)
-        return lower_prim(
-            p, (struct mo_core_prim){.tag = MO_CORE_PRIM_IO, .as.io.tag = MO_CORE_IO_OP_ARGS_LIST},
-            args);
-    if (r->native != NULL && strcmp(r->native, "Args.of") == 0)
-        return lower_prim(
-            p, (struct mo_core_prim){.tag = MO_CORE_PRIM_IO, .as.io.tag = MO_CORE_IO_OP_ARGS_OF},
-            args);
-    if (r->native != NULL && strcmp(r->native, "Console.fake") == 0)
-        return lower_prim(
-            p,
-            (struct mo_core_prim){.tag = MO_CORE_PRIM_IO, .as.io.tag = MO_CORE_IO_OP_CONSOLE_FAKE},
-            args);
-    if (r->native != NULL && strcmp(r->native, "Console.printed") == 0)
-        return lower_prim(
-            p, (struct mo_core_prim){.tag = MO_CORE_PRIM_IO, .as.io.tag = MO_CORE_IO_OP_PRINTED},
-            args);
-    if (r->native != NULL && strcmp(r->native, "List.first") == 0) {
-        mo_core_ty output = result->tag == MO_CORE_TY_FN ? result->as.fn.ret : result;
-        return lower_prim(p,
-                          (struct mo_core_prim){
-                              .tag = MO_CORE_PRIM_LIST,
-                              .as.list = {.t = output->as.option, .op.tag = MO_CORE_LIST_OP_FIRST}},
-                          args);
+    if (r->native != NULL) {
+        static const struct {
+            const char *name;
+            struct mo_core_io_op operation;
+        } io[] = {{"Console.print", {MO_CORE_IO_OP_PRINT, false}},
+                  {"Console.error", {MO_CORE_IO_OP_PRINT_ERROR, false}},
+                  {"Args.list", {MO_CORE_IO_OP_ARGS_LIST, false}},
+                  {"Args.of", {MO_CORE_IO_OP_ARGS_OF, false}},
+                  {"Console.fake", {MO_CORE_IO_OP_CONSOLE_FAKE, false}},
+                  {"Console.printed", {MO_CORE_IO_OP_PRINTED, false}},
+                  {"Files.in_memory", {MO_CORE_IO_OP_FILES_IN_MEMORY, false}},
+                  {"Files.read_only", {MO_CORE_IO_OP_READ_ONLY, false}},
+                  {"Files.read_text", {MO_CORE_IO_OP_READ_TEXT, false}},
+                  {"ReadFiles.read_text", {MO_CORE_IO_OP_READ_TEXT, true}}};
+        for (size_t i = 0; i < sizeof io / sizeof io[0]; i++) {
+            lower_work(p, 1);
+            if (strcmp(r->native, io[i].name) == 0)
+                return lower_prim(
+                    p, (struct mo_core_prim){.tag = MO_CORE_PRIM_IO, .as.io = io[i].operation},
+                    args);
+        }
+        static const struct {
+            const char *name;
+            enum mo_core_list_op_tag operation;
+        } lists[] = {{"List.first", MO_CORE_LIST_OP_FIRST},
+                     {"List.size", MO_CORE_LIST_OP_SIZE},
+                     {"List.empty?", MO_CORE_LIST_OP_IS_EMPTY},
+                     {"List.append", MO_CORE_LIST_OP_APPEND},
+                     {"List.enumerate", MO_CORE_LIST_OP_ENUMERATE}};
+        for (size_t i = 0; i < sizeof lists / sizeof lists[0]; i++) {
+            lower_work(p, 1);
+            if (strcmp(r->native, lists[i].name) == 0) {
+                mo_core_ty receiver =
+                    r->operand_count == 0
+                        ? result->as.fn.params.items[0]
+                        : type(b, row(b, r->receiver == UINT32_MAX ? r->operands[0] : r->receiver)
+                                      ->type);
+                if (receiver->tag == MO_CORE_TY_FN)
+                    receiver = receiver->as.fn.params.items[0];
+                MO_ASSERT(receiver->tag == MO_CORE_TY_LIST);
+                return lower_prim(p,
+                                  (struct mo_core_prim){.tag = MO_CORE_PRIM_LIST,
+                                                        .as.list = {.t = receiver->as.list,
+                                                                    .op.tag = lists[i].operation}},
+                                  args);
+            }
+        }
+        static const struct {
+            const char *name;
+            enum mo_core_text_op operation;
+        } texts[] = {{"Text.bytes", MO_CORE_TEXT_OP_BYTES},
+                     {"Text.byte_count", MO_CORE_TEXT_OP_BYTE_COUNT},
+                     {"Text.starts_with?", MO_CORE_TEXT_OP_STARTS_WITH},
+                     {"Text.lines", MO_CORE_TEXT_OP_LINES},
+                     {"Text.contains?", MO_CORE_TEXT_OP_CONTAINS},
+                     {"Text.ascii_lowercase", MO_CORE_TEXT_OP_LOWER}};
+        for (size_t i = 0; i < sizeof texts / sizeof texts[0]; i++) {
+            lower_work(p, 1);
+            if (strcmp(r->native, texts[i].name) == 0)
+                return lower_prim(
+                    p,
+                    (struct mo_core_prim){.tag = MO_CORE_PRIM_TEXT, .as.text = texts[i].operation},
+                    args);
+        }
     }
     if (r->native != NULL &&
         (strcmp(r->native, "Map.get") == 0 || strcmp(r->native, "Map.set") == 0 ||
@@ -981,15 +1017,6 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                                                                      : MO_CORE_MAP_OP_SIZE}};
         return lower_prim(p, prim, args);
     }
-    if (r->native != NULL && strcmp(r->native, "Text.bytes") == 0)
-        return lower_prim(
-            p, (struct mo_core_prim){.tag = MO_CORE_PRIM_TEXT, .as.text = MO_CORE_TEXT_OP_BYTES},
-            args);
-    if (r->native != NULL && strcmp(r->native, "Text.byte_count") == 0)
-        return lower_prim(
-            p,
-            (struct mo_core_prim){.tag = MO_CORE_PRIM_TEXT, .as.text = MO_CORE_TEXT_OP_BYTE_COUNT},
-            args);
     if (r->native != NULL) {
         const char *member = strrchr(r->native, '.');
         if (member != NULL && strcmp(member, ".to_text") == 0) {
