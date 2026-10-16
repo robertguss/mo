@@ -45,8 +45,11 @@ acceptance adjustment. `Map.update`, `sort_by_desc`, `List.map`, `Option.or_fail
 Time arithmetic and unavailable FileError text remain outside LW5. See
 [sample-blockers.md](sample-blockers.md) for the complete current diagnostic table.
 
-LW5 is complete under these amended acceptance criteria. PR #82 remains draft
-and unmerged; Robert’s approval of these adjustments does not authorize merging.
+LW5 is complete under these amended acceptance criteria. Robert subsequently
+authorized merging PR #82 and removed the mandatory CI-orb prerequisite while
+retaining full verification. The passing Docker/Linux gate below satisfies the
+amended runner policy; the separately dispatched remote Amp CI-orb run is
+additional evidence, not a prerequisite or a substitute for the recorded result.
 
 ## Baseline and supported workflow
 
@@ -96,9 +99,10 @@ Full gate final result: **PASS**, exit 0, no skips. The complete rerun ends:
 
 The full gate verifies implementation commit `69d96b69a95a60c39982cb6c48c889b80faf2550`
 and all its tests. The approval follow-up changes only this verification record,
-the sample status and architecture prose. All 591 source/test/oracle/build inputs
-still match the passing gate’s SHA-256 manifest, so no functional recheck is
-required. The documentation diff is checked with `git diff --check`; the prior
+the sample status, architecture prose and CI-runner policy documentation. Of
+591 manifest entries, the only changed entry is `ci/orb/README.md`, a Markdown
+policy file; all 590 other entries match. Source, tests, oracles and build commands
+are unchanged, so no functional recheck is required. The documentation diff is checked with `git diff --check`; the prior
 full-gate result is not represented as a fresh run on the documentation commit.
 
 ## Evidence and blast radius
@@ -127,5 +131,6 @@ Raw evidence lives outside the build tree in this task’s `evidence/` directory
   source/test/oracle/build inputs match by SHA-256, zero mismatches.
 - `linux-lw5-full-ci-attempt1.log` and the final full-gate log.
 
-Both acceptance adjustments are approved. There are no remaining LW5 blockers
-under the amended criteria. The draft PR is not merged.
+Both acceptance adjustments and the equivalent-Linux runner policy are approved.
+There are no remaining LW5 blockers under the amended criteria. Merge state is
+verified directly on GitHub when executing Robert’s merge authorization.

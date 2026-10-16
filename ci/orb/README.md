@@ -1,11 +1,12 @@
 # The CI orb
 
-CI for robertguss/mo runs in a dedicated Amp orb, on request (decisions D208
-and D214). Nothing runs on GitHub: there is no GitHub Actions workflow, no
-webhook and no commit status. The checks themselves are `ci/check.sh`, the same
-script every agent runs before pushing.
+CI for robertguss/mo runs `ci/check.sh`. Robert removed the requirement to use
+the dedicated Amp CI orb: an equivalent verified Linux environment, including
+a Docker container on the Mac, is also supported. The orb remains an optional
+runner (decisions D208 and D214); there is no GitHub Actions test workflow.
+The full verification requirements are unchanged.
 
-## Asking for a CI run
+## Asking for an optional CI-orb run
 
 From an implementation thread: push the branch, open the pull request, then send
 the CI orb's thread ("Mo CI orb",
@@ -17,10 +18,23 @@ with `send_thread_message`:
 The CI orb runs `bash ci/orb/run.sh N` and replies with the result: pass or
 fail, the commit it checked and, on a failure, the end of the log. The script
 also comments the result on the pull request, so GitHub keeps a record. A result
-covers only the commit it names, so ask again after pushing more commits.
+identifies the commit it tested; apply the evidence rules below to later changes.
 
-A pull request merges when its latest commit has a passing CI orb run and the
-reviewer agent has approved it (Working Agreement).
+## Merge verification
+
+A pull request needs a passing full `CI=1 bash ci/check.sh` run with no missing
+checks, in the CI orb or an equivalent verified Linux environment, plus reviewer
+agent approval and Robert’s merge authorization. Record the tested commit,
+commands, toolchain, exit status and retained log in the PR. Sanitizers, short
+fuzzing, Lean comparisons and every other gate in `ci/check.sh` remain required.
+
+Changed source, test, oracle or build inputs require rechecking; documentation
+consumed by checks counts as an input too. A documentation-only follow-up may retain a prior passing result when its diff is reviewed,
+`git diff --check` passes and recorded hashes prove the executable/test/build
+inputs unchanged. Name both revisions; never claim a fresh run on an untested
+commit. A specific CI-orb result is not a merge prerequisite. Required GitHub
+checks and branch protection must still pass; this policy does not authorize
+bypassing them.
 
 ## What `run.sh` does
 

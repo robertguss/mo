@@ -2217,8 +2217,10 @@ among them:
 - path resolution in the host: never resolves outside the folder;
 - the formatter: formatting twice gives the same text, and keeps the tree.
 
-Every check runs through `ci/check.sh`, in the CI orb on request (D214). The
-Lean build (`make formal`) and CBMC need elan and CBMC in `.agents/setup`.
+Every check runs through `ci/check.sh`, in the optional CI orb (D214) or an
+equivalent verified Linux environment. The full gates remain required; merge
+verification and evidence rules are in `ci/orb/README.md`. The Lean build
+(`make formal`) and CBMC need elan and CBMC in `.agents/setup`.
 
 ## 12. Phase 2's streams and their interfaces
 
