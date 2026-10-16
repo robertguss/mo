@@ -1900,6 +1900,7 @@ def check(binary):
     library = "tests/cli/library/main.mo"
     result = run(binary, ["check", library], 0)
     assert not result.stdout and not result.stderr
+    run(binary, ["check", "--emit=bytecode", library], 0)
     records(run(binary, ["check", "--json", library], 0), "check")
     assert b"E0079" in run(binary, ["run", library], 1).stderr
     tested_lib = records(run(binary, ["test", "--json", library], 0), "test")

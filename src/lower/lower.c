@@ -153,7 +153,7 @@ static void entry(struct lowering *p, struct instance *main) {
         .kind = MO_SOURCE_NAMED, .name = "Int", .module = UINT32_MAX};
     wrapper->fun.ret = lower_type(p, &int_type, NULL);
     wrapper->meta.name = lower_concat(p, main != NULL ? main->meta.name : wrapper->fun.module, ".",
-                                      lower_text(p, "entry"));
+                                      lower_text(p, main != NULL ? "entry" : "%entry"));
     wrapper->meta.span = lower_span(p, p->span);
     if (main == NULL) {
         wrapper->fun.body = lower_int(p, 0);

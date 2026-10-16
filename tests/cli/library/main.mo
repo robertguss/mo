@@ -1,8 +1,12 @@
 module Main
-expose run
+expose entry, run
+
+fn entry(value: Int) : Int
+  value + 1
+end
 
 fn run(value: Int) : Int
-  value + 1
+  entry(value)
 end
 
 test "run increments"
