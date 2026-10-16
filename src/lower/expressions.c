@@ -952,6 +952,26 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
         }
         static const struct {
             const char *name;
+            enum mo_core_dec_op operation;
+        } decimals[] = {{"Decimal.abs", MO_CORE_DEC_OP_ABS},
+                        {"Decimal.min", MO_CORE_DEC_OP_MIN},
+                        {"Decimal.max", MO_CORE_DEC_OP_MAX},
+                        {"Decimal.floor", MO_CORE_DEC_OP_FLOOR},
+                        {"Decimal.ceil", MO_CORE_DEC_OP_CEIL},
+                        {"Decimal.round", MO_CORE_DEC_OP_ROUND},
+                        {"Decimal.to_int", MO_CORE_DEC_OP_TO_INT},
+                        {"Decimal.to_fixed", MO_CORE_DEC_OP_TO_FIXED},
+                        {"Decimal.to_float", MO_CORE_DEC_OP_TO_FLOAT}};
+        for (size_t i = 0; i < sizeof decimals / sizeof decimals[0]; i++) {
+            lower_work(p, 1);
+            if (strcmp(r->native, decimals[i].name) == 0)
+                return lower_prim(
+                    p,
+                    (struct mo_core_prim){.tag = MO_CORE_PRIM_DEC, .as.dec = decimals[i].operation},
+                    args);
+        }
+        static const struct {
+            const char *name;
             enum mo_core_time_op operation;
         } times[] = {{"Time.checked_add", MO_CORE_TIME_OP_CHECKED_ADD},
                      {"Time.parse", MO_CORE_TIME_OP_PARSE},

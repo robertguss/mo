@@ -941,15 +941,18 @@ Console.print, Console.error, Console.fake, Console.printed,
 Console.printed_errors, Files.in_memory, Files.read_only, Files.read_text and
 ReadFiles.read_text lower to their existing Core IO primitives; Int.seconds,
 Int.milliseconds, Int.minutes, Int.hours and Int.days lower to their Core Int
-primitives; Time.checked_add, Time.parse, Duration.in_milliseconds and
-Duration.in_seconds lower to their Core Time primitives; List.first,
-List.size, List.empty?, List.append and List.enumerate use their instantiated
-receiver element type; Text.bytes, Text.byte_count, Text.chars, Text.words,
-Text.pad_left, Text.starts_with?, Text.lines, Text.contains? and
-Text.ascii_lowercase lower to their Core Text primitives. Native function values
-use inline lambdas, so spec-only operations retain their enclosing spec context
-rather than becoming ordinary global adapters. The unchanged greet, find and wc
-samples run with real capabilities and their specs run with shared fake handles.
+primitives; Decimal.abs, Decimal.min, Decimal.max, Decimal.floor, Decimal.ceil,
+Decimal.round, Decimal.to_int, Decimal.to_fixed and Decimal.to_float lower to
+their Core Decimal primitives; Time.checked_add, Time.parse,
+Duration.in_milliseconds and Duration.in_seconds lower to their Core Time
+primitives; List.first, List.size, List.empty?, List.append and List.enumerate
+use their instantiated receiver element type; Text.bytes, Text.byte_count,
+Text.chars, Text.words, Text.pad_left, Text.starts_with?, Text.lines,
+Text.contains? and Text.ascii_lowercase lower to their Core Text primitives.
+Native function values use inline lambdas, so spec-only operations retain their
+enclosing spec context rather than becoming ordinary global adapters. The
+unchanged greet, find, wc and rate-limit samples check cleanly, and their
+supported examples, anchors and tests run with real and fake capabilities.
 Other native operations remain independently staged, as does the source
 checker's Result-return entry convention.
 

@@ -1441,8 +1441,24 @@ def runner(binary):
             assert all(r.get("code") != "E0079" for r in items), (sample, items)
         assert run(binary, ["check", "examples/account.mo"], 0).stderr == b""
         assert b"E0079" in run(binary, ["run", "examples/account.mo"], 1).stderr
-        rate_limit = records(run(binary, ["check", "--json", "examples/rate-limit.mo"], 1), "check")
-        assert [r["code"] for r in rate_limit if r["record"] == "diagnostic"] == ["E1150"]
+        assert run(binary, ["check", "examples/rate-limit.mo"], 0).stderr == b""
+        records(run(binary, ["check", "--json", "examples/rate-limit.mo"], 0), "check")
+        assert b"E0079" in run(binary, ["run", "examples/rate-limit.mo"], 1).stderr
+        rate_limit_tests = records(
+            run(binary, ["test", "--json", "--only", "RateLimit.new_limiter.example.1",
+                         "--only", "RateLimit.new_limiter.example.2",
+                         "--only", "RateLimit.new_limiter.example.3",
+                         "--only", "RateLimit.test.1",
+                         "--only", "RateLimit.test.2",
+                         "examples/rate-limit.mo"], 0), "test")
+        assert [(r["name"], r["outcome"]) for r in rate_limit_tests[1:-1]] == [
+            ("RateLimit.new_limiter.example.1", "passed"),
+            ("RateLimit.new_limiter.example.2", "passed"),
+            ("RateLimit.new_limiter.example.3", "passed"),
+            ("RateLimit.test.1", "passed"),
+            ("RateLimit.test.2", "passed")]
+        assert rate_limit_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                                        "passed": 5, "failed": 0, "stopped": 0, "status": 0}
 
         # Every source stage, including lower/Core/codegen, shares the explicit
         # source stack, while the caller has only 1 MiB. Nested arithmetic also
@@ -1742,6 +1758,16 @@ def constants(binary):
             ('answer = handler(-7)\nhandler = Int.abs\n'
              'fn main() : Int\nanswer + 30\nend\n', 37),
             ('fn main() : Int\nInt.min(7, -11) * 2 + Int.max(-11, 7) + 68\nend\n', 53),
+            ('to_i = Decimal.to_int\n'
+             'fn main() : Int\n'
+             'a = (-2.4).abs.max(Decimal.min(3.1, 2.7)).ceil + 1.9.floor + 2.345.round(2)\n'
+             'f = Decimal.to_fixed\n'
+             'fl = Decimal.to_float\n'
+             'if f(a, 2) == "6.35" and fl(0.5) == 0.5\n'
+             '  to_i(3.0.max(1.0)) or 0\n'
+             'else\n'
+             '  0\n'
+             'end\nend\n', 3),
         ):
             path.write_text("module Main\n" + body)
             result = run(binary, ["check", str(path)], 0)
