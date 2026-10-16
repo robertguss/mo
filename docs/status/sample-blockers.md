@@ -1,38 +1,35 @@
-# Sample blockers after C8
+# Sample blockers after F7
 
 Regenerated from actual `mo check --json examples/<sample>.mo` output on
 `bfcdedcd` (I1/PR81), `75e6db61` (LW5/PR82), `02395dbd` (C7/PR83),
 `09f4c445` (F8/PR84), `1ac2fe8e` (C1/PR85), `0b8589ee` (C4/PR86),
-`a2924f53` (C5/PR87) and C8. Every totals record reports `dropped: 0`. Examples
-are unchanged.
+`a2924f53` (C5/PR87), `dab7da3a` (C8/PR88) and F7. Every totals record reports
+`dropped: 0`. Examples are unchanged.
 
-With `List.count` prepared in the checker's built-in signature tables and
-lowered directly to a Core `join` loop over `List.%uncons` and `Int.add`, and
-`Text.chars` lowered to `MO_CORE_TEXT_OP_CHARS`:
-- `text.chars.count(fn(c) c == '\n' end)` (`20:29`) in `examples/wc.mo` checks
-  and lowers cleanly; `wc.mo` passes `mo_check` with 0 checker errors and now
-  reports 1 lowering refusal (`E1150`) on `text.words` (`21:16`), which F7
-  resolves.
-- Total diagnostics across all 12 samples remain 14 (no sample's error count
-  increases).
+With `Text.words`, `Text.pad_left` and `Console.printed_errors` lowered to their
+Core primitives (`MO_CORE_TEXT_OP_WORDS`, `MO_CORE_TEXT_OP_PAD_LEFT`,
+`MO_CORE_IO_OP_PRINTED_ERRORS`):
+- `examples/wc.mo` checks (`0` errors), passes all 5 `mo test` items (4
+  examples and 1 `test` block), and runs end-to-end with `mo run`.
+- Total diagnostics across all 12 samples drop from 14 to 13.
 
 ## Counts
 
-| Sample | Main / I1 | LW5 | C7 | F8 | C1 | C4 | C5 | C8 | Change (C5→C8) |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| account.mo | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | +0 |
-| expenses.mo | 2 | 4 | 3 | 3 | 3 | 3 | 2 | 2 | +0 |
-| find.mo | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | +0 |
-| greet.mo | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
-| inventory.mo | 2 | 5 | 5 | 5 | 5 | 3 | 1 | 1 | +0 |
-| job-queue.mo | 1 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | +0 |
-| json-query.mo | 1 | 4 | 4 | 4 | 4 | 2 | 2 | 2 | +0 |
-| kv.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
-| notes-tool.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
-| rate-limit.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
-| todo.mo | 1 | 1 | 4 | 4 | 4 | 3 | 3 | 3 | +0 |
-| wc.mo | 2 | 2 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
-| **Total** | **14** | **24** | **25** | **24** | **23** | **17** | **14** | **14** | **+0** |
+| Sample | Main / I1 | LW5 | C7 | F8 | C1 | C4 | C5 | C8 | F7 | Change (C8→F7) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| account.mo | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | +0 |
+| expenses.mo | 2 | 4 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | +0 |
+| find.mo | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| greet.mo | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| inventory.mo | 2 | 5 | 5 | 5 | 5 | 3 | 1 | 1 | 1 | +0 |
+| job-queue.mo | 1 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | 2 | +0 |
+| json-query.mo | 1 | 4 | 4 | 4 | 4 | 2 | 2 | 2 | 2 | +0 |
+| kv.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
+| notes-tool.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
+| rate-limit.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
+| todo.mo | 1 | 1 | 4 | 4 | 4 | 3 | 3 | 3 | 3 | +0 |
+| wc.mo | 2 | 2 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | -1 |
+| **Total** | **14** | **24** | **25** | **24** | **23** | **17** | **14** | **14** | **13** | **-1** |
 
 ## Current diagnostics
 
@@ -51,12 +48,12 @@ lowered directly to a Core `join` loop over `List.%uncons` and `Int.add`, and
 | todo.mo | 71:45 | E0050 | no visible function has this dot-call name | `rest = try line.drop_prefix("[ ] ").or_fail(BadLine(number: index + 1))` |
 | todo.mo | 110:39 | E0050 | no visible function has this dot-call name | `var item = try items.get(n - 1).or_fail(NoSuchItem(number: n))` |
 | todo.mo | 120:42 | E0050 | no visible function has this dot-call name | `command = try parse_command(args.list).or_fail(Usage)` |
-| wc.mo | 21:16 | E1150 | this native call is not lowered yet | `words: text.words.size,` |
 
 ## Newly exposed blockers
 
 - account: passes `mo check` (including its anchors) with 0 errors.
 - find: passes `mo check`, `mo test` and `mo run` with 0 errors.
+- wc: passes `mo check`, `mo test` and `mo run` with 0 errors.
 - expenses: `Map.update` (`57:17`) and `List.sort_by_desc` (`91:8`) clear; only
   `Option.or_fail` (`41:37`) and `List.max` (`70:56`) remain.
 - inventory: `List.sort_by_desc` (`30:9`) and `Map.update` (`42:21`) clear; only
@@ -69,8 +66,6 @@ lowered directly to a Core `join` loop over `List.%uncons` and `Int.add`, and
 - todo: `.map(...)` at `85:9` clears; only `Option.or_fail` (`71:45`, `110:39`,
   `120:42`) remains.
 - notes-tool: `E1150` on `Text.trim` (`45:22`).
-- wc: `E0055` on `List.count` (`20:29`) clears; `mo_check` passes and lowering
-  reaches `Text.words` (`21:16`).
 - kv: `Option.or_fail` (`79:30`).
 - rate-limit: Time arithmetic around `now - bucket.updated` (`66:14`).
 
