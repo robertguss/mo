@@ -756,6 +756,7 @@ def check_modules(driver, vm, root, world):
 for fixture, expected in {
     "file-error-text": 0,
     "list-map": 0,
+    "map-update-sort-desc": 0,
     "map-literals": 0,
     "map-evaluation-order": 0,
     "map-captures": 0,

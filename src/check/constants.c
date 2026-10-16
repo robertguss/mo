@@ -192,7 +192,9 @@ static MO_MUST_USE uint32_t function_index(const struct dependencies *p,
 }
 
 static MO_MUST_USE bool higher_order_native(const char *native) {
-    return native != NULL && strcmp(native, "List.map") == 0;
+    return native != NULL &&
+           (strcmp(native, "List.map") == 0 || strcmp(native, "List.sort_by_desc") == 0 ||
+            strcmp(native, "Map.update") == 0);
 }
 
 /* Resolve only a known function value, never a function call's returned value.
@@ -353,7 +355,10 @@ static MO_MUST_USE bool body_edges(struct dependencies *p, uint32_t from,
             }
         }
         for (uint32_t i = 0; i < row->ability_count; i++)
-            if (row->abilities[i].operand != UINT32_MAX &&
+            if ((row->abilities[i].operand != UINT32_MAX ||
+                 (higher_order_native(row->native) && row->operand_count != 0 &&
+                  (row->abilities[i].implementation->ability == MO_SOURCE_TEXT ||
+                   row->abilities[i].implementation->ability == MO_SOURCE_ORDER))) &&
                 !proof_edges(p, from, row->abilities[i].implementation, span, 0))
                 return false;
         for (uint32_t i = 0; i < row->operand_count; i++) {

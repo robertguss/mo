@@ -860,6 +860,19 @@ static const struct mo_ability_implementation *ability(struct body *b,
     lower_refuse(b->p, MO_CODE_LOWER_UNFINISHED, "this operation has no selected ability proof");
 }
 
+static const struct mo_ability_implementation *
+parameter_ability(struct body *b, const struct mo_checked_expression *r, const char *parameter,
+                  enum mo_source_ability wanted) {
+    for (uint32_t i = 0; i < r->ability_count; i++) {
+        lower_work(b->p, 1);
+        const struct mo_checked_ability_use *use = &r->abilities[i];
+        if (use->parameter != NULL && strcmp(use->parameter->name, parameter) == 0 &&
+            use->implementation->ability == wanted)
+            return use->implementation;
+    }
+    lower_refuse(b->p, MO_CODE_LOWER_UNFINISHED, "this operation has no selected ability proof");
+}
+
 static bool direct_function(struct body *b, const struct mo_checked_expression *r) {
     if (r->symbol == NULL || r->symbol->declaration->kind != MO_S_FN)
         return false;
@@ -1020,6 +1033,286 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
             mapped->as.let_.body = again;
             loop_join->as.join.body = select;
             return loop_join;
+        }
+        if (strcmp(r->native, "List.sort_by_desc") == 0) {
+            MO_ASSERT(args.count == 2);
+            mo_core_ty list_ty = result->tag == MO_CORE_TY_FN ? result->as.fn.ret : result;
+            MO_ASSERT(list_ty->tag == MO_CORE_TY_LIST);
+            mo_core_ty elem_ty = list_ty->as.list;
+            static const struct mo_source_type int_source = {
+                .kind = MO_SOURCE_NAMED, .name = "Int", .module = UINT32_MAX};
+            static const struct mo_source_type ordering_source = {
+                .kind = MO_SOURCE_NAMED, .name = "Ordering", .module = UINT32_MAX};
+            mo_core_ty int_ty = type(b, &int_source);
+            mo_core_ty order_ty = type(b, &ordering_source);
+            const struct mo_ability_implementation *order_proof =
+                parameter_ability(b, r, "K", MO_SOURCE_ORDER);
+            mo_core_expr total =
+                let(b, lower_fresh(p),
+                    unary(b,
+                          (struct mo_core_prim){
+                              .tag = MO_CORE_PRIM_LIST,
+                              .as.list = {.t = elem_ty, .op.tag = MO_CORE_LIST_OP_SIZE}},
+                          args.items[0]));
+            mo_core_expr pass_join = lower_expr(p, MO_CORE_EXPR_JOIN);
+            pass_join->as.join.name = lower_fresh(p);
+            pass_join->as.join.params.count = 2;
+            pass_join->as.join.params.items = LOWER_NEW(p, struct mo_core_param, 2);
+            mo_core_string curr = lower_fresh(p), width = lower_fresh(p);
+            pass_join->as.join.params.items[0] = (struct mo_core_param){curr, list_ty};
+            pass_join->as.join.params.items[1] = (struct mo_core_param){width, int_ty};
+            mo_core_expr pass_start = lower_expr(p, MO_CORE_EXPR_JUMP);
+            pass_start->as.jump.name = pass_join->as.join.name;
+            pass_start->as.jump.args = arguments(b, 2);
+            pass_start->as.jump.args.items[0] = args.items[0];
+            pass_start->as.jump.args.items[1] = lower_int(p, 1);
+            pass_join->as.join.rest = pass_start;
+            total->as.let_.body = pass_join;
+
+            mo_core_expr pass_if = lower_expr(p, MO_CORE_EXPR_IF);
+            mo_core_expr_list cmp_args = arguments(b, 2);
+            cmp_args.items[0] = lower_var(p, width);
+            cmp_args.items[1] = lower_var(p, total->as.let_.name);
+            pass_if->as.if_.cond =
+                lower_prim(p,
+                           (struct mo_core_prim){.tag = MO_CORE_PRIM_CMP,
+                                                 .as.cmp = {MO_CORE_BASE_INT, MO_CORE_CMP_OP_GE}},
+                           cmp_args);
+            pass_if->as.if_.then_ = lower_var(p, curr);
+            pass_join->as.join.body = pass_if;
+
+            mo_core_expr sweep_join = lower_expr(p, MO_CORE_EXPR_JOIN);
+            sweep_join->as.join.name = lower_fresh(p);
+            sweep_join->as.join.params.count = 2;
+            sweep_join->as.join.params.items = LOWER_NEW(p, struct mo_core_param, 2);
+            mo_core_string rem = lower_fresh(p), out = lower_fresh(p);
+            sweep_join->as.join.params.items[0] = (struct mo_core_param){rem, list_ty};
+            sweep_join->as.join.params.items[1] = (struct mo_core_param){out, list_ty};
+            mo_core_expr sweep_start = lower_expr(p, MO_CORE_EXPR_JUMP);
+            sweep_start->as.jump.name = sweep_join->as.join.name;
+            sweep_start->as.jump.args = arguments(b, 2);
+            sweep_start->as.jump.args.items[0] = lower_var(p, curr);
+            struct mo_core_prim empty = {.tag = MO_CORE_PRIM_LIST, .as.list.t = elem_ty};
+            empty.as.list.op.tag = MO_CORE_LIST_OP_LIT;
+            empty.as.list.op.as.lit.digits = lower_text(p, "0");
+            sweep_start->as.jump.args.items[1] = lower_prim(p, empty, arguments(b, 0));
+            sweep_join->as.join.rest = sweep_start;
+            pass_if->as.if_.else_ = sweep_join;
+
+            mo_core_expr sweep_if = lower_expr(p, MO_CORE_EXPR_IF);
+            sweep_if->as.if_.cond =
+                unary(b,
+                      (struct mo_core_prim){
+                          .tag = MO_CORE_PRIM_LIST,
+                          .as.list = {.t = elem_ty, .op.tag = MO_CORE_LIST_OP_IS_EMPTY}},
+                      lower_var(p, rem));
+            mo_core_expr next_pass = lower_expr(p, MO_CORE_EXPR_JUMP);
+            next_pass->as.jump.name = pass_join->as.join.name;
+            next_pass->as.jump.args = arguments(b, 2);
+            next_pass->as.jump.args.items[0] = lower_var(p, out);
+            mo_core_expr_list dbl_args = arguments(b, 2);
+            dbl_args.items[0] = lower_var(p, width);
+            dbl_args.items[1] = lower_var(p, width);
+            next_pass->as.jump.args.items[1] = lower_prim(
+                p, (struct mo_core_prim){.tag = MO_CORE_PRIM_INT, .as.int_ = MO_CORE_INT_OP_ADD},
+                dbl_args);
+            sweep_if->as.if_.then_ = next_pass;
+            sweep_join->as.join.body = sweep_if;
+
+            struct mo_core_prim take_prim = {
+                .tag = MO_CORE_PRIM_LIST,
+                .as.list = {.t = elem_ty, .op.tag = MO_CORE_LIST_OP_TAKE}};
+            struct mo_core_prim drop_prim = {
+                .tag = MO_CORE_PRIM_LIST,
+                .as.list = {.t = elem_ty, .op.tag = MO_CORE_LIST_OP_DROP}};
+            struct mo_core_prim concat_prim = {
+                .tag = MO_CORE_PRIM_LIST,
+                .as.list = {.t = elem_ty, .op.tag = MO_CORE_LIST_OP_CONCAT}};
+            struct mo_core_prim append_prim = {
+                .tag = MO_CORE_PRIM_LIST,
+                .as.list = {.t = elem_ty, .op.tag = MO_CORE_LIST_OP_APPEND}};
+            struct mo_core_prim uncons_prim = {
+                .tag = MO_CORE_PRIM_LIST,
+                .as.list = {.t = elem_ty, .op.tag = MO_CORE_LIST_OP_UNCONS}};
+
+            mo_core_expr_list slice_args = arguments(b, 2);
+            slice_args.items[0] = lower_var(p, rem);
+            slice_args.items[1] = lower_var(p, width);
+            mo_core_expr left = let(b, lower_fresh(p), lower_prim(p, take_prim, slice_args));
+            slice_args = arguments(b, 2);
+            slice_args.items[0] = lower_var(p, rem);
+            slice_args.items[1] = lower_var(p, width);
+            mo_core_expr rest1 = let(b, lower_fresh(p), lower_prim(p, drop_prim, slice_args));
+            slice_args = arguments(b, 2);
+            slice_args.items[0] = lower_var(p, rest1->as.let_.name);
+            slice_args.items[1] = lower_var(p, width);
+            mo_core_expr right = let(b, lower_fresh(p), lower_prim(p, take_prim, slice_args));
+            slice_args = arguments(b, 2);
+            slice_args.items[0] = lower_var(p, rest1->as.let_.name);
+            slice_args.items[1] = lower_var(p, width);
+            mo_core_expr next_rem = let(b, lower_fresh(p), lower_prim(p, drop_prim, slice_args));
+            left->as.let_.body = rest1;
+            rest1->as.let_.body = right;
+            right->as.let_.body = next_rem;
+            sweep_if->as.if_.else_ = left;
+
+            mo_core_expr merge_join = lower_expr(p, MO_CORE_EXPR_JOIN);
+            merge_join->as.join.name = lower_fresh(p);
+            merge_join->as.join.params.count = 3;
+            merge_join->as.join.params.items = LOWER_NEW(p, struct mo_core_param, 3);
+            mo_core_string l_var = lower_fresh(p), r_var = lower_fresh(p), acc_var = lower_fresh(p);
+            merge_join->as.join.params.items[0] = (struct mo_core_param){l_var, list_ty};
+            merge_join->as.join.params.items[1] = (struct mo_core_param){r_var, list_ty};
+            merge_join->as.join.params.items[2] = (struct mo_core_param){acc_var, list_ty};
+            mo_core_expr merge_start = lower_expr(p, MO_CORE_EXPR_JUMP);
+            merge_start->as.jump.name = merge_join->as.join.name;
+            merge_start->as.jump.args = arguments(b, 3);
+            merge_start->as.jump.args.items[0] = lower_var(p, left->as.let_.name);
+            merge_start->as.jump.args.items[1] = lower_var(p, right->as.let_.name);
+            merge_start->as.jump.args.items[2] = lower_var(p, out);
+            merge_join->as.join.rest = merge_start;
+            next_rem->as.let_.body = merge_join;
+
+            mo_core_expr l_case = lower_expr(p, MO_CORE_EXPR_CASE);
+            l_case->as.case_.expr = unary(b, uncons_prim, lower_var(p, l_var));
+            l_case->as.case_.arms.count = 2;
+            l_case->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+            mo_core_expr l_done = lower_expr(p, MO_CORE_EXPR_JUMP);
+            l_done->as.jump.name = sweep_join->as.join.name;
+            l_done->as.jump.args = arguments(b, 2);
+            l_done->as.jump.args.items[0] = lower_var(p, next_rem->as.let_.name);
+            mo_core_expr_list concat_r = arguments(b, 2);
+            concat_r.items[0] = lower_var(p, acc_var);
+            concat_r.items[1] = lower_var(p, r_var);
+            l_done->as.jump.args.items[1] = lower_prim(p, concat_prim, concat_r);
+            l_case->as.case_.arms.items[0] =
+                (struct mo_core_arm){.ctor = lower_text(p, "None"), .body = l_done};
+            struct mo_core_arm *l_some = &l_case->as.case_.arms.items[1];
+            l_some->ctor = lower_text(p, "Some");
+            l_some->names.count = 1;
+            l_some->names.items = LOWER_NEW(p, mo_core_string, 1);
+            mo_core_string l_pair = lower_fresh(p);
+            l_some->names.items[0] = l_pair;
+            merge_join->as.join.body = l_case;
+
+            mo_core_expr r_case = lower_expr(p, MO_CORE_EXPR_CASE);
+            r_case->as.case_.expr = unary(b, uncons_prim, lower_var(p, r_var));
+            r_case->as.case_.arms.count = 2;
+            r_case->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+            mo_core_expr r_done = lower_expr(p, MO_CORE_EXPR_JUMP);
+            r_done->as.jump.name = sweep_join->as.join.name;
+            r_done->as.jump.args = arguments(b, 2);
+            r_done->as.jump.args.items[0] = lower_var(p, next_rem->as.let_.name);
+            mo_core_expr_list concat_l = arguments(b, 2);
+            concat_l.items[0] = lower_var(p, acc_var);
+            concat_l.items[1] = lower_var(p, l_var);
+            r_done->as.jump.args.items[1] = lower_prim(p, concat_prim, concat_l);
+            r_case->as.case_.arms.items[0] =
+                (struct mo_core_arm){.ctor = lower_text(p, "None"), .body = r_done};
+            struct mo_core_arm *r_some = &r_case->as.case_.arms.items[1];
+            r_some->ctor = lower_text(p, "Some");
+            r_some->names.count = 1;
+            r_some->names.items = LOWER_NEW(p, mo_core_string, 1);
+            mo_core_string r_pair = lower_fresh(p);
+            r_some->names.items[0] = r_pair;
+            l_some->body = r_case;
+
+            mo_core_expr l_head = let(b, lower_fresh(p), projection(b, lower_var(p, l_pair), 0));
+            mo_core_expr r_head = let(b, lower_fresh(p), projection(b, lower_var(p, r_pair), 0));
+            mo_core_expr l_app = lower_expr(p, MO_CORE_EXPR_APP);
+            l_app->as.app.f = args.items[1];
+            l_app->as.app.args = arguments(b, 1);
+            l_app->as.app.args.items[0] = lower_var(p, l_head->as.let_.name);
+            mo_core_expr l_key = let(b, lower_fresh(p), l_app);
+            mo_core_expr r_app = lower_expr(p, MO_CORE_EXPR_APP);
+            r_app->as.app.f = args.items[1];
+            r_app->as.app.args = arguments(b, 1);
+            r_app->as.app.args.items[0] = lower_var(p, r_head->as.let_.name);
+            mo_core_expr r_key = let(b, lower_fresh(p), r_app);
+            l_head->as.let_.body = r_head;
+            r_head->as.let_.body = l_key;
+            l_key->as.let_.body = r_key;
+            r_some->body = l_head;
+
+            mo_core_expr pick = lower_expr(p, MO_CORE_EXPR_IF);
+            mo_core_expr_list ord_args = arguments(b, 2);
+            ord_args.items[0] = lower_compare(
+                p, order_proof, &b->instance->substitution, b->instance->owner, b->instance->depth,
+                lower_var(p, l_key->as.let_.name), lower_var(p, r_key->as.let_.name));
+            ord_args.items[1] = lower_expr(p, MO_CORE_EXPR_CON);
+            ord_args.items[1]->as.con.ty = order_ty;
+            ord_args.items[1]->as.con.ctor = lower_text(p, "Less");
+            pick->as.if_.cond = lower_prim(
+                p, (struct mo_core_prim){.tag = MO_CORE_PRIM_EQ, .as.eq = order_ty}, ord_args);
+            mo_core_expr take_r = lower_expr(p, MO_CORE_EXPR_JUMP);
+            take_r->as.jump.name = merge_join->as.join.name;
+            take_r->as.jump.args = arguments(b, 3);
+            take_r->as.jump.args.items[0] = lower_var(p, l_var);
+            take_r->as.jump.args.items[1] = projection(b, lower_var(p, r_pair), 1);
+            mo_core_expr_list append_r = arguments(b, 2);
+            append_r.items[0] = lower_var(p, acc_var);
+            append_r.items[1] = lower_var(p, r_head->as.let_.name);
+            take_r->as.jump.args.items[2] = lower_prim(p, append_prim, append_r);
+            pick->as.if_.then_ = take_r;
+
+            mo_core_expr take_l = lower_expr(p, MO_CORE_EXPR_JUMP);
+            take_l->as.jump.name = merge_join->as.join.name;
+            take_l->as.jump.args = arguments(b, 3);
+            take_l->as.jump.args.items[0] = projection(b, lower_var(p, l_pair), 1);
+            take_l->as.jump.args.items[1] = lower_var(p, r_var);
+            mo_core_expr_list append_l = arguments(b, 2);
+            append_l.items[0] = lower_var(p, acc_var);
+            append_l.items[1] = lower_var(p, l_head->as.let_.name);
+            take_l->as.jump.args.items[2] = lower_prim(p, append_prim, append_l);
+            pick->as.if_.else_ = take_l;
+            r_key->as.let_.body = pick;
+            return total;
+        }
+        if (strcmp(r->native, "Map.update") == 0) {
+            MO_ASSERT(args.count == 4);
+            mo_core_ty map_ty = result->tag == MO_CORE_TY_FN ? result->as.fn.ret : result;
+            MO_ASSERT(map_ty->tag == MO_CORE_TY_MAP);
+            mo_core_expr_list get_args = arguments(b, 2);
+            get_args.items[0] = args.items[0];
+            get_args.items[1] = args.items[1];
+            mo_core_expr select = lower_expr(p, MO_CORE_EXPR_CASE);
+            select->as.case_.expr =
+                lower_prim(p,
+                           (struct mo_core_prim){.tag = MO_CORE_PRIM_MAP,
+                                                 .as.map = {.k = map_ty->as.map.k,
+                                                            .v = map_ty->as.map.v,
+                                                            .op.tag = MO_CORE_MAP_OP_GET}},
+                           get_args);
+            select->as.case_.arms.count = 2;
+            select->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+            select->as.case_.arms.items[0] =
+                (struct mo_core_arm){.ctor = lower_text(p, "None"), .body = args.items[2]};
+            struct mo_core_arm *some = &select->as.case_.arms.items[1];
+            some->ctor = lower_text(p, "Some");
+            some->names.count = 1;
+            some->names.items = LOWER_NEW(p, mo_core_string, 1);
+            mo_core_string found = lower_fresh(p);
+            some->names.items[0] = found;
+            some->body = lower_var(p, found);
+            mo_core_expr current = let(b, lower_fresh(p), select);
+            mo_core_expr app = lower_expr(p, MO_CORE_EXPR_APP);
+            app->as.app.f = args.items[3];
+            app->as.app.args = arguments(b, 1);
+            app->as.app.args.items[0] = lower_var(p, current->as.let_.name);
+            mo_core_expr updated = let(b, lower_fresh(p), app);
+            current->as.let_.body = updated;
+            mo_core_expr_list set_args = arguments(b, 3);
+            set_args.items[0] = args.items[0];
+            set_args.items[1] = args.items[1];
+            set_args.items[2] = lower_var(p, updated->as.let_.name);
+            updated->as.let_.body =
+                lower_prim(p,
+                           (struct mo_core_prim){.tag = MO_CORE_PRIM_MAP,
+                                                 .as.map = {.k = map_ty->as.map.k,
+                                                            .v = map_ty->as.map.v,
+                                                            .op.tag = MO_CORE_MAP_OP_SET}},
+                           set_args);
+            return current;
         }
         static const struct {
             const char *name;
