@@ -1648,8 +1648,9 @@ program's heap will bound arguments converted to Mo values. `mo_cli_file`
 indexes borrowed file lists across an optional `--` separator.
 
 **Current integration boundary.** `check` calls `mo_load_program` and whole
-`mo_check`, never reconstructing a certificate from local inference. The entry
-module must contain `main`, including for `check`; absence reports E0079.
+`mo_check`, never reconstructing a certificate from local inference. Per D250,
+a module without `main` is a library module (`entry.function == UINT32_MAX`):
+`check` and `test` accept it, while `run` reports E0079.
 Forms not yet certified by the producer return E1103 rather than a false
 success. Diagnostic collection, including independent bodies and count-cap
 drops, belongs to the checker; tools do not rerun partial checking behind it.

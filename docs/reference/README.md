@@ -1151,7 +1151,8 @@ first, and its other holders keep the old value.
 
 ### 13.4 The `mo` command
 
-Each command is given the file of the program's main module. `mo check FILE`
+Each command is given the file of the program's main module; `mo check` and `mo
+test` also accept a library module. `mo check FILE`
 reports the program's errors, `mo run FILE [ARGS...]` runs it with the
 arguments after the file's name, and `mo test FILE` checks its examples,
 promises and tests. `mo format` and `mo fix` rewrite the files they are given.

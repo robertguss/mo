@@ -462,49 +462,49 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
     mo_diags_sort(diags);
     if (mo_diags_any(diags))
         return NULL;
-    if (main == UINT32_MAX) {
-        bool kept =
-            report(diags, MO_CODE_MAIN_CONTRACT, span, "the entry module has no main function",
-                   "main declares the program's entry (reference 11.2).");
-        (void)kept;
-        return NULL;
-    }
-    const struct mo_checked_function *entry = &functions[main];
-    struct mo_span entry_span = entry->signature->function->declaration->children[0]->span;
-    unsigned capabilities = 0;
-    static const char *const names[] = {"Args",      "Env",   "Console", "Files",
-                                        "ReadFiles", "Clock", "Random"};
-    for (uint32_t i = 0; i < entry->parameter_count; i++) {
-        unsigned capability = 0;
-        for (unsigned j = 0; j < sizeof(names) / sizeof(names[0]); j++)
-            if (native_type(entry->parameters[i]->type, names[j]))
-                capability = 1u << j;
-        if (capability == 0 || (capabilities & capability) != 0) {
+    struct mo_checked_entry checked_entry = {.function = UINT32_MAX};
+    if (main != UINT32_MAX) {
+        const struct mo_checked_function *entry = &functions[main];
+        struct mo_span entry_span = entry->signature->function->declaration->children[0]->span;
+        unsigned capabilities = 0;
+        static const char *const names[] = {"Args",      "Env",   "Console", "Files",
+                                            "ReadFiles", "Clock", "Random"};
+        for (uint32_t i = 0; i < entry->parameter_count; i++) {
+            unsigned capability = 0;
+            for (unsigned j = 0; j < sizeof(names) / sizeof(names[0]); j++)
+                if (native_type(entry->parameters[i]->type, names[j]))
+                    capability = 1u << j;
+            if (capability == 0 || (capabilities & capability) != 0) {
+                bool kept = report(diags, MO_CODE_MAIN_CONTRACT, entry_span,
+                                   "main has an invalid signature",
+                                   "main lists capabilities, at most one of each type "
+                                   "(reference 11.2).");
+                (void)kept;
+                return NULL;
+            }
+            capabilities |= capability;
+        }
+        const struct mo_source_type *type = entry->signature->type;
+        const struct mo_source_type *result = type->arguments[type->count - 1];
+        bool unit = native_type(result, "Unit"), status = native_type(result, "Int");
+        bool wrapped = native_type(result, "Result") && native_type(result->arguments[0], "Unit");
+        if (!unit && !status && !wrapped) {
             bool kept =
                 report(diags, MO_CODE_MAIN_CONTRACT, entry_span, "main has an invalid signature",
-                       "main lists capabilities, at most one of each type "
-                       "(reference 11.2).");
+                       "main returns nothing, an Int, or Result(Unit, E) (reference 11.2).");
             (void)kept;
             return NULL;
         }
-        capabilities |= capability;
-    }
-    const struct mo_source_type *type = entry->signature->type;
-    const struct mo_source_type *result = type->arguments[type->count - 1];
-    bool unit = native_type(result, "Unit"), status = native_type(result, "Int");
-    bool wrapped = native_type(result, "Result") && native_type(result->arguments[0], "Unit");
-    if (!unit && !status && !wrapped) {
-        bool kept =
-            report(diags, MO_CODE_MAIN_CONTRACT, entry_span, "main has an invalid signature",
-                   "main returns nothing, an Int, or Result(Unit, E) (reference 11.2).");
-        (void)kept;
-        return NULL;
-    }
-    if (!unit && !status) {
-        bool kept = report(diags, MO_CODE_CHECK_UNFINISHED, entry_span,
-                           "this main result convention is not implemented", NULL);
-        (void)kept;
-        return NULL;
+        if (!unit && !status) {
+            bool kept = report(diags, MO_CODE_CHECK_UNFINISHED, entry_span,
+                               "this main result convention is not implemented", NULL);
+            (void)kept;
+            return NULL;
+        }
+        checked_entry = (struct mo_checked_entry){.function = main,
+                                                  .result = unit ? MO_ENTRY_UNIT : MO_ENTRY_STATUS,
+                                                  .capability_count = entry->parameter_count,
+                                                  .capabilities = entry->parameters};
     }
     *program = (struct mo_program){.set = set,
                                    .interfaces = interfaces,
@@ -513,10 +513,7 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
                                    .functions = functions,
                                    .constant_count = constants.count,
                                    .constants = constants.items,
-                                   .entry = {.function = main,
-                                             .result = unit ? MO_ENTRY_UNIT : MO_ENTRY_STATUS,
-                                             .capability_count = functions[main].parameter_count,
-                                             .capabilities = functions[main].parameters}};
+                                   .entry = checked_entry};
     struct mo_checked_spec *specs =
         allocate(arena, diags, span, spec_count, sizeof(*specs), _Alignof(struct mo_checked_spec));
     if (specs == NULL || !check_specs(arena, program, &constants, specs, spec_count, diags))
