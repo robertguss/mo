@@ -1,0 +1,75 @@
+# Runs ci/check.sh, every check the project has, on each pull request and on
+# main. The repository is public, so GitHub's standard hosted runners cost no
+# Actions minutes here. The checks run as parallel jobs, one per group of
+# ci/check.sh; together the groups are every check.
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to a pull request replaces its running check.
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  group:
+    name: ${{ matrix.group }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [gcc, clang, sanitize, fuzz, drivers, static]
+    steps:
+      - uses: actions/checkout@v4
+
+      # .agents/setup installs elan into /opt/elan; make it the runner's own so
+      # the cache can restore into it.
+      - name: Prepare /opt/elan
+        run: sudo mkdir -p /opt/elan && sudo chown "$(id -u):$(id -g)" /opt/elan
+
+      - name: Cache the Lean toolchain
+        uses: actions/cache@v4
+        with:
+          path: /opt/elan
+          key: elan-${{ runner.os }}-${{ hashFiles('formal/lean-toolchain') }}
+
+      - name: Cache the Lean build
+        if: matrix.group == 'drivers'
+        uses: actions/cache@v4
+        with:
+          path: formal/.lake
+          key: lake-${{ runner.os }}-${{ hashFiles('formal/lean-toolchain') }}-${{ hashFiles('formal/**/*.lean', 'formal/lakefile.toml') }}
+          restore-keys: lake-${{ runner.os }}-${{ hashFiles('formal/lean-toolchain') }}-
+
+      - name: Install the toolchain
+        run: bash .agents/setup
+
+      # make format-check expects clang-format 14 (ci/orb/README.md); the
+      # runner's own clang-format is newer and can format differently.
+      - name: Install clang-format 14
+        run: |
+          pipx install clang-format==14.0.6
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # -j runs the builds and the unit tests side by side; -Otarget keeps each
+      # test's output together.
+      - name: Run the ${{ matrix.group }} checks
+        run: MAKEFLAGS="-j$(nproc) -Otarget" CI=1 bash ci/check.sh ${{ matrix.group }}
+
+  # One status to require in branch protection: it passes only when every
+  # group passed.
+  check:
+    if: always()
+    needs: group
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Every group passed
+        run: test "${{ needs.group.result }}" = success

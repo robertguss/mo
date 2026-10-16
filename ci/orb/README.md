@@ -3,7 +3,8 @@
 CI for robertguss/mo runs `ci/check.sh`. Robert removed the requirement to use
 the dedicated Amp CI orb: an equivalent verified Linux environment, including
 a Docker container on the Mac, is also supported. The orb remains an optional
-runner (decisions D208 and D214); there is no GitHub Actions test workflow.
+runner (decisions D208 and D214). GitHub Actions also runs `ci/check.sh` on
+every pull request, its groups as parallel jobs (`.github/workflows/check.yml`).
 The full verification requirements are unchanged.
 
 ## Asking for an optional CI-orb run
