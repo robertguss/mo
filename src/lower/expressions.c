@@ -1017,7 +1017,9 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
     if (r->native != NULL && strcmp(r->native, "None") != 0 && strcmp(r->native, "Some") != 0 &&
         strcmp(r->native, "Ok") != 0 && strcmp(r->native, "Error") != 0 &&
         strcmp(r->native, "Less") != 0 && strcmp(r->native, "Equal") != 0 &&
-        strcmp(r->native, "Greater") != 0)
+        strcmp(r->native, "Greater") != 0 && strcmp(r->native, "NotFound") != 0 &&
+        strcmp(r->native, "NotAllowed") != 0 && strcmp(r->native, "NotText") != 0 &&
+        strcmp(r->native, "Failed") != 0)
         lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "this native call is not lowered yet");
     if (kind(r) == MO_S_TUPLE || kind(r) == MO_S_MAP_ENTRY) {
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_TUPLE);

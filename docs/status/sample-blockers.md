@@ -1,33 +1,39 @@
-# Sample blockers after LW5
+# Sample blockers after C7
 
 Regenerated from actual `mo check --json examples/<sample>.mo` output on
-`bfcdedcd` (current main including I1/PR81) and the LW5 implementation.
+`bfcdedcd` (I1/PR81), `75e6db61` (LW5/PR82) and the C7 implementation.
 Every totals record reports `dropped: 0`. Examples are unchanged.
 
-Map literals are accepted in all six affected samples. Checking reaches later
-independent functions and exposes existing library gaps. Four sample counts
-increase, for a total of 14→24. Robert approved accepting these documented newly
-exposed errors as an amendment to LW5’s original no-increase criterion, together
-with the bounded duplicate-key scope. Diagnostics are retained; tasks C4/C5 remain
-out of scope. See [lw5-verification.md](lw5-verification.md) for the approval record.
+`FileError`'s text form (`PATH: no such file`, `PATH: not allowed`,
+`PATH: not text`, `PATH: REASON`) is accepted through check, lowering and run.
+All four `E1103 FileError's library text function is unavailable` diagnostics
+(`expenses.mo:92:34`, `find.mo:104:32`, `todo.mo:35:26`, `wc.mo:52:30`) are
+eliminated:
+- `expenses.mo` drops from 4 to 3 errors.
+- `wc.mo` drops from 2 to 1 error.
+- `find.mo` passes `mo_check` with 0 checker diagnostics and reaches `mo_lower`,
+  where `console.error` at `92:7` reports `E1150` (1 error total).
+- `todo.mo` clears the `E1103` halt in its first function (`to_text` at `35:26`),
+  allowing `check_program` to check `parse_items`, `apply` and `main` and expose
+  their existing `Option.or_fail` and `List.map` `E0050` diagnostics (1→4).
 
 ## Counts
 
-| Sample | Main / I1 | LW5 | Change |
-| --- | ---: | ---: | ---: |
-| account.mo | 1 | 1 | +0 |
-| expenses.mo | 2 | 4 | +2 |
-| find.mo | 1 | 1 | +0 |
-| greet.mo | 0 | 0 | +0 |
-| inventory.mo | 2 | 5 | +3 |
-| job-queue.mo | 1 | 3 | +2 |
-| json-query.mo | 1 | 4 | +3 |
-| kv.mo | 1 | 1 | +0 |
-| notes-tool.mo | 1 | 1 | +0 |
-| rate-limit.mo | 1 | 1 | +0 |
-| todo.mo | 1 | 1 | +0 |
-| wc.mo | 2 | 2 | +0 |
-| **Total** | **14** | **24** | **+10** |
+| Sample | Main / I1 | LW5 | C7 | Change (LW5→C7) |
+| --- | ---: | ---: | ---: | ---: |
+| account.mo | 1 | 1 | 1 | +0 |
+| expenses.mo | 2 | 4 | 3 | -1 |
+| find.mo | 1 | 1 | 1 | +0 |
+| greet.mo | 0 | 0 | 0 | +0 |
+| inventory.mo | 2 | 5 | 5 | +0 |
+| job-queue.mo | 1 | 3 | 3 | +0 |
+| json-query.mo | 1 | 4 | 4 | +0 |
+| kv.mo | 1 | 1 | 1 | +0 |
+| notes-tool.mo | 1 | 1 | 1 | +0 |
+| rate-limit.mo | 1 | 1 | 1 | +0 |
+| todo.mo | 1 | 1 | 4 | +3 |
+| wc.mo | 2 | 2 | 1 | -1 |
+| **Total** | **14** | **24** | **25** | **+1** |
 
 ## Current diagnostics
 
@@ -37,8 +43,7 @@ out of scope. See [lw5-verification.md](lw5-verification.md) for the approval re
 | expenses.mo | 38:24 | E0050 | no visible function has this dot-call name | `case line.split(",").map(fn(field) field.trim end)` |
 | expenses.mo | 57:17 | E0050 | no visible function has this dot-call name | `sums = sums.update(expense.category, 0, fn(sum) sum + expense.amount end)` |
 | expenses.mo | 68:16 | E0050 | no visible function has this dot-call name | `names = rows.map(fn(row) row.0 end)` |
-| expenses.mo | 92:34 | E1103 | FileError's library text function is unavailable | `console.error("expenses: #{failure}")` |
-| find.mo | 104:32 | E1103 | FileError's library text function is unavailable | `console.error("find: #{failure}")` |
+| find.mo | 92:7 | E1150 | this native call is not lowered yet | `console.error("find: #{problem}")` |
 | inventory.mo | 30:9 | E0050 | no visible function has this dot-call name | `items.sort_by_desc(key).take(n)` |
 | inventory.mo | 42:21 | E0050 | no visible function has this dot-call name | `counts = counts.update(key(item), 0, fn(n) n + 1 end)` |
 | inventory.mo | 72:22 | E0050 | no visible function has this dot-call name | `laid_out = columns.map(fn(column) pad_column(rows, column) end)` |
@@ -54,40 +59,42 @@ out of scope. See [lw5-verification.md](lw5-verification.md) for the approval re
 | kv.mo | 79:30 | E0050 | no visible function has this dot-call name | `n = try seconds.to_int.or_fail(NotAnInteger(text: seconds))` |
 | notes-tool.mo | 1:1 | E0079 | the entry module has no main function | `## The handler of an MCP tool that searches Markdown notes. It is handed one` |
 | rate-limit.mo | 66:14 | E1103 | this body rule is not implemented by the staged checker | `elapsed = (now - bucket.updated).in_seconds.max(0)` |
-| todo.mo | 35:26 | E1103 | FileError's library text function is unavailable | `Storage(failure): "#{failure}"` |
+| todo.mo | 71:45 | E0050 | no visible function has this dot-call name | `rest = try line.drop_prefix("[ ] ").or_fail(BadLine(number: index + 1))` |
+| todo.mo | 85:9 | E0050 | no visible function has this dot-call name | `items.map(fn(item) "#{box(item)} #{item.text}\n" end).join("")` |
+| todo.mo | 110:39 | E0050 | no visible function has this dot-call name | `var item = try items.get(n - 1).or_fail(NoSuchItem(number: n))` |
+| todo.mo | 120:42 | E0050 | no visible function has this dot-call name | `command = try parse_command(args.list).or_fail(Usage)` |
 | wc.mo | 20:29 | E0055 | a call's arguments don't match its parameters | `lines: text.chars.count(fn(c) c == '\n' end),` |
-| wc.mo | 52:30 | E1103 | FileError's library text function is unavailable | `console.error("wc: #{failure}")` |
 
 ## Newly exposed blockers
 
-- expenses: `Map.update` (57:17), `List.map` (68:16), and unavailable FileError
-  library text (92:34); its earlier `List.map` at 38:24 remains.
-- inventory: `Map.update` (42:21), `List.map` (72:22, 81:38, 114:52);
-  `sort_by_desc` (30:9) remains.
+- find: passes `mo_check` completely; `mo_lower` reports `E1150` on
+  `Console.error` at `92:7`.
+- todo: clearing `E1103` in `to_text` (`35:26`) allows `check_program` to
+  continue into `parse_items`, `apply` and `main`, exposing `Option.or_fail`
+  (`71:45`, `110:39`, `120:42`) and `List.map` (`85:9`).
+- expenses: `Map.update` (57:17), `List.map` (38:24, 68:16); its `FileError`
+  text blocker at `92:34` is cleared.
+- wc: `List.count` with a predicate (20:29); its `FileError` text blocker at
+  `52:30` is cleared.
+- inventory: `Map.update` (42:21), `List.map` (72:22, 81:38, 114:52),
+  `sort_by_desc` (30:9).
 - job-queue: `Option.or_fail` (70:39, 135:32), `List.map` (157:20).
 - json-query: `Option.or_fail` (78:25, 137:31), `List.map` (211:21, 228:19).
 - kv: `Option.or_fail` (79:30).
-- rate-limit: Time arithmetic around `now - bucket.updated` (66:14) is the next staged
-  body form after `{}` is cleared.
+- rate-limit: Time arithmetic around `now - bucket.updated` (66:14).
 
 The existing `infer_function` sets `halt` for implementation codes (E1000 and
-above), including the map blocker E1103. Its replacement library errors E0050
-allow `check_program` to continue through independent bodies. The increase comes
-from that existing halt policy after clearing the first map blocker. It is not evidence that those library
-operations are implemented. No diagnostic is hidden to keep the former totals.
+above). Its replacement library errors E0050 allow `check_program` to continue
+through independent bodies. No diagnostic is hidden to keep the former totals.
 
 ## Regeneration and evidence
 
-Build clean main and LW5 in independent workspaces, then run:
+Build `mo`, then run:
 
 ```sh
 build/clang/debug/mo check --json examples/<sample>.mo
 ```
 
-Read `errors` from each totals record and assert `dropped == 0`. Baseline and
-LW5 raw JSON are retained outside the build tree in the dedicated task’s
-`evidence/linux-baseline-samples.json`, `evidence/linux-lw5-samples.json`
-and `evidence/linux-lw5-sample-comparison.json` (Mac capture: `lw5-samples.json`).
-Commands, full-gate evidence and unresolved questions are recorded in
-[lw5-verification.md](lw5-verification.md). Historical I1 verification remains in
-[i1-verification.md](i1-verification.md).
+Read `errors` from each totals record and assert `dropped == 0`. Historical
+LW5 and I1 verification records remain in [lw5-verification.md](lw5-verification.md)
+and [i1-verification.md](i1-verification.md).

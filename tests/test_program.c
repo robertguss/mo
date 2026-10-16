@@ -1010,11 +1010,12 @@ static void native_choice_abilities(void) {
     struct fixture f;
     init(&f, "module Main\nfn main() : Int\n"
              "_entry = Entry(name: \"a\", kind: File).to_text\n"
+             "_message = NotFound(path: \"a\").to_text\n"
              "if NotFound(path: \"a\") == Failed(path: \"a\", reason: \"b\"): 1 else: 0\nend\n");
     CHECK(f.program != NULL && !mo_diags_any(&f.diags));
     if (f.program != NULL) {
         const struct mo_checked_body *body = &f.program->functions[0].body;
-        bool entry = false, error = false;
+        bool entry = false, error_text = false, error_equal = false;
         for (uint32_t i = 0; i < body->count; i++) {
             const struct mo_checked_expression *row = &body->items[i];
             for (uint32_t j = 0; j < row->ability_count; j++) {
@@ -1027,15 +1028,19 @@ static void native_choice_abilities(void) {
                     entry = true;
                 }
                 if (strcmp(proof->type->name, "FileError") == 0) {
-                    CHECK(proof->kind == MO_ABILITY_DERIVED && proof->ability == MO_SOURCE_EQUAL);
+                    CHECK(proof->kind == MO_ABILITY_DERIVED &&
+                          (proof->ability == MO_SOURCE_TEXT || proof->ability == MO_SOURCE_EQUAL));
                     MO_ASSERT(proof->part_count == 5);
                     for (uint32_t k = 0; k < proof->part_count; k++)
                         CHECK(strcmp(proof->parts[k]->type->name, "Text") == 0);
-                    error = true;
+                    if (proof->ability == MO_SOURCE_TEXT)
+                        error_text = true;
+                    if (proof->ability == MO_SOURCE_EQUAL)
+                        error_equal = true;
                 }
             }
         }
-        CHECK(entry && error);
+        CHECK(entry && error_text && error_equal);
     }
     free_fixture(&f);
 }
@@ -2102,8 +2107,6 @@ static void rejected_stages(void) {
          MO_CODE_ABILITY_REQUIREMENT},
         {"fn main() : Int where Q: Equal\n0\nend\n", MO_CODE_ABILITY_REQUIREMENT},
         {"fn main() : Int where Int: Number\n0\nend\n", MO_CODE_ABILITY_REQUIREMENT},
-        {"fn message(error: FileError) : Text\nerror.to_text\nend\nfn main()\nend\n",
-         MO_CODE_CHECK_UNFINISHED},
         {"fn helper(c: Console) : Text\n\"#{c}\"\nend\nfn main()\nend\n", MO_CODE_ABILITY_MISSING},
         {"fn helper(bytes: Bytes) : Text\n\"#{bytes}\"\nend\nfn main()\nend\n",
          MO_CODE_ABILITY_MISSING},
