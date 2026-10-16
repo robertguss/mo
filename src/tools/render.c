@@ -115,7 +115,17 @@ static void json_span(struct writer *w, const struct mo_sources *sources, struct
                       const char *label, bool labeled) {
     text(w, "{\"file\":");
     bool found = available(sources, span);
-    json_string(w, found ? sources->files[span.file].path : NULL);
+    const char *path = found ? sources->files[span.file].path : NULL;
+    json_string(w, path);
+    text(w, ",\"file_bytes\":");
+    if (path != NULL) {
+        text(w, "\"");
+        for (size_t i = 0; w->ok && path[i] != '\0'; i++)
+            hex(w, (uint8_t)path[i], 2);
+        text(w, "\"");
+    } else {
+        text(w, "null");
+    }
     text(w, ",\"start\":");
     unsigned_number(w, span.start);
     text(w, ",\"end\":");
