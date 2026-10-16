@@ -1407,6 +1407,58 @@ def runner(binary):
     print(f"{binary}: real source check/run/emission, statuses, limits and defects passed")
 
 
+def map_literals(binary):
+    fixtures = root / "tests/lower-source"
+    for name, expected in {
+        "map-literals": b"3/7/0/0/0/11\napples=3;pears=7;\n",
+        "map-evaluation-order": b"key 2\nvalue 20\nkey 1\nvalue 10\n2=20\n1=10\nif effect\nwhile effect\n",
+        "map-captures": b"3/4/19\n",
+        "map-native-routes": b"11/3/2/12/12\n",
+        "map-mutating-key": b"1=3;2=5;\n",
+    }.items():
+        path = fixtures / name / "main.mo"
+        checked = run(binary, ["check", str(path)], 0)
+        assert not checked.stdout and not checked.stderr
+        for form in ("core", "bytecode"):
+            emitted = run(binary, ["check", f"--emit={form}", str(path)], 0)
+            assert emitted.stdout and not emitted.stderr
+        result = run(binary, ["run", str(path)], 0)
+        assert result.stdout == expected and not result.stderr, (name, result)
+
+    path = fixtures / "map-runtime-duplicate/main.mo"
+    checked = run(binary, ["check", str(path)], 0)
+    assert not checked.stdout and not checked.stderr
+    result = run(binary, ["run", str(path)], 70)
+    assert not result.stdout
+    assert result.stderr.startswith(b"bug: two keys of a map literal that turn out equal")
+    assert str(path).encode() in result.stderr and b"Main.duplicate" in result.stderr
+
+    with tempfile.TemporaryDirectory(prefix="mo-map-literals-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        for body in (
+            'fn probe(key: Float) : Int\n{key: 3}.size\nend\n'
+            'fn main() : Int\nprobe(1.0)\nend',
+            'fn probe(key: fn(Int) : Int) : Int\n{key: 3}.size\nend\n'
+            'fn main() : Int\nprobe(fn(n) n end)\nend',
+            'fn main(console: Console) : Int\n{console: 3}.size\nend',
+        ):
+            path.write_text("module Main\n" + body + "\n")
+            items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+            diagnostics = [r for r in items if r["record"] == "diagnostic"]
+            assert diagnostics and all(r["code"] == "E0080" for r in diagnostics), items
+            assert any("Hash" in r["headline"] for r in diagnostics), items
+        for body in (
+            'fn main() : Int\n{"apples": 1, "apples": 2}.size\nend',
+            'fn main() : Int\nvar key = 1\n{key: 1, key: 2}.size\nend',
+            'fn probe(key: Text) : Int\n{key: 1, key: 2}.size\nend\n'
+            'fn main() : Int\nprobe("apples")\nend',
+        ):
+            path.write_text("module Main\n" + body + "\n")
+            items = records(run(binary, ["check", "--json", str(path)], 1), "check")
+            assert [r["code"] for r in items if r["record"] == "diagnostic"] == ["E0094"], items
+    print(f"{binary}: map literal context, order, captures, abilities and duplicate keys passed")
+
+
 def anchors(binary):
     # Anchor truth is not a typing certificate. Reordered arguments, opposite
     # expectations and a subject that stops expose distinct wrong consumers.
@@ -1747,6 +1799,7 @@ def check(binary):
     driver = binary.parent / "tests/test_cli.test"
     faults = binary.parent / "tests/test_cli_faults.test"
     runner(binary)
+    map_literals(binary)
     anchors(binary)
     constants(binary)
     filenames(binary)

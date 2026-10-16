@@ -797,6 +797,50 @@ static void number(const char *type, const char *value, bool valid) {
     mo_buffer_free(&source);
 }
 
+static void map_literal_keys(void) {
+    const struct {
+        const char *keys;
+        const char *type;
+        bool repeated;
+    } cases[] = {
+        {"1: 3, 0x1: 5", "Int", true},
+        {"0b1010: 3, 1_0: 5", "Int", true},
+        {"-7: 3, (-0x7): 5", "Int", true},
+        {"-0: 3, 0: 5", "Int", true},
+        {"1: 3, 1.00: 5", "Decimal", true},
+        {"1.1: 3, 11: 5", "Decimal", false},
+        {"18446744073709551616: 3, 0x10000000000000000: 5", "BigInt", true},
+        {"\"a\": 3, \"\\u{61}\": 5", "Text", true},
+        {"'a': 3, '\\u{61}': 5", "Char", true},
+        {"true: 3, (true): 5", "Bool", true},
+        {"false: 3, true: 5", "Bool", false},
+        {"\"a\\u{0}b\": 3, \"a\\u{0}c\": 5", "Text", false},
+        {"1: 3, 2: 5, 1: 7, 2: 9", "Int", true},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char source[512];
+        int n =
+            snprintf(source, sizeof(source), "module Main\nfn run() : Map(%s, Int)\n{%s}\nend\n",
+                     cases[i].type, cases[i].keys);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof(source));
+        struct fixture f;
+        init(&f, source, NULL);
+        CHECK((body(&f, "run") == NULL) == cases[i].repeated);
+        CHECK(f.diags.count == (cases[i].repeated ? 1u : 0u));
+        if (f.diags.count != 0)
+            CHECK(f.diags.items[0].code == MO_CODE_MAP_KEY_REPEATED);
+        finish(&f);
+    }
+    struct fixture f;
+    init(&f,
+         "module Main\nfn run() : Map(Int, Int)\nvar key = 1\nvar other = 1\n"
+         "{key: case true\ntrue:\nother = 2\nother + 1\nfalse: 4\nend, key: 5}\nend\n",
+         NULL);
+    CHECK(body(&f, "run") == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MAP_KEY_REPEATED);
+    finish(&f);
+}
+
 static void literal_ranges(void) {
     number("Int", "9223372036854775807", true);
     number("Int", "-9223372036854775808", true);
@@ -1371,6 +1415,7 @@ static void run_tests(void *argument) {
     tuple_position();
     inferred_uses();
     scope_errors();
+    map_literal_keys();
     literal_ranges();
     number_parameter_ranges();
     float_locale();

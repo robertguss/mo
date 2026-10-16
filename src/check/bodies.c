@@ -2,6 +2,7 @@
 #include "check/check.h"
 #include "check/checked.h"
 #include "check/data.h"
+#include "check/map_keys.h"
 #include "check/native.h"
 #include "check/patterns.h"
 #include "check/signatures.h"
@@ -47,7 +48,7 @@ struct local {
     struct local *next;
     struct note *binding;
     struct capture_write *writes;
-    uint32_t function;
+    uint32_t function, version;
     uint32_t pattern_group, pattern_alternative;
     bool variable;
     bool used;
@@ -264,6 +265,7 @@ static MO_MUST_USE bool problem(struct inference *p, uint16_t code, struct mo_sp
         : code == MO_CODE_CAPABILITY_CAPTURE   ? "pass capabilities as parameters instead"
         : code == MO_CODE_CAPTURE_ASSIGNMENT   ? "copy this value into a name first"
         : code == MO_CODE_EXIT_OUTSIDE_LOOP    ? "no enclosing loop in this function"
+        : code == MO_CODE_MAP_KEY_REPEATED     ? "this key is already in the literal"
         : code == MO_CODE_LITERAL_RANGE        ? "outside its inferred numeric range"
         : code == MO_CODE_TUPLE_POSITION       ? "part index is outside this tuple"
         : code == MO_CODE_FAILURE_IGNORED      ? "handle this Result or pass its failure upward"
@@ -280,6 +282,7 @@ static MO_MUST_USE bool problem(struct inference *p, uint16_t code, struct mo_sp
         (struct mo_label){previous == NULL ? span : previous->span,
                           code == MO_CODE_BIND_REPEATED        ? "the other meaning of this name"
                           : code == MO_CODE_CAPTURE_ASSIGNMENT ? "assigned here"
+                          : code == MO_CODE_MAP_KEY_REPEATED   ? "the first equal key"
                                                                : "declared here"};
     p->error = (struct mo_diag){.code = code,
                                 .primary = {span, label},
@@ -376,6 +379,108 @@ static MO_MUST_USE void *allocate(struct inference *p, size_t count, size_t size
         (void)reported;
     }
     return out;
+}
+
+static MO_MUST_USE bool map_key_work(void *context, size_t amount) {
+    struct inference *p = context;
+    for (size_t i = 0; i < amount; i++)
+        if (!work(p))
+            return false;
+    return true;
+}
+
+static MO_MUST_USE void *map_key_allocate(void *context, size_t bytes) {
+    return allocate(context, bytes, 1, 1);
+}
+
+struct literal_key {
+    struct mo_map_literal_key value;
+    const struct mo_syntax *syntax;
+    uint32_t position, version;
+};
+
+static MO_MUST_USE bool map_key_order(struct inference *p, const struct literal_key *a,
+                                      const struct literal_key *b, int *order) {
+    const struct mo_map_literal_key *x = &a->value, *y = &b->value;
+    if (!work(p))
+        return false;
+    if (x->category != y->category)
+        *order = x->category < y->category ? -1 : 1;
+    else if (a->version != b->version)
+        *order = a->version < b->version ? -1 : 1;
+    else if (x->negative != y->negative)
+        *order = x->negative ? -1 : 1;
+    else if (x->length != y->length)
+        *order = x->length < y->length ? -1 : 1;
+    else {
+        if (!map_key_work(p, x->length))
+            return false;
+        *order = memcmp(x->bytes, y->bytes, x->length);
+    }
+    return true;
+}
+
+static MO_MUST_USE bool map_keys(struct inference *p, const struct mo_syntax *node,
+                                 const uint32_t *versions) {
+    if (node->count < 2)
+        return true;
+    struct literal_key *keys =
+        allocate(p, node->count, sizeof(*keys), _Alignof(struct literal_key));
+    struct literal_key *scratch =
+        allocate(p, node->count, sizeof(*scratch), _Alignof(struct literal_key));
+    if (keys == NULL || scratch == NULL)
+        return false;
+    struct mo_map_key_context context = {p, map_key_work, map_key_allocate};
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < node->count; i++) {
+        const struct mo_syntax *key = node->children[i]->children[0];
+        while (key->kind == MO_S_GROUP)
+            key = key->children[0];
+        struct mo_map_literal_key value = {0};
+        p->span = key->span;
+        if (!mo_map_literal_key(&context, key, &value))
+            return false;
+        if (key->kind == MO_S_NAME) {
+            value.category = MO_MAP_KEY_NAME;
+            value.bytes = key->text;
+            value.length = key->span.end - key->span.start;
+        }
+        if (value.category != 0)
+            keys[count++] = (struct literal_key){value, key, i, versions[i]};
+    }
+    /* Stable merges retain the first source key and bound equal-prefix work. */
+    for (uint32_t width = 1; width < count; width *= 2) {
+        for (uint32_t begin = 0; begin < count; begin += 2 * width) {
+            uint32_t mid = count - begin < width ? count : begin + width;
+            uint32_t end = count - mid < width ? count : mid + width;
+            uint32_t left = begin, right = mid;
+            for (uint32_t at = begin; at < end; at++) {
+                int order = 0;
+                if (left < mid && right < end &&
+                    !map_key_order(p, &keys[left], &keys[right], &order))
+                    return false;
+                scratch[at] =
+                    right == end || (left < mid && order <= 0) ? keys[left++] : keys[right++];
+            }
+        }
+        struct literal_key *swap = keys;
+        keys = scratch;
+        scratch = swap;
+    }
+    const struct literal_key *first = NULL, *repeated = NULL;
+    for (uint32_t i = 1; i < count; i++) {
+        int order = 0;
+        if (!map_key_order(p, &keys[i - 1], &keys[i], &order))
+            return false;
+        if (order == 0 && (repeated == NULL || keys[i].position < repeated->position)) {
+            first = &keys[i - 1];
+            repeated = &keys[i];
+        }
+    }
+    return repeated == NULL ||
+           problem(p, MO_CODE_MAP_KEY_REPEATED, repeated->syntax->span,
+                   "a map literal gives the same key twice",
+                   "Each key in a map literal must be different (reference 3.8).", first->syntax);
 }
 
 static MO_MUST_USE struct term *make_type(struct inference *p, struct mo_source_type shape) {
@@ -2698,6 +2803,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             }
             if (!capture_write(p, variable, node, name))
                 return (struct value){0};
+            variable->version++;
             struct value target = infer(p, name, NULL);
             if (target.type == NULL)
                 return (struct value){0};
@@ -2772,6 +2878,8 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         }
         if (assignment && !capture_write(p, l, node, name))
             return (struct value){0};
+        if (assignment)
+            l->version++;
         struct value target = {0};
         if (assignment) {
             target = (struct value){.type = l->type, .binding = l->name, .bound = l->binding};
@@ -3182,16 +3290,33 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         }
         if (expected != NULL && !unify_as(p, t, expected, p->node_expectation))
             return (struct value){0};
-        struct value out = graph(p, (struct value){.type = t}, node->count);
+        struct value out = graph(p, (struct value){.type = t},
+                                 node->kind == MO_S_MAP ? 2 * node->count : node->count);
         if (out.type == NULL)
             return out;
+        uint32_t *versions = NULL;
+        if (node->kind == MO_S_MAP && node->count > 1) {
+            versions = allocate(p, node->count, sizeof(*versions), _Alignof(uint32_t));
+            if (versions == NULL)
+                return (struct value){0};
+        }
         for (uint32_t i = 0; i < node->count; i++) {
             const struct mo_syntax *part = node->children[i];
             if (node->kind == MO_S_MAP) {
+                const struct mo_syntax *key = part->children[0];
+                while (key->kind == MO_S_GROUP)
+                    key = key->children[0];
+                struct name_slot *name = key->kind == MO_S_NAME ? slot(p, key, false) : NULL;
+                if (versions != NULL)
+                    versions[i] = name != NULL && name->active != NULL && name->active->variable
+                                      ? name->active->version
+                                      : 0;
                 for (uint32_t j = 0; j < 2; j++) {
                     struct value v = infer(p, part->children[j], t->arguments[j]);
                     if (v.type == NULL)
                         return (struct value){0};
+                    if (p->checked)
+                        out.graph->operands[2 * i + j] = v.note;
                     out.never = out.never || v.never;
                 }
             } else {
@@ -3203,6 +3328,8 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                 out.never = out.never || v.never;
             }
         }
+        if (node->kind == MO_S_MAP && !map_keys(p, node, versions))
+            return (struct value){0};
         return out;
     }
     case MO_S_TRY: {
@@ -3340,8 +3467,8 @@ static MO_MUST_USE struct value infer(struct inference *p, const struct mo_synta
         node->kind != MO_S_FIELD_ACCESS && node->kind != MO_S_RETURN && node->kind != MO_S_STOP &&
         node->kind != MO_S_ASSERT && node->kind != MO_S_CASE && node->kind != MO_S_IS &&
         node->kind != MO_S_FOR && node->kind != MO_S_WHILE && node->kind != MO_S_BREAK &&
-        node->kind != MO_S_CONTINUE && node->kind != MO_S_LIST && node->kind != MO_S_TUPLE &&
-        node->kind != MO_S_POSITION && node->kind != MO_S_ADD_ASSIGN &&
+        node->kind != MO_S_CONTINUE && node->kind != MO_S_LIST && node->kind != MO_S_MAP &&
+        node->kind != MO_S_TUPLE && node->kind != MO_S_POSITION && node->kind != MO_S_ADD_ASSIGN &&
         node->kind != MO_S_SUB_ASSIGN && node->kind != MO_S_TEXT_INTERPOLATED &&
         node->kind != MO_S_TRY) {
         bool reported = unfinished(p);

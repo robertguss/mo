@@ -962,6 +962,25 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                               .as.list = {.t = output->as.option, .op.tag = MO_CORE_LIST_OP_FIRST}},
                           args);
     }
+    if (r->native != NULL &&
+        (strcmp(r->native, "Map.get") == 0 || strcmp(r->native, "Map.set") == 0 ||
+         strcmp(r->native, "Map.size") == 0)) {
+        mo_core_ty receiver =
+            r->operand_count == 0
+                ? result->as.fn.params.items[0]
+                : type(b, row(b, r->receiver == UINT32_MAX ? r->operands[0] : r->receiver)->type);
+        if (receiver->tag == MO_CORE_TY_FN)
+            receiver = receiver->as.fn.params.items[0];
+        MO_ASSERT(receiver->tag == MO_CORE_TY_MAP);
+        struct mo_core_prim prim = {
+            .tag = MO_CORE_PRIM_MAP,
+            .as.map = {.k = receiver->as.map.k,
+                       .v = receiver->as.map.v,
+                       .op.tag = strcmp(r->native, "Map.get") == 0   ? MO_CORE_MAP_OP_GET
+                                 : strcmp(r->native, "Map.set") == 0 ? MO_CORE_MAP_OP_SET
+                                                                     : MO_CORE_MAP_OP_SIZE}};
+        return lower_prim(p, prim, args);
+    }
     if (r->native != NULL && strcmp(r->native, "Text.bytes") == 0)
         return lower_prim(
             p, (struct mo_core_prim){.tag = MO_CORE_PRIM_TEXT, .as.text = MO_CORE_TEXT_OP_BYTES},
@@ -1013,6 +1032,15 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
             .as.list = {
                 .t = result->as.list,
                 .op = {.tag = MO_CORE_LIST_OP_LIT, .as.lit.digits = lower_number(p, args.count)}}};
+        return lower_prim(p, prim, args);
+    }
+    if (kind(r) == MO_S_MAP) {
+        struct mo_core_prim prim = {
+            .tag = MO_CORE_PRIM_MAP,
+            .as.map = {
+                .k = result->as.map.k,
+                .v = result->as.map.v,
+                .op = {.tag = MO_CORE_MAP_OP_LIT, .lit.digits = lower_number(p, args.count / 2)}}};
         return lower_prim(p, prim, args);
     }
     if (direct_function(b, r)) {
@@ -1135,7 +1163,13 @@ static void finish_task(struct body *b, struct task t) {
         return;
     }
     if (k->kind == K_JUMP) {
-        *t.out = jump(b, k, t.value);
+        mo_core_expr *out = t.out;
+        if (!k->result && !atom(t.value)) {
+            mo_core_expr e = let(b, lower_fresh(p), t.value);
+            *out = e;
+            out = &e->as.let_.body;
+        }
+        *out = jump(b, k, t.value);
         return;
     }
     if (k->kind == K_SELECT) {
@@ -1373,8 +1407,6 @@ static void row_task(struct body *b, struct task t) {
     const struct mo_checked_expression *r = row(b, t.row);
     enum mo_syntax_kind tag = kind(r);
     require_concrete_proofs(b, r->ability_count, r->abilities);
-    if (tag == MO_S_MAP)
-        lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "map literals are not lowered yet");
     if (tag == MO_S_TEXT_INTERPOLATED) {
         MO_ASSERT(r->operand_count != 0 && r->syntax->count == 2 * r->operand_count + 1);
         struct continuation *k = continuation(b, K_TEXT);

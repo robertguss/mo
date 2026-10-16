@@ -1,0 +1,7 @@
+E0094 3.8
+0:52..60
+a map literal gives the same key twice
+Each key in a map literal must be different (reference 3.8).
+this key is already in the literal
+secondary 0:39..47 the first equal key
+fixes 0
