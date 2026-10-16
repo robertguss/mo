@@ -5,8 +5,26 @@
 # Locally, a check whose tool is missing is skipped with a note, and the summary
 # at the end counts what was skipped instead of claiming that all checks passed.
 # In CI (CI=1) a missing tool is an error, so nothing is skipped silently.
+#
+# With no arguments every check runs. Arguments pick groups of checks, so CI can
+# run the groups as parallel jobs; together the groups are every check:
+#   gcc clang   build and run the unit tests with that compiler
+#   sanitize    the unit tests under AddressSanitizer and UndefinedBehaviorSanitizer
+#   fuzz        every fuzz target briefly
+#   drivers     the checks that drive the test executables: goldens, Unicode, Lean, codegen
+#   static      grammar, module dependencies, library map, formatting, clang-tidy
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+all_groups=" gcc clang sanitize fuzz drivers static "
+groups="$*"
+for group in $groups; do
+	if [[ "$all_groups" != *" $group "* ]]; then
+		echo "usage: bash ci/check.sh [group...], where a group is one of:$all_groups" >&2
+		exit 64
+	fi
+done
+want() { [[ -z "$groups" || " $groups " == *" $1 "* ]]; }
 
 skipped=() # why each skipped check was skipped
 
@@ -30,11 +48,18 @@ has_libfuzzer() {
 	((ok == 1))
 }
 
+if want gcc; then
 step "Build and test with gcc (warnings are errors)"
 if have gcc; then make --no-print-directory test CC=gcc; else missing "gcc is not installed"; fi
 
+fi
+
+if want clang; then
 step "Build and test with clang (warnings are errors)"
 if have clang; then make --no-print-directory test CC=clang; else missing "clang is not installed"; fi
+fi
+
+if want sanitize; then
 
 step "Tests under AddressSanitizer and UndefinedBehaviorSanitizer"
 if have clang; then
@@ -43,6 +68,21 @@ elif have gcc; then
 	make --no-print-directory sanitize CC=gcc
 else
 	missing "no compiler with sanitizers is installed"
+fi
+fi
+
+if want drivers; then
+# Run alone, this group builds the executables it drives, as the gcc, clang and
+# sanitize groups would have.
+if [[ -n "$groups" ]]; then
+	step "Build the test executables the checks below drive"
+	if have gcc; then make --no-print-directory test-executables CC=gcc; fi
+	if have clang; then
+		make --no-print-directory test-executables CC=clang
+		make --no-print-directory sanitize-executables CC=clang
+	elif have gcc; then
+		make --no-print-directory sanitize-executables CC=gcc
+	fi
 fi
 
 step "The mo command: text/JSON goldens, argument matrix and JSON validity"
@@ -81,21 +121,27 @@ if have python3; then
 else
 	missing "python3 is not installed"
 fi
+fi
 
+if want fuzz; then
 step "Fuzz every target briefly"
 if have clang && has_libfuzzer; then
 	make --no-print-directory fuzz-smoke
 else
 	missing "clang with libFuzzer is not installed"
 fi
+fi
 
+if want static; then
 step "The executable grammar: its tests, the examples and the reference's code parse"
 if have bison && (have clang || have gcc); then
 	if have clang; then make --no-print-directory grammar CC=clang; else make --no-print-directory grammar CC=gcc; fi
 else
 	missing "bison or a C compiler is not installed"
 fi
+fi
 
+if want drivers; then
 step "Mo Core in Lean: the model builds and every proof checks"
 # elan lives in /opt/elan where .agents/setup puts it, since CI runs with a
 # fresh HOME, or else in the usual ~/.elan.
@@ -178,7 +224,9 @@ if have python3; then
 else
 	missing "python3 is not installed"
 fi
+fi
 
+if want static; then
 step "Module dependencies: each module includes only what architecture section 2 allows"
 make --no-print-directory deps
 
@@ -190,7 +238,9 @@ if have clang-format; then make --no-print-directory format-check; else missing 
 
 step "Results of standard-library calls are used (clang-tidy)"
 if have clang-tidy; then make --no-print-directory tidy; else missing "clang-tidy is not installed"; fi
+fi
 
+if want drivers; then
 step "The source formatter: reference, examples, library and good grammar are fixed points"
 formatter_driver=
 for driver in build/{gcc,clang}/debug/tests/test_format.test; do
@@ -198,9 +248,10 @@ for driver in build/{gcc,clang}/debug/tests/test_format.test; do
 done
 if [[ -n "$formatter_driver" ]]; then "$formatter_driver" --fixed-points;
 else missing "no source formatter test executable is built"; fi
+fi
 
 if ((${#skipped[@]} == 0)); then
-	step "All checks passed"
+	if [[ -n "$groups" ]]; then step "All checks in $groups passed"; else step "All checks passed"; fi
 else
 	noun="checks were"
 	if ((${#skipped[@]} == 1)); then noun="check was"; fi

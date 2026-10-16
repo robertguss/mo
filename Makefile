@@ -88,7 +88,7 @@ ASAN_OPTIONS ?= abort_on_error=1
 UBSAN_OPTIONS ?= halt_on_error=1:print_stacktrace=1
 export ASAN_OPTIONS UBSAN_OPTIONS
 
-.PHONY: all test sanitize fuzz fuzz-smoke format format-check deps library-map tidy grammar formal \
+.PHONY: all test sanitize test-executables sanitize-executables fuzz fuzz-smoke format format-check deps library-map tidy grammar formal \
 	host-rename-stress clean FORCE
 
 all: $(BUILD)/debug/mo
@@ -115,6 +115,10 @@ build/generated/tools/embedded.h: ci/embed_docs.py docs/reference/README.md $(GU
 # recompile the document consumer when the guide appears or disappears.
 $(BUILD)/debug/src/tools/execute.o $(BUILD)/sanitize/src/tools/execute.o \
 $(FUZZ_BUILD)/src/tools/execute.o: build/generated/tools/embedded.h $(GUIDE_STAMP)
+
+# The test executables without running them, for ci/check.sh's drivers group.
+test-executables: $(DEBUG_TESTS) $(BUILD)/debug/mo
+sanitize-executables: $(SANITIZE_TESTS) $(BUILD)/sanitize/mo
 
 # Each test runs as its own target, so make -j runs them side by side (they share
 # no files: each makes its own temporary folder).
