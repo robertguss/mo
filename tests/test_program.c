@@ -198,6 +198,12 @@ static void constant_dependencies(void) {
          "fn ignore(_value: T) : Int where T: Text\n42\nend\n",
          {"answer"},
          1},
+        {"answer = [1, 2].map(first).sum\nbase = 13\n"
+         "fn first(n: Int) : Int\nn + base\nend\n",
+         {"base", "answer"},
+         2},
+        {"answer = [1, 2].map(fn(n) n + base end).sum\nbase = 13\n", {"base", "answer"}, 2},
+        {"value = [reader].append(reader).size\nfn reader() : Int\nvalue\nend\n", {"value"}, 1},
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         struct mo_buffer source;
@@ -234,6 +240,10 @@ static void constant_refusals(void) {
          MO_CODE_CONSTANT_CYCLE},
         {"value = \"#{Label(value: 3)}\"\nstruct Label\nvalue: Int\nend\n"
          "fn to_text(_label: Label) : Text\nvalue\nend\n",
+         MO_CODE_CONSTANT_CYCLE},
+        {"value = [1].map(reader).size\nfn reader(_n: Int) : Int\nvalue\nend\n",
+         MO_CODE_CONSTANT_CYCLE},
+        {"b = helper()\na = [1, 2].map(fn(x) x + b end).sum\nfn helper() : Int\na\nend\n",
          MO_CODE_CONSTANT_CYCLE},
         {"values = []\nfn read() : List(Int)\nvalues\nend\n", MO_CODE_CANNOT_INFER},
         {"reader = fn(x) x end\n", MO_CODE_CANNOT_INFER},
@@ -646,11 +656,12 @@ static void native_graph(void) {
     }
     free_fixture(&f);
     init(&f, "module Main\nfn main() : Int\nset = Set.empty.add(4)\n"
-             "if set.has?(4): [1, 2, 3].sum else: 0\nend\n");
+             "texts = [1, 2, 3].map(fn(x) x.to_text end)\n"
+             "if set.has?(4): List.map(texts, Text.byte_count).sum else: 0\nend\n");
     CHECK(f.program != NULL && !mo_diags_any(&f.diags));
     if (f.program != NULL) {
         const struct mo_checked_body *body = &f.program->functions[0].body;
-        bool empty = false, sum = false;
+        bool empty = false, sum = false, dot_map = false, qualified_map = false;
         for (uint32_t i = 0; i < body->count; i++) {
             const struct mo_checked_expression *row = &body->items[i];
             if (row->native == NULL)
@@ -664,9 +675,19 @@ static void native_graph(void) {
                 CHECK(row->ability_count == 1 &&
                       row->abilities[0].implementation->ability == MO_SOURCE_NUMBER);
                 sum = true;
+            } else if (strcmp(row->native, "List.map") == 0 &&
+                       row->type->kind != MO_SOURCE_FUNCTION) {
+                CHECK(strcmp(row->type->name, "List") == 0 && row->arguments.count == 2);
+                if (row->receiver != UINT32_MAX) {
+                    CHECK(row->operand_count == 2 && row->receiver == row->operands[0]);
+                    dot_map = true;
+                } else {
+                    CHECK(row->operand_count == 3);
+                    qualified_map = true;
+                }
             }
         }
-        CHECK(empty && sum);
+        CHECK(empty && sum && dot_map && qualified_map);
     }
     free_fixture(&f);
 }
