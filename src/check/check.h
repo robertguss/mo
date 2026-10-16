@@ -581,7 +581,8 @@ struct mo_program {
  * ability dot calls and interpolation retain native/derived/custom/parameter proofs. Source
  * dot/overload dispatch and loaded library calls retain the selected symbols. Written Map/Set
  * types require Hash. main takes distinct capabilities in written order and returns Unit or Int.
- * Invalid entry signatures report E0079; a library module without main has entry.function == UINT32_MAX.
+ * Invalid entry signatures report E0079; a library module without main has
+ * entry.function == UINT32_MAX.
  * Source example lines are zero-parameter Bool bodies, with their subject index,
  * per-subject ordinal and an arena-owned copy of their original bytes/span.
  * set.sources must cover the syntax's original file indices for spec checking.
