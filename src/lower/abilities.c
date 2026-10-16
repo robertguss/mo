@@ -530,16 +530,22 @@ static void derive_text(struct lowering *p, struct derived *d) {
         }
         if (count == 0)
             arm->body = text(p, ctor->name);
-        else {
+        else if (d->type->tag == MO_CORE_TY_FILE_ERROR) {
+            static const char *const suffixes[] = {": no such file", ": not allowed", ": not text",
+                                                   ": "};
+            MO_ASSERT(i < sizeof suffixes / sizeof suffixes[0]);
+            mo_core_expr suffix = text(p, lower_text(p, suffixes[i]));
+            if (count == 2)
+                suffix = concat(p, suffix, values.items[1]);
+            arm->body = concat(p, values.items[0], suffix);
+        } else {
             const struct mo_core_param *fields = NULL;
             if (d->type->tag == MO_CORE_TY_DATA)
                 fields = ctor->fields.items;
-            else if (d->type->tag == MO_CORE_TY_FILE_ERROR || d->type->tag == MO_CORE_TY_ENTRY) {
+            else if (d->type->tag == MO_CORE_TY_ENTRY) {
                 struct mo_core_param *named = LOWER_NEW(p, struct mo_core_param, count);
                 for (size_t j = 0; j < count; j++)
-                    named[j].name = lower_text(p, j == 0                             ? "path"
-                                                  : d->type->tag == MO_CORE_TY_ENTRY ? "kind"
-                                                                                     : "reason");
+                    named[j].name = lower_text(p, j == 0 ? "path" : "kind");
                 fields = named;
             }
             fields_text(p, d, first, values, fields,

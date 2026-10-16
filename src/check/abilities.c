@@ -418,9 +418,6 @@ static MO_MUST_USE bool customizer(struct mo_ability_context *p,
         }
         return true;
     }
-    if (file_error)
-        return fail(p, MO_CODE_CHECK_UNFINISHED, "FileError's library text function is unavailable",
-                    "FileError.to_text is Mo code in the library (design library FileError).");
     return true;
 }
 
