@@ -2,6 +2,7 @@
 
 #include "base/codes.h"
 #include "tools/deadline.h"
+#include "tools/fakes.h"
 #include "tools/run.h"
 
 #include <string.h>
@@ -99,9 +100,11 @@ static bool input_supported(struct eligibility *walk, const struct mo_program *p
     }
     if (type->kind == MO_SOURCE_NAMED) {
         if (type->module == UINT32_MAX) {
-            static const char *const scalars[] = {"Unit", "Bool",  "Byte",     "Int",     "Float",
-                                                  "Char", "Time",  "Duration", "Decimal", "Range",
-                                                  "Text", "Bytes", "BigInt"};
+            static const char *const scalars[] = {
+                "Unit", "Bool", "Byte", "Int", "Float", "Char", "Time", "Duration", "Decimal",
+                "Range", "Text", "Bytes", "BigInt",
+                /* Capabilities, as generated fakes. */
+                "Console", "Files", "ReadFiles", "Clock", "Random", "Args", "Env"};
             bool supported = (type->count == 1 &&
                               (strcmp(type->name, "List") == 0 || strcmp(type->name, "Set") == 0 ||
                                strcmp(type->name, "Option") == 0)) ||
@@ -333,9 +336,11 @@ bool mo_test_promise(const struct mo_cli *cli, struct mo_image *image,
         parameters[i] = ordinary->parameters[i].type;
     struct mo_inputs inputs;
     struct mo_input_limits limits = mo_input_limits_default();
-    enum mo_input_result prepared =
-        mo_inputs_init(&inputs, mo_image_types(image), parameters, ordinary->parameter_count,
-                       observation->name, strlen(observation->name), &limits, NULL, 0);
+    struct mo_fakes fakes;
+    mo_fakes_init(&fakes, mo_image_types(image));
+    enum mo_input_result prepared = mo_inputs_init(
+        &inputs, mo_image_types(image), parameters, ordinary->parameter_count, observation->name,
+        strlen(observation->name), &limits, mo_fakes_factories(&fakes), mo_fakes_count(&fakes));
     struct trial best = {0};
     uint64_t calls = 0;
     bool complete = true, known = true;
@@ -346,6 +351,8 @@ bool mo_test_promise(const struct mo_cli *cli, struct mo_image *image,
     while (calls < cli->calls && mo_deadline_running(&deadline)) {
         struct trial candidate = {.process = mo_process_new(image, &cli->limits)};
         enum mo_input_kind kind;
+        if (candidate.process != NULL)
+            mo_fakes_bind(&fakes, mo_process_host(candidate.process));
         enum mo_input_result generated =
             candidate.process == NULL ? MO_INPUT_NO_MEMORY
                                       : mo_inputs_next(&inputs, mo_process_heap(candidate.process),
@@ -368,6 +375,7 @@ bool mo_test_promise(const struct mo_cli *cli, struct mo_image *image,
             known = false;
         } else if (candidate.outcome != MO_RETURNED) {
             best = candidate;
+            mo_fakes_keep(&fakes);
             break;
         }
         discard(&candidate, ordinary);
@@ -381,6 +389,8 @@ bool mo_test_promise(const struct mo_cli *cli, struct mo_image *image,
              shrinking < MO_CLI_PROMISE_SHRINK_CALLS && mo_deadline_running(&deadline);
              shrinking++) {
             struct trial candidate = {.process = mo_process_new(image, &cli->limits)};
+            if (candidate.process != NULL)
+                mo_fakes_bind(&fakes, mo_process_host(candidate.process));
             enum mo_input_result generated =
                 candidate.process == NULL
                     ? MO_INPUT_NO_MEMORY
@@ -405,6 +415,7 @@ bool mo_test_promise(const struct mo_cli *cli, struct mo_image *image,
             if (fails) {
                 discard(&best, ordinary);
                 best = candidate;
+                mo_fakes_keep(&fakes);
                 if (best.condition == 0)
                     break; /* A genuine stop/fail is not a false Bool condition. */
             } else

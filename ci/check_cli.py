@@ -312,6 +312,64 @@ def promise_shrinking(binary):
             assert items[-1]['failed'] == 1 and items[-1]['stopped'] == 0
 
 
+def fake_capability_promises(binary):
+    tail = 'fn main()\nend\n'
+    with tempfile.TemporaryDirectory(prefix='mo-fake-promises-') as directory:
+        path = pathlib.Path(directory) / 'main.mo'
+
+        # Every capability a promise takes is a generated fake (reference 12.4).
+        path.write_text(
+            'module Main\n'
+            'fn all(files: Files, console: Console, clock: Clock, args: Args) : Int\n'
+            'promise "holds for every kind of fake"\nresult == 0\n'
+            'allows files: Files.in_memory({}), console: Console.fake(), clock: Clock.fixed(t0), '
+            'args: Args.of([]), result: 0\n'
+            'forbids files: Files.in_memory({}), console: Console.fake(), clock: Clock.fixed(t0), '
+            'args: Args.of([]), result: 1\nend\n'
+            '_names = files.list(".")\n_line = console.read_line()\n_now = clock.now()\n'
+            '_words = args.list()\n0\nend\n'
+            't0 = Time.parse("1970-01-01T00:00:00Z") or stop "the time is written correctly"\n' + tail)
+        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
+            ('Main.all.promise.1', 'passed')]
+
+        # The first fake with a file in it fails this promise, on the second call, and the
+        # report shows the capability by its type rather than by contents.
+        path.write_text(
+            'module Main\nfn count(files: ReadFiles) : Int\n'
+            'promise "no files at all"\nresult == 0\n'
+            'allows files: Files.in_memory({}).read_only, result: 0\n'
+            'forbids files: Files.in_memory({}).read_only, result: 1\nend\n'
+            'case files.list(".")\nOk(names): names.size\nError(_e): 0\nend\nend\n' + tail)
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['outcome'] == 'failed' and items[1]['calls'] == 2
+        assert items[1]['input'] == [{'name': 'files', 'value': '<ReadFiles>'}]
+        assert items[1]['result'] == '1'
+        again = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        for key in ('input', 'result', 'calls', 'line'):
+            assert again[1][key] == items[1][key]
+
+        # Shrinking copies the fake along with the input it shrinks.
+        path.write_text(
+            'module Main\nfn pick(files: ReadFiles, limit: Int) : Int\n'
+            'promise "stays small"\nresult <= 5\n'
+            'allows files: Files.in_memory({}).read_only, limit: 1, result: 1\n'
+            'forbids files: Files.in_memory({}).read_only, limit: 1, result: 6\nend\n'
+            'case files.list(".")\nOk(_names): limit\nError(_e): limit\nend\nend\n' + tail)
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['outcome'] == 'failed'
+        assert items[1]['input'] == [{'name': 'files', 'value': '<ReadFiles>'},
+                                     {'name': 'limit', 'value': '6'}]
+        assert items[-1]['errors'] == 0
+
+    # examples/notes-tool.mo asks for a ReadFiles in its promise.
+    root = pathlib.Path(__file__).resolve().parent.parent
+    items = records(run(binary, ['test', '--json', str(root / 'examples/notes-tool.mo')], 0), 'test')
+    assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
+        ('NotesTool.search_notes.promise.1', 'passed'), ('NotesTool.test.1', 'passed'),
+        ('NotesTool.test.2', 'passed'), ('NotesTool.test.3', 'passed')]
+
+
 def composite_promises(binary):
     with tempfile.TemporaryDirectory(prefix='mo-composite-promises-') as directory:
         path = pathlib.Path(directory) / 'main.mo'
@@ -583,7 +641,6 @@ def promise_selection(binary):
         ('Result(Int, Box)', 'Ok(13)', opaque),
         ('Choice', 'Open', opaque + 'enum Choice\nOpen\nClosed(Box)\nend\n'),
         ('(Text, Box)', '("owned", Box(value: 3))', opaque),
-        ('Option(Console)', 'None', ''),
         ('Box', 'make(3)', 'use Shapes{Box, make}\n'),
         ('List(Shapes.Box)', '[]', 'use Shapes\n'),
         ('Shapes.Box', 'Shapes.make(3)',
@@ -742,8 +799,8 @@ def imported_constants(binary):
                    'allows _values: ["owned"], result: 13\nforbids _values: [], result: 14\n'
                    'end\nseed\nend\n')
         for supported in (True, False):
-            body = promise if supported else promise.replace('List(Text)', 'Option(Console)').replace(
-                '_values: ["owned"]', '_values: None').replace('_values: []', '_values: None')
+            body = promise if supported else promise.replace('List(Text)', 'List(fn(Int) : Int)').replace(
+                '_values: ["owned"]', '_values: []')
             path.write_text('module Main\nuse Origin{seed}\n' + body + ordinary)
             listed = records(run(binary, ['test', '--json', '--list', '--max-heap', '1',
                                            '--seconds', '1', str(path)], 0), 'test')
@@ -2241,6 +2298,7 @@ def check(binary):
     promise_boundaries(binary)
     promise_deadlines(binary)
     promise_shrinking(binary)
+    fake_capability_promises(binary)
     composite_promises(binary)
     collection_promises(binary)
     composite_deadlines(binary)
