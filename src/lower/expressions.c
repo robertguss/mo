@@ -1004,6 +1004,7 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                   {"Files.in_memory", {MO_CORE_IO_OP_FILES_IN_MEMORY, false}},
                   {"Files.read_only", {MO_CORE_IO_OP_READ_ONLY, false}},
                   {"Files.read_text", {MO_CORE_IO_OP_READ_TEXT, false}},
+                  {"Files.write_text", {MO_CORE_IO_OP_WRITE_TEXT, false}},
                   {"Files.list", {MO_CORE_IO_OP_LIST, false}},
                   {"ReadFiles.read_text", {MO_CORE_IO_OP_READ_TEXT, true}},
                   {"ReadFiles.list", {MO_CORE_IO_OP_LIST, true}},

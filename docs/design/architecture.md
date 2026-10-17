@@ -939,8 +939,8 @@ order, without extra authority. The existing tools/host entry path constructs
 only the requested handles. Args.list, Args.of, Clock.now, Clock.fixed,
 Console.print, Console.error, Console.read_line, Console.fake,
 Console.fake_input, Console.printed, Console.printed_errors, Files.in_memory,
-Files.read_only, Files.read_text, Files.list, ReadFiles.read_text and
-ReadFiles.list lower to their existing Core IO primitives; Int.checked_add,
+Files.read_only, Files.read_text, Files.write_text, Files.list,
+ReadFiles.read_text and ReadFiles.list lower to their existing Core IO primitives; Int.checked_add,
 Int.seconds, Int.milliseconds, Int.minutes, Int.hours and Int.days lower to
 their Core Int primitives; Decimal.abs, Decimal.min, Decimal.max, Decimal.floor,
 Decimal.ceil, Decimal.round, Decimal.to_int, Decimal.to_fixed and
