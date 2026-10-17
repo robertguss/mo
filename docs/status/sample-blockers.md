@@ -1,4 +1,4 @@
-# Sample blockers after MO-87 (Files.write_text)
+# Sample blockers after MO-88 (generic captures checked at use)
 
 Regenerated from actual `mo check --json examples/<sample>.mo` output on
 `bfcdedcd` (I1/PR81), `75e6db61` (LW5/PR82), `02395dbd` (C7/PR83),
@@ -6,10 +6,17 @@ Regenerated from actual `mo check --json examples/<sample>.mo` output on
 `a2924f53` (C5/PR87), `dab7da3a` (C8/PR88), `b9fbb0e1` (F7/PR89),
 `d7e3abfa` (C3/PR90), `bc0fff4c` (F16/PR91), `4cf4f81c` (F14/PR92),
 `41d6944` (F11/PR93), `3ad6c55` (MO-31/PR97), `5375209` (MO-83/PR101),
-`0d3764c` (MO-84/PR106), MO-85/PR102, MO-86/PR103 and MO-87. Every totals
-record reports `dropped: 0`. Examples are unchanged.
+`0d3764c` (MO-84/PR106), MO-85/PR102, MO-86/PR103, MO-87/PR104 and MO-88.
+Every totals record reports `dropped: 0`. Examples are unchanged.
 
-MO-87 lowers `Files.write_text`:
+MO-88 checks a generic capture's capability membership where the generic
+function is used (E0091 only when the type argument holds a capability):
+- `examples/inventory.mo` passes `mo check`, `mo run`, and its 8 examples and
+  2 tests with 0 errors.
+- Total diagnostics across all 12 samples fall from 1 to 0, and all 12 samples
+  now pass `mo check`.
+
+Earlier, MO-87 lowered `Files.write_text`:
 - `examples/todo.mo` passes `mo check`, runs `add`, `done`, `list` and
   `remove` against a real folder, and passes all 15 examples and tests with 0
   errors.
@@ -59,35 +66,34 @@ Earlier, with `List.all?` checked, lowered and run (plus lowering dispatch for
 
 ## Counts
 
-| Sample | Main / I1 | LW5 | C7 | F8 | C1 | C4 | C5 | C8 | F7 | C3 | F16 | F14 | F11 | MO-31 | MO-83 | MO-84 | MO-85 | MO-86 | MO-87 | Change (MO-86→MO-87) |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| account.mo | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
-| expenses.mo | 2 | 4 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 1 | 1 | 0 | 0 | 0 | 0 | +0 |
-| find.mo | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
-| greet.mo | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
-| inventory.mo | 2 | 5 | 5 | 5 | 5 | 3 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
-| job-queue.mo | 1 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 1 | 1 | 1 | 0 | 0 | 0 | +0 |
-| json-query.mo | 1 | 4 | 4 | 4 | 4 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 1 | 1 | 1 | 1 | 0 | 0 | +0 |
-| kv.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | +0 |
-| notes-tool.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
-| rate-limit.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
-| todo.mo | 1 | 1 | 4 | 4 | 4 | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 1 | 1 | 1 | 1 | 1 | 0 | -1 |
-| wc.mo | 2 | 2 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
-| **Total** | **14** | **24** | **25** | **24** | **23** | **17** | **14** | **14** | **13** | **13** | **12** | **11** | **11** | **6** | **5** | **4** | **3** | **2** | **1** | **-1** |
+| Sample | Main / I1 | LW5 | C7 | F8 | C1 | C4 | C5 | C8 | F7 | C3 | F16 | F14 | F11 | MO-31 | MO-83 | MO-84 | MO-85 | MO-86 | MO-87 | MO-88 | Change (MO-87→MO-88) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| account.mo | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| expenses.mo | 2 | 4 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | +0 |
+| find.mo | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| greet.mo | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| inventory.mo | 2 | 5 | 5 | 5 | 5 | 3 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | -1 |
+| job-queue.mo | 1 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | +0 |
+| json-query.mo | 1 | 4 | 4 | 4 | 4 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | +0 |
+| kv.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| notes-tool.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| rate-limit.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| todo.mo | 1 | 1 | 4 | 4 | 4 | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | +0 |
+| wc.mo | 2 | 2 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| **Total** | **14** | **24** | **25** | **24** | **23** | **17** | **14** | **14** | **13** | **13** | **12** | **11** | **11** | **6** | **5** | **4** | **3** | **2** | **1** | **0** | **-1** |
 
 ## Current diagnostics
 
-| Sample | Location | Code | Diagnostic | Source |
-| --- | --- | --- | --- | --- |
-| inventory.mo | 72:48 | E1103 | this generic capture's capability membership isn't checked | `laid_out = columns.map(fn(column) pad_column(rows, column) end)` |
+None: all 12 samples pass `mo check` with 0 errors.
 
 ## Newly exposed blockers
 
 - expenses: `List.max` (`70:56`) clears, exposing `Map.entries` (`59:7`) and
   `List.zip` (`73:25`) in lowering; all three now lower. The sample passes
   `mo check`, `mo run` and its 9 examples and tests with 0 errors.
-- inventory: unchanged; `E1103` on the generic `rows: List(T)` capture in
-  `pad_table` (`72:48`).
+- inventory: the generic `rows: List(T)` capture in `pad_table` (`72:48`) is
+  now checked where `pad_table` is used, so `E1103` clears; the sample passes
+  `mo check`, `mo run` and its 10 examples and tests with 0 errors.
 - job-queue: `List.find` (`71:26`) clears. Lowering then needed `List.to_map`,
   `Map.has?` and `Map.keys`, which now lower to their existing Core primitives.
   The sample passes `mo check` (including its anchors) and its 8 examples and 1

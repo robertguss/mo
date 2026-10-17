@@ -551,7 +551,8 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
     }
     program->spec_count = spec_count;
     program->specs = ordered_specs;
-    if (!mo_check_recursion(arena, program, diags))
+    if (!mo_check_recursion(arena, program, diags) ||
+        !mo_check_capture_arguments(arena, program, diags))
         return NULL;
     if (!check_imports(signatures, diags))
         return NULL;

@@ -474,6 +474,7 @@ struct mo_checked_body {
     uint32_t count;
     const struct mo_checked_expression *items;
     uint32_t root; /* index in items; UINT32_MAX only for an anchor's argument-only body */
+    uint32_t capture_free_parameters; /* letters of type parameters anonymous functions capture */
     uint32_t binding_count;
     const struct mo_checked_binding *bindings; /* includes lambdas and canonical alternatives */
 };

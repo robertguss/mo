@@ -50,6 +50,13 @@ mo_check_spec_body(struct mo_arena *arena, const struct mo_module_interfaces *in
 MO_MUST_USE bool mo_check_recursion(struct mo_arena *arena, const struct mo_program *program,
                                     struct mo_diags *diags);
 
+/* Rejects a use of a generic function whose anonymous functions capture a type parameter when
+ * the argument holds a capability (reference 11.4), through callers that pass their own
+ * parameters on. */
+MO_MUST_USE bool mo_check_capture_arguments(struct mo_arena *arena,
+                                            const struct mo_program *program,
+                                            struct mo_diags *diags);
+
 MO_MUST_USE bool mo_check_data_recursion(struct mo_arena *arena,
                                          const struct mo_signatures *signatures,
                                          struct mo_diags *diags);

@@ -938,6 +938,7 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                        {"Int.min", MO_CORE_INT_OP_MIN},
                        {"Int.max", MO_CORE_INT_OP_MAX},
                        {"Int.checked_add", MO_CORE_INT_OP_CHECKED_ADD},
+                       {"Int.to_decimal", MO_CORE_INT_OP_TO_DECIMAL},
                        {"Int.to_char", MO_CORE_INT_OP_TO_CHAR},
                        {"Int.seconds", MO_CORE_INT_OP_SECONDS},
                        {"Int.milliseconds", MO_CORE_INT_OP_MILLISECONDS},
@@ -951,6 +952,19 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                     p,
                     (struct mo_core_prim){.tag = MO_CORE_PRIM_INT, .as.int_ = natives[i].operation},
                     args);
+        }
+        static const struct {
+            const char *name;
+            enum mo_core_range_op operation;
+        } ranges[] = {{"Range.to_list", MO_CORE_RANGE_OP_TO_LIST},
+                      {"Range.contains?", MO_CORE_RANGE_OP_CONTAINS}};
+        for (size_t i = 0; i < sizeof ranges / sizeof ranges[0]; i++) {
+            lower_work(p, 1);
+            if (strcmp(r->native, ranges[i].name) == 0)
+                return lower_prim(p,
+                                  (struct mo_core_prim){.tag = MO_CORE_PRIM_RANGE,
+                                                        .as.range = ranges[i].operation},
+                                  args);
         }
         static const struct {
             const char *name;
@@ -1825,6 +1839,39 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                                                .v = receiver->as.map.v,
                                                .op.tag = maps[i].operation}};
         return lower_prim(p, prim, args);
+    }
+    if (r->native != NULL && strncmp(r->native, "Set.", 4) == 0) {
+        static const struct {
+            const char *name;
+            enum mo_core_set_op operation;
+        } sets[] = {{"Set.empty", MO_CORE_SET_OP_EMPTY},
+                    {"Set.size", MO_CORE_SET_OP_SIZE},
+                    {"Set.empty?", MO_CORE_SET_OP_IS_EMPTY},
+                    {"Set.has?", MO_CORE_SET_OP_HAS},
+                    {"Set.add", MO_CORE_SET_OP_ADD},
+                    {"Set.remove", MO_CORE_SET_OP_REMOVE},
+                    {"Set.union", MO_CORE_SET_OP_UNION},
+                    {"Set.intersection", MO_CORE_SET_OP_INTERSECTION},
+                    {"Set.difference", MO_CORE_SET_OP_DIFFERENCE},
+                    {"Set.to_list", MO_CORE_SET_OP_TO_LIST}};
+        for (size_t i = 0; i < sizeof sets / sizeof sets[0]; i++) {
+            lower_work(p, 1);
+            if (strcmp(r->native, sets[i].name) != 0)
+                continue;
+            mo_core_ty receiver =
+                r->operand_count == 0
+                    ? (result->tag == MO_CORE_TY_FN ? result->as.fn.params.items[0] : result)
+                    : type(b,
+                           row(b, r->receiver == UINT32_MAX ? r->operands[0] : r->receiver)->type);
+            if (receiver->tag == MO_CORE_TY_FN)
+                receiver = receiver->as.fn.params.items[0];
+            MO_ASSERT(receiver->tag == MO_CORE_TY_SET);
+            return lower_prim(
+                p,
+                (struct mo_core_prim){.tag = MO_CORE_PRIM_SET,
+                                      .as.set = {.t = receiver->as.set, .op = sets[i].operation}},
+                args);
+        }
     }
     if (r->native != NULL) {
         const char *member = strrchr(r->native, '.');
