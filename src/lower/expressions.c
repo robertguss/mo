@@ -1447,6 +1447,70 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
             loop_join->as.join.body = select;
             return loop_join;
         }
+        if (strcmp(r->native, "List.find") == 0) {
+            MO_ASSERT(args.count == 2);
+            mo_core_ty in_list =
+                r->operand_count == 0
+                    ? result->as.fn.params.items[0]
+                    : type(b,
+                           row(b, r->receiver == UINT32_MAX ? r->operands[0] : r->receiver)->type);
+            if (in_list->tag == MO_CORE_TY_FN)
+                in_list = in_list->as.fn.params.items[0];
+            mo_core_ty option_ty = result->tag == MO_CORE_TY_FN ? result->as.fn.ret : result;
+            MO_ASSERT(in_list->tag == MO_CORE_TY_LIST && option_ty->tag == MO_CORE_TY_OPTION);
+            mo_core_expr loop_join = lower_expr(p, MO_CORE_EXPR_JOIN);
+            loop_join->as.join.name = lower_fresh(p);
+            loop_join->as.join.params.count = 1;
+            loop_join->as.join.params.items = LOWER_NEW(p, struct mo_core_param, 1);
+            mo_core_string rem = lower_fresh(p);
+            loop_join->as.join.params.items[0] = (struct mo_core_param){rem, in_list};
+            mo_core_expr start = lower_expr(p, MO_CORE_EXPR_JUMP);
+            start->as.jump.name = loop_join->as.join.name;
+            start->as.jump.args = arguments(b, 1);
+            start->as.jump.args.items[0] = args.items[0];
+            loop_join->as.join.rest = start;
+            mo_core_expr select = lower_expr(p, MO_CORE_EXPR_CASE);
+            select->as.case_.expr =
+                unary(b,
+                      (struct mo_core_prim){
+                          .tag = MO_CORE_PRIM_LIST,
+                          .as.list = {.t = in_list->as.list, .op.tag = MO_CORE_LIST_OP_UNCONS}},
+                      lower_var(p, rem));
+            select->as.case_.arms.count = 2;
+            select->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+            mo_core_expr none = lower_expr(p, MO_CORE_EXPR_CON);
+            none->as.con.ty = option_ty;
+            none->as.con.ctor = lower_text(p, "None");
+            none->as.con.args = arguments(b, 0);
+            select->as.case_.arms.items[0] =
+                (struct mo_core_arm){.ctor = lower_text(p, "None"), .body = none};
+            struct mo_core_arm *some = &select->as.case_.arms.items[1];
+            some->ctor = lower_text(p, "Some");
+            some->names.count = 1;
+            some->names.items = LOWER_NEW(p, mo_core_string, 1);
+            mo_core_string pair = lower_fresh(p);
+            some->names.items[0] = pair;
+            mo_core_expr app = lower_expr(p, MO_CORE_EXPR_APP);
+            app->as.app.f = args.items[1];
+            app->as.app.args = arguments(b, 1);
+            app->as.app.args.items[0] = projection(b, lower_var(p, pair), 0);
+            mo_core_expr branch = lower_expr(p, MO_CORE_EXPR_IF);
+            branch->as.if_.cond = app;
+            mo_core_expr found = lower_expr(p, MO_CORE_EXPR_CON);
+            found->as.con.ty = option_ty;
+            found->as.con.ctor = lower_text(p, "Some");
+            found->as.con.args = arguments(b, 1);
+            found->as.con.args.items[0] = projection(b, lower_var(p, pair), 0);
+            mo_core_expr miss = lower_expr(p, MO_CORE_EXPR_JUMP);
+            miss->as.jump.name = loop_join->as.join.name;
+            miss->as.jump.args = arguments(b, 1);
+            miss->as.jump.args.items[0] = projection(b, lower_var(p, pair), 1);
+            branch->as.if_.then_ = found;
+            branch->as.if_.else_ = miss;
+            some->body = branch;
+            loop_join->as.join.body = select;
+            return loop_join;
+        }
         if (strcmp(r->native, "List.count") == 0) {
             MO_ASSERT(args.count == 2);
             mo_core_ty in_list =
@@ -1594,9 +1658,19 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                     args);
         }
     }
+    if (r->native != NULL && strcmp(r->native, "List.to_map") == 0) {
+        mo_core_ty map_ty = result->tag == MO_CORE_TY_FN ? result->as.fn.ret : result;
+        MO_ASSERT(map_ty->tag == MO_CORE_TY_MAP);
+        struct mo_core_prim prim = {.tag = MO_CORE_PRIM_MAP,
+                                    .as.map = {.k = map_ty->as.map.k,
+                                               .v = map_ty->as.map.v,
+                                               .op.tag = MO_CORE_MAP_OP_OF_LIST}};
+        return lower_prim(p, prim, args);
+    }
     if (r->native != NULL &&
         (strcmp(r->native, "Map.get") == 0 || strcmp(r->native, "Map.set") == 0 ||
          strcmp(r->native, "Map.remove") == 0 || strcmp(r->native, "Map.size") == 0 ||
+         strcmp(r->native, "Map.has?") == 0 || strcmp(r->native, "Map.keys") == 0 ||
          strcmp(r->native, "Map.values") == 0)) {
         mo_core_ty receiver =
             r->operand_count == 0
@@ -1613,6 +1687,8 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                                  : strcmp(r->native, "Map.set") == 0    ? MO_CORE_MAP_OP_SET
                                  : strcmp(r->native, "Map.remove") == 0 ? MO_CORE_MAP_OP_REMOVE
                                  : strcmp(r->native, "Map.size") == 0   ? MO_CORE_MAP_OP_SIZE
+                                 : strcmp(r->native, "Map.has?") == 0   ? MO_CORE_MAP_OP_HAS
+                                 : strcmp(r->native, "Map.keys") == 0   ? MO_CORE_MAP_OP_KEYS
                                                                         : MO_CORE_MAP_OP_VALUES}};
         return lower_prim(p, prim, args);
     }

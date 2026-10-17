@@ -44,7 +44,6 @@ With `List.all?` checked, lowered and run (plus lowering dispatch for
 | --- | --- | --- | --- | --- |
 | expenses.mo | 70:56 | E0050 | no visible function has this dot-call name | `name_width = names.map(fn(name) name.char_count end).max or 0` |
 | inventory.mo | 72:48 | E1103 | this generic capture's capability membership isn't checked | `laid_out = columns.map(fn(column) pad_column(rows, column) end)` |
-| job-queue.mo | 71:26 | E0050 | no visible function has this dot-call name | `case queue.jobs.values.find(fn(job) job.state == Ready end)` |
 | json-query.mo | 62:28 | E1150 | this native call is not lowered yet | `Some(c) if c == '-' or c.ascii_digit?: number_at(chars, at)` |
 | todo.mo | 132:9 | E1150 | this native call is not lowered yet | `try files.write_text(file, format(items))` |
 
@@ -53,7 +52,10 @@ With `List.all?` checked, lowered and run (plus lowering dispatch for
 - expenses: `Option.or_fail` (`41:37`) clears; only `List.max` (`70:56`) remains.
 - inventory: unchanged; `E1103` on the generic `rows: List(T)` capture in
   `pad_table` (`72:48`).
-- job-queue: both `Option.or_fail` calls clear, exposing `List.find` (`71:26`).
+- job-queue: `List.find` (`71:26`) clears. Lowering then needed `List.to_map`,
+  `Map.has?` and `Map.keys`, which now lower to their existing Core primitives.
+  The sample passes `mo check` (including its anchors) and its 8 examples and 1
+  test pass; its promises still stop at E1400 (no input generator, M9).
 - json-query: both `Option.or_fail` calls clear; the sample now checks and stops
   in lowering at `Char.ascii_digit?` (`62:28`, E1150).
 - kv: `List.all?` (`90:29`) clears; passes `mo check` (including its anchors),

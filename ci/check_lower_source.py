@@ -757,6 +757,7 @@ for fixture, expected in {
     "file-error-text": 0,
     "list-all": 0,
     "list-count": 0,
+    "list-find": 0,
     "list-map": 0,
     "option-or-fail": 0,
     "map-update-sort-desc": 0,
