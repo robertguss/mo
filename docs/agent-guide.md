@@ -6,23 +6,19 @@ This page is the procedure for a finished Mo program. Correct Mo is Language Ref
 
 The language headings below use the present tense of the reference.
 
-`mo check` on this build runs a staged checker. A body form it has not implemented is unfinished. The code is E1103. The headline is "this body rule is not implemented by the staged checker". A nonempty `examples` or `promise` block is one of those forms. On the program below, check also reports that code for `console.print`. With the `examples` block removed, it reports the same code for the interpolated text. The same code covers other forms the reference requires, including `or` on an `Option` and a dot call such as `get`.
+This build runs `mo check`, `mo run`, `mo test`, `mo format` and `mo guide`. The program below checks with no errors, runs, and passes its examples and its test.
 
-E1103 means this toolchain has not implemented that form. If `mo check` reports E1103 and the reference requires the form, leave the form in. A `test` block is not that diagnostic. This build does not look at tests, so deleting a `test` does not change the check, and exit 0 does not mean a test ran.
+`mo fix` exits 1 with E1400. The headline is "this build cannot apply fixes yet". When `mo check` shows a fix, make that edit yourself.
 
-`mo run` exits 1 with E1400. The headline is "this build cannot run programs yet". `mo test` exits 1 with E1400. The headline is "this build cannot run or list tests yet". `mo fix` exits 1 with E1400. The headline is "this build cannot apply fixes yet". `--emit` exits 1 with E1400. The headline is "this build cannot emit Core or bytecode yet".
+A few forms the reference requires are still unfinished. `mo check` reports E1103 for a form the checker has not implemented, with a headline that says so, such as "this body rule is not implemented by the staged checker". It reports E1150 for a form it checks but cannot compile yet, such as `env.get`. The headline is "this native call is not lowered yet". E1103 and E1150 mean this toolchain has not implemented that form. If the reference requires the form, leave the form in. `mo run` and `mo test` report the same code for the same form.
 
-E1400 means the command does no work on this build. Leave the program as the reference requires.
+`mo test` exits 1 with E1400 when it cannot build the inputs of a selected promise, such as one whose function takes a function. The headline is "this build cannot generate inputs for this promise". Keep the promise. Run the other examples, promises and tests by name with `--only`, as `--list` prints them.
 
-This build runs `mo format`. `mo format` rewrites the files it is given.
-
-This build has no `lib/` directory. It loads no library modules from that folder. Section 10.5 names what is always in scope. A call this checker has not implemented is still E1103.
-
-Exit 0 means the staged checker accepted the forms it implements.
+This build has no `lib/` directory. It loads no library modules from that folder. Section 10.5 names what is always in scope.
 
 ## Write this program
 
-Use this shape. Keep the `examples` block, the interpolated text, and `console.print`. This build reports E1103 for those forms.
+Use this shape.
 
 ```mo
 ## Greets the name given on the command line, or the world.
@@ -105,7 +101,7 @@ The executable grammar in `grammar/mo.y` is the authority. Appendix B summarizes
 
 ## Run these commands
 
-Each command is given the file of the program's main module. `mo check FILE` reports the program's errors, `mo run FILE [ARGS...]` runs it with the arguments after the file's name, and `mo test FILE` checks its examples, promises and tests. `mo format` and `mo fix` rewrite the files they are given.
+Each command is given the file of the program's main module. `mo check FILE` reports the program's errors, `mo run FILE [ARGS...]` runs it with the arguments after the file's name, and `mo test FILE` checks its examples, promises and tests. `mo format` rewrites the files it is given. On a complete toolchain, `mo fix` does too.
 
 `mo guide` needs no file. It prints this page. `mo guide --reference` prints the reference.
 
@@ -115,12 +111,12 @@ Section 13.4 names the selection flags and the limits.
 
 ## Work in this loop
 
-Follow these steps for a complete toolchain.
+Follow these steps.
 
 1. Write the program. When a function has `examples` or a `promise`, put each block at the top of the body, then a blank line, then the code. Add a `test` in the same file when you check a scenario. Section 12.
 2. Run `mo format` on those files.
 3. Run `mo check FILE`. Fix language errors. Keep a diagnostic that Know this build names.
-4. When `mo check` offers exactly one fix, run `mo fix FILE`. Appendix A says `mo fix` applies a fix when there is only one.
+4. When `mo check` shows a fix, make that edit. On a complete toolchain, `mo fix FILE` applies a fix when there is only one. Appendix A.
 5. Run `mo test FILE` until the examples, promises, and tests pass.
 6. Run `mo run FILE` only when the task needs a running program.
 
@@ -132,7 +128,7 @@ The task is done when the program is the v0.1 Mo the reference describes for wha
 
 On a complete toolchain, `mo format`, `mo check`, and `mo test` exit 0. Run `mo run` when the task is a running program.
 
-On this build, `mo check` exit 0 is not the bar. Accept a remaining diagnostic only when Know this build names it. Deleting a reference form to silence E1103 leaves the task undone. Skipping tests because a command returns E1400 leaves the task undone.
+On this build, accept a remaining diagnostic only when Know this build names it: E1103 or E1150 on a form the reference requires, or E1400 on a promise whose inputs `mo test` cannot build. Deleting a reference form to silence E1103 or E1150 leaves the task undone. Deleting a promise because `mo test` returns E1400 leaves the task undone.
 
 Where the reference says nothing, do not add a rule, and do not fill that silence from the architecture or from `formal/TRANSLATION.md`.
 

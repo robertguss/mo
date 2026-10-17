@@ -604,7 +604,8 @@ and decoded text/char escapes. A stable, budgeted merge of canonical keys retain
 the earliest repeated key and the first equal key for E0094. Constants, qualified
 names and expression folding are not evaluated for this comparison. Robert
 approved this bounded scope for LW5; broader visibility needs a separate decision.
-Nonempty examples or promises are refused with E1103, never silently skipped.
+Examples and promises are certified and run by `mo test`; a form still unimplemented is refused
+with E1103, never silently skipped.
 A successful intermediate body is not a `mo_program`, is not lowering-ready and does not certify those
 rules. `mo_check` composes implemented stages for a certified subset; section 12
 records its walking skeleton and the forms still refused with E1103.

@@ -115,6 +115,9 @@ Adding a library function typically touches its `check` signature (`src/check/si
   `mo_test_report(name)` sets the exit status. Tests go through public headers, not internals.
 - Checker diagnostics are pinned by `tests/check/diagnostics/eNNNN` inputs with adjacent `.diag`
   expectations (format in that folder's `README.md`). Nothing regenerates them; edit by hand.
+- `docs/agent-guide.md` (`mo guide`) tells agents what this build does. A change to what a `mo`
+  command does, or to which forms are unfinished, updates the guide in the same PR;
+  `guide_claims` in `ci/check_cli.py` runs the guide's program and checks each claim it makes.
 - `grammar/mo.y` is an instrument, not the compiler: the real parser is hand-written in
   `src/syntax/`, and a fuzz target checks both accept and reject the same inputs. Bison refuses any
   conflict, which keeps the grammar unambiguous.
