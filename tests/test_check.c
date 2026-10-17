@@ -1516,11 +1516,47 @@ static void capture_sources(void) {
         {"abstract capture",
          "fn make(value: T) : fn() : T\n"
          "fn() value end\nend\nfn main() : Int\nmake(13)()\nend\n",
-         "value end", MO_CODE_CHECK_UNFINISHED},
+         NULL, 0},
+        {"abstract capture of a list",
+         "fn count(items: List(T)) : Int\n"
+         "f = fn(extra) items.size + extra end\nf(1)\nend\n"
+         "fn main() : Int\ncount([\"a\", \"b\"])\nend\n",
+         NULL, 0},
+        {"abstract capture with a capability",
+         "fn count(items: List(T)) : Int\n"
+         "f = fn(extra) items.size + extra end\nf(1)\nend\n"
+         "fn main(console: Console) : Int\ncount([console])\nend\n",
+         "count([console])", MO_CODE_CAPABILITY_CAPTURE},
+        {"abstract capture with a stored capability",
+         "struct Holder\nconsole: Console\nend\n"
+         "fn count(items: List(T)) : Int\n"
+         "f = fn(extra) items.size + extra end\nf(1)\nend\n"
+         "fn main(console: Console) : Int\ncount([Holder(console: console)])\nend\n",
+         "count([Holder", MO_CODE_CAPABILITY_CAPTURE},
+        {"abstract capture passed on",
+         "fn count(items: List(T)) : Int\n"
+         "f = fn(extra) items.size + extra end\nf(1)\nend\n"
+         "fn relay(items: List(U)) : Int\ncount(items)\nend\n"
+         "fn main() : Int\nrelay([1, 2])\nend\n",
+         NULL, 0},
+        {"abstract capture passed on with a capability",
+         "fn count(items: List(T)) : Int\n"
+         "f = fn(extra) items.size + extra end\nf(1)\nend\n"
+         "fn relay(items: List(U)) : Int\ncount(items)\nend\n"
+         "fn main(console: Console) : Int\nrelay([console])\nend\n",
+         "relay([console])", MO_CODE_CAPABILITY_CAPTURE},
+        {"abstract phantom capability",
+         "enum Mark(T)\nPresent\nend\n"
+         "fn count(mark: Mark(T)) : Int\n"
+         "f = fn(extra) extra + mark_size(mark) end\nf(1)\nend\n"
+         "fn mark_size(_mark: Mark(T)) : Int\n1\nend\n"
+         "fn marked() : Mark(Console)\nPresent\nend\n"
+         "fn main() : Int\ncount(marked())\nend\n",
+         NULL, 0},
         {"Text isn't capability-free",
          "fn make(value: T) : fn() : Text where T: Text\n"
          "fn() value.to_text end\nend\nfn main()\nend\n",
-         "value.to_text", MO_CODE_CHECK_UNFINISHED},
+         NULL, 0},
         {"higher-order initializer",
          "answer = invoke(fn() 13 end)\n"
          "fn invoke(action: fn() : Int) : Int\naction()\nend\n"

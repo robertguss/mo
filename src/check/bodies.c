@@ -196,6 +196,7 @@ struct inference {
     struct type_pair *equal_types;
     struct emitted_lambda *lambda_frame, *lambdas;
     struct capture_loop *capture_loop;
+    uint32_t capture_free; /* type parameters that lambdas capture, so can't hold capabilities */
     struct capture_path *capture_path;
     struct term *result;
     struct mo_span span;
@@ -3857,7 +3858,7 @@ static MO_MUST_USE bool finish_notes(struct inference *p, struct mo_inferred_exp
 }
 
 static MO_MUST_USE bool capture_type(struct inference *p, const struct mo_source_type *type,
-                                     bool *capability, bool *unknown, uint32_t depth) {
+                                     bool *capability, uint32_t *unknown, uint32_t depth) {
     if (!work(p) || !type_depth(p, depth))
         return false;
     if (type->kind == MO_SOURCE_FUNCTION)
@@ -3870,7 +3871,7 @@ static MO_MUST_USE bool capture_type(struct inference *p, const struct mo_source
         /* Number is native-only. Custom Order/Text (including implied Equal)
          * do not establish that a nominal value contains no capabilities. */
         if (fn == NULL || (fn->requirements[letter] & (1u << MO_SOURCE_NUMBER)) == 0)
-            *unknown = true;
+            *unknown |= UINT32_C(1) << letter;
         return true;
     }
     if (type->kind == MO_SOURCE_NAMED && type->declaration != NULL) {
@@ -3945,7 +3946,8 @@ static MO_MUST_USE bool finish_captures(struct inference *p) {
                 MO_ASSERT(p->error.code != 0);
                 continue;
             }
-            bool capability = false, unknown = false;
+            bool capability = false;
+            uint32_t unknown = 0;
             if (!capture_type(p, type, &capability, &unknown, 0))
                 return false;
             if (capability) {
@@ -3955,16 +3957,13 @@ static MO_MUST_USE bool finish_captures(struct inference *p) {
                                         "holding them (reference 11.4).",
                                         c->local->name);
                 (void)reported;
-            } else if (unknown) {
-                bool reported =
-                    problem(p, MO_CODE_CHECK_UNFINISHED, c->use,
-                            "this generic capture's capability membership isn't checked",
-                            "The staged checker cannot certify an abstract captured "
-                            "value without a capability-free type.",
-                            NULL);
-                (void)reported;
-            } else if (!capture_assignment(p, lambda, c) && p->fatal)
-                return false;
+            } else {
+                /* An abstract captured value holds a capability only where the generic function
+                 * is used; mo_check_capture_arguments checks every use. */
+                p->capture_free |= unknown;
+                if (!capture_assignment(p, lambda, c) && p->fatal)
+                    return false;
+            }
             if (p->fatal)
                 return false;
             p->failed = false;
@@ -5381,6 +5380,7 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
                                          .body = {.count = count,
                                                   .items = rows,
                                                   .root = anchor ? UINT32_MAX : v.note->index,
+                                                  .capture_free_parameters = p.capture_free,
                                                   .binding_count = binding_count,
                                                   .bindings = bindings}};
     }
