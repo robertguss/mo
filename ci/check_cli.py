@@ -1588,6 +1588,23 @@ def runner(binary):
             ("Kv.test.2", "passed")]
         assert kv_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
                                 "passed": 17, "failed": 0, "stopped": 0, "status": 0}
+        assert run(binary, ["check", "examples/todo.mo"], 0).stderr == b""
+        records(run(binary, ["check", "--json", "examples/todo.mo"], 0), "check")
+        with tempfile.TemporaryDirectory() as folder:
+            def todo(*words, status=0):
+                result = subprocess.run([str(binary), "run", str(root / "examples/todo.mo"),
+                                         *words], cwd=folder, capture_output=True, timeout=30)
+                assert result.returncode == status, (words, result)
+                return result
+            for words in (["add", "milk"], ["add", "eggs"], ["done", "1"]):
+                assert todo(*words).stdout == b""
+            assert todo("list").stdout == b"1. [x] milk\n2. [ ] eggs\n"
+            assert todo("remove", "9", status=1).stderr == b"there is no item 9\n"
+            todo("remove", "2")
+            assert (pathlib.Path(folder) / "todo.txt").read_text() == "[x] milk\n"
+        todo_tests = records(run(binary, ["test", "--json", "examples/todo.mo"], 0), "test")
+        assert todo_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                                  "passed": 15, "failed": 0, "stopped": 0, "status": 0}
 
         # Every source stage, including lower/Core/codegen, shares the explicit
         # source stack, while the caller has only 1 MiB. Nested arithmetic also
