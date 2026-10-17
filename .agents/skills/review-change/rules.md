@@ -10,7 +10,7 @@ Apply every rule to every changed file. A finding needs a failure scenario: the 
 
 ## Contracts
 
-- Each shared contract the diff crosses (Mo Core, bytecode, `prims.def`, `hostops.def`) is updated on every side that reads it, in this PR. `CLAUDE.md` lists the sides.
+- Each shared contract the diff crosses (Mo Core, bytecode, `prims.def`, `hostops.def`) is updated on every side that reads it, in this PR. `AGENTS.md` lists the sides.
 - Docs that describe the changed behaviour move with it: `docs/design/library.md`, `docs/status/sample-blockers.md`, the reference, the architecture section.
 
 ## Placement
@@ -20,7 +20,7 @@ Apply every rule to every changed file. A finding needs a failure scenario: the 
 
 ## C rules
 
-- Every rule in the "C rules" section of `CLAUDE.md`, applied to each changed function. The ones CI can't check carry the weight here: an `MO_ASSERT` on each invariant the code relies on, a named limit for each new size, depth or count, and arena allocation.
+- Every rule in the "C rules" section of `AGENTS.md`, applied to each changed function. The ones CI can't check carry the weight here: an `MO_ASSERT` on each invariant the code relies on, a named limit for each new size, depth or count, and arena allocation.
 
 ## Tests
 
