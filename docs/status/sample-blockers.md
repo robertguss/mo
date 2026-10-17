@@ -17,6 +17,10 @@ type exposed without its insides (`Store` in `kv.mo`, `Limiter` in
 needs module builders (reference 12.2). `notes-tool.mo` also needs fake
 capabilities as inputs.
 
+MO-91 part 2 (fake capabilities as promise inputs) clears `notes-tool.mo`: its only promise
+subject takes a `ReadFiles`, and `mo test` now passes all 4 of its observations. Its other
+four siblings still need module builders.
+
 MO-88 checks a generic capture's capability membership where the generic
 function is used (E0091 only when the type argument holds a capability):
 - `examples/inventory.mo` passes `mo check`, `mo run`, and its 8 examples and
