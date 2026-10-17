@@ -40,7 +40,8 @@ struct mo_input_request {
     uint64_t seed;
 };
 
-/* Later stages supply hidden-type builders, closures and fakes here. Entries
+/* The driver supplies fakes (tools/fakes.h) here; later stages add hidden-type builders and
+ * closures. Entries
  * override an exact type index; boundary 0 is the minimum. Callbacks are
  * deterministic, honor the remaining limits, and return a valid owned cell
  * in destination, preserving out on refusal. The library counts the root as
@@ -85,7 +86,8 @@ struct mo_inputs {
 /* parameters are valid indices in mo_image_types(image), without an implicit
  * env or the promise's result. The seed hashes the full promise name, not its
  * subject's name, with the generator's fixed key. Free after every init,
- * including a refusal. No function, env or capability inputs yet. */
+ * including a refusal. No function or env inputs yet; capability
+ * inputs need a factory. */
 MO_MUST_USE enum mo_input_result
 mo_inputs_init(struct mo_inputs *inputs, const struct mo_types *types, const uint32_t *parameters,
                uint32_t count, const char *promise, size_t length,

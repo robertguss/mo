@@ -17,6 +17,10 @@ type exposed without its insides (`Store` in `kv.mo`, `Limiter` in
 needs module builders (reference 12.2). `notes-tool.mo` also needs fake
 capabilities as inputs.
 
+MO-91 part 2 (fake capabilities as promise inputs) clears `notes-tool.mo`: its only promise
+subject takes a `ReadFiles`, and `mo test` now passes all 4 of its observations. Its other
+four siblings still need module builders.
+
 MO-88 checks a generic capture's capability membership where the generic
 function is used (E0091 only when the type argument holds a capability):
 - `examples/inventory.mo` passes `mo check`, `mo run`, and its 8 examples and
@@ -111,6 +115,10 @@ None: all 12 samples pass `mo check` with 0 errors.
   tests with 0 errors.
 - kv: `List.all?` (`90:29`) clears; passes `mo check` (including its anchors),
   `mo run`, and its examples and tests with 0 errors.
+- notes-tool: its promise takes a `ReadFiles`, which promises now receive as a generated
+  fake (`src/tools/fakes.c`). `mo test` passes the promise and its 3 tests, so the sample
+  passes plain `mo test`. `Env.get` and `Random.int` do not lower yet, so a promise whose
+  body calls them still stops at E1150; no sample does.
 - todo: `Files.write_text` (`132:9`) clears; the sample passes `mo check`,
   `mo run` and its 15 examples and tests with 0 errors.
 

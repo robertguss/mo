@@ -1807,8 +1807,8 @@ independently force status 1. Selected unsupported promises are never omitted.
 with built-in Unit, Bool, Byte, Int, Float, Char, Time, Duration, Decimal, Range,
 Text, Bytes or BigInt inputs, composed through tuples, Lists, Maps, Sets, Option,
 Result and visible source records/choices, including closed imported generic data and
-regular recursion. Generic subjects, exposed-opaque types, function/capability
-inputs and factory wiring remain unavailable, even if concrete
+regular recursion. Capability inputs are generated fakes (below). Generic subjects,
+exposed-opaque types and function inputs remain unavailable, even if concrete
 instances exist elsewhere. Preflight checks every payload of every case and
 every actual type argument, including phantom arguments. It walks canonical
 declaring symbols and declaration-ordered field templates, never import
@@ -2114,11 +2114,23 @@ their own refusal. Uninhabitable or too-deep choice cases are excluded;
 collections with uninhabitable elements still generate empty values.
 Functions/env/capabilities without
 overrides, missing layouts and non-hashable keys are unsupported. Exact-index
-factory overrides are the future hidden-builder, closure and fake-capability seam; their trusted
+factory overrides are the hidden-builder, closure and fake-capability seam; their trusted
 callbacks subtract child nodes, bytes and work from the same remaining budget
 and rebuild foreign cells instead of retaining them. Hidden visibility and
-the choice of factories remain with the driver. These later builders remain
-unimplemented; the structural controlled-call driver uses no factory overrides.
+the choice of factories remain with the driver. Only the fake-capability
+factories (`src/tools/fakes.c`) exist; the hidden-type and closure builders remain
+unimplemented.
+
+**Fake capabilities.** The driver gives each capability type in the image one factory.
+Every kind has three boundaries, then random fakes whose size grows with the run. Contents come
+from small fixed palettes, so a fake is the same on every run: `Files` and `ReadFiles` hold none,
+one or all of five files in two folders; a `Console` has no input, one line or several; `Args`
+and `Env` hold none, one or several entries; a `Clock` is fixed at the epoch or at either end
+of the years 1 to 9999; a `Random` is seeded with 0, 1 or -1. Each is built through the host's own
+fake entry points (`mo_host_fake_restore`, `Random.seeded`), as the constructors a test calls are. A fake is mutable, so the
+driver keeps the request each fake was made from, and shrinking rebuilds a copy of the
+failing input's fakes from that request, never from their state after the failing call. Fakes
+themselves are not shrunk, and the report names them by type (`<ReadFiles>`).
 
 ### 10.2 JSON output
 
