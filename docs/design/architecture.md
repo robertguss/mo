@@ -1805,10 +1805,10 @@ independently force status 1. Selected unsupported promises are never omitted.
 
 **Structural promise observations.** The bounded runner accepts nongeneric subjects
 with built-in Unit, Bool, Byte, Int, Float, Char, Time, Duration, Decimal, Range,
-Text, Bytes or BigInt inputs, composed through tuples, Lists, Option, Result
-and visible source records/choices, including closed imported generic data and
+Text, Bytes or BigInt inputs, composed through tuples, Lists, Maps, Sets, Option,
+Result and visible source records/choices, including closed imported generic data and
 regular recursion. Generic subjects, exposed-opaque types, function/capability
-inputs, Maps/Sets and factory wiring remain unavailable, even if concrete
+inputs and factory wiring remain unavailable, even if concrete
 instances exist elsewhere. Preflight checks every payload of every case and
 every actual type argument, including phantom arguments. It walks canonical
 declaring symbols and declaration-ordered field templates, never import
