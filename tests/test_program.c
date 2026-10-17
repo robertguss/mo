@@ -3,45 +3,10 @@
 #include "base/limits.h"
 #include "base/stack.h"
 #include "check/check.h"
+#include "program_fixture.h"
 #include "test.h"
 
 #include <string.h>
-
-struct fixture {
-    struct mo_arena syntax, arena;
-    struct mo_sources sources;
-    struct mo_diags diags;
-    struct mo_module_syntax *module;
-    uint32_t order, *uses;
-    struct mo_module_set set;
-    struct mo_program *program;
-};
-
-static void init(struct fixture *f, const char *text) {
-    *f = (struct fixture){0};
-    mo_arena_init(&f->syntax, 64 << 20);
-    mo_arena_init(&f->arena, MO_CLI_CHECK_SIZE);
-    MO_ASSERT(mo_sources_init(&f->sources) && mo_diags_init(&f->diags));
-    uint32_t file;
-    struct mo_source_error error;
-    MO_ASSERT(mo_sources_add_bytes(&f->sources, "main.mo", (const uint8_t *)text, strlen(text),
-                                   &file, &error));
-    f->module = mo_parse(&f->syntax, &f->sources, file, &f->diags);
-    MO_ASSERT(f->module != NULL && !mo_diags_any(&f->diags));
-    f->set = (struct mo_module_set){.count = 1,
-                                    .modules = &f->module,
-                                    .order = &f->order,
-                                    .uses = &f->uses,
-                                    .sources = &f->sources};
-    f->program = mo_check(&f->arena, &f->set, &f->diags);
-}
-
-static void free_fixture(struct fixture *f) {
-    mo_arena_free(&f->arena);
-    mo_arena_free(&f->syntax);
-    mo_diags_free(&f->diags);
-    mo_sources_free(&f->sources);
-}
 
 static void number_literal_bound(void) {
     struct fixture f;
@@ -2610,63 +2575,6 @@ static void ability_depth(void) {
     }
 }
 
-static void allocation_failures(void) {
-    static const char *const sources[] = {
-        "module Main\nfn main()\nend\n",
-        "module Main\nstruct Box(T)\nvalue: T\nend\n"
-        "fn to_text(box: Box(T)) : Text where T: Text\n\"#{box.value}\"\nend\n"
-        "fn main() : Int\nvar total = 0\nfor i in 0..3\ntotal += i\nend\n"
-        "reader = fn(value) value.value end\ntotal = reader(Box(value: total))\n"
-        "box = Some(Box(value: total))\n_rendered = \"#{box}\"\n"
-        "case box\nSome(Box(value: n)): n\nNone: 0\nend\nend\n",
-        "module Main\nenum Outer(T)\nWrapped(Set(T))\nend\n"
-        "fn lift(value: Result(Int, Set(T))) : Result(Text, Outer(T)) where T: Hash\n"
-        "n = try value\nOk(n.to_text)\nend\n"
-        "fn main() : Int\nreader = fn(values) values.get(0) or 17 end\nreader([3])\nend\n",
-        "module Main\nfn twice(value: T) : T where T: Number\nexamples\n"
-        "twice(3) == 6\nend\nvalue + value\nend\n"
-        "fn main() : Int\ntwice(4)\nend\n",
-        "module Main\nfn twice(value: T) : T where T: Number, T: Equal\n"
-        "promise \"doubles\"\nresult == value + value\n"
-        "allows result: 6, value: 3\nforbids value: 2, result: 5\nend\n"
-        "value + value\nend\ntest \"private \\u{3bb}\"\nassert twice(4) == 8\nend\n"
-        "fn main()\nend\n",
-        "module Main\nanswer = twice(3)\nlabel = \"#{Label(value: answer)}\"\n"
-        "prefix = \"value\"\nstruct Label\nvalue: Int\nend\n"
-        "fn to_text(label: Label) : Text\n\"#{prefix}#{label.value}\"\nend\n"
-        "fn twice(value: T) : T where T: Number\nvalue + value\nend\n"
-        "fn main() : Int\nanswer\nend\n"};
-    for (size_t s = 0; s < sizeof(sources) / sizeof(sources[0]); s++) {
-        struct fixture f;
-        init(&f, sources[s]);
-        MO_ASSERT(f.program != NULL && !mo_diags_any(&f.diags));
-        size_t used = f.arena.used;
-        uint32_t failures = 0, successes = 0;
-        for (size_t limit = 0; limit <= used + 128; limit += 128) {
-            mo_arena_free(&f.arena);
-            mo_arena_init(&f.arena, limit);
-            mo_diags_free(&f.diags);
-            MO_ASSERT(mo_diags_init(&f.diags));
-            f.program = mo_check(&f.arena, &f.set, &f.diags);
-            if (f.program == NULL) {
-                failures++;
-                CHECK(mo_diags_any(&f.diags));
-                for (uint32_t i = 0; i < f.diags.count; i++) {
-                    CHECK(f.diags.items[i].code == MO_CODE_CHECK_NO_MEMORY);
-                    struct mo_span span = f.diags.items[i].primary.span;
-                    CHECK(span.file == f.module->span.file || span.file == UINT32_MAX);
-                    CHECK(span.start <= span.end && span.end <= strlen(sources[s]));
-                }
-            } else {
-                successes++;
-                CHECK(!mo_diags_any(&f.diags));
-            }
-        }
-        CHECK(failures != 0 && successes != 0);
-        free_fixture(&f);
-    }
-}
-
 static void corpus(void) {
     static const char *const paths[] = {
         "fuzz/corpus/fuzz_program/loops.mo",    "fuzz/corpus/fuzz_program/patterns.mo",
@@ -2799,7 +2707,6 @@ static void run(void *argument) {
     diagnostic_cap();
     ability_scaling();
     ability_depth();
-    allocation_failures();
     corpus();
 }
 
