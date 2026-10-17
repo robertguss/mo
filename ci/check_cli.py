@@ -1605,6 +1605,22 @@ def runner(binary):
         todo_tests = records(run(binary, ["test", "--json", "examples/todo.mo"], 0), "test")
         assert todo_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
                                   "passed": 15, "failed": 0, "stopped": 0, "status": 0}
+        assert run(binary, ["check", "examples/inventory.mo"], 0).stderr == b""
+        records(run(binary, ["check", "--json", "examples/inventory.mo"], 0), "check")
+        inventory_run = run(binary, ["run", "examples/inventory.mo"], 0)
+        assert inventory_run.stderr == b""
+        assert inventory_run.stdout == (
+            b"The three most valuable stocks:\n"
+            b"product    category  price  stock\n"
+            b"Desk lamp  office    24.50     40\n"
+            b"Notebook   office     3.20    300\n"
+            b"Kettle     kitchen   39.90     12\n\n"
+            b"kitchen: 2\noffice: 2\nhome: 1\n\n"
+            b"One from each category: Kettle, Desk lamp, Doormat\n")
+        inventory_tests = records(run(binary, ["test", "--json", "examples/inventory.mo"], 0),
+                                  "test")
+        assert inventory_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                                       "passed": 10, "failed": 0, "stopped": 0, "status": 0}
         assert run(binary, ["check", "examples/json-query.mo"], 0).stderr == b""
         records(run(binary, ["check", "--json", "examples/json-query.mo"], 0), "check")
         json_run = subprocess.run([str(binary), "run", "examples/json-query.mo", "items.0.n"],
