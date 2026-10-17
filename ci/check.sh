@@ -163,6 +163,9 @@ if have lake; then
 		done
 		if ((${#drivers[@]})); then python3 ci/check_core_check.py "${drivers[@]}";
 		else missing "no Core checker test executable is built"; fi
+		step "Generated well-typed Core programs pass both checkers and print identically in C and Lean"
+		if ((${#drivers[@]})); then PYTHONDONTWRITEBYTECODE=1 python3 ci/check_core_generated.py "${drivers[@]}";
+		else missing "no Core checker test executable is built"; fi
 		step "Heap Float spellings match Lean and BigInt digits match Python"
 		heap_drivers=()
 		for driver in build/{gcc,clang}/{debug,sanitize}/tests/test_heap.test; do
