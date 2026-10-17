@@ -1588,6 +1588,51 @@ def runner(binary):
             ("Kv.test.2", "passed")]
         assert kv_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
                                 "passed": 17, "failed": 0, "stopped": 0, "status": 0}
+        assert run(binary, ["check", "examples/json-query.mo"], 0).stderr == b""
+        records(run(binary, ["check", "--json", "examples/json-query.mo"], 0), "check")
+        json_run = subprocess.run([str(binary), "run", "examples/json-query.mo", "items.0.n"],
+                                  cwd=root, input=b'{"items": [{"n": -1.50}, null]}',
+                                  capture_output=True, timeout=30)
+        assert json_run.returncode == 0 and json_run.stderr == b""
+        assert json_run.stdout == b"-1.5\n"
+        json_tests = records(
+            run(binary, ["test", "--json",
+                         "--only", "JsonQuery.parse.example.1",
+                         "--only", "JsonQuery.parse.example.2",
+                         "--only", "JsonQuery.parse.example.3",
+                         "--only", "JsonQuery.parse.example.4",
+                         "--only", "JsonQuery.parse.example.5",
+                         "--only", "JsonQuery.hex_value.example.1",
+                         "--only", "JsonQuery.hex_value.example.2",
+                         "--only", "JsonQuery.hex_value.example.3",
+                         "--only", "JsonQuery.pretty.example.1",
+                         "--only", "JsonQuery.pretty.example.2",
+                         "--only", "JsonQuery.quoted.example.1",
+                         "--only", "JsonQuery.quoted.example.2",
+                         "--only", "JsonQuery.at_path.example.1",
+                         "--only", "JsonQuery.at_path.example.2",
+                         "--only", "JsonQuery.at_path.example.3",
+                         "--only", "JsonQuery.test.1",
+                         "examples/json-query.mo"], 0), "test")
+        assert [(r["name"], r["outcome"]) for r in json_tests[1:-1]] == [
+            ("JsonQuery.parse.example.1", "passed"),
+            ("JsonQuery.parse.example.2", "passed"),
+            ("JsonQuery.parse.example.3", "passed"),
+            ("JsonQuery.parse.example.4", "passed"),
+            ("JsonQuery.parse.example.5", "passed"),
+            ("JsonQuery.hex_value.example.1", "passed"),
+            ("JsonQuery.hex_value.example.2", "passed"),
+            ("JsonQuery.hex_value.example.3", "passed"),
+            ("JsonQuery.pretty.example.1", "passed"),
+            ("JsonQuery.pretty.example.2", "passed"),
+            ("JsonQuery.quoted.example.1", "passed"),
+            ("JsonQuery.quoted.example.2", "passed"),
+            ("JsonQuery.at_path.example.1", "passed"),
+            ("JsonQuery.at_path.example.2", "passed"),
+            ("JsonQuery.at_path.example.3", "passed"),
+            ("JsonQuery.test.1", "passed")]
+        assert json_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                                  "passed": 16, "failed": 0, "stopped": 0, "status": 0}
         assert run(binary, ["check", "examples/job-queue.mo"], 0).stderr == b""
         records(run(binary, ["check", "--json", "examples/job-queue.mo"], 0), "check")
         job_queue_tests = records(
@@ -1683,6 +1728,7 @@ def map_literals(binary):
     fixtures = root / "tests/lower-source"
     for name, expected in {
         "file-error-text": b"notes/a.md: no such file\n../secret: not allowed\nbin/app: not text\nout.txt: is a folder\nSome(notes/a.md: no such file)\n",
+        "char-natives": b"[false, true, false, true, false, false]/[true, false, false, false, false, true]/[false, true, false]/true/66/b/Q\ntrue/false/true/false/[\"a\", \"b\"]/[(\"a\", 1), (\"b\", 2)]\n",
         "list-all": b"true/true/false/false/true/true/true\n",
         "list-find": b"none/2/none/2/bc/20/40\n",
         "list-count": b"0/0/3/2/2/2/3\n",

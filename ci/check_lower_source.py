@@ -755,6 +755,7 @@ def check_modules(driver, vm, root, world):
 
 for fixture, expected in {
     "file-error-text": 0,
+    "char-natives": 0,
     "list-all": 0,
     "list-count": 0,
     "list-find": 0,
