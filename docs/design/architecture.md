@@ -2227,6 +2227,16 @@ among them:
 | Small critical C functions | CBMC proofs of memory safety and of no overflow: checked arithmetic, Decimal's products and quotients, UTF-8 decoding, path resolution, hash-table probing, reference count updates |
 | The whole toolchain | a golden corpus of programs with their expected output and exit status, and Phase 2's agent benchmark |
 
+**Generated Core programs.** `ci/gen_core.py` builds well-typed Core programs from the typing rules
+in `formal/MoCore/Check.lean`: it picks a type, then an expression of that type, over scalars,
+tuples, lists, maps, sets, options, results, declared data, functions, `let_`, `if_`, `case_`,
+`join`/`jump`, calls and the pure primitives, with no capability. A seed fixes a program on every
+platform. `ci/check_core_generated.py` (the `drivers` group) requires every generated program to
+pass `core_check` in C and `mocore` in Lean, and its text to come back byte for byte from the C
+printer (`tests/test_core_print.c`) and from `mocore --canonical`. `MO_CORE_GENERATED` and
+`MO_CORE_GENERATED_SEED` widen the run for nightly use. The generator is the input for the
+million-program VM comparison; running the programs on both engines is a later step.
+
 **Fuzz targets** (condition 2), each with its invariant:
 
 - the parser against the grammar: same verdict;
