@@ -217,6 +217,7 @@ static void constant_dependencies(void) {
          {"base", "answer"},
          2},
         {"answer = [1, 2, 3].all?(fn(n) n > base end)\nbase = 1\n", {"base", "answer"}, 2},
+        {"answer = [1, 2, 3].find(fn(n) n > base end)\nbase = 1\n", {"base", "answer"}, 2},
         {"answer = [1, 2, 3].count(fn(n) n > base end)\nbase = 1\n", {"base", "answer"}, 2},
         {"value = [reader].append(reader).size\nfn reader() : Int\nvalue\nend\n", {"value"}, 1},
     };
@@ -271,6 +272,8 @@ static void constant_refusals(void) {
          "fn compare(_a: Label, _b: Label) : Ordering\nif value == 0: Less else: Equal\nend\n",
          MO_CODE_CONSTANT_CYCLE},
         {"value = [1].all?(reader)\nfn reader(_n: Int) : Bool\nnot value\nend\n",
+         MO_CODE_CONSTANT_CYCLE},
+        {"value = [1].find(reader)\nfn reader(_n: Int) : Bool\nvalue is None\nend\n",
          MO_CODE_CONSTANT_CYCLE},
         {"value = [1].count(reader)\nfn reader(_n: Int) : Bool\nvalue == 0\nend\n",
          MO_CODE_CONSTANT_CYCLE},

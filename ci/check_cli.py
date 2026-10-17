@@ -1588,6 +1588,32 @@ def runner(binary):
             ("Kv.test.2", "passed")]
         assert kv_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
                                 "passed": 17, "failed": 0, "stopped": 0, "status": 0}
+        assert run(binary, ["check", "examples/job-queue.mo"], 0).stderr == b""
+        records(run(binary, ["check", "--json", "examples/job-queue.mo"], 0), "check")
+        job_queue_tests = records(
+            run(binary, ["test", "--json",
+                         "--only", "JobQueue.lease.example.1",
+                         "--only", "JobQueue.lease.example.2",
+                         "--only", "JobQueue.fail.example.1",
+                         "--only", "JobQueue.fail.example.2",
+                         "--only", "JobQueue.fail.example.3",
+                         "--only", "JobQueue.fail.example.4",
+                         "--only", "JobQueue.expire.example.1",
+                         "--only", "JobQueue.expire.example.2",
+                         "--only", "JobQueue.test.1",
+                         "examples/job-queue.mo"], 0), "test")
+        assert [(r["name"], r["outcome"]) for r in job_queue_tests[1:-1]] == [
+            ("JobQueue.lease.example.1", "passed"),
+            ("JobQueue.lease.example.2", "passed"),
+            ("JobQueue.fail.example.1", "passed"),
+            ("JobQueue.fail.example.2", "passed"),
+            ("JobQueue.fail.example.3", "passed"),
+            ("JobQueue.fail.example.4", "passed"),
+            ("JobQueue.expire.example.1", "passed"),
+            ("JobQueue.expire.example.2", "passed"),
+            ("JobQueue.test.1", "passed")]
+        assert job_queue_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                                       "passed": 9, "failed": 0, "stopped": 0, "status": 0}
         assert run(binary, ["check", "examples/expenses.mo"], 0).stderr == b""
         records(run(binary, ["check", "--json", "examples/expenses.mo"], 0), "check")
         with tempfile.TemporaryDirectory(prefix="mo-expenses-") as expenses_dir:
@@ -1658,6 +1684,7 @@ def map_literals(binary):
     for name, expected in {
         "file-error-text": b"notes/a.md: no such file\n../secret: not allowed\nbin/app: not text\nout.txt: is a folder\nSome(notes/a.md: no such file)\n",
         "list-all": b"true/true/false/false/true/true/true\n",
+        "list-find": b"none/2/none/2/bc/20/40\n",
         "list-count": b"0/0/3/2/2/2/3\n",
         "list-max": b"7/5/8/-2/zebra/b/3/6/30/9\n",
         "list-zip-entries": b'[("a", 1), ("b", 2)]/[]/[(1, "x"), (2, "y")]/[(true, "t"), (false, "f")]/[("b", 2), ("a", 1), ("c", 3)]\n',
