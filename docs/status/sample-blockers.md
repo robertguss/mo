@@ -9,6 +9,14 @@ Regenerated from actual `mo check --json examples/<sample>.mo` output on
 `0d3764c` (MO-84/PR106), MO-85/PR102, MO-86/PR103, MO-87/PR104 and MO-88.
 Every totals record reports `dropped: 0`. Examples are unchanged.
 
+MO-91 part 1 lets `mo test` generate `Map` and `Set` promise inputs. No sample
+changes status: account, job-queue, kv, notes-tool and rate-limit still stop at
+E1400, because each promise subject also takes a
+type exposed without its insides (`Store` in `kv.mo`, `Limiter` in
+`rate-limit.mo`, `Queue` in `job-queue.mo`, `Account` in `account.mo`), which
+needs module builders (reference 12.2). `notes-tool.mo` also needs fake
+capabilities as inputs.
+
 MO-88 checks a generic capture's capability membership where the generic
 function is used (E0091 only when the type argument holds a capability):
 - `examples/inventory.mo` passes `mo check`, `mo run`, and its 8 examples and

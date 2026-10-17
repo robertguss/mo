@@ -5,7 +5,7 @@ description: Plan a Mo change before writing code. Use when starting an MO task,
 
 # Plan a change
 
-A plan names every file the change touches and why, before any code exists. Its job is to make the change land in the right module, cross each shared contract on every side, and fit in one PR. The rules it plans against live in `CLAUDE.md` (Architecture, C rules); this skill is the procedure.
+A plan names every file the change touches and why, before any code exists. Its job is to make the change land in the right module, cross each shared contract on every side, and fit in one PR. The rules it plans against live in `AGENTS.md` (Architecture, C rules); this skill is the procedure.
 
 ## Steps
 

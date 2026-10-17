@@ -525,6 +525,53 @@ def composite_deadlines(binary):
         assert items[-2]['code'] == 'E1404'
 
 
+def collection_promises(binary):
+    # Map and Set inputs are generated like List: empty first, then entries,
+    # and a failing input shrinks to the smallest map or set that still fails.
+    with tempfile.TemporaryDirectory(prefix='mo-collection-promises-') as directory:
+        path = pathlib.Path(directory) / 'main.mo'
+        body = ('promise "{sentence}"\nresult == 0\n'
+                'allows value: {{}}, tags: Set.empty, result: 0\n'
+                'forbids value: {{"a": 1}}, tags: Set.empty, result: 1\nend\n')
+        for subject, sentence, expected in (
+                ('value.entries.size * 0 + tags.size * 0', 'a map and a set give zero', None),
+                ('value.entries.size + tags.size', 'a map and a set are empty',
+                 [{'name': 'value', 'value': '{"": 0}'}, {'name': 'tags', 'value': '[].to_set'}])):
+            path.write_text('module Main\nfn probe(value: Map(Text, Int), tags: Set(Int)) : Int\n' +
+                            body.format(sentence=sentence) + subject + '\nend\n'
+                            'test "after promise"\nassert true\nend\nfn main()\nend\n')
+            items = records(run(binary, ['test', '--json', str(path)], 0 if expected is None else 1),
+                            'test')
+            if expected is None:
+                assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
+                    ('Main.probe.promise.1', 'passed'), ('Main.test.1', 'passed')]
+                assert items[-1]['passed'] == 2 and items[-1]['errors'] == 0
+            else:
+                assert items[1]['outcome'] == 'failed' and items[1]['input'] == expected
+                assert items[1]['result'] == '1' and items[-1]['errors'] == 0
+
+        # Maps and Sets nest under records and Options like any other input.
+        path.write_text('module Main\nstruct Bag\nitems: Map(Int, Set(Text))\nend\n'
+                        'fn probe(value: Option(Bag)) : Int\npromise "nested collections"\n'
+                        'result == 0\nallows value: None, result: 0\n'
+                        'forbids value: None, result: 1\nend\n'
+                        'case value\nNone: 0\nSome(bag): bag.items.entries.size\nend\nend\n'
+                        'fn main()\nend\n')
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['outcome'] == 'failed' and items[1]['input'] == [
+            {'name': 'value', 'value': 'Some(Bag(items: {0: [].to_set}))'}]
+
+        # A set of text keeps its own elements, so a rejected element shrinks to
+        # the one smallest member rather than to the passing empty set.
+        path.write_text('module Main\nfn probe(tags: Set(Text)) : Int\n'
+                        'promise "a set is empty"\nresult == 0\n'
+                        'allows tags: Set.empty, result: 0\n'
+                        'forbids tags: Set.empty, result: 1\nend\ntags.size\nend\nfn main()\nend\n')
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['outcome'] == 'failed' and items[1]['input'] == [
+            {'name': 'tags', 'value': '[""].to_set'}]
+
+
 def promise_selection(binary):
     opaque = 'expose Box\nstruct Box\nvalue: Int\nend\n'
     cases = [
@@ -536,8 +583,6 @@ def promise_selection(binary):
         ('Result(Int, Box)', 'Ok(13)', opaque),
         ('Choice', 'Open', opaque + 'enum Choice\nOpen\nClosed(Box)\nend\n'),
         ('(Text, Box)', '("owned", Box(value: 3))', opaque),
-        ('Option(Map(Text, Int))', 'None', ''),
-        ('Option(Set(Int))', 'None', ''),
         ('Option(Console)', 'None', ''),
         ('Box', 'make(3)', 'use Shapes{Box, make}\n'),
         ('List(Shapes.Box)', '[]', 'use Shapes\n'),
@@ -2197,6 +2242,7 @@ def check(binary):
     promise_deadlines(binary)
     promise_shrinking(binary)
     composite_promises(binary)
+    collection_promises(binary)
     composite_deadlines(binary)
     promise_selection(binary)
     imported_constants(binary)

@@ -44,3 +44,14 @@ When a behaviour fits two rows, take the one closest to the user: a CLI golden o
 ## When a test goes red
 
 The code is wrong until shown otherwise. Fix the code to meet the contract. Change an expectation only when the contract itself changed, and name the decision or reference edit that changed it in the commit message. Goldens and `.diag` files are edited by hand, so read every changed line of their diff before committing.
+
+## Reading a red gate
+
+Groups run in order: gcc, clang, sanitize, drivers, fuzz, static. Fix the first red one; later failures are often its consequence. Locally, rerun just that group (`bash ci/check.sh sanitize`); in CI, open the failing job's log.
+
+- **gcc or clang**: a warning is an error, and the two compilers warn differently, so build with both.
+- **sanitize**: rerun the single test file under `make sanitize` for the stack trace.
+- **fuzz**: the crash input becomes a unit test or fixture first, seen red, then the fix.
+- **drivers**: the script named in the step (`ci/check_cli.py`, `ci/check_lower_source.py`, …) prints the fixture and the expected and actual results.
+- **static**: `make deps`, `make library-map` or `make format-check` names the file and the rule.
+- **CI only**: a tool version differing from yours is the usual cause; CI pins clang-format 14.0.6, and newer versions format differently.
