@@ -117,9 +117,3 @@ Adding a library function typically touches its `check` signature (`src/check/si
 - `grammar/mo.y` is an instrument, not the compiler: the real parser is hand-written in
   `src/syntax/`, and a fuzz target checks both accept and reject the same inputs. Bison refuses any
   conflict, which keeps the grammar unambiguous.
-
-## Agent skills
-
-Repo-specific skills live in `.claude/skills/` (mirrored in `.agents/skills/`): `verify-mo` to
-drive the toolchain and capture evidence, `write-tests`, `write-spec`/`implement-spec`,
-`blast-radius`, `interrogate`, `audit-tests` and others. Use them when the task matches.
