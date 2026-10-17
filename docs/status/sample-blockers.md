@@ -1,14 +1,23 @@
-# Sample blockers after MO-83 (List.all?)
+# Sample blockers after MO-87 (Char.ascii_digit? lowering)
 
 Regenerated from actual `mo check --json examples/<sample>.mo` output on
 `bfcdedcd` (I1/PR81), `75e6db61` (LW5/PR82), `02395dbd` (C7/PR83),
 `09f4c445` (F8/PR84), `1ac2fe8e` (C1/PR85), `0b8589ee` (C4/PR86),
 `a2924f53` (C5/PR87), `dab7da3a` (C8/PR88), `b9fbb0e1` (F7/PR89),
 `d7e3abfa` (C3/PR90), `bc0fff4c` (F16/PR91), `4cf4f81c` (F14/PR92),
-`41d6944` (F11/PR93), `3ad6c55` (MO-31/PR97) and MO-83. Every totals record
+`41d6944` (F11/PR93), `3ad6c55` (MO-31/PR97), MO-83 and the Char lowering
+change. Every totals record
 reports `dropped: 0`. Examples are unchanged.
 
-With `List.all?` checked, lowered and run (plus lowering dispatch for
+The Char lowering change dispatches every `Char` primitive (`ascii_digit?`,
+`ascii_letter?`, `ascii_white_space?`, `ascii_lowercase`, `ascii_uppercase`,
+`code`, `to_text`), `Int.to_char` and the remaining `Map` primitives
+(`empty?`, `has?`, `keys`, `entries`) to Mo Core, all of which Core and the VM
+already had. `examples/json-query.mo` now passes `mo check`, runs on standard
+input, and passes all 15 examples and 1 test with 0 errors. Total diagnostics
+across the 12 samples fall from 5 to 4.
+
+Before that, with `List.all?` checked, lowered and run (plus lowering dispatch for
 `Console.read_line`, `Console.fake_input`, `Int.checked_add`, `Map.remove` and
 `Map.values`):
 - `examples/kv.mo` passes `mo check` (including its `allows` and `forbids`
@@ -45,7 +54,6 @@ With `List.all?` checked, lowered and run (plus lowering dispatch for
 | expenses.mo | 70:56 | E0050 | no visible function has this dot-call name | `name_width = names.map(fn(name) name.char_count end).max or 0` |
 | inventory.mo | 72:48 | E1103 | this generic capture's capability membership isn't checked | `laid_out = columns.map(fn(column) pad_column(rows, column) end)` |
 | job-queue.mo | 71:26 | E0050 | no visible function has this dot-call name | `case queue.jobs.values.find(fn(job) job.state == Ready end)` |
-| json-query.mo | 62:28 | E1150 | this native call is not lowered yet | `Some(c) if c == '-' or c.ascii_digit?: number_at(chars, at)` |
 | todo.mo | 132:9 | E1150 | this native call is not lowered yet | `try files.write_text(file, format(items))` |
 
 ## Newly exposed blockers
@@ -54,8 +62,9 @@ With `List.all?` checked, lowered and run (plus lowering dispatch for
 - inventory: unchanged; `E1103` on the generic `rows: List(T)` capture in
   `pad_table` (`72:48`).
 - job-queue: both `Option.or_fail` calls clear, exposing `List.find` (`71:26`).
-- json-query: both `Option.or_fail` calls clear; the sample now checks and stops
-  in lowering at `Char.ascii_digit?` (`62:28`, E1150).
+- json-query: `Char.ascii_digit?` (`62:28`) clears, and so do the `Int.to_char`
+  and `Map.empty?` calls behind it; the sample runs and passes its examples and
+  tests with 0 errors.
 - kv: `List.all?` (`90:29`) clears; passes `mo check` (including its anchors),
   `mo run`, and its examples and tests with 0 errors.
 - todo: all three `Option.or_fail` calls and `main` returning

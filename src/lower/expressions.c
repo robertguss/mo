@@ -938,6 +938,7 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                        {"Int.min", MO_CORE_INT_OP_MIN},
                        {"Int.max", MO_CORE_INT_OP_MAX},
                        {"Int.checked_add", MO_CORE_INT_OP_CHECKED_ADD},
+                       {"Int.to_char", MO_CORE_INT_OP_TO_CHAR},
                        {"Int.seconds", MO_CORE_INT_OP_SECONDS},
                        {"Int.milliseconds", MO_CORE_INT_OP_MILLISECONDS},
                        {"Int.minutes", MO_CORE_INT_OP_MINUTES},
@@ -1558,6 +1559,24 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
         }
         static const struct {
             const char *name;
+            enum mo_core_char_op operation;
+        } chars[] = {{"Char.code", MO_CORE_CHAR_OP_CODE},
+                     {"Char.ascii_digit?", MO_CORE_CHAR_OP_IS_DIGIT},
+                     {"Char.ascii_letter?", MO_CORE_CHAR_OP_IS_LETTER},
+                     {"Char.ascii_white_space?", MO_CORE_CHAR_OP_IS_WHITE_SPACE},
+                     {"Char.ascii_lowercase", MO_CORE_CHAR_OP_LOWER},
+                     {"Char.ascii_uppercase", MO_CORE_CHAR_OP_UPPER},
+                     {"Char.to_text", MO_CORE_CHAR_OP_TO_TEXT}};
+        for (size_t i = 0; i < sizeof chars / sizeof chars[0]; i++) {
+            lower_work(p, 1);
+            if (strcmp(r->native, chars[i].name) == 0)
+                return lower_prim(
+                    p,
+                    (struct mo_core_prim){.tag = MO_CORE_PRIM_CHAR, .as.char_ = chars[i].operation},
+                    args);
+        }
+        static const struct {
+            const char *name;
             enum mo_core_text_op operation;
         } texts[] = {{"Text.bytes", MO_CORE_TEXT_OP_BYTES},
                      {"Text.byte_count", MO_CORE_TEXT_OP_BYTE_COUNT},
@@ -1594,10 +1613,17 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                     args);
         }
     }
-    if (r->native != NULL &&
-        (strcmp(r->native, "Map.get") == 0 || strcmp(r->native, "Map.set") == 0 ||
-         strcmp(r->native, "Map.remove") == 0 || strcmp(r->native, "Map.size") == 0 ||
-         strcmp(r->native, "Map.values") == 0)) {
+    static const struct {
+        const char *name;
+        enum mo_core_map_op_tag operation;
+    } maps[] = {{"Map.get", MO_CORE_MAP_OP_GET},         {"Map.set", MO_CORE_MAP_OP_SET},
+                {"Map.remove", MO_CORE_MAP_OP_REMOVE},   {"Map.size", MO_CORE_MAP_OP_SIZE},
+                {"Map.empty?", MO_CORE_MAP_OP_IS_EMPTY}, {"Map.has?", MO_CORE_MAP_OP_HAS},
+                {"Map.keys", MO_CORE_MAP_OP_KEYS},       {"Map.values", MO_CORE_MAP_OP_VALUES},
+                {"Map.entries", MO_CORE_MAP_OP_ENTRIES}};
+    for (size_t i = 0; r->native != NULL && i < sizeof maps / sizeof maps[0]; i++) {
+        if (strcmp(r->native, maps[i].name) != 0)
+            continue;
         mo_core_ty receiver =
             r->operand_count == 0
                 ? result->as.fn.params.items[0]
@@ -1605,15 +1631,10 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
         if (receiver->tag == MO_CORE_TY_FN)
             receiver = receiver->as.fn.params.items[0];
         MO_ASSERT(receiver->tag == MO_CORE_TY_MAP);
-        struct mo_core_prim prim = {
-            .tag = MO_CORE_PRIM_MAP,
-            .as.map = {.k = receiver->as.map.k,
-                       .v = receiver->as.map.v,
-                       .op.tag = strcmp(r->native, "Map.get") == 0      ? MO_CORE_MAP_OP_GET
-                                 : strcmp(r->native, "Map.set") == 0    ? MO_CORE_MAP_OP_SET
-                                 : strcmp(r->native, "Map.remove") == 0 ? MO_CORE_MAP_OP_REMOVE
-                                 : strcmp(r->native, "Map.size") == 0   ? MO_CORE_MAP_OP_SIZE
-                                                                        : MO_CORE_MAP_OP_VALUES}};
+        struct mo_core_prim prim = {.tag = MO_CORE_PRIM_MAP,
+                                    .as.map = {.k = receiver->as.map.k,
+                                               .v = receiver->as.map.v,
+                                               .op.tag = maps[i].operation}};
         return lower_prim(p, prim, args);
     }
     if (r->native != NULL) {
