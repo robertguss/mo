@@ -1916,6 +1916,34 @@ static void test_variable_reuse(void) {
     mo_image_free(image);
 }
 
+/* Tools read a module constant from an initialized image, never one that stopped. */
+static void test_image_global(void) {
+    const char *source = "bytecode 0.2 shorthand\nglobal M.g: Int in M\ninit [M.init]\n"
+                         "module M exposes []\nfunction M.init() : Unit init in M\n"
+                         " registers [r0: Int, r1: Unit]\n const r0, 43\n set_global M.g, r0\n"
+                         " const r1, ()\n ret r1\nend\n";
+    struct mo_image *image = assemble(source);
+    if (image == NULL)
+        return;
+    struct mo_cell value = mo_cell_int(7);
+    CHECK(!mo_image_global(image, 0, &value) && mo_cell_get_int(value) == 7);
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    CHECK(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    CHECK(mo_image_global(image, 0, &value) && mo_cell_get_int(value) == 43);
+    mo_image_free(image);
+    image = assemble("bytecode 0.2 shorthand\nglobal M.g: Int in M\ninit [M.init]\n"
+                     "module M exposes []\nfunction M.init() : Unit init in M\n"
+                     " registers [r0: Int, r1: Text]\n const r0, 43\n set_global M.g, r0\n"
+                     " const r1, \"later\"\n stop r1\nend\n");
+    if (image == NULL)
+        return;
+    CHECK(mo_image_init(image, &limits, &defect) == MO_STOPPED);
+    value = mo_cell_int(7);
+    CHECK(!mo_image_global(image, 0, &value) && mo_cell_get_int(value) == 7);
+    mo_image_free(image);
+}
+
 static void test_initializer_variables(void) {
     struct mo_image *image = assemble(
         "bytecode 0.2 shorthand\nglobal M.g: Int in M\ninit [M.init]\n"
@@ -2845,6 +2873,7 @@ int main(int argc, char **argv) {
     test_values();
     test_calls();
     test_initialization();
+    test_image_global();
     test_defects();
     test_borrowing();
     test_scratch_and_fuel();

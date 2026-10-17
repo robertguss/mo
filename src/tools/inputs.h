@@ -40,8 +40,8 @@ struct mo_input_request {
     uint64_t seed;
 };
 
-/* The driver supplies fakes (tools/fakes.h) here; later stages add hidden-type builders and
- * closures. Entries
+/* The driver supplies fakes (tools/fakes.h) and hidden-type builders (tools/builders.h) here;
+ * a later stage adds closures. Entries
  * override an exact type index; boundary 0 is the minimum. Callbacks are
  * deterministic, honor the remaining limits, and return a valid owned cell
  * in destination, preserving out on refusal. The library counts the root as
@@ -107,6 +107,20 @@ MO_MUST_USE enum mo_input_result mo_inputs_next(struct mo_inputs *inputs,
 /* Skip an input which exceeds generation limits; failed allocation can instead
  * be retried with more heap. Each input has its own random stream. */
 void mo_inputs_skip(struct mo_inputs *inputs);
+/* The next input is the one at ordinal: the boundary tuples come first, then random inputs whose
+ * size grows every four ordinals. An ordinal names the same input on every run. */
+void mo_inputs_seek(struct mo_inputs *inputs, uint64_t ordinal);
+MO_MUST_USE uint64_t mo_inputs_boundaries(const struct mo_inputs *inputs);
+/* A deep copy of a borrowed tuple, from any heap with the same type table, in destination. It
+ * builds within remaining (depth included) and subtracts what it used, on refusal too. On
+ * refusal out is unchanged and no partial value is kept. */
+MO_MUST_USE enum mo_input_result mo_inputs_copy(const struct mo_inputs *inputs,
+                                                struct mo_heap *destination,
+                                                const struct mo_cell *source,
+                                                struct mo_input_limits *remaining,
+                                                struct mo_cell *out);
+/* Whether type, reachable from the parameters, can be a map key or set element. */
+MO_MUST_USE bool mo_inputs_hashable(const struct mo_inputs *inputs, uint32_t type);
 
 /* A shrink session owns no values. Before next, best is the caller's borrowed
  * current failing tuple. Success returns an owned, deeply copied candidate in

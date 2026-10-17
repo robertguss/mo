@@ -16,16 +16,17 @@ struct mo_promise_result {
 };
 
 /* Refuse the entire selected set before initialization/observations. Listing
- * needs no generator. Closed scalars, tuples, Lists and visible data only;
- * generic subjects, opaque builders and factory inputs remain unavailable. */
+ * needs no generator. Closed scalars, tuples, collections, visible data, capabilities as fakes,
+ * and hidden types their module can start; generic subjects and functions remain unavailable. */
 MO_MUST_USE bool mo_promises_supported(const struct mo_program *program,
                                        const struct mo_test_selection *selection,
                                        struct mo_diags *diags);
-/* An initialized, anchor-checked image. Owns all trial processes/retained values
+/* An initialized, anchor-checked image of program, which names the exposed constants that build
+ * hidden types. Owns all trial processes/retained values
  * until after reporting. A diagnosed inability has no invented outcome; false
  * means output itself failed and the selection must not continue. */
-MO_MUST_USE bool mo_test_promise(const struct mo_cli *cli, struct mo_image *image,
-                                 const struct mo_sources *sources,
+MO_MUST_USE bool mo_test_promise(const struct mo_cli *cli, const struct mo_program *program,
+                                 struct mo_image *image, const struct mo_sources *sources,
                                  const struct mo_observation *observation, uint32_t function,
                                  FILE *output, struct mo_diags *diags,
                                  struct mo_test_totals *totals);

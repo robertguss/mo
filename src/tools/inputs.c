@@ -140,9 +140,11 @@ enum mo_input_result mo_inputs_next(struct mo_inputs *inputs, struct mo_heap *de
     if (size > inputs->limits.elements) {
         size = inputs->limits.elements;
     }
+    struct mo_input_limits left = inputs->limits;
+    left.work = work;
     enum mo_input_result result =
         mo_input_build(inputs, destination, NULL, boundary ? variants : NULL, (uint32_t)size,
-                       input_stream(inputs->seed, inputs->ordinal), NULL, &work, out);
+                       input_stream(inputs->seed, inputs->ordinal), NULL, &left, out);
     if (result != MO_INPUT_OK) {
         return result;
     }
@@ -154,4 +156,37 @@ enum mo_input_result mo_inputs_next(struct mo_inputs *inputs, struct mo_heap *de
 void mo_inputs_skip(struct mo_inputs *inputs) {
     MO_ASSERT(inputs != NULL && inputs->ordinal != UINT64_MAX);
     inputs->ordinal++;
+}
+
+void mo_inputs_seek(struct mo_inputs *inputs, uint64_t ordinal) {
+    MO_ASSERT(inputs != NULL && ordinal != UINT64_MAX);
+    inputs->ordinal = ordinal;
+}
+
+uint64_t mo_inputs_boundaries(const struct mo_inputs *inputs) {
+    return inputs->boundaries;
+}
+
+enum mo_input_result mo_inputs_copy(const struct mo_inputs *inputs, struct mo_heap *destination,
+                                    const struct mo_cell *source, struct mo_input_limits *remaining,
+                                    struct mo_cell *out) {
+    MO_ASSERT(inputs != NULL && destination != NULL && remaining != NULL);
+    MO_ASSERT((source != NULL && out != NULL) || inputs->parameter_count == 0);
+    struct mo_input_limits left = inputs->limits;
+    left.depth = remaining->depth < left.depth ? remaining->depth : left.depth;
+    left.nodes = remaining->nodes < left.nodes ? remaining->nodes : left.nodes;
+    left.bytes = remaining->bytes < left.bytes ? remaining->bytes : left.bytes;
+    left.work = remaining->work < left.work ? remaining->work : left.work;
+    struct mo_input_limits before = left;
+    enum mo_input_result result =
+        mo_input_build(inputs, destination, source, NULL, 0, 0, NULL, &left, out);
+    remaining->nodes -= before.nodes - left.nodes;
+    remaining->bytes -= before.bytes - left.bytes;
+    remaining->work -= before.work - left.work;
+    return result;
+}
+
+bool mo_inputs_hashable(const struct mo_inputs *inputs, uint32_t type) {
+    MO_ASSERT(type < inputs->types->count);
+    return inputs->info[type].reachable && inputs->info[type].hashable;
 }

@@ -128,6 +128,16 @@ enum mo_outcome mo_image_init(struct mo_image *image, const struct mo_limits *li
     return initialize(image, limits, false, 0, defect_out);
 }
 
+bool mo_image_global(const struct mo_image *image, uint32_t global, struct mo_cell *out) {
+    MO_ASSERT(image != NULL && out != NULL);
+    const struct mo_vm_image *runtime = mo_image_runtime(image);
+    MO_ASSERT(global < mo_image_bytecode(image)->global_count);
+    if (runtime == NULL || !runtime->ready || !runtime->set[global])
+        return false;
+    *out = runtime->globals[global];
+    return true;
+}
+
 enum mo_outcome mo_image_init_bounded(struct mo_image *image, const struct mo_limits *limits,
                                       uint64_t instructions, struct mo_defect *defect_out) {
     return initialize(image, limits, true, instructions, defect_out);

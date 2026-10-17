@@ -95,13 +95,15 @@ struct mo_input_edit {
 };
 
 /* source=NULL generates. Otherwise copy its tree and apply one edit, or just
- * copy with edit=NULL. On refusal all partial owned cells are dropped. */
+ * copy with edit=NULL. left starts as the limits to build within (its depth at
+ * most the generator's) and ends as what is left, on refusal too. On refusal
+ * all partial owned cells are dropped. */
 MO_MUST_USE enum mo_input_result mo_input_build(const struct mo_inputs *inputs,
                                                 struct mo_heap *destination,
                                                 const struct mo_cell *source,
                                                 const uint32_t *boundaries, uint32_t size,
                                                 uint64_t seed, const struct mo_input_edit *edit,
-                                                uint64_t *work_left, struct mo_cell *out);
+                                                struct mo_input_limits *left, struct mo_cell *out);
 enum mo_input_mode { MO_INPUT_MINIMUM, MO_INPUT_SAMPLE, MO_INPUT_PRNG, MO_INPUT_COPY };
 struct mo_input_value_request {
     uint32_t type;

@@ -370,6 +370,130 @@ def fake_capability_promises(binary):
         ('NotesTool.test.2', 'passed'), ('NotesTool.test.3', 'passed')]
 
 
+def hidden_promises(binary):
+    # Reference 12.2: a type exposed without its insides is built only through its module, from
+    # an exposed constant or a function that returns it, then up to three calls that take it.
+    tail = 'test "after promise"\nassert true\nend\nfn main()\nend\n'
+    counter = ('module Main\nexpose Counter, zero, bump, count\n'
+               'struct Counter\nvalue: Int\nend\n'
+               'zero = Counter(value: 0)\nhidden = Counter(value: -1)\n'
+               '## A tuple result holds the counter; a negative step stops.\n'
+               'fn bump(counter: Counter, by: Int) : (Counter, Bool)\n'
+               'if by < 0\nstop "a negative step"\nend\n'
+               '(Counter(value: counter.value + by % 10), by % 10 != 0)\nend\n'
+               'fn count(counter: Counter) : Int\n')
+    with tempfile.TemporaryDirectory(prefix='mo-hidden-promises-') as directory:
+        path = pathlib.Path(directory) / 'main.mo'
+        # Never the private constant, never a stopped step: every counter is 0 to 27.
+        path.write_text(counter + 'promise "in range"\nresult >= 0 and result <= 27\n'
+                        'allows counter: zero, result: 0\nforbids counter: zero, result: 28\n'
+                        'end\ncounter.value\nend\n' + tail)
+        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
+            ('Main.count.promise.1', 'passed'), ('Main.test.1', 'passed')]
+        # Reaching 15 takes two steps after the constant, so the steps chain. Built values are
+        # reported as they are, not shrunk, and the same on every run.
+        path.write_text(counter + 'promise "stays small"\nresult < 15\n'
+                        'allows counter: zero, result: 0\nforbids counter: zero, result: 15\n'
+                        'end\ncounter.value\nend\n' + tail)
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        failure = items[1]
+        assert failure['outcome'] == 'failed', failure
+        value = failure['input'][0]['value']
+        assert value.startswith('Counter(value: ') and 15 <= int(value[15:-1]) <= 27, value
+        again = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        for key in ('input', 'result', 'calls', 'line'):
+            assert again[1][key] == failure[key]
+
+        # An Option start counts only when it returns Some, and steps may come from Result.
+        path.write_text('module Main\nexpose Counter, start, add\nstruct Counter\nvalue: Int\nend\n'
+                        'fn start(value: Int) : Option(Counter)\n'
+                        'if value >= 1 and value <= 100: Some(Counter(value: value)) else: None\nend\n'
+                        'fn add(counter: Counter, more: Int) : Result(Counter, Text)\n'
+                        'if more >= 1 and more <= 100: Ok(Counter(value: counter.value + more)) '
+                        'else: Error("no")\nend\n'
+                        'fn count(counter: Counter) : Int\npromise "within what start and add allow"\n'
+                        'result >= 1 and result <= 400\n'
+                        'allows counter: Counter(value: 1), result: 1\n'
+                        'forbids counter: Counter(value: 1), result: 0\nend\ncounter.value\nend\n' + tail)
+        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        assert items[1]['outcome'] == 'passed' and items[-1]['status'] == 0
+
+        # No way to start one: steps alone, a start that needs a capability, or a private
+        # constant. The whole selection is refused before it runs.
+        for source in ('module Main\nexpose Counter, bump\nstruct Counter\nvalue: Int\nend\n'
+                       'fn bump(counter: Counter) : Counter\nCounter(value: counter.value + 1)\nend\n',
+                       'module Main\nexpose Counter\nstruct Counter\nvalue: Int\nend\n'
+                       'zero = Counter(value: 0)\n',
+                       'module Main\nexpose Counter, open\nstruct Counter\nvalue: Int\nend\n'
+                       'fn open(console: Console) : Counter\nconsole.print("x")\nCounter(value: 0)\nend\n'):
+            path.write_text(source + 'fn count(counter: Counter) : Int\npromise "anything"\n'
+                            'result == counter.value\n'
+                            'allows counter: Counter(value: 1), result: 1\n'
+                            'forbids counter: Counter(value: 1), result: 2\nend\ncounter.value\nend\n' + tail)
+            items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+            assert len(items) == 3 and items[1]['code'] == 'E1400', items
+            assert items[-1]['passed'] == 0
+
+        # A start exists, but a built value can't be copied into a trial: a capability or a
+        # function among its insides. Refused before the run too.
+        for inside, value in (('enum Handle\nEmpty\nLive(Console)\nend\n', 'Empty'),
+                              ('struct Handle\nf: fn(Int) : Int\nend\n', 'Handle(f: same)')):
+            path.write_text('module Main\nexpose Handle, empty, count\n' + inside +
+                            'fn same(x: Int) : Int\nx\nend\n' + f'empty = {value}\n'
+                            'fn count(_handle: Handle) : Int\npromise "zero"\nresult == 0\n'
+                            'allows _handle: empty, result: 0\nforbids _handle: empty, result: 1\n'
+                            'end\n0\nend\n' + tail)
+            items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+            assert len(items) == 3 and items[1]['code'] == 'E1400', items
+
+        # Boundary 0 is the start alone, boundary 1 one step and boundary 2 three.
+        path.write_text('module Main\nexpose Counter, zero, bump\nstruct Counter\nvalue: Int\nend\n'
+                        'zero = Counter(value: 0)\n'
+                        'fn bump(counter: Counter) : Counter\nCounter(value: counter.value + 1)\nend\n'
+                        'fn count(counter: Counter) : Int\npromise "under three"\nresult < 3\n'
+                        'allows counter: zero, result: 0\nforbids counter: zero, result: 3\nend\n'
+                        'counter.value\nend\n' + tail)
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['outcome'] == 'failed' and items[1]['calls'] == 3, items[1]
+        assert items[1]['input'] == [{'name': 'counter', 'value': 'Counter(value: 3)'}]
+
+        # Each hidden type is built by its own module, whatever order the image lists them in;
+        # Alpha's generic Box(Int) comes after Beta's B among the types.
+        (path.parent / 'alpha.mo').write_text(
+            'module Alpha\nexpose Box, make_box, get_box\nstruct Box(T)\nvalue: T\nend\n'
+            'fn make_box(value: Int) : Box(Int)\nBox(value: value)\nend\n'
+            'fn get_box(b: Box(Int)) : Int\nb.value\nend\n')
+        (path.parent / 'beta.mo').write_text(
+            'module Beta\nexpose B, make_b, get_b\nstruct B\nvalue: Int\nend\n'
+            'fn make_b(value: Int) : B\nB(value: value)\nend\nfn get_b(b: B) : Int\nb.value\nend\n')
+        path.write_text('module Main\nuse Alpha\nuse Beta\nfn probe(b: Beta.B) : Int\n'
+                        'promise "anything"\nresult == 0\n'
+                        'allows b: Beta.make_b(0), result: 0\nforbids b: Beta.make_b(0), result: 1\n'
+                        'end\nBeta.get_b(b) * 0 + Alpha.get_box(Alpha.make_box(1)) * 0\nend\n' + tail)
+        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        assert items[1]['outcome'] == 'passed' and items[-1]['errors'] == 0, items
+
+        # A step that never returns ends the search at the promise's deadline, between trials.
+        path.write_text('module Main\nexpose Counter, zero, spin\nstruct Counter\nvalue: Int\nend\n'
+                        'zero = Counter(value: 0)\n'
+                        'fn spin(counter: Counter) : Counter\nvar n = 0\nwhile n == 0\nn = 0\nend\n'
+                        'counter\nend\n'
+                        'fn count(counter: Counter) : Int\npromise "zero"\nresult == 0\n'
+                        'allows counter: zero, result: 0\nforbids counter: zero, result: 1\nend\n'
+                        'counter.value\nend\n' + tail)
+        items = records(run(binary, ['test', '--json', '--seconds', '1', str(path)], 0), 'test')
+        assert items[1]['outcome'] == 'passed' and items[-1]['errors'] == 0, items
+
+    # The samples whose promises take Store, Limiter, Queue and Account.
+    root = pathlib.Path(__file__).resolve().parent.parent
+    for sample in ('account', 'job-queue', 'kv', 'rate-limit'):
+        items = records(run(binary, ['test', '--json', str(root / f'examples/{sample}.mo')], 0), 'test')
+        promises = [r for r in items if r.get('kind') == 'promise']
+        assert promises and all(r['outcome'] == 'passed' for r in promises), (sample, items)
+        assert items[-1]['failed'] == items[-1]['stopped'] == items[-1]['errors'] == 0
+
+
 def composite_promises(binary):
     with tempfile.TemporaryDirectory(prefix='mo-composite-promises-') as directory:
         path = pathlib.Path(directory) / 'main.mo'
@@ -641,6 +765,9 @@ def promise_selection(binary):
         ('Result(Int, Box)', 'Ok(13)', opaque),
         ('Choice', 'Open', opaque + 'enum Choice\nOpen\nClosed(Box)\nend\n'),
         ('(Text, Box)', '("owned", Box(value: 3))', opaque),
+    ]
+    # Shapes can start a Box with its exposed make, so these are built through it (reference 12.2).
+    buildable = [
         ('Box', 'make(3)', 'use Shapes{Box, make}\n'),
         ('List(Shapes.Box)', '[]', 'use Shapes\n'),
         ('Shapes.Box', 'Shapes.make(3)',
@@ -651,7 +778,8 @@ def promise_selection(binary):
         (path.parent / 'shapes.mo').write_text(
             'module Shapes\nexpose Box, make\nstruct Box\nvalue: Int\nend\n'
             'fn make(value: Int) : Box\nBox(value: value)\nend\n')
-        for type_, input_, declarations in cases:
+        for type_, input_, declarations in cases + buildable:
+            built = (type_, input_, declarations) in buildable
             initializer = 'seed = crash()\nfn crash() : Int\nstop "must not initialize"\nend\n'
             source = ('module Main\n' + declarations + initializer +
                             'test "first observation"\nassert true\nend\n'
@@ -667,8 +795,9 @@ def promise_selection(binary):
             assert [r['name'] for r in items[1:-1]] == [
                 'Main.test.1', 'Main.supported.promise.1', 'Main.probe.promise.1']
             items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
-            assert len(items) == 3 and items[1]['code'] == 'E1400'
-            assert items[1]['primary']['label'] == 'Main.probe.promise.1'
+            assert len(items) == 3 and items[1]['code'] == ('E1406' if built else 'E1400')
+            if not built:
+                assert items[1]['primary']['label'] == 'Main.probe.promise.1'
             assert items[-1]['passed'] == items[-1]['failed'] == items[-1]['stopped'] == 0
             # Selection, not the mere presence of a deferred promise, controls
             # preflight. Initialization is reached for ordinary-only selection.
@@ -677,6 +806,9 @@ def promise_selection(binary):
             path.write_text(source.replace(initializer, ''))
             items = records(run(binary, ['test', '--json', '--only', 'Main.test.1', str(path)], 0), 'test')
             assert items[1]['outcome'] == 'passed' and items[-1]['passed'] == 1
+            if built:
+                items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+                assert [r['outcome'] for r in items[1:-1]] == ['passed'] * 3
 
         # Same-module written access to exported opaque fields remains legal;
         # only structural generation is refused. A private local type is not
@@ -2299,6 +2431,7 @@ def check(binary):
     promise_deadlines(binary)
     promise_shrinking(binary)
     fake_capability_promises(binary)
+    hidden_promises(binary)
     composite_promises(binary)
     collection_promises(binary)
     composite_deadlines(binary)

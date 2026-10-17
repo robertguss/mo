@@ -21,6 +21,12 @@ MO-91 part 2 (fake capabilities as promise inputs) clears `notes-tool.mo`: its o
 subject takes a `ReadFiles`, and `mo test` now passes all 4 of its observations. Its other
 four siblings still need module builders.
 
+MO-91 part 3 (hidden types built through their module) clears the last four. `mo test` builds a
+`Store`, `Limiter`, `Queue` or `Account` from its module's exposed constants and functions
+(`empty_store` and `apply`, `new_limiter` and `request`, `empty` and the queue operations,
+`open`, `deposit`, `withdraw` and `transfer`), and every observation passes: account 16,
+job-queue 13, kv 18 and rate-limit 6. All 12 samples now pass `mo check` and plain `mo test`.
+
 MO-88 checks a generic capture's capability membership where the generic
 function is used (E0091 only when the type argument holds a capability):
 - `examples/inventory.mo` passes `mo check`, `mo run`, and its 8 examples and
@@ -115,6 +121,9 @@ None: all 12 samples pass `mo check` with 0 errors.
   tests with 0 errors.
 - kv: `List.all?` (`90:29`) clears; passes `mo check` (including its anchors),
   `mo run`, and its examples and tests with 0 errors.
+- account, job-queue, kv and rate-limit: their promises take a type exposed without its
+  insides, which `mo test` now builds through the type's module (`src/tools/builders.c`).
+  Each sample passes plain `mo test`.
 - notes-tool: its promise takes a `ReadFiles`, which promises now receive as a generated
   fake (`src/tools/fakes.c`). `mo test` passes the promise and its 3 tests, so the sample
   passes plain `mo test`. `Env.get` and `Random.int` do not lower yet, so a promise whose

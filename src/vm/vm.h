@@ -41,6 +41,10 @@ MO_MUST_USE enum mo_outcome mo_image_init_bounded(struct mo_image *image,
                                                   const struct mo_limits *limits,
                                                   uint64_t instructions,
                                                   struct mo_defect *defect_out);
+/* A module constant of an initialized image, borrowed: globals are immortal, so the cell may be
+ * passed to any process's calls and duplicated in its heap. False when it is not set. */
+MO_MUST_USE bool mo_image_global(const struct mo_image *image, uint32_t global,
+                                 struct mo_cell *out);
 MO_MUST_USE struct mo_process *mo_process_new(const struct mo_image *image,
                                               const struct mo_limits *limits);
 void mo_process_free(struct mo_process *process);

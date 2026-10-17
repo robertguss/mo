@@ -569,6 +569,97 @@ static MO_MUST_USE enum mo_input_result text_factory(void *context, struct mo_he
     return mo_value_text(heap, "zz", 2, out) ? MO_INPUT_OK : MO_INPUT_NO_MEMORY;
 }
 
+static MO_MUST_USE bool same_text(struct mo_heap *heap, uint32_t type, struct mo_cell left,
+                                  struct mo_cell right) {
+    struct mo_buffer a, b;
+    mo_buffer_init(&a, 1 << 20);
+    mo_buffer_init(&b, 1 << 20);
+    MO_ASSERT(mo_value_print(heap, type, left, &a) && mo_value_print(heap, type, right, &b));
+    bool same = a.length == b.length && memcmp(a.bytes, b.bytes, a.length) == 0;
+    mo_buffer_free(&a);
+    mo_buffer_free(&b);
+    return same;
+}
+
+/* Hidden-type builders seek a generator to one input, copy built values between heaps, and ask
+ * whether a type can be a key. */
+static void seek_copy_hashable(void) {
+    struct heap_fixture fixture;
+    heap_fixture_init(&fixture);
+    struct mo_limits heap_limits = mo_limits_default();
+    struct mo_heap *heaps[] = {mo_heap_new(fixture.image, &heap_limits),
+                               mo_heap_new(fixture.image, &heap_limits)};
+    MO_ASSERT(heaps[0] != NULL && heaps[1] != NULL);
+    struct mo_input_limits limits = mo_input_limits_default();
+    struct mo_inputs inputs;
+    MO_ASSERT(mo_inputs_init(&inputs, &fixture.types, &fixture.record, 1, "M.record", 8, &limits,
+                             NULL, 0) == MO_INPUT_OK);
+    CHECK(mo_inputs_boundaries(&inputs) > 1);
+    CHECK(mo_inputs_hashable(&inputs, fixture.record) && mo_inputs_hashable(&inputs, fixture.list));
+    CHECK(!mo_inputs_hashable(&inputs, fixture.builtin[MO_TYPE_FLOAT]));
+    /* Seeking replays an input: a boundary and a random one, out of order. */
+    struct mo_cell first[64], again;
+    enum mo_input_kind kind;
+    for (unsigned i = 0; i < 64; i++)
+        MO_ASSERT(mo_inputs_next(&inputs, heaps[0], &first[i], &kind) == MO_INPUT_OK);
+    uint64_t random = mo_inputs_boundaries(&inputs) + 40;
+    MO_ASSERT(random < 64);
+    CHECK(!same_text(heaps[0], fixture.record, first[random], first[random + 1]));
+    mo_inputs_seek(&inputs, random);
+    MO_ASSERT(mo_inputs_next(&inputs, heaps[0], &again, &kind) == MO_INPUT_OK);
+    CHECK(kind == MO_INPUT_RANDOM && same_text(heaps[0], fixture.record, first[random], again));
+    mo_value_drop(heaps[0], fixture.record, again);
+    mo_inputs_seek(&inputs, 1);
+    MO_ASSERT(mo_inputs_next(&inputs, heaps[0], &again, &kind) == MO_INPUT_OK);
+    CHECK(kind == MO_INPUT_BOUNDARY && same_text(heaps[0], fixture.record, first[1], again));
+    mo_value_drop(heaps[0], fixture.record, again);
+    /* A copy lands in the other heap, owns nothing of the first, and charges the budget. */
+    for (unsigned i = 0; i < 64; i++)
+        mo_value_drop(heaps[0], fixture.record, first[i]);
+    struct mo_cell element, fields[2], built;
+    MO_ASSERT(mo_value_text(heaps[0], "d", 1, &element));
+    MO_ASSERT(mo_value_text(heaps[0], "abc", 3, &fields[0]));
+    MO_ASSERT(mo_value_list(heaps[0], fixture.list, &element, 1, &fields[1]));
+    MO_ASSERT(mo_value_construct(heaps[0], fixture.record_layout, fields, 2, &built));
+    mo_value_drop(heaps[0], fixture.builtin[MO_TYPE_TEXT], element);
+    mo_value_drop(heaps[0], fixture.builtin[MO_TYPE_TEXT], fields[0]);
+    mo_value_drop(heaps[0], fixture.list, fields[1]);
+    struct mo_input_limits remaining = mo_input_limits_default();
+    struct mo_cell copied;
+    MO_ASSERT(mo_inputs_copy(&inputs, heaps[1], &built, &remaining, &copied) == MO_INPUT_OK);
+    struct mo_input_limits whole = mo_input_limits_default();
+    /* The record, its text, its list and the list's one text; four payload bytes. */
+    CHECK(whole.nodes - remaining.nodes == 4 && whole.bytes - remaining.bytes == 4);
+    CHECK(remaining.work < whole.work && remaining.depth == whole.depth);
+    CHECK(same_text(heaps[1], fixture.record, copied, built));
+    mo_value_drop(heaps[0], fixture.record, built);
+    CHECK(mo_heap_objects(heaps[0]) == 0);
+    struct mo_cell source = copied;
+    /* Out of nodes: a refusal keeps out and the destination heap as they were. */
+    remaining = mo_input_limits_default();
+    remaining.nodes = 1;
+    size_t used = mo_heap_used(heaps[0]);
+    struct mo_cell refused = mo_cell_int(5);
+    CHECK(mo_inputs_copy(&inputs, heaps[0], &source, &remaining, &refused) == MO_INPUT_LIMIT);
+    CHECK(mo_cell_get_int(refused) == 5 && mo_heap_used(heaps[0]) == used && remaining.nodes <= 1);
+    remaining = mo_input_limits_default();
+    remaining.depth = 1;
+    CHECK(mo_inputs_copy(&inputs, heaps[0], &source, &remaining, &refused) == MO_INPUT_LIMIT);
+    CHECK(mo_heap_used(heaps[0]) == used);
+    remaining = mo_input_limits_default();
+    MO_ASSERT(mo_inputs_copy(&inputs, heaps[0], &source, &remaining, &again) == MO_INPUT_OK);
+    CHECK(same_text(heaps[0], fixture.record, again, source));
+    mo_value_drop(heaps[1], fixture.record, copied);
+    CHECK(mo_heap_objects(heaps[1]) == 0);
+    mo_value_drop(heaps[0], fixture.record, again);
+    CHECK(mo_heap_objects(heaps[0]) == 0);
+    mo_inputs_free(&inputs);
+    mo_heap_free(heaps[1]);
+    mo_heap_free(heaps[0]);
+    mo_heap_image_free(fixture.image);
+    mo_arena_free(&fixture.arena);
+}
+
 static void factory_budget(void) {
     struct heap_fixture fixture;
     heap_fixture_init(&fixture);
@@ -1045,6 +1136,7 @@ int main(void) {
     shrink_record_across_heaps();
     all_types();
     factory_budget();
+    seek_copy_hashable();
     limits_and_retry();
     minimal_tuple_without_heap();
     recursive_boundaries();
