@@ -209,9 +209,10 @@ static uint64_t microseconds(struct timespec start, struct timespec end) {
     return seconds * 1000000 + (uint64_t)nanos / 1000;
 }
 
-void mo_test_program(const struct mo_cli *cli, const struct mo_test_selection *selection,
-                     const struct mo_buffer *wire, const struct mo_sources *sources, FILE *output,
-                     struct mo_diags *diags, struct mo_test_totals *totals) {
+void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
+                     const struct mo_test_selection *selection, const struct mo_buffer *wire,
+                     const struct mo_sources *sources, FILE *output, struct mo_diags *diags,
+                     struct mo_test_totals *totals) {
     struct mo_load_error error;
     struct mo_image *image = mo_load(wire->bytes, wire->length, &error);
     if (image == NULL) {
@@ -258,7 +259,8 @@ void mo_test_program(const struct mo_cli *cli, const struct mo_test_selection *s
         const struct mo_observation *observation = &selection->items[i];
         uint32_t function = functions[i];
         if (observation->source->kind == MO_SPEC_PROMISE) {
-            if (!mo_test_promise(cli, image, sources, observation, function, output, diags, totals))
+            if (!mo_test_promise(cli, program, image, sources, observation, function, output, diags,
+                                 totals))
                 break;
             continue;
         }

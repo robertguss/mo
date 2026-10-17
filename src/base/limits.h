@@ -347,6 +347,14 @@ static inline struct mo_limits mo_limits_default(void) {
  * those inside its collections). A bigger tuple is refused like any oversized input. */
 #define MO_CLI_FAKE_RECIPES 256
 
+/* Architecture 10.1, hidden types: a value comes from at most four calls to its module, a start
+ * and up to three steps. A start whose result doesn't count (None, an Error, a stop) is tried
+ * again with other inputs, up to the attempts limit. A builder's result reaches the value through
+ * at most MO_CLI_BUILDER_PATH tuple fields, Somes and Oks. */
+#define MO_CLI_BUILDER_CALLS 4
+#define MO_CLI_BUILDER_ATTEMPTS 64
+#define MO_CLI_BUILDER_PATH 4
+
 /* Promise input generation, not limits on program results. The caller can
  * choose smaller budgets. Refusal leaves the sequence unchanged; tools may
  * skip an oversized candidate or retry it with more heap. */

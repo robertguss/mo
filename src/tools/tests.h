@@ -47,8 +47,9 @@ MO_MUST_USE bool mo_render_test_result(const struct mo_sources *sources,
 MO_MUST_USE bool mo_write_test_result(FILE *output, bool json, const struct mo_sources *sources,
                                       const struct mo_test_result *result);
 /* Selection has passed generator preflight and is nonempty. Never enters main. */
-void mo_test_program(const struct mo_cli *cli, const struct mo_test_selection *selection,
-                     const struct mo_buffer *wire, const struct mo_sources *sources, FILE *output,
-                     struct mo_diags *diags, struct mo_test_totals *totals);
+void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
+                     const struct mo_test_selection *selection, const struct mo_buffer *wire,
+                     const struct mo_sources *sources, FILE *output, struct mo_diags *diags,
+                     struct mo_test_totals *totals);
 
 #endif

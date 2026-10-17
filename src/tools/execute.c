@@ -133,7 +133,8 @@ static void execute_pipeline(void *argument) {
             goto done;
     }
     if (cli->command == MO_COMMAND_TEST) {
-        mo_test_program(cli, selection, &wire, sources, work->output, diags, &work->totals);
+        mo_test_program(cli, program, selection, &wire, sources, work->output, diags,
+                        &work->totals);
         goto done;
     }
     if (anchors || cli->command == MO_COMMAND_RUN) {

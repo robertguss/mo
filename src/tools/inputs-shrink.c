@@ -324,8 +324,10 @@ enum mo_input_result mo_input_shrink_next(struct mo_input_shrinker *shrinker,
             if (result != MO_INPUT_OK)
                 return result;
             cursor.variant = edit.variant;
-            result = mo_input_build(inputs, destination, best, NULL, 0, 0, &edit,
-                                    &walk.budget.left.work, out);
+            struct mo_input_limits left = inputs->limits;
+            left.work = walk.budget.left.work;
+            result = mo_input_build(inputs, destination, best, NULL, 0, 0, &edit, &left, out);
+            walk.budget.left.work = left.work;
             if (result == MO_INPUT_DONE) {
                 if (edit.kind == MO_INPUT_EDIT_FACTORY) {
                     cursor.node++;

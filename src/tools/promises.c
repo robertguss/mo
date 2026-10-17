@@ -1,6 +1,7 @@
 #include "tools/promises.h"
 
 #include "base/codes.h"
+#include "tools/builders.h"
 #include "tools/deadline.h"
 #include "tools/fakes.h"
 #include "tools/run.h"
@@ -27,6 +28,8 @@ struct eligibility {
     size_t count, capacity;
     size_t *work;
     bool limited;
+    bool plain;  /* a builder's input: no capabilities and no hidden types */
+    bool copied; /* a hidden type's insides: no capabilities, and hidden types are structural */
 };
 
 static bool input_work(struct eligibility *walk) {
@@ -86,6 +89,97 @@ static bool input_fields(struct eligibility *walk, const struct mo_signatures *s
 }
 
 static bool input_supported(struct eligibility *walk, const struct mo_program *program,
+                            const struct mo_source_type *type, uint32_t module);
+
+/* Every type reachable from the walk's roots can be generated. */
+static bool walk_supported(struct eligibility *walk, const struct mo_program *program,
+                           uint32_t module) {
+    for (size_t p = 0; p < walk->count; p++)
+        if (!input_supported(walk, program, walk->types[p], module))
+            return false;
+    return true;
+}
+
+static bool hidden_type(const struct mo_source_type *type, const struct mo_symbol *owner) {
+    return type->kind == MO_SOURCE_NAMED && type->declaration == owner && type->count == 0;
+}
+
+/* Whether a result holds the hidden type: itself, a tuple's field, Some or Ok (the driver's
+ * builders follow the same path in the image, tools/builders.c). */
+static bool yields(const struct mo_source_type *type, const struct mo_symbol *owner,
+                   uint32_t depth) {
+    if (hidden_type(type, owner))
+        return true;
+    if (depth == MO_CLI_BUILDER_PATH)
+        return false;
+    if (type->kind == MO_SOURCE_TUPLE) {
+        for (uint32_t i = 0; i < type->count; i++)
+            if (yields(type->arguments[i], owner, depth + 1))
+                return true;
+        return false;
+    }
+    return type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX && type->count != 0 &&
+           (strcmp(type->name, "Option") == 0 || strcmp(type->name, "Result") == 0) &&
+           yields(type->arguments[0], owner, depth + 1);
+}
+
+/* A hidden type can be generated when its module can start one (reference 12.2): an exposed
+ * constant of it, or an exposed nongeneric function returning it from inputs that hold no
+ * capability, function or hidden type. Later steps are chosen in the image. */
+static bool startable(struct eligibility *outer, const struct mo_program *program,
+                      const struct mo_symbol *owner) {
+    for (uint32_t i = 0; i < program->constant_count; i++) {
+        const struct mo_checked_constant *constant = &program->constants[i];
+        if (!input_work(outer))
+            return false;
+        if (constant->symbol->exported && constant->symbol->module == owner->module &&
+            hidden_type(constant->type, owner))
+            return true;
+    }
+    for (uint32_t i = 0; i < program->function_count; i++) {
+        const struct mo_function_signature *signature = program->functions[i].signature;
+        const struct mo_source_type *type = signature->type;
+        if (!input_work(outer))
+            return false;
+        if (!signature->function->exported || signature->function->module != owner->module ||
+            type->parameters != 0 || !yields(type->arguments[type->count - 1], owner, 0))
+            continue;
+        struct eligibility walk = {.work = outer->work, .plain = true};
+        mo_arena_init(&walk.arena, MO_CLI_TEST_SIZE);
+        bool supported = true;
+        for (uint32_t p = 0; supported && p + 1 < type->count; p++)
+            supported = input_type(&walk, type->arguments[p]);
+        supported = supported && walk_supported(&walk, program, owner->module);
+        mo_arena_free(&walk.arena);
+        outer->limited |= walk.limited;
+        if (supported)
+            return true;
+        if (walk.limited)
+            return false;
+    }
+    return false;
+}
+
+/* Built values are copied into each trial field by field, from their own module's view. */
+static bool insides_supported(struct eligibility *outer, const struct mo_program *program,
+                              const struct mo_symbol *owner) {
+    struct eligibility walk = {.work = outer->work, .copied = true};
+    mo_arena_init(&walk.arena, MO_CLI_TEST_SIZE);
+    bool choice = owner->declaration->kind == MO_S_ENUM;
+    uint32_t count = choice ? owner->case_count : 1;
+    bool supported = true;
+    for (uint32_t i = 0; supported && i < count; i++) {
+        const struct mo_symbol *symbol =
+            choice ? &program->interfaces->scopes[owner->module].symbols[owner->cases[i]] : owner;
+        supported = input_fields(&walk, program->signatures, symbol);
+    }
+    supported = supported && walk_supported(&walk, program, owner->module);
+    mo_arena_free(&walk.arena);
+    outer->limited |= walk.limited;
+    return supported;
+}
+
+static bool input_supported(struct eligibility *walk, const struct mo_program *program,
                             const struct mo_source_type *type, uint32_t module) {
     if (!input_work(walk))
         return false;
@@ -110,17 +204,21 @@ static bool input_supported(struct eligibility *walk, const struct mo_program *p
                                strcmp(type->name, "Option") == 0)) ||
                              (type->count == 2 && (strcmp(type->name, "Map") == 0 ||
                                                    strcmp(type->name, "Result") == 0));
-            for (size_t i = 0; type->count == 0 && i < sizeof scalars / sizeof scalars[0]; i++)
+            size_t scalar_count =
+                sizeof scalars / sizeof scalars[0] - (walk->plain || walk->copied ? 7 : 0);
+            for (size_t i = 0; type->count == 0 && i < scalar_count; i++)
                 supported |= strcmp(type->name, scalars[i]) == 0;
             if (!supported)
                 return false;
         } else {
             const struct mo_symbol *owner = type->declaration;
             MO_ASSERT(owner != NULL && owner->module == type->module);
-            /* Exposed-opaque types require builders even in their own module.
-             * Unexported local data, unlike those types, is structural. */
-            if (!owner->insides && (owner->exported || owner->module != module))
-                return false;
+            /* Exposed-opaque types require builders even in their own module, and a builder's
+             * own inputs hold none. Unexported local data, unlike those types, is structural;
+             * a hidden type's insides must be too, since its built values are copied. */
+            if (!owner->insides && (owner->exported || owner->module != module) && !walk->copied)
+                return !walk->plain && type->count == 0 && startable(walk, program, owner) &&
+                       insides_supported(walk, program, owner);
             bool choice = owner->declaration->kind == MO_S_ENUM;
             uint32_t count = choice ? owner->case_count : 1;
             for (uint32_t i = 0; i < count; i++) {
@@ -152,9 +250,8 @@ bool mo_promises_supported(const struct mo_program *program,
         bool supported = subject->signature->type->parameters == 0;
         for (uint32_t p = 0; supported && p < subject->parameter_count; p++)
             supported = input_type(&walk, subject->parameters[p]->type);
-        for (size_t p = 0; supported && p < walk.count; p++)
-            supported = input_supported(&walk, program, walk.types[p],
-                                        subject->signature->function->module);
+        supported =
+            supported && walk_supported(&walk, program, subject->signature->function->module);
         mo_arena_free(&walk.arena);
         if (!supported) {
             if (walk.limited) {
@@ -319,10 +416,10 @@ static bool write_result(const struct mo_cli *cli, const struct mo_sources *sour
     return false;
 }
 
-bool mo_test_promise(const struct mo_cli *cli, struct mo_image *image,
-                     const struct mo_sources *sources, const struct mo_observation *observation,
-                     uint32_t function, FILE *output, struct mo_diags *diags,
-                     struct mo_test_totals *totals) {
+bool mo_test_promise(const struct mo_cli *cli, const struct mo_program *program,
+                     struct mo_image *image, const struct mo_sources *sources,
+                     const struct mo_observation *observation, uint32_t function, FILE *output,
+                     struct mo_diags *diags, struct mo_test_totals *totals) {
     const struct mo_bytecode *file = mo_image_bytecode(image);
     uint32_t subject = file->debug[function].subject;
     const struct mo_bytecode_function *ordinary = &file->functions[subject];
@@ -338,9 +435,29 @@ bool mo_test_promise(const struct mo_cli *cli, struct mo_image *image,
     struct mo_input_limits limits = mo_input_limits_default();
     struct mo_fakes fakes;
     mo_fakes_init(&fakes, mo_image_types(image));
-    enum mo_input_result prepared = mo_inputs_init(
-        &inputs, mo_image_types(image), parameters, ordinary->parameter_count, observation->name,
-        strlen(observation->name), &limits, mo_fakes_factories(&fakes), mo_fakes_count(&fakes));
+    struct mo_builders builders;
+    enum mo_input_result prepared =
+        mo_builders_init(&builders, program, image, &cli->limits, &deadline);
+    /* Capabilities and hidden types are disjoint kinds of type, so their factories never clash. */
+    struct mo_input_factory *factories =
+        prepared != MO_INPUT_OK
+            ? NULL
+            : mo_arena_allocate(&builders.arena,
+                                (mo_fakes_count(&fakes) + mo_builders_count(&builders) + 1) *
+                                    sizeof *factories,
+                                _Alignof(struct mo_input_factory));
+    if (prepared == MO_INPUT_OK && factories == NULL)
+        prepared = MO_INPUT_NO_MEMORY;
+    if (prepared == MO_INPUT_OK) {
+        memcpy(factories, mo_fakes_factories(&fakes), mo_fakes_count(&fakes) * sizeof *factories);
+        memcpy(factories + mo_fakes_count(&fakes), mo_builders_factories(&builders),
+               mo_builders_count(&builders) * sizeof *factories);
+        prepared =
+            mo_inputs_init(&inputs, mo_image_types(image), parameters, ordinary->parameter_count,
+                           observation->name, strlen(observation->name), &limits, factories,
+                           mo_fakes_count(&fakes) + mo_builders_count(&builders));
+    } else
+        inputs = (struct mo_inputs){0};
     struct trial best = {0};
     uint64_t calls = 0;
     bool complete = true, known = true;
@@ -363,8 +480,11 @@ bool mo_test_promise(const struct mo_cli *cli, struct mo_image *image,
             break;
         }
         if (generated != MO_INPUT_OK) {
-            inability(diags, observation, "promise input could not be generated", NULL);
             discard(&candidate, ordinary);
+            /* A builder's calls share the promise's deadline: running out ends the search. */
+            if (!mo_deadline_running(&deadline))
+                break;
+            inability(diags, observation, "promise input could not be generated", NULL);
             known = false;
             break;
         }
@@ -399,7 +519,7 @@ bool mo_test_promise(const struct mo_cli *cli, struct mo_image *image,
             candidate.has_input = generated == MO_INPUT_OK;
             if (generated != MO_INPUT_OK) {
                 discard(&candidate, ordinary);
-                if (generated != MO_INPUT_DONE)
+                if (generated != MO_INPUT_DONE && mo_deadline_running(&deadline))
                     inability(diags, observation, "promise shrink input could not be generated",
                               NULL);
                 break;
@@ -436,5 +556,6 @@ bool mo_test_promise(const struct mo_cli *cli, struct mo_image *image,
 done:
     discard(&best, ordinary);
     mo_inputs_free(&inputs);
+    mo_builders_free(&builders);
     return complete;
 }

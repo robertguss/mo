@@ -1807,9 +1807,9 @@ independently force status 1. Selected unsupported promises are never omitted.
 with built-in Unit, Bool, Byte, Int, Float, Char, Time, Duration, Decimal, Range,
 Text, Bytes or BigInt inputs, composed through tuples, Lists, Maps, Sets, Option,
 Result and visible source records/choices, including closed imported generic data and
-regular recursion. Capability inputs are generated fakes (below). Generic subjects,
-exposed-opaque types and function inputs remain unavailable, even if concrete
-instances exist elsewhere. Preflight checks every payload of every case and
+regular recursion. Capability inputs are generated fakes, and exposed-opaque types are built
+through their module (both below). Generic subjects, generic exposed-opaque types and function
+inputs remain unavailable, even if concrete instances exist elsewhere. Preflight checks every payload of every case and
 every actual type argument, including phantom arguments. It walks canonical
 declaring symbols and declaration-ordered field templates, never import
 spellings or reconstructed parameter keys. Actual arguments are checked
@@ -1818,9 +1818,13 @@ substitution. A memoized iterative source graph closes recursive edges and
 shared DAGs; its comparisons, edges and lookups share 64 Mi work per selected
 set and each promise uses at most 64 MiB scratch, refusing E1404 on exhaustion.
 An explicitly exposed-opaque type requires builders even inside its defining
-module; an unexported local record/choice remains structural. Hidden nested
-payloads refuse the whole selection, even under List or Option; the generator
-may not silently cover only an empty list or one visible choice case. Listing
+module; an unexported local record/choice remains structural. Preflight accepts one only
+when its module can start one: an exposed constant of it, or an exposed nongeneric function
+returning it (as itself, a tuple field, `Some` or `Ok`) from inputs that hold no capability,
+function or hidden type. Its insides must also be structurally supported, from its own
+module's view and without capabilities, since built values are copied field by field. A hidden
+type with no start refuses the whole selection, even nested under List or Option; the
+generator may not silently cover only an empty list or one visible choice case. Listing
 and ordinary-only selection still require no generator. This eligibility check
 does not widen lowering's native-call
 support: subjects, conditions and anchors still refuse staged calls with E1150
@@ -2010,7 +2014,9 @@ start. Rendering never changes files. Unavailable locations display
 - **Hidden types.** A type exposed without its insides is built only through
   calls to its module's exposed functions that return it, in sequences of up
   to four calls from generated arguments. A builder that returns
-  `Result(T, E)` or `Option(T)` counts when it succeeds.
+  `Result(T, E)` or `Option(T)` counts when it succeeds, and one that returns a
+  tuple holding `T`, such as `(T, Reply)`, counts with the first `T` in it. An
+  exposed constant of the type starts a sequence with no call.
 - **Functions** are generated as constant functions, the identity where the
   types allow it, and functions that derive their result from their
   argument's structural hash, so equal arguments give equal results. In
@@ -2117,9 +2123,9 @@ overrides, missing layouts and non-hashable keys are unsupported. Exact-index
 factory overrides are the hidden-builder, closure and fake-capability seam; their trusted
 callbacks subtract child nodes, bytes and work from the same remaining budget
 and rebuild foreign cells instead of retaining them. Hidden visibility and
-the choice of factories remain with the driver. Only the fake-capability
-factories (`src/tools/fakes.c`) exist; the hidden-type and closure builders remain
-unimplemented.
+the choice of factories remain with the driver. The fake-capability factories
+(`src/tools/fakes.c`) and hidden-type builders (`src/tools/builders.c`) exist; the closure
+builders remain unimplemented.
 
 **Fake capabilities.** The driver gives each capability type in the image one factory.
 Every kind has three boundaries, then random fakes whose size grows with the run. Contents come
@@ -2131,6 +2137,25 @@ fake entry points (`mo_host_fake_restore`, `Random.seeded`), as the constructors
 driver keeps the request each fake was made from, and shrinking rebuilds a copy of the
 failing input's fakes from that request, never from their state after the failing call. Fakes
 themselves are not shrunk, and the report names them by type (`<ReadFiles>`).
+
+**Hidden types.** The driver gives each type exposed without its insides one factory
+(`src/tools/builders.c`). Its starts are the module's exposed constants of the type and its
+exposed functions that return one from inputs a generator can make (no capability, function or
+hidden type); its steps are exposed functions that take the type and return one from such other
+inputs. A function's result counts when the type is the result itself, the first tuple field
+holding it, `Some` or `Ok`, and the call returns that case. Constants are exposed when the
+checked program says so, since the bytecode module table lists only exposed types and functions.
+Each value is one start then up to three steps, run in a scratch process of the same image, so
+a call that stops or fails ends only that sequence: a start that doesn't count is retried with
+other inputs (up to 64 attempts, in boundary order once random ones have had half), and a step
+that doesn't count is skipped. A step's generator takes the value built so far for each
+parameter of the hidden type. Boundary 0 is the first start on its minimum inputs, boundary 1
+adds one step and boundary 2 three, cycling through the steps on their boundary inputs; random
+values pick starts, steps and inputs from the request's seed, sized like the trial. The value is
+then deep-copied into the trial's heap through a structural generator over the type, which also
+copies retained inputs for shrinking. Built values are not shrunk, and the report shows them as
+they are. Builder calls poll the promise's deadline; running out while generating ends the
+search as between trials.
 
 ### 10.2 JSON output
 

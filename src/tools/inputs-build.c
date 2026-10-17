@@ -83,7 +83,7 @@ static MO_MUST_USE enum mo_input_result frame_init(struct mo_input_builder *buil
             frame->request.mode = MO_INPUT_MINIMUM;
     }
     frame->leaf = info->factory != NULL || mo_input_scalar_count(type->kind) != 0;
-    frame->request.remaining_depth = inputs->limits.depth - depth + 1;
+    frame->request.remaining_depth = builder->budget.left.depth - depth + 1;
     if (frame->leaf)
         return MO_INPUT_OK;
     if (frame->request.mode == MO_INPUT_COPY) {
@@ -163,7 +163,7 @@ static MO_MUST_USE enum mo_input_result frame_init(struct mo_input_builder *buil
                 maximum = builder->budget.left.nodes / type->parameter_count;
             for (uint32_t p = 0; p < type->parameter_count; p++) {
                 if (info->factory == NULL &&
-                    inputs->info[type->parameters[p]].depth > inputs->limits.depth - depth)
+                    inputs->info[type->parameters[p]].depth > builder->budget.left.depth - depth)
                     maximum = 0;
             }
             count = (uint32_t)(mo_input_random(&builder->random) % ((uint64_t)maximum + 1));
@@ -265,13 +265,10 @@ static MO_MUST_USE enum mo_input_result finish(struct mo_input_builder *builder,
 enum mo_input_result mo_input_build(const struct mo_inputs *inputs, struct mo_heap *destination,
                                     const struct mo_cell *source, const uint32_t *boundaries,
                                     uint32_t size, uint64_t seed, const struct mo_input_edit *edit,
-                                    uint64_t *work_left, struct mo_cell *out) {
-    struct mo_input_builder builder = {.inputs = inputs,
-                                       .heap = destination,
-                                       .budget.left = inputs->limits,
-                                       .random = seed,
-                                       .size = size};
-    builder.budget.left.work = *work_left;
+                                    struct mo_input_limits *left, struct mo_cell *out) {
+    MO_ASSERT(left->depth <= inputs->limits.depth);
+    struct mo_input_builder builder = {
+        .inputs = inputs, .heap = destination, .budget.left = *left, .random = seed, .size = size};
     mo_scratch_init(&builder.scratch, destination);
     struct build_frame stack[MO_LIMIT_INPUT_DEPTH];
     struct mo_cell roots[MO_LIMIT_BYTECODE_PARAMETERS];
@@ -287,7 +284,7 @@ enum mo_input_result mo_input_build(const struct mo_inputs *inputs, struct mo_he
                             .boundary = boundaries == NULL ? 0 : boundaries[completed],
                             .size = size,
                             .source = source == NULL ? mo_cell_unit() : source[completed]}};
-            if (inputs->limits.depth == 0) {
+            if (builder.budget.left.depth == 0) {
                 result = MO_INPUT_LIMIT;
                 break;
             }
@@ -300,7 +297,7 @@ enum mo_input_result mo_input_build(const struct mo_inputs *inputs, struct mo_he
         if (!frame->leaf && next_child(&builder, frame, &child)) {
             if (child.type == MO_NO_INDEX)
                 continue;
-            if (depth == inputs->limits.depth) {
+            if (depth == builder.budget.left.depth) {
                 result = MO_INPUT_LIMIT;
                 break;
             }
@@ -335,6 +332,6 @@ enum mo_input_result mo_input_build(const struct mo_inputs *inputs, struct mo_he
             mo_value_drop(destination, inputs->parameters[i], roots[i]);
     }
     mo_scratch_free(&builder.scratch);
-    *work_left = builder.budget.left.work;
+    *left = builder.budget.left;
     return result;
 }
