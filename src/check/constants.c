@@ -195,7 +195,8 @@ static MO_MUST_USE bool higher_order_native(const char *native) {
     return native != NULL &&
            (strcmp(native, "List.all?") == 0 || strcmp(native, "List.count") == 0 ||
             strcmp(native, "List.find") == 0 || strcmp(native, "List.map") == 0 ||
-            strcmp(native, "List.sort_by_desc") == 0 || strcmp(native, "Map.update") == 0);
+            strcmp(native, "List.max") == 0 || strcmp(native, "List.sort_by_desc") == 0 ||
+            strcmp(native, "Map.update") == 0);
 }
 
 /* Resolve only a known function value, never a function call's returned value.
