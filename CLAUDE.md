@@ -117,3 +117,16 @@ Adding a library function typically touches its `check` signature (`src/check/si
 - `grammar/mo.y` is an instrument, not the compiler: the real parser is hand-written in
   `src/syntax/`, and a fuzz target checks both accept and reject the same inputs. Bison refuses any
   conflict, which keeps the grammar unambiguous.
+
+## Workflow
+
+Every change runs three skills in order, and the PR template asks for each one's output:
+
+1. `plan-change` before writing code: names every file the change touches and why.
+2. `test-change` while building: picks each behaviour's test layer and sees each test red, then green.
+3. `review-change` before opening the PR or marking it ready: a fresh subagent reviews the diff.
+
+A one-line fix can keep its plan to a sentence; it still gets tests and a review.
+
+After a PR opens, merges or changes CI state, or after Robert makes a decision, run `notion-sync` so the
+Mo v2 Notion hub matches GitHub.
