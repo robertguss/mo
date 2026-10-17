@@ -1,20 +1,38 @@
 ---
 name: review-change
-description: Review a finished Mo change. Use after implementing, before opening a PR or marking it ready, or when asked to review a branch or PR.
+description: Adversarial review of a finished Mo change. Use when asked to review a diff, branch or PR, or as the self-review step before opening a PR.
+context: fork
 ---
 
 # Review a change
 
-The author is the worst reviewer of their own change, so the review runs in a fresh subagent that never saw the work, and the author verifies what it finds. CI already proves formatting, warnings, module includes and the library map; the review spends its attention on what CI can't see.
+You run in a fresh context with no view of the conversation that built the change, so everything you judge comes from the repo. You are a **skeptic** reviewing someone else's change: assume each test is greener than it should be and each contract crossing is missing a side, until the code shows otherwise. If you can see the conversation that built the change, start a subagent with this skill instead of reviewing it yourself.
 
-## Steps
+CI already proves formatting, warnings, module includes and the library map; spend your attention on what it can't see.
 
-1. **Gather the change.** Collect the diff against `origin/main`, the MO task or request it answers, its plan if one was written, and the latest `ci/check.sh` or CI result. Done when you have all four, or have noted which one doesn't exist.
+## 1. Scope the change
 
-2. **Dispatch the reviewer.** Start one subagent with the diff, the task, and this instruction: read `.agents/skills/review-change/rules.md` and `CLAUDE.md`, apply every rule to every changed file, and report each finding as `file:line`, the rule, and a failure scenario (a concrete input or state, and the wrong result it produces). Done when the reviewer returns with every rule marked applied.
+Diff the branch against `origin/main` (for a PR, its base branch) and list every changed file. Find the MO task it answers (the PR title or branch names it) and the plan, if the PR description holds one. Read `AGENTS.md`, then `rules.md` in this skill's folder: they are the yardstick.
 
-3. **Verify each finding.** Reproduce it: run the failing input, build the case, or trace the path through the code to a real caller. A finding is confirmed when you have seen it happen or traced it end to end, and dropped otherwise. Done when every finding is confirmed or dropped, each with the evidence.
+Done when you hold the full file list and the task.
 
-4. **Fix or hand over.** Fix every confirmed finding in this PR's scope, then re-run the checks it touches. A confirmed finding outside the task's scope goes in the PR description as a follow-up. Done when no confirmed in-scope finding remains open.
+## 2. Run the gates
 
-5. **Report.** In the PR description or thread: what was fixed, what was dropped and why, follow-ups, and the check result for the final commit.
+Run `bash ci/check.sh` and record each group as green, red (with the first failing line), or skipped (with the missing tool). A red group is the top finding.
+
+## 3. Apply every rule to every changed file
+
+Work through `rules.md`. For the tests rule, plant a **mutant**: for each new behaviour, break it in the code (an off-by-one, a dropped check, a swapped branch), rerun its test, and confirm it goes red. Restore the code after each one. A mutant that stays green is a finding.
+
+Done when every rule has been applied to every changed file, and each rule either produced findings or you can name what you checked to clear it.
+
+## 4. Report
+
+Findings ranked most severe first. Each one carries:
+
+- `file:line`;
+- the rule it breaks;
+- a concrete failure: the input, mutant or caller that goes wrong, and how;
+- the fix you would make.
+
+Then one line per rule you cleared, naming the evidence, and the gate results from step 2. Keep what you verified apart from what you infer; a finding you could not reproduce says so.
