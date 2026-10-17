@@ -1588,6 +1588,31 @@ def runner(binary):
             ("Kv.test.2", "passed")]
         assert kv_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
                                 "passed": 17, "failed": 0, "stopped": 0, "status": 0}
+        assert run(binary, ["check", "examples/expenses.mo"], 0).stderr == b""
+        records(run(binary, ["check", "--json", "examples/expenses.mo"], 0), "check")
+        with tempfile.TemporaryDirectory(prefix="mo-expenses-") as expenses_dir:
+            pathlib.Path(expenses_dir, "spending.csv").write_text(
+                "date,category,amount\n2026-01-01,rent,900\n2026-01-02,food,12.5\n"
+                "2026-01-03,food,7.25\nbad\n")
+            expenses_run = subprocess.run(
+                [str(pathlib.Path(binary).resolve()), "run", str(root / "examples/expenses.mo"),
+                 "spending.csv"], cwd=expenses_dir, capture_output=True, timeout=30)
+        assert expenses_run.returncode == 1
+        assert expenses_run.stderr == b"line 5: expected 3 fields, found 1\n"
+        assert expenses_run.stdout == b"rent  900.00\nfood   19.75\n"
+        expenses_names = [
+            "Expenses.parse_line.example.1", "Expenses.parse_line.example.2",
+            "Expenses.parse_line.example.3", "Expenses.parse_line.example.4",
+            "Expenses.parse_line.example.5", "Expenses.totals.example.1",
+            "Expenses.totals.example.2", "Expenses.layout.example.1", "Expenses.test.1"]
+        expenses_tests = records(
+            run(binary, ["test", "--json",
+                         *[arg for name in expenses_names for arg in ("--only", name)],
+                         "examples/expenses.mo"], 0), "test")
+        assert [(r["name"], r["outcome"]) for r in expenses_tests[1:-1]] == [
+            (name, "passed") for name in expenses_names]
+        assert expenses_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                                      "passed": 9, "failed": 0, "stopped": 0, "status": 0}
 
         # Every source stage, including lower/Core/codegen, shares the explicit
         # source stack, while the caller has only 1 MiB. Nested arithmetic also
@@ -1634,6 +1659,8 @@ def map_literals(binary):
         "file-error-text": b"notes/a.md: no such file\n../secret: not allowed\nbin/app: not text\nout.txt: is a folder\nSome(notes/a.md: no such file)\n",
         "list-all": b"true/true/false/false/true/true/true\n",
         "list-count": b"0/0/3/2/2/2/3\n",
+        "list-max": b"7/5/8/-2/zebra/b/3/6/30/9\n",
+        "list-zip-entries": b'[("a", 1), ("b", 2)]/[]/[(1, "x"), (2, "y")]/[(true, "t"), (false, "f")]/[("b", 2), ("a", 1), ("c", 3)]\n',
         "list-map": b"[2, 4, 6]/[1, 2, 3]/[13, 14]/[0, 25]/[7, 8]\n",
         "option-or-fail": b"Ok(1)/Error(Missing(name: \"z\"))\nOk(42)/Error(Empty)\n"
                           b"Ok(3)/Error(Empty)\nOk(\"x\")/Error(7)\nmade eager\nOk(1)\n",
