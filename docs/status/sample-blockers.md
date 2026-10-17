@@ -1,23 +1,44 @@
-# Sample blockers after MO-87 (Char.ascii_digit? lowering)
+# Sample blockers after MO-86 (Char and Map lowering)
 
 Regenerated from actual `mo check --json examples/<sample>.mo` output on
 `bfcdedcd` (I1/PR81), `75e6db61` (LW5/PR82), `02395dbd` (C7/PR83),
 `09f4c445` (F8/PR84), `1ac2fe8e` (C1/PR85), `0b8589ee` (C4/PR86),
 `a2924f53` (C5/PR87), `dab7da3a` (C8/PR88), `b9fbb0e1` (F7/PR89),
 `d7e3abfa` (C3/PR90), `bc0fff4c` (F16/PR91), `4cf4f81c` (F14/PR92),
-`41d6944` (F11/PR93), `3ad6c55` (MO-31/PR97), MO-83 and the Char lowering
-change. Every totals record
-reports `dropped: 0`. Examples are unchanged.
+`41d6944` (F11/PR93), `3ad6c55` (MO-31/PR97), `5375209` (MO-83/PR101),
+`0d3764c` (MO-84/PR106), MO-85/PR102 and MO-86. Every totals record reports
+`dropped: 0`. Examples are unchanged.
 
-The Char lowering change dispatches every `Char` primitive (`ascii_digit?`,
-`ascii_letter?`, `ascii_white_space?`, `ascii_lowercase`, `ascii_uppercase`,
-`code`, `to_text`), `Int.to_char` and the remaining `Map` primitives
-(`empty?`, `has?`, `keys`, `entries`) to Mo Core, all of which Core and the VM
-already had. `examples/json-query.mo` now passes `mo check`, runs on standard
-input, and passes all 15 examples and 1 test with 0 errors. Total diagnostics
-across the 12 samples fall from 5 to 4.
+MO-86 dispatches every `Char` primitive (`ascii_digit?`, `ascii_letter?`,
+`ascii_white_space?`, `ascii_lowercase`, `ascii_uppercase`, `code`, `to_text`),
+`Int.to_char` and the remaining `Map` primitives (`empty?`, `has?`, `keys`,
+`entries`) to Mo Core, all of which Core and the VM already had:
+- `examples/json-query.mo` passes `mo check`, runs on standard input, and
+  passes all 15 examples and 1 test with 0 errors.
+- Total diagnostics across all 12 samples fall from 3 to 2, and 10 of 12
+  samples now pass `mo check` (`account.mo`, `expenses.mo`, `find.mo`,
+  `greet.mo`, `job-queue.mo`, `json-query.mo`, `kv.mo`, `notes-tool.mo`,
+  `rate-limit.mo`, `wc.mo`).
 
-Before that, with `List.all?` checked, lowered and run (plus lowering dispatch for
+Earlier, with `List.find` checked, lowered and run (plus lowering for `List.to_map`,
+`Map.has?` and `Map.keys`, which `examples/job-queue.mo` reaches once
+`List.find` clears):
+- `examples/job-queue.mo` passes `mo check` (including its anchors), and its 8
+  examples and 1 test pass; its promises still stop at E1400 (M9).
+- Total diagnostics across all 12 samples fall from 4 to 3, and 9 of 12
+  samples now pass `mo check` (`account.mo`, `expenses.mo`, `find.mo`,
+  `greet.mo`, `job-queue.mo`, `kv.mo`, `notes-tool.mo`, `rate-limit.mo`,
+  `wc.mo`).
+
+Earlier, with `List.max` checked, lowered and run (plus lowering for `Map.entries` and
+`List.zip`, which `examples/expenses.mo` reaches once `List.max` clears):
+- `examples/expenses.mo` passes `mo check`, `mo run` on a CSV, and its 9
+  examples and tests with 0 errors.
+- Total diagnostics across all 12 samples fall from 5 to 4, and 8 of 12
+  samples now pass `mo check` (`account.mo`, `expenses.mo`, `find.mo`,
+  `greet.mo`, `kv.mo`, `notes-tool.mo`, `rate-limit.mo`, `wc.mo`).
+
+Earlier, with `List.all?` checked, lowered and run (plus lowering dispatch for
 `Console.read_line`, `Console.fake_input`, `Int.checked_add`, `Map.remove` and
 `Map.values`):
 - `examples/kv.mo` passes `mo check` (including its `allows` and `forbids`
@@ -31,37 +52,40 @@ Before that, with `List.all?` checked, lowered and run (plus lowering dispatch f
 
 ## Counts
 
-| Sample | Main / I1 | LW5 | C7 | F8 | C1 | C4 | C5 | C8 | F7 | C3 | F16 | F14 | F11 | MO-31 | MO-83 | Change (MO-31→MO-83) |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| account.mo | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
-| expenses.mo | 2 | 4 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 1 | 1 | +0 |
-| find.mo | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
-| greet.mo | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
-| inventory.mo | 2 | 5 | 5 | 5 | 5 | 3 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
-| job-queue.mo | 1 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 1 | 1 | +0 |
-| json-query.mo | 1 | 4 | 4 | 4 | 4 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 1 | 1 | +0 |
-| kv.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | -1 |
-| notes-tool.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | +0 |
-| rate-limit.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | +0 |
-| todo.mo | 1 | 1 | 4 | 4 | 4 | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 1 | 1 | +0 |
-| wc.mo | 2 | 2 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
-| **Total** | **14** | **24** | **25** | **24** | **23** | **17** | **14** | **14** | **13** | **13** | **12** | **11** | **11** | **6** | **5** | **-1** |
+| Sample | Main / I1 | LW5 | C7 | F8 | C1 | C4 | C5 | C8 | F7 | C3 | F16 | F14 | F11 | MO-31 | MO-83 | MO-84 | MO-85 | MO-86 | Change (MO-85→MO-86) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| account.mo | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| expenses.mo | 2 | 4 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 1 | 1 | 0 | 0 | 0 | +0 |
+| find.mo | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| greet.mo | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| inventory.mo | 2 | 5 | 5 | 5 | 5 | 3 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | +0 |
+| job-queue.mo | 1 | 3 | 3 | 3 | 3 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 1 | 1 | 1 | 0 | 0 | +0 |
+| json-query.mo | 1 | 4 | 4 | 4 | 4 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 1 | 1 | 1 | 1 | 0 | -1 |
+| kv.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | +0 |
+| notes-tool.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| rate-limit.mo | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| todo.mo | 1 | 1 | 4 | 4 | 4 | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 1 | 1 | 1 | 1 | 1 | +0 |
+| wc.mo | 2 | 2 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | +0 |
+| **Total** | **14** | **24** | **25** | **24** | **23** | **17** | **14** | **14** | **13** | **13** | **12** | **11** | **11** | **6** | **5** | **4** | **3** | **2** | **-1** |
 
 ## Current diagnostics
 
 | Sample | Location | Code | Diagnostic | Source |
 | --- | --- | --- | --- | --- |
-| expenses.mo | 70:56 | E0050 | no visible function has this dot-call name | `name_width = names.map(fn(name) name.char_count end).max or 0` |
 | inventory.mo | 72:48 | E1103 | this generic capture's capability membership isn't checked | `laid_out = columns.map(fn(column) pad_column(rows, column) end)` |
-| job-queue.mo | 71:26 | E0050 | no visible function has this dot-call name | `case queue.jobs.values.find(fn(job) job.state == Ready end)` |
 | todo.mo | 132:9 | E1150 | this native call is not lowered yet | `try files.write_text(file, format(items))` |
 
 ## Newly exposed blockers
 
-- expenses: `Option.or_fail` (`41:37`) clears; only `List.max` (`70:56`) remains.
+- expenses: `List.max` (`70:56`) clears, exposing `Map.entries` (`59:7`) and
+  `List.zip` (`73:25`) in lowering; all three now lower. The sample passes
+  `mo check`, `mo run` and its 9 examples and tests with 0 errors.
 - inventory: unchanged; `E1103` on the generic `rows: List(T)` capture in
   `pad_table` (`72:48`).
-- job-queue: both `Option.or_fail` calls clear, exposing `List.find` (`71:26`).
+- job-queue: `List.find` (`71:26`) clears. Lowering then needed `List.to_map`,
+  `Map.has?` and `Map.keys`, which now lower to their existing Core primitives.
+  The sample passes `mo check` (including its anchors) and its 8 examples and 1
+  test pass; its promises still stop at E1400 (no input generator, M9).
 - json-query: `Char.ascii_digit?` (`62:28`) clears, and so do the `Int.to_char`
   and `Map.empty?` calls behind it; the sample runs and passes its examples and
   tests with 0 errors.
