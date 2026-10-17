@@ -8,7 +8,9 @@ formal/MoCore/Check.lean and the signatures in formal/TEXT.md, not from src/core
 Programs are built by choosing a type and then an expression of that type, so every one is
 well typed by construction. They cover scalars, tuples, lists, maps, sets, options, results,
 declared data, functions, let, if, case, join and jump, calls and the pure primitives. They use
-no capability. The text is canonical: printing it again through C or Lean changes nothing.
+no capability. Not covered: constants and `global`, `fail`, metadata, recursion, joins with more
+than one parameter, spec and test functions, and the range, ordering, fileError and cap types; they
+are for later tasks. The text is canonical: printing it again through C or Lean changes nothing.
 Same seed, same programs, on every platform.
 """
 
@@ -143,7 +145,7 @@ class Gen:
 
     def char(self):
         # ASCII, controls, escapes, a Latin-1 letter, a BMP letter and an astral character.
-        return self.rng.choice(["a", "Z", "0", " ", '"', "\\", "\n", "\t", "\0", "\x7f", "é", "β", "🙂"])
+        return self.rng.choice(["a", "Z", "0", " ", '"', "\\", "\n", "\r", "\t", "\0", "\x7f", "é", "β", "🙂"])
 
     # --- expressions -----------------------------------------------------------------------
 
@@ -152,9 +154,9 @@ class Gen:
         names = [n for n, t in env if t == ty]
         if names and self.rng.random() < 0.6:
             return f'(var {quote(self.rng.choice(names))})'
-        return self.build(ty, env, 0, True)
+        return self.build(ty, env, 0)
 
-    def build(self, ty, env, depth, stoppable):
+    def build(self, ty, env, depth):
         """Construct a value of ty directly from its type's introduction form."""
         r = self.rng
         tag = ty.split()[0][1:].rstrip(")")
@@ -223,7 +225,7 @@ class Gen:
         choice = r.choice(options)
         d = depth - 1
         if choice == "build":
-            return self.build(ty, env, depth, stoppable)
+            return self.build(ty, env, depth)
         if choice == "let":
             bound_ty = self.type(1)
             name = self.name("x")
@@ -257,7 +259,7 @@ class Gen:
             return f"(call {quote(fname)} ({' '.join(self.expr(t, env, d, False) for _, t in params)}))"
         if choice == "prim":
             made = self.primitive(ty, env, d)
-            return made if made is not None else self.build(ty, env, depth, stoppable)
+            return made if made is not None else self.build(ty, env, depth)
         return f'(stop {quote("generated " + str(r.randrange(100)))})'
 
     def case(self, ty, env, d, stoppable):

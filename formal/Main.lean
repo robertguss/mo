@@ -131,7 +131,7 @@ def main (args : List String) : IO UInt32 := do
               | some n => pure (.test n)
               | none => (automaticEntry p).mapError Report.invalidRun
             pure ⟨p, w, selection, fuel⟩
-      | _ => pure (.error (.invalidRun "usage: mocore RUN | mocore PROGRAM WORLD [--fuel N] [--test NAME]"))
+      | _ => pure (.error (.invalidRun "usage: mocore RUN | mocore PROGRAM WORLD [--fuel N] [--test NAME] | mocore --canonical RUN"))
     match request with
     | .error report => emit report
     | .ok r => emit (execute r)

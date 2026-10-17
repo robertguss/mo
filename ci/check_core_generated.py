@@ -25,6 +25,13 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import gen_core  # noqa: E402
 
 BATCH = 128
+COVERED = ["lit", "var", "let_", "lam", "app", "call", "tuple", "proj", "con", "case_", "if_",
+           "prim", "stop", "join", "jump"]
+# A well-formed program of the wrong type: both checkers must refuse it, or the harness is blind.
+ILL_TYPED = (
+    f'(core {gen_core.VERSION} (Run (Program () ((FunDecl "entry" () (int) (lit (bool true)) '
+    f'"Generated" (function) 0)) () "entry" (noSource)) {gen_core.WORLD} (entry ()) 0))\n'
+)
 
 
 def c_batches(driver, files):
@@ -68,13 +75,30 @@ def main():
     oracle = pathlib.Path(os.environ.get("MO_MOCORE", "formal/.lake/build/bin/mocore")).resolve()
     if not oracle.exists():
         raise AssertionError(f"{oracle} is not built; run `make formal` first")
+    if count < 1:
+        raise AssertionError("MO_CORE_GENERATED must be at least 1")
     texts = [gen_core.document(first + i) for i in range(count)]
+    # Coverage: a regression in the generator's weights must not leave a form untested.
+    if count >= 500:
+        joined = "".join(texts)
+        for form in COVERED:
+            if f"({form} " not in joined:
+                raise AssertionError(f"no generated program uses ({form} ...)")
     with tempfile.TemporaryDirectory(prefix="mo-core-generated-") as tmp:
         files = []
         for i, text in enumerate(texts):
             path = pathlib.Path(tmp) / f"{first + i}.core"
-            path.write_text(text, encoding="utf-8")
+            path.write_bytes(text.encode("utf-8"))
             files.append(str(path))
+        bad_path = pathlib.Path(tmp) / "ill-typed.core"
+        bad_path.write_bytes(ILL_TYPED.encode("utf-8"))
+        for driver in drivers:
+            refused = subprocess.run([driver, str(bad_path)], capture_output=True, text=True)
+            if not refused.stdout.startswith("5 "):
+                raise AssertionError(f"{driver} accepted an ill-typed program: {refused.stdout!r}")
+        code, text = lean(oracle, [str(bad_path)])
+        if code != 5:
+            raise AssertionError(f"mocore did not refuse an ill-typed program (exit {code}): {text}")
         for driver in drivers:
             printer = str(pathlib.Path(driver).with_name("test_core_print.test"))
             verdicts = []
@@ -100,9 +124,9 @@ def main():
         def lean_case(item):
             i, path = item
             code, text = lean(oracle, [path])
-            if code in (4, 5):
+            if code not in (0, 1, 2, 3):
                 raise AssertionError(
-                    f"mocore refused generated program, seed {first + i} (exit {code}): {text}\n{texts[i]}"
+                    f"mocore did not accept generated program, seed {first + i} (exit {code}): {text}\n{texts[i]}"
                 )
             code, text = lean(oracle, ["--canonical", path])
             if code != 0 or text != texts[i]:
