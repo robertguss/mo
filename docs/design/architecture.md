@@ -2148,7 +2148,8 @@ checked program says so, since the bytecode module table lists only exposed type
 Each value is one start then up to three steps, run in a scratch process of the same image, so
 a call that stops or fails ends only that sequence: a start that doesn't count is retried with
 other inputs (up to 64 attempts, in boundary order once random ones have had half), and a step
-that doesn't count is skipped. A step's generator takes the value built so far for each
+that doesn't count is skipped. A value whose start never counts can't be generated, and the
+promise reports that inability (E1404) rather than an outcome. A step's generator takes the value built so far for each
 parameter of the hidden type. Boundary 0 is the first start on its minimum inputs, boundary 1
 adds one step and boundary 2 three, cycling through the steps on their boundary inputs; random
 values pick starts, steps and inputs from the request's seed, sized like the trial. The value is

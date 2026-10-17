@@ -435,6 +435,45 @@ def hidden_promises(binary):
             assert len(items) == 3 and items[1]['code'] == 'E1400', items
             assert items[-1]['passed'] == 0
 
+        # A start exists, but a built value can't be copied into a trial: a capability or a
+        # function among its insides. Refused before the run too.
+        for inside, value in (('enum Handle\nEmpty\nLive(Console)\nend\n', 'Empty'),
+                              ('struct Handle\nf: fn(Int) : Int\nend\n', 'Handle(f: same)')):
+            path.write_text('module Main\nexpose Handle, empty, count\n' + inside +
+                            'fn same(x: Int) : Int\nx\nend\n' + f'empty = {value}\n'
+                            'fn count(_handle: Handle) : Int\npromise "zero"\nresult == 0\n'
+                            'allows _handle: empty, result: 0\nforbids _handle: empty, result: 1\n'
+                            'end\n0\nend\n' + tail)
+            items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+            assert len(items) == 3 and items[1]['code'] == 'E1400', items
+
+        # Boundary 0 is the start alone, boundary 1 one step and boundary 2 three.
+        path.write_text('module Main\nexpose Counter, zero, bump\nstruct Counter\nvalue: Int\nend\n'
+                        'zero = Counter(value: 0)\n'
+                        'fn bump(counter: Counter) : Counter\nCounter(value: counter.value + 1)\nend\n'
+                        'fn count(counter: Counter) : Int\npromise "under three"\nresult < 3\n'
+                        'allows counter: zero, result: 0\nforbids counter: zero, result: 3\nend\n'
+                        'counter.value\nend\n' + tail)
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['outcome'] == 'failed' and items[1]['calls'] == 3, items[1]
+        assert items[1]['input'] == [{'name': 'counter', 'value': 'Counter(value: 3)'}]
+
+        # Each hidden type is built by its own module, whatever order the image lists them in;
+        # Alpha's generic Box(Int) comes after Beta's B among the types.
+        (path.parent / 'alpha.mo').write_text(
+            'module Alpha\nexpose Box, make_box, get_box\nstruct Box(T)\nvalue: T\nend\n'
+            'fn make_box(value: Int) : Box(Int)\nBox(value: value)\nend\n'
+            'fn get_box(b: Box(Int)) : Int\nb.value\nend\n')
+        (path.parent / 'beta.mo').write_text(
+            'module Beta\nexpose B, make_b, get_b\nstruct B\nvalue: Int\nend\n'
+            'fn make_b(value: Int) : B\nB(value: value)\nend\nfn get_b(b: B) : Int\nb.value\nend\n')
+        path.write_text('module Main\nuse Alpha\nuse Beta\nfn probe(b: Beta.B) : Int\n'
+                        'promise "anything"\nresult == 0\n'
+                        'allows b: Beta.make_b(0), result: 0\nforbids b: Beta.make_b(0), result: 1\n'
+                        'end\nBeta.get_b(b) * 0 + Alpha.get_box(Alpha.make_box(1)) * 0\nend\n' + tail)
+        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        assert items[1]['outcome'] == 'passed' and items[-1]['errors'] == 0, items
+
         # A step that never returns ends the search at the promise's deadline, between trials.
         path.write_text('module Main\nexpose Counter, zero, spin\nstruct Counter\nvalue: Int\nend\n'
                         'zero = Counter(value: 0)\n'

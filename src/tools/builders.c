@@ -292,7 +292,8 @@ enum mo_input_result mo_builders_init(struct mo_builders *builders,
             if (exported->contents_exposed || hidden_types[exported->type])
                 continue;
             hidden_types[exported->type] = true;
-            modules[builders->count++] = m;
+            modules[exported->type] = m;
+            builders->count++;
         }
     builders->hidden =
         mo_arena_allocate(&builders->arena, (builders->count + 1) * sizeof *builders->hidden,
@@ -313,7 +314,7 @@ enum mo_input_result mo_builders_init(struct mo_builders *builders,
         struct mo_hidden *hidden = &builders->hidden[slot];
         *hidden = (struct mo_hidden){.owner = builders, .type = t};
         enum mo_input_result result =
-            prepare_hidden(builders, program, hidden_types, modules[slot], hidden, visited, stack);
+            prepare_hidden(builders, program, hidden_types, modules[t], hidden, visited, stack);
         builders->factories[slot] = (struct mo_input_factory){.type = t,
                                                               .boundaries = BOUNDARIES,
                                                               .hashable = hidden->chain.hashable,
@@ -408,6 +409,19 @@ static uint64_t random_ordinal(const struct builder *builder, uint64_t *random, 
            next_random(random) % 4;
 }
 
+/* The generator already counted the value's root node, so the copy's own count of it is
+ * given back. */
+static enum mo_input_result copy_value(struct mo_hidden *hidden, struct mo_heap *destination,
+                                       struct mo_cell value, struct mo_input_limits *remaining,
+                                       struct mo_cell *out) {
+    uint32_t nodes = remaining->nodes;
+    enum mo_input_result result =
+        mo_inputs_copy(&hidden->copier, destination, &value, remaining, out);
+    if (remaining->nodes < nodes)
+        remaining->nodes++;
+    return result;
+}
+
 static enum mo_input_result build(void *context, struct mo_heap *destination,
                                   const struct mo_input_request *request,
                                   struct mo_input_limits *remaining, struct mo_cell *out) {
@@ -466,7 +480,7 @@ static enum mo_input_result build(void *context, struct mo_heap *destination,
         if (outcome == STEP_ENDED)
             break;
     }
-    result = mo_inputs_copy(&hidden->copier, destination, &value, remaining, out);
+    result = copy_value(hidden, destination, value, remaining, out);
 done:
     if (process != NULL) {
         if (has_value)
@@ -481,5 +495,5 @@ static enum mo_input_result copy(void *context, struct mo_heap *destination, str
     struct mo_hidden *hidden = context;
     if (hidden->start_count == 0)
         return MO_INPUT_UNSUPPORTED;
-    return mo_inputs_copy(&hidden->copier, destination, &source, remaining, out);
+    return copy_value(hidden, destination, source, remaining, out);
 }
