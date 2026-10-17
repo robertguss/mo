@@ -127,3 +127,6 @@ Every change runs three skills in order, and the PR template asks for each one's
 3. `review-change` before opening the PR or marking it ready: a fresh subagent reviews the diff.
 
 A one-line fix can keep its plan to a sentence; it still gets tests and a review.
+
+After a PR opens, merges or changes CI state, or after Robert makes a decision, run `notion-sync` so the
+Mo v2 Notion hub matches GitHub.
