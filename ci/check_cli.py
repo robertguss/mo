@@ -2414,8 +2414,85 @@ flags = {
 }
 
 
+def guide_claims(binary):
+    """`mo guide` tells agents what this build does; each claim is checked against the build.
+
+    When one of these fails, the build changed: update docs/agent-guide.md to match, then this
+    test. Never edit only the test."""
+    guide = (root / "docs/agent-guide.md").read_text(encoding="utf-8")
+    blocks = guide.split("```mo\n")
+    assert len(blocks) == 2, "the guide has exactly one Mo program"
+    program = blocks[1].split("```\n", 1)[0]
+
+    def says(*sentences):
+        for sentence in sentences:
+            assert sentence in guide, f"docs/agent-guide.md no longer says: {sentence}"
+
+    def refuses(args, code, headline):
+        result = run(binary, args, 1)
+        assert not result.stdout, (args, result.stdout)
+        assert f"error E{code}: {headline}".encode() in result.stderr, (args, result.stderr)
+        says(f"E{code}", f'"{headline}"')
+
+    with tempfile.TemporaryDirectory(prefix="mo-guide-") as directory:
+        folder = pathlib.Path(directory)
+        greet = folder / "greet.mo"
+        greet.write_text(program, encoding="utf-8")
+
+        # "The program below checks with no errors, runs, and passes its examples and its test."
+        says("This build runs `mo check`, `mo run`, `mo test`, `mo format` and `mo guide`.",
+             "The program below checks with no errors, runs, and passes its examples and its test.")
+        result = run(binary, ["check", str(greet)], 0)
+        assert not result.stdout and not result.stderr, result
+        result = run(binary, ["test", str(greet)], 0)
+        assert not result.stderr and result.stdout.endswith(b"3 passed, 0 failed, 0 stopped\n")
+        assert run(binary, ["run", str(greet), "Ada", "Grace"], 0).stdout == b"Hello, Ada!\n"
+        assert run(binary, ["run", str(greet)], 0).stdout == b"Hello, world!\n"
+        result = run(binary, ["format", str(greet)], 0)
+        assert not result.stdout and not result.stderr
+        assert greet.read_text(encoding="utf-8") == program, "the guide's program is formatted"
+
+        refuses(["fix", str(greet)], 1400, "this build cannot apply fixes yet")
+
+        # E1150 on `env.get`, from check, run and test alike.
+        says("such as `env.get`", "`mo run` and `mo test` report the same code for the same form.")
+        env = folder / "home.mo"
+        env.write_text('module Home\n\nfn home(env: Env) : Text\n  env.get("HOME") or "none"\nend\n\n'
+                       'fn main(env: Env, console: Console)\n  console.print(home(env))\nend\n\n'
+                       'test "home has a default"\n  assert home(Env.of({})) == "none"\nend\n',
+                       encoding="utf-8")
+        for command in ("check", "run", "test"):
+            refuses([command, str(env)], 1150, "this native call is not lowered yet")
+
+        # E1400 for a promise whose function takes a function; the rest run with --only.
+        says("such as one whose function takes a function",
+             "Run the other examples, promises and tests by name with `--only`")
+        twice = folder / "twice.mo"
+        twice.write_text('module Twice\n\nfn twice(xs: List(Int), f: fn(Int) : Int) : List(Int)\n'
+                         '  promise "keeps the length"\n    result.size == xs.size\n'
+                         '    allows xs: [1], f: fn(x) x end, result: [1]\n'
+                         '    forbids xs: [1], f: fn(x) x end, result: []\n  end\n\n'
+                         '  xs.map(fn(x) f(f(x)) end)\nend\n\n'
+                         'fn one() : Int\n  examples\n    one() == 1\n  end\n\n  1\nend\n',
+                         encoding="utf-8")
+        run(binary, ["check", str(twice)], 0)
+        refuses(["test", str(twice)], 1400, "this build cannot generate inputs for this promise")
+        listed = run(binary, ["test", "--list", str(twice)], 0).stdout
+        assert listed == b"Twice.twice.promise.1\nTwice.one.example.1\n", listed
+        result = run(binary, ["test", "--only", "Twice.one.example.1", str(twice)], 0)
+        assert result.stdout.endswith(b"1 passed, 0 failed, 0 stopped\n")
+
+    # E1103 keeps its quoted headline in the checker.
+    says("E1103", '"this body rule is not implemented by the staged checker"')
+    assert b"this body rule is not implemented by the staged checker" in (
+        root / "src/check/bodies.c").read_bytes()
+    says("This build has no `lib/` directory.")
+    assert not (root / "lib").exists()
+
+
 def check(binary):
     driver = binary.parent / "tests/test_cli.test"
+    guide_claims(binary)
     faults = binary.parent / "tests/test_cli_faults.test"
     runner(binary)
     map_literals(binary)
