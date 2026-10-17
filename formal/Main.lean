@@ -101,9 +101,22 @@ def primitiveQueries : IO UInt32 := do
       | _ => throw (IO.userError "primitive did not return or stop")
   pure 0
 
+/-- Read a Run document and print it back through the codec, so the C printer can be compared
+with the reference printer on programs neither wrote by hand. -/
+def canonical (path : String) : IO UInt32 := do
+  let out ← IO.getStdout
+  match (← readCore path) >>= runIn with
+  | .ok run =>
+      out.putStr (document (runOut run))
+      pure 0
+  | .error why =>
+      out.putStr s!"parse error: {why}\n"
+      pure 4
+
 def main (args : List String) : IO UInt32 := do
   try
     if args == ["--primitives"] then return ← primitiveQueries
+    if args.length == 2 && args.head? == some "--canonical" then return ← canonical args[1]!
     let request : Except Report Run ← match args with
       | [path] => do pure (((← readCore path) >>= runIn).mapError Report.parseError)
       | p :: w :: opts => do
