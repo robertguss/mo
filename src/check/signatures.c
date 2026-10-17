@@ -172,6 +172,8 @@ static const struct native_text {
 #include "base/hostops.def"
     {"List", "all?", "List.all?", "fn(List(T), fn(T) : Bool) : Bool", false},
     {"List", "count", "List.count", "fn(List(T), fn(T) : Bool) : Int", false},
+    {"List", "find", "List.find", "fn(List(T), fn(T) : Bool) : Option(T)", false},
+    {"List", "max", "List.max", "fn(List(T)) : Option(T) where T: Order", false},
     {"List", "map", "List.map", "fn(List(T), fn(T) : U) : List(U)", false},
     {"List", "sort_by_desc", "List.sort_by_desc", "fn(List(T), fn(T) : K) : List(T) where K: Order",
      false},

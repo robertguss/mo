@@ -1588,6 +1588,119 @@ def runner(binary):
             ("Kv.test.2", "passed")]
         assert kv_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
                                 "passed": 17, "failed": 0, "stopped": 0, "status": 0}
+        assert run(binary, ["check", "examples/todo.mo"], 0).stderr == b""
+        records(run(binary, ["check", "--json", "examples/todo.mo"], 0), "check")
+        with tempfile.TemporaryDirectory() as folder:
+            def todo(*words, status=0):
+                result = subprocess.run([str(binary), "run", str(root / "examples/todo.mo"),
+                                         *words], cwd=folder, capture_output=True, timeout=30)
+                assert result.returncode == status, (words, result)
+                return result
+            for words in (["add", "milk"], ["add", "eggs"], ["done", "1"]):
+                assert todo(*words).stdout == b""
+            assert todo("list").stdout == b"1. [x] milk\n2. [ ] eggs\n"
+            assert todo("remove", "9", status=1).stderr == b"there is no item 9\n"
+            todo("remove", "2")
+            assert (pathlib.Path(folder) / "todo.txt").read_text() == "[x] milk\n"
+        todo_tests = records(run(binary, ["test", "--json", "examples/todo.mo"], 0), "test")
+        assert todo_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                                  "passed": 15, "failed": 0, "stopped": 0, "status": 0}
+        assert run(binary, ["check", "examples/json-query.mo"], 0).stderr == b""
+        records(run(binary, ["check", "--json", "examples/json-query.mo"], 0), "check")
+        json_run = subprocess.run([str(binary), "run", "examples/json-query.mo", "items.0.n"],
+                                  cwd=root, input=b'{"items": [{"n": -1.50}, null]}',
+                                  capture_output=True, timeout=30)
+        assert json_run.returncode == 0 and json_run.stderr == b""
+        assert json_run.stdout == b"-1.5\n"
+        json_tests = records(
+            run(binary, ["test", "--json",
+                         "--only", "JsonQuery.parse.example.1",
+                         "--only", "JsonQuery.parse.example.2",
+                         "--only", "JsonQuery.parse.example.3",
+                         "--only", "JsonQuery.parse.example.4",
+                         "--only", "JsonQuery.parse.example.5",
+                         "--only", "JsonQuery.hex_value.example.1",
+                         "--only", "JsonQuery.hex_value.example.2",
+                         "--only", "JsonQuery.hex_value.example.3",
+                         "--only", "JsonQuery.pretty.example.1",
+                         "--only", "JsonQuery.pretty.example.2",
+                         "--only", "JsonQuery.quoted.example.1",
+                         "--only", "JsonQuery.quoted.example.2",
+                         "--only", "JsonQuery.at_path.example.1",
+                         "--only", "JsonQuery.at_path.example.2",
+                         "--only", "JsonQuery.at_path.example.3",
+                         "--only", "JsonQuery.test.1",
+                         "examples/json-query.mo"], 0), "test")
+        assert [(r["name"], r["outcome"]) for r in json_tests[1:-1]] == [
+            ("JsonQuery.parse.example.1", "passed"),
+            ("JsonQuery.parse.example.2", "passed"),
+            ("JsonQuery.parse.example.3", "passed"),
+            ("JsonQuery.parse.example.4", "passed"),
+            ("JsonQuery.parse.example.5", "passed"),
+            ("JsonQuery.hex_value.example.1", "passed"),
+            ("JsonQuery.hex_value.example.2", "passed"),
+            ("JsonQuery.hex_value.example.3", "passed"),
+            ("JsonQuery.pretty.example.1", "passed"),
+            ("JsonQuery.pretty.example.2", "passed"),
+            ("JsonQuery.quoted.example.1", "passed"),
+            ("JsonQuery.quoted.example.2", "passed"),
+            ("JsonQuery.at_path.example.1", "passed"),
+            ("JsonQuery.at_path.example.2", "passed"),
+            ("JsonQuery.at_path.example.3", "passed"),
+            ("JsonQuery.test.1", "passed")]
+        assert json_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                                  "passed": 16, "failed": 0, "stopped": 0, "status": 0}
+        assert run(binary, ["check", "examples/job-queue.mo"], 0).stderr == b""
+        records(run(binary, ["check", "--json", "examples/job-queue.mo"], 0), "check")
+        job_queue_tests = records(
+            run(binary, ["test", "--json",
+                         "--only", "JobQueue.lease.example.1",
+                         "--only", "JobQueue.lease.example.2",
+                         "--only", "JobQueue.fail.example.1",
+                         "--only", "JobQueue.fail.example.2",
+                         "--only", "JobQueue.fail.example.3",
+                         "--only", "JobQueue.fail.example.4",
+                         "--only", "JobQueue.expire.example.1",
+                         "--only", "JobQueue.expire.example.2",
+                         "--only", "JobQueue.test.1",
+                         "examples/job-queue.mo"], 0), "test")
+        assert [(r["name"], r["outcome"]) for r in job_queue_tests[1:-1]] == [
+            ("JobQueue.lease.example.1", "passed"),
+            ("JobQueue.lease.example.2", "passed"),
+            ("JobQueue.fail.example.1", "passed"),
+            ("JobQueue.fail.example.2", "passed"),
+            ("JobQueue.fail.example.3", "passed"),
+            ("JobQueue.fail.example.4", "passed"),
+            ("JobQueue.expire.example.1", "passed"),
+            ("JobQueue.expire.example.2", "passed"),
+            ("JobQueue.test.1", "passed")]
+        assert job_queue_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                                       "passed": 9, "failed": 0, "stopped": 0, "status": 0}
+        assert run(binary, ["check", "examples/expenses.mo"], 0).stderr == b""
+        records(run(binary, ["check", "--json", "examples/expenses.mo"], 0), "check")
+        with tempfile.TemporaryDirectory(prefix="mo-expenses-") as expenses_dir:
+            pathlib.Path(expenses_dir, "spending.csv").write_text(
+                "date,category,amount\n2026-01-01,rent,900\n2026-01-02,food,12.5\n"
+                "2026-01-03,food,7.25\nbad\n")
+            expenses_run = subprocess.run(
+                [str(pathlib.Path(binary).resolve()), "run", str(root / "examples/expenses.mo"),
+                 "spending.csv"], cwd=expenses_dir, capture_output=True, timeout=30)
+        assert expenses_run.returncode == 1
+        assert expenses_run.stderr == b"line 5: expected 3 fields, found 1\n"
+        assert expenses_run.stdout == b"rent  900.00\nfood   19.75\n"
+        expenses_names = [
+            "Expenses.parse_line.example.1", "Expenses.parse_line.example.2",
+            "Expenses.parse_line.example.3", "Expenses.parse_line.example.4",
+            "Expenses.parse_line.example.5", "Expenses.totals.example.1",
+            "Expenses.totals.example.2", "Expenses.layout.example.1", "Expenses.test.1"]
+        expenses_tests = records(
+            run(binary, ["test", "--json",
+                         *[arg for name in expenses_names for arg in ("--only", name)],
+                         "examples/expenses.mo"], 0), "test")
+        assert [(r["name"], r["outcome"]) for r in expenses_tests[1:-1]] == [
+            (name, "passed") for name in expenses_names]
+        assert expenses_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+                                      "passed": 9, "failed": 0, "stopped": 0, "status": 0}
 
         # Every source stage, including lower/Core/codegen, shares the explicit
         # source stack, while the caller has only 1 MiB. Nested arithmetic also
@@ -1632,8 +1745,12 @@ def map_literals(binary):
     fixtures = root / "tests/lower-source"
     for name, expected in {
         "file-error-text": b"notes/a.md: no such file\n../secret: not allowed\nbin/app: not text\nout.txt: is a folder\nSome(notes/a.md: no such file)\n",
+        "char-natives": b"[false, true, false, true, false, false]/[true, false, false, false, false, true]/[false, true, false]/true/66/b/Q\ntrue/false/true/false/[\"a\", \"b\"]/[(\"a\", 1), (\"b\", 2)]\n",
         "list-all": b"true/true/false/false/true/true/true\n",
+        "list-find": b"none/2/none/2/bc/20/40\n",
         "list-count": b"0/0/3/2/2/2/3\n",
+        "list-max": b"7/5/8/-2/zebra/b/3/6/30/9\n",
+        "list-zip-entries": b'[("a", 1), ("b", 2)]/[]/[(1, "x"), (2, "y")]/[(true, "t"), (false, "f")]/[("b", 2), ("a", 1), ("c", 3)]\n',
         "list-map": b"[2, 4, 6]/[1, 2, 3]/[13, 14]/[0, 25]/[7, 8]\n",
         "option-or-fail": b"Ok(1)/Error(Missing(name: \"z\"))\nOk(42)/Error(Empty)\n"
                           b"Ok(3)/Error(Empty)\nOk(\"x\")/Error(7)\nmade eager\nOk(1)\n",

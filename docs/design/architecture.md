@@ -939,8 +939,8 @@ order, without extra authority. The existing tools/host entry path constructs
 only the requested handles. Args.list, Args.of, Clock.now, Clock.fixed,
 Console.print, Console.error, Console.read_line, Console.fake,
 Console.fake_input, Console.printed, Console.printed_errors, Files.in_memory,
-Files.read_only, Files.read_text, Files.list, ReadFiles.read_text and
-ReadFiles.list lower to their existing Core IO primitives; Int.checked_add,
+Files.read_only, Files.read_text, Files.write_text, Files.list,
+ReadFiles.read_text and ReadFiles.list lower to their existing Core IO primitives; Int.checked_add,
 Int.seconds, Int.milliseconds, Int.minutes, Int.hours and Int.days lower to
 their Core Int primitives; Decimal.abs, Decimal.min, Decimal.max, Decimal.floor,
 Decimal.ceil, Decimal.round, Decimal.to_int, Decimal.to_fixed and
@@ -948,10 +948,11 @@ Decimal.to_float lower to their Core Decimal primitives; Time.checked_add,
 Time.parse, Duration.in_milliseconds and Duration.in_seconds lower to their Core
 Time primitives; List.first, List.last, List.get, List.size, List.empty?,
 List.append, List.prepend, List.concat, List.reverse, List.take, List.drop,
-List.set, List.remove_at, List.enumerate, List.contains? and List.unique use
-their instantiated receiver element type, and List.join lowers to Core's Text
-join primitive; Map.get, Map.set, Map.remove, Map.size and Map.values use their
-instantiated key and value types; Text.bytes, Text.byte_count, Text.char_count,
+List.set, List.remove_at, List.enumerate, List.zip, List.contains? and
+List.unique use their instantiated receiver element type, and List.join lowers
+to Core's Text join primitive; List.to_map, Map.get, Map.set, Map.remove,
+Map.size, Map.has?, Map.keys, Map.values and Map.entries use their instantiated
+key and value types; Text.bytes, Text.byte_count, Text.char_count,
 Text.empty?, Text.chars, Text.from_chars, Text.words, Text.split, Text.trim,
 Text.trim_start, Text.trim_end, Text.pad_left, Text.pad_right,
 Text.starts_with?, Text.ends_with?, Text.drop_prefix, Text.drop_suffix,
@@ -960,7 +961,8 @@ Text.ascii_uppercase, Text.to_int, Text.to_decimal and Text.to_float lower to
 their Core Text primitives. Native function values use inline lambdas, so
 spec-only operations retain their enclosing spec context rather than becoming
 ordinary global adapters. The unchanged greet, account, find, wc, rate-limit,
-notes-tool and kv samples check cleanly, and their supported examples, anchors
+notes-tool, kv, expenses and job-queue samples check cleanly, and their supported
+examples, anchors
 and tests run with real and fake capabilities. Other native operations remain
 independently staged.
 
@@ -2916,12 +2918,13 @@ functions and callable projections are inserted before their saved arguments.
 Mo-library functions use their loaded module's actual symbols, signatures and
 checked bodies, whether called with a dot or qualified name; when no library
 module is loaded, higher-order built-in library functions (`List.all?`,
-`List.count`, `List.map`, `List.sort_by_desc`, `Map.update`) fall back to
-prepared native signatures, record their callback arguments and `Order`/`Text`
-parameter proofs in constant dependency ordering, and lower directly to Core
-(`join`/`case` loops over `List.%uncons`, `Int.add`, and `List.append`,
-bottom-up merge sort over `List.take`/`List.drop`/`lower_compare`, and
-`Map.get`/`Map.set` case dispatch).
+`List.count`, `List.find`, `List.map`, `List.max`, `List.sort_by_desc`,
+`Map.update`) fall back to prepared native signatures, record their callback
+arguments and `Order`/`Text` parameter proofs in constant dependency ordering,
+and lower directly to Core (`join`/`case` loops over `List.%uncons`, `Int.add`,
+and `List.append`, a `List.max` loop that keeps the first of equal elements with
+`lower_compare`, bottom-up merge sort over `List.take`/`List.drop`/
+`lower_compare`, and `Map.get`/`Map.set` case dispatch).
 `Option.or_fail` takes the same native fallback until `lib/option.mo` exists: its
 two arguments are let-bound in order like any call's, so `e` is computed even
 for `Some` (reference 8.1), and it lowers to one `case` giving `Ok(v)` or
