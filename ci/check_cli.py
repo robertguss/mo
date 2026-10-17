@@ -2428,20 +2428,24 @@ def guide_claims(binary):
         for sentence in sentences:
             assert sentence in guide, f"docs/agent-guide.md no longer says: {sentence}"
 
-    def refuses(args, code, headline):
+    def refuses(args, code, headline, claim):
+        # The claim is the guide's own sentence, so it must name this code and this headline.
+        assert f"E{code}" in claim and f'"{headline}"' in claim, claim
+        says(claim)
         result = run(binary, args, 1)
         assert not result.stdout, (args, result.stdout)
         assert f"error E{code}: {headline}".encode() in result.stderr, (args, result.stderr)
-        says(f"E{code}", f'"{headline}"')
 
+    says("This build runs `mo check`, `mo run`, `mo test`, `mo format` and `mo guide`.",
+         "The program below checks with no errors, runs, and passes its examples and its test.",
+         "E1103 and E1150 mean this toolchain has not implemented that form.",
+         "`mo run` and `mo test` report the same code for the same form.",
+         "accept a remaining diagnostic only when Know this build names it: E1103 or E1150 on a "
+         "form the reference requires, or E1400 on a promise whose inputs `mo test` cannot build.")
     with tempfile.TemporaryDirectory(prefix="mo-guide-") as directory:
         folder = pathlib.Path(directory)
         greet = folder / "greet.mo"
         greet.write_text(program, encoding="utf-8")
-
-        # "The program below checks with no errors, runs, and passes its examples and its test."
-        says("This build runs `mo check`, `mo run`, `mo test`, `mo format` and `mo guide`.",
-             "The program below checks with no errors, runs, and passes its examples and its test.")
         result = run(binary, ["check", str(greet)], 0)
         assert not result.stdout and not result.stderr, result
         result = run(binary, ["test", str(greet)], 0)
@@ -2452,21 +2456,31 @@ def guide_claims(binary):
         assert not result.stdout and not result.stderr
         assert greet.read_text(encoding="utf-8") == program, "the guide's program is formatted"
 
-        refuses(["fix", str(greet)], 1400, "this build cannot apply fixes yet")
+        refuses(["fix", str(greet)], 1400, "this build cannot apply fixes yet",
+                '`mo fix` exits 1 with E1400. The headline is "this build cannot apply fixes yet".')
+        assert greet.read_text(encoding="utf-8") == program
 
-        # E1150 on `env.get`, from check, run and test alike.
-        says("such as `env.get`", "`mo run` and `mo test` report the same code for the same form.")
+        # Each unfinished form gives the same code from check, run and test.
+        unfinished = folder / "unfinished.mo"
+        unfinished.write_text("module Unfinished\n\nfn main(console: Console)\n"
+                              "  _printed = console.printed\nend\n", encoding="utf-8")
         env = folder / "home.mo"
-        env.write_text('module Home\n\nfn home(env: Env) : Text\n  env.get("HOME") or "none"\nend\n\n'
+        env.write_text('module Home\n\nfn home(env: Env) : Text\n'
+                       '  env.get("HOME") or "none"\nend\n\n'
                        'fn main(env: Env, console: Console)\n  console.print(home(env))\nend\n\n'
                        'test "home has a default"\n  assert home(Env.of({})) == "none"\nend\n',
                        encoding="utf-8")
         for command in ("check", "run", "test"):
-            refuses([command, str(env)], 1150, "this native call is not lowered yet")
+            refuses([command, str(unfinished)], 1103,
+                    "this body rule is not implemented by the staged checker",
+                    "`mo check` reports E1103 for a form the checker has not implemented, with a "
+                    'headline that says so, such as "this body rule is not implemented by the '
+                    'staged checker".')
+            refuses([command, str(env)], 1150, "this native call is not lowered yet",
+                    "It reports E1150 for a form it checks but cannot compile yet, such as "
+                    '`env.get`. The headline is "this native call is not lowered yet".')
 
         # E1400 for a promise whose function takes a function; the rest run with --only.
-        says("such as one whose function takes a function",
-             "Run the other examples, promises and tests by name with `--only`")
         twice = folder / "twice.mo"
         twice.write_text('module Twice\n\nfn twice(xs: List(Int), f: fn(Int) : Int) : List(Int)\n'
                          '  promise "keeps the length"\n    result.size == xs.size\n'
@@ -2476,24 +2490,25 @@ def guide_claims(binary):
                          'fn one() : Int\n  examples\n    one() == 1\n  end\n\n  1\nend\n',
                          encoding="utf-8")
         run(binary, ["check", str(twice)], 0)
-        refuses(["test", str(twice)], 1400, "this build cannot generate inputs for this promise")
+        refuses(["test", str(twice)], 1400, "this build cannot generate inputs for this promise",
+                "`mo test` exits 1 with E1400 when it cannot build the inputs of a selected "
+                "promise, such as one whose function takes a function. The headline is "
+                '"this build cannot generate inputs for this promise".')
+        says("Run the other examples, promises and tests by name with `--only`, as `--list` "
+             "prints them.")
         listed = run(binary, ["test", "--list", str(twice)], 0).stdout
         assert listed == b"Twice.twice.promise.1\nTwice.one.example.1\n", listed
         result = run(binary, ["test", "--only", "Twice.one.example.1", str(twice)], 0)
         assert result.stdout.endswith(b"1 passed, 0 failed, 0 stopped\n")
 
-    # E1103 keeps its quoted headline in the checker.
-    says("E1103", '"this body rule is not implemented by the staged checker"')
-    assert b"this body rule is not implemented by the staged checker" in (
-        root / "src/check/bodies.c").read_bytes()
     says("This build has no `lib/` directory.")
     assert not (root / "lib").exists()
 
 
 def check(binary):
     driver = binary.parent / "tests/test_cli.test"
-    guide_claims(binary)
     faults = binary.parent / "tests/test_cli_faults.test"
+    guide_claims(binary)
     runner(binary)
     map_literals(binary)
     anchors(binary)

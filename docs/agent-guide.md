@@ -101,7 +101,7 @@ The executable grammar in `grammar/mo.y` is the authority. Appendix B summarizes
 
 ## Run these commands
 
-Each command is given the file of the program's main module. `mo check FILE` reports the program's errors, `mo run FILE [ARGS...]` runs it with the arguments after the file's name, and `mo test FILE` checks its examples, promises and tests. `mo format` and `mo fix` rewrite the files they are given.
+Each command is given the file of the program's main module. `mo check FILE` reports the program's errors, `mo run FILE [ARGS...]` runs it with the arguments after the file's name, and `mo test FILE` checks its examples, promises and tests. `mo format` rewrites the files it is given. On a complete toolchain, `mo fix` does too.
 
 `mo guide` needs no file. It prints this page. `mo guide --reference` prints the reference.
 
