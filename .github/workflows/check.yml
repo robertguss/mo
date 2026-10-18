@@ -51,7 +51,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [gcc, clang, sanitize, fuzz, drivers, static]
+        group: [gcc, clang, sanitize, fuzz, drivers, static, cbmc]
     steps:
       - uses: actions/checkout@v4
 

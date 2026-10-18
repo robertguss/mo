@@ -13,10 +13,11 @@
 #   fuzz        every fuzz target briefly
 #   drivers     the checks that drive the test executables: goldens, Unicode, Lean, codegen
 #   static      grammar, module dependencies, library map, frozen tool tasks, formatting, clang-tidy
+#   cbmc        the CBMC proofs of the bytecode reader (cbmc/README.md)
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-all_groups=" gcc clang sanitize fuzz drivers static "
+all_groups=" gcc clang sanitize fuzz drivers static cbmc "
 groups="$*"
 for group in $groups; do
 	if [[ "$all_groups" != *" $group "* ]]; then
@@ -284,6 +285,17 @@ for driver in build/{gcc,clang}/debug/tests/test_format.test; do
 done
 if [[ -n "$formatter_driver" ]]; then "$formatter_driver" --fixed-points;
 else missing "no source formatter test executable is built"; fi
+fi
+
+if want cbmc; then
+step "CBMC: the bytecode reader is memory-safe on every input of up to 64 bytes"
+if have cbmc && have goto-cc && have goto-instrument; then
+	make --no-print-directory cbmc
+	step "CBMC: every proof harness reaches its end, so no proof holds vacuously"
+	bash cbmc/prove.sh --reach
+else
+	missing "cbmc is not installed"
+fi
 fi
 
 if ((${#skipped[@]} == 0)); then

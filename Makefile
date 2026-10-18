@@ -13,6 +13,7 @@
 #   make grammar      check that Mo code parses with the executable grammar (needs bison):
 #                     the grammar's own tests, examples/ and the reference's examples
 #   make formal       build Mo Core in Lean (formal/) and check every proof (needs elan)
+#   make cbmc         prove the bytecode reader memory-safe on small inputs (needs CBMC)
 #
 # ci/check.sh runs every check; CI runs ci/check.sh. Choose a compiler with
 # CC=gcc or CC=clang. Each compiler builds into its own directory, so switching
@@ -51,7 +52,7 @@ BASE_SOURCES := $(filter src/base/%,$(LIB_SOURCES))
 SOURCE_LIST := build/sources
 TEST_SOURCES := $(wildcard tests/test_*.c)
 FUZZ_SOURCES := $(wildcard fuzz/fuzz_*.c)
-C_FILES := $(wildcard src/*/*.c src/*/*.h src/core/*.def tests/*.c tests/*.h fuzz/*.c grammar/*.c grammar/*.h ci/*.c)
+C_FILES := $(wildcard src/*/*.c src/*/*.h src/core/*.def tests/*.c tests/*.h fuzz/*.c grammar/*.c grammar/*.h ci/*.c cbmc/*.c)
 TIDY_FILES := $(wildcard src/*/*.c tests/*.c fuzz/*.c grammar/*.c ci/*.c)
 
 # The executable grammar (grammar/): Bison builds its parser from grammar/mo.y. The code Bison
@@ -88,7 +89,7 @@ ASAN_OPTIONS ?= abort_on_error=1
 UBSAN_OPTIONS ?= halt_on_error=1:print_stacktrace=1
 export ASAN_OPTIONS UBSAN_OPTIONS
 
-.PHONY: all test sanitize test-executables sanitize-executables fuzz fuzz-smoke format format-check deps library-map tidy grammar formal \
+.PHONY: all test sanitize test-executables sanitize-executables fuzz fuzz-smoke format format-check deps library-map tidy grammar formal cbmc \
 	host-rename-stress clean FORCE
 
 all: $(BUILD)/debug/mo
@@ -148,6 +149,10 @@ grammar: $(BUILD)/debug/mo-grammar $(BUILD)/sanitize/mo-grammar
 formal:
 	cd formal && lake build MoCore mocore
 	sh ci/test_mocore.sh
+
+# CBMC proofs of the bytecode reader (cbmc/README.md): every input of up to MO_CBMC_INPUT bytes.
+cbmc:
+	bash cbmc/prove.sh
 
 fuzz: $(FUZZERS)
 

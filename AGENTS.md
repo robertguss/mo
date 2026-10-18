@@ -23,7 +23,7 @@ The documents that define correct behaviour, in order of authority:
 ## Commands
 
 Requires a C17 compiler, POSIX `make` and Python 3. `.agents/setup` installs the full toolchain
-(gcc, clang, libFuzzer, clang-format, clang-tidy, bison, and Lean via elan in `/opt/elan`).
+(gcc, clang, libFuzzer, clang-format, clang-tidy, bison, CBMC, and Lean via elan in `/opt/elan`).
 
 ```sh
 make                       # build build/<compiler>/debug/mo (CC=cc by default -> build/cc/)
@@ -37,7 +37,8 @@ make format / format-check # clang-format; CI pins clang-format 14.0.6, newer ve
 make tidy                  # clang-tidy cert-err33-c (unused stdlib results)
 make fuzz-smoke            # every fuzz target briefly (needs clang + libFuzzer; FUZZ_SECONDS=5)
 make formal                # build Mo Core in Lean and check every proof (needs elan)
-bash ci/check.sh [group…]  # everything CI runs; groups: gcc clang sanitize fuzz drivers static
+make cbmc                  # prove the bytecode reader memory-safe on small inputs (needs CBMC)
+bash ci/check.sh [group…]  # everything CI runs; groups: gcc clang sanitize fuzz drivers static cbmc
 ```
 
 - Each compiler builds into its own `build/<compiler>/` tree, so switching `CC` doesn't rebuild.
@@ -53,10 +54,10 @@ bash ci/check.sh [group…]  # everything CI runs; groups: gcc clang sanitize fu
 
 ## CI and merging
 
-GitHub Actions (`.github/workflows/check.yml`) runs `ci/check.sh` as six parallel jobs and reports
+GitHub Actions (`.github/workflows/check.yml`) runs `ci/check.sh` as seven parallel jobs and reports
 one required `check` status on `main`; a red PR cannot merge. `ci/orb/README.md` holds the merge
 evidence rules (tested commit, commands, toolchain, exit status). PRs are squash-merged.
-A PR that changes only documents no check reads skips the six jobs, and `check` still reports
+A PR that changes only documents no check reads skips the seven jobs, and `check` still reports
 (`ci/docs_only.sh` holds the list). `docs/agent-guide.md`, `docs/reference/README.md` and
 `docs/design/library.md` are not on it: the build embeds or checks them. Robert lets agents merge
 docs-only PRs without review.
