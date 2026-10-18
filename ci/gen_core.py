@@ -29,6 +29,8 @@ SCALARS = ["int", "bigInt", "byte", "decimal", "float", "bool", "char", "text", 
 KEYS = ["int", "byte", "char", "text", "bool"]
 INT_MAX = 2**63 - 1
 DECIMAL_MAX = 2**127 - 1
+# The largest count a run program repeats a text by (Gen.primitive).
+REPEAT_MAX = 8
 
 
 def quote(text):
@@ -357,7 +359,14 @@ class Gen:
         if not pick:
             return None
         prim, args = r.choice(pick)
-        return f"(prim {prim} ({' '.join(sub(t) for t in args)}))"
+        parts = [sub(t) for t in args]
+        if self.lowerable and prim == "(text (repeat))":
+            # A run program must stay small: with a count near Int's maximum the VM stops at
+            # MO_LIMIT_VALUE_BYTES, or returns at once for an empty text, while Lean builds the text
+            # or loops and runs out of time or memory. Capping the count at 8 keeps negative and
+            # zero counts and the random draws.
+            parts[1] = f"(prim (int (min)) ({parts[1]} (lit (int {REPEAT_MAX}))))"
+        return f"(prim {prim} ({' '.join(parts)}))"
 
     # --- programs --------------------------------------------------------------------------
 

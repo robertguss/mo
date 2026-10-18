@@ -40,6 +40,9 @@ RUN_PREFIX = f"(core {gen_core.VERSION} (Run "
 RUN_SUFFIX = f" {gen_core.WORLD} (entry ()) 0))\n"
 FUEL = 10000
 BUDGET = "budget"
+# Seeds whose program repeated a text Int-max times before gen_core capped repeat counts: Lean timed
+# out or ran out of memory (an empty text, then two non-empty ones), as the first nightly run found.
+REGRESSION_SEEDS = (2074420190, 2074424572, 2074400432)
 
 
 def split(seed):
@@ -123,6 +126,12 @@ def main():
                 if outcome != want or not isinstance(want, list):
                     mismatches.append((name, driver, want, outcome, bare))
         tally["corpus"] = len(corpus)
+        # Generated programs an earlier run lost, kept in every run so a regression in the generator
+        # shows on a pull request rather than at night.
+        for seed, bare, want, got in (one(s) for s in REGRESSION_SEEDS):
+            for driver, outcome in got.items():
+                if outcome != want or not isinstance(want, list):
+                    mismatches.append((seed, driver, want, outcome, bare))
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 2)) as pool:
             for seed, bare, want, got in pool.map(one, range(first, first + count)):
