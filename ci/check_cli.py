@@ -2501,8 +2501,16 @@ def guide_claims(binary):
         result = run(binary, ["test", "--only", "Twice.one.example.1", str(twice)], 0)
         assert result.stdout.endswith(b"1 passed, 0 failed, 0 stopped\n")
 
-    says("This build has no `lib/` directory.")
-    assert not (root / "lib").exists()
+    says("The `lib/` folder holds library modules written in Mo, and every `mo` command loads "
+         "them with your program.",
+         "`mo check lib/list.mo` and `mo test lib/list.mo` check and test one of them on its own.")
+    for library_file in sorted((root / "lib").glob("*.mo")):
+        run(binary, ["check", str(library_file)], 0)
+        result = run(binary, ["test", str(library_file)], 0)
+        assert result.stdout.endswith(b", 0 failed, 0 stopped\n"), (library_file, result.stdout)
+    for name in ("filter", "filter_map", "flat_map", "reduce", "any?", "sort_by", "sort", "min",
+                 "group_by"):
+        says(f"`{name}`")
 
 
 def check(binary):

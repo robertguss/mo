@@ -358,7 +358,8 @@ the caller, rather than locating the running executable. The tools supply
 the installed library's path; `NULL` permits a library-free fixture while
 `lib/` is being built. A supplied folder must exist. All its `.mo` files,
 including unused modules, are included. Discovery does not enter symlinked
-folders. A dependency or library source file may be a link only when its
+folders. An entry file under the library folder is library module 0 and is not read a
+second time, so the toolchain can check and test its own library. A dependency or library source file may be a link only when its
 resolved path stays under the resolved path of its own root folder (D236).
 This is checked before its bytes enter source storage or diagnostics; the
 entry file may itself be a link outside the root. Source reading opens files
