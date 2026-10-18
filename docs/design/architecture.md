@@ -2978,18 +2978,14 @@ values wait for constraints from all their uses, then numeric defaults; selected
 functions and callable projections are inserted before their saved arguments.
 Mo-library functions use their loaded module's actual symbols, signatures and
 checked bodies, whether called with a dot or qualified name; when no library
-module is loaded, higher-order built-in library functions (`List.all?`,
-`List.count`, `List.find`, `List.map`, `List.max`, `List.sort_by_desc`,
-`Map.update`) fall back to prepared native signatures, record their callback
-arguments and `Order`/`Text` parameter proofs in constant dependency ordering,
-and lower directly to Core (`join`/`case` loops over `List.%uncons`, `Int.add`,
-and `List.append`, a `List.max` loop that keeps the first of equal elements with
-`lower_compare`, bottom-up merge sort over `List.take`/`List.drop`/
-`lower_compare`, and `Map.get`/`Map.set` case dispatch).
-`Option.or_fail` takes the same native fallback until `lib/option.mo` exists: its
-two arguments are let-bound in order like any call's, so `e` is computed even
-for `Some` (reference 8.1), and it lowers to one `case` giving `Ok(v)` or
-`Error(e)`.
+module is loaded, a function the library writes in Mo has no built-in fallback, since the
+toolchain needs `lib/` to find it. The higher-order library functions (`List.map`, `find`,
+`all?`, `count`, `max`, `sort_by_desc`, `Map.update`, `Option.or_fail`) are ordinary Mo code in
+`lib/`, and constant dependency ordering follows their callers: a call to a library function adds
+an edge to each function argument and each `Order`/`Text` proof it is given, while inside a
+library body, calling a function parameter or using a parameter's ability adds none, because
+every caller supplied them. `or_fail`'s two arguments are let-bound in order like any call's, so
+`e` is computed even for `Some` (reference 8.1).
 Public lookup still
 requires expose; ability customizers need not be exposed. Entry's structural
 proof parts are Text then EntryKind; FileError's structural parts flatten its

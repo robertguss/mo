@@ -1,3 +1,5 @@
+#define _XOPEN_SOURCE 700
+
 #include "base/buffer.h"
 #include "base/codes.h"
 #include "base/limits.h"
@@ -118,6 +120,41 @@ static void constant_names(void) {
     free_fixture(&f);
 }
 
+/* Like init, but loads text as main.mo with the toolchain's lib/ folder, as the mo command does,
+ * so List.map and the other library functions are the Mo code in lib/. The library's functions
+ * come before the program's own, so tests that count or index functions use init. */
+static void init_with_library(struct fixture *f, const char *text) {
+    *f = (struct fixture){0};
+    mo_arena_init(&f->syntax, 64 << 20);
+    mo_arena_init(&f->arena, MO_CLI_CHECK_SIZE);
+    MO_ASSERT(mo_sources_init(&f->sources) && mo_diags_init(&f->diags));
+    snprintf(f->folder, sizeof(f->folder), "/tmp/mo-program-XXXXXX");
+    MO_ASSERT(mkdtemp(f->folder) != NULL);
+    int n = snprintf(f->path, sizeof(f->path), "%s/main.mo", f->folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(f->path));
+    FILE *out = fopen(f->path, "wb");
+    MO_ASSERT(out != NULL && fwrite(text, 1, strlen(text), out) == strlen(text));
+    MO_ASSERT(fclose(out) == 0);
+    struct mo_module_set *loaded =
+        mo_load_program(&f->syntax, &f->sources, f->path, "lib", &f->diags);
+    MO_ASSERT(loaded != NULL && !mo_diags_any(&f->diags));
+    f->set = *loaded;
+    f->module = f->set.modules[0];
+    f->program = mo_check(&f->arena, &f->set, &f->diags);
+}
+
+/* The program's own function of this name; the library's functions come before it. */
+static const struct mo_checked_function *own_function(const struct mo_program *program,
+                                                      const char *name) {
+    for (uint32_t i = 0; i < program->function_count; i++) {
+        const struct mo_function_signature *signature = program->functions[i].signature;
+        if (signature->function->module == 0 && strcmp(signature->function->name, name) == 0)
+            return &program->functions[i];
+    }
+    MO_ASSERT(false);
+    return NULL;
+}
+
 static void constant_context(void) {
     struct fixture f;
     init(&f, "module Main\nvalue = Some(try Some(1))\nfn main()\nend\n");
@@ -194,7 +231,7 @@ static void constant_dependencies(void) {
                   mo_buffer_append_text(&source, "fn main()\nend\n") &&
                   mo_buffer_append_byte(&source, 0));
         struct fixture f;
-        init(&f, (const char *)source.bytes);
+        init_with_library(&f, (const char *)source.bytes);
         CHECK(f.program != NULL && !mo_diags_any(&f.diags));
         if (f.program != NULL) {
             CHECK(f.program->constant_count == cases[i].count);
@@ -259,7 +296,7 @@ static void constant_refusals(void) {
                   mo_buffer_append_text(&source, "fn main()\nend\n") &&
                   mo_buffer_append_byte(&source, 0));
         struct fixture f;
-        init(&f, (const char *)source.bytes);
+        init_with_library(&f, (const char *)source.bytes);
         CHECK(f.program == NULL && f.diags.count == 1 && f.diags.items[0].code == cases[i].code);
         free_fixture(&f);
         mo_buffer_free(&source);
@@ -663,76 +700,67 @@ static void native_graph(void) {
         CHECK(trim && count && abs && min);
     }
     free_fixture(&f);
-    init(&f, "module Main\nfn main() : Int\nset = Set.empty.add(4)\n"
-             "counts = {\"a\": 1}.update(\"a\", 0, fn(n) n + 1 end)\n"
-             "all_pos = [1, 2, 3].all?(fn(x) x > 0 end)\n"
-             "positives = [1, 2, 3].count(fn(x) x > 1 end)\n"
-             "biggest = [1, 3, 2].max or 0\n"
-             "texts = [1, 2, 3].sort_by_desc(fn(x) x end).map(fn(x) x.to_text end)\n"
-             "if set.has?(4) and all_pos and positives == 2 and biggest == 3 and "
-             "(counts.get(\"a\") or 0) == 2: "
-             "List.map(texts, Text.byte_count).sum else: 0\nend\n");
+    init_with_library(&f, "module Main\nfn main() : Int\nset = Set.empty.add(4)\n"
+                          "counts = {\"a\": 1}.update(\"a\", 0, fn(n) n + 1 end)\n"
+                          "all_pos = [1, 2, 3].all?(fn(x) x > 0 end)\n"
+                          "positives = [1, 2, 3].count(fn(x) x > 1 end)\n"
+                          "biggest = [1, 3, 2].max or 0\n"
+                          "texts = [1, 2, 3].sort_by_desc(fn(x) x end).map(fn(x) x.to_text end)\n"
+                          "if set.has?(4) and all_pos and positives == 2 and biggest == 3 and "
+                          "(counts.get(\"a\") or 0) == 2: "
+                          "List.map(texts, Text.byte_count).sum else: 0\nend\n");
     CHECK(f.program != NULL && !mo_diags_any(&f.diags));
     if (f.program != NULL) {
-        const struct mo_checked_body *body = &f.program->functions[0].body;
+        const struct mo_checked_body *body = &own_function(f.program, "main")->body;
         bool empty = false, sum = false, dot_map = false, qualified_map = false, update = false,
              sort_desc = false, list_all = false, list_count = false, list_max = false;
         for (uint32_t i = 0; i < body->count; i++) {
             const struct mo_checked_expression *row = &body->items[i];
-            if (row->native == NULL)
+            if (row->native != NULL) {
+                if (strcmp(row->native, "Set.empty") == 0) {
+                    CHECK(strcmp(row->type->name, "Set") == 0 && row->operand_count == 0);
+                    CHECK(row->arguments.count == 1 && row->ability_count == 2);
+                    empty = true;
+                } else if (strcmp(row->native, "List.sum") == 0) {
+                    CHECK(strcmp(row->type->name, "Int") == 0);
+                    CHECK(row->ability_count == 1 &&
+                          row->abilities[0].implementation->ability == MO_SOURCE_NUMBER);
+                    sum = true;
+                }
                 continue;
-            if (strcmp(row->native, "Set.empty") == 0) {
-                CHECK(strcmp(row->type->name, "Set") == 0 && row->operand_count == 0);
-                CHECK(row->arguments.count == 1 && row->ability_count == 2);
-                empty = true;
-            } else if (strcmp(row->native, "List.sum") == 0) {
-                CHECK(strcmp(row->type->name, "Int") == 0);
-                CHECK(row->ability_count == 1 &&
-                      row->abilities[0].implementation->ability == MO_SOURCE_NUMBER);
-                sum = true;
-            } else if (strcmp(row->native, "List.all?") == 0 &&
-                       row->type->kind != MO_SOURCE_FUNCTION) {
-                CHECK(strcmp(row->type->name, "Bool") == 0 && row->arguments.count == 1);
-                CHECK(row->operand_count == 2 && row->receiver == row->operands[0]);
+            }
+            /* The higher-order functions are Mo code in lib/, called through their symbols. */
+            if (row->symbol == NULL || row->symbol->declaration->kind != MO_S_FN ||
+                !f.program->interfaces->scopes[row->symbol->module].library ||
+                row->type->kind == MO_SOURCE_FUNCTION || row->operand_count == 0)
+                continue;
+            const char *name = row->symbol->name;
+            if (strcmp(name, "all?") == 0) {
+                CHECK(strcmp(row->type->name, "Bool") == 0 && row->receiver == row->operands[1]);
                 list_all = true;
-            } else if (strcmp(row->native, "List.max") == 0 &&
-                       row->type->kind != MO_SOURCE_FUNCTION) {
-                CHECK(strcmp(row->type->name, "Option") == 0 && row->arguments.count == 1);
-                CHECK(row->operand_count == 1 && row->receiver == row->operands[0]);
+            } else if (strcmp(name, "max") == 0) {
+                CHECK(strcmp(row->type->name, "Option") == 0);
                 bool ordered = false;
                 for (uint32_t use = 0; use < row->ability_count; use++)
                     ordered =
                         ordered || row->abilities[use].implementation->ability == MO_SOURCE_ORDER;
                 CHECK(ordered);
                 list_max = true;
-            } else if (strcmp(row->native, "List.count") == 0 &&
-                       row->type->kind != MO_SOURCE_FUNCTION) {
-                CHECK(strcmp(row->type->name, "Int") == 0 && row->arguments.count == 1);
-                CHECK(row->operand_count == 2 && row->receiver == row->operands[0]);
+            } else if (strcmp(name, "count") == 0) {
+                CHECK(strcmp(row->type->name, "Int") == 0);
                 list_count = true;
-            } else if (strcmp(row->native, "Map.update") == 0 &&
-                       row->type->kind != MO_SOURCE_FUNCTION) {
-                CHECK(strcmp(row->type->name, "Map") == 0 && row->arguments.count == 2);
-                CHECK(row->operand_count == 4 && row->receiver == row->operands[0] &&
-                      row->ability_count == 2);
+            } else if (strcmp(name, "update") == 0) {
+                CHECK(strcmp(row->type->name, "Map") == 0);
                 update = true;
-            } else if (strcmp(row->native, "List.sort_by_desc") == 0 &&
-                       row->type->kind != MO_SOURCE_FUNCTION) {
-                CHECK(strcmp(row->type->name, "List") == 0 && row->arguments.count == 2);
-                CHECK(row->operand_count == 2 && row->receiver == row->operands[0] &&
-                      row->ability_count == 2 &&
-                      row->abilities[1].implementation->ability == MO_SOURCE_ORDER);
+            } else if (strcmp(name, "sort_by_desc") == 0) {
+                CHECK(strcmp(row->type->name, "List") == 0);
                 sort_desc = true;
-            } else if (strcmp(row->native, "List.map") == 0 &&
-                       row->type->kind != MO_SOURCE_FUNCTION) {
-                CHECK(strcmp(row->type->name, "List") == 0 && row->arguments.count == 2);
-                if (row->receiver != UINT32_MAX) {
-                    CHECK(row->operand_count == 2 && row->receiver == row->operands[0]);
+            } else if (strcmp(name, "map") == 0) {
+                CHECK(strcmp(row->type->name, "List") == 0);
+                if (row->receiver != UINT32_MAX)
                     dot_map = true;
-                } else {
-                    CHECK(row->operand_count == 3);
+                else
                     qualified_map = true;
-                }
             }
         }
         CHECK(empty && sum && dot_map && qualified_map && update && sort_desc && list_all &&
@@ -1397,28 +1425,26 @@ static void option_or_graph(void) {
 
 static void option_or_fail_graph(void) {
     struct fixture f;
-    init(&f,
-         "module Main\nfn pick() : Result(Int, Text)\n"
-         "first = try Some(17).or_fail(\"none\")\nOption.or_fail([1].get(first), \"gone\")\nend\n");
+    init_with_library(
+        &f,
+        "module Main\nfn pick() : Result(Int, Text)\n"
+        "first = try Some(17).or_fail(\"none\")\nOption.or_fail([1].get(first), \"gone\")\nend\n");
     CHECK(f.program != NULL && !mo_diags_any(&f.diags));
     if (f.program != NULL) {
-        const struct mo_checked_body *body = &f.program->functions[0].body;
+        const struct mo_checked_body *body = &own_function(f.program, "pick")->body;
         bool dot = false, qualified = false;
         for (uint32_t i = 0; i < body->count; i++) {
             const struct mo_checked_expression *row = &body->items[i];
-            if (row->native == NULL || strcmp(row->native, "Option.or_fail") != 0 ||
-                row->type->kind == MO_SOURCE_FUNCTION)
+            if (row->symbol == NULL || strcmp(row->symbol->name, "or_fail") != 0 ||
+                row->type->kind == MO_SOURCE_FUNCTION || row->operand_count == 0)
                 continue;
-            CHECK(strcmp(row->type->name, "Result") == 0 && row->arguments.count == 2);
+            CHECK(strcmp(row->type->name, "Result") == 0);
             CHECK(strcmp(row->type->arguments[0]->name, "Int") == 0 &&
                   strcmp(row->type->arguments[1]->name, "Text") == 0);
-            if (row->receiver != UINT32_MAX) {
-                CHECK(row->operand_count == 2 && row->receiver == row->operands[0]);
+            if (row->receiver != UINT32_MAX)
                 dot = true;
-            } else {
-                CHECK(row->operand_count == 3);
+            else
                 qualified = true;
-            }
         }
         CHECK(dot && qualified);
     }
@@ -1436,7 +1462,7 @@ static void option_or_fail_graph(void) {
         MO_ASSERT(mo_buffer_append_text(&source, "module Main\n") &&
                   mo_buffer_append_text(&source, refusals[i].source) &&
                   mo_buffer_append_byte(&source, 0));
-        init(&f, (const char *)source.bytes);
+        init_with_library(&f, (const char *)source.bytes);
         CHECK(f.program == NULL && f.diags.count == 1 && f.diags.items[0].code == refusals[i].code);
         free_fixture(&f);
         mo_buffer_free(&source);

@@ -14,7 +14,9 @@ temporary folder and checked as `main.mo` from inside it.
 
 Codes that no source program can raise (Core text, bytecode, internal failures) are listed in
 tests/errors/unit.tsv with the unit test that pins each one. Every code must be in exactly one of
-the two places, and the source cases are never regenerated: edit `expected` by hand.
+the two places, and the source cases are never regenerated: edit `expected` by hand. A case with a file
+`library-dependent` fills a limit that lib/'s own files also use, so it compares everything in
+`expected` but its numbers.
 """
 
 import pathlib
@@ -215,7 +217,14 @@ def check_cases(binary, table):
         stdout = case / "stdout"
         assert result.stdout == (stdout.read_bytes() if stdout.exists() else b""), case.name
         expected = (case / "expected").read_bytes()
-        assert result.stderr == expected, f"{case.name}: the message differs\n--- expected\n" \
+        actual = result.stderr
+        if (case / "library-dependent").exists():
+            # The toolchain's lib/ files take part of the limit these cases fill, so where the
+            # limit is reached moves whenever lib/ grows: compare everything but the numbers.
+            masked = [re.sub(rb"\d+", b"N", text) for text in (expected, actual)]
+        else:
+            masked = [expected, actual]
+        assert masked[0] == masked[1], f"{case.name}: the message differs\n--- expected\n" \
             f"{expected.decode()}\n--- actual\n{result.stderr.decode(errors='replace')}"
         headers = re.findall(rb"^error E(\d{4}):", expected, re.M)
         assert headers and all(int(h) == code for h in headers), \

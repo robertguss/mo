@@ -2508,8 +2508,9 @@ def guide_claims(binary):
         run(binary, ["check", str(library_file)], 0)
         result = run(binary, ["test", str(library_file)], 0)
         assert result.stdout.endswith(b", 0 failed, 0 stopped\n"), (library_file, result.stdout)
-    for name in ("filter", "filter_map", "flat_map", "reduce", "any?", "sort_by", "sort", "min",
-                 "group_by"):
+    for name in ("map", "filter", "filter_map", "flat_map", "reduce", "find", "any?", "all?", "count",
+                 "sort_by", "sort_by_desc", "sort", "min", "max", "group_by", "Map.update",
+                 "Option.or_fail"):
         says(f"`{name}`")
 
 
