@@ -375,8 +375,17 @@ class Gen:
         for i in range(self.rng.randrange(0, 4)):
             params = [(self.name("a"), self.type(1, False)) for _ in range(self.rng.randrange(0, 3))]
             funs.append(self.function(f"helper{i}", params, self.type(2), self.rng.randrange(1, 5)))
-        funs.append(self.function("entry", [], self.type(2), self.rng.randrange(2, 7)))
-        return f'(Program ({" ".join(data)}) ({" ".join(funs)}) () "entry" (noSource))'
+        entry_type = self.type(2)
+        funs.append(self.function("entry", [], entry_type, self.rng.randrange(2, 7)))
+        entry = "entry"
+        if self.lowerable:
+            # The VM's driver spells a nested Float in decimal and Lean's report spells it in bits;
+            # both engines agree on the structural observer (TEXT.md, structural values), so the
+            # program returns that Text.
+            funs.append(f'(FunDecl "observed" () (text) (prim (structural {entry_type}) '
+                        f'((call "entry" ()))) "Generated" (function) 0)')
+            entry = "observed"
+        return f'(Program ({" ".join(data)}) ({" ".join(funs)}) () "{entry}" (noSource))'
 
 
 def tokens(text):

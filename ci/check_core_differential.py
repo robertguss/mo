@@ -50,10 +50,11 @@ def split(seed):
 
 
 def vm(driver, path):
-    result = subprocess.run([driver, "--core", path], capture_output=True, text=True, timeout=60)
+    # Bytes, not text mode: universal newlines would turn a returned "\r" into "\n".
+    result = subprocess.run([driver, "--core", path], capture_output=True, timeout=60)
     if result.returncode != 0:
-        return f"vm exit {result.returncode}: {result.stderr.strip()[:300]}"
-    kind, _, detail = result.stdout[:-1].partition("\n")
+        return f"vm exit {result.returncode}: {result.stderr.decode('utf-8', 'replace').strip()[:300]}"
+    kind, _, detail = result.stdout.decode("utf-8")[:-1].partition("\n")
     if "instruction limit" in detail or "instruction budget" in detail:
         return BUDGET
     return canonical([kind, detail])
@@ -118,7 +119,7 @@ def main():
                         tally[want[0]] += 1
                     else:
                         mismatches.append((seed, driver, want, outcome, bare))
-                if len(mismatches) >= limit:
+                if len({m[0] for m in mismatches}) >= limit:
                     pool.shutdown(wait=False, cancel_futures=True)
                     break
     for seed, driver, want, got, bare in mismatches:
