@@ -1,0 +1,6 @@
+a/b/c.md:3: gone-c.md: no such file
+a/z.md:2: gone-1.md: no such file
+a/z.md:10: gone-2.md: no such file
+b.md:1: gone-b.md: no such file
+z.md:4: gone-z.md: no such file
+5 broken links
