@@ -1,0 +1,5 @@
+bug: List.take with a negative count
+  at Main.main (tests/golden/fail-bug-take-negative/main.mo:114..128)
+  at Main.main.entry (tests/golden/fail-bug-take-negative/main.mo:13..166)
+  items = [1, 2, 3]
+  console = <Console>

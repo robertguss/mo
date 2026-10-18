@@ -1,0 +1,6 @@
+bug: stop
+  at Main.speed (tests/golden/lang-stop/main.mo:104..137)
+  detail: slow mode is not supported
+  at Main.main (tests/golden/lang-stop/main.mo:228..239)
+  at Main.main.entry (tests/golden/lang-stop/main.mo:149..277)
+  mode = Slow

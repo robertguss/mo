@@ -1,0 +1,17 @@
+passed Account.deposit.promise.1  examples/account.mo:34:3
+passed Account.deposit.example.1  examples/account.mo:41:5
+passed Account.deposit.example.2  examples/account.mo:42:5
+passed Account.deposit.example.3  examples/account.mo:43:5
+passed Account.deposit.example.4  examples/account.mo:44:5
+passed Account.withdraw.promise.1  examples/account.mo:54:3
+passed Account.withdraw.promise.2  examples/account.mo:60:3
+passed Account.withdraw.example.1  examples/account.mo:67:5
+passed Account.withdraw.example.2  examples/account.mo:68:5
+passed Account.withdraw.example.3  examples/account.mo:69:5
+passed Account.withdraw.example.4  examples/account.mo:70:5
+passed Account.transfer.promise.1  examples/account.mo:81:3
+passed Account.transfer.example.1  examples/account.mo:89:5
+passed Account.transfer.example.2  examples/account.mo:90:5
+passed Account.test.1  examples/account.mo:106:1
+passed Account.test.2  examples/account.mo:111:1
+16 passed, 0 failed, 0 stopped

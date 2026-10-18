@@ -1,0 +1,24 @@
+int [42] Some(42)
+int [-17] Some(-17)
+int [+5] None
+int [ 5] None
+int [5x] None
+int [] None
+int [9223372036854775807] Some(9223372036854775807)
+int [9223372036854775808] None
+decimal [3.14] Some(3.14)
+decimal [1.] None
+decimal [.5] None
+decimal [-0.5] Some(-0.5)
+decimal [7] Some(7)
+decimal [1.234567890123456789] Some(1.234567890123456789)
+decimal [1.2345678901234567890] None
+float [1.5] Some(1.5)
+float [1e3] Some(1000)
+float [-2.5E-1] Some(-0.25)
+float [nan] Some(nan)
+float [inf] Some(inf)
+float [-inf] Some(-inf)
+float [1e999] None
+float [abc] None
+float [.5] None

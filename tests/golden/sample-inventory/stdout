@@ -1,0 +1,11 @@
+The three most valuable stocks:
+product    category  price  stock
+Desk lamp  office    24.50     40
+Notebook   office     3.20    300
+Kettle     kitchen   39.90     12
+
+kitchen: 2
+office: 2
+home: 1
+
+One from each category: Kettle, Desk lamp, Doormat

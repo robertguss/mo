@@ -1,0 +1,5 @@
+passed NotesTool.search_notes.promise.1  examples/notes-tool.mo:35:3
+passed NotesTool.test.1  examples/notes-tool.mo:63:1
+passed NotesTool.test.2  examples/notes-tool.mo:78:1
+passed NotesTool.test.3  examples/notes-tool.mo:84:1
+4 passed, 0 failed, 0 stopped

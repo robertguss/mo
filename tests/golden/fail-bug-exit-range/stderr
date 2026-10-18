@@ -1,0 +1,4 @@
+bug: stop
+  at Main.main.entry (tests/golden/fail-bug-exit-range/main.mo:13..90)
+  detail: exit status outside 0 to 255
+  console = <Console>

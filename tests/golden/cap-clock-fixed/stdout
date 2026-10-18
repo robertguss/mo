@@ -1,0 +1,3 @@
+passed Main.test.1  tests/golden/cap-clock-fixed/main.mo:11:1
+passed Main.test.2  tests/golden/cap-clock-fixed/main.mo:17:1
+2 passed, 0 failed, 0 stopped

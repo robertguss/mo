@@ -1,0 +1,11 @@
+{
+  "name": "pen",
+  "tags": [
+    "a",
+    true,
+    null
+  ],
+  "price": 1.5,
+  "none": [],
+  "o": {}
+}

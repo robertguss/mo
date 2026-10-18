@@ -1,0 +1,17 @@
+SET a 1
+INCR a
+get a
+INCR visits
+SET s x
+INCR s
+DEL a visits nope
+GET a
+EXPIRE a ten
+GET
+
+FLY away
+EXPIRE nokey 10
+EXPIRE s 100
+GET s
+EXPIRE s 0
+GET s

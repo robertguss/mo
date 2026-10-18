@@ -1,0 +1,4 @@
+tests/golden/cap-files-wordcount/data/story.txt
+tests/golden/cap-files-wordcount/data/tiny.txt
+tests/golden/cap-files-wordcount/data/gone.txt
+/etc/passwd

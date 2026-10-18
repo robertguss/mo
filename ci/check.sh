@@ -109,6 +109,18 @@ else
 	missing "python3 is not installed"
 fi
 
+step "The golden corpus: whole programs match their expected output and exit status"
+if have python3; then
+	drivers=()
+	for driver in build/{gcc,clang}/{debug,sanitize}/mo; do
+		if [[ -x "$driver" ]]; then drivers+=("$driver"); fi
+	done
+	if ((${#drivers[@]})); then python3 ci/check_golden.py "${drivers[@]}";
+	else missing "no mo command executable is built"; fi
+else
+	missing "python3 is not installed"
+fi
+
 step "Bytecode text: repeated layout and BigInt conversion stay within work ceilings"
 if have python3; then
 	drivers=()

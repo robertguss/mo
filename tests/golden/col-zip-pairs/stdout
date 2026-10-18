@@ -1,0 +1,4 @@
+1. ada 30
+2. cy 20
+3. bo 10
+Some(Score(name: "ada", points: 30))

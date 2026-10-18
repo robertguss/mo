@@ -1,0 +1,4 @@
+passed Main.shout.example.1  tests/golden/tst-example-uses-text/main.mo:5:5
+passed Main.shout.example.2  tests/golden/tst-example-uses-text/main.mo:6:5
+passed Main.shout.example.3  tests/golden/tst-example-uses-text/main.mo:7:5
+3 passed, 0 failed, 0 stopped

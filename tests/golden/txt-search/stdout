@@ -1,0 +1,5 @@
+true false true false
+true false true
+Some("quick brown fox") None
+Some("the quick brown") None
+Some("")

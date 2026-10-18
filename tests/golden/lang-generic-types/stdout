@@ -1,0 +1,4 @@
+Some(10) Some("x")
+Page(items: [10, 20], number: 1)
+Right(3)
+Left("r")

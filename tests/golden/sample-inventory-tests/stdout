@@ -1,0 +1,11 @@
+passed Inventory.top_by.example.1  examples/inventory.mo:25:5
+passed Inventory.top_by.example.2  examples/inventory.mo:26:5
+passed Inventory.top_by.example.3  examples/inventory.mo:27:5
+passed Inventory.count_by.example.1  examples/inventory.mo:36:5
+passed Inventory.count_by.example.2  examples/inventory.mo:37:5
+passed Inventory.first_by.example.1  examples/inventory.mo:50:5
+passed Inventory.first_by.example.2  examples/inventory.mo:51:5
+passed Inventory.table.example.1  examples/inventory.mo:69:5
+passed Inventory.test.1  examples/inventory.mo:118:1
+passed Inventory.test.2  examples/inventory.mo:127:1
+10 passed, 0 failed, 0 stopped

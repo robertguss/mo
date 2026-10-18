@@ -1,0 +1,1 @@
+find: tests/golden/sample-find/data/gone.txt: no such file

@@ -1,0 +1,6 @@
+passed Main.initials.example.1  tests/golden/tst-passing/main.mo:5:5
+passed Main.initials.example.2  tests/golden/tst-passing/main.mo:6:5
+passed Main.ordered.promise.1  tests/golden/tst-passing/main.mo:14:3
+passed Main.test.1  tests/golden/tst-passing/main.mo:24:1
+passed Main.test.2  tests/golden/tst-passing/main.mo:28:1
+5 passed, 0 failed, 0 stopped

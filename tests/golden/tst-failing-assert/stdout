@@ -1,0 +1,8 @@
+passed Main.test.1  tests/golden/tst-failing-assert/main.mo:7:1
+failed Main.test.2  tests/golden/tst-failing-assert/main.mo:11:1
+  left: 15
+  right: 16
+  12 |   assert triple(5) == 16
+     |   ^^^^^^^^^^^^^^^^^^^^^^ this assertion was false
+passed Main.test.3  tests/golden/tst-failing-assert/main.mo:15:1
+2 passed, 1 failed, 0 stopped

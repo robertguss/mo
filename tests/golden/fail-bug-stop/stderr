@@ -1,0 +1,4 @@
+bug: stop
+  at Main.main (tests/golden/fail-bug-stop/main.mo:142..186)
+  detail: every currency was checked at startup
+  at Main.main.entry (tests/golden/fail-bug-stop/main.mo:13..223)

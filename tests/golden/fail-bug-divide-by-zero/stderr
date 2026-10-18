@@ -1,0 +1,6 @@
+bug: dividing by zero
+  at Main.ratio (tests/golden/fail-bug-divide-by-zero/main.mo:46..51)
+  at Main.main (tests/golden/fail-bug-divide-by-zero/main.mo:166..177)
+  at Main.main.entry (tests/golden/fail-bug-divide-by-zero/main.mo:57..215)
+  a = 1
+  b = 0

@@ -1,0 +1,4 @@
+dot 0
+square 9
+rectangle 10
+[Dot, Square(3), Rectangle(width: 2, height: 5)]
