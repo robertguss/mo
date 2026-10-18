@@ -1,0 +1,7 @@
+error E0087: try needs exactly one failure case holding Text as its unnamed value; found 0  tests/errors/e0087/main.mo:6:4
+
+  6 | Ok(try value)
+    |    ^^^ try needs exactly one failure case holding Text as its unnamed value; found 0
+
+Add one case Wrap(E) to the function's failure type, where E is the source failure type; named fields don't wrap (reference 8.3).
+

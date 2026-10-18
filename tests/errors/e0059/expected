@@ -1,0 +1,7 @@
+error E0059: a name ending in ? isn't a yes-or-no answer  tests/errors/e0059/main.mo:3:3
+
+  3 |   ready? = 1
+    |   ^^^^^^ must be Bool or a function returning Bool
+
+A name ending in ? is a Bool, or a function that returns one (reference 2.3).
+

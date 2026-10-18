@@ -1,0 +1,7 @@
+error E0008: a file is one module, named on its first line of code  tests/errors/e0008/main.mo:1:1
+
+  1 | n = 1
+    | ^
+
+A module starts with its name, then expose and use lines (reference 10.1).
+

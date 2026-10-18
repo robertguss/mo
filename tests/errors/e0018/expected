@@ -1,0 +1,9 @@
+error E0018: an example is a Boolean line  tests/errors/e0018/main.mo:3:1
+
+  3 | examples
+    | ^^^^^^^^
+  4 | end
+    | ^^^
+
+An example is a Boolean line that must be true (reference 12.1).
+

@@ -1,0 +1,7 @@
+error E0054: no use decides this expression's type  tests/errors/e0054/main.mo:3:3
+
+  3 |   _items = []
+    |   ^^^^^^ no use decides the type
+
+A function's signature gives its types; inside a body types are inferred from all their uses (reference 5.1).
+

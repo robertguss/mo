@@ -97,6 +97,18 @@ else
 	missing "python3 is not installed"
 fi
 
+step "Every error code has a test of its exact message"
+if have python3; then
+	drivers=()
+	for driver in build/{gcc,clang}/{debug,sanitize}/mo; do
+		if [[ -x "$driver" ]]; then drivers+=("$driver"); fi
+	done
+	if ((${#drivers[@]})); then python3 ci/check_errors.py "${drivers[@]}";
+	else missing "no mo command executable is built"; fi
+else
+	missing "python3 is not installed"
+fi
+
 step "Bytecode text: repeated layout and BigInt conversion stay within work ceilings"
 if have python3; then
 	drivers=()

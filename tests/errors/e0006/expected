@@ -1,0 +1,7 @@
+error E0006: a line break ends a statement; Mo has no semicolons  tests/errors/e0006/main.mo:2:6
+
+  2 | x = 1;
+    |      ^
+
+A line break ends a statement; use Mo's tokens (reference 2.4).
+

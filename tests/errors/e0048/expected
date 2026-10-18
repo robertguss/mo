@@ -1,0 +1,7 @@
+error E0048: a type name isn't in scope  tests/errors/e0048/main.mo:2:17
+
+  2 | fn value(_item: Missing)
+    |                 ^^^^^^^ not a type in scope
+
+Use brings a module's exposed type names into scope (reference 10.3).
+

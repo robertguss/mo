@@ -83,8 +83,10 @@ static MO_MUST_USE bool invisible(uint32_t c) {
            c == 0xe0001 || (c >= 0xe0020 && c <= 0xe007f);
 }
 
-static void lex_error(struct mo_lex *lx, uint16_t code, const char *message) {
-    struct mo_span span = {lx->file, lx->pos, lx->pos < lx->source->length ? lx->pos + 1 : lx->pos};
+static void lex_error_from(struct mo_lex *lx, uint16_t code, const char *message, uint32_t from) {
+    /* A span that starts before the current byte marks the whole token up to it. */
+    uint32_t end = from < lx->pos ? lx->pos : lx->pos < lx->source->length ? lx->pos + 1 : lx->pos;
+    struct mo_span span = {lx->file, from, end};
     const struct mo_code_info *info = mo_code_find(code);
     MO_ASSERT(info != NULL);
     const char *rule =
@@ -112,6 +114,10 @@ static void lex_error(struct mo_lex *lx, uint16_t code, const char *message) {
         MO_ASSERT(n >= 0 && (size_t)n < sizeof reason);
     }
     mo_syntax_error(lx, code, span, message, rule == NULL ? NULL : reason);
+}
+
+static void lex_error(struct mo_lex *lx, uint16_t code, const char *message) {
+    lex_error_from(lx, code, message, lx->pos);
 }
 
 static MO_MUST_USE bool advance(struct mo_lex *lx) {
@@ -338,8 +344,8 @@ static MO_MUST_USE enum mo_syntax_token scan_word(struct mo_lex *lx) {
             return MO_T_ERROR;
     }
     if (bad || (cap && peek(lx, 0) == '_')) {
-        (void)lex_error(lx, MO_CODE_SOURCE_NAME,
-                        "names are snake_case; types and modules are CapCase");
+        lex_error_from(lx, MO_CODE_SOURCE_NAME,
+                       "names are snake_case; types and modules are CapCase", start);
         return MO_T_ERROR;
     }
     uint32_t length = lx->pos - start;

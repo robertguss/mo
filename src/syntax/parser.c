@@ -717,7 +717,9 @@ static MO_MUST_USE struct mo_syntax *primary(struct parser *p) {
                     n->kind = MO_S_TUPLE;
                 if (p->current.kind == close) {
                     if (token == MO_T_LPAREN && n->count < 2)
-                        expect(p, MO_T_NAME);
+                        error(p, MO_CODE_SOURCE_LITERAL, p->current.span,
+                              "a tuple has at least two elements",
+                              "A tuple has two or more elements in parentheses (reference 3.6).");
                     break;
                 }
             } while (true);

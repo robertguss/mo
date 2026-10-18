@@ -1,0 +1,9 @@
+error E0014: a choice type has cases  tests/errors/e0014/main.mo:2:1
+
+  2 | enum Empty
+    | ^^^^^^^^^^
+  3 | end
+    | ^^^
+
+An enum declares a choice type: each value is exactly one of its cases (reference 4.2).
+

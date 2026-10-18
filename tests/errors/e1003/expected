@@ -1,0 +1,5 @@
+error E1003: the program has too many source files  main.mo:4097:5
+
+  4097 | use M4095
+       |     ^^^^^ m4095.mo
+

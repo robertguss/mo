@@ -1,0 +1,11 @@
+error E0069: the alternatives don't bind the same names  tests/errors/e0069/main.mo:4:11
+
+  4 | Some(n) | None: n
+    |           ^^^^ the alternatives bind different names
+
+  --> tests/errors/e0069/main.mo:4:6
+  4 | Some(n) | None: n
+    |      ^ declared here
+
+Arms with the same body share a line; their names must be visible throughout that body (reference 7.2).
+

@@ -1,0 +1,5 @@
+error E1406: program initialization stopped before tests could run  tests/errors/e1406/main.mo:4:1
+
+  4 | stop "initialization ran"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^ stop\x0a  at Main.abort (tests/errors/e1406/main.mo:44..69)\x0a  detail: initialization ran\x0a  at Main.seed.init (tests/errors/e1406/main.mo:19..26)\x0a
+

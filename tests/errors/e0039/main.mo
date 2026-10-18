@@ -1,0 +1,2 @@
+module Main
+expose absent

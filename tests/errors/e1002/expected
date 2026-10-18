@@ -1,0 +1,5 @@
+error E1002: the program's source is too big  main.mo:10:5
+
+  10 | use M8
+     |     ^^ m8.mo
+

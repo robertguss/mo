@@ -1,0 +1,7 @@
+error E0002: invisible characters are an error anywhere  tests/errors/e0002/main.mo:2:13
+
+  2 | # invisible \u{200b}
+    |             ^^^^^^^^
+
+Source is UTF-8; invisible characters are an error anywhere (reference 2.1).
+

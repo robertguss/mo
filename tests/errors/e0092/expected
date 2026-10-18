@@ -1,0 +1,11 @@
+error E0092: an anonymous function reads a var assigned after it is made  tests/errors/e0092/main.mo:4:13
+
+  4 | show = fn() count end
+    |             ^^^^^ copy this value into a name first
+
+  --> tests/errors/e0092/main.mo:5:1
+  5 | count += 19
+    | ^^^^^ assigned here
+
+Copy the value into a name first; later rounds of an enclosing loop also count as later assignments (reference 5.6).
+

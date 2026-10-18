@@ -1,0 +1,5 @@
+error E1054: the syntax arena has no room  m6.mo:588850:1
+
+  588850 | # padding
+         | ^
+

@@ -1,0 +1,7 @@
+error E0043: a choice case clashes with another name  tests/errors/e0043/main.mo:4:3
+
+  4 |   Some
+    |   ^^^^ Some
+
+No case reuses a type or case that is always in scope (reference 4.2).
+

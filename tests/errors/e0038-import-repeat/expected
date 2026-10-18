@@ -1,0 +1,15 @@
+error E0038: a clash between names  tests/errors/e0038-import-repeat/main.mo:2:18
+
+  2 | use Money{Money, Money}
+    |                  ^^^^^ Money
+
+  --> tests/errors/e0038-import-repeat/main.mo:2:11
+  2 | use Money{Money, Money}
+    |           ^^^^^ first imported here
+
+A clash between names is an error; use the qualified form (reference 10.3).
+
+Fix: remove the repeated import
+  tests/errors/e0038-import-repeat/main.mo:2:16
+  2 | use Money{Money}
+

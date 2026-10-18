@@ -1,0 +1,11 @@
+error E0091: an anonymous function can't capture a capability  tests/errors/e0091/main.mo:3:10
+
+  3 | f = fn() console.print("bad") end
+    |          ^^^^^^^ pass capabilities as parameters instead
+
+  --> tests/errors/e0091/main.mo:2:9
+  2 | fn main(console: Console)
+    |         ^^^^^^^ declared here
+
+Anonymous functions can't capture capabilities, or values holding them (reference 11.4).
+

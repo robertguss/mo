@@ -1,0 +1,7 @@
+error E0039: an exposed name doesn't exist  tests/errors/e0039/main.mo:2:8
+
+  2 | expose absent
+    |        ^^^^^^ absent
+
+A module's expose line lists its public names (reference 10.1).
+

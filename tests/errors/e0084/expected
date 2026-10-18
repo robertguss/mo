@@ -1,0 +1,7 @@
+error E0084: a generic type holds itself at a bigger type: Tree holds Tree in a type-parameter cycle  tests/errors/e0084/main.mo:3:11
+
+  3 | children: List(Tree(List(T)))
+    |           ^^^^^^^^^^^^^^^^^^^ a generic type holds itself at a bigger type: Tree holds Tree in a type-parameter cycle
+
+A generic type can't hold itself at a bigger type built from its parameter; it would need types without end (reference 9.1).
+

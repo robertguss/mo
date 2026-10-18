@@ -1,0 +1,7 @@
+error E0028: comments start with #  tests/errors/e0028/main.mo:2:1
+
+  2 | // comment
+    | ^
+
+Comments start with # (reference 2.2).
+

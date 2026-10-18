@@ -1,0 +1,7 @@
+error E0032: expected ], found integer  tests/errors/e0032/main.mo:3:4
+
+  3 | [1 2]
+    |    ^
+
+A list's elements are separated by commas inside brackets (reference 3.7).
+

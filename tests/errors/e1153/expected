@@ -1,0 +1,5 @@
+error E1153: generic instantiation is nested too deeply  main.mo:192:3
+
+  192 |   g64([x])
+      |   ^^^^^^^^
+

@@ -1,0 +1,7 @@
+error E0046: the imported name doesn't exist  tests/errors/e0046/main.mo:2:11
+
+  2 | use Money{totl}
+    |           ^^^^ totl
+
+Use brings in names declared by the module (reference 10.3).
+

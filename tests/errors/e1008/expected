@@ -1,0 +1,5 @@
+error E1008: a module declares too many names  main.mo:65537:1
+
+  65537 | x65535 = 65535
+        | ^^^^^^^^^^^^^^
+

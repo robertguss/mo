@@ -1,0 +1,7 @@
+error E0088: an anchor gives every parameter and result a value  tests/errors/e0088/main.mo:5:1
+
+  5 | allows value: 3
+    | ^^^^^^^^^^^^^^^ an anchor gives every parameter and result a value
+
+No parameter or result can be omitted (reference 12.2).
+

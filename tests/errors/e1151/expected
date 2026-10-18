@@ -1,0 +1,5 @@
+error E1151: the lowering arena has no room  main.mo:77238:5
+
+  77238 |     77234: 77235
+        |     ^^^^^
+

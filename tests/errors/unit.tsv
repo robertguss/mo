@@ -1,0 +1,57 @@
+# code, the unit test that pins it, why no source program raises it
+E1012	tests/test_codes.c	registry only: generic instantiation depth is reported as E1153 by lowering, so no program raises E1012
+E1014	tests/test_codegen.c	needs a function over 262144 instructions or a bytecode file over 256 MiB, which the Core path limit (E1153) and source limits stop first
+E1015	tests/test_codegen.c	needs a function over 262144 instructions or a bytecode file over 256 MiB, which the Core path limit (E1153) and source limits stop first
+E1016	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
+E1017	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
+E1018	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
+E1019	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
+E1020	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
+E1021	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
+E1022	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
+E1023	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
+E1024	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
+E1025	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
+E1026	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
+E1027	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1028	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1029	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1030	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1031	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1032	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1033	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1034	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1035	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1036	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1037	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1038	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1039	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1040	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1041	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1042	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1043	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1044	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1045	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1046	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1047	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1048	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1049	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1050	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1051	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1052	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
+E1055	tests/test_codegen.c	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
+E1056	tests/test_codegen.c	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
+E1200	tests/test_codegen.c	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
+E1201	tests/test_codegen.c	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
+E1202	tests/test_codegen.c	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
+E1203	tests/test_codegen.c	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
+E1204	tests/test_codegen.c	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
+E1059	tests/test_check.c	library discovery and import counts beyond what a program can write, or an unreadable toolchain folder
+E1060	tests/test_check.c	library discovery and import counts beyond what a program can write, or an unreadable toolchain folder
+E1100	tests/test_check.c	library discovery and import counts beyond what a program can write, or an unreadable toolchain folder
+E1102	tests/test_check.c	library discovery and import counts beyond what a program can write, or an unreadable toolchain folder
+E1107	tests/test_check_bodies.c	needs 2^28 units of checking work, set by the test directly
+E1401	tests/test_cli_faults.c	the OS refusing the explicit source stack, raised only by fault injection
+E1053	tests/test_codes.c	UNTESTED: Core checking's scratch arena running out; needs fault injection, which no test does yet
+E1057	tests/test_codes.c	UNTESTED: the bytecode writer refusing compiler output is a compiler bug; no test forces it
+E1106	tests/test_codes.c	UNTESTED: 4,104 nested inference frames; the Core path limit (E1153) and line limits stop every source first

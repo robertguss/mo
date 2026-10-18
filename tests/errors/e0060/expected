@@ -1,0 +1,7 @@
+error E0060: a number literal doesn't fit its type  tests/errors/e0060/main.mo:3:3
+
+  3 |   256
+    |   ^^^ outside its inferred numeric range
+
+A number literal takes its context's numeric type and must fit that type's range (reference 3.3).
+

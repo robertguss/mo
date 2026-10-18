@@ -1,0 +1,9 @@
+error E1405: an allows anchor was rejected  tests/errors/e1405/main.mo:5:1
+
+  5 | allows result: 5, n: 3
+    | ^^^^^^^^^^^^^^^^^^^^^^ allows must satisfy the promise; forbids must fail it (reference 12.2)
+
+  --> tests/errors/e1405/main.mo:4:1
+  4 | result == n + n
+    | ^^^^^^^^^^^^^^^ this promise condition was false
+

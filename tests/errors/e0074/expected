@@ -1,0 +1,7 @@
+error E0074: a condition isn't a yes-or-no answer  tests/errors/e0074/main.mo:3:6
+
+  3 |   if count
+    |      ^^^^^ expected Bool, found Int
+
+Bool is a yes-or-no answer; conditions need Bool (reference 3.1).
+

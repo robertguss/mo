@@ -1,0 +1,7 @@
+error E0072: a value that isn't a function is called  tests/errors/e0072/main.mo:3:3
+
+  3 |   value()
+    |   ^^^^^ expected fn, found Text
+
+A call applies a function to its arguments (reference 5.2).
+

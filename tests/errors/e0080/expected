@@ -1,0 +1,7 @@
+error E0080: type Float doesn't have Hash  tests/errors/e0080/main.mo:2:18
+
+  2 | fn keys(_values: Set(Float))
+    |                  ^^^^^^^^^^ type Float doesn't have Hash
+
+An operation needs its type's ability; functions and capabilities have no abilities (reference 9.2).
+

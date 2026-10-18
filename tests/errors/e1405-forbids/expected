@@ -1,0 +1,5 @@
+error E1405: a forbids anchor was accepted  tests/errors/e1405-forbids/main.mo:6:1
+
+  6 | forbids n: 4, result: 8
+    | ^^^^^^^^^^^^^^^^^^^^^^^ allows must satisfy the promise; forbids must fail it (reference 12.2)
+
