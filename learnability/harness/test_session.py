@@ -123,6 +123,45 @@ class Harness(unittest.TestCase):
                          (ran.stdout, ran.stderr))
         self.assertEqual(os.listdir(session / ".pending"), [])
 
+    def test_output_keeps_its_order(self):
+        # With both streams on one file, the session sees them interleaved as plain mo prints.
+        session = self.start()
+        shutil.copyfile(repo / "tests/golden/cap-console-streams/main.mo",
+                        session / "work/main.mo")
+        line = ["sh", "-c", "mo run main.mo 2>&1"]
+        seen = run(*line, cwd=session / "work", path=session / "bin")
+        real = run(*line, cwd=session / "work", path=pathlib.Path(MO).parent)
+        self.assertEqual(seen.stdout, b"one\nwarning: two\nthree\nfour\n")
+        self.assertEqual((seen.stdout, seen.returncode), (real.stdout, real.returncode))
+        self.assertEqual((session / "runs/001/output").read_bytes(), seen.stdout)
+
+    def test_paths_through_a_link(self):
+        # The session's folder is reached through a symbolic link, as /tmp is on macOS.
+        (self.tmp / "real").mkdir()
+        (self.tmp / "link").symlink_to(self.tmp / "real")
+        session = self.tmp / "link/s1"
+        got = run(sys.executable, harness, "start", "--mo", MO, "--sha256", digest(MO), session)
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.source(session, "001")
+        (session / "work/sub").mkdir()
+        self.mo(session, "check", "../main.mo", cwd=session / "work/sub")
+        codes = [json.loads(line).get("code") for line in
+                 (session / "log/001/output.jsonl").read_text().splitlines()]
+        self.assertEqual(codes, [None, "E0050", "E0078", None])
+
+    def test_files_outside_work(self):
+        # A file outside the work folder is still the file the session named, never one in work/
+        # with the same name.
+        session = self.start()
+        outside = self.tmp / "elsewhere"
+        outside.mkdir()
+        shutil.copyfile(example / "input/logs/s1/001/src/main.mo", outside / "main.mo")
+        (session / "work/main.mo").write_text("module Main\n")
+        self.mo(session, "check", "main.mo", cwd=outside)
+        codes = [json.loads(line).get("code") for line in
+                 (session / "log/001/output.jsonl").read_text().splitlines()]
+        self.assertEqual(codes, [None, "E0050", "E0078", None])
+
     def test_fix_runs_are_logged(self):
         session = self.start()
         self.source(session, "001")
@@ -160,14 +199,18 @@ class Harness(unittest.TestCase):
         log = self.tmp / "log"
         (log / "001/src").mkdir(parents=True)
         (log / "001/command").write_text("run\n")
-        (log / "003/src").mkdir(parents=True)
-        (log / "003/command").write_text("check\n")
-        (log / "003/output.jsonl").write_text('{"record":"totals"}\n')
+        (log / "004/src").mkdir(parents=True)
+        (log / "004/command").write_text("check\n")
+        (log / "004/output.jsonl").write_text('{"record":"totals"}\n')
+        (log / "002/src").mkdir(parents=True)
+        (log / "002/command").write_text("test\n")
+        (log / "002/output.jsonl").write_text('{"record":"version","command":"test"}\n')
         (log / "notes.md").write_text("")
         got = run(sys.executable, harness, "check-log", log)
         self.assertEqual(got.returncode, 1)
-        for problem in [b"notes.md: not a run's folder", b"not numbered 001 to 002",
-                        b"001: command is 'run\\n'", b"003: output.jsonl doesn't start"]:
+        for problem in [b"notes.md: not a run's folder", b"not numbered 001 to 003",
+                        b"001: command is 'run\\n'", b"004: output.jsonl doesn't start",
+                        b"002: output.jsonl doesn't end with totals"]:
             self.assertIn(problem, got.stderr)
 
 

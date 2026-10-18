@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 CONFIG = None  # set in the copy `start` writes to SESSION/bin/mo
@@ -85,20 +86,22 @@ def snapshot(work, dest):
 
 
 def inside(path, folder):
-    return os.path.commonpath([os.path.abspath(path), os.path.abspath(folder)]) == \
-        os.path.abspath(folder)
+    return os.path.commonpath([path, folder]) == folder
 
 
 def from_work(args, cwd, work):
-    """The arguments as they'd be typed in `work`: each one naming a file inside it is rewritten
-    relative to it, so the JSON run's `file` fields match the paths in `src/`."""
+    """The arguments for the JSON run, which runs in the `src/` copy of `work`: each one naming a
+    file inside `work` is rewritten relative to it, so the `file` fields are paths in `src/`, and
+    each other file is made absolute, so it is still the file the session named."""
     out = []
     for arg in args:
-        path = os.path.join(cwd, arg)
-        if not arg.startswith("-") and os.path.isfile(path) and inside(path, work):
+        path = os.path.realpath(os.path.join(cwd, arg))
+        if arg.startswith("-") or not os.path.isfile(path):
+            out.append(arg)
+        elif inside(path, work):
             out.append(os.path.relpath(path, work))
         else:
-            out.append(arg)
+            out.append(path)
     return out
 
 
@@ -106,9 +109,52 @@ def status_of(returncode):
     return 128 - returncode if returncode < 0 else returncode
 
 
+def same_file(a, b):
+    try:
+        one, two = os.fstat(a), os.fstat(b)
+    except OSError:
+        return False
+    return (one.st_dev, one.st_ino) == (two.st_dev, two.st_ino)
+
+
+def show(argv):
+    """Runs `argv` with the session's own streams, passing its output on as it comes, and returns
+    its status and what it printed. When standard output and error are one file (a terminal, or
+    `2>&1`), the child gets one pipe for both, so their order is kept."""
+    if same_file(1, 2):
+        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        pipes = [("output", proc.stdout, 1)]
+    else:
+        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        pipes = [("stdout", proc.stdout, 1), ("stderr", proc.stderr, 2)]
+    seen = {name: [] for name, _, _ in pipes}
+
+    def pump(name, pipe, fd):
+        reader_gone = False
+        while True:
+            data = os.read(pipe.fileno(), 1 << 16)
+            if not data:
+                return
+            seen[name].append(data)
+            while data and not reader_gone:
+                try:
+                    data = data[os.write(fd, data):]
+                except OSError:  # `mo guide | head`: the reader has gone, and the record goes on
+                    reader_gone = True
+
+    threads = [threading.Thread(target=pump, args=pipe) for pipe in pipes]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    for _, pipe, _ in pipes:
+        pipe.close()
+    return proc.wait(), {name: b"".join(parts) for name, parts in seen.items()}
+
+
 def record(config, argv):
     real, session, work = config["mo"], config["session"], config["work"]
-    cwd = os.getcwd()
+    cwd = os.path.realpath(os.getcwd())
     command = argv[0] if argv else ""
     runs = claim(os.path.join(session, "runs"))
     started, clock = now(), time.monotonic()
@@ -117,35 +163,32 @@ def record(config, argv):
           (os.path.relpath(cwd, work) if inside(cwd, work) else cwd) + "\n")
     write(os.path.join(runs, "started"), started + "\n")
 
-    pending = None
+    pending = quiet = None
     if command in LOGGED:
         pending = tempfile.mkdtemp(prefix="run-", dir=os.path.join(session, ".pending"))
         write(os.path.join(pending, "command"), command + "\n")
         snapshot(work, os.path.join(pending, "src"))
+    if command in ("check", "test"):
+        # The JSON run reads the copy, so it sees the files the log keeps, and it runs beside the
+        # session's own run rather than after it.
+        rest = [arg for arg in argv[1:] if arg != "--json"]
+        quiet = subprocess.Popen([real, command, "--json", *from_work(rest, cwd, work)],
+                                 cwd=os.path.join(pending, "src"), stdout=subprocess.PIPE,
+                                 stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
 
-    seen = subprocess.run([real, *argv], capture_output=True, check=False)
-    write(os.path.join(runs, "stdout"), seen.stdout)
-    write(os.path.join(runs, "stderr"), seen.stderr)
-    write(os.path.join(runs, "status"), f"{status_of(seen.returncode)}\n")
-    for stream, data in [(sys.stdout, seen.stdout), (sys.stderr, seen.stderr)]:
-        try:
-            stream.buffer.write(data)
-            stream.flush()
-        except BrokenPipeError:  # `mo guide | head`: the reader has gone, and the record goes on
-            pass
+    returncode, seen = show([real, *argv])
+    for name, data in seen.items():
+        write(os.path.join(runs, name), data)
+    write(os.path.join(runs, "status"), f"{status_of(returncode)}\n")
 
     if pending is not None:
-        keep = True
-        if command == "fix":
-            keep = seen.returncode != 2  # a mistake in the command itself fixes nothing
+        if quiet is None:
+            keep = returncode != 2  # a fix the command itself refused touched nothing
         else:
-            rest = [arg for arg in argv[1:] if arg != "--json"]
-            quiet = subprocess.run([real, command, "--json", *from_work(rest, cwd, work)],
-                                   cwd=work, capture_output=True, stdin=subprocess.DEVNULL,
-                                   check=False)
-            write(os.path.join(pending, "output.jsonl"), quiet.stdout)
+            output = quiet.communicate()[0]
+            write(os.path.join(pending, "output.jsonl"), output)
             try:
-                first = json.loads(quiet.stdout.split(b"\n", 1)[0])
+                first = json.loads(output.split(b"\n", 1)[0])
             except ValueError:
                 first = None
             # A refused command prints no version record and checked nothing; logging it would
@@ -157,7 +200,7 @@ def record(config, argv):
         else:
             shutil.rmtree(pending)
     write(os.path.join(runs, "seconds"), f"{time.monotonic() - clock:.3f}\n")
-    return status_of(seen.returncode)
+    return status_of(returncode)
 
 
 def start(args):
@@ -172,13 +215,16 @@ def start(args):
     if got != options.sha256.lower():
         print(f"session.py: {options.mo} has SHA-256 {got}, not {options.sha256}", file=sys.stderr)
         return 1
-    session = os.path.abspath(options.session)
+    session = os.path.realpath(options.session)
     if os.path.exists(session) and os.listdir(session):
         print(f"session.py: {session} is not empty", file=sys.stderr)
         return 1
-    work = os.path.abspath(options.work or os.path.join(session, "work"))
+    work = os.path.realpath(options.work or os.path.join(session, "work"))
     if os.path.exists(work) and os.listdir(work):
         print(f"session.py: {work} is not empty", file=sys.stderr)
+        return 1
+    if inside(session, work):
+        print(f"session.py: {session} is inside {work}, which the session can see", file=sys.stderr)
         return 1
     for folder in ("bin", ".mo", ".pending", "log", "runs"):
         os.makedirs(os.path.join(session, folder))
@@ -254,7 +300,11 @@ def collect(args):
     logs = args[0]
     os.makedirs(logs, exist_ok=True)
     for session in args[1:]:
-        target = os.path.join(logs, os.path.basename(os.path.abspath(session)))
+        target = os.path.join(logs, os.path.basename(os.path.realpath(session)))
+        if os.path.exists(target):
+            print(f"session.py: {target} already exists; give the sessions distinct names",
+                  file=sys.stderr)
+            return 1
         shutil.copytree(os.path.join(session, "log"), target)
     return 0
 

@@ -29,22 +29,33 @@ family and tool, which `freeze.md` records.
 | `work/` | the agent's files |
 
 A run's `runs/` folder holds `argv` (a JSON list), `cwd` (relative to `work/` when inside it),
-`started` (UTC), `seconds`, `status`, and the `stdout` and `stderr` the agent saw. When the run
-is in the log, `runs/NNN/log` names its number there. `notes.md` reads `runs/`; `tally` reads
-`log/`.
+`started` (UTC), `seconds`, `status`, and what the agent saw: `stdout` and `stderr`, or `output`
+when the agent's standard output and error were one file (a terminal, or `2>&1`), in which case
+`mo` is given one pipe for both so their order is kept. Output reaches the agent as `mo` prints
+it. When the run is in the log, `runs/NNN/log` names its number there. `notes.md` reads `runs/`;
+`tally` reads `log/`. A wrapper that is killed mid-run leaves its `runs/` folder without `status`
+and a folder in `.pending/`, and its run is not in the log.
 
 ## What goes in the log
 
 - **`src/`** is a copy of every `.mo` file under `work/`, taken before the command runs.
-- **`output.jsonl`** comes from a second run of the same command with `--json`, from `work/`, with
-  each argument that names a file inside `work/` rewritten relative to it. So every `file` in it
-  is a path under `src/`, wherever the agent ran `mo` from and however it named the file, and the
-  agent's own run is untouched. A `mo test` therefore runs twice. A file outside `work/` keeps the
-  path the agent gave, and `tally` finds no function for its errors.
+- **`output.jsonl`** comes from a second run of the same command with `--json`, started beside
+  the agent's own and run in the `src/` copy, with each argument that names a file inside `work/`
+  rewritten relative to it. So every `file` in it is a path under `src/`, wherever the agent ran
+  `mo` from and however it named the file, and the agent's own run is untouched. An argument
+  naming a file outside `work/` is made absolute, so it is still that file; `src/` doesn't hold
+  it, so `tally` finds its errors' functions in the file as it is when `tally` runs. Paths are compared after resolving
+  symbolic links.
 - **A refused command isn't logged.** A `check` or `test` whose JSON output doesn't start with a
   `version` record (a usage mistake, such as `mo check` with no file, exits 2 and prints nothing)
   checked no program, and logging it would count as a run that fixed every error. A `fix` that
-  exits 2 is left out for the same reason. Both are still in `runs/`.
+  exits 2 is left out for the same reason. Both are still in `runs/`. Every other `fix` is
+  logged, although on this build it changes nothing (E1400); protocol section 7 counts the errors
+  that moves to `by_fix`.
+- **A file that can't be read** (a misspelt name) is logged as `mo` reports it: E0034 with a
+  `file` of `null`. `tally`'s task text doesn't say what function such an error is in, and its
+  reference (`bench/tools/tally/hidden/reference.py`) stops on it, so that is settled before a
+  round's logs are tallied.
 - **Numbers.** A run's `runs/` number is taken when it starts, and its log number when it
   finishes, so runs that overlap get distinct numbers in the order they finished.
 
