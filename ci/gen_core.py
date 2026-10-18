@@ -361,9 +361,10 @@ class Gen:
         prim, args = r.choice(pick)
         parts = [sub(t) for t in args]
         if self.lowerable and prim == "(text (repeat))":
-            # A run program must stay small: a count near Int's maximum makes the VM stop at
-            # MO_LIMIT_VALUE_BYTES while Lean tries to build the text and runs out of time or
-            # memory. Capping the count at 8 keeps negative and zero counts and the random draws.
+            # A run program must stay small: with a count near Int's maximum the VM stops at
+            # MO_LIMIT_VALUE_BYTES, or returns at once for an empty text, while Lean builds the text
+            # or loops and runs out of time or memory. Capping the count at 8 keeps negative and
+            # zero counts and the random draws.
             parts[1] = f"(prim (int (min)) ({parts[1]} (lit (int {REPEAT_MAX}))))"
         return f"(prim {prim} ({' '.join(parts)}))"
 
