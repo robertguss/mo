@@ -1,0 +1,7 @@
+error E0007: a value is an expression  tests/errors/e0007/main.mo:2:5
+
+  2 | x = )
+    |     ^
+
+Statements are separated by logical line breaks (reference 2.4).
+

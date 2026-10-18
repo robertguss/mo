@@ -1,0 +1,7 @@
+error E0004: whole numbers put _ between digits  tests/errors/e0004/main.mo:2:7
+
+  2 | x = 1_
+    |       ^
+
+Whole numbers may put _ between digits (reference 3.2).
+

@@ -1,0 +1,11 @@
+error E0036: modules use each other in a cycle  tests/errors/e0036/other.mo:2:5
+
+  2 | use Main
+    |     ^^^^ Main
+
+  --> tests/errors/e0036/main.mo:2:5
+  2 | use Other
+    |     ^^^^^ Other
+
+A cycle of modules that use each other is an error (reference 10.3).
+

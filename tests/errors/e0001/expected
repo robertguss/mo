@@ -1,0 +1,7 @@
+error E0001: source is UTF-8  tests/errors/e0001/main.mo:2:6
+
+  2 | x = "\xff"
+    |      ^^^^
+
+Source is UTF-8; invisible characters are an error anywhere (reference 2.1).
+

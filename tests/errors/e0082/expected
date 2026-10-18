@@ -1,0 +1,7 @@
+error E0082: to_text doesn't have the type's text signature  tests/errors/e0082/main.mo:5:4
+
+  5 | fn to_text(p: P) : Int
+    |    ^^^^^^^ to_text doesn't have the type's text signature
+
+A type customizes Order or Text in its own module with compare(T, T): Ordering or to_text(T): Text (reference 9.2). This stage reserves these names for customizers; it doesn't certify unrelated functions with these names.
+

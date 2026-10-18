@@ -1,0 +1,5 @@
+error E1058: the checking arena has no room  main.mo:47312:17
+
+  47312 |   console.print("x")
+        |                 ^^^ the checking arena has no room
+

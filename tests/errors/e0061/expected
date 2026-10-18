@@ -1,0 +1,7 @@
+error E0061: the tuple has no such part  tests/errors/e0061/main.mo:3:8
+
+  3 |   pair.2
+    |        ^ part index is outside this tuple
+
+Tuple parts are read with .0, .1 and so on (reference 3.6).
+

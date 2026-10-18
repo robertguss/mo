@@ -1,0 +1,5 @@
+error E1103: this body rule is not implemented by the staged checker  tests/errors/e1103/main.mo:2:11
+
+  2 | factory = Console.fake
+    |           ^^^^^^^^^^^^ this body rule is not implemented by the staged checker
+

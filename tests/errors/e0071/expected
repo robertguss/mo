@@ -1,0 +1,7 @@
+error E0071: a pattern doesn't name a record or case  tests/errors/e0071/main.mo:4:1
+
+  4 | Int: 0
+    | ^^^ not a record or case constructor
+
+A pattern names a case or record, a literal, a tuple or a list (reference 7.3).
+

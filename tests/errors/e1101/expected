@@ -1,0 +1,5 @@
+error E1101: a module's file is outside its root folder  main.mo:2:5
+
+  2 | use Other
+    |     ^^^^^ other.mo
+

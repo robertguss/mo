@@ -1,0 +1,11 @@
+error E0041: the imported name is private  tests/errors/e0041/main.mo:2:11
+
+  2 | use Money{secret}
+    |           ^^^^^^ secret
+
+  --> tests/errors/e0041/money.mo:17:1
+  17 | secret = 1
+     | ^^^^^^ declared or imported here
+
+Everything not on expose is private to the module (reference 10.1).
+

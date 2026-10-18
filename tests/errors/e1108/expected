@@ -1,0 +1,5 @@
+error E1108: the ability dependency path is too deep  main.mo:6147:1
+
+  6147 | a == b
+       | ^^^^^^ the ability dependency path is too deep
+

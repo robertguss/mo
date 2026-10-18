@@ -1,0 +1,11 @@
+error E0065: the record has no such field  tests/errors/e0065/main.mo:6:7
+
+  6 | point.y
+    |       ^ no field with this name
+
+  --> tests/errors/e0065/main.mo:2:8
+  2 | struct Point
+    |        ^^^^^ declared here
+
+A struct declares named fields, each with a type (reference 4.1).
+

@@ -1,0 +1,2 @@
+module Main
+x = "\q"

@@ -1,0 +1,7 @@
+error E0087: try needs exactly one failure case holding Text as its unnamed value; found 2  tests/errors/e0087-ambiguous/main.mo:7:4
+
+  7 | Ok(try value)
+    |    ^^^ try needs exactly one failure case holding Text as its unnamed value; found 2
+
+Keep exactly one case with this unnamed value; make the other matching cases use named fields, or handle the failure with case (reference 8.3).
+

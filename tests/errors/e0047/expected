@@ -1,0 +1,11 @@
+error E0047: the choice's cases are hidden  tests/errors/e0047/main.mo:2:12
+
+  2 | use Hidden{Ready}
+    |            ^^^^^ Ready
+
+  --> tests/errors/e0047/hidden.mo:3:6
+  3 | enum Choice
+    |      ^^^^^^ the owning choice type
+
+Exposing a type without (..) hides its fields or cases (reference 10.2).
+

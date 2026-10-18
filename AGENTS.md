@@ -115,6 +115,8 @@ Adding a library function typically touches its `check` signature (`src/check/si
   `mo_test_report(name)` sets the exit status. Tests go through public headers, not internals.
 - Checker diagnostics are pinned by `tests/check/diagnostics/eNNNN` inputs with adjacent `.diag`
   expectations (format in that folder's `README.md`). Nothing regenerates them; edit by hand.
+- Every code in `src/base/codes.h` needs a case in `tests/errors/` (exact `mo check` message, see its
+  `README.md`) or a line in `tests/errors/unit.tsv`; `ci/check_errors.py` fails otherwise.
 - `docs/agent-guide.md` (`mo guide`) tells agents what this build does. A change to what a `mo`
   command does, or to which forms are unfinished, updates the guide in the same PR;
   `guide_claims` in `ci/check_cli.py` runs the guide's program and checks each claim it makes.

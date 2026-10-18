@@ -1,0 +1,11 @@
+error E0042: the functions don't have different local receiver types  tests/errors/e0042/main.mo:3:4
+
+  3 | fn total(x: Int) : Int
+    |    ^^^^^ total
+
+  --> tests/errors/e0042/main.mo:7:4
+  7 | fn total(x: Text) : Text
+    |    ^^^^^ declared or imported here
+
+Two functions share a name only when their first parameters are different types declared in that module (reference 5.1).
+

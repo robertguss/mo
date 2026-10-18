@@ -1,0 +1,11 @@
+error E0094: a map literal gives the same key twice  tests/errors/e0094/main.mo:3:15
+
+  3 | {"apples": 3, "apples": 5}
+    |               ^^^^^^^^ this key is already in the literal
+
+  --> tests/errors/e0094/main.mo:3:2
+  3 | {"apples": 3, "apples": 5}
+    |  ^^^^^^^^ the first equal key
+
+Each key in a map literal must be different (reference 3.8).
+

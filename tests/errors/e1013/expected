@@ -1,0 +1,5 @@
+error E1013: Core code generation reached a resource limit  main.mo:70005:3
+
+  70005 |   xs.size
+        |   ^^^^^^^ Main.run: Function exceeds MO_LIMIT_FUNCTION_REGISTERS after recycling.
+

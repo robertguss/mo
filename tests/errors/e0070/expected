@@ -1,0 +1,11 @@
+error E0070: case doesn't cover every possible value; missing: false  tests/errors/e0070/main.mo:3:1
+
+  3 | case flag
+    | ^^^^^^^^^ a possible value isn't covered
+
+  --> tests/errors/e0070/main.mo:3:6
+  3 | case flag
+    |      ^^^^ matched value
+
+The arms must cover every possible value (reference 7.2).
+

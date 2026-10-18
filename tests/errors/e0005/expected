@@ -1,0 +1,7 @@
+error E0005: unknown escape; Mo has \n, \t, \r, \\, \", \', \# and \u{...}  tests/errors/e0005/main.mo:2:7
+
+  2 | x = "\q"
+    |       ^
+
+Text and characters use the listed escapes and Unicode scalar values (reference 3.4).
+

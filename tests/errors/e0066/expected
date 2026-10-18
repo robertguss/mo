@@ -1,0 +1,7 @@
+error E0066: a type parameter isn't a distinct single capital letter  tests/errors/e0066/main.mo:2:15
+
+  2 | struct Box(T, T)
+    |               ^ type parameters must be distinct single letters
+
+Your own types take type parameters, which are single capital letters (reference 9.1; names in reference 2.3).
+

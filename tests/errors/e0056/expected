@@ -1,0 +1,7 @@
+error E0056: a result isn't used  tests/errors/e0056/main.mo:3:3
+
+  3 |   1
+    |   ^ not Unit and not used
+
+A result that isn't Unit and isn't used is an error (reference 6.1).
+

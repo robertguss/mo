@@ -1,0 +1,7 @@
+error E0062: a record or case declares the same field twice  tests/errors/e0062/main.mo:4:1
+
+  4 | x: Int
+    | ^ this field is declared twice
+
+Records and cases have named fields, each with one type (reference 4).
+

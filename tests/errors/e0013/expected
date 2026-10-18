@@ -1,0 +1,9 @@
+error E0013: a record has named fields, each with a type  tests/errors/e0013/main.mo:2:1
+
+  2 | struct Empty
+    | ^^^^^^^^^^^^
+  3 | end
+    | ^^^
+
+A struct declares a record type: named fields, each with a type (reference 4.1).
+

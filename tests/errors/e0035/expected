@@ -1,0 +1,7 @@
+error E0035: the module's name doesn't match its file  tests/errors/e0035/main.mo:1:8
+
+  1 | module Wrong
+    |        ^^^^^ wrong.mo
+
+Each part of a module's name becomes a lowercase folder or file name with hyphens between words (reference 2.1).
+

@@ -1,0 +1,11 @@
+error E0051: a visible name is bound again  tests/errors/e0051/main.mo:3:3
+
+  3 |   value = 2
+    |   ^^^^^ this name already has a meaning
+
+  --> tests/errors/e0051/main.mo:2:8
+  2 | fn run(value: Int) : Int
+    |        ^^^^^ the other meaning of this name
+
+While a local name or parameter is visible it can't be bound again (reference 6.1).
+

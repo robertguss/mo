@@ -1,0 +1,7 @@
+error E0049: a type parameter is used as a generic type  tests/errors/e0049/main.mo:2:17
+
+  2 | fn value(_item: T(Int))
+    |                 ^^^^^^ type parameters don't match
+
+A type parameter is a single capital letter, not a generic type constructor (reference 9.1).
+

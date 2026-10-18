@@ -1,0 +1,11 @@
+error E0063: a supplied field doesn't match the record or case  tests/errors/e0063/main.mo:6:7
+
+  6 | Point(y: 1)
+    |       ^^^^ supplied fields don't match the declaration
+
+  --> tests/errors/e0063/main.mo:2:8
+  2 | struct Point
+    |        ^^^^^ declared here
+
+A record or case is built by naming every field once, or from its one unnamed value (reference 4).
+

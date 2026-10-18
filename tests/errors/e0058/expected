@@ -1,0 +1,7 @@
+error E0058: break or continue is outside a loop  tests/errors/e0058/main.mo:3:3
+
+  3 |   break
+    |   ^^^^^ no enclosing loop in this function
+
+Break leaves the loop and continue starts its next round (reference 7.5).
+

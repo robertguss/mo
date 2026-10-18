@@ -1,0 +1,7 @@
+error E0077: an argument's type doesn't match its parameter  tests/errors/e0077/main.mo:5:8
+
+  5 |   take("text")
+    |        ^^^^^^ expected Int, found Text
+
+A call passes each argument to its corresponding parameter (reference 5.2).
+

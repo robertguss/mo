@@ -1,0 +1,7 @@
+error E0057: a name that isn't var is assigned  tests/errors/e0057/main.mo:3:3
+
+  3 |   value += 1
+    |   ^^^^^ no assignable var here
+
++= and -= assign a var or its fields (reference 6.2).
+

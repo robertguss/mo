@@ -1,0 +1,13 @@
+error E0015: a promise has at least one allows line and one forbids line  tests/errors/e0015/main.mo:3:1
+
+  3 | promise "p"
+    | ^^^^^^^^^^^
+  4 | true
+    | ^^^^
+  5 | allows result: true
+    | ^^^^^^^^^^^^^^^^^^^
+  6 | end
+    | ^^^
+
+Anchors give every parameter and result a value which the body must accept or reject (reference 12.2).
+

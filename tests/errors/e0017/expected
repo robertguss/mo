@@ -1,0 +1,7 @@
+error E0017: expected :, found CapCase name  tests/errors/e0017/main.mo:2:8
+
+  2 | fn f(x Int)
+    |        ^^^
+
+A signature gives each parameter's type and uses : before its result (reference 5.1).
+

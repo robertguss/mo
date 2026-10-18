@@ -1,0 +1,11 @@
+error E0040: a case is exposed without its type  tests/errors/e0040/main.mo:2:8
+
+  2 | expose Ready(..)
+    |        ^^^^^^^^^ Ready
+
+  --> tests/errors/e0040/main.mo:4:6
+  4 | enum Choice
+    |      ^^^^^^ declared or imported here
+
+Exposing a type without (..) hides its fields or cases (reference 10.2).
+

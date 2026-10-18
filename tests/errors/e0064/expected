@@ -1,0 +1,11 @@
+error E0064: the type's fields or cases are hidden  tests/errors/e0064/main.mo:4:1
+
+  4 | Money(amount: 1)
+    | ^^^^^^^^^^^^^^^^ the type's insides aren't exposed
+
+  --> tests/errors/e0064/money.mo:4:8
+  4 | struct Money
+    |        ^^^^^ declared here
+
+Outside its module a type exposed without (..) can't be built, taken apart or have its fields read (reference 10.2).
+

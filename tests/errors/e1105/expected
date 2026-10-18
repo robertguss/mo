@@ -1,0 +1,5 @@
+error E1105: the inferred type is nested too deeply  main.mo:261:9
+
+  261 | _v255 = duplicate(_v254)
+      |         ^^^^^^^^^ the inferred type is nested too deeply
+

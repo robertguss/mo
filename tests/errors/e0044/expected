@@ -1,0 +1,15 @@
+error E0044: a case is imported without its type  tests/errors/e0044/main.mo:2:11
+
+  2 | use Money{Ready}
+    |           ^^^^^ Ready
+
+  --> tests/errors/e0044/money.mo:12:6
+  12 | enum Choice
+     |      ^^^^^^ the owning choice type
+
+Importing a choice type brings its exposed cases with it (reference 10.3).
+
+Fix: import the choice type instead
+  tests/errors/e0044/main.mo:2:11
+  2 | use Money{Choice}
+

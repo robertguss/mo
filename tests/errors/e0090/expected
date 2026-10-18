@@ -1,0 +1,11 @@
+error E0090: an anonymous function can't assign a var  tests/errors/e0090/main.mo:5:1
+
+  5 | n += 1
+    | ^ an anonymous function can't assign a var
+
+  --> tests/errors/e0090/main.mo:4:5
+  4 | var n = 3
+    |     ^ declared here
+
+An anonymous function can read names in scope, but can't assign a var (reference 5.6).
+

@@ -1,0 +1,7 @@
+error E0093: an imported name is unused  tests/errors/e0093/main.mo:2:9
+
+  2 | use Lib{seed}
+    |         ^^^^ an imported name is unused
+
+Unused imports are errors (reference 6.1).
+
