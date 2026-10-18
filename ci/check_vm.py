@@ -55,7 +55,12 @@ def oracle(path, world, test=None, effects=False):
     result = subprocess.run(args,
                             capture_output=True, text=True, timeout=15)
     assert result.returncode in (0, 1, 2), (path, result.stdout, result.stderr)
-    report = parse(result.stdout)[2]
+    return outcome_of(result.stdout, effects)
+
+
+def outcome_of(stdout, effects=False):
+    """The comparable outcome of one `mocore` report, in the VM driver's spelling."""
+    report = parse(stdout)[2]
     detail = report[1]
     if report[0] == "stopped":
         if detail[0] == "stop":
