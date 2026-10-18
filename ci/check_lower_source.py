@@ -797,7 +797,7 @@ def check_specs(driver, vm, root, world):
         source = root / "main.mo"
         original = ("module Main\n" + body + "\n").encode()
         source.write_bytes(original)
-        report = subprocess.run([str(driver), str(source), LIBRARY], capture_output=True,
+        report = subprocess.run([str(driver), str(source)], capture_output=True,
                                 text=True, timeout=30)
         assert report.returncode == 0, (name, report.returncode, report.stderr)
         path = root / f"spec-{name}.core"
