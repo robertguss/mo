@@ -1,0 +1,5 @@
+Point(x: 1.5, y: 2)
+Some(3) None [1, 2] (1, true)
+Named(label: "q\"uote") Plain
+["a", "b"] c plain
+0..3 1000 0.25 -0.5

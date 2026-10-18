@@ -1,0 +1,8 @@
+passed Main.double.example.1  tests/golden/tst-failing-example/main.mo:5:5
+failed Main.double.example.2  tests/golden/tst-failing-example/main.mo:6:5
+  left: 6
+  right: 7
+  6 |     double(3) == 7
+    |     ^^^^^^^^^^^^^^ this example was false
+passed Main.double.example.3  tests/golden/tst-failing-example/main.mo:7:5
+2 passed, 1 failed, 0 stopped

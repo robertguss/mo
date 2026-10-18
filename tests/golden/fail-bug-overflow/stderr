@@ -1,0 +1,5 @@
+bug: overflow: Int
+  at Main.main (tests/golden/fail-bug-overflow/main.mo:146..153)
+  at Main.main.entry (tests/golden/fail-bug-overflow/main.mo:13..191)
+  big = 9223372036854775807
+  console = <Console>

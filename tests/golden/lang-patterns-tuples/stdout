@@ -1,0 +1,6 @@
+(0, 0): origin
+(3, 0): positive x axis
+(-3, 0): negative x axis
+(0, 9): y axis
+(2, 2): first
+(-1, -1): elsewhere

@@ -1,0 +1,2 @@
+tests/golden/sample-find/data/pets.txt: 3
+tests/golden/sample-find/data/other.txt: 0

@@ -1,0 +1,13 @@
+passed Main.double.example.1  tests/golden/lang-test-failing/main.mo:5:5
+failed Main.double.example.2  tests/golden/lang-test-failing/main.mo:6:5
+  left: 6
+  right: 7
+  6 |     double(3) == 7
+    |     ^^^^^^^^^^^^^^ this example was false
+passed Main.test.1  tests/golden/lang-test-failing/main.mo:12:1
+failed Main.test.2  tests/golden/lang-test-failing/main.mo:16:1
+  left: 10
+  right: 11
+  17 |   assert double(5) == 11
+     |   ^^^^^^^^^^^^^^^^^^^^^^ this assertion was false
+2 passed, 2 failed, 0 stopped

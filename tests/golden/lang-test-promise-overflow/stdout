@@ -1,0 +1,9 @@
+stopped Main.negate.promise.1  tests/golden/lang-test-promise-overflow/main.mo:4:3
+  input n = -9223372036854775808
+  n is Int's smallest value
+  fix: return a failure for such inputs, or take a type whose module keeps its values in range (reference 12.2).
+  bug: overflow: Int
+  at Main.negate  tests/golden/lang-test-promise-overflow/main.mo:10:3
+  n = -9223372036854775808
+passed Main.test.1  tests/golden/lang-test-promise-overflow/main.mo:13:1
+1 passed, 0 failed, 1 stopped

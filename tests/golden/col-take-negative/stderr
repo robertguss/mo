@@ -1,0 +1,4 @@
+bug: List.take with a negative count
+  at Main.main (tests/golden/col-take-negative/main.mo:84..105)
+  at Main.main.entry (tests/golden/col-take-negative/main.mo:13..137)
+  console = <Console>

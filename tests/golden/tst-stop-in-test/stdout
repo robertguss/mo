@@ -1,0 +1,8 @@
+passed Main.test.1  tests/golden/tst-stop-in-test/main.mo:7:1
+stopped Main.test.2  tests/golden/tst-stop-in-test/main.mo:11:1
+  bug: stop
+  detail: odd numbers can't be halved
+  at Main.halve  tests/golden/tst-stop-in-test/main.mo:4:18
+  at Main.test.2  tests/golden/tst-stop-in-test/main.mo:12:10
+  n = 7
+1 passed, 0 failed, 1 stopped

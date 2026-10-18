@@ -1,0 +1,7 @@
+passed Main.area.example.1  tests/golden/lang-test-passing/main.mo:10:5
+passed Main.area.example.2  tests/golden/lang-test-passing/main.mo:11:5
+passed Main.clamp.example.1  tests/golden/lang-test-passing/main.mo:22:5
+passed Main.clamp.example.2  tests/golden/lang-test-passing/main.mo:23:5
+passed Main.test.1  tests/golden/lang-test-passing/main.mo:29:1
+passed Main.test.2  tests/golden/lang-test-passing/main.mo:33:1
+6 passed, 0 failed, 0 stopped

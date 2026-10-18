@@ -1,0 +1,6 @@
+Usage: report [--json] FILE
+  indented line
+Prints a summary.
+3
+inner 2
+a+b

@@ -1,0 +1,4 @@
+passed Greet.greeting.example.1  examples/greet.mo:6:5
+passed Greet.greeting.example.2  examples/greet.mo:7:5
+passed Greet.test.1  examples/greet.mo:17:1
+3 passed, 0 failed, 0 stopped

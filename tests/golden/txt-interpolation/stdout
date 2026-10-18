@@ -1,0 +1,6 @@
+Hello, Ada! You have 3 new messages.
+sum: 3, nested: xAday
+list [1, 2] tuple (1, true) opt Some(3)
+texts ["a", "b"] chars ['x', 'y']
+write #{name} to insert
+true c q 1.5 true

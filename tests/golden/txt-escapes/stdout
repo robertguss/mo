@@ -1,0 +1,7 @@
+tab[	] quote["] backslash[\] apostrophe['] hash[#]
+line1
+line2
+smile 😀 lambda λ
+["a\"b", "c\nd"]
+['\n', 'a', '\'']
+true

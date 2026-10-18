@@ -1,0 +1,5 @@
+passed Main.total.example.1  tests/golden/col-test-passing/main.mo:5:5
+passed Main.total.example.2  tests/golden/col-test-passing/main.mo:6:5
+passed Main.test.1  tests/golden/col-test-passing/main.mo:20:1
+passed Main.test.2  tests/golden/col-test-passing/main.mo:25:1
+4 passed, 0 failed, 0 stopped

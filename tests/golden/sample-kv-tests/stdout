@@ -1,0 +1,19 @@
+passed Kv.parse.example.1  examples/kv.mo:57:5
+passed Kv.parse.example.2  examples/kv.mo:58:5
+passed Kv.parse.example.3  examples/kv.mo:59:5
+passed Kv.parse.example.4  examples/kv.mo:60:5
+passed Kv.parse.example.5  examples/kv.mo:61:5
+passed Kv.parse.example.6  examples/kv.mo:62:5
+passed Kv.parse.example.7  examples/kv.mo:63:5
+passed Kv.apply.promise.1  examples/kv.mo:89:3
+passed Kv.increment.example.1  examples/kv.mo:122:5
+passed Kv.increment.example.2  examples/kv.mo:123:5
+passed Kv.increment.example.3  examples/kv.mo:124:5
+passed Kv.increment.example.4  examples/kv.mo:125:5
+passed Kv.expire.example.1  examples/kv.mo:147:5
+passed Kv.expire.example.2  examples/kv.mo:148:5
+passed Kv.expire.example.3  examples/kv.mo:149:5
+passed Kv.expire.example.4  examples/kv.mo:150:5
+passed Kv.test.1  examples/kv.mo:212:1
+passed Kv.test.2  examples/kv.mo:222:1
+18 passed, 0 failed, 0 stopped

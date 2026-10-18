@@ -1,0 +1,14 @@
+passed Main.average.example.1  tests/golden/num-test-failing/main.mo:5:5
+failed Main.average.example.2  tests/golden/num-test-failing/main.mo:6:5
+  left: 1
+  right: 2
+  6 |     average(1, 2) == 2
+    |     ^^^^^^^^^^^^^^^^^^ this example was false
+passed Main.average.example.3  tests/golden/num-test-failing/main.mo:7:5
+passed Main.test.1  tests/golden/num-test-failing/main.mo:13:1
+failed Main.test.2  tests/golden/num-test-failing/main.mo:17:1
+  left: -1
+  right: -2
+  18 |   assert average(-3, 0) == -2
+     |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^ this assertion was false
+3 passed, 2 failed, 0 stopped

@@ -1,0 +1,5 @@
+abc: 3 bytes, 3 chars, empty false
+héllo: 6 bytes, 5 chars, empty false
+日本語: 9 bytes, 3 chars, empty false
+😀: 4 bytes, 1 chars, empty false
+: 0 bytes, 0 chars, empty true

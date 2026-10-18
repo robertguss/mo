@@ -1,0 +1,8 @@
+stopped Main.bump.promise.1  tests/golden/tst-overflow-promise/main.mo:4:3
+  input n = 9223372036854775807
+  n is Int's largest value
+  fix: return a failure for such inputs, or take a type whose module keeps its values in range (reference 12.2).
+  bug: overflow: Int
+  at Main.bump  tests/golden/tst-overflow-promise/main.mo:10:3
+  n = 9223372036854775807
+0 passed, 0 failed, 1 stopped

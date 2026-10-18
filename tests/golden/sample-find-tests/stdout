@@ -1,0 +1,10 @@
+passed Find.parse_args.example.1  examples/find.mo:35:5
+passed Find.parse_args.example.2  examples/find.mo:36:5
+passed Find.parse_args.example.3  examples/find.mo:38:5
+passed Find.parse_args.example.4  examples/find.mo:39:5
+passed Find.parse_args.example.5  examples/find.mo:40:5
+passed Find.matches.example.1  examples/find.mo:70:5
+passed Find.matches.example.2  examples/find.mo:71:5
+passed Find.test.1  examples/find.mo:121:1
+passed Find.test.2  examples/find.mo:128:1
+9 passed, 0 failed, 0 stopped

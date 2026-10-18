@@ -1,0 +1,17 @@
+passed JsonQuery.parse.example.1  examples/json-query.mo:35:5
+passed JsonQuery.parse.example.2  examples/json-query.mo:36:5
+passed JsonQuery.parse.example.3  examples/json-query.mo:37:5
+passed JsonQuery.parse.example.4  examples/json-query.mo:38:5
+passed JsonQuery.parse.example.5  examples/json-query.mo:39:5
+passed JsonQuery.hex_value.example.1  examples/json-query.mo:98:5
+passed JsonQuery.hex_value.example.2  examples/json-query.mo:99:5
+passed JsonQuery.hex_value.example.3  examples/json-query.mo:100:5
+passed JsonQuery.pretty.example.1  examples/json-query.mo:199:5
+passed JsonQuery.pretty.example.2  examples/json-query.mo:200:5
+passed JsonQuery.quoted.example.1  examples/json-query.mo:224:5
+passed JsonQuery.quoted.example.2  examples/json-query.mo:225:5
+passed JsonQuery.at_path.example.1  examples/json-query.mo:256:5
+passed JsonQuery.at_path.example.2  examples/json-query.mo:261:5
+passed JsonQuery.at_path.example.3  examples/json-query.mo:262:5
+passed JsonQuery.test.1  examples/json-query.mo:312:1
+16 passed, 0 failed, 0 stopped

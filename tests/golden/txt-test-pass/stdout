@@ -1,0 +1,7 @@
+passed Main.initials.example.1  tests/golden/txt-test-pass/main.mo:5:5
+passed Main.initials.example.2  tests/golden/txt-test-pass/main.mo:6:5
+passed Main.initials.example.3  tests/golden/txt-test-pass/main.mo:7:5
+passed Main.slug.example.1  tests/golden/txt-test-pass/main.mo:15:5
+passed Main.test.1  tests/golden/txt-test-pass/main.mo:25:1
+passed Main.test.2  tests/golden/txt-test-pass/main.mo:29:1
+6 passed, 0 failed, 0 stopped

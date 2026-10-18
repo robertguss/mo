@@ -1,0 +1,4 @@
+bug: two keys of a map literal that turn out equal
+  at Main.main (tests/golden/fail-bug-map-duplicate/main.mo:104..130)
+  at Main.main.entry (tests/golden/fail-bug-map-duplicate/main.mo:47..163)
+  console = <Console>

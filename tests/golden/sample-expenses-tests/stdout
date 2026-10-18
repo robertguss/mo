@@ -1,0 +1,10 @@
+passed Expenses.parse_line.example.1  examples/expenses.mo:31:5
+passed Expenses.parse_line.example.2  examples/expenses.mo:32:5
+passed Expenses.parse_line.example.3  examples/expenses.mo:33:5
+passed Expenses.parse_line.example.4  examples/expenses.mo:34:5
+passed Expenses.parse_line.example.5  examples/expenses.mo:35:5
+passed Expenses.totals.example.1  examples/expenses.mo:51:5
+passed Expenses.totals.example.2  examples/expenses.mo:52:5
+passed Expenses.layout.example.1  examples/expenses.mo:65:5
+passed Expenses.test.1  examples/expenses.mo:120:1
+9 passed, 0 failed, 0 stopped

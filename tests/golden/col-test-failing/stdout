@@ -1,0 +1,7 @@
+passed Main.test.1  tests/golden/col-test-failing/main.mo:3:1
+failed Main.test.2  tests/golden/col-test-failing/main.mo:7:1
+  left: [2, 3]
+  right: [1, 2, 3]
+  8 |   assert [1, 2, 3].drop(1) == [1, 2, 3]
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this assertion was false
+1 passed, 1 failed, 0 stopped

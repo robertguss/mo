@@ -1,0 +1,7 @@
+failed Main.clamp.promise.1  tests/golden/tst-failing-promise/main.mo:4:3
+  input n = -1
+  result: -1
+  calls: 4
+  5 |     result >= 0
+    |     ^^^^^^^^^^^ this promise condition was false
+0 passed, 1 failed, 0 stopped

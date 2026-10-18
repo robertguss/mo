@@ -1,0 +1,2 @@
+count: tests/golden/cap-files-wordcount/data/gone.txt: no such file
+count: /etc/passwd: not allowed

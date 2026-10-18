@@ -117,6 +117,9 @@ Adding a library function typically touches its `check` signature (`src/check/si
   expectations (format in that folder's `README.md`). Nothing regenerates them; edit by hand.
 - Every code in `src/base/codes.h` needs a case in `tests/errors/` (exact `mo check` message, see its
   `README.md`) or a line in `tests/errors/unit.tsv`; `ci/check_errors.py` fails otherwise.
+- `tests/golden/` is the golden corpus: whole programs with their exact stdout, stderr and exit status
+  (format in `ci/check_golden.py`). Write the expected output by hand from the reference; a wrong-looking
+  result is a bug to fix or list in `docs/status/golden-gaps.md`, never a new expectation.
 - `docs/agent-guide.md` (`mo guide`) tells agents what this build does. A change to what a `mo`
   command does, or to which forms are unfinished, updates the guide in the same PR;
   `guide_claims` in `ci/check_cli.py` runs the guide's program and checks each claim it makes.

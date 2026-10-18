@@ -1,0 +1,5 @@
+alpha
+one
+error: tests/golden/cap-files-read/data/missing.txt: no such file
+error: ../main.mo: not allowed
+list.txt,note.txt

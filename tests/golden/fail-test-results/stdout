@@ -1,0 +1,8 @@
+passed Main.parse.example.1  tests/golden/fail-test-results/main.mo:10:5
+passed Main.parse.example.2  tests/golden/fail-test-results/main.mo:11:5
+passed Main.parse.example.3  tests/golden/fail-test-results/main.mo:12:5
+passed Main.half.example.1  tests/golden/fail-test-results/main.mo:24:5
+passed Main.half.example.2  tests/golden/fail-test-results/main.mo:25:5
+passed Main.test.1  tests/golden/fail-test-results/main.mo:31:1
+passed Main.test.2  tests/golden/fail-test-results/main.mo:36:1
+7 passed, 0 failed, 0 stopped

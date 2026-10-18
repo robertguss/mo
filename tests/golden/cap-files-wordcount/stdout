@@ -1,0 +1,2 @@
+tests/golden/cap-files-wordcount/data/story.txt: 9
+tests/golden/cap-files-wordcount/data/tiny.txt: 1

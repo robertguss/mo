@@ -1,0 +1,18 @@
+passed Main.sign.example.1  tests/golden/tst-two-failures/main.mo:5:5
+passed Main.sign.example.2  tests/golden/tst-two-failures/main.mo:6:5
+failed Main.sign.example.3  tests/golden/tst-two-failures/main.mo:7:5
+  left: 0
+  right: 1
+  7 |     sign(0) == 1
+    |     ^^^^^^^^^^^^ this example was false
+failed Main.sign.example.4  tests/golden/tst-two-failures/main.mo:8:5
+  left: 1
+  right: 0
+  8 |     sign(1) == 0
+    |     ^^^^^^^^^^^^ this example was false
+failed Main.test.1  tests/golden/tst-two-failures/main.mo:14:1
+  left: 1
+  right: 2
+  15 |   assert sign(10) == 2
+     |   ^^^^^^^^^^^^^^^^^^^^ this assertion was false
+2 passed, 3 failed, 0 stopped
