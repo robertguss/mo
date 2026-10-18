@@ -1,0 +1,7 @@
+docs:folder readme.txt:file shortcut:link
+docs:folder docs/deep:folder docs/deep/note.txt:file docs/guide.md:file readme.txt:file shortcut:link
+error: tests/golden/cap-files-walk/data/missing: no such file
+error: tests/golden/cap-files-walk/data/readme.txt: not a folder
+true false false
+docs:folder docs/deep:folder docs/deep/note.txt:file docs/guide.md:file readme.txt:file shortcut:link
+true

@@ -224,6 +224,33 @@ CASES = {
 }
 
 SPEC_CASES = {
+    "files_folders": ("test \"folders\"\nfiles = Files.in_memory({\"b.txt\": \"x\", \"a/c.txt\": \"\"})\n"
+                      "assert files.make_folder(\"n/m\") == Ok(Unit)\n"
+                      "assert files.exists?(\"n/m\") and not files.exists?(\"z\")\n"
+                      "assert files.entries(\".\") == Ok([Entry(name: \"a\", kind: Folder), "
+                      "Entry(name: \"b.txt\", kind: File), Entry(name: \"n\", kind: Folder)])\n"
+                      "assert files.entries(\"b.txt\") == "
+                      "Error(Failed(path: \"b.txt\", reason: \"not a folder\"))\n"
+                      "end\n"
+                      "test \"writes\"\nfiles = Files.in_memory({\"b.txt\": \"x\"})\n"
+                      "assert files.append_text(\"b.txt\", \"y\") == Ok(Unit)\n"
+                      "assert files.read_bytes(\"b.txt\") == Ok(\"xy\".bytes)\n"
+                      "assert files.remove(\"b.txt\") == Ok(Unit)\n"
+                      "assert files.make_folder(\"d\") == Ok(Unit)\n"
+                      "assert files.within(\"d\").write_text(\"e.txt\", \"z\") == Ok(Unit)\n"
+                      "reader = files.read_only.within(\"d\")\n"
+                      "assert reader.entries(\".\") == Ok([Entry(name: \"e.txt\", kind: File)])\n"
+                      "assert reader.exists?(\"e.txt\") and not reader.exists?(\"../d\")\n"
+                      "end\n"
+                      "test \"entry fields\"\nfiles = Files.in_memory({\"k.txt\": \"\"})\n"
+                      "case files.entries(\".\")\n"
+                      "Ok(found): assert found.size == 1 and (found.first or Entry(name: \"\", kind: Other)).name == \"k.txt\"\n"
+                      "Error(_): assert false\nend\nend\n"
+                      "fn main() : Int\n17\nend", {
+                          "Main.test.1": ["returned", "Unit"],
+                          "Main.test.2": ["returned", "Unit"],
+                          "Main.test.3": ["returned", "Unit"],
+                      }),
     "examples": ("fn plus(value: Int) : Int\nexamples\nplus(3) == 4\nend\n"
                  "examples\nplus(8) == 10\nend\nvalue + 1\nend\n"
                  "fn main() : Int\n17\nend", {

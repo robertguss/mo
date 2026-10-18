@@ -1836,6 +1836,42 @@ def runner(binary):
             assert todo("remove", "9", status=1).stderr == b"there is no item 9\n"
             todo("remove", "2")
             assert (pathlib.Path(folder) / "todo.txt").read_text() == "[x] milk\n"
+        # Files writes into a real folder: make_folder, append_text, remove, within, entries, walk.
+        with tempfile.TemporaryDirectory() as folder:
+            written = subprocess.run([str(binary), "run", str(root / "tests/cli/files-write/main.mo")],
+                                     cwd=folder, capture_output=True, timeout=30)
+            assert written.returncode == 0 and written.stderr == b"", written
+            assert written.stdout == (b"true false\nentry a.txt\nentry logs\nwalk a.txt\nwalk logs\n"
+                                      b"walk logs/old\nwalk logs/old/kept.txt\nwalk logs/run.txt\n"
+                                      b"Error(out/a.txt: not a folder)\n"), written.stdout
+            out = pathlib.Path(folder) / "out"
+            assert sorted(str(p.relative_to(out)) for p in out.rglob("*")) == [
+                "a.txt", "logs", "logs/old", "logs/old/kept.txt", "logs/run.txt"]
+            assert (out / "a.txt").read_text() == "one\ntwo\n"
+            assert (out / "logs/run.txt").read_text() == "start\n"
+            assert (out / "logs/old/kept.txt").read_text() == "kept\n"
+        # walk reports a link without entering it, and stops at a folder it can't read.
+        with tempfile.TemporaryDirectory() as folder:
+            tree = pathlib.Path(folder) / "tree"
+            (tree / "b/locked").mkdir(parents=True)
+            (tree / "a.txt").write_text("")
+            (tree / "b/c.txt").write_text("")
+            (tree / "link").symlink_to("b")
+
+            def walk_tree():
+                result = subprocess.run([str(binary), "run",
+                                         str(root / "tests/cli/files-walk/main.mo")],
+                                        cwd=folder, capture_output=True, timeout=30)
+                assert result.returncode == 0 and result.stderr == b"", result
+                return result.stdout
+            assert walk_tree() == (b"a.txt file\nb folder\nb/c.txt file\nb/locked folder\n"
+                                   b"link link\n")
+            if os.geteuid() != 0:  # root reads a folder whatever its permissions
+                (tree / "b/locked").chmod(0)
+                try:
+                    assert walk_tree() == b"error: tree/b/locked: not allowed\n"
+                finally:
+                    (tree / "b/locked").chmod(0o755)
         todo_tests = records(run(binary, ["test", "--json", "examples/todo.mo"], 0), "test")
         assert todo_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
                                   "passed": 15, "failed": 0, "stopped": 0, "status": 0}

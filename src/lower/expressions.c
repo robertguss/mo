@@ -1006,9 +1006,20 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                   {"Files.read_only", {MO_CORE_IO_OP_READ_ONLY, false}},
                   {"Files.read_text", {MO_CORE_IO_OP_READ_TEXT, false}},
                   {"Files.write_text", {MO_CORE_IO_OP_WRITE_TEXT, false}},
+                  {"Files.read_bytes", {MO_CORE_IO_OP_READ_BYTES, false}},
+                  {"Files.append_text", {MO_CORE_IO_OP_APPEND_TEXT, false}},
+                  {"Files.remove", {MO_CORE_IO_OP_REMOVE, false}},
+                  {"Files.make_folder", {MO_CORE_IO_OP_MAKE_FOLDER, false}},
                   {"Files.list", {MO_CORE_IO_OP_LIST, false}},
+                  {"Files.entries", {MO_CORE_IO_OP_ENTRIES, false}},
+                  {"Files.exists?", {MO_CORE_IO_OP_EXISTS, false}},
+                  {"Files.within", {MO_CORE_IO_OP_WITHIN, false}},
                   {"ReadFiles.read_text", {MO_CORE_IO_OP_READ_TEXT, true}},
+                  {"ReadFiles.read_bytes", {MO_CORE_IO_OP_READ_BYTES, true}},
                   {"ReadFiles.list", {MO_CORE_IO_OP_LIST, true}},
+                  {"ReadFiles.entries", {MO_CORE_IO_OP_ENTRIES, true}},
+                  {"ReadFiles.exists?", {MO_CORE_IO_OP_EXISTS, true}},
+                  {"ReadFiles.within", {MO_CORE_IO_OP_WITHIN, true}},
                   {"Clock.now", {MO_CORE_IO_OP_NOW, false}},
                   {"Clock.fixed", {MO_CORE_IO_OP_CLOCK_FIXED, false}}};
         for (size_t i = 0; i < sizeof io / sizeof io[0]; i++) {
@@ -1219,12 +1230,19 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                              &b->instance->substitution, b->instance->owner, b->instance->depth,
                              args.items[0], args.items[1]);
     }
+    if (r->native != NULL &&
+        (strcmp(r->native, "Entry.name") == 0 || strcmp(r->native, "Entry.kind") == 0)) {
+        MO_ASSERT(r->field != UINT32_MAX && r->operand_count == 1 && args.count == 1);
+        return field_read(b, type(b, row(b, r->operands[0])->type), args.items[0], r->field);
+    }
     if (r->native != NULL && strcmp(r->native, "None") != 0 && strcmp(r->native, "Some") != 0 &&
         strcmp(r->native, "Ok") != 0 && strcmp(r->native, "Error") != 0 &&
         strcmp(r->native, "Less") != 0 && strcmp(r->native, "Equal") != 0 &&
         strcmp(r->native, "Greater") != 0 && strcmp(r->native, "NotFound") != 0 &&
         strcmp(r->native, "NotAllowed") != 0 && strcmp(r->native, "NotText") != 0 &&
-        strcmp(r->native, "Failed") != 0)
+        strcmp(r->native, "Failed") != 0 && strcmp(r->native, "Entry") != 0 &&
+        strcmp(r->native, "File") != 0 && strcmp(r->native, "Folder") != 0 &&
+        strcmp(r->native, "Link") != 0 && strcmp(r->native, "Other") != 0)
         lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "this native call is not lowered yet");
     if (kind(r) == MO_S_TUPLE || kind(r) == MO_S_MAP_ENTRY) {
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_TUPLE);
