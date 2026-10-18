@@ -12,7 +12,7 @@
 #   sanitize    the unit tests under AddressSanitizer and UndefinedBehaviorSanitizer
 #   fuzz        every fuzz target briefly
 #   drivers     the checks that drive the test executables: goldens, Unicode, Lean, codegen
-#   static      grammar, module dependencies, library map, formatting, clang-tidy
+#   static      grammar, module dependencies, library map, frozen tool tasks, formatting, clang-tidy
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -265,6 +265,9 @@ make --no-print-directory library-map
 
 step "Docs-only changes: ci/docs_only.sh skips CI only for files no check reads"
 sh ci/test_docs_only.sh
+
+step "The three tools' frozen tasks: hashes match and each reference passes its hidden tests"
+if have python3; then python3 bench/tools/grade.py --check; else missing "python3 is not installed"; fi
 
 step "Formatting"
 if have clang-format; then make --no-print-directory format-check; else missing "clang-format is not installed"; fi

@@ -1,0 +1,10 @@
+code	errors	first_retry	within_three	by_fix	unfixed
+E0024	1	1	1	0	0
+E0048	1	1	1	0	0
+E0050	3	2	2	0	0
+E0077	2	1	1	1	0
+E0078	2	0	1	0	1
+total	9	5	6	1	1
+first_retry_rate	62.5%
+within_three_rate	75.0%
+tests_passed	9/10 90.0%
