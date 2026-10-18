@@ -269,6 +269,9 @@ sh ci/test_docs_only.sh
 step "The three tools' frozen tasks: hashes match and each reference passes its hidden tests"
 if have python3; then python3 bench/tools/grade.py --check; else missing "python3 is not installed"; fi
 
+step "The learnability protocol's Wilson and kappa calculator"
+if have python3; then PYTHONDONTWRITEBYTECODE=1 python3 learnability/test_wilson.py; else missing "python3 is not installed"; fi
+
 step "Formatting"
 if have clang-format; then make --no-print-directory format-check; else missing "clang-format is not installed"; fi
 
