@@ -263,6 +263,9 @@ make --no-print-directory deps
 step "The library map: docs/design/library.md has a row for every primitive and host operation"
 make --no-print-directory library-map
 
+step "Docs-only changes: ci/docs_only.sh skips CI only for files no check reads"
+sh ci/test_docs_only.sh
+
 step "Formatting"
 if have clang-format; then make --no-print-directory format-check; else missing "clang-format is not installed"; fi
 
