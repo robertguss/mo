@@ -6,7 +6,10 @@
 #include "base/limits.h"
 #include "check/check.h"
 
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 struct fixture {
     struct mo_arena syntax, arena;
@@ -16,6 +19,7 @@ struct fixture {
     uint32_t order, *uses;
     struct mo_module_set set;
     struct mo_program *program;
+    char folder[64], path[96]; /* init_with_library's files, empty otherwise */
 };
 
 static void init(struct fixture *f, const char *text) {
@@ -38,6 +42,8 @@ static void init(struct fixture *f, const char *text) {
 }
 
 static void free_fixture(struct fixture *f) {
+    if (f->path[0] != '\0')
+        MO_ASSERT(unlink(f->path) == 0 && rmdir(f->folder) == 0);
     mo_arena_free(&f->arena);
     mo_arena_free(&f->syntax);
     mo_diags_free(&f->diags);
