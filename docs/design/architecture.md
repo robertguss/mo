@@ -2273,8 +2273,19 @@ tuples, lists, maps, sets, options, results, declared data, functions, `let_`, `
 platform. `ci/check_core_generated.py` (the `drivers` group) requires every generated program to
 pass `core_check` in C and `mocore` in Lean, and its text to come back byte for byte from the C
 printer (`tests/test_core_print.c`) and from `mocore --canonical`. `MO_CORE_GENERATED` and
-`MO_CORE_GENERATED_SEED` widen the run for nightly use. The generator is the input for the
-million-program VM comparison; running the programs on both engines is a later step.
+`MO_CORE_GENERATED_SEED` widen the run for nightly use.
+
+**VM against Lean on generated programs.** `ci/check_core_differential.py` (the `drivers` group)
+compiles and runs each generated program on the C VM (`test_vm.test --core`) and evaluates it in
+Lean (`mocore`), and requires the same outcome, stop message included. It generates with
+`lowerable=True`, because codegen refuses by design the Core forms lowering never produces (a
+tuple of fewer than two elements, section 12); the checkers still see the wider set through
+`check_core_generated.py`. A program either engine cuts off at its budget is counted, not
+compared, and a run fails if one engine alone cuts off more than 2% of them. The pull request run
+covers 1,000 programs and every file in `tests/differential`, the minimized programs earlier runs
+found; `.github/workflows/differential.yml` runs 20 shards of 5,000 (100,000) each night, a million
+on a manual run with 50,000 per shard, from seeds that move forward every day, and uploads any
+program that differs. To replay one: `MO_CORE_DIFF=1 MO_CORE_DIFF_SEED=<seed>`.
 
 **Fuzz targets** (condition 2), each with its invariant:
 

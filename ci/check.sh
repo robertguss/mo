@@ -180,6 +180,9 @@ if have lake; then
 		done
 		if ((${#vm_drivers[@]})); then PYTHONDONTWRITEBYTECODE=1 python3 ci/check_vm.py "${vm_drivers[@]}";
 		else missing "no VM test executable is built"; fi
+		step "Generated Core programs give the same outcome on the VM and in Lean"
+		if ((${#vm_drivers[@]})); then PYTHONDONTWRITEBYTECODE=1 python3 ci/check_core_differential.py "${vm_drivers[@]}";
+		else missing "no VM test executable is built"; fi
 		step "Lowered checked-program fixtures match expected outcomes and Lean"
 		lower_drivers=()
 		for driver in build/{gcc,clang}/{debug,sanitize}/tests/test_lower.test; do

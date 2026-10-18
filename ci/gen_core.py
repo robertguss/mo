@@ -44,8 +44,12 @@ def sc(name):
 
 
 class Gen:
-    def __init__(self, seed):
+    def __init__(self, seed, lowerable=False):
         self.rng = random.Random(seed)
+        # Lowering never makes a tuple of fewer than two elements and codegen refuses one with
+        # E1201 (architecture 12, "Source lowering has a narrower representation contract"), so a
+        # program that must run on the VM needs lowerable=True. The checkers accept both.
+        self.lowerable = lowerable
         self.fresh = 0
         self.data = []  # (name, [(ctor, [(field, type)])])
         self.funs = []  # (name, [(param, type)], return type), earlier ones only
@@ -237,7 +241,7 @@ class Gen:
         if choice == "case":
             return self.case(ty, env, d, stoppable)
         if choice == "proj":
-            others = [self.type(1) for _ in range(r.randrange(0, 2))]
+            others = [self.type(1) for _ in range(r.randrange(1 if self.lowerable else 0, 3 if self.lowerable else 2))]
             at = r.randrange(len(others) + 1)
             kinds = others[:at] + [ty] + others[at:]
             parts = [self.expr(t, env, d, False) for t in kinds]
@@ -371,8 +375,17 @@ class Gen:
         for i in range(self.rng.randrange(0, 4)):
             params = [(self.name("a"), self.type(1, False)) for _ in range(self.rng.randrange(0, 3))]
             funs.append(self.function(f"helper{i}", params, self.type(2), self.rng.randrange(1, 5)))
-        funs.append(self.function("entry", [], self.type(2), self.rng.randrange(2, 7)))
-        return f'(Program ({" ".join(data)}) ({" ".join(funs)}) () "entry" (noSource))'
+        entry_type = self.type(2)
+        funs.append(self.function("entry", [], entry_type, self.rng.randrange(2, 7)))
+        entry = "entry"
+        if self.lowerable:
+            # The VM's driver spells a nested Float in decimal and Lean's report spells it in bits;
+            # both engines agree on the structural observer (TEXT.md, structural values), so the
+            # program returns that Text.
+            funs.append(f'(FunDecl "observed" () (text) (prim (structural {entry_type}) '
+                        f'((call "entry" ()))) "Generated" (function) 0)')
+            entry = "observed"
+        return f'(Program ({" ".join(data)}) ({" ".join(funs)}) () "{entry}" (noSource))'
 
 
 def tokens(text):
@@ -450,8 +463,8 @@ def tokens_list(group):
     return out
 
 
-def document(seed):
-    program = Gen(seed).program()
+def document(seed, lowerable=False):
+    program = Gen(seed, lowerable).program()
     return f"(core {VERSION} (Run {program} {WORLD} (entry ()) 0))\n"
 
 
