@@ -16,7 +16,7 @@ import wilson  # noqa: E402
 
 def run(*args):
     return subprocess.run([sys.executable, str(here / "wilson.py"), *args],
-                          capture_output=True, text=True, check=False)
+                          capture_output=True, text=True, check=False, timeout=30)
 
 
 class Interval(unittest.TestCase):
@@ -47,9 +47,13 @@ class Interval(unittest.TestCase):
                 self.assertGreaterEqual(high, k / n)
 
     def test_bad_counts(self):
-        for k, n in [(1, 0), (-1, 5), (6, 5)]:
-            with self.assertRaises(ValueError):
+        for k, n in [(0, 0), (1, 0), (-1, 5), (6, 5)]:
+            with self.assertRaisesRegex(ValueError, "need 0 <= K <= N"):
                 wilson.wilson(k, n)
+
+    def test_quantile(self):
+        # The two-sided 95% normal quantile, 1.959963984540054 to the printed digits.
+        self.assertAlmostEqual(wilson.Z, 1.959963984540054, places=15)
 
 
 class Verdict(unittest.TestCase):
@@ -66,13 +70,40 @@ class Verdict(unittest.TestCase):
         self.assertEqual(wilson.verdict(5, 6, target), "point-estimate pass")
         self.assertEqual(wilson.verdict(4, 6, target), "miss")
 
+    def test_protocol_boundaries(self):
+        # The least passing cases protocol.md section 7 names, and one short of each.
+        f = fractions.Fraction
+        for k, n, target, want in [(22, 22, f(85, 100), "pass"),
+                                   (21, 22, f(85, 100), "point-estimate pass"),
+                                   (33, 34, f(85, 100), "pass"),
+                                   (43, 45, f(85, 100), "pass"),
+                                   (42, 45, f(85, 100), "point-estimate pass"),
+                                   (180, 200, f(85, 100), "pass"),
+                                   (162, 180, f(85, 100), "point-estimate pass"),
+                                   (73, 73, f(95, 100), "pass"),
+                                   (72, 72, f(95, 100), "point-estimate pass"),
+                                   (109, 110, f(95, 100), "pass"),
+                                   (108, 110, f(95, 100), "point-estimate pass")]:
+            self.assertEqual(wilson.verdict(k, n, target), want, f"{k}/{n} against {target}")
+
+    def test_miss_just_under(self):
+        # 84 of 99 is 84.8%, under 85% by less than a point.
+        self.assertEqual(wilson.verdict(84, 99, fractions.Fraction(85, 100)), "miss")
+        self.assertEqual(wilson.verdict(85, 100, fractions.Fraction(85, 100)),
+                         "point-estimate pass")
+
 
 class Size(unittest.TestCase):
     def test_research_figure(self):
-        # The research note's "about 140 per family for a 90% rate to about 5 points".
+        # MO-20's research note: "about 140 per family" puts a 90% rate within about 5 points.
         self.assertEqual(wilson.size(0.9, 0.05), 141)
         self.assertLessEqual(wilson.centre_and_half(0.9, 141)[1], 0.05)
         self.assertGreater(wilson.centre_and_half(0.9, 140)[1], 0.05)
+
+    def test_width_too_small(self):
+        for width in (0.0009,):
+            with self.assertRaises(ValueError):
+                wilson.size(0.9, width)
 
 
 class Kappa(unittest.TestCase):
@@ -88,6 +119,16 @@ class Kappa(unittest.TestCase):
     def test_three_verdicts_and_perfect(self):
         pairs = [("pass", "pass"), ("close", "close"), ("fail", "fail"), ("pass", "pass")]
         self.assertAlmostEqual(wilson.kappa(pairs)[0], 1.0, places=12)
+
+    def test_label_only_one_grader_uses(self):
+        pairs = [("pass", "pass"), ("pass", "fail"), ("fail", "fail"), ("fail", "fail")]
+        value, observed = wilson.kappa(pairs)
+        self.assertAlmostEqual(observed, 0.75, places=12)
+        # A: pass 1/2, fail 1/2; B: pass 1/4, fail 3/4; expected 1/8 + 3/8 = 1/2.
+        self.assertAlmostEqual(value, 0.5, places=12)
+        # A only ever says pass, so the fail B gives once is a label A never uses: kappa 0.
+        value, _ = wilson.kappa([("pass", "pass"), ("pass", "fail"), ("pass", "pass")])
+        self.assertAlmostEqual(value, 0.0, places=12)
 
     def test_one_verdict_only(self):
         value, observed = wilson.kappa([("pass", "pass")] * 5)
@@ -112,13 +153,25 @@ class Command(unittest.TestCase):
 
     def test_kappa_file(self):
         with tempfile.NamedTemporaryFile("w", suffix=".tsv", delete=False) as f:
-            f.write("pass\tpass\nfail\tpass\n\nfail\tfail\npass\tpass\n")
+            f.write("Pass\tpass\nfail\tyes\n\nNO\t fail \nyes\tpass\n")
         result = run("--kappa", f.name)
         pathlib.Path(f.name).unlink()
-        self.assertEqual(result.stdout, "kappa 0.500, observed agreement 75.0%\n")
+        self.assertEqual(result.stdout, "kappa 0.500, observed agreement 75.0%, 4 programs\n")
+
+    def test_kappa_file_errors(self):
+        for text in ["yes\tpass\nmaybe\tfail\n", "pass\tpass\tpass\n", "pass\n"]:
+            with tempfile.NamedTemporaryFile("w", suffix=".tsv", delete=False) as f:
+                f.write(text)
+            result = run("--kappa", f.name)
+            pathlib.Path(f.name).unlink()
+            self.assertEqual(result.returncode, 2, text)
+            self.assertIn(":", result.stderr, text)
 
     def test_usage_errors(self):
-        for args in [(), ("5",), ("7", "6"), ("5", "6", "--goal", "1"), ("--size", "2", "0.1"),
+        for args in [(), ("5",), ("7", "6"), ("0", "0"), ("1_0", "20"), ("-1", "5"),
+                     ("5", "6", "--goal", "1"), ("5", "6", "--target", "85"),
+                     ("5", "6", "--target", "1/0"), ("5", "6", "--target", "much"),
+                     ("--size", "2", "0.1"), ("--size", "0.9", "0"),
                      ("--kappa", "/nonexistent/file")]:
             result = run(*args)
             self.assertEqual(result.returncode, 2, args)

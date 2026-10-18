@@ -8,7 +8,8 @@
                                                     around a true rate P is at most W either side
   python3 learnability/wilson.py --kappa FILE       Cohen's kappa between two graders: FILE has
                                                     one program per line, the two verdicts
-                                                    separated by a tab
+                                                    separated by a tab, each `pass` or `fail`
+                                                    (`yes` and `no` mean the same, in any case)
 
 A rate or target is written as a fraction (0.85), a percentage (85%) or a ratio (5/6).
 Verdicts against a target:
@@ -20,10 +21,11 @@ The exit status is 0 for any result and 2 for a usage error, so a script can pri
 
 import fractions
 import math
+import statistics
 import sys
 
 # The two-sided 95% normal quantile, the protocol's only confidence level.
-Z = 1.959963984540054
+Z = statistics.NormalDist().inv_cdf(0.975)
 
 
 def centre_and_half(p, n):
@@ -61,8 +63,8 @@ def verdict(k, n, target):
 
 def size(rate, width):
     """The fewest trials whose Wilson interval around a true rate is at most width either side."""
-    if not 0 <= rate <= 1 or width <= 0:
-        raise ValueError("need 0 <= P <= 1 and W > 0")
+    if not 0 <= rate <= 1 or width < 0.001:
+        raise ValueError("need 0 <= P <= 1 and W >= 0.001")
     n = 1
     while centre_and_half(rate, n)[1] > width:
         n += 1
@@ -103,6 +105,9 @@ def percent(x):
     return f"{100 * x:.1f}%"
 
 
+VERDICTS = {"pass": "pass", "yes": "pass", "fail": "fail", "no": "fail"}
+
+
 def read_pairs(path):
     pairs = []
     with open(path, encoding="utf-8") as f:
@@ -113,7 +118,14 @@ def read_pairs(path):
             fields = line.split("\t")
             if len(fields) != 2:
                 raise ValueError(f"{path}:{number}: want two verdicts separated by a tab")
-            pairs.append((fields[0].strip(), fields[1].strip()))
+            pair = []
+            for field in fields:
+                label = VERDICTS.get(field.strip().lower())
+                if label is None:
+                    raise ValueError(f"{path}:{number}: a verdict is pass, fail, yes or no, "
+                                     f"not {field.strip()!r}")
+                pair.append(label)
+            pairs.append((pair[0], pair[1]))
     return pairs
 
 
@@ -123,11 +135,14 @@ def main(args):
         print(size(float(rate), float(width)))
         return 0
     if len(args) == 2 and args[0] == "--kappa":
-        value, observed = kappa(read_pairs(args[1]))
+        pairs = read_pairs(args[1])
+        value, observed = kappa(pairs)
         shown = "undefined" if math.isnan(value) else f"{value:.3f}"
-        print(f"kappa {shown}, observed agreement {percent(observed)}")
+        print(f"kappa {shown}, observed agreement {percent(observed)}, {len(pairs)} programs")
         return 0
     if len(args) in (2, 4) and not args[0].startswith("-"):
+        if not all(a.isascii() and a.isdigit() for a in args[:2]):
+            raise ValueError(f"K and N are whole numbers, not {args[0]} and {args[1]}")
         k, n = int(args[0]), int(args[1])
         low, high = wilson(k, n)
         line = f"{k}/{n} = {percent(k / n)}, 95% Wilson interval [{percent(low)}, {percent(high)}]"
