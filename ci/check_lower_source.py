@@ -15,6 +15,8 @@ import tempfile
 from check_core_check import VERSION, WORLD, parse, wire
 from check_vm import oracle, run
 
+LIBRARY = "lib"  # the repository's lib/, relative to the working directory ci/check.sh runs from
+
 
 CASES = {
     "minimum": ("fn main() : Int\nif -9223372036854775808 < 0: 19 else: 1\nend", 19),
@@ -795,7 +797,7 @@ def check_specs(driver, vm, root, world):
         source = root / "main.mo"
         original = ("module Main\n" + body + "\n").encode()
         source.write_bytes(original)
-        report = subprocess.run([str(driver), str(source)], capture_output=True,
+        report = subprocess.run([str(driver), str(source), LIBRARY], capture_output=True,
                                 text=True, timeout=30)
         assert report.returncode == 0, (name, report.returncode, report.stderr)
         path = root / f"spec-{name}.core"
@@ -873,7 +875,7 @@ def main():
         for name, (body, status) in CASES.items():
             source = root / "main.mo"
             source.write_text("module Main\n" + body + "\n")
-            result = subprocess.run([str(driver), str(source)], capture_output=True,
+            result = subprocess.run([str(driver), str(source), LIBRARY], capture_output=True,
                                     text=True, timeout=30)
             assert result.returncode == 0, (name, result.returncode, result.stderr)
             path = root / f"{name}.core"
@@ -902,12 +904,12 @@ def main():
         for name, body in REFUSALS.items():
             source = root / "main.mo"
             source.write_text("module Main\n" + body + "\n")
-            result = subprocess.run([str(driver), str(source)], capture_output=True,
+            result = subprocess.run([str(driver), str(source), LIBRARY], capture_output=True,
                                     text=True, timeout=30)
             assert result.returncode == 1 and result.stdout == "" and result.stderr.startswith("E1150:"), (name, result)
         print(f"lower source: {len(REFUSALS)} explicit deferred-global/native refusals")
         for path in sorted(pathlib.Path("examples").glob("*.mo")):
-            result = subprocess.run([str(driver), str(path.resolve())], capture_output=True,
+            result = subprocess.run([str(driver), str(path.resolve()), LIBRARY], capture_output=True,
                                     text=True, timeout=30)
             if result.returncode == 0:
                 parse(result.stdout)  # the driver already asserts Core's checker verdict
