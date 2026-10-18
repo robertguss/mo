@@ -98,9 +98,10 @@ static void *new_table(size_t n, size_t size) {
 /* The file's strings and the name table over them, as name needs them. */
 #define STRINGS(r)                                                                                 \
     ((r)->file->string_count <= MOST_ENTRIES &&                                                    \
-     __CPROVER_r_ok((r)->file->strings,                                                            \
-                    (size_t)(r)->file->string_count * sizeof(struct mo_bytecode_string)) &&        \
-     __CPROVER_r_ok((r)->names.canonical, (size_t)(r)->file->string_count * sizeof(uint32_t)))
+     ((r)->file->string_count == 0 ||                                                              \
+      (__CPROVER_r_ok((r)->file->strings,                                                          \
+                      (size_t)(r)->file->string_count * sizeof(struct mo_bytecode_string)) &&      \
+       __CPROVER_r_ok((r)->names.canonical, (size_t)(r)->file->string_count * sizeof(uint32_t)))))
 
 /* A decoded type table, shared by the file and the reader. */
 #define TYPES(r)                                                                                   \
