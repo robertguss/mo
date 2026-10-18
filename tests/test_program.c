@@ -128,7 +128,7 @@ static void init_with_library(struct fixture *f, const char *text) {
     mo_arena_init(&f->syntax, 64 << 20);
     mo_arena_init(&f->arena, MO_CLI_CHECK_SIZE);
     MO_ASSERT(mo_sources_init(&f->sources) && mo_diags_init(&f->diags));
-    snprintf(f->folder, sizeof(f->folder), "/tmp/mo-program-XXXXXX");
+    memcpy(f->folder, "/tmp/mo-program-XXXXXX", sizeof("/tmp/mo-program-XXXXXX"));
     MO_ASSERT(mkdtemp(f->folder) != NULL);
     int n = snprintf(f->path, sizeof(f->path), "%s/main.mo", f->folder);
     MO_ASSERT(n > 0 && (size_t)n < sizeof(f->path));
