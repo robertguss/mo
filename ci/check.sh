@@ -13,10 +13,11 @@
 #   fuzz        every fuzz target briefly
 #   drivers     the checks that drive the test executables: goldens, Unicode, Lean, codegen
 #   static      grammar, module dependencies, library map, frozen tool tasks, formatting, clang-tidy
+#   cbmc        the CBMC proofs of the bytecode reader (cbmc/README.md)
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-all_groups=" gcc clang sanitize fuzz drivers static "
+all_groups=" gcc clang sanitize fuzz drivers static cbmc "
 groups="$*"
 for group in $groups; do
 	if [[ "$all_groups" != *" $group "* ]]; then
@@ -287,6 +288,28 @@ for driver in build/{gcc,clang}/debug/tests/test_format.test; do
 done
 if [[ -n "$formatter_driver" ]]; then "$formatter_driver" --fixed-points;
 else missing "no source formatter test executable is built"; fi
+fi
+
+if want cbmc; then
+step "CBMC: the bytecode reader is memory-safe on every small input (cbmc/README.md)"
+if have cbmc && have goto-cc && have goto-instrument; then
+	# The proofs and the check that every block they prove runs on some input take about eight
+	# and six minutes one at a time, so they share the machine's processors.
+	jobs=$(($(getconf _NPROCESSORS_ONLN) / 2))
+	((jobs >= 1)) || jobs=1
+	mkdir -p build
+	MO_CBMC_JOBS=$jobs bash cbmc/prove.sh --reach >build/cbmc-reach.txt 2>&1 &
+	reach=$!
+	proofs_status=0
+	MO_CBMC_JOBS=$jobs make --no-print-directory cbmc || proofs_status=$?
+	step "CBMC: every block of each proved function runs on some input, so no proof is vacuous"
+	reach_status=0
+	wait "$reach" || reach_status=$?
+	cat build/cbmc-reach.txt
+	((proofs_status == 0 && reach_status == 0))
+else
+	missing "cbmc is not installed"
+fi
 fi
 
 if ((${#skipped[@]} == 0)); then

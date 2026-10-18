@@ -203,6 +203,81 @@ static MO_MUST_USE const struct mo_type_field *fields(struct reader *r, uint32_t
     return p;
 }
 
+/* A choice's name and cases, after its kind. */
+static void choice_cases(struct reader *r, struct mo_type *t) {
+    t->name = name(r, false);
+    struct mo_type_case *cases = array(r, &t->case_count, MO_LIMIT_CHOICE_CASES, 8, sizeof *cases,
+                                       _Alignof(struct mo_type_case));
+    t->cases = cases;
+    if (t->case_count == 0) {
+        refuse(r, "choice has no cases");
+    }
+    for (uint32_t j = 0; j < t->case_count && !r->failed; j++) {
+        cases[j].name = name(r, false);
+        cases[j].fields = fields(r, &cases[j].field_count, true);
+        cases[j].unnamed = cases[j].field_count == 1 && cases[j].fields[0].name == NULL;
+        t->has_fields |= cases[j].field_count != 0;
+    }
+}
+
+/* One type's entry, after its kind. */
+static void type_entry(struct reader *r, struct mo_type *t) {
+    switch (t->kind) {
+    case MO_TYPE_UNIT:
+    case MO_TYPE_BOOL:
+    case MO_TYPE_BYTE:
+    case MO_TYPE_INT:
+    case MO_TYPE_FLOAT:
+    case MO_TYPE_CHAR:
+    case MO_TYPE_TIME:
+    case MO_TYPE_DURATION:
+    case MO_TYPE_DECIMAL:
+    case MO_TYPE_RANGE:
+    case MO_TYPE_TEXT:
+    case MO_TYPE_BYTES:
+    case MO_TYPE_BIGINT:
+        break;
+    case MO_TYPE_TUPLE:
+    case MO_TYPE_LIST:
+    case MO_TYPE_SET:
+    case MO_TYPE_MAP:
+    case MO_TYPE_FUNCTION: {
+        uint32_t count_offset = (uint32_t)r->offset;
+        t->parameters =
+            indices(r, &t->parameter_count,
+                    t->kind == MO_TYPE_FUNCTION ? MO_LIMIT_BYTECODE_PARAMETERS : MO_LIMIT_FIELDS);
+        if ((t->kind == MO_TYPE_TUPLE && t->parameter_count < 2) ||
+            ((t->kind == MO_TYPE_LIST || t->kind == MO_TYPE_SET) && t->parameter_count != 1) ||
+            (t->kind == MO_TYPE_MAP && t->parameter_count != 2)) {
+            r->field = count_offset;
+            refuse(r, "invalid type parameter count");
+        }
+        if (t->kind == MO_TYPE_FUNCTION) {
+            t->result = word(r);
+        }
+        break;
+    }
+    case MO_TYPE_RECORD:
+        t->name = name(r, false);
+        t->fields = fields(r, &t->field_count, false);
+        break;
+    case MO_TYPE_CHOICE:
+        choice_cases(r, t);
+        break;
+    case MO_TYPE_ENV:
+        t->function = word(r);
+        break;
+    case MO_TYPE_CAPABILITY: {
+        uint32_t cap = word(r);
+        if (cap > MO_CAP_RANDOM) {
+            refuse(r, "unknown capability");
+        }
+        t->capability = (enum mo_capability)cap;
+        break;
+    }
+    }
+}
+
 static void types(struct reader *r) {
     struct mo_bytecode *f = r->file;
     struct mo_type *p =
@@ -218,73 +293,7 @@ static void types(struct reader *r) {
         }
         t->kind = (enum mo_type_kind)kind;
         t->defined = true;
-        switch (t->kind) {
-        case MO_TYPE_UNIT:
-        case MO_TYPE_BOOL:
-        case MO_TYPE_BYTE:
-        case MO_TYPE_INT:
-        case MO_TYPE_FLOAT:
-        case MO_TYPE_CHAR:
-        case MO_TYPE_TIME:
-        case MO_TYPE_DURATION:
-        case MO_TYPE_DECIMAL:
-        case MO_TYPE_RANGE:
-        case MO_TYPE_TEXT:
-        case MO_TYPE_BYTES:
-        case MO_TYPE_BIGINT:
-            break;
-        case MO_TYPE_TUPLE:
-        case MO_TYPE_LIST:
-        case MO_TYPE_SET:
-        case MO_TYPE_MAP:
-        case MO_TYPE_FUNCTION: {
-            uint32_t count_offset = (uint32_t)r->offset;
-            t->parameters = indices(r, &t->parameter_count,
-                                    t->kind == MO_TYPE_FUNCTION ? MO_LIMIT_BYTECODE_PARAMETERS
-                                                                : MO_LIMIT_FIELDS);
-            if ((t->kind == MO_TYPE_TUPLE && t->parameter_count < 2) ||
-                ((t->kind == MO_TYPE_LIST || t->kind == MO_TYPE_SET) && t->parameter_count != 1) ||
-                (t->kind == MO_TYPE_MAP && t->parameter_count != 2)) {
-                r->field = count_offset;
-                refuse(r, "invalid type parameter count");
-            }
-            if (t->kind == MO_TYPE_FUNCTION) {
-                t->result = word(r);
-            }
-            break;
-        }
-        case MO_TYPE_RECORD:
-            t->name = name(r, false);
-            t->fields = fields(r, &t->field_count, false);
-            break;
-        case MO_TYPE_CHOICE: {
-            t->name = name(r, false);
-            struct mo_type_case *cases = array(r, &t->case_count, MO_LIMIT_CHOICE_CASES, 8,
-                                               sizeof *cases, _Alignof(struct mo_type_case));
-            t->cases = cases;
-            if (t->case_count == 0) {
-                refuse(r, "choice has no cases");
-            }
-            for (uint32_t j = 0; j < t->case_count && !r->failed; j++) {
-                cases[j].name = name(r, false);
-                cases[j].fields = fields(r, &cases[j].field_count, true);
-                cases[j].unnamed = cases[j].field_count == 1 && cases[j].fields[0].name == NULL;
-                t->has_fields |= cases[j].field_count != 0;
-            }
-            break;
-        }
-        case MO_TYPE_ENV:
-            t->function = word(r);
-            break;
-        case MO_TYPE_CAPABILITY: {
-            uint32_t cap = word(r);
-            if (cap > MO_CAP_RANDOM) {
-                refuse(r, "unknown capability");
-            }
-            t->capability = (enum mo_capability)cap;
-            break;
-        }
-        }
+        type_entry(r, t);
     }
     /* Shapes depend only on field kinds and whether nested choices have fields. No recursive
      * fixed point is needed; validate indices before calling the shared shape function. */
@@ -337,6 +346,21 @@ static void constants(struct reader *r) {
     }
 }
 
+/* A function's parameters: a count, then a type and an ownership for each. */
+static void parameters(struct reader *r, struct mo_bytecode_function *fn) {
+    struct mo_parameter *params = array(r, &fn->parameter_count, MO_LIMIT_BYTECODE_PARAMETERS, 8,
+                                        sizeof *params, _Alignof(struct mo_parameter));
+    fn->parameters = params;
+    for (uint32_t j = 0; j < fn->parameter_count; j++) {
+        params[j].type = word(r);
+        uint32_t ownership = word(r);
+        if (ownership > MO_PARAMETER_BORROWED) {
+            refuse(r, "invalid parameter ownership");
+        }
+        params[j].ownership = (enum mo_parameter_ownership)ownership;
+    }
+}
+
 static void functions(struct reader *r) {
     struct mo_bytecode *f = r->file;
     struct mo_bytecode_function *p = array(r, &f->function_count, MO_LIMIT_FUNCTIONS, 36, sizeof *p,
@@ -354,23 +378,94 @@ static void functions(struct reader *r) {
         }
         fn->kind = (enum mo_function_kind)kind;
         fn->spec_code = boolean(r);
-        struct mo_parameter *params = array(r, &fn->parameter_count, MO_LIMIT_BYTECODE_PARAMETERS,
-                                            8, sizeof *params, _Alignof(struct mo_parameter));
-        fn->parameters = params;
-        for (uint32_t j = 0; j < fn->parameter_count; j++) {
-            params[j].type = word(r);
-            uint32_t ownership = word(r);
-            if (ownership > MO_PARAMETER_BORROWED) {
-                refuse(r, "invalid parameter ownership");
-            }
-            params[j].ownership = (enum mo_parameter_ownership)ownership;
-        }
+        parameters(r, fn);
         fn->result_type = word(r);
         fn->capture_types = indices(r, &fn->capture_count, MO_LIMIT_FIELDS);
         fn->register_types = indices(r, &fn->register_count, MO_LIMIT_FUNCTION_REGISTERS);
         r->code_positions[i] = (uint32_t)r->offset + 4;
         fn->code = indices(r, &fn->code_count, MO_LIMIT_FUNCTION_CODE_WORDS);
     }
+}
+
+/* One module's entry: its name, its exported types, functions and globals. */
+static void module_entry(struct reader *r, struct mo_bytecode_module *m) {
+    m->name = word(r);
+    struct mo_bytecode_type_export *exports =
+        array(r, &m->type_count, MO_LIMIT_MODULE_NAMES, 8, sizeof *exports,
+              _Alignof(struct mo_bytecode_type_export));
+    m->types = exports;
+    for (uint32_t j = 0; j < m->type_count; j++) {
+        exports[j].type = word(r);
+        exports[j].contents_exposed = boolean(r);
+    }
+    m->functions = indices(r, &m->function_count, MO_LIMIT_MODULE_NAMES);
+    m->globals = indices(r, &m->global_count, MO_LIMIT_MODULE_NAMES);
+}
+
+/* One function's debug entry, recording where each of its tables starts. */
+static void debug_entry(struct reader *r, struct mo_bytecode_debug *d,
+                        struct mo_bytecode_debug_positions *positions) {
+    positions->spans = (uint32_t)r->offset;
+    struct mo_bytecode_span *spans = array(r, &d->span_count, MO_LIMIT_DEBUG_ENTRIES, 16,
+                                           sizeof *spans, _Alignof(struct mo_bytecode_span));
+    d->spans = spans;
+    for (uint32_t j = 0; j < d->span_count; j++) {
+        spans[j].code_offset = word(r);
+        spans[j].file = word(r);
+        spans[j].start = word(r);
+        spans[j].end = word(r);
+    }
+    positions->names = (uint32_t)r->offset;
+    struct mo_bytecode_register_name *names =
+        array(r, &d->name_count, MO_LIMIT_DEBUG_ENTRIES, 16, sizeof *names,
+              _Alignof(struct mo_bytecode_register_name));
+    d->names = names;
+    for (uint32_t j = 0; j < d->name_count; j++) {
+        names[j].reg = word(r);
+        names[j].name = word(r);
+        names[j].code_start = word(r);
+        names[j].code_end = word(r);
+    }
+    positions->metadata = (uint32_t)r->offset;
+    d->text = word(r);
+    d->file = word(r);
+    d->start = word(r);
+    d->end = word(r);
+    d->subject = word(r);
+    uint32_t expectation = word(r);
+    if (expectation > MO_BYTECODE_FORBIDS) {
+        refuse(r, "invalid anchor expectation");
+    }
+    d->expectation = (enum mo_bytecode_anchor_expectation)expectation;
+    positions->lines = (uint32_t)r->offset;
+    struct mo_bytecode_spec_line *lines =
+        array(r, &d->line_count, MO_LIMIT_DEBUG_ENTRIES, 16, sizeof *lines,
+              _Alignof(struct mo_bytecode_spec_line));
+    d->lines = lines;
+    for (uint32_t j = 0; j < d->line_count; j++) {
+        lines[j].file = word(r);
+        lines[j].start = word(r);
+        lines[j].end = word(r);
+        lines[j].text = word(r);
+    }
+}
+
+static void layout_entry(struct reader *r, struct mo_layout *l) {
+    uint32_t kind = word(r);
+    if (kind > MO_LAYOUT_CLOSURE) {
+        refuse(r, "unknown layout kind");
+    }
+    l->kind = (enum mo_layout_kind)kind;
+    l->type = word(r);
+    l->case_index = l->kind == MO_LAYOUT_CASE ? word(r) : MO_NO_INDEX;
+    l->function = l->kind == MO_LAYOUT_CLOSURE ? word(r) : MO_NO_INDEX;
+    l->fields = indices(r, &l->field_count, MO_LIMIT_FIELDS);
+}
+
+static void file_entry(struct reader *r, struct mo_bytecode_bytes *file) {
+    file->bytes = blob(r, &file->length, false);
+    if (!r->failed && (file->length == 0 || memchr(file->bytes, 0, file->length) != NULL))
+        refuse(r, "filename must be nonempty and contain no NUL");
 }
 
 static void sections(struct reader *r) {
@@ -397,16 +492,7 @@ static void sections(struct reader *r) {
     f->layouts = layouts;
     r->layouts = layouts;
     for (uint32_t i = 0; i < f->layout_count && !r->failed; i++) {
-        struct mo_layout *l = &layouts[i];
-        uint32_t kind = word(r);
-        if (kind > MO_LAYOUT_CLOSURE) {
-            refuse(r, "unknown layout kind");
-        }
-        l->kind = (enum mo_layout_kind)kind;
-        l->type = word(r);
-        l->case_index = l->kind == MO_LAYOUT_CASE ? word(r) : MO_NO_INDEX;
-        l->function = l->kind == MO_LAYOUT_CLOSURE ? word(r) : MO_NO_INDEX;
-        l->fields = indices(r, &l->field_count, MO_LIMIT_FIELDS);
+        layout_entry(r, &layouts[i]);
     }
     constants(r);
     struct mo_bytecode_global *globals =
@@ -425,27 +511,13 @@ static void sections(struct reader *r) {
               _Alignof(struct mo_bytecode_module));
     f->modules = modules;
     for (uint32_t i = 0; i < f->module_count && !r->failed; i++) {
-        struct mo_bytecode_module *m = &modules[i];
-        m->name = word(r);
-        struct mo_bytecode_type_export *exports =
-            array(r, &m->type_count, MO_LIMIT_MODULE_NAMES, 8, sizeof *exports,
-                  _Alignof(struct mo_bytecode_type_export));
-        m->types = exports;
-        for (uint32_t j = 0; j < m->type_count; j++) {
-            exports[j].type = word(r);
-            exports[j].contents_exposed = boolean(r);
-        }
-        m->functions = indices(r, &m->function_count, MO_LIMIT_MODULE_NAMES);
-        m->globals = indices(r, &m->global_count, MO_LIMIT_MODULE_NAMES);
+        module_entry(r, &modules[i]);
     }
     struct mo_bytecode_bytes *files = array(r, &f->file_count, MO_LIMIT_FILES, 5, sizeof *files,
                                             _Alignof(struct mo_bytecode_bytes));
     f->files = files;
     for (uint32_t i = 0; i < f->file_count && !r->failed; i++) {
-        files[i].bytes = blob(r, &files[i].length, false);
-        if (!r->failed &&
-            (files[i].length == 0 || memchr(files[i].bytes, 0, files[i].length) != NULL))
-            refuse(r, "filename must be nonempty and contain no NUL");
+        file_entry(r, &files[i]);
     }
     struct mo_bytecode_debug *debug = array(r, &f->debug_count, MO_LIMIT_FUNCTIONS, 36,
                                             sizeof *debug, _Alignof(struct mo_bytecode_debug));
@@ -453,50 +525,7 @@ static void sections(struct reader *r) {
     r->debug_positions = scratch(r, f->debug_count, sizeof *r->debug_positions,
                                  _Alignof(struct mo_bytecode_debug_positions));
     for (uint32_t i = 0; i < f->debug_count && !r->failed; i++) {
-        struct mo_bytecode_debug *d = &debug[i];
-        r->debug_positions[i].spans = (uint32_t)r->offset;
-        struct mo_bytecode_span *spans = array(r, &d->span_count, MO_LIMIT_DEBUG_ENTRIES, 16,
-                                               sizeof *spans, _Alignof(struct mo_bytecode_span));
-        d->spans = spans;
-        for (uint32_t j = 0; j < d->span_count; j++) {
-            spans[j].code_offset = word(r);
-            spans[j].file = word(r);
-            spans[j].start = word(r);
-            spans[j].end = word(r);
-        }
-        r->debug_positions[i].names = (uint32_t)r->offset;
-        struct mo_bytecode_register_name *names =
-            array(r, &d->name_count, MO_LIMIT_DEBUG_ENTRIES, 16, sizeof *names,
-                  _Alignof(struct mo_bytecode_register_name));
-        d->names = names;
-        for (uint32_t j = 0; j < d->name_count; j++) {
-            names[j].reg = word(r);
-            names[j].name = word(r);
-            names[j].code_start = word(r);
-            names[j].code_end = word(r);
-        }
-        r->debug_positions[i].metadata = (uint32_t)r->offset;
-        d->text = word(r);
-        d->file = word(r);
-        d->start = word(r);
-        d->end = word(r);
-        d->subject = word(r);
-        uint32_t expectation = word(r);
-        if (expectation > MO_BYTECODE_FORBIDS) {
-            refuse(r, "invalid anchor expectation");
-        }
-        d->expectation = (enum mo_bytecode_anchor_expectation)expectation;
-        r->debug_positions[i].lines = (uint32_t)r->offset;
-        struct mo_bytecode_spec_line *lines =
-            array(r, &d->line_count, MO_LIMIT_DEBUG_ENTRIES, 16, sizeof *lines,
-                  _Alignof(struct mo_bytecode_spec_line));
-        d->lines = lines;
-        for (uint32_t j = 0; j < d->line_count; j++) {
-            lines[j].file = word(r);
-            lines[j].start = word(r);
-            lines[j].end = word(r);
-            lines[j].text = word(r);
-        }
+        debug_entry(r, &debug[i], &r->debug_positions[i]);
     }
 }
 

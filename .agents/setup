@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Prepares an orb for robertguss/mo: C compilers with sanitizers and libFuzzer,
-# clang-format and clang-tidy, make, Bison for the executable grammar, and
+# clang-format and clang-tidy, make, Bison for the executable grammar, CBMC for
+# the bytecode reader's proofs (cbmc/), and
 # Lean 4, through elan, for Mo Core. Installs only; never builds or runs anything.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -18,7 +19,7 @@ install_missing() {
 	fi
 }
 
-install_missing build-essential clang clang-format clang-tidy make git bison
+install_missing build-essential clang clang-format clang-tidy make git bison cbmc
 
 # libFuzzer and the sanitizer runtimes ship in a package named after clang's
 # major version.
