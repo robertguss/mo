@@ -31,7 +31,8 @@ struct loader {
     struct mo_module_set *out;
     const char *real_root;
     const char *real_library;
-    uint32_t index; /* AVL root, one-based; zero is absent */
+    const char *real_entry; /* the entry's real path when the entry is a library file */
+    uint32_t index;         /* AVL root, one-based; zero is absent */
     bool failed;
 };
 
@@ -450,6 +451,11 @@ static MO_MUST_USE bool library_files(struct loader *l, const char *root) {
     qsort(files, count, sizeof(*files), compare_paths);
     size_t root_length = strlen(root);
     for (uint32_t i = 0; i < count; i++) {
+        if (l->real_entry != NULL) {
+            char resolved[MO_LIMIT_PATH_SIZE + 1];
+            if (realpath(files[i], resolved) != NULL && strcmp(resolved, l->real_entry) == 0)
+                continue; /* the entry is this file, already loaded as module 0 */
+        }
         uint32_t id = read_module(l, files[i], NULL, unavailable, true);
         if (id == 0)
             return false;
@@ -588,7 +594,25 @@ static MO_MUST_USE struct mo_module_set *load(struct mo_arena *arena, struct mo_
     entry = normal_path(&l, entry);
     if (entry == NULL)
         return NULL;
-    if (read_module(&l, entry, NULL, (struct mo_span){UINT32_MAX, 0, 0}, false) == 0)
+    if (library != NULL) {
+        library = normal_path(&l, library);
+        if (library == NULL)
+            return NULL;
+        l.real_library = real_path(&l, library, (struct mo_span){UINT32_MAX, 0, 0}, true);
+        if (l.real_library == NULL)
+            return NULL;
+        /* An entry inside the library folder is a library module itself, so that the toolchain
+         * can check and test its own library, and it isn't read a second time below. */
+        char resolved[MO_LIMIT_PATH_SIZE + 1];
+        size_t n = strlen(l.real_library);
+        if (realpath(entry, resolved) != NULL && strncmp(l.real_library, resolved, n) == 0 &&
+            (n == 1 || resolved[n] == '/')) {
+            l.real_entry = real_path(&l, entry, (struct mo_span){UINT32_MAX, 0, 0}, false);
+            if (l.real_entry == NULL)
+                return NULL;
+        }
+    }
+    if (read_module(&l, entry, NULL, (struct mo_span){UINT32_MAX, 0, 0}, l.real_entry != NULL) == 0)
         return NULL;
     char *relative = path_text(&l, l.items[0].header.path, true);
     if (relative == NULL)
@@ -612,14 +636,8 @@ static MO_MUST_USE struct mo_module_set *load(struct mo_arena *arena, struct mo_
     l.real_root = real_path(&l, root, l.items[0].header.path->span, false);
     if (l.real_root == NULL)
         return NULL;
-    if (library != NULL) {
-        library = normal_path(&l, library);
-        if (library == NULL)
-            return NULL;
-        l.real_library = real_path(&l, library, (struct mo_span){UINT32_MAX, 0, 0}, true);
-        if (l.real_library == NULL || !library_files(&l, library))
-            return NULL;
-    }
+    if (library != NULL && !library_files(&l, library))
+        return NULL;
     if (!graph(&l))
         return NULL;
     uint32_t before = diags->count;

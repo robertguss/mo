@@ -1782,6 +1782,23 @@ static void library_roots(void) {
     CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_NAME);
     CHECK(f.diags.items[0].primary.span.file == 1);
     finish(&f);
+    /* A library file as the entry is a library module itself, and is not read twice. */
+    write_file(lib_helper, library_source, sizeof(library_source) - 1);
+    init(&f, 16 << 20);
+    set = mo_load_program(&f.arena, &f.sources, support, library, &f.diags);
+    CHECK(set != NULL && f.diags.count == 0);
+    if (set != NULL) {
+        CHECK(set->count == 2 && strcmp(set->names[0], "Support") == 0);
+        CHECK(set->library[0] && set->library[1] && strcmp(set->names[1], "Helper") == 0);
+        CHECK(set->uses[0][0] == 1 && f.sources.count == 2);
+        CHECK(strncmp(set->root, library, strlen(library)) == 0);
+    }
+    finish(&f);
+    /* The program's own file of the same name is not the library's. */
+    init(&f, 16 << 20);
+    set = mo_load_program(&f.arena, &f.sources, helper, library, &f.diags);
+    CHECK(set == NULL && f.diags.count == 1 && f.diags.items[0].code == MO_CODE_MODULE_RESERVED);
+    finish(&f);
     const uint8_t json_source[] = "module Main\nuse Json\n";
     write_file(entry, json_source, sizeof(json_source) - 1);
     init(&f, 16 << 20);
