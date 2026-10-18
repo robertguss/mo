@@ -14,7 +14,7 @@ A few forms the reference requires are still unfinished. `mo check` reports E110
 
 `mo test` exits 1 with E1400 when it cannot build the inputs of a selected promise, such as one whose function takes a function. The headline is "this build cannot generate inputs for this promise". Keep the promise. Run the other examples, promises and tests by name with `--only`, as `--list` prints them.
 
-The `lib/` folder holds library modules written in Mo, and every `mo` command loads them with your program. `mo check lib/list.mo` and `mo test lib/list.mo` check and test one of them on its own. `lib/list.mo` has `List`'s `filter`, `filter_map`, `flat_map`, `reduce`, `any?`, `sort_by`, `sort`, `min` and `group_by`; the rest of section 14 is still built in. Section 10.5 names what is always in scope.
+The `lib/` folder holds library modules written in Mo, and every `mo` command loads them with your program. `mo check lib/list.mo` and `mo test lib/list.mo` check and test one of them on its own. `lib/list.mo` has `List`'s `map`, `filter`, `filter_map`, `flat_map`, `reduce`, `find`, `any?`, `all?`, `count`, `sort_by`, `sort_by_desc`, `sort`, `min`, `max` and `group_by`, `lib/map.mo` has `Map.update` and `lib/option.mo` has `Option.or_fail`; the rest of section 14 is still built in. Section 10.5 names what is always in scope.
 
 ## Write this program
 

@@ -191,12 +191,22 @@ static MO_MUST_USE uint32_t function_index(const struct dependencies *p,
     return p->constants->count + p->functions[signature - p->program->signatures->items];
 }
 
-static MO_MUST_USE bool higher_order_native(const char *native) {
-    return native != NULL &&
-           (strcmp(native, "List.all?") == 0 || strcmp(native, "List.count") == 0 ||
-            strcmp(native, "List.find") == 0 || strcmp(native, "List.map") == 0 ||
-            strcmp(native, "List.max") == 0 || strcmp(native, "List.sort_by_desc") == 0 ||
-            strcmp(native, "Map.update") == 0);
+/* The toolchain library's functions take function and ability arguments from their call sites,
+ * which add the dependencies: inside a library body, calling a function parameter or using a
+ * parameter's ability is not an unknown dependency. */
+static MO_MUST_USE bool library_symbol(const struct dependencies *p,
+                                       const struct mo_symbol *symbol) {
+    return symbol != NULL && symbol->declaration->kind == MO_S_FN && symbol->module != UINT32_MAX &&
+           p->program->interfaces->scopes[symbol->module].library;
+}
+
+static MO_MUST_USE bool library_body(const struct dependencies *p, uint32_t from) {
+    uint32_t count = p->constants->count;
+    return from >= count &&
+           p->program->functions[from - count].signature->function->module != UINT32_MAX &&
+           p->program->interfaces
+               ->scopes[p->program->functions[from - count].signature->function->module]
+               .library;
 }
 
 /* Resolve only a known function value, never a function call's returned value.
@@ -223,8 +233,7 @@ static MO_MUST_USE bool callee(struct dependencies *p, const struct mo_checked_b
             }
         }
         if (row->operand_count == 0 && row->native != NULL) {
-            if (!higher_order_native(row->native))
-                *target = UINT32_MAX;
+            *target = UINT32_MAX;
             return true;
         }
         if (local_lambda != NULL && body == initial && row->lambda != NULL) {
@@ -259,6 +268,7 @@ static MO_MUST_USE bool callee(struct dependencies *p, const struct mo_checked_b
 static MO_MUST_USE bool proof_edges(struct dependencies *p, uint32_t from,
                                     const struct mo_ability_implementation *proof,
                                     struct mo_span span, uint32_t depth) {
+    bool trusted = library_body(p, from);
     if (!work(p->program->signatures, p->diags, span))
         return false;
     if (depth > MO_LIMIT_SOURCE_ABILITY_DEPTH)
@@ -278,7 +288,7 @@ static MO_MUST_USE bool proof_edges(struct dependencies *p, uint32_t from,
     p->seen = seen;
     if (proof->kind == MO_ABILITY_FUNCTION)
         return add_edge(p, from, function_index(p, proof->function), span);
-    if (proof->kind == MO_ABILITY_PARAMETER &&
+    if (proof->kind == MO_ABILITY_PARAMETER && !trusted &&
         (proof->ability == MO_SOURCE_TEXT || proof->ability == MO_SOURCE_ORDER)) {
         p->vertices[from].unknown = true;
         p->vertices[from].span = span;
@@ -330,12 +340,15 @@ static MO_MUST_USE bool body_edges(struct dependencies *p, uint32_t from,
             if (!callee(p, body, row->operands[0], &target, NULL))
                 return false;
             if (target == UINT32_MAX - 1) {
-                p->vertices[from].unknown = true;
-                p->vertices[from].span = span;
+                if (!library_body(p, from)) {
+                    p->vertices[from].unknown = true;
+                    p->vertices[from].span = span;
+                }
             } else if (target != UINT32_MAX && !add_edge(p, from, target, span))
                 return false;
         }
-        if (higher_order_native(row->native) && row->operand_count != 0) {
+        bool library_call = library_symbol(p, row->symbol) && row->operand_count != 0;
+        if (library_call) {
             uint32_t first = row->receiver == UINT32_MAX && callable ? 1u : 0u;
             for (uint32_t i = first; i < row->operand_count; i++) {
                 if (body->items[row->operands[i]].type->kind != MO_SOURCE_FUNCTION)
@@ -350,15 +363,17 @@ static MO_MUST_USE bool body_edges(struct dependencies *p, uint32_t from,
                         stack[depth++] = local_lambda;
                     }
                 } else if (target == UINT32_MAX - 1) {
-                    p->vertices[from].unknown = true;
-                    p->vertices[from].span = span;
+                    if (!library_body(p, from)) {
+                        p->vertices[from].unknown = true;
+                        p->vertices[from].span = span;
+                    }
                 } else if (target != UINT32_MAX && !add_edge(p, from, target, span))
                     return false;
             }
         }
         for (uint32_t i = 0; i < row->ability_count; i++)
             if ((row->abilities[i].operand != UINT32_MAX ||
-                 (higher_order_native(row->native) && row->operand_count != 0 &&
+                 (library_call &&
                   (row->abilities[i].implementation->ability == MO_SOURCE_TEXT ||
                    row->abilities[i].implementation->ability == MO_SOURCE_ORDER))) &&
                 !proof_edges(p, from, row->abilities[i].implementation, span, 0))

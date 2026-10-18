@@ -1,5 +1,34 @@
 module List
-expose filter, filter_map, flat_map, reduce, any?, sort_by, sort, min, group_by
+expose map,
+filter,
+filter_map,
+flat_map,
+reduce,
+find,
+any?,
+all?,
+count,
+sort_by,
+sort_by_desc,
+sort,
+min,
+max,
+group_by
+
+## The results of f on each element, in order.
+fn map(items: List(T), f: fn(T) : U) : List(U)
+  examples
+    [1, 2, 3].map(fn(n) n * 2 end) == [2, 4, 6]
+    ["a", "bc"].map(fn(t) t.byte_count end) == [1, 2]
+    [1].drop(1).map(fn(n) n + 1 end) == []
+  end
+
+  var mapped = []
+  for item in items
+    mapped = mapped.append(f(item))
+  end
+  mapped
+end
 
 ## The elements for which pred is true, in order.
 fn filter(items: List(T), pred: fn(T) : Bool) : List(T)
@@ -60,7 +89,7 @@ fn reduce(items: List(T), start: A, f: fn(A, T) : A) : A
   total
 end
 
-## Whether pred is true for at least one element.
+## Whether pred is true for at least one element; it stops at the first.
 fn any?(items: List(T), pred: fn(T) : Bool) : Bool
   examples
     [1, 2, 3].any?(fn(n) n > 2 end)
@@ -68,13 +97,10 @@ fn any?(items: List(T), pred: fn(T) : Bool) : Bool
     not [1].drop(1).any?(fn(_n) true end)
   end
 
-  var found = false
   for item in items
-    if pred(item)
-      found = true
-    end
+    return true if pred(item)
   end
-  found
+  false
 end
 
 ## The elements ordered by key, smallest first; equal keys keep their order.
@@ -169,6 +195,113 @@ fn group_by(items: List(T), key: fn(T) : K) : Map(K, List(T))
     groups = groups.set(k, members.append(item))
   end
   groups
+end
+
+## The first element for which pred is true, or None; it stops there.
+fn find(items: List(T), pred: fn(T) : Bool) : Option(T)
+  examples
+    [1, 2, 3].find(fn(n) n > 1 end) == Some(2)
+    [1, 2, 3].find(fn(n) n > 5 end) == None
+  end
+
+  for item in items
+    return Some(item) if pred(item)
+  end
+  None
+end
+
+## Whether pred is true for every element; it stops at the first that isn't.
+fn all?(items: List(T), pred: fn(T) : Bool) : Bool
+  examples
+    [2, 4].all?(fn(n) n % 2 == 0 end)
+    not [2, 3].all?(fn(n) n % 2 == 0 end)
+    [1].drop(1).all?(fn(n) n > 100 end)
+  end
+
+  for item in items
+    return false if not pred(item)
+  end
+  true
+end
+
+## How many elements pred is true for.
+fn count(items: List(T), pred: fn(T) : Bool) : Int
+  examples
+    [1, 2, 3, 4].count(fn(n) n % 2 == 0 end) == 2
+    [1].drop(1).count(fn(n) n > 0 end) == 0
+  end
+
+  var total = 0
+  for item in items
+    if pred(item)
+      total += 1
+    end
+  end
+  total
+end
+
+## The elements ordered by key, largest first; equal keys keep their order.
+fn sort_by_desc(items: List(T), key: fn(T) : K) : List(T) where K: Order
+  examples
+    ["a", "ccc", "bb"].sort_by_desc(fn(t) t.byte_count end) == ["ccc", "bb", "a"]
+    [(1, "b"), (2, "z"), (1, "a")].sort_by_desc(fn(p) p.0 end) == [(2, "z"), (1, "b"), (1, "a")]
+  end
+
+  keyed = items.map(fn(item) (key(item), item) end)
+  sorted = sort_keyed_desc(keyed)
+  sorted.map(fn(pair) pair.1 end)
+end
+
+## Merge sort on the first part of each pair, largest first. On equal keys the left list goes first.
+fn sort_keyed_desc(pairs: List((K, T))) : List((K, T)) where K: Order
+  size = pairs.size
+  if size < 2
+    pairs
+  else
+    half = size / 2
+    merge_keyed_desc(sort_keyed_desc(pairs.take(half)), sort_keyed_desc(pairs.drop(half)))
+  end
+end
+
+fn merge_keyed_desc(left: List((K, T)), right: List((K, T))) : List((K, T)) where K: Order
+  var merged = []
+  var i = 0
+  var j = 0
+  while i < left.size and j < right.size
+    case (left.get(i), right.get(j))
+      (Some(a), Some(b)):
+        if b.0.compare(a.0) == Greater
+          merged = merged.append(b)
+          j += 1
+        else
+          merged = merged.append(a)
+          i += 1
+        end
+      _: Unit
+    end
+  end
+  merged.concat(left.drop(i)).concat(right.drop(j))
+end
+
+## The largest element, or the first of several equal ones; None for an empty list.
+fn max(items: List(T)) : Option(T) where T: Order
+  examples
+    [3, 1, 2].max == Some(3)
+    [1].drop(1).max == None
+    [(1, "a"), (0, "b")].max == Some((1, "a"))
+  end
+
+  var best = None
+  for item in items
+    case best
+      Some(current):
+        if item.compare(current) == Greater
+          best = Some(item)
+        end
+      None: best = Some(item)
+    end
+  end
+  best
 end
 
 test "sort_by keeps the order of equal keys"
