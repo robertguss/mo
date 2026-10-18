@@ -55,6 +55,9 @@ Each class keeps one row: evidence (PRs), level, what enforces it (the file, che
 
 When Robert corrects an agent between runs, the agent that was corrected fixes the mistake and adds or bumps its ledger row in the same PR. A row that was already `prose only` and recurred is fixed at a higher level in that PR.
 
+Done when every class has one row with its level, enforcement and state, and "Last run" names today and
+the newest PR read.
+
 ## Report
 
 Per class: its evidence, the level picked and why higher levels didn't work, and the commit or the reason it's left open. Then the classes left as one-offs.
