@@ -45,8 +45,9 @@ mixed with the new one.
   session runs, as the session log that `bench/tools/tally/task.md` defines (one numbered folder
   per run, holding `command`, the `--json` output, and a copy of `src/`). The agent sees the
   usual text output. `mo run` is recorded in the same log for `notes.md`, but `tally` doesn't
-  count it, so an error seen only through `mo run` isn't in the first-retry measure. No such
-  harness exists yet, and no round starts without one.
+  count it, so an error seen only through `mo run` isn't in the first-retry measure. The harness
+  is `learnability/harness/session.py`; its `README.md` says how a session is started through it
+  and where `mo run` and the other commands are kept.
 - **How many.** Each task is attempted by each family in a fixed number of sessions, set at
   freezing:
   - the three tools: one session per tool per family, six attempts in all (D229);

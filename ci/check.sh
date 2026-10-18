@@ -97,6 +97,14 @@ else
 	missing "python3 is not installed"
 fi
 
+step "The session-recording harness: a recorded session's log reads to tally's example table"
+if have python3; then
+	if ((${#drivers[@]})); then PYTHONDONTWRITEBYTECODE=1 python3 learnability/harness/test_session.py "${drivers[@]}";
+	else missing "no mo command executable is built"; fi
+else
+	missing "python3 is not installed"
+fi
+
 step "Every error code has a test of its exact message"
 if have python3; then
 	drivers=()

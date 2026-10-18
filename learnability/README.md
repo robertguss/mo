@@ -18,7 +18,8 @@ Phase 2's rounds (the three tools, benchmark v0 and the first-retry measure)
 follow [`protocol.md`](protocol.md): the `mo` command and hidden tests grade,
 blind Claude and non-Claude graders check the tests, Robert checks the graders
 on 30 programs, and every rate carries its Wilson interval
-([`wilson.py`](wilson.py)).
+([`wilson.py`](wilson.py)). Each session runs `mo` through the session-recording
+harness ([`harness/`](harness/README.md)), which keeps every run for `tally` and `notes.md`.
 
 Each round's folder keeps the exact prompts, every program as written, both
 graders' gradings, and `notes.md`, a log of how the round ran.
