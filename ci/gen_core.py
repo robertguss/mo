@@ -47,7 +47,7 @@ class Gen:
     def __init__(self, seed, lowerable=False):
         self.rng = random.Random(seed)
         # Lowering never makes a tuple of fewer than two elements and codegen refuses one with
-        # E1201 (architecture 6, "Source lowering has a narrower representation contract"), so a
+        # E1201 (architecture 12, "Source lowering has a narrower representation contract"), so a
         # program that must run on the VM needs lowerable=True. The checkers accept both.
         self.lowerable = lowerable
         self.fresh = 0

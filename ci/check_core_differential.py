@@ -7,7 +7,7 @@ Each driver is a built tests/test_vm.test. Every program is compiled, loaded and
 and evaluated by Lean's `mocore`; the two reports must be equal, stop messages included. Only
 programs inside lowering's representation contract are generated (gen_core `lowerable`), because
 codegen refuses the rest by design. A program either engine cuts off at its budget (the VM's
-instruction limit, Lean's fuel) is counted, not compared.
+instruction limit, Lean's fuel) is counted, not compared; one engine alone doing so is capped at 2%.
 
     MO_CORE_DIFF            program count (default 1000)
     MO_CORE_DIFF_SEED       first seed (default 0); the nightly job gives each shard its own range
@@ -50,6 +50,13 @@ def split(seed):
 
 
 def vm(driver, path):
+    try:
+        return vm_run(driver, path)
+    except subprocess.TimeoutExpired:
+        return "vm timed out"
+
+
+def vm_run(driver, path):
     # Bytes, not text mode: universal newlines would turn a returned "\r" into "\n".
     result = subprocess.run([driver, "--core", path], capture_output=True, timeout=60)
     if result.returncode != 0:
@@ -61,6 +68,13 @@ def vm(driver, path):
 
 
 def lean(oracle, path, world):
+    try:
+        return lean_run(oracle, path, world)
+    except subprocess.TimeoutExpired:
+        return "mocore timed out"
+
+
+def lean_run(oracle, path, world):
     result = subprocess.run([oracle, path, world, "--fuel", str(FUEL)], capture_output=True,
                             text=True, timeout=60)
     if result.returncode == 3:
@@ -113,8 +127,10 @@ def main():
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 2)) as pool:
             for seed, bare, want, got in pool.map(one, range(first, first + count)):
                 for driver, outcome in got.items():
-                    if want == BUDGET or outcome == BUDGET:
+                    if want == BUDGET and outcome == BUDGET:
                         tally[BUDGET] += 1
+                    elif want == BUDGET or outcome == BUDGET:
+                        tally["one engine out of budget"] += 1
                     elif outcome == want and isinstance(want, list):
                         tally[want[0]] += 1
                     else:
@@ -129,7 +145,10 @@ def main():
             (pathlib.Path(keep) / f"{seed}.core").write_text(bare)
     if mismatches:
         raise AssertionError(f"{len(mismatches)} generated programs differ between the VM and Lean")
-    compared = sum(tally[k] for k in tally if k not in (BUDGET, "corpus"))
+    one_sided = tally["one engine out of budget"]
+    if one_sided > 0.02 * count * len(drivers):
+        raise AssertionError(f"one engine alone ran out of budget on {one_sided} runs: {dict(tally)}")
+    compared = sum(tally[k] for k in tally if k not in (BUDGET, "corpus", "one engine out of budget"))
     if compared < 0.9 * count * len(drivers):
         raise AssertionError(f"only {compared} of {count * len(drivers)} runs were compared: {dict(tally)}")
     if not tally["returned"] or not tally["stopped"]:
