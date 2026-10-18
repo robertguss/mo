@@ -50,7 +50,8 @@ mixed with the new one.
 - **How many.** Each task is attempted by each family in a fixed number of sessions, set at
   freezing:
   - the three tools: one session per tool per family, six attempts in all (D229);
-  - benchmark v0: three sessions per task per family, so at least 60 per family for 20 tasks.
+  - benchmark v0: one session per task per family, so at least 20 per family for 20 tasks
+    (Robert, 18 October 2026).
 - **Every session counts.** A session that ends without its files, runs out of time, or wanders
   off the task is graded as a fail; it is not run again. The one exception is a session that
   failed before it saw its task (the harness couldn't start it, or the model provider was down).
@@ -149,10 +150,11 @@ grader's model or prompt changes.
   access to the repository or the web, so committing them doesn't show them to a session.
 - After the round, its held-out tasks are public and become ordinary tasks. The next round writes
   new held-out tasks.
-- Results are reported separately for held-out and other tasks. With about 12 held-out programs
-  per family, only a large gap shows: the gap counts when the two Wilson intervals don't
-  overlap, and it means the sessions learned the samples and the guide's examples rather than
-  the language.
+- Results are reported separately for held-out and other tasks. With 4 held-out programs per
+  family the held-out rate is very rough (2 of 4 is [15.0%, 85.0%]), so the two families' held-out
+  programs are also reported together. A gap counts only when the two Wilson intervals don't
+  overlap, and then it means the sessions learned the samples and the guide's examples rather
+  than the language; a smaller gap is reported as a hint, not a finding.
 
 ## 7. Uncertainty: the Wilson interval
 
@@ -171,7 +173,7 @@ What each measurement can show:
 | Three tools, final round | at least 5 of 6 attempts pass (D229) | 6 | point-estimate pass: even 6 of 6 has a lower bound of 61.0% |
 | First retry | at least 85% of errors fixed by the next run | errors in the final round and benchmark sessions | a pass needs 22 errors all fixed, 34 with 33 fixed, or 45 with 43 fixed; at a 90% rate, about 200 errors |
 | Within three | at least 95% fixed within three runs | the same errors | a pass needs 73 errors all fixed, or 110 with 109 fixed (99%) |
-| Benchmark v0 | none; it is the baseline later phases are compared with | 60 per family for 20 tasks | 51 of 60 (85%) gives [73.9%, 91.9%] |
+| Benchmark v0 | none; it is the baseline later phases are compared with | 20 per family for 20 tasks | 17 of 20 (85%) gives [64.0%, 94.8%]; a baseline this wide shows only large changes in later phases |
 
 The tools' target is D229's and stays as written: 5 of 6 meets it, and the report says it is a
 point-estimate pass with its interval.
@@ -184,9 +186,9 @@ The interval assumes each attempt is independent, and these aren't quite:
 - **Errors.** One session can make the same kind of mistake many times. So beside each
   first-retry rate the report gives the number of sessions and how many of the errors came from
   the session with the most, and repeats the rate with that session left out.
-- **Benchmark programs.** The sessions on one task share its difficulty. So the report also gives
-  each task's result (how many of its sessions passed), and says how many tasks every session
-  passed and how many none did.
+- **Benchmark programs.** The two families' sessions on one task share its difficulty. So the
+  report also gives each task's result for both families, and says how many tasks both passed
+  and how many neither did.
 
 In both cases the true interval is wider than the one printed, and the report says so when one
 session or task dominates.
