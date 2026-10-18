@@ -1,0 +1,6 @@
+passed Main.test.1  tests/golden/cap-files-fake-folders/main.mo:3:1
+passed Main.test.2  tests/golden/cap-files-fake-folders/main.mo:13:1
+passed Main.test.3  tests/golden/cap-files-fake-folders/main.mo:27:1
+passed Main.test.4  tests/golden/cap-files-fake-folders/main.mo:34:1
+passed Main.test.5  tests/golden/cap-files-fake-folders/main.mo:51:1
+5 passed, 0 failed, 0 stopped

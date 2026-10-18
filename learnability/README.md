@@ -14,5 +14,11 @@ Claude through Claude Code (decision D226), before the reference was approved.
   held-out tasks, with one fresh session per task and family. It met every
   target of Phase 1. See [`final/results.md`](final/results.md).
 
+Phase 2's rounds (the three tools, benchmark v0 and the first-retry measure)
+follow [`protocol.md`](protocol.md): the `mo` command and hidden tests grade,
+blind Claude and non-Claude graders check the tests, Robert checks the graders
+on 30 programs, and every rate carries its Wilson interval
+([`wilson.py`](wilson.py)).
+
 Each round's folder keeps the exact prompts, every program as written, both
 graders' gradings, and `notes.md`, a log of how the round ran.

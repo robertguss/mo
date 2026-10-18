@@ -8,7 +8,6 @@ a form that lands should gain a golden program. Section numbers are Language Ref
 - `List`: `sort`, `min`, `filter`, `filter_map`, `flat_map`, `reduce`, `any?`, `sort_by`, `group_by`
   (reference 14; 5.5 and 12.1 use `sort` and `filter_map` in their own examples).
 - `Option.map`, `Result.map`, `Result.map_error` (14).
-- `Files.walk` (14).
 
 ## Not lowered yet (E1150)
 
@@ -17,9 +16,8 @@ a form that lands should gain a golden program. Section numbers are Language Ref
 - `Float`: `sqrt`, `floor`, `ceil`, `round`, `abs`, `nan?`, `infinite?`, `to_decimal`.
 - `Text.compare`; `Bytes.size`, `Bytes.decode_utf8`.
 - `List.sum`, `List.to_set`.
-- `Files`: `within`, `exists?`, `append_text`, `remove`, `make_folder`, `entries`.
 - `Env.get`, `Random.int`.
-- Interpolating an `Ordering`, or a `Map` or `Set` (derived text shape).
+- Interpolating an `Ordering`, an `Entry`, or a `Map` or `Set` (derived text shape).
 
 ## Other
 
