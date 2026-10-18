@@ -135,3 +135,7 @@ Start any MO task with the `ship-task` skill; it runs the others in order: `plan
 a sentence; it still gets tests and a review.
 
 After a PR merges or changes CI state, or after Robert makes a decision, run `notion-sync`.
+
+When Robert or a reviewer corrects a mistake, fix it and add or bump its row in
+`docs/status/agent-mistakes.md` in the same PR. A row that recurs is fixed at a stronger level, using
+the `correct` skill.
