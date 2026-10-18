@@ -665,6 +665,42 @@ static void console_graph(void) {
     free_fixture(&f);
 }
 
+/* walk is Mo code in lib/files.mo and lib/read-files.mo, found as a method of Files and ReadFiles
+ * from their library modules; without the library it isn't in scope. */
+static void files_walk(void) {
+    static const char *const sources[] = {
+        "module Main\nfn main(files: Files) : Result(Unit, FileError)\n"
+        "_found = try files.walk(\".\")\nOk(Unit)\nend\n",
+        "module Main\nfn main(files: ReadFiles) : Result(Unit, FileError)\n"
+        "_found = try files.walk(\".\")\nOk(Unit)\nend\n"};
+    static const char *const modules[] = {"Files", "ReadFiles"};
+    for (size_t i = 0; i < sizeof sources / sizeof sources[0]; i++) {
+        struct fixture f;
+        init_with_library(&f, sources[i]);
+        CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+        if (f.program != NULL) {
+            const struct mo_checked_body *body = &own_function(f.program, "main")->body;
+            bool walk = false;
+            for (uint32_t j = 0; j < body->count; j++) {
+                const struct mo_checked_expression *row = &body->items[j];
+                if (row->symbol == NULL || strcmp(row->symbol->name, "walk") != 0 ||
+                    row->type->kind == MO_SOURCE_FUNCTION)
+                    continue;
+                CHECK(f.program->interfaces->scopes[row->symbol->module].library);
+                CHECK(strcmp(f.set.names[row->symbol->module], modules[i]) == 0);
+                CHECK(strcmp(row->type->name, "Result") == 0);
+                walk = true;
+            }
+            CHECK(walk);
+        }
+        free_fixture(&f);
+        init(&f, sources[i]);
+        CHECK(f.program == NULL && f.diags.count == 1 &&
+              f.diags.items[0].code == MO_CODE_NAME_UNKNOWN);
+        free_fixture(&f);
+    }
+}
+
 static void native_graph(void) {
     struct fixture f;
     init(
@@ -2692,6 +2728,7 @@ static void run(void *argument) {
     entry_graph();
     console_graph();
     native_graph();
+    files_walk();
     interpolation_graph();
     ability_dot_graph();
     customizer_helpers();
