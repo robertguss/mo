@@ -19,6 +19,8 @@ step for anything a Mo user would notice.
 2026, and Phase 1 (Design the core) on 12 Oct 2026, with the Language Reference
 v0.1, Architecture v0.1 and Mo Core in Lean.
 
+Phase 3's design step is written up in [docs/design/services.md](design/services.md).
+
 Four tracks run alongside every phase:
 
 - formal verification of Mo's core in Lean;
