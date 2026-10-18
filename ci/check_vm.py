@@ -63,7 +63,7 @@ def outcome_of(stdout, effects=False):
     report = parse(stdout)[2]
     detail = report[1]
     if report[0] == "stopped":
-        if detail[0] == "stop":
+        if detail[0] in ("stop", "outside"):
             detail = detail[1]
         elif detail[0] == "overflow":
             detail = ("time outside years 1 to 9999" if detail[1] == "a time outside the years 1 to 9999"
