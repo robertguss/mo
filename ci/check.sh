@@ -288,19 +288,22 @@ else missing "no source formatter test executable is built"; fi
 fi
 
 if want cbmc; then
-step "CBMC: the bytecode reader is memory-safe on every input of up to 32 bytes"
+step "CBMC: the bytecode reader is memory-safe on every small input (cbmc/README.md)"
 if have cbmc && have goto-cc && have goto-instrument; then
-	# The check that no proof is vacuous runs alongside the proofs: each takes about five
-	# minutes on its own, mostly in the decode proof.
+	# The proofs and the check that every block they prove runs on some input take about eight
+	# and six minutes one at a time, so they share the machine's processors.
+	jobs=$(($(getconf _NPROCESSORS_ONLN) / 2))
+	((jobs >= 1)) || jobs=1
 	mkdir -p build
-	bash cbmc/prove.sh --reach >build/cbmc-reach.txt 2>&1 &
+	MO_CBMC_JOBS=$jobs bash cbmc/prove.sh --reach >build/cbmc-reach.txt 2>&1 &
 	reach=$!
-	make --no-print-directory cbmc
-	step "CBMC: every proof harness reaches its end, so no proof holds vacuously"
+	proofs_status=0
+	MO_CBMC_JOBS=$jobs make --no-print-directory cbmc || proofs_status=$?
+	step "CBMC: every block of each proved function runs on some input, so no proof is vacuous"
 	reach_status=0
 	wait "$reach" || reach_status=$?
 	cat build/cbmc-reach.txt
-	((reach_status == 0))
+	((proofs_status == 0 && reach_status == 0))
 else
 	missing "cbmc is not installed"
 fi

@@ -450,6 +450,24 @@ static void debug_entry(struct reader *r, struct mo_bytecode_debug *d,
     }
 }
 
+static void layout_entry(struct reader *r, struct mo_layout *l) {
+    uint32_t kind = word(r);
+    if (kind > MO_LAYOUT_CLOSURE) {
+        refuse(r, "unknown layout kind");
+    }
+    l->kind = (enum mo_layout_kind)kind;
+    l->type = word(r);
+    l->case_index = l->kind == MO_LAYOUT_CASE ? word(r) : MO_NO_INDEX;
+    l->function = l->kind == MO_LAYOUT_CLOSURE ? word(r) : MO_NO_INDEX;
+    l->fields = indices(r, &l->field_count, MO_LIMIT_FIELDS);
+}
+
+static void file_entry(struct reader *r, struct mo_bytecode_bytes *file) {
+    file->bytes = blob(r, &file->length, false);
+    if (!r->failed && (file->length == 0 || memchr(file->bytes, 0, file->length) != NULL))
+        refuse(r, "filename must be nonempty and contain no NUL");
+}
+
 static void sections(struct reader *r) {
     struct mo_bytecode *f = r->file;
     struct mo_bytecode_string *strings =
@@ -474,16 +492,7 @@ static void sections(struct reader *r) {
     f->layouts = layouts;
     r->layouts = layouts;
     for (uint32_t i = 0; i < f->layout_count && !r->failed; i++) {
-        struct mo_layout *l = &layouts[i];
-        uint32_t kind = word(r);
-        if (kind > MO_LAYOUT_CLOSURE) {
-            refuse(r, "unknown layout kind");
-        }
-        l->kind = (enum mo_layout_kind)kind;
-        l->type = word(r);
-        l->case_index = l->kind == MO_LAYOUT_CASE ? word(r) : MO_NO_INDEX;
-        l->function = l->kind == MO_LAYOUT_CLOSURE ? word(r) : MO_NO_INDEX;
-        l->fields = indices(r, &l->field_count, MO_LIMIT_FIELDS);
+        layout_entry(r, &layouts[i]);
     }
     constants(r);
     struct mo_bytecode_global *globals =
@@ -508,10 +517,7 @@ static void sections(struct reader *r) {
                                             _Alignof(struct mo_bytecode_bytes));
     f->files = files;
     for (uint32_t i = 0; i < f->file_count && !r->failed; i++) {
-        files[i].bytes = blob(r, &files[i].length, false);
-        if (!r->failed &&
-            (files[i].length == 0 || memchr(files[i].bytes, 0, files[i].length) != NULL))
-            refuse(r, "filename must be nonempty and contain no NUL");
+        file_entry(r, &files[i]);
     }
     struct mo_bytecode_debug *debug = array(r, &f->debug_count, MO_LIMIT_FUNCTIONS, 36,
                                             sizeof *debug, _Alignof(struct mo_bytecode_debug));

@@ -36,6 +36,12 @@ uint8_t nondet_u8(void);
 enum mo_case_shape nondet_shape(void);
 struct mo_load_error nondet_error(void);
 struct mo_type nondet_type(void);
+struct mo_layout nondet_layout(void);
+struct mo_bytecode_module nondet_module(void);
+struct mo_bytecode_debug nondet_debug(void);
+/* A pointer to no object: a model returns one for a table its callers store but never read, so a
+ * caller that did read it would fail its proof. */
+void *nondet_pointer(void);
 
 /* ---- Specifications ----------------------------------------------------------------------- */
 
@@ -207,14 +213,15 @@ static void *model_block(struct reader *r, size_t n, size_t size, bool zero) {
 
 void *model_allocate(struct reader *r, size_t n, size_t size, size_t alignment) {
     __CPROVER_assert(READER(r) && (r->failed || n <= N + 1) && size >= 1 && size <= LARGEST_ENTRY &&
-                         alignment >= 1 && alignment <= 16,
+                         alignment >= 1 && alignment <= 16 && (alignment & (alignment - 1)) == 0,
                      "allocate: requires");
     return model_block(r, n, size, true);
 }
 
 void *model_scratch(struct reader *r, uint32_t n, size_t size, size_t alignment) {
     __CPROVER_assert(READER(r) && (r->failed || n <= MOST_ENTRIES) && size >= 1 &&
-                         size <= LARGEST_ENTRY && alignment >= 1 && alignment <= 16,
+                         size <= LARGEST_ENTRY && alignment >= 1 && alignment <= 16 &&
+                         (alignment & (alignment - 1)) == 0,
                      "scratch: requires");
     return model_block(r, n, size, false);
 }
@@ -244,7 +251,7 @@ static void *model_table(struct reader *r, uint32_t *n, uint32_t limit, size_t m
 void *model_array(struct reader *r, uint32_t *n, uint32_t limit, size_t minimum, size_t size,
                   size_t alignment) {
     __CPROVER_assert(READER(r) && minimum >= 4 && size >= 1 && size <= LARGEST_ENTRY &&
-                         alignment >= 1 && alignment <= 16,
+                         alignment >= 1 && alignment <= 16 && (alignment & (alignment - 1)) == 0,
                      "array: requires");
     return model_table(r, n, limit, minimum, size, false);
 }
@@ -305,10 +312,10 @@ void model_choice_cases(struct reader *r, struct mo_type *t) {
     struct reader old = *r;
     havoc_reading(r);
     __CPROVER_assume(READS(r, old));
-    t->name = NULL;
+    t->name = nondet_pointer();
     t->case_count = nondet_u32();
     __CPROVER_assume(t->case_count <= MOST_ENTRIES);
-    t->cases = NULL; /* the reader stores cases, never reads them */
+    t->cases = nondet_pointer();
     t->has_fields = nondet_bool();
 }
 
@@ -334,7 +341,7 @@ void model_parameters(struct reader *r, struct mo_bytecode_function *fn) {
     havoc_reading(r);
     __CPROVER_assume(READS(r, old));
     fn->parameter_count = nondet_u32();
-    fn->parameters = NULL;
+    fn->parameters = nondet_pointer();
 }
 
 void model_module_entry(struct reader *r, struct mo_bytecode_module *m) {
@@ -342,7 +349,24 @@ void model_module_entry(struct reader *r, struct mo_bytecode_module *m) {
     struct reader old = *r;
     havoc_reading(r);
     __CPROVER_assume(READS(r, old));
-    *m = (struct mo_bytecode_module){0};
+    *m = nondet_module();
+}
+
+void model_layout_entry(struct reader *r, struct mo_layout *l) {
+    __CPROVER_assert(READER(r) && __CPROVER_w_ok(l, sizeof *l), "layout_entry: requires");
+    struct reader old = *r;
+    havoc_reading(r);
+    __CPROVER_assume(READS(r, old));
+    *l = nondet_layout();
+}
+
+void model_file_entry(struct reader *r, struct mo_bytecode_bytes *file) {
+    __CPROVER_assert(READER(r) && __CPROVER_w_ok(file, sizeof *file), "file_entry: requires");
+    struct reader old = *r;
+    havoc_reading(r);
+    __CPROVER_assume(READS(r, old));
+    file->length = nondet_u32();
+    file->bytes = nondet_pointer();
 }
 
 void model_debug_entry(struct reader *r, struct mo_bytecode_debug *d,
@@ -353,7 +377,7 @@ void model_debug_entry(struct reader *r, struct mo_bytecode_debug *d,
     struct reader old = *r;
     havoc_reading(r);
     __CPROVER_assume(READS(r, old));
-    *d = (struct mo_bytecode_debug){0};
+    *d = nondet_debug();
     positions->spans = nondet_u32();
     positions->names = nondet_u32();
     positions->metadata = nondet_u32();
@@ -383,7 +407,7 @@ void model_constants(struct reader *r) {
     havoc_reading(r);
     __CPROVER_assume(READS(r, old));
     r->file->constant_count = nondet_u32();
-    r->file->constants = NULL;
+    r->file->constants = nondet_pointer();
 }
 
 void model_functions(struct reader *r) {
@@ -394,12 +418,12 @@ void model_functions(struct reader *r) {
     uint32_t count = nondet_u32();
     __CPROVER_assume(count <= MOST_ENTRIES);
     r->file->function_count = count;
-    r->file->functions = NULL;
+    r->file->functions = nondet_pointer();
     r->code_positions = count == 0 ? NULL : new_table(count, sizeof(uint32_t));
 }
 
 void model_sections(struct reader *r) {
-    __CPROVER_assert(READER(r), "sections: requires");
+    __CPROVER_assert(READER(r) && !r->failed, "sections: requires");
     struct reader old = *r;
     havoc_reading(r);
     __CPROVER_assume(READS(r, old));
@@ -530,13 +554,10 @@ enum mo_case_shape mo_case_shape(const struct mo_types *types, uint32_t type, ui
 
 /* ---- Harnesses ---------------------------------------------------------------------------- */
 
-/* With MO_CBMC_REACH, every harness must fail here: a proof whose end no path reaches proves
- * nothing, which an assumption that can never hold would cause (bash cbmc/prove.sh --reach). */
-#ifdef MO_CBMC_REACH
-#define REACHED() __CPROVER_assert(0, "the harness reaches its end")
-#else
-#define REACHED() ((void)0)
-#endif
+/* Every harness ends here, so prove.sh --reach can check that some input gets to the end of it
+ * (the blocks of the harness itself include assertions' unreachable failure branches). */
+void reached_end(void) {
+}
 
 static uint8_t input[N > 0 ? N : 1];
 
@@ -598,7 +619,7 @@ void harness_word(void) {
                      "word: little-endian value");
     reading(&old, r);
     __CPROVER_assert(UNCHANGED(old, *r), "word: changes only the offset and failure");
-    REACHED();
+    reached_end();
 }
 
 void harness_boolean(void) {
@@ -608,7 +629,7 @@ void harness_boolean(void) {
     __CPROVER_assert(READS(r, old) && r->offset <= old.offset + 4, "boolean: reads one word");
     reading(&old, r);
     __CPROVER_assert(UNCHANGED(old, *r), "boolean: changes only the offset and failure");
-    REACHED();
+    reached_end();
 }
 
 static void check_block(struct reader *r, struct reader old, size_t n, size_t size, void *p) {
@@ -634,7 +655,7 @@ void harness_allocate(void) {
     size_t i = nondet_size();
     __CPROVER_assume(p != NULL && i < n * size);
     __CPROVER_assert(((const uint8_t *)p)[i] == 0, "allocate: zeroed");
-    REACHED();
+    reached_end();
 }
 
 void harness_scratch(void) {
@@ -646,7 +667,7 @@ void harness_scratch(void) {
     struct reader old = *r;
     void *p = scratch(r, n, size, alignment);
     check_block(r, old, n, size, p);
-    REACHED();
+    reached_end();
 }
 
 static void check_table(struct reader *r, struct reader old, uint32_t n, uint32_t limit,
@@ -676,7 +697,7 @@ void harness_array(void) {
     struct reader old = *r;
     void *p = array(r, &n, limit, minimum, size, alignment);
     check_table(r, old, n, limit, minimum, size, p, false);
-    REACHED();
+    reached_end();
 }
 
 void harness_indices(void) {
@@ -685,14 +706,14 @@ void harness_indices(void) {
     struct reader old = *r;
     const uint32_t *p = indices(r, &n, limit);
     check_table(r, old, n, limit, 4, sizeof *p, p, true);
-    REACHED();
+    reached_end();
 }
 
 void harness_utf8(void) {
     size_t length;
     const uint8_t *bytes = any_input(&length);
     (void)mo_bytecode_utf8(bytes, (uint32_t)length);
-    REACHED();
+    reached_end();
 }
 
 void harness_blob(void) {
@@ -712,7 +733,7 @@ void harness_blob(void) {
     }
     reading(&old, r);
     __CPROVER_assert(UNCHANGED(old, *r), "blob: changes only the offset and failure");
-    REACHED();
+    reached_end();
 }
 
 void harness_name(void) {
@@ -722,7 +743,7 @@ void harness_name(void) {
     __CPROVER_assert(READS(r, old) && r->offset <= old.offset + 4, "name: reads one word");
     reading(&old, r);
     __CPROVER_assert(UNCHANGED(old, *r), "name: changes only the offset and failure");
-    REACHED();
+    reached_end();
 }
 
 void harness_fields(void) {
@@ -734,7 +755,7 @@ void harness_fields(void) {
                      "fields: a bounded table");
     reading(&old, r);
     __CPROVER_assert(UNCHANGED(old, *r), "fields: changes only the offset and failure");
-    REACHED();
+    reached_end();
 }
 
 /* choice_cases and type_entry: one type's entry, setting only that entry. */
@@ -763,7 +784,7 @@ void harness_choice_cases(void) {
                          t->capability == before.capability && t->fields == before.fields &&
                          t->field_count == before.field_count && t->reference == before.reference,
                      "choice_cases: sets only the choice's fields");
-    REACHED();
+    reached_end();
 }
 
 void harness_type_entry(void) {
@@ -780,7 +801,7 @@ void harness_type_entry(void) {
                      "type_entry: bounded cases");
     reading(&old, r);
     __CPROVER_assert(UNCHANGED(old, *r), "type_entry: changes only the offset and failure");
-    REACHED();
+    reached_end();
 }
 
 void harness_parameters(void) {
@@ -791,7 +812,7 @@ void harness_parameters(void) {
     __CPROVER_assert(READS(r, old), "parameters: reads");
     reading(&old, r);
     __CPROVER_assert(UNCHANGED(old, *r), "parameters: changes only the offset and failure");
-    REACHED();
+    reached_end();
 }
 
 void harness_module_entry(void) {
@@ -802,7 +823,29 @@ void harness_module_entry(void) {
     __CPROVER_assert(READS(r, old), "module_entry: reads");
     reading(&old, r);
     __CPROVER_assert(UNCHANGED(old, *r), "module_entry: changes only the offset and failure");
-    REACHED();
+    reached_end();
+}
+
+void harness_layout_entry(void) {
+    struct reader *r = any_reader();
+    struct mo_layout *l = object(sizeof *l);
+    struct reader old = *r;
+    layout_entry(r, l);
+    __CPROVER_assert(READS(r, old), "layout_entry: reads");
+    reading(&old, r);
+    __CPROVER_assert(UNCHANGED(old, *r), "layout_entry: changes only the offset and failure");
+    reached_end();
+}
+
+void harness_file_entry(void) {
+    struct reader *r = any_reader();
+    struct mo_bytecode_bytes *file = object(sizeof *file);
+    struct reader old = *r;
+    file_entry(r, file);
+    __CPROVER_assert(READS(r, old), "file_entry: reads");
+    reading(&old, r);
+    __CPROVER_assert(UNCHANGED(old, *r), "file_entry: changes only the offset and failure");
+    reached_end();
 }
 
 void harness_debug_entry(void) {
@@ -814,7 +857,7 @@ void harness_debug_entry(void) {
     __CPROVER_assert(READS(r, old), "debug_entry: reads");
     reading(&old, r);
     __CPROVER_assert(UNCHANGED(old, *r), "debug_entry: changes only the offset and failure");
-    REACHED();
+    reached_end();
 }
 
 /* types, constants and functions: each reads its section and sets only its own tables. */
@@ -830,7 +873,7 @@ void harness_types(void) {
     file.type_count = r->file->type_count;
     file.types = r->file->types;
     __CPROVER_assert(UNCHANGED(old, *r) && same_file(&file, r->file), "types: sets only types");
-    REACHED();
+    reached_end();
 }
 
 void harness_constants(void) {
@@ -845,7 +888,7 @@ void harness_constants(void) {
     file.constants = r->file->constants;
     __CPROVER_assert(UNCHANGED(old, *r) && same_file(&file, r->file),
                      "constants: sets only constants");
-    REACHED();
+    reached_end();
 }
 
 void harness_functions(void) {
@@ -863,12 +906,12 @@ void harness_functions(void) {
     file.functions = r->file->functions;
     __CPROVER_assert(UNCHANGED(old, *r) && same_file(&file, r->file),
                      "functions: sets only functions");
-    REACHED();
+    reached_end();
 }
 
 void harness_sections(void) {
     struct reader *r = any_reader();
-    __CPROVER_assume(!r->failed && r->offset == MO_BYTECODE_HEADER_SIZE);
+    __CPROVER_assume(!r->failed);
     struct reader old = *r;
     sections(r);
     __CPROVER_assert(READS(r, old), "sections: reads");
@@ -879,7 +922,7 @@ void harness_sections(void) {
     __CPROVER_assert(r->bytes == old.bytes && r->length == old.length && r->error == old.error &&
                          r->arena == old.arena && r->file == old.file,
                      "sections: same input and objects");
-    REACHED();
+    reached_end();
 }
 
 /* The whole decoder, with sections replaced by its model: any input of up to N bytes. */
@@ -898,5 +941,5 @@ void harness_decode(void) {
                                 details ? &types_out : NULL, details ? &site : NULL, &error);
     __CPROVER_assert(file != NULL || error.reason != NULL, "a refusal has a reason");
     __CPROVER_assert(file != NULL || error.offset <= length, "a refusal points inside the input");
-    REACHED();
+    reached_end();
 }
