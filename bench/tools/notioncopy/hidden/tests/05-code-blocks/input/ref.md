@@ -1,7 +1,7 @@
 # Code
 
-```mo
-fn main()
+```mo   
+fn main()   
   console.print("hi")
 
 ## not a heading
@@ -10,7 +10,7 @@ fn main()
 end
 ```
 ```text
-plain
+plain   
 ```
 ```python
 print("hi")

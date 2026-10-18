@@ -9,7 +9,7 @@ write.
 | Tool | Task text | Hidden tests |
 | --- | --- | --- |
 | `linkcheck` | [linkcheck/task.md](linkcheck/task.md) | 20, in 21 runs |
-| `notioncopy` | [notioncopy/task.md](notioncopy/task.md) | 14, in 21 runs |
+| `notioncopy` | [notioncopy/task.md](notioncopy/task.md) | 14, in 22 runs |
 | `tally` | [tally/task.md](tally/task.md) | 16, in 19 runs |
 
 Each tool's folder holds:
@@ -26,6 +26,16 @@ Each tool's folder holds:
 
 Sessions must never see `hidden/`. Give a session only `task.md`, through the prompt, and run it
 somewhere without a checkout of this repository.
+
+The texts are the drafts Robert approved on 18 October 2026, with clarifying clauses added while
+the tests were built, wherever an approved test needed a rule the draft didn't state: how a code
+fence closes, indented reference definitions and links in headings (linkcheck); headings after
+the title, how a long section splits, and `--limit` above 0 (notioncopy); and that every error is
+reported on standard error (all three).
+
+No round can start yet: at the frozen commit, `mo` reports E1150 (not lowered yet) for
+`Files.entries`, `Files.exists?` and `Files.make_folder`, and `walk` isn't in scope, so no Mo
+program can list a folder's kinds of entries or make OUT. Lowering them comes first.
 
 ## Grading
 
@@ -51,7 +61,8 @@ text, and a fresh round, and `grade.py --freeze TOOL` writes the new hashes.
 
 - **linkcheck.** The input folders are named `.input/`, so that once `linkcheck` runs over this
   repository (rule 1 skips folders starting with `.`), the tests' planted broken links aren't
-  reported. Test 20 is the repository at the commit in `tests/20-mo-repository/commit`, with every
+  reported. Git can't store a folder named `.git`, so test 13's hidden folders are `.github/`
+  and `.cache/`. Test 20 is the repository at the commit in `tests/20-mo-repository/commit`, with every
   Markdown file whole and every other file present but empty (only its existence matters), one
   link and one anchor broken on purpose, and a 10-second limit.
 - **notioncopy.** Tests 1 and 2 convert `docs/reference/README.md` at the same commit. Converting
@@ -61,7 +72,8 @@ text, and a fresh round, and `grade.py --freeze TOOL` writes the new hashes.
   in a newline, so test 12's piece is `Wikipedia\n`; Adler-32's well-known `11e60398` is
   `Wikipedia` without it.
 - **tally.** Every `output.jsonl` is what `mo check --json` or `mo test --json` printed at the
-  commit in `hidden/mo-commit`, for the `src/` beside it; only tests 14 and 15 edit one by hand
-  (an unknown record and field, and a truncated line). Test 7's `fn first[T](...)` is how an
+  commit in `hidden/mo-commit`, for the `src/` beside it; three tests edit one by hand: 09 adds
+  a second diagnostic in the same function (`mo` reports `y + z` once), 14 an unknown record
+  and field, and 15 truncates a line. Test 7's `fn first[T](...)` is how an
   agent used to other languages writes a generic function; Mo rejects it with E0024 at that line,
-  and the error is in `first`.
+  and the error is in `first`, the same error as the next run's E0024 inside `first`'s body.

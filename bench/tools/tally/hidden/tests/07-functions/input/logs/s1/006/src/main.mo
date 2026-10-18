@@ -20,6 +20,10 @@ test "f adds one"
   assert f(1) == 2
 end
 
+test "g works"
+  assert zzz == "2"
+end
+
 fn g(x: Int) : Text
   "#{x}"
 end

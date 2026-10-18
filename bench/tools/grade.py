@@ -49,9 +49,11 @@ def prepare(case, work):
         with tarfile.open(case / "input.tar.gz") as tar:
             options = {"filter": "tar"} if hasattr(tarfile, "tar_filter") else {}
             tar.extractall(work, **options)
-    else:
+    elif (case / ".input").exists() or (case / "input").exists():
         source = case / ".input" if (case / ".input").exists() else case / "input"
         shutil.copytree(source, work, symlinks=True)
+    else:
+        work.mkdir()
     if (case / "empty-folders").exists():
         for folder in (case / "empty-folders").read_text().splitlines():
             (work / folder).mkdir(parents=True)

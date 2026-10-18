@@ -1,6 +1,6 @@
 <table_of_contents/>
 ```ruby
-fn main()
+fn main()   
   console.print("hi")
 
 ## not a heading
@@ -9,7 +9,7 @@ fn main()
 end
 ```
 ```plain text
-plain
+plain   
 ```
 ```plain text
 print("hi")

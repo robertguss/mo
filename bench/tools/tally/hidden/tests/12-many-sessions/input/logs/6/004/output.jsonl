@@ -1,5 +1,5 @@
 {"record":"version","format":"1.0","mo":"0.0.0","command":"test"}
-{"record":"result","name":"Main.f.example.1","kind":"example","span":{"file":"main.mo","file_bytes":"6d61696e2e6d6f","start":47,"end":56,"line":5,"column":5,"end_line":5,"end_column":14},"outcome":"passed","microseconds":8}
+{"record":"result","name":"Main.f.example.1","kind":"example","span":{"file":"main.mo","file_bytes":"6d61696e2e6d6f","start":47,"end":56,"line":5,"column":5,"end_line":5,"end_column":14},"outcome":"passed","microseconds":7}
 {"record":"result","name":"Main.f.example.2","kind":"example","span":{"file":"main.mo","file_bytes":"6d61696e2e6d6f","start":61,"end":70,"line":6,"column":5,"end_line":6,"end_column":14},"outcome":"passed","microseconds":1}
 {"record":"result","name":"Main.f.example.3","kind":"example","span":{"file":"main.mo","file_bytes":"6d61696e2e6d6f","start":75,"end":84,"line":7,"column":5,"end_line":7,"end_column":14},"outcome":"passed","microseconds":0}
 {"record":"totals","errors":0,"dropped":0,"passed":3,"failed":0,"stopped":0,"status":0}

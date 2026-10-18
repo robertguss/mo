@@ -1,4 +1,4 @@
-3d42587e6d661ca7aaea8e32d9c2654e0ad753b160e7a238551953a8a17bda49  task.md
+606c8ca694e2677ddaf54c089c4391f8decce073cf1f47270abe9c4b60cd3262  task.md
 3bb17ba2bcb8b9d3a774610737b4f232752076af69fbe91ffdcc7c64bcd8ea74  hidden/reference.py
 1330a75dd4e0241ac6b18148e1f883f97717f74c514bdb5f68995487435583ed  hidden/tests/01-clean/.input/README.md
 9f80832d7e028e1821a1d3acb4cc6b225293711524be4fed008779f2b911973b  hidden/tests/01-clean/.input/docs/guide.md
@@ -56,9 +56,8 @@ e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  hidden/tests/0
 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  hidden/tests/10-leaves-the-folder/args
 4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865  hidden/tests/10-leaves-the-folder/status
 3270f445d715c5d231783bf4f6fb4074b66b4f7cf284e9e0b8e90cac3dbea6d1  hidden/tests/10-leaves-the-folder/stdout
-8c736982ed0487a64dca06348b9488e37be193c8d30ca298452deac267d1e4c9  hidden/tests/11-reference-definitions/.input/README.md
+06c276c700956d0c47caf391ab63e597273b812e5b5f3cb9a0dcd29599078402  hidden/tests/11-reference-definitions/.input/README.md
 bc553ffe57e544498b12a9865dbf3abc2004c474e349c52c378eaa402287424b  hidden/tests/11-reference-definitions/.input/docs/guide.md
-98755dfdd2c886e688b4c2b09604908c92961047fceab45db1cdf3603ff621a9  hidden/tests/11-reference-definitions/.input/docs/my guide.md
 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  hidden/tests/11-reference-definitions/args
 4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865  hidden/tests/11-reference-definitions/status
 709ed216c511ead356a00f835642e0ffbbd0ffe4ffc125daec40f22635ff7302  hidden/tests/11-reference-definitions/stdout
@@ -68,7 +67,7 @@ e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  hidden/tests/1
 4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865  hidden/tests/12-images/status
 90b0f7146b78e54a07170bfe8495fbe700f80485adc10be93a7128b0b084f729  hidden/tests/12-images/stdout
 5ba0c61bd3e2163489e93c25fac218bceae529f28df532a4cd6af0592622c627  hidden/tests/13-hidden-folders/.input/.cache/x/y.md
-5ba0c61bd3e2163489e93c25fac218bceae529f28df532a4cd6af0592622c627  hidden/tests/13-hidden-folders/.input/.git/notes.md
+5ba0c61bd3e2163489e93c25fac218bceae529f28df532a4cd6af0592622c627  hidden/tests/13-hidden-folders/.input/.github/notes.md
 c62983cb1ad8ccdc347009f52feb73fac80b433f0dd8f7c73d390ed7a0fe57a2  hidden/tests/13-hidden-folders/.input/README.md
 5ba0c61bd3e2163489e93c25fac218bceae529f28df532a4cd6af0592622c627  hidden/tests/13-hidden-folders/.input/docs/.drafts/z.md
 aa1237b773c38dbddef583c4868aaea7a44c5237ea7923aecca5513764b42d80  hidden/tests/13-hidden-folders/.input/docs/a.md

@@ -1,7 +1,7 @@
 module Main
 
 fn f(x: Int) : Int
-  x + 1
+  y + 1
 end
 
 fn g(x: Int) : Text
