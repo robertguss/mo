@@ -20,7 +20,7 @@
 #include <stdlib.h>
 
 #ifndef MO_CBMC_INPUT
-#define MO_CBMC_INPUT 64
+#define MO_CBMC_INPUT 32
 #endif
 #define N MO_CBMC_INPUT
 

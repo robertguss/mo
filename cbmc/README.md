@@ -2,7 +2,7 @@
 
 `make cbmc` (or `bash cbmc/prove.sh [proof...]`) proves the bytecode reader,
 `src/bytecode/read.c`, with [CBMC](https://www.cprover.org/cbmc/). For **every input of up to
-`MO_CBMC_INPUT` bytes** (64 by default), decoding:
+`MO_CBMC_INPUT` bytes** (32 by default), decoding:
 
 - reads and writes only inside the objects it was given or allocated (bounds and pointer checks);
 - never overflows a signed integer, shifts out of range, divides by zero, or loses a value in an

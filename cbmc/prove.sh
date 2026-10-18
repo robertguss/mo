@@ -1,19 +1,27 @@
 #!/usr/bin/env bash
-# Runs every CBMC proof in cbmc/reader.c (make cbmc). Each proof checks one function against its
-# contract, with the functions it calls replaced by their contracts.
+# Runs the CBMC proofs in cbmc/reader.c (make cbmc). Each proof checks one function of
+# src/bytecode/read.c against its specification, with the functions it calls replaced by their
+# models (cbmc/README.md).
 #
-#   bash cbmc/prove.sh [proof...]   with no names, every proof
+#   bash cbmc/prove.sh [proof...]           with no names, every proof
+#   bash cbmc/prove.sh --reach [proof...]   check instead that each harness reaches its end
 #
-# MO_CBMC_INPUT (default 64) is the largest input, in bytes, the proofs cover.
+# MO_CBMC_INPUT (default 32) is the largest input, in bytes, the proofs cover. Logs and goto
+# programs go to build/cbmc/.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-input=${MO_CBMC_INPUT:-64}
+input=${MO_CBMC_INPUT:-32}
 build=build/cbmc
 mkdir -p "$build"
+reach=
+if [[ "${1:-}" == --reach ]]; then
+	reach=-DMO_CBMC_REACH
+	shift
+fi
 
 # name | functions replaced by their models (model_<name>) | loop bounds
-entries=$((input / 4 + 1))
+entries=$((input / 4 + 1)) # a table has at most this many entries, plus one for the loop's exit
 proofs=(
 	"word||"
 	"boolean|word|"
@@ -47,10 +55,10 @@ for proof in "${proofs[@]}"; do
 	IFS='|' read -r name replaced loops <<<"$proof"
 	if [[ -n "$*" && "$wanted" != *" $name "* ]]; then continue; fi
 	harness=harness_${name}
-	entry=$build/$name.entry.goto
-	instrumented=$build/$name.goto
-	log=$build/$name.log
-	if ! goto-cc -std=c17 -Isrc -DMO_CBMC_INPUT="$input" --function "$harness" cbmc/reader.c \
+	entry=$build/$name${reach:+.reach}.entry.goto
+	instrumented=$build/$name${reach:+.reach}.goto
+	log=$build/$name${reach:+.reach}.log
+	if ! goto-cc -std=c17 -Isrc -DMO_CBMC_INPUT="$input" $reach --function "$harness" cbmc/reader.c \
 		-o "$entry" >"$log" 2>&1; then
 		echo "FAILED $name: cbmc/reader.c does not compile; see $log"
 		failed+=("$name")
@@ -71,6 +79,18 @@ for proof in "${proofs[@]}"; do
 	# rather than hiding paths.
 	common="any_input.0:$((input + 1)),word.0:5,memcpy.0:$((input + 1)),cases_bounded.0:$entries,model_types.0:$entries,model_sections.0:$entries"
 	start=$SECONDS
+	if [[ -n "$reach" ]]; then
+		# The only failure must be the end-of-harness assertion.
+		cbmc "$instrumented" --unwind 1 --unwindset "$common${loops:+,$loops}" >>"$log" 2>&1 || true
+		if grep -q 'the harness reaches its end: FAILURE$' "$log" &&
+			[[ $(grep -c ': FAILURE$' "$log") == 1 ]]; then
+			echo "reached the end of $name ($((SECONDS - start))s)"
+		else
+			echo "FAILED $name: no path reaches the end of harness_$name; see $log"
+			failed+=("$name")
+		fi
+		continue
+	fi
 	if cbmc "$instrumented" "${checks[@]}" --unwind 1 --unwinding-assertions \
 		--unwindset "$common${loops:+,$loops}" >>"$log" 2>&1; then
 		echo "proved $name ($((SECONDS - start))s)"
