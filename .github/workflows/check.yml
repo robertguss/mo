@@ -19,8 +19,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # A pull request that changes only documents no check reads skips the groups.
+  # `check` below still reports, so the required status is met (ci/docs_only.sh
+  # lists the documents). Pushes to main and manual runs always run the groups.
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      docs_only: ${{ steps.filter.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Is this a docs-only pull request?
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            echo "docs_only=$(sh ci/docs_only.sh "$BASE_SHA")" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          fi
+
   group:
     name: ${{ matrix.group }}
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -65,11 +90,21 @@ jobs:
         run: MAKEFLAGS="-j$(nproc) -Otarget" CI=1 bash ci/check.sh ${{ matrix.group }}
 
   # One status to require in branch protection: it passes only when every
-  # group passed.
+  # group passed, or when the groups were skipped for a docs-only change.
   check:
     if: always()
-    needs: group
+    needs: [changes, group]
     runs-on: ubuntu-24.04
     steps:
       - name: Every group passed
-        run: test "${{ needs.group.result }}" = success
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          GROUPS_RESULT: ${{ needs.group.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+        run: |
+          test "$CHANGES" = success
+          if [ "$DOCS_ONLY" = true ]; then
+            test "$GROUPS_RESULT" = skipped
+          else
+            test "$GROUPS_RESULT" = success
+          fi

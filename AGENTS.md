@@ -56,6 +56,10 @@ bash ci/check.sh [group…]  # everything CI runs; groups: gcc clang sanitize fu
 GitHub Actions (`.github/workflows/check.yml`) runs `ci/check.sh` as six parallel jobs and reports
 one required `check` status on `main`; a red PR cannot merge. `ci/orb/README.md` holds the merge
 evidence rules (tested commit, commands, toolchain, exit status). PRs are squash-merged.
+A PR that changes only documents no check reads skips the six jobs, and `check` still reports
+(`ci/docs_only.sh` holds the list). `docs/agent-guide.md`, `docs/reference/README.md` and
+`docs/design/library.md` are not on it: the build embeds or checks them. Robert lets agents merge
+docs-only PRs without review.
 
 ## Architecture
 
