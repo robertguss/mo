@@ -1,5 +1,19 @@
 module List
-expose map, filter, filter_map, flat_map, reduce, find, any?, all?, count, sort_by, sort_by_desc, sort, min, max, group_by
+expose map,
+filter,
+filter_map,
+flat_map,
+reduce,
+find,
+any?,
+all?,
+count,
+sort_by,
+sort_by_desc,
+sort,
+min,
+max,
+group_by
 
 ## The results of f on each element, in order.
 fn map(items: List(T), f: fn(T) : U) : List(U)
