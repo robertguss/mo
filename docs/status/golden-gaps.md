@@ -17,7 +17,7 @@ a form that lands should gain a golden program. Section numbers are Language Ref
 - `Text.compare`; `Bytes.size`, `Bytes.decode_utf8`.
 - `List.sum`, `List.to_set`.
 - `Env.get`, `Random.int`.
-- Interpolating an `Ordering`, or a `Map` or `Set` (derived text shape).
+- Interpolating an `Ordering`, an `Entry`, or a `Map` or `Set` (derived text shape).
 
 ## Other
 

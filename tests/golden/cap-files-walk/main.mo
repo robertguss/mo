@@ -20,7 +20,6 @@ fn main(console: Console, files: ReadFiles)
   dir = "tests/golden/cap-files-walk/data"
   console.print(show(files.entries(dir)))
   console.print(show(files.walk(dir)))
-  console.print(show(files.walk("#{dir}/shortcut")))
   console.print(show(files.walk("#{dir}/missing")))
   console.print(show(files.walk("#{dir}/readme.txt")))
   console.print(

@@ -474,7 +474,7 @@ spec code (reference 12.4).
 | `make_folder(folder)` | host | `FILES_MAKE_FOLDER` | |
 | `list(folder)` | host | `FILES_LIST` | |
 | `entries(folder)` | host | `FILES_ENTRIES` | |
-| `walk(folder)` | Mo | `lib/files.mo` | written over `entries` one folder at a time, entering folders by path rather than with `within`, so it holds no folder open (D232) |
+| `walk(folder)` | Mo | `lib/files.mo` | `ReadFiles`'s `walk` on `read_only` |
 | `exists?(path)` | host | `FILES_EXISTS` | |
 | `within(folder)` | host | `FILES_WITHIN` | |
 | `read_only` | host | `FILES_READ_ONLY` | |
@@ -492,7 +492,7 @@ the same code as `Files`'s, on a handle marked read-only (`bytecode.md` 7).
 | `read_bytes(path)` | host | `READFILES_READ_BYTES` | |
 | `list(folder)` | host | `READFILES_LIST` | |
 | `entries(folder)` | host | `READFILES_ENTRIES` | |
-| `walk(folder)` | Mo | `lib/read-files.mo` | as for `Files` |
+| `walk(folder)` | Mo | `lib/read-files.mo` | written over `entries` one folder at a time, entering folders by path rather than with `within`, so it holds no folder open (D232) |
 | `exists?(path)` | host | `READFILES_EXISTS` | |
 | `within(folder)` | host | `READFILES_WITHIN` | |
 
