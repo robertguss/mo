@@ -17,7 +17,7 @@ Each behaviour has one home. Pick by what the behaviour is:
 | A checker diagnostic | `tests/check/diagnostics/`: a `.mo` input and its `.diag`, one diagnostic each (format in that folder's `README.md`) | the reference section the error code cites |
 | A library function or lowering | `tests/lower-source/<name>/main.mo`, its outcome in `ci/check_lower_source.py`, its output in `ci/check_cli.py`, and a case in `tests/test_program.c` | the reference, and Lean for the outcome |
 | CLI text or JSON | goldens under `tests/cli/<stage>/`, read by `ci/check_cli.py` | the reference and the agent guide |
-| Core or VM semantics | Core text in `tests/core/`, run against the Lean evaluator by the `drivers` group | the Lean model in `formal/` |
+| Core or VM semantics | Core text in `tests/core/`, run against the Lean evaluator by the `lean` group | the Lean model in `formal/` |
 | Code that reads outside input | a fuzz target `fuzz/fuzz_<name>.c` with seeds in `fuzz/corpus/<name>/` | the invariant in architecture section 11 |
 | Syntax | `grammar/tests/`, and the parser corpus in `tests/test_syntax_corpus.c` | the reference grammar |
 | A sample program | `examples/*.mo`, and its row in `docs/status/sample-blockers.md` | the sample's own promises |

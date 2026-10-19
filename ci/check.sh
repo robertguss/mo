@@ -11,13 +11,14 @@
 #   gcc clang   build and run the unit tests with that compiler
 #   sanitize    the unit tests under AddressSanitizer and UndefinedBehaviorSanitizer
 #   fuzz        every fuzz target briefly
-#   drivers     the checks that drive the test executables: goldens, Unicode, Lean, codegen
+#   drivers     the checks that drive the test executables: goldens, Unicode, codegen
+#   lean        Mo Core in Lean, and the checks that compare the test executables with it
 #   static      grammar, module dependencies, library map, frozen tool tasks, formatting, clang-tidy
 #   cbmc        the CBMC proofs of the bytecode reader (cbmc/README.md)
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-all_groups=" gcc clang sanitize fuzz drivers static cbmc "
+all_groups=" gcc clang sanitize fuzz drivers lean static cbmc "
 groups="$*"
 for group in $groups; do
 	if [[ "$all_groups" != *" $group "* ]]; then
@@ -72,10 +73,9 @@ else
 fi
 fi
 
-if want drivers; then
-# Run alone, this group builds the executables it drives, as the gcc, clang and
-# sanitize groups would have.
-if [[ -n "$groups" ]]; then
+# Run alone, the drivers and lean groups build the executables they drive, as the
+# gcc, clang and sanitize groups would have.
+if [[ -n "$groups" ]] && { want drivers || want lean; }; then
 	step "Build the test executables the checks below drive"
 	if have gcc; then make --no-print-directory test-executables CC=gcc; fi
 	if have clang; then
@@ -86,6 +86,7 @@ if [[ -n "$groups" ]]; then
 	fi
 fi
 
+if want drivers; then
 step "The mo command: text/JSON goldens, argument matrix and JSON validity"
 if have python3; then
 	drivers=()
@@ -174,7 +175,7 @@ else
 fi
 fi
 
-if want drivers; then
+if want lean; then
 step "Mo Core in Lean: the model builds and every proof checks"
 # elan lives in /opt/elan where .agents/setup puts it, since CI runs with a
 # fresh HOME, or else in the usual ~/.elan.
@@ -251,7 +252,9 @@ if have lake; then
 else
 	missing "elan (Lean's installer) is not installed"
 fi
+fi
 
+if want drivers; then
 step "Core code generation: deterministic writer-checked fixtures, corpora and generated programs"
 if have python3; then
 	drivers=()
@@ -274,6 +277,9 @@ make --no-print-directory library-map
 
 step "Docs-only changes: ci/docs_only.sh skips CI only for files no check reads"
 sh ci/test_docs_only.sh
+
+step "Pull request groups: ci/ci_groups.sh skips cbmc only when the change can't affect it"
+sh ci/test_ci_groups.sh
 
 step "The three tools' frozen tasks: hashes match and each reference passes its hidden tests"
 if have python3; then python3 bench/tools/grade.py --check; else missing "python3 is not installed"; fi

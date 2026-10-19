@@ -5,7 +5,7 @@
 #   ci/docs_only.sh -        changed files are read from standard input, one per line
 #
 # Prints "true" when every changed file is on the list below and there is at least one, and
-# "false" otherwise. The hosted workflow skips the seven check groups on "true".
+# "false" otherwise. The hosted workflow (through ci/ci_groups.sh) skips every check group on "true".
 #
 # The list is an allow-list on purpose: a file that is not named here runs CI. Three documents
 # are NOT on it because a check reads them: docs/agent-guide.md and docs/reference/README.md are

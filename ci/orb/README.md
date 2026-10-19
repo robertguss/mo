@@ -7,6 +7,12 @@ runner (decisions D208 and D214). GitHub Actions also runs `ci/check.sh` on
 every pull request, its groups as parallel jobs (`.github/workflows/check.yml`).
 The full verification requirements are unchanged.
 
+A pull request's hosted run includes only the groups `ci/ci_groups.sh` picks:
+none for a docs-only change, and `cbmc` only when the change touches a file
+the CBMC harness compiles or how CI runs. A skipped `cbmc` is covered by the
+last `cbmc` run on `main`, since the pull request changed none of its inputs;
+every push to `main` runs every group, so a missed input shows up there.
+
 ## Asking for an optional CI-orb run
 
 From an implementation thread: push the branch, open the pull request, then send
