@@ -19,39 +19,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # A pull request that changes only documents no check reads skips the groups.
-  # `check` below still reports, so the required status is met (ci/docs_only.sh
-  # lists the documents). Pushes to main and manual runs always run the groups.
+  # Which groups a pull request needs (ci/ci_groups.sh): none when it changes only
+  # documents no check reads, and cbmc only when it touches what the CBMC proofs
+  # read. `check` below still reports, so the required status is met. Pushes to
+  # main and manual runs always run every group.
   changes:
     runs-on: ubuntu-24.04
     outputs:
-      docs_only: ${{ steps.filter.outputs.docs_only }}
+      groups: ${{ steps.filter.outputs.groups }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Is this a docs-only pull request?
+      - name: Which groups does this change need?
         id: filter
         env:
           EVENT: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           if [ "$EVENT" = pull_request ]; then
-            echo "docs_only=$(sh ci/docs_only.sh "$BASE_SHA")" >> "$GITHUB_OUTPUT"
+            groups=$(sh ci/ci_groups.sh "$BASE_SHA")
           else
-            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            groups='["gcc", "clang", "sanitize", "fuzz", "drivers", "lean", "static", "cbmc"]'
           fi
+          echo "groups=$groups" >> "$GITHUB_OUTPUT"
+          echo "Groups: $groups"
 
   group:
     name: ${{ matrix.group }}
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.groups != '[]'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        group: [gcc, clang, sanitize, fuzz, drivers, static, cbmc]
+        group: ${{ fromJSON(needs.changes.outputs.groups) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -67,7 +70,7 @@ jobs:
           key: elan-${{ runner.os }}-${{ hashFiles('formal/lean-toolchain') }}
 
       - name: Cache the Lean build
-        if: matrix.group == 'drivers'
+        if: matrix.group == 'lean'
         uses: actions/cache@v4
         with:
           path: formal/.lake
@@ -90,7 +93,7 @@ jobs:
         run: MAKEFLAGS="-j$(nproc) -Otarget" CI=1 bash ci/check.sh ${{ matrix.group }}
 
   # One status to require in branch protection: it passes only when every
-  # group passed, or when the groups were skipped for a docs-only change.
+  # group that ran passed, or when none ran for a docs-only change.
   check:
     if: always()
     needs: [changes, group]
@@ -100,10 +103,10 @@ jobs:
         env:
           CHANGES: ${{ needs.changes.result }}
           GROUPS_RESULT: ${{ needs.group.result }}
-          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          GROUPS: ${{ needs.changes.outputs.groups }}
         run: |
           test "$CHANGES" = success
-          if [ "$DOCS_ONLY" = true ]; then
+          if [ "$GROUPS" = '[]' ]; then
             test "$GROUPS_RESULT" = skipped
           else
             test "$GROUPS_RESULT" = success

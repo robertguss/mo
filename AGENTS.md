@@ -38,7 +38,7 @@ make tidy                  # clang-tidy cert-err33-c (unused stdlib results)
 make fuzz-smoke            # every fuzz target briefly (needs clang + libFuzzer; FUZZ_SECONDS=5)
 make formal                # build Mo Core in Lean and check every proof (needs elan)
 make cbmc                  # prove the bytecode reader memory-safe on small inputs (needs CBMC)
-bash ci/check.sh [group…]  # everything CI runs; groups: gcc clang sanitize fuzz drivers static cbmc
+bash ci/check.sh [group…]  # everything CI runs; groups: gcc clang sanitize fuzz drivers lean static cbmc
 ```
 
 - Each compiler builds into its own `build/<compiler>/` tree, so switching `CC` doesn't rebuild.
@@ -48,17 +48,19 @@ bash ci/check.sh [group…]  # everything CI runs; groups: gcc clang sanitize fu
 - Locally, `ci/check.sh` skips checks whose tool is missing and says so in its summary; with `CI=1`
   a missing tool fails. A skip is not a pass.
 - The `drivers` group runs Python black-box checks against the built executables
-  (`ci/check_cli.py` for CLI text/JSON goldens, `ci/check_lower_source.py`, `ci/check_unicode16.py`,
-  …) plus the Lean build. CLI behaviour changes usually need an edit to `ci/check_cli.py` or the
+  (`ci/check_cli.py` for CLI text/JSON goldens, `ci/check_golden.py`, `ci/check_unicode16.py`, …);
+  the `lean` group builds Mo Core in Lean and compares the executables with it
+  (`ci/check_lower_source.py`, `ci/check_core_differential.py`, …). CLI behaviour changes usually need an edit to `ci/check_cli.py` or the
   goldens under `tests/cli/`.
 
 ## CI and merging
 
-GitHub Actions (`.github/workflows/check.yml`) runs `ci/check.sh` as seven parallel jobs and reports
+GitHub Actions (`.github/workflows/check.yml`) runs `ci/check.sh` as eight parallel jobs and reports
 one required `check` status on `main`; a red PR cannot merge. `ci/orb/README.md` holds the merge
 evidence rules (tested commit, commands, toolchain, exit status). PRs are squash-merged.
-A PR that changes only documents no check reads skips the seven jobs, and `check` still reports
-(`ci/docs_only.sh` holds the list). `docs/agent-guide.md`, `docs/reference/README.md` and
+A PR that changes only documents no check reads skips the eight jobs, and `check` still reports
+(`ci/docs_only.sh` holds the list). A PR that doesn't touch what the CBMC proofs read skips the
+`cbmc` job (`ci/ci_groups.sh`); pushes to main run every job. `docs/agent-guide.md`, `docs/reference/README.md` and
 `docs/design/library.md` are not on it: the build embeds or checks them. Robert lets agents merge
 docs-only PRs without review.
 

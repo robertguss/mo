@@ -2271,12 +2271,12 @@ among them:
 in `formal/MoCore/Check.lean`: it picks a type, then an expression of that type, over scalars,
 tuples, lists, maps, sets, options, results, declared data, functions, `let_`, `if_`, `case_`,
 `join`/`jump`, calls and the pure primitives, with no capability. A seed fixes a program on every
-platform. `ci/check_core_generated.py` (the `drivers` group) requires every generated program to
+platform. `ci/check_core_generated.py` (the `lean` group) requires every generated program to
 pass `core_check` in C and `mocore` in Lean, and its text to come back byte for byte from the C
 printer (`tests/test_core_print.c`) and from `mocore --canonical`. `MO_CORE_GENERATED` and
 `MO_CORE_GENERATED_SEED` widen the run for nightly use.
 
-**VM against Lean on generated programs.** `ci/check_core_differential.py` (the `drivers` group)
+**VM against Lean on generated programs.** `ci/check_core_differential.py` (the `lean` group)
 compiles and runs each generated program on the C VM (`test_vm.test --core`) and evaluates it in
 Lean (`mocore`), and requires the same outcome, stop message included. It generates with
 `lowerable=True`, because codegen refuses by design the Core forms lowering never produces (a
