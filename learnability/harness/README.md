@@ -55,8 +55,11 @@ and a folder in `.pending/`, and its run is not in the log.
 - **A file that can't be read isn't logged either.** A misspelt name (`mo check mian.mo`) gives
   E0034 with a `file` of `null`: that run read no program, `tally`'s task text doesn't say what
   function such an error is in, and the next correct run would count it as fixed on the first
-  try. So a `check` or `test` with a diagnostic that has no file is kept in `runs/` only (Robert,
-  19 October 2026).
+  try. So a `check` or `test` with an E0034 that has no file is kept in `runs/` only (Robert,
+  19 October 2026). A missing imported module's E0034 names the importing file and is logged.
+  Other diagnostics with no file come from the toolchain itself (a file over the size limit, an
+  unreadable `lib/`, running out of memory, an internal step failing); they stay in the log, and
+  `tally`'s reference stops on them, so a round with one looks at that run before tallying.
 - **Numbers.** A run's `runs/` number is taken when it starts, and its log number when it
   finishes, so runs that overlap get distinct numbers in the order they finished.
 

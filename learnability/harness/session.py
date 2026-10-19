@@ -154,9 +154,9 @@ def show(argv):
 
 def checked_a_program(output):
     """Whether a `--json` run read the program, so its log entry counts. A refused command prints
-    no version record. A file that can't be read, such as a misspelt name, gives a diagnostic with
-    no file. Neither run read the program, and logging it would count as a run that fixed every
-    error (Robert, 19 October 2026)."""
+    no version record. A file named on the command line that can't be read, such as a misspelt
+    name, gives E0034 with no file. Neither run read the program, and logging it would count as
+    a run that fixed every error (Robert, 19 October 2026)."""
     records = []
     for line in output.splitlines():
         try:
@@ -166,8 +166,8 @@ def checked_a_program(output):
     if not records or not isinstance(records[0], dict) or records[0].get("record") != "version":
         return False
     return not any(isinstance(r, dict) and r.get("record") == "diagnostic" and
-                   isinstance(r.get("primary"), dict) and r["primary"].get("file") is None
-                   for r in records)
+                   r.get("code") == "E0034" and isinstance(r.get("primary"), dict) and
+                   r["primary"].get("file") is None for r in records)
 
 
 def record(config, argv):
