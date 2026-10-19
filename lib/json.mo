@@ -78,7 +78,9 @@ fn document(chars: List(Char)) : Result(Json, Halt)
   end
 end
 
-## The halt's position as a line and a column, each counted from 1.
+## The halt's position as a line and a column, each counted from 1. Reading stops at the
+## character that can't be there, or at the end; a number stops at the character that breaks its
+## syntax, an escape at its backslash, and a duplicate key at its opening quote.
 fn located(chars: List(Char), halt: Halt) : JsonError
   var line = 1
   var column = 1
@@ -411,11 +413,16 @@ fn plain(number: JsonNumber) : Option((Bool, List(Char), List(Char)))
     end
   end
   return Some((negative, ['0'], [])) if digits.all?(fn(d) d == '0' end)
-  while digits.first == Some('0')
-    digits = digits.drop(1)
-    point -= 1
+  # Each loop finds a position and the list is cut once, since every drop and take copies it.
+  var lead = 0
+  while digits.get(lead) == Some('0')
+    lead += 1
   end
-  exponent = if exponent_text.empty?: 0 else: try (exponent_text.drop_prefix("+") or exponent_text).to_int
+  digits = digits.drop(lead)
+  point -= lead
+  unsigned = exponent_text.drop_prefix("+") or exponent_text
+  exponent = if exponent_text.empty?: 0 else: try unsigned.to_int
+  # No Int or Decimal has a digit 60 places either side of the point.
   return None if exponent > 60 - point or exponent < -60 - point
   point += exponent
   var whole = []
@@ -428,9 +435,11 @@ fn plain(number: JsonNumber) : Option((Bool, List(Char), List(Char)))
     whole = digits.take(point)
     fraction = digits.drop(point)
   end
-  while fraction.last == Some('0')
-    fraction = fraction.take(fraction.size - 1)
+  var kept = fraction.size
+  while kept > 0 and fraction.get(kept - 1) == Some('0')
+    kept -= 1
   end
+  fraction = fraction.take(kept)
   Some((negative, if whole.empty?: ['0'] else: whole, fraction))
 end
 
@@ -506,6 +515,7 @@ fn quoted(text: Text) : Text
   examples
     quoted("say \"hi\"\n") == "\"say \\\"hi\\\"\\n\""
     quoted("tab\tbell\u{7}/é") == "\"tab\\tbell\\u0007/é\""
+    quoted("\u{1f}\u{0} ") == "\"\\u001f\\u0000 \""
   end
 
   "\"#{text.chars.map(escape_char).join("")}\""
@@ -554,6 +564,7 @@ test "reading stops at the character that can't be there"
   assert problem_at("\"a\tb\"") == (1, 3, "Unexpected(found: '\\t')")
   assert problem_at("\"abc") == (1, 5, "UnexpectedEnd")
   assert problem_at("[\n  1,\n  x\n]") == (3, 3, "Unexpected(found: 'x')")
+  assert parse(" \t\r\n[\t1\r,\n2 ]\r\n").map(fn(json) json.to_text end) == Ok("[1,2]")
 end
 
 test "numbers follow JSON's own syntax"
@@ -605,6 +616,10 @@ test "a number converts when its value fits, however it is written"
   assert number("-0.0e5").to_int == Some(0)
   assert number("1e60").to_int == None
   assert number("1e99999999999999999999").to_int == None
+  assert number("1e999999999").to_int == None
+  assert number("1e-999999999").to_decimal == None
+  assert number("1#{"0".repeat(100000)}e-100000").to_int == Some(1)
+  assert number("0.#{"0".repeat(100000)}1e100001").to_decimal == Some(1.0)
   assert number("0.000000000000000001").to_decimal == Some(0.000000000000000001)
   assert number("1e20").to_decimal == Some(100000000000000000000.0)
   assert number("1e21").to_decimal == None
