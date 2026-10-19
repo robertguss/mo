@@ -19,6 +19,8 @@ a form that lands should gain a golden program. Section numbers are Language Ref
 
 ## Other
 
+- After `use Json`, a bare `Json` in a type is E0048, though reference 10.3 says a module's type of
+  its own name is the type (`use Account` and `Account`). `Json.Json` and `use Json{Json}` work.
 - `use Unicode16` fails with E0034: there is no `lib/` folder yet.
 - A choice case cannot be named `Ok` or `Failed` (E0043), and number literals with exponents such
   as `1e21` are rejected (E0004); both match the reference as written.

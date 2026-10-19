@@ -793,6 +793,7 @@ for fixture, expected in {
     "list-map": 0,
     "option-or-fail": 0,
     "option-result-map": 0,
+    "json": 0,
     "map-update-sort-desc": 0,
     "map-literals": 0,
     "map-evaluation-order": 0,

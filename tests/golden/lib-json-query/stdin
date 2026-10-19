@@ -1,0 +1,5 @@
+[
+  {"name": "pen", "price": 1.50, "tags": ["office", "café"]},
+  {"name": "ink", "price": 2.25e0},
+  {"name": "pad", "price": 3}
+]
