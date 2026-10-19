@@ -74,6 +74,7 @@ class Harness(unittest.TestCase):
         self.source(session, "001")
         self.mo(session, "check", "main.mo")
         self.mo(session, "check")  # refused: names no file
+        self.mo(session, "check", "mian.mo")  # misspelt: reads no program
         self.mo(session, "fix", "--json", "main.mo")  # refused: a flag fix doesn't take
         ran = self.mo(session, "run", "main.mo")
         self.source(session, "002")
@@ -110,16 +111,17 @@ class Harness(unittest.TestCase):
         self.assertEqual(got.stdout, (example / "stdout").read_bytes())
 
         runs = session / "runs"
-        self.assertEqual(len(os.listdir(runs)), 7)
+        self.assertEqual(len(os.listdir(runs)), 8)
         argv = [json.loads((runs / n / "argv").read_text()) for n in sorted(os.listdir(runs))]
         self.assertEqual(argv[0], ["check", "main.mo"])
-        self.assertEqual(argv[3], ["run", "main.mo"])
+        self.assertEqual(argv[4], ["run", "main.mo"])
         self.assertEqual([(runs / n / "log").read_text() if (runs / n / "log").exists() else None
                           for n in sorted(os.listdir(runs))],
-                         ["001\n", None, None, None, "002\n", "003\n", None])
-        self.assertEqual((runs / "005/cwd").read_text(), "answers\n")
+                         ["001\n", None, None, None, None, "002\n", "003\n", None])
+        self.assertEqual((runs / "006/cwd").read_text(), "answers\n")
         self.assertEqual((runs / "002/status").read_text(), "2\n")
-        self.assertEqual(((runs / "004/stdout").read_bytes(), (runs / "004/stderr").read_bytes()),
+        self.assertEqual((runs / "003/status").read_text(), "1\n")
+        self.assertEqual(((runs / "005/stdout").read_bytes(), (runs / "005/stderr").read_bytes()),
                          (ran.stdout, ran.stderr))
         self.assertEqual(os.listdir(session / ".pending"), [])
 
