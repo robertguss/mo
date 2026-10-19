@@ -1,0 +1,5 @@
+good.txt: Ok("port 8081")
+bad.txt: Error("not a port: eighty")
+gone.txt: Error("can't read the config: tests/golden/fail-option-result-map/data/gone.txt: no such file")
+Some(9) None
+a.md: no such file, b: is a folder

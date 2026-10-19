@@ -1093,9 +1093,9 @@ a FIFO body queue. Tuple and record fields convert in declaration order; choice
 helpers use a one-level case, indexing proofs by flattened case/field order.
 Empty constructors print their bare name; other constructors print their name
 and fields, retaining declared field labels but not the positional `0` sentinel.
-Native Entry displays its path/kind labels; derived FileError text formats its
-four case messages (`PATH: no such file`, `PATH: not allowed`, `PATH: not text`,
-`PATH: REASON`).
+Native Entry displays its path/kind labels. FileError's text is its own
+`to_text` in `lib/file-error.mo`, so lowering derives none and refuses one with
+E1150 when the library isn't loaded.
 Nested native
 Text/Char fields are quoted and escape slashes before newly inserted escapes,
 including controls and interpolation markers. Generated parameter metadata
@@ -2980,7 +2980,8 @@ Mo-library functions use their loaded module's actual symbols, signatures and
 checked bodies, whether called with a dot or qualified name; when no library
 module is loaded, a function the library writes in Mo has no built-in fallback, since the
 toolchain needs `lib/` to find it. The higher-order library functions (`List.map`, `find`,
-`all?`, `count`, `max`, `sort_by_desc`, `Map.update`, `Option.or_fail`) are ordinary Mo code in
+`all?`, `count`, `max`, `sort_by_desc`, `Map.update`, `Option.or_fail`, `Option.map`, `Result.map`,
+`Result.map_error`) are ordinary Mo code in
 `lib/`, and constant dependency ordering follows their callers: a call to a library function adds
 an edge to each function argument and each `Order`/`Text` proof it is given, while inside a
 library body, calling a function parameter or using a parameter's ability adds none, because
@@ -2990,8 +2991,8 @@ Public lookup still
 requires expose; ability customizers need not be exposed. Entry's structural
 proof parts are Text then EntryKind; FileError's structural parts flatten its
 five Text fields in case order. FileError's Text selects the trusted library
-module's to_text when loaded (design library), and otherwise derives the four
-case messages rather than constructor syntax.
+module's to_text (design library); without the library, lowering refuses it
+rather than derive constructor syntax.
 Polymorphic recursion uses an explicit-stack SCC walk of scoped parameter
 dependencies from generic uses, including function values and ability callbacks
 in function and promise bodies.

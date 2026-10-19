@@ -3,12 +3,6 @@
 Found while writing `tests/golden/`. Each program avoids these forms, so the corpus passes today;
 a form that lands should gain a golden program. Section numbers are Language Reference v0.1.
 
-## Missing from the checker (E0050, "no visible function has this dot-call name")
-
-- `List`: `sort`, `min`, `filter`, `filter_map`, `flat_map`, `reduce`, `any?`, `sort_by`, `group_by`
-  (reference 14; 5.5 and 12.1 use `sort` and `filter_map` in their own examples).
-- `Option.map`, `Result.map`, `Result.map_error` (14).
-
 ## Not lowered yet (E1150)
 
 - `Int`: `floor_div`, `floor_mod`, `pow`, `checked_*`, `wrapping_*`, `saturating_*`, `to_big`,
