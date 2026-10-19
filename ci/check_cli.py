@@ -2040,6 +2040,9 @@ def map_literals(binary):
         "list-map": b"[2, 4, 6]/[1, 2, 3]/[13, 14]/[0, 25]/[7, 8]\n",
         "option-or-fail": b"Ok(1)/Error(Missing(name: \"z\"))\nOk(42)/Error(Empty)\n"
                           b"Ok(3)/Error(Empty)\nOk(\"x\")/Error(7)\nmade eager\nOk(1)\n",
+        "option-result-map": b"Some(20)/None\nSome(3)/Some(3)\nOk(20)/Error(Missing(name: \"z\"))\n"
+                             b"Ok(1)/Error(\"no z\")\nOk(4)/Error(\"no q\")\nOk(true)\n"
+                             b"None/Error(Missing(name: \"z\"))\nOk(1)\n",
         "map-update-sort-desc": b"2/1,1/5,7/[3, 2, 1]/[\"abcd\", \"def\", \"bc\", \"a\"]/[\"top-a\", \"top-b\", \"mid-a\", \"mid-b\", \"first\", \"second\", \"third\"]/[5, 3, 2]\n",
         "map-literals": b"3/7/0/0/0/11\napples=3;pears=7;\n",
         "map-evaluation-order": b"key 2\nvalue 20\nkey 1\nvalue 10\n2=20\n1=10\nif effect\nwhile effect\n",
@@ -2546,7 +2549,8 @@ def guide_claims(binary):
         assert result.stdout.endswith(b", 0 failed, 0 stopped\n"), (library_file, result.stdout)
     for name in ("map", "filter", "filter_map", "flat_map", "reduce", "find", "any?", "all?", "count",
                  "sort_by", "sort_by_desc", "sort", "min", "max", "group_by", "Map.update",
-                 "Option.or_fail"):
+                 "Option.or_fail", "Option.map", "Result.map", "Result.map_error",
+                 "FileError.to_text"):
         says(f"`{name}`")
 
 

@@ -1505,6 +1505,73 @@ static void option_or_fail_graph(void) {
     }
 }
 
+/* Option.map, Result.map and Result.map_error are Mo code in lib/, called through their symbols,
+ * and each call's type comes from the function it is given. */
+static void option_result_map_graph(void) {
+    struct fixture f;
+    init_with_library(&f, "module Main\nfn pick(r: Result(Int, Text)) : Result(Bool, Int)\n"
+                          "size = Some(\"ab\").map(fn(t) t.byte_count end)\n"
+                          "Result.map(r, fn(n) n == (size or 0) end).map_error(Text.byte_count)\n"
+                          "end\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        const struct mo_checked_body *body = &own_function(f.program, "pick")->body;
+        bool option_map = false, result_map = false, map_error = false;
+        for (uint32_t i = 0; i < body->count; i++) {
+            const struct mo_checked_expression *row = &body->items[i];
+            if (row->symbol == NULL || row->symbol->declaration->kind != MO_S_FN ||
+                !f.program->interfaces->scopes[row->symbol->module].library ||
+                row->type->kind == MO_SOURCE_FUNCTION || row->operand_count == 0)
+                continue;
+            const char *module = f.program->interfaces->scopes[row->symbol->module].name;
+            const struct mo_source_type *type = row->type;
+            if (strcmp(module, "Option") == 0 && strcmp(row->symbol->name, "map") == 0) {
+                CHECK(strcmp(type->name, "Option") == 0 &&
+                      strcmp(type->arguments[0]->name, "Int") == 0);
+                CHECK(row->receiver != UINT32_MAX);
+                option_map = true;
+            } else if (strcmp(module, "Result") == 0 && strcmp(row->symbol->name, "map") == 0) {
+                CHECK(strcmp(type->name, "Result") == 0 &&
+                      strcmp(type->arguments[0]->name, "Bool") == 0 &&
+                      strcmp(type->arguments[1]->name, "Text") == 0);
+                CHECK(row->receiver == UINT32_MAX);
+                result_map = true;
+            } else if (strcmp(module, "Result") == 0 &&
+                       strcmp(row->symbol->name, "map_error") == 0) {
+                CHECK(strcmp(type->name, "Result") == 0 &&
+                      strcmp(type->arguments[0]->name, "Bool") == 0 &&
+                      strcmp(type->arguments[1]->name, "Int") == 0);
+                CHECK(row->receiver != UINT32_MAX);
+                map_error = true;
+            }
+        }
+        CHECK(option_map && result_map && map_error);
+    }
+    free_fixture(&f);
+    static const struct {
+        const char *source;
+        uint16_t code;
+    } refusals[] = {
+        {"fn f() : Option(Int)\nSome(1).map(3)\nend\n", MO_CODE_ARGUMENT_TYPE},
+        {"fn f() : Option(Text)\nSome(1).map(fn(n) n + 1 end)\nend\n", MO_CODE_RESULT_TYPE},
+        {"fn f(r: Result(Int, Text)) : Result(Int, Int)\nr.map(fn(n) n + 1 end)\nend\n",
+         MO_CODE_RESULT_TYPE},
+        {"fn f(r: Result(Int, Text)) : Result(Int, Text)\nr.map_error()\nend\n",
+         MO_CODE_CALL_ARGUMENTS},
+    };
+    for (size_t i = 0; i < sizeof(refusals) / sizeof(refusals[0]); i++) {
+        struct mo_buffer source;
+        mo_buffer_init(&source, 4096);
+        MO_ASSERT(mo_buffer_append_text(&source, "module Main\n") &&
+                  mo_buffer_append_text(&source, refusals[i].source) &&
+                  mo_buffer_append_byte(&source, 0));
+        init_with_library(&f, (const char *)source.bytes);
+        CHECK(f.program == NULL && f.diags.count == 1 && f.diags.items[0].code == refusals[i].code);
+        free_fixture(&f);
+        mo_buffer_free(&source);
+    }
+}
+
 static void deferred_defaults(void) {
     struct fixture f;
     init(&f, "module Main\nfn choose() : Bool\n"
@@ -2747,6 +2814,7 @@ static void run(void *argument) {
     generic_lambdas();
     option_or_graph();
     option_or_fail_graph();
+    option_result_map_graph();
     deferred_defaults();
     try_graph();
     inferred_wrappers();

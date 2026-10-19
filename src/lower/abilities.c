@@ -503,10 +503,12 @@ static void derive_text(struct lowering *p, struct derived *d) {
         fields_text(p, d, 0, values, NULL, lower_text(p, "("), lower_text(p, ")"), &f->fun.body);
         return;
     }
+    /* FileError's text form is its own to_text, in lib/file-error.mo. */
+    if (d->type->tag == MO_CORE_TY_FILE_ERROR)
+        lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "FileError's text form needs the library");
     if (d->type->tag != MO_CORE_TY_DATA && d->type->tag != MO_CORE_TY_OPTION &&
         d->type->tag != MO_CORE_TY_RESULT && d->type->tag != MO_CORE_TY_ORDERING &&
-        d->type->tag != MO_CORE_TY_FILE_ERROR && d->type->tag != MO_CORE_TY_ENTRY &&
-        d->type->tag != MO_CORE_TY_ENTRY_KIND)
+        d->type->tag != MO_CORE_TY_ENTRY && d->type->tag != MO_CORE_TY_ENTRY_KIND)
         lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "this derived text shape is not lowered yet");
     mo_core_ctors ctors = lower_ctors(p, d->type);
     mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CASE);
@@ -530,15 +532,7 @@ static void derive_text(struct lowering *p, struct derived *d) {
         }
         if (count == 0)
             arm->body = text(p, ctor->name);
-        else if (d->type->tag == MO_CORE_TY_FILE_ERROR) {
-            static const char *const suffixes[] = {": no such file", ": not allowed", ": not text",
-                                                   ": "};
-            MO_ASSERT(i < sizeof suffixes / sizeof suffixes[0]);
-            mo_core_expr suffix = text(p, lower_text(p, suffixes[i]));
-            if (count == 2)
-                suffix = concat(p, suffix, values.items[1]);
-            arm->body = concat(p, values.items[0], suffix);
-        } else {
+        else {
             const struct mo_core_param *fields = NULL;
             if (d->type->tag == MO_CORE_TY_DATA)
                 fields = ctor->fields.items;
