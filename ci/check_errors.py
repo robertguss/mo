@@ -16,7 +16,7 @@ Codes that no source program can raise (Core text, bytecode, internal failures) 
 tests/errors/unit.tsv with the unit test that pins each one. Every code must be in exactly one of
 the two places, and the source cases are never regenerated: edit `expected` by hand. A case with a file
 `library-dependent` fills a limit that lib/'s own files also use, so it compares everything in
-`expected` but its numbers.
+`expected` but its numbers and the width of its runs of spaces.
 """
 
 import pathlib
@@ -220,8 +220,10 @@ def check_cases(binary, table):
         actual = result.stderr
         if (case / "library-dependent").exists():
             # The toolchain's lib/ files take part of the limit these cases fill, so where the
-            # limit is reached moves whenever lib/ grows: compare everything but the numbers.
-            masked = [re.sub(rb"\d+", b"N", text) for text in (expected, actual)]
+            # limit is reached moves whenever lib/ grows: compare everything but the numbers, and
+            # the spaces that line them up, since the marked part can move along its line.
+            masked = [re.sub(rb" +", b" ", re.sub(rb"\d+", b"N", text))
+                      for text in (expected, actual)]
         else:
             masked = [expected, actual]
         assert masked[0] == masked[1], f"{case.name}: the message differs\n--- expected\n" \

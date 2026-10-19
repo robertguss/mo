@@ -1,0 +1,6 @@
+3 items, total 6.75
+[{"name":"pen","price":1.50,"tags":["office","café"]}]
+{
+  "count": 3,
+  "big": 6.75
+}

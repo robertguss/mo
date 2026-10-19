@@ -1,0 +1,8 @@
+1:13 Unexpected(found: ']')
+3:3 DuplicateKey(key: "a")
+1:3 BadEscape
+1:4 BadNumber
+1:14 UnexpectedEnd
+1:4 Unexpected(found: '[')
+1:129 TooDeep
+None Some("2.5")

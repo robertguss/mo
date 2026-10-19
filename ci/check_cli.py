@@ -2043,6 +2043,9 @@ def map_literals(binary):
         "option-result-map": b"Some(20)/None\nSome(3)/Some(3)\nOk(20)/Error(Missing(name: \"z\"))\n"
                              b"Ok(1)/Error(\"no z\")\nOk(4)/Error(\"no q\")\nOk(true)\n"
                              b"None/Error(Missing(name: \"z\"))\nOk(1)\n",
+        "json": "{\"a\":[1,2.5e1,\"\u00e9\"],\"b\":null}\nSome(1)/Some(25)/Some(25)/2.5e1\n"
+                "Error(JsonError(line: 1, column: 5, problem: Unexpected(found: ']')))\n"
+                "[\n  1,\n  {\n    \"k\": \"v\"\n  }\n]\n".encode(),
         "map-update-sort-desc": b"2/1,1/5,7/[3, 2, 1]/[\"abcd\", \"def\", \"bc\", \"a\"]/[\"top-a\", \"top-b\", \"mid-a\", \"mid-b\", \"first\", \"second\", \"third\"]/[5, 3, 2]\n",
         "map-literals": b"3/7/0/0/0/11\napples=3;pears=7;\n",
         "map-evaluation-order": b"key 2\nvalue 20\nkey 1\nvalue 10\n2=20\n1=10\nif effect\nwhile effect\n",
@@ -2550,8 +2553,22 @@ def guide_claims(binary):
     for name in ("map", "filter", "filter_map", "flat_map", "reduce", "find", "any?", "all?", "count",
                  "sort_by", "sort_by_desc", "sort", "min", "max", "group_by", "Map.update",
                  "Option.or_fail", "Option.map", "Result.map", "Result.map_error",
-                 "FileError.to_text"):
+                 "FileError.to_text", "Json.parse", "pretty"):
         says(f"`{name}`")
+    says("After `use Json` (or `use Account`), this build doesn't yet take the module's own type by "
+         "its bare name: `fn f(value: Json)` is E0048, \"a type name isn't in scope\". Write "
+         "`Json.Json`, or `use Json{Json}`.")
+    with tempfile.TemporaryDirectory() as folder:
+        source = pathlib.Path(folder) / "main.mo"
+        program = ("module Main\nuse {use}\nfn f(value: {type}) : Text\n  value.to_text\nend\n"
+                   "fn main(console: Console)\n  console.print(f(Json.Null))\nend\n")
+        source.write_text(program.format(use="Json", type="Json"))
+        result = run(binary, ["check", str(source)], 1)
+        assert result.stderr.startswith(b"error E0048: a type name isn't in scope"), result.stderr
+        for use, type_name in (("Json", "Json.Json"), ("Json{Json}", "Json")):
+            source.write_text(program.format(use=use, type=type_name))
+            result = run(binary, ["run", str(source)], 0)
+            assert result.stdout == b"null\n", (use, result.stdout, result.stderr)
 
 
 def check(binary):

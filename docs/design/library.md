@@ -521,7 +521,7 @@ new for it: it parses and prints with text and list primitives.
 | `Json.parse(text)` | Mo | `lib/json.mo` | a parser over `text.chars`, with the nesting limit of reference 14 |
 | `json.to_text`, `json.pretty` | Mo | `lib/json.mo` | |
 | `Json.int(n)`, `Json.decimal(d)`, `Json.float(f)` | Mo | `lib/json.mo` | |
-| `to_int`, `to_decimal`, `to_float` and `to_text` on a `JsonNumber` | Mo | `lib/json.mo` | reads the number's text with `Text.to_int`, `to_decimal` and `to_float`, after checking JSON's own number syntax |
+| `to_int`, `to_decimal`, `to_float` and `to_text` on a `JsonNumber` | Mo | `lib/json.mo` | the parser has already checked JSON's own number syntax; `to_float` is `Text.to_float` on the number's text, and `to_int` and `to_decimal` first write it without its exponent, so `1.5e1` is the `Int` 15 |
 
 ## Clock
 

@@ -1,2 +1,1 @@
-module Main
-use Json
+module Json
