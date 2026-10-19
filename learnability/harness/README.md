@@ -52,10 +52,14 @@ and a folder in `.pending/`, and its run is not in the log.
   exits 2 is left out for the same reason. Both are still in `runs/`. Every other `fix` is
   logged, although on this build it changes nothing (E1400); protocol section 7 counts the errors
   that moves to `by_fix`.
-- **A file that can't be read** (a misspelt name) is logged as `mo` reports it: E0034 with a
-  `file` of `null`. `tally`'s task text doesn't say what function such an error is in, and its
-  reference (`bench/tools/tally/hidden/reference.py`) stops on it, so that is settled before a
-  round's logs are tallied.
+- **A file that can't be read isn't logged either.** A misspelt name (`mo check mian.mo`) gives
+  E0034 with a `file` of `null`: that run read no program, `tally`'s task text doesn't say what
+  function such an error is in, and the next correct run would count it as fixed on the first
+  try. So a `check` or `test` with an E0034 that has no file is kept in `runs/` only (Robert,
+  19 October 2026). A missing imported module's E0034 names the importing file and is logged.
+  Other diagnostics with no file come from the toolchain itself (a file over the size limit, an
+  unreadable `lib/`, running out of memory, an internal step failing); they stay in the log, and
+  `tally`'s reference stops on them, so a round with one looks at that run before tallying.
 - **Numbers.** A run's `runs/` number is taken when it starts, and its log number when it
   finishes, so runs that overlap get distinct numbers in the order they finished.
 

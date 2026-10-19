@@ -152,6 +152,24 @@ def show(argv):
     return proc.wait(), {name: b"".join(parts) for name, parts in seen.items()}
 
 
+def checked_a_program(output):
+    """Whether a `--json` run read the program, so its log entry counts. A refused command prints
+    no version record. A file named on the command line that can't be read, such as a misspelt
+    name, gives E0034 with no file. Neither run read the program, and logging it would count as
+    a run that fixed every error (Robert, 19 October 2026)."""
+    records = []
+    for line in output.splitlines():
+        try:
+            records.append(json.loads(line))
+        except ValueError:
+            records.append(None)  # tally reports a line that isn't JSON
+    if not records or not isinstance(records[0], dict) or records[0].get("record") != "version":
+        return False
+    return not any(isinstance(r, dict) and r.get("record") == "diagnostic" and
+                   r.get("code") == "E0034" and isinstance(r.get("primary"), dict) and
+                   r["primary"].get("file") is None for r in records)
+
+
 def record(config, argv):
     real, session, work = config["mo"], config["session"], config["work"]
     cwd = os.path.realpath(os.getcwd())
@@ -187,13 +205,7 @@ def record(config, argv):
         else:
             output = quiet.communicate()[0]
             write(os.path.join(pending, "output.jsonl"), output)
-            try:
-                first = json.loads(output.split(b"\n", 1)[0])
-            except ValueError:
-                first = None
-            # A refused command prints no version record and checked nothing; logging it would
-            # count as a run that fixed every error.
-            keep = isinstance(first, dict) and first.get("record") == "version"
+            keep = checked_a_program(output)
         if keep:
             log = claim(os.path.join(session, "log"), final=pending)
             write(os.path.join(runs, "log"), os.path.basename(log) + "\n")
