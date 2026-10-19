@@ -1,4 +1,4 @@
-error E0037: a program can't declare a library module's name  tests/errors/e0037/json.mo:1:8
+error E0037: a program can't declare a library module's name  tests/errors/e0037/main.mo:1:8
 
   1 | module Json
     |        ^^^^ Json
