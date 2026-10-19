@@ -1867,7 +1867,8 @@ static void test_source_file_error_text(void *unused) {
         &source, "module Main\nfn main() : Int\n"
                  "missing = NotFound(path: \"a\")\n\"#{missing}\".byte_count\nend\n"));
     struct mo_core *core = source_core(&output, &source, &diags);
-    CHECK(core == NULL && diags.count == 1 && diags.items[0].code == MO_CODE_LOWER_UNFINISHED);
+    CHECK(core == NULL && diags.count == 1 && diags.items[0].code == MO_CODE_LOWER_UNFINISHED &&
+          strcmp(diags.items[0].message, "FileError's text form needs the library") == 0);
     mo_arena_free(&output);
     mo_diags_free(&diags);
     mo_buffer_free(&source);

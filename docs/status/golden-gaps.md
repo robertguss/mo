@@ -3,6 +3,10 @@
 Found while writing `tests/golden/`. Each program avoids these forms, so the corpus passes today;
 a form that lands should gain a golden program. Section numbers are Language Reference v0.1.
 
+## Checked and run, but no golden program yet
+
+- `List`: `filter`, `filter_map`, `flat_map`, `any?`, `group_by` (reference 14).
+
 ## Not lowered yet (E1150)
 
 - `Int`: `floor_div`, `floor_mod`, `pow`, `checked_*`, `wrapping_*`, `saturating_*`, `to_big`,
