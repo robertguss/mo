@@ -50,8 +50,8 @@ bash ci/check.sh [group…]  # everything CI runs; groups: gcc clang sanitize fu
 - The `drivers` group runs Python black-box checks against the built executables
   (`ci/check_cli.py` for CLI text/JSON goldens, `ci/check_golden.py`, `ci/check_unicode16.py`, …);
   the `lean` group builds Mo Core in Lean and compares the executables with it
-  (`ci/check_lower_source.py`, `ci/check_core_differential.py`, …). CLI behaviour changes usually need an edit to `ci/check_cli.py` or the
-  goldens under `tests/cli/`.
+  (`ci/check_lower_source.py`, `ci/check_core_differential.py`, …). CLI behaviour changes usually
+  need an edit to `ci/check_cli.py` or the goldens under `tests/cli/`.
 
 ## CI and merging
 
@@ -59,9 +59,9 @@ GitHub Actions (`.github/workflows/check.yml`) runs `ci/check.sh` as eight paral
 one required `check` status on `main`; a red PR cannot merge. `ci/orb/README.md` holds the merge
 evidence rules (tested commit, commands, toolchain, exit status). PRs are squash-merged.
 A PR that changes only documents no check reads skips the eight jobs, and `check` still reports
-(`ci/docs_only.sh` holds the list). A PR that doesn't touch what the CBMC proofs read skips the
-`cbmc` job (`ci/ci_groups.sh`); pushes to main run every job. `docs/agent-guide.md`, `docs/reference/README.md` and
-`docs/design/library.md` are not on it: the build embeds or checks them. Robert lets agents merge
+(`ci/docs_only.sh` holds the list). `docs/agent-guide.md`, `docs/reference/README.md` and
+`docs/design/library.md` are not on it: the build embeds or checks them. A PR that doesn't touch
+what the CBMC proofs read skips the `cbmc` job (`ci/ci_groups.sh`); pushes to main run every job. Robert lets agents merge
 docs-only PRs without review.
 
 ## Architecture

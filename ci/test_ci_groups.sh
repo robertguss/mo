@@ -29,8 +29,28 @@ expect "$all" cbmc/reader.c
 expect "$all" cbmc/prove.sh
 expect "$all" ci/check.sh
 expect "$all" Makefile
+expect "$all" ci/ci_groups.sh
+expect "$all" .agents/setup
 expect "$all" .github/workflows/check.yml
 expect "$all" src/check/check.c src/bytecode/bytecode.h
 expect "$most" ''
+
+# Without a compiler to list what the harness reads, cbmc always runs.
+nocc=$(mktemp -d)
+for tool in sh sed tr grep cat dirname git; do ln -s "$(command -v "$tool")" "$nocc/$tool"; done
+got=$(printf 'src/check/check.c\n' | PATH=$nocc sh ci/ci_groups.sh -)
+rm -rf "$nocc"
+if [ "$got" != "$all" ]; then
+    echo "error: ci/ci_groups.sh without a compiler said $got, expected $all" >&2
+    fail=1
+fi
+
+# $all must name every group ci/check.sh has, or a new group would never run on a pull request.
+groups=$(sed -n 's/^all_groups=" \(.*\) "$/\1/p' ci/check.sh)
+listed=$(printf '%s' "$all" | tr -d '[]",')
+if [ "$(printf '%s\n' $groups | sort)" != "$(printf '%s\n' $listed | sort)" ]; then
+    echo "error: ci/check.sh has groups $groups but ci/ci_groups.sh runs $listed" >&2
+    fail=1
+fi
 
 exit "$fail"
