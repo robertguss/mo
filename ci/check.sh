@@ -255,7 +255,18 @@ if have lake; then
 	sh ci/check_core_fixtures.sh
 	if have python3; then
 		# The comparisons below don't depend on each other, so they run side by side
-		# (`later`), the longest first.
+		# (`later`), the longest first. Most of them already run a thread per processor,
+		# and with more of them at once the work bounds in check_primitives near their timeouts,
+		# so half as many run at once as in the drivers group.
+		processors=$later_limit
+		later_limit=$(((processors + 1) / 2))
+		built tests/test_prim.test
+		if ((${#drivers[@]})); then
+			later "Primitive results and stops match Lean; large inputs keep their work bounds" \
+				python3 ci/check_primitives.py "${drivers[@]}"
+		else
+			missing "no primitive test executable is built"
+		fi
 		built tests/test_vm.test
 		vm_drivers=("${drivers[@]}")
 		if ((${#vm_drivers[@]})); then
@@ -263,13 +274,6 @@ if have lake; then
 				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_vm.py "${vm_drivers[@]}"
 		else
 			missing "no VM test executable is built"
-		fi
-		built tests/test_prim.test
-		if ((${#drivers[@]})); then
-			later "Primitive results and stops match Lean; large inputs keep their work bounds" \
-				python3 ci/check_primitives.py "${drivers[@]}"
-		else
-			missing "no primitive test executable is built"
 		fi
 		built tests/test_lower.test
 		lower_drivers=("${drivers[@]}")
@@ -315,6 +319,7 @@ if have lake; then
 			missing "no host test executable is built"
 		fi
 		report
+		later_limit=$processors
 	else
 		missing "python3 is not installed"
 	fi
