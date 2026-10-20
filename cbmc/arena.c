@@ -37,9 +37,9 @@ size_t nondet_size(void);
 bool nondet_bool(void);
 unsigned char nondet_byte(void);
 
-/* The largest limit an arena is proved for: far above any in src/base/limits.h, and small enough
- * that CBMC can represent a chunk of that size as one object. */
-#define MOST_LIMIT ((size_t)1 << 40)
+/* The largest block the system hands out, so that CBMC can represent each chunk as one object.
+ * An arena's limit and use are any size at all (mo run --heap-size takes any). */
+#define MOST_OBJECT ((size_t)1 << 40)
 
 /* ---- The system ---------------------------------------------------------------------------- */
 
@@ -74,10 +74,16 @@ void *system_memcpy(void *destination, const void *source, size_t size) {
     return destination;
 }
 
-/* malloc and realloc may fail, and on our targets align what they return to 16 bytes, as
- * arena.c's chunk layout requires. A failed realloc leaves the block as it was. */
+/* Whether malloc or realloc has failed, so a harness can tell the system's refusals from the
+ * arena's own. */
+static bool system_failed;
+
+/* malloc and realloc may fail, always for more than MOST_OBJECT bytes, and on our targets align
+ * what they return to 16 bytes, as arena.c's chunk layout requires. A failed realloc leaves the
+ * block as it was. */
 void *system_malloc(size_t size) {
-    if (nondet_bool()) {
+    if (size > MOST_OBJECT || nondet_bool()) {
+        system_failed = true;
         return NULL;
     }
     void *p = malloc(size);
@@ -91,7 +97,8 @@ void *system_realloc(void *block, size_t size) {
     __CPROVER_assert(__CPROVER_POINTER_OFFSET(block) == 0 && size >= __CPROVER_OBJECT_SIZE(block) &&
                          size >= HEADER,
                      "realloc grows a chunk");
-    if (nondet_bool()) {
+    if (size > MOST_OBJECT || nondet_bool()) {
+        system_failed = true;
         return NULL;
     }
     unsigned char *p = malloc(size);
@@ -131,7 +138,7 @@ static bool chunk_ok(const struct mo_arena_chunk *c) {
 
 /* An arena: within its limit, and its newest chunk, when it has one, counted in what it used. */
 static bool arena_ok(const struct mo_arena *a) {
-    if (a->limit > MOST_LIMIT || a->used > a->limit || !chunk_size_ok(a->next_chunk_size)) {
+    if (a->used > a->limit || !chunk_size_ok(a->next_chunk_size)) {
         return false;
     }
     if (a->chunk == NULL) {
@@ -147,11 +154,11 @@ static void any_arena(struct mo_arena *a) {
     a->used = nondet_size();
     a->next_chunk_size = nondet_size();
     a->chunk = NULL;
-    __CPROVER_assume(a->limit <= MOST_LIMIT && a->used <= a->limit &&
-                     chunk_size_ok(a->next_chunk_size));
+    __CPROVER_assume(a->used <= a->limit && chunk_size_ok(a->next_chunk_size));
     if (a->used > 0 && nondet_bool()) {
         size_t capacity = nondet_size();
-        __CPROVER_assume(HEADER <= a->used && capacity <= a->used - HEADER);
+        __CPROVER_assume(HEADER <= a->used && capacity <= a->used - HEADER &&
+                         capacity <= MOST_OBJECT - HEADER);
         struct mo_arena_chunk *c = malloc(HEADER + capacity);
         __CPROVER_assume(c != NULL && aligned(c, 16));
         c->previous = NULL;
@@ -173,6 +180,16 @@ static size_t any_alignment(void) {
 /* Where the newest chunk's free space starts. */
 static unsigned char *free_space(const struct mo_arena *a) {
     return chunk_data(a->chunk) + a->chunk->used;
+}
+
+/* Whether a block of size bytes, aligned to alignment, fits in a new chunk within the limit: the
+ * arena refuses it only when it does not (or when the system does). A chunk is aligned to 16, so
+ * a larger alignment can need that much less 16 of padding. */
+static bool fits_in_limit(const struct mo_arena *a, size_t size, size_t alignment) {
+    size_t n = size == 0 ? 1 : size;
+    size_t padding = alignment > 16 ? alignment - 16 : 0;
+    size_t room = a->limit - a->used;
+    return n <= room && HEADER + padding <= room - n;
 }
 
 static bool same_arena(const struct mo_arena *a, const struct mo_arena *b) {
@@ -201,12 +218,13 @@ static bool new_block(const struct mo_arena *a, const struct mo_arena *before, s
 
 /* mo_arena_allocate as harness_arena_allocate proves it, for its callers' proofs: it requires an
  * arena and an alignment, and returns no block, or a block of the size asked (at least one byte),
- * aligned, that overlaps no other object. A block larger than the limit is always refused. */
+ * aligned, that overlaps no other object. A block larger than the limit, or than a chunk the
+ * system gives, is always refused. */
 void *model_mo_arena_allocate(struct mo_arena *arena, size_t size, size_t alignment) {
     __CPROVER_assert(arena_ok(arena) && is_power_of_two(alignment) &&
                          alignment <= MO_ARENA_MAX_ALIGNMENT,
                      "mo_arena_allocate's requirements");
-    if (nondet_bool() || size > arena->limit) {
+    if (nondet_bool() || size > arena->limit || size > MOST_OBJECT - HEADER) {
         return NULL;
     }
     unsigned char *block = malloc(size == 0 ? 1 : size);
@@ -227,15 +245,19 @@ void harness_arena_allocate(void) {
     size_t old_used = a.chunk != NULL ? a.chunk->used : 0;
     size_t size = nondet_size();
     size_t alignment = any_alignment();
+    system_failed = false;
     unsigned char *block = mo_arena_allocate(&a, size, alignment);
     __CPROVER_assert(arena_ok(&a) && a.limit == before.limit, "still an arena, same limit");
     if (block == NULL) {
         __CPROVER_assert(same_arena(&a, &before) && (a.chunk == NULL || a.chunk->used == old_used),
                          "a failed allocation changes nothing");
+        __CPROVER_assert(system_failed || !fits_in_limit(&before, size, alignment),
+                         "only a block past the limit, or the system, fails");
     } else {
         __CPROVER_assert(new_block(&a, &before, old_used, block, size, alignment),
                          "a new block of the size asked");
-        __CPROVER_assert(size <= a.limit, "a block larger than the limit is refused");
+        __CPROVER_assert(size <= a.limit && size <= MOST_OBJECT - HEADER,
+                         "a block larger than the limit, or than the system gives, is refused");
     }
     reached_end();
 }
@@ -287,7 +309,7 @@ void harness_arena_resize(void) {
         __CPROVER_assume(aligned(block, alignment));
     } else {
         /* A block in an older chunk, which is another object. */
-        __CPROVER_assume(old_size <= a.limit);
+        __CPROVER_assume(old_size <= MOST_OBJECT);
         block = malloc(old_size);
         __CPROVER_assume(block != NULL && aligned(block, alignment));
     }
@@ -301,21 +323,38 @@ void harness_arena_resize(void) {
     unsigned char value = keeps ? block[i] : 0;
     watched = keeps ? block + i : NULL;
 
+    system_failed = false;
     unsigned char *resized = mo_arena_resize(&a, block, old_size, new_size, alignment);
     __CPROVER_assert(arena_ok(&a) && a.limit == before.limit, "still an arena, same limit");
     if (resized == NULL) {
         __CPROVER_assert(same_arena(&a, &before) && (a.chunk == NULL || a.chunk->used == old_used),
                          "a failed resize changes nothing");
         __CPROVER_assert(!keeps || block[i] == value, "a failed resize keeps the block");
+        __CPROVER_assert(block == NULL || new_size > old_size, "shrinking never fails");
+        __CPROVER_assert(system_failed || !fits_in_limit(&before, new_size, alignment),
+                         "only a block past the limit, or the system, fails");
     } else {
         __CPROVER_assert(aligned(resized, alignment) && __CPROVER_w_ok(resized, new_size),
                          "a block of the new size");
         __CPROVER_assert(!keeps || resized[i] == value, "the block keeps its bytes");
+        __CPROVER_assert(block == NULL || new_size > old_size || resized == block,
+                         "a shrunk block stays where it is");
+        /* A block in the newest chunk ends before its free space, so the next block does not
+         * overlap it. */
+        __CPROVER_assert(new_size == 0 || !__CPROVER_same_object(resized, a.chunk) ||
+                             resized + new_size <= free_space(&a),
+                         "a block in the newest chunk is below its free space");
         if (resized != block || new_size > old_size) {
             /* A grown or moved block is the newest, so it overlaps no other. */
             __CPROVER_assert(__CPROVER_same_object(resized, a.chunk) &&
                                  resized + (new_size == 0 ? 1 : new_size) <= free_space(&a),
                              "a grown block is in the newest chunk");
+        }
+        if (resized == block && new_size > old_size) {
+            /* Only the newest block grows in place, so it covers no later block. */
+            __CPROVER_assert(before.chunk != NULL && __CPROVER_same_object(block, before.chunk) &&
+                                 block + old_size == chunk_data(before.chunk) + old_used,
+                             "only the newest block grows in place");
         }
     }
     reached_end();
@@ -325,7 +364,7 @@ void harness_arena_copy(void) {
     struct mo_arena a;
     any_arena(&a);
     size_t size = nondet_size();
-    __CPROVER_assume(size <= a.limit);
+    __CPROVER_assume(size <= MOST_OBJECT);
     const unsigned char *bytes = size == 0 && nondet_bool() ? NULL : malloc(size);
     __CPROVER_assume(bytes != NULL || size == 0);
     size_t alignment = any_alignment();

@@ -149,7 +149,7 @@ run() {
 			grep -qE "^\[reached_end\.coverage\.[0-9]+\] .*: SATISFIED$" "$log" && [[ -z "$missed" ]]; then
 			echo "reached every block of $name ($((SECONDS - start))s$inputs)"
 		else
-			echo "FAILED $name: some blocks never run on $n-byte inputs; see $log"
+			echo "FAILED $name: some blocks never run${inputs:+ on $n-byte inputs}; see $log"
 			if [[ -n "$missed" ]]; then printf %s "$missed" | head -n 20; fi
 			return 1
 		fi

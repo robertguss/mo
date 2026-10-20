@@ -353,8 +353,8 @@ fi
 if want cbmc; then
 step "CBMC: the bytecode reader on every small input, and the arena, are memory-safe (cbmc/README.md)"
 if have cbmc && have goto-cc && have goto-instrument; then
-	# The proofs and the check that every block they prove runs on some input take about eight
-	# and six minutes one at a time, so they share the machine's processors.
+	# The proofs and the check that every block they prove runs on some input take about twelve
+	# and seven minutes one at a time, so they share the machine's processors.
 	jobs=$(($(getconf _NPROCESSORS_ONLN) / 2))
 	((jobs >= 1)) || jobs=1
 	mkdir -p build
