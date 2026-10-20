@@ -388,39 +388,49 @@ static bool verified(const struct mo_bytecode *f, const struct mo_bytecode_funct
                      uint32_t pc) {
     const uint32_t *a = fn->code + pc + 1;
     uint32_t op = fn->code[pc] & MO_OPCODE_MASK, n = fn->code[pc] >> MO_OPCODE_VARIABLE_SHIFT;
+    const uint32_t *types = fn->register_types;
     switch (op) {
+    case MO_OP_SWITCH:
+        return n == f->types[types[a[0]]].case_count;
     case MO_OP_CALL:
         return n == f->functions[a[1]].parameter_count;
     case MO_OP_TAIL_CALL:
         return n == f->functions[a[0]].parameter_count;
+    case MO_OP_CALL_CLOSURE:
+        return n == f->types[types[a[1]]].parameter_count;
+    case MO_OP_TAIL_CALL_CLOSURE:
+        return n == f->types[types[a[0]]].parameter_count;
+    case MO_OP_CONSTRUCT:
+        return n == f->layouts[a[1]].field_count;
+    case MO_OP_REUSE:
+        return n == f->layouts[a[2]].field_count;
+    case MO_OP_MAKE_CLOSURE:
+        return n == f->functions[a[1]].capture_count;
     case MO_OP_PRIM:
         return n == primitive_arity[a[1]];
     case MO_OP_HOST:
         return n == host_arity[a[1]];
     case MO_OP_MAKE_CASE:
-        return f->types[a[1]].kind == MO_TYPE_CHOICE && a[2] < f->types[a[1]].case_count;
+        /* A file without case tables (harness_step's) has no case field counts to match. */
+        return f->types[a[1]].kind == MO_TYPE_CHOICE && a[2] < f->types[a[1]].case_count &&
+               (f->types[a[1]].cases == NULL || n == f->types[a[1]].cases[a[2]].field_count);
     default:
         return true;
     }
 }
 
-/* A refusal: a reason, and either no memory or a position inside the function's code. */
+/* A refusal: a reason, and a position inside the function's code (step allocates nothing). */
 static bool refused(const struct flow *f) {
     const struct mo_load_error *e = f->v.error;
-    return e->reason != NULL &&
-           (e->kind == MO_BYTECODE_NO_MEMORY ||
-            ((e->kind == MO_BYTECODE_INVALID || e->kind == MO_BYTECODE_LIMIT) &&
-             e->offset >= f->v.base && e->offset - f->v.base <= 4 * f->v.fn->code_count));
+    return e->reason != NULL && (e->kind == MO_BYTECODE_INVALID || e->kind == MO_BYTECODE_LIMIT) &&
+           e->offset >= f->v.base && e->offset - f->v.base <= 4 * f->v.fn->code_count;
 }
 
-/* The layouts cases gives the ownership pass: one for each reset, perhaps one for a case or a
- * closure made, and none for anything else. */
+/* The layout cases gives a reset, which the ownership pass reads; every other instruction's
+ * entry may hold anything. */
 static bool reset_ok(const struct flow *f, uint32_t pc) {
-    uint32_t op = f->v.fn->code[pc] & MO_OPCODE_MASK, l = f->reset[pc];
-    return op == MO_OP_RESET ? l < f->v.file->layout_count
-           : op == MO_OP_MAKE_CASE || op == MO_OP_MAKE_CLOSURE
-               ? l == MO_NO_INDEX || l < f->v.file->layout_count
-               : l == MO_NO_INDEX;
+    uint32_t op = f->v.fn->code[pc] & MO_OPCODE_MASK;
+    return op != MO_OP_RESET || f->reset[pc] < f->v.file->layout_count;
 }
 
 /* A register's ownership state: undefined, a value, owned, borrowed, moved, or a token for
@@ -443,6 +453,148 @@ static uint32_t any_state(const struct flow *f) {
     uint32_t s = nondet_u32();
     __CPROVER_assume(state_ok(f, s));
     return s;
+}
+
+static bool readable_state(uint32_t s) {
+    return s == VALUE || s == OWNED || s == BORROWED;
+}
+
+static bool reads(enum mo_operand_access mode) {
+    return mode != MO_ACCESS_NONE && mode != MO_ACCESS_WRITE && mode != MO_ACCESS_TOKEN_WRITE;
+}
+
+static bool consumes(enum mo_operand_access mode, uint32_t s) {
+    return mode == MO_ACCESS_TOKEN_CONSUME || mode == MO_ACCESS_CONSUME ||
+           (mode == MO_ACCESS_MOVE && s == OWNED);
+}
+
+/* The ownership rules, of an instruction at pc 0 that step accepted, with the slots' states
+ * before (old) and after (state):
+ * - each register it reads is readable, and each token it consumes a token, and a reuse's
+ *   token is of its layout;
+ * - a reference it consumes is owned, a tail call borrows only borrowed references, and no
+ *   reference or token is consumed and used again by the same instruction;
+ * - it writes over no owned register or token (once its moves are done), and leaves each register
+ * it writes owned (a reference, borrowed from a constant or global), a value, undefined (clear),
+ * the moved state (move) or a token of the instruction's layout (reset); each owned reference or
+ * token it consumes and does not write is moved, and every other register is as it was;
+ * - an init reads only globals set before it, sets its own once, and returns only after setting
+ *   it; and nothing returns or tail calls with an owned register or a token left. */
+static bool step_ok(const struct flow *f, const uint32_t *old, const uint32_t *state) {
+    const struct mo_bytecode_function *fn = f->v.fn;
+    const struct mo_bytecode *file = f->v.file;
+    const uint32_t *a = fn->code + 1;
+    uint32_t op = fn->code[0] & MO_OPCODE_MASK, global = fn->register_count;
+    const struct mo_opcode_info *info = mo_opcode_find(op);
+    uint32_t count = info->fixed_count + (fn->code[0] >> MO_OPCODE_VARIABLE_SHIFT);
+    enum mo_operand_access modes[CODE];
+    bool reference[CODE];
+    uint32_t move = UNDEFINED, expected[REGISTERS];
+    for (uint32_t r = 0; r < fn->register_count; r++) {
+        expected[r] = old[r];
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        modes[i] = access(f, 0, i);
+        reference[i] =
+            modes[i] != MO_ACCESS_NONE && file->types[fn->register_types[a[i]]].reference;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        enum mo_operand_access mode = modes[i];
+        if (!reads(mode)) {
+            continue;
+        }
+        uint32_t r = a[i], s = old[r];
+        bool token = mode == MO_ACCESS_TOKEN_CONSUME, consumed = consumes(mode, s);
+        if (token ? s < TOKEN : !readable_state(s)) {
+            return false;
+        }
+        if (consumed && reference[i] && !token && s != OWNED) {
+            return false;
+        }
+        if (op == MO_OP_TAIL_CALL && i >= info->fixed_count && mode == MO_ACCESS_READ &&
+            reference[i] && s != BORROWED) {
+            return false;
+        }
+        for (uint32_t j = 0; j < i; j++) {
+            if (a[j] == r && reads(modes[j]) &&
+                (reference[i] || modes[j] == MO_ACCESS_TOKEN_CONSUME) &&
+                ((consumed && (reference[i] || token)) || consumes(modes[j], s))) {
+                return false;
+            }
+        }
+        if (mode == MO_ACCESS_MOVE) {
+            move = s;
+        }
+        if (token ||
+            ((mode == MO_ACCESS_CONSUME || mode == MO_ACCESS_MOVE) && reference[i] && s == OWNED)) {
+            expected[r] = MOVED;
+        }
+    }
+    if (op == MO_OP_REUSE && old[a[1]] != TOKEN + a[2]) {
+        return false;
+    }
+    /* Writes come after the moves, so a register an instruction moves from it may write. */
+    for (uint32_t i = 0; i < info->fixed_count; i++) {
+        enum mo_operand_access mode = modes[i];
+        if (mode != MO_ACCESS_WRITE && mode != MO_ACCESS_TOKEN_WRITE) {
+            continue;
+        }
+        uint32_t r = a[i];
+        if (expected[r] == OWNED || expected[r] >= TOKEN) {
+            return false;
+        }
+        expected[r] = mode == MO_ACCESS_TOKEN_WRITE             ? TOKEN + f->reset[0]
+                      : op == MO_OP_CLEAR                       ? UNDEFINED
+                      : op == MO_OP_MOVE                        ? move
+                      : !reference[i]                           ? VALUE
+                      : op == MO_OP_CONST || op == MO_OP_GLOBAL ? BORROWED
+                                                                : OWNED;
+    }
+    for (uint32_t r = 0; r < fn->register_count; r++) {
+        if (state[r] != expected[r]) {
+            return false;
+        }
+    }
+    if (op == MO_OP_SET_GLOBAL ? old[global] != 0 || state[global] != 1
+                               : state[global] != old[global]) {
+        return false;
+    }
+    if (f->program != NULL && fn->kind == MO_FUNCTION_INIT) {
+        uint32_t needed = op == MO_OP_GLOBAL      ? f->program->global_rank[a[1]]
+                          : op == MO_OP_CALL      ? f->program->required[a[1]]
+                          : op == MO_OP_TAIL_CALL ? f->program->required[a[0]]
+                                                  : 0;
+        if ((uint64_t)needed > (uint64_t)f->program->init_rank[f->index] - 1 + old[global]) {
+            return false;
+        }
+    }
+    if (op == MO_OP_RET || op == MO_OP_TAIL_CALL || op == MO_OP_TAIL_CALL_CLOSURE) {
+        for (uint32_t r = 0; r < fn->register_count; r++) {
+            if (state[r] == OWNED || state[r] >= TOKEN) {
+                return false;
+            }
+        }
+        if (fn->kind == MO_FUNCTION_INIT && state[global] == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* The readable mask after an instruction at pc 0: when visiting, each register's readability
+ * after it; otherwise, when it is the one replayed to, each register's readability before it,
+ * and else the mask as it was. */
+static bool mask_ok(const struct flow *f, const bool *before, const uint32_t *old,
+                    const uint32_t *state) {
+    for (uint32_t r = 0; f->readable != NULL && r < f->v.fn->register_count; r++) {
+        bool expected = f->visit != NULL ? readable_state(state[r])
+                        : f->replay == 0 ? readable_state(old[r])
+                                         : before[r];
+        if (f->readable[r] != expected) {
+            return false;
+        }
+    }
+    return true;
 }
 
 /* ---- Flows -------------------------------------------------------------------------------- */
@@ -566,11 +718,12 @@ void harness_lookup(void) {
     reached_end();
 }
 
-/* The ownership transfer of any instruction, with room for up to CODE words of changes on the
- * path before it. */
+/* The ownership transfer of any instruction, with any room the undo log has left for it: step
+ * reads no code after the instruction, so the function's code is the instruction alone, and the
+ * undo log as long. */
 void harness_step(void) {
     struct world w = any_world(false);
-    any_instruction(&w, 1, MO_OPCODE_COUNT, CODE);
+    any_instruction(&w, MO_CBMC_FIRST, MO_CBMC_LAST, 0);
     struct flow *f = any_flow(&w);
     const struct mo_bytecode_function *fn = w.fn;
     uint32_t pc = 0;
@@ -587,9 +740,21 @@ void harness_step(void) {
                              .undo = TABLE(struct undo, CODE, fn->code_count),
                              .changes = nondet_u32()};
     uint32_t old[REGISTERS + 1];
+    bool mask[REGISTERS];
     for (uint32_t r = 0; r < slots; r++) {
         regs.state[r] = r == fn->register_count ? nondet_bool() : any_state(f);
         old[r] = regs.state[r];
+    }
+    /* Every block runs once (ownership), so no register is marked for this instruction yet, and
+     * a visit keeps the mask matching the states. */
+    for (uint32_t r = 0; r < fn->register_count; r++) {
+        regs.seen[r] = nondet_u32();
+        regs.consumed[r] = nondet_u32();
+        __CPROVER_assume(regs.seen[r] != pc + 1 && regs.consumed[r] != pc + 1);
+        if (f->readable != NULL) {
+            __CPROVER_assume(f->visit == NULL || f->readable[r] == readable_state(old[r]));
+            mask[r] = f->readable[r];
+        }
     }
     __CPROVER_assume(regs.changes <= fn->code_count &&
                      length(fn, pc) - 1 <= fn->code_count - regs.changes);
@@ -611,6 +776,8 @@ void harness_step(void) {
         for (uint32_t r = 0; r < slots; r++) {
             __CPROVER_assert(undone[r] == old[r], "step: the undo log restores every slot");
         }
+        __CPROVER_assert(step_ok(f, old, regs.state), "step: the ownership rules hold");
+        __CPROVER_assert(mask_ok(f, mask, old, regs.state), "step: the readable mask");
     } else {
         __CPROVER_assert(refused(f), "step: a refusal with its reason");
     }

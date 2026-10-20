@@ -353,9 +353,9 @@ fi
 if want cbmc; then
 step "CBMC: the bytecode reader on every small input, the arena and the verifier's transfer functions (cbmc/README.md)"
 if have cbmc && have goto-cc && have goto-instrument; then
-	# The proofs and the check that every block they prove runs on some input take about thirty
-	# and twenty minutes one at a time (the verifier's step proof alone about fourteen), so they
-	# share the machine's processors.
+	# The proofs and the check that every block they prove runs on some input take about
+	# twenty-five and twenty minutes one at a time (the verifier's step proof alone about eleven),
+	# so they share the machine's processors.
 	jobs=$(($(getconf _NPROCESSORS_ONLN) / 2))
 	((jobs >= 1)) || jobs=1
 	mkdir -p build

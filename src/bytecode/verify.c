@@ -506,13 +506,12 @@ static MO_MUST_USE bool step(struct flow *f, struct registers *regs, uint32_t pc
 static MO_MUST_USE bool ownership(struct flow *f) {
     const struct mo_bytecode_function *fn = f->v.fn;
     size_t slots = (size_t)fn->register_count + 1;
-    struct registers s = {.state = array(f, slots, sizeof *s.state, _Alignof(uint32_t)),
-                          .seen = array(f, fn->register_count, sizeof *s.seen, _Alignof(uint32_t)),
-                          .consumed =
-                              array(f, fn->register_count, sizeof *s.consumed, _Alignof(uint32_t)),
-                          .undo = array(f, fn->code_count, sizeof *s.undo, _Alignof(struct undo))};
-    uint32_t *state = s.state;
+    struct registers s = {.state = array(f, slots, sizeof *s.state, _Alignof(uint32_t))};
+    s.seen = array(f, fn->register_count, sizeof *s.seen, _Alignof(uint32_t));
+    s.consumed = array(f, fn->register_count, sizeof *s.consumed, _Alignof(uint32_t));
     struct walk *stack = array(f, f->count, sizeof *stack, _Alignof(struct walk));
+    s.undo = array(f, fn->code_count, sizeof *s.undo, _Alignof(struct undo));
+    uint32_t *state = s.state;
     if (state == NULL || s.seen == NULL || s.consumed == NULL || stack == NULL || s.undo == NULL) {
         return false;
     }

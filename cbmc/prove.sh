@@ -163,6 +163,7 @@ run() {
 		cbmc "$instrumented" --cover location "${cover[@]}" --unwind "$unwind" \
 			--unwindset "$unwindset" >>"$log" 2>&1 || true
 		missed=
+		pointer_sites=
 		while IFS= read -r goal; do
 			# An MO_ASSERT's failure branch, or an MO_UNREACHABLE, must never run: the proof
 			# shows that.
@@ -171,10 +172,15 @@ run() {
 				grep -qE 'MO_ASSERT\(|MO_UNREACHABLE\(' && continue
 			# Nor can a call through a function pointer reach a target the harness never gives
 			# it: CBMC adds that branch when it resolves the pointer, and closes it with
-			# assume(false).
-			[[ "$goal" =~ \ file\ ([^ ]+)\ line\ ([0-9]+)\ function\ ([^ ]+)\  ]] &&
-				grep -qF "at file ${BASH_REMATCH[1]} line ${BASH_REMATCH[2]} function ${BASH_REMATCH[3]} thread 0: dereferenced function pointer must be" "$log" &&
-				continue
+			# assume(false). One such branch per line is let off, no more.
+			if [[ "$goal" =~ \ file\ ([^ ]+)\ line\ ([0-9]+)\ function\ ([^ ]+)\  ]]; then
+				site="${BASH_REMATCH[1]} line ${BASH_REMATCH[2]} function ${BASH_REMATCH[3]}"
+				if [[ "$pointer_sites" != *"|$site|"* ]] &&
+					grep -qF "at file $site thread 0: dereferenced function pointer must be" "$log"; then
+					pointer_sites+="|$site|"
+					continue
+				fi
+			fi
 			missed+="$goal"$'\n'
 		done < <(grep -E "^\[($function|reached_end)\.coverage\.[0-9]+\] .*: FAILED$" "$log" || true)
 		if grep -qE "^\[($function)\.coverage\.[0-9]+\] .*: SATISFIED$" "$log" &&

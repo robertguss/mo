@@ -142,22 +142,26 @@ can fail.
 
 | Proof | Checks |
 | --- | --- |
-| `instruction` | `mo_verify_instruction`, the type check: reads only inside the file's tables, never fails an `MO_ASSERT`, and either accepts with the error untouched or refuses with a reason at the instruction. When it accepts, each count the later passes loop over matches what they index with it: a call's arguments match its function's parameters, a primitive's or capability operation's its arity, and a case made is one of its choice's |
-| `step` | the ownership transfer of one instruction (the loop body of `ownership`, split out as `step`): from any register states, any layout `cases` gave the instruction and any room left in the undo log, it reads only inside its tables, leaves every register in a valid state, logs fewer changes than the instruction has words, and the log, undone newest first, gives back every register's state; or it refuses with a reason inside the function's code |
+| `instruction` | `mo_verify_instruction`, the type check: reads only inside the file's tables, never fails an `MO_ASSERT`, and either accepts with the error untouched or refuses with a reason at the instruction. When it accepts, each count the later passes and the VM loop over matches what they index with it: a call's arguments its function's parameters, a closure call's its function type's, a primitive's or capability operation's its arity, a construct's or reuse's fields its layout's, a closure's captures its function's, a switch's targets its choice's cases, and a case made is one of its choice's, with that case's fields |
+| `step` | the ownership transfer of one instruction (the loop body of `ownership`, split out as `step`), from any register states, any layout `cases` gave a reset and any room left in the undo log: it reads only inside its tables and either refuses with a reason inside the function's code, or accepts only when the ownership rules hold (each register read is readable, each consumed reference owned and each consumed token a token, no reference used again after it is consumed, no write over an owned register or a token, a tail call borrows only borrowed references, a return leaves nothing owned, an init reads only globals set before it and sets its own once) and then leaves each register in the state the rules give, logs fewer changes than the instruction has words, and the log, undone newest first, gives back every slot; the readable mask a replay reports matches the states |
 | `lookup` | `mo_verify_layout_lookup`: any answer is a layout of that type and tag, and in sorted keys a layout that is there is found |
 
 The proofs assume what the validator (`src/bytecode/validate.c`) checks: every operand inside the
 table its kind names, every target an instruction start, an environment type names a closure, and
-a function's parameters have its registers' types. `mo_bytecode_signature`
-(`src/bytecode/signature.c`) is not proved: it may accept or refuse any library signature, and is
-only asserted to be given decoded types. `mo_case_shape` is asserted to be given a decoded type
-and case. `step`'s files have no parameter, field or case tables, which it never reads; a read
-would fail the proof.
+a function's parameters have its registers' types. `step` assumes what `ownership` gives it: each
+block runs once, so no register is yet marked as used by the instruction, and a visit keeps the
+readable mask matching the states. Its operands' access modes come from the real `access`, which
+`step`'s proof runs but does not specify. Two library checks are not proved, and may accept or
+refuse anything: `mo_bytecode_signature` (`src/bytecode/signature.c`), only asserted to be given
+decoded types, and `mo_bytecode_ordering`. `step`'s files have no parameter, field or case tables,
+which it never reads; a read would fail the proof.
 
 Not proved: the three passes that drive these functions (`graph`, `cases`, `ownership`) and
 `function`, which runs them. Their loops over blocks and edges, even for eight code words, give
 CBMC more than this machine's 15 GB. `tests/test_bytecode_verify.c` and the verifier fuzz target
-check them. Nor do the proofs show that the verifier accepts exactly the right programs.
+check them. `mo_case_shape`, which only `cases` calls, has a model so that the file links. The
+proofs do not show that the type check accepts exactly the right programs: it may refuse more
+than it should, and only the counts above are checked of what it accepts.
 
 ## Running it
 
