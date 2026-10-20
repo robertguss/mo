@@ -119,10 +119,13 @@ void *mo_arena_allocate(struct mo_arena *arena, size_t size, size_t alignment) {
 
 void *mo_arena_allocate_array(struct mo_arena *arena, size_t count, size_t element_size,
                               size_t alignment) {
-    if (element_size != 0 && count > SIZE_MAX / element_size) {
+    /* gcc and clang check the product directly, which CBMC can prove (cbmc/arena.c) far faster
+     * than a check by division. */
+    size_t size;
+    if (__builtin_mul_overflow(count, element_size, &size)) {
         return NULL;
     }
-    return mo_arena_allocate(arena, count * element_size, alignment);
+    return mo_arena_allocate(arena, size, alignment);
 }
 
 /* Grows the newest chunk, which holds only the newest block, to hold size bytes. */

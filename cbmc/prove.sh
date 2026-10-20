@@ -53,7 +53,7 @@ proofs=(
 	"sections|array blob types layout_entry constants word indices functions module_entry file_entry debug_entry scratch|sections.0:/4,sections.1:/12,sections.2:/12,sections.3:/16,sections.4:/5,sections.5:/36,mo_bytecode_names_init.0:/4|64"
 	"decode|allocate sections|mo_bytecode_decode_info.0:9,mo_bytecode_decode_info.1:+,mo_bytecode_decode_info.2:/4,mo_bytecode_decode_info.3:/4,memcmp.0:5|"
 	"arena_allocate||||arena.c"
-	"arena_allocate_array||||arena.c"
+	"arena_allocate_array|mo_arena_allocate|||arena.c"
 	"arena_resize||||arena.c"
 	"arena_copy||||arena.c"
 	"arena_copy_text||strlen.0:9||arena.c"
@@ -85,6 +85,9 @@ run() {
 	local source=cbmc/${file:-reader.c}
 	local n=$default_input
 	if [[ -n "$least" ]] && ((least > n)); then n=$least; fi
+	# Only the reader's proofs are about inputs of n bytes.
+	local inputs=
+	if [[ -z "$file" ]]; then inputs=", $n bytes"; fi
 	harness=harness_${name}
 	suffix=${reach:+.reach}
 	entry=$build/$name$suffix.entry.goto
@@ -144,7 +147,7 @@ run() {
 		done < <(grep -E "^\[($function|reached_end)\.coverage\.[0-9]+\] .*: FAILED$" "$log" || true)
 		if grep -qE "^\[($function)\.coverage\.[0-9]+\] .*: SATISFIED$" "$log" &&
 			grep -qE "^\[reached_end\.coverage\.[0-9]+\] .*: SATISFIED$" "$log" && [[ -z "$missed" ]]; then
-			echo "reached every block of $name ($((SECONDS - start))s, $n bytes)"
+			echo "reached every block of $name ($((SECONDS - start))s$inputs)"
 		else
 			echo "FAILED $name: some blocks never run on $n-byte inputs; see $log"
 			if [[ -n "$missed" ]]; then printf %s "$missed" | head -n 20; fi
@@ -157,7 +160,7 @@ run() {
 	# shellcheck disable=SC2086 # flags holds separate options
 	if cbmc "$instrumented" "${checks[@]}" $flags --unwind 1 --unwinding-assertions \
 		--unwindset "$unwindset" >>"$log" 2>&1; then
-		echo "proved $name ($((SECONDS - start))s, $n bytes)"
+		echo "proved $name ($((SECONDS - start))s$inputs)"
 	else
 		echo "FAILED $name: see $log"
 		grep -E ': FAILURE$|ERROR$|^error' "$log" | head -n 20 || true

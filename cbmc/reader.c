@@ -459,7 +459,7 @@ _Noreturn void mo_assert_failed(const char *expression, const char *file, int li
 }
 
 /* The arena: each block is its own object of exactly the size asked, and any allocation may
- * fail. The arena's own proof is task V5. */
+ * fail. cbmc/arena.c proves that the real arena's blocks are that large and overlap no other. */
 void mo_arena_init(struct mo_arena *arena, size_t limit) {
     *arena = (struct mo_arena){.limit = limit};
 }

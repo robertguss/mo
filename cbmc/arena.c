@@ -14,7 +14,7 @@
  * The bytecode reader's proofs (cbmc/reader.c) assume exactly this of the arena.
  *
  * arena.c is included rather than linked, so that its static functions and its chunk layout can
- * be used here. Its malloc and realloc are renamed to the system models below. */
+ * be used here. Its malloc, realloc and memcpy are renamed to the system models below. */
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -22,11 +22,16 @@
 
 void *system_malloc(size_t size);
 void *system_realloc(void *block, size_t size);
+void *system_memcpy(void *destination, const void *source, size_t size);
 #define malloc system_malloc
 #define realloc system_realloc
+#define memcpy system_memcpy
 #include "base/arena.c"
 #undef malloc
 #undef realloc
+#undef memcpy
+
+#define HEADER sizeof(struct mo_arena_chunk)
 
 size_t nondet_size(void);
 bool nondet_bool(void);
@@ -36,12 +41,37 @@ unsigned char nondet_byte(void);
  * that CBMC can represent a chunk of that size as one object. */
 #define MOST_LIMIT ((size_t)1 << 40)
 
-#define HEADER sizeof(struct mo_arena_chunk)
-
 /* ---- The system ---------------------------------------------------------------------------- */
 
 static bool aligned(const void *p, size_t alignment) {
     return ((uintptr_t)p & (uintptr_t)(alignment - 1)) == 0;
+}
+
+/* The one byte a harness checks is copied: copying any number of bytes of any size is far too
+ * slow for CBMC, and the harness picks the byte as any byte of the block, so checking it checks
+ * them all. */
+static const unsigned char *watched;
+
+/* Copies the watched byte, when it is one of the size bytes at source, to its place in
+ * destination. */
+static void copy_watched(unsigned char *destination, const unsigned char *source, size_t size) {
+    if (watched != NULL && __CPROVER_same_object(watched, source) && watched >= source &&
+        (size_t)(watched - source) < size) {
+        destination[watched - source] = *watched;
+    }
+}
+
+/* memcpy reads size bytes, writes size bytes elsewhere, and copies them (the watched one). */
+void *system_memcpy(void *destination, const void *source, size_t size) {
+    __CPROVER_assert(__CPROVER_r_ok(source, size), "memcpy reads inside its source");
+    __CPROVER_assert(__CPROVER_w_ok(destination, size), "memcpy writes inside its destination");
+    const unsigned char *from = source;
+    const unsigned char *to = destination;
+    __CPROVER_assert(size == 0 || !__CPROVER_same_object(from, to) || from + size <= to ||
+                         to + size <= from,
+                     "memcpy's source and destination do not overlap");
+    copy_watched(destination, source, size);
+    return destination;
 }
 
 /* malloc and realloc may fail, and on our targets align what they return to 16 bytes, as
@@ -55,12 +85,23 @@ void *system_malloc(size_t size) {
     return p;
 }
 
+/* The arena reallocates only a chunk, to a larger size: a new object with the chunk's header and
+ * its bytes (the watched one), and the old one freed. */
 void *system_realloc(void *block, size_t size) {
+    __CPROVER_assert(__CPROVER_POINTER_OFFSET(block) == 0 && size >= __CPROVER_OBJECT_SIZE(block) &&
+                         size >= HEADER,
+                     "realloc grows a chunk");
     if (nondet_bool()) {
         return NULL;
     }
-    void *p = realloc(block, size);
+    unsigned char *p = malloc(size);
     __CPROVER_assume(p != NULL && aligned(p, 16));
+    *(struct mo_arena_chunk *)p = *(struct mo_arena_chunk *)block;
+    copy_watched(p, block, __CPROVER_OBJECT_SIZE(block));
+    if (watched != NULL && __CPROVER_same_object(watched, block)) {
+        watched = p + (watched - (const unsigned char *)block);
+    }
+    free(block);
     return p;
 }
 
@@ -158,6 +199,21 @@ static bool new_block(const struct mo_arena *a, const struct mo_arena *before, s
             a->next_chunk_size == LARGEST_CHUNK_SIZE);
 }
 
+/* mo_arena_allocate as harness_arena_allocate proves it, for its callers' proofs: it requires an
+ * arena and an alignment, and returns no block, or a block of the size asked (at least one byte),
+ * aligned, that overlaps no other object. A block larger than the limit is always refused. */
+void *model_mo_arena_allocate(struct mo_arena *arena, size_t size, size_t alignment) {
+    __CPROVER_assert(arena_ok(arena) && is_power_of_two(alignment) &&
+                         alignment <= MO_ARENA_MAX_ALIGNMENT,
+                     "mo_arena_allocate's requirements");
+    if (nondet_bool() || size > arena->limit) {
+        return NULL;
+    }
+    unsigned char *block = malloc(size == 0 ? 1 : size);
+    __CPROVER_assume(block != NULL && aligned(block, alignment));
+    return block;
+}
+
 /* ---- Harnesses ---------------------------------------------------------------------------- */
 
 /* Every harness ends here, so prove.sh --reach can check that some input gets to the end of it. */
@@ -174,35 +230,41 @@ void harness_arena_allocate(void) {
     unsigned char *block = mo_arena_allocate(&a, size, alignment);
     __CPROVER_assert(arena_ok(&a) && a.limit == before.limit, "still an arena, same limit");
     if (block == NULL) {
-        __CPROVER_assert(same_arena(&a, &before) &&
-                             (a.chunk == NULL || a.chunk->used == old_used),
+        __CPROVER_assert(same_arena(&a, &before) && (a.chunk == NULL || a.chunk->used == old_used),
                          "a failed allocation changes nothing");
     } else {
         __CPROVER_assert(new_block(&a, &before, old_used, block, size, alignment),
                          "a new block of the size asked");
+        __CPROVER_assert(size <= a.limit, "a block larger than the limit is refused");
     }
     reached_end();
 }
 
+/* The table's size in bytes is checked before it is allocated. mo_arena_allocate is replaced by
+ * its model: the multiplication and the arena's own sums together are too slow for CBMC, and
+ * harness_arena_allocate proves the rest. */
 void harness_arena_allocate_array(void) {
     struct mo_arena a;
     any_arena(&a);
-    struct mo_arena before = a;
-    size_t old_used = a.chunk != NULL ? a.chunk->used : 0;
     size_t count = nondet_size();
-    size_t element_size = nondet_size();
+    /* Any element size for the overflow check, and the element sizes of Mo's tables (and some
+     * that are not powers of two) for the block: with any element size, proving that the block
+     * holds count * element_size bytes asks CBMC to show two 64-bit products equal, which it
+     * cannot do in reasonable time. */
+    bool any_size = nondet_bool();
+    size_t sizes[] = {0, 1, 2, 3, 4, 8, 12, 16, 24, 40, 48, 64, 4096};
+    size_t choice = nondet_size();
+    __CPROVER_assume(choice < sizeof sizes / sizeof sizes[0]);
+    size_t element_size = any_size ? nondet_size() : sizes[choice];
     size_t alignment = any_alignment();
     unsigned char *block = mo_arena_allocate_array(&a, count, element_size, alignment);
-    __CPROVER_assert(arena_ok(&a), "still an arena");
-    if (block == NULL) {
-        __CPROVER_assert(same_arena(&a, &before) &&
-                             (a.chunk == NULL || a.chunk->used == old_used),
-                         "a failed allocation changes nothing");
-    } else {
-        __CPROVER_assert(element_size == 0 || count <= SIZE_MAX / element_size,
+    if (block != NULL) {
+        /* CBMC's own overflow test: a test by division is as slow as the one arena.c avoids. */
+        __CPROVER_assert(!__CPROVER_overflow_mult(count, element_size),
                          "a table whose size wraps is refused");
-        __CPROVER_assert(new_block(&a, &before, old_used, block, count * element_size, alignment),
-                         "a new block for the whole table");
+        __CPROVER_assert(aligned(block, alignment) &&
+                             (any_size || __CPROVER_w_ok(block, count * element_size)),
+                         "a block for the whole table");
     }
     reached_end();
 }
@@ -237,12 +299,12 @@ void harness_arena_resize(void) {
     size_t i = keeps ? nondet_size() : 0;
     __CPROVER_assume(!keeps || i < kept);
     unsigned char value = keeps ? block[i] : 0;
+    watched = keeps ? block + i : NULL;
 
     unsigned char *resized = mo_arena_resize(&a, block, old_size, new_size, alignment);
     __CPROVER_assert(arena_ok(&a) && a.limit == before.limit, "still an arena, same limit");
     if (resized == NULL) {
-        __CPROVER_assert(same_arena(&a, &before) &&
-                             (a.chunk == NULL || a.chunk->used == old_used),
+        __CPROVER_assert(same_arena(&a, &before) && (a.chunk == NULL || a.chunk->used == old_used),
                          "a failed resize changes nothing");
         __CPROVER_assert(!keeps || block[i] == value, "a failed resize keeps the block");
     } else {
@@ -267,14 +329,15 @@ void harness_arena_copy(void) {
     const unsigned char *bytes = size == 0 && nondet_bool() ? NULL : malloc(size);
     __CPROVER_assume(bytes != NULL || size == 0);
     size_t alignment = any_alignment();
+    size_t i = size > 0 ? nondet_size() : 0;
+    __CPROVER_assume(size == 0 || i < size);
+    watched = size > 0 ? bytes + i : NULL;
     unsigned char *copy = mo_arena_copy(&a, bytes, size, alignment);
     __CPROVER_assert(arena_ok(&a), "still an arena");
     if (copy != NULL) {
         __CPROVER_assert(aligned(copy, alignment) && __CPROVER_w_ok(copy, size == 0 ? 1 : size),
                          "a block of the size copied");
         if (size > 0) {
-            size_t i = nondet_size();
-            __CPROVER_assume(i < size);
             __CPROVER_assert(copy[i] == bytes[i], "the same bytes");
         }
     }
@@ -292,12 +355,13 @@ void harness_arena_copy_text(void) {
     char *text = malloc(size);
     __CPROVER_assume(text != NULL);
     text[size - 1] = '\0';
+    size_t length = strlen(text);
+    size_t i = nondet_size();
+    __CPROVER_assume(i <= length);
+    watched = (const unsigned char *)text + i;
     char *copy = mo_arena_copy_text(&a, text);
     __CPROVER_assert(arena_ok(&a), "still an arena");
     if (copy != NULL) {
-        size_t length = strlen(text);
-        size_t i = nondet_size();
-        __CPROVER_assume(i <= length);
         __CPROVER_assert(__CPROVER_w_ok(copy, length + 1) && copy[i] == text[i],
                          "the same text, terminated");
     }

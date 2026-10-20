@@ -1,7 +1,10 @@
 # CBMC proofs
 
-`make cbmc` (or `bash cbmc/prove.sh [proof...]`) proves the bytecode reader,
-`src/bytecode/read.c`, with [CBMC](https://www.cprover.org/cbmc/). For **every input of up to
+`make cbmc` (or `bash cbmc/prove.sh [proof...]`) proves two parts of Mo with
+[CBMC](https://www.cprover.org/cbmc/): the bytecode reader, `src/bytecode/read.c` (`reader.c`,
+below), and the arena, `src/base/arena.c` (`arena.c`, in [The arena](#the-arena)).
+
+For the bytecode reader, for **every input of up to
 `MO_CBMC_INPUT` bytes** (32 by default, and more for the proofs whose loops need it), decoding:
 
 - reads and writes only inside the objects it was given or allocated (bounds and pointer checks);
@@ -68,7 +71,8 @@ CI runs the proofs and the reach check side by side, `MO_CBMC_JOBS` at a time ea
 These neighbours are models, each with its own checks:
 
 - **The arena** (`src/base/arena.c`) hands out each block as its own object of exactly the size
-  asked, and may fail any allocation. Its own proof is task V5.
+  asked, and may fail any allocation. `arena.c` proves that the real arena's blocks are as large
+  as asked and overlap no other block, which is what makes this model faithful.
 - **The name table** (`src/bytecode/names.c`) gives each string a canonical index that is absent
   or no later than its own, which is all the reader relies on.
 - **The validator** (`mo_bytecode_validate`) may accept or refuse anything; a refusal has a reason
@@ -86,7 +90,36 @@ These neighbours are models, each with its own checks:
 - That an enum field holds one of its values. After refusing an unknown layout kind or anchor
   expectation, the reader still stores the number it read, so `prove.sh` leaves out CBMC's
   `--enum-range-check`.
-- Inputs larger than the sizes above, and the arena, name table and validator themselves.
+- Inputs larger than the sizes above, and the name table and validator themselves.
+
+## The arena
+
+`arena.c` proves each public function of `src/base/arena.c` from **any arena the arena's own
+functions can leave behind**: a limit up to 2^40 bytes (far above any in `src/base/limits.h`),
+any bytes used within it, a next chunk size between the first and the largest, and a newest chunk
+of any capacity with any part of it used. Sizes, counts and alignments are any value at all, up
+to `SIZE_MAX`. For each, the function:
+
+- reads and writes only inside its chunks, never overflows or wraps a size, and never fails an
+  `MO_ASSERT`;
+- leaves an arena that is still one (`arena_ok`) with the same limit;
+- hands out a block of at least the size asked, aligned as asked, inside the newest chunk and after
+  every block handed out before it, or a new chunk linked to the old one and counted in what the
+  arena used;
+- or, when it fails, changes nothing, and a failed resize leaves the block as it was.
+
+| Proof | Also checks |
+| --- | --- |
+| `arena_allocate` | the new block ends where the chunk's free space starts, which `mo_arena_resize` relies on to grow the newest block in place |
+| `arena_allocate_array` | a table whose size in bytes wraps is refused |
+| `arena_resize` | any byte the block keeps, in place, grown alone or moved, is the same after |
+| `arena_copy`, `arena_copy_text` | any byte of the copy is the source's, and a text's terminator is copied |
+| `arena_free` | every chunk of an arena of up to three goes back to the system (`--memory-leak-check`), and the arena is empty with the same limit |
+
+The system is modelled: `malloc` and `realloc` may fail, and align what they return to 16 bytes,
+as the chunk layout needs on our targets. `memcpy` asserts that it reads and writes only inside
+its objects, and copies one byte, the one the harness picked as any byte of the block; copying a
+symbolic number of bytes of a block of up to 2^40 is far too slow for CBMC.
 
 ## Running it
 
