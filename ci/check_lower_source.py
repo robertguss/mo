@@ -802,6 +802,11 @@ for fixture, expected in {
     "map-mutating-key": 0,
     "map-runtime-duplicate": ["stopped", "two keys of a map literal that turn out equal"],
     "time-sub": 0,
+    "closure-captures": 0,
+    "closure-returned": 0,
+    "generic-higher-order": 0,
+    "generic-case": 0,
+    "generic-subject": 0,
 }.items():
     body = (pathlib.Path("tests/lower-source") / fixture / "main.mo").read_text()
     assert body.startswith("module Main\n")
