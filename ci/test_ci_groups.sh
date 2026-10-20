@@ -26,6 +26,8 @@ expect "$all" src/bytecode/read.c
 expect "$all" src/base/limits.h
 expect "$all" src/heap/types.h
 expect "$all" cbmc/reader.c
+expect "$all" src/base/arena.c
+expect "$all" cbmc/arena.c
 expect "$all" cbmc/prove.sh
 expect "$all" ci/check.sh
 expect "$all" Makefile

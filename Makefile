@@ -13,7 +13,7 @@
 #   make grammar      check that Mo code parses with the executable grammar (needs bison):
 #                     the grammar's own tests, examples/ and the reference's examples
 #   make formal       build Mo Core in Lean (formal/) and check every proof (needs elan)
-#   make cbmc         prove the bytecode reader memory-safe on small inputs (needs CBMC)
+#   make cbmc         prove the bytecode reader and the arena memory-safe (needs CBMC)
 #
 # ci/check.sh runs every check; CI runs ci/check.sh. Choose a compiler with
 # CC=gcc or CC=clang. Each compiler builds into its own directory, so switching
@@ -150,7 +150,8 @@ formal:
 	cd formal && lake build MoCore mocore
 	sh ci/test_mocore.sh
 
-# CBMC proofs of the bytecode reader (cbmc/README.md): every input of up to MO_CBMC_INPUT bytes.
+# CBMC proofs (cbmc/README.md): the bytecode reader on every input of up to MO_CBMC_INPUT bytes,
+# and the arena on every size.
 cbmc:
 	bash cbmc/prove.sh
 

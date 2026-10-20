@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Runs the CBMC proofs in cbmc/reader.c (make cbmc). Each proof checks one function of
-# src/bytecode/read.c against its specification, with the functions it calls replaced by their
-# models (cbmc/README.md).
+# Runs the CBMC proofs in cbmc/reader.c and cbmc/arena.c (make cbmc). Each proof checks one
+# function of src/bytecode/read.c or src/base/arena.c against its specification, with the
+# functions it calls replaced by their models (cbmc/README.md).
 #
 #   bash cbmc/prove.sh [proof...]           with no names, every proof
 #   bash cbmc/prove.sh --reach [proof...]   check instead that every block of each proved
@@ -23,7 +23,8 @@ if [[ "${1:-}" == --reach ]]; then
 	shift
 fi
 
-# name | functions replaced by their models (model_<name>) | loop bounds | least input size
+# name | functions replaced by their models (model_<name>) | loop bounds | least input size |
+# file in cbmc/ (default reader.c) | more cbmc options
 #
 # A loop bound is written for an input of n bytes: "f.k:/d" is n / d + 1 (a loop over entries of
 # at least d bytes, plus one for the loop's exit), "f.k:+" is n + 1 (a loop over bytes) and
@@ -51,6 +52,12 @@ proofs=(
 	"debug_entry|array word|debug_entry.0:/16,debug_entry.1:/16,debug_entry.2:/16|52"
 	"sections|array blob types layout_entry constants word indices functions module_entry file_entry debug_entry scratch|sections.0:/4,sections.1:/12,sections.2:/12,sections.3:/16,sections.4:/5,sections.5:/36,mo_bytecode_names_init.0:/4|64"
 	"decode|allocate sections|mo_bytecode_decode_info.0:9,mo_bytecode_decode_info.1:+,mo_bytecode_decode_info.2:/4,mo_bytecode_decode_info.3:/4,memcmp.0:5|"
+	"arena_allocate||||arena.c"
+	"arena_allocate_array|mo_arena_allocate|||arena.c"
+	"arena_resize||||arena.c"
+	"arena_copy||||arena.c"
+	"arena_copy_text||strlen.0:9||arena.c"
+	"arena_free||harness_arena_free.0:4,mo_arena_free.0:4||arena.c|--memory-leak-check"
 )
 
 checks=(--bounds-check --pointer-check --pointer-overflow-check --signed-overflow-check
@@ -62,16 +69,25 @@ proved_function() {
 	case "$1" in
 	utf8) echo mo_bytecode_utf8 ;;
 	decode) echo mo_bytecode_decode_info ;;
+	# An arena proof covers the static helpers its function calls, too.
+	arena_allocate) echo 'mo_arena_allocate|add_chunk|fits|padding_for' ;;
+	arena_resize) echo 'mo_arena_resize|grow_alone' ;;
+	arena_free) echo 'mo_arena_free|mo_arena_init' ;;
+	arena_*) echo "mo_$1" ;;
 	*) echo "$1" ;;
 	esac
 }
 
 # Runs one proof (or, with --reach, its reach check), printing one line and any failures.
 run() {
-	local name replaced loops least
-	IFS='|' read -r name replaced loops least <<<"$1"
+	local name replaced loops least file flags
+	IFS='|' read -r name replaced loops least file flags <<<"$1"
+	local source=cbmc/${file:-reader.c}
 	local n=$default_input
 	if [[ -n "$least" ]] && ((least > n)); then n=$least; fi
+	# Only the reader's proofs are about inputs of n bytes.
+	local inputs=
+	if [[ -z "$file" ]]; then inputs=", $n bytes"; fi
 	harness=harness_${name}
 	suffix=${reach:+.reach}
 	entry=$build/$name$suffix.entry.goto
@@ -99,9 +115,9 @@ run() {
 		return 1
 	fi
 
-	if ! goto-cc -std=c17 -Isrc -DMO_CBMC_INPUT="$n" --function "$harness" cbmc/reader.c \
+	if ! goto-cc -std=c17 -Isrc -DMO_CBMC_INPUT="$n" --function "$harness" "$source" \
 		-o "$entry" >>"$log" 2>&1; then
-		echo "FAILED $name: cbmc/reader.c does not compile; see $log"
+		echo "FAILED $name: $source does not compile; see $log"
 		return 1
 	fi
 	replace=()
@@ -129,11 +145,11 @@ run() {
 				sed -n "${BASH_REMATCH[2]}p" "${BASH_REMATCH[1]}" | grep -q 'MO_ASSERT(' && continue
 			missed+="$goal"$'\n'
 		done < <(grep -E "^\[($function|reached_end)\.coverage\.[0-9]+\] .*: FAILED$" "$log" || true)
-		if grep -qE "^\[$function\.coverage\.[0-9]+\] .*: SATISFIED$" "$log" &&
+		if grep -qE "^\[($function)\.coverage\.[0-9]+\] .*: SATISFIED$" "$log" &&
 			grep -qE "^\[reached_end\.coverage\.[0-9]+\] .*: SATISFIED$" "$log" && [[ -z "$missed" ]]; then
-			echo "reached every block of $name ($((SECONDS - start))s, $n bytes)"
+			echo "reached every block of $name ($((SECONDS - start))s$inputs)"
 		else
-			echo "FAILED $name: some blocks never run on $n-byte inputs; see $log"
+			echo "FAILED $name: some blocks never run${inputs:+ on $n-byte inputs}; see $log"
 			if [[ -n "$missed" ]]; then printf %s "$missed" | head -n 20; fi
 			return 1
 		fi
@@ -141,9 +157,10 @@ run() {
 	fi
 	# Every loop bound carries an unwinding assertion, so a bound too small fails the proof
 	# rather than hiding paths.
-	if cbmc "$instrumented" "${checks[@]}" --unwind 1 --unwinding-assertions \
+	# shellcheck disable=SC2086 # flags holds separate options
+	if cbmc "$instrumented" "${checks[@]}" $flags --unwind 1 --unwinding-assertions \
 		--unwindset "$unwindset" >>"$log" 2>&1; then
-		echo "proved $name ($((SECONDS - start))s, $n bytes)"
+		echo "proved $name ($((SECONDS - start))s$inputs)"
 	else
 		echo "FAILED $name: see $log"
 		grep -E ': FAILURE$|ERROR$|^error' "$log" | head -n 20 || true
