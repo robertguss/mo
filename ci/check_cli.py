@@ -2027,7 +2027,7 @@ def runner(binary):
     print(f"{binary}: real source check/run/emission, statuses, limits and defects passed")
 
 
-def map_literals(binary):
+def lower_source_fixtures(binary):
     fixtures = root / "tests/lower-source"
     for name, expected in {
         "file-error-text": b"notes/a.md: no such file\n../secret: not allowed\nbin/app: not text\nout.txt: is a folder\nSome(notes/a.md: no such file)\n",
@@ -2053,7 +2053,7 @@ def map_literals(binary):
         "map-native-routes": b"11/3/2/12/12\n",
         "map-mutating-key": b"1=3;2=5;\n",
         "time-sub": b"10000/-9750/5/-5000\n",
-        "closure-captures": b"n10r2/12/13/15\n",
+        "closure-captures": b"n10r2/12/13/15/6\n",
         "closure-returned": b"3/6/8/123/[2, 11, 102]/tick=8\n",
         "generic-higher-order": b'18/<<x>>/[1, 3, 0]/["1!", "2!"]/10/3,4,/true/false/("k", 7)\n',
         "generic-case": b'4/[1, 2, 5, 8]/["v1", "v2", "v5", "v8"]/["left 1", "right b"]/9/none\n',
@@ -2589,7 +2589,7 @@ def check(binary):
     faults = binary.parent / "tests/test_cli_faults.test"
     guide_claims(binary)
     runner(binary)
-    map_literals(binary)
+    lower_source_fixtures(binary)
     anchors(binary)
     constants(binary)
     filenames(binary)

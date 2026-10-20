@@ -31,7 +31,7 @@ fn main(console: Console) : Int
   steps = [adder(1), adder(10), compose(adder(1), adder(100))].map(fn(f) f(1) end)
   tick = counter("tick", 7)
   console.print(
-    "#{add_two(1)}/#{add_five(1)}/#{both(1)}/#{digits}/#{steps}/#{tick.name}=#{(tick.step)(1)}"
+    "#{add_two(1)}/#{add_five(1)}/#{both(1)}/#{digits}/#{steps}/#{tick.name}=#{tick.step(1)}"
   )
   if add_two(1) == 3 and
     both(1) == 8 and

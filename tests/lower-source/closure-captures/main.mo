@@ -20,6 +20,13 @@ fn main(console: Console) : Int
   snapshot = total
   read_later = fn() snapshot + scale end
   total += 5
-  console.print("#{mixed(2)}/#{nested(2)}/#{read_later()}/#{total}")
-  if mixed(2) == "n10r2" and nested(2) == 12 and read_later() == 13 and total == 15: 0 else: 1
+  var seen = 4
+  seen += 1
+  direct = fn(x) x + seen end
+  console.print("#{mixed(2)}/#{nested(2)}/#{read_later()}/#{total}/#{direct(1)}")
+  if mixed(2) == "n10r2" and
+    nested(2) == 12 and
+    read_later() == 13 and
+    total == 15 and
+    direct(1) == 6: 0 else: 1
 end

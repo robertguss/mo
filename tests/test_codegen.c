@@ -1434,8 +1434,8 @@ static void test_closure_contexts(void) {
     mo_arena_free(&arena);
 }
 static void test_returned_closure_captures(void) {
-    /* F6/R4: a returned closure that captures a function value and an Int, as `compose` and
-     * `adder` in tests/lower-source/closure-returned lower to. */
+    /* F6/R4: a returned closure that captures a function value and an Int, the shape of
+     * `compose` and `adder` in tests/lower-source/closure-returned. */
     struct mo_arena arena;
     mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
     struct mo_bytecode *b = compile(
@@ -1460,8 +1460,9 @@ static void test_returned_closure_captures(void) {
     mo_arena_free(&arena);
 }
 static void test_recursive_choice_case(void) {
-    /* F6/R4: `case` on a recursive choice, as the monomorphized `size` on `Tree(Int)` in
-     * tests/lower-source/generic-case lowers to: one switch and a call back into itself. */
+    /* F6/R4: `case` on a recursive choice, the shape of `size` on `Tree(Int)` in
+     * tests/lower-source/generic-case: one two-way switch on the parameter, whose arms go to
+     * different code, and a call back into itself for each child. */
     struct mo_arena arena;
     mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
     struct mo_bytecode *b = compile(
@@ -1477,9 +1478,10 @@ static void test_recursive_choice_case(void) {
         const struct mo_bytecode_function *f = &b->functions[0];
         CHECK(b->function_count == 1 && opcode_count(f, MO_OP_SWITCH) == 1);
         CHECK(opcode_count(f, MO_OP_CALL) == 2);
-        const uint32_t *call = instruction(f, MO_OP_CALL, 0);
-        if (call != NULL)
-            CHECK(call[2] == 0);
+        const uint32_t *branch = instruction(f, MO_OP_SWITCH, 0);
+        if (branch != NULL)
+            CHECK((branch[0] >> MO_OPCODE_VARIABLE_SHIFT) == 2 && branch[1] == 0 &&
+                  branch[2] != branch[3]);
         CHECK(b->types[f->parameters[0].type].kind == MO_TYPE_CHOICE);
     }
     mo_arena_free(&arena);
