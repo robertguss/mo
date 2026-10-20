@@ -2027,7 +2027,7 @@ def runner(binary):
     print(f"{binary}: real source check/run/emission, statuses, limits and defects passed")
 
 
-def map_literals(binary):
+def lower_source_fixtures(binary):
     fixtures = root / "tests/lower-source"
     for name, expected in {
         "file-error-text": b"notes/a.md: no such file\n../secret: not allowed\nbin/app: not text\nout.txt: is a folder\nSome(notes/a.md: no such file)\n",
@@ -2053,6 +2053,11 @@ def map_literals(binary):
         "map-native-routes": b"11/3/2/12/12\n",
         "map-mutating-key": b"1=3;2=5;\n",
         "time-sub": b"10000/-9750/5/-5000\n",
+        "closure-captures": b"n10r2/12/13/15/6\n",
+        "closure-returned": b"3/6/8/123/[2, 11, 102]/tick=8\n",
+        "generic-higher-order": b'18/<<x>>/[1, 3, 0]/["1!", "2!"]/10/3,4,/true/false/("k", 7)\n',
+        "generic-case": b'4/[1, 2, 5, 8]/["v1", "v2", "v5", "v8"]/["left 1", "right b"]/9/none\n',
+        "generic-subject": b'("x", 7)/2.5/z\n',
     }.items():
         path = fixtures / name / "main.mo"
         checked = run(binary, ["check", str(path)], 0)
@@ -2062,6 +2067,14 @@ def map_literals(binary):
             assert emitted.stdout and not emitted.stderr
         result = run(binary, ["run", str(path)], 0)
         assert result.stdout == expected and not result.stderr, (name, result)
+
+    # Examples on generic subjects run once each; generic promises still need inputs (E1400).
+    path = fixtures / "generic-subject/main.mo"
+    for example in ("Main.swap.example.1", "Main.swap.example.2", "Main.larger.example.1",
+                    "Main.larger.example.2"):
+        result = run(binary, ["test", "--only", example, str(path)], 0)
+        assert result.stdout.startswith(b"passed " + example.encode()), (example, result)
+        assert b"1 passed, 0 failed, 0 stopped" in result.stdout and not result.stderr
 
     path = fixtures / "map-runtime-duplicate/main.mo"
     checked = run(binary, ["check", str(path)], 0)
@@ -2576,7 +2589,7 @@ def check(binary):
     faults = binary.parent / "tests/test_cli_faults.test"
     guide_claims(binary)
     runner(binary)
-    map_literals(binary)
+    lower_source_fixtures(binary)
     anchors(binary)
     constants(binary)
     filenames(binary)

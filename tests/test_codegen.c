@@ -1433,6 +1433,59 @@ static void test_closure_contexts(void) {
     }
     mo_arena_free(&arena);
 }
+static void test_returned_closure_captures(void) {
+    /* F6/R4: a returned closure that captures a function value and an Int, the shape of
+     * `compose` and `adder` in tests/lower-source/closure-returned. */
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b = compile(
+        &arena, "(Program () ((FunDecl \"compose\" ((\"f\" (fn ((int)) (int))) (\"n\" (int))) "
+                "(fn ((int)) (int)) "
+                "(lam ((\"x\" (int))) (prim (int (add)) ((app (var \"f\") ((var \"x\"))) "
+                "(var \"n\")))) \"M\" (function) 0)) () \"compose\" (noSource))");
+    if (b != NULL) {
+        CHECK(b->function_count == 2 && b->functions[1].kind == MO_FUNCTION_CLOSURE);
+        CHECK(b->functions[1].capture_count == 2);
+        if (b->functions[1].capture_count == 2) {
+            CHECK(b->types[b->functions[1].capture_types[0]].kind == MO_TYPE_FUNCTION);
+            CHECK(b->types[b->functions[1].capture_types[1]].kind == MO_TYPE_INT);
+        }
+        CHECK(b->types[b->functions[0].result_type].kind == MO_TYPE_FUNCTION &&
+              b->types[b->functions[0].result_type].result == b->functions[1].result_type);
+        CHECK(opcode_count(&b->functions[0], MO_OP_MAKE_CLOSURE) == 1);
+        CHECK(opcode_count(&b->functions[1], MO_OP_CALL_CLOSURE) +
+                  opcode_count(&b->functions[1], MO_OP_TAIL_CALL_CLOSURE) ==
+              1);
+    }
+    mo_arena_free(&arena);
+}
+static void test_recursive_choice_case(void) {
+    /* F6/R4: `case` on a recursive choice, the shape of `size` on `Tree(Int)` in
+     * tests/lower-source/generic-case: one two-way switch on the parameter, whose arms go to
+     * different code, and a call back into itself for each child. */
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b = compile(
+        &arena, "(Program ((DataDecl \"Tree(Int)\" ((Ctor \"Leaf\" ()) (Ctor \"Node\" "
+                "((\"left\" (data \"Tree(Int)\")) (\"value\" (int)) "
+                "(\"right\" (data \"Tree(Int)\"))))))) "
+                "((FunDecl \"size\" ((\"t\" (data \"Tree(Int)\"))) (int) "
+                "(case_ (var \"t\") ((\"Leaf\" () (lit (int 0))) "
+                "(\"Node\" (\"l\" \"_v\" \"r\") (prim (int (add)) ((call \"size\" ((var \"l\"))) "
+                "(prim (int (add)) ((lit (int 1)) (call \"size\" ((var \"r\")))))))))) "
+                "\"M\" (function) 0)) () \"size\" (noSource))");
+    if (b != NULL) {
+        const struct mo_bytecode_function *f = &b->functions[0];
+        CHECK(b->function_count == 1 && opcode_count(f, MO_OP_SWITCH) == 1);
+        CHECK(opcode_count(f, MO_OP_CALL) == 2);
+        const uint32_t *branch = instruction(f, MO_OP_SWITCH, 0);
+        if (branch != NULL)
+            CHECK((branch[0] >> MO_OPCODE_VARIABLE_SHIFT) == 2 && branch[1] == 0 &&
+                  branch[2] != branch[3]);
+        CHECK(b->types[f->parameters[0].type].kind == MO_TYPE_CHOICE);
+    }
+    mo_arena_free(&arena);
+}
 static void test_closure_metadata(void) {
     struct mo_arena arena;
     struct mo_diags diags;
@@ -2359,6 +2412,8 @@ static MO_MUST_USE int tests(int argc, char **argv) {
     test_closure();
     test_captures();
     test_closure_contexts();
+    test_returned_closure_captures();
+    test_recursive_choice_case();
     test_closure_metadata();
     test_spec_closure_metadata();
     test_closure_parameter_limit();
