@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Every check robertguss/mo's CI runs, in order. Run it before every push: the
-# CI orb runs exactly this on each pull request it is sent (decisions D208, D214).
+# Every check robertguss/mo's CI runs, in order, except that the drivers and lean groups run their
+# checks side by side. Run it before every push: the CI orb runs exactly this on each pull request
+# it is sent (decisions D208, D214).
 #
 # Locally, a check whose tool is missing is skipped with a note, and the summary
 # at the end counts what was skipped instead of claiming that all checks passed.
@@ -51,12 +52,13 @@ has_libfuzzer() {
 }
 
 # Checks that don't depend on each other run side by side, as many at a time as there are
-# processors. `later TITLE COMMAND...` starts one in the background, and `report` waits for them
-# all, prints each one's output under its title in the order they were queued, with how long it
-# took, and fails if any of them failed.
+# processors. `later TITLE COMMAND...` starts one in the background, and `report` prints each
+# one's output under its title as it finishes, with how long it took, and fails if any of them
+# failed. A command that is a shell function runs without `set -e`, so chain its steps with &&.
 later_limit=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
 later_dir=
 later_titles=()
+later_pids=()
 later() {
 	local title=$1
 	shift
@@ -71,24 +73,45 @@ later() {
 		echo "($((SECONDS - started)) s)"
 		echo "$status" >"$later_dir/$n.status"
 	) >"$later_dir/$n.log" 2>&1 &
+	later_pids+=($!)
 }
 report() {
-	wait
-	local n failed=()
-	for n in "${!later_titles[@]}"; do
-		step "${later_titles[n]}"
-		cat "$later_dir/$n.log"
-		if [[ "$(cat "$later_dir/$n.status" 2>/dev/null)" != 0 ]]; then failed+=("${later_titles[n]}"); fi
+	local n left=${#later_titles[@]} shown=() failed=()
+	while ((left > 0)); do
+		for n in "${!later_titles[@]}"; do
+			if [[ -n "${shown[n]:-}" ]]; then continue; fi
+			# A check killed before it wrote its status has failed.
+			if [[ ! -e "$later_dir/$n.status" ]] && kill -0 "${later_pids[n]}" 2>/dev/null; then continue; fi
+			step "${later_titles[n]}"
+			cat "$later_dir/$n.log"
+			if [[ "$(cat "$later_dir/$n.status" 2>/dev/null)" != 0 ]]; then failed+=("${later_titles[n]}"); fi
+			shown[n]=1
+			left=$((left - 1))
+		done
+		if ((left > 0)); then sleep 0.2; fi
 	done
+	wait
 	rm -rf "$later_dir"
 	later_dir=
 	later_titles=()
+	later_pids=()
 	if ((${#failed[@]})); then
 		echo >&2
 		printf 'failed: %s\n' "${failed[@]}" >&2
 		return 1
 	fi
 }
+# If the script stops early (a missing tool under CI=1, a failed build), checks it started
+# don't outlive it.
+stop_later() {
+	local pid
+	for pid in "${later_pids[@]}"; do
+		pkill -P "$pid" 2>/dev/null || true
+		kill "$pid" 2>/dev/null || true
+	done
+	if [[ -n "$later_dir" ]]; then rm -rf "$later_dir"; fi
+}
+trap stop_later EXIT
 
 built() { # sets drivers to the built executables at $1 under build/<compiler>/<mode>/
 	local driver
@@ -137,7 +160,6 @@ fi
 if want drivers; then
 # Each script below checks the executables it is given one after another, so each gets one
 # executable at a time and they all run side by side (`later`), the longest first.
-unicode16() { python3 ci/generate_unicode16.py --check && python3 ci/check_unicode16.py "$@"; }
 if have python3; then
 	built mo
 	if ((${#drivers[@]})); then
@@ -175,9 +197,10 @@ if have python3; then
 		missing "no code generation test executable is built"
 	fi
 
+	later "Unicode 16: the pinned tables match the UCD files" python3 ci/generate_unicode16.py --check
 	built tests/test_unicode16.test
 	if ((${#drivers[@]})); then
-		later "Unicode 16: pinned tables, UCD conformance and long-text work bounds" unicode16 "${drivers[@]}"
+		later "Unicode 16: UCD conformance and long-text work bounds" python3 ci/check_unicode16.py "${drivers[@]}"
 	else
 		missing "no Unicode primitive test executable is built"
 	fi
@@ -233,13 +256,6 @@ if have lake; then
 	if have python3; then
 		# The comparisons below don't depend on each other, so they run side by side
 		# (`later`), the longest first.
-		built tests/test_prim.test
-		if ((${#drivers[@]})); then
-			later "Primitive results and stops match Lean; large inputs keep their work bounds" \
-				python3 ci/check_primitives.py "${drivers[@]}"
-		else
-			missing "no primitive test executable is built"
-		fi
 		built tests/test_vm.test
 		vm_drivers=("${drivers[@]}")
 		if ((${#vm_drivers[@]})); then
@@ -247,6 +263,13 @@ if have lake; then
 				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_vm.py "${vm_drivers[@]}"
 		else
 			missing "no VM test executable is built"
+		fi
+		built tests/test_prim.test
+		if ((${#drivers[@]})); then
+			later "Primitive results and stops match Lean; large inputs keep their work bounds" \
+				python3 ci/check_primitives.py "${drivers[@]}"
+		else
+			missing "no primitive test executable is built"
 		fi
 		built tests/test_lower.test
 		lower_drivers=("${drivers[@]}")
