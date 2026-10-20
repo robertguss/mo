@@ -50,6 +50,54 @@ has_libfuzzer() {
 	((ok == 1))
 }
 
+# Checks that don't depend on each other run side by side, as many at a time as there are
+# processors. `later TITLE COMMAND...` starts one in the background, and `report` waits for them
+# all, prints each one's output under its title in the order they were queued, with how long it
+# took, and fails if any of them failed.
+later_limit=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
+later_dir=
+later_titles=()
+later() {
+	local title=$1
+	shift
+	if [[ -z "$later_dir" ]]; then later_dir=$(mktemp -d); fi
+	local n=${#later_titles[@]}
+	later_titles+=("$title")
+	while (($(jobs -rp | wc -l) >= later_limit)); do sleep 0.2; done
+	(
+		started=$SECONDS
+		status=0
+		"$@" </dev/null || status=$?
+		echo "($((SECONDS - started)) s)"
+		echo "$status" >"$later_dir/$n.status"
+	) >"$later_dir/$n.log" 2>&1 &
+}
+report() {
+	wait
+	local n failed=()
+	for n in "${!later_titles[@]}"; do
+		step "${later_titles[n]}"
+		cat "$later_dir/$n.log"
+		if [[ "$(cat "$later_dir/$n.status" 2>/dev/null)" != 0 ]]; then failed+=("${later_titles[n]}"); fi
+	done
+	rm -rf "$later_dir"
+	later_dir=
+	later_titles=()
+	if ((${#failed[@]})); then
+		echo >&2
+		printf 'failed: %s\n' "${failed[@]}" >&2
+		return 1
+	fi
+}
+
+built() { # sets drivers to the built executables at $1 under build/<compiler>/<mode>/
+	local driver
+	drivers=()
+	for driver in build/{gcc,clang}/{debug,sanitize}/"$1"; do
+		if [[ -x "$driver" ]]; then drivers+=("$driver"); fi
+	done
+}
+
 if want gcc; then
 step "Build and test with gcc (warnings are errors)"
 if have gcc; then make --no-print-directory test CC=gcc; else missing "gcc is not installed"; fi
@@ -87,74 +135,67 @@ if [[ -n "$groups" ]] && { want drivers || want lean; }; then
 fi
 
 if want drivers; then
-step "The mo command: text/JSON goldens, argument matrix and JSON validity"
+# Each script below checks the executables it is given one after another, so each gets one
+# executable at a time and they all run side by side (`later`), the longest first.
+unicode16() { python3 ci/generate_unicode16.py --check && python3 ci/check_unicode16.py "$@"; }
 if have python3; then
-	drivers=()
-	for driver in build/{gcc,clang}/{debug,sanitize}/mo; do
-		if [[ -x "$driver" ]]; then drivers+=("$driver"); fi
-	done
-	if ((${#drivers[@]})); then python3 ci/check_cli.py "${drivers[@]}";
-	else missing "no mo command executable is built"; fi
+	built mo
+	if ((${#drivers[@]})); then
+		for driver in "${drivers[@]}"; do
+			later "The mo command: text/JSON goldens, argument matrix and JSON validity ($driver)" \
+				python3 ci/check_cli.py "$driver"
+		done
+		for driver in "${drivers[@]}"; do
+			later "The golden corpus: whole programs match their expected output and exit status ($driver)" \
+				python3 ci/check_golden.py "$driver"
+		done
+		for driver in "${drivers[@]}"; do
+			later "Every error code has a test of its exact message ($driver)" \
+				python3 ci/check_errors.py "$driver"
+		done
+		later "The session-recording harness: a recorded session's log reads to tally's example table" \
+			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/harness/test_session.py "${drivers[@]}"
+	else
+		missing "no mo command executable is built"
+	fi
+
+	built tests/test_bytecode_text.test
+	if ((${#drivers[@]})); then
+		later "Bytecode text: repeated layout and BigInt conversion stay within work ceilings" \
+			python3 ci/check_bytecode_text.py "${drivers[@]}"
+	else
+		missing "no bytecode text test executable is built"
+	fi
+
+	built tests/test_codegen.test
+	if ((${#drivers[@]})); then
+		later "Core code generation: deterministic writer-checked fixtures, corpora and generated programs" \
+			python3 ci/check_codegen.py "${drivers[@]}"
+	else
+		missing "no code generation test executable is built"
+	fi
+
+	built tests/test_unicode16.test
+	if ((${#drivers[@]})); then
+		later "Unicode 16: pinned tables, UCD conformance and long-text work bounds" unicode16 "${drivers[@]}"
+	else
+		missing "no Unicode primitive test executable is built"
+	fi
 else
 	missing "python3 is not installed"
 fi
 
-step "The session-recording harness: a recorded session's log reads to tally's example table"
-if have python3; then
-	if ((${#drivers[@]})); then PYTHONDONTWRITEBYTECODE=1 python3 learnability/harness/test_session.py "${drivers[@]}";
-	else missing "no mo command executable is built"; fi
+formatter_driver=
+for driver in build/{gcc,clang}/debug/tests/test_format.test; do
+	if [[ -x "$driver" ]]; then formatter_driver=$driver; break; fi
+done
+if [[ -n "$formatter_driver" ]]; then
+	later "The source formatter: reference, examples, library and good grammar are fixed points" \
+		"$formatter_driver" --fixed-points
 else
-	missing "python3 is not installed"
+	missing "no source formatter test executable is built"
 fi
-
-step "Every error code has a test of its exact message"
-if have python3; then
-	drivers=()
-	for driver in build/{gcc,clang}/{debug,sanitize}/mo; do
-		if [[ -x "$driver" ]]; then drivers+=("$driver"); fi
-	done
-	if ((${#drivers[@]})); then python3 ci/check_errors.py "${drivers[@]}";
-	else missing "no mo command executable is built"; fi
-else
-	missing "python3 is not installed"
-fi
-
-step "The golden corpus: whole programs match their expected output and exit status"
-if have python3; then
-	drivers=()
-	for driver in build/{gcc,clang}/{debug,sanitize}/mo; do
-		if [[ -x "$driver" ]]; then drivers+=("$driver"); fi
-	done
-	if ((${#drivers[@]})); then python3 ci/check_golden.py "${drivers[@]}";
-	else missing "no mo command executable is built"; fi
-else
-	missing "python3 is not installed"
-fi
-
-step "Bytecode text: repeated layout and BigInt conversion stay within work ceilings"
-if have python3; then
-	drivers=()
-	for driver in build/{gcc,clang}/{debug,sanitize}/tests/test_bytecode_text.test; do
-		if [[ -x "$driver" ]]; then drivers+=("$driver"); fi
-	done
-	if ((${#drivers[@]})); then python3 ci/check_bytecode_text.py "${drivers[@]}";
-	else missing "no bytecode text test executable is built"; fi
-else
-	missing "python3 is not installed"
-fi
-
-step "Unicode 16: pinned tables, UCD conformance and long-text work bounds"
-if have python3; then
-	python3 ci/generate_unicode16.py --check
-	drivers=()
-	for driver in build/{gcc,clang}/{debug,sanitize}/tests/test_unicode16.test; do
-		if [[ -x "$driver" ]]; then drivers+=("$driver"); fi
-	done
-	if ((${#drivers[@]})); then python3 ci/check_unicode16.py "${drivers[@]}";
-	else missing "no Unicode primitive test executable is built"; fi
-else
-	missing "python3 is not installed"
-fi
+report
 fi
 
 if want fuzz; then
@@ -189,82 +230,73 @@ if have lake; then
 	make --no-print-directory formal
 	step "Core text fixtures match the Lean reference printer"
 	sh ci/check_core_fixtures.sh
-	step "Core checker verdicts match Lean on fixtures, generated variants and fuzz corpora"
 	if have python3; then
-		drivers=()
-		for driver in build/{gcc,clang}/{debug,sanitize}/tests/test_core_check.test; do
-			if [[ -x "$driver" ]]; then drivers+=("$driver"); fi
-		done
-		if ((${#drivers[@]})); then python3 ci/check_core_check.py "${drivers[@]}";
-		else missing "no Core checker test executable is built"; fi
-		step "Generated well-typed Core programs pass both checkers and print identically in C and Lean"
-		if ((${#drivers[@]})); then PYTHONDONTWRITEBYTECODE=1 python3 ci/check_core_generated.py "${drivers[@]}";
-		else missing "no Core checker test executable is built"; fi
-		step "Heap Float spellings match Lean and BigInt digits match Python"
-		heap_drivers=()
-		for driver in build/{gcc,clang}/{debug,sanitize}/tests/test_heap.test; do
-			if [[ -x "$driver" ]]; then heap_drivers+=("$driver"); fi
-		done
-		if ((${#heap_drivers[@]})); then python3 ci/check_heap_numbers.py "${heap_drivers[@]}";
-		else missing "no heap test executable is built"; fi
-		step "Compiled Core outcomes match the Lean VM model"
-		vm_drivers=()
-		for driver in build/{gcc,clang}/{debug,sanitize}/tests/test_vm.test; do
-			if [[ -x "$driver" ]]; then vm_drivers+=("$driver"); fi
-		done
-		if ((${#vm_drivers[@]})); then PYTHONDONTWRITEBYTECODE=1 python3 ci/check_vm.py "${vm_drivers[@]}";
-		else missing "no VM test executable is built"; fi
-		step "Generated Core programs give the same outcome on the VM and in Lean"
-		if ((${#vm_drivers[@]})); then PYTHONDONTWRITEBYTECODE=1 python3 ci/check_core_differential.py "${vm_drivers[@]}";
-		else missing "no VM test executable is built"; fi
-		step "Lowered checked-program fixtures match expected outcomes and Lean"
-		lower_drivers=()
-		for driver in build/{gcc,clang}/{debug,sanitize}/tests/test_lower.test; do
-			if [[ -x "$driver" ]]; then lower_drivers+=("$driver"); fi
-		done
+		# The comparisons below don't depend on each other, so they run side by side
+		# (`later`), the longest first.
+		built tests/test_prim.test
+		if ((${#drivers[@]})); then
+			later "Primitive results and stops match Lean; large inputs keep their work bounds" \
+				python3 ci/check_primitives.py "${drivers[@]}"
+		else
+			missing "no primitive test executable is built"
+		fi
+		built tests/test_vm.test
+		vm_drivers=("${drivers[@]}")
+		if ((${#vm_drivers[@]})); then
+			later "Compiled Core outcomes match the Lean VM model" \
+				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_vm.py "${vm_drivers[@]}"
+		else
+			missing "no VM test executable is built"
+		fi
+		built tests/test_lower.test
+		lower_drivers=("${drivers[@]}")
 		for driver in "${lower_drivers[@]}"; do
 			compiler=${driver#build/}; compiler=${compiler%%/*}
 			make --no-print-directory CC="$compiler" "${driver%/tests/*}/lower-source"
 		done
-		if ((${#lower_drivers[@]})); then PYTHONDONTWRITEBYTECODE=1 python3 ci/check_lower.py "${lower_drivers[@]}";
-		else missing "no lowering test executable is built"; fi
-		step "Source/check/lower programs match expected outcomes, Lean and the host-entry VM"
 		for driver in "${lower_drivers[@]}"; do
-			PYTHONDONTWRITEBYTECODE=1 python3 ci/check_lower_source.py "${driver%/tests/*}/lower-source" "${driver%/tests/*}/lower-source"
+			later "Source/check/lower programs match expected outcomes, Lean and the host-entry VM (${driver%/tests/*})" \
+				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_lower_source.py "${driver%/tests/*}/lower-source" "${driver%/tests/*}/lower-source"
 		done
-		step "Primitive results and stops match Lean; large inputs keep their work bounds"
-		prim_drivers=()
-		for driver in build/{gcc,clang}/{debug,sanitize}/tests/test_prim.test; do
-			if [[ -x "$driver" ]]; then prim_drivers+=("$driver"); fi
-		done
-		if ((${#prim_drivers[@]})); then python3 ci/check_primitives.py "${prim_drivers[@]}";
-		else missing "no primitive test executable is built"; fi
-		step "Fake capability operations match the Lean host model"
-		host_drivers=()
-		for driver in build/{gcc,clang}/{debug,sanitize}/tests/test_host.test; do
-			if [[ -x "$driver" ]]; then host_drivers+=("$driver"); fi
-		done
-		if ((${#host_drivers[@]})); then PYTHONDONTWRITEBYTECODE=1 python3 ci/check_host.py "${host_drivers[@]}";
-		else missing "no host test executable is built"; fi
+		built tests/test_heap.test
+		if ((${#drivers[@]})); then
+			later "Heap Float spellings match Lean and BigInt digits match Python" \
+				python3 ci/check_heap_numbers.py "${drivers[@]}"
+		else
+			missing "no heap test executable is built"
+		fi
+		built tests/test_core_check.test
+		if ((${#drivers[@]})); then
+			later "Core checker verdicts match Lean on fixtures, generated variants and fuzz corpora" \
+				python3 ci/check_core_check.py "${drivers[@]}"
+			later "Generated well-typed Core programs pass both checkers and print identically in C and Lean" \
+				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_core_generated.py "${drivers[@]}"
+		else
+			missing "no Core checker test executable is built"
+		fi
+		if ((${#vm_drivers[@]})); then
+			later "Generated Core programs give the same outcome on the VM and in Lean" \
+				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_core_differential.py "${vm_drivers[@]}"
+		fi
+		if ((${#lower_drivers[@]})); then
+			later "Lowered checked-program fixtures match expected outcomes and Lean" \
+				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_lower.py "${lower_drivers[@]}"
+		else
+			missing "no lowering test executable is built"
+		fi
+		built tests/test_host.test
+		if ((${#drivers[@]})); then
+			later "Fake capability operations match the Lean host model" \
+				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_host.py "${drivers[@]}"
+		else
+			missing "no host test executable is built"
+		fi
+		report
 	else
 		missing "python3 is not installed"
 	fi
 else
 	missing "elan (Lean's installer) is not installed"
-fi
-fi
-
-if want drivers; then
-step "Core code generation: deterministic writer-checked fixtures, corpora and generated programs"
-if have python3; then
-	drivers=()
-	for driver in build/{gcc,clang}/{debug,sanitize}/tests/test_codegen.test; do
-		if [[ -x "$driver" ]]; then drivers+=("$driver"); fi
-	done
-	if ((${#drivers[@]})); then python3 ci/check_codegen.py "${drivers[@]}";
-	else missing "no code generation test executable is built"; fi
-else
-	missing "python3 is not installed"
 fi
 fi
 
@@ -292,16 +324,6 @@ if have clang-format; then make --no-print-directory format-check; else missing 
 
 step "Results of standard-library calls are used (clang-tidy)"
 if have clang-tidy; then make --no-print-directory tidy; else missing "clang-tidy is not installed"; fi
-fi
-
-if want drivers; then
-step "The source formatter: reference, examples, library and good grammar are fixed points"
-formatter_driver=
-for driver in build/{gcc,clang}/debug/tests/test_format.test; do
-	if [[ -x "$driver" ]]; then formatter_driver=$driver; break; fi
-done
-if [[ -n "$formatter_driver" ]]; then "$formatter_driver" --fixed-points;
-else missing "no source formatter test executable is built"; fi
 fi
 
 if want cbmc; then
