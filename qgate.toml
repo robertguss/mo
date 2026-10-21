@@ -1,12 +1,12 @@
 # qgate: the local quality gate (https://github.com/robertguss/code-quality-cli).
-# Loosening anything here fails the next run until Robert runs `qgate approve`.
-qgate_version = "0.2.0"
+# Loosening anything here shows as a `loosening` warning on the next run; it never fails the run.
+qgate_version = "0.4.1"
 
 # Prose, and the Unicode table ci/generate_unicode16.py writes.
 exclude = ["docs/**", "src/prim/unicode16-data.h"]
 
 # Test data: goldens, the three tools' hidden tests, lowering fixtures and the other inputs with
-# expected outputs. They skip the length and duplication checks, and adding one needs no approval;
+# expected outputs. They skip the length and duplication checks, and adding one is not a loosening;
 # C and Python files under them are still checked like any other code.
 fixtures = [
     "tests/golden/**",
@@ -28,7 +28,7 @@ attribute_macros = ["MO_MUST_USE", "_Noreturn", "_Alignas", "__extension__"]
 function_lines = 50
 file_lines = 500
 
-# A baselined function or file may grow this many lines past its recorded size without approval.
+# A baselined function or file may grow this many lines past its recorded size.
 [ratchet]
 headroom_lines = 5
 
