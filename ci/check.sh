@@ -377,7 +377,7 @@ fi
 fi
 
 if want qgate; then
-step "qgate (report only): long functions and files, duplication and unapproved loosenings since ${QGATE_BASE:-origin/main}"
+step "qgate (report only): long functions and files, duplication and loosenings since ${QGATE_BASE:-origin/main}"
 # Report only: a qgate failure, or no merge base on a shallow clone (exit 2), never fails the
 # group. MO_QGATE_SKIP_CHECK stops qgate.toml's push tool from running ci/check.sh again here.
 if have qgate; then

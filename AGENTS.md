@@ -64,11 +64,12 @@ A PR that changes only documents no check reads skips the eight jobs, and `check
 what the CBMC proofs read skips the `cbmc` job (`ci/ci_groups.sh`); pushes to main run every job. Robert lets agents merge
 docs-only PRs without review.
 
-qgate (`qgate.toml`, `qgate.baseline`, v0.2.0) runs as git hooks once a clone has run `qgate install`:
+qgate (`qgate.toml`, `qgate.baseline`, v0.4.1) runs as git hooks once a clone has run `qgate install`:
 commit runs clang-format on the staged C files plus qgate's function length, file length and
 duplication checks; push also runs `CI=1 bash ci/check.sh gcc clang sanitize static drivers`. The
-baseline only shrinks, with 5 lines of headroom. A failure prints its fix; anything that loosens the
-gate needs Robert's `qgate approve`, so never bypass the hooks and never run `qgate approve` yourself.
+baseline only shrinks, with 5 lines of headroom. A failure prints its fix. Loosening the gate (a raised limit, a grown
+baseline, a changed tool) is a `loosening` warning that never fails the run; prefer fixing the code,
+and say in the PR what you loosened and why. Never bypass the hooks (`--no-verify`, `core.hooksPath`).
 A separate `qgate` job on each code PR runs `bash ci/check.sh qgate`, the same push stage against the
 merge base, as annotations and a job summary. It only reports, is not part of `check`, and is on
 trial until early November 2026 (MO-100).

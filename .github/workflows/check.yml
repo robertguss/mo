@@ -103,8 +103,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
-      QGATE_VERSION: 0.2.0
-      QGATE_SHA256: e5020f61465b1b99176f0bb5de51ad1ffb12b38509af01609640e10eb65a5b53
+      QGATE_VERSION: 0.4.1
+      QGATE_SHA256: af0cfcc6611345021a3495ac29cb17a8450a77d6b0656f821b4923c6c57e54ed
     steps:
       - uses: actions/checkout@v4
         with:
