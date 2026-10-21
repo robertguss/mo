@@ -68,6 +68,12 @@ A separate `qgate` job on each code PR reports, without ever failing, the duplic
 functions the PR adds in `src/` and `lib/` (`ci/qgate_report.py`, settings in `ci/qgate.toml`, MO-100).
 It is on trial until early November 2026; it is not part of `check`.
 
+qgate (`qgate.toml`, `qgate.baseline`) runs as git hooks once a clone has run `qgate install`: commit
+runs clang-format on the staged C files plus qgate's function length, file length and duplication
+checks; push also runs `CI=1 bash ci/check.sh gcc clang sanitize static drivers`. The baseline only
+shrinks. A failure prints its fix; anything that loosens the gate needs Robert's `qgate approve`, so
+never bypass the hooks.
+
 ## Architecture
 
 Pipeline: source → parser (`syntax`) → names, types and rule checks (`check`) → lowering to Mo
