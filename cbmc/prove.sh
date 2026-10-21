@@ -77,8 +77,9 @@ proved_function() {
 	arena_resize) echo 'mo_arena_resize|grow_alone' ;;
 	arena_free) echo 'mo_arena_free|mo_arena_init' ;;
 	arena_*) echo "mo_$1" ;;
-	# A verifier proof covers the static helpers only its function calls.
-	instruction) echo 'mo_verify_instruction|reg|kind|closure|field|args' ;;
+	# A verifier proof covers the helpers its function calls, including
+	# mo_verify_closure_signature, which the validator shares (CBMC does not build the validator).
+	instruction) echo 'mo_verify_instruction|reg|kind|mo_verify_closure_signature|field|args' ;;
 	lookup) echo 'mo_verify_layout_lookup|layout_order' ;;
 	step) echo 'step|access|mo_verify_parameter_modes|refuse|charge' ;;
 	*) echo "$1" ;;
