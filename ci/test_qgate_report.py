@@ -6,6 +6,7 @@ These need no qgate binary: they feed the report saved qgate JSON, shaped like q
 
 import json
 import os
+import re
 import pathlib
 import subprocess
 import sys
@@ -43,6 +44,8 @@ DROPPED = [
     finding("baseline-prunable", "src/vm/run.c", 506, "function shrank", severity="info"),
     finding("function-length", "src/vm/run.c", 9, "function `f` is 60 lines", severity="warning"),
     finding("function-length", "srcx/a.c", 1, "function `g` is 60 lines"),
+    finding("function-length", "src/vm/run2.c", 376,
+            "baselined function `step` moved here; its baseline entry must move with it"),
 ]
 
 
@@ -89,6 +92,14 @@ class Output(unittest.TestCase):
         self.assertIn("| duplication | `cbmc/verify.c:345` | duplicated block", text)
         self.assertNotIn("file-length", text)
 
+    def test_annotation_escapes_workflow_commands(self):
+        tricky = finding("function-length", "src/a,b:c.c", 2, "100% long\n::error::x")
+        self.assertEqual(qgate_report.annotation(tricky),
+                         "::notice file=src/a%2Cb%3Ac.c,line=2,title=qgate function-length::"
+                         "100%25 long%0A::error::x")
+        result = run_report({"findings": [tricky]})
+        self.assertNotIn("\n::error", result.stdout)
+
     def test_no_findings(self):
         with tempfile.TemporaryDirectory() as work:
             summary = pathlib.Path(work) / "summary.md"
@@ -106,11 +117,82 @@ class Output(unittest.TestCase):
             self.assertIn("qgate report skipped:", result.stdout, broken)
 
     def test_never_fails_without_qgate(self):
+        # Fails before making any worktree, so the real repository is untouched.
         result = subprocess.run([sys.executable, str(here / "qgate_report.py"), "--qgate",
                                  "/nonexistent/qgate", "HEAD"], capture_output=True, text=True,
                                 check=False, timeout=60)
         self.assertEqual(result.returncode, 0)
         self.assertIn("qgate report skipped:", result.stdout)
+
+
+FAKE_QGATE = """#!{python}
+import json, pathlib, subprocess, sys
+here = pathlib.Path.cwd()
+def git(*args):
+    return subprocess.run(["git", *args], capture_output=True, text=True, check=True).stdout
+if sys.argv[1:] == ["baseline", "create"]:
+    (here / "qgate.baseline").write_text("base files: " + " ".join(git("ls-files").split()) + "\\n")
+    sys.exit(0)
+assert sys.argv[1:] == ["run", "--stage", "commit", "--format", "json"], sys.argv
+staged = " ".join(git("diff", "--cached", "--name-status").split())
+seen = (here / "qgate.baseline").read_text().strip()
+config = (here / "qgate.toml").read_text().splitlines()[-1]
+print(json.dumps({{"findings": [
+    {{"rule": "function-length", "severity": "error", "path": "src/new.c", "line": 1,
+     "message": staged}},
+    {{"rule": "function-length", "severity": "error", "path": "src/new.c", "line": 2,
+     "message": seen}},
+    {{"rule": "function-length", "severity": "error", "path": "src/new.c", "line": 3,
+     "message": config}}]}}))
+sys.exit(1)
+"""
+
+
+class RunQgate(unittest.TestCase):
+    """run_qgate on a scratch repository, with a fake qgate that reports what it was shown."""
+
+    def test_stages_exactly_the_change_on_top_of_a_baseline_of_the_base(self):
+        with tempfile.TemporaryDirectory() as work:
+            repo = pathlib.Path(work) / "repo"
+            (repo / "src").mkdir(parents=True)
+
+            def git(*args):
+                subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+                               cwd=repo, check=True, capture_output=True)
+
+            git("init", "-q")
+            (repo / "src/kept.c").write_text("int a;\n")
+            (repo / "src/gone.c").write_text("int b;\n")
+            git("add", "-A")
+            git("commit", "-qm", "base")
+            git("branch", "base")
+            (repo / "src/kept.c").write_text("int a, c;\n")
+            (repo / "src/gone.c").unlink()
+            (repo / "src/new.c").write_text("int d;\n")
+            git("add", "-A")
+            git("commit", "-qm", "change")
+            fake = pathlib.Path(work) / "qgate"
+            fake.write_text(FAKE_QGATE.format(python=sys.executable))
+            fake.chmod(0o755)
+
+            data = qgate_report.run_qgate(str(fake), "base", repo)
+            listed = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=repo,
+                                    capture_output=True, text=True, check=True).stdout
+        messages = [f["message"] for f in data["findings"]]
+        self.assertEqual(messages, [
+            "A qgate.baseline A qgate.toml D src/gone.c M src/kept.c A src/new.c",
+            "base files: src/gone.c src/kept.c",
+            "min_tokens = 50",
+        ])
+        self.assertEqual(listed.count("worktree "), 1, listed)
+
+
+class Pins(unittest.TestCase):
+    def test_qgate_version_matches_the_workflow(self):
+        toml = (here / "qgate.toml").read_text()
+        workflow = (here.parent / ".github/workflows/check.yml").read_text()
+        version = re.search(r'^qgate_version = "([^"]+)"', toml, re.M).group(1)
+        self.assertIn(f"QGATE_VERSION: {version}\n", workflow)
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ the change against that baseline, so a finding is something the change added or 
 qgate's findings this keeps only two kinds:
   function-length  a function in src/ or lib/ that is newly over 50 lines, or grew while over
   duplication      a copied block of 50+ tokens with at least one copy in src/ or lib/
-and drops the rest: file length (most of the long files are long on purpose), parse warnings
+and drops the rest: long functions that only moved, file length (most of the long files are long on purpose), parse warnings
 (qgate's C grammar trips on Mo's macros), the baseline approvals qgate asks of a developer, and
 notes about violations that shrank. Settings are in ci/qgate.toml.
 
@@ -52,7 +52,9 @@ def keep(finding):
         return False
     rule = finding.get("rule")
     if rule == "function-length":
-        return watched(finding.get("path"))
+        # A function that was already long and moved to another file or name is not new; qgate
+        # only asks for its baseline entry to move. If it also grew, qgate reports that separately.
+        return watched(finding.get("path")) and "moved here" not in finding.get("message", "")
     if rule == "duplication":
         partners = PARTNER.findall(finding.get("message", ""))
         return watched(finding.get("path")) or any(watched(p) for p in partners)
@@ -69,19 +71,23 @@ def git(*args, cwd=root):
                           text=True).stdout.strip()
 
 
-def run_qgate(qgate, base_ref):
+def run_qgate(qgate, base_ref, repo=root):
     """Runs qgate on HEAD against a baseline of the merge base; returns its parsed JSON."""
-    base = git("merge-base", base_ref, "HEAD")
-    head = git("rev-parse", "HEAD")
+    if not os.access(qgate, os.X_OK):
+        raise FileNotFoundError(f"no qgate executable at {qgate}")
+    base = git("merge-base", base_ref, "HEAD", cwd=repo)
+    head = git("rev-parse", "HEAD", cwd=repo)
     work = pathlib.Path(tempfile.mkdtemp(prefix="qgate-"))
     trees = []
     try:
         for name, commit in (("base", base), ("head", head)):
-            git("worktree", "add", "--detach", str(work / name), commit)
+            git("worktree", "add", "--detach", str(work / name), commit, cwd=repo)
             trees.append(work / name)
         shutil.copyfile(CONFIG, work / "base/qgate.toml")
-        subprocess.run([qgate, "baseline", "create"], cwd=work / "base", check=True,
-                       capture_output=True, timeout=120)
+        made = subprocess.run([qgate, "baseline", "create"], cwd=work / "base",
+                              capture_output=True, text=True, timeout=120)
+        if made.returncode != 0:
+            raise RuntimeError(f"qgate baseline create failed: {made.stderr[-500:]}")
         for name in ("qgate.toml", "qgate.baseline"):
             shutil.copyfile(work / "base" / name, work / "head" / name)
         # The head tree staged on top of the base commit: qgate's commit stage then checks exactly
@@ -90,12 +96,19 @@ def run_qgate(qgate, base_ref):
         git("add", "qgate.toml", "qgate.baseline", cwd=work / "head")
         result = subprocess.run([qgate, "run", "--stage", "commit", "--format", "json"],
                                 cwd=work / "head", capture_output=True, text=True, timeout=120)
-        return json.loads(result.stdout)
+        try:
+            return json.loads(result.stdout)
+        except ValueError as error:
+            raise RuntimeError(f"qgate run printed no JSON ({error}): {result.stderr[-500:]}")
     finally:
         for tree in trees:
-            subprocess.run(["git", "worktree", "remove", "--force", str(tree)], cwd=root,
+            subprocess.run(["git", "worktree", "remove", "--force", str(tree)], cwd=repo,
                            capture_output=True, check=False)
         shutil.rmtree(work, ignore_errors=True)
+
+
+def one_line(text):
+    return " ".join(str(text).split())
 
 
 def location(finding):
@@ -106,7 +119,7 @@ def location(finding):
 def text_report(kept, seconds):
     lines = [f"qgate (report only, never fails CI): {len(kept)} new finding(s) in src/ and lib/"
              f" in {seconds:.1f} s"]
-    lines += [f"  {f['rule']}: {location(f)}: {f['message']}" for f in kept]
+    lines += [f"  {f['rule']}: {one_line(location(f))}: {one_line(f['message'])}" for f in kept]
     return "\n".join(lines) + "\n"
 
 
@@ -120,14 +133,23 @@ def markdown_report(kept, seconds):
                " They never fail CI; see MO-100.")
     out += ["", "| Rule | Where | What |", "| --- | --- | --- |"]
     for f in kept:
-        message = f["message"].replace("|", "\\|")
+        message = one_line(f["message"]).replace("|", "\\|")
         out.append(f"| {f['rule']} | `{location(f)}` | {message} |")
     return "\n".join(out) + "\n"
 
 
+def escape_data(text):
+    return str(text).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def escape_property(text):
+    return escape_data(text).replace(":", "%3A").replace(",", "%2C")
+
+
 def annotation(finding):
-    message = finding["message"].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-    where = f"file={finding['path']}"
+    """A GitHub workflow command, escaped as GitHub's toolkit escapes data and properties."""
+    message = escape_data(finding["message"])
+    where = f"file={escape_property(finding['path'])}"
     if finding.get("line"):
         where += f",line={finding['line']}"
     return f"::notice {where},title=qgate {finding['rule']}::{message}"

@@ -94,14 +94,14 @@ jobs:
 
   # Report-only: the duplicated code and long functions a pull request adds in src/ and lib/,
   # from qgate (ci/qgate_report.py, MO-100), in the job summary and as notices on the diff. It
-  # never fails: the script always exits 0, the job may fail without failing the run, and
-  # `check` below does not wait for it. Skipped for docs-only changes and pushes to main.
+  # never fails: the script always exits 0, a failed download or a timeout only skips the
+  # report, and `check` below does not wait for it. Skipped for docs-only changes and pushes to
+  # main.
   qgate:
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.groups != '[]'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    continue-on-error: true
+    timeout-minutes: 10
     env:
       QGATE_VERSION: 0.1.0
       QGATE_SHA256: ea2d62b8bc888a9b60ad72dd28bd6d970dc5b18807657d135500212113881214
@@ -110,6 +110,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install qgate ${{ env.QGATE_VERSION }}
+        id: install
+        continue-on-error: true
+        timeout-minutes: 2
         run: |
           archive=qgate-x86_64-unknown-linux-musl.tar.gz
           curl -sSfL -o "$RUNNER_TEMP/$archive" \
@@ -117,6 +120,9 @@ jobs:
           echo "$QGATE_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" qgate
       - name: New duplication and long functions (report only)
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 3
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: python3 ci/qgate_report.py --qgate "$RUNNER_TEMP/qgate" "$BASE_SHA"
