@@ -30,7 +30,8 @@ static MO_MUST_USE uint32_t reg(const struct mo_verify_function *v, uint32_t r) 
 static MO_MUST_USE bool kind(const struct mo_verify_function *v, uint32_t r, enum mo_type_kind k) {
     return v->file->types[reg(v, r)].kind == k;
 }
-static MO_MUST_USE bool closure(const struct mo_bytecode *f, uint32_t type, uint32_t function) {
+bool mo_verify_closure_signature(const struct mo_bytecode *f, uint32_t type, uint32_t function) {
+    MO_ASSERT(type < f->type_count && function < f->function_count);
     const struct mo_type *t = &f->types[type];
     const struct mo_bytecode_function *fn = &f->functions[function];
     if (t->kind != MO_TYPE_FUNCTION || fn->kind != MO_FUNCTION_CLOSURE ||
@@ -262,7 +263,7 @@ bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc) {
         REQUIRE(reg(v, a[3]) == field(f, reg(v, a[1]), a[2]), "set_field value type");
         break;
     case MO_OP_MAKE_CLOSURE:
-        REQUIRE(closure(f, reg(v, a[0]), a[1]), "closure signature");
+        REQUIRE(mo_verify_closure_signature(f, reg(v, a[0]), a[1]), "closure signature");
         REQUIRE(fn->spec_code || !f->functions[a[1]].spec_code, "spec closure in non-spec code");
         REQUIRE(
             args(v, a + 2, n, f->functions[a[1]].capture_types, f->functions[a[1]].capture_count),

@@ -1,0 +1,16 @@
+# qgate's settings for the report-only CI job (ci/qgate_report.py). The job copies this file into
+# temporary checkouts as qgate.toml; it is not a repository-wide qgate config and installs no hooks.
+# The version must match QGATE_VERSION in .github/workflows/check.yml.
+qgate_version = "0.1.0"
+
+# Fixtures, generated text and documents: copies there are expected, and leaving them out keeps
+# duplicates found in src/ and lib/ pointing at other code.
+exclude = ["bench/**", "docs/**", "**/*.md", "tests/golden/**", "tests/errors/**", "tests/cli/**", "tests/core/**", "tests/lower-source/**", "tests/check/**", "fuzz/corpus/**", "grammar/tests/**", "learnability/final/**", "tests/test_*.c", "ci/check_*.py"]
+
+[limits]
+function_lines = 50
+file_lines = 500
+
+[duplication]
+enabled = true
+min_tokens = 50

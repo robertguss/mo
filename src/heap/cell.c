@@ -62,7 +62,7 @@ int64_t mo_cell_get_time(struct mo_cell cell) {
 
 struct mo_cell mo_cell_decimal(mo_i128 value) {
     /* Two's complement minimum is the only count outside Decimal's range. */
-    MO_ASSERT((mo_u128)value != (mo_u128)1 << 127);
+    MO_ASSERT(value >= -(mo_i128)(((mo_u128)1 << 127) - 1));
     struct mo_cell cell;
     memcpy(cell.bytes, &value, sizeof value);
     return cell;

@@ -42,6 +42,17 @@ static MO_MUST_USE enum mo_prim_status int_result(struct mo_prim_call *c, mo_i12
     return MO_PRIM_RETURNED;
 }
 
+mo_i128 mo_prim_exact_product(int64_t a, int64_t b) {
+    return (mo_i128)a * b;
+}
+
+/* C's division, which truncates toward zero, and its remainder, which has a's sign. */
+static void truncated_division(int64_t a, int64_t b, int64_t *q, int64_t *r) {
+    MO_ASSERT(b != 0 && b != -1);
+    *q = a / b;
+    *r = a % b;
+}
+
 static MO_MUST_USE enum mo_prim_status integers(struct mo_prim_call *c, struct mo_cell *out) {
     int64_t a = mo_cell_get_int(c->args[0]);
     int64_t b = 0;
@@ -57,15 +68,23 @@ static MO_MUST_USE enum mo_prim_status integers(struct mo_prim_call *c, struct m
         *out = mo_cell_int(c->id == MO_PRIM_INT_MIN ? (a < b ? a : b) : (a > b ? a : b));
         return MO_PRIM_RETURNED;
     case MO_PRIM_INT_FLOOR_DIV:
-    case MO_PRIM_INT_FLOOR_MOD:
+    case MO_PRIM_INT_FLOOR_MOD: {
         if (b == 0) {
             c->reason = "dividing by zero";
             return MO_PRIM_DIV_BY_ZERO;
         }
-        n = (mo_i128)a / b;
-        if ((mo_i128)a % b != 0 && ((a < 0) != (b < 0)))
-            n--;
-        return int_result(c, c->id == MO_PRIM_INT_FLOOR_DIV ? n : (mo_i128)a - n * b, out);
+        if (b == -1)
+            return int_result(c, c->id == MO_PRIM_INT_FLOOR_DIV ? -(mo_i128)a : 0, out);
+        /* Truncate, then step down when the remainder's sign is not the divisor's. */
+        int64_t q, r;
+        truncated_division(a, b, &q, &r);
+        if (r != 0 && ((r < 0) != (b < 0))) {
+            q--;
+            r += b;
+        }
+        *out = mo_cell_int(c->id == MO_PRIM_INT_FLOOR_DIV ? q : r);
+        return MO_PRIM_RETURNED;
+    }
     case MO_PRIM_INT_WRAPPING_ADD:
     case MO_PRIM_INT_SATURATING_ADD:
     case MO_PRIM_INT_CHECKED_ADD:
@@ -79,10 +98,10 @@ static MO_MUST_USE enum mo_prim_status integers(struct mo_prim_call *c, struct m
     case MO_PRIM_INT_WRAPPING_MUL:
     case MO_PRIM_INT_SATURATING_MUL:
     case MO_PRIM_INT_CHECKED_MUL:
-        n = (mo_i128)a * b;
+        n = mo_prim_exact_product(a, b);
         break;
     case MO_PRIM_INT_TO_DECIMAL:
-        *out = mo_cell_decimal((mo_i128)a * MO_DECIMAL_SCALE);
+        *out = mo_cell_decimal(mo_prim_exact_product(a, MO_DECIMAL_SCALE));
         return MO_PRIM_RETURNED;
     case MO_PRIM_INT_TO_FLOAT:
         *out = mo_cell_float(mo_prim_ratio_float(a < 0, (mo_u128)(a < 0 ? -(mo_i128)a : a), 1));
@@ -92,7 +111,7 @@ static MO_MUST_USE enum mo_prim_status integers(struct mo_prim_call *c, struct m
         uint8_t bytes[8];
         size_t length = 0;
         while (magnitude != 0) {
-            bytes[length++] = (uint8_t)magnitude;
+            bytes[length++] = (uint8_t)(magnitude & 0xff);
             magnitude >>= 8;
         }
         enum mo_bigint_sign sign = a == 0  ? MO_BIGINT_ZERO
@@ -101,8 +120,10 @@ static MO_MUST_USE enum mo_prim_status integers(struct mo_prim_call *c, struct m
         return mo_value_bigint(c->heap, sign, bytes, length, out) ? MO_PRIM_RETURNED
                                                                   : MO_PRIM_OUT_OF_MEMORY;
     }
-    case MO_PRIM_INT_TO_BYTE:
-        return mo_prim_option(c, a >= 0 && a <= 255, mo_cell_byte((uint8_t)a), out);
+    case MO_PRIM_INT_TO_BYTE: {
+        bool valid = a >= 0 && a <= 255;
+        return mo_prim_option(c, valid, mo_cell_byte(valid ? (uint8_t)a : 0), out);
+    }
     case MO_PRIM_INT_TO_CHAR: {
         bool valid = a >= 0 && a <= 0x10ffff && (a < 0xd800 || a > 0xdfff);
         return mo_prim_option(c, valid, mo_cell_char(valid ? (uint32_t)a : 0), out);
@@ -115,7 +136,7 @@ static MO_MUST_USE enum mo_prim_status integers(struct mo_prim_call *c, struct m
     case MO_PRIM_INT_HOURS:
     case MO_PRIM_INT_DAYS: {
         static const int64_t scales[] = {1000000, 1000, 60000000, 3600000000, 86400000000};
-        n = (mo_i128)a * scales[c->id - MO_PRIM_INT_SECONDS];
+        n = mo_prim_exact_product(a, scales[c->id - MO_PRIM_INT_SECONDS]);
         if (n < INT64_MIN || n > INT64_MAX) {
             c->reason = "Duration";
             return MO_PRIM_OVERFLOW;
@@ -127,7 +148,10 @@ static MO_MUST_USE enum mo_prim_status integers(struct mo_prim_call *c, struct m
         MO_UNREACHABLE();
     }
     if (c->id <= MO_PRIM_INT_WRAPPING_MUL) {
-        uint64_t low = (uint64_t)(mo_u128)n;
+        /* The exact result's low 64 bits, read as two's complement. */
+        mo_u128 bits;
+        memcpy(&bits, &n, sizeof bits);
+        uint64_t low = (uint64_t)(bits & UINT64_MAX);
         int64_t signed_low;
         memcpy(&signed_low, &low, sizeof signed_low);
         *out = mo_cell_int(signed_low);

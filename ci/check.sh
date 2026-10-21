@@ -15,7 +15,7 @@
 #   drivers     the checks that drive the test executables: goldens, Unicode, codegen
 #   lean        Mo Core in Lean, and the checks that compare the test executables with it
 #   static      grammar, module dependencies, library map, frozen tool tasks, formatting, clang-tidy
-#   cbmc        the CBMC proofs of the bytecode reader, the arena and the verifier (cbmc/README.md)
+#   cbmc        the CBMC proofs of the bytecode reader, the arena, the verifier and the primitives (cbmc/README.md)
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -337,6 +337,9 @@ sh ci/test_docs_only.sh
 step "Pull request groups: ci/ci_groups.sh skips cbmc only when the change can't affect it"
 sh ci/test_ci_groups.sh
 
+step "The qgate report: keeps only new long functions and duplicates in src/ and lib/, never fails"
+if have python3; then PYTHONDONTWRITEBYTECODE=1 python3 ci/test_qgate_report.py; else missing "python3 is not installed"; fi
+
 step "The three tools' frozen tasks: hashes match and each reference passes its hidden tests"
 if have python3; then python3 bench/tools/grade.py --check; else missing "python3 is not installed"; fi
 
@@ -351,11 +354,11 @@ if have clang-tidy; then make --no-print-directory tidy; else missing "clang-tid
 fi
 
 if want cbmc; then
-step "CBMC: the bytecode reader on every small input, the arena and the verifier's transfer functions (cbmc/README.md)"
+step "CBMC: the bytecode reader on every small input, the arena, the verifier's transfer functions and the primitives' arithmetic and UTF-8 (cbmc/README.md)"
 if have cbmc && have goto-cc && have goto-instrument; then
 	# The proofs and the check that every block they prove runs on some input take about
-	# twenty-five and twenty minutes one at a time (the verifier's step proof alone about eleven),
-	# so they share the machine's processors.
+	# thirty and twenty-seven minutes one at a time (the verifier's step proof alone about
+	# eleven), so they share the machine's processors.
 	jobs=$(($(getconf _NPROCESSORS_ONLN) / 2))
 	((jobs >= 1)) || jobs=1
 	mkdir -p build

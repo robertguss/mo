@@ -37,7 +37,7 @@ make format / format-check # clang-format; CI pins clang-format 14.0.6, newer ve
 make tidy                  # clang-tidy cert-err33-c (unused stdlib results)
 make fuzz-smoke            # every fuzz target briefly (needs clang + libFuzzer; FUZZ_SECONDS=5)
 make formal                # build Mo Core in Lean and check every proof (needs elan)
-make cbmc                  # prove the bytecode reader, the arena and verifier steps (needs CBMC)
+make cbmc                  # prove the bytecode reader, arena, verifier steps, primitives (needs CBMC)
 bash ci/check.sh [group…]  # everything CI runs; groups: gcc clang sanitize fuzz drivers lean static cbmc
 ```
 
@@ -63,6 +63,10 @@ A PR that changes only documents no check reads skips the eight jobs, and `check
 `docs/design/library.md` are not on it: the build embeds or checks them. A PR that doesn't touch
 what the CBMC proofs read skips the `cbmc` job (`ci/ci_groups.sh`); pushes to main run every job. Robert lets agents merge
 docs-only PRs without review.
+
+A separate `qgate` job on each code PR reports, without ever failing, the duplicated code and long
+functions the PR adds in `src/` and `lib/` (`ci/qgate_report.py`, settings in `ci/qgate.toml`, MO-100).
+It is on trial until early November 2026; it is not part of `check`.
 
 qgate (`qgate.toml`, `qgate.baseline`) runs as git hooks once a clone has run `qgate install`: commit
 runs clang-format on the staged C files plus qgate's function length, file length and duplication
