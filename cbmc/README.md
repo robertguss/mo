@@ -1,8 +1,10 @@
 # CBMC proofs
 
-`make cbmc` (or `bash cbmc/prove.sh [proof...]`) proves two parts of Mo with
+`make cbmc` (or `bash cbmc/prove.sh [proof...]`) proves three parts of Mo with
 [CBMC](https://www.cprover.org/cbmc/): the bytecode reader, `src/bytecode/read.c` (`reader.c`,
-below), and the arena, `src/base/arena.c` (`arena.c`, in [The arena](#the-arena)).
+below), the arena, `src/base/arena.c` (`arena.c`, in [The arena](#the-arena)), and the bytecode
+verifier's transfer functions in `src/bytecode/verify.c` and `verify-instruction.c` (`verify.c`,
+in [The verifier](#the-verifier)).
 
 For the bytecode reader, for **every input of up to
 `MO_CBMC_INPUT` bytes** (32 by default, and more for the proofs whose loops need it), decoding:
@@ -62,7 +64,9 @@ body, or an assumption that rules out the paths that matter. Two checks catch th
 - **Reach.** `bash cbmc/prove.sh --reach` runs CBMC's location coverage on each proof and fails
   unless every block of the proved function runs on some input, and so does the end of its
   harness. The only blocks allowed to stay unreached are the failure branches of `MO_ASSERT`,
-  which the proofs show never run.
+  which the proofs show never run, and the branch CBMC adds to a call through a function pointer
+  for a target the harness never gives it (the verifier's replay visitor), which it closes with
+  `assume(false)`.
 
 CI runs the proofs and the reach check side by side, `MO_CBMC_JOBS` at a time each.
 
@@ -126,6 +130,38 @@ symbolic number of bytes of a block of up to 2^40 is far too slow for CBMC.
 
 Not proved: a system that hands out more than 2^40 bytes at once, and a 32-bit `size_t` (CBMC
 runs these proofs for 64-bit targets).
+
+## The verifier
+
+`verify.c` proves the verifier's transfer functions: what it does with **any one instruction of
+any opcode**, with any operands the validator accepts, in any small file the validator accepts.
+A file has three types, two functions, up to two layouts, constants and globals, up to three
+registers per function, and up to eight code words; the function verified is the first; and a
+variable operand list has up to three operands, one more than any table, so every count check
+can fail.
+
+| Proof | Checks |
+| --- | --- |
+| `instruction` | `mo_verify_instruction`, the type check: reads only inside the file's tables, never fails an `MO_ASSERT`, and either accepts with the error untouched or refuses with a reason at the instruction. When it accepts, each count the later passes and the VM loop over matches what they index with it: a call's arguments its function's parameters, a closure call's its function type's, a primitive's or capability operation's its arity, a construct's or reuse's fields its layout's, a closure's captures its function's, a switch's targets its choice's cases, and a case made is one of its choice's, with that case's fields |
+| `step` | the ownership transfer of one instruction (the loop body of `ownership`, split out as `step`), from any register states, any layout `cases` gave a reset and any room left in the undo log: it reads only inside its tables and either refuses with a reason inside the function's code, or accepts only when the ownership rules hold (each register read is readable, each consumed reference owned and each consumed token a token, no reference used again after it is consumed, no write over an owned register or a token, a tail call borrows only borrowed references, a return leaves nothing owned, an init reads only globals set before it and sets its own once) and then leaves each register in the state the rules give, logs fewer changes than the instruction has words, and the log, undone newest first, gives back every slot; the readable mask a replay reports matches the states |
+| `lookup` | `mo_verify_layout_lookup`: any answer is a layout of that type and tag, and in sorted keys a layout that is there is found |
+
+The proofs assume what the validator (`src/bytecode/validate.c`) checks: every operand inside the
+table its kind names, every target an instruction start, an environment type names a closure, and
+a function's parameters have its registers' types. `step` assumes what `ownership` gives it: each
+block runs once, so no register is yet marked as used by the instruction, and a visit keeps the
+readable mask matching the states. Its operands' access modes come from the real `access`, which
+`step`'s proof runs but does not specify. Two library checks are not proved, and may accept or
+refuse anything: `mo_bytecode_signature` (`src/bytecode/signature.c`), only asserted to be given
+decoded types, and `mo_bytecode_ordering`. `step`'s files have no parameter, field or case tables,
+which it never reads; a read would fail the proof.
+
+Not proved: the three passes that drive these functions (`graph`, `cases`, `ownership`) and
+`function`, which runs them. Their loops over blocks and edges, even for eight code words, give
+CBMC more than this machine's 15 GB. `tests/test_bytecode_verify.c` and the verifier fuzz target
+check them. `mo_case_shape`, which only `cases` calls, has a model so that the file links. The
+proofs do not show that the type check accepts exactly the right programs: it may refuse more
+than it should, and only the counts above are checked of what it accepts.
 
 ## Running it
 

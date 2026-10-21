@@ -362,20 +362,162 @@ static MO_MUST_USE enum mo_operand_access access(const struct flow *f, uint32_t 
     return op->variable.access;
 }
 
+/* The ownership walk's registers: a state per register and one more for an init's global (set or
+ * not), the instruction that last read and last consumed each register, and the undo log of the
+ * slots changed on the current path. */
+struct registers {
+    uint32_t *state, *seen, *consumed;
+    struct undo *undo;
+    uint32_t changes;
+};
+
+/* The ownership transfer of the instruction at pc: checks its reads against the states, then
+ * records each slot it changes in the undo log before changing it. */
+static MO_MUST_USE bool step(struct flow *f, struct registers *regs, uint32_t pc) {
+    const struct mo_bytecode_function *fn = f->v.fn;
+    uint32_t op = fn->code[pc] & MO_OPCODE_MASK;
+    const struct mo_opcode_info *info = mo_opcode_find(op);
+    MO_ASSERT(info != NULL);
+    const uint32_t *a = fn->code + pc + 1;
+    uint32_t count = info->fixed_count + (fn->code[pc] >> 16), move = 0;
+    if (f->program != NULL && fn->kind == MO_FUNCTION_INIT) {
+        uint32_t needed = 0;
+        if (op == MO_OP_GLOBAL) {
+            needed = f->program->global_rank[a[1]];
+        }
+        if (op == MO_OP_CALL || op == MO_OP_TAIL_CALL) {
+            needed = f->program->required[a[op == MO_OP_CALL ? 1 : 0]];
+        }
+        uint32_t available = f->program->init_rank[f->index] - 1 + regs->state[fn->register_count];
+        if (needed > available) {
+            return refuse(f, pc, "init reads an unset global");
+        }
+    }
+    if (f->readable != NULL && pc == f->replay) {
+        for (uint32_t r = 0; r < fn->register_count; r++) {
+            f->readable[r] =
+                regs->state[r] == VALUE || regs->state[r] == OWNED || regs->state[r] == BORROWED;
+        }
+    }
+    if (f->visit != NULL && !f->visit(pc, f->readable, f->context)) {
+        return refuse(f, pc, "replay visitor stopped");
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        enum mo_operand_access mode = access(f, pc, i);
+        if (mode == MO_ACCESS_NONE || mode == MO_ACCESS_WRITE || mode == MO_ACCESS_TOKEN_WRITE) {
+            continue;
+        }
+        uint32_t r = a[i], s = regs->state[r];
+        if (!charge(f, pc, 1)) {
+            return false;
+        }
+        bool consumes = mode == MO_ACCESS_TOKEN_CONSUME || mode == MO_ACCESS_CONSUME ||
+                        (mode == MO_ACCESS_MOVE && s == OWNED);
+        if (mode == MO_ACCESS_TOKEN_CONSUME) {
+            if (s < TOKEN) {
+                return refuse(f, pc + 1 + i, "register is not a token");
+            }
+        } else if (s != VALUE && s != OWNED && s != BORROWED) {
+            return refuse(f, pc + 1 + i, "register is not readable");
+        }
+        if (mode == MO_ACCESS_MOVE) {
+            move = s;
+        }
+        bool reference = f->v.file->types[fn->register_types[r]].reference;
+        if (consumes && reference && mode != MO_ACCESS_TOKEN_CONSUME && s != OWNED) {
+            return refuse(f, pc + 1 + i, "consume needs an owned reference");
+        }
+        if (reference || mode == MO_ACCESS_TOKEN_CONSUME) {
+            if ((regs->seen[r] == pc + 1 && consumes) || regs->consumed[r] == pc + 1) {
+                return refuse(f, pc + 1 + i, "consumed register is repeated");
+            }
+            regs->seen[r] = pc + 1;
+            if (consumes) {
+                regs->consumed[r] = pc + 1;
+            }
+        }
+        if (op == MO_OP_TAIL_CALL && i >= info->fixed_count && mode == MO_ACCESS_READ &&
+            reference && s != BORROWED) {
+            return refuse(f, pc + 1 + i, "tail borrow needs a borrowed reference");
+        }
+    }
+    if (op == MO_OP_REUSE && regs->state[a[1]] != TOKEN + a[2]) {
+        return refuse(f, pc, "reuse layout differs from token");
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        enum mo_operand_access mode = access(f, pc, i);
+        if (mode == MO_ACCESS_TOKEN_CONSUME ||
+            ((mode == MO_ACCESS_CONSUME || mode == MO_ACCESS_MOVE) &&
+             f->v.file->types[fn->register_types[a[i]]].reference && regs->state[a[i]] == OWNED)) {
+            MO_ASSERT(regs->changes < fn->code_count);
+            regs->undo[regs->changes++] = (struct undo){a[i], regs->state[a[i]]};
+            regs->state[a[i]] = MOVED;
+            if (f->visit != NULL) {
+                f->readable[a[i]] = false;
+            }
+        }
+    }
+    for (uint32_t i = 0; i < info->fixed_count; i++) {
+        enum mo_operand_access mode = info->fixed[i].access;
+        if (mode != MO_ACCESS_WRITE && mode != MO_ACCESS_TOKEN_WRITE) {
+            continue;
+        }
+        uint32_t r = a[i];
+        if (regs->state[r] == OWNED || regs->state[r] >= TOKEN) {
+            return refuse(f, pc + 1 + i, "write overwrites ownership or token");
+        }
+        MO_ASSERT(regs->changes < fn->code_count);
+        regs->undo[regs->changes++] = (struct undo){r, regs->state[r]};
+        regs->state[r] = mode == MO_ACCESS_TOKEN_WRITE ? TOKEN + f->reset[pc]
+                         : op == MO_OP_CLEAR           ? UNDEFINED
+                         : op == MO_OP_MOVE            ? move
+                         : f->v.file->types[fn->register_types[r]].reference
+                             ? op == MO_OP_CONST || op == MO_OP_GLOBAL ? BORROWED : OWNED
+                             : VALUE;
+        if (f->visit != NULL) {
+            f->readable[r] =
+                regs->state[r] == VALUE || regs->state[r] == OWNED || regs->state[r] == BORROWED;
+        }
+    }
+    if (op == MO_OP_SET_GLOBAL) {
+        if (regs->state[fn->register_count] != 0) {
+            return refuse(f, pc, "init sets its global twice");
+        }
+        MO_ASSERT(regs->changes < fn->code_count);
+        regs->undo[regs->changes++] = (struct undo){fn->register_count, 0};
+        regs->state[fn->register_count] = 1;
+    }
+    if (op == MO_OP_RET || op == MO_OP_TAIL_CALL || op == MO_OP_TAIL_CALL_CLOSURE) {
+        for (uint32_t r = 0; r < fn->register_count; r++) {
+            if (!charge(f, pc, 1)) {
+                return false;
+            }
+            if (regs->state[r] == OWNED || regs->state[r] >= TOKEN) {
+                return refuse(f, pc, "return leaves ownership or token");
+            }
+        }
+        if (fn->kind == MO_FUNCTION_INIT && regs->state[fn->register_count] == 0) {
+            return refuse(f, pc, "init returns without setting its global");
+        }
+    }
+    return true;
+}
+
 static MO_MUST_USE bool ownership(struct flow *f) {
     const struct mo_bytecode_function *fn = f->v.fn;
     size_t slots = (size_t)fn->register_count + 1;
-    uint32_t *state = array(f, slots, sizeof *state, _Alignof(uint32_t));
-    uint32_t *seen = array(f, fn->register_count, sizeof *seen, _Alignof(uint32_t));
-    uint32_t *consumed = array(f, fn->register_count, sizeof *consumed, _Alignof(uint32_t));
+    struct registers s = {.state = array(f, slots, sizeof *s.state, _Alignof(uint32_t))};
+    s.seen = array(f, fn->register_count, sizeof *s.seen, _Alignof(uint32_t));
+    s.consumed = array(f, fn->register_count, sizeof *s.consumed, _Alignof(uint32_t));
     struct walk *stack = array(f, f->count, sizeof *stack, _Alignof(struct walk));
-    struct undo *undo = array(f, fn->code_count, sizeof *undo, _Alignof(struct undo));
-    if (state == NULL || seen == NULL || consumed == NULL || stack == NULL || undo == NULL) {
+    s.undo = array(f, fn->code_count, sizeof *s.undo, _Alignof(struct undo));
+    uint32_t *state = s.state;
+    if (state == NULL || s.seen == NULL || s.consumed == NULL || stack == NULL || s.undo == NULL) {
         return false;
     }
     memset(state, 0, slots * sizeof *state);
-    memset(seen, 0, fn->register_count * sizeof *seen);
-    memset(consumed, 0, fn->register_count * sizeof *consumed);
+    memset(s.seen, 0, fn->register_count * sizeof *s.seen);
+    memset(s.consumed, 0, fn->register_count * sizeof *s.consumed);
     for (uint32_t r = 0; r < fn->parameter_count; r++) {
         state[r] = f->v.file->types[fn->register_types[r]].reference
                        ? fn->parameters[r].ownership == MO_PARAMETER_OWNED ? OWNED : BORROWED
@@ -391,7 +533,7 @@ static MO_MUST_USE bool ownership(struct flow *f) {
     }
     /* Depth-first traversal restores only changed slots. Full vectors survive only at joins
      * (and a loop back to entry); every block executes once, regardless of its path count. */
-    uint32_t depth = 1, changes = 0;
+    uint32_t depth = 1;
     stack[0] = (struct walk){0, 0, 0};
     while (depth != 0) {
         struct walk *frame = &stack[depth - 1];
@@ -411,133 +553,8 @@ static MO_MUST_USE bool ownership(struct flow *f) {
                 }
             }
             for (uint32_t pc = f->blocks[b].start; pc < f->blocks[b].end; pc = next(fn, pc)) {
-                uint32_t op = fn->code[pc] & MO_OPCODE_MASK;
-                const struct mo_opcode_info *info = mo_opcode_find(op);
-                MO_ASSERT(info != NULL);
-                const uint32_t *a = fn->code + pc + 1;
-                uint32_t count = info->fixed_count + (fn->code[pc] >> 16), move = 0;
-                if (f->program != NULL && fn->kind == MO_FUNCTION_INIT) {
-                    uint32_t needed = 0;
-                    if (op == MO_OP_GLOBAL) {
-                        needed = f->program->global_rank[a[1]];
-                    }
-                    if (op == MO_OP_CALL || op == MO_OP_TAIL_CALL) {
-                        needed = f->program->required[a[op == MO_OP_CALL ? 1 : 0]];
-                    }
-                    uint32_t available =
-                        f->program->init_rank[f->index] - 1 + state[fn->register_count];
-                    if (needed > available) {
-                        return refuse(f, pc, "init reads an unset global");
-                    }
-                }
-                if (f->readable != NULL && pc == f->replay) {
-                    for (uint32_t r = 0; r < fn->register_count; r++) {
-                        f->readable[r] =
-                            state[r] == VALUE || state[r] == OWNED || state[r] == BORROWED;
-                    }
-                }
-                if (f->visit != NULL && !f->visit(pc, f->readable, f->context)) {
-                    return refuse(f, pc, "replay visitor stopped");
-                }
-                for (uint32_t i = 0; i < count; i++) {
-                    enum mo_operand_access mode = access(f, pc, i);
-                    if (mode == MO_ACCESS_NONE || mode == MO_ACCESS_WRITE ||
-                        mode == MO_ACCESS_TOKEN_WRITE) {
-                        continue;
-                    }
-                    uint32_t r = a[i], s = state[r];
-                    if (!charge(f, pc, 1)) {
-                        return false;
-                    }
-                    bool consumes = mode == MO_ACCESS_TOKEN_CONSUME || mode == MO_ACCESS_CONSUME ||
-                                    (mode == MO_ACCESS_MOVE && s == OWNED);
-                    if (mode == MO_ACCESS_TOKEN_CONSUME) {
-                        if (s < TOKEN) {
-                            return refuse(f, pc + 1 + i, "register is not a token");
-                        }
-                    } else if (s != VALUE && s != OWNED && s != BORROWED) {
-                        return refuse(f, pc + 1 + i, "register is not readable");
-                    }
-                    if (mode == MO_ACCESS_MOVE) {
-                        move = s;
-                    }
-                    bool reference = f->v.file->types[fn->register_types[r]].reference;
-                    if (consumes && reference && mode != MO_ACCESS_TOKEN_CONSUME && s != OWNED) {
-                        return refuse(f, pc + 1 + i, "consume needs an owned reference");
-                    }
-                    if (reference || mode == MO_ACCESS_TOKEN_CONSUME) {
-                        if ((seen[r] == pc + 1 && consumes) || consumed[r] == pc + 1) {
-                            return refuse(f, pc + 1 + i, "consumed register is repeated");
-                        }
-                        seen[r] = pc + 1;
-                        if (consumes) {
-                            consumed[r] = pc + 1;
-                        }
-                    }
-                    if (op == MO_OP_TAIL_CALL && i >= info->fixed_count && mode == MO_ACCESS_READ &&
-                        reference && s != BORROWED) {
-                        return refuse(f, pc + 1 + i, "tail borrow needs a borrowed reference");
-                    }
-                }
-                if (op == MO_OP_REUSE && state[a[1]] != TOKEN + a[2]) {
-                    return refuse(f, pc, "reuse layout differs from token");
-                }
-                for (uint32_t i = 0; i < count; i++) {
-                    enum mo_operand_access mode = access(f, pc, i);
-                    if (mode == MO_ACCESS_TOKEN_CONSUME ||
-                        ((mode == MO_ACCESS_CONSUME || mode == MO_ACCESS_MOVE) &&
-                         f->v.file->types[fn->register_types[a[i]]].reference &&
-                         state[a[i]] == OWNED)) {
-                        MO_ASSERT(changes < fn->code_count);
-                        undo[changes++] = (struct undo){a[i], state[a[i]]};
-                        state[a[i]] = MOVED;
-                        if (f->visit != NULL) {
-                            f->readable[a[i]] = false;
-                        }
-                    }
-                }
-                for (uint32_t i = 0; i < info->fixed_count; i++) {
-                    enum mo_operand_access mode = info->fixed[i].access;
-                    if (mode != MO_ACCESS_WRITE && mode != MO_ACCESS_TOKEN_WRITE) {
-                        continue;
-                    }
-                    uint32_t r = a[i];
-                    if (state[r] == OWNED || state[r] >= TOKEN) {
-                        return refuse(f, pc + 1 + i, "write overwrites ownership or token");
-                    }
-                    MO_ASSERT(changes < fn->code_count);
-                    undo[changes++] = (struct undo){r, state[r]};
-                    state[r] = mode == MO_ACCESS_TOKEN_WRITE ? TOKEN + f->reset[pc]
-                               : op == MO_OP_CLEAR           ? UNDEFINED
-                               : op == MO_OP_MOVE            ? move
-                               : f->v.file->types[fn->register_types[r]].reference
-                                   ? op == MO_OP_CONST || op == MO_OP_GLOBAL ? BORROWED : OWNED
-                                   : VALUE;
-                    if (f->visit != NULL) {
-                        f->readable[r] =
-                            state[r] == VALUE || state[r] == OWNED || state[r] == BORROWED;
-                    }
-                }
-                if (op == MO_OP_SET_GLOBAL) {
-                    if (state[fn->register_count] != 0) {
-                        return refuse(f, pc, "init sets its global twice");
-                    }
-                    MO_ASSERT(changes < fn->code_count);
-                    undo[changes++] = (struct undo){fn->register_count, 0};
-                    state[fn->register_count] = 1;
-                }
-                if (op == MO_OP_RET || op == MO_OP_TAIL_CALL || op == MO_OP_TAIL_CALL_CLOSURE) {
-                    for (uint32_t r = 0; r < fn->register_count; r++) {
-                        if (!charge(f, pc, 1)) {
-                            return false;
-                        }
-                        if (state[r] == OWNED || state[r] >= TOKEN) {
-                            return refuse(f, pc, "return leaves ownership or token");
-                        }
-                    }
-                    if (fn->kind == MO_FUNCTION_INIT && state[fn->register_count] == 0) {
-                        return refuse(f, pc, "init returns without setting its global");
-                    }
+                if (!step(f, &s, pc)) {
+                    return false;
                 }
             }
         }
@@ -545,7 +562,7 @@ static MO_MUST_USE bool ownership(struct flow *f) {
             uint32_t to = edge(f, b, frame->edge++);
             if (!f->blocks[to].visited) {
                 MO_ASSERT(depth < f->count);
-                stack[depth++] = (struct walk){to, 0, changes};
+                stack[depth++] = (struct walk){to, 0, s.changes};
             } else {
                 MO_ASSERT(f->blocks[to].state != NULL);
                 if (!charge(f, f->blocks[to].start, slots)) {
@@ -556,8 +573,8 @@ static MO_MUST_USE bool ownership(struct flow *f) {
                 }
             }
         } else {
-            while (changes != frame->mark) {
-                struct undo change = undo[--changes];
+            while (s.changes != frame->mark) {
+                struct undo change = s.undo[--s.changes];
                 state[change.reg] = change.state;
                 if (f->visit != NULL && change.reg < fn->register_count) {
                     f->readable[change.reg] =

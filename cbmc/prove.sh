@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Runs the CBMC proofs in cbmc/reader.c and cbmc/arena.c (make cbmc). Each proof checks one
-# function of src/bytecode/read.c or src/base/arena.c against its specification, with the
-# functions it calls replaced by their models (cbmc/README.md).
+# Runs the CBMC proofs in cbmc/reader.c, cbmc/arena.c and cbmc/verify.c (make cbmc). Each proof
+# checks one function of src/bytecode/read.c, src/base/arena.c or the bytecode verifier against
+# its specification, with the functions it calls replaced by their models (cbmc/README.md).
 #
 #   bash cbmc/prove.sh [proof...]           with no names, every proof
 #   bash cbmc/prove.sh --reach [proof...]   check instead that every block of each proved
@@ -58,6 +58,9 @@ proofs=(
 	"arena_copy||||arena.c"
 	"arena_copy_text||strlen.0:9||arena.c"
 	"arena_free||harness_arena_free.0:4,mo_arena_free.0:4||arena.c|--memory-leak-check"
+	"instruction||||verify.c|--object-bits 10 --unwind 10"
+	"lookup||||verify.c|--unwind 10"
+	"step||||verify.c|--object-bits 10 --unwind 10"
 )
 
 checks=(--bounds-check --pointer-check --pointer-overflow-check --signed-overflow-check
@@ -74,6 +77,10 @@ proved_function() {
 	arena_resize) echo 'mo_arena_resize|grow_alone' ;;
 	arena_free) echo 'mo_arena_free|mo_arena_init' ;;
 	arena_*) echo "mo_$1" ;;
+	# A verifier proof covers the static helpers only its function calls.
+	instruction) echo 'mo_verify_instruction|reg|kind|closure|field|args' ;;
+	lookup) echo 'mo_verify_layout_lookup|layout_order' ;;
+	step) echo 'step|access|mo_verify_parameter_modes|refuse|charge' ;;
 	*) echo "$1" ;;
 	esac
 }
@@ -115,6 +122,18 @@ run() {
 		return 1
 	fi
 
+	# A proof's default loop bound (--unwind k, else 1) comes out of its cbmc options.
+	local options=() unwind=1 next_is_unwind=
+	for option in $flags; do
+		if [[ -n "$next_is_unwind" ]]; then
+			unwind=$option
+			next_is_unwind=
+		elif [[ "$option" == --unwind ]]; then
+			next_is_unwind=1
+		else
+			options+=("$option")
+		fi
+	done
 	if ! goto-cc -std=c17 -Isrc -DMO_CBMC_INPUT="$n" --function "$harness" "$source" \
 		-o "$entry" >>"$log" 2>&1; then
 		echo "FAILED $name: $source does not compile; see $log"
@@ -137,12 +156,31 @@ run() {
 		# Every block of the proved function must run on some input, so no assumption or loop
 		# bound leaves part of it unchecked, and so must the end of the harness (reached_end).
 		function=$(proved_function "$name")
-		cbmc "$instrumented" --cover location --unwind 1 --unwindset "$unwindset" >>"$log" 2>&1 || true
+		local cover=()
+		for option in "${options[@]}"; do
+			if [[ "$option" != --memory-leak-check ]]; then cover+=("$option"); fi
+		done
+		cbmc "$instrumented" --cover location "${cover[@]}" --unwind "$unwind" \
+			--unwindset "$unwindset" >>"$log" 2>&1 || true
 		missed=
+		pointer_sites=
 		while IFS= read -r goal; do
-			# An MO_ASSERT's failure branch must never run: the proof shows that.
+			# An MO_ASSERT's failure branch, or an MO_UNREACHABLE, must never run: the proof
+			# shows that.
 			[[ "$goal" =~ \ file\ ([^ ]+)\ line\ ([0-9]+)\  ]] &&
-				sed -n "${BASH_REMATCH[2]}p" "${BASH_REMATCH[1]}" | grep -q 'MO_ASSERT(' && continue
+				sed -n "${BASH_REMATCH[2]}p" "${BASH_REMATCH[1]}" |
+				grep -qE 'MO_ASSERT\(|MO_UNREACHABLE\(' && continue
+			# Nor can a call through a function pointer reach a target the harness never gives
+			# it: CBMC adds that branch when it resolves the pointer, and closes it with
+			# assume(false). One such branch per line is let off, no more.
+			if [[ "$goal" =~ \ file\ ([^ ]+)\ line\ ([0-9]+)\ function\ ([^ ]+)\  ]]; then
+				site="${BASH_REMATCH[1]} line ${BASH_REMATCH[2]} function ${BASH_REMATCH[3]}"
+				if [[ "$pointer_sites" != *"|$site|"* ]] &&
+					grep -qF "at file $site thread 0: dereferenced function pointer must be" "$log"; then
+					pointer_sites+="|$site|"
+					continue
+				fi
+			fi
 			missed+="$goal"$'\n'
 		done < <(grep -E "^\[($function|reached_end)\.coverage\.[0-9]+\] .*: FAILED$" "$log" || true)
 		if grep -qE "^\[($function)\.coverage\.[0-9]+\] .*: SATISFIED$" "$log" &&
@@ -157,8 +195,7 @@ run() {
 	fi
 	# Every loop bound carries an unwinding assertion, so a bound too small fails the proof
 	# rather than hiding paths.
-	# shellcheck disable=SC2086 # flags holds separate options
-	if cbmc "$instrumented" "${checks[@]}" $flags --unwind 1 --unwinding-assertions \
+	if cbmc "$instrumented" "${checks[@]}" "${options[@]}" --unwind "$unwind" --unwinding-assertions \
 		--unwindset "$unwindset" >>"$log" 2>&1; then
 		echo "proved $name ($((SECONDS - start))s$inputs)"
 	else

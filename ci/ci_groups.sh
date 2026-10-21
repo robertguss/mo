@@ -5,11 +5,11 @@
 #   ci/ci_groups.sh -        changed files are read from standard input, one per line
 #
 # Prints the groups as a JSON array. A docs-only change (ci/docs_only.sh) needs none. Any other
-# change needs every group except cbmc, which takes about ten minutes and reads only the bytecode
-# reader and the arena: it runs when a changed file is one a CBMC harness in cbmc/ compiles (found
-# with the compiler's -MM, so a new include or harness is covered without editing this file), is
-# under cbmc/, or is part of how CI runs. Pushes to main and manual runs don't use this script;
-# they run every group.
+# change needs every group except cbmc, which takes about fifteen minutes and reads only the
+# bytecode reader, the arena and the verifier: it runs when a changed file is one a CBMC harness
+# in cbmc/ compiles (found with the compiler's -MM, so a new include or harness is covered without
+# editing this file), is under cbmc/, or is part of how CI runs. Pushes to main and manual runs
+# don't use this script; they run every group.
 set -eu
 
 if [ "$#" -ne 1 ]; then
