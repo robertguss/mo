@@ -1,0 +1,39 @@
+# qgate: the local quality gate (https://github.com/robertguss/code-quality-cli).
+# Loosening anything here fails the next run until Robert runs `qgate approve`.
+qgate_version = "0.1.0"
+
+# Prose, and the Unicode table ci/generate_unicode16.py writes.
+exclude = ["docs/**", "src/prim/unicode16-data.h"]
+
+[limits]
+function_lines = 50
+file_lines = 500
+
+[duplication]
+enabled = true
+min_tokens = 50
+
+# The C toolchain starts at 80 lines a function; lower it as the baseline shrinks.
+[[package]]
+path = "src"
+function_lines = 80
+
+# clang-format on the staged C files, the same files and rules as `make format-check`.
+# CI pins clang-format 14.0.6; newer versions can disagree.
+[[tool]]
+name = "format"
+command = "clang-format --dry-run --Werror {files}"
+globs = ["src/*/*.c", "src/*/*.h", "src/core/*.def", "tests/*.c", "tests/*.h", "fuzz/*.c", "grammar/*.c", "grammar/*.h", "ci/*.c", "cbmc/*.c"]
+stage = "commit"
+config_files = [".clang-format"]
+format = "gcc"
+
+# The CI groups that finish in minutes: both build-and-test runs, the sanitizers,
+# the static checks (grammar, module deps, library map, formatting, clang-tidy)
+# and the driver checks. fuzz, lean and cbmc stay in CI.
+[[tool]]
+name = "check"
+command = "CI=1 bash ci/check.sh gcc clang sanitize static drivers"
+stage = "push"
+timeout_secs = 1800
+format = "text"
