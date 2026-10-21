@@ -158,14 +158,14 @@ void model_truncated_division(int64_t a, int64_t b, int64_t *q, int64_t *r) {
 }
 
 /* Nor is C's 128-bit multiplication: showing the harness's product equal to the primitive's
- * means showing two multipliers equal, which CBMC does not finish. exact_product's model gives
- * any value its proof allows, and records it, so the harness checks what each primitive does
+ * means showing two multipliers equal, which CBMC does not finish. mo_prim_exact_product's model
+ * gives any value its proof allows, and records it, so the harness checks what each primitive does
  * with the product. */
 static mo_i128 product_given;
 static int64_t product_of[2];
 static unsigned products_given;
 
-mo_i128 model_exact_product(int64_t a, int64_t b) {
+mo_i128 model_mo_prim_exact_product(int64_t a, int64_t b) {
     product_of[0] = a;
     product_of[1] = b;
     products_given++;
@@ -366,12 +366,12 @@ void harness_int_primitive(void) {
     reached_end();
 }
 
-/* exact_product, for any two Ints: at most 2^126 either way. */
+/* mo_prim_exact_product, for any two Ints: at most 2^126 either way. */
 void harness_exact_product(void) {
     int64_t a = nondet_i64(), b = nondet_i64();
-    mo_i128 p = exact_product(a, b);
+    mo_i128 p = mo_prim_exact_product(a, b);
     __CPROVER_assert(p >= -((mo_i128)1 << 126) && p <= (mo_i128)1 << 126,
-                     "exact_product: at most 2^126 either way");
+                     "mo_prim_exact_product: at most 2^126 either way");
     reached_end();
 }
 
@@ -389,13 +389,17 @@ void harness_truncated_division(void) {
     reached_end();
 }
 
-/* prim.c's checked multiplication, for any two Ints: it never overflows, and a product it gives
- * fits. That the product is a * b is C's own arithmetic, as for exact_product. */
+/* prim.c's checked multiplication, for any two Ints, with mo_prim_exact_product replaced by its
+ * model: it multiplies a by b, refuses exactly when the product does not fit, leaving out alone,
+ * and otherwise gives the product. */
 void harness_int_multiply(void) {
     int64_t a = nondet_i64(), b = nondet_i64(), out = nondet_i64(), before = out;
-    if (!multiply(a, b, &out)) {
-        __CPROVER_assert(out == before, "multiply: a refusal leaves out alone");
-    }
+    bool ok = multiply(a, b, &out);
+    __CPROVER_assert(products_given == 1 && product_of[0] == a && product_of[1] == b,
+                     "multiply: multiplies a by b, once");
+    __CPROVER_assert(ok == fits(product_given), "multiply: refuses exactly when it does not fit");
+    __CPROVER_assert(ok ? out == product_given : out == before,
+                     "multiply: the product, or out left alone");
     reached_end();
 }
 
@@ -416,7 +420,8 @@ bool model_multiply(int64_t a, int64_t b, int64_t *out) {
 
 /* Int.pow, for any Int raised to any Int, with multiply replaced by its model: a negative
  * exponent is refused, a zero one gives 1 without multiplying, at most two multiplications run
- * for each of the exponent's 63 bits, and the result overflows exactly when one of them does. */
+ * for each of the exponent's 63 bits, and the result overflows exactly when one of them does.
+ * The value of a^n, and which multiplications run, are left to tests/test_prim.c. */
 void harness_int_pow(void) {
     int64_t a = nondet_i64(), n = nondet_i64();
     struct mo_cell args[2] = {mo_cell_int(a), mo_cell_int(n)};
@@ -427,8 +432,9 @@ void harness_int_pow(void) {
         __CPROVER_assert(status == MO_PRIM_OUTSIDE && reason != NULL,
                          "Int.pow: a negative exponent is refused");
     } else if (n == 0) {
-        __CPROVER_assert(status == MO_PRIM_RETURNED && mo_cell_get_int(out) == 1,
-                         "Int.pow: a^0 is 1");
+        __CPROVER_assert(status == MO_PRIM_RETURNED && mo_cell_get_int(out) == 1 &&
+                             multiplications == 0,
+                         "Int.pow: a^0 is 1, without multiplying");
     } else {
         __CPROVER_assert(multiplications <= 2 * 63, "Int.pow: two multiplications a bit");
         __CPROVER_assert(refusals == 0

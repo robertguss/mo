@@ -14,7 +14,7 @@
  * The 256 steps chain by induction (cbmc/README.md): after them the quotient and remainder are
  * those of the whole numerator, so the result is the exact value rounded once, to nearest with
  * ties to even. CBMC cannot check that chain, nor the rounding of a whole product in one proof
- * (each ran for more than ten minutes), so each piece is proved alone and its callers use its
+ * (each ran for more than fifteen minutes), so each piece is proved alone and its callers use its
  * model.
  *
  * decimal.c is included rather than linked, so that its static functions can be proved. */
@@ -38,6 +38,7 @@ typedef unsigned __CPROVER_bitvector[260] u260;
 
 #define DECIMAL_MAX ((mo_i128)(((mo_u128)1 << 127) - 1))
 #define LIMIT ((mo_u128)1 << 127)
+#define SCALE ((mo_u128)1000000000000000000)
 
 mo_u128 nondet_u128(void);
 mo_i128 nondet_i128(void);
@@ -125,11 +126,16 @@ void harness_multiply(void) {
     reached_end();
 }
 
-/* Callers rely on nothing about the product. */
+/* Callers rely on nothing about the product's value; the model records what it multiplied and
+ * what it gave, so a caller's proof can check where the product goes. */
+static mo_u128 multiplied[2];
+static struct wide product_made;
+
 struct wide model_multiply(mo_u128 a, mo_u128 b) {
-    (void)a;
-    (void)b;
-    return any_wide();
+    multiplied[0] = a;
+    multiplied[1] = b;
+    product_made = any_wide();
+    return product_made;
 }
 
 /* ---- One step of the division -------------------------------------------------------------- */
@@ -191,9 +197,18 @@ bool model_round_quotient(struct wide quotient, mo_u128 remainder, mo_u128 denom
  * and CBMC's solver takes time exponential in the number of steps to carry that through (eight
  * steps already take over a minute). Its loop is argued in cbmc/README.md from divide_step's
  * proof. Callers rely on what rounded requires, and on a refusal leaving out alone. */
+static struct {
+    bool called, numerator_is_product, negative;
+    mo_u128 denominator;
+} rounding;
+
 bool model_rounded(struct wide numerator, mo_u128 denominator, bool negative, mo_i128 *out) {
     __CPROVER_assert(out != NULL && denominator != 0 && denominator < LIMIT,
                      "rounded: a denominator from 1 to 2^127 - 1");
+    rounding.called = true;
+    rounding.numerator_is_product = value(numerator) == value(product_made);
+    rounding.negative = negative;
+    rounding.denominator = denominator;
     return model_round_quotient((struct wide){0}, 0, 1, negative, out);
 }
 
@@ -205,20 +220,38 @@ static mo_i128 any_decimal(void) {
     return d;
 }
 
-/* mo_decimal_mul, for any two Decimals. */
+static mo_u128 magnitude_of(mo_i128 d) {
+    return (mo_u128)(d < 0 ? -d : d);
+}
+
+/* mo_decimal_mul, for any two Decimals: |a| times |b|, over 10^18, with the product's sign. */
 void harness_decimal_mul(void) {
     mo_i128 a = any_decimal(), b = any_decimal(), out = nondet_i128(), before = out;
-    if (!mo_decimal_mul(a, b, &out)) {
+    bool ok = mo_decimal_mul(a, b, &out);
+    __CPROVER_assert(multiplied[0] == magnitude_of(a) && multiplied[1] == magnitude_of(b),
+                     "decimal_mul: multiplies the magnitudes");
+    __CPROVER_assert(rounding.called && rounding.numerator_is_product &&
+                         rounding.denominator == SCALE && rounding.negative == ((a < 0) != (b < 0)),
+                     "decimal_mul: divides the product by 10^18, with its sign");
+    if (!ok) {
         __CPROVER_assert(out == before, "decimal_mul: a refusal leaves out alone");
     }
     reached_end();
 }
 
-/* mo_decimal_div, for any Decimal over any nonzero Decimal. */
+/* mo_decimal_div, for any Decimal over any nonzero Decimal: |a| times 10^18, over |b|, with the
+ * quotient's sign. */
 void harness_decimal_div(void) {
     mo_i128 a = any_decimal(), b = any_decimal(), out = nondet_i128(), before = out;
     __CPROVER_assume(b != 0);
-    if (!mo_decimal_div(a, b, &out)) {
+    bool ok = mo_decimal_div(a, b, &out);
+    __CPROVER_assert(multiplied[0] == magnitude_of(a) && multiplied[1] == SCALE,
+                     "decimal_div: scales the dividend's magnitude by 10^18");
+    __CPROVER_assert(rounding.called && rounding.numerator_is_product &&
+                         rounding.denominator == magnitude_of(b) &&
+                         rounding.negative == ((a < 0) != (b < 0)),
+                     "decimal_div: divides by the divisor's magnitude, with the sign");
+    if (!ok) {
         __CPROVER_assert(out == before, "decimal_div: a refusal leaves out alone");
     }
     reached_end();

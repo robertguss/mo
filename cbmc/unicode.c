@@ -121,7 +121,7 @@ void harness_unicode_encode(void) {
 
 /* properties, for any scalar value: its binary search stays inside the table, and finds the
  * range that holds the scalar (the table's ranges are sorted and apart), whose properties it
- * gives, with a Hangul syllable's LV or LVT break class. */
+ * gives, or none for a scalar in no range, with a Hangul syllable's LV or LVT break class. */
 void harness_properties(void) {
     uint32_t c = nondet_u32();
     __CPROVER_assume(scalar_value(c));
@@ -136,6 +136,15 @@ void harness_properties(void) {
             expected = (expected & ~15U) | ((c - 0xac00) % 28 == 0 ? MO_GCB_LV : MO_GCB_LVT);
         }
         __CPROVER_assert(p == expected, "properties: its range's");
+    } else if (i <= COUNT(mo_unicode_ranges) && (i == 0 || mo_unicode_ranges[i - 1].last < c) &&
+               (i == COUNT(mo_unicode_ranges) || c < mo_unicode_ranges[i].first)) {
+        /* Before range i and after the one before it, or past the last: no properties but a
+         * Hangul syllable's. */
+        uint32_t expected = 0;
+        if (c >= 0xac00 && c <= 0xd7a3) {
+            expected = (c - 0xac00) % 28 == 0 ? MO_GCB_LV : MO_GCB_LVT;
+        }
+        __CPROVER_assert(p == expected, "properties: none outside every range");
     }
     reached_end();
 }

@@ -42,8 +42,7 @@ static MO_MUST_USE enum mo_prim_status int_result(struct mo_prim_call *c, mo_i12
     return MO_PRIM_RETURNED;
 }
 
-/* The exact product of two Ints, which always fits in 128 bits. */
-static MO_MUST_USE mo_i128 exact_product(int64_t a, int64_t b) {
+mo_i128 mo_prim_exact_product(int64_t a, int64_t b) {
     return (mo_i128)a * b;
 }
 
@@ -99,10 +98,10 @@ static MO_MUST_USE enum mo_prim_status integers(struct mo_prim_call *c, struct m
     case MO_PRIM_INT_WRAPPING_MUL:
     case MO_PRIM_INT_SATURATING_MUL:
     case MO_PRIM_INT_CHECKED_MUL:
-        n = exact_product(a, b);
+        n = mo_prim_exact_product(a, b);
         break;
     case MO_PRIM_INT_TO_DECIMAL:
-        *out = mo_cell_decimal(exact_product(a, MO_DECIMAL_SCALE));
+        *out = mo_cell_decimal(mo_prim_exact_product(a, MO_DECIMAL_SCALE));
         return MO_PRIM_RETURNED;
     case MO_PRIM_INT_TO_FLOAT:
         *out = mo_cell_float(mo_prim_ratio_float(a < 0, (mo_u128)(a < 0 ? -(mo_i128)a : a), 1));
@@ -137,7 +136,7 @@ static MO_MUST_USE enum mo_prim_status integers(struct mo_prim_call *c, struct m
     case MO_PRIM_INT_HOURS:
     case MO_PRIM_INT_DAYS: {
         static const int64_t scales[] = {1000000, 1000, 60000000, 3600000000, 86400000000};
-        n = exact_product(a, scales[c->id - MO_PRIM_INT_SECONDS]);
+        n = mo_prim_exact_product(a, scales[c->id - MO_PRIM_INT_SECONDS]);
         if (n < INT64_MIN || n > INT64_MAX) {
             c->reason = "Duration";
             return MO_PRIM_OVERFLOW;

@@ -77,8 +77,8 @@ proofs=(
 	"decimal_mul|multiply rounded|||decimal.c|--unwind 5"
 	"decimal_div|multiply rounded|||decimal.c|--unwind 5"
 	"truncated_division||||number.c"
-	"int_primitive|truncated_division exact_product|||number.c|--unwind 130"
-	"int_multiply||||number.c"
+	"int_primitive|truncated_division mo_prim_exact_product|||number.c|--unwind 130"
+	"int_multiply|mo_prim_exact_product|||number.c"
 	"exact_product||||number.c"
 	"int_pow|multiply|||number.c|--unwind 66"
 )
@@ -123,6 +123,7 @@ proved_function() {
 	int_primitive) echo 'integers|int_result|mo_prim_option|mo_prim_print' ;;
 	int_pow) echo power ;;
 	int_multiply) echo multiply ;;
+	exact_product) echo mo_prim_exact_product ;;
 	*) echo "$1" ;;
 	esac
 }
@@ -212,11 +213,14 @@ run() {
 			if [[ "$goal" =~ \ file\ ([^ ]+)\ line\ ([0-9]+)\  ]]; then
 				sed -n "${BASH_REMATCH[2]}p" "${BASH_REMATCH[1]}" |
 					grep -qE 'MO_ASSERT\(|MO_UNREACHABLE\(' && continue
-				# Nor the jump out of a block that ends in MO_UNREACHABLE, nor a let-off line: the
-				# block's own, or the condition just before it.
+				# Nor the jump out of a block that ends in MO_UNREACHABLE: a lone closing brace
+				# just after it.
 				sed -n "$((BASH_REMATCH[2] > 1 ? BASH_REMATCH[2] - 1 : 1)),${BASH_REMATCH[2]}p" \
-					"${BASH_REMATCH[1]}" |
-					grep -qE "MO_UNREACHABLE\(|$(unreachable_lines "$name")" && continue
+					"${BASH_REMATCH[1]}" | tr -d ' \t' | tr '\n' ' ' |
+					grep -qE '^MO_UNREACHABLE\(\); \} $' && continue
+				# Nor a let-off line: the block's own, or the condition just before it.
+				sed -n "$((BASH_REMATCH[2] > 1 ? BASH_REMATCH[2] - 1 : 1)),${BASH_REMATCH[2]}p" \
+					"${BASH_REMATCH[1]}" | grep -qE "$(unreachable_lines "$name")" && continue
 			fi
 			# Nor can a call through a function pointer reach a target the harness never gives
 			# it: CBMC adds that branch when it resolves the pointer, and closes it with

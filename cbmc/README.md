@@ -181,15 +181,15 @@ its span or fails an `MO_ASSERT`.
 | `text_encode`, `unicode_encode` | every scalar value is spelt as the one well-formed sequence that encodes it; `encode(c, NULL)` counts what it spells |
 | `checked_scalar` (`unicode.c`) | the same as `text_scalar` for the decoder of spans that may be malformed, and a refusal changes nothing |
 | `unicode_scalar` | the decoder for texts, which are well-formed, gives each sequence's value and length |
-| `properties` | the binary search for a scalar's Unicode properties stays inside its table and gives the properties of the range holding the scalar, for any scalar value |
+| `properties` | the binary search for a scalar's Unicode properties stays inside its table and gives the properties of the range holding the scalar, or none for a scalar in no range, for any scalar value |
 | `next_grapheme`, `display_width` | `mo_unicode16_next_grapheme` and `mo_unicode16_display_width` succeed exactly on well-formed spans of up to 6 bytes (a cluster also on any span with a well-formed first cluster); a cluster is whole scalars and ends before one; a width is at most two columns per scalar. `properties` is their model, giving any properties |
 | `word_product`, `multiply` (`decimal.c`) | the 256-bit product of two magnitudes is the sum of the products of their 64-bit halves in place; the half products are C's own multiplication, which `word_product`'s proof bounds by their operands' sizes |
 | `divide_step` | one step of long division keeps 2 × remainder + bit = quotient bit × denominator + new remainder, and the remainder below the denominator |
 | `round_quotient` | rounds to nearest with ties to even, gives the sign, and refuses exactly when the result is outside Decimal's range, leaving the output alone |
-| `decimal_mul`, `decimal_div` | `mo_decimal_mul` and `mo_decimal_div`, for any Decimals (any nonzero divisor), give the division a denominator from 1 to 2^127 - 1; a refusal leaves the output alone |
+| `decimal_mul`, `decimal_div` | `mo_decimal_mul` and `mo_decimal_div`, for any Decimals (any nonzero divisor), divide the right product by the right denominator with the right sign: \|a\| × \|b\| over 10^18, or \|a\| × 10^18 over \|b\|, negative when exactly one operand is; a refusal leaves the output alone |
 | `truncated_division` (`number.c`) | C's division, for any Int over any Int but 0 and -1, has a remainder below the divisor with the dividend's sign, and a quotient of at most 2^62 either way |
-| `int_primitive` | every Int primitive but `pow`, on any two Ints, gives the reference's result: `abs` overflows exactly at `INT64_MIN`, and `floor_div` exactly for `INT64_MIN / -1`; `floor_div` and `floor_mod` refuse a zero divisor; `wrapping_` gives the exact result's low 64 bits, `saturating_` clamps it, `checked_` gives `Some` exactly when it fits; `to_decimal`, `to_float` (rounded as C rounds), `to_big` (least significant byte first, none zero at the top), `to_byte`, `to_char` (exactly the scalar values) and the five `Duration` constructors (microseconds, overflowing exactly when out of range) |
-| `int_multiply`, `exact_product` | `Int.pow`'s checked multiplication and the Int primitives' exact one never overflow, and an exact product is at most 2^126 either way |
+| `int_primitive` | every Int primitive but `pow`, on any two Ints, gives the reference's result: `abs` overflows exactly at `INT64_MIN`, and `floor_div` exactly for `INT64_MIN / -1`; `floor_div` and `floor_mod` refuse a zero divisor, and otherwise floor C's truncating quotient and remainder exactly; `wrapping_` gives the exact result's low 64 bits, `saturating_` clamps it, `checked_` gives `Some` exactly when it fits; `to_decimal`, `to_float` (rounded as C rounds), `to_big` (least significant byte first, none zero at the top), `to_byte`, `to_char` (exactly the scalar values) and the five `Duration` constructors (microseconds, overflowing exactly when out of range) |
+| `exact_product`, `int_multiply` | `mo_prim_exact_product`, the one 128-bit product the Int primitives take, is at most 2^126 either way; `Int.pow`'s checked multiplication multiplies a by b through it, refuses exactly when the product does not fit, and otherwise gives it |
 | `int_pow` | `Int.pow` for any Int and exponent: refuses a negative exponent with a reason, gives 1 for a zero one, multiplies at most twice for each bit of the exponent, and overflows exactly when a multiplication does |
 
 Decimal multiplication and division are proved in pieces because CBMC cannot show two
@@ -204,11 +204,13 @@ whole numerator's, so `round_quotient` rounds the exact value once. Each bit ind
 so `bit / 64` indexes one of the four words and `bit % 64` is a valid shift.
 
 Likewise, `int_primitive` takes C's truncating `/` and `%` from `truncated_division`'s model,
-whose properties that proof shows, and checks the floor adjustment exactly; and it takes each
-product from `exact_product`'s model, checking that the primitive multiplies a by the right factor
+whose properties (a remainder below the divisor with the dividend's sign, a quotient of at most
+2^62) that proof shows, and checks the floor adjustment exactly; that the quotient is a / b is C's
+own arithmetic. It takes each product from `mo_prim_exact_product`'s model, checking that the primitive multiplies a by the right factor
 (b, 10^18 for Decimal, or a Duration unit in microseconds) and what it does with the product.
 `int_pow` replaces the checked multiplication of `prim.c` by a model that may refuse, so it shows
-the control of square-and-multiply, not the value of a^n, which the tests check.
+the control of square-and-multiply, not the value of a^n or which multiplications run, which
+`tests/test_prim.c` checks (`(-2).pow(63)` fits, `2.pow(63)` overflows).
 
 Models: the heap's builders (`mo_value_case` for an Option, `mo_value_bigint`, `mo_value_text`)
 check what they are given and may run out of memory; printing may give any text or fail.

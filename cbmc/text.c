@@ -26,7 +26,10 @@
 #include "utf8.h"
 
 /* The longest span a proof decodes in: a four-byte sequence that need not start the span. */
-#define SPAN 6
+#ifndef MO_CBMC_SPAN
+#define MO_CBMC_SPAN 6
+#endif
+#define SPAN MO_CBMC_SPAN
 
 size_t nondet_size(void);
 uint32_t nondet_u32(void);
