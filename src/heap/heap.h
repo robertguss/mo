@@ -16,7 +16,7 @@
  * is 8, so fields can follow the 8-byte object header without padding. Decimal
  * uses memcpy, not an aligned mo_i128 lvalue. Unused bytes are always zero. */
 struct mo_cell {
-    _Alignas(uint64_t) uint8_t bytes[16];
+    _Alignas(8) uint8_t bytes[16];
 };
 _Static_assert(sizeof(struct mo_cell) == 16, "every value fits in one cell");
 _Static_assert(_Alignof(struct mo_cell) == 8, "cells follow the heap header");

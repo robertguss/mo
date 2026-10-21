@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Runs the CBMC proofs in cbmc/reader.c, cbmc/arena.c and cbmc/verify.c (make cbmc). Each proof
-# checks one function of src/bytecode/read.c, src/base/arena.c or the bytecode verifier against
-# its specification, with the functions it calls replaced by their models (cbmc/README.md).
+# Runs the CBMC proofs in cbmc/ (make cbmc): the bytecode reader (reader.c), the arena (arena.c),
+# the bytecode verifier (verify.c), and the primitives' arithmetic and UTF-8 (decimal.c, number.c,
+# text.c, unicode.c). Each proof checks one function against its specification, with the
+# functions it calls replaced by their models (cbmc/README.md).
 #
 #   bash cbmc/prove.sh [proof...]           with no names, every proof
 #   bash cbmc/prove.sh --reach [proof...]   check instead that every block of each proved
@@ -61,11 +62,41 @@ proofs=(
 	"instruction||||verify.c|--object-bits 10 --unwind 10"
 	"lookup||||verify.c|--unwind 10"
 	"step||||verify.c|--object-bits 10 --unwind 10"
+	"text_scalar||||text.c|--unwind 8"
+	"text_encode||||text.c|--unwind 8"
+	"checked_scalar||||unicode.c|--unwind 8"
+	"unicode_scalar||||unicode.c|--unwind 8"
+	"unicode_encode||||unicode.c|--unwind 8"
+	"properties||||unicode.c|--unwind 13"
+	"next_grapheme|properties|||unicode.c|--unwind 9"
+	"display_width|properties|||unicode.c|--unwind 9"
+	"word_product||||decimal.c|--unwind 5"
+	"multiply|word_product|||decimal.c|--unwind 5"
+	"divide_step||||decimal.c"
+	"round_quotient||||decimal.c|--unwind 5"
+	"decimal_mul|multiply rounded|||decimal.c|--unwind 5"
+	"decimal_div|multiply rounded|||decimal.c|--unwind 5"
+	"truncated_division||||number.c"
+	"int_primitive|truncated_division exact_product|||number.c|--unwind 130"
+	"int_multiply||||number.c"
+	"exact_product||||number.c"
+	"int_pow|multiply|||number.c|--unwind 66"
 )
 
 checks=(--bounds-check --pointer-check --pointer-overflow-check --signed-overflow-check
 	--conversion-check --undefined-shift-check --div-by-zero-check --float-overflow-check
 	--nan-check --pointer-primitive-check)
+
+# Source lines a proof's blocks may leave unreached, as an extended regular expression, because
+# no input the proof covers can reach them; each is named with why. A block is let off when its
+# line, or the line before it (an if guarding it), matches.
+unreachable_lines() {
+	case "$1" in
+	# A width past UINT64_MAX needs a span of more than 2^63 bytes.
+	display_width) echo 'cluster_width > UINT64_MAX - total' ;;
+	*) echo '^MO_CBMC_NO_LINE$' ;;
+	esac
+}
 
 # The function a proof is about, when it is not the proof's own name.
 proved_function() {
@@ -82,6 +113,16 @@ proved_function() {
 	instruction) echo 'mo_verify_instruction|reg|kind|mo_verify_closure_signature|field|args' ;;
 	lookup) echo 'mo_verify_layout_lookup|layout_order' ;;
 	step) echo 'step|access|mo_verify_parameter_modes|refuse|charge' ;;
+	# A primitive proof covers the helpers its function calls that no other proof covers.
+	text_scalar | unicode_scalar) echo scalar ;;
+	text_encode | unicode_encode) echo encode ;;
+	next_grapheme) echo 'mo_unicode16_next_grapheme|boundary' ;;
+	display_width) echo 'mo_unicode16_display_width|keycap' ;;
+	decimal_mul) echo 'mo_decimal_mul|magnitude' ;;
+	decimal_div) echo 'mo_decimal_div' ;;
+	int_primitive) echo 'integers|int_result|mo_prim_option|mo_prim_print' ;;
+	int_pow) echo power ;;
+	int_multiply) echo multiply ;;
 	*) echo "$1" ;;
 	esac
 }
@@ -167,10 +208,16 @@ run() {
 		pointer_sites=
 		while IFS= read -r goal; do
 			# An MO_ASSERT's failure branch, or an MO_UNREACHABLE, must never run: the proof
-			# shows that.
-			[[ "$goal" =~ \ file\ ([^ ]+)\ line\ ([0-9]+)\  ]] &&
+			# shows that. Nor can the lines unreachable_lines names.
+			if [[ "$goal" =~ \ file\ ([^ ]+)\ line\ ([0-9]+)\  ]]; then
 				sed -n "${BASH_REMATCH[2]}p" "${BASH_REMATCH[1]}" |
-				grep -qE 'MO_ASSERT\(|MO_UNREACHABLE\(' && continue
+					grep -qE 'MO_ASSERT\(|MO_UNREACHABLE\(' && continue
+				# Nor the jump out of a block that ends in MO_UNREACHABLE, nor a let-off line: the
+				# block's own, or the condition just before it.
+				sed -n "$((BASH_REMATCH[2] > 1 ? BASH_REMATCH[2] - 1 : 1)),${BASH_REMATCH[2]}p" \
+					"${BASH_REMATCH[1]}" |
+					grep -qE "MO_UNREACHABLE\(|$(unreachable_lines "$name")" && continue
+			fi
 			# Nor can a call through a function pointer reach a target the harness never gives
 			# it: CBMC adds that branch when it resolves the pointer, and closes it with
 			# assume(false). One such branch per line is let off, no more.
