@@ -92,23 +92,23 @@ jobs:
       - name: Run the ${{ matrix.group }} checks
         run: MAKEFLAGS="-j$(nproc) -Otarget" CI=1 bash ci/check.sh ${{ matrix.group }}
 
-  # Report-only: the duplicated code and long functions a pull request adds in src/ and lib/,
-  # from qgate (ci/qgate_report.py, MO-100), in the job summary and as notices on the diff. It
-  # never fails: the script always exits 0, a failed download or a timeout only skips the
-  # report, and `check` below does not wait for it. Skipped for docs-only changes and pushes to
-  # main.
+  # Report-only: `bash ci/check.sh qgate`, qgate's push stage against the pull request's merge
+  # base with qgate.toml and qgate.baseline, as annotations on the diff and a table in the job
+  # summary. It never fails: the group always exits 0, a failed download or a timeout only skips
+  # the report, and `check` below does not wait for it. Skipped for docs-only changes and pushes
+  # to main.
   qgate:
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.groups != '[]'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
-      QGATE_VERSION: 0.1.0
-      QGATE_SHA256: ea2d62b8bc888a9b60ad72dd28bd6d970dc5b18807657d135500212113881214
+      QGATE_VERSION: 0.2.0
+      QGATE_SHA256: e5020f61465b1b99176f0bb5de51ad1ffb12b38509af01609640e10eb65a5b53
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0 # qgate needs the merge base with the target branch
       - name: Install qgate ${{ env.QGATE_VERSION }}
         id: install
         continue-on-error: true
@@ -119,13 +119,14 @@ jobs:
             "https://github.com/robertguss/qgate/releases/download/v$QGATE_VERSION/$archive"
           echo "$QGATE_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" qgate
-      - name: New duplication and long functions (report only)
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: qgate push stage (report only)
         if: steps.install.outcome == 'success'
         continue-on-error: true
-        timeout-minutes: 3
+        timeout-minutes: 5
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: python3 ci/qgate_report.py --qgate "$RUNNER_TEMP/qgate" "$BASE_SHA"
+          QGATE_BASE: origin/${{ github.base_ref }}
+        run: bash ci/check.sh qgate
 
   # One status to require in branch protection: it passes only when every
   # group that ran passed, or when none ran for a docs-only change.
