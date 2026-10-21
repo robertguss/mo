@@ -1,6 +1,6 @@
 # qgate: the local quality gate (https://github.com/robertguss/code-quality-cli).
 # Loosening anything here fails the next run until Robert runs `qgate approve`.
-qgate_version = "0.1.0"
+qgate_version = "0.2.0"
 
 # Prose, and the Unicode table ci/generate_unicode16.py writes.
 exclude = ["docs/**", "src/prim/unicode16-data.h"]

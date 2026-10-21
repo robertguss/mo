@@ -41,13 +41,14 @@ duplication	-	179faaa956c44579	2x60
 duplication	-	17d64e83bb8a673a	2x54
 duplication	-	1933e23a4fc988f2	3x57
 duplication	-	19d35851e410d3b9	2x55
+duplication	-	1a615cbc06eb79fc	2x63
 duplication	-	1a7775290fe761b9	3x63
 duplication	-	1c264bf375c7d532	2x50
 duplication	-	1c4cd5a1b7c8a4df	2x58
 duplication	-	1cde8dd1e0278c46	4x55
 duplication	-	1d66cba4b2118627	2x64
 duplication	-	1de0f0ed694b2f47	2x55
-duplication	-	1ead8ffaa3c7d090	2x50
+duplication	-	1ead8ffaa3c7d090	6x50
 duplication	-	1ed4843d1a3b829d	2x68
 duplication	-	1fba43b24dc395f4	2x75
 duplication	-	2076a8d81ff3cb35	2x66
@@ -72,7 +73,7 @@ duplication	-	2af3ae06dde6ddfe	2x53
 duplication	-	2bd5676cfef42c52	2x77
 duplication	-	2bdfcbe2969cf812	4x56
 duplication	-	2bee8f60ac8a19d4	2x70
-duplication	-	2c5e1a5b5bc8c5f0	2x51
+duplication	-	2c5e1a5b5bc8c5f0	6x51
 duplication	-	2c77b87cfcf09b42	2x55
 duplication	-	2c81f12d5af7b556	2x53
 duplication	-	2cb0f1b8a402546e	3x50
@@ -171,6 +172,7 @@ duplication	-	648e46dbdf1ab7bb	2x51
 duplication	-	66a8cc4b4954b2f4	2x73
 duplication	-	685a5b5cb4616831	2x68
 duplication	-	6885e4f466d1dbce	2x66
+duplication	-	68f57af4bfeede52	4x62
 duplication	-	693773ec066e225e	2x75
 duplication	-	69669ad0b1c0c2c0	2x69
 duplication	-	69d9a0763b4b3261	2x75
@@ -275,6 +277,7 @@ duplication	-	a7d1975265edf576	2x56
 duplication	-	aad7a3047df660a4	2x61
 duplication	-	ad5381a327243d6d	2x51
 duplication	-	add07d94808b0c64	3x61
+duplication	-	af1422064c9ae2d1	2x68
 duplication	-	b07ff20ae4797d22	2x99
 duplication	-	b09a72efb9b8dd02	2x71
 duplication	-	b29818eef4cbbd22	3x73
@@ -323,7 +326,6 @@ duplication	-	d6206bcb9b5da14a	2x50
 duplication	-	d6674526a39217e5	2x91
 duplication	-	d6783d120ce00f7e	2x91
 duplication	-	d6dcaaa255b0db70	2x64
-duplication	-	d75341b85226713f	2x110
 duplication	-	d7b3472507b5221f	2x66
 duplication	-	d7e587af324725ea	2x51
 duplication	-	d8174e47afdc22a7	2x55
@@ -351,6 +353,7 @@ duplication	-	e56717335812d17b	2x56
 duplication	-	e68f49b5a6fa914b	2x52
 duplication	-	e751be2862825fda	2x106
 duplication	-	e7b68ecd2544e92f	2x80
+duplication	-	e7df0e9a74b3d7d5	5x61
 duplication	-	e83ee06e2d9b565e	2x66
 duplication	-	e8ed1873d25eacf2	2x57
 duplication	-	e9303550dff0f387	2x54
@@ -415,7 +418,7 @@ file-length	src/bytecode/bytecode.h	-	513
 file-length	src/bytecode/read.c	-	641
 file-length	src/bytecode/shorthand-function.c	-	690
 file-length	src/bytecode/shorthand.c	-	570
-file-length	src/bytecode/validate.c	-	708
+file-length	src/bytecode/validate.c	-	696
 file-length	src/bytecode/verify.c	-	717
 file-length	src/check/abilities.c	-	586
 file-length	src/check/bodies.c	-	5487
@@ -446,7 +449,7 @@ file-length	src/tools/render.c	-	1103
 file-length	tests/prim_oracle.h	-	541
 file-length	tests/test_bytecode_io.c	-	1923
 file-length	tests/test_bytecode_text.c	-	765
-file-length	tests/test_bytecode_verify.c	-	2432
+file-length	tests/test_bytecode_verify.c	-	2463
 file-length	tests/test_check.c	-	2400
 file-length	tests/test_check_bodies.c	-	1443
 file-length	tests/test_cli.c	-	508
@@ -464,7 +467,8 @@ file-length	tests/test_tables.c	-	687
 file-length	tests/test_types.c	-	593
 file-length	tests/test_vm.c	-	2899
 function-length	cbmc/arena.c	harness_arena_resize#0	68
-function-length	cbmc/prove.sh	run#0	118
+function-length	cbmc/number.c	harness_int_primitive#0	137
+function-length	cbmc/prove.sh	run#0	127
 function-length	cbmc/verify.c	any_world#0	84
 function-length	cbmc/verify.c	harness_step#0	63
 function-length	cbmc/verify.c	step_ok#0	100
@@ -644,7 +648,7 @@ function-length	src/prim/bigint.c	mo_prim_bigint#0	103
 function-length	src/prim/collections.c	list#0	140
 function-length	src/prim/collections.c	mo_prim_collection#0	93
 function-length	src/prim/collections.c	table#0	104
-function-length	src/prim/number.c	integers#0	96
+function-length	src/prim/number.c	integers#0	109
 function-length	src/prim/parse.c	floating#0	84
 function-length	src/prim/prim.c	mo_prim_call#0	217
 function-length	src/prim/text.c	mo_prim_text#0	166
