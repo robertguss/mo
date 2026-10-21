@@ -48,7 +48,8 @@ if [ "$got" != "$all" ]; then
 fi
 
 # $all must name every group ci/check.sh has, or a new group would never run on a pull request.
-groups=$(sed -n 's/^all_groups=" \(.*\) "$/\1/p' ci/check.sh)
+# qgate is the exception: it only reports, so the workflow runs it as its own job outside `check`.
+groups=$(sed -n 's/^all_groups=" \(.*\) "$/\1/p' ci/check.sh | sed 's/ *qgate//')
 listed=$(printf '%s' "$all" | tr -d '[]",')
 if [ "$(printf '%s\n' $groups | sort)" != "$(printf '%s\n' $listed | sort)" ]; then
     echo "error: ci/check.sh has groups $groups but ci/ci_groups.sh runs $listed" >&2

@@ -5,9 +5,32 @@ qgate_version = "0.2.0"
 # Prose, and the Unicode table ci/generate_unicode16.py writes.
 exclude = ["docs/**", "src/prim/unicode16-data.h"]
 
+# Test data: goldens, the three tools' hidden tests, lowering fixtures and the other inputs with
+# expected outputs. They skip the length and duplication checks, and adding one needs no approval;
+# C and Python files under them are still checked like any other code.
+fixtures = [
+    "tests/golden/**",
+    "tests/cli/**",
+    "tests/lower-source/**",
+    "tests/errors/**",
+    "tests/check/**",
+    "tests/core/**",
+    "tests/differential/**",
+    "bench/tools/*/hidden/**",
+    "fuzz/corpus/**",
+    "grammar/tests/**",
+]
+
+# C attributes qgate's parser doesn't know, blanked before parsing (src/base/base.h and friends).
+attribute_macros = ["MO_MUST_USE", "_Noreturn", "_Alignas", "__extension__"]
+
 [limits]
 function_lines = 50
 file_lines = 500
+
+# A baselined function or file may grow this many lines past its recorded size without approval.
+[ratchet]
+headroom_lines = 5
 
 [duplication]
 enabled = true
@@ -17,6 +40,12 @@ min_tokens = 50
 [[package]]
 path = "src"
 function_lines = 80
+
+# The unit tests are long lists of CHECKs over one fixture; give them room until they are split.
+[[package]]
+glob = "tests/**"
+function_lines = 150
+file_lines = 3000
 
 # clang-format on the staged C files, the same files and rules as `make format-check`.
 # CI pins clang-format 14.0.6; newer versions can disagree.
@@ -30,10 +59,11 @@ format = "gcc"
 
 # The CI groups that finish in minutes: both build-and-test runs, the sanitizers,
 # the static checks (grammar, module deps, library map, formatting, clang-tidy)
-# and the driver checks. fuzz, lean and cbmc stay in CI.
+# and the driver checks. fuzz, lean and cbmc stay in CI. The qgate group of ci/check.sh sets
+# MO_QGATE_SKIP_CHECK=1, because CI already runs these groups as jobs of their own.
 [[tool]]
 name = "check"
-command = "CI=1 bash ci/check.sh gcc clang sanitize static drivers"
+command = 'if [ -n "${MO_QGATE_SKIP_CHECK:-}" ]; then echo "check: skipped, CI runs these groups as their own jobs"; else CI=1 bash ci/check.sh gcc clang sanitize static drivers; fi'
 stage = "push"
 timeout_secs = 1800
 format = "text"
