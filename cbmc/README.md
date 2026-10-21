@@ -1,10 +1,11 @@
 # CBMC proofs
 
-`make cbmc` (or `bash cbmc/prove.sh [proof...]`) proves three parts of Mo with
+`make cbmc` (or `bash cbmc/prove.sh [proof...]`) proves four parts of Mo with
 [CBMC](https://www.cprover.org/cbmc/): the bytecode reader, `src/bytecode/read.c` (`reader.c`,
-below), the arena, `src/base/arena.c` (`arena.c`, in [The arena](#the-arena)), and the bytecode
+below), the arena, `src/base/arena.c` (`arena.c`, in [The arena](#the-arena)), the bytecode
 verifier's transfer functions in `src/bytecode/verify.c` and `verify-instruction.c` (`verify.c`,
-in [The verifier](#the-verifier)).
+in [The verifier](#the-verifier)), and the primitives' arithmetic and UTF-8 in `src/base/decimal.c`,
+`src/prim/number.c`, `prim.c`, `text.c` and `unicode.c` (in [The primitives](#the-primitives)).
 
 For the bytecode reader, for **every input of up to
 `MO_CBMC_INPUT` bytes** (32 by default, and more for the proofs whose loops need it), decoding:
@@ -63,10 +64,12 @@ body, or an assumption that rules out the paths that matter. Two checks catch th
   `prove.sh` refuses a proof whose input leaves a loop bound below 2.
 - **Reach.** `bash cbmc/prove.sh --reach` runs CBMC's location coverage on each proof and fails
   unless every block of the proved function runs on some input, and so does the end of its
-  harness. The only blocks allowed to stay unreached are the failure branches of `MO_ASSERT`,
-  which the proofs show never run, and the branch CBMC adds to a call through a function pointer
-  for a target the harness never gives it (the verifier's replay visitor), which it closes with
-  `assume(false)`.
+  harness. The only blocks allowed to stay unreached are the failure branches of `MO_ASSERT`
+  and `MO_UNREACHABLE` (and the jump out of a block ending in one), which the proofs show never
+  run; the branch CBMC adds to a call through a function pointer for a target the harness never
+  gives it (the verifier's replay visitor), which it closes with `assume(false)`; and the lines
+  `unreachable_lines` in `prove.sh` names for a proof, each with its reason (only
+  `display_width`'s width overflow checks, which need a span of more than 2^63 bytes).
 
 CI runs the proofs and the reach check side by side, `MO_CBMC_JOBS` at a time each.
 
@@ -162,6 +165,61 @@ CBMC more than this machine's 15 GB. `tests/test_bytecode_verify.c` and the veri
 check them. `mo_case_shape`, which only `cases` calls, has a model so that the file links. The
 proofs do not show that the type check accepts exactly the right programs: it may refuse more
 than it should, and only the counts above are checked of what it accepts.
+
+## The primitives
+
+Four files prove the arithmetic and the UTF-8 that Mo's primitives rest on, each against a
+specification written independently of the code: in wider arithmetic for numbers (CBMC's
+`__CPROVER_bitvector` types for 256-bit values), and from the Unicode Standard's table of
+well-formed byte sequences (table 3-7, `utf8.h`) for UTF-8. Every proof also shows that its
+function never overflows, wraps a conversion, shifts out of range, divides by zero, reads outside
+its span or fails an `MO_ASSERT`.
+
+| Proof | Checks |
+| --- | --- |
+| `text_scalar` (`text.c`) | the decoder behind `Bytes.decode_utf8` and every Text walk accepts exactly the well-formed sequences, from any offset in any span of up to 6 bytes, with the value each encodes and the offset past it; a refusal gives no value |
+| `text_encode`, `unicode_encode` | every scalar value is spelt as the one well-formed sequence that encodes it; `encode(c, NULL)` counts what it spells |
+| `checked_scalar` (`unicode.c`) | the same as `text_scalar` for the decoder of spans that may be malformed, and a refusal changes nothing |
+| `unicode_scalar` | the decoder for texts, which are well-formed, gives each sequence's value and length |
+| `properties` | the binary search for a scalar's Unicode properties stays inside its table and gives the properties of the range holding the scalar, or none for a scalar in no range, for any scalar value |
+| `next_grapheme`, `display_width` | `mo_unicode16_next_grapheme` and `mo_unicode16_display_width` succeed exactly on well-formed spans of up to 6 bytes (a cluster also on any span with a well-formed first cluster); a cluster is whole scalars and ends before one; a width is at most two columns per scalar. `properties` is their model, giving any properties |
+| `word_product`, `multiply` (`decimal.c`) | the 256-bit product of two magnitudes is the sum of the products of their 64-bit halves in place; the half products are C's own multiplication, which `word_product`'s proof bounds by their operands' sizes |
+| `divide_step` | one step of long division keeps 2 × remainder + bit = quotient bit × denominator + new remainder, and the remainder below the denominator |
+| `round_quotient` | rounds to nearest with ties to even, gives the sign, and refuses exactly when the result is outside Decimal's range, leaving the output alone |
+| `decimal_mul`, `decimal_div` | `mo_decimal_mul` and `mo_decimal_div`, for any Decimals (any nonzero divisor), divide the right product by the right denominator with the right sign: \|a\| × \|b\| over 10^18, or \|a\| × 10^18 over \|b\|, negative when exactly one operand is; a refusal leaves the output alone |
+| `truncated_division` (`number.c`) | C's division, for any Int over any Int but 0 and -1, has a remainder below the divisor with the dividend's sign, and a quotient of at most 2^62 either way |
+| `int_primitive` | every Int primitive but `pow`, on any two Ints, gives the reference's result: `abs` overflows exactly at `INT64_MIN`, and `floor_div` exactly for `INT64_MIN / -1`; `floor_div` and `floor_mod` refuse a zero divisor, and otherwise floor C's truncating quotient and remainder exactly; `wrapping_` gives the exact result's low 64 bits, `saturating_` clamps it, `checked_` gives `Some` exactly when it fits; `to_decimal`, `to_float` (rounded as C rounds), `to_big` (least significant byte first, none zero at the top), `to_byte`, `to_char` (exactly the scalar values) and the five `Duration` constructors (microseconds, overflowing exactly when out of range) |
+| `exact_product`, `int_multiply` | `mo_prim_exact_product`, the one 128-bit product the Int primitives take, is at most 2^126 either way; `Int.pow`'s checked multiplication multiplies a by b through it, refuses exactly when the product does not fit, and otherwise gives it |
+| `int_pow` | `Int.pow` for any Int and exponent: refuses a negative exponent with a reason, gives 1 for a zero one, multiplies at most twice for each bit of the exponent, and overflows exactly when a multiplication does |
+
+Decimal multiplication and division are proved in pieces because CBMC cannot show two
+multiplier or divider circuits equal in reasonable time (each attempt ran past fifteen minutes).
+The loop that chains the division's steps, `rounded`, is not proved by CBMC: carrying "the
+remainder is below the denominator" through its 256 steps takes CBMC's solver time exponential in
+the steps (eight already take over a minute). It is argued instead. The remainder starts at 0,
+below any denominator, and `divide_step` keeps it below, so each step meets the next one's
+requirement. By induction, before the step for bit k the quotient and remainder are those of the
+numerator's bits above k, since each step keeps 2r + bit = q·d + r'; after the last they are the
+whole numerator's, so `round_quotient` rounds the exact value once. Each bit index is below 256,
+so `bit / 64` indexes one of the four words and `bit % 64` is a valid shift.
+
+Likewise, `int_primitive` takes C's truncating `/` and `%` from `truncated_division`'s model,
+whose properties (a remainder below the divisor with the dividend's sign, a quotient of at most
+2^62) that proof shows, and checks the floor adjustment exactly; that the quotient is a / b is C's
+own arithmetic. It takes each product from `mo_prim_exact_product`'s model, checking that the primitive multiplies a by the right factor
+(b, 10^18 for Decimal, or a Duration unit in microseconds) and what it does with the product.
+`int_pow` replaces the checked multiplication of `prim.c` by a model that may refuse, so it shows
+the control of square-and-multiply, not the value of a^n or which multiplications run, which
+`tests/test_prim.c` checks (`(-2).pow(63)` fits, `2.pow(63)` overflows).
+
+Models: the heap's builders (`mo_value_case` for an Option, `mo_value_bigint`, `mo_value_text`)
+check what they are given and may run out of memory; printing may give any text or fail.
+
+Not proved: which scalars join into a grapheme cluster, and each one's width, which follow the
+Unicode data tables (`ci/check_unicode16.py` runs the standard's conformance tests); the
+Decimal primitives' rounding to places, `floor`, `ceil` and `to_int`, `Float.to_decimal`, BigInt,
+the Text primitives built on the decoder, and the collections, whose cost CBMC cannot bear
+through 128-bit dividers or the heap. The tests and the VM-against-Lean differential check them.
 
 ## Running it
 

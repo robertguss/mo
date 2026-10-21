@@ -37,7 +37,7 @@ make format / format-check # clang-format; CI pins clang-format 14.0.6, newer ve
 make tidy                  # clang-tidy cert-err33-c (unused stdlib results)
 make fuzz-smoke            # every fuzz target briefly (needs clang + libFuzzer; FUZZ_SECONDS=5)
 make formal                # build Mo Core in Lean and check every proof (needs elan)
-make cbmc                  # prove the bytecode reader, the arena and verifier steps (needs CBMC)
+make cbmc                  # prove the bytecode reader, arena, verifier steps, primitives (needs CBMC)
 bash ci/check.sh [group…]  # everything CI runs; groups: gcc clang sanitize fuzz drivers lean static cbmc
 ```
 

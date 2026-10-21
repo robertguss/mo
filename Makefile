@@ -13,8 +13,8 @@
 #   make grammar      check that Mo code parses with the executable grammar (needs bison):
 #                     the grammar's own tests, examples/ and the reference's examples
 #   make formal       build Mo Core in Lean (formal/) and check every proof (needs elan)
-#   make cbmc         prove the bytecode reader, the arena and the verifier's transfer
-#                     functions (needs CBMC)
+#   make cbmc         prove the bytecode reader, the arena, the verifier's transfer
+#                     functions and the primitives' arithmetic and UTF-8 (needs CBMC)
 #
 # ci/check.sh runs every check; CI runs ci/check.sh. Choose a compiler with
 # CC=gcc or CC=clang. Each compiler builds into its own directory, so switching
@@ -152,7 +152,8 @@ formal:
 	sh ci/test_mocore.sh
 
 # CBMC proofs (cbmc/README.md): the bytecode reader on every input of up to MO_CBMC_INPUT bytes,
-# the arena on every size, and the verifier's transfer functions on any one instruction.
+# the arena on every size, the verifier's transfer functions on any one instruction, and the
+# primitives' arithmetic and UTF-8 on every operand.
 cbmc:
 	bash cbmc/prove.sh
 

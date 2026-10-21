@@ -35,7 +35,7 @@ enum mo_prim_status mo_prim_print(struct mo_prim_call *call, uint32_t type, stru
 }
 
 static MO_MUST_USE bool multiply(int64_t a, int64_t b, int64_t *out) {
-    mo_i128 wide = (mo_i128)a * b;
+    mo_i128 wide = mo_prim_exact_product(a, b);
     if (wide < INT64_MIN || wide > INT64_MAX)
         return false;
     *out = (int64_t)wide;
