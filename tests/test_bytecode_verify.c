@@ -849,6 +849,36 @@ static void calls(void) {
     expect(&t, "fail outside spec code", 0, 3);
 }
 
+/* The one signature check behind make_closure and the validator's closure layouts and
+ * literals: each case differs from the matching type in exactly one respect. */
+static void closure_signatures(void) {
+    const uint32_t int_param[] = {0}, two_ints[] = {0, 0}, bool_param[] = {1};
+    const struct mo_type types[] = {
+        {.kind = MO_TYPE_INT},
+        {.kind = MO_TYPE_BOOL},
+        {.kind = MO_TYPE_FUNCTION, .parameters = int_param, .parameter_count = 1, .result = 0},
+        {.kind = MO_TYPE_FUNCTION, .parameters = int_param, .parameter_count = 1, .result = 1},
+        {.kind = MO_TYPE_FUNCTION, .parameters = two_ints, .parameter_count = 2, .result = 0},
+        {.kind = MO_TYPE_FUNCTION, .parameters = bool_param, .parameter_count = 1, .result = 0},
+        {.kind = MO_TYPE_TUPLE, .parameters = int_param, .parameter_count = 1, .result = 0},
+    };
+    const struct mo_parameter param[] = {{0, MO_PARAMETER_OWNED}};
+    const struct mo_bytecode_function functions[] = {
+        {.kind = MO_FUNCTION_CLOSURE, .parameter_count = 1, .parameters = param, .result_type = 0},
+        {.kind = MO_FUNCTION_FUNCTION, .parameter_count = 1, .parameters = param, .result_type = 0},
+    };
+    const struct mo_bytecode f = {.types = types,
+                                  .type_count = N(types),
+                                  .functions = functions,
+                                  .function_count = N(functions)};
+    CHECK(mo_verify_closure_signature(&f, 2, 0));
+    CHECK(!mo_verify_closure_signature(&f, 3, 0)); /* result */
+    CHECK(!mo_verify_closure_signature(&f, 4, 0)); /* parameter count */
+    CHECK(!mo_verify_closure_signature(&f, 5, 0)); /* parameter type */
+    CHECK(!mo_verify_closure_signature(&f, 6, 0)); /* not a function type */
+    CHECK(!mo_verify_closure_signature(&f, 2, 1)); /* not closure code */
+}
+
 static void closures(void) {
     struct fixture t;
     init(&t);
@@ -2415,6 +2445,7 @@ int main(int argc, char **argv) {
     choices_and_joins();
     data();
     calls();
+    closure_signatures();
     closures();
     primitives();
     abi_shapes();

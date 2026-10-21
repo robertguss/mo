@@ -1,5 +1,6 @@
 #include "bytecode/io.h"
 #include "bytecode/names.h"
+#include "bytecode/verify.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -216,21 +217,8 @@ static MO_MUST_USE bool type_table(struct validation *v) {
 }
 
 static MO_MUST_USE bool signature(const struct mo_bytecode *f, uint32_t type, uint32_t function) {
-    if (type >= f->type_count || function >= f->function_count) {
-        return false;
-    }
-    const struct mo_type *t = &f->types[type];
-    const struct mo_bytecode_function *fn = &f->functions[function];
-    if (t->kind != MO_TYPE_FUNCTION || fn->kind != MO_FUNCTION_CLOSURE ||
-        t->parameter_count != fn->parameter_count || t->result != fn->result_type) {
-        return false;
-    }
-    for (uint32_t i = 0; i < t->parameter_count; i++) {
-        if (t->parameters[i] != fn->parameters[i].type) {
-            return false;
-        }
-    }
-    return true;
+    return type < f->type_count && function < f->function_count &&
+           mo_verify_closure_signature(f, type, function);
 }
 
 static MO_MUST_USE int compare_layouts(const void *a, const void *b) {

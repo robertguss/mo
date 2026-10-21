@@ -22,6 +22,11 @@ struct mo_verify_function {
 /* All local instruction types, even in unreachable code. */
 MO_MUST_USE bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc);
 MO_MUST_USE const char *mo_verify_parameter_modes(const uint32_t *instruction);
+/* Whether function type type is closure function's signature: the same parameter and result
+ * types. Both indices must be inside their tables. The validator checks closure layouts and
+ * literals with it, and the verifier make_closure. */
+MO_MUST_USE bool mo_verify_closure_signature(const struct mo_bytecode *file, uint32_t type,
+                                             uint32_t function);
 
 struct mo_verification {
     const uint8_t *abilities;
