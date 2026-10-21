@@ -337,6 +337,9 @@ sh ci/test_docs_only.sh
 step "Pull request groups: ci/ci_groups.sh skips cbmc only when the change can't affect it"
 sh ci/test_ci_groups.sh
 
+step "The qgate report: keeps only new long functions and duplicates in src/ and lib/, never fails"
+if have python3; then PYTHONDONTWRITEBYTECODE=1 python3 ci/test_qgate_report.py; else missing "python3 is not installed"; fi
+
 step "The three tools' frozen tasks: hashes match and each reference passes its hidden tests"
 if have python3; then python3 bench/tools/grade.py --check; else missing "python3 is not installed"; fi
 

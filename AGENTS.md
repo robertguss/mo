@@ -64,6 +64,10 @@ A PR that changes only documents no check reads skips the eight jobs, and `check
 what the CBMC proofs read skips the `cbmc` job (`ci/ci_groups.sh`); pushes to main run every job. Robert lets agents merge
 docs-only PRs without review.
 
+A separate `qgate` job on each code PR reports, without ever failing, the duplicated code and long
+functions the PR adds in `src/` and `lib/` (`ci/qgate_report.py`, settings in `ci/qgate.toml`, MO-100).
+It is on trial until early November 2026; it is not part of `check`.
+
 ## Architecture
 
 Pipeline: source → parser (`syntax`) → names, types and rule checks (`check`) → lowering to Mo
