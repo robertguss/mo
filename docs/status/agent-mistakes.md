@@ -23,5 +23,6 @@ this range, so the evidence is fix-up commits inside PRs, the Review sections of
 | 10 | Boilerplate or wrong verification evidence pasted into PR bodies (Lean 4.29.0, Z3, Valgrind, a build path that doesn't exist) | #84, #89, #90, #91, #92, #95, #96, #98 | the required hosted `check` status (#100) | enforced |
 | 11 | Python caches committed | #102, #104, #105, #106 | `.gitignore` (#112) | enforced |
 
-One-offs this run: macOS build breaks (#81), a skill written into `.claude/skills/` instead of
+One-offs this run: macOS build breaks (#81; tests that create non-UTF-8 file names, which APFS
+refuses, found by the qgate push hook on 22 Oct), a skill written into `.claude/skills/` instead of
 `.agents/skills/` (#108), a Python line over 100 columns (#115).

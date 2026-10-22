@@ -2384,7 +2384,14 @@ def filenames(binary):
                              ("ÿ".encode(), "ÿ".encode()),
                              (b"\\xff", b"\\\\xff"), (b"line\n\\", b"line\\n\\\\")):
             folder = os.fsencode(directory) + b"/" + raw
-            os.mkdir(folder)
+            try:
+                os.mkdir(folder)
+            except OSError as error:
+                # APFS/HFS+ refuse non-UTF-8 names; don't hide unrelated I/O errors.
+                if error.errno != errno.EILSEQ:
+                    raise
+                print(f"{binary}: filesystem refuses the name {escaped.decode()}; skipped")
+                continue
             path = folder + b"/main.mo"
             with open(path, "wb") as file:
                 file.write(b"module Main\nfn main() : Int\n37\nend\n")
