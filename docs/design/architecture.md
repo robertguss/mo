@@ -2256,7 +2256,7 @@ among them:
 | Layer | How it is tested |
 | --- | --- |
 | Every C module | unit tests in `tests/`, run plain and under AddressSanitizer and UndefinedBehaviorSanitizer (condition 1) |
-| Reference counting | a heap that records every allocation and poisons freed memory, and a leak check: after each call that returns, in `mo test`, in an anchor and in the verifier fuzz target, the process's heap holds no object, because verified bytecode releases every reference it acquires (bytecode 4.2) |
+| Reference counting | a heap that records every allocation and poisons freed memory, and a leak check: after each call that returns in `mo test` (tests, examples and promise trials), in an anchor and in the verifier fuzz target, the process's heap holds no object, because verified bytecode releases every reference it acquires (bytecode 4.2) |
 | Parser | the executable grammar's tests, and a fuzz target that checks the parser and `grammar/mo.y` accept and reject the same inputs |
 | Checker | a corpus of programs with the exact diagnostics they must produce, one file or more per error code |
 | Lowering | the twelve samples and the corpus, lowered and compared with their Core text, which the Lean evaluator runs to the samples' expected results |

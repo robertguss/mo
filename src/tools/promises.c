@@ -277,7 +277,8 @@ struct trial {
     struct mo_defect defect;
     enum mo_outcome outcome;
     uint32_t condition;
-    bool has_input, has_value;
+    /* Both the subject and the promise returned, whatever the condition. */
+    bool has_input, has_value, returned;
 };
 
 static void discard(struct trial *trial, const struct mo_bytecode_function *subject) {
@@ -289,6 +290,8 @@ static void discard(struct trial *trial, const struct mo_bytecode_function *subj
             mo_value_drop(heap, subject->parameters[i].type, trial->input[i]);
     if (trial->has_value)
         mo_value_drop(heap, subject->result_type, trial->value);
+    /* Verified bytecode releases every reference it acquires (bytecode 4.2). */
+    MO_ASSERT(!trial->returned || mo_heap_objects(heap) == 0);
     mo_process_free(trial->process);
     *trial = (struct trial){0};
 }
@@ -329,6 +332,7 @@ static bool evaluate(struct trial *trial, const struct mo_bytecode *file, uint32
             MO_ASSERT(condition >= 0 && (uint64_t)condition <= file->debug[promise].line_count);
             trial->condition = (uint32_t)condition;
             mo_value_drop(heap, file->functions[promise].result_type, answer);
+            trial->returned = true;
             trial->outcome = condition == 0 ? MO_RETURNED : MO_FAILED;
             return true;
         }

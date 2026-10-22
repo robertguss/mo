@@ -519,9 +519,11 @@ static void instruction_refusals(void) {
  * instruction, at at's first match in the body plus delta. */
 static void reference_refusals(void) {
     static const char header[] =
-        "bytecode 0.2 shorthand\nmodule A exposes [A.f, A.take, A.copy]\n"
+        "bytecode 0.2 shorthand\nmodule A exposes [A.f, A.take, A.keep, A.copy]\n"
         "function A.take(a: Text owned, b: Text borrowed) : Unit function in A\n"
         " registers [r2: Unit]\n drop r0\n const r2, ()\n ret r2\nend\n"
+        "function A.keep(b: Text borrowed, a: Text owned) : Unit function in A\n"
+        " registers [r2: Unit]\n drop r1\n const r2, ()\n ret r2\nend\n"
         "function A.copy(a: Text borrowed) : Text function in A\n"
         " registers [r1: Text]\n dup r1, r0\n ret r1\nend\n"
         "function A.f(x: Text owned, y: Text borrowed, c: Bool owned) : Text function in A\n"
@@ -552,6 +554,7 @@ static void reference_refusals(void) {
         {" drop r0\n drop r0\n stop r1\n", "drop r0\n drop", 14, "register is not readable"},
         {" call r4, A.take, r0, r1\n ret r0\n", "ret r0", 4, "register is not readable"},
         {" call r4, A.take, r0, r0\n stop r1\n", "r0\n", 0, "consumed register is repeated"},
+        {" call r4, A.keep, r0, r0\n stop r1\n", "r0\n", 0, "consumed register is repeated"},
         {" dup r3, r1\n dup r3, r1\n stop r1\n", "dup r3, r1\n dup", 16,
          "write overwrites ownership or token"},
         /* Consuming what the frame only borrows. */

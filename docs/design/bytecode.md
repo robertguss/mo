@@ -146,7 +146,7 @@ immortal.
 - A `dup` that would bring a count to `UINT32_MAX` makes the object immortal
   instead. It then leaks, but it is never freed early.
 
-The debug heap asserts all three (Architecture section 11).
+Unit tests in `tests/test_heap.c` pin all three; no runtime check asserts them.
 
 The C heap keeps a charged private prefix before the eight-byte header:
 teardown links, an iterative-walk link, the allocation size, one structural
