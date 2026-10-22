@@ -80,6 +80,14 @@ static struct instance *reserve(struct lowering *p, uint32_t index, struct insta
     return f;
 }
 
+/* A library module's examples, promises and tests run only when `mo test` is given its file, and
+ * then that file is the program's own module, not a library one. So no program lowers them. */
+static bool library_spec(const struct lowering *p, const struct mo_checked_spec *source) {
+    const struct mo_module_set *set = p->program->set;
+    MO_ASSERT(source->module < set->count);
+    return source->module != 0 && set->library != NULL && set->library[source->module];
+}
+
 void lower_subject_specs(struct lowering *p, struct instance *subject) {
     if (p->promise_heads == NULL)
         return; /* Initial ordinary-body walk precedes spec reservation. */
@@ -100,7 +108,7 @@ void lower_specs(struct lowering *p) {
     for (uint32_t i = count; i != 0; i--) {
         lower_work(p, 1);
         const struct mo_checked_spec *source = &p->program->specs[i - 1];
-        if (source->kind != MO_SPEC_PROMISE)
+        if (source->kind != MO_SPEC_PROMISE || library_spec(p, source))
             continue;
         MO_ASSERT(source->subject < p->program->function_count);
         p->promise_next[i - 1] = p->promise_heads[source->subject];
@@ -111,6 +119,8 @@ void lower_specs(struct lowering *p) {
     for (uint32_t i = 0; i < count; i++) {
         lower_work(p, 1);
         const struct mo_checked_spec *source = &p->program->specs[i];
+        if (library_spec(p, source))
+            continue;
         p->span = source->syntax->span;
         if (source->kind == MO_SPEC_EXAMPLE || source->kind == MO_SPEC_TEST)
             (void)reserve(p, i, NULL);
