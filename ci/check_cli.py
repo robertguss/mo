@@ -2572,10 +2572,14 @@ def guide_claims(binary):
         assert result.stdout.endswith(b", 0 failed, 0 stopped\n"), (library_file, result.stdout)
     with tempfile.TemporaryDirectory() as folder:
         source = pathlib.Path(folder) / "main.mo"
-        source.write_text("module Main\nfn main(console: Console)\n  console.print(\"hi\")\nend\n")
+        source.write_text("module Main\nuse Json\nfn main(console: Console)\n"
+                          "  console.print(Json.Null.to_text)\nend\n"
+                          "test \"own\"\n  assert 1 == 1\nend\n")
         core = run(binary, ["check", "--emit=core", str(source)], 0).stdout
-        for kind in (b".example.", b".test.", b".promise."):
+        assert b'"Json.' in core and b"Main.test.1" in core, core[:200]
+        for kind in (b".example.", b".promise.", b".allows.", b".forbids."):
             assert kind not in core, ("a program lowers a library module's " + kind.decode(), core[:200])
+        assert core.count(b".test.") == core.count(b"Main.test.1"), core[:200]
     for name in ("map", "filter", "filter_map", "flat_map", "reduce", "find", "any?", "all?", "count",
                  "sort_by", "sort_by_desc", "sort", "min", "max", "group_by", "Map.update",
                  "Option.or_fail", "Option.map", "Result.map", "Result.map_error",

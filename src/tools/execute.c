@@ -113,8 +113,13 @@ static void execute_pipeline(void *argument) {
             return;
     }
     bool anchors = false;
-    for (uint32_t i = 0; i < program->spec_count; i++)
-        anchors |= program->specs[i].kind == MO_SPEC_ANCHOR;
+    for (uint32_t i = 0; i < program->spec_count; i++) {
+        uint32_t module = program->specs[i].module;
+        /* Lowering leaves out a library module's anchors, as it does all its specs. */
+        bool in_library =
+            module != 0 && program->set->library != NULL && program->set->library[module];
+        anchors |= program->specs[i].kind == MO_SPEC_ANCHOR && !in_library;
+    }
     struct mo_arena lowered;
     mo_arena_init(&lowered, MO_LIMIT_LOWER_WORK);
     struct mo_core *core = mo_lower(&lowered, program, sources, diags);

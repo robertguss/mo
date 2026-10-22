@@ -1,6 +1,7 @@
 #include "base/codes.h"
 #include "base/limits.h"
 #include "base/stack.h"
+#include "check/check.h"
 #include "codegen/codegen.h"
 #include "lower/lower.h"
 #include "lower_fixture.h"
@@ -1853,6 +1854,53 @@ static void test_source_specs(void *unused) {
     mo_buffer_free(&source);
 }
 
+/* Counts the spec functions (examples, promises, anchors, tests) lowered for module. */
+static uint32_t spec_funs(const struct mo_core *core, const char *module) {
+    uint32_t count = 0;
+    for (size_t i = 0; i < core->funs.count; i++) {
+        const struct mo_core_fun *fun = &core->funs.items[i];
+        if (fun->kind != MO_CORE_FUNCTION && fun->module.length == strlen(module) &&
+            memcmp(fun->module.bytes, module, fun->module.length) == 0)
+            count++;
+    }
+    return count;
+}
+
+/* A library module's specs run only under `mo test` of its own file, so a program using it
+ * lowers none of them; given that file, its example, promise, two anchors and test lower. */
+static void test_source_library_specs(void *unused) {
+    (void)unused;
+    static const struct {
+        const char *entry;
+        const char *module;
+        uint32_t own, library;
+    } cases[] = {{"tests/lower/library-specs/main.mo", "Main", 1, 0},
+                 {"tests/lower/library-specs/lib/shapes.mo", "Shapes", 5, 5}};
+    for (size_t c = 0; c < sizeof cases / sizeof cases[0]; c++) {
+        struct mo_arena input, output;
+        struct mo_sources sources;
+        struct mo_diags diags;
+        mo_arena_init(&input, MO_LIMIT_LOWER_WORK);
+        mo_arena_init(&output, MO_LIMIT_LOWER_WORK);
+        MO_ASSERT(mo_sources_init(&sources) && mo_diags_init(&diags));
+        struct mo_module_set *set = mo_load_program(&input, &sources, cases[c].entry,
+                                                    "tests/lower/library-specs/lib", &diags);
+        MO_ASSERT(set != NULL && !mo_diags_any(&diags));
+        struct mo_program *program = mo_check(&input, set, &diags);
+        MO_ASSERT(program != NULL && !mo_diags_any(&diags));
+        struct mo_core *core = mo_lower(&output, program, &sources, &diags);
+        CHECK(core != NULL && !mo_diags_any(&diags));
+        if (core != NULL) {
+            CHECK(spec_funs(core, cases[c].module) == cases[c].own);
+            CHECK(spec_funs(core, "Shapes") == cases[c].library);
+        }
+        mo_diags_free(&diags);
+        mo_sources_free(&sources);
+        mo_arena_free(&output);
+        mo_arena_free(&input);
+    }
+}
+
 /* FileError's text form is lib/file-error.mo's to_text; without the library, lowering refuses it
  * rather than derive constructor syntax. */
 static void test_source_file_error_text(void *unused) {
@@ -2079,6 +2127,7 @@ int main(int argc, char **argv) {
     test_substituted_depth();
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_specs, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_constants, NULL) == 0);
+    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_library_specs, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_file_error_text, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_captures, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source, NULL) == 0);

@@ -84,8 +84,8 @@ static struct instance *reserve(struct lowering *p, uint32_t index, struct insta
  * then that file is the program's own module, not a library one. So no program lowers them. */
 static bool library_spec(const struct lowering *p, const struct mo_checked_spec *source) {
     const struct mo_module_set *set = p->program->set;
-    return source->module != 0 && set != NULL && set->library != NULL &&
-           set->library[source->module];
+    MO_ASSERT(source->module < set->count);
+    return source->module != 0 && set->library != NULL && set->library[source->module];
 }
 
 void lower_subject_specs(struct lowering *p, struct instance *subject) {
