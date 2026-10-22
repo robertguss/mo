@@ -64,6 +64,25 @@ static MO_MUST_USE uint64_t hash_value(uint64_t hash, uint64_t value) {
     return (hash ^ value) * UINT64_C(1099511628211);
 }
 
+/* What a declaration hashes to: its module, name and place, never its address, so that where the
+ * allocator put a symbol can't change which structural slots collide or the work they cost. */
+static MO_MUST_USE uint64_t hash_declaration(uint64_t hash, const struct mo_symbol *symbol) {
+    if (symbol == NULL)
+        return hash_value(hash, UINT64_MAX);
+    hash = hash_value(hash, symbol->module);
+    size_t length = symbol->name_length != 0 ? symbol->name_length
+                    : symbol->name != NULL   ? strlen(symbol->name)
+                                             : 0;
+    for (size_t i = 0; i < length; i++)
+        hash = hash_value(hash, (unsigned char)symbol->name[i]);
+    return hash_value(hash,
+                      symbol->declaration == NULL ? UINT32_MAX : symbol->declaration->span.start);
+}
+
+/* The pointer index is keyed by address, which differs from run to run, so its probes are not
+ * charged as work: charging them moved where E1104 was reported between runs of one program.
+ * The index is at most half full and its slots mix every address bit, so probes stay short;
+ * each lookup is charged once by cache(). */
 static MO_MUST_USE uint32_t pointer_slot(const struct mo_source_type *type, uint32_t capacity) {
     uint64_t value = (uint64_t)(uintptr_t)type;
     value ^= value >> 33;
@@ -97,11 +116,8 @@ static MO_MUST_USE bool grow_cache(struct mo_ability_context *p) {
         }
         if (p->pointers[i].type != NULL) {
             uint32_t slot = pointer_slot(p->pointers[i].type, capacity);
-            while (pointers[slot].type != NULL) {
-                if (!work(p, 0))
-                    return false;
+            while (pointers[slot].type != NULL)
                 slot = (slot + 1) & (capacity - 1);
-            }
             pointers[slot] = p->pointers[i];
         }
     }
@@ -120,8 +136,6 @@ static MO_MUST_USE struct mo_ability_cache *cache(struct mo_ability_context *p,
     if (p->capacity != 0) {
         uint32_t slot = pointer_slot(type, p->capacity);
         while (p->pointers[slot].type != NULL) {
-            if (!work(p, 0))
-                return NULL;
             if (p->pointers[slot].type == type)
                 return p->pointers[slot].entry;
             slot = (slot + 1) & (p->capacity - 1);
@@ -133,7 +147,7 @@ static MO_MUST_USE struct mo_ability_cache *cache(struct mo_ability_context *p,
         return NULL;
     uint64_t hash = hash_value(UINT64_C(14695981039346656037), (uint64_t)type->kind);
     hash = hash_value(hash, type->module);
-    hash = hash_value(hash, (uint64_t)(uintptr_t)type->declaration);
+    hash = hash_declaration(hash, type->declaration);
     hash = hash_value(hash, type->count);
     for (const char *name = type->name; *name != '\0'; name++)
         hash = hash_value(hash, (unsigned char)*name);
@@ -174,11 +188,8 @@ static MO_MUST_USE struct mo_ability_cache *cache(struct mo_ability_context *p,
         p->cache[slot] = out;
     }
     slot = pointer_slot(type, p->capacity);
-    while (p->pointers[slot].type != NULL) {
-        if (!work(p, 0))
-            return NULL;
+    while (p->pointers[slot].type != NULL)
         slot = (slot + 1) & (p->capacity - 1);
-    }
     p->pointers[slot] = (struct mo_ability_pointer){type, out};
     p->count++;
     return out;

@@ -1,5 +1,5 @@
-error E1104: the function needs too much type-checking work  main.mo:69332:5
+error E1104: the function needs too much type-checking work  main.mo:69377:5
 
-  69332 |     C4326: 4326
+  69377 |     C4371: 4371
         |     ^^^^^ the function needs too much type-checking work
 
