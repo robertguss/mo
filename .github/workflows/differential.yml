@@ -81,10 +81,9 @@ jobs:
           path: ${{ runner.temp }}/mismatches
           if-no-files-found: ignore
 
-  # One issue for the whole comparison, whichever shards failed.
   report:
     needs: shard
-    if: always()
+    if: always() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     permissions:
       actions: read

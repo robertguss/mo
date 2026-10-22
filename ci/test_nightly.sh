@@ -105,6 +105,12 @@ run report cbmc failure ddd ccc https://run/2
 expect_call "issue comment 7" "repeat failure comments"
 expect_no_call "issue create" "repeat failure files nothing"
 
+# Two open issues with the same title (say, from a race): the first one gets the comment.
+issues_json='[{"number":7,"title":"Nightly: cbmc failing on main"},{"number":9,"title":"Nightly: cbmc failing on main"}]'
+run report cbmc failure ddd ccc https://run/2
+expect_call "issue comment 7 " "duplicate titles comment on the first issue"
+expect_no_call "issue comment 9" "duplicate titles comment on one issue only"
+
 # A cancelled or timed-out check counts as a failure.
 issues_json='[]'
 run report cbmc cancelled ccc bbb https://run/3

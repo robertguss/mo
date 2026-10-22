@@ -17,8 +17,8 @@ wherever there is code to check, not good intentions; `ci/check.sh` runs every
 check, the slow ones nightly (`ci/orb/README.md`).
 
 1. **Sanitizers in every test run.** Every test also runs under
-   AddressSanitizer and UndefinedBehaviorSanitizer, so memory bugs fail loudly
-   where they happen. ThreadSanitizer joins them in Phase 3, when concurrent
+   AddressSanitizer and UndefinedBehaviorSanitizer, nightly against `main`, so
+   memory bugs fail loudly where they happen. ThreadSanitizer joins them in Phase 3, when concurrent
    code arrives; there is none to check yet.
 2. **Fuzzing in CI.** The parser, the bytecode loader, the VM and everything
    that reads outside input get fuzz targets in `fuzz/`, with seed inputs in

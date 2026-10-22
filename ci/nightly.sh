@@ -44,7 +44,7 @@ report() {
 
     title="Nightly: $check failing on main"
     if ! number=$(gh issue list --label nightly --state open --limit 100 --json number,title \
-        --jq ".[] | select(.title == \"$title\") | .number"); then
+        --jq "[.[] | select(.title == \"$title\")][0].number // empty"); then
         warn "could not list the nightly issues to report $check ($result)"
         return 0
     fi
