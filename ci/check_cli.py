@@ -2568,17 +2568,14 @@ def guide_claims(binary):
                  "Option.or_fail", "Option.map", "Result.map", "Result.map_error",
                  "FileError.to_text", "Json.parse", "pretty"):
         says(f"`{name}`")
-    says("After `use Json` (or `use Account`), this build doesn't yet take the module's own type by "
-         "its bare name: `fn f(value: Json)` is E0048, \"a type name isn't in scope\". Write "
-         "`Json.Json`, or `use Json{Json}`.")
+    says("After `use Json` (or `use Shop.Account`), a bare `Json` (or `Account`) in a type is the "
+         "module's own type of that name, as reference 10.3 says: write `fn f(value: Json)`. "
+         "`Json.Json` means the same type.")
     with tempfile.TemporaryDirectory() as folder:
         source = pathlib.Path(folder) / "main.mo"
         program = ("module Main\nuse {use}\nfn f(value: {type}) : Text\n  value.to_text\nend\n"
                    "fn main(console: Console)\n  console.print(f(Json.Null))\nend\n")
-        source.write_text(program.format(use="Json", type="Json"))
-        result = run(binary, ["check", str(source)], 1)
-        assert result.stderr.startswith(b"error E0048: a type name isn't in scope"), result.stderr
-        for use, type_name in (("Json", "Json.Json"), ("Json{Json}", "Json")):
+        for use, type_name in (("Json", "Json"), ("Json", "Json.Json"), ("Json{Json}", "Json")):
             source.write_text(program.format(use=use, type=type_name))
             result = run(binary, ["run", str(source)], 0)
             assert result.stdout == b"null\n", (use, result.stdout, result.stderr)

@@ -1,0 +1,7 @@
+error E0038: a clash between names  tests/golden/mod-type-bare-clash-import/main.mo:5:20
+
+  5 | fn number(account: Account) : Int
+    |                    ^^^^^^^ a clash between names
+
+A clash between names is an error; use the qualified form (reference 10.3).
+
