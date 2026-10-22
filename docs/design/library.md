@@ -198,7 +198,8 @@ two rows in a section.
 
 ## Text
 
-Every operation on text is a primitive (architecture section 7).
+Every operation on text is a primitive (architecture section 7). `lib/text.mo` holds
+no functions, only tests that pin what reference section 14 says they do.
 
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |

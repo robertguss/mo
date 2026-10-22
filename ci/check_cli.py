@@ -2667,6 +2667,7 @@ def guide_claims(binary):
                  "Option.or_fail", "Option.map", "Result.map", "Result.map_error",
                  "FileError.to_text", "Json.parse", "pretty"):
         says(f"`{name}`")
+    says("`lib/text.mo` has no functions, only tests of `Text`'s operations")
     says("After `use Json` (or `use Shop.Account`), a bare `Json` (or `Account`) in a type is the "
          "module's own type of that name, as reference 10.3 says: write `fn f(value: Json)`. "
          "`Json.Json` means the same type.")
