@@ -1,0 +1,118 @@
+# Runs the slow groups of ci/check.sh against main once a night: the CBMC proofs, Mo Core in Lean,
+# five minutes of fuzzing per target, and the sanitizers with the driver checks over the sanitize
+# builds. Pull requests don't wait for these (ci/orb/README.md has the two tiers). A scheduled
+# night with no new commit on main since the last finished run is skipped; a manual run always
+# runs. Each group keeps one open issue labelled `nightly` while it fails (ci/nightly.sh).
+name: nightly
+
+on:
+  schedule:
+    - cron: "41 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  decide:
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      verdict: ${{ steps.decide.outputs.verdict }}
+      previous: ${{ steps.decide.outputs.previous }}
+      groups: ${{ steps.decide.outputs.groups }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Has main moved since the last finished run?
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          HEAD: ${{ github.sha }}
+        run: |
+          set -- $(sh ci/nightly.sh decide nightly.yml "$EVENT" "$HEAD")
+          echo "verdict=$1" >> "$GITHUB_OUTPUT"
+          echo "previous=${2:-}" >> "$GITHUB_OUTPUT"
+          echo "groups=$(sh ci/ci_groups.sh --nightly)" >> "$GITHUB_OUTPUT"
+          echo "Verdict: $1 (previous tested commit: ${2:-none}, main: $HEAD)"
+
+  group:
+    name: ${{ matrix.group }}
+    needs: decide
+    if: needs.decide.outputs.verdict == 'run'
+    runs-on: ubuntu-24.04
+    # 23 fuzz targets at 300 s each run one after another: about two hours.
+    timeout-minutes: ${{ matrix.group == 'fuzz' && 180 || matrix.group == 'cbmc' && 90 || 60 }}
+    permissions:
+      contents: read
+      issues: write
+    strategy:
+      fail-fast: false
+      matrix:
+        group: ${{ fromJSON(needs.decide.outputs.groups) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # .agents/setup installs elan into /opt/elan; make it the runner's own so
+      # the cache can restore into it.
+      - name: Prepare /opt/elan
+        if: matrix.group == 'lean'
+        run: sudo mkdir -p /opt/elan && sudo chown "$(id -u):$(id -g)" /opt/elan
+
+      - name: Cache the Lean toolchain
+        if: matrix.group == 'lean'
+        uses: actions/cache@v4
+        with:
+          path: /opt/elan
+          key: elan-${{ runner.os }}-${{ hashFiles('formal/lean-toolchain') }}
+
+      - name: Cache the Lean build
+        if: matrix.group == 'lean'
+        uses: actions/cache@v4
+        with:
+          path: formal/.lake
+          key: lake-${{ runner.os }}-${{ hashFiles('formal/lean-toolchain') }}-${{ hashFiles('formal/**/*.lean', 'formal/lakefile.toml') }}
+          restore-keys: lake-${{ runner.os }}-${{ hashFiles('formal/lean-toolchain') }}-
+
+      - name: Install the toolchain
+        run: bash .agents/setup ${{ matrix.group }}
+
+      # -j runs the builds and the unit tests side by side; -Otarget keeps each
+      # test's output together. The sanitize job also runs the driver checks, which
+      # then drive the sanitize builds as well as the debug ones.
+      - name: Run the ${{ matrix.group }} checks
+        env:
+          GROUP: ${{ matrix.group }}
+        run: |
+          case "$GROUP" in
+          sanitize) set -- sanitize drivers ;;
+          *) set -- "$GROUP" ;;
+          esac
+          MAKEFLAGS="-j$(nproc) -Otarget" CI=1 FUZZ_SECONDS=300 bash ci/check.sh "$@"
+
+      - name: Keep the inputs that crashed a fuzz target
+        if: failure() && matrix.group == 'fuzz'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: build/fuzz/artifacts
+          if-no-files-found: ignore
+
+      - name: File, update or close this group's nightly issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          GROUP: ${{ matrix.group }}
+          RESULT: ${{ job.status }}
+          HEAD: ${{ github.sha }}
+          PREVIOUS: ${{ needs.decide.outputs.previous }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: sh ci/nightly.sh report "$GROUP" "$RESULT" "$HEAD" "$PREVIOUS" "$RUN_URL"
