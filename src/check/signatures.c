@@ -412,44 +412,57 @@ static MO_MUST_USE const struct mo_symbol *lookup(const struct mo_module_scope *
     return mo_find_symbol(scope, name->text, name->span.end - name->span.start);
 }
 
+static MO_MUST_USE bool use_origin(struct preparation *p, const struct mo_syntax *name,
+                                   const struct mo_syntax *origin) {
+    if (mo_use_import(p->signatures, p->function->module, origin))
+        return true;
+    bool reported = problem(p, MO_CODE_CHECK_PROGRAM_WORK, name->span,
+                            "the program needs too much import-checking work", NULL);
+    (void)reported;
+    p->failed = true;
+    return false;
+}
+
+/* The declaration `member` names in the module that `use` calls `prefix`, or NULL. Problems
+ * are reported at name. */
+static MO_MUST_USE const struct mo_symbol *module_member(struct preparation *p,
+                                                         const struct mo_module_scope *scope,
+                                                         const struct mo_syntax *name,
+                                                         const struct mo_syntax *prefix,
+                                                         const struct mo_syntax *member) {
+    uint32_t lo = 0, hi = scope->alias_count;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (compare_name(prefix, scope->aliases[mid].name) > 0)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    if (lo == scope->alias_count || compare_name(prefix, scope->aliases[lo].name) != 0)
+        return NULL;
+    const struct mo_symbol *symbol =
+        lookup(&p->interfaces->scopes[scope->aliases[lo].module], member);
+    if (symbol != NULL && !symbol->exported) {
+        bool reported = problem(p, MO_CODE_IMPORT_PRIVATE, name->span,
+                                "everything not on expose is private to the module",
+                                "Everything not on expose is private to the module "
+                                "(reference 10.1).");
+        (void)reported;
+        p->failed = true;
+        return NULL;
+    }
+    if (symbol != NULL && !use_origin(p, name, scope->aliases[lo].origin))
+        return NULL;
+    return symbol;
+}
+
 static MO_MUST_USE const struct mo_symbol *definition(struct preparation *p,
                                                       const struct mo_syntax *name) {
     if (p->function->module == UINT32_MAX)
         return NULL;
     const struct mo_module_scope *scope = &p->interfaces->scopes[p->function->module];
-    if (name->kind == MO_S_QUALIFIED) {
-        const struct mo_syntax *prefix = name->children[0];
-        uint32_t lo = 0, hi = scope->alias_count;
-        while (lo < hi) {
-            uint32_t mid = lo + (hi - lo) / 2;
-            if (compare_name(prefix, scope->aliases[mid].name) > 0)
-                lo = mid + 1;
-            else
-                hi = mid;
-        }
-        if (lo == scope->alias_count || compare_name(prefix, scope->aliases[lo].name) != 0)
-            return NULL;
-        const struct mo_symbol *symbol =
-            lookup(&p->interfaces->scopes[scope->aliases[lo].module], name->children[1]);
-        if (symbol != NULL && !symbol->exported) {
-            bool reported = problem(p, MO_CODE_IMPORT_PRIVATE, name->span,
-                                    "everything not on expose is private to the module",
-                                    "Everything not on expose is private to the module "
-                                    "(reference 10.1).");
-            (void)reported;
-            p->failed = true;
-            return NULL;
-        }
-        if (symbol != NULL &&
-            !mo_use_import(p->signatures, p->function->module, scope->aliases[lo].origin)) {
-            bool reported = problem(p, MO_CODE_CHECK_PROGRAM_WORK, name->span,
-                                    "the program needs too much import-checking work", NULL);
-            (void)reported;
-            p->failed = true;
-            return NULL;
-        }
-        return symbol;
-    }
+    if (name->kind == MO_S_QUALIFIED)
+        return module_member(p, scope, name, name->children[0], name->children[1]);
     const struct mo_symbol *symbol = lookup(scope, name);
     if (symbol != NULL)
         return symbol;
@@ -461,16 +474,11 @@ static MO_MUST_USE const struct mo_symbol *definition(struct preparation *p,
         else
             hi = mid;
     }
-    if (lo == scope->imported_count || compare_name(name, scope->imported[lo].name) != 0)
-        return NULL;
-    if (!mo_use_import(p->signatures, p->function->module, scope->imported[lo].origin)) {
-        bool reported = problem(p, MO_CODE_CHECK_PROGRAM_WORK, name->span,
-                                "the program needs too much import-checking work", NULL);
-        (void)reported;
-        p->failed = true;
-        return NULL;
-    }
-    return scope->imported[lo].symbols;
+    if (lo < scope->imported_count && compare_name(name, scope->imported[lo].name) == 0)
+        return use_origin(p, name, scope->imported[lo].origin) ? scope->imported[lo].symbols : NULL;
+    /* After `use Shop.Account`, a bare Account in a type is the module's own type Account
+     * (reference 10.3). */
+    return name->kind == MO_S_CAPNAME ? module_member(p, scope, name, name, name) : NULL;
 }
 
 static MO_MUST_USE const struct mo_source_type *resolve(struct preparation *p,

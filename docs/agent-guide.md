@@ -16,7 +16,7 @@ A few forms the reference requires are still unfinished. `mo check` reports E110
 
 The `lib/` folder holds library modules written in Mo, and every `mo` command loads them with your program. `mo check lib/list.mo` and `mo test lib/list.mo` check and test one of them on its own. `lib/list.mo` has `List`'s `map`, `filter`, `filter_map`, `flat_map`, `reduce`, `find`, `any?`, `all?`, `count`, `sort_by`, `sort_by_desc`, `sort`, `min`, `max` and `group_by`, `lib/map.mo` has `Map.update`, `lib/option.mo` has `Option.or_fail` and `Option.map`, `lib/result.mo` has `Result.map` and `Result.map_error`, `lib/file-error.mo` has `FileError.to_text`, `lib/json.mo` is the `Json` module (`use Json`, then `Json.parse`, `to_text` and `pretty`), and `lib/files.mo` and `lib/read-files.mo` have `walk` for `Files` and `ReadFiles`; the rest of section 14 is still built in. Section 10.5 names what is always in scope.
 
-After `use Json` (or `use Account`), this build doesn't yet take the module's own type by its bare name: `fn f(value: Json)` is E0048, "a type name isn't in scope". Write `Json.Json`, or `use Json{Json}`.
+After `use Json` (or `use Shop.Account`), a bare `Json` (or `Account`) in a type is the module's own type of that name, as reference 10.3 says: write `fn f(value: Json)`. `Json.Json` means the same type.
 
 ## Write this program
 

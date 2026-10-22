@@ -1,0 +1,7 @@
+error E0041: everything not on expose is private to the module  tests/golden/mod-type-bare-private/main.mo:4:13
+
+  4 | fn show(_s: Secret) : Int
+    |             ^^^^^^ everything not on expose is private to the module
+
+Everything not on expose is private to the module (reference 10.1).
+
