@@ -513,6 +513,81 @@ static void instruction_refusals(void) {
     }
 }
 
+/* Reference tracking (bytecode 4.2, V7): every owned reference is consumed exactly once on every
+ * path to a return or tail call, and nothing else is consumed. Each fixture breaks one rule in
+ * A.f, whose x is owned, y borrowed and c a Bool; the refusal names the exact operand or
+ * instruction, at at's first match in the body plus delta. */
+static void reference_refusals(void) {
+    static const char header[] =
+        "bytecode 0.2 shorthand\nmodule A exposes [A.f, A.take, A.keep, A.copy]\n"
+        "function A.take(a: Text owned, b: Text borrowed) : Unit function in A\n"
+        " registers [r2: Unit]\n drop r0\n const r2, ()\n ret r2\nend\n"
+        "function A.keep(b: Text borrowed, a: Text owned) : Unit function in A\n"
+        " registers [r2: Unit]\n drop r1\n const r2, ()\n ret r2\nend\n"
+        "function A.copy(a: Text borrowed) : Text function in A\n"
+        " registers [r1: Text]\n dup r1, r0\n ret r1\nend\n"
+        "function A.f(x: Text owned, y: Text borrowed, c: Bool owned) : Text function in A\n"
+        " registers [r3: Text, r4: Unit]\n";
+    static const struct {
+        const char *body, *at;
+        uint32_t delta;
+        const char *reason;
+    } cases[] = {
+        /* Accepted controls: each refusal below differs from one of these in one place. */
+        {" drop r0\n dup r3, r1\n ret r3\n", NULL, 0, NULL},
+        {" branch r2, @a, @b\n@a:\n drop r0\n jump @j\n@b:\n drop r0\n jump @j\n"
+         "@j:\n dup r3, r1\n ret r3\n",
+         NULL, 0, NULL},
+        {" call r4, A.take, r0, r1\n tail_call A.copy, r1\n", NULL, 0, NULL},
+        /* Leaks: an owned reference still held where the frame ends. */
+        {" dup r3, r1\n ret r3\n", "ret", 0, "return leaves ownership or token"},
+        {" branch r2, @a, @b\n@a:\n drop r0\n dup r3, r1\n ret r3\n@b:\n dup r3, r1\n ret r3\n",
+         "@b:", 17, "return leaves ownership or token"},
+        {" tail_call A.copy, r1\n", "tail_call", 0, "return leaves ownership or token"},
+        /* Paths that disagree: released on one edge into a join, or once per loop turn. */
+        {" branch r2, @a, @b\n@a:\n drop r0\n jump @j\n@b:\n jump @j\n@j:\n dup r3, r1\n ret r3\n",
+         "dup", 0, "register states disagree at join"},
+        {" jump @loop\n@loop:\n branch r2, @body, @exit\n@body:\n dup r3, r1\n jump @loop\n"
+         "@exit:\n drop r0\n dup r3, r1\n ret r3\n",
+         "branch", 0, "register states disagree at join"},
+        /* Consuming twice, or reading after the consume. */
+        {" drop r0\n drop r0\n stop r1\n", "drop r0\n drop", 14, "register is not readable"},
+        {" call r4, A.take, r0, r1\n ret r0\n", "ret r0", 4, "register is not readable"},
+        {" call r4, A.take, r0, r0\n stop r1\n", "r0\n", 0, "consumed register is repeated"},
+        {" call r4, A.keep, r0, r0\n stop r1\n", "r0\n", 0, "consumed register is repeated"},
+        {" dup r3, r1\n dup r3, r1\n stop r1\n", "dup r3, r1\n dup", 16,
+         "write overwrites ownership or token"},
+        /* Consuming what the frame only borrows. */
+        {" drop r1\n stop r1\n", "r1", 0, "consume needs an owned reference"},
+        {" drop r0\n ret r1\n", "r1", 0, "consume needs an owned reference"},
+        {" drop r0\n call r4, A.take, r1, r1\n stop r1\n", "r1", 0,
+         "consume needs an owned reference"},
+        {" move r3, r0\n tail_call A.copy, r3\n", "r3\n", 0,
+         "tail borrow needs a borrowed reference"},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        struct mo_buffer text;
+        mo_buffer_init(&text, MO_LIMIT_BYTECODE_TEXT_SIZE);
+        CHECK(mo_buffer_append_text(&text, header));
+        size_t start = text.length;
+        CHECK(mo_buffer_append_text(&text, cases[i].body));
+        CHECK(mo_buffer_append_text(&text, "end\n"));
+        if (cases[i].reason == NULL) {
+            struct mo_image *image = assemble(&text);
+            CHECK(image != NULL);
+            if (image != NULL)
+                mo_image_free(image);
+            mo_buffer_free(&text);
+            continue;
+        }
+        CHECK(mo_buffer_append_byte(&text, 0));
+        const char *input = (const char *)text.bytes, *at = strstr(input + start, cases[i].at);
+        MO_ASSERT(at != NULL);
+        refusal(input, text.length - 1, (uint32_t)(at - input) + cases[i].delta, cases[i].reason);
+        mo_buffer_free(&text);
+    }
+}
+
 static void boundaries(void) {
     struct mo_buffer text, literal;
     mo_buffer_init(&text, MO_LIMIT_BYTECODE_TEXT_SIZE);
@@ -759,6 +834,7 @@ int main(int argc, char **argv) {
     filenames();
     refusals();
     instruction_refusals();
+    reference_refusals();
     boundaries();
     ordered_names();
     return mo_test_report("bytecode text");

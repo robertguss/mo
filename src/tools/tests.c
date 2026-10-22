@@ -293,6 +293,8 @@ void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
         case MO_RETURNED:
             totals->passed++;
             mo_value_drop(mo_process_heap(process), file->functions[function].result_type, value);
+            /* Verified bytecode releases every reference it acquires (bytecode 4.2). */
+            MO_ASSERT(mo_heap_objects(mo_process_heap(process)) == 0);
             break;
         case MO_FAILED:
             totals->failed++;

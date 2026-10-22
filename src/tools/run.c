@@ -113,6 +113,8 @@ bool mo_check_anchors(struct mo_image *image, const struct mo_cli *cli,
                                      "(reference 12.2)",
                                      answer, diags);
             mo_value_drop(mo_process_heap(process), file->functions[i].result_type, result);
+            /* Verified bytecode releases every reference it acquires (bytecode 4.2). */
+            MO_ASSERT(mo_heap_objects(mo_process_heap(process)) == 0);
         } else
             added = anchor_stopped(file, sources, i, &defect, diags);
         /* Reporting copies everything before the stopped owner is released. */
