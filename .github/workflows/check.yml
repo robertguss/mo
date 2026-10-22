@@ -1,7 +1,8 @@
-# Runs ci/check.sh, every check the project has, on each pull request and on
-# main. The repository is public, so GitHub's standard hosted runners cost no
-# Actions minutes here. The checks run as parallel jobs, one per group of
-# ci/check.sh; together the groups are every check.
+# Runs the fast groups of ci/check.sh on each pull request and push to main: the
+# gate a pull request needs to merge. The slow groups run each night against main
+# (.github/workflows/nightly.yml); ci/orb/README.md has the two tiers. The
+# repository is public, so GitHub's standard hosted runners cost no Actions
+# minutes here. The groups run as parallel jobs, one per group of ci/check.sh.
 name: check
 
 on:
@@ -13,16 +14,17 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request replaces its running check.
+# A new push to a pull request replaces its running check. Pushes to main queue instead: each
+# one checks only its own range, so a cancelled run would leave that range unchecked.
 concurrency:
   group: check-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Which groups a pull request needs (ci/ci_groups.sh): none when it changes only
-  # documents no check reads, and cbmc only when it touches what the CBMC proofs
-  # read. `check` below still reports, so the required status is met. Pushes to
-  # main and manual runs always run every group.
+  # Which groups a change needs (ci/ci_groups.sh): none when it changes only
+  # documents no check reads, the fast groups otherwise. `check` below still
+  # reports, so the required status is met. A manual run has no range to look at
+  # and runs the fast groups.
   changes:
     runs-on: ubuntu-24.04
     outputs:
@@ -35,13 +37,14 @@ jobs:
         id: filter
         env:
           EVENT: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE: ${{ github.event.before }}
         run: |
-          if [ "$EVENT" = pull_request ]; then
-            groups=$(sh ci/ci_groups.sh "$BASE_SHA")
-          else
-            groups='["gcc", "clang", "sanitize", "fuzz", "drivers", "lean", "static", "cbmc"]'
-          fi
+          case "$EVENT" in
+          pull_request) groups=$(sh ci/ci_groups.sh "$PR_BASE") ;;
+          push) groups=$(sh ci/ci_groups.sh "$PUSH_BASE") ;;
+          *) groups=$(sh ci/ci_groups.sh --fast) ;;
+          esac
           echo "groups=$groups" >> "$GITHUB_OUTPUT"
           echo "Groups: $groups"
 
@@ -58,27 +61,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # .agents/setup installs elan into /opt/elan; make it the runner's own so
-      # the cache can restore into it.
-      - name: Prepare /opt/elan
-        run: sudo mkdir -p /opt/elan && sudo chown "$(id -u):$(id -g)" /opt/elan
-
-      - name: Cache the Lean toolchain
-        uses: actions/cache@v4
-        with:
-          path: /opt/elan
-          key: elan-${{ runner.os }}-${{ hashFiles('formal/lean-toolchain') }}
-
-      - name: Cache the Lean build
-        if: matrix.group == 'lean'
-        uses: actions/cache@v4
-        with:
-          path: formal/.lake
-          key: lake-${{ runner.os }}-${{ hashFiles('formal/lean-toolchain') }}-${{ hashFiles('formal/**/*.lean', 'formal/lakefile.toml') }}
-          restore-keys: lake-${{ runner.os }}-${{ hashFiles('formal/lean-toolchain') }}-
-
+      # Only what this group needs: the full install (CBMC, Lean) can take minutes.
       - name: Install the toolchain
-        run: bash .agents/setup
+        run: bash .agents/setup ${{ matrix.group }}
 
       # make format-check expects clang-format 14 (ci/orb/README.md); the
       # runner's own clang-format is newer and can format differently.

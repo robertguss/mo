@@ -38,7 +38,7 @@ make tidy                  # clang-tidy cert-err33-c (unused stdlib results)
 make fuzz-smoke            # every fuzz target briefly (needs clang + libFuzzer; FUZZ_SECONDS=5)
 make formal                # build Mo Core in Lean and check every proof (needs elan)
 make cbmc                  # prove the bytecode reader, arena, verifier steps, primitives (needs CBMC)
-bash ci/check.sh [group…]  # everything CI runs; groups: gcc clang sanitize fuzz drivers lean static cbmc
+bash ci/check.sh [group…]  # every check; groups: gcc clang sanitize fuzz drivers lean static cbmc
 ```
 
 - Each compiler builds into its own `build/<compiler>/` tree, so switching `CC` doesn't rebuild.
@@ -55,18 +55,19 @@ bash ci/check.sh [group…]  # everything CI runs; groups: gcc clang sanitize fu
 
 ## CI and merging
 
-GitHub Actions (`.github/workflows/check.yml`) runs `ci/check.sh` as eight parallel jobs and reports
-one required `check` status on `main`; a red PR cannot merge. `ci/orb/README.md` holds the merge
-evidence rules (tested commit, commands, toolchain, exit status). PRs are squash-merged.
-A PR that changes only documents no check reads skips the eight jobs, and `check` still reports
+A PR merges on a green hosted `check` status, which runs the fast groups (`gcc`, `clang`, `static`,
+`drivers`) on every PR and push to main (`.github/workflows/check.yml`); a red PR cannot merge. The
+slow groups (`cbmc`, `lean`, long `fuzz`, `sanitize`) run nightly against main and file a GitHub
+issue labelled `nightly` when one fails; treat an open one as a task. `ci/orb/README.md` holds the
+two tiers, the merge evidence rules and how to restore the strict gate. PRs are squash-merged.
+A PR that changes only documents no check reads runs no group, and `check` still reports
 (`ci/docs_only.sh` holds the list). `docs/agent-guide.md`, `docs/reference/README.md` and
-`docs/design/library.md` are not on it: the build embeds or checks them. A PR that doesn't touch
-what the CBMC proofs read skips the `cbmc` job (`ci/ci_groups.sh`); pushes to main run every job. Robert lets agents merge
+`docs/design/library.md` are not on it: the build embeds or checks them. Robert lets agents merge
 docs-only PRs without review.
 
 qgate (`qgate.toml`, `qgate.baseline`, v0.5.0) runs as git hooks once a clone has run `qgate install`:
 commit runs clang-format on the staged C files plus qgate's function length, file length and
-duplication checks; push also runs `CI=1 bash ci/check.sh gcc clang sanitize static drivers`, unless `ci/docs_only.sh` calls the change docs-only. The
+duplication checks; push also runs `CI=1 bash ci/check.sh gcc`, unless `ci/docs_only.sh` calls the change docs-only. The
 baseline only shrinks, with 5 lines of headroom. A failure prints its fix. Loosening the gate (a raised limit, a grown
 baseline, a changed tool) is a `loosening` warning that never fails the run; prefer fixing the code,
 and say in the PR what you loosened and why. Never bypass the hooks (`--no-verify`, `core.hooksPath`).

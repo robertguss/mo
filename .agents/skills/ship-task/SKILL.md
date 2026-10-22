@@ -27,7 +27,7 @@ Done when the plan has no open questions.
 
 Write the code and its tests following `test-change`, in commits that each leave the tree building.
 
-Done when every behaviour in the plan has a test seen red, then green, and `bash ci/check.sh` passes, or each skipped check is named with the tool it lacks.
+Done when every behaviour in the plan has a test seen red, then green, and the `ci/check.sh` groups the change touches pass, or each skipped check is named with the tool it lacks. A PR merges on the hosted `check` status, which runs the fast groups; the slow ones run nightly (`ci/orb/README.md`).
 
 ## 5. Review
 

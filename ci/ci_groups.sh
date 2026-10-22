@@ -1,21 +1,27 @@
 #!/bin/sh
-# Decides which ci/check.sh groups a pull request's change needs, for the hosted workflow.
+# Decides which ci/check.sh groups CI runs. The two tiers and why are in ci/orb/README.md.
 #
-#   ci/ci_groups.sh <base>   changed files are `git diff --name-only <base>...HEAD`
-#   ci/ci_groups.sh -        changed files are read from standard input, one per line
+#   ci/ci_groups.sh <base>      changed files are `git diff --name-only <base>...HEAD`
+#   ci/ci_groups.sh -           changed files are read from standard input, one per line
+#   ci/ci_groups.sh --fast      the fast groups, for a run with no range to look at
+#   ci/ci_groups.sh --nightly   the slow groups the nightly workflow runs against main
 #
-# Prints the groups as a JSON array. A docs-only change (ci/docs_only.sh) needs none. Any other
-# change needs every group except cbmc, which takes about fifteen minutes and reads only the
-# bytecode reader, the arena, the verifier and the primitives: it runs when a changed file is one
-# a CBMC harness in cbmc/ compiles (found with the compiler's -MM, so a new include or harness is
-# covered without editing this file), is under cbmc/, or is part of how CI runs. Pushes to main and manual runs
-# don't use this script; they run every group.
+# Prints the groups as a JSON array. A docs-only change (ci/docs_only.sh) needs none; any other
+# change needs the fast groups, the ones the required `check` status waits for.
 set -eu
 
+fast='["gcc", "clang", "static", "drivers"]'
+nightly='["cbmc", "lean", "fuzz", "sanitize"]'
+
 if [ "$#" -ne 1 ]; then
-    echo "usage: ci/ci_groups.sh <base> | -" >&2
+    echo "usage: ci/ci_groups.sh <base> | - | --fast | --nightly" >&2
     exit 2
 fi
+
+case "$1" in
+--fast) echo "$fast" && exit 0 ;;
+--nightly) echo "$nightly" && exit 0 ;;
+esac
 
 cd "$(dirname "$0")/.."
 
@@ -27,29 +33,6 @@ fi
 
 if [ "$(printf '%s\n' "$files" | sh ci/docs_only.sh -)" = true ]; then
     echo '[]'
-    exit 0
+else
+    echo "$fast"
 fi
-
-# Every file the harnesses in cbmc/ compile, one per line. Without a compiler, cbmc always runs.
-reads=
-for cc in gcc clang cc; do
-    if command -v "$cc" >/dev/null 2>&1; then
-        reads=$("$cc" -std=c17 -Isrc -MM cbmc/*.c | sed -e 's/^[^:]*://' -e 's/\\$//' | tr ' ' '\n' | sed '/^$/d')
-        break
-    fi
-done
-
-cbmc=false
-if [ -z "$reads" ]; then cbmc=true; fi
-while IFS= read -r file; do
-    case "$file" in
-    cbmc/* | ci/check.sh | ci/ci_groups.sh | Makefile | .agents/setup | .github/workflows/check.yml) cbmc=true ;;
-    esac
-    if [ -n "$reads" ] && printf '%s\n' "$reads" | grep -qxF -- "$file"; then cbmc=true; fi
-done <<EOF2
-$files
-EOF2
-
-groups='"gcc", "clang", "sanitize", "fuzz", "drivers", "lean", "static"'
-if [ "$cbmc" = true ]; then groups="$groups, \"cbmc\""; fi
-echo "[$groups]"
