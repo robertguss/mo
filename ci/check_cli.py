@@ -2570,6 +2570,12 @@ def guide_claims(binary):
         run(binary, ["check", str(library_file)], 0)
         result = run(binary, ["test", str(library_file)], 0)
         assert result.stdout.endswith(b", 0 failed, 0 stopped\n"), (library_file, result.stdout)
+    with tempfile.TemporaryDirectory() as folder:
+        source = pathlib.Path(folder) / "main.mo"
+        source.write_text("module Main\nfn main(console: Console)\n  console.print(\"hi\")\nend\n")
+        core = run(binary, ["check", "--emit=core", str(source)], 0).stdout
+        for kind in (b".example.", b".test.", b".promise."):
+            assert kind not in core, ("a program lowers a library module's " + kind.decode(), core[:200])
     for name in ("map", "filter", "filter_map", "flat_map", "reduce", "find", "any?", "all?", "count",
                  "sort_by", "sort_by_desc", "sort", "min", "max", "group_by", "Map.update",
                  "Option.or_fail", "Option.map", "Result.map", "Result.map_error",
