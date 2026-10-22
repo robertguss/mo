@@ -14,7 +14,7 @@ C has no memory safety, and Mo's capability security is only as strong as the
 VM's integrity: a memory bug in the VM could let a program reach something it
 wasn't handed. These five conditions make up for that. Checks enforce them
 wherever there is code to check, not good intentions; `ci/check.sh` runs every
-check.
+check, the slow ones nightly (`ci/orb/README.md`).
 
 1. **Sanitizers in every test run.** Every test also runs under
    AddressSanitizer and UndefinedBehaviorSanitizer, so memory bugs fail loudly
@@ -22,7 +22,8 @@ check.
    code arrives; there is none to check yet.
 2. **Fuzzing in CI.** The parser, the bytecode loader, the VM and everything
    that reads outside input get fuzz targets in `fuzz/`, with seed inputs in
-   `fuzz/corpus/<target>/`. `ci/check.sh` runs every target, so every CI run fuzzes them all.
+   `fuzz/corpus/<target>/`. `ci/check.sh` runs every target, and the nightly run fuzzes each one
+   for five minutes.
 3. **Tiger Style.** Assertions everywhere (`MO_ASSERT` is never compiled out),
    explicit limits, arenas instead of scattered `malloc` and `free`, every
    return value checked, and warnings treated as errors, including
@@ -53,7 +54,7 @@ make library-map    # docs/design/library.md and the tables of primitives agree
 make tidy           # standard-library results are used (needs clang-tidy)
 make grammar        # Mo code parses with the executable grammar (needs bison)
 make formal         # Mo Core in Lean builds and every proof checks (needs elan)
-bash ci/check.sh    # everything CI runs: run it before every push
+bash ci/check.sh    # every check, including the slow ones CI runs nightly
 ```
 
 Choose a compiler with `CC=gcc` or `CC=clang`. Each compiler builds into its
@@ -80,13 +81,11 @@ better error messages, and is tested against this grammar. See
 
 ## CI
 
-Run the full `CI=1 bash ci/check.sh` in the optional dedicated Amp CI orb or an
-equivalent verified Linux environment, such as a Docker container on the Mac.
-Robert removed the mandatory CI-orb prerequisite; all test, sanitizer, fuzz and
-formal gates remain required. Record the tested revision, commands, toolchain,
-exit status and retained log in the PR. Review and Robert’s merge authorization
-remain required, as do applicable GitHub checks and branch protection. For
-runner instructions and documentation-only evidence reuse, see
+A pull request merges on a green hosted `check` status, which runs the fast
+groups; the sanitizer, fuzz, Lean and CBMC gates run nightly against `main` and
+file an issue when one fails. Review and Robert’s merge authorization remain
+required, as do applicable GitHub checks and branch protection. The two tiers,
+the evidence a PR records and how to restore the strict gate are in
 `ci/orb/README.md`.
 
 ## Rust-era plans, replaced

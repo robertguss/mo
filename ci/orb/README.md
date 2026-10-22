@@ -3,15 +3,40 @@
 CI for robertguss/mo runs `ci/check.sh`. Robert removed the requirement to use
 the dedicated Amp CI orb: an equivalent verified Linux environment, including
 a Docker container on the Mac, is also supported. The orb remains an optional
-runner (decisions D208 and D214). GitHub Actions also runs `ci/check.sh` on
-every pull request, its groups as parallel jobs (`.github/workflows/check.yml`).
-The full verification requirements are unchanged.
+runner (decisions D208 and D214).
 
-A pull request's hosted run includes only the groups `ci/ci_groups.sh` picks:
-none for a docs-only change, and `cbmc` only when the change touches a file
-the CBMC harness compiles or how CI runs. A skipped `cbmc` is covered by the
-last `cbmc` run on `main`, since the pull request changed none of its inputs;
-every push to `main` runs every group, so a missed input shows up there.
+## The two tiers
+
+While Mo is experimental and has no outside users, CI runs in two tiers, so a
+pull request gets a merge decision in minutes and a broken `main` is found the
+next morning rather than prevented at every merge.
+
+- **Fast, on every pull request and push to `main`** (`.github/workflows/check.yml`):
+  `gcc`, `clang`, `static` and `drivers`, which finish in a few minutes. They decide the required `check` status. A change that touches only
+  documents no check reads runs none of them, and `check` still reports.
+- **Slow, once a night against `main`** (`.github/workflows/nightly.yml`): `cbmc`,
+  `lean`, `fuzz` with five minutes per target, and `sanitize` together with the
+  driver checks over the sanitize builds. A scheduled night with no new commit
+  on `main` since the last finished run is skipped. `.github/workflows/differential.yml`
+  also runs every night, comparing generated Core programs on the C VM and in Lean.
+
+`ci/ci_groups.sh` holds both lists; `ci/test_ci_groups.sh` checks that together
+they are every group `ci/check.sh` has. Locally, the qgate pre-push hook runs the
+`gcc` group (`qgate.toml`).
+
+When a nightly group fails, `ci/nightly.sh` files an issue labelled `nightly`,
+titled "Nightly: <group> failing on main", with the tested commit, the commits
+since the previous nightly run and a link to the run. A night it stays red
+adds a comment; the night it passes again closes the issue. An open `nightly`
+issue is a bug on `main`: fix it in a pull request like any other task.
+
+## Restoring the strict gate
+
+Once Mo has outside users or real applications, go back to running every group
+before a merge: make `ci/ci_groups.sh` print the nightly groups with the fast
+ones (and update `ci/test_ci_groups.sh`), and make the `check` tool in
+`qgate.toml` run `CI=1 bash ci/check.sh gcc clang sanitize static drivers` again.
+The nightly workflow can stay as the place long fuzzing runs.
 
 ## Asking for an optional CI-orb run
 
@@ -29,19 +54,14 @@ identifies the commit it tested; apply the evidence rules below to later changes
 
 ## Merge verification
 
-A pull request needs a passing full `CI=1 bash ci/check.sh` run with no missing
-checks, in the CI orb or an equivalent verified Linux environment, plus reviewer
-agent approval and Robert’s merge authorization. Record the tested commit,
-commands, toolchain, exit status and retained log in the PR. Sanitizers, short
-fuzzing, Lean comparisons and every other gate in `ci/check.sh` remain required.
-
-Changed source, test, oracle or build inputs require rechecking; documentation
-consumed by checks counts as an input too. A documentation-only follow-up may retain a prior passing result when its diff is reviewed,
-`git diff --check` passes and recorded hashes prove the executable/test/build
-inputs unchanged. Name both revisions; never claim a fresh run on an untested
-commit. A specific CI-orb result is not a merge prerequisite. Required GitHub
-checks and branch protection must still pass; this policy does not authorize
-bypassing them.
+A pull request merges on a green hosted `check` status (the fast tier above),
+plus reviewer agent approval and Robert's merge authorization. Record in the PR
+the commit `check` ran on and any groups you ran locally for the change, with
+their results; a check you did not run is named as not run, never claimed.
+Required GitHub checks and branch protection must pass; this policy does not
+authorize bypassing them. A full `CI=1 bash ci/check.sh` run, here or in the CI
+orb, is still the way to check a change to the slow groups' own inputs (the
+CBMC harnesses, `formal/`, a fuzz target) before merging it.
 
 ## What `run.sh` does
 
@@ -66,16 +86,15 @@ Runs share one clone, so a second run waits for the first.
 
 ## Nightly fuzzing
 
-A pull request's check fuzzes each target for five seconds (`FUZZ_SECONDS` in
-the `Makefile`), which keeps a run to a few minutes. Once a night the CI orb runs
-`bash ci/orb/nightly.sh`: the same `ci/check.sh` on `main`'s latest commit, with
-each target fuzzed for five minutes (`MO_CI_FUZZ_SECONDS`, 300 by default). It
-keeps the log, and any crashing inputs, under `~/mo-ci/logs`, and sends the
-coordinating thread one line with the result, or the end of the log on a
-failure. A failure there is a bug on `main`; fix it in a pull request, and add
-the crashing input to the target's corpus. The nightly run has its own clone
-and lock under `~/mo-ci/nightly`, so pull requests' runs don't wait the hour or
-more it takes.
+A pull request's check doesn't fuzz. The nightly workflow fuzzes each target for
+five minutes (`FUZZ_SECONDS=300`), keeps any crashing inputs as an artifact of
+the run, and files a `nightly` issue on a failure; fix it in a pull request, and
+add the crashing input to the target's corpus. The CI orb can run the same full
+check by hand with `bash ci/orb/nightly.sh`: `ci/check.sh` on `main`'s latest
+commit, each target fuzzed for five minutes (`MO_CI_FUZZ_SECONDS`, 300 by
+default), keeping the log and any crashing inputs under `~/mo-ci/logs`. It has
+its own clone and lock under `~/mo-ci/nightly`, so pull requests' runs don't
+wait the hour or more it takes.
 
 ## The CI orb itself
 

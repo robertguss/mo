@@ -2312,8 +2312,9 @@ program that differs. To replay one: `MO_CORE_DIFF=1 MO_CORE_DIFF_SEED=<seed>`.
 - the formatter: formatting twice gives the same text, and keeps the tree.
 
 Every check runs through `ci/check.sh`, in the optional CI orb (D214) or an
-equivalent verified Linux environment. The full gates remain required; merge
-verification and evidence rules are in `ci/orb/README.md`. The Lean build
+equivalent verified Linux environment. A pull request waits for the fast groups;
+the slow ones run nightly against `main`. The two tiers, merge verification and
+evidence rules are in `ci/orb/README.md`. The Lean build
 (`make formal`) and CBMC need elan and CBMC in `.agents/setup`.
 
 ## 12. Phase 2's streams and their interfaces
