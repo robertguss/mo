@@ -47,8 +47,10 @@ test "the summary counts the tracks and names the longest"
     Track(artist: "C", title: "Three", seconds: 300)
   ]
   assert Playlist.summary(tracks) == ["3 tracks, 11:40", "longest: Two by B (5:00)"]
-  assert Playlist.summary([Track(artist: "A", title: "One", seconds: 61)]) ==
-    ["1 track, 1:01", "longest: One by A (1:01)"]
+  assert Playlist.summary([Track(artist: "A", title: "One", seconds: 61)]) == [
+    "1 track, 1:01",
+    "longest: One by A (1:01)"
+  ]
   assert Playlist.summary([]) == ["0 tracks, 0:00"]
 end
 

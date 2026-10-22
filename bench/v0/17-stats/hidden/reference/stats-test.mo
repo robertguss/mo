@@ -22,3 +22,16 @@ test "an empty list has no statistics"
   assert Stats.maximum([]) == None
   assert Stats.spread([]) == None
 end
+
+test "the median is the middle value, or the mean of the two middle values"
+  assert Stats.median([3, 1, 2]) == Some(2)
+  assert Stats.median([4, 1, 3, 2]) == Some(2.5)
+  assert Stats.median([]) == None
+end
+
+test "every value tied for most often is a mode"
+  assert Stats.modes([1, 2, 2, 3]) == [2]
+  assert Stats.modes([3, 1, 3, 1, 2]) == [1, 3]
+  assert Stats.modes([1.50, 1.5]) == [1.5]
+  assert Stats.modes([]) == []
+end

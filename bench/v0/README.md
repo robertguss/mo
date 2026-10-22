@@ -13,7 +13,7 @@ start it; its `freeze.md` (the `mo` commit, the prompt, the models, the seeds) i
 | [02-col-sum](02-col-sum/task.md) | write a program | | 13 runs |
 | [03-brackets](03-brackets/task.md) | write a program | | 15 runs |
 | [04-line-counts](04-line-counts/task.md) | write a program | | 18 runs |
-| [05-ranges](05-ranges/task.md) | write a program | yes | 21 runs |
+| [05-ranges](05-ranges/task.md) | write a program | yes | 20 runs |
 | [06-temperature](06-temperature/task.md) | fix compile errors | | 6 tests, 3 runs |
 | [07-grades](07-grades/task.md) | fix compile errors | | 6 tests, 3 runs |
 | [08-playlist](08-playlist/task.md) | fix compile errors | | 7 tests, 3 runs |
@@ -27,7 +27,7 @@ start it; its `freeze.md` (the `mo` commit, the prompt, the models, the seeds) i
 | [16-todo](16-todo/task.md) | extend a program | | 16 runs |
 | [17-stats](17-stats/task.md) | extend a program | | 11 tests |
 | [18-store](18-store/task.md) | extend a program | | 12 runs |
-| [19-cart](19-cart/task.md) | extend a program | | 14 tests |
+| [19-cart](19-cart/task.md) | extend a program | | 15 tests |
 | [20-timesheet](20-timesheet/task.md) | extend a program | yes | 18 runs |
 
 A *test* is a `test` in a hidden Mo module, run with `mo test`; a *run* is one `mo run` of the
@@ -50,7 +50,8 @@ the file of the program's main module, and, for a module other code calls, what 
   that test module, copied back over the session's, and runs of the program, so a fix that
   changes what the program does fails.
 - **Make a failing test pass** (11 to 15): `start/` holds a module with one bug and its test
-  module, of which exactly one test fails. The hidden tests are that test module, copied back
+  module, in which exactly one test fails, the one the text names (`failing_test` in
+  `task.json`). The hidden tests are that test module, copied back
   over the session's, so editing or deleting a test doesn't help, and a second module,
   `hidden-tests.mo`, that tests the same behaviour on inputs the visible tests don't name, so
   special-casing the visible test's inputs doesn't help either.
@@ -62,7 +63,7 @@ the file of the program's main module, and, for a module other code calls, what 
 | Path | What it is |
 | --- | --- |
 | `task.md` | the text a session reads |
-| `task.json` | the kind, whether it is held out, and the main module's file |
+| `task.json` | the kind, whether it is held out, the main module's file, and the failing test's name |
 | `start/` | the files the session's folder starts with (every kind but write a program) |
 | `hidden/reference/` | the reference solution: the session's folder as the task's author would leave it |
 | `hidden/broken/` | a deliberately broken solution, which must fail a hidden test |
@@ -84,15 +85,19 @@ python3 bench/v0/grade.py --check --mo build/gcc/debug/mo      # what CI runs
 The verdict is protocol section 3's: the first step that fails, of 1 parses (the executable
 grammar, `build/<compiler>/debug/mo-grammar` from `make grammar`, accepts every `.mo` file),
 2 checks (`mo check` on the main module reports no diagnostic), and 3 does the task (every hidden
-test and run passes). A folder whose only diagnostics are E1103 or E1150 is a toolchain gap, and
-its hidden tests still run. The model graders and Robert's check (protocol sections 4 and 5)
+test and run passes). A folder whose only diagnostics are E1103 or E1150 may be a toolchain gap,
+and its hidden tests still run. It is one only when each of those diagnostics is on a form the
+reference requires, which the round checks by reading it: this build also reports E1103 for some
+mistakes, such as calling a function that doesn't exist through its module. The model graders and Robert's check (protocol sections 4 and 5)
 come after this, on what the sessions wrote.
 
 ## Frozen means frozen
 
 CI's `drivers` group runs `grade.py --check` with every built `mo`: every `SHA256SUMS` must match
-its files, every reference must pass, every broken solution must fail, and every start folder
-must fail too, a fix task's at `mo check` and the others' at a hidden test. So no task needs a
+its files, every reference must pass, every broken solution must check and fail a hidden test,
+and every start folder must fail too, a fix task's at `mo check` and the others' at a hidden
+test, with a failing-test task's start failing its named test and no other. The `static` group
+checks that the executable grammar accepts every reference and broken solution. So no task needs a
 form this build hasn't finished: the references avoid `List.sum`, `to_set`, `to_big` and the
 checked and saturating arithmetic other than `checked_add`, which `mo check` reports as E1150 at
 this commit. Once a session has seen a task, neither its text nor its files change: a change is

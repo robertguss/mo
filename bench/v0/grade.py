@@ -17,7 +17,9 @@ TASK is a task folder's name, such as 01-rle. MO defaults to `mo` on the PATH. E
 holds
   task.md             the text the session reads
   task.json           {"kind": "write" | "fix" | "failing-test" | "extend", "held_out": BOOL,
-                       "main": the main module's file, relative to the session's folder}
+                       "main": the main module's file, relative to the session's folder, and
+                       for a failing-test task "failing_test": the full name of the one test
+                       that fails in start/}
   start/              the files the session's folder starts with (every kind but write)
   hidden/reference/   the reference solution: the whole folder as its author left it
   hidden/broken/      a deliberately broken solution, which must fail a hidden test
@@ -35,8 +37,10 @@ holds
 
 The verdict is the first step that fails: 1 parses (the executable grammar accepts every .mo
 file; skipped without --grammar), 2 checks (`mo check MAIN` reports no diagnostic), 3 does the
-task (every spec module and run passes). A folder whose only diagnostics are E1103 or E1150 is a
-toolchain gap, and its hidden tests still run.
+task (every spec module and run passes). A folder whose only diagnostics are E1103 or E1150 may be
+a toolchain gap, and its hidden tests still run; it is one only when each such diagnostic is on a
+form the reference requires, which someone confirms by reading it, since this build also reports
+E1103 for some mistakes.
 """
 
 import concurrent.futures
@@ -71,11 +75,14 @@ def mo_files(folder):
 
 
 def overlay(source, target):
-    """Copies every file under source into target, replacing what is there."""
+    """Copies every file under source into target, replacing what is there. A link in target is
+    replaced, never written through."""
     for path in sorted(source.rglob("*")):
         if path.is_file():
             destination = target / path.relative_to(source)
             destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination.is_symlink() or destination.exists():
+                destination.unlink()
             shutil.copyfile(path, destination)
 
 
@@ -125,6 +132,21 @@ def module_name(path):
     return match.group(1)
 
 
+def test_results(work, mo, relative, module):
+    """Runs one test module; returns its exit status and the names of what didn't pass."""
+    result = run([mo, "test", "--json", relative, "--in", module], work)
+    if result is None:
+        return None, [f"did not finish within {SECONDS} seconds"]
+    failed = []
+    for line in result.stdout.decode(errors="replace").splitlines():
+        record = json.loads(line)
+        if record.get("record") == "result" and record.get("outcome") != "passed":
+            failed.append(f"{record['name']} {record['outcome']}")
+        if record.get("record") == "diagnostic":
+            failed.append(f"{record['code']} {record['headline']}")
+    return result.returncode, failed
+
+
 def spec_problems(task, folder, mo):
     spec = here / task / "hidden/spec"
     if not spec.exists():
@@ -132,24 +154,14 @@ def spec_problems(task, folder, mo):
     problems = []
     with tempfile.TemporaryDirectory() as temporary:
         work = pathlib.Path(temporary) / "work"
-        shutil.copytree(folder, work, symlinks=True)
+        shutil.copytree(folder, work)  # links are copied as what they lead to
         overlay(spec, work)
         for path in mo_files(spec):
             relative = path.relative_to(spec).as_posix()
-            result = run([mo, "test", "--json", relative, "--in", module_name(path)], work)
-            if result is None:
-                problems.append(f"{relative}: did not finish within {SECONDS} seconds")
-                continue
-            failed = []
-            for line in result.stdout.decode(errors="replace").splitlines():
-                record = json.loads(line)
-                if record.get("record") == "result" and record.get("outcome") != "passed":
-                    failed.append(f"{record['name']} {record['outcome']}")
-                if record.get("record") == "diagnostic":
-                    failed.append(f"{record['code']} {record['headline']}")
-            if result.returncode != 0 or failed:
+            status, failed = test_results(work, mo, relative, module_name(path))
+            if status != 0 or failed:
                 problems.append(f"{relative}: " + ("; ".join(failed) or
-                                                   f"mo test exited {result.returncode}"))
+                                                   f"mo test exited {status}"))
     return problems
 
 
@@ -220,7 +232,8 @@ def describe(verdict, step):
     if verdict == "pass":
         return "pass"
     if verdict == "gap":
-        return "toolchain gap" + (f", hidden tests fail" if step else "")
+        return ("toolchain gap if the reference requires each E1103 or E1150 form"
+                + (", and hidden tests fail" if step else ""))
     return f"fail at step {step} ({['parses', 'checks', 'does the task'][step - 1]})"
 
 
@@ -245,8 +258,8 @@ def check_task(task, mo):
         problems.append(f"the reference: {describe(verdict, step)}")
         problems += ["  " + line for line in lines]
     verdict, step, _ = grade(task, folder / "hidden/broken", mo)
-    if verdict != "fail":
-        problems.append("the broken solution passes; it must fail a hidden test")
+    if verdict != "fail" or step != 3:
+        problems.append("the broken solution must check and fail a hidden test")
     if data["kind"] == "write":
         if (folder / "start").exists():
             problems.append("a write task has no start folder")
@@ -259,6 +272,14 @@ def check_task(task, mo):
         elif data["kind"] != "fix" and step != 3:
             problems.append(f"the start folder of a {data['kind']} task must check and "
                             f"fail a hidden test")
+    if data["kind"] == "failing-test":
+        name = data.get("failing_test", "")
+        module = name.split(".test.")[0]
+        files = [p for p in mo_files(folder / "start") if module_name(p) == module]
+        _, failed = (test_results(folder / "start", mo, files[0].name, module) if files
+                     else (None, ["no test module"]))
+        if failed != [f"{name} failed"]:
+            problems.append(f"in start/, exactly {name} must fail; got {failed}")
     return problems
 
 
@@ -270,7 +291,9 @@ def main():
             at = args.index(flag)
             if at + 1 >= len(args):
                 return usage()
-            value = str(pathlib.Path(args[at + 1]).resolve())
+            value = args[at + 1]
+            if "/" in value:
+                value = str(pathlib.Path(value).resolve())
             mo, grammar = (value, grammar) if flag == "--mo" else (mo, value)
             del args[at:at + 2]
     if args and args[0] == "--check":

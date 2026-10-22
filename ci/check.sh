@@ -241,6 +241,13 @@ if want static; then
 step "The executable grammar: its tests, the examples and the reference's code parse"
 if have bison && (have clang || have gcc); then
 	if have clang; then make --no-print-directory grammar CC=clang; else make --no-print-directory grammar CC=gcc; fi
+	# Benchmark v0's references and broken solutions must parse (step 1 of its grading).
+	for grammar in build/{clang,gcc}/debug/mo-grammar; do
+		if [[ -x "$grammar" ]]; then
+			"$grammar" bench/v0/*/hidden/reference/*.mo bench/v0/*/hidden/broken/*.mo
+			break
+		fi
+	done
 else
 	missing "bison or a C compiler is not installed"
 fi

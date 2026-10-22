@@ -4,7 +4,8 @@ use Grades{Student}
 
 test "a line names a student and lists scores"
   assert Grades.parse_line("Ada: 90, 85, 77") == Some(Student(name: "Ada", scores: [90, 85, 77]))
-  assert Grades.parse_line("  Grace Hopper :100") == Some(Student(name: "Grace Hopper", scores: [100]))
+  assert Grades.parse_line("  Grace Hopper :100") ==
+    Some(Student(name: "Grace Hopper", scores: [100]))
   assert Grades.parse_line("Bo:") == Some(Student(name: "Bo", scores: []))
 end
 

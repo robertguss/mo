@@ -51,6 +51,11 @@ test "BULK takes fifteen percent off each line of ten or more"
   assert Cart.discount(with_code(cart_of([tea, jam]), "BULK")) == 0
 end
 
+test "BULK rounds the whole discount once, not each line"
+  cart = cart_of([Line(name: "pin", price: 0.03, quantity: 10), Line(name: "tack", price: 0.03, quantity: 10)])
+  assert Cart.discount(with_code(cart, "BULK")) == 0.09
+end
+
 test "BULK counts a line's quantity once lines are merged"
   cart = cart_of([
     Line(name: "egg", price: 1, quantity: 6),
