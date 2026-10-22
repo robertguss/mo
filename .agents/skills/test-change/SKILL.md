@@ -32,7 +32,7 @@ When a behaviour fits two rows, take the one closest to the user: a CLI golden o
 
 3. **Repeat per behaviour.** One test at a time, each seen red, until every behaviour in the plan has one. Done when the plan's test list is fully ticked.
 
-4. **Run the gate.** `bash ci/check.sh`, and read the summary: a skipped check is not a passed one. Done when it ends with all checks passed, or every skip is named in the PR.
+4. **Run the gate.** `bash ci/check.sh gcc clang static drivers`, the fast groups a PR's hosted `check` runs, plus `sanitize`, `lean`, `fuzz` or `cbmc` when the change reaches what they check; the rest run nightly (`ci/orb/README.md`). Read the summary: a skipped check is not a passed one. Done when it ends with all checks passed, or every skip is named in the PR.
 
 ## What a test asserts
 

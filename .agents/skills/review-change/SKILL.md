@@ -18,7 +18,7 @@ Done when you hold the full file list and the task.
 
 ## 2. Run the gates
 
-Run `bash ci/check.sh` and record each group as green, red (with the first failing line), or skipped (with the missing tool). A red group is the top finding.
+Run `bash ci/check.sh` for the fast groups (`gcc clang static drivers`) and any slow group the change reaches, and record each as green, red (with the first failing line), or skipped (with the missing tool). A red group is the top finding. The PR merges on the hosted `check`; the slow groups run nightly (`ci/orb/README.md`).
 
 ## 3. Apply every rule to every changed file
 

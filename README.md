@@ -54,7 +54,7 @@ Python 3 (to embed the version-matched reference and guide):
 
 ```sh
 make              # build build/<compiler>/debug/mo
-bash ci/check.sh  # every check CI runs
+bash ci/check.sh  # every check; CI's two tiers are in ci/orb/README.md
 ```
 
 See [docs/design/implementation.md](docs/design/implementation.md) for the

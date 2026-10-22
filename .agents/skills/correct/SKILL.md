@@ -47,7 +47,7 @@ Done when every class has a level and a reason the higher levels don't work.
 
 Fix the most frequent classes, one commit each, following `test-change`. Prove each new check against a real past mistake: re-apply the bad diff from the PR that made it (in a scratch branch), run the check, and see it go red with the message that names the fix. Then restore and see it green. A check never seen red on a real mistake proves nothing.
 
-Done when each fixed class has a commit and a recorded red run on its past mistake, and `bash ci/check.sh` passes.
+Done when each fixed class has a commit and a recorded red run on its past mistake, and the `ci/check.sh` group the check joined passes.
 
 ## 5. Update the ledger
 

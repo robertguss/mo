@@ -20,4 +20,4 @@ After:
 
 ## Checks
 
-<!-- `bash ci/check.sh` on the final commit: result, and any skipped checks named. -->
+<!-- The hosted `check` result on the final commit, plus any groups run locally for this change (`bash ci/check.sh <group>`), with results; name what was not run (ci/orb/README.md). -->
