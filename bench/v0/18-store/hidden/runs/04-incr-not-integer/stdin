@@ -1,0 +1,7 @@
+SET n forty
+INCR n
+GET n
+SET f 1.5
+INCR f
+SET s 1 2
+INCR s

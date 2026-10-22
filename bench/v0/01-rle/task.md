@@ -1,0 +1,6 @@
+**rle** (write a program): Write the module `Rle`, in the file `rle.mo`, for run-length encoding, exposing these two functions:
+
+- `encode(text: Text) : Option(Text)` writes each run of one character repeated, from the start of the text, as the run's length in decimal, then the character, so `"aaabcc"` becomes `"3a1b2c"` and `"ééé"` becomes `"3é"`. A character is a `Char`, and any character but an ASCII digit can be in a run, spaces and line breaks included. A text with an ASCII digit in it can't be encoded, and gives `None`. The empty text gives `Some("")`.
+- `decode(text: Text) : Option(Text)` reverses it. Its input is a sequence of runs, each one or more ASCII digits followed by one character that isn't an ASCII digit, and its result joins each run's character repeated that many times, so `"3a1b2c"` gives `"aaabcc"`. Runs of the same character needn't be joined: `"2a1a"` gives `"aaa"`. Anything else gives `None`: digits with no character after them, a character with no digits before it, a count of 0 or one with a leading 0, such as `"03a"`, and a count too large for an `Int`. The empty text gives `Some("")`.
+
+Give both functions examples, and `encode` a promise that decoding what it encodes gives the text back.

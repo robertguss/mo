@@ -1,0 +1,5 @@
+SET n 1
+INCRBY n x
+INCRBY n 2.5
+INCRBY n
+GET n

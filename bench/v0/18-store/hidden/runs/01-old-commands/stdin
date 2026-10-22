@@ -1,0 +1,6 @@
+SET name Ada Lovelace
+GET name
+DEL name
+GET name
+DEL name
+PING

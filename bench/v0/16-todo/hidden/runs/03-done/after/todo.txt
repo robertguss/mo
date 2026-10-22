@@ -1,0 +1,4 @@
+[x] buy milk
+[x] call Bo
+[x] pay rent
+[ ] water plants

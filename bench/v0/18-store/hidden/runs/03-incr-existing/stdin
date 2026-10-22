@@ -1,0 +1,5 @@
+SET n 41
+INCR n
+SET m -1
+INCR m
+GET m
