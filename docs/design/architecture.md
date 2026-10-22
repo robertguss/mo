@@ -791,7 +791,14 @@ are registered in one table, `src/base/codes.h`, with the reference section
 each cites. A code is never reused for a different meaning. Diagnostics are
 sorted by position. A stage that reports an error passes nothing it can't
 vouch for to the next, so one mistake doesn't cascade. `mo fix` applies a
-diagnostic's fix when it has exactly one (reference appendix A).
+diagnostic's fix when it has exactly one (reference appendix A). It checks
+each file it is given as the program that file starts, takes the lone fixes
+whose edits all lie in that file, in position order, and leaves one that
+overlaps a fix already taken for the next round. It rewrites the file
+atomically, as `mo format` does, and checks again, for at most
+`MO_LIMIT_FIX_ROUNDS` rounds, since a fix can uncover an error the checker
+held back. Once every file is fixed it checks each again and reports what is
+left as `mo check` would. A file it can't read or replace is E1407.
 
 New implementation codes use blocks per stream: front end (check/lower)
 E1100–E1199, code generation E1200–E1299, bytecode/heap/VM E1300–E1399,
@@ -1774,7 +1781,7 @@ the source inventory, even if another requested name exists. Unknown names or an
 empty intersection are exit-2 command mistakes with one stderr line and no stdout.
 Whole-program source errors precede name resolution. Test JSON delays its version
 until selection is resolved, so even `--json` command mistakes write no records.
-`fix` still returns E1400 and rewrites nothing. Generator preflight is selection-wide:
+Generator preflight is selection-wide:
 an unsupported selected promise refuses E1400 before initialization or any
 observation, rather than reporting a partial run as passed. Successful anchor
 validation alone does not claim those observations passed.

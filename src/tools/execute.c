@@ -10,6 +10,7 @@
 #include "lower/lower.h"
 #include "prim/prim.h"
 #include "tools/embedded.h"
+#include "tools/fix.h"
 #include "tools/format.h"
 #include "tools/promises.h"
 #include "tools/run.h"
@@ -38,6 +39,7 @@ static void tool_error(struct mo_diags *diags, uint16_t code, const char *messag
 
 struct pipeline_work {
     const struct mo_cli *cli;
+    uint32_t file; /* the cli's file whose program this checks */
     struct mo_arena *arena;
     struct mo_sources *sources;
     struct mo_diags *diags;
@@ -54,10 +56,6 @@ static void execute_pipeline(void *argument) {
     struct mo_arena *arena = work->arena;
     struct mo_sources *sources = work->sources;
     struct mo_diags *diags = work->diags;
-    if (cli->command == MO_COMMAND_FIX) {
-        tool_error(diags, MO_CODE_TOOL_UNAVAILABLE, "this build cannot apply fixes yet", NULL);
-        return;
-    }
     struct stat st;
     /* No installed library yet is normal; an existing but unreadable folder
      * must still reach the loader's E1102 rather than silently disappear. */
@@ -65,7 +63,7 @@ static void execute_pipeline(void *argument) {
     if (stat(library, &st) != 0 && errno == ENOENT)
         library = NULL;
     struct mo_module_set *set =
-        mo_load_program(arena, sources, mo_cli_file(cli, 0), library, diags);
+        mo_load_program(arena, sources, mo_cli_file(cli, work->file), library, diags);
     if (set == NULL || mo_diags_any(diags))
         return;
     struct mo_program *program = mo_check(arena, set, diags);
@@ -129,8 +127,9 @@ static void execute_pipeline(void *argument) {
                                                        : MO_LIMIT_BYTECODE_TEXT_SIZE);
     if (core == NULL || mo_diags_any(diags) || !mo_core_check(core, diags))
         goto done;
-    /* Plain check validates lowering too, but never executes the user's main. */
-    if (cli->command == MO_COMMAND_CHECK && cli->emit == MO_EMIT_NONE && !anchors)
+    /* Plain check and fix validate lowering too, but never execute the user's main. */
+    bool checking = cli->command == MO_COMMAND_CHECK || cli->command == MO_COMMAND_FIX;
+    if (checking && cli->emit == MO_EMIT_NONE && !anchors)
         goto done;
     if (anchors || cli->command == MO_COMMAND_RUN || cli->command == MO_COMMAND_TEST ||
         cli->emit == MO_EMIT_BYTECODE) {
@@ -166,6 +165,150 @@ done:
     mo_arena_free(&lowered);
 }
 
+/* Applies the fixes the check offers alone to the checked file, which is source 0 once loaded, and
+ * says whether it rewrote the file. When it can't, problem says why. */
+static bool apply_fixes(const char *path, const struct stat *original,
+                        const struct mo_sources *sources, struct mo_diags *diags,
+                        char problem[192]) {
+    if (sources->count == 0)
+        return false;
+    struct mo_buffer fixed;
+    mo_buffer_init(&fixed, MO_LIMIT_FILE_SIZE);
+    uint32_t applied;
+    bool rewrote = false;
+    if (!mo_fix_source(sources, 0, diags, &fixed, &applied)) {
+        (void)snprintf(problem, 192, "the fixed file exceeds this build's file size limit");
+    } else if (applied != 0) {
+        int error = 0;
+        rewrote = mo_replace_file(path, &fixed, original, &error);
+        if (!rewrote) {
+            int written =
+                snprintf(problem, 192, "could not replace the fixed file (%s)", strerror(error));
+            MO_ASSERT(written > 0);
+        }
+    }
+    mo_buffer_free(&fixed);
+    return rewrote;
+}
+
+/* Reports E1407 alone: a file fix can't read or replace, which names the file in its headline as
+ * format's E1402 does. */
+static int refuse_fix(const char *path, const char *detail, FILE *output, FILE *errors) {
+    struct mo_sources sources;
+    struct mo_diags diags;
+    bool have_sources = mo_sources_init(&sources);
+    bool have_diags = mo_diags_init(&diags);
+    if (!have_sources || !have_diags)
+        diags.dropped = 1;
+    else {
+        char message[MO_LIMIT_PATH_SIZE + 256];
+        int written =
+            snprintf(message, sizeof message, "%s: %.*s%s", detail, (int)MO_LIMIT_PATH_SIZE, path,
+                     strlen(path) > MO_LIMIT_PATH_SIZE ? "..." : "");
+        MO_ASSERT(written >= 0 && (size_t)written < sizeof message);
+        tool_error(&diags, MO_CODE_TOOL_FIX_IO, message, NULL);
+    }
+    int status =
+        mo_write_diagnostics(output, errors, false, MO_COMMAND_FIX, &sources, &diags, NULL);
+    mo_sources_free(&sources);
+    mo_diags_free(&diags);
+    return status;
+}
+
+/* Checks the program of the cli's file-th file and writes its diagnostics. Given the file's
+ * lstat instead, it applies the fixes the check offers and writes nothing about the check: it
+ * returns CHECK_AGAIN when it rewrote the file, 0 when no fix applied, and 1 after reporting why it
+ * couldn't rewrite it. */
+enum { CHECK_AGAIN = -1 };
+static int check_program(const struct mo_cli *cli, uint32_t file, FILE *output, FILE *errors,
+                         bool version, const struct stat *fixing) {
+    struct mo_sources sources;
+    struct mo_diags diags;
+    bool have_sources = mo_sources_init(&sources);
+    bool have_diags = mo_diags_init(&diags);
+    if (!have_sources || !have_diags) {
+        /* The failed initializers still prepare their arenas for freeing. */
+        diags.dropped = 1;
+        if (cli->json && !version)
+            version = mo_write_version(output, cli->command);
+        int status = cli->json && !version
+                         ? 1
+                         : mo_write_diagnostics(output, errors, cli->json, cli->command, &sources,
+                                                &diags, NULL);
+        mo_sources_free(&sources);
+        mo_diags_free(&diags);
+        return status;
+    }
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_CLI_CHECK_SIZE);
+    struct pipeline_work work = {.cli = cli,
+                                 .file = file,
+                                 .arena = &arena,
+                                 .sources = &sources,
+                                 .diags = &diags,
+                                 .output = output,
+                                 .errors = errors,
+                                 .version = version};
+    int error = mo_with_stack(MO_SOURCE_STACK_SIZE, execute_pipeline, &work);
+    if (error != 0)
+        tool_error(&diags, MO_CODE_TOOL_SOURCE_STACK, "could not prepare the source pipeline stack",
+                   strerror(error));
+    int status;
+    char problem[192] = "";
+    if (fixing != NULL) {
+        const char *path = mo_cli_file(cli, file);
+        status = apply_fixes(path, fixing, &sources, &diags, problem) ? CHECK_AGAIN
+                 : problem[0] != '\0' ? refuse_fix(path, problem, output, errors)
+                                      : 0;
+    } else if (work.mistake != NULL) {
+        (void)fprintf(errors, "%s\n", work.mistake);
+        status = 2;
+    } else if (cli->json && !work.version && work.status != 0) {
+        (void)fputs("mo: could not write version record\n", errors);
+        status = 1;
+    } else if (cli->json && !work.version && !mo_write_version(output, cli->command))
+        status = 1;
+    else
+        status = mo_write_diagnostics(output, errors, cli->json, cli->command, &sources, &diags,
+                                      &work.totals);
+    mo_arena_free(&arena);
+    mo_sources_free(&sources);
+    mo_diags_free(&diags);
+    return status != 0 ? status : work.status;
+}
+
+static bool regular_file(const char *path, struct stat *st) {
+    return strlen(path) <= MO_LIMIT_PATH_SIZE && lstat(path, st) == 0 && S_ISREG(st->st_mode);
+}
+
+/* Each file is checked as the program it starts, fixed, and checked again, until no fix applies or
+ * MO_LIMIT_FIX_ROUNDS rounds have rewritten it. Only the given files are rewritten (reference
+ * 13.4). Once every file is fixed, each is checked once more for the errors that are left, so no
+ * report shows an error a later file's fix removed. */
+static int fix_files(const struct mo_cli *cli, FILE *output, FILE *errors) {
+    int status = 0;
+    struct stat st;
+    for (uint32_t i = 0; i < cli->file_count; i++) {
+        int result = CHECK_AGAIN;
+        for (uint32_t round = 0; result == CHECK_AGAIN && round < MO_LIMIT_FIX_ROUNDS &&
+                                 regular_file(mo_cli_file(cli, i), &st);
+             round++)
+            result = check_program(cli, i, output, errors, false, &st);
+        status = result > status ? result : status;
+    }
+    for (uint32_t i = 0; i < cli->file_count; i++) {
+        const char *path = mo_cli_file(cli, i);
+        int result =
+            regular_file(path, &st)
+                ? check_program(cli, i, output, errors, false, NULL)
+                : refuse_fix(path,
+                             "fix needs a readable regular file, not a symlink or special file",
+                             output, errors);
+        status = result > status ? result : status;
+    }
+    return status;
+}
+
 int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
     if (cli->command == MO_COMMAND_VERSION) {
         bool ok = fprintf(output, "%s\n", mo_version_line()) >= 0 && fflush(output) == 0;
@@ -192,55 +335,12 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
         struct mo_format_options options = {100, display_width};
         return mo_format_files(cli, options, errors);
     }
+    if (cli->command == MO_COMMAND_FIX)
+        return fix_files(cli, output, errors);
     bool version = cli->json && cli->command != MO_COMMAND_TEST;
     if (version && !mo_write_version(output, cli->command)) {
         (void)fputs("mo: could not write version record\n", errors);
         return 1;
     }
-    struct mo_sources sources;
-    struct mo_diags diags;
-    bool have_sources = mo_sources_init(&sources);
-    bool have_diags = mo_diags_init(&diags);
-    if (!have_sources || !have_diags) {
-        /* The failed initializers still prepare their arenas for freeing. */
-        diags.dropped = 1;
-        if (cli->json && !version)
-            version = mo_write_version(output, cli->command);
-        int status = cli->json && !version
-                         ? 1
-                         : mo_write_diagnostics(output, errors, cli->json, cli->command, &sources,
-                                                &diags, NULL);
-        mo_sources_free(&sources);
-        mo_diags_free(&diags);
-        return status;
-    }
-    struct mo_arena arena;
-    mo_arena_init(&arena, MO_CLI_CHECK_SIZE);
-    struct pipeline_work work = {.cli = cli,
-                                 .arena = &arena,
-                                 .sources = &sources,
-                                 .diags = &diags,
-                                 .output = output,
-                                 .errors = errors,
-                                 .version = version};
-    int error = mo_with_stack(MO_SOURCE_STACK_SIZE, execute_pipeline, &work);
-    if (error != 0)
-        tool_error(&diags, MO_CODE_TOOL_SOURCE_STACK, "could not prepare the source pipeline stack",
-                   strerror(error));
-    int status;
-    if (work.mistake != NULL) {
-        (void)fprintf(errors, "%s\n", work.mistake);
-        status = 2;
-    } else if (cli->json && !work.version && work.status != 0) {
-        (void)fputs("mo: could not write version record\n", errors);
-        status = 1;
-    } else if (cli->json && !work.version && !mo_write_version(output, cli->command))
-        status = 1;
-    else
-        status = mo_write_diagnostics(output, errors, cli->json, cli->command, &sources, &diags,
-                                      &work.totals);
-    mo_arena_free(&arena);
-    mo_sources_free(&sources);
-    mo_diags_free(&diags);
-    return status != 0 ? status : work.status;
+    return check_program(cli, 0, output, errors, version, NULL);
 }

@@ -1,3 +1,12 @@
-error E1400: this build cannot apply fixes yet  <unavailable>
+error E1400: this build cannot generate inputs for this promise  tests/errors/e1400/main.mo:4:3
 
+  4 |   promise "keeps the length"
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  5 |     result.size == xs.size
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    | ...
+  7 |     forbids xs: [1], f: fn(x) x end, result: []
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  8 |   end
+    | ^^^^^ Main.twice.promise.1
 

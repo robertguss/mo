@@ -829,6 +829,59 @@ def promise_selection(binary):
         assert items[-1]['passed'] == 2 and items[-1]['errors'] == 0
 
 
+def fix_command(binary):
+    """`mo fix` applies every fix offered alone, checks again, and reports what is left (MO-48)."""
+    with tempfile.TemporaryDirectory(prefix='mo-fix-') as directory:
+        folder = pathlib.Path(directory)
+        # The acceptance: after mo fix, mo check exits 0.
+        alone = folder / 'alone'
+        alone.mkdir()
+        fixable = alone / 'main.mo'
+        fixable.write_bytes((root / 'tests/cli/fix/main.mo').read_bytes())
+        fixable.chmod(0o640)
+        result = run(binary, ['fix', str(fixable)], 0)
+        assert not result.stdout and not result.stderr, result
+        assert fixable.read_text() == 'module Main\nfn run(_value: Int) : Int\n  1\nend\n'
+        assert fixable.stat().st_mode & 0o777 == 0o640
+        run(binary, ['check', str(fixable)], 0)
+        result = run(binary, ['fix', str(fixable)], 0)
+        assert not result.stdout and not result.stderr, result
+        assert not list(alone.glob('.mo-write-*'))
+
+        # The removed repeated import uncovers the unnamed field, fixed on the next round. Only the
+        # given file is rewritten; the imported module's fix is reported, and so is the unused
+        # parameter, which has no fix while the module imports names.
+        main = folder / 'main.mo'
+        shapes = folder / 'shapes.mo'
+        main.write_text('module Main\n\nuse Shapes { Shape, Shape }\n\n'
+                        'fn area(shape: Shape, scale: Int) : Int\n  case shape\n'
+                        '    Square(s): s * s\n  end\nend\n\nfn main()\nend\n')
+        shapes_source = ('module Shapes\n\nexpose Shape(..)\n\nenum Shape\n  Square(side: Int)\n'
+                         'end\n\nfn unused(count: Int) : Int\n  1\nend\n')
+        shapes.write_text(shapes_source)
+        result = run(binary, ['fix', str(main)], 1)
+        assert not result.stdout
+        assert result.stderr.count(b'error ') == 2, result.stderr
+        assert b'main.mo:5:23' in result.stderr and b'shapes.mo:9:11' in result.stderr
+        assert main.read_text() == ('module Main\n\nuse Shapes { Shape }\n\n'
+                                    'fn area(shape: Shape, scale: Int) : Int\n  case shape\n'
+                                    '    Square(side: s): s * s\n  end\nend\n\nfn main()\nend\n')
+        assert shapes.read_text() == shapes_source
+        # Given both files, each is checked as the program it starts and fixed.
+        result = run(binary, ['fix', str(main), str(shapes)], 1)
+        assert result.stderr.count(b'error ') == 1 and b'main.mo:5:23' in result.stderr
+        assert 'fn unused(_count: Int)' in shapes.read_text()
+
+        # A file fix can't replace is refused like format's, and the rest are still fixed.
+        fixable.write_bytes((root / 'tests/cli/fix/main.mo').read_bytes())
+        link = folder / 'link.mo'
+        link.symlink_to(fixable)
+        result = run(binary, ['fix', str(link), str(folder / 'missing.mo'), str(fixable)], 1)
+        assert result.stderr.count(b'E1407') == 2 and result.stderr.count(b'error ') == 2
+        assert link.is_symlink() and '_value' in fixable.read_text()
+        assert not list(folder.glob('.mo-write-*'))
+
+
 def imported_constants(binary):
     with tempfile.TemporaryDirectory(prefix='mo-imported-constants-') as directory:
         path = pathlib.Path(directory) / 'main.mo'
@@ -2498,7 +2551,7 @@ def guide_claims(binary):
         assert not result.stdout, (args, result.stdout)
         assert f"error E{code}: {headline}".encode() in result.stderr, (args, result.stderr)
 
-    says("This build runs `mo check`, `mo run`, `mo test`, `mo format` and `mo guide`.",
+    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix` and `mo guide`.",
          "The program below checks with no errors, runs, and passes its examples and its test.",
          "E1103 and E1150 mean this toolchain has not implemented that form.",
          "`mo run` and `mo test` report the same code for the same form.",
@@ -2518,9 +2571,19 @@ def guide_claims(binary):
         assert not result.stdout and not result.stderr
         assert greet.read_text(encoding="utf-8") == program, "the guide's program is formatted"
 
-        refuses(["fix", str(greet)], 1400, "this build cannot apply fixes yet",
-                '`mo fix` exits 1 with E1400. The headline is "this build cannot apply fixes yet".')
+        result = run(binary, ["fix", str(greet)], 0)
+        assert not result.stdout and not result.stderr
         assert greet.read_text(encoding="utf-8") == program
+        says("`mo fix FILE` makes each edit that `mo check` shows as an error's only fix, checks "
+             "again, and prints the errors that are left, as `mo check` does. It rewrites only "
+             "the files it is given.",
+             "`mo format` and `mo fix` rewrite the files they are given.")
+        unused = folder / "unused.mo"
+        unused.write_text("module Unused\n\nfn one(x: Int) : Int\n  1\nend\n", encoding="utf-8")
+        assert b"Fix: " in run(binary, ["check", str(unused)], 1).stderr
+        result = run(binary, ["fix", str(unused)], 0)
+        assert not result.stdout and not result.stderr
+        assert "fn one(_x: Int)" in unused.read_text(encoding="utf-8")
 
         # Each unfinished form gives the same code from check, run and test.
         unfinished = folder / "unfinished.mo"
@@ -2622,6 +2685,7 @@ def check(binary):
     composite_deadlines(binary)
     promise_selection(binary)
     imported_constants(binary)
+    fix_command(binary)
     items = records(run(faults, ["--json"], 1), "check")
     assert items[1]["code"] == "E1401" and items[-1]["dropped"] == 0
     assert items[1]["primary"]["file"] is None and items[1]["primary"]["file_bytes"] is None
@@ -2692,10 +2756,6 @@ def check(binary):
     else:
         result = run(binary, ["guide"], 1)
         assert not result.stdout and b"--reference" in result.stderr
-    for command in ("fix",):
-        result = run(binary, [command, good], 1)
-        assert not result.stdout and b"this build cannot" in result.stderr
-        assert result.stderr.count(b"<unavailable>") == 1
     result = run(binary, ["test", "--json", "--list", "--only", "No.match", good], 2)
     assert not result.stdout and result.stderr.count(b"\n") == 1
 
@@ -2741,7 +2801,7 @@ def check(binary):
     run(binary, ["run", good, "--bad", ""], 0)
     run(binary, ["test", "--only", "a", "--only", "b", "--in", "Main", good], 2)
     run(binary, ["format", good, good], 0)
-    run(binary, ["fix", good, good], 1)
+    run(binary, ["fix", good, good], 0)
     for version in ("--version", "-V"):
         assert run(binary, [version], 0).stdout == b"mo 0.0.0\n"
     read_fd, write_fd = os.pipe()
@@ -2755,8 +2815,9 @@ def check(binary):
     run(binary, ["run", good, "x" * 5000], 0)
     run(binary, ["run", good, *(str(i) for i in range(300))], 0)
     run(binary, ["run", good, *("x" * 4096 for _ in range(16))], 0)
-    for command in ("format", "fix"):
-        run(binary, [command, *([good] * 4096)], 0 if command == "format" else 1)
+    # fix checks each file's program, so it gets fewer copies than format's 4096.
+    run(binary, ["format", *([good] * 4096)], 0)
+    run(binary, ["fix", *([good] * 64)], 0)
     run(binary, ["test", *(["--only", "x"] * 128), good], 2)
     mistake(["test", *(["--only", "x"] * 129), good])
     mistake(["test", "--only", "x" * 4097, good])
@@ -2899,7 +2960,7 @@ def check(binary):
         result = run(binary, ["format", str(symlink), str(fifo), str(folder)], 1)
         assert result.stderr.count(b'E1402') == 3 and not result.stdout
         assert symlink.is_symlink() and alias.read_bytes() == source
-        assert not list(folder.glob('.mo-format-*'))
+        assert not list(folder.glob('.mo-write-*'))
     print(f"{binary}: CLI goldens, argument matrix and JSON validity passed")
 
 

@@ -6,9 +6,9 @@ This page is the procedure for a finished Mo program. Correct Mo is Language Ref
 
 The language headings below use the present tense of the reference.
 
-This build runs `mo check`, `mo run`, `mo test`, `mo format` and `mo guide`. The program below checks with no errors, runs, and passes its examples and its test.
+This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix` and `mo guide`. The program below checks with no errors, runs, and passes its examples and its test.
 
-`mo fix` exits 1 with E1400. The headline is "this build cannot apply fixes yet". When `mo check` shows a fix, make that edit yourself.
+`mo fix FILE` makes each edit that `mo check` shows as an error's only fix, checks again, and prints the errors that are left, as `mo check` does. It rewrites only the files it is given.
 
 A few forms the reference requires are still unfinished. `mo check` reports E1103 for a form the checker has not implemented, with a headline that says so, such as "this body rule is not implemented by the staged checker". It reports E1150 for a form it checks but cannot compile yet, such as `env.get`. The headline is "this native call is not lowered yet". E1103 and E1150 mean this toolchain has not implemented that form. If the reference requires the form, leave the form in. `mo run` and `mo test` report the same code for the same form.
 
@@ -103,7 +103,7 @@ The executable grammar in `grammar/mo.y` is the authority. Appendix B summarizes
 
 ## Run these commands
 
-Each command is given the file of the program's main module. `mo check FILE` reports the program's errors, `mo run FILE [ARGS...]` runs it with the arguments after the file's name, and `mo test FILE` checks its examples, promises and tests. `mo format` rewrites the files it is given. On a complete toolchain, `mo fix` does too.
+Each command is given the file of the program's main module. `mo check FILE` reports the program's errors, `mo run FILE [ARGS...]` runs it with the arguments after the file's name, and `mo test FILE` checks its examples, promises and tests. `mo format` and `mo fix` rewrite the files they are given.
 
 `mo guide` needs no file. It prints this page. `mo guide --reference` prints the reference.
 
@@ -118,7 +118,7 @@ Follow these steps.
 1. Write the program. When a function has `examples` or a `promise`, put each block at the top of the body, then a blank line, then the code. Add a `test` in the same file when you check a scenario. Section 12.
 2. Run `mo format` on those files.
 3. Run `mo check FILE`. Fix language errors. Keep a diagnostic that Know this build names.
-4. When `mo check` shows a fix, make that edit. On a complete toolchain, `mo fix FILE` applies a fix when there is only one. Appendix A.
+4. Run `mo fix FILE` when `mo check` shows a fix. When an error shows more than one fix, choose one and make that edit yourself. Appendix A.
 5. Run `mo test FILE` until the examples, promises, and tests pass.
 6. Run `mo run FILE` only when the task needs a running program.
 

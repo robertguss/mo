@@ -198,8 +198,8 @@ session or task dominates.
 Errors the guide tells sessions to keep (E1103, E1150, and E1400 from `mo test`) aren't the
 session's to fix. `tally` counts them, since its task is frozen, so the report gives the rates
 twice: as `tally` prints them, and with those codes left out of the errors. The second is the one
-measured against the targets. A `mo fix` run on this build does nothing (E1400), yet `tally`
-moves an error it precedes to `by_fix`; the report says how many errors that moved.
+measured against the targets. `tally` moves an error a `mo fix` run precedes to `by_fix`. Before
+MO-48 that run did nothing (E1400), so a round on such a build says how many errors that moved.
 
 ## 8. Reporting
 
