@@ -4,6 +4,7 @@
 
 #include "base/codes.h"
 #include "base/stack.h"
+#include "tools/fix.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -25,58 +26,6 @@ static void problem(struct mo_diags *diags, uint32_t file, uint16_t code, const 
     bool added = mo_diags_add(diags, &diag);
     if (!added)
         MO_ASSERT(diags->dropped != 0);
-}
-
-/* The temporary basename does not extend the source basename: a source name
- * already at NAME_MAX still has room for a sibling temporary. */
-static bool replace(const struct mo_source *source, const struct mo_buffer *output,
-                    const struct stat *original, int *error) {
-    const char *slash = strrchr(source->path, '/');
-    size_t directory = slash == NULL ? 0 : (size_t)(slash - source->path) + 1;
-    char temporary[MO_LIMIT_PATH_SIZE + 32];
-    static const char suffix[] = ".mo-format-XXXXXX";
-    MO_ASSERT(directory <= MO_LIMIT_PATH_SIZE);
-    memcpy(temporary, source->path, directory);
-    memcpy(temporary + directory, suffix, sizeof suffix);
-    int fd = mkstemp(temporary);
-    if (fd < 0) {
-        *error = errno;
-        return false;
-    }
-    FILE *stream = fdopen(fd, "wb");
-    bool ok = stream != NULL;
-    if (!ok) {
-        *error = errno;
-        if (close(fd) != 0)
-            *error = errno;
-    } else {
-        ok = fwrite(output->bytes, 1, output->length, stream) == output->length &&
-             fflush(stream) == 0 && fchmod(fd, original->st_mode & (mode_t)0777) == 0 &&
-             fsync(fd) == 0;
-        if (!ok)
-            *error = errno;
-        if (fclose(stream) != 0) {
-            ok = false;
-            *error = errno;
-        }
-    }
-    if (ok) {
-        struct stat current;
-        ok = lstat(source->path, &current) == 0;
-        if (!ok)
-            *error = errno;
-        else if (current.st_dev != original->st_dev || current.st_ino != original->st_ino) {
-            ok = false;
-            *error = EBUSY;
-        }
-    }
-    if (ok && rename(temporary, source->path) != 0) {
-        ok = false;
-        *error = errno;
-    }
-    if (!ok && unlink(temporary) != 0)
-        *error = errno;
-    return ok;
 }
 
 struct format_work {
@@ -137,7 +86,7 @@ static void format_file(const char *path, struct mo_format_options options,
     if (work.rendered && (output.length != source->length ||
                           memcmp(output.bytes, source->bytes, output.length) != 0)) {
         int system_error = 0;
-        if (!replace(source, &output, &original, &system_error)) {
+        if (!mo_replace_file(source->path, &output, &original, &system_error)) {
             char detail[192];
             int written =
                 snprintf(detail, sizeof detail, "could not replace the formatted file (%s)",

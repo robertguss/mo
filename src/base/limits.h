@@ -382,9 +382,16 @@ static inline struct mo_limits mo_limits_default(void) {
  * that work. A stage gives no fix rather than one with more: mo_diags_add asserts it. */
 #define MO_LIMIT_FIX_EDITS 1024
 
+/* `mo fix` checks a file and applies the fixes it can, at most this many times, so a fix that
+ * waited on an overlapping one, or one the first fixes uncovered, still lands. Each
+ * round takes at most MO_LIMIT_FIX_ROUND_EDITS edits, which bounds its overlap checks. */
+#define MO_LIMIT_FIX_ROUNDS 8
+#define MO_LIMIT_FIX_ROUND_EDITS 4096
+
 /* How the limits depend on each other and on the formats. */
 _Static_assert(MO_LIMIT_FILE_SIZE < UINT32_MAX, "spans hold byte offsets in 32 bits");
 _Static_assert(MO_LIMIT_PROGRAM_SIZE >= MO_LIMIT_FILE_SIZE, "a program can be one large file");
+_Static_assert(MO_LIMIT_FIX_ROUND_EDITS >= MO_LIMIT_FIX_EDITS, "a round can take any one fix");
 _Static_assert(MO_LIMIT_FIELDS <= MO_LIMIT_OPERANDS, "construct takes every field as an operand");
 _Static_assert(MO_LIMIT_CHOICE_CASES <= MO_LIMIT_OPERANDS, "switch takes a target per case");
 _Static_assert(MO_LIMIT_BYTECODE_PARAMETERS <= MO_LIMIT_OPERANDS,

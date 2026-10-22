@@ -47,6 +47,11 @@ struct mo_fix {
     uint32_t edit_count;
 };
 
+/* Whether two edits can't both apply against the original text: they are in one file, and change
+ * a byte in common, one inserts inside the other's span, or both insert at the same place, where
+ * their order would be unclear. */
+MO_MUST_USE bool mo_edits_overlap(const struct mo_edit *a, const struct mo_edit *b);
+
 /* One error, as reference appendix A shows it. Mo has no warnings: a problem is an error, or it
  * isn't reported. */
 struct mo_diag {

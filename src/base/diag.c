@@ -37,10 +37,7 @@ static void check_span(struct mo_span span) {
     MO_ASSERT(span.start <= span.end);
 }
 
-/* Whether two edits of one fix can't both apply against the original text: they change a byte in
- * common, one inserts inside the other's span, or both insert at the same place, where their
- * order would be unclear. */
-static bool overlap(const struct mo_edit *a, const struct mo_edit *b) {
+bool mo_edits_overlap(const struct mo_edit *a, const struct mo_edit *b) {
     if (a->span.file != b->span.file) {
         return false;
     }
@@ -60,7 +57,7 @@ static void check_fix(const struct mo_fix *fix) {
         MO_ASSERT(fix->edits[i].replacement != NULL);
         /* Every pair, which MO_LIMIT_FIX_EDITS keeps to half a million. */
         for (uint32_t j = 0; j < i; j++) {
-            MO_ASSERT(!overlap(&fix->edits[i], &fix->edits[j]));
+            MO_ASSERT(!mo_edits_overlap(&fix->edits[i], &fix->edits[j]));
         }
     }
 }

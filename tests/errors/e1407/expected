@@ -1,0 +1,3 @@
+error E1407: fix needs a readable regular file, not a symlink or special file: tests/errors/e1407/nowhere.mo  <unavailable>
+
+
