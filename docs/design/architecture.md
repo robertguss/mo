@@ -2256,7 +2256,7 @@ among them:
 | Layer | How it is tested |
 | --- | --- |
 | Every C module | unit tests in `tests/`, run plain and under AddressSanitizer and UndefinedBehaviorSanitizer (condition 1) |
-| Reference counting | a debug heap under `make sanitize` that records every allocation, poisons freed memory, and checks at each process's end that every object it didn't make immortal was freed |
+| Reference counting | a heap that records every allocation and poisons freed memory, and a leak check: after each call that returns, in `mo test`, in an anchor and in the verifier fuzz target, the process's heap holds no object, because verified bytecode releases every reference it acquires (bytecode 4.2) |
 | Parser | the executable grammar's tests, and a fuzz target that checks the parser and `grammar/mo.y` accept and reject the same inputs |
 | Checker | a corpus of programs with the exact diagnostics they must produce, one file or more per error code |
 | Lowering | the twelve samples and the corpus, lowered and compared with their Core text, which the Lean evaluator runs to the samples' expected results |
@@ -2295,7 +2295,8 @@ program that differs. To replay one: `MO_CORE_DIFF=1 MO_CORE_DIFF_SEED=<seed>`.
   assertion;
 - the Core checker on mutated Core text: the same;
 - the verifier and loader on arbitrary and mutated bytecode: refuse, or load
-  and run without a sanitizer error;
+  and run without a sanitizer error, leaving no object behind after a call
+  that returns;
 - the VM on generated valid bytecode, with a step budget: an outcome, never a
   crash;
 - the text parsers `to_int`, `to_decimal`, `to_float`, `Time.parse` and

@@ -152,9 +152,13 @@ static void verifier_fuzz_execute(struct verifier_fuzz_input input) {
                 struct mo_cell result;
                 uint32_t function = input.as.accepted.entries[i].function;
                 outcome = mo_call(process, function, NULL, 0, &result, &defect);
-                if (outcome == MO_RETURNED)
-                    mo_value_drop(mo_process_heap(process), file->functions[function].result_type,
-                                  result);
+                if (outcome == MO_RETURNED) {
+                    struct mo_heap *heap = mo_process_heap(process);
+                    mo_value_drop(heap, file->functions[function].result_type, result);
+                    /* The oracle for reference tracking: a verified call that returns has
+                     * released every reference it acquired. */
+                    MO_ASSERT(mo_heap_objects(heap) == 0);
+                }
                 mo_process_free(process);
             }
         }
