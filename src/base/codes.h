@@ -261,7 +261,7 @@
     X(1405, TOOL_ANCHOR, NULL)                                                                     \
     /* Image initialization stops before test observations can run. */                             \
     X(1406, TOOL_TEST_INITIALIZATION, NULL)                                                        \
-    /* Fixing cannot read or atomically replace a regular source file. */                          \
+    /* Fixing is given no regular source file, or cannot atomically replace one. */                \
     X(1407, TOOL_FIX_IO, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */

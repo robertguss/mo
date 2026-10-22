@@ -215,13 +215,37 @@ static int refuse_fix(const char *path, const char *detail, FILE *output, FILE *
     return status;
 }
 
+/* A file fix was given, by device and inode, so a path that names it another way still matches. */
+struct given_file {
+    dev_t device;
+    ino_t inode;
+};
+
+/* Leaves out the diagnostics in another of the files fix was given: that file's own check reports
+ * them, and mo check never shows an error twice. Source 0 is the checked file itself. */
+static void leave_given(const struct mo_cli *cli, uint32_t file, const struct given_file *given,
+                        const struct mo_sources *sources, struct mo_diags *diags) {
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i < diags->count; i++) {
+        uint32_t source = diags->items[i].primary.span.file;
+        bool other = false;
+        struct stat st;
+        if (source != 0 && source < sources->count && stat(sources->files[source].path, &st) == 0)
+            for (uint32_t j = 0; !other && j < cli->file_count; j++)
+                other = j != file && given[j].device == st.st_dev && given[j].inode == st.st_ino;
+        if (!other)
+            diags->items[kept++] = diags->items[i];
+    }
+    diags->count = kept;
+}
+
 /* Checks the program of the cli's file-th file and writes its diagnostics. Given the file's
  * lstat instead, it applies the fixes the check offers and writes nothing about the check: it
  * returns CHECK_AGAIN when it rewrote the file, 0 when no fix applied, and 1 after reporting why it
  * couldn't rewrite it. */
 enum { CHECK_AGAIN = -1 };
 static int check_program(const struct mo_cli *cli, uint32_t file, FILE *output, FILE *errors,
-                         bool version, const struct stat *fixing) {
+                         bool version, const struct stat *fixing, const struct given_file *given) {
     struct mo_sources sources;
     struct mo_diags diags;
     bool have_sources = mo_sources_init(&sources);
@@ -268,9 +292,12 @@ static int check_program(const struct mo_cli *cli, uint32_t file, FILE *output, 
         status = 1;
     } else if (cli->json && !work.version && !mo_write_version(output, cli->command))
         status = 1;
-    else
+    else {
+        if (given != NULL)
+            leave_given(cli, file, given, &sources, &diags);
         status = mo_write_diagnostics(output, errors, cli->json, cli->command, &sources, &diags,
                                       &work.totals);
+    }
     mo_arena_free(&arena);
     mo_sources_free(&sources);
     mo_diags_free(&diags);
@@ -293,19 +320,29 @@ static int fix_files(const struct mo_cli *cli, FILE *output, FILE *errors) {
         for (uint32_t round = 0; result == CHECK_AGAIN && round < MO_LIMIT_FIX_ROUNDS &&
                                  regular_file(mo_cli_file(cli, i), &st);
              round++)
-            result = check_program(cli, i, output, errors, false, &st);
+            result = check_program(cli, i, output, errors, false, &st, NULL);
         status = result > status ? result : status;
     }
+    struct mo_arena arena;
+    mo_arena_init(&arena, (size_t)cli->file_count * sizeof(struct given_file) + 4096);
+    struct given_file *given = mo_arena_allocate_array(&arena, cli->file_count, sizeof *given,
+                                                       _Alignof(struct given_file));
+    MO_ASSERT(given != NULL || cli->file_count == 0);
+    for (uint32_t i = 0; i < cli->file_count; i++)
+        given[i] = regular_file(mo_cli_file(cli, i), &st)
+                       ? (struct given_file){st.st_dev, st.st_ino}
+                       : (struct given_file){0, 0};
     for (uint32_t i = 0; i < cli->file_count; i++) {
         const char *path = mo_cli_file(cli, i);
         int result =
             regular_file(path, &st)
-                ? check_program(cli, i, output, errors, false, NULL)
+                ? check_program(cli, i, output, errors, false, NULL, given)
                 : refuse_fix(path,
                              "fix needs a readable regular file, not a symlink or special file",
                              output, errors);
         status = result > status ? result : status;
     }
+    mo_arena_free(&arena);
     return status;
 }
 
@@ -342,5 +379,5 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
         (void)fputs("mo: could not write version record\n", errors);
         return 1;
     }
-    return check_program(cli, 0, output, errors, version, NULL);
+    return check_program(cli, 0, output, errors, version, NULL, NULL);
 }

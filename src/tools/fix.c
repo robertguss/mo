@@ -9,14 +9,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-/* Two edits overlap when they change a byte in common or insert at the same place, as struct
- * mo_fix says; an insertion may sit at either end of a replaced span. */
-static bool overlap(const struct mo_edit *a, const struct mo_edit *b) {
-    bool insertions = a->span.start == a->span.end && b->span.start == b->span.end;
-    return (a->span.start < b->span.end && b->span.start < a->span.end) ||
-           (insertions && a->span.start == b->span.start);
-}
-
 static int by_position(const void *left, const void *right) {
     const struct mo_edit *a = *(const struct mo_edit *const *)left;
     const struct mo_edit *b = *(const struct mo_edit *const *)right;
@@ -37,7 +29,7 @@ static bool fits(const struct mo_fix *fix, uint32_t file, uint32_t length,
             return false;
         MO_ASSERT(e->span.start <= e->span.end && e->span.end <= length);
         for (uint32_t j = 0; j < count; j++)
-            if (overlap(e, taken[j]))
+            if (mo_edits_overlap(e, taken[j]))
                 return false;
     }
     return true;

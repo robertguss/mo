@@ -867,10 +867,29 @@ def fix_command(binary):
                                     'fn area(shape: Shape, scale: Int) : Int\n  case shape\n'
                                     '    Square(side: s): s * s\n  end\nend\n\nfn main()\nend\n')
         assert shapes.read_text() == shapes_source
-        # Given both files, each is checked as the program it starts and fixed.
+        # Given both files, each is checked as the program it starts and fixed. An error in a
+        # given module is reported once, by its own file's check, not by every program using it.
+        shapes.write_text(shapes_source + '\nfn bad() : Int\n  "x"\nend\n')
         result = run(binary, ['fix', str(main), str(shapes)], 1)
-        assert result.stderr.count(b'error ') == 1 and b'main.mo:5:23' in result.stderr
+        assert result.stderr.count(b'error ') == 2, result.stderr
+        assert b'main.mo:5:23' in result.stderr and result.stderr.count(b'shapes.mo:14:3') == 1
         assert 'fn unused(_count: Int)' in shapes.read_text()
+        result = run(binary, ['fix', str(main)], 1)
+        assert b'shapes.mo:14:3' in result.stderr
+
+        # A fixed file that would outgrow the file size limit is left as it was.
+        full = folder / 'full' / 'main.mo'
+        full.parent.mkdir()
+        head = b'module Main\nfn run(value: Int) : Int\n  1\nend\n'
+        line = b'# ' + b'x' * 77 + b'\n'
+        rest = 8 * 1024 * 1024 - len(head)
+        body = line * (rest // len(line))
+        full_source = head + body + b'#' * (rest - len(body) - 1) + b'\n'
+        assert len(full_source) == 8 * 1024 * 1024
+        full.write_bytes(full_source)
+        result = run(binary, ['fix', str(full)], 1)
+        assert b'E1407: the fixed file exceeds' in result.stderr and b'E0052' in result.stderr
+        assert full.read_bytes() == full_source
 
         # A file fix can't replace is refused like format's, and the rest are still fixed.
         fixable.write_bytes((root / 'tests/cli/fix/main.mo').read_bytes())

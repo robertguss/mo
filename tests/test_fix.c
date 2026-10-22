@@ -103,6 +103,12 @@ static void overlapping_fixes(void) {
     offer(&p, &shared[1], 1);
     CHECK(fixed(&p, "aXdef", 1));
 
+    /* Diagnostics are taken in position order, not the order they were reported in. */
+    start(&p, "abcdef");
+    offer(&p, &shared[1], 1);
+    offer(&p, &shared[0], 1);
+    CHECK(fixed(&p, "aXdef", 1));
+
     /* Two insertions at one place would have no clear order. */
     start(&p, "abcdef");
     struct mo_edit left = edit(0, 2, 2, "1"), right = edit(0, 2, 2, "2");
