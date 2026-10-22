@@ -102,6 +102,8 @@ static MO_MUST_USE bool grow_cache(struct mo_ability_context *p) {
         return false;
     memset(entries, 0, (size_t)capacity * sizeof(*entries));
     memset(pointers, 0, (size_t)capacity * sizeof(*pointers));
+    /* The uncharged probes below end at an empty slot, which this leaves. */
+    MO_ASSERT(p->count < capacity);
     for (uint32_t i = 0; i < p->capacity; i++) {
         if (!work(p, 0))
             return false;
@@ -134,6 +136,7 @@ static MO_MUST_USE struct mo_ability_cache *cache(struct mo_ability_context *p,
     if (!work(p, type->height))
         return NULL;
     if (p->capacity != 0) {
+        MO_ASSERT(p->count < p->capacity);
         uint32_t slot = pointer_slot(type, p->capacity);
         while (p->pointers[slot].type != NULL) {
             if (p->pointers[slot].type == type)
@@ -188,6 +191,7 @@ static MO_MUST_USE struct mo_ability_cache *cache(struct mo_ability_context *p,
         p->cache[slot] = out;
     }
     slot = pointer_slot(type, p->capacity);
+    MO_ASSERT(p->count < p->capacity / 2);
     while (p->pointers[slot].type != NULL)
         slot = (slot + 1) & (p->capacity - 1);
     p->pointers[slot] = (struct mo_ability_pointer){type, out};
@@ -316,7 +320,9 @@ static MO_MUST_USE unsigned parameter_requirements(struct mo_ability_context *p,
         mo_function_signature_by_symbol(p->signatures, type->declaration);
     if (fn != NULL)
         return fn->requirements[letter];
-    uint32_t lo = 0, hi = p->signatures->native_count;
+    /* Only a native owner (module UINT32_MAX) is in native[]; searching for any other symbol
+     * would charge steps that depend on where the two arrays sit in memory. */
+    uint32_t lo = 0, hi = type->declaration->module == UINT32_MAX ? p->signatures->native_count : 0;
     while (lo < hi) {
         if (!work(p, 0))
             return 0;
