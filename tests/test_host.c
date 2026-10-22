@@ -511,12 +511,16 @@ static void test_real_files(bool portable) {
         mo_value_drop(f.heap, f.result_bytes, read_bytes);
         mo_value_drop(f.heap, f.types.text, raw_args[1]);
         CHECK(unlinkat(directory, "invalid", 0) == 0);
+        /* APFS (macOS) refuses names that are not UTF-8 with EILSEQ. */
         raw = openat(directory, "\xff", O_WRONLY | O_CREAT | O_CLOEXEC, 0600);
-        MO_ASSERT(raw >= 0);
-        CHECK(close(raw) == 0);
-        expect(&f, MO_HOST_FILES_LIST, f.result_names, files, ".", "",
-               "Error(Failed(path: \".\", reason: \"folder contains a name that is not text\"))");
-        CHECK(unlinkat(directory, "\xff", 0) == 0);
+        if (raw >= 0) {
+            CHECK(close(raw) == 0);
+            expect(&f, MO_HOST_FILES_LIST, f.result_names, files, ".", "",
+                   "Error(Failed(path: \".\", reason: \"folder contains a name that is not "
+                   "text\"))");
+            CHECK(unlinkat(directory, "\xff", 0) == 0);
+        } else
+            CHECK(errno == EILSEQ);
         pending_root(&f, files);
         retained_folder(&f, files, directory);
         expect(&f, MO_HOST_FILES_REMOVE, f.result_unit, files, "a", "", "Ok(Unit)");
