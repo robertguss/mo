@@ -64,9 +64,9 @@ A PR that changes only documents no check reads skips the eight jobs, and `check
 what the CBMC proofs read skips the `cbmc` job (`ci/ci_groups.sh`); pushes to main run every job. Robert lets agents merge
 docs-only PRs without review.
 
-qgate (`qgate.toml`, `qgate.baseline`, v0.4.1) runs as git hooks once a clone has run `qgate install`:
+qgate (`qgate.toml`, `qgate.baseline`, v0.5.0) runs as git hooks once a clone has run `qgate install`:
 commit runs clang-format on the staged C files plus qgate's function length, file length and
-duplication checks; push also runs `CI=1 bash ci/check.sh gcc clang sanitize static drivers`. The
+duplication checks; push also runs `CI=1 bash ci/check.sh gcc clang sanitize static drivers`, unless `ci/docs_only.sh` calls the change docs-only. The
 baseline only shrinks, with 5 lines of headroom. A failure prints its fix. Loosening the gate (a raised limit, a grown
 baseline, a changed tool) is a `loosening` warning that never fails the run; prefer fixing the code,
 and say in the PR what you loosened and why. Never bypass the hooks (`--no-verify`, `core.hooksPath`).
@@ -156,3 +156,11 @@ After a PR merges or changes CI state, or after Robert makes a decision, run `no
 When Robert or a reviewer corrects a mistake, fix it and add or bump its row in
 `docs/status/agent-mistakes.md` in the same PR. A row that recurs is fixed at a stronger level, using
 the `correct` skill.
+
+`docs/solutions/` holds documented solutions to past problems (bugs, best practices, workflow
+patterns), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`); it is
+relevant when implementing or debugging in an area it covers.
+
+After a solved, verified problem, offer once to invoke the `ce-compound` skill at the completion checkpoint only when the work produced durable project reasoning that is not readily recoverable from the final code, tests, types, comments, or existing documentation, and losing it would plausibly cause recurrence, material risk, or substantial rediscovery. Apply this counterfactual: if the learning document disappeared, would a future engineer reading the final implementation still be likely to repeat the mistake or redo substantial investigation? If not, do not offer. Completion, effort, and diff size alone are not enough. Offer at the checkpoint so a qualifying learning can ship in the PR that produced it, and only where the repository treats captured learnings as tracked, committed knowledge.
+
+Write every report, summary, or handoff to the user through the `ce-noslop` skill. This applies when you are the top-level agent writing to the user, not when you are a subagent reporting to its caller. Do not apply it to code, config, verbatim quotes, or text the user asked to post as written.
