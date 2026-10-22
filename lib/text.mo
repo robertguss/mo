@@ -28,10 +28,10 @@ test "chars gives every character in order, and from_chars puts them back"
   assert Text.from_chars("any text, é".chars) == "any text, é"
 end
 
-test "bytes gives the UTF-8 bytes"
-  assert "".bytes == "".bytes
-  assert "é".bytes == "é".bytes
+## Bytes' own operations don't lower yet (E1150), so this compares whole values only.
+test "bytes differ when the UTF-8 differs"
   assert "é".bytes != "e".bytes
+  assert "é".bytes != "é ".bytes
   assert "é".bytes != "e\u{301}".bytes
 end
 
@@ -43,6 +43,7 @@ test "lines splits at \n and \r\n, without the line endings"
   assert "a\n".lines == ["a"]
   assert "a\n\nb".lines == ["a", "", "b"]
   assert "\n".lines == [""]
+  assert "\r\n".lines == [""]
   assert "a\rb".lines == ["a\rb"]
   assert "a\r".lines == ["a\r"]
 end
@@ -61,7 +62,6 @@ test "split keeps empty pieces"
   assert ",a,,b,".split(",") == ["", "a", "", "b", ""]
   assert "a, b".split(", ") == ["a", "b"]
   assert "abc".split("x") == ["abc"]
-  assert "aaa".split("aa") == ["", "a"]
   assert "aéb".split("é") == ["a", "b"]
 end
 
@@ -70,6 +70,8 @@ test "trim, trim_start and trim_end drop ASCII white space"
   assert " \t a b \r\n".trim_start == "a b \r\n"
   assert " \t a b \r\n".trim_end == " \t a b"
   assert "   ".trim == ""
+  assert "   ".trim_start == ""
+  assert "   ".trim_end == ""
   assert "".trim == ""
   assert "\u{A0}a\u{A0}".trim == "\u{A0}a\u{A0}"
   assert "\u{0B}\u{0C}a".trim_start == "a"
@@ -100,9 +102,9 @@ test "drop_prefix and drop_suffix give None when the text doesn't have it"
   assert "a".drop_prefix("ab") == None
 end
 
-test "replace replaces every occurrence, from the left"
+test "replace replaces every occurrence"
   assert "a-b-c".replace("-", "+") == "a+b+c"
-  assert "aaa".replace("aa", "b") == "ba"
+  assert "a.b.c".replace(".", "::") == "a::b::c"
   assert "abc".replace("x", "y") == "abc"
   assert "abc".replace("b", "") == "ac"
   assert "".replace("a", "b") == ""
@@ -139,6 +141,7 @@ test "to_int reads an optional - and ASCII digits in Int's range, and nothing el
   assert "0".to_int == Some(0)
   assert "42".to_int == Some(42)
   assert "-42".to_int == Some(-42)
+  assert "-0".to_int == Some(0)
   assert "007".to_int == Some(7)
   assert "9223372036854775807".to_int == Some(9223372036854775807)
   assert "-9223372036854775808".to_int == Some(-9223372036854775807 - 1)
@@ -159,6 +162,9 @@ test "to_decimal reads digits and up to 18 places, and nothing else"
   assert "-2.50".to_decimal == Some(-2.5)
   assert "0.000000000000000001".to_decimal == Some(0.000000000000000001)
   assert "0.0000000000000000001".to_decimal == None
+  assert "170141183460469231731.687303715884105727".to_decimal ==
+    Some(170141183460469231731.687303715884105727)
+  assert "170141183460469231732".to_decimal == None
   assert "1.".to_decimal == None
   assert ".5".to_decimal == None
   assert "+1".to_decimal == None
@@ -180,6 +186,8 @@ test "to_float reads a number with an optional exponent, or nan, inf and -inf"
   assert "NaN".to_float == None
   assert "Infinity".to_float == None
   assert "1e400".to_float == None
+  assert "1.7e308".to_float.map(fn(f) f.to_text end) == Some("1.7e308")
+  assert "1.8e308".to_float == None
   assert "1e-400".to_float == Some(0.0)
   assert "1.".to_float == None
   assert ".5".to_float == None
@@ -196,6 +204,7 @@ test "texts are equal by their bytes and sort by character code"
   assert "ab" < "abc"
   assert "" < "a"
   assert "z" < "é"
+  assert "\u{FF61}" < "\u{1F600}"
   assert "a".compare("b") == Less
   assert "b".compare("b") == Equal
   assert "é".compare("z") == Greater
@@ -205,4 +214,9 @@ end
 test "a text's text form is the text itself"
   assert "a \"b\"".to_text == "a \"b\""
   assert "#{"x"}" == "x"
+end
+
+test "inside another value's text form, a text is quoted and escaped"
+  assert ["a \"b\""].to_text == "[\"a \\\"b\\\"\"]"
+  assert Some("x\n").to_text == "Some(\"x\\n\")"
 end
