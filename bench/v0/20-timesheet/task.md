@@ -1,0 +1,6 @@
+**timesheet** (extend a program): Your folder holds a Mo program, the module `Timesheet` in `timesheet.mo`, that reads shifts from standard input, one on each line, such as `ada 09:00-12:30`, and prints the hours each person worked, in order of name, as `ada: 7:15`. Lines it can't read are reported on standard error as `line N: can't read LINE`, and the exit status is then 1. Extend it in two ways, keeping what it does now:
+
+- **Overlaps.** A shift that shares a minute with a shift of the same person already counted is not counted. It is reported on standard error as `line N: overlaps line M`, where M is the earliest line holding a counted shift that it overlaps, and the exit status is then 1. Shifts that only touch, such as `09:00-12:00` and `12:00-13:00`, don't overlap. Names are compared exactly, so `Ada` and `ada` are two people.
+- **`--over HOURS`.** Run as `timesheet --over HOURS`, where HOURS is a whole number of at least 0, the program prints only the people who worked more than HOURS hours, each as `NAME: TOTAL (EXTRA over)`, such as `ada: 9:30 (1:30 over)` with `--over 8`, where EXTRA is how much more than HOURS they worked, written as TOTAL is. Any other arguments are a usage error: the program prints `usage: timesheet [--over HOURS]` on standard error, reads nothing, and exits with status 2.
+
+Add tests of both to `timesheet.mo`.

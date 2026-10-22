@@ -1,0 +1,3 @@
+INCRBY n 10
+INCRBY n -15
+GET n

@@ -1,0 +1,4 @@
+sku,on_hand,reorder_at,order_up_to
+A1,3,5,20
+B2,9,5,20
+C3,0,2,4

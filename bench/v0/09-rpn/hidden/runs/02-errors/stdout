@@ -1,0 +1,6 @@
+error: token 2: + needs two values
+error: nothing to evaluate
+error: token 3: unknown token ^
+error: token 3: division by zero
+error: 2 values are left over
+5

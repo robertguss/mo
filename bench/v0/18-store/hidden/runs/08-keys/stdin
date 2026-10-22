@@ -1,0 +1,10 @@
+KEYS
+SET b 1
+SET a 2
+INCR c
+KEYS
+SET b 3
+KEYS
+DEL b
+SET b 4
+KEYS

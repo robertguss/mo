@@ -12,7 +12,7 @@
 #   gcc clang   build and run the unit tests with that compiler
 #   sanitize    the unit tests under AddressSanitizer and UndefinedBehaviorSanitizer
 #   fuzz        every fuzz target briefly
-#   drivers     the checks that drive the test executables: goldens, Unicode, codegen
+#   drivers     the checks that drive the test executables: goldens, Unicode, codegen, benchmark v0
 #   lean        Mo Core in Lean, and the checks that compare the test executables with it
 #   static      grammar, module dependencies, library map, frozen tool tasks, formatting, clang-tidy
 #   cbmc        the CBMC proofs of the bytecode reader, the arena, the verifier and the primitives (cbmc/README.md)
@@ -180,6 +180,10 @@ if have python3; then
 		done
 		later "The session-recording harness: a recorded session's log reads to tally's example table" \
 			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/harness/test_session.py "${drivers[@]}"
+		for driver in "${drivers[@]}"; do
+			later "Benchmark v0: tasks frozen, references pass, broken solutions and start folders fail ($driver)" \
+				python3 bench/v0/grade.py --check --mo "$driver"
+		done
 	else
 		missing "no mo command executable is built"
 	fi

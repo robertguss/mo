@@ -77,8 +77,9 @@ gap allows. Phase 1's "close" (at most two mistakes a compiler would
 catch) has no Phase 2 counterpart: a session now has the compiler, and a program that doesn't
 check can't run its tests.
 
-For the three tools, `bench/tools/grade.py` is the grading script. For the benchmark, every task
-has hidden tests, whatever its kind:
+For the three tools, `bench/tools/grade.py` is the grading script, and for benchmark v0's tasks,
+`bench/v0/grade.py` (`bench/v0/README.md`). For the benchmark, every task has hidden tests,
+whatever its kind:
 
 - **write a program:** tests of its behaviour, as the tools have;
 - **fix compile errors:** `mo check` is clean and the program's original tests still pass;
