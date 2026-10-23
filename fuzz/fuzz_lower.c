@@ -103,7 +103,8 @@ static void source_specs(void *argument) {
                                 .sources = &sources};
     struct mo_program *program = mo_check(&frontend, &set, &diags);
     MO_ASSERT(program != NULL && !mo_diags_any(&diags));
-    struct mo_core *core = mo_lower(&output, program, &sources, &diags);
+    struct mo_lowered_promises promises;
+    struct mo_core *core = mo_lower_for_tests(&output, program, &sources, &diags, &promises);
     MO_ASSERT(core != NULL && !mo_diags_any(&diags));
     mo_arena_free(&frontend);
     mo_sources_free(&sources);

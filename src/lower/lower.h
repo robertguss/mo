@@ -13,4 +13,23 @@
 MO_MUST_USE struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *program,
                                      const struct mo_sources *sources, struct mo_diags *diags);
 
+/* Test-only provenance, outside the Core/wire contract. Storage belongs to arena;
+ * source declarations and names inside parameter types borrow program. */
+struct mo_lowered_promise {
+    const struct mo_checked_spec *source;
+    mo_core_string name;
+    uint32_t parameter_count;
+    const struct mo_source_type **parameters;
+};
+struct mo_lowered_promises {
+    uint32_t count;
+    struct mo_lowered_promise *items;
+};
+/* The same lowering, retaining each concrete promise's closed input types. */
+MO_MUST_USE struct mo_core *mo_lower_for_tests(struct mo_arena *arena,
+                                               const struct mo_program *program,
+                                               const struct mo_sources *sources,
+                                               struct mo_diags *diags,
+                                               struct mo_lowered_promises *promises);
+
 #endif

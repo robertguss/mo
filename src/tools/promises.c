@@ -245,11 +245,16 @@ bool mo_promises_supported(const struct mo_program *program,
         if (spec->kind != MO_SPEC_PROMISE)
             continue;
         const struct mo_checked_function *subject = &program->functions[spec->subject];
+        const struct mo_lowered_promise *instance = observation->instance;
+        if (subject->signature->type->parameters != 0 && instance == NULL)
+            continue; /* Concrete inputs are checked after lowering has found all uses. */
         struct eligibility walk = {.work = &work};
         mo_arena_init(&walk.arena, MO_CLI_TEST_SIZE);
-        bool supported = subject->signature->type->parameters == 0;
+        bool supported = true;
+        MO_ASSERT(instance == NULL || instance->parameter_count == subject->parameter_count);
         for (uint32_t p = 0; supported && p < subject->parameter_count; p++)
-            supported = input_type(&walk, subject->parameters[p]->type);
+            supported = input_type(&walk, instance == NULL ? subject->parameters[p]->type
+                                                           : instance->parameters[p]);
         supported =
             supported && walk_supported(&walk, program, subject->signature->function->module);
         mo_arena_free(&walk.arena);

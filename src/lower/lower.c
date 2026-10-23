@@ -227,8 +227,9 @@ static void entry(struct lowering *p, struct instance *main) {
     }
 }
 
-struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *program,
-                         const struct mo_sources *sources, struct mo_diags *diags) {
+static struct mo_core *lower(struct mo_arena *arena, const struct mo_program *program,
+                             const struct mo_sources *sources, struct mo_diags *diags,
+                             struct mo_lowered_promises *promises) {
     MO_ASSERT(arena != NULL && program != NULL && sources != NULL && diags != NULL);
     struct lowering *p = mo_arena_allocate(arena, sizeof *p, _Alignof(struct lowering));
     if (p == NULL) {
@@ -243,7 +244,8 @@ struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *progra
                            .program = program,
                            .sources = sources,
                            .diags = diags,
-                           .span.file = UINT32_MAX};
+                           .span.file = UINT32_MAX,
+                           .retain_source_types = promises != NULL};
     if (setjmp(p->escape) != 0)
         return NULL;
     if (program->set == NULL)
@@ -311,5 +313,41 @@ struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *progra
     for (struct data_instance *d = p->data; d != NULL; d = d->next)
         result->data.items[i++] = d->data;
     lower_metadata(p, result);
+    if (promises != NULL) {
+        *promises = (struct mo_lowered_promises){0};
+        for (struct instance *f = p->functions; f != NULL; f = f->next) {
+            lower_work(p, 1);
+            promises->count += f->spec != NULL && f->spec->kind == MO_SPEC_PROMISE ? 1U : 0U;
+        }
+        promises->items = LOWER_NEW(p, struct mo_lowered_promise, promises->count);
+        uint32_t at = 0;
+        for (struct instance *f = p->functions; f != NULL; f = f->next) {
+            lower_work(p, 1);
+            if (f->spec == NULL || f->spec->kind != MO_SPEC_PROMISE)
+                continue;
+            struct mo_lowered_promise *promise = &promises->items[at++];
+            promise->source = f->spec;
+            promise->name = f->fun.name;
+            promise->parameter_count = (uint32_t)f->subject->fun.params.count;
+            promise->parameters =
+                LOWER_NEW(p, const struct mo_source_type *, promise->parameter_count);
+            for (uint32_t j = 0; j < promise->parameter_count; j++) {
+                lower_work(p, 1);
+                promise->parameters[j] = lower_source_type(f->subject->fun.params.items[j].ty);
+            }
+        }
+    }
     return result;
+}
+
+struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *program,
+                         const struct mo_sources *sources, struct mo_diags *diags) {
+    return lower(arena, program, sources, diags, NULL);
+}
+
+struct mo_core *mo_lower_for_tests(struct mo_arena *arena, const struct mo_program *program,
+                                   const struct mo_sources *sources, struct mo_diags *diags,
+                                   struct mo_lowered_promises *promises) {
+    MO_ASSERT(promises != NULL);
+    return lower(arena, program, sources, diags, promises);
 }

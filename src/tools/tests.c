@@ -93,7 +93,8 @@ struct mo_test_selection *mo_select_tests(struct mo_arena *arena, const struct m
         selected = selected && (cli->module == NULL ||
                                 strcmp(cli->module, program->set->names[spec->module]) == 0);
         if (selected)
-            selection->items[selection->count++] = (struct mo_observation){full, spec};
+            selection->items[selection->count++] =
+                (struct mo_observation){.name = full, .source = spec};
     }
     for (uint32_t i = 0; i < cli->only_count; i++)
         if (!found[i])
@@ -118,10 +119,65 @@ static void report_error(struct mo_diags *diags, const char *message, struct mo_
     (void)added;
 }
 
+struct mo_test_selection *mo_instantiate_tests(struct mo_arena *arena,
+                                               const struct mo_test_selection *selection,
+                                               const struct mo_lowered_promises *promises,
+                                               struct mo_diags *diags) {
+    struct mo_test_selection *result =
+        mo_arena_allocate(arena, sizeof(*result), _Alignof(struct mo_test_selection));
+    if (result == NULL)
+        goto exhausted;
+    *result = (struct mo_test_selection){0};
+    result->items =
+        mo_arena_allocate_array(arena, (size_t)selection->count + promises->count,
+                                sizeof(*result->items), _Alignof(struct mo_observation));
+    if (result->items == NULL)
+        goto exhausted;
+    size_t work = MO_CLI_TEST_WORK;
+    for (uint32_t i = 0; i < selection->count; i++) {
+        const struct mo_observation *observation = &selection->items[i];
+        if (result->count == MO_LIMIT_CORE_NODES)
+            goto exhausted;
+        if (observation->source->kind != MO_SPEC_PROMISE) {
+            result->items[result->count++] = *observation;
+            continue;
+        }
+        uint32_t before = result->count;
+        size_t length = strlen(observation->name);
+        for (uint32_t j = 0; j < promises->count; j++) {
+            if (work == 0)
+                goto exhausted;
+            work--;
+            const struct mo_lowered_promise *promise = &promises->items[j];
+            if (promise->source != observation->source)
+                continue;
+            if (length > work || result->count == MO_LIMIT_CORE_NODES)
+                goto exhausted;
+            work -= length;
+            struct mo_observation *item = &result->items[result->count++];
+            *item = *observation;
+            if (promise->name.length != length ||
+                memcmp(promise->name.bytes, observation->name, length) != 0)
+                item->instance = promise;
+        }
+        if (result->count == before) {
+            report_error(diags, "selected promise has no concrete instantiation",
+                         observation->source->syntax->span, observation->name);
+            return NULL;
+        }
+    }
+    return result;
+exhausted:
+    report_error(diags, "test instances exceed tool resources", (struct mo_span){UINT32_MAX, 0, 0},
+                 NULL);
+    return NULL;
+}
+
 struct observation_index {
     struct mo_span span;
     enum mo_function_kind kind;
     uint32_t selected;
+    mo_core_string name;
 };
 
 /* Numeric declaration keys avoid repeated full scans and long-prefix name
@@ -133,7 +189,12 @@ static int compare_observations(const void *a, const void *b) {
     for (unsigned i = 0; i < 4; i++)
         if (l[i] != r[i])
             return l[i] < r[i] ? -1 : 1;
-    return 0;
+    size_t length = left->name.length < right->name.length ? left->name.length : right->name.length;
+    int order = memcmp(left->name.bytes, right->name.bytes, length);
+    return order != 0                               ? order
+           : left->name.length < right->name.length ? -1
+           : left->name.length > right->name.length ? 1
+                                                    : 0;
 }
 
 static uint32_t *bind_observations(struct mo_arena *arena, const struct mo_bytecode *file,
@@ -146,13 +207,17 @@ static uint32_t *bind_observations(struct mo_arena *arena, const struct mo_bytec
     if (index == NULL || functions == NULL)
         return NULL;
     for (uint32_t i = 0; i < selection->count; i++) {
-        const struct mo_checked_spec *source = selection->items[i].source;
-        index[i] =
-            (struct observation_index){source->syntax->span,
-                                       source->kind == MO_SPEC_TEST      ? MO_FUNCTION_TEST
-                                       : source->kind == MO_SPEC_PROMISE ? MO_FUNCTION_PROMISE
-                                                                         : MO_FUNCTION_EXAMPLE,
-                                       i};
+        const struct mo_observation *observation = &selection->items[i];
+        const struct mo_checked_spec *source = observation->source;
+        index[i] = (struct observation_index){
+            source->syntax->span,
+            source->kind == MO_SPEC_TEST      ? MO_FUNCTION_TEST
+            : source->kind == MO_SPEC_PROMISE ? MO_FUNCTION_PROMISE
+                                              : MO_FUNCTION_EXAMPLE,
+            i,
+            observation->instance != NULL
+                ? observation->instance->name
+                : (mo_core_string){observation->name, strlen(observation->name)}};
         functions[i] = MO_NO_INDEX;
     }
     qsort(index, selection->count, sizeof(*index), compare_observations);
@@ -162,20 +227,19 @@ static uint32_t *bind_observations(struct mo_arena *arena, const struct mo_bytec
             function->kind != MO_FUNCTION_PROMISE)
             continue;
         const struct mo_bytecode_debug *debug = &file->debug[i];
+        const struct mo_bytecode_string *full = &file->strings[function->name];
         struct observation_index key = {
             .span = mo_runtime_span(file, sources, debug->file, debug->start, debug->end),
-            .kind = function->kind};
+            .kind = function->kind,
+            .name = {(const char *)full->bytes, full->length}};
         struct observation_index *match =
             bsearch(&key, index, selection->count, sizeof(*index), compare_observations);
         if (match == NULL)
             continue;
-        const struct mo_bytecode_string *full = &file->strings[function->name];
         const struct mo_observation *observation = &selection->items[match->selected];
-        const char *selected = observation->name;
         bool promise = function->kind == MO_FUNCTION_PROMISE;
         if (function->parameter_count != (promise ? observation->source->parameter_count : 0) ||
             file->types[function->result_type].kind != (promise ? MO_TYPE_INT : MO_TYPE_UNIT) ||
-            full->length != strlen(selected) || memcmp(full->bytes, selected, full->length) != 0 ||
             functions[match->selected] != MO_NO_INDEX)
             return NULL;
         functions[match->selected] = i;
