@@ -74,6 +74,10 @@ body, or an assumption that rules out the paths that matter. Two checks catch th
   `display_width`'s width overflow checks, which need a span of more than 2^63 bytes).
 
 CI runs the proofs and the reach check side by side, `MO_CBMC_JOBS` at a time each.
+`ci/check.sh cbmc` sets that to half the processors, so a machine with many processors and
+little memory can run out: on 14 processors and 16 GB, the kernel killed `step`'s proof and its
+reach check. A proof or reach check whose `cbmc` is killed says so, and names the command that
+reruns it alone; it is not a failed proof.
 
 ## What the proofs assume
 

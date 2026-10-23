@@ -130,9 +130,18 @@ proved_function() {
 	esac
 }
 
+# Says so when cbmc died of a signal rather than finishing: the kernel kills it when the machine
+# runs out of memory, which says nothing about the proof.
+killed() {
+	local name=$1 status=$2 seconds=$3
+	if ((status <= 128)); then return 1; fi
+	echo "FAILED $name: cbmc was killed by signal $((status - 128)) after ${seconds}s, most often" \
+		"for lack of memory; rerun it alone: bash cbmc/prove.sh${reach:+ --reach} $name"
+}
+
 # Runs one proof (or, with --reach, its reach check), printing one line and any failures.
 run() {
-	local name replaced loops least file flags
+	local name replaced loops least file flags status=0
 	IFS='|' read -r name replaced loops least file flags <<<"$1"
 	local source=cbmc/${file:-reader.c}
 	local n=$default_input
@@ -206,7 +215,8 @@ run() {
 			if [[ "$option" != --memory-leak-check ]]; then cover+=("$option"); fi
 		done
 		cbmc "$instrumented" --cover location "${cover[@]}" --unwind "$unwind" \
-			--unwindset "$unwindset" >>"$log" 2>&1 || true
+			--unwindset "$unwindset" >>"$log" 2>&1 || status=$?
+		if killed "$name" "$status" $((SECONDS - start)); then return 1; fi
 		missed=
 		pointer_sites=
 		while IFS= read -r goal; do
@@ -249,9 +259,12 @@ run() {
 	fi
 	# Every loop bound carries an unwinding assertion, so a bound too small fails the proof
 	# rather than hiding paths.
-	if cbmc "$instrumented" "${checks[@]}" "${options[@]}" --unwind "$unwind" --unwinding-assertions \
-		--unwindset "$unwindset" >>"$log" 2>&1; then
+	cbmc "$instrumented" "${checks[@]}" "${options[@]}" --unwind "$unwind" --unwinding-assertions \
+		--unwindset "$unwindset" >>"$log" 2>&1 || status=$?
+	if ((status == 0)); then
 		echo "proved $name ($((SECONDS - start))s$inputs)"
+	elif killed "$name" "$status" $((SECONDS - start)); then
+		return 1
 	else
 		echo "FAILED $name: see $log"
 		grep -E ': FAILURE$|ERROR$|^error' "$log" | head -n 20 || true
