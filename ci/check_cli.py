@@ -2104,6 +2104,12 @@ def lower_source_fixtures(binary):
     for name, expected in {
         "file-error-text": b"notes/a.md: no such file\n../secret: not allowed\nbin/app: not text\nout.txt: is a folder\nSome(notes/a.md: no such file)\n",
         "char-natives": b"[false, true, false, true, false, false]/[true, false, false, false, false, true]/[false, true, false]/true/66/b/Q\ntrue/false/true/false/[\"a\", \"b\"]/[(\"a\", 1), (\"b\", 2)]\n",
+        "int-natives": b"81/-8/1/1\n-3/-3/2/-2\n"
+                       b"-9223372036854775808/9223372036854775807/9223372036854775807/-9223372036854775808/-2/-9223372036854775808\n"
+                       b"9223372036854775807/-9223372036854775808/-9223372036854775808/9223372036854775807/9223372036854775807/9223372036854775807\n"
+                       b"None/Some(4)/None/Some(-21)\nSome(255)/None/None/Some(0)\n",
+        "float-natives": b"true/0/-0\n",
+        "bytes-natives": b"10/0/Some(65)/Some(206)/Some(187)\nNone/None/None/Some(\"\")\n",
         "list-all": b"true/true/false/false/true/true/true\n",
         "list-find": b"none/2/none/2/bc/20/40\n",
         "list-count": b"0/0/3/2/2/2/3\n",
@@ -2139,6 +2145,32 @@ def lower_source_fixtures(binary):
             assert emitted.stdout and not emitted.stderr
         result = run(binary, ["run", str(path)], 0)
         assert result.stdout == expected and not result.stderr, (name, result)
+
+    with tempfile.TemporaryDirectory(prefix="mo-numeric-bytes-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        for expression, reason in (
+            ("Int.pow(2, -1)", b"negative exponent"),
+            ("2.pow(63)", b"overflow: Int"),
+            ("Int.floor_div(-9223372036854775808, -1)", b"overflow: Int"),
+            ("7.floor_div(0)", b"dividing by zero"),
+            ("Int.floor_mod(7, 0)", b"dividing by zero"),
+        ):
+            path.write_text(f"module Main\nfn main() : Int\n{expression}\nend\n")
+            checked = run(binary, ["check", str(path)], 0)
+            assert not checked.stdout and not checked.stderr
+            result = run(binary, ["run", str(path)], 70)
+            assert not result.stdout and reason in result.stderr, (expression, result)
+        data = pathlib.Path(directory) / "input.bin"
+        path.write_text('module Main\nfn main(files: Files) : Int\n'
+                        'case files.read_bytes("input.bin")\n'
+                        '  Ok(bytes): if bytes.decode_utf8 is None and '
+                        'Bytes.decode_utf8(bytes) is None: 0 else: 1\n'
+                        '  Error(_): 2\nend\nend\n')
+        for payload in (b"\xff", b"\xc0\x80", b"\xed\xa0\x80", b"\xf0\x9f", b"a\x80"):
+            data.write_bytes(payload)
+            result = subprocess.run([str(binary.resolve()), "run", str(path)], cwd=directory,
+                                    capture_output=True, timeout=30)
+            assert result.returncode == 0 and not result.stdout and not result.stderr, result
 
     # Examples on generic subjects run once each; generic promises still need inputs (E1400).
     path = fixtures / "generic-subject/main.mo"
@@ -2383,6 +2415,8 @@ def constants(binary):
              'fn main() : Int\nhandler() + 24\nend\n', 37),
             ('answer = handler(-7)\nhandler = Int.abs\n'
              'fn main() : Int\nanswer + 30\nend\n', 37),
+            ('answer = handler(2, 3)\nhandler = Int.pow\n'
+             'fn main() : Int\nanswer + 30\nend\n', 38),
             ('fn main() : Int\nInt.min(7, -11) * 2 + Int.max(-11, 7) + 68\nend\n', 53),
             ('to_i = Decimal.to_int\n'
              'fn main() : Int\n'
@@ -2423,7 +2457,6 @@ def constants(binary):
 
         # A lazy body is not an initialization dependency. Neither a lambda,
         # a named adapter nor a self-alias may access beyond its creation prefix.
-        # Int.pow is separate from the supported abs/min/max native routes.
         for body, reason in (
             ('handler = fn() base end\nbase = 13\n'
              'fn main() : Int\nhandler() + 24\nend\n', "deferred function"),
@@ -2432,8 +2465,6 @@ def constants(binary):
              "deferred function"),
             ('handler = first\nfn first() : Int\nhandler()\nend\n'
              'fn main() : Int\n17\nend\n', "deferred function"),
-            ('answer = handler(2, 3)\nhandler = Int.pow\n'
-             'fn main() : Int\nanswer + 30\nend\n', "native call"),
         ):
             path.write_text("module Main\n" + body)
             items = records(run(binary, ["check", "--json", str(path)], 1), "check")

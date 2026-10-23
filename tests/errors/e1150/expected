@@ -1,5 +1,5 @@
 error E1150: this native call is not lowered yet  tests/errors/e1150/main.mo:3:11
 
-  3 | handler = Int.pow
+  3 | handler = Env.get
     |           ^^^^^^^
 

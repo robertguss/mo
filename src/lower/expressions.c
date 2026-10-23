@@ -924,8 +924,22 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
         } natives[] = {{"Int.abs", MO_CORE_INT_OP_ABS},
                        {"Int.min", MO_CORE_INT_OP_MIN},
                        {"Int.max", MO_CORE_INT_OP_MAX},
+                       {"Int.pow", MO_CORE_INT_OP_POW},
+                       {"Int.floor_div", MO_CORE_INT_OP_FLOOR_DIV},
+                       {"Int.floor_mod", MO_CORE_INT_OP_FLOOR_MOD},
+                       {"Int.wrapping_add", MO_CORE_INT_OP_WRAPPING_ADD},
+                       {"Int.wrapping_sub", MO_CORE_INT_OP_WRAPPING_SUB},
+                       {"Int.wrapping_mul", MO_CORE_INT_OP_WRAPPING_MUL},
+                       {"Int.saturating_add", MO_CORE_INT_OP_SATURATING_ADD},
+                       {"Int.saturating_sub", MO_CORE_INT_OP_SATURATING_SUB},
+                       {"Int.saturating_mul", MO_CORE_INT_OP_SATURATING_MUL},
                        {"Int.checked_add", MO_CORE_INT_OP_CHECKED_ADD},
+                       {"Int.checked_sub", MO_CORE_INT_OP_CHECKED_SUB},
+                       {"Int.checked_mul", MO_CORE_INT_OP_CHECKED_MUL},
                        {"Int.to_decimal", MO_CORE_INT_OP_TO_DECIMAL},
+                       {"Int.to_float", MO_CORE_INT_OP_TO_FLOAT},
+                       {"Int.to_big", MO_CORE_INT_OP_TO_BIG},
+                       {"Int.to_byte", MO_CORE_INT_OP_TO_BYTE},
                        {"Int.to_char", MO_CORE_INT_OP_TO_CHAR},
                        {"Int.seconds", MO_CORE_INT_OP_SECONDS},
                        {"Int.milliseconds", MO_CORE_INT_OP_MILLISECONDS},
@@ -939,6 +953,39 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                     p,
                     (struct mo_core_prim){.tag = MO_CORE_PRIM_INT, .as.int_ = natives[i].operation},
                     args);
+        }
+        static const struct {
+            const char *name;
+            enum mo_core_float_op operation;
+        } floats[] = {{"Float.abs", MO_CORE_FLOAT_OP_ABS},
+                      {"Float.floor", MO_CORE_FLOAT_OP_FLOOR},
+                      {"Float.ceil", MO_CORE_FLOAT_OP_CEIL},
+                      {"Float.round", MO_CORE_FLOAT_OP_ROUND},
+                      {"Float.sqrt", MO_CORE_FLOAT_OP_SQRT},
+                      {"Float.nan?", MO_CORE_FLOAT_OP_IS_NAN},
+                      {"Float.infinite?", MO_CORE_FLOAT_OP_IS_INFINITE},
+                      {"Float.to_decimal", MO_CORE_FLOAT_OP_TO_DECIMAL}};
+        for (size_t i = 0; i < sizeof floats / sizeof floats[0]; i++) {
+            lower_work(p, 1);
+            if (strcmp(r->native, floats[i].name) == 0)
+                return lower_prim(p,
+                                  (struct mo_core_prim){.tag = MO_CORE_PRIM_FLOAT,
+                                                        .as.float_ = floats[i].operation},
+                                  args);
+        }
+        static const struct {
+            const char *name;
+            enum mo_core_bytes_op operation;
+        } bytes[] = {{"Bytes.size", MO_CORE_BYTES_OP_SIZE},
+                     {"Bytes.get", MO_CORE_BYTES_OP_GET},
+                     {"Bytes.decode_utf8", MO_CORE_BYTES_OP_DECODE_UTF8}};
+        for (size_t i = 0; i < sizeof bytes / sizeof bytes[0]; i++) {
+            lower_work(p, 1);
+            if (strcmp(r->native, bytes[i].name) == 0)
+                return lower_prim(p,
+                                  (struct mo_core_prim){.tag = MO_CORE_PRIM_BYTES,
+                                                        .as.bytes = bytes[i].operation},
+                                  args);
         }
         static const struct {
             const char *name;
