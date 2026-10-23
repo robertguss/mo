@@ -37,6 +37,49 @@ static void tool_error(struct mo_diags *diags, uint16_t code, const char *messag
         MO_ASSERT(mo_diags_any(diags));
 }
 
+/* Whether path names the same file as any source the program was built from. */
+static bool names_a_source(const char *path, const struct mo_sources *sources) {
+    struct stat out_stat, in_stat;
+    if (stat(path, &out_stat) != 0)
+        return false;
+    for (uint32_t i = 0; i < sources->count; i++)
+        if (stat(sources->files[i].path, &in_stat) == 0 && out_stat.st_dev == in_stat.st_dev &&
+            out_stat.st_ino == in_stat.st_ino)
+            return true;
+    return false;
+}
+
+/* Writes the compiled program to path, never over a source file it was built from, and removes the
+ * partial regular file when a write fails. An existing file is replaced. Reports E1404 with the
+ * OS's reason. */
+static void write_bytecode(const char *path, const struct mo_sources *sources,
+                           const struct mo_buffer *wire, struct mo_diags *diags) {
+    if (names_a_source(path, sources)) {
+        tool_error(diags, MO_CODE_TOOL_PIPELINE, "bytecode can't replace a source file", path);
+        return;
+    }
+    FILE *file = fopen(path, "wb");
+    if (file == NULL) {
+        tool_error(diags, MO_CODE_TOOL_PIPELINE, "bytecode could not be written to the file",
+                   strerror(errno));
+        return;
+    }
+    struct stat made;
+    bool regular = fstat(fileno(file), &made) == 0 && S_ISREG(made.st_mode);
+    bool written = fwrite(wire->bytes, 1, wire->length, file) == wire->length;
+    int reason = written ? 0 : (errno != 0 ? errno : EIO);
+    if (fclose(file) != 0 && written) {
+        written = false;
+        reason = errno != 0 ? errno : EIO;
+    }
+    if (!written) {
+        if (regular)
+            (void)remove(path); /* never a device such as /dev/full */
+        tool_error(diags, MO_CODE_TOOL_PIPELINE, "bytecode could not be written to the file",
+                   strerror(reason));
+    }
+}
+
 struct pipeline_work {
     const struct mo_cli *cli;
     uint32_t file; /* the cli's file whose program this checks */
@@ -69,7 +112,8 @@ static void execute_pipeline(void *argument) {
     struct mo_program *program = mo_check(arena, set, diags);
     if (program == NULL || mo_diags_any(diags))
         return;
-    if (cli->command == MO_COMMAND_RUN && program->entry.function == UINT32_MAX) {
+    if ((cli->command == MO_COMMAND_RUN || cli->command == MO_COMMAND_EMIT) &&
+        program->entry.function == UINT32_MAX) {
         const char *message = "the entry module has no main function";
         struct mo_diag diag = {.code = MO_CODE_MAIN_CONTRACT,
                                .primary = {set->modules[0]->span, message},
@@ -129,10 +173,11 @@ static void execute_pipeline(void *argument) {
         goto done;
     /* Plain check and fix validate lowering too, but never execute the user's main. */
     bool checking = cli->command == MO_COMMAND_CHECK || cli->command == MO_COMMAND_FIX;
+    bool emitting = cli->command == MO_COMMAND_EMIT;
     if (checking && cli->emit == MO_EMIT_NONE && !anchors)
         goto done;
     if (anchors || cli->command == MO_COMMAND_RUN || cli->command == MO_COMMAND_TEST ||
-        cli->emit == MO_EMIT_BYTECODE) {
+        cli->emit == MO_EMIT_BYTECODE || emitting) {
         if (!mo_compile(core, &wire, diags))
             goto done;
     }
@@ -155,6 +200,8 @@ static void execute_pipeline(void *argument) {
             tool_error(diags, MO_CODE_TOOL_PIPELINE, "bytecode text could not be emitted",
                        error.reason);
     }
+    if (emitting && !mo_diags_any(diags))
+        write_bytecode(cli->output, sources, &wire, diags);
     if (cli->emit != MO_EMIT_NONE && !mo_diags_any(diags) &&
         (fwrite(printed.bytes, 1, printed.length, work->output) != printed.length ||
          fflush(work->output) != 0))

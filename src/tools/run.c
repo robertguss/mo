@@ -225,7 +225,7 @@ int mo_run_program(const struct mo_cli *cli, const struct mo_core *core,
         status = 1;
         goto done;
     }
-    if (cli->command == MO_COMMAND_CHECK) {
+    if (cli->command == MO_COMMAND_CHECK || cli->command == MO_COMMAND_EMIT) {
         status = 0;
         goto done;
     }

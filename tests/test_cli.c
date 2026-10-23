@@ -5,10 +5,12 @@
 #include "base/stack.h"
 #include "bytecode/bytecode.h"
 #include "core/core.h"
+#include "vm/vm.h"
 
 #include <locale.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 struct emission {
     const char *path;
@@ -50,6 +52,56 @@ static void roundtrip_emission(void *argument) {
     mo_sources_free(&sources);
 }
 
+/* The stand-in for the loader `mo emit` leaves to a later task: loads the bytes of an emitted
+ * file, which verifies them, then runs the program's entry wrapper with the real console. Its exit
+ * status is the program's, or 70 when anything before main failed, so a driver can compare it
+ * with `mo run` on the source. Programs whose main takes no arguments, environment or files. */
+static int run_bytecode(const char *path) {
+    struct mo_buffer bytes;
+    mo_buffer_init(&bytes, MO_LIMIT_BYTECODE_SIZE);
+    FILE *file = fopen(path, "rb");
+    int status = 70;
+    uint8_t chunk[4096];
+    size_t got = 0;
+    bool read_all = file != NULL;
+    while (read_all && (got = fread(chunk, 1, sizeof chunk, file)) > 0)
+        read_all = mo_buffer_append(&bytes, chunk, got);
+    read_all = read_all && file != NULL && !ferror(file);
+    if (file != NULL)
+        (void)fclose(file);
+    struct mo_load_error loaded;
+    struct mo_image *image = read_all ? mo_load(bytes.bytes, bytes.length, &loaded) : NULL;
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    if (image != NULL && mo_image_init(image, &limits, &defect) == MO_RETURNED) {
+        const struct mo_bytecode *code = mo_image_bytecode(image);
+        uint32_t main = UINT32_MAX;
+        static const char suffix[] = ".main.entry";
+        for (uint32_t i = 0; i < code->function_count; i++) {
+            const struct mo_bytecode_string *name = &code->strings[code->functions[i].name];
+            if (name->length >= sizeof suffix - 1 &&
+                memcmp(name->bytes + name->length - (sizeof suffix - 1), suffix,
+                       sizeof suffix - 1) == 0)
+                main = i;
+        }
+        struct mo_process *process = main == UINT32_MAX ? NULL : mo_process_new(image, &limits);
+        if (process != NULL) {
+            struct mo_host *host = mo_process_host(process);
+            host->output = STDOUT_FILENO;
+            host->errors = STDERR_FILENO;
+            struct mo_cell result;
+            if (mo_call_main(process, main, NULL, NULL, -1, NULL, &result, &defect) ==
+                MO_RETURNED)
+                status = (int)mo_cell_get_int(result);
+            mo_process_free(process);
+        }
+    }
+    if (image != NULL)
+        mo_image_free(image);
+    mo_buffer_free(&bytes);
+    return status;
+}
+
 static void parse_commands(void) {
     struct mo_cli cli;
     const char *error;
@@ -66,6 +118,26 @@ static void parse_commands(void) {
           strcmp(mo_cli_file(&cli, 1), "-two.mo") == 0 &&
           strcmp(mo_cli_file(&cli, 2), "three.mo") == 0);
     CHECK(!mo_cli_parse(0, NULL, &cli, &error));
+    const char *emit[] = {"mo", "emit", "main.mo", "-o", "main.bc"};
+    CHECK(mo_cli_parse(5, emit, &cli, &error));
+    CHECK(cli.command == MO_COMMAND_EMIT && cli.file_count == 1 && cli.emit == MO_EMIT_NONE &&
+          strcmp(cli.output, "main.bc") == 0);
+    const char *first[] = {"mo", "emit", "-o", "main.bc", "main.mo"};
+    CHECK(mo_cli_parse(5, first, &cli, &error) && strcmp(cli.output, "main.bc") == 0);
+    const char *bare[] = {"mo", "emit", "main.mo"};
+    CHECK(!mo_cli_parse(3, bare, &cli, &error));
+    CHECK(strcmp(error, "emit needs -o FILE: \"emit\"") == 0);
+    const char *twice[] = {"mo", "emit", "main.mo", "-o", "a.bc", "-o", "b.bc"};
+    CHECK(!mo_cli_parse(7, twice, &cli, &error));
+    const char *dash[] = {"mo", "emit", "main.mo", "-o", "-a.bc"};
+    CHECK(!mo_cli_parse(5, dash, &cli, &error));
+    const char *wrong_command[] = {"mo", "check", "main.mo", "-o", "main.bc"};
+    CHECK(!mo_cli_parse(5, wrong_command, &cli, &error));
+    CHECK(strcmp(error, "flag is not accepted by this command: \"-o\"") == 0);
+    const char *two[] = {"mo", "emit", "a.mo", "b.mo", "-o", "main.bc"};
+    CHECK(!mo_cli_parse(6, two, &cli, &error));
+    const char *json[] = {"mo", "emit", "--json", "main.mo", "-o", "main.bc"};
+    CHECK(!mo_cli_parse(6, json, &cli, &error));
 }
 
 static void limit_values(void) {
@@ -490,6 +562,8 @@ int main(int argc, char *argv[]) {
         struct emission e = {.path = argv[2], .core = strcmp(argv[1], "--roundtrip-core") == 0};
         return mo_with_stack(MO_SOURCE_STACK_SIZE, roundtrip_emission, &e) == 0 && e.ok ? 0 : 1;
     }
+    if (argc == 3 && strcmp(argv[1], "--run-bytecode") == 0)
+        return run_bytecode(argv[2]);
     if (argc == 2 && strcmp(argv[1], "--render-bytes") == 0)
         return render_bytes() ? 0 : 1;
     if (argc == 2 &&

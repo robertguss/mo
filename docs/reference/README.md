@@ -1155,7 +1155,9 @@ Each command is given the file of the program's main module; `mo check` and `mo
 test` also accept a library module. `mo check FILE`
 reports the program's errors, `mo run FILE [ARGS...]` runs it with the
 arguments after the file's name, and `mo test FILE` checks its examples,
-promises and tests. `mo format` and `mo fix` rewrite the files they are given.
+promises and tests. `mo emit FILE -o OUT` checks the program as `mo check` does
+and writes its bytecode to `OUT`; `-o` is required, and a library module has no
+main to emit (E0079). `mo format` and `mo fix` rewrite the files they are given.
 `mo guide` needs no file. It prints a short guide for agents writing Mo,
 matched to the installed version: how to work with the `mo` command, a small
 complete program with its tests, and when a task is done. `mo guide
