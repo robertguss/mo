@@ -6,7 +6,7 @@ text must survive C's parser and printer and Lean's unchanged.
 
 Each driver is a built tests/test_core_check.test; the tests/test_core_print.test beside it is the
 printer. MO_CORE_GENERATED sets the program count (default 2000) and MO_CORE_GENERATED_SEED the
-first seed (default 0), so a nightly run can cover seeds the pull request run does not.
+first seed (default 0), so a run by hand can cover seeds the default run does not.
 Lean's mocore decides the same programs: a typing or parse verdict from it fails the run, and
 `mocore --canonical` must print every program byte for byte as it was generated. All storage is
 disposable.

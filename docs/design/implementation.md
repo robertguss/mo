@@ -14,16 +14,17 @@ C has no memory safety, and Mo's capability security is only as strong as the
 VM's integrity: a memory bug in the VM could let a program reach something it
 wasn't handed. These five conditions make up for that. Checks enforce them
 wherever there is code to check, not good intentions; `ci/check.sh` runs every
-check, the slow ones nightly (`ci/orb/README.md`).
+check. Nothing runs them automatically: the fast groups run before each pull
+request, the slow ones (sanitizers, fuzzing, Lean, CBMC) only when run by hand.
 
 1. **Sanitizers in every test run.** Every test also runs under
-   AddressSanitizer and UndefinedBehaviorSanitizer, nightly against `main`, so
-   memory bugs fail loudly where they happen. ThreadSanitizer joins them in Phase 3, when concurrent
+   AddressSanitizer and UndefinedBehaviorSanitizer (`bash ci/check.sh sanitize`,
+   run by hand), so memory bugs fail loudly where they happen. ThreadSanitizer joins them in Phase 3, when concurrent
    code arrives; there is none to check yet.
-2. **Fuzzing in CI.** The parser, the bytecode loader, the VM and everything
+2. **Fuzzing.** The parser, the bytecode loader, the VM and everything
    that reads outside input get fuzz targets in `fuzz/`, with seed inputs in
-   `fuzz/corpus/<target>/`. `ci/check.sh` runs every target, and the nightly run fuzzes each one
-   for five minutes.
+   `fuzz/corpus/<target>/`. `bash ci/check.sh fuzz` runs every target briefly;
+   `ci/orb/nightly.sh` fuzzes each one for five minutes when run by hand.
 3. **Tiger Style.** Assertions everywhere (`MO_ASSERT` is never compiled out),
    explicit limits, arenas instead of scattered `malloc` and `free`, every
    return value checked, and warnings treated as errors, including
@@ -54,7 +55,7 @@ make library-map    # docs/design/library.md and the tables of primitives agree
 make tidy           # standard-library results are used (needs clang-tidy)
 make grammar        # Mo code parses with the executable grammar (needs bison)
 make formal         # Mo Core in Lean builds and every proof checks (needs elan)
-bash ci/check.sh    # every check, including the slow ones CI runs nightly
+bash ci/check.sh    # every check, including the slow ones
 ```
 
 Choose a compiler with `CC=gcc` or `CC=clang`. Each compiler builds into its
@@ -79,13 +80,12 @@ refuses a grammar with any conflict. Phase 2's parser is hand-written, for
 better error messages, and is tested against this grammar. See
 `grammar/README.md`.
 
-## CI
+## Checks and merging
 
-A pull request merges on a green hosted `check` status, which runs the fast
-groups; the sanitizer, fuzz, Lean and CBMC gates run nightly against `main` and
-file an issue when one fails. Review and Robert’s merge authorization remain
-required, as do applicable GitHub checks and branch protection. The two tiers,
-the evidence a PR records and how to restore the strict gate are in
+Mo has no hosted CI. Before a pull request, `bash ci/check.sh gcc` builds and
+runs the unit tests; the sanitizer, fuzz, Lean and CBMC groups run only when
+someone runs them by hand. A pull request merges when Robert says so. The merge
+rule is in AGENTS.md "Checks and merging", and the evidence a PR records is in
 `ci/orb/README.md`.
 
 ## Rust-era plans, replaced

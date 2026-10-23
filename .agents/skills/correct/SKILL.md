@@ -1,6 +1,6 @@
 ---
 name: correct
-description: Find the mistakes agents keep repeating in Mo and move each fix as high as it goes, from structure down to a CI check, a test, and prose last. Use for /correct, when Robert or a reviewer corrects the same kind of mistake twice, or when asked which agent mistakes recur.
+description: Find the mistakes agents keep repeating in Mo and move each fix as high as it goes, from structure down to a check, a test, and prose last. Use for /correct, when Robert or a reviewer corrects the same kind of mistake twice, or when asked which agent mistakes recur.
 ---
 
 # Correct repeated mistakes
@@ -15,7 +15,6 @@ Read, newest first, since the ledger's "Last run" line (all history on the first
 
 - merged PRs' reviews and review threads, and the "Review" section of each PR body, where `review-change` findings are recorded;
 - commits inside each PR after its first: "fix review findings", "fix CI", "format", conflict merges;
-- red `check` runs on PR heads, by group and first failing line;
 - Robert's messages in the project threads that correct an agent, when the project's fetch tools are available;
 - reverts and follow-up PRs that fix a just-merged one.
 
@@ -35,7 +34,7 @@ For each class, take the first level that can stop it, and write down why each l
 
 1. **Structure.** One source of truth instead of hand-synced lists (the way `prims.def` feeds four readers); one supported way to do a job; dead code an agent would copy deleted; a file layout where parallel PRs add separate files instead of editing the same lines.
 2. **The C type system and compiler.** An enum that `-Wswitch-enum` makes exhaustive, `MO_MUST_USE`, a named limit in `src/base/limits.h`, an `MO_ASSERT` that fires in every test run.
-3. **A CI check.** A `ci/check_*.py` script or `make` target wired into a `ci/check.sh` group, whose error names the file and the fix. If the bad pattern is already common, fail only when a change adds more.
+3. **A check.** A `ci/check_*.py` script or `make` target wired into a `ci/check.sh` group, whose error names the file and the fix. If the bad pattern is already common, fail only when a change adds more.
 4. **A test** that goes red when the behaviour breaks (see `test-change`).
 5. **Prose, last**, only for judgment calls: a rule in `AGENTS.md`, `review-change/rules.md` or a skill. Nothing fails when an agent skips it.
 

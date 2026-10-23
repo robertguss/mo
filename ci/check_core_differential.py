@@ -10,7 +10,7 @@ codegen refuses the rest by design. A program either engine cuts off at its budg
 instruction limit, Lean's fuel) is counted, not compared; one engine alone doing so is capped at 2%.
 
     MO_CORE_DIFF            program count (default 1000)
-    MO_CORE_DIFF_SEED       first seed (default 0); the nightly job gives each shard its own range
+    MO_CORE_DIFF_SEED       first seed (default 0); give each run by hand its own range
     MO_CORE_DIFF_MISMATCHES stop after this many mismatches (default 5)
     MO_CORE_DIFF_OUT        a folder to keep every mismatching program in, as SEED.core
     MO_CORE_DIFF_CORPUS     a folder of .core programs compared first (default tests/differential)
@@ -41,7 +41,7 @@ RUN_SUFFIX = f" {gen_core.WORLD} (entry ()) 0))\n"
 FUEL = 10000
 BUDGET = "budget"
 # Seeds whose program repeated a text Int-max times before gen_core capped repeat counts: Lean timed
-# out or ran out of memory (an empty text, then two non-empty ones), as the first nightly run found.
+# out or ran out of memory (an empty text, then two non-empty ones), as the first 100,000-program run found.
 REGRESSION_SEEDS = (2074420190, 2074424572, 2074400432)
 
 

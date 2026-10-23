@@ -8,7 +8,7 @@ context: fork
 
 You run in a fresh context with no view of the conversation that built the change, so everything you judge comes from the repo. You are a **skeptic** reviewing someone else's change: assume each test is greener than it should be and each contract crossing is missing a side, until the code shows otherwise. If you can see the conversation that built the change, start a subagent with this skill instead of reviewing it yourself.
 
-CI already proves formatting, warnings, module includes and the library map; spend your attention on what it can't see.
+Nothing on GitHub checks the change, so run the checks below rather than assume formatting, warnings, module includes and the library map are fine; then spend your attention on what no check can see.
 
 ## 1. Scope the change
 
@@ -18,7 +18,7 @@ Done when you hold the full file list and the task.
 
 ## 2. Run the gates
 
-Run `bash ci/check.sh` for the fast groups (`gcc clang static drivers`) and any slow group the change reaches, and record each as green, red (with the first failing line), or skipped (with the missing tool). A red group is the top finding. The PR merges on the hosted `check`; the slow groups run nightly (`ci/orb/README.md`).
+Run `bash ci/check.sh` for the fast groups (`gcc clang static drivers`) and any slow group the change reaches, and record each as green, red (with the first failing line), or skipped (with the missing tool). A red group is the top finding. A group you could not run is named as not run.
 
 ## 3. Apply every rule to every changed file
 
