@@ -6,6 +6,8 @@ a form that lands should gain a golden program. Section numbers are Language Ref
 ## Checked and run, but no golden program yet
 
 - `List`: `filter`, `filter_map`, `flat_map`, `any?`, `group_by` (reference 14).
+- `List.to_set` and Set text forms (reference 14 and 9.2) run in `lib/set.mo` and
+  `tests/lower-source/set/main.mo`.
 
 ## Not lowered yet (E1150)
 
@@ -13,9 +15,9 @@ a form that lands should gain a golden program. Section numbers are Language Ref
   `to_byte`, `to_float`, `compare`. `BigInt`: `to_int`, `abs`, `min`.
 - `Float`: `sqrt`, `floor`, `ceil`, `round`, `abs`, `nan?`, `infinite?`, `to_decimal`.
 - `Bytes.size`, `Bytes.decode_utf8`.
-- `List.sum`, `List.to_set`.
+- `List.sum`.
 - `Env.get`, `Random.int`.
-- Interpolating an `Ordering`, an `Entry`, or a `Map` or `Set` (derived text shape).
+- Interpolating an `Ordering`, an `Entry`, or a `Map` (derived text shape).
 
 ## Other
 

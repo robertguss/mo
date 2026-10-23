@@ -351,6 +351,9 @@ no functions, only tests that pin what reference section 14 says they do.
 
 ## Set(T)
 
+`lib/set.mo` tests these operations, `List.to_set`, insertion order, equality, hashing and text forms
+against reference sections 3.8, 9.2 and 14. It has no functions; the operations stay primitives.
+
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
 | `Set.empty` | primitive | `SET_EMPTY` | a constant, so its signature in `prims.def` is just its type |
