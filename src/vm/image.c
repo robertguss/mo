@@ -13,6 +13,7 @@ static void release_image(void *pointer) {
 
 static MO_MUST_USE bool constant(struct mo_process *p, const struct mo_bytecode_constant *c,
                                  struct mo_cell *out) {
+    MO_ASSERT(c->type < p->file->type_count);
     switch (c->encoding) {
     case MO_CONSTANT_IMMEDIATE64:
     case MO_CONSTANT_DECIMAL128: {
@@ -38,6 +39,8 @@ static MO_MUST_USE bool constant(struct mo_process *p, const struct mo_bytecode_
         return mo_value_bigint(p->heap, c->value.bigint.sign, c->value.bigint.magnitude.bytes,
                                c->value.bigint.magnitude.length, out);
     case MO_CONSTANT_CLOSURE:
+        MO_ASSERT(c->value.function < p->file->function_count &&
+                  p->file->functions[c->value.function].kind == MO_FUNCTION_CLOSURE);
         return mo_value_closure_owned(p->heap, c->value.function, NULL, 0, out);
     }
     MO_UNREACHABLE();
@@ -109,12 +112,17 @@ static MO_MUST_USE enum mo_outcome initialize(struct mo_image *image,
         }
     }
     for (uint32_t i = 0; i < file->init_count; i++) {
+        MO_ASSERT(file->init[i] < file->function_count &&
+                  file->functions[file->init[i]].kind == MO_FUNCTION_INIT);
         struct mo_cell result;
         runtime->outcome = mo_call(p, file->init[i], NULL, 0, &result, defect_out);
         if (runtime->outcome != MO_RETURNED)
             return runtime->outcome;
         mo_value_drop(p->heap, file->functions[file->init[i]].result_type, result);
     }
+    /* The verifier gave every global exactly one initializer, so all of them ran. */
+    for (uint32_t i = 0; i < file->global_count; i++)
+        MO_ASSERT(runtime->set[i]);
     runtime->ready = true;
     runtime->outcome = MO_RETURNED;
     free(p->stack);

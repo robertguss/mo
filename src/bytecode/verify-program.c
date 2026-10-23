@@ -150,11 +150,13 @@ bool mo_verify_program_init(struct mo_arena *arena, const struct mo_bytecode *f,
     }
     for (uint32_t i = 0; i < f->init_count; i++) {
         uint32_t index = f->init[i], target = MO_NO_INDEX;
+        MO_ASSERT(index < f->function_count && f->functions[index].kind == MO_FUNCTION_INIT);
         const struct mo_bytecode_function *fn = &f->functions[index];
         out->init_rank[index] = i + 1;
         for (uint32_t pc = 0; pc < fn->code_count; pc = next(fn, pc)) {
             if ((fn->code[pc] & MO_OPCODE_MASK) == MO_OP_SET_GLOBAL) {
                 uint32_t global = fn->code[pc + 1];
+                MO_ASSERT(global < f->global_count);
                 if (target != MO_NO_INDEX && target != global) {
                     return refuse(error, code_offsets[index] + pc * 4,
                                   "init sets different globals");
@@ -171,6 +173,7 @@ bool mo_verify_program_init(struct mo_arena *arena, const struct mo_bytecode *f,
             return refuse(error, 20, "global has multiple initializers");
         }
         out->global_rank[target] = i + 1;
+        MO_ASSERT(out->global_rank[target] == out->init_rank[index]);
     }
     for (uint32_t i = 0; i < f->global_count; i++) {
         if (out->global_rank[i] == 0) {
@@ -179,11 +182,17 @@ bool mo_verify_program_init(struct mo_arena *arena, const struct mo_bytecode *f,
             return refuse(error, 20, "global has no initializer");
         }
     }
+    /* Every global has exactly one initializer: the VM's `set_global` asserts it runs once, and
+     * image initialization asserts that every global is set. */
+    for (uint32_t i = 0; i < f->global_count; i++) {
+        MO_ASSERT(out->global_rank[i] != 0 && out->global_rank[i] <= f->init_count);
+    }
     for (uint32_t i = 0; i < f->function_count; i++) {
         const struct mo_bytecode_function *fn = &f->functions[i];
         for (uint32_t pc = 0; pc < fn->code_count; pc = next(fn, pc)) {
             uint32_t op = fn->code[pc] & MO_OPCODE_MASK;
             if (op == MO_OP_GLOBAL) {
+                MO_ASSERT(fn->code[pc + 2] < f->global_count);
                 uint32_t rank = out->global_rank[fn->code[pc + 2]];
                 if (out->required[i] < rank) {
                     out->required[i] = rank;
@@ -191,6 +200,7 @@ bool mo_verify_program_init(struct mo_arena *arena, const struct mo_bytecode *f,
             }
             if (op == MO_OP_CALL || op == MO_OP_TAIL_CALL) {
                 MO_ASSERT(g.count < capacity);
+                MO_ASSERT(fn->code[pc + (op == MO_OP_CALL ? 2U : 1U)] < nodes);
                 add(&g, i, fn->code[pc + (op == MO_OP_CALL ? 2U : 1U)]);
             }
         }
