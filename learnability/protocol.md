@@ -201,6 +201,11 @@ twice: as `tally` prints them, and with those codes left out of the errors. The 
 measured against the targets. `tally` moves an error a `mo fix` run precedes to `by_fix`. Before
 MO-48 that run did nothing (E1400), so a round on such a build says how many errors that moved.
 
+`python3 learnability/retry.py LOGS` prints all of this for a round's logs: `tally`'s table from
+the reference (`bench/tools/tally/hidden/reference.py`), then for both sets of errors the two
+rates with their Wilson intervals, the errors `mo fix` moved, the number of sessions, the errors
+from the session with the most, and the rates without that session.
+
 ## 8. Reporting
 
 Each round's folder (as `final/` is for Phase 1) holds `freeze.md`, the prompt, every program as
