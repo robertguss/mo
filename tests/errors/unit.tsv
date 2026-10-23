@@ -52,6 +52,6 @@ E1100	tests/test_check.c	library discovery and import counts beyond what a progr
 E1102	tests/test_check.c	library discovery and import counts beyond what a program can write, or an unreadable toolchain folder
 E1107	tests/test_check_bodies.c	needs 2^28 units of checking work, set by the test directly
 E1401	tests/test_cli_faults.c	the OS refusing the explicit source stack, raised only by fault injection
-E1053	tests/test_codes.c	UNTESTED: Core checking's scratch arena running out; needs fault injection, which no test does yet
-E1057	tests/test_codes.c	UNTESTED: the bytecode writer refusing compiler output is a compiler bug; no test forces it
-E1106	tests/test_codes.c	UNTESTED: 4,104 nested inference frames; the Core path limit (E1153) and line limits stop every source first
+E1053	tests/test_compiler_faults.c	Core scratch allocation failure, raised through the public checker with compile-time fault injection
+E1057	tests/test_compiler_faults.c	compiler output corrupted at the writer boundary, refused by the real bytecode writer
+E1106	tests/errors/README.md	UNREACHABLE: parser-produced bodies cannot reach the conservative inference-frame bound; retain the defensive guard and registered code
