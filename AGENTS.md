@@ -55,14 +55,18 @@ bash ci/check.sh [group…]  # every check; groups: gcc clang sanitize fuzz driv
 
 ## Checks and merging
 
-Nothing runs on GitHub: there are no Actions workflows, and `main` requires no status check (only
-force-pushes are blocked). Before opening a PR, run `bash ci/check.sh gcc` (build and unit tests)
-and report its result in the PR body; run any other group the change reaches and say which groups
-you did not run. The slow groups (`cbmc`, `lean`, `sanitize`, `fuzz`) run only when someone runs
-them by hand. The build embeds or checks `docs/agent-guide.md`, `docs/reference/README.md` and
+No Mo check runs on GitHub: there are no Actions workflows, and `main` requires no status check
+(only force-pushes are blocked). The Socket Security app may still post its own checks; none is
+required. Before opening a PR, run `bash ci/check.sh gcc` (build and unit tests)
+and report its result in the PR body, listing any check it skipped for a missing tool (a skip is
+not a pass; `CI=1` makes it fail instead). Run any other group the change reaches and say which
+groups you did not run: usually `clang` and `static` (formatting, module includes, library map)
+for C changes, `drivers` for CLI or golden changes, `static` for `prims.def` or `hostops.def`.
+The slow groups (`cbmc`, `lean`, `sanitize`, `fuzz`) run only when someone runs them by hand. The
+build embeds or checks `docs/agent-guide.md`, `docs/reference/README.md` and
 `docs/design/library.md`, so after editing one, also run `bash ci/check.sh drivers static`. A PR
-merges when Robert says so; he lets agents merge docs-only PRs without review. PRs are
-squash-merged.
+merges when Robert says so. He lets agents merge docs-only PRs without review: PRs that change only
+Markdown files, other than those three. PRs are squash-merged.
 
 ## Architecture
 

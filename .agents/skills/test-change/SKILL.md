@@ -54,4 +54,4 @@ Groups run in order: gcc, clang, sanitize, drivers, fuzz, static. Fix the first 
 - **fuzz**: the crash input becomes a unit test or fixture first, seen red, then the fix.
 - **drivers**: the script named in the step (`ci/check_cli.py`, `ci/check_lower_source.py`, …) prints the fixture and the expected and actual results.
 - **static**: `make deps`, `make library-map` or `make format-check` names the file and the rule.
-- **Another machine only** (the CI orb, a reviewer): a tool version differing from yours is the usual cause; `make format-check` expects clang-format 14.0.6, and newer versions format differently.
+- **Another machine only** (the CI orb, a reviewer): a tool version differing from yours is the usual cause; the code is formatted with clang-format 14.0.6, which `make format-check` does not pin, and newer versions format differently.

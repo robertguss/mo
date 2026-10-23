@@ -5,7 +5,7 @@ description: Take a Mo task from Notion to an open pull request. Use when asked 
 
 # Ship a task
 
-One MO task is one PR off `main`. This skill is the order of the work; each step's own skill holds how to do it. Agents commit, push and open PRs freely; Robert approves every merge.
+One MO task is one PR off `main`. This skill is the order of the work; each step's own skill holds how to do it. Agents commit, push and open PRs freely; Robert approves every merge except docs-only PRs (AGENTS.md "Checks and merging").
 
 ## 1. Load the task
 
@@ -27,7 +27,7 @@ Done when the plan has no open questions.
 
 Write the code and its tests following `test-change`, in commits that each leave the tree building.
 
-Done when every behaviour in the plan has a test seen red, then green, and the `ci/check.sh` groups the change touches pass, or each skipped check is named with the tool it lacks. A PR merges when Robert says so (AGENTS.md "Checks and merging"); nothing runs on GitHub.
+Done when every behaviour in the plan has a test seen red, then green, and the `ci/check.sh` groups the change touches pass, or each skipped check is named with the tool it lacks. A PR merges when Robert says so (AGENTS.md "Checks and merging"); no Mo check runs on GitHub.
 
 ## 5. Review
 

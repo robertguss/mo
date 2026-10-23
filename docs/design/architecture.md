@@ -2311,7 +2311,7 @@ found. A larger run, such as the 100,000 programs a nightly job once ran, is a r
 - the formatter: formatting twice gives the same text, and keeps the tree.
 
 Every check runs through `ci/check.sh`, in the optional CI orb (D214) or an
-equivalent verified Linux environment; nothing runs on GitHub. Before a pull request an agent runs
+equivalent verified Linux environment; no Mo check runs on GitHub. Before a pull request an agent runs
 the `gcc` group; the slow groups run only by hand. Merge verification and evidence rules are in
 `ci/orb/README.md`. The Lean build
 (`make formal`) and CBMC need elan and CBMC in `.agents/setup`.
