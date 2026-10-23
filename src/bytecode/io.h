@@ -17,7 +17,7 @@ _Static_assert(sizeof(struct mo_type) <= sizeof(struct mo_bytecode) &&
  * imposing another file limit. It is a ceiling, not an allocation or a reservation. */
 static inline MO_MUST_USE size_t mo_bytecode_work_budget(size_t wire_size) {
     const size_t per_byte =
-        2 * (sizeof(struct mo_bytecode) + MO_ARENA_CHUNK_HEADER + _Alignof(max_align_t));
+        2 * (sizeof(struct mo_bytecode) + MO_ARENA_CHUNK_HEADER + MO_ARENA_ALIGNMENT);
     MO_ASSERT(wire_size <= MO_LIMIT_BYTECODE_SIZE && wire_size < SIZE_MAX / per_byte);
     return (wire_size + 1) * per_byte;
 }

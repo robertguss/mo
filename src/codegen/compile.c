@@ -119,7 +119,7 @@ static MO_MUST_USE bool unsupported(struct compiler *c, const char *reason) {
     return problem(c, MO_CODE_CODEGEN_UNSUPPORTED, reason);
 }
 static MO_MUST_USE void *allocate(struct compiler *c, size_t count, size_t width) {
-    void *p = mo_arena_allocate_array(&c->arena, count, width, _Alignof(max_align_t));
+    void *p = mo_arena_allocate_array(&c->arena, count, width, MO_ARENA_ALIGNMENT);
     if (p == NULL) {
         if (!problem(c, MO_CODE_CODEGEN_MEMORY,
                      "Code generation exhausted its scratch limit or memory."))

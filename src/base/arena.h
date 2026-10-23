@@ -14,10 +14,16 @@
 
 #include "base/base.h"
 
+/* The alignment for memory whose type the caller doesn't name: enough for max_align_t and the
+ * 16-byte wide integers. It is 16 on every target, including Apple arm64 where max_align_t's
+ * alignment is only 8, so a program takes the same arena memory everywhere and reaches a limit at
+ * the same place. Chunks start aligned to it. */
+enum { MO_ARENA_ALIGNMENT = 16 };
+
 /* The most memory an arena takes from the system beyond what it hands out, per chunk: the chunk's
  * header. An arena that must hold n bytes in one piece needs a limit of at least
- * n + MO_ARENA_CHUNK_HEADER, with alignment - _Alignof(max_align_t) more for an alignment larger
- * than max_align_t's. */
+ * n + MO_ARENA_CHUNK_HEADER, with alignment - MO_ARENA_ALIGNMENT more for an alignment larger
+ * than MO_ARENA_ALIGNMENT. */
 enum { MO_ARENA_CHUNK_HEADER = 32 };
 
 /* The largest alignment an arena hands out. */

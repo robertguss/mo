@@ -6,13 +6,12 @@
 #include <string.h>
 
 /* A chunk: its header, then capacity bytes, of which the first used have been handed out. The
- * data starts aligned for max_align_t and the 16-byte wide integers, including on Apple
- * arm64 where max_align_t's alignment is only 8. malloc/realloc align to 16 on our targets. */
+ * data starts aligned to MO_ARENA_ALIGNMENT. malloc/realloc align to 16 on our targets. */
 struct mo_arena_chunk {
     struct mo_arena_chunk *previous;
     size_t capacity;
     size_t used;
-    _Alignas(16) max_align_t data[];
+    _Alignas(MO_ARENA_ALIGNMENT) max_align_t data[];
 };
 
 _Static_assert(sizeof(struct mo_arena_chunk) <= MO_ARENA_CHUNK_HEADER,
@@ -21,6 +20,9 @@ _Static_assert(sizeof(struct mo_arena_chunk) % _Alignof(max_align_t) == 0,
                "a chunk's data is aligned for any type");
 _Static_assert(offsetof(struct mo_arena_chunk, data) % 16 == 0,
                "a chunk's data is aligned for wide integers");
+_Static_assert(MO_ARENA_ALIGNMENT % _Alignof(max_align_t) == 0 &&
+                   _Alignof(struct mo_arena_chunk) == MO_ARENA_ALIGNMENT,
+               "MO_ARENA_ALIGNMENT suits any type and is a chunk's own alignment");
 
 /* Chunks start small, so a small arena takes little, and double up to the largest size, so a large
  * one makes few calls to malloc. A request that needs more gets a chunk of its own size. */

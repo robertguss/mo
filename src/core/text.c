@@ -438,7 +438,7 @@ static MO_MUST_USE bool decode(struct reader *r, const struct schema *s, const s
         return decode_node(r, s, sx, out, depth);
     case SH_POINTER: {
         MO_ASSERT(s->size == sizeof(void *));
-        void *p = mo_arena_allocate(r->arena, s->element->size, _Alignof(max_align_t));
+        void *p = mo_arena_allocate(r->arena, s->element->size, MO_ARENA_ALIGNMENT);
         if (p == NULL)
             return error_node(r, MO_CODE_CORE_NO_MEMORY, sx, "Core arena is exhausted");
         memset(p, 0, s->element->size);
@@ -450,8 +450,8 @@ static MO_MUST_USE bool decode(struct reader *r, const struct schema *s, const s
             return error_node(r, MO_CODE_CORE_FIELD, sx, "expected list wrapper");
         void *items = NULL;
         if (sx->count != 0) {
-            items = mo_arena_allocate_array(r->arena, sx->count, s->element->size,
-                                            _Alignof(max_align_t));
+            items =
+                mo_arena_allocate_array(r->arena, sx->count, s->element->size, MO_ARENA_ALIGNMENT);
             if (items == NULL)
                 return error_node(r, MO_CODE_CORE_NO_MEMORY, sx, "Core arena is exhausted");
             memset(items, 0, sx->count * s->element->size);
@@ -557,7 +557,7 @@ void *mo_core_text_parse(struct mo_arena *arena, enum mo_core_text_kind kind, co
                 MO_ASSERT(!reported);
             } else {
                 const struct sexp *payload = root->children->next->next;
-                out = mo_arena_allocate(arena, s->size, _Alignof(max_align_t));
+                out = mo_arena_allocate(arena, s->size, MO_ARENA_ALIGNMENT);
                 if (out == NULL) {
                     bool reported =
                         error_node(&r, MO_CODE_CORE_NO_MEMORY, payload, "Core arena is exhausted");
