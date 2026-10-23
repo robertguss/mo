@@ -16,6 +16,7 @@ expect() {
 expect true docs/status/v3-fuzz-log.md
 expect true docs/design/architecture.md README.md AGENTS.md
 expect true .agents/skills/ship-task/SKILL.md learnability/final/results.md
+expect true docs/plans/2026-10-22-1510-refactor-ci-two-tier-gate-plan.md
 expect false docs/agent-guide.md
 expect false docs/reference/README.md
 expect false docs/design/library.md

@@ -2,7 +2,9 @@
 # request's check cannot afford: 20 shards of 5,000 programs, 100,000 in all, each night (a manual
 # run with per_shard 50000 makes it a million). A
 # mismatch fails its shard and uploads the program as an artifact. To rerun one, set
-# MO_CORE_DIFF=1 MO_CORE_DIFF_SEED=<seed> and run ci/check_core_differential.py by hand.
+# MO_CORE_DIFF=1 MO_CORE_DIFF_SEED=<seed> and run ci/check_core_differential.py by hand. It runs
+# every night, even when main has not changed, since each night draws new seeds; a failing night
+# files or updates one issue labelled `nightly` (ci/nightly.sh).
 name: differential
 
 on:
@@ -78,3 +80,25 @@ jobs:
           name: mismatches-shard-${{ matrix.shard }}
           path: ${{ runner.temp }}/mismatches
           if-no-files-found: ignore
+
+  report:
+    needs: shard
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: File, update or close the differential's nightly issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          RESULT: ${{ needs.shard.result }}
+          HEAD: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -- $(sh ci/nightly.sh decide differential.yml "$EVENT" "$HEAD")
+          sh ci/nightly.sh report differential "$RESULT" "$HEAD" "${2:-}" "$RUN_URL"

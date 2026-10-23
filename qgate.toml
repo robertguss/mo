@@ -57,14 +57,14 @@ stage = "commit"
 config_files = [".clang-format"]
 format = "gcc"
 
-# The CI groups that finish in minutes: both build-and-test runs, the sanitizers,
-# the static checks (grammar, module deps, library map, formatting, clang-tidy)
-# and the driver checks. fuzz, lean and cbmc stay in CI. The qgate group of ci/check.sh sets
-# MO_QGATE_SKIP_CHECK=1, because CI already runs these groups as jobs of their own. A change that
-# ci/docs_only.sh calls docs-only skips them, as it does in CI.
+# A quick local check before a push: build and run the unit tests (the gcc group), which also
+# catches what only breaks on this machine's file system. The pull request gate and the nightly
+# run cover the rest (ci/orb/README.md). The qgate group of ci/check.sh sets MO_QGATE_SKIP_CHECK=1,
+# because CI runs the groups as jobs of their own. A change that ci/docs_only.sh calls docs-only
+# skips it, as it does in CI.
 [[tool]]
 name = "check"
-command = 'if [ -n "${MO_QGATE_SKIP_CHECK:-}" ]; then echo "check: skipped, CI runs these groups as their own jobs"; elif [ "$(sh ci/docs_only.sh origin/main)" = true ]; then echo "check: skipped, docs-only change"; else CI=1 bash ci/check.sh gcc clang sanitize static drivers; fi'
+command = 'if [ -n "${MO_QGATE_SKIP_CHECK:-}" ]; then echo "check: skipped, CI runs these groups as their own jobs"; elif [ "$(sh ci/docs_only.sh origin/main)" = true ]; then echo "check: skipped, docs-only change"; else CI=1 bash ci/check.sh gcc; fi'
 stage = "push"
 timeout_secs = 1800
 format = "text"

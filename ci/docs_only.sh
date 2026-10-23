@@ -34,7 +34,7 @@ result=true
 while IFS= read -r file; do
     case "$file" in
     docs/design/library.md | docs/agent-guide.md | docs/reference/*) result=false ;;
-    docs/status/*.md | docs/design/*.md | docs/ROADMAP.md) ;;
+    docs/status/*.md | docs/design/*.md | docs/plans/*.md | docs/ROADMAP.md) ;;
     README.md | AGENTS.md | CLAUDE.md | .github/pull_request_template.md) ;;
     .agents/skills/*.md | learnability/*.md) ;;
     *) result=false ;;

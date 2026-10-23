@@ -3,8 +3,15 @@
 # clang-format and clang-tidy, make, Bison for the executable grammar, CBMC for
 # the bytecode reader's proofs (cbmc/), and
 # Lean 4, through elan, for Mo Core. Installs only; never builds or runs anything.
+#
+#   bash .agents/setup            everything
+#   bash .agents/setup GROUP...   only what those ci/check.sh groups need, so a CI job for the
+#                                 fast groups installs nothing it will not use
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
+
+groups=" $* "
+needs() { [[ "$groups" == "  " || "$groups" == *" $1 "* ]]; }
 
 install_missing() {
 	local missing=() package
@@ -19,24 +26,31 @@ install_missing() {
 	fi
 }
 
-install_missing build-essential clang clang-format clang-tidy make git bison cbmc
+packages=(build-essential clang make git)
+if needs static; then packages+=(clang-format clang-tidy bison jq); fi
+if needs cbmc; then packages+=(cbmc); fi
+install_missing "${packages[@]}"
 
 # libFuzzer and the sanitizer runtimes ship in a package named after clang's
-# major version.
-clang_major=$(clang --version | sed -n 's/.*clang version \([0-9][0-9]*\).*/\1/p' | head -n 1)
-install_missing "libclang-rt-${clang_major}-dev"
+# major version. lean needs them too: run alone it builds the sanitize executables it compares.
+if needs sanitize || needs fuzz || needs lean; then
+	clang_major=$(clang --version | sed -n 's/.*clang version \([0-9][0-9]*\).*/\1/p' | head -n 1)
+	install_missing "libclang-rt-${clang_major}-dev"
+fi
 
 # Lean 4 for Mo Core (formal/), through elan with no default toolchain, in
 # /opt/elan rather than in HOME: the CI orb runs the checks with a fresh, empty
 # HOME. The version formal/lean-toolchain names is installed, and lake uses it.
-export ELAN_HOME=/opt/elan
-if [[ ! -x "$ELAN_HOME/bin/elan" ]]; then
-	sudo mkdir -p "$ELAN_HOME"
-	sudo chown "$(id -u):$(id -g)" "$ELAN_HOME"
-	curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh |
-		sh -s -- -y --no-modify-path --default-toolchain none
+if needs lean; then
+	export ELAN_HOME=/opt/elan
+	if [[ ! -x "$ELAN_HOME/bin/elan" ]]; then
+		sudo mkdir -p "$ELAN_HOME"
+		sudo chown "$(id -u):$(id -g)" "$ELAN_HOME"
+		curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh |
+			sh -s -- -y --no-modify-path --default-toolchain none
+	fi
+	"$ELAN_HOME/bin/elan" toolchain install "$(cat "$(dirname "${BASH_SOURCE[0]}")/../formal/lean-toolchain")"
 fi
-"$ELAN_HOME/bin/elan" toolchain install "$(cat "$(dirname "${BASH_SOURCE[0]}")/../formal/lean-toolchain")"
 
-printf 'robertguss/mo orb ready: %s, %s, %s\n' "$(gcc --version | head -n 1)" "$(clang --version | head -n 1)" \
-	"$("$ELAN_HOME/bin/elan" --version)"
+printf 'robertguss/mo orb ready for %s: %s, %s\n' "${*:-every group}" "$(gcc --version | head -n 1)" \
+	"$(clang --version | head -n 1)"

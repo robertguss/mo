@@ -1,10 +1,10 @@
 #!/bin/sh
-# Tests ci/ci_groups.sh: docs-only changes run no group, and cbmc runs only when the change
-# touches what the CBMC harness compiles or how CI runs.
+# Tests ci/ci_groups.sh: docs-only changes run no group, every other change runs the fast groups,
+# and the nightly tier names the rest.
 set -eu
 
-all='["gcc", "clang", "sanitize", "fuzz", "drivers", "lean", "static", "cbmc"]'
-most='["gcc", "clang", "sanitize", "fuzz", "drivers", "lean", "static"]'
+fast='["gcc", "clang", "static", "drivers"]'
+nightly='["cbmc", "lean", "fuzz", "sanitize"]'
 fail=0
 expect() {
     want=$1
@@ -18,41 +18,36 @@ expect() {
 
 expect '[]' docs/status/v3-fuzz-log.md
 expect '[]' AGENTS.md README.md
-expect "$most" docs/agent-guide.md
-expect "$most" src/check/check.c
-expect "$most" src/vm/vm.c tests/golden/example/main.mo
-expect "$most" lib/json.mo docs/status/v3-fuzz-log.md
-expect "$all" src/bytecode/read.c
-expect "$all" src/base/limits.h
-expect "$all" src/heap/types.h
-expect "$all" cbmc/reader.c
-expect "$all" src/base/arena.c
-expect "$all" cbmc/arena.c
-expect "$all" cbmc/prove.sh
-expect "$all" ci/check.sh
-expect "$all" Makefile
-expect "$all" ci/ci_groups.sh
-expect "$all" .agents/setup
-expect "$all" .github/workflows/check.yml
-expect "$all" src/check/check.c src/bytecode/bytecode.h
-expect "$most" ''
+expect '[]' docs/plans/2026-10-22-1510-refactor-ci-two-tier-gate-plan.md
+expect "$fast" docs/agent-guide.md
+expect "$fast" src/check/check.c
+expect "$fast" src/vm/vm.c tests/golden/example/main.mo
+expect "$fast" lib/json.mo docs/status/v3-fuzz-log.md
+expect "$fast" src/bytecode/read.c
+expect "$fast" cbmc/reader.c
+expect "$fast" ci/check.sh
+expect "$fast" Makefile
+expect "$fast" .github/workflows/check.yml
+expect "$fast" ''
 
-# Without a compiler to list what the harness reads, cbmc always runs.
-nocc=$(mktemp -d)
-for tool in sh sed tr grep cat dirname git; do ln -s "$(command -v "$tool")" "$nocc/$tool"; done
-got=$(printf 'src/check/check.c\n' | PATH=$nocc sh ci/ci_groups.sh -)
-rm -rf "$nocc"
-if [ "$got" != "$all" ]; then
-    echo "error: ci/ci_groups.sh without a compiler said $got, expected $all" >&2
+got=$(sh ci/ci_groups.sh --fast)
+if [ "$got" != "$fast" ]; then
+    echo "error: ci/ci_groups.sh --fast said $got, expected $fast" >&2
     fail=1
 fi
 
-# $all must name every group ci/check.sh has, or a new group would never run on a pull request.
-# qgate is the exception: it only reports, so the workflow runs it as its own job outside `check`.
+got=$(sh ci/ci_groups.sh --nightly)
+if [ "$got" != "$nightly" ]; then
+    echo "error: ci/ci_groups.sh --nightly said $got, expected $nightly" >&2
+    fail=1
+fi
+
+# The two tiers together must name every group ci/check.sh has, each once, or a group would never
+# run in CI. qgate is the exception: it only reports, so the workflow runs it as its own job.
 groups=$(sed -n 's/^all_groups=" \(.*\) "$/\1/p' ci/check.sh | sed 's/ *qgate//')
-listed=$(printf '%s' "$all" | tr -d '[]",')
+listed=$(printf '%s %s' "$fast" "$nightly" | tr -d '[]",')
 if [ "$(printf '%s\n' $groups | sort)" != "$(printf '%s\n' $listed | sort)" ]; then
-    echo "error: ci/check.sh has groups $groups but ci/ci_groups.sh runs $listed" >&2
+    echo "error: ci/check.sh has groups $groups but the two tiers run $listed" >&2
     fail=1
 fi
 

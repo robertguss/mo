@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Every check robertguss/mo's CI runs, in order, except that the drivers and lean groups run their
-# checks side by side. Run it before every push: the CI orb runs exactly this on each pull request
-# it is sent (decisions D208, D214).
+# checks side by side. CI runs the fast groups on each pull request and the slow ones nightly
+# (ci/orb/README.md); the CI orb runs all of them on a pull request it is sent (decisions D208, D214).
 #
 # Locally, a check whose tool is missing is skipped with a note, and the summary
 # at the end counts what was skipped instead of claiming that all checks passed.
@@ -148,15 +148,19 @@ fi
 fi
 
 # Run alone, the drivers and lean groups build the executables they drive, as the
-# gcc, clang and sanitize groups would have.
+# gcc, clang and sanitize groups would have. drivers alone drives only the debug builds, which
+# keeps it fast in the pull request gate; with the sanitize group it also drives the sanitize
+# builds that group made, as the nightly run does.
 if [[ -n "$groups" ]] && { want drivers || want lean; }; then
 	step "Build the test executables the checks below drive"
 	if have gcc; then make --no-print-directory test-executables CC=gcc; fi
-	if have clang; then
-		make --no-print-directory test-executables CC=clang
-		make --no-print-directory sanitize-executables CC=clang
-	elif have gcc; then
-		make --no-print-directory sanitize-executables CC=gcc
+	if have clang; then make --no-print-directory test-executables CC=clang; fi
+	if want lean; then
+		if have clang; then
+			make --no-print-directory sanitize-executables CC=clang
+		elif have gcc; then
+			make --no-print-directory sanitize-executables CC=gcc
+		fi
 	fi
 fi
 
@@ -348,8 +352,11 @@ make --no-print-directory library-map
 step "Docs-only changes: ci/docs_only.sh skips CI only for files no check reads"
 sh ci/test_docs_only.sh
 
-step "Pull request groups: ci/ci_groups.sh skips cbmc only when the change can't affect it"
+step "CI tiers: ci/ci_groups.sh runs the fast groups on a change and the rest nightly"
 sh ci/test_ci_groups.sh
+
+step "Nightly bookkeeping: ci/nightly.sh skips a quiet night and keeps one issue per failing check"
+if have jq; then sh ci/test_nightly.sh; else missing "jq is not installed"; fi
 
 step "The three tools' frozen tasks: hashes match and each reference passes its hidden tests"
 if have python3; then python3 bench/tools/grade.py --check; else missing "python3 is not installed"; fi
