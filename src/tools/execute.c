@@ -37,14 +37,25 @@ static void tool_error(struct mo_diags *diags, uint16_t code, const char *messag
         MO_ASSERT(mo_diags_any(diags));
 }
 
-/* Writes the compiled program to path, never over the source it came from, and removes the partial
- * regular file when a write fails. Reports E1404 with the OS's reason. */
-static void write_bytecode(const char *path, const char *source, const struct mo_buffer *wire,
-                           struct mo_diags *diags) {
+/* Whether path names the same file as any source the program was built from. */
+static bool names_a_source(const char *path, const struct mo_sources *sources) {
     struct stat out_stat, in_stat;
-    if (stat(path, &out_stat) == 0 && stat(source, &in_stat) == 0 &&
-        out_stat.st_dev == in_stat.st_dev && out_stat.st_ino == in_stat.st_ino) {
-        tool_error(diags, MO_CODE_TOOL_PIPELINE, "bytecode can't replace the source file", path);
+    if (stat(path, &out_stat) != 0)
+        return false;
+    for (uint32_t i = 0; i < sources->count; i++)
+        if (stat(sources->files[i].path, &in_stat) == 0 && out_stat.st_dev == in_stat.st_dev &&
+            out_stat.st_ino == in_stat.st_ino)
+            return true;
+    return false;
+}
+
+/* Writes the compiled program to path, never over a source file it was built from, and removes the
+ * partial regular file when a write fails. An existing file is replaced. Reports E1404 with the
+ * OS's reason. */
+static void write_bytecode(const char *path, const struct mo_sources *sources,
+                           const struct mo_buffer *wire, struct mo_diags *diags) {
+    if (names_a_source(path, sources)) {
+        tool_error(diags, MO_CODE_TOOL_PIPELINE, "bytecode can't replace a source file", path);
         return;
     }
     FILE *file = fopen(path, "wb");
@@ -190,7 +201,7 @@ static void execute_pipeline(void *argument) {
                        error.reason);
     }
     if (emitting && !mo_diags_any(diags))
-        write_bytecode(cli->output, mo_cli_file(cli, work->file), &wire, diags);
+        write_bytecode(cli->output, sources, &wire, diags);
     if (cli->emit != MO_EMIT_NONE && !mo_diags_any(diags) &&
         (fwrite(printed.bytes, 1, printed.length, work->output) != printed.length ||
          fflush(work->output) != 0))

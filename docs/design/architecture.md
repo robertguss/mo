@@ -1598,8 +1598,9 @@ constant stack (reference 5.3); a callee with more registers grows that frame
 - **`mo emit FILE -o OUT`** checks the program as `mo check` does, including
   the anchors, compiles it, and writes the verified-format binary bytecode
   file (`bytecode.md` section 3, magic `MOBC`) to `OUT`; `-o` is required. A
-  module without `main` is E0079, as for `run`. `OUT` may not be the source
-  file, and a failed write removes the partial file and reports E1404. The
+  module without `main` is E0079, as for `run`. `OUT` may not be the entry file or any module it loaded; an existing `OUT`
+  is replaced, and a failed write removes the partial regular file and
+  reports E1404. The
   bytes are the ones `run` loads; no command loads a `.bc` yet.
 - **`mo run FILE [ARGS...]`** checks the program whose entry module is
   `FILE`, including the anchors, as `mo check` does, then runs its `main`

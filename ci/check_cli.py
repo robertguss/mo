@@ -2598,7 +2598,7 @@ def guide_claims(binary):
              "the files it is given.",
              "`mo format` and `mo fix` rewrite the files they are given.")
         says("`mo emit FILE -o OUT` checks the program as `mo check` does, then writes its bytecode "
-             "to `OUT`. `-o` is required, and `OUT` is never the source file. A library module "
+             "to `OUT`. `-o` is required, and `OUT` is never a source file of the program. A library module "
              "with no `main` is E0079, as for `mo run`, and a file that cannot be written is "
              "E1404. This build has no command that runs a bytecode file; run the source with "
              "`mo run`.")
@@ -2738,6 +2738,31 @@ def emit_command(binary):
         before = source.read_bytes()
         refused = run(binary, ["emit", str(source), "-o", str(source)], 1)
         assert b"E1404" in refused.stderr and source.read_bytes() == before
+        # Nor is any module the program imports.
+        imported = folder / "imported"
+        imported.mkdir()
+        (imported / "main.mo").write_text(
+            "module Main\nuse Left\n\nfn main(console: Console)\nconsole.print(\"#{Left.value()}\")\nend\n")
+        left = imported / "left.mo"
+        left.write_text("module Left\nexpose value\n\nfn value() : Int\n11\nend\n")
+        before = left.read_bytes()
+        refused = run(binary, ["emit", str(imported / "main.mo"), "-o", str(left)], 1)
+        assert b"E1404" in refused.stderr and left.read_bytes() == before
+        # With anchors, emit stops after checking them: it runs neither main nor a failing
+        # anchor's program through to a file.
+        anchored = folder / "anchored"
+        anchored.mkdir()
+        anchor_source = ('module Main\nfn twice(n: Int) : Int\npromise "returns twice its input"\n'
+                         'result == n + n\nallows result: 6, n: 3\nforbids n: 4, result: 7\nend\n'
+                         'n + n\nend\nfn main(console: Console) : Int\nconsole.print("main")\n37\nend\n')
+        (anchored / "main.mo").write_text(anchor_source)
+        target = folder / "anchored.bc"
+        result = run(binary, ["emit", str(anchored / "main.mo"), "-o", str(target)], 0)
+        assert not result.stdout and not result.stderr and target.read_bytes().startswith(b"MOBC")
+        target.unlink()
+        (anchored / "main.mo").write_text(anchor_source.replace("result: 6", "result: 5"))
+        refused = run(binary, ["emit", str(anchored / "main.mo"), "-o", str(target)], 1)
+        assert b"E1405" in refused.stderr and not refused.stdout and not target.exists()
         # A file that can't be written is E1404 with the OS's reason, and nothing is left behind.
         refused = run(binary, ["emit", str(source), "-o", str(folder / "missing" / "x.bc")], 1)
         assert b"E1404" in refused.stderr and b"No such file or directory" in refused.stderr

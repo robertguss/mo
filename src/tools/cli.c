@@ -102,8 +102,9 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         .limits = mo_limits_default(), .calls = 200, .seconds = 2, .file_separator = UINT32_MAX};
     *error = NULL;
     if (argc < 2)
-        return refuse(out, error, "expected a command: check, run, test, format, fix, guide or emit",
-                      NULL, NULL);
+        return refuse(out, error,
+                      "expected a command: check, run, test, format, fix, guide or emit", NULL,
+                      NULL);
     MO_ASSERT(argv != NULL && argv[1] != NULL);
     const char *command = argv[1];
     uint32_t count = 0;
@@ -124,8 +125,8 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
             break;
     if (c == sizeof(names) / sizeof(names[0]))
         return refuse(out, error,
-                      "unknown command (expected check, run, test, format, fix, guide or emit)", command,
-                      NULL);
+                      "unknown command (expected check, run, test, format, fix, guide or emit)",
+                      command, NULL);
     out->command = (enum mo_command)c;
     bool flags = true;
     uint32_t seen = 0;
@@ -176,7 +177,8 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
                 MO_ASSERT(operand != NULL);
                 if (!option(out, error, operand, &count, &total))
                     return false;
-                if (operand[0] == '\0' || (operand[0] == '-' && (flag < 5 || flag == 10 || operand[1] == '-')))
+                if (operand[0] == '\0' ||
+                    (operand[0] == '-' && (flag < 5 || flag == 10 || operand[1] == '-')))
                     return refuse(out, error, "flag needs a nonempty value", arg, operand);
             }
             uint64_t n = 0;
