@@ -206,23 +206,41 @@ class Retry(unittest.TestCase):
         self.assertIn("retry.py: the reference tally printed no table", result.stderr)
         self.assertIn("TypeError", result.stderr)
 
-    def test_sessions_must_add_up(self):
-        # The leave-one-out rates rely on tally adding up its sessions. A tally that didn't
-        # (here, one that finds one error in each session alone but one in all) stops the script.
+    def fake_reference(self, total="1\t1\t1\t0\t0", status=0):
+        """Puts in place of the reference one that prints one E0050 row, total and status."""
         fake = self.logs.parent / "fake.py"
-        fake.write_text("import os, sys\n"
+        fake.write_text("import sys\n"
                         "print('code\\terrors\\tfirst_retry\\twithin_three\\tby_fix\\tunfixed')\n"
                         "print('E0050\\t1\\t1\\t1\\t0\\t0')\n"
-                        "print('total\\t1\\t1\\t1\\t0\\t0')\n")
-        (self.logs / "a").mkdir()
-        (self.logs / "b").mkdir()
+                        f"print('total\\t{total.replace(chr(9), chr(92) + 't')}')\n"
+                        f"sys.exit({status})\n")
         sys.path.insert(0, str(here))
         import retry
         saved = retry.REFERENCE
         retry.REFERENCE = fake
         self.addCleanup(setattr, retry, "REFERENCE", saved)
+        return retry
+
+    def test_sessions_must_add_up(self):
+        # The leave-one-out rates rely on tally adding up its sessions. A tally that didn't
+        # (here, one that finds one error in each session alone but one in all) stops the script.
+        retry = self.fake_reference()
+        (self.logs / "a").mkdir()
+        (self.logs / "b").mkdir()
         with self.assertRaisesRegex(retry.Failed, "the sessions' tallies don't add up to the "
                                     "tally over .* for E0050"):
+            retry.main([str(self.logs)])
+
+    def test_total_must_be_the_sum(self):
+        retry = self.fake_reference(total="2\t1\t1\t0\t0")
+        with self.assertRaisesRegex(retry.Failed, "printed no table .*the total line isn't the "
+                                    "sum of the codes' lines"):
+            retry.main([str(self.logs)])
+
+    def test_tally_usage_error(self):
+        # Exit 2 is tally's usage error, whatever it printed.
+        retry = self.fake_reference(status=2)
+        with self.assertRaisesRegex(retry.Failed, "the reference tally exited with 2"):
             retry.main([str(self.logs)])
 
     def test_usage(self):
