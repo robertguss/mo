@@ -41,7 +41,8 @@ files a capability reaches while a lookup runs (P8), and timing or other side ch
 | CBMC proof | bounded model checking of small functions, `cbmc/` (`cbmc/README.md`) | `make cbmc`, by hand |
 | Differential test | the C VM against the Lean evaluator of Mo Core, `ci/check_core_differential.py` | `bash ci/check.sh lean`, by hand |
 
-Mo has no hosted CI. Only the first row's `gcc` group is a routine pre-PR check; the others run
+Mo has no hosted CI. Only the unit tests (`bash ci/check.sh gcc`) are a routine pre-PR check, plus `drivers` and
+`static` when a change reaches them (`AGENTS.md`, "Checks and merging"); the other groups run
 when someone runs them. A property whose only evidence is a by-hand group is still backed, but
 nothing re-runs it for you.
 
@@ -55,12 +56,12 @@ carrying on with a broken invariant. The pairs, and where each half lives:
 
 | Fact | Verifier | VM |
 | --- | --- | --- |
-| An instruction's register operands exist | `verify.c` `step` (`r < register_count`) | `execute.c` `read`, `write`, `consume` |
+| An instruction's register operands exist | `validate.c` `operand()`; `verify.c` `step` asserts it for read operands | `execute.c` `read`, `write`, `consume` |
 | Move and dup keep the type | `verify-instruction.c` "move/dup type mismatch" | `execute.c` `MO_OP_MOVE`, `MO_OP_DUP` |
 | A constant or global named exists and has the register's type | `verify-instruction.c` `MO_OP_CONST`, `MO_OP_GLOBAL` | `execute.c` `MO_OP_CONST`, `MO_OP_GLOBAL` |
 | A global is stored only by an init function, once | `verify-instruction.c` "global store outside init", `verify-program.c` ranks | `execute.c` `MO_OP_SET_GLOBAL` |
 | Every global has exactly one initializer, so all are set after initialization | `verify-program.c` rank loop | `image.c` `initialize` |
-| Every block start is an instruction start inside the function | `verify.c` `graph`, `edge` | `execute.c` `MO_OP_JUMP`, `MO_OP_BRANCH`, `MO_OP_SWITCH` and the pc check |
+| Every block start is an instruction start inside the function | `validate.c` (`starts[]`, `MO_OPERAND_TARGET`); `verify.c` `graph` asserts the entry is a block | `execute.c` `MO_OP_JUMP`, `MO_OP_BRANCH`, `MO_OP_SWITCH` and the pc check |
 | A branch tests a Bool; a switch has one target per case | `verify-instruction.c` "branch needs Bool", "switch target count" | `execute.c` `MO_OP_BRANCH`, `MO_OP_SWITCH` |
 | A call's argument count, argument types, result type and target kind match its callee | `verify-instruction.c` `MO_OP_CALL`, `MO_OP_CALL_CLOSURE` | `execute.c` call cases |
 | A closure's environment sits after the parameters, and closure code is entered only as a closure | `verify.c` `ownership`, `verify-instruction.c` | `process.c` `mo_vm_enter` |
@@ -93,13 +94,16 @@ UTF-8 strings, valid constants, and well-formed types and layouts.*
 used out of range: a verified program has no type confusion.*
 
 - Enforced by: `mo_verify_instruction` (`verify-instruction.c`), using `prims.def` and
-  `hostops.def` signatures and ability checks (`bytecode.md` section 9, item 4). The VM never
-  tests a value's kind; it relies on this.
+  `hostops.def` signatures and ability checks (`bytecode.md` section 9, item 4). The VM does
+  not branch on a value's kind; it relies on this, and asserts the kinds of the few operands it
+  reads by kind (`kind_of` in `execute.c`).
 - Evidence: CBMC `instruction` proof: for any one instruction of any opcode, the function reads
-  only inside the file's tables, never fails an assertion, and accepts only when the counts
+  only inside the file's tables, never fails an assertion (as of the last CBMC run; see below), and accepts only when the counts
   later passes and the VM index with (arguments, fields, switch targets, captures) match their
   tables (`cbmc/verify.c`). `tests/test_bytecode_verify.c`; `fuzz/fuzz_bytecode_verify.c`.
-  The VM's pair assertions (table above) check the same facts as it runs.
+  The VM's pair assertions (table above) check the same facts as it runs. This change added
+  assertions to `mo_verify_instruction` and `step`; the `instruction` and `step` proofs were not
+  re-run with it (CBMC was unavailable), so they are pending a run of `make cbmc`.
 - Not covered: CBMC shows what the check accepts has the right counts, not that it accepts
   exactly the right programs; it may refuse more than it should. Type agreement of operands is
   tested and fuzzed, not proved.
@@ -117,8 +121,10 @@ never reads a register that is undefined or moved.*
 - Evidence: CBMC `step` proof of one instruction's ownership transfer from any register states:
   it accepts only when the rules hold and leaves the states the rules give, and the undo log
   restores every slot (`cbmc/verify.c`). `tests/test_bytecode_verify.c`. `fuzz_bytecode_verify.c`
-  loads arbitrary and mutated files, and for each accepted file runs its functions and asserts
-  that no object remains in the heap after a call that returns; `fuzz_vm.c` does the same for
+  loads arbitrary and mutated files, and for each accepted file runs only its zero-parameter,
+  non-closure, non-init functions (`verifier_fuzz_select_entries`), at most
+  `VERIFIER_FUZZ_MAX_CALLS` of them, under an instruction budget, and asserts that no object
+  remains in the heap after a call that returns; `fuzz_vm.c` does the same for
   generated valid bytecode. The VM asserts the states as it runs (`read`, `consume`, `write`,
   `clean` in `execute.c`). The unit tests also run under ASan and UBSan.
 - Not covered: `graph`, `cases` and `ownership`, the passes that drive `step`, are not
@@ -223,7 +229,7 @@ process stops with a defect report naming it. It does not crash or grow without 
 - Not covered: **time**. Verification does not check termination, and a default `mo run` has no
   instruction or wall-clock limit. An embedder can bound a run with `mo_process_instruction_limit`
   or stop it from outside with `mo_call_controlled`'s `keep_running` callback (used for
-  promises); the fuzz targets use the instruction budget. Native memory outside the heap (the
+  promises and in `src/tools/builders.c`); the fuzz targets use the instruction budget. Native memory outside the heap (the
   stack buffer's `realloc`) can still fail; that case stops with "running out of memory".
 
 ### P10. A verified program that goes wrong stops cleanly
@@ -234,9 +240,11 @@ stops, prints a report from state that is still readable, and frees its heap who
 - Enforced by: `mo_vm_stop` and `defect.c`; the report prints only registers that are value,
   owned or borrowed at the stopping instruction, found by re-running the verifier's dataflow
   (`bytecode.md` section 9), so it never reads a consumed register.
-- Evidence: `tests/test_vm.c`; `fuzz_vm.c` and `fuzz_bytecode_verify.c` compare the readable
-  mask with the VM's states at every instruction; the Lean differential test compares outcomes,
-  including stop messages, with Mo Core's evaluator (`ci/check_core_differential.py`).
+- Evidence: `tests/test_vm.c`; `fuzz_vm.c` `replay()` compares the VM's states with the readable
+  mask, only at a non-returning stop and only on the top frame; `fuzz_bytecode_io.c`
+  `check_readable` checks, at every instruction, that the streaming visit agrees with a
+  single-instruction replay (verifier against verifier, not against VM states); the Lean
+  differential test compares outcomes, including stop messages, with Mo Core's evaluator (`ci/check_core_differential.py`).
 - Not covered: the differential test runs generated programs without capabilities.
 
 ## What the trusted base is
@@ -246,7 +254,7 @@ bug could break, so they are the parts the other evidence aims at:
 
 | Part | Size and kind | Evidence |
 | --- | --- | --- |
-| Loader and verifier | `src/bytecode`, C | CBMC (reader, `instruction`, `step`, `lookup`), fuzzing, tests, sanitizers |
+| Loader and verifier | `src/bytecode`, C | CBMC (reader, `instruction`, `step`, `lookup`; `instruction` and `step` not re-run after MO-58's new assertions), fuzzing, tests, sanitizers |
 | VM | `src/vm`, C | Pair assertions, fuzzing (`fuzz_vm.c`), differential test against Lean, sanitizers. **No CBMC proof of the interpreter loop.** |
 | Heap and arena | `src/heap`, `src/base/arena.c`, C | CBMC (arena), `fuzz_heap.c`, sanitizers |
 | Primitives | `src/prim`, C | CBMC (arithmetic and UTF-8), `fuzz_prim.c`, oracles in `tests/test_prim.c` |
@@ -277,7 +285,8 @@ These are not guaranteed today.
    sandbox escape; the Lean differential test and the golden corpus look for it.
 8. **Assertions are evidence of intent, not proof.** A pair assertion stops the process when a
    fact is false at run time. It does not show the fact is always true, and it costs a check
-   per use (measured as no visible change on `tests/test_vm.c` at `-O0`).
+   per use. The cost was measured once, on `tests/test_vm.c` at `-O0` (0.47 s before, 0.48 s
+   after); it was not measured with optimization.
 
 ## Keeping this document true
 

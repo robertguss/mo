@@ -410,8 +410,9 @@ static MO_MUST_USE bool step(struct flow *f, struct registers *regs, uint32_t pc
         if (mode == MO_ACCESS_NONE || mode == MO_ACCESS_WRITE || mode == MO_ACCESS_TOKEN_WRITE) {
             continue;
         }
-        uint32_t r = a[i], s = regs->state[r];
+        uint32_t r = a[i];
         MO_ASSERT(r < fn->register_count);
+        uint32_t s = regs->state[r];
         if (!charge(f, pc, 1)) {
             return false;
         }

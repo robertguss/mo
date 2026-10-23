@@ -185,7 +185,6 @@ bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc) {
     case MO_OP_SWITCH:
         REQUIRE(kind(v, a[0], MO_TYPE_CHOICE), "switch needs choice");
         REQUIRE(n == f->types[reg(v, a[0])].case_count, "switch target count");
-        MO_ASSERT(n == f->types[reg(v, a[0])].case_count);
         break;
     case MO_OP_CALL:
     case MO_OP_TAIL_CALL: {
@@ -202,8 +201,6 @@ bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc) {
             REQUIRE(reg(v, a[info->fixed_count + i]) == target->parameters[i].type,
                     "direct call argument type");
         }
-        MO_ASSERT(n == target->parameter_count && target->kind != MO_FUNCTION_CLOSURE &&
-                  target->kind != MO_FUNCTION_INIT);
         return true;
     }
     case MO_OP_CALL_CLOSURE:
@@ -215,12 +212,10 @@ bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc) {
         REQUIRE(n == t->parameter_count, "closure call argument count");
         REQUIRE(args(v, a + info->fixed_count, n, t->parameters, t->parameter_count),
                 "closure call argument type");
-        MO_ASSERT(t->kind == MO_TYPE_FUNCTION && n == t->parameter_count);
         break;
     }
     case MO_OP_RET:
         REQUIRE(reg(v, a[0]) == fn->result_type, "return type");
-        MO_ASSERT(reg(v, a[0]) == fn->result_type);
         break;
     case MO_OP_FAIL:
         REQUIRE(fn->spec_code, "fail outside spec code");
@@ -239,7 +234,6 @@ bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc) {
         REQUIRE(n == layout->field_count, "construct/reuse field count");
         REQUIRE(args(v, a + info->fixed_count, n, layout->fields, layout->field_count),
                 "construct/reuse field type");
-        MO_ASSERT(n == layout->field_count && layout->kind != MO_LAYOUT_CLOSURE);
         break;
     }
     case MO_OP_MAKE_CASE: {
@@ -247,14 +241,12 @@ bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc) {
         const struct mo_type *t = &f->types[a[1]];
         REQUIRE(t->kind == MO_TYPE_CHOICE, "make_case needs choice");
         REQUIRE(a[2] < t->case_count, "make_case case index");
-        MO_ASSERT(a[2] < t->case_count);
         REQUIRE(reg(v, a[0]) == a[1], "make_case result type");
         const struct mo_type_case *c = &t->cases[a[2]];
         REQUIRE(n == c->field_count, "make_case field count");
         for (uint32_t i = 0; i < n; i++) {
             REQUIRE(reg(v, a[3 + i]) == c->fields[i].type, "make_case field type");
         }
-        MO_ASSERT(n == c->field_count);
         return true;
     }
     case MO_OP_FIELD:
@@ -266,7 +258,6 @@ bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc) {
         REQUIRE(t->kind == MO_TYPE_CHOICE, "case_field needs choice");
         REQUIRE(a[2] < t->case_count, "case_field case index");
         REQUIRE(a[3] < t->cases[a[2]].field_count, "case_field field index");
-        MO_ASSERT(a[2] < t->case_count && a[3] < t->cases[a[2]].field_count);
         REQUIRE(reg(v, a[0]) == t->cases[a[2]].fields[a[3]].type, "case_field result type");
         break;
     }
@@ -283,8 +274,6 @@ bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc) {
         REQUIRE(
             args(v, a + 2, n, f->functions[a[1]].capture_types, f->functions[a[1]].capture_count),
             "closure capture types or count");
-        MO_ASSERT(f->functions[a[1]].kind == MO_FUNCTION_CLOSURE &&
-                  n == f->functions[a[1]].capture_count);
         break;
     case MO_OP_EQUAL:
         REQUIRE(kind(v, a[0], MO_TYPE_BOOL), "equal result type");
@@ -299,7 +288,6 @@ bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc) {
         REQUIRE(args(v, a + 3, n, t->parameters, t->parameter_count),
                 "primitive argument types or count");
         REQUIRE(n == strlen(primitives[a[1]].modes), "primitive arity");
-        MO_ASSERT(n == strlen(primitives[a[1]].modes));
         const char *reason = "primitive signature or constraint";
         REQUIRE(mo_bytecode_signature(v, primitives[a[1]].signature, t->parameters, n, t->result,
                                       &reason),
@@ -309,7 +297,6 @@ bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc) {
     case MO_OP_HOST: {
         MO_ASSERT(a[1] < sizeof hosts / sizeof hosts[0]);
         REQUIRE(n == strlen(hosts[a[1]].modes), "host arity");
-        MO_ASSERT(n == strlen(hosts[a[1]].modes));
         REQUIRE(!hosts[a[1]].spec || fn->spec_code, "spec host in non-spec code");
         uint32_t parameters[MO_LIMIT_BYTECODE_PARAMETERS];
         for (uint32_t i = 0; i < n; i++) {

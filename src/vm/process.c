@@ -55,6 +55,7 @@ const char *mo_vm_reserve(struct mo_process *process, size_t needed, uint32_t de
 void mo_vm_enter(struct mo_process *process, uint32_t function, const struct mo_cell *arguments,
                  struct mo_cell environment, bool closure, bool tail, uint32_t destination,
                  uint32_t next) {
+    MO_ASSERT(function < process->file->function_count);
     const struct mo_bytecode_function *fn = &process->file->functions[function];
     size_t previous = process->depth == 0 ? SIZE_MAX : process->top;
     size_t offset = process->used;
@@ -69,8 +70,7 @@ void mo_vm_enter(struct mo_process *process, uint32_t function, const struct mo_
     size_t extent = mo_vm_frame_size(fn->register_count);
     /* Verified: the parameters, then a closure's environment, are the first registers, and
      * a closure's code is entered only as a closure. */
-    MO_ASSERT(function < process->file->function_count &&
-              (size_t)fn->parameter_count + (closure ? 1u : 0u) <= fn->register_count);
+    MO_ASSERT((size_t)fn->parameter_count + (closure ? 1u : 0u) <= fn->register_count);
     MO_ASSERT(closure == (fn->kind == MO_FUNCTION_CLOSURE));
     MO_ASSERT(offset <= process->capacity && extent <= process->capacity - offset);
     struct mo_vm_frame *frame = (struct mo_vm_frame *)(process->stack + offset);
