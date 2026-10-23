@@ -43,8 +43,8 @@ if [ "$got" != "$nightly" ]; then
 fi
 
 # The two tiers together must name every group ci/check.sh has, each once, or a group would never
-# run in CI. qgate is the exception: it only reports, so the workflow runs it as its own job.
-groups=$(sed -n 's/^all_groups=" \(.*\) "$/\1/p' ci/check.sh | sed 's/ *qgate//')
+# run in CI.
+groups=$(sed -n 's/^all_groups=" \(.*\) "$/\1/p' ci/check.sh)
 listed=$(printf '%s %s' "$fast" "$nightly" | tr -d '[]",')
 if [ "$(printf '%s\n' $groups | sort)" != "$(printf '%s\n' $listed | sort)" ]; then
     echo "error: ci/check.sh has groups $groups but the two tiers run $listed" >&2
