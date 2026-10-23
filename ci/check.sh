@@ -12,7 +12,7 @@
 #   gcc clang   build and run the unit tests with that compiler
 #   sanitize    the unit tests under AddressSanitizer and UndefinedBehaviorSanitizer
 #   fuzz        every fuzz target briefly
-#   drivers     the checks that drive the test executables: goldens, Unicode, codegen, benchmark v0
+#   drivers     the checks that drive the test executables: goldens, Unicode, codegen, benchmark v0, mo check time
 #   lean        Mo Core in Lean, and the checks that compare the test executables with it
 #   static      grammar, module dependencies, library map, frozen tool tasks, formatting, clang-tidy
 #   cbmc        the CBMC proofs of the bytecode reader, the arena, the verifier and the primitives (cbmc/README.md)
@@ -225,7 +225,24 @@ if [[ -n "$formatter_driver" ]]; then
 else
 	missing "no source formatter test executable is built"
 fi
-report
+report_status=0
+report || report_status=$?
+# Timed alone, after the checks that ran side by side, so their load does not inflate it.
+# It runs even when one of them failed.
+timed_driver=
+for driver in build/{gcc,clang}/debug/mo; do
+	if [[ -x "$driver" ]]; then timed_driver=$driver; break; fi
+done
+timing_status=0
+if [[ -z "$timed_driver" ]]; then
+	missing "no mo command executable is built to time"
+elif have python3; then
+	step "mo check stays under 0.1 s on each sample ($timed_driver)"
+	python3 ci/check_check_time.py "$timed_driver" || timing_status=$?
+else
+	missing "python3 is not installed, so mo check is not timed"
+fi
+if ((report_status != 0 || timing_status != 0)); then exit 1; fi
 fi
 
 if want fuzz; then
