@@ -35,7 +35,7 @@ static _Noreturn void error(struct parser *p, uint16_t code, struct mo_span span
 }
 
 static MO_MUST_USE void *allocate(struct parser *p, size_t size) {
-    void *result = mo_arena_allocate(p->lx.arena, size, _Alignof(max_align_t));
+    void *result = mo_arena_allocate(p->lx.arena, size, MO_ARENA_ALIGNMENT);
     if (result == NULL) {
         mo_syntax_error(&p->lx, MO_CODE_SYNTAX_NO_MEMORY, p->current.span,
                         "the syntax arena has no room", NULL);

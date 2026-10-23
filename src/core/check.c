@@ -86,7 +86,7 @@ static MO_MUST_USE void *allocate(struct checker *c, struct mo_arena *a, size_t 
         c->fatal = MO_CODE_CORE_CHECK_LIMIT;
         return NULL;
     }
-    void *p = mo_arena_allocate_array(a, n, size, _Alignof(max_align_t));
+    void *p = mo_arena_allocate_array(a, n, size, MO_ARENA_ALIGNMENT);
     if (p == NULL)
         c->fatal = MO_CODE_CORE_CHECK_MEMORY;
     else

@@ -277,7 +277,7 @@ uint16_t mo_codegen_registers(struct mo_arena *arena, const struct mo_bytecode *
     a.capacity =
         capacity < MO_LIMIT_FUNCTION_CODE_WORDS ? (uint32_t)capacity : MO_LIMIT_FUNCTION_CODE_WORDS;
 #define ARRAY(field, count)                                                                        \
-    a.field = mo_arena_allocate_array(&temporary, count, sizeof *a.field, _Alignof(max_align_t))
+    a.field = mo_arena_allocate_array(&temporary, count, sizeof *a.field, MO_ARENA_ALIGNMENT)
     ARRAY(intervals, registers);
     ARRAY(slots, slots);
     ARRAY(starts, words);
