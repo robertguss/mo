@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <string.h>
 
+#ifndef MO_CBMC_NORMALIZE /* cbmc/path.c compiles only mo_host_normalize from this file. */
 struct mo_file_error mo_host_errno(int number) {
     if (number == ENOENT)
         return (struct mo_file_error){.status = FILE_NOT_FOUND};
@@ -17,6 +18,7 @@ struct mo_file_error mo_host_errno(int number) {
         return (struct mo_file_error){.status = FILE_FAILED, .reason = "too many links"};
     return (struct mo_file_error){.status = FILE_FAILED, .number = number};
 }
+#endif
 
 struct mo_file_error mo_host_normalize(struct mo_cell value, char *out, size_t *size) {
     size_t length;
@@ -51,6 +53,7 @@ struct mo_file_error mo_host_normalize(struct mo_cell value, char *out, size_t *
     return (struct mo_file_error){.status = FILE_OK};
 }
 
+#ifndef MO_CBMC_NORMALIZE
 size_t mo_host_join(struct mo_cell prefix, const char *path, size_t length, char *out) {
     size_t root_length;
     const uint8_t *root = mo_value_data(prefix, &root_length);
@@ -207,3 +210,4 @@ bool mo_host_names(struct mo_host *host, struct mo_heap *heap, uint32_t type, st
     mo_scratch_free(&scratch);
     return ok;
 }
+#endif
