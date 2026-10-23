@@ -2570,7 +2570,7 @@ def guide_claims(binary):
         assert not result.stdout, (args, result.stdout)
         assert f"error E{code}: {headline}".encode() in result.stderr, (args, result.stderr)
 
-    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix` and `mo guide`.",
+    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide` and `mo emit`.",
          "The program below checks with no errors, runs, and passes its examples and its test.",
          "E1103 and E1150 mean this toolchain has not implemented that form.",
          "`mo run` and `mo test` report the same code for the same form.",
@@ -2597,6 +2597,11 @@ def guide_claims(binary):
              "again, and prints the errors that are left, as `mo check` does. It rewrites only "
              "the files it is given.",
              "`mo format` and `mo fix` rewrite the files they are given.")
+        says("`mo emit FILE -o OUT` checks the program as `mo check` does, then writes its bytecode "
+             "to `OUT`. `-o` is required, and `OUT` is never the source file. A library module "
+             "with no `main` is E0079, as for `mo run`, and a file that cannot be written is "
+             "E1404. This build has no command that runs a bytecode file; run the source with "
+             "`mo run`.")
         unused = folder / "unused.mo"
         unused.write_text("module Unused\n\nfn one(x: Int) : Int\n  1\nend\n", encoding="utf-8")
         assert b"Fix: " in run(binary, ["check", str(unused)], 1).stderr
@@ -2681,10 +2686,90 @@ def guide_claims(binary):
             assert result.stdout == b"null\n", (use, result.stdout, result.stderr)
 
 
+def emit_command(binary):
+    """mo emit FILE -o OUT writes the verified bytecode that mo run executes (MO-41)."""
+    driver = binary.parent / "tests/test_cli.test"
+    sources = {
+        # Console output and an exit status, so both sides of the comparison have something to match.
+        "console": 'module Main\nfn main(console: Console) : Int\nconsole.print("hello 日本語")\n37\nend\n',
+        "silent": "module Main\nfn main()\nend\n",
+    }
+    with tempfile.TemporaryDirectory(prefix="mo-emit-") as directory:
+        folder = pathlib.Path(directory)
+        for name, text in sources.items():
+            path = folder / name / "main.mo"
+            path.parent.mkdir()
+            path.write_text(text)
+            out = folder / f"{name}.bc"
+            for args in (["emit", str(path), "-o", str(out)], ["emit", "-o", str(out), str(path)]):
+                out.unlink(missing_ok=True)
+                result = run(binary, args, 0)
+                assert not result.stdout and not result.stderr
+                data = out.read_bytes()
+                assert data.startswith(b"MOBC")
+            # The loader verifies the file as it loads it, then the program prints and exits as
+            # mo run does on the source.
+            ran = run(binary, ["run", str(path)], 37 if name == "console" else 0)
+            loaded = run(driver, ["--run-bytecode", str(out)], 37 if name == "console" else 0)
+            assert loaded.stdout == ran.stdout and loaded.stderr == ran.stderr, (name, loaded, ran)
+            # Emission is deterministic.
+            again = folder / f"{name}-again.bc"
+            run(binary, ["emit", str(path), "-o", str(again)], 0)
+            assert again.read_bytes() == data
+        # Emitting replaces an existing file whole.
+        out = folder / "console.bc"
+        out.write_bytes(b"x" * (1 << 20))
+        run(binary, ["emit", str(folder / "console" / "main.mo"), "-o", str(out)], 0)
+        assert out.read_bytes().startswith(b"MOBC") and out.stat().st_size < 1 << 20
+        # Checks come first: a program with errors writes nothing and reports them as mo check does.
+        bad = folder / "bad" / "main.mo"
+        bad.parent.mkdir()
+        bad.write_text("module Main\nfn main() : Int\n\"text\"\nend\n")
+        target = folder / "bad.bc"
+        refused = run(binary, ["emit", str(bad), "-o", str(target)], 1)
+        assert refused.stderr == run(binary, ["check", str(bad)], 1).stderr and not target.exists()
+        # A library has no entry, as for mo run.
+        library = root / "tests/cli/library/main.mo"
+        target = folder / "library.bc"
+        refused = run(binary, ["emit", str(library), "-o", str(target)], 1)
+        assert b"E0079" in refused.stderr and not target.exists()
+        # The source is never the output.
+        source = folder / "console" / "main.mo"
+        before = source.read_bytes()
+        refused = run(binary, ["emit", str(source), "-o", str(source)], 1)
+        assert b"E1404" in refused.stderr and source.read_bytes() == before
+        # A file that can't be written is E1404 with the OS's reason, and nothing is left behind.
+        refused = run(binary, ["emit", str(source), "-o", str(folder / "missing" / "x.bc")], 1)
+        assert b"E1404" in refused.stderr and b"No such file or directory" in refused.stderr
+        full = pathlib.Path("/dev/full")
+        if full.exists():
+            refused = run(binary, ["emit", str(source), "-o", str(full)], 1)
+            assert b"E1404" in refused.stderr
+    def mistake(args, message):
+        r = run(binary, args, 2)
+        assert not r.stdout and r.stderr == message.encode() + b"\n", (args, r.stderr)
+
+    good = "tests/cli/good/main.mo"
+    mistake(["emit", good], 'emit needs -o FILE: "emit"')
+    mistake(["emit", "-o", "x.bc"], 'command needs a file: "emit"')
+    mistake(["emit", good, "-o"], 'flag needs a nonempty value: "-o"')
+    mistake(["emit", good, "-o", ""], 'flag needs a nonempty value: "-o" ""')
+    mistake(["emit", good, "-o", "-x.bc"], 'flag needs a nonempty value: "-o" "-x.bc"')
+    mistake(["emit", good, "-o", "a.bc", "-o", "b.bc"], 'flag may be given only once (except --only): "-o"')
+    mistake(["emit", good, good, "-o", "a.bc"], f'command takes exactly one file: "{good}"')
+    for flag in ("--json", "--emit=core", "--max-heap", "--list"):
+        args = ["emit", flag, *(["1GiB"] if flag == "--max-heap" else []), good, "-o", "a.bc"]
+        mistake(args, f'flag is not accepted by this command: "{flag}"')
+    for command in ("check", "run", "test", "format", "fix"):
+        mistake([command, "-o", "a.bc", good], f'flag is not accepted by this command: "-o"')
+    assert not (root / "a.bc").exists()
+
+
 def check(binary):
     driver = binary.parent / "tests/test_cli.test"
     faults = binary.parent / "tests/test_cli_faults.test"
     guide_claims(binary)
+    emit_command(binary)
     runner(binary)
     lower_source_fixtures(binary)
     anchors(binary)
@@ -2786,13 +2871,13 @@ def check(binary):
             assert r.stderr == message.encode() + b"\n", (args, r.stderr)
 
     for args in ([], ["unknown"], [""], ["--version", "extra"], ["check"], ["format"],
-                 ["fix"], ["run"], ["test"], ["guide", good], ["check", ""],
+                 ["fix"], ["run"], ["test"], ["emit"], ["emit", good], ["guide", good], ["check", ""],
                  ["check", good, good], ["test", good, good], ["check", "--bad", good],
                  ["check", "--emit=bad", good], ["check", "--emit", "core", good],
                  ["check", "--json", "--emit=core", good], ["check", "--version", good],
                  ["check", "--json", "--bad", good]):
         mistake(args)
-    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix or guide): "bad\\x0a\\x09\\xc3\\xbf"')
+    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide or emit): "bad\\x0a\\x09\\xc3\\xbf"')
     for flag, (value, allowed) in flags.items():
         for command in ("check", "run", "test", "format", "fix", "guide"):
             args = [command, flag, *value, *([] if command == "guide" else [good])]

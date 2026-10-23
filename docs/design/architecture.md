@@ -1595,6 +1595,12 @@ constant stack (reference 5.3); a callee with more registers grows that frame
   promises' anchors. It prints diagnostics as text, or as JSON with `--json`
   (10.2). `--emit=core` and `--emit=bytecode` print the program's Core or
   bytecode in their text forms.
+- **`mo emit FILE -o OUT`** checks the program as `mo check` does, including
+  the anchors, compiles it, and writes the verified-format binary bytecode
+  file (`bytecode.md` section 3, magic `MOBC`) to `OUT`; `-o` is required. A
+  module without `main` is E0079, as for `run`. `OUT` may not be the source
+  file, and a failed write removes the partial file and reports E1404. The
+  bytes are the ones `run` loads; no command loads a `.bc` yet.
 - **`mo run FILE [ARGS...]`** checks the program whose entry module is
   `FILE`, including the anchors, as `mo check` does, then runs its `main`
   with the arguments after the file name. The image it runs is the one the
@@ -1638,7 +1644,8 @@ argument, even an empty string or flag, belongs to the program. `--` ends
 option parsing and permits file names starting with `-`. Options with values
 take a separate nonempty argument; names cannot start with `-`, and numeric
 values with signs are invalid limits. Only `--emit=core` and
-`--emit=bytecode` use `=`. Unknown flags, flags on the wrong command,
+`--emit=bytecode` use `=`. `-o` takes a separate nonempty value that may not
+start with `-`. Unknown flags, flags on the wrong command,
 duplicate flags (except `--only`), missing/extra files and invalid limits are
 command mistakes. A mistake writes one newline-terminated message to standard
 error, nothing to standard output, and exits 2, without extra usage text.
@@ -1651,6 +1658,7 @@ or flag.
 | Command | Files | Accepted flags |
 | --- | --- | --- |
 | `check` | one entry file | `--json`, `--emit=core`, `--emit=bytecode` |
+| `emit` | one entry file | `-o FILE` (required) |
 | `run` | one entry file, then program arguments | `--max-stack`, `--max-depth`, `--max-heap`, before the file |
 | `test` | one entry file | `--json`, repeatable `--only NAME`, `--in MODULE`, `--list`, `--max-stack`, `--max-depth`, `--max-heap`, `--calls`, `--seconds` |
 | `format`, `fix` | one or more files | none |
@@ -1687,7 +1695,7 @@ checking on exhaustion).
 Only a successful certificate reaches `mo_lower` and `mo_core_check`, including
 for plain `check`; an unfinished lowering stage cannot be silently accepted.
 Plain checking never executes the user's `main`, examples or tests. `run`,
-bytecode emission, and checking a program with anchors then call `mo_compile`.
+`emit`, bytecode emission, and checking a program with anchors then call `mo_compile`.
 Lowering has its own 256 MiB work arena; the wire and
 text buffers use their format limits. `--emit=core` prints checked
 Core text; `--emit=bytecode` prints indexed bytecode text after compiling and
