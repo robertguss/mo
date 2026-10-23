@@ -139,7 +139,7 @@ killed() {
 
 # Runs one proof (or, with --reach, its reach check), printing one line and any failures.
 run() {
-	local name replaced loops least file flags
+	local name replaced loops least file flags status=0
 	IFS='|' read -r name replaced loops least file flags <<<"$1"
 	local source=cbmc/${file:-reader.c}
 	local n=$default_input
@@ -212,7 +212,6 @@ run() {
 		for option in "${options[@]}"; do
 			if [[ "$option" != --memory-leak-check ]]; then cover+=("$option"); fi
 		done
-		local status=0
 		cbmc "$instrumented" --cover location "${cover[@]}" --unwind "$unwind" \
 			--unwindset "$unwindset" >>"$log" 2>&1 || status=$?
 		if killed "$name" "$status" $((SECONDS - start)); then return 1; fi
@@ -258,7 +257,6 @@ run() {
 	fi
 	# Every loop bound carries an unwinding assertion, so a bound too small fails the proof
 	# rather than hiding paths.
-	local status=0
 	cbmc "$instrumented" "${checks[@]}" "${options[@]}" --unwind "$unwind" --unwinding-assertions \
 		--unwindset "$unwindset" >>"$log" 2>&1 || status=$?
 	if ((status == 0)); then
