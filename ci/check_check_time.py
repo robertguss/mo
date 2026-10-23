@@ -40,12 +40,21 @@ def best_time(binary, sample):
 
 def main(argv):
     limit = LIMIT
+    usage = "usage: check_check_time.py [--limit SECONDS] MO"
     if argv[:1] == ["--limit"]:
-        limit = float(argv[1])
+        try:
+            limit = float(argv[1])
+        except (IndexError, ValueError):
+            print(usage, file=sys.stderr)
+            sys.exit(2)
         argv = argv[2:]
     if len(argv) != 1:
-        raise SystemExit("usage: check_check_time.py [--limit SECONDS] MO")
+        print(usage, file=sys.stderr)
+        sys.exit(2)
     binary = str(pathlib.Path(argv[0]).resolve())
+    if not pathlib.Path(binary).is_file():
+        print(f"check_check_time.py: no such executable: {argv[0]}", file=sys.stderr)
+        sys.exit(2)
     samples = sorted((root / "examples").glob("*.mo"))
     if len(samples) < MINIMUM:
         raise SystemExit(f"found {len(samples)} samples in examples/, expected {MINIMUM}")
