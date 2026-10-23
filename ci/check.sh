@@ -16,13 +16,10 @@
 #   lean        Mo Core in Lean, and the checks that compare the test executables with it
 #   static      grammar, module dependencies, library map, frozen tool tasks, formatting, clang-tidy
 #   cbmc        the CBMC proofs of the bytecode reader, the arena, the verifier and the primitives (cbmc/README.md)
-#   qgate       report only, never fails: qgate's push stage against the merge base with $QGATE_BASE
-#               (default origin/main), as GitHub annotations. The workflow runs it as its own job,
-#               outside the required `check`.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-all_groups=" gcc clang sanitize fuzz drivers lean static cbmc qgate "
+all_groups=" gcc clang sanitize fuzz drivers lean static cbmc "
 groups="$*"
 for group in $groups; do
 	if [[ "$all_groups" != *" $group "* ]]; then
@@ -391,19 +388,6 @@ if have cbmc && have goto-cc && have goto-instrument; then
 	((proofs_status == 0 && reach_status == 0))
 else
 	missing "cbmc is not installed"
-fi
-fi
-
-if want qgate; then
-step "qgate (report only): long functions and files, duplication and loosenings since ${QGATE_BASE:-origin/main}"
-# Report only: a qgate failure, or no merge base on a shallow clone (exit 2), never fails the
-# group. MO_QGATE_SKIP_CHECK stops qgate.toml's push tool from running ci/check.sh again here.
-if have qgate; then
-	MO_QGATE_SKIP_CHECK=1 qgate run --stage push --base "${QGATE_BASE:-origin/main}" --format github ||
-		echo "qgate exited with status $?; this group only reports, so it passes"
-else
-	echo "skipped: qgate is not installed (https://github.com/robertguss/qgate)"
-	skipped+=("qgate is not installed")
 fi
 fi
 

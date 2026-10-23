@@ -77,42 +77,6 @@ jobs:
       - name: Run the ${{ matrix.group }} checks
         run: MAKEFLAGS="-j$(nproc) -Otarget" CI=1 bash ci/check.sh ${{ matrix.group }}
 
-  # Report-only: `bash ci/check.sh qgate`, qgate's push stage against the pull request's merge
-  # base with qgate.toml and qgate.baseline, as annotations on the diff and a table in the job
-  # summary. It never fails: the group always exits 0, a failed download or a timeout only skips
-  # the report, and `check` below does not wait for it. Skipped for docs-only changes and pushes
-  # to main.
-  qgate:
-    needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.groups != '[]'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    env:
-      QGATE_VERSION: 0.5.0
-      QGATE_SHA256: ec510362caf5d9c37595f0c226ae792cedef12297047781841a0bb22dbe18fcb
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # qgate needs the merge base with the target branch
-      - name: Install qgate ${{ env.QGATE_VERSION }}
-        id: install
-        continue-on-error: true
-        timeout-minutes: 2
-        run: |
-          archive=qgate-x86_64-unknown-linux-musl.tar.gz
-          curl -sSfL -o "$RUNNER_TEMP/$archive" \
-            "https://github.com/robertguss/qgate/releases/download/v$QGATE_VERSION/$archive"
-          echo "$QGATE_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
-          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" qgate
-          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
-      - name: qgate push stage (report only)
-        if: steps.install.outcome == 'success'
-        continue-on-error: true
-        timeout-minutes: 5
-        env:
-          QGATE_BASE: origin/${{ github.base_ref }}
-        run: bash ci/check.sh qgate
-
   # One status to require in branch protection: it passes only when every
   # group that ran passed, or when none ran for a docs-only change.
   check:

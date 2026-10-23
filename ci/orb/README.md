@@ -21,8 +21,7 @@ next morning rather than prevented at every merge.
   also runs every night, comparing generated Core programs on the C VM and in Lean.
 
 `ci/ci_groups.sh` holds both lists; `ci/test_ci_groups.sh` checks that together
-they are every group `ci/check.sh` has. Locally, the qgate pre-push hook runs the
-`gcc` group (`qgate.toml`).
+they are every group `ci/check.sh` has.
 
 When a nightly group fails, `ci/nightly.sh` files an issue labelled `nightly`,
 titled "Nightly: <group> failing on main", with the tested commit, the commits
@@ -34,8 +33,7 @@ issue is a bug on `main`: fix it in a pull request like any other task.
 
 Once Mo has outside users or real applications, go back to running every group
 before a merge: make `ci/ci_groups.sh` print the nightly groups with the fast
-ones (and update `ci/test_ci_groups.sh`), and make the `check` tool in
-`qgate.toml` run `CI=1 bash ci/check.sh gcc clang sanitize static drivers` again.
+ones (and update `ci/test_ci_groups.sh`).
 The nightly workflow can stay as the place long fuzzing runs.
 
 ## Asking for an optional CI-orb run

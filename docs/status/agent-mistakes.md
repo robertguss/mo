@@ -24,5 +24,5 @@ this range, so the evidence is fix-up commits inside PRs, the Review sections of
 | 11 | Python caches committed | #102, #104, #105, #106 | `.gitignore` (#112) | enforced |
 
 One-offs this run: macOS build breaks (#81; tests that create non-UTF-8 file names, which APFS
-refuses, found by the qgate push hook on 22 Oct), a skill written into `.claude/skills/` instead of
+refuses, found by a local push on 22 Oct), a skill written into `.claude/skills/` instead of
 `.agents/skills/` (#108), a Python line over 100 columns (#115).

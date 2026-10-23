@@ -65,16 +65,6 @@ A PR that changes only documents no check reads runs no group, and `check` still
 `docs/design/library.md` are not on it: the build embeds or checks them. Robert lets agents merge
 docs-only PRs without review.
 
-qgate (`qgate.toml`, `qgate.baseline`, v0.5.0) runs as git hooks once a clone has run `qgate install`:
-commit runs clang-format on the staged C files plus qgate's function length, file length and
-duplication checks; push also runs `CI=1 bash ci/check.sh gcc`, unless `ci/docs_only.sh` calls the change docs-only. The
-baseline only shrinks, with 5 lines of headroom. A failure prints its fix. Loosening the gate (a raised limit, a grown
-baseline, a changed tool) is a `loosening` warning that never fails the run; prefer fixing the code,
-and say in the PR what you loosened and why. Never bypass the hooks (`--no-verify`, `core.hooksPath`).
-A separate `qgate` job on each code PR runs `bash ci/check.sh qgate`, the same push stage against the
-merge base, as annotations and a job summary. It only reports, is not part of `check`, and is on
-trial until early November 2026 (MO-100).
-
 ## Architecture
 
 Pipeline: source → parser (`syntax`) → names, types and rule checks (`check`) → lowering to Mo
