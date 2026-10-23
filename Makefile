@@ -16,7 +16,7 @@
 #   make cbmc         prove the bytecode reader, the arena, the verifier's transfer
 #                     functions and the primitives' arithmetic and UTF-8 (needs CBMC)
 #
-# ci/check.sh runs every check; CI runs ci/check.sh. Choose a compiler with
+# ci/check.sh runs every check. Choose a compiler with
 # CC=gcc or CC=clang. Each compiler builds into its own directory, so switching
 # never forces a full rebuild. Changing this Makefile rebuilds everything.
 

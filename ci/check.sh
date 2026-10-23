@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Every check robertguss/mo's CI runs, in order, except that the drivers and lean groups run their
-# checks side by side. CI runs the fast groups on each pull request and the slow ones nightly
-# (ci/orb/README.md); the CI orb runs all of them on a pull request it is sent (decisions D208, D214).
+# Every check robertguss/mo has, in order, except that the drivers and lean groups run their
+# checks side by side. Nothing runs these on GitHub; run them locally, or ask the CI orb to run
+# them on a pull request (ci/orb/README.md; decisions D208, D214).
 #
-# Locally, a check whose tool is missing is skipped with a note, and the summary
-# at the end counts what was skipped instead of claiming that all checks passed.
-# In CI (CI=1) a missing tool is an error, so nothing is skipped silently.
+# A check whose tool is missing is skipped with a note, and the summary at the end counts what
+# was skipped instead of claiming that all checks passed. Set CI=1 to make a missing tool an
+# error instead, so nothing is skipped silently.
 #
-# With no arguments every check runs. Arguments pick groups of checks, so CI can
-# run the groups as parallel jobs; together the groups are every check:
+# With no arguments every check runs. Arguments pick groups of checks; together the groups are
+# every check:
 #   gcc clang   build and run the unit tests with that compiler
 #   sanitize    the unit tests under AddressSanitizer and UndefinedBehaviorSanitizer
 #   fuzz        every fuzz target briefly
@@ -146,8 +146,7 @@ fi
 
 # Run alone, the drivers and lean groups build the executables they drive, as the
 # gcc, clang and sanitize groups would have. drivers alone drives only the debug builds, which
-# keeps it fast in the pull request gate; with the sanitize group it also drives the sanitize
-# builds that group made, as the nightly run does.
+# keeps it fast; with the sanitize group it also drives the sanitize builds that group made.
 if [[ -n "$groups" ]] && { want drivers || want lean; }; then
 	step "Build the test executables the checks below drive"
 	if have gcc; then make --no-print-directory test-executables CC=gcc; fi
@@ -256,7 +255,7 @@ fi
 
 if want lean; then
 step "Mo Core in Lean: the model builds and every proof checks"
-# elan lives in /opt/elan where .agents/setup puts it, since CI runs with a
+# elan lives in /opt/elan where .agents/setup puts it, since the CI orb runs with a
 # fresh HOME, or else in the usual ~/.elan.
 for elan_home in "${ELAN_HOME:-}" /opt/elan "$HOME/.elan"; do
 	if [[ -n "$elan_home" && -x "$elan_home/bin/lake" ]]; then
@@ -346,15 +345,6 @@ make --no-print-directory deps
 step "The library map: docs/design/library.md has a row for every primitive and host operation"
 make --no-print-directory library-map
 
-step "Docs-only changes: ci/docs_only.sh skips CI only for files no check reads"
-sh ci/test_docs_only.sh
-
-step "CI tiers: ci/ci_groups.sh runs the fast groups on a change and the rest nightly"
-sh ci/test_ci_groups.sh
-
-step "Nightly bookkeeping: ci/nightly.sh skips a quiet night and keeps one issue per failing check"
-if have jq; then sh ci/test_nightly.sh; else missing "jq is not installed"; fi
-
 step "The three tools' frozen tasks: hashes match and each reference passes its hidden tests"
 if have python3; then python3 bench/tools/grade.py --check; else missing "python3 is not installed"; fi
 
@@ -398,5 +388,5 @@ else
 	if ((${#skipped[@]} == 1)); then noun="check was"; fi
 	step "${#skipped[@]} $noun skipped; the others passed"
 	printf '  - %s\n' "${skipped[@]}"
-	echo "CI treats a missing tool as an error. Install what is missing (.agents/setup does) before relying on this result."
+	echo "CI=1 treats a missing tool as an error. Install what is missing (.agents/setup does) before relying on this result."
 fi

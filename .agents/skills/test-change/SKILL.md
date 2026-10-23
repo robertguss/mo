@@ -32,7 +32,7 @@ When a behaviour fits two rows, take the one closest to the user: a CLI golden o
 
 3. **Repeat per behaviour.** One test at a time, each seen red, until every behaviour in the plan has one. Done when the plan's test list is fully ticked.
 
-4. **Run the gate.** `bash ci/check.sh gcc clang static drivers`, the fast groups a PR's hosted `check` runs, plus `sanitize`, `lean`, `fuzz` or `cbmc` when the change reaches what they check; the rest run nightly (`ci/orb/README.md`). Read the summary: a skipped check is not a passed one. Done when it ends with all checks passed, or every skip is named in the PR.
+4. **Run the gate.** `bash ci/check.sh gcc` at least, which every PR reports, plus `clang`, `static`, `drivers`, `sanitize`, `lean`, `fuzz` or `cbmc` when the change reaches what they check. Nothing runs them on GitHub. Read the summary: a skipped check is not a passed one. Done when it ends with all checks passed, or every skip is named in the PR.
 
 ## What a test asserts
 
@@ -47,11 +47,11 @@ The code is wrong until shown otherwise. Fix the code to meet the contract. Chan
 
 ## Reading a red gate
 
-Groups run in order: gcc, clang, sanitize, drivers, fuzz, static. Fix the first red one; later failures are often its consequence. Locally, rerun just that group (`bash ci/check.sh sanitize`); in CI, open the failing job's log.
+Groups run in order: gcc, clang, sanitize, drivers, fuzz, static. Fix the first red one; later failures are often its consequence. Rerun just that group (`bash ci/check.sh sanitize`); in a CI-orb run, read the end of its log.
 
 - **gcc or clang**: a warning is an error, and the two compilers warn differently, so build with both.
 - **sanitize**: rerun the single test file under `make sanitize` for the stack trace.
 - **fuzz**: the crash input becomes a unit test or fixture first, seen red, then the fix.
 - **drivers**: the script named in the step (`ci/check_cli.py`, `ci/check_lower_source.py`, …) prints the fixture and the expected and actual results.
 - **static**: `make deps`, `make library-map` or `make format-check` names the file and the rule.
-- **CI only**: a tool version differing from yours is the usual cause; CI pins clang-format 14.0.6, and newer versions format differently.
+- **Another machine only** (the CI orb, a reviewer): a tool version differing from yours is the usual cause; the code is formatted with clang-format 14.0.6, which `make format-check` does not pin, and newer versions format differently.

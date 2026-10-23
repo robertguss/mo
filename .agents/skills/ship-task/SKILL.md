@@ -1,11 +1,11 @@
 ---
 name: ship-task
-description: Take a Mo task from Notion to an open, green pull request. Use when asked to start, build, do or ship an MO task, such as "do MO-89".
+description: Take a Mo task from Notion to an open pull request. Use when asked to start, build, do or ship an MO task, such as "do MO-89".
 ---
 
 # Ship a task
 
-One MO task is one PR off `main`. This skill is the order of the work; each step's own skill holds how to do it. Agents commit, push and open PRs freely; Robert approves every merge.
+One MO task is one PR off `main`. This skill is the order of the work; each step's own skill holds how to do it. Agents commit, push and open PRs freely; Robert approves every merge except docs-only PRs (AGENTS.md "Checks and merging").
 
 ## 1. Load the task
 
@@ -27,7 +27,7 @@ Done when the plan has no open questions.
 
 Write the code and its tests following `test-change`, in commits that each leave the tree building.
 
-Done when every behaviour in the plan has a test seen red, then green, and the `ci/check.sh` groups the change touches pass, or each skipped check is named with the tool it lacks. A PR merges on the hosted `check` status, which runs the fast groups; the slow ones run nightly (`ci/orb/README.md`).
+Done when every behaviour in the plan has a test seen red, then green, and the `ci/check.sh` groups the change touches pass, or each skipped check is named with the tool it lacks. A PR merges when Robert says so (AGENTS.md "Checks and merging"); no Mo check runs on GitHub.
 
 ## 5. Review
 
@@ -39,4 +39,4 @@ Done when every finding is fixed or answered and the checks are green again.
 
 Title it `MO-NN: <what it adds>` so the GitHub sync links it to the task, and fill in every section of the PR template. Then run `notion-sync` so the task shows as "In review".
 
-Done when the PR is open and its `check` status is green, or its red check is diagnosed with `test-change`'s "Reading a red gate" and fixed.
+Done when the PR is open and its body reports the local `bash ci/check.sh gcc` result on its final commit, plus any other group run and the groups not run.

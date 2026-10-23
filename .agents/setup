@@ -5,8 +5,7 @@
 # Lean 4, through elan, for Mo Core. Installs only; never builds or runs anything.
 #
 #   bash .agents/setup            everything
-#   bash .agents/setup GROUP...   only what those ci/check.sh groups need, so a CI job for the
-#                                 fast groups installs nothing it will not use
+#   bash .agents/setup GROUP...   only what those ci/check.sh groups need
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
@@ -27,7 +26,7 @@ install_missing() {
 }
 
 packages=(build-essential clang make git)
-if needs static; then packages+=(clang-format clang-tidy bison jq); fi
+if needs static; then packages+=(clang-format clang-tidy bison); fi
 if needs cbmc; then packages+=(cbmc); fi
 install_missing "${packages[@]}"
 

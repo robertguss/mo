@@ -2281,7 +2281,7 @@ tuples, lists, maps, sets, options, results, declared data, functions, `let_`, `
 platform. `ci/check_core_generated.py` (the `lean` group) requires every generated program to
 pass `core_check` in C and `mocore` in Lean, and its text to come back byte for byte from the C
 printer (`tests/test_core_print.c`) and from `mocore --canonical`. `MO_CORE_GENERATED` and
-`MO_CORE_GENERATED_SEED` widen the run for nightly use.
+`MO_CORE_GENERATED_SEED` widen the run when it is run by hand.
 
 **VM against Lean on generated programs.** `ci/check_core_differential.py` (the `lean` group)
 compiles and runs each generated program on the C VM (`test_vm.test --core`) and evaluates it in
@@ -2289,11 +2289,10 @@ Lean (`mocore`), and requires the same outcome, stop message included. It genera
 `lowerable=True`, because codegen refuses by design the Core forms lowering never produces (a
 tuple of fewer than two elements, section 12); the checkers still see the wider set through
 `check_core_generated.py`. A program either engine cuts off at its budget is counted, not
-compared, and a run fails if one engine alone cuts off more than 2% of them. The pull request run
+compared, and a run fails if one engine alone cuts off more than 2% of them. The default run
 covers 1,000 programs and every file in `tests/differential`, the minimized programs earlier runs
-found; `.github/workflows/differential.yml` runs 20 shards of 5,000 (100,000) each night, a million
-on a manual run with 50,000 per shard, from seeds that move forward every day, and uploads any
-program that differs. To replay one: `MO_CORE_DIFF=1 MO_CORE_DIFF_SEED=<seed>`.
+found. A larger run, such as the 100,000 programs a nightly job once ran, is a run by hand with
+`MO_CORE_DIFF` and `MO_CORE_DIFF_SEED` set. To replay one: `MO_CORE_DIFF=1 MO_CORE_DIFF_SEED=<seed>`.
 
 **Fuzz targets** (condition 2), each with its invariant:
 
@@ -2312,9 +2311,9 @@ program that differs. To replay one: `MO_CORE_DIFF=1 MO_CORE_DIFF_SEED=<seed>`.
 - the formatter: formatting twice gives the same text, and keeps the tree.
 
 Every check runs through `ci/check.sh`, in the optional CI orb (D214) or an
-equivalent verified Linux environment. A pull request waits for the fast groups;
-the slow ones run nightly against `main`. The two tiers, merge verification and
-evidence rules are in `ci/orb/README.md`. The Lean build
+equivalent verified Linux environment; no Mo check runs on GitHub. Before a pull request an agent runs
+the `gcc` group; the slow groups run only by hand. Merge verification and evidence rules are in
+`ci/orb/README.md`. The Lean build
 (`make formal`) and CBMC need elan and CBMC in `.agents/setup`.
 
 ## 12. Phase 2's streams and their interfaces

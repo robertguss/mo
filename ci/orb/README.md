@@ -1,40 +1,10 @@
 # The CI orb
 
-CI for robertguss/mo runs `ci/check.sh`. Robert removed the requirement to use
-the dedicated Amp CI orb: an equivalent verified Linux environment, including
-a Docker container on the Mac, is also supported. The orb remains an optional
-runner (decisions D208 and D214).
-
-## The two tiers
-
-While Mo is experimental and has no outside users, CI runs in two tiers, so a
-pull request gets a merge decision in minutes and a broken `main` is found the
-next morning rather than prevented at every merge.
-
-- **Fast, on every pull request and push to `main`** (`.github/workflows/check.yml`):
-  `gcc`, `clang`, `static` and `drivers`, which finish in a few minutes. They decide the required `check` status. A change that touches only
-  documents no check reads runs none of them, and `check` still reports.
-- **Slow, once a night against `main`** (`.github/workflows/nightly.yml`): `cbmc`,
-  `lean`, `fuzz` with five minutes per target, and `sanitize` together with the
-  driver checks over the sanitize builds. A scheduled night with no new commit
-  on `main` since the last finished run is skipped. `.github/workflows/differential.yml`
-  also runs every night, comparing generated Core programs on the C VM and in Lean.
-
-`ci/ci_groups.sh` holds both lists; `ci/test_ci_groups.sh` checks that together
-they are every group `ci/check.sh` has.
-
-When a nightly group fails, `ci/nightly.sh` files an issue labelled `nightly`,
-titled "Nightly: <group> failing on main", with the tested commit, the commits
-since the previous nightly run and a link to the run. A night it stays red
-adds a comment; the night it passes again closes the issue. An open `nightly`
-issue is a bug on `main`: fix it in a pull request like any other task.
-
-## Restoring the strict gate
-
-Once Mo has outside users or real applications, go back to running every group
-before a merge: make `ci/ci_groups.sh` print the nightly groups with the fast
-ones (and update `ci/test_ci_groups.sh`).
-The nightly workflow can stay as the place long fuzzing runs.
+Mo has no hosted CI: no Mo check runs on GitHub, and `main` requires no status
+check. `ci/check.sh` runs every check locally. The CI orb is an optional runner
+that runs it on a pull request when asked (decisions D208 and D214); an
+equivalent verified Linux environment, including a Docker container on the Mac,
+works too.
 
 ## Asking for an optional CI-orb run
 
@@ -52,14 +22,11 @@ identifies the commit it tested; apply the evidence rules below to later changes
 
 ## Merge verification
 
-A pull request merges on a green hosted `check` status (the fast tier above),
-plus reviewer agent approval and Robert's merge authorization. Record in the PR
-the commit `check` ran on and any groups you ran locally for the change, with
-their results; a check you did not run is named as not run, never claimed.
-Required GitHub checks and branch protection must pass; this policy does not
-authorize bypassing them. A full `CI=1 bash ci/check.sh` run, here or in the CI
-orb, is still the way to check a change to the slow groups' own inputs (the
-CBMC harnesses, `formal/`, a fuzz target) before merging it.
+AGENTS.md "Checks and merging" holds the merge rule. Record in the PR the
+commit you checked and each group you ran, with its result; a check you did not
+run is named as not run, never claimed. A full `CI=1 bash ci/check.sh` run, here
+or in the CI orb, is the way to check a change to the slow groups' own inputs
+(the CBMC harnesses, `formal/`, a fuzz target) before merging it.
 
 ## What `run.sh` does
 
@@ -82,17 +49,15 @@ CBMC harnesses, `formal/`, a fuzz target) before merging it.
 
 Runs share one clone, so a second run waits for the first.
 
-## Nightly fuzzing
+## Long fuzzing
 
-A pull request's check doesn't fuzz. The nightly workflow fuzzes each target for
-five minutes (`FUZZ_SECONDS=300`), keeps any crashing inputs as an artifact of
-the run, and files a `nightly` issue on a failure; fix it in a pull request, and
-add the crashing input to the target's corpus. The CI orb can run the same full
-check by hand with `bash ci/orb/nightly.sh`: `ci/check.sh` on `main`'s latest
-commit, each target fuzzed for five minutes (`MO_CI_FUZZ_SECONDS`, 300 by
-default), keeping the log and any crashing inputs under `~/mo-ci/logs`. It has
-its own clone and lock under `~/mo-ci/nightly`, so pull requests' runs don't
-wait the hour or more it takes.
+`ci/check.sh`'s `fuzz` group fuzzes each target only briefly. For a longer run,
+the CI orb can run the full check by hand with `bash ci/orb/nightly.sh`:
+`ci/check.sh` on `main`'s latest commit, each target fuzzed for five minutes
+(`MO_CI_FUZZ_SECONDS`, 300 by default), keeping the log and any crashing inputs
+under `~/mo-ci/logs`. It has its own clone and lock under `~/mo-ci/nightly`, so
+pull requests' runs don't wait the hour or more it takes. Add any crashing input
+to the target's corpus when you fix it.
 
 ## The CI orb itself
 
@@ -100,14 +65,14 @@ wait the hour or more it takes.
   because under `CI=1` a missing tool fails the check.
 - Its own checkout stays on `main`; `git pull` before a run, so `run.sh` is
   current. Each run checks the pull request's code, not `main`'s.
-- Never archive its thread: it is the CI.
+- Never archive its thread: the orb lives in it.
 
-## Matching the CI orb locally
+## Matching clang-format 14 locally
 
-The formatting check (`make format-check`, part of `ci/check.sh`) uses the CI
-orb's clang-format, version 14. Other versions can format the same code
-differently, so a check that passes with your clang-format can fail in the CI
-orb. Check `clang-format --version`, and if it is not 14, put version 14 first
+The formatting check (`make format-check`, part of the `static` group) expects
+clang-format version 14, which the CI orb has. Other versions can format the
+same code differently, so a check that passes with your clang-format can fail
+for anyone using 14. Check `clang-format --version`, and if it is not 14, put version 14 first
 on your `PATH`:
 
 ```sh

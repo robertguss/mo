@@ -1,6 +1,6 @@
 ---
 name: notion-sync
-description: Bring the Mo v2 Notion hub up to date with live GitHub state. Use after a PR opens, merges or changes CI state, after Robert makes a decision, or when asked to update Notion or the hub.
+description: Bring the Mo v2 Notion hub up to date with live GitHub state. Use after a PR opens or merges, after Robert makes a decision, or when asked to update Notion or the hub.
 ---
 
 # Notion sync
@@ -23,7 +23,7 @@ The Notion connector can be signed in to Robert's work workspace instead. Call `
 
 ## 1. Read live state
 
-From GitHub: main's head SHA, and for every MO PR its state (open, draft, merged, closed), head SHA, mergeable state and latest `check` result, plus the merge commit SHA and time of each merged PR. Read the Status page, the Changelog, the Mo Tasks rows for those PRs, and the latest Decision Log rows fresh. A summary from memory or an earlier session is a lead to check, never a fact to copy.
+From GitHub: main's head SHA, and for every MO PR its state (open, draft, merged, closed), head SHA and mergeable state, plus the merge commit SHA and time of each merged PR. Read the Status page, the Changelog, the Mo Tasks rows for those PRs, and the latest Decision Log rows fresh. A summary from memory or an earlier session is a lead to check, never a fact to copy.
 
 Done when you hold the live row for every PR the Status page or Mo Tasks mentions.
 
@@ -37,7 +37,7 @@ Compare each of these spots with the live state. These go stale first:
 - "Still to do for Phase 2" and "Waiting for Robert";
 - "Recent decisions" against the Decision Log;
 - each task's Status and PR in Mo Tasks: an open PR is "In review", a merged one "Done";
-- any note saying CI is pending, red, or conflicting, and any PR described as open that has since merged.
+- any note saying a PR is waiting on CI or conflicting (Mo has no hosted CI), and any PR described as open that has since merged.
 
 ## 3. Fix
 

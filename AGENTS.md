@@ -33,7 +33,7 @@ make -j8 build/gcc/debug/tests/test_check.test.run CC=gcc   # build and run ONE 
 make grammar               # executable grammar (bison) over grammar/tests, examples/, the reference
 make deps                  # module include rules (table at the top of ci/deps.sh)
 make library-map           # docs/design/library.md vs src/base/prims.def and hostops.def
-make format / format-check # clang-format; CI pins clang-format 14.0.6, newer versions can differ
+make format / format-check # clang-format; use clang-format 14.0.6, newer versions can differ
 make tidy                  # clang-tidy cert-err33-c (unused stdlib results)
 make fuzz-smoke            # every fuzz target briefly (needs clang + libFuzzer; FUZZ_SECONDS=5)
 make formal                # build Mo Core in Lean and check every proof (needs elan)
@@ -44,7 +44,7 @@ bash ci/check.sh [group…]  # every check; groups: gcc clang sanitize fuzz driv
 - Each compiler builds into its own `build/<compiler>/` tree, so switching `CC` doesn't rebuild.
   Changing the Makefile, or adding or removing a file in `src/`, rebuilds everything.
 - Warnings are errors (`-Wconversion`, `-Wsign-conversion`, `-Wshadow`, `-Wswitch-enum`, …), and
-  CI builds with both gcc and clang, so build with both before pushing.
+  gcc and clang warn about different things, so a change to C code should build with both.
 - Locally, `ci/check.sh` skips checks whose tool is missing and says so in its summary; with `CI=1`
   a missing tool fails. A skip is not a pass.
 - The `drivers` group runs Python black-box checks against the built executables
@@ -53,17 +53,20 @@ bash ci/check.sh [group…]  # every check; groups: gcc clang sanitize fuzz driv
   (`ci/check_lower_source.py`, `ci/check_core_differential.py`, …). CLI behaviour changes usually
   need an edit to `ci/check_cli.py` or the goldens under `tests/cli/`.
 
-## CI and merging
+## Checks and merging
 
-A PR merges on a green hosted `check` status, which runs the fast groups (`gcc`, `clang`, `static`,
-`drivers`) on every PR and push to main (`.github/workflows/check.yml`); a red PR cannot merge. The
-slow groups (`cbmc`, `lean`, long `fuzz`, `sanitize`) run nightly against main and file a GitHub
-issue labelled `nightly` when one fails; treat an open one as a task. `ci/orb/README.md` holds the
-two tiers, the merge evidence rules and how to restore the strict gate. PRs are squash-merged.
-A PR that changes only documents no check reads runs no group, and `check` still reports
-(`ci/docs_only.sh` holds the list). `docs/agent-guide.md`, `docs/reference/README.md` and
-`docs/design/library.md` are not on it: the build embeds or checks them. Robert lets agents merge
-docs-only PRs without review.
+No Mo check runs on GitHub: there are no Actions workflows, and `main` requires no status check
+(only force-pushes are blocked). The Socket Security app may still post its own checks; none is
+required. Before opening a PR, run `bash ci/check.sh gcc` (build and unit tests)
+and report its result in the PR body, listing any check it skipped for a missing tool (a skip is
+not a pass; `CI=1` makes it fail instead). Run any other group the change reaches and say which
+groups you did not run: usually `clang` and `static` (formatting, module includes, library map)
+for C changes, `drivers` for CLI or golden changes, `static` for `prims.def` or `hostops.def`.
+The slow groups (`cbmc`, `lean`, `sanitize`, `fuzz`) run only when someone runs them by hand. The
+build embeds or checks `docs/agent-guide.md`, `docs/reference/README.md` and
+`docs/design/library.md`, so after editing one, also run `bash ci/check.sh drivers static`. A PR
+merges when Robert says so. He lets agents merge docs-only PRs without review: PRs that change only
+Markdown files, other than those three. PRs are squash-merged.
 
 ## Architecture
 
@@ -142,7 +145,7 @@ Start any MO task with the `ship-task` skill; it runs the others in order: `plan
 `.agents/skills/`. The PR template asks for each step's output. A one-line fix can keep its plan to
 a sentence; it still gets tests and a review.
 
-After a PR merges or changes CI state, or after Robert makes a decision, run `notion-sync`.
+After a PR opens or merges, or after Robert makes a decision, run `notion-sync`.
 
 When Robert or a reviewer corrects a mistake, fix it and add or bump its row in
 `docs/status/agent-mistakes.md` in the same PR. A row that recurs is fixed at a stronger level, using
