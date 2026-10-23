@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Runs the CBMC proofs in cbmc/ (make cbmc): the bytecode reader (reader.c), the arena (arena.c),
-# the bytecode verifier (verify.c), and the primitives' arithmetic and UTF-8 (decimal.c, number.c,
-# text.c, unicode.c). Each proof checks one function against its specification, with the
-# functions it calls replaced by their models (cbmc/README.md).
+# the bytecode verifier (verify.c), the primitives' arithmetic and UTF-8 (decimal.c, number.c,
+# text.c, unicode.c), and lexical path containment (path.c). Each proof checks one function
+# against its specification, with the functions it calls replaced by their models (cbmc/README.md).
 #
 #   bash cbmc/prove.sh [proof...]           with no names, every proof
 #   bash cbmc/prove.sh --reach [proof...]   check instead that every block of each proved
@@ -62,6 +62,7 @@ proofs=(
 	"instruction||||verify.c|--object-bits 10 --unwind 10"
 	"lookup||||verify.c|--unwind 10"
 	"step||||verify.c|--object-bits 10 --unwind 10"
+	"normalize||mo_host_normalize.0:7,mo_host_normalize.1:7,mo_host_normalize.2:7,spec_normalize.0:7,spec_normalize.1:7,spec_normalize.2:7||path.c|--unwind 7"
 	"text_scalar||||text.c|--unwind 8"
 	"text_encode||||text.c|--unwind 8"
 	"checked_scalar||||unicode.c|--unwind 8"
@@ -113,6 +114,7 @@ proved_function() {
 	instruction) echo 'mo_verify_instruction|reg|kind|mo_verify_closure_signature|field|args' ;;
 	lookup) echo 'mo_verify_layout_lookup|layout_order' ;;
 	step) echo 'step|access|mo_verify_parameter_modes|refuse|charge' ;;
+	normalize) echo mo_host_normalize ;;
 	# A primitive proof covers the helpers its function calls that no other proof covers.
 	text_scalar | unicode_scalar) echo scalar ;;
 	text_encode | unicode_encode) echo encode ;;

@@ -1,11 +1,13 @@
 # CBMC proofs
 
-`make cbmc` (or `bash cbmc/prove.sh [proof...]`) proves four parts of Mo with
+`make cbmc` (or `bash cbmc/prove.sh [proof...]`) proves five parts of Mo with
 [CBMC](https://www.cprover.org/cbmc/): the bytecode reader, `src/bytecode/read.c` (`reader.c`,
 below), the arena, `src/base/arena.c` (`arena.c`, in [The arena](#the-arena)), the bytecode
 verifier's transfer functions in `src/bytecode/verify.c` and `verify-instruction.c` (`verify.c`,
-in [The verifier](#the-verifier)), and the primitives' arithmetic and UTF-8 in `src/base/decimal.c`,
-`src/prim/number.c`, `prim.c`, `text.c` and `unicode.c` (in [The primitives](#the-primitives)).
+in [The verifier](#the-verifier)), the primitives' arithmetic and UTF-8 in `src/base/decimal.c`,
+`src/prim/number.c`, `prim.c`, `text.c` and `unicode.c` (in [The primitives](#the-primitives)),
+and lexical path containment, `src/host/files.c` `mo_host_normalize` (`path.c`, in
+[The host paths](#the-host-paths)).
 
 For the bytecode reader, for **every input of up to
 `MO_CBMC_INPUT` bytes** (32 by default, and more for the proofs whose loops need it), decoding:
@@ -220,6 +222,23 @@ Unicode data tables (`ci/check_unicode16.py` runs the standard's conformance tes
 Decimal primitives' rounding to places, `floor`, `ceil` and `to_int`, `Float.to_decimal`, BigInt,
 the Text primitives built on the decoder, and the collections, whose cost CBMC cannot bear
 through 128-bit dividers or the heap. The tests and the VM-against-Lean differential check them.
+
+## The host paths
+
+`path.c` proves `mo_host_normalize` against architecture section 7 ("Files"): split on `/`, skip
+`.`, pop on `..`, and refuse an empty path, an empty component (absolute, trailing slash, or
+`//`), or a `..` that would leave the root. Real and fake Files operations run this before they
+open or look up a path (sandbox-properties P8).
+
+The proof takes **every path of up to `MO_CBMC_PATH` bytes** (6 by default) whose bytes are `.`,
+`/` or `a`. `a` stands for any other component byte: the function only special-cases `.` and `/`.
+For each such input it accepts exactly when the spec does, writes the spec's bytes, and a refusal
+is `FILE_NOT_ALLOWED` with `containment`. It also never overflows, reads past the path, or fails
+an `MO_ASSERT`. `files.c` is included with `MO_CBMC_NORMALIZE` defined, so only
+`mo_host_normalize` is compiled from that file.
+
+Not proved: the portable and `openat2` resolvers in `src/host/path.c`, link targets, NUL (the
+callers refuse that before they call normalize), and paths longer than the bound.
 
 ## Running it
 

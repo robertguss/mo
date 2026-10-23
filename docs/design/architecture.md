@@ -2280,7 +2280,7 @@ among them:
 | Compiler | every Core program the Core checker accepts compiles to bytecode the verifier accepts: a property run on every Core program above |
 | Verifier and loader | arbitrary and mutated files; disassembling then assembling gives the same bytes |
 | Library | `mo test` on the library's own examples, promises and tests; the trusted primitives against their oracles (4.5) |
-| Small critical C functions | CBMC proofs of memory safety and of no overflow: checked arithmetic, Decimal's products and quotients, UTF-8 decoding, path resolution, hash-table probing, reference count updates |
+| Small critical C functions | CBMC proofs of memory safety and of no overflow: checked arithmetic, Decimal's products and quotients, UTF-8 decoding, lexical path containment, path resolution after normalize, hash-table probing, reference count updates |
 | The whole toolchain | a golden corpus of programs with their expected output and exit status, and Phase 2's agent benchmark |
 
 **Generated Core programs.** `ci/gen_core.py` builds well-typed Core programs from the typing rules
