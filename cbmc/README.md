@@ -1,13 +1,14 @@
 # CBMC proofs
 
-`make cbmc` (or `bash cbmc/prove.sh [proof...]`) proves five parts of Mo with
+`make cbmc` (or `bash cbmc/prove.sh [proof...]`) proves parts of Mo with
 [CBMC](https://www.cprover.org/cbmc/): the bytecode reader, `src/bytecode/read.c` (`reader.c`,
 below), the arena, `src/base/arena.c` (`arena.c`, in [The arena](#the-arena)), the bytecode
 verifier's transfer functions in `src/bytecode/verify.c` and `verify-instruction.c` (`verify.c`,
 in [The verifier](#the-verifier)), the primitives' arithmetic and UTF-8 in `src/base/decimal.c`,
 `src/prim/number.c`, `prim.c`, `text.c` and `unicode.c` (in [The primitives](#the-primitives)),
-and lexical path containment, `src/host/files.c` `mo_host_normalize` (`path.c`, in
-[The host paths](#the-host-paths)).
+lexical path containment, `src/host/files.c` `mo_host_normalize` (`path.c`, in
+[The host paths](#the-host-paths)), and reference count updates (`refcount.c`, in
+[Reference count updates](#reference-count-updates)).
 
 For the bytecode reader, for **every input of up to
 `MO_CBMC_INPUT` bytes** (32 by default, and more for the proofs whose loops need it), decoding:
@@ -243,6 +244,26 @@ an `MO_ASSERT`. `files.c` is included with `MO_CBMC_NORMALIZE` defined, so only
 
 Not proved: the portable and `openat2` resolvers in `src/host/path.c`, link targets, NUL (the
 callers refuse that before they call normalize), and paths longer than the bound.
+
+## Reference count updates
+
+`refcount.c` includes the real `heap.c`, `cell.c` and `types.c`. Counts range over **every
+nonzero 32-bit value**, including 1, `UINT32_MAX - 1` and the immortal `UINT32_MAX`.
+
+| Proof | Checks |
+| --- | --- |
+| `refcount_dup` | `mo_value_dup` returns the same cell, increments a reference's count exactly once, saturates at the immortal count, and leaves an immediate's count and the object's layout alone |
+| `refcount_enqueue` | `enqueue_object`, used by drop, decrements a non-immortal live object's count exactly once, queues it exactly when its count reaches zero, preserves the previous pending tail, and changes neither the queue nor the link otherwise; null and immortal references do nothing |
+
+The duplication harness uses Int, Text and four choice cases covering empty, inline Int,
+reference Text and boxed two-field payloads. Type classification and cell accessors are real,
+not models. Both proofs also check memory safety, conversions and arithmetic with the runner's
+usual checks. `--reach` reaches every block of both update functions and `mo_value_object`.
+
+Not proved: arbitrary type graphs, the destructor's walk over child references, allocation and
+release, reset and reuse, or the compiler's placement of updates. A pending queue is empty or
+has an existing tail distinct from the live object. A zero count is not a legal input to an
+update. These are local transition proofs, not a proof that the whole heap cannot leak.
 
 ## Running it
 
