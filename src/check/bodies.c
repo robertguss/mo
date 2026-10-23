@@ -1138,7 +1138,8 @@ static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
             lo < scope->alias_count && compare_text(prefix, scope->aliases[lo].name) == 0
                 ? &p->interfaces->scopes[scope->aliases[lo].module]
                 : NULL;
-        bool implicit = mo_source_builtin(prefix->text, prefix->span.end - prefix->span.start);
+        bool implicit = mo_source_builtin(prefix->text, prefix->span.end - prefix->span.start) ||
+                        (scope->library && compare_text(prefix, scope->name) == 0);
         for (uint32_t i = 0; implicit && target == NULL && i < p->interfaces->count; i++) {
             if (!work(p))
                 return NULL;
@@ -1176,8 +1177,7 @@ static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
             (void)reported;
             return NULL;
         }
-        if (s != NULL && lo < scope->alias_count &&
-            compare_text(prefix, scope->aliases[lo].name) == 0 &&
+        if (lo < scope->alias_count && compare_text(prefix, scope->aliases[lo].name) == 0 &&
             !mo_use_import(p->signatures, p->function->function->module,
                            scope->aliases[lo].origin)) {
             bool reported = problem(p, MO_CODE_CHECK_PROGRAM_WORK, name->span,

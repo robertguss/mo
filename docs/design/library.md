@@ -540,6 +540,9 @@ new for it: it parses and prints with text and list primitives.
 
 ## Unicode16
 
+`lib/unicode16.mo` supplies the module and tests its primitive operations against
+the reference's section 14 and the Unicode policy below.
+
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
 | `Unicode16.graphemes(text)` | primitive | `UNICODE16_GRAPHEMES` | |

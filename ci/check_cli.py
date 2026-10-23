@@ -2673,6 +2673,10 @@ def guide_claims(binary):
                  "FileError.to_text", "Json.parse", "pretty"):
         says(f"`{name}`")
     says("`lib/text.mo` has no functions, only tests of `Text`'s operations")
+    says("`lib/unicode16.mo` is the `Unicode16` module.",
+         "After `use Unicode16`, its built-in `graphemes`, `display_width`, `normalize_nfc`, "
+         "`lowercase` and `uppercase` operations follow Unicode 16.0.",
+         "`mo test lib/unicode16.mo` tests them.")
     says("After `use Json` (or `use Shop.Account`), a bare `Json` (or `Account`) in a type is the "
          "module's own type of that name, as reference 10.3 says: write `fn f(value: Json)`. "
          "`Json.Json` means the same type.")

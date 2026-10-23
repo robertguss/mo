@@ -988,6 +988,22 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                     (struct mo_core_prim){.tag = MO_CORE_PRIM_TIME, .as.time = times[i].operation},
                     args);
         }
+        static const struct {
+            const char *name;
+            enum mo_core_unicode_op operation;
+        } unicodes[] = {{"Unicode16.graphemes", MO_CORE_UNICODE_OP_GRAPHEMES},
+                        {"Unicode16.display_width", MO_CORE_UNICODE_OP_DISPLAY_WIDTH},
+                        {"Unicode16.normalize_nfc", MO_CORE_UNICODE_OP_NORMALIZE_NFC},
+                        {"Unicode16.lowercase", MO_CORE_UNICODE_OP_LOWERCASE},
+                        {"Unicode16.uppercase", MO_CORE_UNICODE_OP_UPPERCASE}};
+        for (size_t i = 0; i < sizeof unicodes / sizeof unicodes[0]; i++) {
+            lower_work(p, 1);
+            if (strcmp(r->native, unicodes[i].name) == 0)
+                return lower_prim(p,
+                                  (struct mo_core_prim){.tag = MO_CORE_PRIM_UNICODE16,
+                                                        .as.unicode16 = unicodes[i].operation},
+                                  args);
+        }
     }
     if (r->native != NULL) {
         static const struct {
