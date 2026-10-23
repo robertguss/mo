@@ -90,8 +90,7 @@ static int run_bytecode(const char *path) {
             host->output = STDOUT_FILENO;
             host->errors = STDERR_FILENO;
             struct mo_cell result;
-            if (mo_call_main(process, main, NULL, NULL, -1, NULL, &result, &defect) ==
-                MO_RETURNED)
+            if (mo_call_main(process, main, NULL, NULL, -1, NULL, &result, &defect) == MO_RETURNED)
                 status = (int)mo_cell_get_int(result);
             mo_process_free(process);
         }

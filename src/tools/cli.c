@@ -146,7 +146,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
             bool value = false;
             const char *flag_names[] = {"--json",  "--list",      "--reference", "--only",
                                         "--in",    "--max-stack", "--max-depth", "--max-heap",
-                                        "--calls", "--seconds", "-o"};
+                                        "--calls", "--seconds",   "-o"};
             for (flag = 0; flag < 11; flag++)
                 if (strcmp(arg, flag_names[flag]) == 0)
                     break;
