@@ -92,9 +92,9 @@ static void test_the_limit_holds(void) {
 
 static void test_one_header_of_room_is_enough(void) {
     /* An arena with a limit of n + MO_ARENA_CHUNK_HEADER holds n bytes in one piece, at any
-     * alignment up to max_align_t's, and with the difference more at a larger one. */
+     * alignment up to MO_ARENA_ALIGNMENT, and with the difference more at a larger one. */
     for (size_t alignment = 1; alignment <= 256; alignment *= 2) {
-        size_t extra = alignment > _Alignof(max_align_t) ? alignment - _Alignof(max_align_t) : 0;
+        size_t extra = alignment > MO_ARENA_ALIGNMENT ? alignment - MO_ARENA_ALIGNMENT : 0;
         for (size_t n = 1; n < 120000; n = n * 3 + 1) {
             struct mo_arena arena;
             mo_arena_init(&arena, n + MO_ARENA_CHUNK_HEADER + extra);
