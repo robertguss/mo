@@ -124,15 +124,18 @@ bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc) {
     case MO_OP_FREE_TOKEN:
         return true;
     case MO_OP_CONST:
+        MO_ASSERT(a[1] < f->constant_count);
         REQUIRE(reg(v, a[0]) == f->constants[a[1]].type, "constant result type");
         REQUIRE(fn->spec_code || f->types[f->constants[a[1]].type].kind != MO_TYPE_FUNCTION ||
                     !f->functions[f->constants[a[1]].value.function].spec_code,
                 "spec closure constant in non-spec code");
         break;
     case MO_OP_GLOBAL:
+        MO_ASSERT(a[1] < f->global_count);
         REQUIRE(reg(v, a[0]) == f->globals[a[1]].type, "global result type");
         break;
     case MO_OP_SET_GLOBAL:
+        MO_ASSERT(a[0] < f->global_count);
         REQUIRE(fn->kind == MO_FUNCTION_INIT, "global store outside init");
         REQUIRE(f->globals[a[0]].type == reg(v, a[1]), "global store type");
         break;
@@ -186,6 +189,7 @@ bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc) {
     case MO_OP_CALL:
     case MO_OP_TAIL_CALL: {
         bool tail = op == MO_OP_TAIL_CALL;
+        MO_ASSERT(a[tail ? 0 : 1] < f->function_count);
         const struct mo_bytecode_function *target = &f->functions[a[tail ? 0 : 1]];
         REQUIRE(target->kind != MO_FUNCTION_CLOSURE && target->kind != MO_FUNCTION_INIT,
                 "direct call target kind");
@@ -223,6 +227,7 @@ bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc) {
     case MO_OP_CONSTRUCT:
     case MO_OP_REUSE: {
         uint32_t l = a[op == MO_OP_REUSE ? 2 : 1];
+        MO_ASSERT(l < f->layout_count);
         const struct mo_layout *layout = &f->layouts[l];
         REQUIRE(layout->kind != MO_LAYOUT_CLOSURE, "construct/reuse closure layout");
         REQUIRE(reg(v, a[0]) == layout->type, "construct/reuse result type");
@@ -232,6 +237,7 @@ bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc) {
         break;
     }
     case MO_OP_MAKE_CASE: {
+        MO_ASSERT(a[1] < f->type_count);
         const struct mo_type *t = &f->types[a[1]];
         REQUIRE(t->kind == MO_TYPE_CHOICE, "make_case needs choice");
         REQUIRE(a[2] < t->case_count, "make_case case index");
@@ -275,6 +281,7 @@ bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc) {
         REQUIRE((v->abilities[a[1]] & MO_ABILITY_EQUAL) != 0, "equal lacks Equal");
         break;
     case MO_OP_PRIM: {
+        MO_ASSERT(a[1] < sizeof primitives / sizeof primitives[0]);
         const struct mo_type *t = &f->types[a[2]];
         REQUIRE(t->kind == MO_TYPE_FUNCTION, "primitive needs function type");
         REQUIRE(reg(v, a[0]) == t->result, "primitive result type");
@@ -288,6 +295,7 @@ bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc) {
         break;
     }
     case MO_OP_HOST: {
+        MO_ASSERT(a[1] < sizeof hosts / sizeof hosts[0]);
         REQUIRE(n == strlen(hosts[a[1]].modes), "host arity");
         REQUIRE(!hosts[a[1]].spec || fn->spec_code, "spec host in non-spec code");
         uint32_t parameters[MO_LIMIT_BYTECODE_PARAMETERS];

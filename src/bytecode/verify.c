@@ -123,6 +123,9 @@ static MO_MUST_USE bool graph(struct flow *f) {
     for (uint32_t pc = 0; pc < fn->code_count; pc = next(fn, pc)) {
         f->count += f->map[pc];
     }
+    /* The entry is a block start and every block start is an instruction start: the VM asserts
+     * `pc < code_count` at each instruction and every jump target below code_count. */
+    MO_ASSERT(f->map[0] == 1 && f->count >= 1 && f->count <= fn->code_count);
     if ((uint64_t)fn->register_count * f->count > MO_LIMIT_FUNCTION_REGISTER_BLOCKS) {
         bool ok = refuse(f, 0, "register-block limit");
         f->v.error->kind = MO_BYTECODE_LIMIT;
@@ -407,7 +410,9 @@ static MO_MUST_USE bool step(struct flow *f, struct registers *regs, uint32_t pc
         if (mode == MO_ACCESS_NONE || mode == MO_ACCESS_WRITE || mode == MO_ACCESS_TOKEN_WRITE) {
             continue;
         }
-        uint32_t r = a[i], s = regs->state[r];
+        uint32_t r = a[i];
+        MO_ASSERT(r < fn->register_count);
+        uint32_t s = regs->state[r];
         if (!charge(f, pc, 1)) {
             return false;
         }
@@ -474,6 +479,10 @@ static MO_MUST_USE bool step(struct flow *f, struct registers *regs, uint32_t pc
                          : f->v.file->types[fn->register_types[r]].reference
                              ? op == MO_OP_CONST || op == MO_OP_GLOBAL ? BORROWED : OWNED
                              : VALUE;
+        /* The VM's write() leaves a value, owned or borrowed register; `clear` and token writes
+         * are the other cases. */
+        MO_ASSERT(mode == MO_ACCESS_TOKEN_WRITE || op == MO_OP_CLEAR || regs->state[r] == VALUE ||
+                  regs->state[r] == OWNED || regs->state[r] == BORROWED);
         if (f->visit != NULL) {
             f->readable[r] =
                 regs->state[r] == VALUE || regs->state[r] == OWNED || regs->state[r] == BORROWED;

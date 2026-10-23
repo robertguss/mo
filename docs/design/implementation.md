@@ -42,6 +42,10 @@ request, the slow ones (sanitizers, fuzzing, Lean, CBMC) only when run by hand.
 5. **Bytecode verified when it's loaded,** as WebAssembly does, because upgrade
    packages will arrive over the network in Phase 5.
 
+`sandbox-properties.md` states, property by property, what these conditions
+guarantee about a loaded program, where each guarantee is enforced and what
+evidence backs it, and it lists the gaps.
+
 ## Building and checking
 
 ```sh

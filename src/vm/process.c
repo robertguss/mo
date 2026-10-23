@@ -12,6 +12,7 @@ size_t mo_vm_frame_size(uint32_t registers) {
 
 struct mo_vm_frame *mo_vm_frame(struct mo_process *process) {
     MO_ASSERT(process->depth != 0 && process->top < process->used);
+    MO_ASSERT(process->used <= process->capacity);
     return (struct mo_vm_frame *)(process->stack + process->top);
 }
 
@@ -54,6 +55,7 @@ const char *mo_vm_reserve(struct mo_process *process, size_t needed, uint32_t de
 void mo_vm_enter(struct mo_process *process, uint32_t function, const struct mo_cell *arguments,
                  struct mo_cell environment, bool closure, bool tail, uint32_t destination,
                  uint32_t next) {
+    MO_ASSERT(function < process->file->function_count);
     const struct mo_bytecode_function *fn = &process->file->functions[function];
     size_t previous = process->depth == 0 ? SIZE_MAX : process->top;
     size_t offset = process->used;
@@ -66,6 +68,10 @@ void mo_vm_enter(struct mo_process *process, uint32_t function, const struct mo_
     } else
         process->depth++;
     size_t extent = mo_vm_frame_size(fn->register_count);
+    /* Verified: the parameters, then a closure's environment, are the first registers, and
+     * a closure's code is entered only as a closure. */
+    MO_ASSERT((size_t)fn->parameter_count + (closure ? 1u : 0u) <= fn->register_count);
+    MO_ASSERT(closure == (fn->kind == MO_FUNCTION_CLOSURE));
     MO_ASSERT(offset <= process->capacity && extent <= process->capacity - offset);
     struct mo_vm_frame *frame = (struct mo_vm_frame *)(process->stack + offset);
     *frame = (struct mo_vm_frame){.previous = previous,
@@ -79,6 +85,7 @@ void mo_vm_enter(struct mo_process *process, uint32_t function, const struct mo_
     uint8_t *states = mo_vm_states(process, frame);
     memset(states, VM_UNDEFINED, fn->register_count);
     for (uint32_t i = 0; i < fn->parameter_count; i++) {
+        MO_ASSERT(fn->register_types[i] == fn->parameters[i].type);
         cells[i] = arguments[i];
         states[i] =
             process->types->items[fn->parameters[i].type].reference
@@ -87,6 +94,8 @@ void mo_vm_enter(struct mo_process *process, uint32_t function, const struct mo_
         frame->owners += states[i] == VM_OWNED ? 1u : 0u;
     }
     if (closure) {
+        MO_ASSERT(process->types->items[fn->register_types[fn->parameter_count]].kind ==
+                  MO_TYPE_ENV);
         cells[fn->parameter_count] = environment;
         states[fn->parameter_count] = VM_OWNED;
         frame->owners++;

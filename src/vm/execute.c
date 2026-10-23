@@ -5,6 +5,15 @@
 #include <fenv.h>
 #include <string.h>
 
+/* The type kind of a register. The verifier (bytecode.md section 9, "Types of operands") checked
+ * every operand's type against its opcode; the assertions below state the same facts where the
+ * loop relies on them. */
+static MO_MUST_USE enum mo_type_kind kind_of(const struct mo_process *p,
+                                             const struct mo_bytecode_function *fn, uint32_t reg) {
+    MO_ASSERT(reg < fn->register_count);
+    return p->types->items[fn->register_types[reg]].kind;
+}
+
 static MO_MUST_USE struct mo_cell read(const struct mo_process *p, struct mo_vm_frame *f,
                                        uint32_t reg) {
     MO_ASSERT(reg < p->file->functions[f->function].register_count);
@@ -113,6 +122,7 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
         }
         switch (op) {
         case MO_OP_MOVE: {
+            MO_ASSERT(fn->register_types[a[0]] == fn->register_types[a[1]]);
             value = read(p, f, a[1]);
             bool borrowed = mo_vm_states(p, f)[a[1]] == VM_BORROWED;
             if (!borrowed)
@@ -126,6 +136,7 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             mo_vm_states(p, f)[a[0]] = VM_UNDEFINED;
             break;
         case MO_OP_DUP:
+            MO_ASSERT(fn->register_types[a[0]] == fn->register_types[a[1]]);
             value = mo_value_dup(p->heap, fn->register_types[a[1]], read(p, f, a[1]));
             write(p, f, a[0], value, false);
             break;
@@ -135,15 +146,21 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             mo_value_drop(p->heap, fn->register_types[a[0]], value);
             break;
         case MO_OP_CONST:
+            MO_ASSERT(a[1] < p->file->constant_count &&
+                      fn->register_types[a[0]] == p->file->constants[a[1]].type);
             write(p, f, a[0], p->runtime->constants[a[1]], true);
             break;
         case MO_OP_GLOBAL:
+            MO_ASSERT(a[1] < p->file->global_count &&
+                      fn->register_types[a[0]] == p->file->globals[a[1]].type);
             if (!p->runtime->set[a[1]])
                 return mo_vm_stop(p, "internal error: unset global", NULL, false, mo_cell_unit(),
                                   MO_STOPPED);
             write(p, f, a[0], p->runtime->globals[a[1]], true);
             break;
         case MO_OP_SET_GLOBAL:
+            MO_ASSERT(fn->kind == MO_FUNCTION_INIT && a[0] < p->file->global_count &&
+                      p->file->globals[a[0]].type == fn->register_types[a[1]]);
             value = read(p, f, a[1]);
             MO_ASSERT(!p->runtime->set[a[0]]);
             if (!mo_value_make_immortal(p->heap, fn->register_types[a[1]], value))
@@ -153,14 +170,19 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             p->runtime->set[a[0]] = true;
             break;
         case MO_OP_JUMP:
+            MO_ASSERT(a[0] < fn->code_count);
             f->pc = a[0];
             continue;
         case MO_OP_BRANCH:
+            MO_ASSERT(kind_of(p, fn, a[0]) == MO_TYPE_BOOL && a[1] < fn->code_count &&
+                      a[2] < fn->code_count);
             f->pc = mo_cell_get_bool(read(p, f, a[0])) ? a[1] : a[2];
             continue;
         case MO_OP_SWITCH: {
             uint32_t tag = mo_cell_get_tag(read(p, f, a[0]));
-            MO_ASSERT(tag < count);
+            MO_ASSERT(kind_of(p, fn, a[0]) == MO_TYPE_CHOICE &&
+                      count == p->types->items[fn->register_types[a[0]]].case_count);
+            MO_ASSERT(tag < count && a[1 + tag] < fn->code_count);
             f->pc = a[1 + tag];
             continue;
         }
@@ -181,6 +203,13 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             }
             MO_ASSERT(target < p->file->function_count);
             const struct mo_bytecode_function *callee = &p->file->functions[target];
+            /* Verified: a direct call names a function that is neither closure code nor an
+             * init; a closure call's layout names closure code; the count is the callee's. */
+            MO_ASSERT(closure ? callee->kind == MO_FUNCTION_CLOSURE
+                              : callee->kind != MO_FUNCTION_CLOSURE &&
+                                    callee->kind != MO_FUNCTION_INIT);
+            MO_ASSERT(count == callee->parameter_count && count <= MO_LIMIT_BYTECODE_PARAMETERS);
+            MO_ASSERT((tail ? fn->result_type : fn->register_types[a[0]]) == callee->result_type);
             size_t offset = tail ? p->top : p->used;
             size_t bytes = mo_vm_frame_size(callee->register_count);
             const char *limit = !tail && p->depth == UINT32_MAX ? "--max-depth"
@@ -195,8 +224,10 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             f = mo_vm_frame(p); /* reserve may move the native stack */
             struct mo_cell arguments[MO_LIMIT_BYTECODE_PARAMETERS];
             const uint32_t *regs = a + (tail ? 1 : 2);
-            for (uint32_t i = 0; i < count; i++)
+            for (uint32_t i = 0; i < count; i++) {
+                MO_ASSERT(fn->register_types[regs[i]] == callee->parameters[i].type);
                 arguments[i] = read(p, f, regs[i]);
+            }
             for (uint32_t i = 0; i < count; i++)
                 if (callee->parameters[i].ownership == MO_PARAMETER_OWNED)
                     consume(p, f, regs[i]);
@@ -208,6 +239,7 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             continue;
         }
         case MO_OP_RET: {
+            MO_ASSERT(fn->register_types[a[0]] == fn->result_type);
             value = read(p, f, a[0]);
             consume(p, f, a[0]);
             clean(f);
@@ -227,6 +259,7 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
         }
         case MO_OP_STOP:
         case MO_OP_FAIL:
+            MO_ASSERT(kind_of(p, fn, a[0]) == MO_TYPE_TEXT);
             return mo_vm_stop(p, op == MO_OP_STOP ? "stop" : "failed assertion", NULL, true,
                               read(p, f, a[0]), op == MO_OP_STOP ? MO_STOPPED : MO_FAILED);
         case MO_OP_CONSTRUCT:
@@ -245,6 +278,19 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
                 return memory(p);
             }
             const uint32_t *regs = a + info->fixed_count;
+            if (op == MO_OP_MAKE_CASE) {
+                MO_ASSERT(a[1] < p->types->count && a[2] < p->types->items[a[1]].case_count &&
+                          count == p->types->items[a[1]].cases[a[2]].field_count);
+            } else if (op == MO_OP_MAKE_CLOSURE) {
+                MO_ASSERT(a[1] < p->file->function_count &&
+                          p->file->functions[a[1]].kind == MO_FUNCTION_CLOSURE &&
+                          count == p->file->functions[a[1]].capture_count);
+            } else {
+                uint32_t layout = a[op == MO_OP_REUSE ? 2 : 1];
+                MO_ASSERT(layout < p->file->layout_count &&
+                          p->file->layouts[layout].kind != MO_LAYOUT_CLOSURE &&
+                          count == p->file->layouts[layout].field_count);
+            }
             for (uint32_t i = 0; i < count; i++)
                 fields[i] = read(p, f, regs[i]);
             struct mo_token token = {0};
@@ -283,6 +329,9 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             if (op == MO_OP_CASE_FIELD) {
                 MO_ASSERT(mo_cell_get_tag(object) == a[2]);
                 uint32_t type = fn->register_types[a[1]];
+                MO_ASSERT(p->types->items[type].kind == MO_TYPE_CHOICE &&
+                          a[2] < p->types->items[type].case_count &&
+                          a[3] < p->types->items[type].cases[a[2]].field_count);
                 enum mo_case_shape shape = mo_case_shape(p->types, type, a[2]);
                 struct mo_cell payload = mo_cell_get_payload(object);
                 value = shape == MO_CASE_BOXED ? mo_value_field(payload, a[3]) : payload;
@@ -335,6 +384,8 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
 #include "base/prims.def"
             };
             MO_ASSERT(a[1] < MO_PRIM_COUNT && count == strlen(ownership[a[1]]));
+            MO_ASSERT(a[2] < p->types->count && p->types->items[a[2]].kind == MO_TYPE_FUNCTION &&
+                      p->types->items[a[2]].parameter_count == count);
             struct mo_cell arguments[MO_LIMIT_BYTECODE_PARAMETERS];
             for (uint32_t i = 0; i < count; i++)
                 arguments[i] = read(p, f, a[3 + i]);
@@ -353,6 +404,7 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
         case MO_OP_HOST: {
             MO_ASSERT(a[0] < fn->register_count && a[1] < MO_HOST_COUNT &&
                       count <= MO_LIMIT_BYTECODE_PARAMETERS);
+            MO_ASSERT(count == strlen(host_modes[a[1]]));
             struct mo_cell arguments[MO_LIMIT_BYTECODE_PARAMETERS];
             for (uint32_t i = 0; i < count; i++)
                 arguments[i] = read(p, f, a[2 + i]);
