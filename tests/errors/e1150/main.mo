@@ -1,6 +1,6 @@
 module Main
-answer = handler(2, 3)
-handler = Int.pow
-fn main() : Int
-answer + 30
+
+handler = Env.get
+fn main(env: Env) : Int
+(handler(env, "MO_TEST") or "").byte_count
 end

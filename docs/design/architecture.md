@@ -1768,8 +1768,8 @@ function adapter needing a later global refuses E1150 during lowering (4.3),
 even when called only after initialization. Supporting that lazy body does not
 justify changing the checker's dependency order or adding false execution edges.
 Inventoried `Int.abs`, `Int.min` and `Int.max` scalar callables, including aliases,
-now execute through the existing primitive adapters (4.3). Other numeric native
-function aliases such as `Int.pow` remain a separate E1150 staging route.
+now execute through the existing primitive adapters (4.3), as do all remaining
+section 14 `Int`, `Float` and `Bytes` functions, including `Int.pow` aliases.
 Tools render these refusals and suppress both artifacts; they do not treat
 them as invalid compiler Core or runtime bugs.
 
@@ -1846,7 +1846,7 @@ generator may not silently cover only an empty list or one visible choice case. 
 and ordinary-only selection still require no generator. This eligibility check
 does not widen lowering's native-call
 support: subjects, conditions and anchors still refuse staged calls with E1150
-(for example Time.parse, Int.seconds, Bytes.size and Float.nan?). Listing still
+(for example Env.get and Random.int). Listing still
 needs no generator or image. The runner uses
 `tools/inputs.h` unchanged, seeded by the full source promise name. Each trial
 uses a fresh process, retaining its tuple and returned result independently of

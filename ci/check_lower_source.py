@@ -168,6 +168,8 @@ CASES = {
                        "\nc64 = 3\nfn main() : Int\nc0\nend", 67),
     "native_abs_constant": ("answer = handler(-7)\nhandler = Int.abs\n"
                             "fn main() : Int\nanswer + 30\nend", 37),
+    "native_pow_constant": ("answer = handler(2, 3)\nhandler = Int.pow\n"
+                            "fn main() : Int\nanswer + 30\nend", 38),
     "native_abs_routes": ("fn apply(f: fn(Int) : Int, n: Int) : Int\nf(n)\nend\n"
                           "fn main() : Int\nn = -17\nhandler = Int.abs\n"
                           "if Int.abs(n) == 17 and n.abs == 17 and handler(-17) == 17 "
@@ -434,7 +436,6 @@ REFUSALS = {
     "deferred_alias": "answer = handler()\nhandler = first\nbase = 13\n"
                       "fn first() : Int\nbase\nend\nfn main() : Int\nanswer + 24\nend",
     "deferred_self_alias": "handler = first\nfn first() : Int\nhandler()\nend\nfn main() : Int\n17\nend",
-    "native_pow": "answer = handler(2, 3)\nhandler = Int.pow\nfn main() : Int\nanswer + 30\nend",
 }
 
 # These are actual loader inputs, not synthetic symbol tables. Unequal values,
@@ -785,6 +786,9 @@ def check_modules(driver, vm, root, world):
 for fixture, expected in {
     "file-error-text": 0,
     "char-natives": 0,
+    "int-natives": 0,
+    "float-natives": 0,
+    "bytes-natives": 0,
     "list-all": 0,
     "list-count": 0,
     "list-find": 0,

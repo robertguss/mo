@@ -8,13 +8,14 @@ a form that lands should gain a golden program. Section numbers are Language Ref
 - `List`: `filter`, `filter_map`, `flat_map`, `any?`, `group_by` (reference 14).
 - `List.to_set` and Set text forms (reference 14 and 9.2) run in `lib/set.mo` and
   `tests/lower-source/set/main.mo`.
+- `Int`: `floor_div`, `floor_mod`, `pow`, `checked_sub`, `checked_mul`, `wrapping_*`,
+  `saturating_*`, `to_big`, `to_byte`, `to_float`; `Float`: `sqrt`, `floor`, `ceil`,
+  `round`, `abs`, `nan?`, `infinite?`, `to_decimal`; `Bytes`: `size`, `get`, `decode_utf8`.
+  The `int-natives`, `float-natives` and `bytes-natives` lower-source fixtures cover these.
 
 ## Not lowered yet (E1150)
 
-- `Int`: `floor_div`, `floor_mod`, `pow`, `checked_*`, `wrapping_*`, `saturating_*`, `to_big`,
-  `to_byte`, `to_float`, `compare`. `BigInt`: `to_int`, `abs`, `min`.
-- `Float`: `sqrt`, `floor`, `ceil`, `round`, `abs`, `nan?`, `infinite?`, `to_decimal`.
-- `Bytes.size`, `Bytes.decode_utf8`.
+- `Int.compare`. `BigInt`: `to_int`, `abs`, `min`.
 - `List.sum`.
 - `Env.get`, `Random.int`.
 - Interpolating an `Ordering`, an `Entry`, or a `Map` (derived text shape).
