@@ -907,8 +907,9 @@ A primitive that "changes" a collection, such as `append`, `set`, `remove` or
 reads, such as `get`, `size` or `contains?`, borrows. Every row in `prims.def`
 has a C implementation. That does not mean every source-level call lowers;
 native-call coverage belongs to `src/lower`. MO-116 delivered Env.get/of,
-Ordering/Entry/Map text conversion, Ordering comparison and qualified
-Int.compare (#189), using existing Core operations rather than new primitives.
+Ordering/Entry/Map text conversion and Ordering comparison (#189), and MO-144
+qualified `T.to_text` and `T.compare` for every type with the ability (#208),
+using existing Core operations rather than new primitives.
 `docs/status/golden-gaps.md` lists working routes still needing golden programs
 and other gaps.
 

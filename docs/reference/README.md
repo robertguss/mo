@@ -912,8 +912,10 @@ declare a type with its own name, as the module `Account` declares `Account`:
 `Account.open(...)` calls the module's function, and `Account` in a type is the
 type. There are no wildcards and no aliases. A clash between names is an error that suggests the
 qualified form, and so is a cycle of modules that use each other. The
-library's modules, `Json` and `Unicode16`, are used the same way, and a program
-can't declare a module with one of their names.
+library's `Json` and `Unicode16` modules are used the same way. Every library
+module reserves its name, so a program can't declare a module named `FileError`,
+`Files`, `Json`, `List`, `Map`, `Option`, `ReadFiles`, `Result`, `Set`, `Text`,
+`Time` or `Unicode16`.
 
 ### 10.4 Constants
 
@@ -1346,8 +1348,10 @@ zero), `in_seconds : Decimal` (exact), `to_text : Text`.
 standard output or standard error; print other values with interpolation, as
 in `console.print("#{count}")`. `read_line : Option(Text)` reads a line from
 standard input, without its line ending, `\n` or `\r\n`, and gives `None` at
-the input's end. Each sequence of bytes in it that isn't valid UTF-8 becomes
-one U+FFFD, the replacement character. A fake also has `printed` and
+the input's end. Bytes that aren't valid UTF-8 become U+FFFD, the replacement
+character, one for each maximal invalid subpart, as Unicode recommends: the start of a
+valid sequence that ends too soon, or else a single byte. The
+bytes `a`, FF, FE, `b` read as `a`, two U+FFFD, `b`. A fake also has `printed` and
 `printed_errors : List(Text)`, with one entry for each line written. Using them
 outside tests, examples and promises is an error (section 12.4).
 `Console.fake() : Console`, `Console.fake_input(lines: List(Text)) : Console`.
@@ -1424,6 +1428,9 @@ error. A `JsonNumber` keeps the number as it was written, and two are equal
 when they're written the same: its `to_int : Option(Int)`,
 `to_decimal : Option(Decimal)` and `to_float : Option(Float)` each give `None`
 when the number doesn't fit, and `to_text : Text` gives it as written.
+`to_decimal` never rounds: after the exponent and trailing zeros are applied,
+a value that needs more than 18 decimal places gives `None`, so `1e-19` gives
+`None` and `0.10` and `1.0e0` convert.
 `Json.int(n: Int)` and `Json.decimal(d: Decimal)` make a number, and
 `Json.float(f: Float) : Option(Json)` gives `None` for not-a-number and the
 infinities, which JSON can't write. `json.to_text` writes compact JSON, and

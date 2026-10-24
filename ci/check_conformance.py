@@ -18,6 +18,9 @@ def has_test(path, name):
         return re.search(rf"^{name}:", text, re.M) is not None
     if path.suffix in (".c", ".h"):
         return re.search(rf"^[A-Za-z_][\w *]*\b{name}\(", text, re.M) is not None
+    if path.suffix == ".mo":
+        # A library function in lib/, whose examples the drivers group runs with mo test.
+        return path.parent.name == "lib" and re.search(rf"^fn {name}\(", text, re.M) is not None
     if path.suffix == ".py":
         defined = re.search(rf"^\s*def {name}\(", text, re.M) is not None
         return defined and len(re.findall(rf"\b{name}\(", text)) > 1
