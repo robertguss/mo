@@ -1,0 +1,12 @@
+passed Linkcheck.test.1  answers/linkcheck.mo:506:1
+passed Linkcheck.test.2  answers/linkcheck.mo:517:1
+passed Linkcheck.test.3  answers/linkcheck.mo:531:1
+passed Linkcheck.test.4  answers/linkcheck.mo:551:1
+passed Linkcheck.test.5  answers/linkcheck.mo:561:1
+passed Linkcheck.test.6  answers/linkcheck.mo:571:1
+failed Linkcheck.test.7  answers/linkcheck.mo:584:1
+  left: ["a.md:12: #not-a-heading: no such heading", "1 broken links"]
+  right: ["a.md:13: #not-a-heading: no such heading", "1 broken links"]
+  590 |   assert console.printed == ["a.md:13: #not-a-heading: no such heading", "1 broken links"]
+      |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this assertion was false
+6 passed, 1 failed, 0 stopped

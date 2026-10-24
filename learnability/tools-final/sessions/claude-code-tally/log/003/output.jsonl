@@ -1,0 +1,3 @@
+{"record":"version","format":"1.0","mo":"0.0.0","command":"test"}
+{"record":"diagnostic","code":"E0053","headline":"values of different types are combined","reason":"Comparing or combining values of different types is an error (reference 3).","section":"3","primary":{"file":"/tmp/s/bad.mo","file_bytes":"2f746d702f732f6261642e6d6f","start":45,"end":48,"line":5,"column":7,"end_line":5,"end_column":10,"label":"expected Int, found Text"},"secondary":[],"fixes":[]}
+{"record":"totals","errors":1,"dropped":0,"passed":0,"failed":0,"stopped":0,"status":1}

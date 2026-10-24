@@ -1,0 +1,26 @@
+{
+  "q2fcu7n": {
+    "family": "claude-code",
+    "tool": "linkcheck"
+  },
+  "qnxknxy": {
+    "family": "claude-code",
+    "tool": "notioncopy"
+  },
+  "qs3szas": {
+    "family": "claude-code",
+    "tool": "tally"
+  },
+  "q8dzhm5": {
+    "family": "gpt-6.1-sol",
+    "tool": "linkcheck"
+  },
+  "qvjrjcu": {
+    "family": "gpt-6.1-sol",
+    "tool": "notioncopy"
+  },
+  "qnyekzg": {
+    "family": "gpt-6.1-sol",
+    "tool": "tally"
+  }
+}
