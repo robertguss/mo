@@ -176,7 +176,10 @@ class ConformanceCheck(unittest.TestCase):
     def test_inventory_includes_bullets_tables_and_text_not_example_comments(self):
         self.reference.write_text(
             "## 2. Source\n\n### 2.3 Names\n\n- First line\n  continues.\n- Second rule.\n\n"
+            "<!-- mo-example: fragment -->\n"
             "```mo\n## Not a section\nmodule Demo\n```\n\n"
+            "<!-- mo-example: error E0053 -->\n"
+            "```mo\nmodule Demo\nx = 1 + true\n```\n\n"
             "```text\nfn var\n```\n\n| Type | Values |\n| --- | --- |\n| `Int` | whole |\n\n"
             "## Appendix B. Grammar\n\nA final rule.\n")
         result = self.command("--inventory")
