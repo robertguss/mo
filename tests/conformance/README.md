@@ -50,7 +50,9 @@ programs pin the complete CLI error, including its locations and fixes.
 - `cost` lists the C unit tests, `tests/test_*.c` or `tests/test_*.c:TEST`,
   that check the semantics of an operation whose cost the block promises
   (D281). The cost itself is not measured; work and allocation counters are
-  left for Phase 3.
+  left for Phase 3. The exception is 13.3/8: sort, sort_by and sort_by_desc
+  are Mo code in `lib/list.mo`, and `tests/test_lower.c:test_source_sort_work`
+  counts the VM instructions they execute (D294).
 - `untestable` gives a one-line reason no program can check the claim, such as
   the real clock or a promise about a future version (D282).
 
