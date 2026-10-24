@@ -22,7 +22,6 @@ a form that lands should gain a golden program. Section numbers are Language Ref
 
 ## Other
 
-- `use Unicode16` fails with E0034: there is no `lib/` folder yet.
 - A choice case cannot be named `Ok` or `Failed` (E0043), and number literals with exponents such
   as `1e21` are rejected (E0004); both match the reference as written.
 - The bug report printed on exit 70 is pinned by the `fail-bug-*`, `col-take-negative` and
