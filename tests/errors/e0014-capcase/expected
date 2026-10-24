@@ -1,0 +1,7 @@
+error E0014: expected CapCase name, found snake_case name  tests/errors/e0014-capcase/main.mo:4:3
+
+  4 |   circle
+    |   ^^^^^^
+
+Use the declaration or statement's syntax and close its delimiters (reference 4.2).
+

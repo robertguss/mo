@@ -6,12 +6,12 @@ rule	accepts	refuses	stops	gap
 2.1/2	ref-source	e0001,e0002		
 2.2/1	ref-source	e0028		Comment alignment expectations are in ci/check_cli.py; ci/check_format.py checks every tracked program, but a run golden cannot assert formatted source.
 2.3/1	ref-source	e0003		
-2.3/2	lang-enum-shapes			CapCase rejection needs a separate malformed-type program; e0003 currently checks a malformed value name only.
+2.3/2	lang-enum-shapes	e0008-capcase,e0013-capcase,e0014-capcase		
 2.3/3	lang-generic-functions	e0066		
 2.3/4	ref-source	e0059		
 2.3/5	ref-source	e0052		
 2.3/6	ref-source	e0003		
-2.3/7	ref-source			The reserved-word list needs a rejection program for each word in name position.
+2.3/7	ref-source	e0017-reserved		
 2.4/1	ref-source	e0006		
 2.4/2				Exact formatter output, Unicode width and blank lines remain CLI fixtures; ci/check_format.py now checks fixed points and preserved behavior for every tracked Mo file.
 3/1	ref-evaluation			
@@ -43,11 +43,11 @@ rule	accepts	refuses	stops	gap
 3.4/5	ref-library-natives			Invalid UTF-8 cannot be built from Text.bytes; a read_bytes file fixture is still needed for decode_utf8 returning None.
 3.5/1	lang-abilities-text-forms,tst-fakes			
 3.6/1	col-tuples	e0019,e0061		
-3.7/1	col-list-basics	e0024,e0032		Mixed-element-type rejection still needs an exact-error fixture; e0053 combines numeric/Bool operands, not list elements.
+3.7/1	col-list-basics	e0024,e0032,e0053-list		
 3.7/2	col-build-with-var,col-shared-values	e0056		One-holder memory reuse and amortized construction cost need allocation/work instrumentation, not output goldens.
 3.8/1	col-map-basics,col-set-basics	e0094	fail-bug-map-duplicate	
 3.8/2	col-map-order,col-map-equality,col-set-basics			
-3.9/1	ref-time			Out-of-range time and Duration overflow still need stop goldens; checked_add refusal is covered.
+3.9/1	ref-time		fail-bug-time-range,fail-bug-duration-overflow	
 4.1/1	lang-records	e0062,e0063,e0065		
 4.1/2	lang-records-order	e0063		
 4.2/1	lang-enum-shapes	e0063		
@@ -57,7 +57,7 @@ rule	accepts	refuses	stops	gap
 5.1/2	ref-functions	e0042,e0055		
 5.2/1	ref-functions	e0012,e0021,e0055,e0077		
 5.3/1	lang-recursion-tail			
-5.4/1	lang-dot-calls,lang-dot-calls-cases,ref-abilities			No standalone diagnostic pins x.f() when f takes only the receiver.
+5.4/1	lang-dot-calls,lang-dot-calls-cases,ref-abilities			x.f() is accepted when f takes only the receiver, which this rule refuses (MO-141); see docs/status/golden-gaps.md.
 5.4/2	ref-functions			Hidden-field fallback to the same-named function needs a cross-module golden; visible fields and function-valued fields are covered.
 5.5/1	lang-generic-functions	e0081		
 5.5/2	lang-enum-tree	e0083		
@@ -84,14 +84,14 @@ rule	accepts	refuses	stops	gap
 7.3/6	lang-patterns-tuples			
 7.3/7	lang-patterns-lists,ref-operators			
 7.3/8	lang-is-and-if,lang-enum-shapes	e0067		
-7.4/1	lang-is-and-if,lang-while-is,tst-assert-is-binding,ref-operators			An is-bound name escaping its true branch still needs a dedicated exact-error fixture.
+7.4/1	lang-is-and-if,lang-while-is,tst-assert-is-binding,ref-operators	e0050-is-scope		
 7.5/1	col-range-loops,col-map-basics,col-set-basics	e0023,e0058,e0073		
 8/1	fail-option-basics,fail-result-declared		fail-bug-stop	
 8.1/1	ref-evaluation,fail-option-basics			
 8.2/1	fail-result-declared			
 8.3/1	fail-try-wrap,ref-functions	e0085,e0086		
 8.3/2	fail-try-wrap	e0087,e0087-ambiguous,e0412		
-8.4/1	fail-option-basics		fail-bug-stop	No special unwrap syntax exists; unknown member refusal is not yet pinned for the spelling unwrap.
+8.4/1	fail-option-basics	e0050-unwrap	fail-bug-stop	
 8.4/2	ref-functions		fail-bug-stop,lang-stop	
 9.1/1	lang-generic-types	e0049,e0066		
 9.1/2	lang-enum-tree	e0084		
@@ -107,13 +107,13 @@ rule	accepts	refuses	stops	gap
 9.2/10	ref-library-natives,ref-abilities	e0076		
 9.2/11	num-float-arithmetic,ref-abilities	e0080		
 9.2/12	txt-ordering,col-map-basics,ref-abilities			
-9.2/13	ref-library-natives,ref-abilities			Bytes Text-ability rejection still needs a dedicated exact-error program.
+9.2/13	ref-library-natives,ref-abilities	e0080-bytes		
 9.2/14	ref-abilities			
 9.2/15	ref-time,ref-abilities			
-9.2/16	col-range-loops,lang-abilities-text-forms,ref-abilities			Range Order rejection lacks an exact-error program.
+9.2/16	col-range-loops,lang-abilities-text-forms,ref-abilities	e0080-range		
 9.2/17	col-tuples,col-tuple-keys,lang-abilities-order			
 9.2/18	lang-abilities-order,col-list-basics,ref-abilities			
-9.2/19	col-map-equality,col-set-basics,ref-abilities			Map/Set Order rejection still needs exact-error programs; derived Map text now has a golden.
+9.2/19	col-map-equality,col-set-basics,ref-abilities	e0080-map-set		
 9.2/20	lang-abilities-order,num-float-arithmetic,ref-abilities			
 9.2/21	lang-abilities-text-forms,num-float-arithmetic,ref-time,ref-abilities			
 9.2/22	lang-abilities-order,lang-abilities-custom-order,lang-dot-calls-cases,ref-abilities			
@@ -131,7 +131,7 @@ rule	accepts	refuses	stops	gap
 11.1/3	ref-capability-fakes			
 11.1/4	cap-console-streams,cap-console-stdin			
 11.1/5	cap-files-fake,cap-files-read			
-11.1/6	cap-files-read			ReadFiles write-member refusal needs a dedicated diagnostic program.
+11.1/6	cap-files-read	e0050-read-files		
 11.1/7	cap-clock-fixed			Real clock is nondeterministic; only the fixed fake is asserted here.
 11.1/8	ref-capability-fakes			
 11.2/1	cap-files-read,cap-args-list	e0079		
@@ -139,24 +139,24 @@ rule	accepts	refuses	stops	gap
 11.3/1	cap-files-fake			Empty-authority within escapes need a golden; lexical containment and real resolution have separate CBMC proofs.
 11.4/1	cap-record-of-capabilities			
 11.4/2	ref-functions	e0091		
-11.4/3	tst-fakes			Fake construction outside a test needs a dedicated refusal fixture.
-11.4/4	cap-record-of-capabilities			No comparison/printing/key operation on a capability is valid; dedicated rejection programs are still needed.
-11.4/5	ref-shout			No log keyword exists; a spelling-specific rejection program is not yet present.
-12/1	tst-passing			Specification-after-code rejection is not yet pinned by an exact-error fixture.
+11.4/3	tst-fakes			Making a fake outside a test reports the staged checker's E1103, not a dedicated refusal, so no fixture pins it; see docs/status/golden-gaps.md.
+11.4/4	cap-record-of-capabilities	e0080-capability		
+11.4/5	ref-shout	e0007-log		
+12/1	tst-passing	e0015-after-code,e0018-after-code		A specification followed directly by code, with no blank line, is accepted and left unchanged by mo format; the reference does not say whether that is refused or formatted.
 12.1/1	tst-passing	tst-failing-example		
 12.2/1	tst-promise-holds	e0015		
-12.2/2	tst-promise-holds			A missing-sentence rejection still needs a dedicated exact-error fixture.
-12.2/3	tst-promise-holds			Non-Bool promise-body rejection still needs a dedicated exact-error fixture.
+12.2/2	tst-promise-holds	e0015-sentence		
+12.2/3	tst-promise-holds	e0074-promise		
 12.2/4	tst-promise-holds	e0015,e0088,e1405,e1405-forbids		
 12.2/5	tst-promise-holds	tst-overflow-promise,tst-failing-promise		Not a proof of every call; generated boundary coverage for hidden types and all field types needs broader conformance programs.
 12.2/6				Generic instantiation selection/shrinking is covered by generic_promises and promise_selection in ci/check_cli.py using generated programs, not the golden runner; a golden per supported instance shape is still needed.
 12.2/7	sample-job-queue-tests			
-12.2/8	mod-hidden-type,fail-result-declared			No precondition keyword exists; a spelling-specific refusal fixture is not present.
+12.2/8	mod-hidden-type,fail-result-declared	e0007-requires		
 12.3/1	tst-private-names,tst-assert-is-binding	tst-failing-assert		
-12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed,ref-capability-fakes			Fake access outside tests still needs an exact-error program; Env and Random fake behavior now has a golden.
-12.4/2	cap-console-fake,cap-files-fake			Fake observation outside tests needs an exact-error program.
+12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed,ref-capability-fakes			Making a fake, or reading printed or printed_errors, outside a test reports the staged checker's E1103, not a dedicated refusal, so no fixture pins it; see docs/status/golden-gaps.md.
+12.4/2	cap-console-fake,cap-files-fake			Reading a fake's printed lines outside a test reports the staged checker's E1103, not a dedicated refusal, so no fixture pins it; see docs/status/golden-gaps.md.
 13.1/1	ref-evaluation			
-13.2/1	ref-shout		fail-bug-overflow,fail-bug-divide-by-zero,fail-bug-stop,fail-bug-map-duplicate,fail-bug-take-negative	Duration/Decimal overflow, time range, invalid fake path and file-folder conflicts still need stop goldens; resource-limit reports are in ci/check_cli.py.
+13.2/1	ref-shout		fail-bug-overflow,fail-bug-divide-by-zero,fail-bug-stop,fail-bug-map-duplicate,fail-bug-take-negative,fail-bug-time-range,fail-bug-duration-overflow	Decimal overflow, invalid fake path and file-folder conflicts still need stop goldens; resource-limit reports are in ci/check_cli.py.
 13.3/1				Cost claims require work/allocation instrumentation rather than program output; see tests/test_prim.c and tests/test_heap.c.
 13.3/2				No standalone work-bound program proves constant list access; unit tests exercise primitives without asserting asymptotics.
 13.3/3	col-build-with-var,lang-records-update			Output checks semantics only; one-holder cost needs allocation/work instrumentation.
@@ -171,7 +171,7 @@ rule	accepts	refuses	stops	gap
 13.4/3	lang-recursion-tail			Stack, depth and heap switches/defaults are checked by ci/check_cli.py, not golden programs with resource arguments.
 13.4/4				JSON fields/version/unknown-field compatibility need the structured assertions in ci/check_cli.py rather than a run/test text golden.
 14/1	lang-dot-calls,lang-dot-calls-cases,col-range-loops,ref-abilities		fail-bug-take-negative	
-14/2	num-int-functions,num-int-checked,ref-library-natives,ref-time			Negative pow and Duration-construction overflow need stop goldens.
+14/2	num-int-functions,num-int-checked,ref-library-natives,ref-time		fail-bug-duration-unit-overflow	Negative pow needs a stop golden.
 14/3	num-bigint,ref-library-natives,ref-bigint			
 14/4	num-decimal-rounding,num-decimal-int,num-float-convert			Out-of-range places and Decimal-to-Int range boundaries still need dedicated programs.
 14/5	ref-library-natives			Float-to-Decimal range and 18-place ties-even boundaries need dedicated goldens.
@@ -200,7 +200,7 @@ A/3		e0412,e0050		JSON fields, Unicode columns, source ordering and mo fix are c
 B/1	ref-source	e0008		The executable grammar is checked by make grammar; this prose defines notation rather than an additional language behavior.
 B/2	ref-source	e0008		The grammar summary contains many productions; grammar/tests and test_syntax_corpus exercise them, but a per-production accepted/refused index is still needed.
 B/3	ref-source			
-B/4	ref-operators			Non-chaining comparisons/ranges/implies still need dedicated rejection fixtures.
+B/4	ref-operators	e0007-chain		
 B/5	ref-operators			
 B/6	ref-operators			
 B/7	ref-operators			
@@ -213,25 +213,25 @@ B/13	ref-operators
 B/14	ref-functions,ref-operators			
 B/15	ref-functions,ref-operators			
 C/1	col-list-basics,col-map-basics	e0024		
-C/2	txt-counts,col-list-basics			No standalone diagnostic is pinned for each alternative length spelling.
-C/3	fail-option-basics			No standalone diagnostic is pinned for null/nil spellings.
-C/4	fail-try-wrap,fail-result-declared			No standalone diagnostic is pinned for throw/raise/catch spellings.
-C/5	fail-option-basics		fail-bug-stop	No standalone diagnostic is pinned for unwrap/! spellings.
+C/2	txt-counts,col-list-basics	e0050-length		
+C/3	fail-option-basics	e0050-null		
+C/4	fail-try-wrap,fail-result-declared	e0007-catch,e0007-throw		
+C/5	fail-option-basics	e0050-unwrap	fail-bug-stop	Postfix ! reports E0025 "Mo writes not instead of !", which points to not rather than case, so it is not pinned; see docs/status/golden-gaps.md.
 C/6	ref-evaluation	e0025		
 C/7	lang-is-and-if	e0022		
 C/8	lang-is-and-if	e0022		
 C/9	lang-case-guards	e0016		
-C/10	lang-closures			Alternative lambda spellings need dedicated exact-error fixtures.
+C/10	lang-closures	e0021-lambda		x => ... reports E0016 as a case arm, and |x| ... the generic E0007 "a value is an expression"; neither points to fn, so neither is pinned; see docs/status/golden-gaps.md.
 C/11	ref-functions	e0092		
-C/12	lang-bindings	e0031		Alternative binding keywords need dedicated exact-error fixtures; e0031 checks a missing = only.
+C/12	lang-bindings	e0031,e0007-let		
 C/13	col-build-with-var	e0056		
 C/14	lang-bindings	e0051		
-C/15	ref-shout			No standalone diagnostic is pinned for console.log.
+C/15	ref-shout	e0050-print		
 C/16	txt-interpolation	e0075		
-C/17	lang-dot-calls			No standalone diagnostic is pinned for x.f() when f takes only the receiver.
-C/18	lang-abilities-text-forms			No standalone diagnostic is pinned for str/toString spellings.
-C/19	ref-functions			Alternative function keywords need dedicated exact-error fixtures.
-C/20	lang-records,lang-dot-calls			Class/method/self spellings need dedicated exact-error fixtures.
+C/17	lang-dot-calls			x.f() is accepted when f takes only the receiver, which reference 5.4 refuses (MO-141); see docs/status/golden-gaps.md.
+C/18	lang-abilities-text-forms	e0003-to-string,e0050-str		
+C/19	ref-functions	e0031-def		
+C/20	lang-records,lang-dot-calls	e0031-class,e0050-self		
 C/21	mod-brace-import	e0027		
 C/22	lang-generic-types	e0020		
 C/23	ref-functions	e0017		

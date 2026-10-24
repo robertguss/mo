@@ -385,6 +385,10 @@ against reference sections 3.8, 9.2 and 14. It has no functions; the operations 
 
 ## Time
 
+Every operation on times and durations is an instruction or a primitive: Mo code can
+neither build a `Time` from its parts nor read them. `lib/time.mo` holds no functions, only
+tests that pin what reference sections 3.9 and 14 say they do, with `Clock.fixed`'s.
+
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
 | `t + d`, `t - d`, with a `Duration` | instruction | `add_time` and `sub_time` | |
