@@ -24,6 +24,16 @@ def has_test(path, name):
     return False
 
 
+MEASURED = "measured:"
+
+
+def cost_entries(entries):
+    """Split a cost column into (semantics-only entries, entries whose test measures the cost)."""
+    entries = list(filter(None, entries.split(",")))
+    measured = [entry.removeprefix(MEASURED) for entry in entries if entry.startswith(MEASURED)]
+    return [entry for entry in entries if not entry.startswith(MEASURED)], measured
+
+
 def check_tests(root, rule, field, entries):
     for entry in filter(None, entries.split(",")):
         path, _, name = entry.partition(":")
@@ -93,7 +103,10 @@ def validate(root, rows, rules):
         assert any(row[field].strip() for field in EVIDENCE), \
             f"{rule}: no accepting program, driver, untestable reason or gap explanation"
         check_tests(root, rule, "drivers", row["drivers"])
-        check_tests(root, rule, "cost", row["cost"])
+        semantics, measured = cost_entries(row["cost"])
+        check_tests(root, rule, "cost", ",".join(semantics + measured))
+        for entry in measured:
+            assert ":" in entry, f"{rule}: measured cost evidence must name a test: {entry}"
         for field in ("accepts", "refuses", "stops"):
             for name in filter(None, row[field].split(",")):
                 assert re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name), (rule, field, name)
@@ -151,18 +164,26 @@ def main():
         for row in selected:
             print(f"\n{row['rule']} {rules[row['rule']]}")
             for field in FIELDS[1:]:
-                label = "cost (semantics checked, cost not measured)" if field == "cost" else field
-                if row[field]:
-                    print(f"  {label}: {row[field]}")
+                if field == "cost":
+                    semantics, measured = cost_entries(row[field])
+                    if semantics:
+                        print(f"  cost (semantics checked, cost not measured): "
+                              f"{','.join(semantics)}")
+                    if measured:
+                        print(f"  cost measured: {','.join(measured)}")
+                elif row[field]:
+                    print(f"  {field}: {row[field]}")
             diagnostics = [f"tests/check/diagnostics/{name}.diag"
                            for name in row["refuses"].split(",")
                            if name and (ROOT / f"tests/check/diagnostics/{name}.diag").is_file()]
             if diagnostics:
                 print(f"  diagnostic fields: {', '.join(diagnostics)}")
     count = {field: sum(bool(row[field]) for row in rows) for field in FIELDS[4:]}
+    measured = sum(bool(cost_entries(row["cost"])[1]) for row in rows)
     print(f"{len(rows)} reference rules indexed; {count['gap']} have explicit gaps; "
-          f"{count['drivers']} name other drivers; {count['cost']} have cost claims checked "
-          f"for semantics only; {count['untestable']} untestable")
+          f"{count['drivers']} name other drivers; {count['cost'] - measured} have cost claims "
+          f"checked for semantics only; {measured} have cost measured; "
+          f"{count['untestable']} untestable")
 
 
 if __name__ == "__main__":
