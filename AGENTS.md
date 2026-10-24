@@ -37,7 +37,7 @@ make format / format-check # clang-format; use clang-format 14.0.6, newer versio
 make tidy                  # clang-tidy cert-err33-c (unused stdlib results)
 make fuzz-smoke            # every fuzz target briefly (needs clang + libFuzzer; FUZZ_SECONDS=5)
 make formal                # build Mo Core in Lean and check every proof (needs elan)
-make cbmc                  # prove the bytecode reader, arena, verifier steps, primitives, path containment (needs CBMC)
+make cbmc                  # prove the bytecode reader, arena, verifier, primitives, path containment and resolution, refcounts, hash tables (needs CBMC)
 bash ci/check.sh [group…]  # every check; groups: gcc clang sanitize fuzz drivers lean static cbmc
 ```
 
@@ -150,10 +150,6 @@ After a PR opens or merges, or after Robert makes a decision, run `notion-sync`.
 When Robert or a reviewer corrects a mistake, fix it and add or bump its row in
 `docs/status/agent-mistakes.md` in the same PR. A row that recurs is fixed at a stronger level, using
 the `correct` skill.
-
-`docs/solutions/` holds documented solutions to past problems (bugs, best practices, workflow
-patterns), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`); it is
-relevant when implementing or debugging in an area it covers.
 
 After a solved, verified problem, offer once to invoke the `ce-compound` skill at the completion checkpoint only when the work produced durable project reasoning that is not readily recoverable from the final code, tests, types, comments, or existing documentation, and losing it would plausibly cause recurrence, material risk, or substantial rediscovery. Apply this counterfactual: if the learning document disappeared, would a future engineer reading the final implementation still be likely to repeat the mistake or redo substantial investigation? If not, do not offer. Completion, effort, and diff size alone are not enough. Offer at the checkpoint so a qualifying learning can ship in the PR that produced it, and only where the repository treats captured learnings as tracked, committed knowledge.
 

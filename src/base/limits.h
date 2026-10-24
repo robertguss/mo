@@ -159,7 +159,7 @@
 #define MO_LIMIT_LOWER_WORK (UINT64_C(1) << 28)
 
 /* Reserved POSIX stack for source-stage execution, not an input restriction.
- * Tests and fuzzing use base/stack.h; source tools will do so when connected. */
+ * Tests, fuzzing and source tools use base/stack.h. */
 #define MO_SOURCE_STACK_SIZE (48 << 20)
 
 /* Registers of one function, its parameters included. The code generator refuses a function that

@@ -402,7 +402,7 @@ section citation.
 
 **Source-stage stack.** Checker tests and the `fuzz_check` and `fuzz_bodies`
 targets run source work through `mo_with_stack` in `base/stack.h`. Tools run
-the whole compiler pipeline, including parsing and future lowering, Core
+the whole compiler pipeline, including parsing and lowering, Core
 checking and codegen, in one call with `MO_SOURCE_STACK_SIZE` (10).
 It rounds the requested allowance
 up to the POSIX page size, sets a new thread's stack explicitly and joins it
@@ -608,8 +608,8 @@ approved this bounded scope for LW5; broader visibility needs a separate decisio
 Examples and promises are certified and run by `mo test`; a form still unimplemented is refused
 with E1103, never silently skipped.
 A successful intermediate body is not a `mo_program`, is not lowering-ready and does not certify those
-rules. `mo_check` composes implemented stages for a certified subset; section 12
-records its walking skeleton and the forms still refused with E1103.
+rules. `mo_check` composes implemented stages; section 12
+records the forms still refused with E1103.
 
 **Typed data and patterns.** Construction names every declared field once, or
 supplies a case's single unnamed value. Reads retain the selected field's
@@ -2955,13 +2955,12 @@ does not reject a well-typed program merely for using one of these forms:
   changes once; each instruction constraint then takes constant time. No Lean
   rule is changed and compiler comparisons skip these permanent exclusions.
 
-**Checked-program contract, provisional.** `src/check/check.h` now defines the
+**Checked-program contract.** `src/check/check.h` defines the
 input to lowering. Its
-`mo_checked_*` records and `mo_program` are an in-memory interface; their layout
-may change while checking is completed. `mo_check` is an implemented walking
-skeleton: it prepares interfaces and signatures and shares inference's walk to
-emit typed graphs, rather than running a second name/type checker. It currently
-certifies generic functions and their keyed requirement proofs, scalar
+`mo_checked_*` records and `mo_program` are an in-memory interface, not a
+serialized or stable ABI. `mo_check` prepares interfaces and signatures and shares
+inference's walk to emit typed graphs, rather than running a second name/type
+checker. It covers generic functions and their keyed requirement proofs, scalar
 expressions and native/derived/custom operator proofs, direct/indirect calls,
 prepared native calls, record/choice construction and fields, normalized
 patterns, tuples/lists, conditionals, loops, early exits/asserts and capturing
@@ -3251,8 +3250,7 @@ MO_MUST_USE struct mo_inferred_body *mo_infer_function(struct mo_arena *arena,
                                                        const struct mo_module_interfaces *interfaces,
                                                        const struct mo_signatures *signatures,
                                                        uint32_t function, struct mo_diags *diags);
-/* Provisional checked-program contract, defined in check.h. mo_check produces
- * only its certified subset; unfinished forms report E1103. */
+/* Checked-program contract, defined in check.h. Unfinished forms report E1103. */
 struct mo_program {
     const struct mo_module_set *set; /* borrows loaded syntax */
     const struct mo_module_interfaces *interfaces;

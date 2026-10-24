@@ -1,8 +1,8 @@
 # Sample programs
 
 Twelve programs in Mo, written with the Language Reference v0.1. Each one
-parses with the executable grammar (`make grammar`). There is no compiler yet,
-so none of them runs; their examples and tests say what they compute.
+parses (`make grammar`). `ci/check_cli.py` checks and tests every example;
+all twelve pass (`docs/status/sample-blockers.md`).
 
 | Program | What it does | What it exercises |
 | --- | --- | --- |
