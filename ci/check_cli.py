@@ -563,6 +563,28 @@ def hidden_promises(binary):
             assert len(items) == 3 and items[1]['code'] == 'E1400', items
             assert items[-1]['passed'] == 0
 
+        # A value comes with the hidden value its call returned beside it (D284). make returns
+        # an A and a B together, and each one's build keeps the other as its companion; taking
+        # an A's companion must leave b alone, or the swap pairs them crosswise, unrelated again.
+        # Boundary Ints (0, 1, -1 and the extremes) collide anyway, so the promise excuses them.
+        # The 9 boundary tuples (3 per parameter) and the first random trial keep their own
+        # values; the second random trial, call 11, takes companions and so holds a related pair.
+        path.write_text('module Main\nexpose A, B, make\nstruct A\nn: Int\nm: Int\nend\n'
+                        'struct B\nn: Int\nm: Int\nend\n'
+                        'fn make(n: Int, m: Int) : (A, B)\n(A(n: n, m: m), B(n: n, m: m))\nend\n'
+                        'fn apart(a: A, b: B) : Bool\npromise "never from the same call"\n'
+                        'result or edge?(a.n)\n'
+                        'allows a: A(n: 1, m: 2), b: B(n: 2, m: 2), result: true\n'
+                        'forbids a: A(n: 5, m: 2), b: B(n: 5, m: 2), result: false\nend\n'
+                        'a.n != b.n or a.m != b.m\nend\n'
+                        'fn edge?(n: Int) : Bool\n'
+                        'n >= -1 and n <= 1 or n < -1000000000000000000 or n > 1000000000000000000'
+                        '\nend\n' + tail)
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['outcome'] == 'failed' and items[1]['calls'] == 11, items[1]
+        a, b = (entry['value'] for entry in items[1]['input'])
+        assert a[1:] == b[1:] and a[0] == 'A' and b[0] == 'B', items[1]
+
         # Random values fall back to the boundary order's full search: this start counts only on
         # its 45th boundary tuple (true, Int's smallest, Int's largest), past the 32 ordered tries a
         # random value once had and out of reach of random Ints.
@@ -621,6 +643,22 @@ def hidden_promises(binary):
             items = records(run(binary, ['test', '--json', *only, str(answer)], 0), 'test')
             promises = [r for r in items if r.get('kind') == 'promise']
             assert promises and all(r['outcome'] == 'passed' for r in promises), items
+            assert items[-1]['errors'] == 0, items
+        # Half the random trials take the Queue that the Lease's own lease call returned (D284),
+        # so acknowledge and fail reach their Ok branch: breaking either Ok path fails its promise
+        # and only that one.
+        honest = answer.read_text()
+        for failing, honest_line, broken_line in (
+                ('acknowledge', 'if completed?: Acknowledged', 'if completed?: Dead'),
+                ('fail', 'settled.ready_at = now', 'settled.ready_at = entry.ready_at')):
+            assert honest.count(honest_line) == 1, honest_line
+            answer.write_text(honest.replace(honest_line, broken_line))
+            items = records(run(binary, ['test', '--json', str(answer)], 1), 'test')
+            outcomes = {r['name']: r['outcome'] for r in items if r.get('kind') == 'promise'}
+            assert outcomes == {f'Answers.JobQueue.{name}.promise.1':
+                                'failed' if name == failing else 'passed'
+                                for name in ('submit', 'expire_leases', 'lease', 'acknowledge',
+                                             'fail')}, items
             assert items[-1]['errors'] == 0, items
 
 
@@ -2860,12 +2898,28 @@ def guide_claims(binary):
         deferred.write_text('module Deferred\nhandler = fn() base end\nbase = 13\n'
                             'fn main() : Int\nhandler()\nend\n'
                             'test "reads base"\nassert handler() == 13\nend\n', encoding="utf-8")
+        qualified = [folder / "compared.mo", folder / "texted.mo"]
+        for path, call in zip(qualified, ('Text.compare("a", "b")', "List.to_text([1])")):
+            path.write_text(f"module {path.stem.title()}\n\nfn main(console: Console)\n"
+                            f'  console.print("#{{{call}}}")\nend\n', encoding="utf-8")
+        receivers = folder / "receivers.mo"
+        receivers.write_text("module Receivers\n\nfn main(console: Console)\n"
+                             '  console.print("#{Less.compare(Greater)} #{Folder.to_text}")\nend\n',
+                             encoding="utf-8")
+        says("For other types, write `to_text` and `compare` as dot calls: `Text.compare(a, b)` "
+             "and `List.to_text(xs)` report E1103.",
+             "A case without fields can be the receiver directly, as in `Less.compare(Greater)` "
+             "or `Folder.to_text`.")
+        assert run(binary, ["run", str(receivers)], 0).stdout == b"Less Folder\n"
         for command in ("check", "run", "test"):
             refuses([command, str(unfinished)], 1103,
                     "this body rule is not implemented by the staged checker",
                     "`mo check` reports E1103 for a form the checker has not implemented, with a "
                     'headline that says so, such as "this body rule is not implemented by the '
                     'staged checker".')
+            for path in qualified:
+                result = run(binary, [command, str(path)], 1)
+                assert b"error E1103: " in result.stderr and not result.stdout, (command, result)
             refuses([command, str(deferred)], 1150,
                     "this constant's deferred function needs globals not yet initialized",
                     "It reports E1150 for a form it checks but cannot compile yet, such as a "

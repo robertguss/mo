@@ -57,7 +57,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 5.1/2	ref-functions	e0042,e0055		
 5.2/1	ref-functions	e0012,e0021,e0055,e0077		
 5.3/1	lang-recursion-tail			
-5.4/1	lang-dot-calls,lang-dot-calls-cases,ref-abilities	e0095,e0095-deferred		
+5.4/1	lang-dot-calls,lang-dot-calls-cases,ref-abilities,ref-case-receivers	e0095,e0095-deferred		
 5.4/2	lang-dot-calls,ref-functions,mod-hidden-customized			
 5.5/1	lang-generic-functions	e0081		
 5.5/2	lang-enum-tree	e0083		
@@ -116,7 +116,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 9.2/19	col-map-equality,col-set-basics,ref-abilities	e0080-map-set		
 9.2/20	lang-abilities-order,num-float-arithmetic,ref-abilities			
 9.2/21	lang-abilities-text-forms,num-float-arithmetic,ref-time,ref-abilities			
-9.2/22	lang-abilities-order,lang-abilities-custom-order,lang-dot-calls-cases,ref-abilities			
+9.2/22	lang-abilities-order,lang-abilities-custom-order,lang-dot-calls-cases,ref-abilities,ref-case-receivers			
 9.2/23	lang-abilities-custom-order,lang-abilities-custom-text,mod-hidden-customized	e0082		
 9.2/24	lang-generic-functions	e0081		
 10.1/1	mod-brace-import,mod-qualified	e0008,e0027,e0039		
@@ -170,7 +170,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 13.4/2					ci/check_cli.py:promise_selection
 13.4/3	lang-recursion-tail				ci/check_cli.py:observations,ci/check_cli.py:check,tests/test_limits.c:test_the_defaults
 13.4/4					ci/check_cli.py:records,ci/check_cli.py:check		No program can show that a field keeps its name, type and meaning in later versions of the format.
-14/1	lang-dot-calls,lang-dot-calls-cases,col-range-loops,ref-abilities		fail-bug-take-negative	
+14/1	lang-dot-calls,lang-dot-calls-cases,col-range-loops,ref-abilities,ref-case-receivers		fail-bug-take-negative	Qualified to_text and compare, such as Text.compare(a, b), report E1103 except Int.compare and the scalar to_text primitives; D285 makes them language and MO-144 builds them. docs/status/section-14-inventory.md lists every function.
 14/2	num-int-functions,num-int-checked,ref-library-natives,ref-time		fail-bug-pow-negative,fail-bug-duration-unit-overflow	
 14/3	num-bigint,ref-library-natives,ref-bigint			
 14/4	num-decimal-rounding,num-decimal-int,num-float-convert,num-decimal-boundaries		fail-bug-decimal-places	
