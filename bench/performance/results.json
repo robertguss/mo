@@ -1,0 +1,2096 @@
+{
+  "recorded_utc": "2026-10-24T11:56:47.772641+00:00",
+  "commit": "636876209f3f1a08f303faa78bb7789ba1fb31ff",
+  "git_status": "",
+  "machine": {
+    "platform": "Linux-6.1.158+-x86_64-with-glibc2.36",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.60GHz",
+    "logical_cpus": 4,
+    "affinity_cpus": 4,
+    "cpu_max": null,
+    "memory": "MemTotal:        8147608 kB",
+    "python": "3.11.6",
+    "compiler": "gcc (Debian 12.2.0-14+deb12u1) 12.2.0",
+    "load_before": [
+      1.11083984375,
+      0.98291015625,
+      0.482421875
+    ],
+    "load_after": [
+      1.08544921875,
+      0.984375,
+      0.4912109375
+    ]
+  },
+  "build_command": [
+    "make",
+    "-B",
+    "-j4",
+    "CC=gcc",
+    "BUILD=build/bench-release",
+    "DEBUG=-O2 -g -pthread",
+    "all"
+  ],
+  "binary": "build/bench-release/debug/mo",
+  "binary_sha256": "f253eed621ad35e751f80ac588f00e1d1c61d83e379e659dcb9394f3ab7766f6",
+  "source_sha256": {
+    "bench/performance/measure.py": "ee71d23af5a8b234cbb1f1be8fc306c46b4b69fd3ed6ce409f07caaf97d4d74a",
+    "bench/performance/list-building.mo": "32bcdbddccc556f46807c8ed32abe1f79e419c206335d542087b45ecbd9ee3ff",
+    "bench/performance/map-updates.mo": "76a7efba849267a6604a69c6879893a198aba6e92f7f17f691aa776e0aefd88b",
+    "bench/performance/text-processing.mo": "2073a18a395174249181ea2c8151b3a12bbc522d63825224b1a4ea075079dd09"
+  },
+  "method": {
+    "clock": "perf_counter_ns wall time around subprocess.run",
+    "warmups_per_job": 1,
+    "runs_per_job": 9,
+    "order": "serial rounds, alternating forward and reverse job order",
+    "validation": "every invocation exits 0, stderr empty, stdout exact",
+    "timeout_s": 60,
+    "failures": 0,
+    "scope": "fresh process including startup, compilation, execution and output capture"
+  },
+  "measurements": [
+    {
+      "program": "examples/account.mo",
+      "command": "check",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "",
+      "runs": [
+        {
+          "wall_s": 0.03313233,
+          "user_s": 0.024602999999999042,
+          "system_s": 0.008201000000000125
+        },
+        {
+          "wall_s": 0.032247847,
+          "user_s": 0.02796999999999983,
+          "system_s": 0.0039959999999998885
+        },
+        {
+          "wall_s": 0.032343064,
+          "user_s": 0.024024999999998187,
+          "system_s": 0.008008000000000237
+        },
+        {
+          "wall_s": 0.031730033,
+          "user_s": 0.01571299999999809,
+          "system_s": 0.015712999999999866
+        },
+        {
+          "wall_s": 0.031539441,
+          "user_s": 0.026811999999999614,
+          "system_s": 0.0044680000000001385
+        },
+        {
+          "wall_s": 0.031812866,
+          "user_s": 0.02365999999999957,
+          "system_s": 0.00788600000000006
+        },
+        {
+          "wall_s": 0.031367415,
+          "user_s": 0.01331800000000527,
+          "system_s": 0.017757000000000023
+        },
+        {
+          "wall_s": 0.031850667,
+          "user_s": 0.027651999999996235,
+          "system_s": 0.003950000000000564
+        },
+        {
+          "wall_s": 0.032373382,
+          "user_s": 0.02408900000000358,
+          "system_s": 0.00802999999999976
+        }
+      ],
+      "median_s": 0.031850667,
+      "min_s": 0.031367415,
+      "max_s": 0.03313233
+    },
+    {
+      "program": "examples/account.mo",
+      "command": "test",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "passed Account.deposit.promise.1  examples/account.mo:34:3\npassed Account.deposit.example.1  examples/account.mo:41:5\npassed Account.deposit.example.2  examples/account.mo:42:5\npassed Account.deposit.example.3  examples/account.mo:43:5\npassed Account.deposit.example.4  examples/account.mo:44:5\npassed Account.withdraw.promise.1  examples/account.mo:54:3\npassed Account.withdraw.promise.2  examples/account.mo:60:3\npassed Account.withdraw.example.1  examples/account.mo:67:5\npassed Account.withdraw.example.2  examples/account.mo:68:5\npassed Account.withdraw.example.3  examples/account.mo:69:5\npassed Account.withdraw.example.4  examples/account.mo:70:5\npassed Account.transfer.promise.1  examples/account.mo:81:3\npassed Account.transfer.example.1  examples/account.mo:89:5\npassed Account.transfer.example.2  examples/account.mo:90:5\npassed Account.test.1  examples/account.mo:106:1\npassed Account.test.2  examples/account.mo:111:1\n16 passed, 0 failed, 0 stopped\n",
+      "runs": [
+        {
+          "wall_s": 0.043574639,
+          "user_s": 0.03546800000000161,
+          "system_s": 0.007881999999999945
+        },
+        {
+          "wall_s": 0.046025328,
+          "user_s": 0.03817799999999849,
+          "system_s": 0.007635000000000058
+        },
+        {
+          "wall_s": 0.042803336,
+          "user_s": 0.038629000000000246,
+          "system_s": 0.003867000000000065
+        },
+        {
+          "wall_s": 0.042056496,
+          "user_s": 0.030409999999996273,
+          "system_s": 0.011403999999999748
+        },
+        {
+          "wall_s": 0.041611404,
+          "user_s": 0.037195000000004086,
+          "system_s": 0.004132999999999942
+        },
+        {
+          "wall_s": 0.041740484,
+          "user_s": 0.02643199999999979,
+          "system_s": 0.015104000000000006
+        },
+        {
+          "wall_s": 0.04193055,
+          "user_s": 0.041612999999998124,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.041735602,
+          "user_s": 0.037322000000003186,
+          "system_s": 0.004146999999999679
+        },
+        {
+          "wall_s": 0.042180959,
+          "user_s": 0.030506000000002587,
+          "system_s": 0.011440000000000339
+        }
+      ],
+      "median_s": 0.042056496,
+      "min_s": 0.041611404,
+      "max_s": 0.046025328
+    },
+    {
+      "program": "examples/expenses.mo",
+      "command": "check",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "",
+      "runs": [
+        {
+          "wall_s": 0.020830988,
+          "user_s": 0.008196999999999122,
+          "system_s": 0.012278000000000011
+        },
+        {
+          "wall_s": 0.02037277,
+          "user_s": 0.016104000000002117,
+          "system_s": 0.004026000000000085
+        },
+        {
+          "wall_s": 0.021550084,
+          "user_s": 0.008505000000003093,
+          "system_s": 0.012757999999999825
+        },
+        {
+          "wall_s": 0.021433037,
+          "user_s": 0.012703000000001907,
+          "system_s": 0.008469000000000282
+        },
+        {
+          "wall_s": 0.019608503,
+          "user_s": 0.019323999999997454,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.019677599,
+          "user_s": 0.015551000000002091,
+          "system_s": 0.0038879999999998915
+        },
+        {
+          "wall_s": 0.0201345,
+          "user_s": 0.015870999999997082,
+          "system_s": 0.0039679999999999715
+        },
+        {
+          "wall_s": 0.020960346,
+          "user_s": 0.016470999999995684,
+          "system_s": 0.004118000000000066
+        },
+        {
+          "wall_s": 0.022720815,
+          "user_s": 0.013486000000000331,
+          "system_s": 0.008989999999999831
+        }
+      ],
+      "median_s": 0.020830988,
+      "min_s": 0.019608503,
+      "max_s": 0.022720815
+    },
+    {
+      "program": "examples/expenses.mo",
+      "command": "test",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "passed Expenses.parse_line.example.1  examples/expenses.mo:31:5\npassed Expenses.parse_line.example.2  examples/expenses.mo:32:5\npassed Expenses.parse_line.example.3  examples/expenses.mo:33:5\npassed Expenses.parse_line.example.4  examples/expenses.mo:34:5\npassed Expenses.parse_line.example.5  examples/expenses.mo:35:5\npassed Expenses.totals.example.1  examples/expenses.mo:51:5\npassed Expenses.totals.example.2  examples/expenses.mo:52:5\npassed Expenses.layout.example.1  examples/expenses.mo:65:5\npassed Expenses.test.1  examples/expenses.mo:120:1\n9 passed, 0 failed, 0 stopped\n",
+      "runs": [
+        {
+          "wall_s": 0.037551484,
+          "user_s": 0.03314500000000109,
+          "system_s": 0.0041439999999999255
+        },
+        {
+          "wall_s": 0.035423083,
+          "user_s": 0.02345899999999901,
+          "system_s": 0.011730000000000018
+        },
+        {
+          "wall_s": 0.035742999,
+          "user_s": 0.026548999999999268,
+          "system_s": 0.008850000000000247
+        },
+        {
+          "wall_s": 0.034807205,
+          "user_s": 0.019212000000003115,
+          "system_s": 0.015368999999999744
+        },
+        {
+          "wall_s": 0.034560208,
+          "user_s": 0.03007300000000157,
+          "system_s": 0.004297000000000217
+        },
+        {
+          "wall_s": 0.035592868,
+          "user_s": 0.023575999999998487,
+          "system_s": 0.011788000000000132
+        },
+        {
+          "wall_s": 0.034068878,
+          "user_s": 0.011284000000003402,
+          "system_s": 0.02256199999999975
+        },
+        {
+          "wall_s": 0.034941824,
+          "user_s": 0.026022000000004653,
+          "system_s": 0.00867400000000007
+        },
+        {
+          "wall_s": 0.036100494,
+          "user_s": 0.019937999999996237,
+          "system_s": 0.01595000000000013
+        }
+      ],
+      "median_s": 0.035423083,
+      "min_s": 0.034068878,
+      "max_s": 0.037551484
+    },
+    {
+      "program": "examples/expenses.mo",
+      "command": "run",
+      "arguments": [
+        "tests/golden/sample-expenses/data/ok.csv"
+      ],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "rent  900.00\nfood   15.50\nfun     3.50\n",
+      "runs": [
+        {
+          "wall_s": 0.036180109,
+          "user_s": 0.027896999999999395,
+          "system_s": 0.007970000000000033
+        },
+        {
+          "wall_s": 0.035553888,
+          "user_s": 0.030809999999998894,
+          "system_s": 0.004402999999999935
+        },
+        {
+          "wall_s": 0.036584416,
+          "user_s": 0.02826199999999801,
+          "system_s": 0.008073999999999693
+        },
+        {
+          "wall_s": 0.03424623,
+          "user_s": 0.021194000000001267,
+          "system_s": 0.012716000000000172
+        },
+        {
+          "wall_s": 0.034748168,
+          "user_s": 0.023020999999999958,
+          "system_s": 0.01150999999999991
+        },
+        {
+          "wall_s": 0.037264318,
+          "user_s": 0.02876399999999535,
+          "system_s": 0.008217999999999837
+        },
+        {
+          "wall_s": 0.033760959,
+          "user_s": 0.029319000000000983,
+          "system_s": 0.00418900000000022
+        },
+        {
+          "wall_s": 0.034173532,
+          "user_s": 0.01695599999999331,
+          "system_s": 0.016955999999999527
+        },
+        {
+          "wall_s": 0.034708296,
+          "user_s": 0.02682500000000232,
+          "system_s": 0.007664999999999367
+        }
+      ],
+      "median_s": 0.034748168,
+      "min_s": 0.033760959,
+      "max_s": 0.037264318
+    },
+    {
+      "program": "examples/find.mo",
+      "command": "check",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "",
+      "runs": [
+        {
+          "wall_s": 0.020613645,
+          "user_s": 0.016282000000000352,
+          "system_s": 0.004070999999999936
+        },
+        {
+          "wall_s": 0.021140405,
+          "user_s": 0.016719000000001927,
+          "system_s": 0.0041799999999998505
+        },
+        {
+          "wall_s": 0.019473744,
+          "user_s": 0.011473999999999762,
+          "system_s": 0.007681000000000271
+        },
+        {
+          "wall_s": 0.019380395,
+          "user_s": 0.014293999999999585,
+          "system_s": 0.004764999999999908
+        },
+        {
+          "wall_s": 0.01901761,
+          "user_s": 0.01125199999999893,
+          "system_s": 0.00750099999999998
+        },
+        {
+          "wall_s": 0.019179274,
+          "user_s": 0.015149000000000967,
+          "system_s": 0.0037880000000001246
+        },
+        {
+          "wall_s": 0.019103645,
+          "user_s": 0.015103999999993789,
+          "system_s": 0.0037760000000002236
+        },
+        {
+          "wall_s": 0.019219906,
+          "user_s": 0.015150000000005548,
+          "system_s": 0.0037880000000001246
+        },
+        {
+          "wall_s": 0.018995288,
+          "user_s": 0.011234999999999218,
+          "system_s": 0.007490000000000663
+        }
+      ],
+      "median_s": 0.019219906,
+      "min_s": 0.018995288,
+      "max_s": 0.021140405
+    },
+    {
+      "program": "examples/find.mo",
+      "command": "test",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "passed Find.parse_args.example.1  examples/find.mo:35:5\npassed Find.parse_args.example.2  examples/find.mo:36:5\npassed Find.parse_args.example.3  examples/find.mo:38:5\npassed Find.parse_args.example.4  examples/find.mo:39:5\npassed Find.parse_args.example.5  examples/find.mo:40:5\npassed Find.matches.example.1  examples/find.mo:70:5\npassed Find.matches.example.2  examples/find.mo:71:5\npassed Find.test.1  examples/find.mo:121:1\npassed Find.test.2  examples/find.mo:128:1\n9 passed, 0 failed, 0 stopped\n",
+      "runs": [
+        {
+          "wall_s": 0.03305781,
+          "user_s": 0.02870799999999818,
+          "system_s": 0.004101000000000132
+        },
+        {
+          "wall_s": 0.032917937,
+          "user_s": 0.028572000000000486,
+          "system_s": 0.0040879999999998695
+        },
+        {
+          "wall_s": 0.03346675,
+          "user_s": 0.029088000000001557,
+          "system_s": 0.004154999999999909
+        },
+        {
+          "wall_s": 0.033562208,
+          "user_s": 0.02593899999999394,
+          "system_s": 0.0074110000000002785
+        },
+        {
+          "wall_s": 0.032387507,
+          "user_s": 0.024112000000002354,
+          "system_s": 0.00803799999999999
+        },
+        {
+          "wall_s": 0.034341065,
+          "user_s": 0.03414400000000484,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.032264922,
+          "user_s": 0.02401200000000614,
+          "system_s": 0.008003999999999678
+        },
+        {
+          "wall_s": 0.034256384,
+          "user_s": 0.02974400000000088,
+          "system_s": 0.004249000000000613
+        },
+        {
+          "wall_s": 0.032511282,
+          "user_s": 0.024260999999995647,
+          "system_s": 0.008085999999999594
+        }
+      ],
+      "median_s": 0.03305781,
+      "min_s": 0.032264922,
+      "max_s": 0.034341065
+    },
+    {
+      "program": "examples/find.mo",
+      "command": "run",
+      "arguments": [
+        "cat",
+        "tests/golden/sample-find/data/pets.txt"
+      ],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "tests/golden/sample-find/data/pets.txt:1: A cat sat.\ntests/golden/sample-find/data/pets.txt:4: catalog\n",
+      "runs": [
+        {
+          "wall_s": 0.038505723,
+          "user_s": 0.030561999999999756,
+          "system_s": 0.007635999999999976
+        },
+        {
+          "wall_s": 0.032736096,
+          "user_s": 0.02437799999999868,
+          "system_s": 0.0081260000000003
+        },
+        {
+          "wall_s": 0.032253878,
+          "user_s": 0.01596800000000087,
+          "system_s": 0.015991999999999784
+        },
+        {
+          "wall_s": 0.033239519,
+          "user_s": 0.02470800000000395,
+          "system_s": 0.008253999999999984
+        },
+        {
+          "wall_s": 0.033229023,
+          "user_s": 0.02062199999999592,
+          "system_s": 0.01237300000000019
+        },
+        {
+          "wall_s": 0.031584502,
+          "user_s": 0.027429999999995403,
+          "system_s": 0.003918000000000088
+        },
+        {
+          "wall_s": 0.032246399,
+          "user_s": 0.028008999999997286,
+          "system_s": 0.004001000000000143
+        },
+        {
+          "wall_s": 0.032709149,
+          "user_s": 0.01803099999999347,
+          "system_s": 0.014394999999999492
+        },
+        {
+          "wall_s": 0.032172024,
+          "user_s": 0.023958000000000368,
+          "system_s": 0.007990000000000386
+        }
+      ],
+      "median_s": 0.032709149,
+      "min_s": 0.031584502,
+      "max_s": 0.038505723
+    },
+    {
+      "program": "examples/greet.mo",
+      "command": "check",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "",
+      "runs": [
+        {
+          "wall_s": 0.026853352,
+          "user_s": 0.015147000000002464,
+          "system_s": 0.011359999999999815
+        },
+        {
+          "wall_s": 0.018369567,
+          "user_s": 0.014486000000001553,
+          "system_s": 0.0036209999999998743
+        },
+        {
+          "wall_s": 0.018283486,
+          "user_s": 0.013521999999998258,
+          "system_s": 0.0045079999999999565
+        },
+        {
+          "wall_s": 0.017974931,
+          "user_s": 0.010626000000002023,
+          "system_s": 0.007083999999999868
+        },
+        {
+          "wall_s": 0.017489026,
+          "user_s": 0.006901000000006263,
+          "system_s": 0.010350999999999999
+        },
+        {
+          "wall_s": 0.017608409,
+          "user_s": 0.010398999999999603,
+          "system_s": 0.006933000000000078
+        },
+        {
+          "wall_s": 0.017387221,
+          "user_s": 0.012844000000001188,
+          "system_s": 0.004281000000000201
+        },
+        {
+          "wall_s": 0.017568193,
+          "user_s": 0.017267000000003918,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.018535139,
+          "user_s": 0.01362200000000513,
+          "system_s": 0.004540999999999684
+        }
+      ],
+      "median_s": 0.017974931,
+      "min_s": 0.017387221,
+      "max_s": 0.026853352
+    },
+    {
+      "program": "examples/greet.mo",
+      "command": "test",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "passed Greet.greeting.example.1  examples/greet.mo:6:5\npassed Greet.greeting.example.2  examples/greet.mo:7:5\npassed Greet.test.1  examples/greet.mo:17:1\n3 passed, 0 failed, 0 stopped\n",
+      "runs": [
+        {
+          "wall_s": 0.0332168,
+          "user_s": 0.028811999999998505,
+          "system_s": 0.004116000000000231
+        },
+        {
+          "wall_s": 0.028491373,
+          "user_s": 0.02422599999999875,
+          "system_s": 0.004037999999999986
+        },
+        {
+          "wall_s": 0.02798057,
+          "user_s": 0.02379499999999979,
+          "system_s": 0.003964999999999996
+        },
+        {
+          "wall_s": 0.02821426,
+          "user_s": 0.027935999999996852,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.027564567,
+          "user_s": 0.019548999999997818,
+          "system_s": 0.007819999999999716
+        },
+        {
+          "wall_s": 0.02730152,
+          "user_s": 0.022561000000003162,
+          "system_s": 0.004513999999999907
+        },
+        {
+          "wall_s": 0.027976947,
+          "user_s": 0.02777499999999833,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.028945273,
+          "user_s": 0.016379999999998063,
+          "system_s": 0.012285000000000323
+        },
+        {
+          "wall_s": 0.028336789,
+          "user_s": 0.016051999999994848,
+          "system_s": 0.012038999999999689
+        }
+      ],
+      "median_s": 0.02821426,
+      "min_s": 0.02730152,
+      "max_s": 0.0332168
+    },
+    {
+      "program": "examples/greet.mo",
+      "command": "run",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "Hello, world!\n",
+      "runs": [
+        {
+          "wall_s": 0.02831909,
+          "user_s": 0.016056999999999988,
+          "system_s": 0.012041999999999886
+        },
+        {
+          "wall_s": 0.028568362,
+          "user_s": 0.028321000000001817,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.028645543,
+          "user_s": 0.01623599999999925,
+          "system_s": 0.012177000000000326
+        },
+        {
+          "wall_s": 0.032443576,
+          "user_s": 0.02261800000000136,
+          "system_s": 0.007538999999999962
+        },
+        {
+          "wall_s": 0.028873193,
+          "user_s": 0.020468999999998516,
+          "system_s": 0.008186999999999944
+        },
+        {
+          "wall_s": 0.027451016,
+          "user_s": 0.01945599999999814,
+          "system_s": 0.007782000000000178
+        },
+        {
+          "wall_s": 0.027732201,
+          "user_s": 0.02360000000000184,
+          "system_s": 0.00393399999999966
+        },
+        {
+          "wall_s": 0.028163799,
+          "user_s": 0.011971000000002618,
+          "system_s": 0.015960999999999892
+        },
+        {
+          "wall_s": 0.029670779,
+          "user_s": 0.025134000000001322,
+          "system_s": 0.00418900000000022
+        }
+      ],
+      "median_s": 0.028568362,
+      "min_s": 0.027451016,
+      "max_s": 0.032443576
+    },
+    {
+      "program": "examples/inventory.mo",
+      "command": "check",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "",
+      "runs": [
+        {
+          "wall_s": 0.022369422,
+          "user_s": 0.007365000000000066,
+          "system_s": 0.01473200000000019
+        },
+        {
+          "wall_s": 0.021439925,
+          "user_s": 0.008478999999997683,
+          "system_s": 0.012719000000000147
+        },
+        {
+          "wall_s": 0.02831544,
+          "user_s": 0.024036999999999864,
+          "system_s": 0.0040079999999997895
+        },
+        {
+          "wall_s": 0.021594856,
+          "user_s": 0.012803999999995597,
+          "system_s": 0.008536000000000321
+        },
+        {
+          "wall_s": 0.022404756,
+          "user_s": 0.017710999999998478,
+          "system_s": 0.004428000000000321
+        },
+        {
+          "wall_s": 0.020548,
+          "user_s": 0.012188000000001864,
+          "system_s": 0.008125999999999856
+        },
+        {
+          "wall_s": 0.021209947,
+          "user_s": 0.016760999999995363,
+          "system_s": 0.004189999999999916
+        },
+        {
+          "wall_s": 0.020489282,
+          "user_s": 0.012143000000001791,
+          "system_s": 0.008096000000000103
+        },
+        {
+          "wall_s": 0.021813242,
+          "user_s": 0.012729000000000212,
+          "system_s": 0.008486000000000438
+        }
+      ],
+      "median_s": 0.021594856,
+      "min_s": 0.020489282,
+      "max_s": 0.02831544
+    },
+    {
+      "program": "examples/inventory.mo",
+      "command": "test",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "passed Inventory.top_by.example.1  examples/inventory.mo:25:5\npassed Inventory.top_by.example.2  examples/inventory.mo:26:5\npassed Inventory.top_by.example.3  examples/inventory.mo:27:5\npassed Inventory.count_by.example.1  examples/inventory.mo:36:5\npassed Inventory.count_by.example.2  examples/inventory.mo:37:5\npassed Inventory.first_by.example.1  examples/inventory.mo:50:5\npassed Inventory.first_by.example.2  examples/inventory.mo:51:5\npassed Inventory.table.example.1  examples/inventory.mo:69:5\npassed Inventory.test.1  examples/inventory.mo:118:1\npassed Inventory.test.2  examples/inventory.mo:127:1\n10 passed, 0 failed, 0 stopped\n",
+      "runs": [
+        {
+          "wall_s": 0.038354963,
+          "user_s": 0.0339109999999998,
+          "system_s": 0.004238999999999882
+        },
+        {
+          "wall_s": 0.039430116,
+          "user_s": 0.027405000000001678,
+          "system_s": 0.011744999999999894
+        },
+        {
+          "wall_s": 0.039207605,
+          "user_s": 0.03119800000000339,
+          "system_s": 0.007800000000000029
+        },
+        {
+          "wall_s": 0.039793015,
+          "user_s": 0.027669000000003052,
+          "system_s": 0.011857999999999702
+        },
+        {
+          "wall_s": 0.038988222,
+          "user_s": 0.034863999999998896,
+          "system_s": 0.00386299999999995
+        },
+        {
+          "wall_s": 0.038049733,
+          "user_s": 0.030200999999998146,
+          "system_s": 0.007562999999999764
+        },
+        {
+          "wall_s": 0.037914628,
+          "user_s": 0.03768800000000283,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.037811096,
+          "user_s": 0.030047999999993635,
+          "system_s": 0.007514999999999716
+        },
+        {
+          "wall_s": 0.039228485,
+          "user_s": 0.030304999999998472,
+          "system_s": 0.00865899999999975
+        }
+      ],
+      "median_s": 0.038988222,
+      "min_s": 0.037811096,
+      "max_s": 0.039793015
+    },
+    {
+      "program": "examples/inventory.mo",
+      "command": "run",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "The three most valuable stocks:\nproduct    category  price  stock\nDesk lamp  office    24.50     40\nNotebook   office     3.20    300\nKettle     kitchen   39.90     12\n\nkitchen: 2\noffice: 2\nhome: 1\n\nOne from each category: Kettle, Desk lamp, Doormat\n",
+      "runs": [
+        {
+          "wall_s": 0.039311083,
+          "user_s": 0.023431999999999675,
+          "system_s": 0.015621000000000107
+        },
+        {
+          "wall_s": 0.041544176,
+          "user_s": 0.022486000000000672,
+          "system_s": 0.01873799999999992
+        },
+        {
+          "wall_s": 0.039286748,
+          "user_s": 0.02732899999999816,
+          "system_s": 0.011712000000000167
+        },
+        {
+          "wall_s": 0.038768638,
+          "user_s": 0.03082200000000057,
+          "system_s": 0.007706000000000213
+        },
+        {
+          "wall_s": 0.038613845,
+          "user_s": 0.030696000000006052,
+          "system_s": 0.007673999999999737
+        },
+        {
+          "wall_s": 0.037254445,
+          "user_s": 0.028807999999997946,
+          "system_s": 0.008231000000000321
+        },
+        {
+          "wall_s": 0.037612543,
+          "user_s": 0.03318099999999902,
+          "system_s": 0.004148999999999958
+        },
+        {
+          "wall_s": 0.040097645,
+          "user_s": 0.02786700000000053,
+          "system_s": 0.011942000000000341
+        },
+        {
+          "wall_s": 0.040357402,
+          "user_s": 0.03603700000000032,
+          "system_s": 0.004005000000000258
+        }
+      ],
+      "median_s": 0.039286748,
+      "min_s": 0.037254445,
+      "max_s": 0.041544176
+    },
+    {
+      "program": "examples/job-queue.mo",
+      "command": "check",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "",
+      "runs": [
+        {
+          "wall_s": 0.036035874,
+          "user_s": 0.027801000000000187,
+          "system_s": 0.007942999999999811
+        },
+        {
+          "wall_s": 0.037087498,
+          "user_s": 0.024540999999999258,
+          "system_s": 0.01223099999999988
+        },
+        {
+          "wall_s": 0.035952836,
+          "user_s": 0.02774000000000143,
+          "system_s": 0.007899999999999796
+        },
+        {
+          "wall_s": 0.035781702,
+          "user_s": 0.023673000000002276,
+          "system_s": 0.011835999999999736
+        },
+        {
+          "wall_s": 0.035459108,
+          "user_s": 0.019517999999997926,
+          "system_s": 0.015614000000000239
+        },
+        {
+          "wall_s": 0.034888049,
+          "user_s": 0.01923500000000189,
+          "system_s": 0.015387999999999735
+        },
+        {
+          "wall_s": 0.035114992,
+          "user_s": 0.03090999999999866,
+          "system_s": 0.0038640000000000896
+        },
+        {
+          "wall_s": 0.035594071,
+          "user_s": 0.01962699999999984,
+          "system_s": 0.015702000000000105
+        },
+        {
+          "wall_s": 0.036281363,
+          "user_s": 0.027990000000002624,
+          "system_s": 0.007979999999999876
+        }
+      ],
+      "median_s": 0.035781702,
+      "min_s": 0.034888049,
+      "max_s": 0.037087498
+    },
+    {
+      "program": "examples/job-queue.mo",
+      "command": "test",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "passed JobQueue.submit.promise.1  examples/job-queue.mo:39:3\npassed JobQueue.lease.promise.1  examples/job-queue.mo:55:3\npassed JobQueue.lease.example.1  examples/job-queue.mo:65:5\npassed JobQueue.lease.example.2  examples/job-queue.mo:66:5\npassed JobQueue.acknowledge.promise.1  examples/job-queue.mo:82:3\npassed JobQueue.fail.promise.1  examples/job-queue.mo:100:3\npassed JobQueue.fail.example.1  examples/job-queue.mo:108:5\npassed JobQueue.fail.example.2  examples/job-queue.mo:109:5\npassed JobQueue.fail.example.3  examples/job-queue.mo:110:5\npassed JobQueue.fail.example.4  examples/job-queue.mo:111:5\npassed JobQueue.expire.example.1  examples/job-queue.mo:121:5\npassed JobQueue.expire.example.2  examples/job-queue.mo:122:5\npassed JobQueue.test.1  examples/job-queue.mo:184:1\n13 passed, 0 failed, 0 stopped\n",
+      "runs": [
+        {
+          "wall_s": 0.050355589,
+          "user_s": 0.03856400000000093,
+          "system_s": 0.01156899999999994
+        },
+        {
+          "wall_s": 0.050447983,
+          "user_s": 0.038619000000000625,
+          "system_s": 0.011585999999999874
+        },
+        {
+          "wall_s": 0.051443472,
+          "user_s": 0.03147299999999831,
+          "system_s": 0.019671999999999912
+        },
+        {
+          "wall_s": 0.050431151,
+          "user_s": 0.050155999999994094,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.049214591,
+          "user_s": 0.04483199999999954,
+          "system_s": 0.004078999999999944
+        },
+        {
+          "wall_s": 0.049502688,
+          "user_s": 0.04928800000000422,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.049186716,
+          "user_s": 0.03668500000000563,
+          "system_s": 0.012236999999999831
+        },
+        {
+          "wall_s": 0.050678957,
+          "user_s": 0.04202200000000289,
+          "system_s": 0.008403999999999634
+        },
+        {
+          "wall_s": 0.051163355,
+          "user_s": 0.05089399999999955,
+          "system_s": 0.0
+        }
+      ],
+      "median_s": 0.050431151,
+      "min_s": 0.049186716,
+      "max_s": 0.051443472
+    },
+    {
+      "program": "examples/json-query.mo",
+      "command": "check",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "",
+      "runs": [
+        {
+          "wall_s": 0.022348681,
+          "user_s": 0.017669999999998964,
+          "system_s": 0.004418000000000255
+        },
+        {
+          "wall_s": 0.021794388,
+          "user_s": 0.021547999999999234,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.025268328,
+          "user_s": 0.016631000000000284,
+          "system_s": 0.008315000000000072
+        },
+        {
+          "wall_s": 0.02350087,
+          "user_s": 0.015472000000002595,
+          "system_s": 0.007735999999999965
+        },
+        {
+          "wall_s": 0.021878497,
+          "user_s": 0.01296299999999917,
+          "system_s": 0.008642000000000039
+        },
+        {
+          "wall_s": 0.021456917,
+          "user_s": 0.017697999999995773,
+          "system_s": 0.0035400000000000986
+        },
+        {
+          "wall_s": 0.021742476,
+          "user_s": 0.0085679999999968,
+          "system_s": 0.01285200000000053
+        },
+        {
+          "wall_s": 0.023487728,
+          "user_s": 0.02316199999999924,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.032938328,
+          "user_s": 0.020347000000001003,
+          "system_s": 0.012208000000000219
+        }
+      ],
+      "median_s": 0.022348681,
+      "min_s": 0.021456917,
+      "max_s": 0.032938328
+    },
+    {
+      "program": "examples/json-query.mo",
+      "command": "test",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "passed JsonQuery.parse.example.1  examples/json-query.mo:35:5\npassed JsonQuery.parse.example.2  examples/json-query.mo:36:5\npassed JsonQuery.parse.example.3  examples/json-query.mo:37:5\npassed JsonQuery.parse.example.4  examples/json-query.mo:38:5\npassed JsonQuery.parse.example.5  examples/json-query.mo:39:5\npassed JsonQuery.hex_value.example.1  examples/json-query.mo:98:5\npassed JsonQuery.hex_value.example.2  examples/json-query.mo:99:5\npassed JsonQuery.hex_value.example.3  examples/json-query.mo:100:5\npassed JsonQuery.pretty.example.1  examples/json-query.mo:199:5\npassed JsonQuery.pretty.example.2  examples/json-query.mo:200:5\npassed JsonQuery.quoted.example.1  examples/json-query.mo:224:5\npassed JsonQuery.quoted.example.2  examples/json-query.mo:225:5\npassed JsonQuery.at_path.example.1  examples/json-query.mo:256:5\npassed JsonQuery.at_path.example.2  examples/json-query.mo:261:5\npassed JsonQuery.at_path.example.3  examples/json-query.mo:262:5\npassed JsonQuery.test.1  examples/json-query.mo:312:1\n16 passed, 0 failed, 0 stopped\n",
+      "runs": [
+        {
+          "wall_s": 0.043500243,
+          "user_s": 0.03142400000000123,
+          "system_s": 0.011782999999999877
+        },
+        {
+          "wall_s": 0.038664413,
+          "user_s": 0.034610000000000696,
+          "system_s": 0.0038450000000000983
+        },
+        {
+          "wall_s": 0.045132683,
+          "user_s": 0.032562999999999676,
+          "system_s": 0.012211000000000194
+        },
+        {
+          "wall_s": 0.041941323,
+          "user_s": 0.022736000000001866,
+          "system_s": 0.018956000000000195
+        },
+        {
+          "wall_s": 0.040681427,
+          "user_s": 0.028227999999998588,
+          "system_s": 0.012097999999999942
+        },
+        {
+          "wall_s": 0.0386549,
+          "user_s": 0.03417800000000426,
+          "system_s": 0.0042719999999998315
+        },
+        {
+          "wall_s": 0.037855313,
+          "user_s": 0.03762400000000099,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.040052968,
+          "user_s": 0.031781999999999755,
+          "system_s": 0.007948999999999984
+        },
+        {
+          "wall_s": 0.053462554,
+          "user_s": 0.044950000000000045,
+          "system_s": 0.00817299999999932
+        }
+      ],
+      "median_s": 0.040681427,
+      "min_s": 0.037855313,
+      "max_s": 0.053462554
+    },
+    {
+      "program": "examples/json-query.mo",
+      "command": "run",
+      "arguments": [
+        "tags.0"
+      ],
+      "cwd": ".",
+      "stdin": "{\"name\":\"pen\",\"tags\":[\"a\",true,null],\"price\":1.5,\"none\":[],\"o\":{}}\n",
+      "expected_stdout": "\"a\"\n",
+      "runs": [
+        {
+          "wall_s": 0.038974257,
+          "user_s": 0.038703999999999184,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.038282334,
+          "user_s": 0.03383699999999834,
+          "system_s": 0.004230000000000178
+        },
+        {
+          "wall_s": 0.042106584,
+          "user_s": 0.0379870000000011,
+          "system_s": 0.003797999999999746
+        },
+        {
+          "wall_s": 0.040453579,
+          "user_s": 0.032162999999997055,
+          "system_s": 0.008039999999999825
+        },
+        {
+          "wall_s": 0.040633872,
+          "user_s": 0.02416900000000055,
+          "system_s": 0.016112999999999822
+        },
+        {
+          "wall_s": 0.03970809,
+          "user_s": 0.035481999999994684,
+          "system_s": 0.003942000000000334
+        },
+        {
+          "wall_s": 0.037713389,
+          "user_s": 0.029913000000000523,
+          "system_s": 0.007477999999999874
+        },
+        {
+          "wall_s": 0.043464503,
+          "user_s": 0.0313549999999978,
+          "system_s": 0.011757999999999935
+        },
+        {
+          "wall_s": 0.039044895,
+          "user_s": 0.03101000000000198,
+          "system_s": 0.007751999999999981
+        }
+      ],
+      "median_s": 0.03970809,
+      "min_s": 0.037713389,
+      "max_s": 0.043464503
+    },
+    {
+      "program": "examples/kv.mo",
+      "command": "check",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "",
+      "runs": [
+        {
+          "wall_s": 0.036814218,
+          "user_s": 0.028414000000001494,
+          "system_s": 0.00811900000000021
+        },
+        {
+          "wall_s": 0.036512315,
+          "user_s": 0.02415500000000037,
+          "system_s": 0.012077999999999811
+        },
+        {
+          "wall_s": 0.037034767,
+          "user_s": 0.02043300000000059,
+          "system_s": 0.01634700000000011
+        },
+        {
+          "wall_s": 0.048281799,
+          "user_s": 0.04396300000000508,
+          "system_s": 0.003999000000000308
+        },
+        {
+          "wall_s": 0.047061321,
+          "user_s": 0.031122000000003425,
+          "system_s": 0.01556000000000024
+        },
+        {
+          "wall_s": 0.035925942,
+          "user_s": 0.03169900000000325,
+          "system_s": 0.0039639999999998565
+        },
+        {
+          "wall_s": 0.035481111,
+          "user_s": 0.019562000000000523,
+          "system_s": 0.015649999999999942
+        },
+        {
+          "wall_s": 0.038039531,
+          "user_s": 0.026381000000000654,
+          "system_s": 0.011305999999999816
+        },
+        {
+          "wall_s": 0.036271145,
+          "user_s": 0.032013999999996656,
+          "system_s": 0.004001999999999839
+        }
+      ],
+      "median_s": 0.036814218,
+      "min_s": 0.035481111,
+      "max_s": 0.048281799
+    },
+    {
+      "program": "examples/kv.mo",
+      "command": "test",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "passed Kv.parse.example.1  examples/kv.mo:57:5\npassed Kv.parse.example.2  examples/kv.mo:58:5\npassed Kv.parse.example.3  examples/kv.mo:59:5\npassed Kv.parse.example.4  examples/kv.mo:60:5\npassed Kv.parse.example.5  examples/kv.mo:61:5\npassed Kv.parse.example.6  examples/kv.mo:62:5\npassed Kv.parse.example.7  examples/kv.mo:63:5\npassed Kv.apply.promise.1  examples/kv.mo:89:3\npassed Kv.increment.example.1  examples/kv.mo:122:5\npassed Kv.increment.example.2  examples/kv.mo:123:5\npassed Kv.increment.example.3  examples/kv.mo:124:5\npassed Kv.increment.example.4  examples/kv.mo:125:5\npassed Kv.expire.example.1  examples/kv.mo:147:5\npassed Kv.expire.example.2  examples/kv.mo:148:5\npassed Kv.expire.example.3  examples/kv.mo:149:5\npassed Kv.expire.example.4  examples/kv.mo:150:5\npassed Kv.test.1  examples/kv.mo:212:1\npassed Kv.test.2  examples/kv.mo:222:1\n18 passed, 0 failed, 0 stopped\n",
+      "runs": [
+        {
+          "wall_s": 0.040597004,
+          "user_s": 0.03225399999999823,
+          "system_s": 0.008062999999999931
+        },
+        {
+          "wall_s": 0.043320837,
+          "user_s": 0.03527199999999908,
+          "system_s": 0.007838000000000012
+        },
+        {
+          "wall_s": 0.044856805,
+          "user_s": 0.03648499999999899,
+          "system_s": 0.008108000000000004
+        },
+        {
+          "wall_s": 0.059479086,
+          "user_s": 0.05523399999999867,
+          "system_s": 0.003944999999999865
+        },
+        {
+          "wall_s": 0.048852288,
+          "user_s": 0.028334999999998445,
+          "system_s": 0.020239999999999814
+        },
+        {
+          "wall_s": 0.041160853,
+          "user_s": 0.029773999999996192,
+          "system_s": 0.011165000000000092
+        },
+        {
+          "wall_s": 0.050864115,
+          "user_s": 0.04638999999999527,
+          "system_s": 0.004216999999999693
+        },
+        {
+          "wall_s": 0.042375043,
+          "user_s": 0.029500000000005855,
+          "system_s": 0.012643000000000182
+        },
+        {
+          "wall_s": 0.040980873,
+          "user_s": 0.03261100000000283,
+          "system_s": 0.008153000000000077
+        }
+      ],
+      "median_s": 0.043320837,
+      "min_s": 0.040597004,
+      "max_s": 0.059479086
+    },
+    {
+      "program": "examples/kv.mo",
+      "command": "run",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "SET a 1\nINCR a\nget a\nINCR visits\nSET s x\nINCR s\nDEL a visits nope\nGET a\nEXPIRE a ten\nGET\n\nFLY away\nEXPIRE nokey 10\nEXPIRE s 100\nGET s\nEXPIRE s 0\nGET s\n",
+      "expected_stdout": "OK\n(integer) 2\n\"2\"\n(integer) 1\nOK\n(error) the value is not an integer\n(integer) 2\n(nil)\n(error) ten is not an integer\n(error) wrong number of arguments for GET\n(error) no command\n(error) unknown command FLY\n(integer) 0\n(integer) 1\n\"x\"\n(integer) 1\n(nil)\n",
+      "runs": [
+        {
+          "wall_s": 0.037477065,
+          "user_s": 0.03354799999999969,
+          "system_s": 0.0037279999999997315
+        },
+        {
+          "wall_s": 0.03713675,
+          "user_s": 0.022121000000002056,
+          "system_s": 0.014745000000000008
+        },
+        {
+          "wall_s": 0.037153578,
+          "user_s": 0.01637500000000003,
+          "system_s": 0.020468000000000153
+        },
+        {
+          "wall_s": 0.050372275,
+          "user_s": 0.0500419999999977,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.037533248,
+          "user_s": 0.03724499999999864,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.037954801,
+          "user_s": 0.02094600000000213,
+          "system_s": 0.01675699999999969
+        },
+        {
+          "wall_s": 0.037139756,
+          "user_s": 0.02213800000000532,
+          "system_s": 0.014759000000000189
+        },
+        {
+          "wall_s": 0.042442504,
+          "user_s": 0.026786999999998784,
+          "system_s": 0.01530699999999996
+        },
+        {
+          "wall_s": 0.037134144,
+          "user_s": 0.024588999999998862,
+          "system_s": 0.012294000000000693
+        }
+      ],
+      "median_s": 0.037477065,
+      "min_s": 0.037134144,
+      "max_s": 0.050372275
+    },
+    {
+      "program": "examples/notes-tool.mo",
+      "command": "check",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "",
+      "runs": [
+        {
+          "wall_s": 0.031463608,
+          "user_s": 0.02338100000000054,
+          "system_s": 0.007794000000000079
+        },
+        {
+          "wall_s": 0.030213372,
+          "user_s": 0.021373999999998006,
+          "system_s": 0.008550000000000058
+        },
+        {
+          "wall_s": 0.030557443,
+          "user_s": 0.025953000000001225,
+          "system_s": 0.00432599999999983
+        },
+        {
+          "wall_s": 0.040536579,
+          "user_s": 0.014530000000000598,
+          "system_s": 0.02179500000000001
+        },
+        {
+          "wall_s": 0.030175329,
+          "user_s": 0.014946999999999377,
+          "system_s": 0.014947999999999961
+        },
+        {
+          "wall_s": 0.032105363,
+          "user_s": 0.02782799999999952,
+          "system_s": 0.003975000000000062
+        },
+        {
+          "wall_s": 0.030626213,
+          "user_s": 0.030393999999994037,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.03399695,
+          "user_s": 0.03369199999999495,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.031017851,
+          "user_s": 0.023052999999997326,
+          "system_s": 0.007683999999999358
+        }
+      ],
+      "median_s": 0.031017851,
+      "min_s": 0.030175329,
+      "max_s": 0.040536579
+    },
+    {
+      "program": "examples/notes-tool.mo",
+      "command": "test",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "passed NotesTool.search_notes.promise.1  examples/notes-tool.mo:35:3\npassed NotesTool.test.1  examples/notes-tool.mo:63:1\npassed NotesTool.test.2  examples/notes-tool.mo:78:1\npassed NotesTool.test.3  examples/notes-tool.mo:84:1\n4 passed, 0 failed, 0 stopped\n",
+      "runs": [
+        {
+          "wall_s": 0.04967807,
+          "user_s": 0.03287900000000121,
+          "system_s": 0.016439000000000092
+        },
+        {
+          "wall_s": 0.032360347,
+          "user_s": 0.024110000000000298,
+          "system_s": 0.008036000000000154
+        },
+        {
+          "wall_s": 0.032672015,
+          "user_s": 0.025212999999997265,
+          "system_s": 0.0072030000000000705
+        },
+        {
+          "wall_s": 0.03501537,
+          "user_s": 0.025827999999997076,
+          "system_s": 0.008608999999999867
+        },
+        {
+          "wall_s": 0.032370765,
+          "user_s": 0.02411400000000441,
+          "system_s": 0.008037000000000294
+        },
+        {
+          "wall_s": 0.033029785,
+          "user_s": 0.02871900000000238,
+          "system_s": 0.00410300000000019
+        },
+        {
+          "wall_s": 0.032423842,
+          "user_s": 0.024159000000004482,
+          "system_s": 0.008052999999999866
+        },
+        {
+          "wall_s": 0.034880559,
+          "user_s": 0.030801000000003853,
+          "system_s": 0.003850000000000353
+        },
+        {
+          "wall_s": 0.034429548,
+          "user_s": 0.018962999999999397,
+          "system_s": 0.01517100000000049
+        }
+      ],
+      "median_s": 0.033029785,
+      "min_s": 0.032360347,
+      "max_s": 0.04967807
+    },
+    {
+      "program": "examples/rate-limit.mo",
+      "command": "check",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "",
+      "runs": [
+        {
+          "wall_s": 0.033753615,
+          "user_s": 0.016717999999997346,
+          "system_s": 0.01671800000000001
+        },
+        {
+          "wall_s": 0.034014888,
+          "user_s": 0.022470999999999464,
+          "system_s": 0.011235999999999802
+        },
+        {
+          "wall_s": 0.038111227,
+          "user_s": 0.029210000000002623,
+          "system_s": 0.00841499999999984
+        },
+        {
+          "wall_s": 0.042351022,
+          "user_s": 0.030581000000005076,
+          "system_s": 0.011467999999999812
+        },
+        {
+          "wall_s": 0.030460904,
+          "user_s": 0.030219999999999914,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.031087459,
+          "user_s": 0.019261000000000195,
+          "system_s": 0.011556999999999817
+        },
+        {
+          "wall_s": 0.029758053,
+          "user_s": 0.025235999999999592,
+          "system_s": 0.004205999999999932
+        },
+        {
+          "wall_s": 0.03658658,
+          "user_s": 0.0161329999999964,
+          "system_s": 0.020165999999999684
+        },
+        {
+          "wall_s": 0.030980215,
+          "user_s": 0.02629200000000509,
+          "system_s": 0.004381999999999664
+        }
+      ],
+      "median_s": 0.033753615,
+      "min_s": 0.029758053,
+      "max_s": 0.042351022
+    },
+    {
+      "program": "examples/rate-limit.mo",
+      "command": "test",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "passed RateLimit.new_limiter.example.1  examples/rate-limit.mo:28:5\npassed RateLimit.new_limiter.example.2  examples/rate-limit.mo:29:5\npassed RateLimit.new_limiter.example.3  examples/rate-limit.mo:30:5\npassed RateLimit.request.promise.1  examples/rate-limit.mo:39:3\npassed RateLimit.test.1  examples/rate-limit.mo:86:1\npassed RateLimit.test.2  examples/rate-limit.mo:98:1\n6 passed, 0 failed, 0 stopped\n",
+      "runs": [
+        {
+          "wall_s": 0.049692905,
+          "user_s": 0.04942100000000238,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.06100979,
+          "user_s": 0.04860599999999948,
+          "system_s": 0.01215199999999994
+        },
+        {
+          "wall_s": 0.058556719,
+          "user_s": 0.03887800000000041,
+          "system_s": 0.019439000000000206
+        },
+        {
+          "wall_s": 0.049483396,
+          "user_s": 0.03694799999999532,
+          "system_s": 0.012316000000000216
+        },
+        {
+          "wall_s": 0.048389342,
+          "user_s": 0.037053000000000225,
+          "system_s": 0.011115999999999904
+        },
+        {
+          "wall_s": 0.048526084,
+          "user_s": 0.040258999999998935,
+          "system_s": 0.008040999999999965
+        },
+        {
+          "wall_s": 0.048652108,
+          "user_s": 0.040377999999996916,
+          "system_s": 0.008075999999999972
+        },
+        {
+          "wall_s": 0.055790299,
+          "user_s": 0.05153200000000169,
+          "system_s": 0.0039639999999998565
+        },
+        {
+          "wall_s": 0.049779862,
+          "user_s": 0.03811100000000067,
+          "system_s": 0.011434000000000388
+        }
+      ],
+      "median_s": 0.049692905,
+      "min_s": 0.048389342,
+      "max_s": 0.06100979
+    },
+    {
+      "program": "examples/todo.mo",
+      "command": "check",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "",
+      "runs": [
+        {
+          "wall_s": 0.034915595,
+          "user_s": 0.02693700000000021,
+          "system_s": 0.007696999999999843
+        },
+        {
+          "wall_s": 0.037527538,
+          "user_s": 0.033109000000003164,
+          "system_s": 0.004138000000000197
+        },
+        {
+          "wall_s": 0.036922744,
+          "user_s": 0.03255999999999659,
+          "system_s": 0.004070000000000018
+        },
+        {
+          "wall_s": 0.035325379,
+          "user_s": 0.023366000000002884,
+          "system_s": 0.01168300000000011
+        },
+        {
+          "wall_s": 0.034625966,
+          "user_s": 0.030075999999993996,
+          "system_s": 0.004296999999999773
+        },
+        {
+          "wall_s": 0.034324819,
+          "user_s": 0.018912999999997737,
+          "system_s": 0.015131000000000228
+        },
+        {
+          "wall_s": 0.034383723,
+          "user_s": 0.0227740000000054,
+          "system_s": 0.011387000000000036
+        },
+        {
+          "wall_s": 0.035744368,
+          "user_s": 0.027568999999999733,
+          "system_s": 0.007877000000000134
+        },
+        {
+          "wall_s": 0.03738008,
+          "user_s": 0.02886599999999362,
+          "system_s": 0.008246999999999893
+        }
+      ],
+      "median_s": 0.035325379,
+      "min_s": 0.034324819,
+      "max_s": 0.037527538
+    },
+    {
+      "program": "examples/todo.mo",
+      "command": "test",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "passed Todo.parse_command.example.1  examples/todo.mo:41:5\npassed Todo.parse_command.example.2  examples/todo.mo:42:5\npassed Todo.parse_command.example.3  examples/todo.mo:43:5\npassed Todo.parse_command.example.4  examples/todo.mo:44:5\npassed Todo.parse_command.example.5  examples/todo.mo:45:5\npassed Todo.parse_items.example.1  examples/todo.mo:60:5\npassed Todo.parse_items.example.2  examples/todo.mo:62:5\npassed Todo.parse_items.example.3  examples/todo.mo:63:5\npassed Todo.format.example.1  examples/todo.mo:81:5\npassed Todo.apply.promise.1  examples/todo.mo:93:3\npassed Todo.apply.example.1  examples/todo.mo:100:5\npassed Todo.apply.example.2  examples/todo.mo:101:5\npassed Todo.apply.example.3  examples/todo.mo:102:5\npassed Todo.test.1  examples/todo.mo:140:1\npassed Todo.test.2  examples/todo.mo:151:1\n15 passed, 0 failed, 0 stopped\n",
+      "runs": [
+        {
+          "wall_s": 0.037618147,
+          "user_s": 0.037345999999999435,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.046748627,
+          "user_s": 0.03088899999999839,
+          "system_s": 0.015502000000000127
+        },
+        {
+          "wall_s": 0.044092884,
+          "user_s": 0.03586000000000311,
+          "system_s": 0.007969000000000115
+        },
+        {
+          "wall_s": 0.0378052,
+          "user_s": 0.026314999999996758,
+          "system_s": 0.0112779999999999
+        },
+        {
+          "wall_s": 0.0368452,
+          "user_s": 0.028480999999999312,
+          "system_s": 0.00813700000000006
+        },
+        {
+          "wall_s": 0.036261802,
+          "user_s": 0.03605200000000508,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.036002369,
+          "user_s": 0.023868999999997698,
+          "system_s": 0.011934000000000111
+        },
+        {
+          "wall_s": 0.037425628,
+          "user_s": 0.01859900000000181,
+          "system_s": 0.018599000000000032
+        },
+        {
+          "wall_s": 0.049109245,
+          "user_s": 0.040752000000004784,
+          "system_s": 0.008149999999999658
+        }
+      ],
+      "median_s": 0.037618147,
+      "min_s": 0.036002369,
+      "max_s": 0.049109245
+    },
+    {
+      "program": "examples/todo.mo",
+      "command": "run",
+      "arguments": [
+        "list"
+      ],
+      "cwd": "temporary empty directory",
+      "stdin": "",
+      "expected_stdout": "",
+      "runs": [
+        {
+          "wall_s": 0.045962,
+          "user_s": 0.04135399999999834,
+          "system_s": 0.004135000000000222
+        },
+        {
+          "wall_s": 0.035461501,
+          "user_s": 0.02733699999999928,
+          "system_s": 0.0078099999999996506
+        },
+        {
+          "wall_s": 0.035057869,
+          "user_s": 0.027030999999997363,
+          "system_s": 0.007722999999999924
+        },
+        {
+          "wall_s": 0.035616161,
+          "user_s": 0.030906000000001654,
+          "system_s": 0.004414999999999836
+        },
+        {
+          "wall_s": 0.035239606,
+          "user_s": 0.027187000000004957,
+          "system_s": 0.007767999999999997
+        },
+        {
+          "wall_s": 0.034898969,
+          "user_s": 0.026948999999994783,
+          "system_s": 0.007698999999999678
+        },
+        {
+          "wall_s": 0.033856564,
+          "user_s": 0.03360200000000191,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.0362539,
+          "user_s": 0.03596600000000194,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.034664025,
+          "user_s": 0.02578799999999859,
+          "system_s": 0.008595999999999826
+        }
+      ],
+      "median_s": 0.035239606,
+      "min_s": 0.033856564,
+      "max_s": 0.045962
+    },
+    {
+      "program": "examples/wc.mo",
+      "command": "check",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "",
+      "runs": [
+        {
+          "wall_s": 0.023011748,
+          "user_s": 0.018169000000000324,
+          "system_s": 0.004541999999999824
+        },
+        {
+          "wall_s": 0.018998329,
+          "user_s": 0.01870699999999914,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.018443971,
+          "user_s": 0.00910299999999964,
+          "system_s": 0.009103000000000083
+        },
+        {
+          "wall_s": 0.018644938,
+          "user_s": 0.01833899999999744,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.019084063,
+          "user_s": 0.018838999999999828,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.018593003,
+          "user_s": 0.013732000000004518,
+          "system_s": 0.004578000000000415
+        },
+        {
+          "wall_s": 0.026524354,
+          "user_s": 0.026286999999996397,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.018852454,
+          "user_s": 0.00929000000000002,
+          "system_s": 0.00929100000000016
+        },
+        {
+          "wall_s": 0.018232089,
+          "user_s": 0.017989000000000033,
+          "system_s": 0.0
+        }
+      ],
+      "median_s": 0.018852454,
+      "min_s": 0.018232089,
+      "max_s": 0.026524354
+    },
+    {
+      "program": "examples/wc.mo",
+      "command": "test",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "passed Wc.count.example.1  examples/wc.mo:14:5\npassed Wc.count.example.2  examples/wc.mo:15:5\npassed Wc.count.example.3  examples/wc.mo:16:5\npassed Wc.row.example.1  examples/wc.mo:32:5\npassed Wc.test.1  examples/wc.mo:62:1\n5 passed, 0 failed, 0 stopped\n",
+      "runs": [
+        {
+          "wall_s": 0.037067934,
+          "user_s": 0.022055999999999187,
+          "system_s": 0.01470400000000005
+        },
+        {
+          "wall_s": 0.030436372,
+          "user_s": 0.025911000000000683,
+          "system_s": 0.004318000000000044
+        },
+        {
+          "wall_s": 0.03062768,
+          "user_s": 0.022751000000003074,
+          "system_s": 0.007583999999999591
+        },
+        {
+          "wall_s": 0.034904172,
+          "user_s": 0.026949000000001888,
+          "system_s": 0.007700000000000262
+        },
+        {
+          "wall_s": 0.030245873,
+          "user_s": 0.01865699999999748,
+          "system_s": 0.011194000000000148
+        },
+        {
+          "wall_s": 0.029320517,
+          "user_s": 0.025456999999995844,
+          "system_s": 0.0036359999999997505
+        },
+        {
+          "wall_s": 0.029111358,
+          "user_s": 0.02066899999999805,
+          "system_s": 0.008268000000000164
+        },
+        {
+          "wall_s": 0.031654046,
+          "user_s": 0.019649999999998613,
+          "system_s": 0.011788999999999827
+        },
+        {
+          "wall_s": 0.029701275,
+          "user_s": 0.021061000000003105,
+          "system_s": 0.008346000000000409
+        }
+      ],
+      "median_s": 0.030436372,
+      "min_s": 0.029111358,
+      "max_s": 0.037067934
+    },
+    {
+      "program": "examples/wc.mo",
+      "command": "run",
+      "arguments": [
+        "tests/golden/sample-wc/data/a.txt",
+        "tests/golden/sample-wc/data/b.txt"
+      ],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "      2       3      14 tests/golden/sample-wc/data/a.txt\n      1       1       6 tests/golden/sample-wc/data/b.txt\n      3       4      20 total\n",
+      "runs": [
+        {
+          "wall_s": 0.031410263,
+          "user_s": 0.026689000000001073,
+          "system_s": 0.0044480000000000075
+        },
+        {
+          "wall_s": 0.031084506,
+          "user_s": 0.011548000000001224,
+          "system_s": 0.019247000000000014
+        },
+        {
+          "wall_s": 0.030078045,
+          "user_s": 0.02608899999999892,
+          "system_s": 0.0037280000000001756
+        },
+        {
+          "wall_s": 0.033413354,
+          "user_s": 0.028967999999998995,
+          "system_s": 0.004137999999999753
+        },
+        {
+          "wall_s": 0.031269496,
+          "user_s": 0.026591000000003362,
+          "system_s": 0.0044319999999999915
+        },
+        {
+          "wall_s": 0.030003555,
+          "user_s": 0.02552400000000432,
+          "system_s": 0.00425399999999998
+        },
+        {
+          "wall_s": 0.030877249,
+          "user_s": 0.03060100000000432,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.030014066,
+          "user_s": 0.01856300000000033,
+          "system_s": 0.01113799999999987
+        },
+        {
+          "wall_s": 0.029636585,
+          "user_s": 0.018380999999997982,
+          "system_s": 0.011027999999999594
+        }
+      ],
+      "median_s": 0.030877249,
+      "min_s": 0.029636585,
+      "max_s": 0.033413354
+    },
+    {
+      "program": "bench/performance/list-building.mo",
+      "command": "run",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "100000 4999950000\n",
+      "runs": [
+        {
+          "wall_s": 0.145784926,
+          "user_s": 0.12982799999999983,
+          "system_s": 0.015738999999999947
+        },
+        {
+          "wall_s": 0.145235878,
+          "user_s": 0.13289999999999935,
+          "system_s": 0.012081999999999926
+        },
+        {
+          "wall_s": 0.140769487,
+          "user_s": 0.12848400000000026,
+          "system_s": 0.012045000000000083
+        },
+        {
+          "wall_s": 0.146946911,
+          "user_s": 0.13083600000000217,
+          "system_s": 0.01585900000000029
+        },
+        {
+          "wall_s": 0.141433857,
+          "user_s": 0.13333699999999737,
+          "system_s": 0.007845999999999798
+        },
+        {
+          "wall_s": 0.146169546,
+          "user_s": 0.1340099999999964,
+          "system_s": 0.01183000000000023
+        },
+        {
+          "wall_s": 0.140913311,
+          "user_s": 0.1406069999999957,
+          "system_s": 0.0
+        },
+        {
+          "wall_s": 0.141244628,
+          "user_s": 0.128783999999996,
+          "system_s": 0.01207400000000014
+        },
+        {
+          "wall_s": 0.142528881,
+          "user_s": 0.1381680000000003,
+          "system_s": 0.004066000000000791
+        }
+      ],
+      "median_s": 0.142528881,
+      "min_s": 0.140769487,
+      "max_s": 0.146946911
+    },
+    {
+      "program": "bench/performance/map-updates.mo",
+      "command": "run",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "1000 100000 100\n",
+      "runs": [
+        {
+          "wall_s": 0.181625923,
+          "user_s": 0.17729500000000087,
+          "system_s": 0.00402900000000006
+        },
+        {
+          "wall_s": 0.182990401,
+          "user_s": 0.17434300000000036,
+          "system_s": 0.007934000000000108
+        },
+        {
+          "wall_s": 0.178220774,
+          "user_s": 0.16988399999999615,
+          "system_s": 0.008090000000000153
+        },
+        {
+          "wall_s": 0.181839485,
+          "user_s": 0.17352300000000298,
+          "system_s": 0.008070999999999717
+        },
+        {
+          "wall_s": 0.178864788,
+          "user_s": 0.16646599999999978,
+          "system_s": 0.012180000000000302
+        },
+        {
+          "wall_s": 0.181339389,
+          "user_s": 0.1729479999999981,
+          "system_s": 0.00804399999999994
+        },
+        {
+          "wall_s": 0.209921559,
+          "user_s": 0.1934220000000053,
+          "system_s": 0.01612200000000019
+        },
+        {
+          "wall_s": 0.18007657,
+          "user_s": 0.17580200000000445,
+          "system_s": 0.0039959999999998885
+        },
+        {
+          "wall_s": 0.178523404,
+          "user_s": 0.17425599999999974,
+          "system_s": 0.003961999999999577
+        }
+      ],
+      "median_s": 0.181339389,
+      "min_s": 0.178220774,
+      "max_s": 0.209921559
+    },
+    {
+      "program": "bench/performance/text-processing.mo",
+      "command": "run",
+      "arguments": [],
+      "cwd": ".",
+      "stdin": "",
+      "expected_stdout": "30000 130000\n",
+      "runs": [
+        {
+          "wall_s": 0.061034768,
+          "user_s": 0.05320199999999886,
+          "system_s": 0.007601999999999887
+        },
+        {
+          "wall_s": 0.061108788,
+          "user_s": 0.048694000000001125,
+          "system_s": 0.012173000000000211
+        },
+        {
+          "wall_s": 0.06166291,
+          "user_s": 0.046040000000004966,
+          "system_s": 0.015346999999999777
+        },
+        {
+          "wall_s": 0.063212634,
+          "user_s": 0.05511699999999564,
+          "system_s": 0.007874000000000159
+        },
+        {
+          "wall_s": 0.060103216,
+          "user_s": 0.05549299999999846,
+          "system_s": 0.004268999999999856
+        },
+        {
+          "wall_s": 0.061470911,
+          "user_s": 0.057151000000004615,
+          "system_s": 0.004081999999999919
+        },
+        {
+          "wall_s": 0.062285678,
+          "user_s": 0.04957799999999679,
+          "system_s": 0.012394999999999712
+        },
+        {
+          "wall_s": 0.058954413,
+          "user_s": 0.04186299999999932,
+          "system_s": 0.016745000000000232
+        },
+        {
+          "wall_s": 0.059543607,
+          "user_s": 0.04745199999999983,
+          "system_s": 0.011862999999999957
+        }
+      ],
+      "median_s": 0.061108788,
+      "min_s": 0.058954413,
+      "max_s": 0.063212634
+    }
+  ]
+}
