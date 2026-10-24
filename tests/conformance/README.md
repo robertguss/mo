@@ -46,7 +46,9 @@ programs pin the complete CLI error, including its locations and fixes.
   by commas (D280): a function in a Python driver such as
   `ci/check_cli.py:promise_selection`, a function in a C unit test such as
   `tests/test_format.c:check_source`, or a Makefile target such as
-  `Makefile:grammar`. Those checks are not copied into goldens.
+  `Makefile:grammar`. A library function in `lib/`, such as `lib/json.mo:to_decimal`,
+  also counts: the drivers group runs every `lib/` file's examples and tests with `mo test`.
+  Those checks are not copied into goldens.
 - `cost` lists the C unit tests, `tests/test_*.c` or `tests/test_*.c:TEST`,
   that check the semantics of an operation whose cost the block promises
   (D281). The cost itself is not measured; work and allocation counters are
@@ -138,6 +140,17 @@ host failures, future-version claims, or confirmed compiler limitations.
 Multiline case interpolation and direct calls on a nullary case such as
 `Equal.to_text` now have the `txt-interpolation-case` and
 `lang-dot-calls-cases` programs; `ref-case-receivers` adds coverage of the latter.
+
+## The last four gaps
+
+MO-140 closed the four gaps left on main `22bf10b`. `12/1` names the formatter
+checks it cited as drivers. `14/1`'s gap only pointed at
+`docs/status/section-14-inventory.md`, the record of MO-135's probe; its programs
+cover the block. `14/17` closed when reference 14 adopted maximal invalid
+subparts (D291) and `cap-console-stdin-invalid` gained inputs where that rule
+differs from one U+FFFD per run. `14/22` closed when reference 14 said
+`to_decimal` gives `None` past 18 decimal places and never rounds (D295); it
+cites `lib/json.mo`'s `to_decimal` examples. No row has a gap.
 
 ## Other drivers, cost and untestable claims
 

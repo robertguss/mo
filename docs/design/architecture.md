@@ -1000,8 +1000,10 @@ the eight with a `main` run through this entry path. Every Files and ReadFiles
 operation lowers, with `walk` written in Mo. Set, Unicode16, Char, Byte.to_int,
 List.sum and the remaining section 14 Int, Float and Bytes primitives also
 lower. BigInt's abs/min/max/pow/floor_div/floor_mod/to_int and Random.int/seeded
-also lower (#186). Env.get/of, Ordering/Entry/Map text conversion, Ordering
-comparison and qualified Int.compare lower and run (#189, MO-116).
+also lower (#186). Env.get/of, Ordering/Entry/Map text conversion and Ordering
+comparison lower and run (#189, MO-116). Qualified `T.to_text` and `T.compare`,
+called or taken as values, lower through the same Text or Order proof as the dot
+form for every type with the ability (#208, D285).
 `docs/status/golden-gaps.md` distinguishes working routes without golden
 programs from other gaps; `src/lower/expressions.c` owns native dispatch.
 
@@ -1115,9 +1117,11 @@ retain written evaluation order; `abs` of Int's minimum stops with Core's Int
 overflow, not a lowering refusal. Native adapters keep source spans/closure names
 and the existing creation-prefix restrictions. The remaining section 14 Int,
 Float and Bytes primitives also have adapters, as do Byte.to_int and List.sum.
-Source-native dispatch is separate from primitive implementation in C;
-`Int.compare` has a checker signature and reuses native Order lowering without
-adding a primitive.
+Source-native dispatch is separate from primitive implementation in C.
+Qualified `to_text` and `compare`, including `Int.compare`, carry the ability
+proof on their own checked row and reuse the dot form's lowering without adding
+a primitive (#208, D285); a name that is both a type and its only value, such as
+`Unit`, is the type when the call passes the qualified form's arguments (D297).
 BigInt's seven native adapters and Random's two IO adapters are implemented
 (#186).
 Function instances retain requirement
@@ -2359,6 +2363,7 @@ among them:
 | Library | `mo test` on the library's own examples, promises and tests; the trusted primitives against their oracles (4.5) |
 | Small critical C functions | CBMC proofs of memory safety and of no overflow: checked arithmetic, Decimal's products and quotients, UTF-8 decoding, lexical path containment, path resolution after normalize, hash-table probing, reference count updates |
 | The whole toolchain | a golden corpus of programs with their expected output and exit status, and Phase 2's agent benchmark |
+| The reference | `tests/conformance/rules.tsv`, which maps every reference block to golden programs, exact errors, other drivers, cost tests or an untestable reason, and fails on an unmapped or changed block; `sort`'s n log n cost is measured by counting VM instructions (`tests/test_lower.c`, D294) |
 
 **Reference count updates.** `cbmc/refcount.c` proves duplication and drop's enqueue transition
 for every nonzero 32-bit count, including saturation at the immortal count and the transition
@@ -2429,14 +2434,15 @@ The recorded hour-long fuzz runs cover 22 sources and a large-bytecode variant,
 23 runs with no crash (`docs/status/v3-fuzz-log.md`). CBMC covers the reader,
 arena, verifier transfer functions, arithmetic and UTF-8, paths, reference
 count updates and hash probing within the bounds in `cbmc/README.md` (D274).
-These are bounded results, not proofs of the whole VM. Benchmark v0's 20 tasks
-and first round are frozen; the round is in progress in
-`learnability/bench-v0-round-1/`, not yet published on main. Release command
-timings for the twelve samples and three workloads are recorded in
-`bench/performance/` (#185), not a new speed gate. The three real
-tools' final round passed 5 of 6 attempts (`learnability/tools-final/results.md`);
-the million-program differential target and Phase 2's other remaining items
-are not implied by that result.
+These are bounded results, not proofs of the whole VM. One million generated
+Core programs agreed between the VM and Lean, run by hand on main `267370f`
+(#190, `docs/status/mo119-core-differential.md`). Benchmark v0's 20 tasks are
+frozen; rounds 1 to 3 are in `learnability/bench-v0-round-N/` (#193, #210,
+#215), and round 3 fixed 37 of 38 compile errors on the next attempt (D298).
+Release command timings for the twelve samples and three workloads are recorded
+in `bench/performance/` (#185), not a new speed gate. The three real tools'
+final round passed 5 of 6 attempts (`learnability/tools-final/results.md`), and
+maintained copies in `tools/` run in the `drivers` group (MO-139).
 
 ## 12. Phase 2's streams and their interfaces
 
@@ -3081,7 +3087,6 @@ rather than supplying an unproven order or reporting a guessed cycle.
 types, in written order (reference 11.2).
 Direct `Console.print` reads its operation
 and named input type from `base/hostops.def`, with the receiver explicit.
-Map expressions still report E1103.
 Spec-only capability operations check in spec bodies and their lambdas, never
 in constants or ordinary functions; unsupported lowering routes remain E1150.
 `where`

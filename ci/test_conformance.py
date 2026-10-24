@@ -110,6 +110,14 @@ class ConformanceCheck(unittest.TestCase):
         self.index.write_text(HEADER +
                               "3/1\t\t\t\t\tMakefile:grammar\n")
         self.rejected("3/1: no test grammar in Makefile")
+        (self.root / "lib").mkdir()
+        (self.root / "lib/json.mo").write_text("module Json\n\nfn to_decimal(n: Int) : Int\n"
+                                               "  n\nend\n")
+        self.index.write_text(HEADER + "3/1\t\t\t\t\tlib/json.mo:to_decimal\n")
+        self.assertEqual(self.command().returncode, 0)
+        (self.root / "lib/json.mo").write_text("module Json\n\nfn to_number(n: Int) : Int\n"
+                                               "  n\nend\n")
+        self.rejected("3/1: no test to_decimal in lib/json.mo")
 
     def test_section_report_includes_subsections_and_exact_diagnostics(self):
         self.reference.write_text("## 3. Values\n\nValues never change.\n\n"
