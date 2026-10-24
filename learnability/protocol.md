@@ -89,8 +89,7 @@ whatever its kind:
 
 A task is frozen only when its reference solution, written by the task's author, checks with no
 diagnostic and passes all of its hidden tests on the frozen `mo`, and a deliberately broken
-solution fails at least one. So no task needs an unfinished form; `bench/tools/README.md` holds
-back the tools' rounds for the same reason.
+solution fails at least one. So no task needs an unfinished form.
 
 ## 4. Model graders check the tests
 

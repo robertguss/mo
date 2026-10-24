@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Runs the CBMC proofs in cbmc/ (make cbmc): the bytecode reader (reader.c), the arena (arena.c),
 # the bytecode verifier (verify.c), the primitives' arithmetic and UTF-8 (decimal.c, number.c,
-# text.c, unicode.c), and lexical path containment (path.c). Each proof checks one function
-# against its specification, with the functions it calls replaced by their models (cbmc/README.md).
+# text.c, unicode.c), lexical path containment (path.c), path resolution (resolve.c,
+# resolve-kernel.c), reference counts (refcount.c) and hash-table probing (table.c). Each proof
+# checks one function against its specification, with the functions it calls replaced by their
+# models (cbmc/README.md).
 #
 #   bash cbmc/prove.sh [proof...]           with no names, every proof
 #   bash cbmc/prove.sh --reach [proof...]   check instead that every block of each proved

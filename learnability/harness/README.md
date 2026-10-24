@@ -50,8 +50,7 @@ and a folder in `.pending/`, and its run is not in the log.
   `version` record (a usage mistake, such as `mo check` with no file, exits 2 and prints nothing)
   checked no program, and logging it would count as a run that fixed every error. A `fix` that
   exits 2 is left out for the same reason. Both are still in `runs/`. Every other `fix` is
-  logged, although on this build it changes nothing (E1400); protocol section 7 counts the errors
-  that moves to `by_fix`.
+  logged. Protocol section 7 counts the errors that moves to `by_fix`.
 - **A file that can't be read isn't logged either.** A misspelt name (`mo check mian.mo`) gives
   E0034 with a `file` of `null`: that run read no program, `tally`'s task text doesn't say what
   function such an error is in, and the next correct run would count it as fixed on the first

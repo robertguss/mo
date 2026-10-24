@@ -209,8 +209,7 @@ mo_infer_function(struct mo_arena *arena, const struct mo_module_interfaces *int
                   const struct mo_signatures *signatures, uint32_t function,
                   struct mo_diags *diags);
 
-/* Checked-program contract for lower. PROVISIONAL layout while checking is
- * completed. mo_check fills these records only for its certified subset;
+/* Checked-program contract for lower. mo_check fills these records;
  * unfinished stages return E1103. None of the intermediate APIs above
  * certifies these records.
  * This is an in-memory compiler interface, not a serialized or stable ABI. */
@@ -571,12 +570,12 @@ struct mo_program {
     struct mo_checked_entry entry;
 };
 
-/* Composes the implemented checks, returning a lowering-ready program for
- * the certified subset or NULL with diagnostics, never
- * a partially certified result. set must satisfy mo_resolve_modules' input
- * contract. Use the explicit source-stage stack. The current skeleton supports
- * generic functions with scoped requirement proofs, scalar expressions/operators, direct/indirect
- * calls, records/choices and fields, normalized patterns, tuples/lists, conditionals, loops, early
+/* Composes the implemented checks, returning a lowering-ready program or NULL
+ * with diagnostics, never a partially checked result. set must satisfy
+ * mo_resolve_modules' input contract. Use the explicit source-stage stack.
+ * Checking covers generic functions with scoped requirement proofs, scalar
+ * expressions/operators, direct/indirect calls, records/choices and fields, normalized
+ * patterns, tuples/lists, conditionals, loops, early
  * exits/asserts, capturing lambdas, lazy Option defaults and nearest-function/lambda try with
  * unique error wrapping. Native signatures use the shared tables; operators,
  * ability dot calls and interpolation retain native/derived/custom/parameter proofs. Source

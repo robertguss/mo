@@ -108,7 +108,7 @@ Earlier, with `List.all?` checked, lowered and run (plus lowering dispatch for
 
 None: all 12 samples pass `mo check` with 0 errors.
 
-## Newly exposed blockers
+## Unblocked forms (history)
 
 - expenses: `List.max` (`70:56`) clears, exposing `Map.entries` (`59:7`) and
   `List.zip` (`73:25`) in lowering; all three now lower. The sample passes
@@ -119,7 +119,7 @@ None: all 12 samples pass `mo check` with 0 errors.
 - job-queue: `List.find` (`71:26`) clears. Lowering then needed `List.to_map`,
   `Map.has?` and `Map.keys`, which now lower to their existing Core primitives.
   The sample passes `mo check` (including its anchors) and its 8 examples and 1
-  test pass; its promises still stop at E1400 (no input generator, M9).
+  test pass.
 - json-query: `Char.ascii_digit?` (`62:28`) clears, and so do the `Int.to_char`
   and `Map.empty?` calls behind it; the sample runs and passes its examples and
   tests with 0 errors.

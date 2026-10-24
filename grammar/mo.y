@@ -1,8 +1,8 @@
-/* The executable grammar of Mo, Language Reference v0.1 (draft).
+/* The executable grammar of Mo, Language Reference v0.1.
  *
  * This file is the authority on what Mo's syntax accepts; the reference's
  * grammar summary is written from it. Bison builds an LR(1) parser from it and
- * fails the build on any conflict (%expect 0 and %expect-rr 0), and the grammar
+ * fails the build on any conflict (%expect 0), and the grammar
  * declares no operator precedence: every precedence level is its own rule. A
  * grammar Bison accepts that way is unambiguous, which is what decision D33
  * asks of Mo.
@@ -522,7 +522,7 @@ text
     | TEXT_HEAD expr text_rest              { $$ = ADD(ADD(MK(K_TEXT_INTERPOLATED, @$, $1), $2), $3); }
     ;
 
-/* The rest of an interpolated text, as one list that `text` flattens. */
+/* The rest of an interpolated text: a right-nested spine of mid/expr pairs ending in a tail. */
 text_rest
     : TEXT_TAIL                             { $$ = $1; }
     | TEXT_MID expr text_rest               { $$ = MK(K_TEXT_INTERPOLATED, @$, $1, $2, $3); }

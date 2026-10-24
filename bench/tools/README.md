@@ -33,10 +33,6 @@ fence closes, indented reference definitions and links in headings (linkcheck); 
 the title, how a long section splits, and `--limit` above 0 (notioncopy); and that every error is
 reported on standard error (all three).
 
-No round can start yet: at the frozen commit, `mo` reports E1150 (not lowered yet) for
-`Files.entries`, `Files.exists?` and `Files.make_folder`, and `walk` isn't in scope, so no Mo
-program can list a folder's kinds of entries or make OUT. Lowering them comes first.
-
 ## Grading
 
 ```sh

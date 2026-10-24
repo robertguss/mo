@@ -1,6 +1,6 @@
 /* Fuzzes the argument parser: the input's zero bytes split it into arguments.
  * Whatever arrives, the parser must return a known command without tripping
- * an assertion or a sanitizer. */
+ * an assertion or a sanitizer. Also fuzzes diagnostic and test-result renderers. */
 #include "tools/tools.h"
 
 #include "base/codes.h"
