@@ -722,7 +722,9 @@ some names by type:
 - **A dot call** `x.f(...)` is resolved once `x`'s type is known: in the module
   that declares that type first, then among the names in scope (reference
   5.4). A field of `x`'s record wins where it's visible. When the field holds a
-  function, `x.f(a)` calls it. It's enough to know the type's constructor:
+  function, `x.f(a)` calls it, and `x.f()` calls it with no arguments. Where
+  `f` resolves to a function that takes only the receiver, `x.f()` is E0095,
+  whose fix removes the parentheses. It's enough to know the type's constructor:
   `var items = []` followed by `items.append(x)` finds `append` in `List`,
   even before the element type is known. If `x`'s type is still unknown when
   the body's other constraints have been solved, that's an error: give `x` a

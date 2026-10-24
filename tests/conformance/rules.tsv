@@ -57,8 +57,8 @@ rule	accepts	refuses	stops	gap
 5.1/2	ref-functions	e0042,e0055		
 5.2/1	ref-functions	e0012,e0021,e0055,e0077		
 5.3/1	lang-recursion-tail			
-5.4/1	lang-dot-calls,lang-dot-calls-cases,ref-abilities			x.f() is accepted when f takes only the receiver, which this rule refuses (MO-141); see docs/status/golden-gaps.md.
-5.4/2	ref-functions,mod-hidden-customized			
+5.4/1	lang-dot-calls,lang-dot-calls-cases,ref-abilities	e0095,e0095-deferred		
+5.4/2	lang-dot-calls,ref-functions,mod-hidden-customized			
 5.5/1	lang-generic-functions	e0081		
 5.5/2	lang-enum-tree	e0083		
 5.6/1	lang-closures,lang-generic-functions			
@@ -228,7 +228,7 @@ C/13	col-build-with-var	e0056
 C/14	lang-bindings	e0051		
 C/15	ref-shout	e0050-print		
 C/16	txt-interpolation	e0075		
-C/17	lang-dot-calls			x.f() is accepted when f takes only the receiver, which reference 5.4 refuses (MO-141); see docs/status/golden-gaps.md.
+C/17	lang-dot-calls	e0095,e0095-deferred		
 C/18	lang-abilities-text-forms	e0003-to-string,e0050-str		
 C/19	ref-functions	e0031-def		
 C/20	lang-records,lang-dot-calls	e0031-class,e0050-self		

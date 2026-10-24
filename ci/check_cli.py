@@ -395,8 +395,8 @@ def fake_capability_promises(binary):
             'args: Args.of([]), result: 0\n'
             'forbids files: Files.in_memory({}), console: Console.fake(), clock: Clock.fixed(t0), '
             'args: Args.of([]), result: 1\nend\n'
-            '_names = files.list(".")\n_line = console.read_line()\n_now = clock.now()\n'
-            '_words = args.list()\n0\nend\n'
+            '_names = files.list(".")\n_line = console.read_line\n_now = clock.now\n'
+            '_words = args.list\n0\nend\n'
             't0 = Time.parse("1970-01-01T00:00:00Z") or stop "the time is written correctly"\n' + tail)
         items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
         assert [(r['name'], r['outcome']) for r in items[1:-1]] == [

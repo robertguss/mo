@@ -19,12 +19,7 @@ retained as language limitations.
 
 ## Refused by the reference, accepted by the checker
 
-Reference 5.4 says to write `x.f`, not `x.f()`, and appendix C lists `x.f()` as a refused
-spelling. On main `fc53746`, `mo check` accepts `3.twice()`, `[1, 2].size()` and
-`"ab".trim().byte_count()`, and `mo run` runs them. MO-141 tracks the refusal. Until it lands,
-no fixture pins `x.f()`.
-
-A specification followed directly by its code, with no blank line, is also accepted, and
+A specification followed directly by its code, with no blank line, is accepted, and
 `mo format` leaves it unchanged. Reference 12 places a blank line there but does not say whether
 leaving it out is refused or formatted.
 
