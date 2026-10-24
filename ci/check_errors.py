@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Every error code in src/base/codes.h has a test of its exact message.
+"""Every error code has a message test or a documented reachability exemption.
 
 Run from the repository root: python3 ci/check_errors.py MO...
 
@@ -13,8 +13,10 @@ big to commit has a file `generated` naming its generator below; the source is t
 temporary folder and checked as `main.mo` from inside it.
 
 Codes that no source program can raise (Core text, bytecode, internal failures) are listed in
-tests/errors/unit.tsv with the unit test that pins each one. Every code must be in exactly one of
-the two places, and the source cases are never regenerated: edit `expected` by hand. A case with a file
+tests/errors/unit.tsv with the unit test that pins each one. An UNREACHABLE reason instead names
+a document that explains the bound and the code's disposition; it is not counted as a test.
+Every code must be in exactly one place, and the source cases are never regenerated: edit
+`expected` by hand. A case with a file
 `library-dependent` fills a limit that lib/'s own files also use, so it compares everything in
 `expected` but its numbers and the width of its runs of spaces.
 """
@@ -236,24 +238,25 @@ def check_cases(binary, table):
 
 def check_units(table, seen):
     units = {}
-    untested = []
+    unreachable = {}
     for line in (errors / "unit.tsv").read_text().splitlines():
         if not line or line.startswith("#"):
             continue
         code, test, reason = line.split("\t")
         number = int(code[1:])
-        assert number in table and number not in seen and number not in units, line
-        if reason.startswith("UNTESTED:"):
-            # Nothing raises it and no test pins it yet; the gate keeps the gap visible.
-            untested.append(code)
-            units[number] = test
-            continue
+        assert number in table and number not in seen and number not in units \
+            and number not in unreachable, line
+        assert not reason.startswith("UNTESTED:"), f"{code} has no message test: {reason}"
         text = (root / test).read_text()
         assert f"MO_CODE_{table[number]}" in text or code in text, \
             f"{test} does not name {code}"
         assert reason.strip(), line
+        if reason.startswith("UNREACHABLE:"):
+            assert test.endswith(".md"), f"{code} needs a reachability explanation"
+            unreachable[number] = reason
+            continue
         units[number] = test
-    return units, untested
+    return units, unreachable
 
 
 def main():
@@ -262,12 +265,13 @@ def main():
     assert binaries, "usage: check_errors.py MO..."
     for binary in binaries:
         seen = check_cases(pathlib.Path(binary).resolve(), table)
-    units, untested = check_units(table, seen)
-    missing = sorted(set(table) - seen - set(units))
+    units, unreachable = check_units(table, seen)
+    missing = sorted(set(table) - seen - set(units) - set(unreachable))
     assert not missing, "codes with no test: " + ", ".join(f"E{n:04d}" for n in missing)
-    if untested:
-        print("registry only, with no test that raises them: " + ", ".join(untested))
-    print(f"{len(seen)} codes by message, {len(units)} by unit test, of {len(table)}")
+    for number, reason in unreachable.items():
+        print(f"E{number:04d} {reason}")
+    print(f"{len(seen)} codes by message, {len(units)} by unit test, "
+          f"{len(unreachable)} unreachable, of {len(table)}")
 
 
 main()

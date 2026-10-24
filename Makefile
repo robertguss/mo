@@ -285,6 +285,24 @@ $(BUILD)/debug/tests/%.test: $(BUILD)/debug/tests/%.o $(call objects,$(BUILD)/de
 $(BUILD)/sanitize/tests/%.test: $(BUILD)/sanitize/tests/%.o $(call objects,$(BUILD)/sanitize,$(LIB_SOURCES))
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
+# Only the compiler-fault test substitutes these two module boundaries.
+COMPILER_FAULT_SOURCES := src/core/check.c src/codegen/compile.c
+COMPILER_FAULT_RENAMES := -Dmo_arena_allocate_array=mo_compiler_fault_allocate_array \
+	-Dmo_bytecode_write=mo_compiler_fault_bytecode_write
+$(BUILD)/debug/compiler-faults/%.o: src/%.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) $(COMPILER_FAULT_RENAMES) -c $< -o $@
+
+$(BUILD)/sanitize/compiler-faults/%.o: src/%.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) $(COMPILER_FAULT_RENAMES) -c $< -o $@
+
+$(BUILD)/debug/tests/test_compiler_faults.test: $(BUILD)/debug/tests/test_compiler_faults.o $(call objects,$(BUILD)/debug,$(filter-out $(COMPILER_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/debug/compiler-faults/%.o,$(COMPILER_FAULT_SOURCES))
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/tests/test_compiler_faults.test: $(BUILD)/sanitize/tests/test_compiler_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out $(COMPILER_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/compiler-faults/%.o,$(COMPILER_FAULT_SOURCES))
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
 # Test-only stack failure at the command's POSIX edge, using the same portable
 # compile-time renaming as the VM faults. Production links ordinary execute.o.
 $(BUILD)/debug/cli-faults/execute.o: src/tools/execute.c Makefile $(SOURCE_LIST) build/generated/tools/embedded.h $(GUIDE_STAMP)
