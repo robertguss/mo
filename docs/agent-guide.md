@@ -22,7 +22,7 @@ Every `Int`, `Float` and `Bytes` function listed in reference section 14 compile
 
 Every `BigInt` function in reference section 14 compiles and runs, including `abs`, `min`, `max`, `pow`, `floor_div`, `floor_mod` and `to_int`. `Random.int` and the fake constructor `Random.seeded` also compile, including as function values.
 
-`Int.compare(a, b)` works as well as `a.compare(b)`. `Ordering`, `Entry`, and `Map` support `to_text` and interpolation. Maps print entries in insertion order, with text and character keys and values quoted and escaped.
+`Int.compare(a, b)` works as well as `a.compare(b)`. For other types, write `to_text` and `compare` as dot calls: `Text.compare(a, b)` and `List.to_text(xs)` report E1103. A case without fields can be the receiver directly, as in `Less.compare(Greater)` or `Folder.to_text`. `Ordering`, `Entry`, and `Map` support `to_text` and interpolation. Maps print entries in insertion order, with text and character keys and values quoted and escaped.
 
 `Env.get` runs on real or fake capabilities. Tests, examples and promises can construct a fake with `Env.of`.
 

@@ -113,7 +113,7 @@ checks owned by other drivers, costs requiring instrumentation, nondeterministic
 host failures, future-version claims, or confirmed compiler limitations.
 Multiline case interpolation and direct calls on a nullary case such as
 `Equal.to_text` now have the `txt-interpolation-case` and
-`lang-dot-calls-cases` programs.
+`lang-dot-calls-cases` programs; `ref-case-receivers` adds coverage of the latter.
 
 ## Initial mapping
 
