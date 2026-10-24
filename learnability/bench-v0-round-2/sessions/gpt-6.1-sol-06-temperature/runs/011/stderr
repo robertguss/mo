@@ -1,0 +1,33 @@
+error E0070: case doesn't cover every possible value; missing: (Fahrenheit, Fahrenheit)  temperature.mo:52:13
+
+  52 |   degrees = case (reading.scale, scale)
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^ a possible value isn't covered
+
+  --> temperature.mo:52:18
+  52 |   degrees = case (reading.scale, scale)
+     |                  ^^^^^^^^^^^^^^^^^^^^^^ matched value
+
+The arms must cover every possible value (reference 7.2).
+
+error E0075: arithmetic is used on a type without Number  temperature.mo:72:3
+
+  72 |   reading.degrees.to_text() + symbol(reading.scale) + " = " + converted.degrees.to_text() + symbol(other)
+     |   ^^^^^^^^^^^^^^^^^^^^^^^^^ expected Int or BigInt or Decimal or Float, found Text
+
+Text has no Number, so + doesn't join texts; insert them into one text instead, as in "#{a}#{b}" (reference 3.4).
+
+error E0051: a visible name is bound again  temperature.mo:82:9
+
+  82 |         status = 1
+     |         ^^^^^^ this name already has a meaning
+
+  --> temperature.mo:76:3
+  76 |   status = 0
+     |   ^^^^^^ the other meaning of this name
+
+While a name is visible it can't be bound again; to assign it again, declare it with var where it is first bound (reference 6.2).
+
+Fix: declare it with var
+  temperature.mo:76:3
+  76 |   var status = 0
+

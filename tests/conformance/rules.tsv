@@ -139,10 +139,10 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 11.3/1	cap-files-fake,cap-files-within-escape			
 11.4/1	cap-record-of-capabilities			
 11.4/2	ref-functions	e0091		
-11.4/3	tst-fakes			Making a fake outside a test reports the staged checker's E1103, not a dedicated refusal, so no fixture pins it; see docs/status/golden-gaps.md.
+11.4/3	tst-fakes	e0098,e0098-constant		
 11.4/4	cap-record-of-capabilities	e0080-capability		
 11.4/5	ref-shout	e0007-log		
-12/1	tst-passing	e0015-after-code,e0018-after-code		A specification followed directly by code, with no blank line, is accepted and left unchanged by mo format; the reference does not say whether that is refused or formatted.
+12/1	tst-passing	e0015-after-code,e0018-after-code		A specification directly followed by its code is accepted and mo format writes the blank line; tests/test_format.c and ci/check_cli.py check that, since every tracked program is already formatted.
 12.1/1	tst-passing	tst-failing-example		
 12.2/1	tst-promise-holds	e0015		
 12.2/2	tst-promise-holds	e0015-sentence		
@@ -153,8 +153,8 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 12.2/7	sample-job-queue-tests			
 12.2/8	mod-hidden-type,fail-result-declared	e0007-requires		
 12.3/1	tst-private-names,tst-assert-is-binding	tst-failing-assert		
-12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed,ref-capability-fakes			Making a fake, or reading printed or printed_errors, outside a test reports the staged checker's E1103, not a dedicated refusal, so no fixture pins it; see docs/status/golden-gaps.md.
-12.4/2	cap-console-fake,cap-files-fake			Reading a fake's printed lines outside a test reports the staged checker's E1103, not a dedicated refusal, so no fixture pins it; see docs/status/golden-gaps.md.
+12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed,ref-capability-fakes	e0098,e0098-constant,e0098-printed		
+12.4/2	cap-console-fake,cap-files-fake	e0098-printed		
 13.1/1	ref-evaluation			
 13.2/1	ref-shout	tst-fake-files-bugs	fail-bug-overflow,fail-bug-divide-by-zero,fail-bug-stop,fail-bug-map-duplicate,fail-bug-take-negative,fail-bug-decimal-overflow,fail-bug-decimal-divide-by-zero,fail-bug-duration-overflow,fail-bug-duration-unit-overflow,fail-bug-time-range,fail-bug-pow-negative,fail-bug-decimal-places,fail-bug-split-empty,fail-bug-replace-empty,fail-bug-repeat-negative,fail-bug-drop-negative,fail-bug-constant-stop		ci/check_cli.py:observations,tests/test_host.c:test_real_console,tests/test_host.c:test_real_files,tests/test_host.c:test_clock_random
 13.3/1						tests/test_prim.c:primitive_work,tests/test_heap.c:test_reuse_and_images
@@ -186,7 +186,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 14/14	fail-option-result-map			
 14/15	ref-time			
 14/16	cap-args-list,ref-capability-fakes			
-14/17	cap-console-streams,cap-console-line-endings,cap-console-stdin,cap-console-fake,cap-console-stdin-invalid			Reference 14 says a run of invalid bytes becomes one U+FFFD; D291 keeps one per maximal subpart and MO-140 corrects the text, so cap-console-stdin-invalid pins only inputs where both agree. Reading a fake's printed lines outside a test reports the staged checker's E1103, so no fixture pins it; see docs/status/golden-gaps.md.
+14/17	cap-console-streams,cap-console-line-endings,cap-console-stdin,cap-console-fake,cap-console-stdin-invalid	e0098-printed		Reference 14 says a run of invalid bytes becomes one U+FFFD; D291 keeps one per maximal subpart and MO-140 corrects the text, so cap-console-stdin-invalid pins only inputs where both agree.
 14/18	cap-files-fake,cap-files-fake-folders,cap-files-read,cap-files-walk,cap-files-within-escape	tst-fake-files-bugs			tests/test_host.c:test_real_files,tests/test_host.c:test_hostile_links
 14/19	fail-option-result-map,fail-result-declared,fail-file-error-forms,txt-invalid-utf8-file,cap-files-within-escape	fail-main-result-error		
 14/20	cap-clock-fixed,cap-args-list,ref-capability-fakes						No program can move the system clock outside the years 1 to 9999; Clock.fixed, Args, Env and Random fakes are asserted.
@@ -216,12 +216,12 @@ C/1	col-list-basics,col-map-basics	e0024
 C/2	txt-counts,col-list-basics	e0050-length		
 C/3	fail-option-basics	e0050-null		
 C/4	fail-try-wrap,fail-result-declared	e0007-catch,e0007-throw		
-C/5	fail-option-basics	e0050-unwrap	fail-bug-stop	Postfix ! reports E0025 "Mo writes not instead of !", which points to not rather than case, so it is not pinned; see docs/status/golden-gaps.md.
-C/6	ref-evaluation	e0025		
+C/5	fail-option-basics	e0050-unwrap,e0097	fail-bug-stop	
+C/6	ref-evaluation	e0025,e0025-prefix		
 C/7	lang-is-and-if	e0022		
 C/8	lang-is-and-if	e0022		
-C/9	lang-case-guards	e0016		
-C/10	lang-closures	e0021-lambda		x => ... reports E0016 as a case arm, and |x| ... the generic E0007 "a value is an expression"; neither points to fn, so neither is pinned; see docs/status/golden-gaps.md.
+C/9	lang-case-guards	e0016,e0016-arrow		
+C/10	lang-closures	e0021-lambda,e0096,e0096-bar		
 C/11	ref-functions	e0092		
 C/12	lang-bindings	e0031,e0007-let		
 C/13	col-build-with-var	e0056		

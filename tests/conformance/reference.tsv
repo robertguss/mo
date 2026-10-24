@@ -141,7 +141,7 @@
 11.4/3	- Only the runtime makes real capabilities. Tests, examples and promises use fakes (section 12.4).
 11.4/4	- Capabilities have no abilities: they can't be compared, printed or used as keys.
 11.4/5	- There are no log statements. To report something, print it or return it.
-12/1	A function's specification sits at the top of its body: its promises and examples, then a blank line, then its code.
+12/1	A function's specification sits at the top of its body: its promises and examples, then a blank line, then its code. Leaving out the blank line is not an error; `mo format` writes it.
 12.1/1	`examples` lists calls with their expected results. Each line is a `Bool` expression, usually `call == expected`, and `mo test` checks every line:
 12.2/1	A `promise` states what must hold for every call. It has three parts:
 12.2/2	- **a sentence** saying, in plain words, what is promised;

@@ -28,6 +28,8 @@ struct mo_lex {
     enum mo_syntax_token last;
     bool lambda_parameters; /* after fn(, followed only by names, _ and commas */
     bool lambda_close;      /* the last scanned token closes lambda parameters */
+    uint32_t line_opens;    /* brackets left open on this logical line */
+    bool line_assign;       /* this logical line has an = */
     struct mo_token preceding;
     uint32_t preceding_line; /* physical line at the end of that token */
     bool ignore_comments;    /* bounded token replay for source-independent anchors */

@@ -26,30 +26,6 @@ runs as a dot call, including on a nullary case receiver (`lang-dot-calls-cases`
 the rest report E1103. D285 makes that form part of the language for every type with the
 ability, and MO-144 builds it. These failures are not expected-error fixtures.
 
-## Refused by the reference, accepted by the checker
-
-A specification followed directly by its code, with no blank line, is accepted, and
-`mo format` leaves it unchanged. Reference 12 places a blank line there but does not say whether
-leaving it out is refused or formatted.
-
-## Refused with a placeholder or a misleading hint
-
-Making a fake capability, or reading `printed` or `printed_errors`, outside a test, example or
-promise is an error (reference 11.4 and 12.4). `mo check` refuses each one with E1103, "this body
-rule is not implemented by the staged checker", not a dedicated diagnostic. E1103 marks an
-unfinished form, so it is not an expected-error fixture.
-
-These spellings from appendix C are refused, but the error points away from the replacement, so
-no fixture pins them:
-
-- `x => x + 1` as an argument reports E0016, "a case arm is written Pattern: value, with no =>",
-  as if it were a case arm. The lexer reports `=>` the same way wherever it appears.
-- `|x| x + 1` reports E0007, "a value is an expression", citing statement separation (2.4).
-- A postfix `!`, as in `items.first!`, reports E0025, "Mo writes not instead of !", which points
-  to `not`, not to `case` with `stop` (8.4).
-
-`lambda x: ...` (`e0021-lambda`) and `unwrap()` (`e0050-unwrap`) are pinned.
-
 ## How many U+FFFD a run of invalid input bytes becomes
 
 Reference 14 says each sequence of bytes on standard input that isn't valid UTF-8 "becomes one

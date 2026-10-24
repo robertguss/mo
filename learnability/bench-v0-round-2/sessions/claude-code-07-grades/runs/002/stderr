@@ -1,0 +1,7 @@
+error E0025: Mo writes or instead of ||  grades.mo:28:30
+
+  28 |     return None if score < 0 || score > 100
+     |                              ^
+
+Boolean expressions use and, or and not (reference 3.1).
+
