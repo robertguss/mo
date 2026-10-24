@@ -1,0 +1,5 @@
+line 2: not a range: 1--2
+line 4: not a range: 8-2
+line 12: not a range: -1
+line 13: not a range: 8-2
+line 14: not a range: 8-2

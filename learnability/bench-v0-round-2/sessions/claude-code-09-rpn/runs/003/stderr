@@ -1,0 +1,28 @@
+error E0053: values of different types are combined  rpn.mo:25:19
+
+  25 |     _: if b == 0: DivisionByZero(position: position) else: Ok(a / b)
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected Result(Int, RpnError), found RpnError
+
+Comparing or combining values of different types is an error (reference 3).
+
+error E0050: no visible function has this dot-call name  rpn.mo:44:48
+
+  44 |           value = apply(token, a, b, position).unwrap
+     |                                                ^^^^^^ not visible in this block
+
+A dot call looks in the type's module, then among the names in scope (reference 5.4).
+
+error E0068: a choice arm is a catch-all  rpn.mo:72:5
+
+  72 |     _: "nothing to evaluate"
+     |     ^ covers cases without naming them
+
+A whole arm over a choice type can't be _ or a name; list the cases (reference 7.2).
+
+error E0077: an argument's type doesn't match its parameter  rpn.mo:80:32
+
+  80 |       Ok(value): console.print(value)
+     |                                ^^^^^ expected Text, found Int
+
+A call passes each argument to its corresponding parameter (reference 5.2).
+

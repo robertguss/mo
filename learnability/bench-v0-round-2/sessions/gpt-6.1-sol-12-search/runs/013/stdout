@@ -1,0 +1,13 @@
+passed SearchTest.test.1  search-test.mo:5:1
+passed SearchTest.test.2  search-test.mo:12:1
+passed SearchTest.test.3  search-test.mo:17:1
+passed SearchTest.test.4  search-test.mo:22:1
+passed SearchTest.test.5  search-test.mo:31:1
+passed Search.lower_bound.example.1  search.mo:9:5
+passed Search.lower_bound.example.2  search.mo:10:5
+passed Search.lower_bound.example.3  search.mo:11:5
+passed Search.index_of.example.1  search.mo:30:5
+passed Search.index_of.example.2  search.mo:31:5
+passed Search.count_between.example.1  search.mo:41:5
+passed Search.count_between.example.2  search.mo:42:5
+12 passed, 0 failed, 0 stopped
