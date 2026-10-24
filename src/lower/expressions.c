@@ -1026,6 +1026,15 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                     p, (struct mo_core_prim){.tag = MO_CORE_PRIM_BIG, .as.big = bigs[i].operation},
                     args);
         }
+        if (strcmp(r->native, "Int.compare") == 0) {
+            MO_ASSERT(args.count == 2);
+            static const struct mo_source_type integer = {
+                .kind = MO_SOURCE_NAMED, .name = "Int", .module = UINT32_MAX};
+            static const struct mo_ability_implementation proof = {
+                .ability = MO_SOURCE_ORDER, .kind = MO_ABILITY_NATIVE, .type = &integer};
+            return lower_compare(p, &proof, NULL, b->instance->owner, b->instance->depth,
+                                 args.items[0], args.items[1]);
+        }
         static const struct {
             const char *name;
             enum mo_core_float_op operation;
@@ -1143,6 +1152,8 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                   {"Console.read_line", {MO_CORE_IO_OP_READ_LINE, false}},
                   {"Args.list", {MO_CORE_IO_OP_ARGS_LIST, false}},
                   {"Args.of", {MO_CORE_IO_OP_ARGS_OF, false}},
+                  {"Env.get", {MO_CORE_IO_OP_ENV_GET, false}},
+                  {"Env.of", {MO_CORE_IO_OP_ENV_OF, false}},
                   {"Console.fake", {MO_CORE_IO_OP_CONSOLE_FAKE, false}},
                   {"Console.fake_input", {MO_CORE_IO_OP_CONSOLE_FAKE_INPUT, false}},
                   {"Console.printed", {MO_CORE_IO_OP_PRINTED, false}},

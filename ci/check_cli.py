@@ -2199,6 +2199,9 @@ def lower_source_fixtures(binary):
         "float-natives": b"true/0/-0\n",
         "bytes-natives": b"10/0/Some(65)/Some(206)/Some(187)\nNone/None/None/Some(\"\")\n",
         "byte-natives": b"0/127/128/255/255\n",
+        "builtin-abilities": ('Less/Equal/Greater\nEntry(name: "a\\n\\\"λ", kind: Folder)\n'
+                              '{"b": Some(Less), "a": None}\n'
+                              '{}/[(File, Link), (Other, Folder)]\nLess/Greater/Greater\n').encode(),
         "list-sum": b"7/7/-15/42\n0/0/0/0\n",
         "list-all": b"true/true/false/false/true/true/true\n",
         "list-find": b"none/2/none/2/bc/20/40\n",
@@ -2275,6 +2278,22 @@ def lower_source_fixtures(binary):
             result = subprocess.run([str(binary.resolve()), "run", str(path)], cwd=directory,
                                     capture_output=True, timeout=30)
             assert result.returncode == 0 and not result.stdout and not result.stderr, result
+
+    path = fixtures / "env-natives/main.mo"
+    checked = run(binary, ["check", str(path)], 0)
+    assert not checked.stdout and not checked.stderr
+    result = run(binary, ["test", str(path)], 0)
+    assert b"1 passed, 0 failed, 0 stopped" in result.stdout and not result.stderr
+    with tempfile.TemporaryDirectory(prefix="mo-env-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        path.write_text('module Main\nfn main(env: Env) : Int\n'
+                        'if env.get("MO116_VALUE") == Some("λ") and '
+                        'Env.get(env, "MO116_EMPTY") == Some("") and '
+                        'env.get("MO116_ABSENT") is None: 0 else: 1\nend\n')
+        environment = {**os.environ, "MO116_VALUE": "λ", "MO116_EMPTY": ""}
+        environment.pop("MO116_ABSENT", None)
+        result = run(binary, ["run", str(path)], 0, env=environment)
+        assert not result.stdout and not result.stderr
 
     # Examples on generic subjects run once each, independently of promise instances.
     path = fixtures / "generic-subject/main.mo"
@@ -2753,21 +2772,21 @@ def guide_claims(binary):
         unfinished = folder / "unfinished.mo"
         unfinished.write_text("module Unfinished\n\nfn main(console: Console)\n"
                               "  _printed = console.printed\nend\n", encoding="utf-8")
-        env = folder / "home.mo"
-        env.write_text('module Home\n\nfn home(env: Env) : Text\n'
-                       '  env.get("HOME") or "none"\nend\n\n'
-                       'fn main(env: Env, console: Console)\n  console.print(home(env))\nend\n\n'
-                       'test "home has a default"\n  assert home(Env.of({})) == "none"\nend\n',
-                       encoding="utf-8")
+        deferred = folder / "deferred.mo"
+        deferred.write_text('module Deferred\nhandler = fn() base end\nbase = 13\n'
+                            'fn main() : Int\nhandler()\nend\n'
+                            'test "reads base"\nassert handler() == 13\nend\n', encoding="utf-8")
         for command in ("check", "run", "test"):
             refuses([command, str(unfinished)], 1103,
                     "this body rule is not implemented by the staged checker",
                     "`mo check` reports E1103 for a form the checker has not implemented, with a "
                     'headline that says so, such as "this body rule is not implemented by the '
                     'staged checker".')
-            refuses([command, str(env)], 1150, "this native call is not lowered yet",
-                    "It reports E1150 for a form it checks but cannot compile yet, such as "
-                    '`env.get`. The headline is "this native call is not lowered yet".')
+            refuses([command, str(deferred)], 1150,
+                    "this constant's deferred function needs globals not yet initialized",
+                    "It reports E1150 for a form it checks but cannot compile yet, such as a "
+                    "constant's function value that reads a later constant. The headline is "
+                    '"this constant\'s deferred function needs globals not yet initialized".')
 
         # E1400 for a promise whose function takes a function; the rest run with --only.
         twice = folder / "twice.mo"
