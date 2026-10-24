@@ -722,7 +722,9 @@ some names by type:
 - **A dot call** `x.f(...)` is resolved once `x`'s type is known: in the module
   that declares that type first, then among the names in scope (reference
   5.4). A field of `x`'s record wins where it's visible. When the field holds a
-  function, `x.f(a)` calls it. It's enough to know the type's constructor:
+  function, `x.f(a)` calls it, and `x.f()` calls it with no arguments. Where
+  `f` resolves to a function that takes only the receiver, `x.f()` is E0095,
+  whose fix removes the parentheses. It's enough to know the type's constructor:
   `var items = []` followed by `items.append(x)` finds `append` in `List`,
   even before the element type is known. If `x`'s type is still unknown when
   the body's other constraints have been solved, that's an error: give `x` a
@@ -2088,7 +2090,17 @@ start. Rendering never changes files. Unavailable locations display
   never in a cycle. A builder that returns
   `Result(T, E)` or `Option(T)` counts when it succeeds, and one that returns a
   tuple holding `T`, such as `(T, Reply)`, counts with the first `T` in it. An
-  exposed constant of the type starts a sequence with no call.
+  exposed constant of the type starts a sequence with no call. When the call
+  that last made the value returned it in a tuple beside another hidden type,
+  as `lease` returns `(Queue, Result(Option(Lease), QueueError))`, the first
+  such field is kept as the value's companion. On every second random input,
+  never on a boundary, each parameter of a companion's type takes that
+  companion instead of its own value, so a `Lease` arrives with the `Queue`
+  that issued it (D284). A parameter of the type that companion came with
+  then keeps its own value, so two types that each come with the other are
+  not swapped crosswise. Only a promise's own inputs keep companions, at most
+  `MO_CLI_BUILDER_COMPANIONS` per input; shrinking copies both whole, so they
+  stay related.
 - **Functions** are generated as constant functions, the identity where the
   types allow it, and functions that derive their result from their
   argument's structural hash, so equal arguments give equal results. In

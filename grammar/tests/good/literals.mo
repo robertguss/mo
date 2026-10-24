@@ -15,6 +15,12 @@ m = "escapes: \n \t \r \\ \" \' \# \u{0} \u{10FFFF}"
 n = "#{a} and #{b + 1} and #{f(x).g} and #{"nested #{"deeper #{z}"}"}"
 o = "braces in interpolation: #{ {"k": 1}.size } and \#{not interpolated}"
 p = "a # inside text is not a comment"
+aa = "#{case n
+  1: "one"
+  _: "other"
+end} item#{
+  suffix
+}"
 q = """
   line one
     indented

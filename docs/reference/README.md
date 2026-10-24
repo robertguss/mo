@@ -216,11 +216,17 @@ label = rounded.to_fixed(2)     # the text "0.10": exactly 2 places, rounded as 
 written in double quotes, with the escapes `\n`, `\t`, `\r`, `\\`, `\"`, `\'`,
 `\#` and `\u{1F600}` (a character by its hexadecimal code). `#{...}` inside text
 inserts the text form of any value that has one (section 9.2), and may hold any
-expression, even one with text in it, as in `"#{name or "you"}"`:
+expression, even one with text in it, as in `"#{name or "you"}"`. Lines inside
+`#{...}` break as they do elsewhere (section 2.4), with `#{` and its `}` as
+brackets, so a `case` may run over several lines there:
 
 ```mo
 greeting = "Hello, #{name}! You have #{count} new messages."
 literal = "write \#{name} to insert a name"
+label = "#{count} #{case count
+  1: "item"
+  _: "items"
+end}"
 ```
 
 Text on several lines starts with `"""` at the end of a line and ends with
@@ -1050,7 +1056,9 @@ The compiler checks that the body accepts every `allows` and rejects every
 `mo test` checks the body against the function on many generated inputs,
 boundaries first. It builds a type exposed without its insides only through a
 limited number of calls to its module's exposed functions, other types from any
-values of their fields, and capabilities as fakes. A promise speaks about calls
+values of their fields, and capabilities as fakes. A value built that way can
+come with another such value that the same call returned, so a `Lease` can
+arrive with the `Queue` that issued it. A promise speaks about calls
 that return; a call that stops on a generated input is reported as a bug, with
 the input. The boundaries include each type's extremes, such as `Decimal`'s
 largest value and the last instant of the year 9999, so a promise that passes
