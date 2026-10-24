@@ -75,15 +75,17 @@ for ending in returned stopped failed; do
 	check "$status" "(core 0.8 ($report $fake_effects))" "$tree/fake"
 done
 
-# Trusted Unicode has no substitute implementation in the oracle. All five
+# Trusted Unicode has no substitute implementation in the oracle. All seven
 # reached calls stop with prior effects retained; an unchosen call does not.
-for op in graphemes displayWidth normalizeNfc lowercase uppercase; do
+for op in graphemes displayWidth normalizeNfc lowercase uppercase letter digit; do
+	arg='(text "éß👩‍💻")'
 	case "$op" in
 		graphemes) ty='(list (text))' ;;
 		displayWidth) ty='(int)' ;;
+		letter|digit) ty='(bool)'; arg='(char "é")' ;;
 		*) ty='(text)' ;;
 	esac
-	unicode="(Program () ((FunDecl \"main\" ((\"c\" (cap (console)))) $ty (let_ \"_\" (prim (io (print)) ((var \"c\") (lit (text \"before unicode\")))) (prim (unicode16 ($op)) ((lit (text \"éß👩‍💻\"))))) \"Main\" (function) 0)) () \"main\" (noSource))"
+	unicode="(Program () ((FunDecl \"main\" ((\"c\" (cap (console)))) $ty (let_ \"_\" (prim (io (print)) ((var \"c\") (lit (text \"before unicode\")))) (prim (unicode16 ($op)) ((lit $arg)))) \"Main\" (function) 0)) () \"main\" (noSource))"
 	printf '(core 0.8 %s)\n' "$unicode" >"$tree/unicode"
 	check 1 '(core 0.8 (stopped (outside "Unicode16 is a trusted primitive unavailable in mocore") (effects ("before unicode") () () () ())))' "$tree/unicode" "$tree/world"
 done

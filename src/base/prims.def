@@ -222,5 +222,7 @@ PRIM(UNICODE16_DISPLAY_WIDTH,   "Unicode16", "display_width",      "fn(Text) : I
 PRIM(UNICODE16_NORMALIZE_NFC,   "Unicode16", "normalize_nfc",      "fn(Text) : Text",                            "o",   "")
 PRIM(UNICODE16_LOWERCASE,       "Unicode16", "lowercase",          "fn(Text) : Text",                            "o",   "")
 PRIM(UNICODE16_UPPERCASE,       "Unicode16", "uppercase",          "fn(Text) : Text",                            "o",   "")
+PRIM(UNICODE16_LETTER,          "Unicode16", "letter?",            "fn(Char) : Bool",                            "b",   "")
+PRIM(UNICODE16_DIGIT,           "Unicode16", "digit?",             "fn(Char) : Bool",                            "b",   "")
 
 #undef PRIM

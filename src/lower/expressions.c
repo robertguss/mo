@@ -1107,7 +1107,9 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                         {"Unicode16.display_width", MO_CORE_UNICODE_OP_DISPLAY_WIDTH},
                         {"Unicode16.normalize_nfc", MO_CORE_UNICODE_OP_NORMALIZE_NFC},
                         {"Unicode16.lowercase", MO_CORE_UNICODE_OP_LOWERCASE},
-                        {"Unicode16.uppercase", MO_CORE_UNICODE_OP_UPPERCASE}};
+                        {"Unicode16.uppercase", MO_CORE_UNICODE_OP_UPPERCASE},
+                        {"Unicode16.letter?", MO_CORE_UNICODE_OP_LETTER},
+                        {"Unicode16.digit?", MO_CORE_UNICODE_OP_DIGIT}};
         for (size_t i = 0; i < sizeof unicodes / sizeof unicodes[0]; i++) {
             lower_work(p, 1);
             if (strcmp(r->native, unicodes[i].name) == 0)

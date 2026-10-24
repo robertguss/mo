@@ -2,6 +2,24 @@
 ## these tests pin their results through the Mo module.
 module Unicode16
 
+test "letter follows Unicode general category L, not Alphabetic"
+  for c in "Azéǅʰ界\u{10400}\u{1C89}\u{AC00}\u{D7A3}".chars
+    assert Unicode16.letter?(c)
+    assert not Unicode16.digit?(c)
+  end
+  for c in "09٠９\u{1D7CE}\u{10D40}".chars
+    assert Unicode16.digit?(c)
+    assert not Unicode16.letter?(c)
+  end
+end
+
+test "classification excludes marks, other numbers and unassigned code points"
+  for c in "\u{0} @[_`{²Ⅳ\u{301}\u{345}\u{903}\u{378}\u{E000}\u{1F600}\u{10FFFF}".chars
+    assert not Unicode16.letter?(c)
+    assert not Unicode16.digit?(c)
+  end
+end
+
 test "graphemes splits user-perceived characters without normalizing their bytes"
   assert Unicode16.graphemes("") == []
   assert Unicode16.graphemes("aé!") == ["a", "é", "!"]

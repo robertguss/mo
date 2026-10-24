@@ -21,7 +21,11 @@ NFC invariants of every `NormalizationTest` row, including identity for
 assigned scalars outside Part 1. It checks full case mappings from
 `UnicodeData` and `SpecialCasing`, with context from `DerivedCoreProperties`.
 Locale-specific mappings are excluded; language-insensitive final sigma is
-included. Width uses the policy in `docs/design/library.md`.
+included. Width uses the policy in `docs/design/library.md`. Every valid
+Unicode scalar is checked through both classification primitives against
+General_Category L and Nd from `UnicodeData.txt`, including First/Last ranges
+and the false results for unassigned code points. This oracle reads categories
+independently of the generated runtime table.
 
 The C tables coalesce property ranges, deduplicate mapping sequences and
 compute Hangul decomposition/composition and LV/LVT classes algorithmically.

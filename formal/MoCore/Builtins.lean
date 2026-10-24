@@ -1001,8 +1001,9 @@ def libraryChecks : Expr :=
 def libraryProgram : Program :=
   { program with funs := program.funs ++
     [{ (fn "library" [] tUnit (assertThat libraryChecks (str "library check failed"))) with kind := .test }] ++
-    Text.unicodeOps.map (fun (name, op) => fn ("Unicode16." ++ name) [("text", tText)] op.sig.2
-      (prim (.unicode16 op) [v "text"])) }
+    Text.unicodeOps.map (fun (name, op) =>
+      fn ("Unicode16." ++ name) [("value", op.sig.1.headD tText)] op.sig.2
+        (prim (.unicode16 op) [v "value"])) }
 
 #guard wellTyped? libraryProgram
 #guard passes libraryProgram libraryChecks
@@ -1010,6 +1011,14 @@ def libraryProgram : Program :=
   typedAs? program [] (prim (.unicode16 op) [str "éß👩‍💻"]) op.sig.2 &&
   !typedAs? program [] (prim (.unicode16 op) [int 0]) op.sig.2 &&
   stops program (prim (.unicode16 op) [str "éß👩‍💻"]) op.sig.2
+    (.outside "Unicode16 is a trusted primitive unavailable in mocore")
+
+#guard [UnicodeOp.letter, .digit].all fun op =>
+  op.sig == ([tChar], tBool) &&
+  typedAs? program [] (prim (.unicode16 op) [chr 'é']) tBool &&
+  !typedAs? program [] (prim (.unicode16 op) [str "é"]) tBool &&
+  !typedAs? program [] (prim (.unicode16 op) [int 0]) tBool &&
+  stops program (prim (.unicode16 op) [chr 'é']) tBool
     (.outside "Unicode16 is a trusted primitive unavailable in mocore")
 
 -- Real-state dispatch, empty root, inaccessible/narrowed roots and persistent folders.

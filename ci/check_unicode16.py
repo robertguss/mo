@@ -37,6 +37,29 @@ def properties(text, name):
     return result
 
 
+def categories(sources):
+    expected = bytearray(0x110000)
+    start = None
+    for _, row in rows(sources["UnicodeData.txt"]):
+        fields = row.split(";")
+        cp = int(fields[0], 16)
+        if fields[1].endswith(", First>"):
+            assert start is None
+            start = cp
+            continue
+        if fields[1].endswith(", Last>"):
+            assert start is not None
+        else:
+            assert start is None
+            start = cp
+        value = 1 if fields[2] in {"Lu", "Ll", "Lt", "Lm", "Lo"} else 2 if fields[2] == "Nd" else 0
+        expected[start:cp + 1] = bytes([value]) * (cp + 1 - start)
+        start = None
+    assert start is None
+    del expected[0xD800:0xE000]
+    return expected
+
+
 def fixtures(sources):
     cases = []
 
@@ -245,8 +268,19 @@ def main():
         return
     cases, description = fixtures(sources)
     data = "".join(raw for _, raw, _ in cases)
+    expected_categories = categories(sources)
 
     def check(driver):
+        classified = subprocess.run([driver, "--categories"], capture_output=True, timeout=180)
+        if classified.returncode:
+            raise AssertionError(f"{driver}: classification failed\n{classified.stderr!r}")
+        if classified.stdout != expected_categories:
+            if len(classified.stdout) != len(expected_categories):
+                raise AssertionError(f"{driver}: classification result length differs")
+            for index, (actual, want) in enumerate(zip(classified.stdout, expected_categories)):
+                if actual != want:
+                    cp = index if index < 0xD800 else index + 0x800
+                    raise AssertionError(f"{driver}: U+{cp:04X} category bits {actual}, wanted {want}")
         result = subprocess.run([driver, "--oracle"], input=data, text=True,
                                 capture_output=True, timeout=180)
         if result.returncode:
@@ -261,7 +295,8 @@ def main():
         work = subprocess.run([driver, "--work"], text=True, capture_output=True, timeout=20)
         if work.returncode:
             raise AssertionError(f"{driver}: work failed\n{work.stdout}\n{work.stderr}")
-        return f"{driver}: {len(cases)} Unicode calls agree; work {time.monotonic() - start:.2f}s"
+        return (f"{driver}: letter/digit agree at all {len(expected_categories)} scalars; "
+                f"{len(cases)} Unicode calls agree; work {time.monotonic() - start:.2f}s")
 
     print("Unicode 16: " + description)
     with concurrent.futures.ThreadPoolExecutor() as pool:

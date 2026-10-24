@@ -47,7 +47,7 @@
 #define MO_CORE_BYTES_OPS(X) X(SIZE, "size") X(GET, "get") X(DECODE_UTF8, "decodeUtf8")
 #define MO_CORE_UNICODE_OPS(X) \
     X(GRAPHEMES, "graphemes") X(DISPLAY_WIDTH, "displayWidth") X(NORMALIZE_NFC, "normalizeNfc") \
-    X(LOWERCASE, "lowercase") X(UPPERCASE, "uppercase")
+    X(LOWERCASE, "lowercase") X(UPPERCASE, "uppercase") X(LETTER, "letter") X(DIGIT, "digit")
 #define MO_CORE_RANGE_OPS(X) \
     X(MAKE, "make") X(START, "start") X(END, "end") X(TO_LIST, "toList") X(CONTAINS, "contains") \
     X(TO_TEXT, "toText")
