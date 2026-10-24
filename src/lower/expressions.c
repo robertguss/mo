@@ -1212,6 +1212,15 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                                                .op.tag = MO_CORE_MAP_OP_OF_LIST}};
         return lower_prim(p, prim, args);
     }
+    if (r->native != NULL && strcmp(r->native, "List.to_set") == 0) {
+        mo_core_ty set_ty = result->tag == MO_CORE_TY_FN ? result->as.fn.ret : result;
+        MO_ASSERT(set_ty->tag == MO_CORE_TY_SET);
+        return lower_prim(
+            p,
+            (struct mo_core_prim){.tag = MO_CORE_PRIM_SET,
+                                  .as.set = {.t = set_ty->as.set, .op = MO_CORE_SET_OP_OF_LIST}},
+            args);
+    }
     static const struct {
         const char *name;
         enum mo_core_map_op_tag operation;

@@ -2199,6 +2199,11 @@ def lower_source_fixtures(binary):
         "map-captures": b"3/4/19\n",
         "map-native-routes": b"11/3/2/12/12\n",
         "map-mutating-key": b"1=3;2=5;\n",
+        "set": ('[3, 1, 2].to_set\n[].to_set\n'
+                '["a\\n", "\\\"\\\\", "é"].to_set\n'
+                "['\\n', '\\'', 'é'].to_set\n"
+                '[[2, 1].to_set, [].to_set].to_set\n'
+                'Some([3, 1, 2].to_set)\n[label 7, label 2].to_set\n').encode(),
         "time-sub": b"10000/-9750/5/-5000\n",
         "closure-captures": b"n10r2/12/13/15/6\n",
         "closure-returned": b"3/6/8/123/[2, 11, 102]/tick=8\n",
@@ -2773,6 +2778,7 @@ def guide_claims(binary):
                  "FileError.to_text", "Json.parse", "pretty"):
         says(f"`{name}`")
     says("`lib/text.mo` has no functions, only tests of `Text`'s operations")
+    says("`lib/set.mo` likewise tests `Set`'s operations, `List.to_set` and Set text forms")
     says("`lib/unicode16.mo` is the `Unicode16` module.",
          "After `use Unicode16`, its built-in `graphemes`, `display_width`, `normalize_nfc`, "
          "`lowercase` and `uppercase` operations follow Unicode 16.0.",

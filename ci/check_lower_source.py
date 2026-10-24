@@ -805,6 +805,7 @@ for fixture, expected in {
     "map-native-routes": 0,
     "map-mutating-key": 0,
     "map-runtime-duplicate": ["stopped", "two keys of a map literal that turn out equal"],
+    "set": 0,
     "time-sub": 0,
     "closure-captures": 0,
     "closure-returned": 0,
