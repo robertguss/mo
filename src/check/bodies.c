@@ -1336,11 +1336,17 @@ static MO_MUST_USE bool case_receiver(struct inference *p, const struct mo_synta
     const struct mo_module_scope *scope = &p->interfaces->scopes[p->function->function->module];
     if (find_alias(scope, name) != scope->alias_count)
         return false;
-    if (mo_builtin_case_by_name(name) != NULL)
-        return true;
+    /* Only a case without fields is a value on its own; Entry.to_text(e) and a
+     * declared Money.to_text(m) name the type (D285). */
+    const struct mo_builtin_case *builtin = mo_builtin_case_by_name(name);
+    if (builtin != NULL)
+        return builtin->count == 0;
     uint32_t count = 0;
     const struct mo_symbol *s = definition(p, name, NULL, &count);
-    return s != NULL && s->declaration->kind == MO_S_CASE_DECL;
+    if (s == NULL || s->declaration->kind != MO_S_CASE_DECL)
+        return false;
+    const struct mo_data_signature *data = data_type(p, s);
+    return data != NULL && data->count == 0;
 }
 
 static MO_MUST_USE bool missing_field(struct inference *p, struct mo_span span, const uint8_t *name,
