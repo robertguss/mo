@@ -38,7 +38,7 @@ including `Bool`, `Unit`, tuples, `Ordering`, `Entry`, `EntryKind` and `FileErro
 | Range | `for`, `to_list`, `contains?`, `to_text` | runs in every form; qualified `to_text` since MO-144 (#208) | `col-range-loops` |
 | Option | `or`, `or_fail`, `map`, `to_text`, `compare` | runs in every form; qualified `to_text` and `compare` since MO-144 (#208) | `fail-option-result-map`, `ref-evaluation` |
 | Result | `map`, `map_error`, `to_text` | runs in every form; qualified `to_text` since MO-144 (#208) | `fail-option-result-map` |
-| Ordering, Unit, EntryKind | `to_text`, `compare` | runs, including direct receivers such as `Less.compare(Greater)` since MO-130 (#202); qualified since MO-144 (#208), except `Unit.compare(a, b)`: `Unit` there is read as the value, so write `a.compare(b)` | `lang-dot-calls-cases`, `ref-case-receivers`, `ref-abilities` |
+| Ordering, Unit, EntryKind | `to_text`, `compare` | runs, including direct receivers such as `Less.compare(Greater)` since MO-130 (#202); qualified since MO-144 (#208), and `Unit.compare(Unit, Unit)` since MO-149 (D297) | `lang-dot-calls-cases`, `ref-case-receivers`, `ref-abilities`, `ref-unit-qualified` |
 | Bool, tuples | `to_text`, `compare` | runs; qualified `Bool` forms since MO-144 (#208) | `ref-abilities` |
 | Args, Env, Random | `list`, `get`, `int` and the fakes | runs | `cap-args-list`, `ref-capability-fakes` |
 | Console | `print`, `error`, `read_line`, `printed`, `printed_errors`, the fakes | runs | `cap-console-*` |
