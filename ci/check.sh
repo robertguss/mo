@@ -196,9 +196,12 @@ if have python3; then
 			later "Benchmark v0: tasks frozen, references pass, broken solutions and start folders fail ($driver)" \
 				python3 bench/v0/grade.py --check --mo "$driver"
 		done
+		# The frozen hidden tests' time limits fit one gcc debug build, so only the first runs them.
+		hidden=()
 		for driver in "${drivers[@]}"; do
 			later "The three tools: linkcheck, tally and notioncopy pass their tests and do their jobs here ($driver)" \
-				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_tools.py "$driver"
+				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_tools.py "$driver" "${hidden[@]}"
+			hidden=(--no-hidden)
 		done
 	else
 		missing "no mo command executable is built"
