@@ -1,8 +1,10 @@
 /* Promise inputs of types exposed without their insides (architecture 10.1, "Hidden types"). Such
  * a value is built only through its module: an exposed constant, or a call to an exposed function
- * that returns it, then up to three more calls that take it and return it. The calls run in a
- * scratch process, so one that stops costs nothing but that step, and the value is then copied
- * into the trial's heap. These plug into mo_inputs_init as exact-type factories. */
+ * that returns it, then up to three more calls that take it and return it. A call's arguments may
+ * hold other hidden types of lower levels (MO_CLI_BUILDER_LEVELS), built by their own factories.
+ * The calls run in a scratch process, so one that stops costs nothing but that step, and the
+ * value is then copied into the trial's heap. These plug into mo_inputs_init as exact-type
+ * factories. */
 #ifndef MO_BUILDERS_H
 #define MO_BUILDERS_H
 
@@ -24,8 +26,9 @@ struct mo_builders {
 };
 
 /* One factory per hidden type in the image, over an initialized image. program names which
- * module constants are exposed. A hidden type with no way to start one gets a factory that
- * refuses, so it is never built from its insides. Calls poll deadline. Free after every init. */
+ * module constants are exposed. A hidden type with no way to start one within the levels gets a
+ * factory that refuses, so it is never built from its insides. Calls poll deadline. Free after
+ * every init. */
 MO_MUST_USE enum mo_input_result mo_builders_init(struct mo_builders *builders,
                                                   const struct mo_program *program,
                                                   const struct mo_image *image,

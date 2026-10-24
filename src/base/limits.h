@@ -349,11 +349,18 @@ static inline struct mo_limits mo_limits_default(void) {
 
 /* Architecture 10.1, hidden types: a value comes from at most four calls to its module, a start
  * and up to three steps. A start whose result doesn't count (None, an Error, a stop) is tried
- * again with other inputs, up to the attempts limit. A builder's result reaches the value through
+ * again with other inputs, up to the attempts limit; a random value makes half as many random
+ * attempts before those. A builder's result reaches the value through
  * at most MO_CLI_BUILDER_PATH tuple fields, Somes and Oks. */
 #define MO_CLI_BUILDER_CALLS 4
 #define MO_CLI_BUILDER_ATTEMPTS 64
 #define MO_CLI_BUILDER_PATH 4
+/* A builder may take other hidden types, each built first by its own factory. Levels make that
+ * finite: a type is level 0 when a start needs no other hidden type, else one more than the
+ * highest level its start needs, and a builder takes only hidden types of lower levels. Levels
+ * stop at MO_CLI_BUILDER_LEVELS - 1, so one value nests at most this many builds, and a cycle
+ * gets no level. */
+#define MO_CLI_BUILDER_LEVELS 3
 
 /* Promise input generation, not limits on program results. The caller can
  * choose smaller budgets. Refusal leaves the sequence unchanged; tools may

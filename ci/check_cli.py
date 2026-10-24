@@ -527,6 +527,55 @@ def hidden_promises(binary):
         assert items[1]['outcome'] == 'failed' and items[1]['calls'] == 3, items[1]
         assert items[1]['input'] == [{'name': 'counter', 'value': 'Counter(value: 3)'}]
 
+        # A builder may take other hidden types, each built by its own factory first: a Stamp
+        # needs a Ticket, which needs a Pool. Every stamp is a multiple of 10 from 10 to 50 only
+        # when each one comes through its builders, never from its insides.
+        chain = ('struct Pool\nsize: Int\nend\nstruct Ticket\nseat: Int\nend\n'
+                 'struct Stamp\nseat: Int\nend\n'
+                 'fn open(size: Int) : Option(Pool)\n'
+                 'if size >= 1 and size <= 5: Some(Pool(size: size)) else: None\nend\n'
+                 'fn issue(pool: Pool, seat: Int) : Option(Ticket)\n'
+                 'if seat >= 1 and seat <= pool.size: Some(Ticket(seat: seat)) else: None\nend\n'
+                 'fn stamp(ticket: Ticket) : Stamp\nStamp(seat: ticket.seat * 10)\nend\n')
+        probe = ('fn seat_of(stamp: Stamp) : Int\npromise "a seat a pool had"\n'
+                 'result % 10 == 0 and result >= 10 and result <= 50\n'
+                 'allows stamp: Stamp(seat: 10), result: 10\n'
+                 'forbids stamp: Stamp(seat: 10), result: 7\nend\nstamp.seat\nend\n')
+        exposed = 'module Main\nexpose Pool, Ticket, Stamp, open, issue, stamp'
+        path.write_text(exposed + '\n' + chain + probe + tail)
+        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
+            ('Main.seat_of.promise.1', 'passed'), ('Main.test.1', 'passed')], items
+        # That is MO_CLI_BUILDER_LEVELS levels; a fourth, a Badge from a Stamp, is refused, and
+        # so is a cycle: an A only from a B and a B only from an A.
+        badge = ('struct Badge\nseat: Int\nend\n'
+                 'fn pin(stamp: Stamp) : Badge\nBadge(seat: stamp.seat)\nend\n'
+                 'fn seat_of(badge: Badge) : Int\npromise "positive"\nresult > 0\n'
+                 'allows badge: Badge(seat: 10), result: 10\n'
+                 'forbids badge: Badge(seat: 10), result: 0\nend\nbadge.seat\nend\n')
+        cycle = ('module Main\nexpose A, B, a, b\nstruct A\nn: Int\nend\nstruct B\nn: Int\nend\n'
+                 'fn a(b: B) : A\nA(n: b.n)\nend\nfn b(a: A) : B\nB(n: a.n)\nend\n'
+                 'fn n_of(a: A) : Int\npromise "anything"\nresult == a.n\n'
+                 'allows a: A(n: 1), result: 1\nforbids a: A(n: 1), result: 2\nend\na.n\nend\n')
+        for source in (exposed + ', Badge, pin\n' + chain + badge, cycle):
+            path.write_text(source + tail)
+            items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+            assert len(items) == 3 and items[1]['code'] == 'E1400', items
+            assert items[-1]['passed'] == 0
+
+        # Random values fall back to the boundary order's full search: this start counts only on
+        # its 45th boundary tuple (true, Int's smallest, Int's largest), past the 32 ordered tries a
+        # random value once had and out of reach of random Ints.
+        path.write_text('module Main\nexpose Pool, open\nstruct Pool\nsize: Int\nend\n'
+                        'fn open(flag: Bool, a: Int, b: Int) : Option(Pool)\n'
+                        'if flag and a < -1000000000000000000 and b > 1000000000000000000\n'
+                        'Some(Pool(size: 1))\nelse\nNone\nend\nend\n'
+                        'fn size_of(pool: Pool) : Int\npromise "one"\nresult == 1\n'
+                        'allows pool: Pool(size: 1), result: 1\n'
+                        'forbids pool: Pool(size: 1), result: 2\nend\npool.size\nend\n' + tail)
+        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        assert items[1]['outcome'] == 'passed' and items[-1]['errors'] == 0, items
+
         # Each hidden type is built by its own module, whatever order the image lists them in;
         # Alpha's generic Box(Int) comes after Beta's B among the types.
         (path.parent / 'alpha.mo').write_text(
@@ -561,6 +610,18 @@ def hidden_promises(binary):
         promises = [r for r in items if r.get('kind') == 'promise']
         assert promises and all(r['outcome'] == 'passed' for r in promises), (sample, items)
         assert items[-1]['failed'] == items[-1]['stopped'] == items[-1]['errors'] == 0
+
+    # MO-121's job queue: its opaque Lease comes only from lease, which takes an opaque Queue.
+    with tempfile.TemporaryDirectory(prefix='mo-hidden-chain-') as directory:
+        answer = pathlib.Path(directory) / 'answers/job-queue.mo'
+        answer.parent.mkdir()
+        answer.write_bytes((root / 'learnability/final/gpt-6.1-sol/job-queue.mo').read_bytes())
+        for only in ([], ['--only', 'Answers.JobQueue.acknowledge.promise.1'],
+                     ['--only', 'Answers.JobQueue.fail.promise.1']):
+            items = records(run(binary, ['test', '--json', *only, str(answer)], 0), 'test')
+            promises = [r for r in items if r.get('kind') == 'promise']
+            assert promises and all(r['outcome'] == 'passed' for r in promises), items
+            assert items[-1]['errors'] == 0, items
 
 
 def composite_promises(binary):

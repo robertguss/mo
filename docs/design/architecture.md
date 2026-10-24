@@ -1889,8 +1889,9 @@ set and each promise uses at most 64 MiB scratch, refusing E1404 on exhaustion.
 An explicitly exposed-opaque type requires builders even inside its defining
 module; an unexported local record/choice remains structural. Preflight accepts one only
 when its module can start one: an exposed constant of it, or an exposed nongeneric function
-returning it (as itself, a tuple field, `Some` or `Ok`) from inputs that hold no capability,
-function or hidden type. Its insides must also be structurally supported, from its own
+returning it (as itself, a tuple field, `Some` or `Ok`) from inputs that hold no capability or
+function, and only hidden types that can themselves be started at a lower level (section 10.1,
+"Hidden types"), so a cycle or a chain deeper than three levels is refused. Its insides must also be structurally supported, from its own
 module's view and without capabilities, since built values are copied field by field. A hidden
 type with no start refuses the whole selection, even nested under List or Option; the
 generator may not silently cover only an empty list or one visible choice case. Listing
@@ -2082,7 +2083,9 @@ start. Rendering never changes files. Unavailable locations display
   not the VM's, which changes from run to run (`bytecode.md` section 8).
 - **Hidden types.** A type exposed without its insides is built only through
   calls to its module's exposed functions that return it, in sequences of up
-  to four calls from generated arguments. A builder that returns
+  to four calls from generated arguments. Those arguments may hold other
+  hidden types, each built the same way first, up to three levels deep and
+  never in a cycle. A builder that returns
   `Result(T, E)` or `Option(T)` counts when it succeeds, and one that returns a
   tuple holding `T`, such as `(T, Reply)`, counts with the first `T` in it. An
   exposed constant of the type starts a sequence with no call.
@@ -2209,17 +2212,24 @@ themselves are not shrunk, and the report names them by type (`<ReadFiles>`).
 
 **Hidden types.** The driver gives each type exposed without its insides one factory
 (`src/tools/builders.c`). Its starts are the module's exposed constants of the type and its
-exposed functions that return one from inputs a generator can make (no capability, function or
-hidden type); its steps are exposed functions that take the type and return one from such other
-inputs. MO-127 tracks builders that need another hidden type as input; that
-dependency gap is separate from the lack of shrinking for built values.
+exposed functions that return one from inputs a generator can make (no capability or function);
+its steps are exposed functions that take the type and return one from such other inputs. An
+input may hold other hidden types, which their own factories build into the builder's scratch
+process. Levels keep that finite: a type is level 0 when one of its starts needs no other
+hidden type, and level n when a start needs only types below n. Levels stop at 2
+(`MO_CLI_BUILDER_LEVELS` is 3), and every builder, start or step, takes only hidden types of a lower
+level than its own type, so a value nests at most three builds, never builds its own type
+inside itself, and a type reachable only through a cycle has no level and no factory. Preflight
+(`startable` in `src/tools/promises.c`) checks the same levels on the source. The other types are
+built independently of each other and of the promise's other inputs.
 A function's result counts when the type is the result itself, the first tuple field
 holding it, `Some` or `Ok`, and the call returns that case. Constants are exposed when the
 checked program says so, since the bytecode module table lists only exposed types and functions.
 Each value is one start then up to three steps, run in a scratch process of the same image, so
 a call that stops or fails ends only that sequence: a start that doesn't count is retried with
-other inputs (up to 64 attempts, in boundary order once random ones have had half), and a step
-that doesn't count is skipped. A value whose start never counts can't be generated, and the
+other inputs (in boundary order, up to 64 attempts), and a step
+that doesn't count is skipped. A random value first makes 32 attempts of its own, then falls back
+to the boundary order's full 64, so it can be built whenever boundary 0 can. A value whose start never counts can't be generated, and the
 promise reports that inability (E1404) rather than an outcome. A step's generator takes the value built so far for each
 parameter of the hidden type. Boundary 0 is the first start on its minimum inputs, boundary 1
 adds one step and boundary 2 three, cycling through the steps on their boundary inputs; random

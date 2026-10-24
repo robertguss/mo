@@ -4,6 +4,7 @@
 
 #define BOUNDARIES 3
 #define STEPS (MO_CLI_BUILDER_CALLS - 1)
+#define UNLEVELLED UINT32_MAX
 
 /* An exposed constant of the hidden type, or an exposed function whose result holds one. */
 struct builder {
@@ -14,6 +15,9 @@ struct builder {
     uint32_t path_length;
     bool chained; /* takes the hidden type: a step, not a start */
     bool generated;
+    /* The other hidden types among its inputs, as slots in mo_builders, each once. */
+    uint32_t *needs;
+    uint32_t need_count;
     struct mo_inputs arguments;
 };
 
@@ -26,10 +30,15 @@ struct mo_hidden {
     uint32_t count;
     uint32_t *starts, *steps;
     uint32_t start_count, step_count;
+    /* 0 when a start needs no other hidden type, else one more than the highest level among a
+     * start's needs; UNLEVELLED when no start qualifies within MO_CLI_BUILDER_LEVELS. A builder
+     * takes only hidden types of lower levels, so building one never comes back to its type. */
+    uint32_t level;
     /* A step's generator takes the value built so far for each parameter of the hidden type. */
     struct mo_input_factory chain;
     struct mo_heap *heap;
     struct mo_cell current;
+    bool building; /* levels keep a build from reaching its own type again */
 };
 
 static uint64_t next_random(uint64_t *state) {
@@ -97,17 +106,25 @@ static bool extract(const struct mo_types *types, const struct builder *builder,
     return true;
 }
 
-/* Whether a generator can make a value of type for a builder: no capability, function or hidden
- * type inside it. visited is scratch of one byte per type. */
-static bool plain(const struct mo_types *types, const bool *hidden, uint32_t type, uint8_t *visited,
-                  uint32_t *stack) {
-    memset(visited, 0, types->count);
+/* Whether a generator can make a value of type for a builder: no capability or function inside
+ * it. A hidden type inside it comes from that type's own factory, so the walk stops there and
+ * adds its slot to needs, once per builder. visited is scratch of one byte per type, cleared for
+ * each builder; slots maps a type to its hidden slot or MO_NO_INDEX. */
+static bool buildable(const struct mo_types *types, const uint32_t *slots, uint32_t type,
+                      uint8_t *visited, uint32_t *stack, uint32_t *needs, uint32_t *need_count) {
+    if (visited[type])
+        return true;
     uint32_t depth = 0;
     stack[depth++] = type;
     visited[type] = 1;
     while (depth != 0) {
-        const struct mo_type *item = &types->items[stack[--depth]];
-        if (hidden[stack[depth]] || item->kind == MO_TYPE_FUNCTION || item->kind == MO_TYPE_ENV ||
+        uint32_t at = stack[--depth];
+        const struct mo_type *item = &types->items[at];
+        if (slots[at] != MO_NO_INDEX) {
+            needs[(*need_count)++] = slots[at];
+            continue;
+        }
+        if (item->kind == MO_TYPE_FUNCTION || item->kind == MO_TYPE_ENV ||
             item->kind == MO_TYPE_CAPABILITY)
             return false;
         const struct mo_type_field *fields = NULL;
@@ -171,6 +188,8 @@ static bool exposed_constant(const struct mo_program *program, const struct mo_b
     return false;
 }
 
+/* A builder's arguments come from the chain for the hidden type itself and the factories of the
+ * lower-level hidden types it needs. */
 static enum mo_input_result
 prepare_builder(struct mo_hidden *hidden, const struct mo_bytecode *file, struct builder *builder) {
     if (builder->function == MO_NO_INDEX)
@@ -181,12 +200,23 @@ prepare_builder(struct mo_hidden *hidden, const struct mo_bytecode *file, struct
         parameters[i] = function->parameters[i].type;
     if (function->parameter_count == 0)
         return MO_INPUT_OK;
+    struct mo_builders *builders = hidden->owner;
+    uint32_t count = (builder->chained ? 1 : 0) + builder->need_count;
+    struct mo_input_factory *factories =
+        mo_arena_allocate(&builders->arena, (count == 0 ? 1 : count) * sizeof *factories,
+                          _Alignof(struct mo_input_factory));
+    if (factories == NULL)
+        return MO_INPUT_NO_MEMORY;
+    uint32_t used = 0;
+    if (builder->chained)
+        factories[used++] = hidden->chain;
+    for (uint32_t i = 0; i < builder->need_count; i++)
+        factories[used++] = builders->factories[builder->needs[i]];
     const struct mo_bytecode_string *name = &file->strings[function->name];
     struct mo_input_limits limits = mo_input_limits_default();
-    enum mo_input_result result =
-        mo_inputs_init(&builder->arguments, mo_image_types(hidden->owner->image), parameters,
-                       function->parameter_count, (const char *)name->bytes, name->length, &limits,
-                       &hidden->chain, builder->chained ? 1 : 0);
+    enum mo_input_result result = mo_inputs_init(
+        &builder->arguments, mo_image_types(builders->image), parameters, function->parameter_count,
+        (const char *)name->bytes, name->length, &limits, factories, count);
     builder->generated = true;
     return result;
 }
@@ -197,16 +227,35 @@ static enum mo_input_result build(void *context, struct mo_heap *destination,
 static enum mo_input_result copy(void *context, struct mo_heap *destination, struct mo_cell source,
                                  struct mo_input_limits *remaining, struct mo_cell *out);
 
-static enum mo_input_result prepare_hidden(struct mo_builders *builders,
-                                           const struct mo_program *program,
-                                           const bool *hidden_types, uint32_t module,
-                                           struct mo_hidden *hidden, uint8_t *visited,
-                                           uint32_t *stack) {
+/* The copier that moves a built value into a trial, which also says whether it is hashable. */
+static enum mo_input_result prepare_copier(struct mo_builders *builders, struct mo_hidden *hidden,
+                                           bool *copyable) {
+    const struct mo_types *types = mo_image_types(builders->image);
+    hidden->chain = (struct mo_input_factory){
+        .type = hidden->type, .boundaries = 1, .context = hidden, .build = chain_build};
+    struct mo_input_limits limits = mo_input_limits_default();
+    enum mo_input_result result =
+        mo_inputs_init(&hidden->copier, types, &hidden->type, 1, "", 0, &limits, NULL, 0);
+    hidden->copier_ready = true;
+    *copyable = result == MO_INPUT_OK;
+    if (result == MO_INPUT_NO_MEMORY)
+        return result;
+    if (*copyable)
+        hidden->chain.hashable = mo_inputs_hashable(&hidden->copier, hidden->type);
+    return MO_INPUT_OK;
+}
+
+/* Every exposed constant and function of the module that yields the hidden type from inputs a
+ * generator can make, with the other hidden types each needs and its prepared generator. Which
+ * of them start and step waits for the levels. */
+static enum mo_input_result collect_builders(struct mo_builders *builders,
+                                             const struct mo_program *program,
+                                             const uint32_t *slots, uint32_t module,
+                                             struct mo_hidden *hidden, uint8_t *visited,
+                                             uint32_t *stack, uint32_t *needs) {
     const struct mo_bytecode *file = mo_image_bytecode(builders->image);
     const struct mo_types *types = mo_image_types(builders->image);
     const struct mo_bytecode_module *owner = &file->modules[module];
-    hidden->chain = (struct mo_input_factory){
-        .type = hidden->type, .boundaries = 1, .context = hidden, .build = chain_build};
     uint32_t most = owner->function_count + owner->global_count;
     hidden->builders =
         mo_arena_allocate(&builders->arena, (most == 0 ? 1 : most) * sizeof *hidden->builders,
@@ -217,22 +266,12 @@ static enum mo_input_result prepare_hidden(struct mo_builders *builders,
                                       _Alignof(uint32_t));
     if (hidden->builders == NULL || hidden->starts == NULL || hidden->steps == NULL)
         return MO_INPUT_NO_MEMORY;
-    struct mo_input_limits limits = mo_input_limits_default();
-    enum mo_input_result result =
-        mo_inputs_init(&hidden->copier, types, &hidden->type, 1, "", 0, &limits, NULL, 0);
-    hidden->copier_ready = true;
-    if (result == MO_INPUT_NO_MEMORY)
-        return result;
-    if (result != MO_INPUT_OK)
-        return MO_INPUT_OK; /* No way to copy one, so none is built: the factory refuses. */
-    hidden->chain.hashable = mo_inputs_hashable(&hidden->copier, hidden->type);
     for (uint32_t i = 0; i < owner->global_count; i++) {
         uint32_t global = owner->globals[i];
         if (file->globals[global].type != hidden->type || !exposed_constant(program, file, global))
             continue;
-        hidden->builders[hidden->count] =
+        hidden->builders[hidden->count++] =
             (struct builder){.function = MO_NO_INDEX, .global = global};
-        hidden->starts[hidden->start_count++] = hidden->count++;
     }
     for (uint32_t i = 0; i < owner->function_count; i++) {
         uint32_t index = owner->functions[i];
@@ -241,32 +280,47 @@ static enum mo_input_result prepare_hidden(struct mo_builders *builders,
         if (function->kind != MO_FUNCTION_FUNCTION || function->spec_code ||
             !find_path(types, function->result_type, hidden->type, 0, &candidate))
             continue;
+        memset(visited, 0, types->count);
         bool usable = true;
         for (uint32_t p = 0; usable && p < function->parameter_count; p++) {
             uint32_t type = function->parameters[p].type;
             if (type == hidden->type)
                 candidate.chained = true;
             else
-                usable = plain(types, hidden_types, type, visited, stack);
+                usable =
+                    buildable(types, slots, type, visited, stack, needs, &candidate.need_count);
         }
         if (!usable)
             continue;
+        if (candidate.need_count != 0) {
+            candidate.needs = mo_arena_allocate(
+                &builders->arena, candidate.need_count * sizeof(uint32_t), _Alignof(uint32_t));
+            if (candidate.needs == NULL)
+                return MO_INPUT_NO_MEMORY;
+            memcpy(candidate.needs, needs, candidate.need_count * sizeof(uint32_t));
+        }
         struct builder *builder = &hidden->builders[hidden->count];
         *builder = candidate;
-        result = prepare_builder(hidden, file, builder);
-        if (result == MO_INPUT_NO_MEMORY)
-            return result;
-        if (result != MO_INPUT_OK) {
-            mo_inputs_free(&builder->arguments);
+        enum mo_input_result result = prepare_builder(hidden, file, builder);
+        if (result == MO_INPUT_OK) {
+            hidden->count++;
             continue;
         }
-        if (builder->chained)
-            hidden->steps[hidden->step_count++] = hidden->count;
-        else
-            hidden->starts[hidden->start_count++] = hidden->count;
-        hidden->count++;
+        if (builder->generated)
+            mo_inputs_free(&builder->arguments);
+        if (result == MO_INPUT_NO_MEMORY)
+            return result;
     }
     return MO_INPUT_OK;
+}
+
+/* Whether every hidden type a builder needs has a level below level. */
+static bool below(const struct mo_builders *builders, const struct builder *builder,
+                  uint32_t level) {
+    for (uint32_t i = 0; i < builder->need_count; i++)
+        if (builders->hidden[builder->needs[i]].level >= level)
+            return false;
+    return true;
 }
 
 enum mo_input_result mo_builders_init(struct mo_builders *builders,
@@ -277,21 +331,25 @@ enum mo_input_result mo_builders_init(struct mo_builders *builders,
     mo_arena_init(&builders->arena, MO_CLI_TEST_SIZE);
     const struct mo_bytecode *file = mo_image_bytecode(image);
     const struct mo_types *types = mo_image_types(image);
-    bool *hidden_types = mo_arena_allocate(&builders->arena, types->count + 1, 1);
+    uint32_t *slots = mo_arena_allocate(&builders->arena, (types->count + 1) * sizeof(uint32_t),
+                                        _Alignof(uint32_t));
     uint8_t *visited = mo_arena_allocate(&builders->arena, types->count + 1, 1);
     uint32_t *stack = mo_arena_allocate(&builders->arena, (types->count + 1) * sizeof(uint32_t),
                                         _Alignof(uint32_t));
     uint32_t *modules = mo_arena_allocate(&builders->arena, (types->count + 1) * sizeof(uint32_t),
                                           _Alignof(uint32_t));
-    if (hidden_types == NULL || visited == NULL || stack == NULL || modules == NULL)
+    uint32_t *needs = mo_arena_allocate(&builders->arena, (types->count + 1) * sizeof(uint32_t),
+                                        _Alignof(uint32_t));
+    if (slots == NULL || visited == NULL || stack == NULL || modules == NULL || needs == NULL)
         return MO_INPUT_NO_MEMORY;
-    memset(hidden_types, 0, types->count + 1);
+    for (uint32_t t = 0; t < types->count; t++)
+        slots[t] = MO_NO_INDEX;
     for (uint32_t m = 0; m < file->module_count; m++)
         for (uint32_t i = 0; i < file->modules[m].type_count; i++) {
             const struct mo_bytecode_type_export *exported = &file->modules[m].types[i];
-            if (exported->contents_exposed || hidden_types[exported->type])
+            if (exported->contents_exposed || slots[exported->type] != MO_NO_INDEX)
                 continue;
-            hidden_types[exported->type] = true;
+            slots[exported->type] = 0;
             modules[exported->type] = m;
             builders->count++;
         }
@@ -305,16 +363,20 @@ enum mo_input_result mo_builders_init(struct mo_builders *builders,
         builders->count = 0;
         return MO_INPUT_NO_MEMORY;
     }
+    /* Every factory exists before any builder's generator takes it. */
     uint32_t count = builders->count;
     builders->count = 0;
+    bool *copyable = mo_arena_allocate(&builders->arena, count + 1, 1);
+    if (copyable == NULL)
+        return MO_INPUT_NO_MEMORY;
     for (uint32_t t = 0; t < types->count && builders->count < count; t++) {
-        if (!hidden_types[t])
+        if (slots[t] == MO_NO_INDEX)
             continue;
         uint32_t slot = builders->count++;
+        slots[t] = slot;
         struct mo_hidden *hidden = &builders->hidden[slot];
-        *hidden = (struct mo_hidden){.owner = builders, .type = t};
-        enum mo_input_result result =
-            prepare_hidden(builders, program, hidden_types, modules[t], hidden, visited, stack);
+        *hidden = (struct mo_hidden){.owner = builders, .type = t, .level = UNLEVELLED};
+        enum mo_input_result result = prepare_copier(builders, hidden, &copyable[slot]);
         builders->factories[slot] = (struct mo_input_factory){.type = t,
                                                               .boundaries = BOUNDARIES,
                                                               .hashable = hidden->chain.hashable,
@@ -323,6 +385,35 @@ enum mo_input_result mo_builders_init(struct mo_builders *builders,
                                                               .copy = copy};
         if (result != MO_INPUT_OK)
             return result;
+    }
+    for (uint32_t slot = 0; slot < count; slot++) {
+        struct mo_hidden *hidden = &builders->hidden[slot];
+        if (!copyable[slot])
+            continue; /* No way to copy one, so none is built: the factory refuses. */
+        enum mo_input_result result = collect_builders(
+            builders, program, slots, modules[hidden->type], hidden, visited, stack, needs);
+        if (result != MO_INPUT_OK)
+            return result;
+    }
+    /* Round r gives level r to each type with a start whose needs all got levels before it. */
+    for (uint32_t round = 0; round < MO_CLI_BUILDER_LEVELS; round++)
+        for (uint32_t slot = 0; slot < count; slot++) {
+            struct mo_hidden *hidden = &builders->hidden[slot];
+            for (uint32_t i = 0; hidden->level == UNLEVELLED && i < hidden->count; i++)
+                if (!hidden->builders[i].chained && below(builders, &hidden->builders[i], round))
+                    hidden->level = round;
+        }
+    /* A type with no level keeps no starts, so its factory refuses. */
+    for (uint32_t slot = 0; slot < count; slot++) {
+        struct mo_hidden *hidden = &builders->hidden[slot];
+        for (uint32_t i = 0; hidden->level != UNLEVELLED && i < hidden->count; i++) {
+            if (!below(builders, &hidden->builders[i], hidden->level))
+                continue;
+            if (hidden->builders[i].chained)
+                hidden->steps[hidden->step_count++] = i;
+            else
+                hidden->starts[hidden->start_count++] = i;
+        }
     }
     return MO_INPUT_OK;
 }
@@ -429,6 +520,8 @@ static enum mo_input_result build(void *context, struct mo_heap *destination,
     struct mo_builders *builders = hidden->owner;
     if (hidden->start_count == 0)
         return MO_INPUT_UNSUPPORTED;
+    MO_ASSERT(!hidden->building);
+    hidden->building = true;
     bool boundary = request->kind == MO_INPUT_BOUNDARY;
     uint64_t random = boundary ? UINT64_C(0x6275696c64657273) + request->boundary : request->seed;
     uint32_t steps = boundary ? (request->boundary == 0   ? 0
@@ -443,13 +536,18 @@ static enum mo_input_result build(void *context, struct mo_heap *destination,
     bool has_value = false;
     enum mo_input_result result = MO_INPUT_LIMIT;
     /* A start counts when it returns a value; boundaries go through the starts and their boundary
-     * inputs in order, and random inputs fall back to that order after half their attempts. */
-    for (uint32_t attempt = 0; attempt < MO_CLI_BUILDER_ATTEMPTS && !has_value; attempt++) {
+     * inputs in order. Random inputs first make half as many attempts of their own, then fall back
+     * to that same order, so a random value can be built whenever boundary 0 can. */
+    uint32_t random_attempts = boundary ? 0 : MO_CLI_BUILDER_ATTEMPTS / 2;
+    for (uint32_t attempt = 0; attempt < random_attempts + MO_CLI_BUILDER_ATTEMPTS && !has_value;
+         attempt++) {
         if (process == NULL &&
-            (process = mo_process_new(builders->image, builders->limits)) == NULL)
-            return MO_INPUT_NO_MEMORY;
-        bool ordered = boundary || attempt >= MO_CLI_BUILDER_ATTEMPTS / 2;
-        uint32_t rank = boundary ? attempt : attempt - MO_CLI_BUILDER_ATTEMPTS / 2;
+            (process = mo_process_new(builders->image, builders->limits)) == NULL) {
+            result = MO_INPUT_NO_MEMORY;
+            goto done;
+        }
+        bool ordered = attempt >= random_attempts;
+        uint32_t rank = attempt - random_attempts;
         struct builder *start =
             &hidden->builders[hidden->starts[ordered ? rank % hidden->start_count
                                                      : next_random(&random) % hidden->start_count]];
@@ -487,6 +585,7 @@ done:
             mo_value_drop(mo_process_heap(process), hidden->type, value);
         mo_process_free(process);
     }
+    hidden->building = false;
     return result;
 }
 
