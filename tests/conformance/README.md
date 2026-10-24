@@ -50,7 +50,14 @@ programs pin the complete CLI error, including its locations and fixes.
 - `cost` lists the C unit tests, `tests/test_*.c` or `tests/test_*.c:TEST`,
   that check the semantics of an operation whose cost the block promises
   (D281). The cost itself is not measured; work and allocation counters are
-  left for Phase 3.
+  left for Phase 3. An entry written `measured:tests/test_*.c:TEST` names a
+  test that measures the cost itself; the report labels it "cost measured"
+  and counts it apart. 13.3/8's is the only one: sort, sort_by and
+  sort_by_desc are Mo code in `lib/list.mo`, and
+  `tests/test_lower.c:test_source_sort_work` counts the VM instructions they
+  execute (D294). Native operations run uncounted, so a sort made quadratic
+  inside a native such as `append` would still pass it; 13.3's other rows
+  cover the natives' own costs.
 - `untestable` gives a one-line reason no program can check the claim, such as
   the real clock or a promise about a future version (D282).
 
