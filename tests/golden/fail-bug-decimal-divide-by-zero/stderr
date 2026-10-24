@@ -1,0 +1,6 @@
+bug: dividing by zero
+  at Main.share (tests/golden/fail-bug-decimal-divide-by-zero/main.mo:66..79)
+  at Main.main (tests/golden/fail-bug-decimal-divide-by-zero/main.mo:198..211)
+  at Main.main.entry (tests/golden/fail-bug-decimal-divide-by-zero/main.mo:85..249)
+  total = 1.5
+  parts = 0

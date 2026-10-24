@@ -1,0 +1,5 @@
+bug: Text.replace of an empty text
+  at Main.main (tests/golden/fail-bug-replace-empty/main.mo:109..130)
+  at Main.main.entry (tests/golden/fail-bug-replace-empty/main.mo:13..166)
+  text = "a-b"
+  console = <Console>

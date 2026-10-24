@@ -1,0 +1,4 @@
+money named EUR | EUR | 150
+1.50 EUR [1.50 EUR, 20.00 USD] Some(20.00 USD)
+false Greater [20.00 USD, 1.50 EUR]
+Some(1.50 EUR) Some(20.00 USD)
