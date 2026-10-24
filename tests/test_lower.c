@@ -1978,7 +1978,8 @@ static void test_source_sort_work(void *unused) {
             uint64_t work[2];
             for (int64_t size = 0; size < 2; size++) {
                 int64_t n = size == 0 ? N : 4 * N, arguments[] = {n, shape, way};
-                uint64_t sorting = list_work(image, "Main.sorted", arguments, 3, n, way == 2 ? -1 : 1);
+                uint64_t sorting =
+                    list_work(image, "Main.sorted", arguments, 3, n, way == 2 ? -1 : 1);
                 uint64_t building = list_work(image, "Main.input", arguments, 2, n, 0);
                 MO_ASSERT(sorting > building);
                 work[size] = sorting - building;
