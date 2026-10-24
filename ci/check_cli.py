@@ -2686,7 +2686,12 @@ def guide_claims(binary):
          "E1103 and E1150 mean this toolchain has not implemented that form.",
          "`mo run` and `mo test` report the same code for the same form.",
          "accept a remaining diagnostic only when Know this build names it: E1103 or E1150 on a "
-         "form the reference requires, or E1400 on a promise whose inputs `mo test` cannot build.")
+         "form the reference requires and offers no other way to write the same behaviour, or "
+         "E1400 on a promise whose inputs `mo test` cannot build.",
+         "If the reference offers another way to write the same behaviour from forms that "
+         "compile, use that instead.",
+         "Deleting a required spec, promise or capability to silence a diagnostic leaves the "
+         "task undone.")
     with tempfile.TemporaryDirectory(prefix="mo-guide-") as directory:
         folder = pathlib.Path(directory)
         greet = folder / "greet.mo"
