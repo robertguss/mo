@@ -1,0 +1,3 @@
+{"record":"version","format":"1.0","mo":"0.0.0","command":"test"}
+{"record":"result","name":"Linkcheck.test.1","kind":"test","span":{"file":"answers/linkcheck.mo","file_bytes":"616e73776572732f6c696e6b636865636b2e6d6f","start":1358,"end":1655,"line":53,"column":1,"end_line":58,"end_column":4},"outcome":"passed","microseconds":221}
+{"record":"totals","errors":0,"dropped":0,"passed":1,"failed":0,"stopped":0,"status":0}

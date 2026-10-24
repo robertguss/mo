@@ -1,0 +1,197 @@
+FAIL notioncopy/01-reference
+     stdout
+     --- expected
+     piece-01.md 11637 d9158270
+     piece-02.md 11173 3955e836
+     piece-03.md 11429 866814d8
+     piece-04.md 10510 953c3d27
+     piece-05.md 10577 9ef9f063
+     piece-06.md 10834 bcd2a3f8
+     piece-07.md 2559 230025a4
+     --- actual
+     
+     status: expected 0, got 1
+     after: out/piece-01.md is missing
+     after: out/piece-02.md is missing
+     after: out/piece-03.md is missing
+     after: out/piece-04.md is missing
+     after: out/piece-05.md is missing
+     after: out/piece-06.md is missing
+     after: out/piece-07.md is missing
+FAIL notioncopy/02-reference-limit-4000
+     stdout
+     --- expected
+     piece-01.md 3247 27f96d41
+     piece-02.md 2992 07c5ef7e
+     piece-03.md 2651 cfb87a2e
+     piece-04.md 3757 0c6e0963
+     piece-05.md 3836 0acc1755
+     piece-06.md 3988 c6245b47
+     piece-07.md 3748 6eaaef6c
+     piece-08.md 3956 604f419d
+     piece-09.md 3269 84fb37b7
+     piece-10.md 3574 5251da0a
+     piece-11.md 3834 28142e11
+     piece-12.md 3714 5db50767
+     piece-13.md 2183 f7f9f144
+     piece-14.md 3821 da032cd6
+     piece-15.md 2831 6a24c725
+     piece-16.md 3925 0258fc5b
+     piece-17.md 3844 8e87253b
+     piece-18.md 3102 43cc396a
+     piece-19.md 3888 1b744555
+     piece-20.md 2559 230025a4
+     --- actual
+     
+     status: expected 0, got 1
+     after: out/piece-01.md is missing
+     after: out/piece-02.md is missing
+     after: out/piece-03.md is missing
+     after: out/piece-04.md is missing
+     after: out/piece-05.md is missing
+     after: out/piece-06.md is missing
+     after: out/piece-07.md is missing
+     after: out/piece-08.md is missing
+     after: out/piece-09.md is missing
+     after: out/piece-10.md is missing
+     after: out/piece-11.md is missing
+     after: out/piece-12.md is missing
+     after: out/piece-13.md is missing
+     after: out/piece-14.md is missing
+     after: out/piece-15.md is missing
+     after: out/piece-16.md is missing
+     after: out/piece-17.md is missing
+     after: out/piece-18.md is missing
+     after: out/piece-19.md is missing
+     after: out/piece-20.md is missing
+FAIL notioncopy/03-paragraphs
+     stdout
+     --- expected
+     piece-01.md 157 a26337d6
+     --- actual
+     
+     status: expected 0, got 1
+     after: out/piece-01.md is missing
+FAIL notioncopy/04-lists
+     stdout
+     --- expected
+     piece-01.md 208 202747ac
+     --- actual
+     
+     status: expected 0, got 1
+     after: out/piece-01.md is missing
+FAIL notioncopy/05-code-blocks
+     stdout
+     --- expected
+     piece-01.md 209 e7484428
+     --- actual
+     
+     status: expected 0, got 1
+     after: out/piece-01.md is missing
+FAIL notioncopy/06-tables
+     stdout
+     --- expected
+     piece-01.md 247 cccc4f8b
+     --- actual
+     
+     status: expected 0, got 1
+     after: out/piece-01.md is missing
+FAIL notioncopy/07-no-title
+     stdout
+     --- expected
+     piece-01.md 42 3be70de7
+     --- actual
+     
+     status: expected 0, got 1
+     after: out/piece-01.md is missing
+FAIL notioncopy/07-second-title
+     stdout
+     --- expected
+     piece-01.md 42 437f0e0e
+     --- actual
+     
+     status: expected 0, got 1
+     after: out/piece-01.md is missing
+FAIL notioncopy/08-exactly-at-the-limit
+     stdout
+     --- expected
+     piece-01.md 100 bd4522fc
+     piece-02.md 7 04680121
+     --- actual
+     
+     status: expected 0, got 1
+     after: out/piece-01.md is missing
+     after: out/piece-02.md is missing
+FAIL notioncopy/08-one-byte-over
+     stdout
+     --- expected
+     piece-01.md 50 a9591168
+     piece-02.md 57 2d1512b5
+     --- actual
+     
+     status: expected 0, got 1
+     after: out/piece-01.md is missing
+     after: out/piece-02.md is missing
+FAIL notioncopy/08-section-at-the-limit
+     stdout
+     --- expected
+     piece-01.md 7 04680121
+     piece-02.md 100 4b8b2b08
+     piece-03.md 7 04680121
+     --- actual
+     
+     status: expected 0, got 1
+     after: out/piece-01.md is missing
+     after: out/piece-02.md is missing
+     after: out/piece-03.md is missing
+FAIL notioncopy/09-long-section
+     stdout
+     --- expected
+     piece-01.md 200 d11a4fe6
+     piece-02.md 183 3a5f3bf4
+     --- actual
+     
+     status: expected 0, got 1
+     after: out/piece-01.md is missing
+     after: out/piece-02.md is missing
+FAIL notioncopy/10-block-over-the-limit
+     stderr: expected it to contain 'ref.md:5: a block of 300 bytes is longer than the limit', got 'error E1150: this native call is not lowered yet  /home/user/workspace/repo/.amp/mo63/collect/gpt-6.1-sol/notioncopy.mo:159:20\n\n  159 |       Some(value): value.to_int\n      |                    ^^^^^^^^^^^^\n\n'
+FAIL notioncopy/11-utf8
+     stdout
+     --- expected
+     piece-01.md 97 222a3142
+     piece-02.md 46 836d1d2d
+     --- actual
+     
+     status: expected 0, got 1
+     after: out/piece-01.md is missing
+     after: out/piece-02.md is missing
+FAIL notioncopy/12-checksum-wikipedia
+     stdout
+     --- expected
+     piece-01.md 10 158803a2
+     --- actual
+     
+     status: expected 0, got 1
+     after: out/piece-01.md is missing
+FAIL notioncopy/12-checksum-wraps
+     stdout
+     --- expected
+     piece-01.md 10001 9472c700
+     --- actual
+     
+     status: expected 0, got 1
+     after: out/piece-01.md is missing
+FAIL notioncopy/13-empty-source
+     status: expected 0, got 1
+FAIL notioncopy/14-usage-limit-without-number
+     status: expected 2, got 1
+FAIL notioncopy/14-usage-limit-zero
+     status: expected 2, got 1
+FAIL notioncopy/14-usage-missing-argument
+     status: expected 2, got 1
+FAIL notioncopy/14-usage-missing-source
+     status: expected 2, got 1
+FAIL notioncopy/14-usage-out-not-empty
+     status: expected 2, got 1
+notioncopy: 0 of 22 tests passed

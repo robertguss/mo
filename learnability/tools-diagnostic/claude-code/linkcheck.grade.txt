@@ -1,0 +1,22 @@
+ok   linkcheck/01-clean
+ok   linkcheck/02-missing-file
+ok   linkcheck/03-missing-heading
+ok   linkcheck/04-duplicate-headings
+ok   linkcheck/05-anchor-rules
+ok   linkcheck/06-code-is-not-links
+ok   linkcheck/07-skipped-schemes
+ok   linkcheck/08-folders-and-other-files
+ok   linkcheck/09-paths
+ok   linkcheck/10-leaves-the-folder
+ok   linkcheck/11-reference-definitions
+ok   linkcheck/12-images
+ok   linkcheck/13-hidden-folders
+ok   linkcheck/14-ordering
+ok   linkcheck/15-line-numbers
+ok   linkcheck/16-several-on-a-line
+ok   linkcheck/17-no-markdown
+ok   linkcheck/18-usage-missing-folder
+ok   linkcheck/18-usage-two-arguments
+ok   linkcheck/19-folder-argument
+ok   linkcheck/20-mo-repository
+linkcheck: 21 of 21 tests passed

@@ -1,0 +1,6 @@
+code	errors	first_retry	within_three	by_fix	unfixed
+E0052	1	0	0	1	0
+total	1	0	0	1	0
+first_retry_rate	n/a
+within_three_rate	n/a
+tests_passed	1/2 50.0%

@@ -1,0 +1,4 @@
+z.md:1: lost.md: no such file
+z.md:2: ../outside.md: leaves the folder
+z.md:3: docs/guide.md#absent: no such heading
+3 broken links

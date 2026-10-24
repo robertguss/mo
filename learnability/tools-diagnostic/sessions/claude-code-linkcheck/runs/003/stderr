@@ -1,0 +1,5 @@
+error E1150: this error text implementation is not lowered yet  /home/user/workspace/mo-work/probe.mo:8:23
+
+  8 |         console.print("#{e}")
+    |                       ^^^^^^
+
