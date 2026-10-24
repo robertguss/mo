@@ -8,7 +8,7 @@ write.
 
 | Tool | Task text | Hidden tests |
 | --- | --- | --- |
-| `linkcheck` | [linkcheck/task.md](linkcheck/task.md) | 20, in 21 runs |
+| `linkcheck` | [linkcheck/task.md](linkcheck/task.md) | 22, in 23 runs |
 | `notioncopy` | [notioncopy/task.md](notioncopy/task.md) | 14, in 22 runs |
 | `tally` | [tally/task.md](tally/task.md) | 16, in 19 runs |
 
@@ -32,10 +32,6 @@ the tests were built, wherever an approved test needed a rule the draft didn't s
 fence closes, indented reference definitions and links in headings (linkcheck); headings after
 the title, how a long section splits, and `--limit` above 0 (notioncopy); and that every error is
 reported on standard error (all three).
-
-No round can start yet: at the frozen commit, `mo` reports E1150 (not lowered yet) for
-`Files.entries`, `Files.exists?` and `Files.make_folder`, and `walk` isn't in scope, so no Mo
-program can list a folder's kinds of entries or make OUT. Lowering them comes first.
 
 ## Grading
 
@@ -64,7 +60,10 @@ text, and a fresh round, and `grade.py --freeze TOOL` writes the new hashes.
   reported. Git can't store a folder named `.git`, so test 13's hidden folders are `.github/`
   and `.cache/`. Test 20 is the repository at the commit in `tests/20-mo-repository/commit`, with every
   Markdown file whole and every other file present but empty (only its existence matters), one
-  link and one anchor broken on purpose, and a 10-second limit.
+  link and one anchor broken on purpose, and a 10-second limit. Tests 21 and 22 were added for
+  the final round (D275), after the diagnostic round found a program that passed every test while
+  breaking rules 5 and 6: 21 has empty `#` fragments, which name no heading, and 22 has headings
+  with a combining accent and fullwidth punctuation, which rule 6 removes.
 - **notioncopy.** Tests 1 and 2 convert `docs/reference/README.md` at the same commit. Converting
   the reference as it was on 12 October gives, byte for byte, the Notion copy made that day
   (`hidden/notion-copy-2026-10-12.txt`, 68,664 bytes); test 1's pieces, joined, differ from it
