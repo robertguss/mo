@@ -2303,6 +2303,13 @@ from one to zero. Duplication covers immediate, reference and four choice payloa
 real type dispatch. The destructor's graph walk, allocation, release and reuse are not proved.
 `cbmc/README.md` gives the harness inputs and exclusions.
 
+**Hash-table probing.** `cbmc/table.c` proves bounded insertion, map/set lookup, compaction and
+the union reservation overlay, including collisions, tombstones and wraparound. A separate
+256-slot case checks both sides of the 128-probe insertion limit. Layout proofs justify the
+typed-array models used by the probing proofs. The ordinary cases have eight slots; compaction
+has at most two entries. Larger tables and whole collection operations are not proved.
+`cbmc/README.md` lists each bound and model.
+
 **Generated Core programs.** `ci/gen_core.py` builds well-typed Core programs from the typing rules
 in `formal/MoCore/Check.lean`: it picks a type, then an expression of that type, over scalars,
 tuples, lists, maps, sets, options, results, declared data, functions, `let_`, `if_`, `case_`,

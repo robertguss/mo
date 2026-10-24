@@ -84,6 +84,14 @@ proofs=(
 	"int_pow|multiply|||number.c|--unwind 66"
 	"refcount_dup||||refcount.c|--unwind 17"
 	"refcount_enqueue||||refcount.c"
+	"table_layout||||table.c|--unwind 17"
+	"table_layout_limit||||table.c|--unwind 17"
+	"table_insert|mo_table_info mo_table_slots mo_table_hashes mo_table_live|||table.c|--unwind 129"
+	"table_probe_limit|mo_table_info mo_table_slots|||table.c|--unwind 257"
+	"table_lookup|mo_table_info mo_table_slots mo_table_hashes mo_table_live|||table.c|--unwind 17"
+	"table_lookup_set|mo_table_info mo_table_slots mo_table_hashes mo_table_live|||table.c|--unwind 17"
+	"table_compact|mo_table_info mo_table_slots mo_table_hashes mo_table_live|compact.0:3,compact.1:2,compact.2:3,memmove.0:3,memmove.1:3||table.c|--unwind 9"
+	"table_union|mo_table_info mo_table_slots mo_table_hashes mo_table_live|union_slots.0:3,union_slots.1:129,union_slots.2:4||table.c|--unwind 9"
 )
 
 checks=(--bounds-check --pointer-check --pointer-overflow-check --signed-overflow-check
@@ -130,6 +138,11 @@ proved_function() {
 	exact_product) echo mo_prim_exact_product ;;
 	refcount_dup) echo 'mo_value_dup|mo_value_object' ;;
 	refcount_enqueue) echo 'enqueue_object|mo_heap_allocation' ;;
+	table_layout | table_layout_limit) echo 'new_table|mo_table_info|mo_table_slots|mo_table_hashes|mo_table_live|mo_table_stride' ;;
+	table_insert | table_probe_limit) echo insertion_slot ;;
+	table_lookup | table_lookup_set) echo lookup ;;
+	table_compact) echo compact ;;
+	table_union) echo union_slots ;;
 	*) echo "$1" ;;
 	esac
 }
@@ -229,11 +242,14 @@ run() {
 			if [[ "$goal" =~ \ file\ ([^ ]+)\ line\ ([0-9]+)\  ]]; then
 				sed -n "${BASH_REMATCH[2]}p" "${BASH_REMATCH[1]}" |
 					grep -qE 'MO_ASSERT\(|MO_UNREACHABLE\(' && continue
-				# Nor the jump out of a block that ends in MO_UNREACHABLE: a lone closing brace
-				# just after it.
-				sed -n "$((BASH_REMATCH[2] > 1 ? BASH_REMATCH[2] - 1 : 1)),${BASH_REMATCH[2]}p" \
-					"${BASH_REMATCH[1]}" | tr -d ' \t' | tr '\n' ' ' |
-					grep -qE '^MO_UNREACHABLE\(\); \} $' && continue
+				# CBMC also assigns locations to braces immediately before and after an
+				# MO_UNREACHABLE. Neither is executable on a proved path.
+				if sed -n "${BASH_REMATCH[2]}p" "${BASH_REMATCH[1]}" | grep -qE '^[[:space:]]*\}$'; then
+					if sed -n "$((BASH_REMATCH[2] > 1 ? BASH_REMATCH[2] - 1 : 1))p;$((BASH_REMATCH[2] + 1))p" \
+						"${BASH_REMATCH[1]}" | grep -qE '^[[:space:]]*MO_UNREACHABLE\(\);([[:space:]]*/\*.*\*/)?[[:space:]]*$'; then
+						continue
+					fi
+				fi
 				# Nor a let-off line: the block's own, or the condition just before it.
 				sed -n "$((BASH_REMATCH[2] > 1 ? BASH_REMATCH[2] - 1 : 1)),${BASH_REMATCH[2]}p" \
 					"${BASH_REMATCH[1]}" | grep -qE "$(unreachable_lines "$name")" && continue
