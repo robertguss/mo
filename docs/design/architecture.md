@@ -1,7 +1,7 @@
 # Mo Architecture v0.1
 
 **Phase 2 implementation, checked 24 October 2026 against main at
-[`fb85a00`](https://github.com/robertguss/mo/commit/fb85a00211905f9843c79d1bb27d6ac3f42bcad8).**
+[`aa13b8c`](https://github.com/robertguss/mo/commit/aa13b8c0a9f84a5983b855f798d747b3081e8539).**
 This describes the `mo` toolchain in C (decision D207): the compiler, the
 virtual machine, and the contracts between them. It is written against the
 Language Reference v0.1 (`docs/reference/`), whose rules win wherever the two
@@ -981,9 +981,12 @@ ordinary global adapters. All twelve samples check and pass plain `mo test`;
 the eight with a `main` run through this entry path. Every Files and ReadFiles
 operation lowers, with `walk` written in Mo. Set, Unicode16, Char, Byte.to_int,
 List.sum and the remaining section 14 Int, Float and Bytes primitives also
-lower. This is not full source-library coverage: `Env.get`, `Random.int` and
-other native routes still report E1150. `docs/status/golden-gaps.md` lists
-known gaps; `src/lower/expressions.c` owns native dispatch.
+lower. BigInt's abs/min/max/pow/floor_div/floor_mod/to_int and Random.int/seeded
+also lower (#186). This is not full source-library coverage: `Env.get` and
+other native routes still report E1150. MO-116 tracks the remaining routes,
+including `Int.compare`'s checker E1103. `docs/status/golden-gaps.md` inventories
+gaps but still lists some now-delivered routes; `src/lower/expressions.c` owns
+native dispatch.
 
 Numeric immediates fold unary minus before building Core scalars, including
 Int's minimum. Float literals convert in a private C numeric locale with
@@ -1096,9 +1099,9 @@ overflow, not a lowering refusal. Native adapters keep source spans/closure name
 and the existing creation-prefix restrictions. The remaining section 14 Int,
 Float and Bytes primitives also have adapters, as do Byte.to_int and List.sum.
 Source-native dispatch is separate from primitive implementation in C;
-`Int.compare` through its module still refuses at the checker (E1103), while
-some BigInt natives refuse at lowering (E1150). The gap list currently groups
-both under E1150; the diagnostic classification needs a separate correction.
+`Int.compare` through its module still refuses at the checker (E1103, MO-116).
+BigInt's seven native adapters and Random's two IO adapters are implemented
+(#186); the older gap list's entries for them are stale.
 Function instances retain requirement
 proofs keyed by the callee's scoped parameter and ability, together with the
 supplying instance's type/proof environment. PARAMETER replacement follows those
@@ -1876,7 +1879,7 @@ generator may not silently cover only an empty list or one visible choice case. 
 and ordinary-only selection still require no generator. This eligibility check
 does not widen lowering's native-call
 support: subjects, conditions and anchors still refuse staged calls with E1150
-(for example Env.get and Random.int). Listing still
+(for example Env.get). Random.int and Random.seeded lower (#186). Listing still
 needs no generator or image. The runner uses
 `tools/inputs.h` unchanged, seeded by the full source promise name. Each trial
 uses a fresh process, retaining its tuple and returned result independently of
@@ -2190,7 +2193,9 @@ themselves are not shrunk, and the report names them by type (`<ReadFiles>`).
 (`src/tools/builders.c`). Its starts are the module's exposed constants of the type and its
 exposed functions that return one from inputs a generator can make (no capability, function or
 hidden type); its steps are exposed functions that take the type and return one from such other
-inputs. A function's result counts when the type is the result itself, the first tuple field
+inputs. MO-127 tracks builders that need another hidden type as input; that
+dependency gap is separate from the lack of shrinking for built values.
+A function's result counts when the type is the result itself, the first tuple field
 holding it, `Some` or `Ok`, and the call returns that case. Constants are exposed when the
 checked program says so, since the bytecode module table lists only exposed types and functions.
 Each value is one start then up to three steps, run in a scratch process of the same image, so
@@ -2383,7 +2388,10 @@ The recorded hour-long fuzz runs cover 22 sources and a large-bytecode variant,
 arena, verifier transfer functions, arithmetic and UTF-8, paths, reference
 count updates and hash probing within the bounds in `cbmc/README.md` (D274).
 These are bounded results, not proofs of the whole VM. Benchmark v0's 20 tasks
-and protocol are frozen, but its baseline round has not run. The three real
+and first round are frozen; the round is in progress in
+`learnability/bench-v0-round-1/`, not yet published on main. Release command
+timings for the twelve samples and three workloads are recorded in
+`bench/performance/` (#185), not a new speed gate. The three real
 tools' final round passed 5 of 6 attempts (`learnability/tools-final/results.md`);
 the million-program differential target and Phase 2's other remaining items
 are not implied by that result.

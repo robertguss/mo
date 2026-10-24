@@ -1,7 +1,7 @@
 # Mo Bytecode v0.2
 
 **Implementation contract, checked 24 October 2026 against main at
-[`fb85a00`](https://github.com/robertguss/mo/commit/fb85a00211905f9843c79d1bb27d6ac3f42bcad8).** This is the
+[`aa13b8c`](https://github.com/robertguss/mo/commit/aa13b8c0a9f84a5983b855f798d747b3081e8539).** This is the
 contract between Mo's compiler and its virtual machine, part of Architecture
 v0.1 (`architecture.md`). It fixes the file format, the instruction set, the
 representation of values, the calling convention and the rules the verifier
@@ -906,8 +906,9 @@ A primitive that "changes" a collection, such as `append`, `set`, `remove` or
 `take`, consumes it and follows section 4.6's two paths. A primitive that only
 reads, such as `get`, `size` or `contains?`, borrows. Every row in `prims.def`
 has a C implementation. That does not mean every source-level call lowers;
-native-call coverage belongs to `src/lower`, and known gaps are listed in
-`docs/status/golden-gaps.md`.
+native-call coverage belongs to `src/lower`. MO-116 tracks the remaining
+routes; the inventory in `docs/status/golden-gaps.md` still includes BigInt
+and Random routes delivered in #186.
 
 On a stop, primitives and host operations must leave operands in their
 pre-instruction state, including their ownership and the objects they name, or
