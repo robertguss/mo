@@ -20,6 +20,12 @@ LIBRARY = "lib"  # the repository's lib/, relative to the working directory ci/c
 
 CASES = {
     "minimum": ("fn main() : Int\nif -9223372036854775808 < 0: 19 else: 1\nend", 19),
+    "sum_int_overflow": ("fn main() : Int\n[9223372036854775807, 1, -1].sum\nend",
+                         ["stopped", "overflow: Int"]),
+    "sum_decimal_overflow": ("fn main() : Int\n"
+                             "if [170141183460469231731.687303715884105727, "
+                             "0.000000000000000001, -1.0].sum == 0.0: 0 else: 1\nend",
+                             ["stopped", "overflow: Decimal"]),
     "lazy_bool": ("fn main() : Int\n"
                   "if (true or 1 / 0 == 0) and (false implies 1 / 0 == 0): 23 else: 1\nend", 23),
     "scalar": ("fn main() : Int\n"
@@ -789,6 +795,8 @@ for fixture, expected in {
     "int-natives": 0,
     "float-natives": 0,
     "bytes-natives": 0,
+    "byte-natives": 0,
+    "list-sum": 0,
     "list-all": 0,
     "list-count": 0,
     "list-find": 0,

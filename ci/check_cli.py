@@ -2179,6 +2179,8 @@ def lower_source_fixtures(binary):
                        b"None/Some(4)/None/Some(-21)\nSome(255)/None/None/Some(0)\n",
         "float-natives": b"true/0/-0\n",
         "bytes-natives": b"10/0/Some(65)/Some(206)/Some(187)\nNone/None/None/Some(\"\")\n",
+        "byte-natives": b"0/127/128/255/255\n",
+        "list-sum": b"7/7/-15/42\n0/0/0/0\n",
         "list-all": b"true/true/false/false/true/true/true\n",
         "list-find": b"none/2/none/2/bc/20/40\n",
         "list-count": b"0/0/3/2/2/2/3\n",
@@ -2228,6 +2230,10 @@ def lower_source_fixtures(binary):
             ("Int.floor_div(-9223372036854775808, -1)", b"overflow: Int"),
             ("7.floor_div(0)", b"dividing by zero"),
             ("Int.floor_mod(7, 0)", b"dividing by zero"),
+            ("[9223372036854775807, 1, -1].sum", b"overflow: Int"),
+            ("[-9223372036854775808, -1, 1].sum", b"overflow: Int"),
+            ("if [170141183460469231731.687303715884105727, 0.000000000000000001, -1.0].sum == 0.0: 0 else: 1",
+             b"overflow: Decimal"),
         ):
             path.write_text(f"module Main\nfn main() : Int\n{expression}\nend\n")
             checked = run(binary, ["check", str(path)], 0)
