@@ -2310,6 +2310,14 @@ typed-array models used by the probing proofs. The ordinary cases have eight slo
 has at most two entries. Larger tables and whole collection operations are not proved.
 `cbmc/README.md` lists each bound and model.
 
+**Path resolution after normalize.** `cbmc/resolve.c` and `resolve-kernel.c` prove memory and
+arithmetic safety of the portable walk and Linux wrapper under modelled syscalls. They check
+no-follow component opens, root-based parent replay, Linux beneath-root flags, retained-descriptor
+reopening and cleanup. The bounds are an eight-byte path buffer, two links, eight work steps
+and three temporary descriptors. The Linux proof uses the portable proof's contract; neither
+proves the OS, production-size limits, or an atomic namespace snapshot. `cbmc/README.md` lists
+the models and exclusions.
+
 **Generated Core programs.** `ci/gen_core.py` builds well-typed Core programs from the typing rules
 in `formal/MoCore/Check.lean`: it picks a type, then an expression of that type, over scalars,
 tuples, lists, maps, sets, options, results, declared data, functions, `let_`, `if_`, `case_`,

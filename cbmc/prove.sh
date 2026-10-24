@@ -92,6 +92,8 @@ proofs=(
 	"table_lookup_set|mo_table_info mo_table_slots mo_table_hashes mo_table_live|||table.c|--unwind 17"
 	"table_compact|mo_table_info mo_table_slots mo_table_hashes mo_table_live|compact.0:3,compact.1:2,compact.2:3,memmove.0:3,memmove.1:3||table.c|--unwind 9"
 	"table_union|mo_table_info mo_table_slots mo_table_hashes mo_table_live|union_slots.0:3,union_slots.1:129,union_slots.2:4||table.c|--unwind 9"
+	"resolve_portable||portable.5:10,portable.4:5,replay.0:5,opened.0:4,memcpy.0:9||resolve.c|--unwind 9"
+	"resolve_kernel|portable|||resolve-kernel.c|--object-bits 10 --unwind 17"
 )
 
 checks=(--bounds-check --pointer-check --pointer-overflow-check --signed-overflow-check
@@ -105,6 +107,8 @@ unreachable_lines() {
 	case "$1" in
 	# A width past UINT64_MAX needs a span of more than 2^63 bytes.
 	display_width) echo 'cluster_width > UINT64_MAX - total' ;;
+	# Inputs and link targets are relative; each advance already skips separators.
+	resolve_portable) echo 'while \(pending\[at\] == '\''/'\''\)' ;;
 	*) echo '^MO_CBMC_NO_LINE$' ;;
 	esac
 }
@@ -143,6 +147,8 @@ proved_function() {
 	table_lookup | table_lookup_set) echo lookup ;;
 	table_compact) echo compact ;;
 	table_union) echo union_slots ;;
+	resolve_portable) echo 'portable|replay|step|kind|flags|directory_flags|mo_host_close' ;;
+	resolve_kernel) echo 'mo_host_resolve|kernel|beneath|kind|flags|mo_host_close' ;;
 	*) echo "$1" ;;
 	esac
 }
