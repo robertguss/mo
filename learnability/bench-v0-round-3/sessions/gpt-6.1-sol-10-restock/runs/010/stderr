@@ -1,0 +1,32 @@
+error E0086: try needs a function returning the same failure kind  restock.mo:19:7
+
+  19 |   n = try text.trim.to_int
+     |       ^^^ try needs a function returning the same failure kind
+
+try works on a Result in a function returning Result, or on an Option in a function returning Option; otherwise handle the failure with case (reference 8.3).
+
+error E0056: a result isn't used  restock.mo:69:3
+
+  69 |   lines.append("#{wanted.size} #{noun} to order")
+     |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not Unit and not used
+
+A result that isn't Unit and isn't used is an error (reference 6.1).
+
+error E0070: case doesn't cover every possible value; missing: BadLevels(..)  restock.mo:74:3
+
+  74 |   case error
+     |   ^^^^^^^^^^ a possible value isn't covered
+
+  --> restock.mo:74:8
+  74 |   case error
+     |        ^^^^^ matched value
+
+The arms must cover every possible value (reference 7.2).
+
+error E0053: values of different types are combined  restock.mo:101:9
+
+  101 |         status = 1
+      |         ^^^^^^^^^^ expected List(Item), found Unit
+
+Comparing or combining values of different types is an error (reference 3).
+

@@ -1,0 +1,21 @@
+passed TitlesTest.test.1  titles-test.mo:5:1
+passed TitlesTest.test.2  titles-test.mo:13:1
+failed TitlesTest.test.3  titles-test.mo:19:1
+  left: the Lord of the Rings
+  right: The Lord of the Rings
+  20 |   assert Titles.title_case("the lord of the rings") == "The Lord of the Rings"
+     |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this assertion was false
+passed TitlesTest.test.4  titles-test.mo:24:1
+passed TitlesTest.test.5  titles-test.mo:28:1
+passed TitlesTest.test.6  titles-test.mo:34:1
+passed Titles.capitalize.example.1  titles.mo:25:5
+passed Titles.capitalize.example.2  titles.mo:26:5
+passed Titles.capitalize.example.3  titles.mo:27:5
+failed Titles.title_case.example.1  titles.mo:44:5
+  left: the Lord of the Rings
+  right: The Lord of the Rings
+  44 |     title_case("the lord of the rings") == "The Lord of the Rings"
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this example was false
+passed Titles.title_case.example.2  titles.mo:45:5
+passed Titles.title_case.example.3  titles.mo:46:5
+10 passed, 2 failed, 0 stopped
