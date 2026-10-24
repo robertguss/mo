@@ -1,0 +1,7 @@
+error E0031: expected =, found CapCase name  tests/errors/e0031-class/main.mo:3:7
+
+  3 | class Point
+    |       ^^^^^
+
+A binding gives a name a value with = (reference 6.1).
+

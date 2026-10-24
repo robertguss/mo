@@ -1,0 +1,14 @@
+error E0080: type Map(Text, Int) doesn't have Order  tests/errors/e0080-map-set/main.mo:4:3
+
+  4 |   a < b
+    |   ^^^^^ type Map(Text, Int) doesn't have Order
+
+An operation needs its type's ability; functions and capabilities have no abilities (reference 9.2).
+
+error E0080: type Set(Int) doesn't have Order  tests/errors/e0080-map-set/main.mo:8:3
+
+  8 |   a < b
+    |   ^^^^^ type Set(Int) doesn't have Order
+
+An operation needs its type's ability; functions and capabilities have no abilities (reference 9.2).
+

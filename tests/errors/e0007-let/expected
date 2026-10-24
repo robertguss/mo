@@ -1,0 +1,21 @@
+error E0007: expected line break, found snake_case name; Mo binds a name with name = value, and a changeable one with var  tests/errors/e0007-let/main.mo:4:7
+
+  4 |   let x = 1
+    |       ^
+
+Use the declaration or statement's syntax and close its delimiters (reference 2.4).
+
+error E0007: expected line break, found snake_case name; Mo binds a name with name = value, and a changeable one with var  tests/errors/e0007-let/main.mo:9:9
+
+  9 |   const y = 2
+    |         ^
+
+Use the declaration or statement's syntax and close its delimiters (reference 2.4).
+
+error E0007: expected line break, found :  tests/errors/e0007-let/main.mo:14:5
+
+  14 |   z := 3
+     |     ^
+
+Use the declaration or statement's syntax and close its delimiters (reference 2.4).
+

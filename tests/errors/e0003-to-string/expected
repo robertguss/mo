@@ -1,0 +1,7 @@
+error E0003: names are snake_case; types and modules are CapCase  tests/errors/e0003-to-string/main.mo:4:5
+
+  4 |   n.toString()
+    |     ^^^^^^^^
+
+Names are ASCII, in snake_case or CapCase (reference 2.3).
+
