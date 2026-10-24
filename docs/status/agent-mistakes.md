@@ -8,7 +8,7 @@ level in the PR that fixes the recurrence.
 Last run: 2026-10-18, PRs #80 to #121 and the project threads. GitHub held no review comments for
 this range, so the evidence is fix-up commits inside PRs, the Review sections of PR bodies, red
 `check` runs, and corrections in the project threads. Class 1 bumped 2026-10-24 for #178 and
-#188's gap-review follow-up.
+#188's gap-review follow-up. Class 6 bumped 2026-10-24 for MO-152's nightly workflow review.
 
 | # | Class | Evidence | Enforced by | State |
 | --- | --- | --- | --- | --- |
@@ -17,7 +17,7 @@ this range, so the evidence is fix-up commits inside PRs, the Review sections of
 | 3 | Lean-dependent drivers skipped locally (no elan in cloud sessions), so hosted CI found the failures, or the PR merged without them | #97 (merged without Lean), #116 (2 red runs), #121 (2 red runs, body said drivers passed); nearly every PR body since #100 says Lean was skipped | AGENTS.md "a skip is not a pass" | prose only (hosted CI removed 22 Oct); cloud sessions don't run `.agents/setup` |
 | 4 | PRs green alone merged onto a main that had moved, turning main red | #118 + #119 + #120: `tests/errors` pins E1003 at `main.mo:4097`, `lib/list.mo` takes one source slot, main red from f4e7f03 until #121; conflicts on the lowering table, `ci/check_cli.py` and `sample-blockers.md` in every sample PR after #106 | nothing (hosted CI removed 22 Oct) | open |
 | 5 | The fresh-context review step skipped | #116, #117, #118, #121 (and #97 skipped a gate) | PR template Review section; `ship-task` | prose only |
-| 6 | Tests or harnesses that pass without testing anything: loose exit-code matching, a count of 0 allowed, no negative control, surviving mutants, an empty fixture, a stale assertion, a CBMC specification that checks what a refusal leaves but not what an acceptance requires | 12 times across 9 PRs: #82, #87, #110, #113, #114, #115, #116, #138 (3 mutants survived), #139 (3 mutants survived) | `review-change` mutant step; `test-change` "see it red" | prose only |
+| 6 | Tests or harnesses that pass without testing anything: loose exit-code matching, a count of 0 allowed, no negative control, surviving mutants, an empty fixture, a stale assertion, a CBMC specification that checks what a refusal leaves but not what an acceptance requires | 13 times across 10 PRs: #82, #87, #110, #113, #114, #115, #116, #138 (3 mutants survived), #139 (3 mutants survived), MO-152 (scratch workflow check missed a mismatched artifact path) | `review-change` mutant step; `test-change` "see it red"; nightly comparison and artifact upload share the job's `MO_CORE_DIFF_OUT`, removing the duplicated path | structure-enforced for the nightly output path; prose only for the general class |
 | 7 | Logic bugs in new checker, lowering or tools code that only a fresh review caught | 7 times: #81 (2), #85, #86, #113, #114 (2) | `review-change` | prose only (works when it runs) |
 | 8 | Checker loops not charged to the work budget, or a size without a named limit | #81 (2), #86 (`src/check/bodies.c` missing `work(p)`) | AGENTS.md "Every input has a named limit"; `review-change/rules.md` | prose only |
 | 9 | Static drift: clang-format, a module-boundary include, an unchecked result | #81, #85, #111, #121 | `static` group: `make format-check`, `make deps`, `make tidy` | prose only: `static` runs only by hand since hosted CI was removed (22 Oct); format-check needs clang-format 14.0.6 |
@@ -26,6 +26,10 @@ this range, so the evidence is fix-up commits inside PRs, the Review sections of
 
 On 22 Oct Robert removed hosted CI (no workflows, no required `check`), so rows 3, 4, 9 and 10 now
 depend on agents running `ci/check.sh` groups locally.
+
+MO-152 restores nightly checks of main, including Lean and static checks; it does not restore a
+PR gate. Its review also corrected a one-off claim that GitHub concurrency queues every request:
+the active run is preserved, but only the newest pending run is retained.
 
 One-offs this run: macOS build breaks (#81; tests that create non-UTF-8 file names, which APFS
 refuses, found by a local push on 22 Oct), a skill written into `.claude/skills/` instead of

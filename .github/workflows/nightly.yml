@@ -1,0 +1,71 @@
+name: nightly
+
+on:
+  schedule:
+    - cron: '17 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      CI: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      MO_CORE_DIFF_OUT: build/nightly-mismatches
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install the toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential python3 clang-18 libclang-rt-18-dev \
+            clang-format-14 clang-tidy-18 bison elan
+          # The runner also has other LLVM versions. Select these tools explicitly.
+          mkdir -p "$RUNNER_TEMP/mo-tools"
+          ln -s /usr/bin/clang-18 "$RUNNER_TEMP/mo-tools/clang"
+          ln -s /usr/bin/clang-tidy-18 "$RUNNER_TEMP/mo-tools/clang-tidy"
+          ln -s /usr/bin/clang-format-14 "$RUNNER_TEMP/mo-tools/clang-format"
+          echo "$RUNNER_TEMP/mo-tools" >> "$GITHUB_PATH"
+          /usr/bin/clang-format-14 --version | grep -F 'version 14.0.6'
+          /usr/bin/elan toolchain install "$(cat formal/lean-toolchain)"
+
+      - name: Run the checks
+        run: |
+          MAKEFLAGS="-j$(nproc) -Otarget"
+          export MAKEFLAGS
+          bash ci/check.sh gcc clang sanitize drivers static lean
+
+      - name: Compare a fresh seed range
+        env:
+          MO_CORE_DIFF: '1000'
+        run: |
+          # Every UTC day gets a disjoint range, even when main has not changed.
+          day=$(( $(date -u +%s) / 86400 ))
+          export MO_CORE_DIFF_SEED=$(( day * MO_CORE_DIFF ))
+          echo "Core differential seeds: $MO_CORE_DIFF_SEED..$((MO_CORE_DIFF_SEED + MO_CORE_DIFF - 1))"
+          python3 ci/check_core_differential.py \
+            build/gcc/debug/tests/test_vm.test \
+            build/clang/debug/tests/test_vm.test \
+            build/clang/sanitize/tests/test_vm.test
+
+      - name: Keep programs that differ
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: core-mismatches
+          path: ${{ env.MO_CORE_DIFF_OUT }}
+          if-no-files-found: ignore
