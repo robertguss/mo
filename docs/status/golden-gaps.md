@@ -3,22 +3,41 @@
 Found while writing `tests/golden/`. Each program avoids these forms, so the corpus passes today;
 a form that lands should gain a golden program. Section numbers are Language Reference v0.1.
 
-## Checked and run, but no golden program yet
+## Coverage indexed by reference section
 
-- `List`: `filter`, `filter_map`, `flat_map`, `any?`, `group_by` (reference 14).
-- `List.to_set` and Set text forms (reference 14 and 9.2) run in `lib/set.mo` and
-  `tests/lower-source/set/main.mo`.
-- `Int`: `floor_div`, `floor_mod`, `pow`, `checked_sub`, `checked_mul`, `wrapping_*`,
-  `saturating_*`, `to_big`, `to_byte`, `to_float`; `Float`: `sqrt`, `floor`, `ceil`,
-  `round`, `abs`, `nan?`, `infinite?`, `to_decimal`; `Bytes`: `size`, `get`, `decode_utf8`.
-  The `int-natives`, `float-natives` and `bytes-natives` lower-source fixtures cover these.
-- `Byte.to_int` and `List.sum` run in the `byte-natives` and `list-sum` lower-source fixtures.
-- The section 14 `BigInt` functions run in `bigint-natives`; `Random.int` and `Random.seeded`
-  run in `random-natives`.
-- `Int.compare`, Ordering comparison, and text conversion/interpolation for `Ordering`, `Entry`
-  and `Map` run in `builtin-abilities`.
-- `Env.get` and `Env.of` run in the `env-natives` lower-source fixture's test. CLI checks also
-  exercise a real environment handle.
+`tests/conformance/rules.tsv` lists remaining partial coverage by reference section, including
+missing boundary and refusal programs. It is a map with a guard, not proof of conformance or
+completion of the Phase 2 conformance item. A gap there is not a pass.
+
+The native BigInt functions, Env and Random fakes, Ordering comparison, qualified `Int.compare`,
+and Ordering, Entry and Map text now have golden programs in `ref-bigint`,
+`ref-capability-fakes` and `ref-abilities`. `ref-library-natives` also covers `List.to_set` and
+`Int.to_float`. Their former unsupported entries must not be retained as language limitations.
+
+## Direct nullary-case receivers still fail
+
+`Equal.to_text` and `Less.compare(Greater)` still report E1103 on main `4a40389`, although
+reference 5.4 and 9.2 permit these operations on values. Binding each receiver to a name first
+works and is covered by `ref-abilities`. These failures are not expected-error fixtures.
+
+## Accepted by the reference, rejected by the parser
+
+Reference 3.4 allows any expression inside interpolation. This complete program should print
+`one` and exit 0, but `mo check` reports E0016 at the first arm, followed by parser recovery errors:
+
+```mo
+module Main
+
+fn main(console: Console)
+  console.print("#{case 1
+    1: "one"
+    _: "other"
+  end}")
+end
+```
+
+Computing the `case` in a binding before interpolating it works, as `ref-operators` does.
+The parser's error is not a conformance expectation.
 
 ## Other
 

@@ -164,6 +164,10 @@ if want drivers; then
 # Each script below checks the executables it is given one after another, so each gets one
 # executable at a time and they all run side by side (`later`), the longest first.
 if have python3; then
+	later "Reference conformance: every rule has programs or an explicit gap" \
+		python3 ci/check_conformance.py
+	later "Reference conformance: coverage-check regression tests" \
+		python3 ci/test_conformance.py
 	built mo
 	if ((${#drivers[@]})); then
 		for driver in "${drivers[@]}"; do

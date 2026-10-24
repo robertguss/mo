@@ -1,0 +1,3 @@
+passed Main.test.1  tests/golden/ref-capability-fakes/main.mo:3:1
+passed Main.test.2  tests/golden/ref-capability-fakes/main.mo:16:1
+2 passed, 0 failed, 0 stopped
