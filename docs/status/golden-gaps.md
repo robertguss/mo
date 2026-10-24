@@ -12,13 +12,10 @@ completion of the Phase 2 conformance item. A gap there is not a pass.
 The native BigInt functions, Env and Random fakes, Ordering comparison, qualified `Int.compare`,
 and Ordering, Entry and Map text now have golden programs in `ref-bigint`,
 `ref-capability-fakes` and `ref-abilities`. `ref-library-natives` also covers `List.to_set` and
-`Int.to_float`. Their former unsupported entries must not be retained as language limitations.
-
-## Direct nullary-case receivers still fail
-
-`Equal.to_text` and `Less.compare(Greater)` still report E1103 on main `4a40389`, although
-reference 5.4 and 9.2 permit these operations on values. Binding each receiver to a name first
-works and is covered by `ref-abilities`. These failures are not expected-error fixtures.
+`Int.to_float`. Direct calls on a nullary case, such as `Equal.to_text` and
+`Less.compare(Greater)`, are in `lang-dot-calls-cases`, and a `case` written across several lines
+inside interpolation is in `txt-interpolation-case`. Their former unsupported entries must not be
+retained as language limitations.
 
 ## Refused by the reference, accepted by the checker
 
@@ -48,25 +45,6 @@ no fixture pins them:
   to `not`, not to `case` with `stop` (8.4).
 
 `lambda x: ...` (`e0021-lambda`) and `unwrap()` (`e0050-unwrap`) are pinned.
-
-## Accepted by the reference, rejected by the parser
-
-Reference 3.4 allows any expression inside interpolation. This complete program should print
-`one` and exit 0, but `mo check` reports E0016 at the first arm, followed by parser recovery errors:
-
-```mo
-module Main
-
-fn main(console: Console)
-  console.print("#{case 1
-    1: "one"
-    _: "other"
-  end}")
-end
-```
-
-Computing the `case` in a binding before interpolating it works, as `ref-operators` does.
-The parser's error is not a conformance expectation.
 
 ## How many U+FFFD a run of invalid input bytes becomes
 
