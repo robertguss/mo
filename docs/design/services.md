@@ -120,6 +120,18 @@ The log and snapshots are stored in SQLite, embedded in the runtime (D263). SQLi
 C and pointed at Mo's own allocator, keeping the rule that only `base` and `heap` allocate memory
 (D207). Service authors never see it, and Mo programs get no SQL access in Phase 3.
 
+Saved bytes are untrusted. Loading a snapshot, replaying the log, and Phase 5 migrations must
+validate each restored state value against the service's state type before any handler sees it.
+Replay also validates each saved message against its handler's input type before calling it.
+A migration reads state validated against the old type and must produce state valid for the new
+type before the upgrade is accepted. Invalid tags, lengths, links or field values refuse the load
+or upgrade with a diagnostic, never a crash or partially restored state. `heap` owns the bounded
+decoder and value validation against runtime type descriptors; `host` owns reading snapshots and
+log records from SQLite, and the runtime uses only validated values. This is not a `check` pass:
+the VM never sees source. Implementation must add `fuzz/fuzz_saved_state.c`, with seeds under
+`fuzz/corpus/fuzz_saved_state/`, covering snapshot and log decoding and rejection of malformed
+values; Phase 5 extends it to migration input and output validation.
+
 ## 7. Access
 
 Mo checks an access token itself (D264), so the service is not tied to exe.dev's proxy and the
