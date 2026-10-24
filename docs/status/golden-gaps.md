@@ -5,20 +5,43 @@ a form that lands should gain a golden program. Section numbers are Language Ref
 
 ## Checked and run, but no golden program yet
 
-- `List`: `filter`, `filter_map`, `flat_map`, `any?`, `group_by` (reference 14).
-- `List.to_set` and Set text forms (reference 14 and 9.2) run in `lib/set.mo` and
-  `tests/lower-source/set/main.mo`.
-- `Int`: `floor_div`, `floor_mod`, `pow`, `checked_sub`, `checked_mul`, `wrapping_*`,
-  `saturating_*`, `to_big`, `to_byte`, `to_float`; `Float`: `sqrt`, `floor`, `ceil`,
-  `round`, `abs`, `nan?`, `infinite?`, `to_decimal`; `Bytes`: `size`, `get`, `decode_utf8`.
-  The `int-natives`, `float-natives` and `bytes-natives` lower-source fixtures cover these.
-- `Byte.to_int` and `List.sum` run in the `byte-natives` and `list-sum` lower-source fixtures.
+- `List.to_set` (reference 14) runs in `lib/set.mo` and `tests/lower-source/set/main.mo`.
+- `Int.to_float` runs in the `int-natives` lower-source fixture.
+
+`ref-library-natives` now covers the previously listed List functions, Int arithmetic natives,
+Float natives, Bytes operations and `Byte.to_int`. `ref-abilities` covers `List.sum` at all four
+numeric types and Set text. `tests/conformance/rules.tsv` lists the remaining partial coverage
+by reference section, including missing boundary and refusal programs. A gap there is not a pass.
 
 ## Not lowered yet (E1150)
 
-- `Int.compare`. `BigInt`: `to_int`, `abs`, `min`.
+- `BigInt`: `to_int`, `abs`, `min`.
 - `Env.get`, `Random.int`.
 - Interpolating an `Ordering`, an `Entry`, or a `Map` (derived text shape).
+- Comparing two `Ordering` values through bound names, such as
+  `a = Equal`, `b = Greater`, `a.compare(b)`. Reference 9.2 requires `Less`.
+  Calling `Equal.compare(Greater)` directly instead reports E1103 in the staged checker.
+
+`Int.compare` works and is covered by `ref-abilities`; its former entry here was stale.
+
+## Accepted by the reference, rejected by the parser
+
+Reference 3.4 allows any expression inside interpolation. This complete program should print
+`one` and exit 0, but `mo check` reports E0016 at the first arm, followed by parser recovery errors:
+
+```mo
+module Main
+
+fn main(console: Console)
+  console.print("#{case 1
+    1: "one"
+    _: "other"
+  end}")
+end
+```
+
+Computing the `case` in a binding before interpolating it works, as `ref-operators` does.
+The parser's error is not a conformance expectation.
 
 ## Other
 

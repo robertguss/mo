@@ -1,0 +1,18 @@
+less
+true false true
+Some(4) Some(2)
+true true Some(8)
+Some(7) Some(9)
+Some(6)
+true true
+Some(3)
+Some(2) true
+Some(5)
+Some(6)
+true Some(7)
+[2, 1].to_set
+Some(8) Some(9)
+[-1, 2, 3, nan, nan]
+5 0
+0.3 0
+0.75 0
