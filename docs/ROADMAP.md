@@ -15,9 +15,12 @@ step for anything a Mo user would notice.
 | 7. Fast | Fast enough for serious services | v0.4 |
 | 8. Ecosystem | Others build and share | 1.0 |
 
-**Current phase: 2, Agents can write it.** Phase 0 (Reset) finished on 11 Oct
-2026, and Phase 1 (Design the core) on 12 Oct 2026, with the Language Reference
-v0.1, Architecture v0.1 and Mo Core in Lean.
+**Current phase: 3, Services.** Phase 0 (Reset) finished on 11 Oct 2026, and
+Phase 1 (Design the core) on 12 Oct 2026, with the Language Reference v0.1,
+Architecture v0.1 and Mo Core in Lean. Phase 2 (Agents can write it) finished on
+24 Oct 2026, with all 44 items of its acceptance checklist met on main
+[`1db2d16`](https://github.com/robertguss/mo/commit/1db2d16015d65e1beed0e865e83b7a97ac7a9a0b);
+Robert signed it off the same day.
 
 ## Phase 2 on main
 
@@ -25,8 +28,8 @@ Checked on 24 Oct 2026 against main at
 [`4958074`](https://github.com/robertguss/mo/commit/49580746ad3257e15b44c3d2c595b2c0e831b0ee),
 Notion's [Status](https://www.notion.so/3fd700320c45810ca58ddf73fb6fc8c2) and
 [Changelog](https://www.notion.so/3fd700320c4581d083f7ca20eb6e0903).
-This is a snapshot, not a declaration that Phase 2 is done. The live acceptance
-checklist is in Notion's [Phase 2 page](https://www.notion.so/3f6700320c4581c4b7c4dafa8f459b52).
+This is a snapshot of what Phase 2 delivered. Its acceptance checklist, every item
+met, is in Notion's [Phase 2 page](https://www.notion.so/3f6700320c4581c4b7c4dafa8f459b52).
 
 - The C toolchain checks, lowers, compiles, verifies and runs source programs.
   `mo check`, `run`, `test`, `format`, `fix`, `emit` and `guide` work.
