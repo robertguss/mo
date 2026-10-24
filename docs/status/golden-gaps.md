@@ -39,6 +39,16 @@ end
 Computing the `case` in a binding before interpolating it works, as `ref-operators` does.
 The parser's error is not a conformance expectation.
 
+## How many U+FFFD a run of invalid input bytes becomes
+
+Reference 14 says each sequence of bytes on standard input that isn't valid UTF-8 "becomes one
+U+FFFD". Read plainly, the line `a`, FF, FE, `b` reads as `a�b`, three characters. `mo` follows
+Unicode's maximal-subpart rule (architecture 7, `src/host/console.c`) and gives `a��b`, one U+FFFD
+for each of FF and FE, and three for the encoded surrogate ED A0 80. Robert decides which reading is
+meant; then either the reference or `console.c` changes. `cap-console-stdin-invalid` uses only
+inputs where both readings agree: a lone invalid byte, a truncated sequence, and a lead byte
+followed by ASCII.
+
 ## Other
 
 - A choice case cannot be named `Ok` or `Failed` (E0043), and number literals with exponents such

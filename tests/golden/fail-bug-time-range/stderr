@@ -1,0 +1,5 @@
+bug: time outside years 1 to 9999
+  at Main.main (tests/golden/fail-bug-time-range/main.mo:219..235)
+  at Main.main.entry (tests/golden/fail-bug-time-range/main.mo:13..273)
+  last = 9999-12-31T23:59:59Z
+  console = <Console>

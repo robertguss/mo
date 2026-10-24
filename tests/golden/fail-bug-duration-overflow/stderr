@@ -1,0 +1,5 @@
+bug: overflow: Duration
+  at Main.main (tests/golden/fail-bug-duration-overflow/main.mo:150..161)
+  at Main.main.entry (tests/golden/fail-bug-duration-overflow/main.mo:13..199)
+  long = 9223372036854s
+  console = <Console>
