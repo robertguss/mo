@@ -1,0 +1,6 @@
+notes/a.md: no such file
+../a.txt: not allowed
+photo.jpg: not text
+logs: is a folder
+../x: not allowed
+[p: not text]

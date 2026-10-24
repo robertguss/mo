@@ -2,7 +2,7 @@ rule	accepts	refuses	stops	gap
 1/1	ref-source	e0008		
 1/2	ref-shout	e0091		
 1/3	ref-source			Tracked-source formatting is checked by ci/check_format.py; exact layout expectations remain in ci/check_cli.py, not run goldens.
-2.1/1	mod-chain	e0034,e0035		Acronym and digit path boundaries are checker unit cases, not yet standalone golden programs.
+2.1/1	mod-chain,mod-path-words	e0034,e0035		
 2.1/2	ref-source	e0001,e0002		
 2.2/1	ref-source	e0028		Comment alignment expectations are in ci/check_cli.py; ci/check_format.py checks every tracked program, but a run golden cannot assert formatted source.
 2.3/1	ref-source	e0003		
@@ -34,13 +34,13 @@ rule	accepts	refuses	stops	gap
 3.2/2	num-int-division,ref-library-natives	e0053		
 3.2/3	num-int-checked,ref-library-natives		fail-bug-overflow,fail-bug-divide-by-zero	
 3.2/4	num-bigint,ref-library-natives,ref-bigint	e0076		
-3.3/1	num-decimal-exact,num-decimal-limits,num-decimal-rounding			Decimal overflow and division by zero lack standalone stop goldens; Int stops do not prove Decimal stops.
+3.3/1	num-decimal-exact,num-decimal-limits,num-decimal-rounding,num-decimal-boundaries		fail-bug-decimal-overflow,fail-bug-decimal-divide-by-zero	
 3.3/2	num-float-arithmetic,num-float-convert,num-decimal-int	e0060		
-3.4/1	txt-escapes,txt-interpolation	e0005		A multiline case inside interpolation is rejected despite the any-expression rule; see docs/status/golden-gaps.md.
+3.4/1	txt-escapes,txt-interpolation,txt-interpolation-case	e0005		
 3.4/2	txt-multiline			
 3.4/3	txt-escapes,txt-case-chars			
 3.4/4	txt-counts,txt-ordering,lib-unicode16	e0024		Constant-time byte_count needs a work-bound check; execution output cannot establish cost.
-3.4/5	ref-library-natives			Invalid UTF-8 cannot be built from Text.bytes; a read_bytes file fixture is still needed for decode_utf8 returning None.
+3.4/5	ref-library-natives,txt-invalid-utf8-file			
 3.5/1	lang-abilities-text-forms,tst-fakes			
 3.6/1	col-tuples	e0019,e0061		
 3.7/1	col-list-basics	e0024,e0032,e0053-list		
@@ -57,8 +57,8 @@ rule	accepts	refuses	stops	gap
 5.1/2	ref-functions	e0042,e0055		
 5.2/1	ref-functions	e0012,e0021,e0055,e0077		
 5.3/1	lang-recursion-tail			
-5.4/1	lang-dot-calls,ref-abilities,ref-case-receivers			x.f() is accepted when f takes only the receiver, which this rule refuses (MO-141); see docs/status/golden-gaps.md.
-5.4/2	ref-functions			Hidden-field fallback to the same-named function needs a cross-module golden; visible fields and function-valued fields are covered.
+5.4/1	lang-dot-calls,lang-dot-calls-cases,ref-abilities,ref-case-receivers			x.f() is accepted when f takes only the receiver, which this rule refuses (MO-141); see docs/status/golden-gaps.md.
+5.4/2	ref-functions,mod-hidden-customized			
 5.5/1	lang-generic-functions	e0081		
 5.5/2	lang-enum-tree	e0083		
 5.6/1	lang-closures,lang-generic-functions			
@@ -101,7 +101,7 @@ rule	accepts	refuses	stops	gap
 9.2/4	lang-abilities-order,lang-abilities-custom-order			
 9.2/5	lang-abilities-text-forms,lang-abilities-custom-text			
 9.2/6	ref-library-natives,ref-abilities,num-bigint,num-decimal-exact,num-float-arithmetic	e0075,e0076		
-9.2/7	lang-abilities-hash,lang-abilities-order,col-map-equality	e0080		Structural ability propagation and every negative combination are checker unit cases, not an exhaustive program matrix.
+9.2/7	lang-abilities-hash,lang-abilities-order,col-map-equality,lang-abilities-structural	e0080,e0080-bytes,e0080-capability,e0080-map-set,e0080-range		Negative combinations other than Bytes Text, Range Order, Map/Set Order and capability abilities are checker unit cases, not exact-error programs.
 9.2/8	lang-abilities-order,ref-abilities			
 9.2/9	lang-abilities-order,num-bigint,num-decimal-exact,ref-abilities			
 9.2/10	ref-library-natives,ref-abilities	e0076		
@@ -116,15 +116,15 @@ rule	accepts	refuses	stops	gap
 9.2/19	col-map-equality,col-set-basics,ref-abilities	e0080-map-set		
 9.2/20	lang-abilities-order,num-float-arithmetic,ref-abilities			
 9.2/21	lang-abilities-text-forms,num-float-arithmetic,ref-time,ref-abilities			
-9.2/22	lang-abilities-order,lang-abilities-custom-order,ref-abilities,ref-case-receivers			
-9.2/23	lang-abilities-custom-order,lang-abilities-custom-text	e0082		Customization across module boundaries with hidden insides needs a dedicated golden.
+9.2/22	lang-abilities-order,lang-abilities-custom-order,lang-dot-calls-cases,ref-abilities,ref-case-receivers			
+9.2/23	lang-abilities-custom-order,lang-abilities-custom-text,mod-hidden-customized	e0082		
 9.2/24	lang-generic-functions	e0081		
 10.1/1	mod-brace-import,mod-qualified	e0008,e0027,e0039		
 10.1/2	tst-private-names	e0041		
 10.2/1	mod-hidden-type	e0040,e0047,e0064		
 10.3/1	mod-qualified,mod-brace-import,mod-choice-cases,mod-type-named-like-module	e0036,e0037,e0038,e0038-import-repeat,e0044,e0046,e0048		
 10.4/1	lang-constants,mod-constants			
-10.4/2	lang-constants,mod-constants	e0089		Constant evaluation once and stop-before-main need effect/order and stop goldens; dependency ordering is covered.
+10.4/2	lang-constants,mod-constants	e0089	fail-bug-constant-stop	Computing each constant once is not observable in program output, since a constant has no effects; stop-before-main and dependency order are covered.
 10.5/1	mod-type-bare-after-use,lang-bindings,cap-files-walk	e0045		
 11.1/1	cap-record-of-capabilities,tst-fakes	e0091		
 11.1/2	cap-args-list			
@@ -136,7 +136,7 @@ rule	accepts	refuses	stops	gap
 11.1/8	ref-capability-fakes			
 11.2/1	cap-files-read,cap-args-list	e0079		
 11.2/2	ref-shout	fail-main-exit-status,fail-main-result-error	fail-bug-exit-range	
-11.3/1	cap-files-fake			Empty-authority within escapes need a golden; lexical containment and real resolution have separate CBMC proofs.
+11.3/1	cap-files-fake,cap-files-within-escape			
 11.4/1	cap-record-of-capabilities			
 11.4/2	ref-functions	e0091		
 11.4/3	tst-fakes			Making a fake outside a test reports the staged checker's E1103, not a dedicated refusal, so no fixture pins it; see docs/status/golden-gaps.md.
@@ -156,7 +156,7 @@ rule	accepts	refuses	stops	gap
 12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed,ref-capability-fakes			Making a fake, or reading printed or printed_errors, outside a test reports the staged checker's E1103, not a dedicated refusal, so no fixture pins it; see docs/status/golden-gaps.md.
 12.4/2	cap-console-fake,cap-files-fake			Reading a fake's printed lines outside a test reports the staged checker's E1103, not a dedicated refusal, so no fixture pins it; see docs/status/golden-gaps.md.
 13.1/1	ref-evaluation			
-13.2/1	ref-shout		fail-bug-overflow,fail-bug-divide-by-zero,fail-bug-stop,fail-bug-map-duplicate,fail-bug-take-negative,fail-bug-time-range,fail-bug-duration-overflow	Decimal overflow, invalid fake path and file-folder conflicts still need stop goldens; resource-limit reports are in ci/check_cli.py.
+13.2/1	ref-shout	tst-fake-files-bugs	fail-bug-overflow,fail-bug-divide-by-zero,fail-bug-stop,fail-bug-map-duplicate,fail-bug-take-negative,fail-bug-decimal-overflow,fail-bug-decimal-divide-by-zero,fail-bug-duration-overflow,fail-bug-duration-unit-overflow,fail-bug-time-range,fail-bug-pow-negative,fail-bug-decimal-places,fail-bug-split-empty,fail-bug-replace-empty,fail-bug-repeat-negative,fail-bug-drop-negative,fail-bug-constant-stop	Fake file conflicts and invalid fake keys are in tst-fake-files-bugs, whose stopped tests exit 1, not 70. Resource-limit reports are in ci/check_cli.py; printing to an output that is gone, too many open folders and random.int(5, 5) have no golden program.
 13.3/1				Cost claims require work/allocation instrumentation rather than program output; see tests/test_prim.c and tests/test_heap.c.
 13.3/2				No standalone work-bound program proves constant list access; unit tests exercise primitives without asserting asymptotics.
 13.3/3	col-build-with-var,lang-records-update			Output checks semantics only; one-holder cost needs allocation/work instrumentation.
@@ -164,21 +164,21 @@ rule	accepts	refuses	stops	gap
 13.3/5	col-map-order,col-set-basics			Output checks semantics only; one-holder average update complexity needs allocation/work instrumentation.
 13.3/6	txt-counts			Output checks byte count only; constant cost needs work instrumentation.
 13.3/7	txt-counts,txt-lines-words,txt-search			Output checks semantics only; length-proportional cost needs work instrumentation.
-13.3/8	txt-ordering,col-list-map-find			Stable descending equal keys are covered; sort and sort_by stability and n-log-n work bounds need dedicated programs/instrumentation.
+13.3/8	txt-ordering,col-list-map-find,col-list-order-ties			Ascending and descending stability of sort and sort_by are covered; n-log-n work bounds need instrumentation.
 13.3/9	col-shared-values,lang-records-update			Old-holder values are asserted; memory reuse/copy allocation is not observable in program output.
 13.4/1	ref-shout,tst-passing			Command matrix, emit, guide, format and fix are in ci/check_cli.py with tests/cli fixtures; execution goldens do not cover their protocols.
 13.4/2				Selection and full names are checked by promise_selection in ci/check_cli.py with generated programs; the golden runner has no command-selection fixture format.
 13.4/3	lang-recursion-tail			Stack, depth and heap switches/defaults are checked by ci/check_cli.py, not golden programs with resource arguments.
 13.4/4				JSON fields/version/unknown-field compatibility need the structured assertions in ci/check_cli.py rather than a run/test text golden.
-14/1	lang-dot-calls,col-range-loops,ref-abilities,ref-case-receivers		fail-bug-take-negative	Qualified to_text and compare, such as Text.compare(a, b), report E1103 except Int.compare and the scalar to_text primitives; D285 makes them language and MO-144 builds them. docs/status/section-14-inventory.md lists every function.
-14/2	num-int-functions,num-int-checked,ref-library-natives,ref-time		fail-bug-duration-unit-overflow	Negative pow needs a stop golden.
+14/1	lang-dot-calls,lang-dot-calls-cases,col-range-loops,ref-abilities,ref-case-receivers		fail-bug-take-negative	Qualified to_text and compare, such as Text.compare(a, b), report E1103 except Int.compare and the scalar to_text primitives; D285 makes them language and MO-144 builds them. docs/status/section-14-inventory.md lists every function.
+14/2	num-int-functions,num-int-checked,ref-library-natives,ref-time		fail-bug-pow-negative,fail-bug-duration-unit-overflow	
 14/3	num-bigint,ref-library-natives,ref-bigint			
-14/4	num-decimal-rounding,num-decimal-int,num-float-convert			Out-of-range places and Decimal-to-Int range boundaries still need dedicated programs.
-14/5	ref-library-natives			Float-to-Decimal range and 18-place ties-even boundaries need dedicated goldens.
-14/6	txt-counts,txt-lines-words,txt-split-join,txt-trim-pad,txt-search,txt-replace-repeat,txt-parse-numbers,ref-library-natives			Empty split/replace and negative repeat need stop goldens; exhaustive parsing boundaries remain covered only by primitive tests.
+14/4	num-decimal-rounding,num-decimal-int,num-float-convert,num-decimal-boundaries		fail-bug-decimal-places	
+14/5	ref-library-natives,num-decimal-boundaries			
+14/6	txt-counts,txt-lines-words,txt-split-join,txt-trim-pad,txt-search,txt-replace-repeat,txt-parse-numbers,ref-library-natives		fail-bug-split-empty,fail-bug-replace-empty,fail-bug-repeat-negative	Exhaustive parsing boundaries remain covered only by primitive tests.
 14/7	txt-case-chars,txt-chars-roundtrip			
-14/8	ref-library-natives			Invalid-UTF-8 decode needs a read_bytes fixture.
-14/9	col-list-basics,col-list-slicing,col-list-map-find,col-list-enumerate-zip,ref-library-natives		fail-bug-take-negative	First-equal min/max identity, ascending sort stability and negative drop need dedicated cases.
+14/8	ref-library-natives,txt-invalid-utf8-file			
+14/9	col-list-basics,col-list-slicing,col-list-map-find,col-list-enumerate-zip,ref-library-natives,col-list-order-ties		fail-bug-take-negative,fail-bug-drop-negative	
 14/10	col-map-basics,col-map-order,col-map-counting,col-map-equality			
 14/11	col-set-basics			
 14/12	col-range-loops			
@@ -186,12 +186,12 @@ rule	accepts	refuses	stops	gap
 14/14	fail-option-result-map			
 14/15	ref-time			
 14/16	cap-args-list,ref-capability-fakes			
-14/17	cap-console-streams,cap-console-line-endings,cap-console-stdin,cap-console-fake			Invalid-UTF-8 input replacement grouping needs a binary stdin golden; fake observation outside tests needs an exact-error program.
-14/18	cap-files-fake,cap-files-fake-folders,cap-files-read,cap-files-walk			Real symlink confinement/link removal, too-many-links, invalid fake paths and exact folder/file error variants need black-box programs; host unit/CBMC tests are not counted as golden coverage.
-14/19	fail-option-result-map,fail-result-declared	fail-main-result-error		NotText and NotAllowed exact text forms need a dedicated program.
+14/17	cap-console-streams,cap-console-line-endings,cap-console-stdin,cap-console-fake,cap-console-stdin-invalid			Reference 14 says a run of invalid bytes becomes one U+FFFD; D291 keeps one per maximal subpart and MO-140 corrects the text, so cap-console-stdin-invalid pins only inputs where both agree. Reading a fake's printed lines outside a test reports the staged checker's E1103, so no fixture pins it; see docs/status/golden-gaps.md.
+14/18	cap-files-fake,cap-files-fake-folders,cap-files-read,cap-files-walk,cap-files-within-escape	tst-fake-files-bugs		Real symlink confinement/link removal, too-many-links and exact folder/file error variants need black-box programs; host unit/CBMC tests are not counted as golden coverage.
+14/19	fail-option-result-map,fail-result-declared,fail-file-error-forms,txt-invalid-utf8-file,cap-files-within-escape	fail-main-result-error		
 14/20	cap-clock-fixed,cap-args-list,ref-capability-fakes			Real-clock out-of-range behavior still needs host injection rather than a deterministic program; Env and Random fakes now have a golden.
 14/21	lib-json-query,lib-json-errors			
-14/22	lib-json-query,lib-json-errors			JsonNumber lexical equality and all numeric-conversion boundaries need a dedicated program.
+14/22	lib-json-query,lib-json-errors,lib-json-numbers			The reference does not say whether to_decimal on a number with more than 18 decimal places rounds or gives None, so no program pins it.
 14/23	lib-unicode16			letter?/digit? classification is now exercised by lib-unicode16; the full Unicode 16 corpus remains in check_unicode16.py, and a golden cannot establish the future Unicode17 versioning promise.
 15/1				Roadmap only; processes, upgrades, packages and user-defined abilities are deliberately outside v0.1.
 A/1		e0412		No accepting error report exists; e0412 pins the complete rejection and its fix.

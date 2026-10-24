@@ -2829,6 +2829,29 @@ def guide_claims(binary):
         assert not result.stdout and not result.stderr
         assert "fn one(_x: Int)" in unused.read_text(encoding="utf-8")
 
+        # The rules first retries missed (MO-137): each mistake's error names the rule's fix.
+        says("To assign it again, declare `var name = value` where it is first bound, even when "
+             "the assignment is inside a loop or a branch.",
+             "`+` adds numbers and does not join texts.",
+             "There is no `len` or `length`.")
+        counted = folder / "counted.mo"
+        counted.write_text("module Counted\n\nfn count(items: List(Int)) : Int\n  total = 0\n"
+                           "  for _ in items\n    total += 1\n  end\n  total\nend\n",
+                           encoding="utf-8")
+        assert b"declare it with var where it is first bound" in \
+            run(binary, ["check", str(counted)], 1).stderr
+        result = run(binary, ["fix", str(counted)], 0)
+        assert not result.stdout and not result.stderr
+        assert "  var total = 0\n" in counted.read_text(encoding="utf-8")
+        joined = folder / "joined.mo"
+        joined.write_text('module Joined\n\nfn join(a: Text, b: Text) : Text\n  a + b\nend\n',
+                          encoding="utf-8")
+        assert b"+ doesn't join texts" in run(binary, ["check", str(joined)], 1).stderr
+        sized = folder / "sized.mo"
+        sized.write_text("module Sized\n\nfn size(items: List(Int)) : Int\n  len(items)\nend\n",
+                         encoding="utf-8")
+        assert b"list.size" in run(binary, ["check", str(sized)], 1).stderr
+
         # Each unfinished form gives the same code from check, run and test.
         unfinished = folder / "unfinished.mo"
         unfinished.write_text("module Unfinished\n\nfn main(console: Console)\n"

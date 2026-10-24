@@ -1,0 +1,10 @@
+E0051 6.1
+0:79..84
+a visible name is bound again
+While a name is visible it can't be bound again; to assign it again, declare it with var where it is first bound (reference 6.2).
+this name already has a meaning
+secondary 0:45..50 the other meaning of this name
+fixes 1
+declare it with var
+0:45..45
+"var "

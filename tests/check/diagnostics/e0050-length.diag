@@ -1,0 +1,6 @@
+E0050 6.1
+0:44..50
+no visible function has this dot-call name
+The library has no len or length: a list's length is list.size, and a text's is text.char_count or text.byte_count (reference 3.4).
+not visible in this block
+fixes 0

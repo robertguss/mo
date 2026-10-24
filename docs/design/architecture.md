@@ -460,10 +460,6 @@ have a distinct locally declared record or choice constructor; two
 applications of the same generic constructor do not distinguish overloads.
 Module prefixes live separately from value/type names, so importing module
 `Money` and its type `Money` does not clash. This is not a user-defined alias.
-`Less.to_text` parses like a module prefix; when no module or native function
-owns `Less.to_text` and `Less` is a case without fields, the body
-checker reads it as a dot call on that value (reference 5.4), so built-in and
-declared nullary cases are receivers without being bound first.
 Names always in scope (reference 10.5) cannot be declared, imported, or used
 as a module prefix's last segment, by D224's one meaning per name and
 reference 10.3's clash rule.
