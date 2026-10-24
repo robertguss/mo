@@ -658,6 +658,14 @@ static void tuple_position(void) {
     if (out != NULL)
         CHECK(strcmp(out->items[out->count - 1].type->name, "Text") == 0);
     finish(&f);
+    /* The parameter's tuple type is decided only by the later call (reference 5.1). */
+    init(&f, "module Main\nfn run() : Text\npick = fn(entry) entry.1 end\npick((1, \"x\"))\nend\n",
+         NULL);
+    out = body(&f, "run");
+    CHECK(out != NULL && f.diags.count == 0);
+    if (out != NULL)
+        CHECK(strcmp(out->items[out->count - 1].type->name, "Text") == 0);
+    finish(&f);
 }
 
 static void inferred_uses(void) {
