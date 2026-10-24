@@ -8,6 +8,8 @@ import sys
 import tempfile
 import unittest
 
+HEADER = "rule\taccepts\trefuses\tstops\tgap\tdrivers\tcost\tuntestable\n"
+
 
 class ConformanceCheck(unittest.TestCase):
     def setUp(self):
@@ -22,7 +24,7 @@ class ConformanceCheck(unittest.TestCase):
         self.reference = self.root / "docs/reference/README.md"
         self.reference.write_text("## 3. Values\n\nValues never change.\n")
         self.index = self.root / "tests/conformance/rules.tsv"
-        self.index.write_text("rule\taccepts\trefuses\tstops\tgap\n3/1\tgood\te0053\t\t\n")
+        self.index.write_text(HEADER + "3/1\tgood\te0053\t\t\n")
         self.snapshot = self.root / "tests/conformance/reference.tsv"
         self.snapshot.write_text("3/1\tValues never change.\n")
         (self.root / "tests/golden/good/main.mo").write_text("module Main\nfn main()\nend\n")
@@ -43,10 +45,54 @@ class ConformanceCheck(unittest.TestCase):
         result = self.command()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("1 reference rules indexed; 0 have explicit gaps", result.stdout)
-        self.index.write_text("rule\taccepts\trefuses\tstops\tgap\n3/1\t\t\t\tNeeds a program.\n")
+        self.index.write_text(HEADER + "3/1\t\t\t\tNeeds a program.\n")
         result = self.command()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("1 have explicit gaps", result.stdout)
+
+    def test_driver_cost_and_untestable_rows_are_not_gaps(self):
+        (self.root / "ci/check_x.py").write_text(
+            "def alignment(binary):\n    pass\n\nalignment(None)\n")
+        (self.root / "tests/test_heap.c").write_text(
+            "static void test_lists(struct fixture *f) {\n}\nint main(void) {\n"
+            "    test_lists(NULL);\n}\n")
+        (self.root / "Makefile").write_text("grammar: build/mo-grammar\n")
+        self.index.write_text(
+            HEADER +
+            "3/1\t\t\t\t\tci/check_x.py:alignment,Makefile:grammar\t"
+            "tests/test_heap.c:test_lists,tests/test_heap.c\tThe real clock varies.\n")
+        result = self.command()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("1 reference rules indexed; 0 have explicit gaps; 1 name other drivers; "
+                      "1 have cost claims checked for semantics only; 1 untestable", result.stdout)
+        result = self.command("--section", "3")
+        self.assertIn("cost (semantics checked, cost not measured): tests/test_heap.c", result.stdout)
+
+    def test_renamed_or_missing_driver_test_fails(self):
+        driver = self.root / "ci/check_x.py"
+        driver.write_text("def alignment(binary):\n    pass\n\nalignment(None)\n")
+        self.index.write_text(HEADER +
+                              "3/1\t\t\t\t\tci/check_x.py:alignment\n")
+        self.assertEqual(self.command().returncode, 0)
+        driver.write_text("def aligned(binary):\n    pass\n\naligned(None)\n")
+        self.rejected("3/1: no test alignment in ci/check_x.py")
+        driver.write_text("def alignment(binary):\n    pass\n")
+        self.rejected("3/1: no test alignment in ci/check_x.py")
+        driver.unlink()
+        self.rejected("3/1: missing driver ci/check_x.py")
+        self.index.write_text(HEADER +
+                              "3/1\t\t\t\t\tci/check_x.py\n")
+        self.rejected("3/1: driver evidence must name a test")
+        self.index.write_text(HEADER +
+                              "3/1\tgood\t\t\t\t\ttests/test_gone.c:lists\n")
+        self.rejected("3/1: missing driver tests/test_gone.c")
+        (self.root / "tests/test_heap.c").write_text("int main(void) {\n    lists();\n}\n")
+        self.index.write_text(HEADER + "3/1\tgood\t\t\t\t\ttests/test_heap.c:lists\n")
+        self.rejected("3/1: no test lists in tests/test_heap.c")
+        (self.root / "Makefile").write_text("grammar-check: x\n")
+        self.index.write_text(HEADER +
+                              "3/1\t\t\t\t\tMakefile:grammar\n")
+        self.rejected("3/1: no test grammar in Makefile")
 
     def test_section_report_includes_subsections_and_exact_diagnostics(self):
         self.reference.write_text("## 3. Values\n\nValues never change.\n\n"
@@ -70,9 +116,9 @@ class ConformanceCheck(unittest.TestCase):
         self.assertIn("unknown section: 30", result.stderr)
 
     def test_unmapped_rule_and_empty_row_fail(self):
-        self.index.write_text("rule\taccepts\trefuses\tstops\tgap\n")
+        self.index.write_text(HEADER)
         self.rejected("reference rules with no entry: 3/1")
-        self.index.write_text("rule\taccepts\trefuses\tstops\tgap\n3/1\t\t\t\t\n")
+        self.index.write_text(HEADER + "3/1\t\t\t\t\n")
         self.rejected("no program or gap explanation")
 
     def test_reference_addition_or_change_requires_review(self):

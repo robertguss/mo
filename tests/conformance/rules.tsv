@@ -1,10 +1,10 @@
-rule	accepts	refuses	stops	gap
+rule	accepts	refuses	stops	gap	drivers	cost	untestable
 1/1	ref-source	e0008		
 1/2	ref-shout	e0091		
-1/3	ref-source			Tracked-source formatting is checked by ci/check_format.py; exact layout expectations remain in ci/check_cli.py, not run goldens.
+1/3	ref-source				tests/test_format.c:check_source,ci/check_format.py:audit
 2.1/1	mod-chain,mod-path-words	e0034,e0035		
 2.1/2	ref-source	e0001,e0002		
-2.2/1	ref-source	e0028		Comment alignment expectations are in ci/check_cli.py; ci/check_format.py checks every tracked program, but a run golden cannot assert formatted source.
+2.2/1	ref-source	e0028			tests/test_format.c:check_source,ci/check_format.py:audit
 2.3/1	ref-source	e0003		
 2.3/2	lang-enum-shapes	e0008-capcase,e0013-capcase,e0014-capcase		
 2.3/3	lang-generic-functions	e0066		
@@ -13,7 +13,7 @@ rule	accepts	refuses	stops	gap
 2.3/6	ref-source	e0003		
 2.3/7	ref-source	e0017-reserved		
 2.4/1	ref-source	e0006		
-2.4/2				Exact formatter output, Unicode width and blank lines remain CLI fixtures; ci/check_format.py now checks fixed points and preserved behavior for every tracked Mo file.
+2.4/2					tests/test_format.c:check_source,ci/check_cli.py:check,ci/check_format.py:audit
 3/1	ref-evaluation			
 3/2	ref-library-natives,num-bigint			
 3/3	num-decimal-exact,num-float-arithmetic			
@@ -39,12 +39,12 @@ rule	accepts	refuses	stops	gap
 3.4/1	txt-escapes,txt-interpolation,txt-interpolation-case	e0005		
 3.4/2	txt-multiline			
 3.4/3	txt-escapes,txt-case-chars			
-3.4/4	txt-counts,txt-ordering,lib-unicode16	e0024		Constant-time byte_count needs a work-bound check; execution output cannot establish cost.
+3.4/4	txt-counts,txt-ordering,lib-unicode16	e0024				tests/test_prim.c
 3.4/5	ref-library-natives,txt-invalid-utf8-file			
 3.5/1	lang-abilities-text-forms,tst-fakes			
 3.6/1	col-tuples	e0019,e0061		
 3.7/1	col-list-basics	e0024,e0032,e0053-list		
-3.7/2	col-build-with-var,col-shared-values	e0056		One-holder memory reuse and amortized construction cost need allocation/work instrumentation, not output goldens.
+3.7/2	col-build-with-var,col-shared-values	e0056				tests/test_heap.c:test_lists,tests/test_prim.c:primitive_work
 3.8/1	col-map-basics,col-set-basics	e0094	fail-bug-map-duplicate	
 3.8/2	col-map-order,col-map-equality,col-set-basics			
 3.9/1	ref-time		fail-bug-time-range,fail-bug-duration-overflow	
@@ -70,7 +70,7 @@ rule	accepts	refuses	stops	gap
 6.1/2	lang-bindings	e0051		
 6.1/3	ref-source,lang-bindings	e0052,e0056,e0093		
 6.2/1	lang-records-update	e0057		
-6.2/2	lang-records-update,col-shared-values	e0026,e0057		Formatter compound-assignment expectations are in ci/check_cli.py and tracked-source preservation is in ci/check_format.py; memory reuse still needs allocation instrumentation.
+6.2/2	lang-records-update,col-shared-values	e0026,e0057			tests/test_format.c:check_source,ci/check_cli.py:check	tests/test_heap.c:test_reuse_and_images,tests/test_prim.c:reuse_aliases
 6.2/3	lang-dot-calls,col-shared-values			
 7.1/1	lang-is-and-if	e0022		
 7.1/2	lang-is-and-if	e0022		
@@ -101,7 +101,7 @@ rule	accepts	refuses	stops	gap
 9.2/4	lang-abilities-order,lang-abilities-custom-order			
 9.2/5	lang-abilities-text-forms,lang-abilities-custom-text			
 9.2/6	ref-library-natives,ref-abilities,num-bigint,num-decimal-exact,num-float-arithmetic	e0075,e0076		
-9.2/7	lang-abilities-hash,lang-abilities-order,col-map-equality,lang-abilities-structural	e0080,e0080-bytes,e0080-capability,e0080-map-set,e0080-range		Negative combinations other than Bytes Text, Range Order, Map/Set Order and capability abilities are checker unit cases, not exact-error programs.
+9.2/7	lang-abilities-hash,lang-abilities-order,col-map-equality,lang-abilities-structural	e0080,e0080-bytes,e0080-capability,e0080-map-set,e0080-range			tests/test_check.c:generic_import_sources
 9.2/8	lang-abilities-order,ref-abilities			
 9.2/9	lang-abilities-order,num-bigint,num-decimal-exact,ref-abilities			
 9.2/10	ref-library-natives,ref-abilities	e0076		
@@ -124,7 +124,7 @@ rule	accepts	refuses	stops	gap
 10.2/1	mod-hidden-type	e0040,e0047,e0064		
 10.3/1	mod-qualified,mod-brace-import,mod-choice-cases,mod-type-named-like-module	e0036,e0037,e0038,e0038-import-repeat,e0038-module-case,e0038-module-imported-case,e0044,e0046,e0048		
 10.4/1	lang-constants,mod-constants			
-10.4/2	lang-constants,mod-constants	e0089	fail-bug-constant-stop	Computing each constant once is not observable in program output, since a constant has no effects; stop-before-main and dependency order are covered.
+10.4/2	lang-constants,mod-constants	e0089	fail-bug-constant-stop				A constant has no effects, so no program can observe how many times it is computed.
 10.5/1	mod-type-bare-after-use,lang-bindings,cap-files-walk	e0045		
 11.1/1	cap-record-of-capabilities,tst-fakes	e0091		
 11.1/2	cap-args-list			
@@ -132,7 +132,7 @@ rule	accepts	refuses	stops	gap
 11.1/4	cap-console-streams,cap-console-stdin			
 11.1/5	cap-files-fake,cap-files-read			
 11.1/6	cap-files-read	e0050-read-files		
-11.1/7	cap-clock-fixed			Real clock is nondeterministic; only the fixed fake is asserted here.
+11.1/7	cap-clock-fixed						The real clock reads differently on every run; only Clock.fixed can be asserted.
 11.1/8	ref-capability-fakes			
 11.2/1	cap-files-read,cap-args-list	e0079		
 11.2/2	ref-shout	fail-main-exit-status,fail-main-result-error	fail-bug-exit-range	
@@ -148,34 +148,34 @@ rule	accepts	refuses	stops	gap
 12.2/2	tst-promise-holds	e0015-sentence		
 12.2/3	tst-promise-holds	e0074-promise		
 12.2/4	tst-promise-holds	e0015,e0088,e1405,e1405-forbids		
-12.2/5	tst-promise-holds	tst-overflow-promise,tst-failing-promise		Not a proof of every call; generated boundary coverage for hidden types and all field types needs broader conformance programs. A built value's companion from the same call (D284) is checked by ci/check_cli.py hidden_promises, not a golden program.
-12.2/6				Generic instantiation selection/shrinking is covered by generic_promises and promise_selection in ci/check_cli.py using generated programs, not the golden runner; a golden per supported instance shape is still needed.
+12.2/5	tst-promise-holds	tst-overflow-promise,tst-failing-promise			ci/check_cli.py:promise_boundaries,ci/check_cli.py:hidden_promises,ci/check_cli.py:composite_promises,ci/check_cli.py:fake_capability_promises,ci/check_cli.py:promise_shrinking
+12.2/6					ci/check_cli.py:generic_promises,ci/check_cli.py:promise_selection
 12.2/7	sample-job-queue-tests			
 12.2/8	mod-hidden-type,fail-result-declared	e0007-requires		
 12.3/1	tst-private-names,tst-assert-is-binding	tst-failing-assert		
 12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed,ref-capability-fakes			Making a fake, or reading printed or printed_errors, outside a test reports the staged checker's E1103, not a dedicated refusal, so no fixture pins it; see docs/status/golden-gaps.md.
 12.4/2	cap-console-fake,cap-files-fake			Reading a fake's printed lines outside a test reports the staged checker's E1103, not a dedicated refusal, so no fixture pins it; see docs/status/golden-gaps.md.
 13.1/1	ref-evaluation			
-13.2/1	ref-shout	tst-fake-files-bugs	fail-bug-overflow,fail-bug-divide-by-zero,fail-bug-stop,fail-bug-map-duplicate,fail-bug-take-negative,fail-bug-decimal-overflow,fail-bug-decimal-divide-by-zero,fail-bug-duration-overflow,fail-bug-duration-unit-overflow,fail-bug-time-range,fail-bug-pow-negative,fail-bug-decimal-places,fail-bug-split-empty,fail-bug-replace-empty,fail-bug-repeat-negative,fail-bug-drop-negative,fail-bug-constant-stop	Fake file conflicts and invalid fake keys are in tst-fake-files-bugs, whose stopped tests exit 1, not 70. Resource-limit reports are in ci/check_cli.py; printing to an output that is gone, too many open folders and random.int(5, 5) have no golden program.
-13.3/1				Cost claims require work/allocation instrumentation rather than program output; see tests/test_prim.c and tests/test_heap.c.
-13.3/2				No standalone work-bound program proves constant list access; unit tests exercise primitives without asserting asymptotics.
-13.3/3	col-build-with-var,lang-records-update			Output checks semantics only; one-holder cost needs allocation/work instrumentation.
-13.3/4	col-map-basics,col-set-basics			Output checks semantics only; average lookup complexity needs work instrumentation.
-13.3/5	col-map-order,col-set-basics			Output checks semantics only; one-holder average update complexity needs allocation/work instrumentation.
-13.3/6	txt-counts			Output checks byte count only; constant cost needs work instrumentation.
-13.3/7	txt-counts,txt-lines-words,txt-search			Output checks semantics only; length-proportional cost needs work instrumentation.
-13.3/8	txt-ordering,col-list-map-find,col-list-order-ties			Ascending and descending stability of sort and sort_by are covered; n-log-n work bounds need instrumentation.
-13.3/9	col-shared-values,lang-records-update			Old-holder values are asserted; memory reuse/copy allocation is not observable in program output.
-13.4/1	ref-shout,tst-passing			Command matrix, emit, guide, format and fix are in ci/check_cli.py with tests/cli fixtures; execution goldens do not cover their protocols.
-13.4/2				Selection and full names are checked by promise_selection in ci/check_cli.py with generated programs; the golden runner has no command-selection fixture format.
-13.4/3	lang-recursion-tail			Stack, depth and heap switches/defaults are checked by ci/check_cli.py, not golden programs with resource arguments.
-13.4/4				JSON fields/version/unknown-field compatibility need the structured assertions in ci/check_cli.py rather than a run/test text golden.
+13.2/1	ref-shout	tst-fake-files-bugs	fail-bug-overflow,fail-bug-divide-by-zero,fail-bug-stop,fail-bug-map-duplicate,fail-bug-take-negative,fail-bug-decimal-overflow,fail-bug-decimal-divide-by-zero,fail-bug-duration-overflow,fail-bug-duration-unit-overflow,fail-bug-time-range,fail-bug-pow-negative,fail-bug-decimal-places,fail-bug-split-empty,fail-bug-replace-empty,fail-bug-repeat-negative,fail-bug-drop-negative,fail-bug-constant-stop		ci/check_cli.py:observations,tests/test_host.c:test_real_console,tests/test_host.c:test_real_files,tests/test_host.c:test_clock_random
+13.3/1						tests/test_prim.c:primitive_work,tests/test_heap.c:test_reuse_and_images
+13.3/2						tests/test_heap.c:test_lists,tests/test_heap.c:test_list_windows
+13.3/3	col-build-with-var,lang-records-update					tests/test_heap.c:test_lists,tests/test_prim.c:primitive_work
+13.3/4	col-map-basics,col-set-basics					tests/test_heap.c:test_tables
+13.3/5	col-map-order,col-set-basics					tests/test_prim.c:primitive_work,tests/test_heap.c:test_tables
+13.3/6	txt-counts					tests/test_prim.c
+13.3/7	txt-counts,txt-lines-words,txt-search					tests/test_prim.c
+13.3/8	txt-ordering,col-list-map-find,col-list-order-ties			Stability is covered by the listed programs. sort, sort_by and sort_by_desc are Mo code in lib/list.mo, so no C unit test checks them as D281 assumes, and n log n work is not measured.
+13.3/9	col-shared-values,lang-records-update					tests/test_prim.c:shared_copy_charge,tests/test_prim.c:reuse_aliases,tests/test_heap.c:test_reuse_and_images
+13.4/1	ref-shout,tst-passing				ci/check_cli.py:check,ci/check_cli.py:emit_command,ci/check_cli.py:guide_claims,ci/check_cli.py:fix_command
+13.4/2					ci/check_cli.py:promise_selection
+13.4/3	lang-recursion-tail				ci/check_cli.py:observations,ci/check_cli.py:check,tests/test_limits.c:test_the_defaults
+13.4/4					ci/check_cli.py:records,ci/check_cli.py:check		No program can show that a field keeps its name, type and meaning in later versions of the format.
 14/1	lang-dot-calls,lang-dot-calls-cases,col-range-loops,ref-abilities,ref-case-receivers		fail-bug-take-negative	Qualified to_text and compare, such as Text.compare(a, b), report E1103 except Int.compare and the scalar to_text primitives; D285 makes them language and MO-144 builds them. docs/status/section-14-inventory.md lists every function.
 14/2	num-int-functions,num-int-checked,ref-library-natives,ref-time		fail-bug-pow-negative,fail-bug-duration-unit-overflow	
 14/3	num-bigint,ref-library-natives,ref-bigint			
 14/4	num-decimal-rounding,num-decimal-int,num-float-convert,num-decimal-boundaries		fail-bug-decimal-places	
 14/5	ref-library-natives,num-decimal-boundaries			
-14/6	txt-counts,txt-lines-words,txt-split-join,txt-trim-pad,txt-search,txt-replace-repeat,txt-parse-numbers,ref-library-natives		fail-bug-split-empty,fail-bug-replace-empty,fail-bug-repeat-negative	Exhaustive parsing boundaries remain covered only by primitive tests.
+14/6	txt-counts,txt-lines-words,txt-split-join,txt-trim-pad,txt-search,txt-replace-repeat,txt-parse-numbers,ref-library-natives		fail-bug-split-empty,fail-bug-replace-empty,fail-bug-repeat-negative		tests/test_prim.c:text_split,ci/check_primitives.py:text_cases
 14/7	txt-case-chars,txt-chars-roundtrip			
 14/8	ref-library-natives,txt-invalid-utf8-file			
 14/9	col-list-basics,col-list-slicing,col-list-map-find,col-list-enumerate-zip,ref-library-natives,col-list-order-ties		fail-bug-take-negative,fail-bug-drop-negative	
@@ -187,18 +187,18 @@ rule	accepts	refuses	stops	gap
 14/15	ref-time			
 14/16	cap-args-list,ref-capability-fakes			
 14/17	cap-console-streams,cap-console-line-endings,cap-console-stdin,cap-console-fake,cap-console-stdin-invalid			Reference 14 says a run of invalid bytes becomes one U+FFFD; D291 keeps one per maximal subpart and MO-140 corrects the text, so cap-console-stdin-invalid pins only inputs where both agree. Reading a fake's printed lines outside a test reports the staged checker's E1103, so no fixture pins it; see docs/status/golden-gaps.md.
-14/18	cap-files-fake,cap-files-fake-folders,cap-files-read,cap-files-walk,cap-files-within-escape	tst-fake-files-bugs		Real symlink confinement/link removal, too-many-links and exact folder/file error variants need black-box programs; host unit/CBMC tests are not counted as golden coverage.
+14/18	cap-files-fake,cap-files-fake-folders,cap-files-read,cap-files-walk,cap-files-within-escape	tst-fake-files-bugs			tests/test_host.c:test_real_files,tests/test_host.c:test_hostile_links
 14/19	fail-option-result-map,fail-result-declared,fail-file-error-forms,txt-invalid-utf8-file,cap-files-within-escape	fail-main-result-error		
-14/20	cap-clock-fixed,cap-args-list,ref-capability-fakes			Real-clock out-of-range behavior still needs host injection rather than a deterministic program; Env and Random fakes now have a golden.
+14/20	cap-clock-fixed,cap-args-list,ref-capability-fakes						No program can move the system clock outside the years 1 to 9999; Clock.fixed, Args, Env and Random fakes are asserted.
 14/21	lib-json-query,lib-json-errors			
 14/22	lib-json-query,lib-json-errors,lib-json-numbers			The reference does not say whether to_decimal on a number with more than 18 decimal places rounds or gives None, so no program pins it.
-14/23	lib-unicode16			letter?/digit? classification is now exercised by lib-unicode16; the full Unicode 16 corpus remains in check_unicode16.py, and a golden cannot establish the future Unicode17 versioning promise.
-15/1				Roadmap only; processes, upgrades, packages and user-defined abilities are deliberately outside v0.1.
-A/1		e0412		No accepting error report exists; e0412 pins the complete rejection and its fix.
-A/2		e0412		The illustrated terminal rendering is explanatory; the existing exact e0412 golden pins the current renderer, not the sample's shop/orders.mo path.
-A/3		e0412,e0050		JSON fields, Unicode columns, source ordering and mo fix are checked by ci/check_cli.py; no program can prove a code never changes meaning in future versions.
-B/1	ref-source	e0008		The executable grammar is checked by make grammar; this prose defines notation rather than an additional language behavior.
-B/2	ref-source	e0008		The grammar summary contains many productions; grammar/tests and test_syntax_corpus exercise them, but a per-production accepted/refused index is still needed.
+14/23	lib-unicode16				ci/check_unicode16.py:corpus		No program can test the promise about a future Unicode17 module.
+15/1							Roadmap only: it names later phases and changes no rule of v0.1.
+A/1		e0412			ci/check_errors.py:check_cases
+A/2		e0412			ci/check_errors.py:check_cases
+A/3		e0412,e0050			ci/check_cli.py:check,ci/check_cli.py:fix_command,tests/test_program.c:diagnostic_order		No program can show that a code never changes its meaning in future versions.
+B/1	ref-source	e0008			Makefile:grammar
+B/2	ref-source	e0008			Makefile:grammar,tests/test_syntax_corpus.c:files
 B/3	ref-source			
 B/4	ref-operators	e0007-chain		
 B/5	ref-operators			
