@@ -1,0 +1,12 @@
+parent: Error(README.md: not allowed) Error(.: not allowed)
+parent: false false
+parent: Error(README.md: not allowed)
+through: Error(README.md: not allowed) Error(.: not allowed)
+through: false false
+through: Error(README.md: not allowed)
+nested: Error(README.md: not allowed) Error(.: not allowed)
+nested: false false
+nested: Error(README.md: not allowed)
+true Error(../README.md: not allowed)
+Error(x.txt: not allowed) Error(d: not allowed)
+Error(x.txt: not allowed) Error(.: not allowed) Error(.: not allowed)

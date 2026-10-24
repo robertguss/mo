@@ -1,0 +1,7 @@
+error E0053: values of different types are combined  tests/errors/e0053-list/main.mo:4:7
+
+  4 |   [1, "two"]
+    |       ^^^^^ expected Int, found Text
+
+Comparing or combining values of different types is an error (reference 3).
+

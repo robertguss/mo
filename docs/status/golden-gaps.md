@@ -20,6 +20,13 @@ and Ordering, Entry and Map text now have golden programs in `ref-bigint`,
 reference 5.4 and 9.2 permit these operations on values. Binding each receiver to a name first
 works and is covered by `ref-abilities`. These failures are not expected-error fixtures.
 
+## Refused by the reference, accepted by the checker
+
+Reference 5.4 says to write `x.f`, not `x.f()`, and appendix C lists `x.f()` as a refused
+spelling. On main `fc53746`, `mo check` accepts `3.twice()`, `[1, 2].size()` and
+`"ab".trim().byte_count()`, and `mo run` runs them. MO-141 tracks the refusal. Until it lands,
+no fixture pins `x.f()`.
+
 ## Accepted by the reference, rejected by the parser
 
 Reference 3.4 allows any expression inside interpolation. This complete program should print
@@ -38,6 +45,16 @@ end
 
 Computing the `case` in a binding before interpolating it works, as `ref-operators` does.
 The parser's error is not a conformance expectation.
+
+## How many U+FFFD a run of invalid input bytes becomes
+
+Reference 14 says each sequence of bytes on standard input that isn't valid UTF-8 "becomes one
+U+FFFD". Read plainly, the line `a`, FF, FE, `b` reads as `a�b`, three characters. `mo` follows
+Unicode's maximal-subpart rule (architecture 7, `src/host/console.c`) and gives `a��b`, one U+FFFD
+for each of FF and FE, and three for the encoded surrogate ED A0 80. Robert decides which reading is
+meant; then either the reference or `console.c` changes. `cap-console-stdin-invalid` uses only
+inputs where both readings agree: a lone invalid byte, a truncated sequence, and a lead byte
+followed by ASCII.
 
 ## Other
 

@@ -1,0 +1,7 @@
+error E0007: expected line break, found text  tests/errors/e0007-log/main.mo:4:7
+
+  4 |   log "starting"
+    |       ^^^^^^^^^^
+
+Use the declaration or statement's syntax and close its delimiters (reference 2.4).
+

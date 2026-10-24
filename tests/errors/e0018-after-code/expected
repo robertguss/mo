@@ -1,0 +1,7 @@
+error E0018: examples and promises come first in a function's body  tests/errors/e0018-after-code/main.mo:5:3
+
+  5 |   examples
+    |   ^^^^^^^^
+
+Examples precede the function's body (reference 12.1).
+

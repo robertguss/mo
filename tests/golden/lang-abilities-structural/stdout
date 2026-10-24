@@ -1,0 +1,7 @@
+true Some("first") 1
+Tagged(tags: ["b", "a"].to_set, spots: {"x": (1, true)}, span: 0..3)
+[2, 1] 2
+[Dot((1, 9)), Dot((2, 1)), Path([None]), Path([Some(1.5), None]), Empty]
+[(false, Unit), (false, Unit), (true, Unit)]
+Some(Empty)
+[[0, 9], [1, 2], [1, 2, 0]] Some(1s)

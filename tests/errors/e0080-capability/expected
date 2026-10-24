@@ -1,0 +1,21 @@
+error E0080: type Console doesn't have Equal  tests/errors/e0080-capability/main.mo:4:3
+
+  4 |   a == b
+    |   ^^^^^^ type Console doesn't have Equal
+
+An operation needs its type's ability; functions and capabilities have no abilities (reference 9.2).
+
+error E0080: type Clock doesn't have Text  tests/errors/e0080-capability/main.mo:8:6
+
+  8 |   "#{clock}"
+    |      ^^^^^ type Clock doesn't have Text
+
+An operation needs its type's ability; functions and capabilities have no abilities (reference 9.2).
+
+error E0080: type Files doesn't have Hash  tests/errors/e0080-capability/main.mo:11:26
+
+  11 | fn keyed(files: Files) : Set(Files)
+     |                          ^^^^^^^^^^ type Files doesn't have Hash
+
+An operation needs its type's ability; functions and capabilities have no abilities (reference 9.2).
+

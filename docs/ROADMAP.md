@@ -54,12 +54,15 @@ checklist is in Notion's [Phase 2 page](https://www.notion.so/3f6700320c4581c4b7
   a linkcheck test. They do not substitute for benchmark v0's baseline. Its
   first round is frozen and in progress in `learnability/bench-v0-round-1/`,
   not yet published on main.
+- Maintained copies of the three tools are in [tools/](../tools/README.md), and the
+  `drivers` group runs them: linkcheck over the repository's Markdown, tally over
+  every recorded round's session logs, and notioncopy on the reference (MO-139).
 - The release performance baseline is recorded in
   [bench/performance/](../bench/performance/README.md): command timings for all
   twelve samples and three small workloads (#185). It is not a new speed gate.
 - The golden corpus, differential checks, fuzz targets and bounded CBMC proofs
   exist. The recorded hour-long fuzz runs had no crash. The million-program
-  VM-against-Lean run, full conformance audit and daily use of all three tools
+  VM-against-Lean run and full conformance audit
   remain Phase 2 work.
 
 No Mo check runs on GitHub, and there is no nightly job (D270). Agents run
