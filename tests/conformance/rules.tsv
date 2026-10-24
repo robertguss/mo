@@ -47,7 +47,7 @@ rule	accepts	refuses	stops	gap
 3.7/2	col-build-with-var,col-shared-values	e0056		One-holder memory reuse and amortized construction cost need allocation/work instrumentation, not output goldens.
 3.8/1	col-map-basics,col-set-basics	e0094	fail-bug-map-duplicate	
 3.8/2	col-map-order,col-map-equality,col-set-basics			
-3.9/1	ref-time			Out-of-range time and Duration overflow still need stop goldens; checked_add refusal is covered.
+3.9/1	ref-time		fail-bug-time-range,fail-bug-duration-overflow	
 4.1/1	lang-records	e0062,e0063,e0065		
 4.1/2	lang-records-order	e0063		
 4.2/1	lang-enum-shapes	e0063		
@@ -156,7 +156,7 @@ rule	accepts	refuses	stops	gap
 12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed,ref-capability-fakes			Fake access outside tests still needs an exact-error program; Env and Random fake behavior now has a golden.
 12.4/2	cap-console-fake,cap-files-fake			Fake observation outside tests needs an exact-error program.
 13.1/1	ref-evaluation			
-13.2/1	ref-shout		fail-bug-overflow,fail-bug-divide-by-zero,fail-bug-stop,fail-bug-map-duplicate,fail-bug-take-negative	Duration/Decimal overflow, time range, invalid fake path and file-folder conflicts still need stop goldens; resource-limit reports are in ci/check_cli.py.
+13.2/1	ref-shout		fail-bug-overflow,fail-bug-divide-by-zero,fail-bug-stop,fail-bug-map-duplicate,fail-bug-take-negative,fail-bug-time-range,fail-bug-duration-overflow	Decimal overflow, invalid fake path and file-folder conflicts still need stop goldens; resource-limit reports are in ci/check_cli.py.
 13.3/1				Cost claims require work/allocation instrumentation rather than program output; see tests/test_prim.c and tests/test_heap.c.
 13.3/2				No standalone work-bound program proves constant list access; unit tests exercise primitives without asserting asymptotics.
 13.3/3	col-build-with-var,lang-records-update			Output checks semantics only; one-holder cost needs allocation/work instrumentation.
@@ -171,7 +171,7 @@ rule	accepts	refuses	stops	gap
 13.4/3	lang-recursion-tail			Stack, depth and heap switches/defaults are checked by ci/check_cli.py, not golden programs with resource arguments.
 13.4/4				JSON fields/version/unknown-field compatibility need the structured assertions in ci/check_cli.py rather than a run/test text golden.
 14/1	lang-dot-calls,col-range-loops,ref-abilities		fail-bug-take-negative	Built-in Order families now have comparison programs; direct nullary-case receivers such as Less.compare(Greater) still report E1103.
-14/2	num-int-functions,num-int-checked,ref-library-natives,ref-time			Negative pow and Duration-construction overflow need stop goldens.
+14/2	num-int-functions,num-int-checked,ref-library-natives,ref-time		fail-bug-duration-unit-overflow	Negative pow needs a stop golden.
 14/3	num-bigint,ref-library-natives,ref-bigint			
 14/4	num-decimal-rounding,num-decimal-int,num-float-convert			Out-of-range places and Decimal-to-Int range boundaries still need dedicated programs.
 14/5	ref-library-natives			Float-to-Decimal range and 18-place ties-even boundaries need dedicated goldens.
