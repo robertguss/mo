@@ -1,0 +1,7 @@
+error E0016: a case arm is written Pattern: value, with no =>  tests/errors/e0016-arrow/main.mo:5:7
+
+  5 |     1 => "one"
+    |       ^
+
+A case arm is Pattern: value (reference 7.2).
+

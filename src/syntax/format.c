@@ -359,6 +359,9 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
             node(f, spec->children[i]);
             op(f, MO_DOC_LINE_IF);
         }
+        /* A blank line separates the specification from the code (reference 12). */
+        if (spec->count != 0 && body->count != 0 && !body->children[0]->blank_before)
+            op(f, MO_DOC_BLANK);
         statements(f, body, false);
         comments(f, n->ending, false);
         op(f, MO_DOC_UNNEST);

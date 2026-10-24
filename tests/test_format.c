@@ -185,6 +185,15 @@ int main(int argc, char **argv) {
     const char *nested_case =
         "case outer\n  Some(value):\n    case value\n      One: 1\n      Two: 2\n    end\nend\n";
     check_source(nested_case, nested_case);
+    /* Reference 12: a specification, then a blank line, then the code. */
+    check_source("fn f(x: Int) : Int\n  examples\n    f(1) == 2\n  end\n  x + 1\nend\n"
+                 "fn g(x: Int) : Int\n  promise \"keeps x\"\n    result == x\n"
+                 "    allows x: 1, result: 1\n    forbids x: 1, result: 2\n  end\n"
+                 "  # the code\n  x\nend\n",
+                 "fn f(x: Int) : Int\n  examples\n    f(1) == 2\n  end\n\n  x + 1\nend\n"
+                 "fn g(x: Int) : Int\n  promise \"keeps x\"\n    result == x\n"
+                 "    allows x: 1, result: 1\n    forbids x: 1, result: 2\n  end\n\n"
+                 "  # the code\n  x\nend\n");
     check_source("## module docs\nmodule M\n# function docs\nfn f()\n  examples # header\n"
                  "    true\n  end\n\n  if true\n    1\n  else # alternative\n    2\n  end\n"
                  "  # last\nend # close\n# eof\n",
