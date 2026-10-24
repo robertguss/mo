@@ -137,9 +137,9 @@ Follow these steps.
 
 1. Write the program. When a function has `examples` or a `promise`, put each block at the top of the body, then a blank line, then the code. Add a `test` in the same file when you check a scenario. Section 12.
 2. Run `mo format` on those files.
-3. Run `mo check FILE`. Fix language errors. Handle E1103 and E1150 as Know this build says.
+3. Run `mo check FILE`. It reports each error it finds, in source order. Fix every error it reports before you run `mo check` again, not only the first. Handle E1103 and E1150 as Know this build says.
 4. Run `mo fix FILE` when `mo check` shows a fix. When an error shows more than one fix, choose one and make that edit yourself. Appendix A.
-5. Run `mo test FILE` until the examples, promises, and tests pass.
+5. Run `mo test FILE` only once `mo check` reports no errors but those Know this build names. While the program has other errors, `mo test` runs nothing and prints the same errors `mo check` does. Run `mo test FILE` until the examples, promises, and tests pass.
 6. Run `mo run FILE` only when the task needs a running program.
 
 If a command exits 1 for a reason that Know this build names, follow its instructions above, and continue. Section 13.4 describes `--json`.
