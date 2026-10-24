@@ -28,7 +28,9 @@ struct eligibility {
     size_t count, capacity;
     size_t *work;
     bool limited;
-    bool plain;  /* a builder's input: no capabilities and no hidden types */
+    bool plain; /* a builder's input: no capabilities, and hidden types only of lower levels */
+    /* A hidden type met here must start within level - 1 (MO_CLI_BUILDER_LEVELS); 0 allows none. */
+    uint32_t level;
     bool copied; /* a hidden type's insides: no capabilities, and hidden types are structural */
 };
 
@@ -123,11 +125,12 @@ static bool yields(const struct mo_source_type *type, const struct mo_symbol *ow
            yields(type->arguments[0], owner, depth + 1);
 }
 
-/* A hidden type can be generated when its module can start one (reference 12.2): an exposed
- * constant of it, or an exposed nongeneric function returning it from inputs that hold no
- * capability, function or hidden type. Later steps are chosen in the image. */
+/* A hidden type can be generated when its module can start one at level or below (reference
+ * 12.2): an exposed constant of it, or an exposed nongeneric function returning it from inputs
+ * that hold no capability or function, and only hidden types that start at a lower level. This
+ * matches the levels the image's builders take (tools/builders.c); the image chooses steps. */
 static bool startable(struct eligibility *outer, const struct mo_program *program,
-                      const struct mo_symbol *owner) {
+                      const struct mo_symbol *owner, uint32_t level) {
     for (uint32_t i = 0; i < program->constant_count; i++) {
         const struct mo_checked_constant *constant = &program->constants[i];
         if (!input_work(outer))
@@ -144,7 +147,7 @@ static bool startable(struct eligibility *outer, const struct mo_program *progra
         if (!signature->function->exported || signature->function->module != owner->module ||
             type->parameters != 0 || !yields(type->arguments[type->count - 1], owner, 0))
             continue;
-        struct eligibility walk = {.work = outer->work, .plain = true};
+        struct eligibility walk = {.work = outer->work, .plain = true, .level = level};
         mo_arena_init(&walk.arena, MO_CLI_TEST_SIZE);
         bool supported = true;
         for (uint32_t p = 0; supported && p + 1 < type->count; p++)
@@ -214,10 +217,12 @@ static bool input_supported(struct eligibility *walk, const struct mo_program *p
             const struct mo_symbol *owner = type->declaration;
             MO_ASSERT(owner != NULL && owner->module == type->module);
             /* Exposed-opaque types require builders even in their own module, and a builder's
-             * own inputs hold none. Unexported local data, unlike those types, is structural;
-             * a hidden type's insides must be too, since its built values are copied. */
+             * own inputs hold only those of lower levels. Unexported local data, unlike those
+             * types, is structural; a hidden type's insides must be too, since its built values
+             * are copied. */
             if (!owner->insides && (owner->exported || owner->module != module) && !walk->copied)
-                return !walk->plain && type->count == 0 && startable(walk, program, owner) &&
+                return walk->level != 0 && type->count == 0 &&
+                       startable(walk, program, owner, walk->level - 1) &&
                        insides_supported(walk, program, owner);
             bool choice = owner->declaration->kind == MO_S_ENUM;
             uint32_t count = choice ? owner->case_count : 1;
@@ -248,7 +253,7 @@ bool mo_promises_supported(const struct mo_program *program,
         const struct mo_lowered_promise *instance = observation->instance;
         if (subject->signature->type->parameters != 0 && instance == NULL)
             continue; /* Concrete inputs are checked after lowering has found all uses. */
-        struct eligibility walk = {.work = &work};
+        struct eligibility walk = {.work = &work, .level = MO_CLI_BUILDER_LEVELS};
         mo_arena_init(&walk.arena, MO_CLI_TEST_SIZE);
         bool supported = true;
         MO_ASSERT(instance == NULL || instance->parameter_count == subject->parameter_count);

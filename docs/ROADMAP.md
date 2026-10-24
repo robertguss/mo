@@ -35,7 +35,8 @@ checklist is in Notion's [Phase 2 page](https://www.notion.so/3f6700320c4581c4b7
   and run; the other four are libraries, for which `mo run` reports E0079.
 - `mo test` generates and shrinks structural inputs, maps and sets, and generates
   fake capabilities and hidden types through module builders. Built hidden values
-  are not shrunk. Builders needing other hidden types remain unsupported (MO-127).
+  are not shrunk. A builder may take other hidden types, up to three levels deep
+  and never in a cycle (MO-127).
   Generic promises run at each concrete instantiation already in the program,
   without inventing type combinations (D273).
 - Higher-order library functions and Json are Mo code in `lib/`. Text, Set and

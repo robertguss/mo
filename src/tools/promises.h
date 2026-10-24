@@ -17,8 +17,9 @@ struct mo_promise_result {
 
 /* Refuse the entire selected set before initialization/observations. Listing
  * needs no generator. Closed scalars, tuples, collections, visible data, capabilities as fakes,
- * and hidden types their module can start. Generic templates are deferred until
- * mo_instantiate_tests supplies their concrete input types. Function inputs remain unavailable. */
+ * and hidden types their module can start within MO_CLI_BUILDER_LEVELS. Generic templates are
+ * deferred until mo_instantiate_tests supplies their concrete input types. Function inputs remain
+ * unavailable. */
 MO_MUST_USE bool mo_promises_supported(const struct mo_program *program,
                                        const struct mo_test_selection *selection,
                                        struct mo_diags *diags);
