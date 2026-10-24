@@ -25,25 +25,25 @@ including `Bool`, `Unit`, tuples, `Ordering`, `Entry`, `EntryKind` and `FileErro
 | Type | Functions | Result | Golden programs |
 | --- | --- | --- | --- |
 | Int | every function except the Duration constructors | runs in every form | `num-int-functions`, `num-int-checked`, `ref-library-natives`, `ref-abilities` |
-| BigInt | operators, its seven functions, `to_text`, `compare` | runs; qualified `compare`: MO-144 | `num-bigint`, `ref-bigint` |
-| Byte | `to_int`, `to_text`, `compare` | runs; qualified `compare`: MO-144 | `ref-library-natives`, `ref-abilities` |
-| Decimal | every function | runs; qualified `compare`: MO-144 | `num-decimal-rounding`, `num-decimal-int` |
-| Float | every function | runs; qualified `compare`: MO-144 | `num-float-convert`, `ref-library-natives` |
-| Text | every function and `Text.from_chars` | runs; qualified `to_text` and `compare`: MO-144 | `txt-*`, `ref-library-natives` |
-| Char | every function | runs; qualified `compare`: MO-144 | `txt-case-chars`, `txt-chars-roundtrip` |
-| Bytes | `size`, `get`, `decode_utf8`, `compare` | runs; qualified `compare`: MO-144 | `ref-library-natives`, `ref-abilities` |
-| List | every function, `join` and `to_map` | runs; qualified `to_text` and `compare`: MO-144 | `col-list-*`, `ref-library-natives` |
-| Map | every function and `to_text` | runs; qualified `to_text`: MO-144 | `col-map-*`, `ref-abilities` |
-| Set | every function, `Set.empty` and `to_text` | runs; qualified `to_text`: MO-144 | `col-set-basics` |
-| Range | `for`, `to_list`, `contains?`, `to_text` | runs; qualified `to_text`: MO-144 | `col-range-loops` |
-| Option | `or`, `or_fail`, `map`, `to_text`, `compare` | runs; qualified `to_text` and `compare`: MO-144 | `fail-option-result-map`, `ref-evaluation` |
-| Result | `map`, `map_error`, `to_text` | runs; qualified `to_text`: MO-144 | `fail-option-result-map` |
-| Ordering, Unit, EntryKind | `to_text`, `compare` | runs, including direct receivers such as `Less.compare(Greater)` since MO-130 (#202); qualified: MO-144 | `lang-dot-calls-cases`, `ref-case-receivers`, `ref-abilities` |
-| Bool, tuples | `to_text`, `compare` | runs; qualified `Bool` forms: MO-144 | `ref-abilities` |
+| BigInt | operators, its seven functions, `to_text`, `compare` | runs in every form; qualified `compare` since MO-144 (#208) | `num-bigint`, `ref-bigint` |
+| Byte | `to_int`, `to_text`, `compare` | runs in every form; qualified `compare` since MO-144 (#208) | `ref-library-natives`, `ref-abilities` |
+| Decimal | every function | runs in every form; qualified `compare` since MO-144 (#208) | `num-decimal-rounding`, `num-decimal-int` |
+| Float | every function | runs in every form; qualified `compare` since MO-144 (#208) | `num-float-convert`, `ref-library-natives` |
+| Text | every function and `Text.from_chars` | runs in every form; qualified `to_text` and `compare` since MO-144 (#208) | `txt-*`, `ref-library-natives` |
+| Char | every function | runs in every form; qualified `compare` since MO-144 (#208) | `txt-case-chars`, `txt-chars-roundtrip` |
+| Bytes | `size`, `get`, `decode_utf8`, `compare` | runs in every form; qualified `compare` since MO-144 (#208) | `ref-library-natives`, `ref-abilities` |
+| List | every function, `join` and `to_map` | runs in every form; qualified `to_text` and `compare` since MO-144 (#208) | `col-list-*`, `ref-library-natives` |
+| Map | every function and `to_text` | runs in every form; qualified `to_text` since MO-144 (#208) | `col-map-*`, `ref-abilities` |
+| Set | every function, `Set.empty` and `to_text` | runs in every form; qualified `to_text` since MO-144 (#208) | `col-set-basics` |
+| Range | `for`, `to_list`, `contains?`, `to_text` | runs in every form; qualified `to_text` since MO-144 (#208) | `col-range-loops` |
+| Option | `or`, `or_fail`, `map`, `to_text`, `compare` | runs in every form; qualified `to_text` and `compare` since MO-144 (#208) | `fail-option-result-map`, `ref-evaluation` |
+| Result | `map`, `map_error`, `to_text` | runs in every form; qualified `to_text` since MO-144 (#208) | `fail-option-result-map` |
+| Ordering, Unit, EntryKind | `to_text`, `compare` | runs, including direct receivers such as `Less.compare(Greater)` since MO-130 (#202); qualified since MO-144 (#208), except `Unit.compare(a, b)`: `Unit` there is read as the value, so write `a.compare(b)` | `lang-dot-calls-cases`, `ref-case-receivers`, `ref-abilities` |
+| Bool, tuples | `to_text`, `compare` | runs; qualified `Bool` forms since MO-144 (#208) | `ref-abilities` |
 | Args, Env, Random | `list`, `get`, `int` and the fakes | runs | `cap-args-list`, `ref-capability-fakes` |
 | Console | `print`, `error`, `read_line`, `printed`, `printed_errors`, the fakes | runs | `cap-console-*` |
 | Files, ReadFiles | every operation and `Files.in_memory` | runs | `cap-files-*` |
-| FileError, Entry | constructors, `to_text`, `compare` | runs; qualified `compare` and `Entry` `to_text`: MO-144 | `ref-abilities`, `fail-result-declared` |
+| FileError, Entry | constructors, `to_text`, `compare` | runs in every form; qualified `compare` and `Entry` `to_text` since MO-144 (#208) | `ref-abilities`, `fail-result-declared` |
 | Json | `parse`, `int`, `decimal`, `float`, `to_text`, `pretty`, JsonNumber's conversions, JsonError | runs | `lib-json-query`, `lib-json-errors` |
 | Unicode16 | every function | runs | `lib-unicode16` |
 
@@ -52,9 +52,9 @@ including `Bool`, `Unit`, tuples, `Ordering`, `Entry`, `EntryKind` and `FileErro
 | Form | On main `fc53746` | Now |
 | --- | --- | --- |
 | A case without fields written as the receiver: `Less.to_text`, `Less.compare(Greater)`, `Unit.to_text`, `Folder.to_text`, a declared `Stop.to_text` | E1103: the checker read `Less` as a module prefix | runs since MO-130 (#202); `lang-dot-calls-cases`, and `ref-case-receivers` as extra coverage |
-| Qualified or value `to_text` and `compare` other than `Int.compare` and the scalar `to_text` primitives, such as `Text.compare(a, b)` or `List.to_text(xs)` | E1103 | needs a design decision: MO-144 |
+| Qualified or value `to_text` and `compare` other than `Int.compare` and the scalar `to_text` primitives, such as `Text.compare(a, b)` or `List.to_text(xs)` | E1103 | runs since MO-144 (#208, D285); `ref-qualified-abilities` |
 
-Two refusals the probe met are right in outcome but give E1103 rather than a specific error. Making
+Two refusals the probe met are right in outcome but gave E1103 rather than a specific error. Making
 a fake in `main` or another function, which reference 12.4 forbids, belongs to MO-143. A qualified
-name no module owns, such as `Shapes.bogus(p)`, belongs to MO-144. Neither is a library function
-that fails to run.
+name no module owns, such as `Shapes.bogus(p)`, gives E0050 since MO-144 (#208). Neither is a
+library function that fails to run.

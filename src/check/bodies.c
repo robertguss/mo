@@ -112,6 +112,13 @@ struct emitted {
     struct term **parameters; /* compact A-Z substitution terms */
 };
 
+/* M.to_text or M.compare: its graph takes only types the module M declares. */
+struct ability_module {
+    const struct emitted *graph;
+    const struct mo_module_scope *module;
+    struct ability_module *next;
+};
+
 struct note {
     struct mo_inferred_expression output;
     struct term *type;
@@ -194,6 +201,7 @@ struct inference {
     struct match_check *matches;
     struct pattern_defaults *defaults;
     struct dispatch *dispatches, *last_dispatch;
+    struct ability_module *ability_modules;
     struct failure_check *failures;
     struct type_pair *equal_types;
     struct emitted_lambda *lambda_frame, *lambdas;
@@ -245,6 +253,8 @@ struct dispatch {
     bool solved;
 };
 
+static const char unknown_member[] = "the module or type has no function with this name";
+
 static MO_MUST_USE bool problem(struct inference *p, uint16_t code, struct mo_span span,
                                 const char *message, const char *reason,
                                 const struct mo_syntax *previous) {
@@ -255,7 +265,8 @@ static MO_MUST_USE bool problem(struct inference *p, uint16_t code, struct mo_sp
     if (!p->fatal && p->error.code != 0 && p->error.primary.span.start <= span.start)
         return false;
     const char *label =
-        code == MO_CODE_NAME_UNKNOWN    ? "not visible in this block"
+        code == MO_CODE_NAME_UNKNOWN
+            ? (message == unknown_member ? "no function of this name" : "not visible in this block")
         : code == MO_CODE_BIND_REPEATED ? "this name already has a meaning"
         : code == MO_CODE_UNUSED_NAME   ? "never read"
         : code == MO_CODE_TYPE_MISMATCH || code == MO_CODE_CONDITION_TYPE ||
@@ -1179,6 +1190,42 @@ static MO_MUST_USE uint32_t find_alias(const struct mo_module_scope *scope,
                : scope->alias_count;
 }
 
+/* The module a call prefix names: a use alias, or a library module always in
+ * scope. *alias is the alias index, or UINT32_MAX. */
+static MO_MUST_USE const struct mo_module_scope *
+prefix_module(struct inference *p, const struct mo_syntax *prefix, uint32_t *alias) {
+    const struct mo_module_scope *scope = &p->interfaces->scopes[p->function->function->module];
+    uint32_t lo = find_alias(scope, prefix);
+    *alias = UINT32_MAX;
+    if (lo < scope->alias_count) {
+        *alias = lo;
+        return &p->interfaces->scopes[scope->aliases[lo].module];
+    }
+    bool implicit = mo_source_builtin(prefix->text, prefix->span.end - prefix->span.start) ||
+                    (scope->library && compare_text(prefix, scope->name) == 0);
+    for (uint32_t i = 0; implicit && i < p->interfaces->count; i++) {
+        if (!work(p))
+            return NULL;
+        const struct mo_module_scope *library = &p->interfaces->scopes[i];
+        if (library->library && compare_text(prefix, library->name) == 0)
+            return library;
+    }
+    return NULL;
+}
+
+/* Credit the use line a prefix went through. */
+static MO_MUST_USE bool use_alias(struct inference *p, uint32_t alias,
+                                  const struct mo_syntax *name) {
+    const struct mo_module_scope *scope = &p->interfaces->scopes[p->function->function->module];
+    if (alias == UINT32_MAX ||
+        mo_use_import(p->signatures, p->function->function->module, scope->aliases[alias].origin))
+        return true;
+    bool reported = problem(p, MO_CODE_CHECK_PROGRAM_WORK, name->span,
+                            "the program needs too much import-checking work", NULL, NULL);
+    (void)reported;
+    return false;
+}
+
 static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
                                                       const struct mo_syntax *name,
                                                       const struct mo_syntax *prefix,
@@ -1189,20 +1236,10 @@ static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
         name = name->children[1];
     }
     if (prefix != NULL) {
-        uint32_t lo = find_alias(scope, prefix);
-        const struct mo_module_scope *target =
-            lo < scope->alias_count && compare_text(prefix, scope->aliases[lo].name) == 0
-                ? &p->interfaces->scopes[scope->aliases[lo].module]
-                : NULL;
-        bool implicit = mo_source_builtin(prefix->text, prefix->span.end - prefix->span.start) ||
-                        (scope->library && compare_text(prefix, scope->name) == 0);
-        for (uint32_t i = 0; implicit && target == NULL && i < p->interfaces->count; i++) {
-            if (!work(p))
-                return NULL;
-            const struct mo_module_scope *library = &p->interfaces->scopes[i];
-            if (library->library && compare_text(prefix, library->name) == 0)
-                target = library;
-        }
+        uint32_t alias;
+        const struct mo_module_scope *target = prefix_module(p, prefix, &alias);
+        if (p->failed)
+            return NULL;
         if (target != NULL && name->kind == MO_S_NAME && prefix->kind == MO_S_CAPNAME) {
             /* Red.f with both a used module Red and a case Red in scope could call either. Look
              * the case up without definition, which would count an import of Red as used. */
@@ -1259,14 +1296,8 @@ static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
             (void)reported;
             return NULL;
         }
-        if (lo < scope->alias_count && compare_text(prefix, scope->aliases[lo].name) == 0 &&
-            !mo_use_import(p->signatures, p->function->function->module,
-                           scope->aliases[lo].origin)) {
-            bool reported = problem(p, MO_CODE_CHECK_PROGRAM_WORK, name->span,
-                                    "the program needs too much import-checking work", NULL, NULL);
-            (void)reported;
+        if (!use_alias(p, alias, name))
             return NULL;
-        }
         return s;
     }
     const struct mo_symbol *s = find_symbol(scope, name, count);
@@ -1306,11 +1337,17 @@ static MO_MUST_USE bool case_receiver(struct inference *p, const struct mo_synta
     const struct mo_module_scope *scope = &p->interfaces->scopes[p->function->function->module];
     if (find_alias(scope, name) != scope->alias_count)
         return false;
-    if (mo_builtin_case_by_name(name) != NULL)
-        return true;
+    /* Only a case without fields is a value on its own; Entry.to_text(e) and a
+     * declared Money.to_text(m) name the type (D285). */
+    const struct mo_builtin_case *builtin = mo_builtin_case_by_name(name);
+    if (builtin != NULL)
+        return builtin->count == 0;
     uint32_t count = 0;
     const struct mo_symbol *s = definition(p, name, NULL, &count);
-    return s != NULL && s->declaration->kind == MO_S_CASE_DECL;
+    if (s == NULL || s->declaration->kind != MO_S_CASE_DECL)
+        return false;
+    const struct mo_data_signature *data = data_type(p, s);
+    return data != NULL && data->count == 0;
 }
 
 static MO_MUST_USE bool missing_field(struct inference *p, struct mo_span span, const uint8_t *name,
@@ -1484,6 +1521,73 @@ static MO_MUST_USE const struct mo_module_scope *type_scope(struct inference *p,
     return NULL;
 }
 
+static MO_MUST_USE const struct mo_source_type *parameter_type(const struct mo_source_type *type,
+                                                               uint32_t bit);
+static MO_MUST_USE struct value ability_function(struct inference *p, struct value receiver,
+                                                 const struct mo_syntax *name);
+
+/* T.to_text and T.compare (D285, reference 5.4) go through the ability, so a
+ * customizer applies exposed or not (9.2). T is a type always in scope, a
+ * module and any type it declares, a type parameter, or a declared type. */
+static MO_MUST_USE struct value qualified_ability(struct inference *p,
+                                                  const struct mo_syntax *prefix,
+                                                  const struct mo_syntax *name) {
+    struct term *type = NULL;
+    uint32_t arity = 0, alias;
+    const char *builtin = mo_builtin_type(prefix, &arity);
+    const struct mo_module_scope *module =
+        builtin != NULL ? NULL : prefix_module(p, prefix, &alias);
+    size_t length = prefix->span.end - prefix->span.start;
+    uint32_t bit = length == 1 && prefix->text[0] >= 'A' && prefix->text[0] <= 'Z'
+                       ? UINT32_C(1) << (unsigned)(prefix->text[0] - 'A')
+                       : 0;
+    if (p->failed)
+        return (struct value){0};
+    if (builtin != NULL) {
+        type = native(p, builtin, arity);
+        for (uint32_t i = 0; type != NULL && i < arity; i++)
+            type->arguments[i] = fresh(p, 0);
+    } else if (module != NULL) {
+        if (!use_alias(p, alias, name))
+            return (struct value){0};
+        type = fresh(p, 0);
+    } else if ((p->function->type->parameters & bit) != 0) {
+        type = annotation(p, parameter_type(p->function->type, bit), NULL, 0);
+    } else {
+        uint32_t count = 0;
+        const struct mo_symbol *s = definition(p, prefix, NULL, &count);
+        if (p->failed)
+            return (struct value){0};
+        const struct mo_nominal_signature *nominal =
+            s == NULL || s->owner != UINT32_MAX ||
+                    (s->declaration->kind != MO_S_STRUCT && s->declaration->kind != MO_S_ENUM)
+                ? NULL
+                : mo_nominal_signature_by_symbol(p->signatures, s);
+        if (nominal == NULL) {
+            /* Report an unknown prefix as any other qualified name does. */
+            if (definition(p, name, prefix, &count) == NULL && !p->failed) {
+                bool reported = unfinished(p);
+                (void)reported;
+            }
+            return (struct value){0};
+        }
+        struct term *parameters[26] = {NULL};
+        type = annotation(p, nominal->type, parameters, 0);
+    }
+    if (p->failed || type == NULL)
+        return (struct value){0};
+    struct value out = ability_function(p, (struct value){.type = type}, name);
+    if (out.graph != NULL && module != NULL) {
+        struct ability_module *owner =
+            allocate(p, 1, sizeof(*owner), _Alignof(struct ability_module));
+        if (owner == NULL)
+            return (struct value){0};
+        *owner = (struct ability_module){out.graph, module, p->ability_modules};
+        p->ability_modules = owner;
+    }
+    return out;
+}
+
 static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_syntax *node,
                                            const struct mo_syntax *prefix) {
     if (node->kind == MO_S_QUALIFIED) {
@@ -1505,6 +1609,9 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
     const struct mo_builtin_case *builtin = prefix == NULL ? mo_builtin_case_by_name(node) : NULL;
     if (builtin != NULL)
         return builtin_construct(p, builtin, NULL, NULL);
+    if (prefix != NULL &&
+        (compare_text(node, "to_text") == 0 || compare_text(node, "compare") == 0))
+        return qualified_ability(p, prefix, node);
     uint32_t count = 0;
     const struct mo_symbol *s = definition(p, node, prefix, &count);
     if (p->failed)
@@ -1518,7 +1625,13 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
                     return native_identifier(p, native);
             }
         }
-        if (prefix != NULL || node->kind == MO_S_CAPNAME || node->kind == MO_S_QUALIFIED) {
+        if (prefix != NULL) {
+            bool reported = problem(p, MO_CODE_NAME_UNKNOWN, node->span, unknown_member,
+                                    "T.f names a function in the module of T, or one T has "
+                                    "through its abilities (reference 5.4, 10.3).",
+                                    NULL);
+            (void)reported;
+        } else if (node->kind == MO_S_CAPNAME || node->kind == MO_S_QUALIFIED) {
             bool reported = unfinished(p);
             (void)reported;
         } else {
@@ -3259,7 +3372,9 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             !qualified && start < node->count && node->children[start]->kind == MO_S_CALL
                 ? mo_builtin_case_by_name(name)
                 : NULL;
-        if ((name->kind == MO_S_CAPNAME || qualified) && start < node->count &&
+        bool ability =
+            qualified && (compare_text(name, "to_text") == 0 || compare_text(name, "compare") == 0);
+        if ((name->kind == MO_S_CAPNAME || qualified) && !ability && start < node->count &&
             node->children[start]->kind == MO_S_CALL) {
             uint32_t count = 0;
             const struct mo_symbol *symbol =
@@ -4253,13 +4368,46 @@ static MO_MUST_USE bool finish_operator(struct inference *p, struct note *note) 
         : compare || op == MO_T_LT || op == MO_T_LE || op == MO_T_GT || op == MO_T_GE
             ? MO_SOURCE_ORDER
             : MO_SOURCE_NUMBER;
-    MO_ASSERT(graph->output.operand_count != 0 && graph->operands[0] != NULL);
-    const struct mo_source_type *type = graph->operands[0]->output.type;
+    /* A qualified ability function, as a value or called, proves its
+     * ability on its first parameter; a dot call on its receiver. */
+    bool qualified = (text || compare) &&
+                     (graph->output.operand_count == 0 || graph->output.receiver == UINT32_MAX);
+    MO_ASSERT(qualified || (graph->output.operand_count != 0 && graph->operands[0] != NULL));
+    struct note *operand = graph->output.operand_count == 0 ? note : graph->operands[0];
+    const struct mo_source_type *type = operand->output.type;
+    if (qualified) {
+        MO_ASSERT(type->kind == MO_SOURCE_FUNCTION && type->count != 0);
+        type = type->arguments[0];
+    }
+    p->span = note->output.syntax->span;
+    const struct mo_module_scope *module = NULL;
+    for (const struct ability_module *at = p->ability_modules; at != NULL; at = at->next) {
+        if (!work(p))
+            return false;
+        if (at->graph == graph)
+            module = at->module;
+    }
+    if (module != NULL && (type->kind != MO_SOURCE_NAMED || type->declaration == NULL ||
+                           &p->interfaces->scopes[type->module] != module)) {
+        char *label = allocate(p, 256, 1, 1);
+        if (label == NULL)
+            return false;
+        int length = snprintf(label, 256, "%.100s doesn't declare %.100s", module->name,
+                              type->kind == MO_SOURCE_FUNCTION ? "functions"
+                              : type->kind == MO_SOURCE_TUPLE  ? "tuples"
+                                                               : type->name);
+        MO_ASSERT(length > 0 && length < 256);
+        p->type_label = label;
+        return problem(p, MO_CODE_ARGUMENT_TYPE, p->span,
+                       "a module's to_text or compare is given a type it doesn't declare",
+                       "M.to_text(x) and M.compare(a, b) take a value of a type that the module M "
+                       "declares (reference 5.4).",
+                       NULL);
+    }
     if (ability == MO_SOURCE_NUMBER && type->kind == MO_SOURCE_NAMED &&
         type->module == UINT32_MAX &&
         (strcmp(type->name, "Time") == 0 || strcmp(type->name, "Duration") == 0))
         return true;
-    p->span = note->output.syntax->span;
     const struct mo_ability_implementation *implementation =
         mo_prove_ability(&p->abilities, type, ability);
     if (implementation == NULL)
@@ -4269,7 +4417,7 @@ static MO_MUST_USE bool finish_operator(struct inference *p, struct note *note) 
         allocate(p, 1, sizeof(*use), _Alignof(struct mo_checked_ability_use));
     if (p->failed)
         return false;
-    *use = (struct mo_checked_ability_use){.operand = graph->operands[0]->index,
+    *use = (struct mo_checked_ability_use){.operand = operand->index,
                                            .implementation = implementation};
     graph->output.ability_count = 1;
     graph->output.abilities = use;

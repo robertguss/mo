@@ -23,6 +23,10 @@ fn order(a: T, b: T) : Ordering where T: Order
   a.compare(b)
 end
 
+fn qualified(a: T, b: T) : Ordering where T: Order
+  T.compare(a, b)
+end
+
 fn empty(map: Map(Text, Int)) : Text
   map.to_text
 end
@@ -38,6 +42,7 @@ fn main(console: Console) : Int
   console.print("#{map}")
   console.print("#{empty({})}/#{[(File, Link), (Other, Folder)]}")
   console.print("#{less.compare(Greater)}/#{order(Greater, Equal)}/#{initial}")
+  textify = Ordering.to_text
   if render(Less) == "Less" and
     render(Equal) == "Equal" and
     greater.to_text == "Greater" and
@@ -61,6 +66,14 @@ fn main(console: Console) : Int
     order(File, Folder) == Less and
     order(entry, Entry(name: "z", kind: File)) == Less and
     Int.compare(-2, 7) == Less and
+    Ordering.compare(Less, Greater) == Less and
+    Option.compare(None, Some(1)) == Less and
+    qualified(entry, Entry(name: "z", kind: File)) == Less and
+    Text.to_text("x\n") == "x\n" and
+    List.to_text([Less]) == "[Less]" and
+    Label.to_text(Label(value: 7)) == "<7>" and
+    [Label(value: 1)].map(Label.to_text) == ["<1>"] and
+    textify(Equal) == "Equal" and
     comparison(7, 7) == Equal and
     initial == Greater and
     Int.compare(-9223372036854775808, 9223372036854775807) == Less: 0 else: 1

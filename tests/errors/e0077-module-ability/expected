@@ -1,0 +1,7 @@
+error E0077: a module's to_text or compare is given a type it doesn't declare  tests/errors/e0077-module-ability/main.mo:5:23
+
+  5 |   console.print(Shapes.to_text(3))
+    |                       ^^^^^^^^ Shapes doesn't declare Int
+
+M.to_text(x) and M.compare(a, b) take a value of a type that the module M declares (reference 5.4).
+

@@ -454,6 +454,13 @@ Where a record's field and a function share a name, `x.name` is the field
 where the field is visible, and the function elsewhere (section 10.2). When the
 field holds a function, `x.name(a)` calls it with `a`.
 
+`T.to_text(x)` is `x.to_text`, and `T.compare(a, b)` is `a.compare(b)`, for
+any type with `Text` or `Order` (section 9.2), including one that has it
+automatically. `T` is the type, as in `Text.compare(a, b)` or
+`Option.to_text(found)`, a type parameter, or the module that declares the
+type: `Shapes.to_text(shape)` takes any type `Shapes` declares. Without
+arguments they are function values, as in `shapes.map(Shape.to_text)`.
+
 ### 5.5 Generic functions
 
 A single capital letter in a signature is a type parameter, and `where` asks

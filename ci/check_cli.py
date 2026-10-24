@@ -2925,20 +2925,19 @@ def guide_claims(binary):
         receivers.write_text("module Receivers\n\nfn main(console: Console)\n"
                              '  console.print("#{Less.compare(Greater)} #{Folder.to_text}")\nend\n',
                              encoding="utf-8")
-        says("For other types, write `to_text` and `compare` as dot calls: `Text.compare(a, b)` "
-             "and `List.to_text(xs)` report E1103.",
+        says("`T.to_text(x)` and `T.compare(a, b)` work as well as `x.to_text` and "
+             "`a.compare(b)` for every type with `Text` or `Order`",
              "A case without fields can be the receiver directly, as in `Less.compare(Greater)` "
              "or `Folder.to_text`.")
         assert run(binary, ["run", str(receivers)], 0).stdout == b"Less Folder\n"
+        for path, printed in zip(qualified, (b"Less\n", b"[1]\n")):
+            assert run(binary, ["run", str(path)], 0).stdout == printed, path
         for command in ("check", "run", "test"):
             refuses([command, str(unfinished)], 1103,
                     "this constant's call dependencies are not implemented",
                     "`mo check` reports E1103 for a form the checker has not implemented, with a "
                     'headline that says so, such as "this constant\'s call dependencies are not '
                     'implemented".')
-            for path in qualified:
-                result = run(binary, [command, str(path)], 1)
-                assert b"error E1103: " in result.stderr and not result.stdout, (command, result)
             refuses([command, str(deferred)], 1150,
                     "this constant's deferred function needs globals not yet initialized",
                     "It reports E1150 for a form it checks but cannot compile yet, such as a "

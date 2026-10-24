@@ -59,6 +59,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 5.3/1	lang-recursion-tail			
 5.4/1	lang-dot-calls,lang-dot-calls-cases,ref-abilities,ref-case-receivers	e0095,e0095-deferred		
 5.4/2	lang-dot-calls,ref-functions,mod-hidden-customized			
+5.4/3	ref-qualified-abilities	e0077-module-ability		
 5.5/1	lang-generic-functions	e0081		
 5.5/2	lang-enum-tree	e0083		
 5.6/1	lang-closures,lang-generic-functions			
@@ -170,7 +171,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 13.4/2					ci/check_cli.py:promise_selection
 13.4/3	lang-recursion-tail				ci/check_cli.py:observations,ci/check_cli.py:check,tests/test_limits.c:test_the_defaults
 13.4/4					ci/check_cli.py:records,ci/check_cli.py:check		No program can show that a field keeps its name, type and meaning in later versions of the format.
-14/1	lang-dot-calls,lang-dot-calls-cases,col-range-loops,ref-abilities,ref-case-receivers		fail-bug-take-negative	Qualified to_text and compare, such as Text.compare(a, b), report E1103 except Int.compare and the scalar to_text primitives; D285 makes them language and MO-144 builds them. docs/status/section-14-inventory.md lists every function.
+14/1	lang-dot-calls,lang-dot-calls-cases,col-range-loops,ref-abilities,ref-case-receivers,ref-qualified-abilities	e0050-unknown-member	fail-bug-take-negative	docs/status/section-14-inventory.md lists every function.
 14/2	num-int-functions,num-int-checked,ref-library-natives,ref-time		fail-bug-pow-negative,fail-bug-duration-unit-overflow	
 14/3	num-bigint,ref-library-natives,ref-bigint			
 14/4	num-decimal-rounding,num-decimal-int,num-float-convert,num-decimal-boundaries		fail-bug-decimal-places	
