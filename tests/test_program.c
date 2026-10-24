@@ -1569,6 +1569,8 @@ static void option_result_map_graph(void) {
          MO_CODE_RESULT_TYPE},
         {"fn f(r: Result(Int, Text)) : Result(Int, Text)\nr.map_error()\nend\n",
          MO_CODE_CALL_ARGUMENTS},
+        /* `x.f()` is E0095 only when f takes just the receiver (reference 5.4). */
+        {"fn f() : Int\ng = fn(t) t.split() end\ng(\"a\").size\nend\n", MO_CODE_CALL_ARGUMENTS},
     };
     for (size_t i = 0; i < sizeof(refusals) / sizeof(refusals[0]); i++) {
         struct mo_buffer source;

@@ -1,0 +1,11 @@
+error E0095: write x.f, not x.f()  tests/errors/e0095/main.mo:8:27
+
+  8 |   console.print("#{3.twice()}")
+    |                           ^^ the function takes only the receiver
+
+x.f, with no other arguments, calls f(x) (reference 5.4).
+
+Fix: remove the parentheses
+  tests/errors/e0095/main.mo:8:27
+  8 |   console.print("#{3.twice}")
+

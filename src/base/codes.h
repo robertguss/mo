@@ -120,6 +120,7 @@
     X(92, CAPTURE_ASSIGNMENT, "5.6")                                                               \
     X(93, UNUSED_IMPORT, "6.1")                                                                    \
     X(94, MAP_KEY_REPEATED, "3.8")                                                                 \
+    X(95, DOT_CALL_PARENTHESES, "5.4")                                                             \
     X(96, SOURCE_LAMBDA, "5.6")                                                                    \
     X(97, SOURCE_UNWRAP, "8.4")                                                                    \
     X(98, FAKE_OUTSIDE_SPEC, "12.4")                                                               \

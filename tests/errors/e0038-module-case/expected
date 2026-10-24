@@ -1,0 +1,7 @@
+error E0038: a clash between names  tests/errors/e0038-module-case/main.mo:17:17
+
+  17 |   console.print(Red.shade())
+     |                 ^^^ a clash between names
+
+A clash between names is an error; use the qualified form (reference 10.3).
+

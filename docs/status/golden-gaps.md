@@ -17,13 +17,6 @@ and Ordering, Entry and Map text now have golden programs in `ref-bigint`,
 inside interpolation is in `txt-interpolation-case`. Their former unsupported entries must not be
 retained as language limitations.
 
-## Refused by the reference, accepted by the checker
-
-Reference 5.4 says to write `x.f`, not `x.f()`, and appendix C lists `x.f()` as a refused
-spelling. On main `fc53746`, `mo check` accepts `3.twice()`, `[1, 2].size()` and
-`"ab".trim().byte_count()`, and `mo run` runs them. MO-141 tracks the refusal. Until it lands,
-no fixture pins `x.f()`.
-
 ## How many U+FFFD a run of invalid input bytes becomes
 
 Reference 14 says each sequence of bytes on standard input that isn't valid UTF-8 "becomes one

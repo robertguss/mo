@@ -273,6 +273,7 @@ static MO_MUST_USE bool problem(struct inference *p, uint16_t code, struct mo_sp
         : code == MO_CODE_CAPTURE_ASSIGNMENT   ? "copy this value into a name first"
         : code == MO_CODE_EXIT_OUTSIDE_LOOP    ? "no enclosing loop in this function"
         : code == MO_CODE_MAP_KEY_REPEATED     ? "this key is already in the literal"
+        : code == MO_CODE_DOT_CALL_PARENTHESES ? "the function takes only the receiver"
         : code == MO_CODE_FAKE_OUTSIDE_SPEC    ? "outside any test, example or promise"
         : code == MO_CODE_LITERAL_RANGE        ? "outside its inferred numeric range"
         : code == MO_CODE_TUPLE_POSITION       ? "part index is outside this tuple"
@@ -1202,6 +1203,32 @@ static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
             if (library->library && compare_text(prefix, library->name) == 0)
                 target = library;
         }
+        if (target != NULL && name->kind == MO_S_NAME && prefix->kind == MO_S_CAPNAME) {
+            /* Red.f with both a used module Red and a case Red in scope could call either. Look
+             * the case up without definition, which would count an import of Red as used. */
+            uint32_t meanings = 0;
+            const struct mo_symbol *other = find_symbol(scope, prefix, &meanings);
+            uint32_t low = 0, high = scope->imported_count;
+            while (other == NULL && low < high) {
+                uint32_t mid = low + (high - low) / 2;
+                int order = compare_text(prefix, scope->imported[mid].name);
+                if (order == 0)
+                    other = scope->imported[mid].symbols;
+                else if (order > 0)
+                    low = mid + 1;
+                else
+                    high = mid;
+            }
+            if (other != NULL && other->declaration->kind == MO_S_CASE_DECL) {
+                bool reported =
+                    problem(p, MO_CODE_NAME_CLASH, prefix->span, "a clash between names",
+                            "A clash between names is an error; use the qualified "
+                            "form (reference 10.3).",
+                            NULL);
+                (void)reported;
+                return NULL;
+            }
+        }
         if (target == NULL) {
             uint32_t meanings = 0;
             const struct mo_symbol *type = definition(p, prefix, NULL, &meanings);
@@ -1958,6 +1985,28 @@ static MO_MUST_USE struct value member(struct inference *p, struct value v,
     return out;
 }
 
+static bool receiver_only(struct term *type) {
+    type = root(type);
+    return !type->variable && type->shape.kind == MO_SOURCE_FUNCTION && type->shape.count == 2;
+}
+
+/* `x.f()` where `f` takes only the receiver: reference 5.4 spells it `x.f`. A
+ * field holding a function is called with `()` and never reaches here. */
+static MO_MUST_USE bool empty_dot_call(struct inference *p, const struct mo_syntax *site) {
+    struct mo_span span = site->span;
+    bool reported = problem(p, MO_CODE_DOT_CALL_PARENTHESES, span, "write x.f, not x.f()",
+                            "x.f, with no other arguments, calls f(x) (reference 5.4).", NULL);
+    (void)reported;
+    if (p->error.code == MO_CODE_DOT_CALL_PARENTHESES &&
+        p->error.primary.span.start == span.start) {
+        p->edit = (struct mo_edit){span, ""};
+        p->fix = (struct mo_fix){"remove the parentheses", &p->edit, 1};
+        p->error.fixes = &p->fix;
+        p->error.fix_count = 1;
+    }
+    return false;
+}
+
 static MO_MUST_USE struct value field_value(struct inference *p, struct value receiver,
                                             const struct mo_syntax *name,
                                             const struct mo_syntax *syntax,
@@ -1998,6 +2047,9 @@ static MO_MUST_USE struct value field_value(struct inference *p, struct value re
     struct value resolved = member(p, receiver, name, called);
     if (resolved.type == NULL || !*called)
         return resolved;
+    if (args != NULL && args->count == 0 && receiver_only(resolved.type) &&
+        !empty_dot_call(p, site))
+        return (struct value){0};
     if (p->checked && resolved.symbol != NULL) {
         if (!record(p, name, resolved))
             return (struct value){0};
@@ -4789,6 +4841,8 @@ static MO_MUST_USE bool finish_dot(struct inference *p, struct dispatch *at) {
     struct value selected = member(p, at->receiver, at->name, &method);
     if (selected.type == NULL)
         return false;
+    if (method && at->arguments != NULL && at->count == 0 && receiver_only(selected.type))
+        return empty_dot_call(p, at->call);
     if (!method && at->arguments == NULL) {
         if (!unify(p, at->type, selected.type, 0))
             return false;
