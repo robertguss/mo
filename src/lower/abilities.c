@@ -426,14 +426,25 @@ static void fields_text(struct lowering *p, struct derived *d, uint32_t first,
 }
 
 static void collection_text(struct lowering *p, struct derived *d) {
-    MO_ASSERT(d->proof->part_count == 1);
     bool set = d->type->tag == MO_CORE_TY_SET;
-    MO_ASSERT(set || d->type->tag == MO_CORE_TY_LIST);
+    bool map = d->type->tag == MO_CORE_TY_MAP;
+    MO_ASSERT(d->proof->part_count == (map ? 2u : 1u));
+    MO_ASSERT(set || map || d->type->tag == MO_CORE_TY_LIST);
     mo_core_ty list_type = d->type;
-    if (set) {
+    if (set || map) {
         struct mo_source_type *source = LOWER_NEW(p, struct mo_source_type, 1);
         *source = *d->proof->type;
         source->name = "List";
+        if (map) {
+            struct mo_source_type *pair = LOWER_NEW(p, struct mo_source_type, 1);
+            *pair = *source;
+            pair->kind = MO_SOURCE_TUPLE;
+            pair->name = "Tuple";
+            source->count = 1;
+            const struct mo_source_type **element = LOWER_NEW(p, const struct mo_source_type *, 1);
+            element[0] = pair;
+            source->arguments = element;
+        }
         list_type = lower_type(p, source, d->substitution);
     }
     struct instance *f = d->function;
@@ -465,6 +476,16 @@ static void collection_text(struct lowering *p, struct derived *d) {
             (struct mo_core_prim){.tag = MO_CORE_PRIM_SET,
                                   .as.set = {.t = d->type->as.set, .op = MO_CORE_SET_OP_TO_LIST}},
             values);
+    } else if (map) {
+        mo_core_expr_list values = args(p, 1);
+        values.items[0] = start->as.jump.args.items[0];
+        start->as.jump.args.items[0] =
+            lower_prim(p,
+                       (struct mo_core_prim){.tag = MO_CORE_PRIM_MAP,
+                                             .as.map = {.k = d->type->as.map.k,
+                                                        .v = d->type->as.map.v,
+                                                        .op.tag = MO_CORE_MAP_OP_ENTRIES}},
+                       values);
     }
     struct mo_core_prim list = {.tag = MO_CORE_PRIM_LIST, .as.list.t = f->fun.ret};
     list.as.list.op.tag = MO_CORE_LIST_OP_LIT;
@@ -483,17 +504,29 @@ static void collection_text(struct lowering *p, struct derived *d) {
     pieces.items[0] = lower_prim(p, list, values);
     pieces.items[1] = text(p, lower_text(p, ", "));
     e->as.case_.arms.items[0].body =
-        concat(p, text(p, lower_text(p, "[")),
+        concat(p, text(p, lower_text(p, map ? "{" : "[")),
                concat(p,
                       lower_prim(p,
                                  (struct mo_core_prim){.tag = MO_CORE_PRIM_TEXT,
                                                        .as.text = MO_CORE_TEXT_OP_JOIN},
                                  pieces),
-                      text(p, lower_text(p, set ? "].to_set" : "]"))));
+                      text(p, lower_text(p, map   ? "}"
+                                            : set ? "].to_set"
+                                                  : "]"))));
     mo_core_string pair = e->as.case_.arms.items[1].names.items[0];
     mo_core_expr converted = lower_expr(p, MO_CORE_EXPR_LET);
     converted->as.let_.name = lower_fresh(p);
-    converted->as.let_.bound = part_text(p, d, 0, projection(p, lower_var(p, pair), 0));
+    mo_core_expr element = projection(p, lower_var(p, pair), 0);
+    if (map) {
+        mo_core_expr key = lower_expr(p, MO_CORE_EXPR_LET);
+        key->as.let_.name = lower_fresh(p);
+        key->as.let_.bound = part_text(p, d, 0, projection(p, element, 0));
+        key->as.let_.body = concat(
+            p, lower_var(p, key->as.let_.name),
+            concat(p, text(p, lower_text(p, ": ")), part_text(p, d, 1, projection(p, element, 1))));
+        converted->as.let_.bound = key;
+    } else
+        converted->as.let_.bound = part_text(p, d, 0, element);
     e->as.case_.arms.items[1].body = converted;
     mo_core_expr again = lower_expr(p, MO_CORE_EXPR_JUMP);
     again->as.jump.name = join->as.join.name;
@@ -510,7 +543,8 @@ static void collection_text(struct lowering *p, struct derived *d) {
 static void derive_text(struct lowering *p, struct derived *d) {
     p->span = d->span;
     struct instance *f = d->function;
-    if (d->type->tag == MO_CORE_TY_LIST || d->type->tag == MO_CORE_TY_SET) {
+    if (d->type->tag == MO_CORE_TY_LIST || d->type->tag == MO_CORE_TY_SET ||
+        d->type->tag == MO_CORE_TY_MAP) {
         collection_text(p, d);
         return;
     }
@@ -559,7 +593,7 @@ static void derive_text(struct lowering *p, struct derived *d) {
             else if (d->type->tag == MO_CORE_TY_ENTRY) {
                 struct mo_core_param *named = LOWER_NEW(p, struct mo_core_param, count);
                 for (size_t j = 0; j < count; j++)
-                    named[j].name = lower_text(p, j == 0 ? "path" : "kind");
+                    named[j].name = lower_text(p, j == 0 ? "name" : "kind");
                 fields = named;
             }
             fields_text(p, d, first, values, fields,

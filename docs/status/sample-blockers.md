@@ -130,8 +130,7 @@ None: all 12 samples pass `mo check` with 0 errors.
   Each sample passes plain `mo test`.
 - notes-tool: its promise takes a `ReadFiles`, which promises now receive as a generated
   fake (`src/tools/fakes.c`). `mo test` passes the promise and its 3 tests, so the sample
-  passes plain `mo test`. `Env.get` and `Random.int` do not lower yet, so a promise whose
-  body calls them still stops at E1150; no sample does.
+  passes plain `mo test`. `Env.get` and `Random.int` also lower, including in promises.
 - todo: `Files.write_text` (`132:9`) clears; the sample passes `mo check`,
   `mo run` and its 15 examples and tests with 0 errors.
 

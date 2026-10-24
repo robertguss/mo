@@ -13,12 +13,12 @@ a form that lands should gain a golden program. Section numbers are Language Ref
   `round`, `abs`, `nan?`, `infinite?`, `to_decimal`; `Bytes`: `size`, `get`, `decode_utf8`.
   The `int-natives`, `float-natives` and `bytes-natives` lower-source fixtures cover these.
 - `Byte.to_int` and `List.sum` run in the `byte-natives` and `list-sum` lower-source fixtures.
-
-## Not lowered yet (E1150)
-
-- `Int.compare`. `BigInt`: `to_int`, `abs`, `min`.
-- `Env.get`, `Random.int`.
-- Interpolating an `Ordering`, an `Entry`, or a `Map` (derived text shape).
+- The section 14 `BigInt` functions run in `bigint-natives`; `Random.int` and `Random.seeded`
+  run in `random-natives`.
+- `Int.compare`, Ordering comparison, and text conversion/interpolation for `Ordering`, `Entry`
+  and `Map` run in `builtin-abilities`.
+- `Env.get` and `Env.of` run in the `env-natives` lower-source fixture's test. CLI checks also
+  exercise a real environment handle.
 
 ## Other
 

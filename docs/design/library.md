@@ -89,7 +89,8 @@ two rows in a section.
 
 ## Int
 
-`bytecode.md` 4.4: everything on numbers but the operators is a primitive.
+`bytecode.md` 4.4: numeric functions other than the operators and generated
+`compare` are primitives.
 
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
@@ -98,6 +99,7 @@ two rows in a section.
 | `-a` | instruction | `neg` at `int` | |
 | `a == b`, `a != b` | instruction | `eq` at `int`, and `not` for `!=` | |
 | `a < b`, `a <= b`, `a > b`, `a >= b` | instruction | `lt` and `le` at `int`; `>` and `>=` swap the operands | |
+| `compare(b)`, also `Int.compare(a, b)` | lowering | native Order lowering, as for every type above | no new primitive |
 | `abs` | primitive | `INT_ABS` | |
 | `min(b)` | primitive | `INT_MIN` | |
 | `max(b)` | primitive | `INT_MAX` | |
