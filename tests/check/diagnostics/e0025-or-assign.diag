@@ -1,0 +1,6 @@
+E0025 3.1
+0:64..65
+Mo writes or instead of ||
+Boolean expressions use and, or and not (reference 3.1).
+-
+fixes 0

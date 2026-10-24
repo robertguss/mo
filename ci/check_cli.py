@@ -1016,6 +1016,20 @@ def fix_command(binary):
         assert not result.stdout and not result.stderr, result
         assert not list(alone.glob('.mo-write-*'))
 
+        # E0025's fixes write or, and and not, spaced from their neighbours (D298). An error stops
+        # its declaration, so the second and third in pick land on later rounds.
+        boolean = folder / 'boolean' / 'main.mo'
+        boolean.parent.mkdir()
+        boolean.write_text('module Main\n\nfn pick(a: Bool, b: Bool, c: Bool) : Bool\n'
+                           '  (a&&b) || !c\nend\n\nfn flip(b: Bool) : Int\n  if!b\n    1\n'
+                           '  else\n    2\n  end\nend\n')
+        result = run(binary, ['fix', str(boolean)], 0)
+        assert not result.stdout and not result.stderr, result
+        assert boolean.read_text() == ('module Main\n\nfn pick(a: Bool, b: Bool, c: Bool) : Bool\n'
+                                       '  (a and b) or not c\nend\n\nfn flip(b: Bool) : Int\n'
+                                       '  if not b\n    1\n  else\n    2\n  end\nend\n')
+        run(binary, ['check', str(boolean)], 0)
+
         # The removed repeated import uncovers the unnamed field, fixed on the next round. Only the
         # given file is rewritten; the imported module's fix is reported, and so is the unused
         # parameter, which has no fix while the module imports names.

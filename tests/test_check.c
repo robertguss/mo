@@ -169,6 +169,10 @@ static void corpus(void) {
         const char *expected;
         enum phase phase;
     } cases[] = {
+        {"e0025-and/main.mo", "e0025-and.diag", LOADING},
+        {"e0025-not/main.mo", "e0025-not.diag", LOADING},
+        {"e0025-or-lambda/main.mo", "e0025-or-lambda.diag", LOADING},
+        {"e0025-or-assign/main.mo", "e0025-or-assign.diag", LOADING},
         {"e0034/main.mo", "e0034.diag", LOADING},
         {"e0035/main.mo", "e0035.diag", LOADING},
         {"e0036/main.mo", "e0036.diag", LOADING},
