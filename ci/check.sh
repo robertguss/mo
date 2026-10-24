@@ -175,6 +175,12 @@ if have python3; then
 				python3 ci/check_cli.py "$driver"
 		done
 		for driver in "${drivers[@]}"; do
+			later "Reference examples: check every block and run complete programs ($driver)" \
+				python3 ci/check_reference_examples.py "$driver"
+			later "Reference examples: driver regression tests ($driver)" \
+				python3 ci/test_reference_examples.py "$driver"
+		done
+		for driver in "${drivers[@]}"; do
 			later "The golden corpus: whole programs match their expected output and exit status ($driver)" \
 				python3 ci/check_golden.py "$driver"
 		done
