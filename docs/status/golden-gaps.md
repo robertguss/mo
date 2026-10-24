@@ -14,11 +14,14 @@ and Ordering, Entry and Map text now have golden programs in `ref-bigint`,
 `ref-capability-fakes` and `ref-abilities`. `ref-library-natives` also covers `List.to_set` and
 `Int.to_float`. Their former unsupported entries must not be retained as language limitations.
 
-## Direct nullary-case receivers still fail
+## Qualified `to_text` and `compare`
 
-`Equal.to_text` and `Less.compare(Greater)` still report E1103 on main `4a40389`, although
-reference 5.4 and 9.2 permit these operations on values. Binding each receiver to a name first
-works and is covered by `ref-abilities`. These failures are not expected-error fixtures.
+`docs/status/section-14-inventory.md` records a probe of every section 14 function. Every one
+runs as a dot call, and direct nullary-case receivers such as `Less.compare(Greater)` now run
+(`ref-case-receivers`). Written through a type or module, `to_text` and `compare` work only as
+`Int.compare` and the scalar `to_text` primitives; `Text.compare(a, b)`, `List.to_text(xs)` and
+the rest report E1103. The reference does not say whether that form is part of the language:
+MO-142 asks Robert to decide. These failures are not expected-error fixtures.
 
 ## Accepted by the reference, rejected by the parser
 
