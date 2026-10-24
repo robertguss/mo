@@ -563,6 +563,28 @@ def hidden_promises(binary):
             assert len(items) == 3 and items[1]['code'] == 'E1400', items
             assert items[-1]['passed'] == 0
 
+        # A value comes with the hidden value its call returned beside it (D284). make returns
+        # an A and a B together, and each one's build keeps the other as its companion; taking
+        # an A's companion must leave b alone, or the swap pairs them crosswise, unrelated again.
+        # Boundary Ints (0, 1, -1 and the extremes) collide anyway, so the promise excuses them.
+        # The 9 boundary tuples (3 per parameter) and the first random trial keep their own
+        # values; the second random trial, call 11, takes companions and so holds a related pair.
+        path.write_text('module Main\nexpose A, B, make\nstruct A\nn: Int\nm: Int\nend\n'
+                        'struct B\nn: Int\nm: Int\nend\n'
+                        'fn make(n: Int, m: Int) : (A, B)\n(A(n: n, m: m), B(n: n, m: m))\nend\n'
+                        'fn apart(a: A, b: B) : Bool\npromise "never from the same call"\n'
+                        'result or edge?(a.n)\n'
+                        'allows a: A(n: 1, m: 2), b: B(n: 2, m: 2), result: true\n'
+                        'forbids a: A(n: 5, m: 2), b: B(n: 5, m: 2), result: false\nend\n'
+                        'a.n != b.n or a.m != b.m\nend\n'
+                        'fn edge?(n: Int) : Bool\n'
+                        'n >= -1 and n <= 1 or n < -1000000000000000000 or n > 1000000000000000000'
+                        '\nend\n' + tail)
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['outcome'] == 'failed' and items[1]['calls'] == 11, items[1]
+        a, b = (entry['value'] for entry in items[1]['input'])
+        assert a[1:] == b[1:] and a[0] == 'A' and b[0] == 'B', items[1]
+
         # Random values fall back to the boundary order's full search: this start counts only on
         # its 45th boundary tuple (true, Int's smallest, Int's largest), past the 32 ordered tries a
         # random value once had and out of reach of random Ints.

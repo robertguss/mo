@@ -20,6 +20,7 @@ struct mo_hidden;
  * returns the Queue it issued a Lease from (D284). It is owned by the trial's heap. */
 struct mo_companion {
     uint32_t type;
+    uint32_t owner; /* the type of the value it came with */
     struct mo_cell value;
 };
 
@@ -52,7 +53,9 @@ void mo_builders_free(struct mo_builders *builders);
 void mo_builders_begin(struct mo_builders *builders, struct mo_heap *trial);
 /* With swap, each input of a type some companion has (count owned cells of types, in the trial's
  * heap) is replaced by the first such companion, so it is the value that came from the same call.
- * Every other companion is dropped. Ends what mo_builders_begin started. */
+ * An input of the type that companion came with then keeps its own value, so a pair of types that
+ * each come with the other isn't swapped crosswise. Every other companion is dropped. Ends what
+ * mo_builders_begin started. */
 void mo_builders_relate(struct mo_builders *builders, struct mo_cell *inputs, const uint32_t *types,
                         uint32_t count, bool swap);
 static inline MO_MUST_USE const struct mo_input_factory *

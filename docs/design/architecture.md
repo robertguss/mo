@@ -2094,7 +2094,9 @@ start. Rendering never changes files. Unavailable locations display
   such field is kept as the value's companion. On every second random input,
   never on a boundary, each parameter of a companion's type takes that
   companion instead of its own value, so a `Lease` arrives with the `Queue`
-  that issued it (D284). Only a promise's own inputs keep companions, at most
+  that issued it (D284). A parameter of the type that companion came with
+  then keeps its own value, so two types that each come with the other are
+  not swapped crosswise. Only a promise's own inputs keep companions, at most
   `MO_CLI_BUILDER_COMPANIONS` per input; shrinking copies both whole, so they
   stay related.
 - **Functions** are generated as constant functions, the identity where the

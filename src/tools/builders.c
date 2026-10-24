@@ -625,6 +625,7 @@ static enum mo_input_result build(void *context, struct mo_heap *destination,
         struct mo_companion *kept = &builders->companions[builders->companion_count];
         struct mo_input_limits limits = mo_input_limits_default();
         kept->type = factory->type;
+        kept->owner = hidden->type;
         if (factory->copy(factory->context, destination, hidden->companion, &limits,
                           &kept->value) == MO_INPUT_OK)
             builders->companion_count++;
@@ -656,16 +657,25 @@ void mo_builders_begin(struct mo_builders *builders, struct mo_heap *trial) {
 void mo_builders_relate(struct mo_builders *builders, struct mo_cell *inputs, const uint32_t *types,
                         uint32_t count, bool swap) {
     struct mo_heap *heap = builders->trial;
-    for (uint32_t i = 0; swap && i < count; i++)
-        for (uint32_t c = 0; c < builders->companion_count; c++) {
+    /* The types whose inputs keep their own value, because a companion of theirs was taken. */
+    uint32_t anchored[MO_LIMIT_BYTECODE_PARAMETERS];
+    uint32_t anchored_count = 0;
+    MO_ASSERT(count <= MO_LIMIT_BYTECODE_PARAMETERS);
+    for (uint32_t i = 0; swap && i < count; i++) {
+        bool anchor = false;
+        for (uint32_t a = 0; a < anchored_count; a++)
+            anchor |= anchored[a] == types[i];
+        for (uint32_t c = 0; !anchor && c < builders->companion_count; c++) {
             struct mo_companion *companion = &builders->companions[c];
-            if (companion->type != types[i] || companion->type == UINT32_MAX)
+            if (companion->type != types[i])
                 continue;
             mo_value_drop(heap, types[i], inputs[i]);
             inputs[i] = companion->value;
+            anchored[anchored_count++] = companion->owner;
             companion->type = UINT32_MAX; /* taken */
             break;
         }
+    }
     for (uint32_t c = 0; c < builders->companion_count; c++)
         if (builders->companions[c].type != UINT32_MAX)
             mo_value_drop(heap, builders->companions[c].type, builders->companions[c].value);
