@@ -1,0 +1,22 @@
+passed Main.test.1  tests/golden/tst-fake-files-bugs/main.mo:7:1
+stopped Main.test.2  tests/golden/tst-fake-files-bugs/main.mo:11:1
+  bug: fake has a file that is also a folder
+  detail: a
+  at Main.test.2  tests/golden/tst-fake-files-bugs/main.mo:12:16
+stopped Main.test.3  tests/golden/tst-fake-files-bugs/main.mo:15:1
+  bug: fake has a key that is not a plain relative path
+  detail: /a
+  at Main.test.3  tests/golden/tst-fake-files-bugs/main.mo:16:16
+stopped Main.test.4  tests/golden/tst-fake-files-bugs/main.mo:19:1
+  bug: fake has a key that is not a plain relative path
+  detail: ./a
+  at Main.test.4  tests/golden/tst-fake-files-bugs/main.mo:20:16
+stopped Main.test.5  tests/golden/tst-fake-files-bugs/main.mo:23:1
+  bug: fake has a key that is not a plain relative path
+  detail: a/
+  at Main.test.5  tests/golden/tst-fake-files-bugs/main.mo:24:16
+stopped Main.test.6  tests/golden/tst-fake-files-bugs/main.mo:27:1
+  bug: fake has a key that is not a plain relative path
+  detail: a//b
+  at Main.test.6  tests/golden/tst-fake-files-bugs/main.mo:28:16
+1 passed, 0 failed, 5 stopped
