@@ -152,17 +152,51 @@ class Harness(unittest.TestCase):
         self.assertEqual(codes, [None, "E0050", "E0078", None])
 
     def test_files_outside_work(self):
-        # A file outside the work folder is still the file the session named, never one in work/
-        # with the same name.
         session = self.start()
-        outside = self.tmp / "elsewhere"
+        work = session / "work"
+        outside = session / "work-other"
         outside.mkdir()
         shutil.copyfile(example / "input/logs/s1/001/src/main.mo", outside / "main.mo")
-        (session / "work/main.mo").write_text("module Main\n")
-        self.mo(session, "check", "main.mo", cwd=outside)
-        codes = [json.loads(line).get("code") for line in
-                 (session / "log/001/output.jsonl").read_text().splitlines()]
-        self.assertEqual(codes, [None, "E0050", "E0078", None])
+        self.source(session, "003")
+        (work / "outside").symlink_to(outside, target_is_directory=True)
+        (outside / "inside").symlink_to(work, target_is_directory=True)
+        for command in ("check", "test"):
+            for path, cwd in [("main.mo", outside), (str(outside / "main.mo"), work),
+                              ("../work-other/main.mo", work), ("outside/main.mo", work)]:
+                with self.subTest(command=command, path=path):
+                    got = self.mo(session, command, path, cwd=cwd)
+                    self.assertEqual(got.returncode, 1)
+                    self.assertIn(b"E0050", got.stderr)
+                    self.assertEqual(os.listdir(session / "log"), [])
+        for number, command in [("001", "check"), ("002", "test")]:
+            self.mo(session, command, "inside/main.mo", cwd=outside)
+            self.assertEqual((session / f"log/{number}/command").read_text(), command + "\n")
+            self.assertEqual((session / f"log/{number}/src/main.mo").read_bytes(),
+                             (work / "main.mo").read_bytes())
+            want = run(MO, command, "--json", "main.mo", cwd=work).stdout
+            self.assertEqual(untimed((session / f"log/{number}/output.jsonl").read_bytes()),
+                             untimed(want))
+        runs = session / "runs"
+        self.assertEqual(sorted(os.listdir(runs)), [f"{n:03d}" for n in range(1, 11)])
+        for n in range(1, 9):
+            folder = runs / f"{n:03d}"
+            self.assertFalse((folder / "log").exists())
+            self.assertEqual((folder / "status").read_text(), "1\n")
+            self.assertIn(b"E0050", (folder / "stderr").read_bytes())
+        self.assertEqual((runs / "009/log").read_text(), "001\n")
+        self.assertEqual((runs / "010/log").read_text(), "002\n")
+        self.assertEqual(os.listdir(session / ".pending"), [])
+
+    def test_option_values_are_not_files(self):
+        session = self.start()
+        self.source(session, "001")
+        outside = self.tmp / "main.mo"
+        shutil.copyfile(session / "work/main.mo", outside)
+        got = self.mo(session, "test", "--only", "main.mo", str(outside))
+        self.assertEqual(got.returncode, 1)
+        self.assertIn(b"E0050", got.stderr)
+        self.assertEqual(os.listdir(session / "log"), [])
+        self.assertEqual((session / "runs/001/status").read_text(), "1\n")
 
     def test_fix_runs_are_logged(self):
         session = self.start()

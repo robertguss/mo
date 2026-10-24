@@ -92,17 +92,34 @@ def inside(path, folder):
 def from_work(args, cwd, work):
     """The arguments for the JSON run, which runs in the `src/` copy of `work`: each one naming a
     file inside `work` is rewritten relative to it, so the `file` fields are paths in `src/`, and
-    each other file is made absolute, so it is still the file the session named."""
+    each other file is made absolute, so it is still the file the session named. Also returns
+    whether any named file is inside `work`."""
     out = []
+    checks_work = False
+    flags = True
+    args = iter(args)
     for arg in args:
+        if flags and arg == "--":
+            flags = False
+            out.append(arg)
+            continue
+        if flags and arg.startswith("-"):
+            out.append(arg)
+            if arg in ("--only", "--in", "--max-stack", "--max-depth", "--max-heap",
+                       "--calls", "--seconds"):
+                value = next(args, None)
+                if value is not None:
+                    out.append(value)
+            continue
         path = os.path.realpath(os.path.join(cwd, arg))
-        if arg.startswith("-") or not os.path.isfile(path):
+        if not os.path.isfile(path):
             out.append(arg)
         elif inside(path, work):
             out.append(os.path.relpath(path, work))
+            checks_work = True
         else:
             out.append(path)
-    return out
+    return out, checks_work
 
 
 def status_of(returncode):
@@ -190,7 +207,8 @@ def record(config, argv):
         # The JSON run reads the copy, so it sees the files the log keeps, and it runs beside the
         # session's own run rather than after it.
         rest = [arg for arg in argv[1:] if arg != "--json"]
-        quiet = subprocess.Popen([real, command, "--json", *from_work(rest, cwd, work)],
+        rest, checks_work = from_work(rest, cwd, work)
+        quiet = subprocess.Popen([real, command, "--json", *rest],
                                  cwd=os.path.join(pending, "src"), stdout=subprocess.PIPE,
                                  stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
 
@@ -205,7 +223,7 @@ def record(config, argv):
         else:
             output = quiet.communicate()[0]
             write(os.path.join(pending, "output.jsonl"), output)
-            keep = checked_a_program(output)
+            keep = checks_work and checked_a_program(output)
         if keep:
             log = claim(os.path.join(session, "log"), final=pending)
             write(os.path.join(runs, "log"), os.path.basename(log) + "\n")
