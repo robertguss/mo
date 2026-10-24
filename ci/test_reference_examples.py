@@ -36,6 +36,21 @@ class ReferenceExamples(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("3 blocks, 3 checked, 1 run, 0 fragments skipped, 0 failures", result.stdout)
 
+    def test_declarations_allow_whitespace_but_not_text_contents(self):
+        for space in ("  ", "\t"):
+            with self.subTest(space=space):
+                result = self.command(
+                    f"```mo\nmodule{space}Main\nfn{space}main()\n"
+                    '  stop "must run"\nend\n```\n')
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn("mo run exited 70", result.stdout)
+        result = self.command(
+            '```mo\nusage = """\nmodule Other\nfn main()\nend\n"""\n```\n'
+            '```mo\n# """ does not start text in a comment\nmodule Main\n'
+            'fn main()\nend\n```\n')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("2 blocks, 2 checked, 1 run", result.stdout)
+
     def test_broken_block_and_failures_stay_in_document_order(self):
         result = self.command(
             "# Examples\n\n```mo\nfn wrong() : Int\n  1 + true\nend\n```\n\n"
@@ -97,6 +112,12 @@ class ReferenceExamples(unittest.TestCase):
             with self.subTest(document=document):
                 result = self.command(document)
                 self.assertEqual(result.returncode, 1, result.stdout)
+        result = self.command("```mo\nfn main()\nend\n```\n```\n")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("unterminated output fence", result.stdout)
+        result = self.command("```mo\nfn f()\nend\n```\n```\n```\n")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("output fence requires a complete program with main", result.stdout)
 
 
 if __name__ == "__main__":

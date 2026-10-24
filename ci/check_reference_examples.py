@@ -23,8 +23,12 @@ from dataclasses import dataclass
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MARKER = re.compile(r"<!-- mo-example: (fragment|error E[0-9]{4}) -->")
-MODULE = re.compile(r"^\s*module ([A-Z][A-Za-z0-9]*(?:\.[A-Z][A-Za-z0-9]*)*)\s*(?:#.*)?$", re.M)
-MAIN = re.compile(r"^\s*fn main\s*\(", re.M)
+MODULE = re.compile(r"^[ \t]*module[ \t]+([A-Z][A-Za-z0-9]*(?:\.[A-Z][A-Za-z0-9]*)*)[ \t\r]*$",
+                    re.M)
+MAIN = re.compile(r"^[ \t]*fn[ \t]+main[ \t]*\(", re.M)
+NON_CODE = re.compile(
+    r'#[^\n]*|"""[ \t]*\r?\n.*?^[ \t]*"""'
+    r'|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'', re.M | re.S)
 
 
 @dataclass
@@ -76,14 +80,15 @@ def examples(document):
 
 def check(binary, block, directory):
     """Return a failure message and whether a complete program was run."""
-    module = MODULE.search(block.source)
+    declarations = NON_CODE.sub(lambda m: "\n" * m[0].count("\n"), block.source)
+    module = MODULE.search(declarations)
     name = module[1] if module else "Example"
     # Reference 2.1: acronym boundary first, then lower-case/digit to capital.
     path = re.sub(r"([A-Z])([A-Z][a-z])", r"\1-\2", name)
     path = re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", path).lower().replace(".", "/")
     source = directory / (path + ".mo")
     source.parent.mkdir(parents=True, exist_ok=True)
-    has_main = MAIN.search(block.source) is not None
+    has_main = MAIN.search(declarations) is not None
     forms = [("as written", block.source)]
     if not module:
         forms.append(("with module", "module Example\n" + block.source))
