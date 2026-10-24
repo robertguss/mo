@@ -85,7 +85,9 @@ The `test` uses `Console.fake()`, `Args.of`, and `console.printed`. Sections 12.
 Write these forms. The section number states the rule.
 
 - Where another language writes `items[i]` or `map[key]`, write `items.get(i)` or `map.get(key)`. `get` returns an `Option`. Sections 3.7 and 3.8.
-- Bind a name once with `name = value`. A name is visible from its binding to the end of its block. To assign it again, declare `var name = value`. Sections 6.1 and 6.2.
+- Bind a name once with `name = value`. A name is visible from its binding to the end of its block. To assign it again, declare `var name = value` where it is first bound, even when the assignment is inside a loop or a branch. Sections 6.1 and 6.2.
+- Join texts by inserting them into one text, as in `"#{name}: #{score}"`. `+` adds numbers and does not join texts. Section 3.4.
+- A list's length is `list.size`. A text's is `text.char_count` or `text.byte_count`. There is no `len` or `length`. Sections 3.4 and 14.
 - Add an element with `items = items.append(x)`, and declare `var items` when you assign that name again. Sections 3.7 and 6.2.
 - Mo has no exceptions, and there is no "unwrap". Return `Error(...)`, pass it on with `try`, and handle it with `case`. Where a failure truly cannot happen, write `stop` and the reason. Sections 8.2, 8.3, and 8.4.
 - Cover every possible value in a `case`. On a choice, a whole arm cannot be `_` or a name, so list the cases. Inside a pattern, `_` or a name may stand for anything. Section 7.2.
