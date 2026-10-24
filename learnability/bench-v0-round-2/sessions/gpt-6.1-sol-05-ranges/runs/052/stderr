@@ -1,0 +1,4 @@
+line 3: not a range: 8-2
+line 5: not a range: bad
+line 9: not a range: 8-2
+line 14: not a range: 1--2

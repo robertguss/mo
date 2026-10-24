@@ -1,0 +1,162 @@
+{
+  "qw7wjn8": {
+    "family": "claude-code",
+    "task": "01-rle"
+  },
+  "qxnfv4b": {
+    "family": "claude-code",
+    "task": "02-col-sum"
+  },
+  "qaw4kfp": {
+    "family": "claude-code",
+    "task": "03-brackets"
+  },
+  "qt5mddg": {
+    "family": "claude-code",
+    "task": "04-line-counts"
+  },
+  "qhhjedm": {
+    "family": "claude-code",
+    "task": "05-ranges"
+  },
+  "qgrerxb": {
+    "family": "claude-code",
+    "task": "06-temperature"
+  },
+  "qk78dmu": {
+    "family": "claude-code",
+    "task": "07-grades"
+  },
+  "qja2yry": {
+    "family": "claude-code",
+    "task": "08-playlist"
+  },
+  "qhtunwa": {
+    "family": "claude-code",
+    "task": "09-rpn"
+  },
+  "qurz5j8": {
+    "family": "claude-code",
+    "task": "10-restock"
+  },
+  "qh5m592": {
+    "family": "claude-code",
+    "task": "11-calendar"
+  },
+  "qz8kje9": {
+    "family": "claude-code",
+    "task": "12-search"
+  },
+  "qzzpf5n": {
+    "family": "claude-code",
+    "task": "13-titles"
+  },
+  "qgmq4k9": {
+    "family": "claude-code",
+    "task": "14-wallet"
+  },
+  "qhk45pu": {
+    "family": "claude-code",
+    "task": "15-parking"
+  },
+  "qezgsdc": {
+    "family": "claude-code",
+    "task": "16-todo"
+  },
+  "qewj2cy": {
+    "family": "claude-code",
+    "task": "17-stats"
+  },
+  "qkewyfs": {
+    "family": "claude-code",
+    "task": "18-store"
+  },
+  "qs8qp36": {
+    "family": "claude-code",
+    "task": "19-cart"
+  },
+  "q57absn": {
+    "family": "claude-code",
+    "task": "20-timesheet"
+  },
+  "qtpqjpp": {
+    "family": "gpt-6.1-sol",
+    "task": "01-rle"
+  },
+  "q5fje36": {
+    "family": "gpt-6.1-sol",
+    "task": "02-col-sum"
+  },
+  "q7cjuwz": {
+    "family": "gpt-6.1-sol",
+    "task": "03-brackets"
+  },
+  "q6kz5jt": {
+    "family": "gpt-6.1-sol",
+    "task": "04-line-counts"
+  },
+  "qvvat3e": {
+    "family": "gpt-6.1-sol",
+    "task": "05-ranges"
+  },
+  "qfhanbe": {
+    "family": "gpt-6.1-sol",
+    "task": "06-temperature"
+  },
+  "q85nnx4": {
+    "family": "gpt-6.1-sol",
+    "task": "07-grades"
+  },
+  "qmrmdcw": {
+    "family": "gpt-6.1-sol",
+    "task": "08-playlist"
+  },
+  "qfjsztf": {
+    "family": "gpt-6.1-sol",
+    "task": "09-rpn"
+  },
+  "qre3wgg": {
+    "family": "gpt-6.1-sol",
+    "task": "10-restock"
+  },
+  "qnfzjfv": {
+    "family": "gpt-6.1-sol",
+    "task": "11-calendar"
+  },
+  "qeud4cz": {
+    "family": "gpt-6.1-sol",
+    "task": "12-search"
+  },
+  "qq4vyv2": {
+    "family": "gpt-6.1-sol",
+    "task": "13-titles"
+  },
+  "qut5725": {
+    "family": "gpt-6.1-sol",
+    "task": "14-wallet"
+  },
+  "qf4pume": {
+    "family": "gpt-6.1-sol",
+    "task": "15-parking"
+  },
+  "q8vmc5s": {
+    "family": "gpt-6.1-sol",
+    "task": "16-todo"
+  },
+  "q9e93my": {
+    "family": "gpt-6.1-sol",
+    "task": "17-stats"
+  },
+  "qbqvnvr": {
+    "family": "gpt-6.1-sol",
+    "task": "18-store"
+  },
+  "qp2eegm": {
+    "family": "gpt-6.1-sol",
+    "task": "19-cart"
+  },
+  "q5rsj3g": {
+    "family": "gpt-6.1-sol",
+    "task": "20-timesheet"
+  }
+}

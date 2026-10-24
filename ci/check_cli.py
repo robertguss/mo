@@ -1853,7 +1853,7 @@ def runner(binary):
                      'fn main(console: Console)\n_printed = console.printed\nend'):
             path.write_text("module Main\n" + body + "\n")
             items = records(run(binary, ["check", "--json", str(path)], 1), "check")
-            assert items[1]["code"] == "E1103" and items[-1]["errors"] == 1
+            assert items[1]["code"] == "E0098" and items[-1]["errors"] == 1
 
         for body, status, reason in (
             ("fn main()\nend", 0, None),
@@ -2890,10 +2890,29 @@ def guide_claims(binary):
                          encoding="utf-8")
         assert b"list.size" in run(binary, ["check", str(sized)], 1).stderr
 
+        # Round 2's next-attempt misses were errors left unedited before a re-run (D296).
+        says("It reports each error it finds, in source order. Fix every error it reports before "
+             "you run `mo check` again, not only the first.",
+             "Run `mo test FILE` only once `mo check` reports no errors but those Know this build "
+             "names. While the program has other errors, `mo test` runs nothing and prints the "
+             "same errors `mo check` does.")
+        several = folder / "several.mo"
+        several.write_text("module Several\n\nfn count() : Int\n  total = 0\n  total = 1\n  total\nend\n\n"
+                           "fn join(a: Text, b: Text) : Text\n  a + b\nend\n\n"
+                           "fn size(items: List(Int)) : Int\n  len(items)\nend\n\n"
+                           'test "never runs"\n  assert size([1]) == 1\nend\n', encoding="utf-8")
+        checked = run(binary, ["check", str(several)], 1)
+        codes = [line.split(b":")[0] for line in checked.stderr.splitlines()
+                 if line.startswith(b"error E")]
+        assert codes == [b"error E0051", b"error E0075", b"error E0050"], checked.stderr
+        tested = run(binary, ["test", str(several)], 1)
+        assert not tested.stdout and tested.stderr == checked.stderr, tested
+
         # Each unfinished form gives the same code from check, run and test.
         unfinished = folder / "unfinished.mo"
-        unfinished.write_text("module Unfinished\n\nfn main(console: Console)\n"
-                              "  _printed = console.printed\nend\n", encoding="utf-8")
+        unfinished.write_text("module Unfinished\n\nanswer = invoke(fn() 13 end)\n\n"
+                              "fn invoke(action: fn() : Int) : Int\n  action()\nend\n\n"
+                              "fn main() : Int\n  answer\nend\n", encoding="utf-8")
         deferred = folder / "deferred.mo"
         deferred.write_text('module Deferred\nhandler = fn() base end\nbase = 13\n'
                             'fn main() : Int\nhandler()\nend\n'
@@ -2915,10 +2934,10 @@ def guide_claims(binary):
             assert run(binary, ["run", str(path)], 0).stdout == printed, path
         for command in ("check", "run", "test"):
             refuses([command, str(unfinished)], 1103,
-                    "this body rule is not implemented by the staged checker",
+                    "this constant's call dependencies are not implemented",
                     "`mo check` reports E1103 for a form the checker has not implemented, with a "
-                    'headline that says so, such as "this body rule is not implemented by the '
-                    'staged checker".')
+                    'headline that says so, such as "this constant\'s call dependencies are not '
+                    'implemented".')
             refuses([command, str(deferred)], 1150,
                     "this constant's deferred function needs globals not yet initialized",
                     "It reports E1150 for a form it checks but cannot compile yet, such as a "
@@ -3383,6 +3402,14 @@ def check(binary):
         run(binary, ["format", str(path)], 0)
         after = path.stat()
         assert before.st_ino == after.st_ino and before.st_mtime_ns == after.st_mtime_ns
+        # Reference 12: a specification directly followed by its code is accepted, and
+        # mo format writes the blank line between them.
+        path.write_bytes(b'module Main\n\nfn f() : Int\n  examples\n    f() == 1\n  end\n'
+                         b'  1\nend\n')
+        run(binary, ["check", str(path)], 0)
+        run(binary, ["format", str(path)], 0)
+        assert path.read_bytes() == (b'module Main\n\nfn f() : Int\n  examples\n    f() == 1\n'
+                                     b'  end\n\n  1\nend\n')
         bad = folder / 'bad.mo'
         bad_source = b'module Bad\nfn f()\n(\nend\n'
         bad.write_bytes(bad_source)

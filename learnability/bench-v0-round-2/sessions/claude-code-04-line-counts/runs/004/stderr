@@ -1,0 +1,7 @@
+error E0007: expected =, found :  line-counts.mo:54:16
+
+  54 |   var positions: Map(Text, Int) = {}
+     |                ^
+
+Use the declaration or statement's syntax and close its delimiters (reference 2.4).
+

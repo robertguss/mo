@@ -35,6 +35,8 @@ static inline void format_comments(struct mo_buffer *b, const struct mo_syntax_c
 struct format_visit {
     const struct mo_syntax *node;
     bool sum, omit_comments;
+    bool spec_body; /* a function's code after a non-empty specification */
+    bool blank;     /* the first line of that code, which always follows a blank line */
 };
 
 /* Expand += into assignment/addition, independently of the printer's matching
@@ -57,7 +59,7 @@ static inline void format_tree(struct mo_buffer *b, const struct mo_syntax *root
         format_word(b, (uint32_t)(visit.sum ? MO_S_BINARY : increment ? MO_S_BIND : n->kind));
         format_word(b, (uint32_t)(visit.sum ? MO_T_PLUS : n->token));
         format_word(b, n->count);
-        format_word(b, visit.sum ? 0 : n->blank_before);
+        format_word(b, visit.sum ? 0 : visit.blank ? 1u : n->blank_before);
         format_word(b, n->text == NULL ? 0 : n->span.end - n->span.start);
         if (n->text != NULL)
             MO_ASSERT(mo_buffer_append(b, n->text, n->span.end - n->span.start));
@@ -69,6 +71,9 @@ static inline void format_tree(struct mo_buffer *b, const struct mo_syntax *root
                 .node = increment && !visit.sum && i == 2 ? n : n->children[i - 1],
                 .sum = increment && !visit.sum && i == 2,
                 .omit_comments = visit.omit_comments || (visit.sum && i == 1),
+                .spec_body = n->kind == MO_S_FN && i == 6 && n->children[4] != NULL &&
+                             n->children[4]->count != 0,
+                .blank = visit.spec_body && i == 1,
             };
             MO_ASSERT(mo_buffer_append(&stack, &child, sizeof child));
         }

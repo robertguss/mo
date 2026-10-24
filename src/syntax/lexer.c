@@ -462,6 +462,10 @@ static MO_MUST_USE enum mo_syntax_token scan_literal(struct mo_lex *lx) {
     return text_body(lx, true, triple, indent, triple);
 }
 
+#define LAMBDA_REASON                                                                              \
+    "An anonymous function is written fn(x) ... end, on one line or several, and its parameter "   \
+    "types are inferred (reference 5.6)."
+
 static MO_MUST_USE enum mo_syntax_token punctuation(struct mo_lex *lx) {
     static const struct {
         const char *text;
@@ -488,6 +492,13 @@ static MO_MUST_USE enum mo_syntax_token punctuation(struct mo_lex *lx) {
         {"|>", "Mo has no pipe operator; chain calls with dots, as in text.trim.lines",
          MO_CODE_SOURCE_CALL},
     };
+    /* A => inside an open bracket, after an = or after fn(x) is a function, not a case arm. */
+    if (peek(lx, 0) == '=' && peek(lx, 1) == '>' &&
+        (lx->line_opens > 0 || lx->line_assign || lx->lambda_close)) {
+        mo_syntax_error(lx, MO_CODE_SOURCE_LAMBDA, (struct mo_span){lx->file, lx->pos, lx->pos + 2},
+                        "Mo has no => functions: write fn(x) ... end", LAMBDA_REASON);
+        return MO_T_ERROR;
+    }
     for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
         size_t n = strlen(bad[i].text);
         if (n <= lx->source->length - lx->pos &&
@@ -518,11 +529,31 @@ static MO_MUST_USE enum mo_syntax_token punctuation(struct mo_lex *lx) {
                 break;
             }
     }
+    /* An alternative's | follows a pattern; one that starts a value opens |x| parameters. */
+    if (kind == MO_T_BAR &&
+        (lx->last == MO_T_LPAREN || lx->last == MO_T_LBRACK || lx->last == MO_T_LBRACE ||
+         lx->last == MO_T_COMMA || lx->last == MO_T_COLON || lx->last == MO_T_ASSIGN)) {
+        mo_syntax_error(lx, MO_CODE_SOURCE_LAMBDA, (struct mo_span){lx->file, lx->pos, lx->pos + 1},
+                        "Mo has no |x| functions: write fn(x) ... end", LAMBDA_REASON);
+        return MO_T_ERROR;
+    }
     if (kind == MO_T_ERROR) {
         uint32_t start = lx->pos;
         int c = peek(lx, 0);
         if (!advance(lx))
             return MO_T_ERROR;
+        enum mo_syntax_token last = lx->last;
+        if (c == '!' && lx->preceding.span.end == start &&
+            (last == MO_T_NAME || last == MO_T_CAPNAME || last == MO_T_RPAREN ||
+             last == MO_T_RBRACK || last == MO_T_RBRACE || last == MO_T_TEXT ||
+             last == MO_T_TEXT_TAIL)) {
+            mo_syntax_error(lx, MO_CODE_SOURCE_UNWRAP, (struct mo_span){lx->file, start, lx->pos},
+                            "Mo has no postfix ! to unwrap a value: use case, with stop \"why it "
+                            "can't happen\"",
+                            "There is no unwrap: where a failure truly can't happen, the code says "
+                            "why, with stop (reference 8.4).");
+            return MO_T_ERROR;
+        }
         const char *message = c == ';'   ? "a line break ends a statement; Mo has no semicolons"
                               : c == '!' ? "Mo writes not instead of !"
                               : c == '&' ? "Mo has no & operator"
@@ -700,9 +731,22 @@ scanned:
         (void)lex_error(lx, MO_CODE_SOURCE_TEXT, "an interpolation is closed with }");
         token.kind = MO_T_ERROR;
     }
-    if (lx->last != MO_T_EOF && lx->last != MO_T_NL &&
-        (token.kind == MO_T_EOF ||
-         (newline && !continues(lx->last, false) && !continues(token.kind, true)))) {
+    bool split = lx->last != MO_T_EOF && lx->last != MO_T_NL &&
+                 (token.kind == MO_T_EOF ||
+                  (newline && !continues(lx->last, false) && !continues(token.kind, true)));
+    if (split || lx->last == MO_T_EOF || lx->last == MO_T_NL) {
+        lx->line_opens = 0;
+        lx->line_assign = false;
+    }
+    if (token.kind == MO_T_LPAREN || token.kind == MO_T_LBRACK || token.kind == MO_T_LBRACE)
+        lx->line_opens++;
+    else if ((token.kind == MO_T_RPAREN || token.kind == MO_T_RBRACK ||
+              token.kind == MO_T_RBRACE) &&
+             lx->line_opens > 0)
+        lx->line_opens--;
+    else if (token.kind == MO_T_ASSIGN)
+        lx->line_assign = true;
+    if (split) {
         lx->pending = token;
         lx->has_pending = true;
         nl.kind = MO_T_NL;
@@ -738,6 +782,8 @@ void mo_syntax_resume(struct mo_lex *lx) {
     lx->last = MO_T_EOF;
     lx->lambda_parameters = false;
     lx->lambda_close = false;
+    lx->line_opens = 0;
+    lx->line_assign = false;
     lx->has_pending = false;
     lx->depth = 0;
     lx->recovery_end = 0;

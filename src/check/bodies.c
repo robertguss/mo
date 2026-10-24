@@ -285,6 +285,7 @@ static MO_MUST_USE bool problem(struct inference *p, uint16_t code, struct mo_sp
         : code == MO_CODE_EXIT_OUTSIDE_LOOP    ? "no enclosing loop in this function"
         : code == MO_CODE_MAP_KEY_REPEATED     ? "this key is already in the literal"
         : code == MO_CODE_DOT_CALL_PARENTHESES ? "the function takes only the receiver"
+        : code == MO_CODE_FAKE_OUTSIDE_SPEC    ? "outside any test, example or promise"
         : code == MO_CODE_LITERAL_RANGE        ? "outside its inferred numeric range"
         : code == MO_CODE_TUPLE_POSITION       ? "part index is outside this tuple"
         : code == MO_CODE_FAILURE_IGNORED      ? "handle this Result or pass its failure upward"
@@ -1413,7 +1414,20 @@ static MO_MUST_USE struct value function_value(struct inference *p,
 static MO_MUST_USE struct value native_identifier(struct inference *p,
                                                   const struct mo_native_signature *signature) {
     if (signature->spec_only && !p->spec) {
-        bool reported = unfinished(p);
+        bool observes = strcmp(signature->name, "printed") == 0 ||
+                        strcmp(signature->name, "printed_errors") == 0;
+        bool reported =
+            observes
+                ? problem(p, MO_CODE_FAKE_OUTSIDE_SPEC, p->span,
+                          "printed and printed_errors are read only in a test, example or promise",
+                          "They can be used only where every console is a fake: in tests, "
+                          "examples and promises (reference 12.4).",
+                          NULL)
+                : problem(p, MO_CODE_FAKE_OUTSIDE_SPEC, p->span,
+                          "a fake capability is made only in a test, example or promise",
+                          "Fakes are made only in tests, examples and promises, never in a "
+                          "module's constants or its functions (reference 12.4).",
+                          NULL);
         (void)reported;
         return (struct value){0};
     }
