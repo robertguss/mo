@@ -111,9 +111,9 @@ layout expectations.
 The remaining entries name absent standalone programs, partial matrices,
 checks owned by other drivers, costs requiring instrumentation, nondeterministic
 host failures, future-version claims, or confirmed compiler limitations.
-Multiline case interpolation and direct nullary-case receivers such as
-`Equal.to_text` still fail; bound Ordering values work. The exact failures are
-not conformance expectations. See `docs/status/golden-gaps.md`.
+Multiline case interpolation and direct calls on a nullary case such as
+`Equal.to_text` now have the `txt-interpolation-case` and
+`lang-dot-calls-cases` programs.
 
 ## Initial mapping
 

@@ -1,0 +1,7 @@
+E0051 6.1
+0:81..87
+a visible name is bound again
+While a name is visible it can't be bound again; this value has another type, so bind it to a new name instead (reference 6.1).
+this name already has a meaning
+secondary 0:46..52 the other meaning of this name
+fixes 0

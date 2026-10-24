@@ -54,6 +54,7 @@ struct local {
     uint32_t pattern_group, pattern_alternative;
     bool variable;
     bool used;
+    bool statement; /* bound by `name = value`, where `var` would make it assignable */
 };
 
 struct emitted_lambda {
@@ -655,8 +656,11 @@ static MO_MUST_USE bool mismatch(struct inference *p, struct term *found, struct
         reason = "Bool is a yes-or-no answer; conditions need Bool (reference 3.1).";
     } else if (code == MO_CODE_NUMBER_ABILITY) {
         message = "arithmetic is used on a type without Number";
-        reason = "Only Int, BigInt, Decimal and Float have Number; times and durations also add "
-                 "and subtract (reference 9.2).";
+        reason = named(found, "Text")
+                     ? "Text has no Number, so + doesn't join texts; insert them into one text "
+                       "instead, as in \"#{a}#{b}\" (reference 3.4)."
+                     : "Only Int, BigInt, Decimal and Float have Number; times and durations "
+                       "also add and subtract (reference 9.2).";
     } else if (code == MO_CODE_BYTE_ARITHMETIC) {
         message = "Byte is used in arithmetic";
         reason = "Byte has no arithmetic; convert it with to_int first (reference 3.2).";
@@ -758,6 +762,36 @@ static MO_MUST_USE bool unify_as(struct inference *p, struct term *found, struct
     bool valid = unify(p, found, expected, 0);
     p->expectation = saved;
     return valid;
+}
+
+/* Whether a and b can be one type, without unifying them: an unsolved type matches any type its
+ * numeric range allows. A diagnostic's choice of fix needs only this, so it is approximate. */
+static MO_MUST_USE bool same_type(struct inference *p, struct term *a, struct term *b,
+                                  uint32_t depth) {
+    a = root(a);
+    b = root(b);
+    if (a == b || (a->resolved != NULL && a->resolved == b->resolved))
+        return true;
+    if (depth >= MO_LIMIT_SOURCE_TYPE_DEPTH)
+        return false;
+    if (a->variable && !b->variable) {
+        struct term *swap = a;
+        a = b;
+        b = swap;
+    }
+    if (b->variable)
+        return b->numeric == 0 || (a->variable && a->numeric == 0) ||
+               ((a->variable ? a->numeric : number_type(a)) & b->numeric) != 0;
+    if (a->shape.kind != b->shape.kind || a->shape.module != b->shape.module ||
+        a->shape.declaration != b->shape.declaration || a->shape.count != b->shape.count ||
+        strcmp(a->shape.name, b->shape.name) != 0)
+        return false;
+    for (uint32_t i = 0; i < a->shape.count; i++) {
+        struct term *x = argument(p, a, i), *y = argument(p, b, i);
+        if (x == NULL || y == NULL || !same_type(p, x, y, depth + 1))
+            return false;
+    }
+    return true;
 }
 
 static MO_MUST_USE struct term *annotation(struct inference *p, const struct mo_source_type *type,
@@ -867,6 +901,15 @@ static MO_MUST_USE int compare_text(const struct mo_syntax *a, const char *b) {
     size_t x = a->span.end - a->span.start, y = strlen(b);
     int order = memcmp(a->text, b, x < y ? x : y);
     return order != 0 ? order : x < y ? -1 : x > y ? 1 : 0;
+}
+
+/* The reason for an unknown name, called or dot-called, that another language uses for a length
+ * (reference appendix C), or NULL. */
+static const char *length_habit(const struct mo_syntax *name) {
+    return compare_text(name, "len") == 0 || compare_text(name, "length") == 0
+               ? "The library has no len or length: a list's length is list.size, and a text's "
+                 "is text.char_count or text.byte_count (reference 3.4)."
+               : NULL;
 }
 
 static MO_MUST_USE uint32_t height(const struct name_slot *s) {
@@ -1118,6 +1161,22 @@ static MO_MUST_USE const struct mo_field_signature *find_field(const struct mo_d
                                                                               : NULL;
 }
 
+/* The index of the module alias spelled prefix, or alias_count when there is none. */
+static MO_MUST_USE uint32_t find_alias(const struct mo_module_scope *scope,
+                                       const struct mo_syntax *prefix) {
+    uint32_t lo = 0, hi = scope->alias_count;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (compare_text(prefix, scope->aliases[mid].name) > 0)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo < scope->alias_count && compare_text(prefix, scope->aliases[lo].name) == 0
+               ? lo
+               : scope->alias_count;
+}
+
 static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
                                                       const struct mo_syntax *name,
                                                       const struct mo_syntax *prefix,
@@ -1128,14 +1187,7 @@ static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
         name = name->children[1];
     }
     if (prefix != NULL) {
-        uint32_t lo = 0, hi = scope->alias_count;
-        while (lo < hi) {
-            uint32_t mid = lo + (hi - lo) / 2;
-            if (compare_text(prefix, scope->aliases[mid].name) > 0)
-                lo = mid + 1;
-            else
-                hi = mid;
-        }
+        uint32_t lo = find_alias(scope, prefix);
         const struct mo_module_scope *target =
             lo < scope->alias_count && compare_text(prefix, scope->aliases[lo].name) == 0
                 ? &p->interfaces->scopes[scope->aliases[lo].module]
@@ -1242,6 +1294,22 @@ static MO_MUST_USE struct value builtin_construct(struct inference *p,
                                                   const struct mo_builtin_case *data,
                                                   const struct mo_syntax *args,
                                                   struct term *expected);
+
+/* Whether the capitalized name before a dot is a case, a value as in Equal.to_text, rather than a
+ * module or type qualifier as in Int.compare (reference 5.4). A module alias keeps the qualifier.
+ */
+static MO_MUST_USE bool case_receiver(struct inference *p, const struct mo_syntax *name) {
+    if (name->kind != MO_S_CAPNAME)
+        return false;
+    const struct mo_module_scope *scope = &p->interfaces->scopes[p->function->function->module];
+    if (find_alias(scope, name) != scope->alias_count)
+        return false;
+    if (mo_builtin_case_by_name(name) != NULL)
+        return true;
+    uint32_t count = 0;
+    const struct mo_symbol *s = definition(p, name, NULL, &count);
+    return s != NULL && s->declaration->kind == MO_S_CASE_DECL;
+}
 
 static MO_MUST_USE bool missing_field(struct inference *p, struct mo_span span, const uint8_t *name,
                                       size_t length, const struct mo_syntax *declaration) {
@@ -1446,10 +1514,12 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
                  * it looked unused. Report that use, not a destructive rename. */
                 p->error.code = 0;
             }
+            const char *habit = entry == NULL ? length_habit(node) : NULL;
             bool reported =
                 problem(p, MO_CODE_NAME_UNKNOWN, node->span, "a name isn't visible in this block",
-                        "A local name is visible from its binding to the end of its "
-                        "block (reference 6.1).",
+                        habit != NULL ? habit
+                                      : "A local name is visible from its binding to the end of "
+                                        "its block (reference 6.1).",
                         NULL);
             (void)reported;
         }
@@ -1858,10 +1928,12 @@ static MO_MUST_USE struct value member(struct inference *p, struct value v,
         }
     }
     if (type->shape.declaration == NULL) {
+        const char *habit = length_habit(name);
         bool reported = problem(p, MO_CODE_NAME_UNKNOWN, name->span,
                                 "no visible function has this dot-call name",
-                                "A dot call looks in the type's module, then among the names in "
-                                "scope (reference 5.4).",
+                                habit != NULL ? habit
+                                              : "A dot call looks in the type's module, then "
+                                                "among the names in scope (reference 5.4).",
                                 NULL);
         (void)reported;
         return (struct value){0};
@@ -2886,7 +2958,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     case MO_S_QUALIFIED:
         return identifier(p, node, NULL);
     case MO_S_FIELD_ACCESS: {
-        if (node->children[0]->kind == MO_S_CAPNAME)
+        if (node->children[0]->kind == MO_S_CAPNAME && !case_receiver(p, node->children[0]))
             return identifier(p, node->children[1], node->children[0]);
         bool called;
         return field_value(p, infer(p, node->children[0], NULL), node->children[1], node, NULL,
@@ -2980,12 +3052,38 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         struct local *l = s == NULL ? NULL : s->active;
         bool assignment = l != NULL && l->variable && node->kind != MO_S_VAR;
         if (l != NULL && !assignment) {
-            bool reported =
-                problem(p, MO_CODE_BIND_REPEATED, name->span, "a visible name is bound again",
-                        "While a local name or parameter is visible it can't be "
-                        "bound again (reference 6.1).",
-                        l->name);
+            /* Assigning a name first bound by `name = value` in this function needs only `var`
+             * there, when the new value has the name's type (D290); a value of another type
+             * needs a new name. Any other earlier meaning keeps the plain rule. */
+            bool statement = l->statement && l->function == p->lambda && node->kind != MO_S_VAR;
+            bool to_var = statement, differs = false;
+            if (statement && node->kind == MO_S_BIND) {
+                struct value rhs = infer(p, node->children[1], NULL);
+                if (p->fatal)
+                    return (struct value){0};
+                to_var = rhs.type != NULL && same_type(p, rhs.type, l->type, 0);
+                if (p->fatal)
+                    return (struct value){0};
+                differs = rhs.type != NULL && !to_var;
+            }
+            bool reported = problem(
+                p, MO_CODE_BIND_REPEATED, name->span, "a visible name is bound again",
+                to_var    ? "While a name is visible it can't be bound again; to assign it again, "
+                            "declare it with var where it is first bound (reference 6.2)."
+                : differs ? "While a name is visible it can't be bound again; this value has "
+                            "another type, so bind it to a new name instead (reference 6.1)."
+                          : "While a local name or parameter is visible it can't be bound "
+                            "again (reference 6.1).",
+                l->name);
             (void)reported;
+            if (to_var && p->error.code == MO_CODE_BIND_REPEATED &&
+                p->error.primary.span.start == name->span.start) {
+                struct mo_span at = l->name->span;
+                p->edit = (struct mo_edit){{at.file, at.start, at.start}, "var "};
+                p->fix = (struct mo_fix){"declare it with var", &p->edit, 1};
+                p->error.fixes = &p->fix;
+                p->error.fix_count = 1;
+            }
             return (struct value){0};
         }
         if ((node->kind == MO_S_ADD_ASSIGN || node->kind == MO_S_SUB_ASSIGN) && !assignment) {
@@ -3043,6 +3141,8 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         if (!assignment &&
             !(node->kind == MO_S_VAR ? bind(p, name, rhs.type, true) : binder(p, name, rhs.type)))
             return (struct value){0};
+        if (!assignment && node->kind == MO_S_BIND && name->kind == MO_S_NAME)
+            p->locals->statement = true;
         struct value result =
             graph(p,
                   (struct value){.type = native(p, "Unit", 0),
@@ -3108,8 +3208,9 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         return position(p, infer(p, node->children[0], NULL), node->children[1]);
     case MO_S_POSTFIX: {
         bool qualified = node->children[0]->kind == MO_S_CAPNAME &&
-                         (node->children[1]->kind == MO_S_FIELD_ACCESS ||
-                          node->children[1]->kind == MO_S_QUALIFIED);
+                         (node->children[1]->kind == MO_S_QUALIFIED ||
+                          (node->children[1]->kind == MO_S_FIELD_ACCESS &&
+                           !case_receiver(p, node->children[0])));
         uint32_t start = qualified ? 2u : 1u;
         const struct mo_syntax *name =
             qualified ? node->children[1]->children[0] : node->children[0];

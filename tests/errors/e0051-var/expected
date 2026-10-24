@@ -1,0 +1,15 @@
+error E0051: a visible name is bound again  tests/errors/e0051-var/main.mo:5:5
+
+  5 |     total = total + item
+    |     ^^^^^ this name already has a meaning
+
+  --> tests/errors/e0051-var/main.mo:3:3
+  3 |   total = 0
+    |   ^^^^^ the other meaning of this name
+
+While a name is visible it can't be bound again; to assign it again, declare it with var where it is first bound (reference 6.2).
+
+Fix: declare it with var
+  tests/errors/e0051-var/main.mo:3:3
+  3 |   var total = 0
+
