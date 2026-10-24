@@ -1,0 +1,5 @@
+bug: Int.pow with a negative exponent
+  at Main.main (tests/golden/fail-bug-pow-negative/main.mo:119..131)
+  at Main.main.entry (tests/golden/fail-bug-pow-negative/main.mo:13..169)
+  base = 2
+  console = <Console>
