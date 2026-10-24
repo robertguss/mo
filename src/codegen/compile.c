@@ -68,6 +68,7 @@ struct join {
     struct node *node;
     uint32_t offset, checkpoint;
     struct live_set live;
+    bool *used;
 };
 struct function {
     struct vector regs, code, spans, names, captures, joins, changes;
@@ -1908,6 +1909,11 @@ static MO_MUST_USE bool live_walk(struct compiler *c, struct function *f, struct
                    live_walk(c, f, n->children[0], live, depth + 1);
         }
         struct join *target = &((struct join *)f->joins.items)[n->index];
+        if (target->used == NULL) {
+            target->used = allocate(c, n->bind_count, sizeof *target->used);
+            if (target->used == NULL)
+                return false;
+        }
         bool changed;
         do {
             if (!live_copy(c, f, &n->work, &n->after))
@@ -1916,9 +1922,11 @@ static MO_MUST_USE bool live_walk(struct compiler *c, struct function *f, struct
             if (!live_use(c, f, &n->work, n->children[0]->reg) ||
                 !live_walk(c, f, n->children[0], &n->work, depth + 1))
                 return false;
-            for (uint32_t i = 0; i < n->bind_count; i++)
+            for (uint32_t i = 0; i < n->bind_count; i++) {
+                target->used[i] = live_has(&n->work, n->binds[i]);
                 if (!live_kill(c, f, &n->work, n->binds[i]))
                     return false;
+            }
             changed = false;
             if (!live_union(c, f, &target->live, &n->work, &changed))
                 return false;
@@ -2762,6 +2770,8 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
                 if (!state(c, f, n->binds[i], REF_OWNED))
                     return false;
                 owner_add(f, n->binds[i]);
+                if (!joins[n->index].used[i] && !drop(c, f, n->binds[i], n->span))
+                    return false;
             }
         uint32_t start = f->code.count;
         if (!generate(c, f, n->children[0], tail, depth + 1, live))
