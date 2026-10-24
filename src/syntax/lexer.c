@@ -580,17 +580,21 @@ static MO_MUST_USE enum mo_syntax_token punctuation(struct mo_lex *lx) {
     return kind;
 }
 
+/* Line continuation (reference 2.4). An interpolation's #{ and } act as brackets: text ending in
+ * #{ continues, and so does a line starting with the } that closes it. */
 static MO_MUST_USE bool continues(enum mo_syntax_token token, bool before) {
     return token == MO_T_DOT || token == MO_T_DOTDOT || token == MO_T_EQ || token == MO_T_NE ||
            token == MO_T_LT || token == MO_T_LE || token == MO_T_GT || token == MO_T_GE ||
            token == MO_T_PLUS || token == MO_T_STAR || token == MO_T_SLASH ||
            token == MO_T_PERCENT || token == MO_T_BAR || token == MO_T_AND || token == MO_T_OR ||
            token == MO_T_IMPLIES || token == MO_T_IS || token == MO_T_WHERE ||
-           (before ? token == MO_T_RPAREN || token == MO_T_RBRACK || token == MO_T_RBRACE
+           token == MO_T_TEXT_MID ||
+           (before ? token == MO_T_RPAREN || token == MO_T_RBRACK || token == MO_T_RBRACE ||
+                         token == MO_T_TEXT_TAIL
                    : token == MO_T_LPAREN || token == MO_T_LBRACK || token == MO_T_LBRACE ||
-                         token == MO_T_COMMA || token == MO_T_ASSIGN || token == MO_T_PLUSEQ ||
-                         token == MO_T_MINUSEQ || token == MO_T_MINUS || token == MO_T_NOT ||
-                         token == MO_T_TRY);
+                         token == MO_T_TEXT_HEAD || token == MO_T_COMMA || token == MO_T_ASSIGN ||
+                         token == MO_T_PLUSEQ || token == MO_T_MINUSEQ || token == MO_T_MINUS ||
+                         token == MO_T_NOT || token == MO_T_TRY);
 }
 
 struct mo_token mo_syntax_next(struct mo_lex *lx) {
@@ -728,8 +732,8 @@ scanned:
         token.kind = MO_T_ERROR;
     }
     bool split = lx->last != MO_T_EOF && lx->last != MO_T_NL &&
-                 (token.kind == MO_T_EOF || (newline && depth == 0 && !continues(lx->last, false) &&
-                                             !continues(token.kind, true)));
+                 (token.kind == MO_T_EOF ||
+                  (newline && !continues(lx->last, false) && !continues(token.kind, true)));
     if (split || lx->last == MO_T_EOF || lx->last == MO_T_NL) {
         lx->line_opens = 0;
         lx->line_assign = false;

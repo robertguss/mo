@@ -205,7 +205,7 @@ int main(int argc, char **argv) {
     check_source("module A. # dot first\nB. # dot second\nC\n"
                  "fn f(a: Int, b: Bool) where # where\nA: Copy, B: Copy\n"
                  "  examples # examples\n    true\n  end # examples close\n"
-                 "  text = \"#{Pair(x: # colon\n1)}\"\n"
+                 "  text = \"#{Pair( # interpolated open\nx: 1)}\"\n"
                  "  x = # assign\n    not # not\n    true\n"
                  "  y = a + # binary\n    b\n"
                  "  z = a + # chain first\n    b + # chain second\n    c\n"
@@ -214,7 +214,7 @@ int main(int argc, char **argv) {
                  "  ( # group open\n    1) # group close\n"
                  "  [ # list open\n    1, 2] # list close\n"
                  "  { # map open\n    1: 2} # map close\n"
-                 "  map_text = \"#{{1: # map colon\n2}}\"\n"
+                 "  map_text = \"#{{1: 2, # interpolated comma\n3: 4}}\"\n"
                  "  if true\n    1\n  else if false\n    2\n  else # else\n    3\n"
                  "  end # conditional close\nend # function close\n",
                  NULL);
