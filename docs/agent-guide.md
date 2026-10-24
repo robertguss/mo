@@ -22,7 +22,7 @@ Every `Int`, `Float` and `Bytes` function listed in reference section 14 compile
 
 Every `BigInt` function in reference section 14 compiles and runs, including `abs`, `min`, `max`, `pow`, `floor_div`, `floor_mod` and `to_int`. `Random.int` and the fake constructor `Random.seeded` also compile, including as function values.
 
-`T.to_text(x)` and `T.compare(a, b)` work as well as `x.to_text` and `a.compare(b)` for every type with `Text` or `Order`, written through the type (`Text.compare`, `Option.to_text`), a type parameter, or the module that declares the type (`Shapes.to_text`), and `T.to_text` and `T.compare` are function values. `Ordering`, `Entry`, and `Map` support `to_text` and interpolation. Maps print entries in insertion order, with text and character keys and values quoted and escaped.
+`T.to_text(x)` and `T.compare(a, b)` work as well as `x.to_text` and `a.compare(b)` for every type with `Text` or `Order`, written through the type (`Text.compare`, `Option.to_text`), a type parameter, or the module that declares the type (`Shapes.to_text`), and `T.to_text` and `T.compare` are function values. A case without fields can be the receiver directly, as in `Less.compare(Greater)` or `Folder.to_text`. `Ordering`, `Entry`, and `Map` support `to_text` and interpolation. Maps print entries in insertion order, with text and character keys and values quoted and escaped.
 
 `Env.get` runs on real or fake capabilities. Tests, examples and promises can construct a fake with `Env.of`.
 
