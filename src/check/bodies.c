@@ -5006,7 +5006,7 @@ static MO_MUST_USE bool finish_dispatches(struct inference *p) {
         if (!at->solved)
             return at->position
                        ? problem(p, MO_CODE_CANNOT_INFER, at->name->span,
-                                 "no use decides the type this tuple part is read from",
+                                 "no use decides this expression's type",
                                  "A function's signature gives its types; inside a body types "
                                  "are inferred from all their uses (reference 5.1).",
                                  NULL)
