@@ -240,6 +240,7 @@ struct dispatch {
     const struct mo_syntax *syntax, *call, *arguments;
     struct value receiver;
     struct value *inputs;
+    bool position; /* `.0` on a tuple: `name` is the index */
     bool solved;
 };
 
@@ -2777,16 +2778,9 @@ static MO_MUST_USE bool binder(struct inference *p, const struct mo_syntax *node
     return true;
 }
 
-static MO_MUST_USE struct value position(struct inference *p, struct value v,
-                                         const struct mo_syntax *index) {
-    if (v.type == NULL)
-        return v;
-    struct term *t = root(v.type);
-    if (t->variable) {
-        bool reported = unfinished(p);
-        (void)reported;
-        return (struct value){0};
-    }
+/* The part of tuple type `t` that `index` reads, or NULL after reporting. */
+static MO_MUST_USE struct term *tuple_part(struct inference *p, struct term *t,
+                                           const struct mo_syntax *index, uint32_t *part) {
     uint32_t at = 0;
     bool fits = true;
     for (uint32_t i = 0; i < index->span.end - index->span.start; i++) {
@@ -2805,9 +2799,32 @@ static MO_MUST_USE struct value position(struct inference *p, struct value v,
             problem(p, MO_CODE_TUPLE_POSITION, index->span, "the tuple has no such part",
                     "Tuple parts are read with .0, .1 and so on (reference 3.6).", NULL);
         (void)reported;
-        return (struct value){0};
+        return NULL;
     }
-    struct value out = graph(p, (struct value){.type = argument(p, t, at), .never = v.never}, 1);
+    *part = at;
+    return argument(p, t, at);
+}
+
+static MO_MUST_USE struct value position(struct inference *p, struct value v,
+                                         const struct mo_syntax *index) {
+    if (v.type == NULL)
+        return v;
+    struct term *t = root(v.type);
+    if (t->variable) {
+        /* A later use may settle the tuple's type (reference 5.1); solved with the dispatches. */
+        struct value out = deferred_function(p, index, NULL, 0);
+        if (out.type == NULL)
+            return out;
+        out.dispatch->receiver = v;
+        out.dispatch->position = true;
+        out.never = v.never;
+        return out;
+    }
+    uint32_t at;
+    struct term *part = tuple_part(p, t, index, &at);
+    if (part == NULL)
+        return (struct value){0};
+    struct value out = graph(p, (struct value){.type = part, .never = v.never}, 1);
     if (p->checked && out.type != NULL) {
         out.graph->operands[0] = v.note;
         out.graph->output.field = at;
@@ -4721,6 +4738,23 @@ static MO_MUST_USE bool finish_dot(struct inference *p, struct dispatch *at) {
     return true;
 }
 
+static MO_MUST_USE bool finish_position(struct inference *p, struct dispatch *at) {
+    uint32_t part;
+    struct term *type = tuple_part(p, root(at->receiver.type), at->name, &part);
+    if (type == NULL || !unify(p, at->type, type, 0))
+        return false;
+    if (!p->checked)
+        return true;
+    struct note **operands = allocate(p, 1, sizeof(*operands), _Alignof(struct note *));
+    if (operands == NULL)
+        return false;
+    operands[0] = at->receiver.note;
+    *at->graph =
+        (struct emitted){.output = {.operand_count = 1, .field = part, .receiver = UINT32_MAX},
+                         .operands = operands};
+    return true;
+}
+
 static MO_MUST_USE struct term *failure_container(struct inference *p, bool option) {
     struct term *out = native(p, option ? "Option" : "Result", option ? 1u : 2u);
     if (out == NULL)
@@ -4885,7 +4919,7 @@ static MO_MUST_USE bool finish_dispatches(struct inference *p) {
                     return false;
                 if (receiver->variable)
                     continue;
-                if (!finish_dot(p, at))
+                if (at->position ? !finish_position(p, at) : !finish_dot(p, at))
                     return false;
                 at->solved = true;
                 progress = true;
@@ -4970,10 +5004,17 @@ static MO_MUST_USE bool finish_dispatches(struct inference *p) {
     } while (progress);
     for (struct dispatch *at = p->dispatches; at != NULL; at = at->next)
         if (!at->solved)
-            return problem(p, MO_CODE_CANNOT_INFER, at->name->span,
-                           "no use decides this dispatch's receiver type",
-                           "Give the value a type, or write the call another way (reference 5.4).",
-                           NULL);
+            return at->position
+                       ? problem(p, MO_CODE_CANNOT_INFER, at->name->span,
+                                 "no use decides this expression's type",
+                                 "A function's signature gives its types; inside a body types "
+                                 "are inferred from all their uses (reference 5.1).",
+                                 NULL)
+                       : problem(p, MO_CODE_CANNOT_INFER, at->name->span,
+                                 "no use decides this dispatch's receiver type",
+                                 "Give the value a type, or write the call another way "
+                                 "(reference 5.4).",
+                                 NULL);
     for (struct failure_check *at = p->failures; at != NULL; at = at->next)
         if (!at->solved)
             return problem(p, MO_CODE_CANNOT_INFER, at->span,

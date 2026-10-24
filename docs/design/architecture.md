@@ -617,8 +617,8 @@ finalized, without inventing unresolved-type errors from the missing uses.
 Resource errors stop immediately and take priority. The caller can
 continue with independent bodies. Signature preparation currently stops at
 its first error too. E1103 explicitly refuses unfinished body forms; it does
-not silently accept them. Dot dispatch and delayed overload selection
-finish in this walk. Ability proofs and polymorphic recursion are certified
+not silently accept them. Dot dispatch, delayed overload selection and
+tuple projections whose tuple type only a later use decides finish in this walk. Ability proofs and polymorphic recursion are certified
 by `mo_check` (section 12), not by this intermediate result. Failure
 propagation, capture/capability flow, specs, constants, unused imports and
 the entry contract still need their stages. Map literals reject unchanged repeated bare names
