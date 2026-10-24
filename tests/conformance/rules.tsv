@@ -143,7 +143,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 11.4/3	tst-fakes	e0098,e0098-constant		
 11.4/4	cap-record-of-capabilities	e0080-capability		
 11.4/5	ref-shout	e0007-log		
-12/1	tst-passing	e0015-after-code,e0018-after-code		A specification directly followed by its code is accepted and mo format writes the blank line; tests/test_format.c and ci/check_cli.py check that, since every tracked program is already formatted.
+12/1	tst-passing	e0015-after-code,e0018-after-code			tests/test_format.c:check_source,ci/check_cli.py:check
 12.1/1	tst-passing	tst-failing-example		
 12.2/1	tst-promise-holds	e0015		
 12.2/2	tst-promise-holds	e0015-sentence		
@@ -171,7 +171,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 13.4/2					ci/check_cli.py:promise_selection
 13.4/3	lang-recursion-tail				ci/check_cli.py:observations,ci/check_cli.py:check,tests/test_limits.c:test_the_defaults
 13.4/4					ci/check_cli.py:records,ci/check_cli.py:check		No program can show that a field keeps its name, type and meaning in later versions of the format.
-14/1	lang-dot-calls,lang-dot-calls-cases,col-range-loops,ref-abilities,ref-case-receivers,ref-qualified-abilities	e0050-unknown-member	fail-bug-take-negative	docs/status/section-14-inventory.md lists every function.
+14/1	lang-dot-calls,lang-dot-calls-cases,col-range-loops,ref-abilities,ref-case-receivers,ref-qualified-abilities	e0050-unknown-member	fail-bug-take-negative	
 14/2	num-int-functions,num-int-checked,ref-library-natives,ref-time		fail-bug-pow-negative,fail-bug-duration-unit-overflow	
 14/3	num-bigint,ref-library-natives,ref-bigint			
 14/4	num-decimal-rounding,num-decimal-int,num-float-convert,num-decimal-boundaries		fail-bug-decimal-places	
@@ -187,12 +187,12 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 14/14	fail-option-result-map			
 14/15	ref-time			
 14/16	cap-args-list,ref-capability-fakes			
-14/17	cap-console-streams,cap-console-line-endings,cap-console-stdin,cap-console-fake,cap-console-stdin-invalid	e0098-printed		Reference 14 says a run of invalid bytes becomes one U+FFFD; D291 keeps one per maximal subpart and MO-140 corrects the text, so cap-console-stdin-invalid pins only inputs where both agree.
+14/17	cap-console-streams,cap-console-line-endings,cap-console-stdin,cap-console-fake,cap-console-stdin-invalid	e0098-printed		
 14/18	cap-files-fake,cap-files-fake-folders,cap-files-read,cap-files-walk,cap-files-within-escape	tst-fake-files-bugs			tests/test_host.c:test_real_files,tests/test_host.c:test_hostile_links
 14/19	fail-option-result-map,fail-result-declared,fail-file-error-forms,txt-invalid-utf8-file,cap-files-within-escape	fail-main-result-error		
 14/20	cap-clock-fixed,cap-args-list,ref-capability-fakes						No program can move the system clock outside the years 1 to 9999; Clock.fixed, Args, Env and Random fakes are asserted.
 14/21	lib-json-query,lib-json-errors			
-14/22	lib-json-query,lib-json-errors,lib-json-numbers			The reference does not say whether to_decimal on a number with more than 18 decimal places rounds or gives None, so no program pins it.
+14/22	lib-json-query,lib-json-errors,lib-json-numbers				lib/json.mo:to_decimal
 14/23	lib-unicode16				ci/check_unicode16.py:corpus		No program can test the promise about a future Unicode17 module.
 15/1							Roadmap only: it names later phases and changes no rule of v0.1.
 A/1		e0412			ci/check_errors.py:check_cases

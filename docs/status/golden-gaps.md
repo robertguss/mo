@@ -16,27 +16,9 @@ and Ordering, Entry and Map text now have golden programs in `ref-bigint`,
 `Less.compare(Greater)`, are in `lang-dot-calls-cases`, and a `case` written across several lines
 inside interpolation is in `txt-interpolation-case`. Qualified `T.to_text` and `T.compare`, as
 calls and as values, have `ref-qualified-abilities` (D285). Their former unsupported entries must
-not be retained as language limitations.
-
-
-## Qualified `to_text` and `compare`
-
-`docs/status/section-14-inventory.md` records a probe of every section 14 function. Every one
-runs as a dot call, including on a nullary case receiver (`lang-dot-calls-cases`, and
-`ref-case-receivers`). Written through a type or module, `to_text` and `compare` work only as
-`Int.compare` and the scalar `to_text` primitives; `Text.compare(a, b)`, `List.to_text(xs)` and
-the rest report E1103. D285 makes that form part of the language for every type with the
-ability, and MO-144 builds it. These failures are not expected-error fixtures.
-
-## How many U+FFFD a run of invalid input bytes becomes
-
-Reference 14 says each sequence of bytes on standard input that isn't valid UTF-8 "becomes one
-U+FFFD". Read plainly, the line `a`, FF, FE, `b` reads as `a�b`, three characters. `mo` follows
-Unicode's maximal-subpart rule (architecture 7, `src/host/console.c`) and gives `a��b`, one U+FFFD
-for each of FF and FE, and three for the encoded surrogate ED A0 80. Robert decides which reading is
-meant; then either the reference or `console.c` changes. `cap-console-stdin-invalid` uses only
-inputs where both readings agree: a lone invalid byte, a truncated sequence, and a lead byte
-followed by ASCII.
+not be retained as language limitations. Invalid UTF-8 on standard input gives one U+FFFD per
+maximal invalid subpart, as reference 14 now says (D291), and `cap-console-stdin-invalid` pins
+inputs where that differs from one U+FFFD per run. Since MO-140, no `rules.tsv` row has a gap.
 
 ## Other
 
