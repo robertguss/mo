@@ -860,6 +860,11 @@ static const struct mo_ability_implementation *ability(struct body *b,
     lower_refuse(b->p, MO_CODE_LOWER_UNFINISHED, "this operation has no selected ability proof");
 }
 
+/* to_text or compare through an ability: a dot call, or qualified (T.to_text). */
+static bool ability_native(const struct mo_checked_expression *r) {
+    return strcmp(r->native, "to_text") == 0 || strcmp(r->native, "compare") == 0;
+}
+
 static bool direct_function(struct body *b, const struct mo_checked_expression *r) {
     if (r->symbol == NULL || r->symbol->declaration->kind != MO_S_FN)
         return false;
@@ -1025,15 +1030,6 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                 return lower_prim(
                     p, (struct mo_core_prim){.tag = MO_CORE_PRIM_BIG, .as.big = bigs[i].operation},
                     args);
-        }
-        if (strcmp(r->native, "Int.compare") == 0) {
-            MO_ASSERT(args.count == 2);
-            static const struct mo_source_type integer = {
-                .kind = MO_SOURCE_NAMED, .name = "Int", .module = UINT32_MAX};
-            static const struct mo_ability_implementation proof = {
-                .ability = MO_SOURCE_ORDER, .kind = MO_ABILITY_NATIVE, .type = &integer};
-            return lower_compare(p, &proof, NULL, b->instance->owner, b->instance->depth,
-                                 args.items[0], args.items[1]);
         }
         static const struct {
             const char *name;
@@ -1387,15 +1383,16 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
             return lower_error_text(p, receiver, args.items[0]);
         }
     }
+    /* A qualified ability function value proves its ability on its own row. */
+    uint32_t proved = r->operand_count == 0 ? (uint32_t)(r - b->source->items) : r->operands[0];
     if (r->native != NULL && strcmp(r->native, "to_text") == 0) {
         MO_ASSERT(args.count == 1);
-        return lower_to_text(p, ability(b, r, MO_SOURCE_TEXT, r->operands[0]),
-                             &b->instance->substitution, b->instance->owner, b->instance->depth,
-                             args.items[0]);
+        return lower_to_text(p, ability(b, r, MO_SOURCE_TEXT, proved), &b->instance->substitution,
+                             b->instance->owner, b->instance->depth, args.items[0]);
     }
     if (r->native != NULL && strcmp(r->native, "compare") == 0) {
         MO_ASSERT(args.count == 2);
-        return lower_compare(p, ability(b, r, MO_SOURCE_ORDER, r->operands[0]),
+        return lower_compare(p, ability(b, r, MO_SOURCE_ORDER, proved),
                              &b->instance->substitution, b->instance->owner, b->instance->depth,
                              args.items[0], args.items[1]);
     }
@@ -2043,9 +2040,10 @@ static void row_task(struct body *b, struct task t) {
         finish(b, e, t.state, t.continuation, t.out);
         return;
     }
+    bool qualified = r->native != NULL && r->receiver == UINT32_MAX &&
+                     (strchr(r->native, '.') != NULL || ability_native(r));
     if (r->operand_count == 0 && ((r->symbol != NULL && r->symbol->declaration->kind == MO_S_FN) ||
-                                  (r->native != NULL && strchr(r->native, '.') != NULL &&
-                                   r->type->kind == MO_SOURCE_FUNCTION))) {
+                                  (qualified && r->type->kind == MO_SOURCE_FUNCTION))) {
         mo_core_ty signature = type(b, r->type);
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_LAM);
         e->as.lam.params.count = signature->as.fn.params.count;
@@ -2066,8 +2064,8 @@ static void row_task(struct body *b, struct task t) {
     uint32_t skip = direct_function(b, r) ? 1 : 0;
     /* An ordinary namespace call retains its native function-value callee;
      * a native receiver dot call has only the receiver and explicit arguments. */
-    if (r->native != NULL && strchr(r->native, '.') != NULL && r->receiver == UINT32_MAX &&
-        r->operand_count != 0 && row(b, r->operands[0])->type->kind == MO_SOURCE_FUNCTION)
+    if (qualified && r->operand_count != 0 &&
+        row(b, r->operands[0])->type->kind == MO_SOURCE_FUNCTION)
         skip = 1;
     if (r->operand_count == skip) {
         finish(b, application(b, r, arguments(b, 0)), t.state, t.continuation, t.out);

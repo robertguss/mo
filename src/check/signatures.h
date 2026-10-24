@@ -45,5 +45,7 @@ mo_nominal_signature_by_symbol(const struct mo_signatures *signatures,
 MO_MUST_USE const struct mo_function_signature *
 mo_customizer_signature(const struct mo_signatures *signatures, const struct mo_source_type *type,
                         enum mo_source_ability ability);
+/* A type name always in scope (reference 10.5) and its arity, or NULL. */
+MO_MUST_USE const char *mo_builtin_type(const struct mo_syntax *name, uint32_t *arity);
 
 #endif
