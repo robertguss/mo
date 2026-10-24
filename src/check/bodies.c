@@ -764,6 +764,36 @@ static MO_MUST_USE bool unify_as(struct inference *p, struct term *found, struct
     return valid;
 }
 
+/* Whether a and b can be one type, without unifying them: an unsolved type matches any type its
+ * numeric range allows. A diagnostic's choice of fix needs only this, so it is approximate. */
+static MO_MUST_USE bool same_type(struct inference *p, struct term *a, struct term *b,
+                                  uint32_t depth) {
+    a = root(a);
+    b = root(b);
+    if (a == b || (a->resolved != NULL && a->resolved == b->resolved))
+        return true;
+    if (depth >= MO_LIMIT_SOURCE_TYPE_DEPTH)
+        return false;
+    if (a->variable && !b->variable) {
+        struct term *swap = a;
+        a = b;
+        b = swap;
+    }
+    if (b->variable)
+        return b->numeric == 0 || (a->variable && a->numeric == 0) ||
+               ((a->variable ? a->numeric : number_type(a)) & b->numeric) != 0;
+    if (a->shape.kind != b->shape.kind || a->shape.module != b->shape.module ||
+        a->shape.declaration != b->shape.declaration || a->shape.count != b->shape.count ||
+        strcmp(a->shape.name, b->shape.name) != 0)
+        return false;
+    for (uint32_t i = 0; i < a->shape.count; i++) {
+        struct term *x = argument(p, a, i), *y = argument(p, b, i);
+        if (x == NULL || y == NULL || !same_type(p, x, y, depth + 1))
+            return false;
+    }
+    return true;
+}
+
 static MO_MUST_USE struct term *annotation(struct inference *p, const struct mo_source_type *type,
                                            struct term **parameters, uint32_t depth) {
     if (depth == 0 && !mo_signature_type_available(p->signatures, type)) {
@@ -2972,14 +3002,27 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         bool assignment = l != NULL && l->variable && node->kind != MO_S_VAR;
         if (l != NULL && !assignment) {
             /* Assigning a name first bound by `name = value` in this function needs only `var`
-             * there; any other earlier meaning needs a new name. */
-            bool to_var = l->statement && l->function == p->lambda && node->kind != MO_S_VAR;
+             * there, when the new value has the name's type (D290); a value of another type
+             * needs a new name. Any other earlier meaning keeps the plain rule. */
+            bool statement = l->statement && l->function == p->lambda && node->kind != MO_S_VAR;
+            bool to_var = statement, differs = false;
+            if (statement && node->kind == MO_S_BIND) {
+                struct value rhs = infer(p, node->children[1], NULL);
+                if (p->fatal)
+                    return (struct value){0};
+                to_var = rhs.type != NULL && same_type(p, rhs.type, l->type, 0);
+                if (p->fatal)
+                    return (struct value){0};
+                differs = rhs.type != NULL && !to_var;
+            }
             bool reported = problem(
                 p, MO_CODE_BIND_REPEATED, name->span, "a visible name is bound again",
-                to_var ? "While a name is visible it can't be bound again; to assign it again, "
-                         "declare it with var where it is first bound (reference 6.2)."
-                       : "While a local name or parameter is visible it can't be bound again "
-                         "(reference 6.1).",
+                to_var    ? "While a name is visible it can't be bound again; to assign it again, "
+                            "declare it with var where it is first bound (reference 6.2)."
+                : differs ? "While a name is visible it can't be bound again; this value has "
+                            "another type, so bind it to a new name instead (reference 6.1)."
+                          : "While a local name or parameter is visible it can't be bound "
+                            "again (reference 6.1).",
                 l->name);
             (void)reported;
             if (to_var && p->error.code == MO_CODE_BIND_REPEATED &&

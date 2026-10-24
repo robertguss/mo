@@ -191,6 +191,7 @@ static void corpus(void) {
         {"e0050-length.mo", "e0050-length.diag", BODIES},
         {"e0051.mo", "e0051.diag", BODIES},
         {"e0051-var.mo", "e0051-var.diag", BODIES},
+        {"e0051-new-name.mo", "e0051-new-name.diag", BODIES},
         {"e0051-lambda.mo", "e0051-lambda.diag", BODIES},
         {"e0052.mo", "e0052.diag", BODIES},
         {"e0053.mo", "e0053.diag", BODIES},
