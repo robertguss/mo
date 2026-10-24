@@ -23,6 +23,35 @@ runs as a dot call, and direct nullary-case receivers such as `Less.compare(Grea
 the rest report E1103. The reference does not say whether that form is part of the language:
 MO-142 asks Robert to decide. These failures are not expected-error fixtures.
 
+## Refused by the reference, accepted by the checker
+
+Reference 5.4 says to write `x.f`, not `x.f()`, and appendix C lists `x.f()` as a refused
+spelling. On main `fc53746`, `mo check` accepts `3.twice()`, `[1, 2].size()` and
+`"ab".trim().byte_count()`, and `mo run` runs them. MO-141 tracks the refusal. Until it lands,
+no fixture pins `x.f()`.
+
+A specification followed directly by its code, with no blank line, is also accepted, and
+`mo format` leaves it unchanged. Reference 12 places a blank line there but does not say whether
+leaving it out is refused or formatted.
+
+## Refused with a placeholder or a misleading hint
+
+Making a fake capability, or reading `printed` or `printed_errors`, outside a test, example or
+promise is an error (reference 11.4 and 12.4). `mo check` refuses each one with E1103, "this body
+rule is not implemented by the staged checker", not a dedicated diagnostic. E1103 marks an
+unfinished form, so it is not an expected-error fixture.
+
+These spellings from appendix C are refused, but the error points away from the replacement, so
+no fixture pins them:
+
+- `x => x + 1` as an argument reports E0016, "a case arm is written Pattern: value, with no =>",
+  as if it were a case arm. The lexer reports `=>` the same way wherever it appears.
+- `|x| x + 1` reports E0007, "a value is an expression", citing statement separation (2.4).
+- A postfix `!`, as in `items.first!`, reports E0025, "Mo writes not instead of !", which points
+  to `not`, not to `case` with `stop` (8.4).
+
+`lambda x: ...` (`e0021-lambda`) and `unwrap()` (`e0050-unwrap`) are pinned.
+
 ## Accepted by the reference, rejected by the parser
 
 Reference 3.4 allows any expression inside interpolation. This complete program should print

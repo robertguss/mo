@@ -1,0 +1,7 @@
+error E0021: expected ), found snake_case name  tests/errors/e0021-lambda/main.mo:4:20
+
+  4 |   items.map(lambda x: x + 1)
+    |                    ^
+
+Arguments are passed in parentheses, separated by commas (reference 5.2).
+

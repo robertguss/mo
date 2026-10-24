@@ -1,0 +1,14 @@
+error E0050: a name isn't visible in this block  tests/errors/e0050-length/main.mo:4:3
+
+  4 |   len(items)
+    |   ^^^ not visible in this block
+
+A local name is visible from its binding to the end of its block (reference 6.1).
+
+error E0050: no visible function has this dot-call name  tests/errors/e0050-length/main.mo:8:8
+
+  8 |   name.length
+    |        ^^^^^^ not visible in this block
+
+A dot call looks in the type's module, then among the names in scope (reference 5.4).
+

@@ -1,7 +1,7 @@
 # Section 14 inventory: which core library functions run
 
 MO-135 probed every function Language Reference v0.1 section 14 lists, except `Time`, `Duration`,
-`Clock` and Int's `seconds` through `days`, which MO-134 owns. Each function got its own minimal
+`Clock` and Int's `seconds` through `days`, which MO-134 covers (#196). Each function got its own minimal
 program, run through `mo test` (which checks it first) on main `fc53746` and again with this
 change. A row says "runs" only when each form below checked and ran.
 

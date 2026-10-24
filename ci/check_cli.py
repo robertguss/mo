@@ -2910,6 +2910,8 @@ def guide_claims(binary):
         says(f"`{name}`")
     says("`lib/text.mo` has no functions, only tests of `Text`'s operations")
     says("`lib/set.mo` likewise tests `Set`'s operations, `List.to_set` and Set text forms")
+    says("`lib/time.mo` has no functions, only tests of `Time`'s, `Duration`'s and "
+         "`Clock.fixed`'s operations, run by `mo test lib/time.mo`.")
     says("`lib/unicode16.mo` is the `Unicode16` module.",
          "After `use Unicode16`, its built-in `graphemes`, `display_width`, `normalize_nfc`, "
          "`lowercase` and `uppercase` operations follow Unicode 16.0.",
