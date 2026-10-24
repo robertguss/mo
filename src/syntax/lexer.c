@@ -6,8 +6,8 @@
 #include <stdio.h>
 #include <string.h>
 
-void mo_syntax_error(struct mo_lex *lx, uint16_t code, struct mo_span span, const char *message,
-                     const char *reason) {
+static void syntax_error(struct mo_lex *lx, uint16_t code, struct mo_span span, const char *message,
+                         const char *reason, const struct mo_fix *fix) {
     bool allocation = code == MO_CODE_SYNTAX_NO_MEMORY;
     if ((lx->failed || lx->fatal) && !allocation)
         return;
@@ -29,10 +29,19 @@ void mo_syntax_error(struct mo_lex *lx, uint16_t code, struct mo_span span, cons
             return;
         lx->limits_reported |= bit;
     }
-    struct mo_diag diag = {
-        .code = code, .primary = {span, NULL}, .message = message, .reason = reason};
+    struct mo_diag diag = {.code = code,
+                           .primary = {span, NULL},
+                           .message = message,
+                           .reason = reason,
+                           .fixes = fix,
+                           .fix_count = fix == NULL ? 0u : 1u};
     if (!mo_diags_add(lx->diags, &diag))
         lx->fatal = true;
+}
+
+void mo_syntax_error(struct mo_lex *lx, uint16_t code, struct mo_span span, const char *message,
+                     const char *reason) {
+    syntax_error(lx, code, span, message, reason, NULL);
 }
 
 void mo_syntax_lex_init(struct mo_lex *lx, struct mo_arena *arena, const struct mo_sources *sources,
@@ -98,7 +107,6 @@ static void lex_error_from(struct mo_lex *lx, uint16_t code, const char *message
         : code == MO_CODE_SOURCE_TEXT
             ? "Text and characters use the listed escapes and Unicode scalar values"
         : code == MO_CODE_SOURCE_INDEX ? "List positions are read with get, which returns an Option"
-        : code == MO_CODE_SOURCE_BOOLEAN ? "Boolean expressions use and, or and not"
         : code == MO_CODE_SOURCE_FUNCTION
             ? "A function signature uses fn and : before its result type"
         : code == MO_CODE_SOURCE_ASSIGNMENT    ? "Compound assignment uses only += and -="
@@ -462,6 +470,32 @@ static MO_MUST_USE enum mo_syntax_token scan_literal(struct mo_lex *lx) {
     return text_body(lx, true, triple, indent, triple);
 }
 
+/* E0025 at the operator's first byte. When fixable, its fix writes word over the operator's length
+ * bytes, with a space where a neighbour would otherwise touch the word: on the left of || and &&
+ * unless a space is there, on the left of ! only after a word, and on the right unless a space is
+ * there. */
+static void boolean_error(struct mo_lex *lx, uint32_t start, uint32_t length, const char *message,
+                          const char *word, bool fixable) {
+    const uint8_t *bytes = lx->source->bytes;
+    uint32_t end = start + length;
+    int before = start == 0 ? ' ' : bytes[start - 1];
+    int after = end == lx->source->length ? ' ' : bytes[end];
+    bool left = length == 2 ? before != ' ' && before != 9 && before != 10 && before != 13
+                            : alnum(before) || before == '_' || before == '?';
+    bool right = after != ' ' && after != 9 && after != 10 && after != 13;
+    char replacement[8];
+    char title[16];
+    int n = snprintf(replacement, sizeof replacement, "%s%s%s", left ? " " : "", word,
+                     right ? " " : "");
+    MO_ASSERT(n > 0 && (size_t)n < sizeof replacement);
+    n = snprintf(title, sizeof title, "write %s", word);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof title);
+    struct mo_edit edit = {{lx->file, start, end}, replacement};
+    struct mo_fix fix = {title, &edit, 1};
+    syntax_error(lx, MO_CODE_SOURCE_BOOLEAN, (struct mo_span){lx->file, start, start + 1}, message,
+                 "Boolean expressions use and, or and not (reference 3.1).", fixable ? &fix : NULL);
+}
+
 #define LAMBDA_REASON                                                                              \
     "An anonymous function is written fn(x) ... end, on one line or several, and its parameter "   \
     "types are inferred (reference 5.6)."
@@ -487,11 +521,24 @@ static MO_MUST_USE enum mo_syntax_token punctuation(struct mo_lex *lx) {
         {"*=", "Mo has += and -=, and no other compound assignment", MO_CODE_SOURCE_ASSIGNMENT},
         {"//", "comments start with #", MO_CODE_SOURCE_COMMENT},
         {"/=", "Mo has += and -=, and no other compound assignment", MO_CODE_SOURCE_ASSIGNMENT},
-        {"||", "Mo writes or instead of ||", MO_CODE_SOURCE_BOOLEAN},
-        {"&&", "Mo writes and instead of &&", MO_CODE_SOURCE_BOOLEAN},
         {"|>", "Mo has no pipe operator; chain calls with dots, as in text.trim.lines",
          MO_CODE_SOURCE_CALL},
     };
+    /* || and && between two values become or and and. Where no value comes before, as in
+     * x = || 1, or an = comes after, as in a ||= b, the word would not mean what was written, so
+     * the error has no fix. */
+    if ((peek(lx, 0) == '|' || peek(lx, 0) == '&') && peek(lx, 1) == peek(lx, 0)) {
+        enum mo_syntax_token last = lx->last;
+        bool value = last == MO_T_NAME || last == MO_T_CAPNAME || last == MO_T_INT ||
+                     last == MO_T_DECIMAL || last == MO_T_CHAR || last == MO_T_TEXT ||
+                     last == MO_T_TEXT_TAIL || last == MO_T_TRUE || last == MO_T_FALSE ||
+                     last == MO_T_RPAREN || last == MO_T_RBRACK || last == MO_T_RBRACE;
+        bool bar = peek(lx, 0) == '|';
+        boolean_error(lx, lx->pos, 2,
+                      bar ? "Mo writes or instead of ||" : "Mo writes and instead of &&",
+                      bar ? "or" : "and", value && peek(lx, 2) != '=');
+        return MO_T_ERROR;
+    }
     /* A => inside an open bracket, after an = or after fn(x) is a function, not a case arm. */
     if (peek(lx, 0) == '=' && peek(lx, 1) == '>' &&
         (lx->line_opens > 0 || lx->line_assign || lx->lambda_close)) {
@@ -554,17 +601,17 @@ static MO_MUST_USE enum mo_syntax_token punctuation(struct mo_lex *lx) {
                             "why, with stop (reference 8.4).");
             return MO_T_ERROR;
         }
+        if (c == '!') {
+            boolean_error(lx, start, 1, "Mo writes not instead of !", "not", true);
+            return MO_T_ERROR;
+        }
         const char *message = c == ';'   ? "a line break ends a statement; Mo has no semicolons"
-                              : c == '!' ? "Mo writes not instead of !"
                               : c == '&' ? "Mo has no & operator"
                                          : "this character isn't part of Mo";
-        uint16_t code = c == '!'   ? MO_CODE_SOURCE_BOOLEAN
-                        : c == '&' ? MO_CODE_SOURCE_OPERATOR
-                                   : MO_CODE_SOURCE_TOKEN;
+        uint16_t code = c == '&' ? MO_CODE_SOURCE_OPERATOR : MO_CODE_SOURCE_TOKEN;
         const char *reason =
-            c == '!'   ? "Boolean expressions use and, or and not (reference 3.1)."
-            : c == '&' ? "Use Mo's arithmetic operators (reference 3.2)."
-                       : "A line break ends a statement; use Mo's tokens (reference 2.4).";
+            c == '&' ? "Use Mo's arithmetic operators (reference 3.2)."
+                     : "A line break ends a statement; use Mo's tokens (reference 2.4).";
         (void)mo_syntax_error(lx, code, (struct mo_span){lx->file, start, lx->pos}, message,
                               reason);
         return MO_T_ERROR;
