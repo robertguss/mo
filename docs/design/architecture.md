@@ -1821,12 +1821,26 @@ leaf's span. Failed observations do not become source diagnostics: `errors`
 stays zero unless a compiler/tool error was found, while `failed`/`stopped`
 independently force status 1. Selected unsupported promises are never omitted.
 
-**Structural promise observations.** The bounded runner accepts nongeneric subjects
+**Generic promise observations (MO-112, D273).** The runner uses every concrete subject
+instance lowering discovers from anchors and program uses, including examples,
+tests and other generic bodies. Complete type-argument lists stay together;
+there are no invented cross-products or default types. Lowering retains closed
+source input types in a test-only result beside Core, so preflight preserves
+source visibility and hidden-type builder rules after substitution. This result
+borrows declarations from the checked program; Core and bytecode do not change.
+Each compiled instance has its own generation and shrinking budgets and one
+result under the source promise's selectable name. Text results name the concrete
+instance; JSON adds `instance`. Totals count each instance. Binding uses both
+the declaration span and concrete name, so instances sharing a span do not collide.
+All selected instances pass input preflight before initialization or observations.
+An unsupported instance refuses the whole selection, never a partial green run.
+
+**Structural promise observations.** The bounded runner accepts concrete subjects
 with built-in Unit, Bool, Byte, Int, Float, Char, Time, Duration, Decimal, Range,
 Text, Bytes or BigInt inputs, composed through tuples, Lists, Maps, Sets, Option,
 Result and visible source records/choices, including closed imported generic data and
 regular recursion. Capability inputs are generated fakes, and exposed-opaque types are built
-through their module (both below). Generic subjects, generic exposed-opaque types and function
+through their module (both below). Generic exposed-opaque types and function
 inputs remain unavailable, even if concrete instances exist elsewhere. Preflight checks every payload of every case and
 every actual type argument, including phantom arguments. It walks canonical
 declaring symbols and declaration-ordered field templates, never import

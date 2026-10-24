@@ -149,8 +149,8 @@ static void execute_pipeline(void *argument) {
                 }
             return;
         }
-        /* Refuse the entire selection before starting it, never a partial green
-         * run that quietly omitted unsupported promises (including templates). */
+        /* Closed declarations can refuse before lowering. Generic inputs need
+         * the concrete uses retained below; both passes precede execution. */
         if (!mo_promises_supported(program, selection, diags))
             return;
     }
@@ -164,13 +164,21 @@ static void execute_pipeline(void *argument) {
     }
     struct mo_arena lowered;
     mo_arena_init(&lowered, MO_LIMIT_LOWER_WORK);
-    struct mo_core *core = mo_lower(&lowered, program, sources, diags);
+    struct mo_lowered_promises promises;
+    struct mo_core *core = cli->command == MO_COMMAND_TEST
+                               ? mo_lower_for_tests(&lowered, program, sources, diags, &promises)
+                               : mo_lower(&lowered, program, sources, diags);
     struct mo_buffer wire, printed;
     mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
     mo_buffer_init(&printed, cli->emit == MO_EMIT_CORE ? MO_LIMIT_CORE_TEXT_SIZE
                                                        : MO_LIMIT_BYTECODE_TEXT_SIZE);
     if (core == NULL || mo_diags_any(diags) || !mo_core_check(core, diags))
         goto done;
+    if (cli->command == MO_COMMAND_TEST) {
+        selection = mo_instantiate_tests(arena, selection, &promises, diags);
+        if (selection == NULL || !mo_promises_supported(program, selection, diags))
+            goto done;
+    }
     /* Plain check and fix validate lowering too, but never execute the user's main. */
     bool checking = cli->command == MO_COMMAND_CHECK || cli->command == MO_COMMAND_FIX;
     bool emitting = cli->command == MO_COMMAND_EMIT;

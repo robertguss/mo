@@ -943,6 +943,16 @@ bool mo_render_test_result(const struct mo_sources *sources, const struct mo_tes
         location(&w, sources, observation->source->syntax->span);
         text(&w, "\n");
     }
+    if (observation->instance != NULL) {
+        mo_core_string instance = observation->instance->name;
+        text(&w, json ? ",\"instance\":" : "  instance: ");
+        if (json)
+            json_bytes(&w, (const uint8_t *)instance.bytes, instance.length);
+        else {
+            safe_bytes(&w, (const uint8_t *)instance.bytes, instance.length);
+            text(&w, "\n");
+        }
+    }
     if (result->promise != NULL)
         promise_result(&w, result, json);
     if (result->outcome == MO_FAILED) {

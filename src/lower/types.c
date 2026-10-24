@@ -16,6 +16,7 @@ struct canonical_type {
     mo_core_string name;
     uint64_t hash;
     uint32_t height;
+    const struct mo_source_type *source;
 };
 
 static uint64_t mix(uint64_t h) {
@@ -124,6 +125,11 @@ mo_core_string lower_type_name(struct lowering *p, mo_core_ty type) {
 uint64_t lower_type_hash(struct lowering *p, mo_core_ty type) {
     lower_work(p, 1);
     return ((struct canonical_type *)type)->hash;
+}
+const struct mo_source_type *lower_source_type(mo_core_ty type) {
+    const struct mo_source_type *source = ((struct canonical_type *)type)->source;
+    MO_ASSERT(source != NULL && source->kind != MO_SOURCE_PARAMETER);
+    return source;
 }
 static bool same_parameter(const struct mo_source_type *a, const struct mo_source_type *b) {
     return a == b || (a->kind == MO_SOURCE_PARAMETER && b->kind == MO_SOURCE_PARAMETER &&
@@ -275,6 +281,22 @@ static mo_core_ty make_type(struct lowering *p, const struct mo_source_type *sou
     made->hash = hash;
     made->next = p->types[at];
     p->types[at] = made;
+    if (p->retain_source_types) {
+        struct mo_source_type *closed_source = LOWER_NEW(p, struct mo_source_type, 1);
+        *closed_source = *source;
+        closed_source->parameters = 0;
+        closed_source->height = 0;
+        const struct mo_source_type **closed =
+            LOWER_NEW(p, const struct mo_source_type *, source->count);
+        for (uint32_t i = 0; i < source->count; i++) {
+            lower_work(p, 1);
+            closed[i] = lower_source_type(args[i]);
+            if (closed_source->height <= closed[i]->height)
+                closed_source->height = closed[i]->height + 1;
+        }
+        closed_source->arguments = closed;
+        made->source = closed_source;
+    }
     if (t->tag == MO_CORE_TY_DATA) {
         struct data_instance *d = LOWER_NEW(p, struct data_instance, 1);
         d->source = source;
