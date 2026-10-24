@@ -361,6 +361,9 @@ static inline struct mo_limits mo_limits_default(void) {
  * stop at MO_CLI_BUILDER_LEVELS - 1, so one value nests at most this many builds, and a cycle
  * gets no level. */
 #define MO_CLI_BUILDER_LEVELS 3
+/* Companions one input tuple keeps (D284): for each hidden value built for it, the first other
+ * hidden value its last call returned in the same tuple. Past this many, later ones keep none. */
+#define MO_CLI_BUILDER_COMPANIONS 16
 
 /* Promise input generation, not limits on program results. The caller can
  * choose smaller budgets. Refusal leaves the sequence unchanged; tools may

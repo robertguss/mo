@@ -14,6 +14,9 @@ struct builder {
     uint32_t path[2 * MO_CLI_BUILDER_PATH];
     uint32_t path_length;
     bool chained; /* takes the hidden type: a step, not a start */
+    /* The first other field of a tuple result holding a hidden type, kept as the value's
+     * companion (D284); MO_NO_INDEX for none. */
+    uint32_t companion_field, companion_slot;
     bool generated;
     /* The other hidden types among its inputs, as slots in mo_builders, each once. */
     uint32_t *needs;
@@ -39,6 +42,9 @@ struct mo_hidden {
     struct mo_heap *heap;
     struct mo_cell current;
     bool building; /* levels keep a build from reaching its own type again */
+    /* The companion the call that made the value so far returned, in its scratch process. */
+    struct mo_cell companion;
+    uint32_t companion_slot; /* MO_NO_INDEX for none */
 };
 
 static uint64_t next_random(uint64_t *state) {
@@ -270,16 +276,30 @@ static enum mo_input_result collect_builders(struct mo_builders *builders,
         uint32_t global = owner->globals[i];
         if (file->globals[global].type != hidden->type || !exposed_constant(program, file, global))
             continue;
-        hidden->builders[hidden->count++] =
-            (struct builder){.function = MO_NO_INDEX, .global = global};
+        hidden->builders[hidden->count++] = (struct builder){.function = MO_NO_INDEX,
+                                                             .global = global,
+                                                             .companion_field = MO_NO_INDEX,
+                                                             .companion_slot = MO_NO_INDEX};
     }
     for (uint32_t i = 0; i < owner->function_count; i++) {
         uint32_t index = owner->functions[i];
         const struct mo_bytecode_function *function = &file->functions[index];
-        struct builder candidate = {.function = index, .global = MO_NO_INDEX};
+        struct builder candidate = {.function = index,
+                                    .global = MO_NO_INDEX,
+                                    .companion_field = MO_NO_INDEX,
+                                    .companion_slot = MO_NO_INDEX};
         if (function->kind != MO_FUNCTION_FUNCTION || function->spec_code ||
             !find_path(types, function->result_type, hidden->type, 0, &candidate))
             continue;
+        const struct mo_type *returned = &types->items[function->result_type];
+        for (uint32_t f = 0;
+             candidate.path_length != 0 && candidate.path[0] == MO_NO_INDEX &&
+             candidate.companion_field == MO_NO_INDEX && f < returned->parameter_count;
+             f++)
+            if (f != candidate.path[1] && slots[returned->parameters[f]] != MO_NO_INDEX) {
+                candidate.companion_field = f;
+                candidate.companion_slot = slots[returned->parameters[f]];
+            }
         memset(visited, 0, types->count);
         bool usable = true;
         for (uint32_t p = 0; usable && p < function->parameter_count; p++) {
@@ -375,7 +395,8 @@ enum mo_input_result mo_builders_init(struct mo_builders *builders,
         uint32_t slot = builders->count++;
         slots[t] = slot;
         struct mo_hidden *hidden = &builders->hidden[slot];
-        *hidden = (struct mo_hidden){.owner = builders, .type = t, .level = UNLEVELLED};
+        *hidden = (struct mo_hidden){
+            .owner = builders, .type = t, .level = UNLEVELLED, .companion_slot = MO_NO_INDEX};
         enum mo_input_result result = prepare_copier(builders, hidden, &copyable[slot]);
         builders->factories[slot] = (struct mo_input_factory){.type = t,
                                                               .boundaries = BOUNDARIES,
@@ -431,6 +452,12 @@ void mo_builders_free(struct mo_builders *builders) {
     *builders = (struct mo_builders){0};
 }
 
+static void drop_companion(struct mo_hidden *hidden, struct mo_heap *heap) {
+    if (hidden->companion_slot != MO_NO_INDEX)
+        mo_value_drop(heap, hidden->owner->hidden[hidden->companion_slot].type, hidden->companion);
+    hidden->companion_slot = MO_NO_INDEX;
+}
+
 enum step { STEP_BUILT, STEP_SKIPPED, STEP_ENDED, STEP_CANCELLED, STEP_REFUSED };
 
 /* One call, in process. BUILT replaces *value (owned) with the new one; SKIPPED leaves it, since
@@ -447,6 +474,7 @@ static enum step call(struct mo_hidden *hidden, struct mo_process *process, stru
         if (!mo_image_global(builders->image, builder->global, &global))
             return STEP_SKIPPED;
         made = mo_value_dup(heap, hidden->type, global);
+        drop_companion(hidden, heap);
     } else {
         const struct mo_bytecode *file = mo_image_bytecode(builders->image);
         const struct mo_bytecode_function *function = &file->functions[builder->function];
@@ -478,8 +506,16 @@ static enum step call(struct mo_hidden *hidden, struct mo_process *process, stru
             return STEP_ENDED;
         struct mo_cell found;
         bool counts = extract(types, builder, function->result_type, result, &found);
-        if (counts)
+        if (counts) {
             made = mo_value_dup(heap, hidden->type, found);
+            drop_companion(hidden, heap);
+            if (builder->companion_slot != MO_NO_INDEX) {
+                hidden->companion_slot = builder->companion_slot;
+                hidden->companion =
+                    mo_value_dup(heap, builders->hidden[builder->companion_slot].type,
+                                 mo_value_field(result, builder->companion_field));
+            }
+        }
         mo_value_drop(heap, function->result_type, result);
         if (!counts)
             return STEP_SKIPPED;
@@ -534,6 +570,7 @@ static enum mo_input_result build(void *context, struct mo_heap *destination,
     struct mo_process *process = NULL;
     struct mo_cell value = mo_cell_unit();
     bool has_value = false;
+    hidden->companion_slot = MO_NO_INDEX;
     enum mo_input_result result = MO_INPUT_LIMIT;
     /* A start counts when it returns a value; boundaries go through the starts and their boundary
      * inputs in order. Random inputs first make half as many attempts of their own, then fall back
@@ -559,6 +596,7 @@ static enum mo_input_result build(void *context, struct mo_heap *destination,
             goto done;
         }
         if (outcome == STEP_ENDED) {
+            drop_companion(hidden, mo_process_heap(process));
             mo_process_free(process);
             process = NULL;
         }
@@ -579,8 +617,21 @@ static enum mo_input_result build(void *context, struct mo_heap *destination,
             break;
     }
     result = copy_value(hidden, destination, value, remaining, out);
+    /* Only a value for the trial's own input keeps its companion; one built as another builder's
+     * argument doesn't. Without room or a copy, the value goes without. */
+    if (result == MO_INPUT_OK && hidden->companion_slot != MO_NO_INDEX &&
+        destination == builders->trial && builders->companion_count < MO_CLI_BUILDER_COMPANIONS) {
+        const struct mo_input_factory *factory = &builders->factories[hidden->companion_slot];
+        struct mo_companion *kept = &builders->companions[builders->companion_count];
+        struct mo_input_limits limits = mo_input_limits_default();
+        kept->type = factory->type;
+        if (factory->copy(factory->context, destination, hidden->companion, &limits,
+                          &kept->value) == MO_INPUT_OK)
+            builders->companion_count++;
+    }
 done:
     if (process != NULL) {
+        drop_companion(hidden, mo_process_heap(process));
         if (has_value)
             mo_value_drop(mo_process_heap(process), hidden->type, value);
         mo_process_free(process);
@@ -595,4 +646,29 @@ static enum mo_input_result copy(void *context, struct mo_heap *destination, str
     if (hidden->start_count == 0)
         return MO_INPUT_UNSUPPORTED;
     return copy_value(hidden, destination, source, remaining, out);
+}
+
+void mo_builders_begin(struct mo_builders *builders, struct mo_heap *trial) {
+    MO_ASSERT(builders->trial == NULL && builders->companion_count == 0);
+    builders->trial = trial;
+}
+
+void mo_builders_relate(struct mo_builders *builders, struct mo_cell *inputs, const uint32_t *types,
+                        uint32_t count, bool swap) {
+    struct mo_heap *heap = builders->trial;
+    for (uint32_t i = 0; swap && i < count; i++)
+        for (uint32_t c = 0; c < builders->companion_count; c++) {
+            struct mo_companion *companion = &builders->companions[c];
+            if (companion->type != types[i] || companion->type == UINT32_MAX)
+                continue;
+            mo_value_drop(heap, types[i], inputs[i]);
+            inputs[i] = companion->value;
+            companion->type = UINT32_MAX; /* taken */
+            break;
+        }
+    for (uint32_t c = 0; c < builders->companion_count; c++)
+        if (builders->companions[c].type != UINT32_MAX)
+            mo_value_drop(heap, builders->companions[c].type, builders->companions[c].value);
+    builders->companion_count = 0;
+    builders->trial = NULL;
 }

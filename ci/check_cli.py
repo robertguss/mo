@@ -622,6 +622,22 @@ def hidden_promises(binary):
             promises = [r for r in items if r.get('kind') == 'promise']
             assert promises and all(r['outcome'] == 'passed' for r in promises), items
             assert items[-1]['errors'] == 0, items
+        # Half the random trials take the Queue that the Lease's own lease call returned (D284),
+        # so acknowledge and fail reach their Ok branch: breaking either Ok path fails its promise
+        # and only that one.
+        honest = answer.read_text()
+        for failing, honest_line, broken_line in (
+                ('acknowledge', 'if completed?: Acknowledged', 'if completed?: Dead'),
+                ('fail', 'settled.ready_at = now', 'settled.ready_at = entry.ready_at')):
+            assert honest.count(honest_line) == 1, honest_line
+            answer.write_text(honest.replace(honest_line, broken_line))
+            items = records(run(binary, ['test', '--json', str(answer)], 1), 'test')
+            outcomes = {r['name']: r['outcome'] for r in items if r.get('kind') == 'promise'}
+            assert outcomes == {f'Answers.JobQueue.{name}.promise.1':
+                                'failed' if name == failing else 'passed'
+                                for name in ('submit', 'expire_leases', 'lease', 'acknowledge',
+                                             'fail')}, items
+            assert items[-1]['errors'] == 0, items
 
 
 def composite_promises(binary):

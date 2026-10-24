@@ -473,7 +473,7 @@ bool mo_test_promise(const struct mo_cli *cli, const struct mo_program *program,
     } else
         inputs = (struct mo_inputs){0};
     struct trial best = {0};
-    uint64_t calls = 0;
+    uint64_t calls = 0, random_trials = 0;
     bool complete = true, known = true;
     if (prepared != MO_INPUT_OK) {
         inability(diags, observation, "promise input generator could not be prepared", NULL);
@@ -482,12 +482,19 @@ bool mo_test_promise(const struct mo_cli *cli, const struct mo_program *program,
     while (calls < cli->calls && mo_deadline_running(&deadline)) {
         struct trial candidate = {.process = mo_process_new(image, &cli->limits)};
         enum mo_input_kind kind;
-        if (candidate.process != NULL)
+        enum mo_input_result generated = MO_INPUT_NO_MEMORY;
+        if (candidate.process != NULL) {
             mo_fakes_bind(&fakes, mo_process_host(candidate.process));
-        enum mo_input_result generated =
-            candidate.process == NULL ? MO_INPUT_NO_MEMORY
-                                      : mo_inputs_next(&inputs, mo_process_heap(candidate.process),
-                                                       candidate.input, &kind);
+            mo_builders_begin(&builders, mo_process_heap(candidate.process));
+            generated =
+                mo_inputs_next(&inputs, mo_process_heap(candidate.process), candidate.input, &kind);
+            /* Every second random trial takes a built value's companions as its other inputs
+             * of their types, so they come from the same call (D284); boundaries never do. */
+            bool ok = generated == MO_INPUT_OK;
+            mo_builders_relate(&builders, candidate.input, parameters,
+                               ok ? ordinary->parameter_count : 0,
+                               ok && kind == MO_INPUT_RANDOM && random_trials++ % 2 == 1);
+        }
         candidate.has_input = generated == MO_INPUT_OK;
         if (generated == MO_INPUT_DONE) {
             discard(&candidate, ordinary);
