@@ -1,18 +1,22 @@
 # Mo Architecture v0.1
 
-**Draft, 12 October 2026, revised after two independent reviews.** This is how
-Phase 2 builds the `mo` toolchain in C (decision D207): the compiler, the
+**Phase 2 implementation, checked 24 October 2026 against main at
+[`acb2b84`](https://github.com/robertguss/mo/commit/acb2b8488f872c8d907184f2618c467dd8209afc).**
+This describes the `mo` toolchain in C (decision D207): the compiler, the
 virtual machine, and the contracts between them. It is written against the
 Language Reference v0.1 (`docs/reference/`), whose rules win wherever the two
 disagree. It also builds on Mo Core (`formal/`) and the bytecode
-specification (`bytecode.md`). It fixes what Phase 2's work streams build
-against, so they can work in parallel. Section 13 lists what is still open.
+specification (`bytecode.md`). The pipeline is integrated; remaining unsupported
+forms are refused, not silently accepted. [The roadmap](../ROADMAP.md) separates
+delivered work from Phase 2's remaining acceptance work. Section 9 describes
+future hooks, not implemented services or upgrades. Section 13 lists open questions.
 
 ## 1. The shape of the system
 
 One program, `mo`, with the commands `mo check`, `mo run`, `mo test`,
-`mo format` and `mo fix`. It compiles a whole program at once, from source to
-bytecode, and runs the bytecode on its own virtual machine (D195).
+`mo format`, `mo fix`, `mo emit` and `mo guide`. It compiles a whole program
+at once, from source to bytecode, and runs the bytecode on its own virtual
+machine (D195).
 
 ```text
 ┌────────┐  ┌────────┐  ┌──────────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────┐
@@ -67,7 +71,8 @@ src/heap/      the runtime type table and layouts (types.h); values, cells, heap
 src/prim/      the primitives of prims.def
 src/host/      capabilities, real and fake
 src/vm/        processes, the interpreter, calls and frames, stops and defect reports
-src/tools/     the mo command: check, run, test, format and fix; diagnostics as text and JSON
+src/tools/     the mo command: check, run, test, format, fix, emit and guide;
+               diagnostics as text and JSON
 lib/           the standard library written in Mo (condition 4 of D207)
 ```
 
@@ -96,10 +101,10 @@ a second header, `types.h`, with the runtime type table, the layouts and
 host use it without the rest of the heap. Nothing else is included across
 modules.
 
-Every module follows the five conditions of D207: sanitizers on every test,
-fuzzing in CI, Tiger Style (`MO_ASSERT` always on, explicit limits, arenas,
-every result checked, `-Wconversion`), a small trusted C core, and bytecode
-verified on load.
+The five conditions of D207 are sanitizers, fuzzing, Tiger Style (`MO_ASSERT`
+always on, explicit limits, arenas, every result checked, `-Wconversion`), a
+small trusted C core, and bytecode verified on load. The sanitizer and fuzz
+checks run by hand through `ci/check.sh`, not on GitHub (D270; section 11).
 
 **Memory.** Compiler stages allocate from arenas that live as long as the
 stage's output and are freed at once. The VM allocates Mo values from a
@@ -119,7 +124,10 @@ build on a compiler without it. Decimal's 256-bit intermediate products are
 written once, in `base/decimal.c`, shared by the VM and primitives. Division
 takes exactly 256 steps and rounds the exact result once, with ties to even.
 The current gate checks boundary and generated results against exact Python
-rationals through the public VM; CBMC proofs remain to be added.
+rationals through the public VM. `cbmc/decimal.c` proves the multiplication
+and division decomposition with helper contracts; C's multiplication and
+division and the full 256-step rounding loop are not proved. The bounds and
+exclusions are in `cbmc/README.md`.
 
 ## 3. The front end
 
@@ -320,7 +328,7 @@ and leaf positions. It excludes a mismatch only when every parser
 diagnostic is a source-limit code and an independent walk of the grammar's
 tree or source proves each reported limit was exceeded. It also compares
 header reads with accepted full parses and exercises input-derived arena
-limits. A token dictionary and regression seeds run in CI, including
+limits. A token dictionary and regression seeds run in the fuzz checks, including
 generated long binary and prefix chains. The grammar's AST validator walks
 ordinary expressions with an explicit stack, preserving its first-error
 order. Bison's maximum stack is four times the source-byte limit rather
@@ -418,7 +426,7 @@ frames; the earlier inference-only minima were 7.75 MiB and 10.5 MiB.
 `MO_SOURCE_STACK_SIZE` reserves 48 MiB, more than twice the larger measured
 minimum. Unused stack is reserved address space, not touched memory. Compiler
 flags and platform instrumentation can change these measurements; the deep
-checks run under the same explicit allowance in CI and fuzzing.
+checks run under the same explicit allowance in the test gate and fuzzing.
 
 ### 3.3 Names and types
 
@@ -942,7 +950,7 @@ at the template's source depth; an over-deep concrete result refuses with E1153.
 E1152 also bounds canonical types plus unfolded expression occurrences across
 all bodies together, matching Core's whole-document node allowance.
 
-**Capability-entry increment.** Unit/Int entries forward any distinct subset
+**Capability entry.** Unit, Int and Result entries forward any distinct subset
 of Args, Env, Console, Files, ReadFiles, Clock and Random in main's written
 order, without extra authority. The existing tools/host entry path constructs
 only the requested handles. Args.list, Args.of, Clock.now, Clock.fixed,
@@ -969,11 +977,15 @@ Text.replace, Text.repeat, Text.lines, Text.contains?, Text.ascii_lowercase,
 Text.ascii_uppercase, Text.to_int, Text.to_decimal and Text.to_float lower to
 their Core Text primitives. Native function values use inline lambdas, so
 spec-only operations retain their enclosing spec context rather than becoming
-ordinary global adapters. The unchanged greet, account, find, wc, rate-limit,
-notes-tool, kv, expenses and job-queue samples check cleanly, and their supported
-examples, anchors
-and tests run with real and fake capabilities. Other native operations remain
-independently staged.
+ordinary global adapters. All twelve samples check and pass plain `mo test`;
+the eight with a `main` run through this entry path. Every Files and ReadFiles
+operation lowers, with `walk` written in Mo. Set, Unicode16, Char, Byte.to_int,
+List.sum and the remaining section 14 Int, Float and Bytes primitives also
+lower. BigInt's abs/min/max/pow/floor_div/floor_mod/to_int and Random.int/seeded
+also lower (#186). Env.get/of, Ordering/Entry/Map text conversion, Ordering
+comparison and qualified Int.compare lower and run (#189, MO-116).
+`docs/status/golden-gaps.md` distinguishes working routes without golden
+programs from other gaps; `src/lower/expressions.c` owns native dispatch.
 
 Numeric immediates fold unary minus before building Core scalars, including
 Int's minimum. Float literals convert in a private C numeric locale with
@@ -1083,8 +1095,13 @@ primitives for namespace/receiver calls and first-class values, including consta
 aliases. The three-entry dispatch charges the lowering work budget. Arguments
 retain written evaluation order; `abs` of Int's minimum stops with Core's Int
 overflow, not a lowering refusal. Native adapters keep source spans/closure names
-and the existing creation-prefix restrictions. `Int.compare` has a
-checker signature and reuses native Order lowering without adding a primitive.
+and the existing creation-prefix restrictions. The remaining section 14 Int,
+Float and Bytes primitives also have adapters, as do Byte.to_int and List.sum.
+Source-native dispatch is separate from primitive implementation in C;
+`Int.compare` has a checker signature and reuses native Order lowering without
+adding a primitive.
+BigInt's seven native adapters and Random's two IO adapters are implemented
+(#186).
 Function instances retain requirement
 proofs keyed by the callee's scoped parameter and ability, together with the
 supplying instance's type/proof environment. PARAMETER replacement follows those
@@ -1239,15 +1256,15 @@ constructors, lists, insertion-ordered maps and sets, time and duration
 arithmetic. Their results are compared with the VM's in differential tests
 (section 11).
 
-The rest are **trusted primitives**, each checked against its own oracle
-instead:
+Trusted operations also have the following checks. An oracle that shares the
+same underlying library is not an independent proof of that library:
 
-| Primitive | Oracle |
+| Primitive | Implemented evidence |
 | --- | --- |
-| `Float` arithmetic and `sqrt` | IEEE 754 itself: the C library's correctly rounded operations |
-| `Float`'s shortest text form and parsing | a reference implementation of shortest round-trip printing (Ryu), and `strtod` |
-| RFC 3339 times | a table of cases, and a second implementation in Python run in tests |
-| UTF-8 decoding of `Bytes` | an exhaustive test over every 1- to 4-byte sequence |
+| `Float` arithmetic and `sqrt` | C arithmetic and `libm`, compared with Lean's Float operations by `ci/check_primitives.py`; the underlying floating-point operations remain trusted |
+| `Float`'s shortest text form and parsing | exact Lean text oracle through `ci/check_heap_numbers.py`; parsing cases through the primitive comparison, with C `strtod` remaining trusted |
+| RFC 3339 times | boundary and generated cases compared with the Lean implementation by `ci/check_primitives.py` |
+| UTF-8 decoding of `Bytes` | valid and invalid cases in primitive comparisons and fuzzing; `cbmc/text.c` and `unicode.c` prove scalar decoding and encoding against Unicode well-formedness within the bounds in `cbmc/README.md`, not an exhaustive enumeration of byte strings |
 | `Random` | the published reference code of xoshiro256** and SplitMix64, and Lemire's method (section 7) |
 | `Unicode16` | the Unicode Character Database 16.0's own test files |
 
@@ -1717,8 +1734,9 @@ or initializing image until rendering finishes, and apply terminal-safe text
 escaping, never user `to_text` customizers. Only requested Args/Env values are
 materialized in the process heap; their owned originals remain alive through
 the call and report. File capabilities borrow the starting-folder descriptor.
-The current source producer still stages Args/Env/file/other entry forms and
-Result returns; those consumer paths await source-level certification controls.
+Source checking and lowering support these capability entry forms and Unit,
+Int and Result returns. Unsupported operations inside a body still refuse
+with E1103 or E1150 at their owning stage.
 
 **Executable anchor checks.** Typing a promise is not proof of its allows/forbids
 expectations. After loading and initializing one image, tools call each anchor
@@ -1742,8 +1760,8 @@ from bytecode 0.2's separate `files` byte table to the retained source store by
 exact length and bytes, not through the UTF-8 runtime string table. Invalid
 UTF-8 paths therefore support checking, running, bytecode emission and anchor
 locations without filename rewriting. The Core 0.8 text printer's raw-path
-refusal remains separate and unresolved. JSON's existing nonlossless `file`
-representation in 10.2 is unchanged pending approval of an exact-byte field.
+refusal remains separate and unresolved. JSON's `file_bytes` field already
+preserves exact path bytes alongside the display `file` field (10.2).
 Each anchor call, and image initialization for these checks, has a compiler
 work ceiling of 16 Mi instructions (`MO_CLI_ANCHOR_INSTRUCTIONS`). Exhaustion
 refuses certification, never concludes the expectation was false, and never
@@ -1773,8 +1791,8 @@ function adapter needing a later global refuses E1150 during lowering (4.3),
 even when called only after initialization. Supporting that lazy body does not
 justify changing the checker's dependency order or adding false execution edges.
 Inventoried `Int.abs`, `Int.min` and `Int.max` scalar callables, including aliases,
-now execute through the existing primitive adapters (4.3), as do all remaining
-section 14 `Int`, `Float` and `Bytes` functions, including `Int.pow` aliases.
+now execute through the existing primitive adapters (4.3), as do the remaining
+section 14 `Int`, `Float` and `Bytes` primitives, including `Int.pow` aliases.
 Tools render these refusals and suppress both artifacts; they do not treat
 them as invalid compiler Core or runtime bugs.
 
@@ -2179,7 +2197,9 @@ themselves are not shrunk, and the report names them by type (`<ReadFiles>`).
 (`src/tools/builders.c`). Its starts are the module's exposed constants of the type and its
 exposed functions that return one from inputs a generator can make (no capability, function or
 hidden type); its steps are exposed functions that take the type and return one from such other
-inputs. A function's result counts when the type is the result itself, the first tuple field
+inputs. MO-127 tracks builders that need another hidden type as input; that
+dependency gap is separate from the lack of shrinking for built values.
+A function's result counts when the type is the result itself, the first tuple field
 holding it, `Some` or `Ok`, and the call returns that case. Constants are exposed when the
 checked program says so, since the bytecode module table lists only exposed types and functions.
 Each value is one start then up to three steps, run in a scratch process of the same image, so
@@ -2295,7 +2315,7 @@ among them:
 | Parser | the executable grammar's tests, and a fuzz target that checks the parser and `grammar/mo.y` accept and reject the same inputs |
 | Checker | a corpus of programs with the exact diagnostics they must produce, one file or more per error code |
 | Lowering | the twelve samples and the corpus, lowered and compared with their Core text, which the Lean evaluator runs to the samples' expected results |
-| Core and the VM | **differential testing**: Core programs, hand-written, from the samples, and generated well-typed, run on the Lean evaluator and through the C compiler and VM; any difference in outcome is a bug, and a minimized corpus of them runs in CI, as in AWS Cedar (research brief on verification-guided development) |
+| Core and the VM | **differential testing**: Core programs, hand-written, from the samples, and generated well-typed, run on the Lean evaluator and through the C compiler and VM; any difference in outcome is a bug, and a minimized corpus of them runs in the `lean` group, as in AWS Cedar (research brief on verification-guided development) |
 | Compiler | every Core program the Core checker accepts compiles to bytecode the verifier accepts: a property run on every Core program above |
 | Verifier and loader | arbitrary and mutated files; disassembling then assembling gives the same bytes |
 | Library | `mo test` on the library's own examples, promises and tests; the trusted primitives against their oracles (4.5) |
@@ -2359,34 +2379,46 @@ found. A larger run, such as the 100,000 programs a nightly job once ran, is a r
 - path resolution in the host: never resolves outside the folder;
 - the formatter: formatting twice gives the same text, and keeps the tree.
 
-Every check runs through `ci/check.sh`, in the optional CI orb (D214) or an
-equivalent verified Linux environment; no Mo check runs on GitHub. Before a pull request an agent runs
-the `gcc` group; the slow groups run only by hand. Merge verification and evidence rules are in
-`ci/orb/README.md`. The Lean build
-(`make formal`) and CBMC need elan and CBMC in `.agents/setup`.
+`ci/check.sh` groups the checks as `gcc`, `clang`, `sanitize`, `drivers`,
+`lean`, `fuzz`, `static` and `cbmc`. No Mo check runs on GitHub, no status check
+is required on main, and there is no nightly comparison job (D270). Before a
+PR, an agent runs `bash ci/check.sh gcc` locally and reports other groups run
+and not run. Slow groups run by hand. A missing tool is a named skip, not a
+pass; `CI=1` makes it fail. `.agents/setup` installs elan and CBMC for the
+Lean build (`make formal`) and proofs. Robert approves merges.
+
+The recorded hour-long fuzz runs cover 22 sources and a large-bytecode variant,
+23 runs with no crash (`docs/status/v3-fuzz-log.md`). CBMC covers the reader,
+arena, verifier transfer functions, arithmetic and UTF-8, paths, reference
+count updates and hash probing within the bounds in `cbmc/README.md` (D274).
+These are bounded results, not proofs of the whole VM. Benchmark v0's 20 tasks
+and first round are frozen; the round is in progress in
+`learnability/bench-v0-round-1/`, not yet published on main. Release command
+timings for the twelve samples and three workloads are recorded in
+`bench/performance/` (#185), not a new speed gate. The three real
+tools' final round passed 5 of 6 attempts (`learnability/tools-final/results.md`);
+the million-program differential target and Phase 2's other remaining items
+are not implied by that result.
 
 ## 12. Phase 2's streams and their interfaces
 
-Phase 2 starts with the contracts as code, then splits into four streams that
-build in parallel.
+Phase 2 used the following ownership split. The contracts and all four streams
+are integrated on main; this table records ownership, not work waiting to start.
 
 | Stream | Builds | Consumes | Produces | Tests itself with |
 | --- | --- | --- | --- | --- |
-| 0. Contracts (first) | `bytecode.h`, `types.h`, `heap.h`, `prims.def`, `hostops.def`, `core.h`; Core's text form in C and Lean; in `formal/`, what 4.1 lists as missing, and `Random` as section 7 defines it | the design documents | the four contracts | round trips of the text forms; the Lean build |
+| 0. Contracts (first) | `bytecode.h`, `types.h`, `heap.h`, `prims.def`, `hostops.def`, `core.h`; Core's text form in C and Lean; `formal/`'s types, primitives and program layer, including `Random` | the design documents | the four contracts | round trips of the text forms; the Lean build |
 | 1. Front end | `syntax`, `check`, `lower` | source files | Core, or diagnostics | the grammar, the diagnostics corpus, and Core text run by the Lean evaluator |
 | 2. Compiler | `core`'s checker, `codegen` | Core | bytecode, through `src/bytecode`'s writer | the verifier, and the property that checked Core compiles to verified bytecode |
 | 3. VM | all of `src/bytecode`: writer, reader, verifier, assembler and disassembler; `heap`, `prim`, `host`, `vm` | bytecode | outcomes | hand-written bytecode in the text form, with golden outcomes; then the differential tests |
 | 4. Library and tools | `lib/`, `src/tools` | the other three | the `mo` command | `mo test` on `lib/`, and the golden corpus |
 
-The headers each stream codes against, in outline. Every pointer a function
-returns belongs to the arena it was given, unless its comment says otherwise.
-
-The complete contracts in the headers win over this outline. Types and layouts
-have per-kind wire encodings in `bytecode.md` section 3, never native C struct
-bytes. Source signatures have at most 255 parameters (E1009); bytecode has
+The public headers define the C interfaces and each value's ownership. Types
+and layouts have per-kind wire encodings in `bytecode.md` section 3, never
+native C struct bytes. Source signatures have at most 255 parameters (E1009); bytecode has
 256 slots so a promise can add its result and closure code can add `env`.
-Stream 3 implements the writer, text tools, image accessor and C value APIs
-declared below. The image retains file indices in every decoded and runtime
+`bytecode` owns the writer, text tools and image accessor; `heap` owns the C
+value builders. The image retains file indices in every decoded and runtime
 table, so streams 2 and 4 use the same indices in calls and value builders.
 
 `src/prim/prim.h` is the VM's primitive seam. `mo_prim_call(heap, types, id,
@@ -2447,7 +2479,7 @@ Reference 13.3 promises no constant or linear cost for BigInt arithmetic.
 Unicode16 is trusted, not reimplemented in Lean. `ci/unicode16/` holds the
 compressed unmodified UCD 16.0.0 sources, their SHA-256 hashes and license;
 `ci/generate_unicode16.py` generates the compact range/mapping tables.
-CI checks reproducibility and every grapheme/NFC test vector, full case data
+The `drivers` group checks reproducibility and every grapheme/NFC test vector, full case data
 and final-sigma contexts. Graphemes use the untailored extended rules of
 UAX #29 revision 45. The width policy is explicit in `library.md`.
 `prim.h` exposes `mo_unicode16_display_width(bytes, length, width_out)` for
@@ -2458,7 +2490,7 @@ and the output pointer is required. Malformed UTF-8 or `uint64_t` overflow
 returns false without changing the output. Success writes the total width.
 The call allocates nothing, needs no heap, uses constant stack space and
 visits each scalar at most twice. It has no source-file or runtime value cap.
-CI compares it with the primitive on every UCD runner input and every Text
+The Unicode driver and primitive fuzzer compare it with the primitive on every UCD runner input and every Text
 generated by the primitive fuzzer; raw fuzz inputs also check refusal safety.
 `mo_unicode16_next_grapheme(bytes, length, length_out)` exposes the same
 boundary routine as `Unicode16.graphemes`, without allocation or tables in
@@ -2466,7 +2498,7 @@ tools. Its input must be valid UTF-8 starting at a cluster boundary. It
 validates only the first cluster and one lookahead scalar, refusing an empty
 span or malformed bytes it encounters without changing the output. It does
 not validate the unvisited suffix. Repeated calls take linear work and
-constant stack. CI compares every split with the primitive on all 1,093
+constant stack. The Unicode driver compares every split with the primitive on all 1,093
 GraphemeBreakTest vectors and generated fuzz Texts; the work gate also splits
 a million ASCII characters under the existing 20-second ceiling.
 Property, mapping and composition lookups are logarithmic in their table
@@ -2536,9 +2568,8 @@ Core parsing, printing, metadata validation, checking and compilation must run
 through `mo_with_stack(MO_SOURCE_STACK_SIZE)`, like source checking. Core and
 codegen tests, their corpus drivers and fuzz targets, and the VM's `--core`
 driver use this explicit stack, not the platform's default. Every caller that
-accepts full-depth Core must use it. The `mo` command's pending source-stack
-follow-up carries this contract when it connects Core stages. The existing
-48 MiB source allowance is retained.
+accepts full-depth Core must use it. `mo_cli_execute` runs the source pipeline,
+including its Core stages, through this same 48 MiB allowance.
 
 The following are minimum passing stack reservations, in MiB, from 256 KiB
 sweeps on Linux x86-64 with Clang `-O0 -g` debug and ASan/UBSan builds using
@@ -2569,7 +2600,7 @@ recursion follows AVL height, not Core nesting. The checker exceeds half an
 The explicit allowance therefore covers all Core tools. These reservations are
 measured bounds for these inputs, not portable frame-size constants; compiler
 flags and instrumentation can change them. Depth-bound tests run with the
-same 48 MiB allowance in CI. Lean's `mocore` also runs a 4,096-let chain to
+same 48 MiB allowance in the test gate. Lean's `mocore` also runs a 4,096-let chain to
 `returned "7"` with fuel 100,000, independently of C's implementation limit.
 
 `ci/check_core_check.py` compares every Core fixture and committed or smoke
@@ -2616,7 +2647,7 @@ Range toText expansions and BigInt decimal literals; all 15 Core fixtures now
 compile. The eighth consumes owned operands at their last use. The ninth recycles
 exact-type block-local registers. Cross-block recycling and reset/reuse remain
 unfinished optimizations. The
-sample fixtures and Core fuzz corpora are attempted in CI; unfinished forms,
+sample fixtures and Core fuzz corpora are attempted in the codegen corpus check; unfinished forms,
 permanently excluded representations, entry-name collisions, resource limits
 and invalid compiler inputs are counted separately. E1201 inputs are skipped
 from compiler outcome comparisons, not passed off as compilations. Core's
@@ -2626,7 +2657,7 @@ Generated programs within the slices must all compile, never merely refuse
 consistently.
 The writer structurally checks and fully verifies every compiled file.
 Writer refusals are classified by their error kind, never by reason text.
-Outcome comparison with Lean waits for the VM.
+Outcome comparison with Lean runs through the integrated VM in the `lean` group.
 
 Primitive and host names map to rows in `prims.def` and `hostops.def`; codegen
 reads their signatures and ownership columns directly. Trusted signature
@@ -2682,7 +2713,7 @@ scratch plus an arena header, rather than allocating the wire limit's 144 MiB
 for a literal certain to exceed the budget. Magnitude-dependent output work
 remains exact. Exceeding the budget gives E1202 at the literal
 span (or declaration fallback), leaves output empty and is a resource refusal,
-not a compiler bug. CI compares generated magnitudes/signs with Python across
+not a compiler bug. The codegen driver compares generated magnitudes/signs with Python across
 limb, nine-digit group and multiplication boundaries; it also requires every
 fixture and supported generated program to compile deterministically and verify.
 
@@ -3205,200 +3236,28 @@ remain a separate argument to `mo_lower` for filenames and provenance; Core
 copies all metadata and borrows neither input. Counts, graph work, arena storage
 and source execution retain the base limits and explicit-stack policy.
 
-```c
-/* src/base/diag.h: diagnostics, rendered as text or JSON by src/tools. */
-struct mo_span { uint32_t file; uint32_t start; uint32_t end; };     /* byte offsets */
-struct mo_label { struct mo_span span; const char *text; };
-struct mo_edit { struct mo_span span; const char *replacement; };   /* an empty span inserts */
-/* Edits apply together or not at all, each against the original text, and don't overlap. */
-struct mo_fix { const char *title; const struct mo_edit *edits; uint32_t edit_count; };
-struct mo_diag {
-    uint16_t code;                      /* E0412, registered in src/base/codes.h */
-    struct mo_label primary;
-    const struct mo_label *secondary;   /* secondary_count of them */
-    uint32_t secondary_count;
-    const char *message;                /* the headline, in the reference's words */
-    const char *reason;                 /* why, citing the section; NULL only for a limit's code */
-    const char *section;                /* the reference section it cites, such as "8.3" */
-    const struct mo_fix *fixes;         /* fix_count alternatives */
-    uint32_t fix_count;
-};
-/* Diagnostics own their strings, in their own arena. */
-MO_MUST_USE bool mo_diags_init(struct mo_diags *diags);
-void mo_diags_free(struct mo_diags *diags);
-/* Source files, indexed by mo_span.file, for printing snippets. A file that can't be added
- * adds nothing, and error_out says why: unreadable, past a limit, or no memory. */
-MO_MUST_USE bool mo_sources_init(struct mo_sources *sources);
-void mo_sources_free(struct mo_sources *sources);
-MO_MUST_USE bool mo_sources_add(struct mo_sources *sources, const char *path, uint32_t *file_out,
-                                struct mo_source_error *error_out);
+The owning headers are the source of truth for exact signatures, result types
+and allocation rules. The earlier copied C outline is replaced by this index
+so a second declaration cannot drift from the API it describes.
 
-/* src/syntax/syntax.h: on an error, a partial tree for the rest of the file, and diagnostics. */
-MO_MUST_USE struct mo_module_syntax *mo_parse(struct mo_arena *arena, const struct mo_sources *sources,
-                                              uint32_t file, struct mo_diags *diags);
-MO_MUST_USE bool mo_read_header(struct mo_arena *arena, const struct mo_sources *sources, uint32_t file,
-                                struct mo_header *header_out, struct mo_diags *diags);
+| Interface | Owning header | Main operations |
+| --- | --- | --- |
+| Sources and diagnostics | [diag.h](../../src/base/diag.h) | source storage, spans, labels, edits and diagnostic ownership |
+| Parsing and formatting | [syntax.h](../../src/syntax/syntax.h) | `mo_parse`, `mo_read_header`, syntax-tree formatting |
+| Loading and checking | [check.h](../../src/check/check.h) | `mo_load_program`, intermediate stages, `mo_check` and its complete `mo_program` carrier |
+| Lowering | [lower.h](../../src/lower/lower.h) | `mo_lower`, copying checked source metadata into Core |
+| Core | [core.h](../../src/core/core.h) | `mo_core_check`, `mo_core_parse`, `mo_core_print` |
+| Compilation | [codegen.h](../../src/codegen/codegen.h) | `mo_compile`, verified bytecode and classified refusals |
+| Bytecode | [bytecode.h](../../src/bytecode/bytecode.h) | writer, assembler, disassembler, `mo_load`, image access and register-state replay |
+| Heap values | [heap.h](../../src/heap/heap.h) | image/process heaps, type-directed duplication and drop, builders and reuse |
+| Primitive dispatch | [prim.h](../../src/prim/prim.h) | `mo_prim_call`, typed refusal status and operand ownership |
+| Host operations | [host.h](../../src/host/host.h) | `mo_host_call`, fake snapshot and restore, real host context |
+| Execution | [vm.h](../../src/vm/vm.h) | image initialization, processes, `mo_call`, `mo_call_controlled`, `mo_call_main` and defect rendering |
+| CLI integration | [tools.h](../../src/tools/tools.h) | command parsing, `mo_cli_execute`, diagnostic and defect output |
 
-/* src/check/check.h: implemented intermediate stages; NULL with diagnostics.
- * None of their successes is a lowering-ready checked program. */
-MO_MUST_USE struct mo_module_set *mo_load_program(struct mo_arena *arena, struct mo_sources *sources,
-                                                  const char *entry, const char *library,
-                                                  struct mo_diags *diags);
-MO_MUST_USE struct mo_module_interfaces *mo_resolve_modules(struct mo_arena *arena,
-                                                            const struct mo_module_set *set,
-                                                            struct mo_diags *diags);
-MO_MUST_USE struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena,
-                                                        const struct mo_module_set *set,
-                                                        const struct mo_module_interfaces *interfaces,
-                                                        struct mo_diags *diags);
-MO_MUST_USE struct mo_inferred_body *mo_infer_function(struct mo_arena *arena,
-                                                       const struct mo_module_interfaces *interfaces,
-                                                       const struct mo_signatures *signatures,
-                                                       uint32_t function, struct mo_diags *diags);
-/* Checked-program contract, defined in check.h. Unfinished forms report E1103. */
-struct mo_program {
-    const struct mo_module_set *set; /* borrows loaded syntax */
-    const struct mo_module_interfaces *interfaces;
-    const struct mo_signatures *signatures;
-    uint32_t function_count;
-    const struct mo_checked_function *functions; /* typed bodies, binders and use decisions */
-    uint32_t constant_count;
-    const struct mo_checked_constant *constants; /* dependency order */
-    uint32_t spec_count;
-    const struct mo_checked_spec *specs; /* text, spans, conditions and links */
-    struct mo_checked_entry entry; /* main capabilities and result convention */
-};
-/* Lowering-ready program, or NULL with diagnostics; no partial success. */
-MO_MUST_USE struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *set,
-                                        struct mo_diags *diags);
-
-/* src/lower/lower.h: lowering and monomorphization. Copies complete source metadata
- * (formal/TEXT.md) into arena; no pointer in Core borrows the program or sources. */
-MO_MUST_USE struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *program,
-                                     const struct mo_sources *sources,
-                                     struct mo_diags *diags);
-
-/* src/core/core.h: Core's checker and its text form. */
-MO_MUST_USE bool mo_core_check(const struct mo_core *core, struct mo_diags *diags);
-MO_MUST_USE bool mo_core_print(const struct mo_core *core, struct mo_buffer *out);
-MO_MUST_USE struct mo_core *mo_core_parse(struct mo_arena *arena, const char *text, size_t length,
-                                          struct mo_diags *diags);
-
-/* src/codegen/codegen.h: the whole Core document, spec code and metadata included.
- * Validate metadata shape; derive debug ranges, copy exact filename bytes in source order,
- * retain file indices in the separate filename table, module exposure and spec links/lines.
- * Never reopen sources or consult checked Mo. */
-MO_MUST_USE bool mo_compile(const struct mo_core *core, struct mo_buffer *bytecode_out, struct mo_diags *diags);
-
-/* src/bytecode/bytecode.h: writing and text tools borrow inputs. out is an initialized,
- * empty caller-owned buffer, never input storage. On false it is empty (capacity may have
- * grown), and required error_out gives static reason text. The writer verifies, preserves
- * indices and regenerates the header/checksum. Names must already be in the strings table. */
-struct mo_write_error { const char *reason; };
-struct mo_assemble_error { uint32_t offset; const char *reason; };  /* text byte offset */
-struct mo_load_error { uint32_t offset; const char *reason; };       /* reason is static text */
-MO_MUST_USE bool mo_bytecode_write(const struct mo_bytecode *file, struct mo_buffer *out,
-                                   struct mo_write_error *error_out);
-/* Assembly accepts bytecode.md section 10's indexed form or shorthand with optional pool seeds.
- * Disassembly verifies and prints only canonical indexed text, retaining every entry, index,
- * literal bit, exposure flag and debug field, so reassembly gives identical bytes.
- * Scalars use exact natural spellings, except float uses its bits. Text input/output fits
- * MO_LIMIT_BYTECODE_TEXT_SIZE; binary files fit MO_LIMIT_BYTECODE_SIZE.
- * Neither form changes the binary format. No terminating NUL is printed. */
-MO_MUST_USE bool mo_bytecode_assemble(const char *text, size_t length, struct mo_buffer *out,
-                                      struct mo_assemble_error *error_out);
-MO_MUST_USE bool mo_bytecode_disassemble(const uint8_t *bytes, size_t length, struct mo_buffer *out,
-                                         struct mo_load_error *error_out);
-/* Loading always verifies and copies what it needs from bytes. The accessor's read-only
- * tables live until mo_image_free, retaining file indices and module contents_exposed. */
-MO_MUST_USE struct mo_image *mo_load(const uint8_t *bytes, size_t length, struct mo_load_error *error_out);
-MO_MUST_USE const struct mo_bytecode *mo_image_bytecode(const struct mo_image *image);
-MO_MUST_USE const struct mo_types *mo_image_types(const struct mo_image *image);
-/* The opaque VM run state attaches once; image_free releases it before decoded tables. */
-MO_MUST_USE void *mo_image_runtime(const struct mo_image *image);
-void mo_image_attach_runtime(struct mo_image *image, void *runtime, void (*release)(void *));
-void mo_image_free(struct mo_image *image);
-
-/* src/vm/vm.h: initialization, processes and calls. */
-enum mo_outcome { MO_RETURNED, MO_STOPPED, MO_FAILED };
-/* Runs the init functions once; on a stop, the image can't run and defect_out says why. */
-MO_MUST_USE enum mo_outcome mo_image_init(struct mo_image *image, const struct mo_limits *limits,
-                                          struct mo_defect *defect_out);
-/* A process must not outlive its image, which must be initialized. */
-MO_MUST_USE struct mo_process *mo_process_new(const struct mo_image *image, const struct mo_limits *limits);
-void mo_process_free(struct mo_process *process);    /* frees its whole heap, never the image's */
-/* Arguments passed to owned parameters are consumed on every outcome; those passed to borrowed
- * ones stay the caller's. Duplicate before the call to retain an owned argument for a promise.
- * Only MO_RETURNED writes an owned result_out, which C may drop early. On stop/failure it is
- * unchanged, and defect_out describes why, valid until mo_process_free. STOPPED/FAILED
- * are terminal; RETURNED permits another call. INIT and CLOSURE are not direct C calls. */
-MO_MUST_USE enum mo_outcome mo_call(struct mo_process *process, uint32_t function,
-                                    const struct mo_cell *arguments, uint32_t argument_count,
-                                    struct mo_cell *result_out, struct mo_defect *defect_out);
-MO_MUST_USE bool mo_render_defect(const struct mo_process *process, const struct mo_defect *defect,
-                                  struct mo_buffer *out);
-/* C harness hooks only, not Mo resource limits; internal stop on exhaustion. */
-MO_MUST_USE enum mo_outcome mo_image_init_bounded(struct mo_image *image,
-    const struct mo_limits *limits, uint64_t instructions, struct mo_defect *defect_out);
-void mo_process_instruction_limit(struct mo_process *process, uint64_t instructions);
-/* Initializes the image, then runs main with real capabilities; returns the exit status. */
-MO_MUST_USE int mo_run(struct mo_image *image, const struct mo_run_options *options);
-
-/* src/heap/heap.h: C ownership is type-directed. Both operations are infallible, copy/do nothing
- * for immediates, and follow bytecode 2.4's immortal and saturating counts. dup returns another
- * owned cell without consuming its input; drop consumes one owned cell without C recursion. */
-struct mo_heap_image; /* Shared run metadata; its initialization heap owns image values. */
-struct mo_heap;       /* A separate, fixed-size context owned by struct mo_process. */
-MO_MUST_USE struct mo_heap_image *mo_heap_image_new(const struct mo_types *types, const struct mo_limits *limits);
-MO_MUST_USE bool mo_heap_image_refresh(struct mo_heap_image *image);
-MO_MUST_USE struct mo_heap *mo_heap_image_constants(struct mo_heap_image *image);
-void mo_heap_image_free(struct mo_heap_image *image);
-MO_MUST_USE struct mo_heap *mo_heap_new(struct mo_heap_image *image, const struct mo_limits *limits);
-void mo_heap_free(struct mo_heap *heap);
-MO_MUST_USE struct mo_cell mo_value_dup(struct mo_heap *heap, uint32_t type, struct mo_cell value);
-void mo_value_drop(struct mo_heap *heap, uint32_t type, struct mo_cell value);
-/* Building generated inputs borrows input cells and duplicates references kept. Successful
- * results are owned in the process heap; false leaves inputs and out unchanged. Byte builders
- * copy at most MO_LIMIT_VALUE_BYTES bytes, subject to --max-heap; NULL is allowed only for
- * zero length. Bytes accepts any sequence. BigInt uses base.h's sign enum and bytecode 3.1's canonical magnitude; invalid
- * signs/magnitudes, lengths past the limit and allocation/heap-limit failure return false. */
-MO_MUST_USE bool mo_value_text(struct mo_heap *heap, const char *utf8, size_t length, struct mo_cell *out);
-MO_MUST_USE bool mo_value_bytes(struct mo_heap *heap, const uint8_t *bytes, size_t length, struct mo_cell *out);
-MO_MUST_USE bool mo_value_bigint(struct mo_heap *heap, enum mo_bigint_sign sign,
-                                 const uint8_t *magnitude, size_t length, struct mo_cell *out);
-MO_MUST_USE bool mo_value_construct(struct mo_heap *heap, uint32_t layout, const struct mo_cell *fields,
-                                    uint32_t count, struct mo_cell *out);
-MO_MUST_USE bool mo_value_case(struct mo_heap *heap, uint32_t type, uint32_t tag, const struct mo_cell *fields,
-                               uint32_t count, struct mo_cell *out);
-MO_MUST_USE bool mo_value_list(struct mo_heap *heap, uint32_t type, const struct mo_cell *elements,
-                               uint32_t count, struct mo_cell *out);
-MO_MUST_USE bool mo_value_map(struct mo_heap *heap, uint32_t type, const struct mo_cell *keys,
-                              const struct mo_cell *values, uint32_t count, struct mo_cell *out);
-MO_MUST_USE bool mo_value_set(struct mo_heap *heap, uint32_t type, const struct mo_cell *elements,
-                              uint32_t count, struct mo_cell *out);
-MO_MUST_USE bool mo_value_closure(struct mo_heap *heap, uint32_t function, const struct mo_cell *captures,
-                                  uint32_t count, struct mo_cell *out);
-/* The VM's _owned construct/case/closure/reuse variants transfer field ownership
- * on success, without a dup/drop pair; failure preserves fields, tokens and out. */
-MO_MUST_USE bool mo_value_construct_owned(struct mo_heap *heap, uint32_t layout,
-    const struct mo_cell *fields, uint32_t count, struct mo_cell *out);
-MO_MUST_USE bool mo_value_make_immortal(struct mo_heap *heap, uint32_t type, struct mo_cell value);
-
-/* src/host/host.h: a fake for mo test's generated inputs, as its constructor would make it
- * from contents, such as Files.in_memory's map. */
-MO_MUST_USE bool mo_host_fake(struct mo_process *process, enum mo_capability which, const struct mo_cell *contents,
-                              uint32_t count, struct mo_cell *out);
-```
-
-The order of work: stream 0 first, for about a week, reviewed against these
-documents. Then streams 1, 2 and 3 in parallel, each tested on its own as
-the table says, and stream 4 throughout. The differential tests join streams
-1 to 3 as soon as each can run its part.
-
-**Repository changes for Phase 2.** The Makefile builds `src/<module>/*.c` per
-module; `grammar/` includes `src/base/base.h` by its new path; `.agents/setup`
-adds elan, with Lean 4.34.0, and CBMC; `ci/check.sh` gains `make formal` and
-the CBMC proofs, within a time budget for the CI orb.
+The Makefile builds `src/<module>/*.c` per module. `.agents/setup` installs
+Lean 4.34.0 via elan and CBMC; `ci/check.sh` exposes their checks as the
+manually invoked `lean` and `cbmc` groups.
 
 ## 13. Open questions
 
@@ -3423,7 +3282,7 @@ the CBMC proofs, within a time budget for the CI orb.
   per text; decide with the benchmark.
 - **Unicode16** now has generated UCD 16.0.0 tables, the generator, compressed
   unmodified sources and their hashes in the repository (section 12).
-  CI checks regeneration and the UCD's conformance data; width follows the
+  The `drivers` group checks regeneration and the UCD's conformance data; width follows the
   explicit policy in `library.md`, not the host terminal.
 - **The bytecode format's stability.** It is internal in Phase 2. Phase 5's
   upgrades need a versioned format; decide then whether it is public.
