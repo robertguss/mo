@@ -2193,6 +2193,9 @@ def lower_source_fixtures(binary):
                        b"-9223372036854775808/9223372036854775807/9223372036854775807/-9223372036854775808/-2/-9223372036854775808\n"
                        b"9223372036854775807/-9223372036854775808/-9223372036854775808/9223372036854775807/9223372036854775807/9223372036854775807\n"
                        b"None/Some(4)/None/Some(-21)\nSome(255)/None/None/Some(0)\n",
+        "bigint-natives": b"1267650600228229401496703205376/-1267650600228229401496703205376/1267650600228229401496703205376\n"
+                          b"-3/-3/2/-2\nNone/None/Some(9223372036854775807)/Some(-9223372036854775808)\n",
+        "random-natives": b"",
         "float-natives": b"true/0/-0\n",
         "bytes-natives": b"10/0/Some(65)/Some(206)/Some(187)\nNone/None/None/Some(\"\")\n",
         "byte-natives": b"0/127/128/255/255\n",
@@ -2237,6 +2240,11 @@ def lower_source_fixtures(binary):
             assert emitted.stdout and not emitted.stderr
         result = run(binary, ["run", str(path)], 0)
         assert result.stdout == expected and not result.stderr, (name, result)
+
+    random_tests = records(run(binary, ["test", "--json",
+                                       str(fixtures / "random-natives/main.mo")], 0), "test")
+    assert random_tests[-1]["passed"] == 1 and random_tests[-1]["failed"] == 0
+    assert random_tests[-1]["stopped"] == 0
 
     with tempfile.TemporaryDirectory(prefix="mo-numeric-bytes-") as directory:
         path = pathlib.Path(directory) / "main.mo"

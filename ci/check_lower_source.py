@@ -793,6 +793,8 @@ for fixture, expected in {
     "file-error-text": 0,
     "char-natives": 0,
     "int-natives": 0,
+    "bigint-natives": 0,
+    "random-natives": 0,
     "float-natives": 0,
     "bytes-natives": 0,
     "byte-natives": 0,

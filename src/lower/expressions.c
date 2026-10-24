@@ -1011,6 +1011,23 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
         }
         static const struct {
             const char *name;
+            enum mo_core_big_op operation;
+        } bigs[] = {{"BigInt.abs", MO_CORE_BIG_OP_ABS},
+                    {"BigInt.min", MO_CORE_BIG_OP_MIN},
+                    {"BigInt.max", MO_CORE_BIG_OP_MAX},
+                    {"BigInt.pow", MO_CORE_BIG_OP_POW},
+                    {"BigInt.floor_div", MO_CORE_BIG_OP_FLOOR_DIV},
+                    {"BigInt.floor_mod", MO_CORE_BIG_OP_FLOOR_MOD},
+                    {"BigInt.to_int", MO_CORE_BIG_OP_TO_INT}};
+        for (size_t i = 0; i < sizeof bigs / sizeof bigs[0]; i++) {
+            lower_work(p, 1);
+            if (strcmp(r->native, bigs[i].name) == 0)
+                return lower_prim(
+                    p, (struct mo_core_prim){.tag = MO_CORE_PRIM_BIG, .as.big = bigs[i].operation},
+                    args);
+        }
+        static const struct {
+            const char *name;
             enum mo_core_float_op operation;
         } floats[] = {{"Float.abs", MO_CORE_FLOAT_OP_ABS},
                       {"Float.floor", MO_CORE_FLOAT_OP_FLOOR},
@@ -1149,7 +1166,9 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                   {"ReadFiles.exists?", {MO_CORE_IO_OP_EXISTS, true}},
                   {"ReadFiles.within", {MO_CORE_IO_OP_WITHIN, true}},
                   {"Clock.now", {MO_CORE_IO_OP_NOW, false}},
-                  {"Clock.fixed", {MO_CORE_IO_OP_CLOCK_FIXED, false}}};
+                  {"Clock.fixed", {MO_CORE_IO_OP_CLOCK_FIXED, false}},
+                  {"Random.int", {MO_CORE_IO_OP_RANDOM_INT, false}},
+                  {"Random.seeded", {MO_CORE_IO_OP_RANDOM_SEEDED, false}}};
         for (size_t i = 0; i < sizeof io / sizeof io[0]; i++) {
             lower_work(p, 1);
             if (strcmp(r->native, io[i].name) == 0)
