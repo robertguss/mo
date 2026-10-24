@@ -1149,6 +1149,32 @@ static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
             if (library->library && compare_text(prefix, library->name) == 0)
                 target = library;
         }
+        if (target != NULL && name->kind == MO_S_NAME && prefix->kind == MO_S_CAPNAME) {
+            /* Red.f with both a used module Red and a case Red in scope could call either. Look
+             * the case up without definition, which would count an import of Red as used. */
+            uint32_t meanings = 0;
+            const struct mo_symbol *other = find_symbol(scope, prefix, &meanings);
+            uint32_t low = 0, high = scope->imported_count;
+            while (other == NULL && low < high) {
+                uint32_t mid = low + (high - low) / 2;
+                int order = compare_text(prefix, scope->imported[mid].name);
+                if (order == 0)
+                    other = scope->imported[mid].symbols;
+                else if (order > 0)
+                    low = mid + 1;
+                else
+                    high = mid;
+            }
+            if (other != NULL && other->declaration->kind == MO_S_CASE_DECL) {
+                bool reported =
+                    problem(p, MO_CODE_NAME_CLASH, prefix->span, "a clash between names",
+                            "A clash between names is an error; use the qualified "
+                            "form (reference 10.3).",
+                            NULL);
+                (void)reported;
+                return NULL;
+            }
+        }
         if (target == NULL) {
             uint32_t meanings = 0;
             const struct mo_symbol *type = definition(p, prefix, NULL, &meanings);
