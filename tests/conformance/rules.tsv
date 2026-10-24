@@ -57,8 +57,8 @@ rule	accepts	refuses	stops	gap
 5.1/2	ref-functions	e0042,e0055		
 5.2/1	ref-functions	e0012,e0021,e0055,e0077		
 5.3/1	lang-recursion-tail			
-5.4/1	lang-dot-calls,ref-abilities			No standalone diagnostic pins x.f() when f takes only the receiver. Direct nullary-case receivers such as Equal.to_text still report E1103; bound values work.
-5.4/2	ref-functions			Hidden-field fallback to the same-named function needs a cross-module golden; visible fields and function-valued fields are covered.
+5.4/1	lang-dot-calls,ref-abilities	e0095,e0095-deferred		Direct nullary-case receivers such as Equal.to_text still report E1103; bound values work.
+5.4/2	lang-dot-calls,ref-functions			Hidden-field fallback to the same-named function needs a cross-module golden; visible fields and function-valued fields are covered.
 5.5/1	lang-generic-functions	e0081		
 5.5/2	lang-enum-tree	e0083		
 5.6/1	lang-closures,lang-generic-functions			
@@ -228,7 +228,7 @@ C/13	col-build-with-var	e0056
 C/14	lang-bindings	e0051		
 C/15	ref-shout			No standalone diagnostic is pinned for console.log.
 C/16	txt-interpolation	e0075		
-C/17	lang-dot-calls			No standalone diagnostic is pinned for x.f() when f takes only the receiver.
+C/17	lang-dot-calls	e0095,e0095-deferred		
 C/18	lang-abilities-text-forms			No standalone diagnostic is pinned for str/toString spellings.
 C/19	ref-functions			Alternative function keywords need dedicated exact-error fixtures.
 C/20	lang-records,lang-dot-calls			Class/method/self spellings need dedicated exact-error fixtures.

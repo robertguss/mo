@@ -120,6 +120,7 @@
     X(92, CAPTURE_ASSIGNMENT, "5.6")                                                               \
     X(93, UNUSED_IMPORT, "6.1")                                                                    \
     X(94, MAP_KEY_REPEATED, "3.8")                                                                 \
+    X(95, DOT_CALL_PARENTHESES, "5.4")                                                             \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \

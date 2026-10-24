@@ -1,0 +1,9 @@
+E0095 5.4
+0:67..69
+write x.f, not x.f()
+x.f, with no other arguments, calls f(x) (reference 5.4).
+the function takes only the receiver
+fixes 1
+remove the parentheses
+0:67..69
+""
