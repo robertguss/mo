@@ -1793,7 +1793,6 @@ justify changing the checker's dependency order or adding false execution edges.
 Inventoried `Int.abs`, `Int.min` and `Int.max` scalar callables, including aliases,
 now execute through the existing primitive adapters (4.3), as do the remaining
 section 14 `Int`, `Float` and `Bytes` primitives, including `Int.pow` aliases.
-This does not include the separate module-call gap for `Int.compare`.
 Tools render these refusals and suppress both artifacts; they do not treat
 them as invalid compiler Core or runtime bugs.
 
