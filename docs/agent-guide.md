@@ -12,7 +12,9 @@ This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guid
 
 `mo emit FILE -o OUT` checks the program as `mo check` does, then writes its bytecode to `OUT`. `-o` is required, and `OUT` is never a source file of the program. A library module with no `main` is E0079, as for `mo run`, and a file that cannot be written is E1404. This build has no command that runs a bytecode file; run the source with `mo run`.
 
-A few forms the reference requires are still unfinished. `mo check` reports E1103 for a form the checker has not implemented, with a headline that says so, such as "this body rule is not implemented by the staged checker". It reports E1150 for a form it checks but cannot compile yet, such as `env.get`. The headline is "this native call is not lowered yet". E1103 and E1150 mean this toolchain has not implemented that form. If the reference requires the form, leave the form in. `mo run` and `mo test` report the same code for the same form.
+A few forms the reference requires are still unfinished. `mo check` reports E1103 for a form the checker has not implemented, with a headline that says so, such as "this body rule is not implemented by the staged checker". It reports E1150 for a form it checks but cannot compile yet, such as `env.get`. The headline is "this native call is not lowered yet". E1103 and E1150 mean this toolchain has not implemented that form. `mo run` and `mo test` report the same code for the same form.
+
+If the reference offers another way to write the same behaviour from forms that compile, use that instead. Keep the unfinished form only when the reference requires it and offers no other way to write the same behaviour. For example, on a build where `List.sum` gives E1150, sum a `List(Int)` with `xs.reduce(0, fn(total, x) total + x end)`.
 
 Every `Int`, `Float` and `Bytes` function listed in reference section 14 compiles and runs, whether called with a dot, through its type's module, or as a function value. This includes checked, wrapping and saturating integer arithmetic, integer conversions, float rounding and classification, and UTF-8 decoding.
 
@@ -125,12 +127,12 @@ Follow these steps.
 
 1. Write the program. When a function has `examples` or a `promise`, put each block at the top of the body, then a blank line, then the code. Add a `test` in the same file when you check a scenario. Section 12.
 2. Run `mo format` on those files.
-3. Run `mo check FILE`. Fix language errors. Keep a diagnostic that Know this build names.
+3. Run `mo check FILE`. Fix language errors. Handle E1103 and E1150 as Know this build says.
 4. Run `mo fix FILE` when `mo check` shows a fix. When an error shows more than one fix, choose one and make that edit yourself. Appendix A.
 5. Run `mo test FILE` until the examples, promises, and tests pass.
 6. Run `mo run FILE` only when the task needs a running program.
 
-If a command exits 1 for a reason that Know this build names, keep the source that the reference requires, and continue. Section 13.4 describes `--json`.
+If a command exits 1 for a reason that Know this build names, follow its instructions above, and continue. Section 13.4 describes `--json`.
 
 ## Stop when the task is done
 
@@ -138,7 +140,7 @@ The task is done when the program is the v0.1 Mo the reference describes for wha
 
 On a complete toolchain, `mo format`, `mo check`, and `mo test` exit 0. Run `mo run` when the task is a running program.
 
-On this build, accept a remaining diagnostic only when Know this build names it: E1103 or E1150 on a form the reference requires, or E1400 on a promise whose inputs `mo test` cannot build. Deleting a reference form to silence E1103 or E1150 leaves the task undone. Deleting a promise because `mo test` returns E1400 leaves the task undone.
+On this build, accept a remaining diagnostic only when Know this build names it: E1103 or E1150 on a form the reference requires and offers no other way to write the same behaviour, or E1400 on a promise whose inputs `mo test` cannot build. Deleting a required spec, promise or capability to silence a diagnostic leaves the task undone. Deleting a promise because `mo test` returns E1400 leaves the task undone.
 
 Where the reference says nothing, do not add a rule, and do not fill that silence from the architecture or from `formal/TRANSLATION.md`.
 
