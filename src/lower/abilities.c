@@ -425,8 +425,17 @@ static void fields_text(struct lowering *p, struct derived *d, uint32_t first,
     *out = result;
 }
 
-static void list_text(struct lowering *p, struct derived *d) {
+static void collection_text(struct lowering *p, struct derived *d) {
     MO_ASSERT(d->proof->part_count == 1);
+    bool set = d->type->tag == MO_CORE_TY_SET;
+    MO_ASSERT(set || d->type->tag == MO_CORE_TY_LIST);
+    mo_core_ty list_type = d->type;
+    if (set) {
+        struct mo_source_type *source = LOWER_NEW(p, struct mo_source_type, 1);
+        *source = *d->proof->type;
+        source->name = "List";
+        list_type = lower_type(p, source, d->substitution);
+    }
     struct instance *f = d->function;
     static const struct mo_source_type text_type = {
         .kind = MO_SOURCE_NAMED, .name = "Text", .module = UINT32_MAX};
@@ -441,19 +450,30 @@ static void list_text(struct lowering *p, struct derived *d) {
     join->as.join.params.count = 2;
     join->as.join.params.items = LOWER_NEW(p, struct mo_core_param, 2);
     join->as.join.params.items[0] = f->fun.params.items[0];
+    join->as.join.params.items[0].ty = list_type;
     join->as.join.params.items[1] =
         (struct mo_core_param){lower_fresh(p), lower_type(p, &texts, NULL)};
     mo_core_expr start = lower_expr(p, MO_CORE_EXPR_JUMP);
     start->as.jump.name = join->as.join.name;
     start->as.jump.args = args(p, 2);
     start->as.jump.args.items[0] = lower_var(p, f->fun.params.items[0].name);
+    if (set) {
+        mo_core_expr_list values = args(p, 1);
+        values.items[0] = start->as.jump.args.items[0];
+        start->as.jump.args.items[0] = lower_prim(
+            p,
+            (struct mo_core_prim){.tag = MO_CORE_PRIM_SET,
+                                  .as.set = {.t = d->type->as.set, .op = MO_CORE_SET_OP_TO_LIST}},
+            values);
+    }
     struct mo_core_prim list = {.tag = MO_CORE_PRIM_LIST, .as.list.t = f->fun.ret};
     list.as.list.op.tag = MO_CORE_LIST_OP_LIT;
     list.as.list.op.as.lit.digits = lower_text(p, "0");
     start->as.jump.args.items[1] = lower_prim(p, list, args(p, 0));
     join->as.join.rest = start;
     f->fun.body = join;
-    mo_core_expr e = list_case(p, d->type->as.list, start->as.jump.args.items[0]);
+    mo_core_expr e =
+        list_case(p, list_type->as.list, lower_var(p, join->as.join.params.items[0].name));
     join->as.join.body = e;
     mo_core_string accumulated = join->as.join.params.items[1].name;
     mo_core_expr_list values = args(p, 1);
@@ -469,7 +489,7 @@ static void list_text(struct lowering *p, struct derived *d) {
                                  (struct mo_core_prim){.tag = MO_CORE_PRIM_TEXT,
                                                        .as.text = MO_CORE_TEXT_OP_JOIN},
                                  pieces),
-                      text(p, lower_text(p, "]"))));
+                      text(p, lower_text(p, set ? "].to_set" : "]"))));
     mo_core_string pair = e->as.case_.arms.items[1].names.items[0];
     mo_core_expr converted = lower_expr(p, MO_CORE_EXPR_LET);
     converted->as.let_.name = lower_fresh(p);
@@ -490,8 +510,8 @@ static void list_text(struct lowering *p, struct derived *d) {
 static void derive_text(struct lowering *p, struct derived *d) {
     p->span = d->span;
     struct instance *f = d->function;
-    if (d->type->tag == MO_CORE_TY_LIST) {
-        list_text(p, d);
+    if (d->type->tag == MO_CORE_TY_LIST || d->type->tag == MO_CORE_TY_SET) {
+        collection_text(p, d);
         return;
     }
     if (d->type->tag == MO_CORE_TY_TUPLE) {
