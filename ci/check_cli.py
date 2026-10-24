@@ -2890,6 +2890,24 @@ def guide_claims(binary):
                          encoding="utf-8")
         assert b"list.size" in run(binary, ["check", str(sized)], 1).stderr
 
+        # Round 2's next-attempt misses were errors left unedited before a re-run (D296).
+        says("It reports each error it finds, in source order. Fix every error it reports before "
+             "you run `mo check` again, not only the first.",
+             "Run `mo test FILE` only once `mo check` reports no errors but those Know this build "
+             "names. While the program has other errors, `mo test` runs nothing and prints the "
+             "same errors `mo check` does.")
+        several = folder / "several.mo"
+        several.write_text("module Several\n\nfn count() : Int\n  total = 0\n  total = 1\n  total\nend\n\n"
+                           "fn join(a: Text, b: Text) : Text\n  a + b\nend\n\n"
+                           "fn size(items: List(Int)) : Int\n  len(items)\nend\n\n"
+                           'test "never runs"\n  assert size([1]) == 1\nend\n', encoding="utf-8")
+        checked = run(binary, ["check", str(several)], 1)
+        codes = [line.split(b":")[0] for line in checked.stderr.splitlines()
+                 if line.startswith(b"error E")]
+        assert codes == [b"error E0051", b"error E0075", b"error E0050"], checked.stderr
+        tested = run(binary, ["test", str(several)], 1)
+        assert not tested.stdout and tested.stderr == checked.stderr, tested
+
         # Each unfinished form gives the same code from check, run and test.
         unfinished = folder / "unfinished.mo"
         unfinished.write_text("module Unfinished\n\nanswer = invoke(fn() 13 end)\n\n"
