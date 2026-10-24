@@ -1,0 +1,17 @@
+passed ScratchCheck.test.1  scratch-check.mo:12:1
+passed Calendar.leap_year?.example.1  calendar.mo:9:5
+passed Calendar.leap_year?.example.2  calendar.mo:10:5
+passed Calendar.leap_year?.example.3  calendar.mo:11:5
+passed Calendar.leap_year?.example.4  calendar.mo:12:5
+passed Calendar.days_in_month.example.1  calendar.mo:21:5
+passed Calendar.days_in_month.example.2  calendar.mo:22:5
+passed Calendar.days_in_month.example.3  calendar.mo:23:5
+passed Calendar.day_of_year.example.1  calendar.mo:37:5
+passed Calendar.day_of_year.example.2  calendar.mo:38:5
+passed Calendar.day_of_year.example.3  calendar.mo:39:5
+passed Calendar.days_between.example.1  calendar.mo:54:5
+passed Calendar.days_between.example.2  calendar.mo:55:5
+passed Calendar.days_between.example.3  calendar.mo:56:5
+passed Calendar.days_between.example.4  calendar.mo:57:5
+passed Calendar.days_between.example.5  calendar.mo:58:5
+16 passed, 0 failed, 0 stopped

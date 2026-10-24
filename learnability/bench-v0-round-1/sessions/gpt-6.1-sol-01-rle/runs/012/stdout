@@ -1,0 +1,15 @@
+passed Rle.encode.promise.1  rle.mo:6:3
+passed Rle.encode.example.1  rle.mo:14:5
+passed Rle.encode.example.2  rle.mo:15:5
+passed Rle.encode.example.3  rle.mo:16:5
+passed Rle.encode.example.4  rle.mo:17:5
+passed Rle.decode.example.1  rle.mo:40:5
+passed Rle.decode.example.2  rle.mo:41:5
+passed Rle.decode.example.3  rle.mo:42:5
+passed Rle.decode.example.4  rle.mo:43:5
+passed Rle.decode.example.5  rle.mo:44:5
+passed Rle.decode.example.6  rle.mo:45:5
+passed Rle.decode.example.7  rle.mo:46:5
+passed Rle.decode.example.8  rle.mo:47:5
+passed Rle.decode.example.9  rle.mo:48:5
+14 passed, 0 failed, 0 stopped

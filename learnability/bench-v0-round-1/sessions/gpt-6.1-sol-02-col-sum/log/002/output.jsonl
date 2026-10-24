@@ -1,0 +1,3 @@
+{"record":"version","format":"1.0","mo":"0.0.0","command":"check"}
+{"record":"diagnostic","code":"E1150","headline":"this native call is not lowered yet","reason":null,"section":null,"primary":{"file":"col-sum.mo","file_bytes":"636f6c2d73756d2e6d6f","start":855,"end":864,"line":35,"column":12,"end_line":35,"end_column":21,"label":null},"secondary":[],"fixes":[]}
+{"record":"totals","errors":1,"dropped":0,"status":1}

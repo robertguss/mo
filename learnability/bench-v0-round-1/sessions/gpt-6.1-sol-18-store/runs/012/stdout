@@ -1,0 +1,9 @@
+passed Store.apply.example.1  store.mo:22:5
+passed Store.apply.example.2  store.mo:23:5
+passed Store.apply.example.3  store.mo:24:5
+passed Store.apply.example.4  store.mo:25:5
+passed Store.apply.example.5  store.mo:26:5
+passed Store.test.1  store.mo:49:1
+passed Store.test.2  store.mo:61:1
+passed Store.test.3  store.mo:75:1
+8 passed, 0 failed, 0 stopped

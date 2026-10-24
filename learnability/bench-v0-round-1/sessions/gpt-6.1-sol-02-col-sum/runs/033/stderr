@@ -1,0 +1,21 @@
+line 9: not a number: 1e3
+line 13: expected 3 fields, found 4
+line 16: not a number: 1.0000000000000000000
+line 23: not a number: １２
+line 24: expected 3 fields, found 4
+line 30: not a number: １２
+line 35: expected 3 fields, found 4
+line 37: not a number: 1.0000000000000000000
+line 44: not a number: .5
+line 46: expected 3 fields, found 4
+line 51: not a number: +7
+line 57: expected 3 fields, found 4
+line 58: not a number: oops
+line 65: not a number: 3.
+line 68: expected 3 fields, found 4
+line 72: not a number: １２
+line 79: expected 3 fields, found 4
+line 86: not a number: 3.
+line 90: expected 3 fields, found 4
+line 100: not a number: oops
+line 101: expected 3 fields, found 4

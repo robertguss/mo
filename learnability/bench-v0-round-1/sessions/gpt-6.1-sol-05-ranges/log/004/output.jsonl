@@ -1,0 +1,11 @@
+{"record":"version","format":"1.0","mo":"0.0.0","command":"test"}
+{"record":"result","name":"Ranges.test.1","kind":"test","span":{"file":"ranges.mo","file_bytes":"72616e6765732e6d6f","start":2394,"end":2657,"line":96,"column":1,"end_line":101,"end_column":4},"outcome":"passed","microseconds":382}
+{"record":"result","name":"Ranges.test.2","kind":"test","span":{"file":"ranges.mo","file_bytes":"72616e6765732e6d6f","start":2659,"end":2919,"line":103,"column":1,"end_line":108,"end_column":4},"outcome":"passed","microseconds":391}
+{"record":"result","name":"Ranges.test.3","kind":"test","span":{"file":"ranges.mo","file_bytes":"72616e6765732e6d6f","start":2921,"end":3223,"line":110,"column":1,"end_line":115,"end_column":4},"outcome":"passed","microseconds":452}
+{"record":"result","name":"Ranges.test.4","kind":"test","span":{"file":"ranges.mo","file_bytes":"72616e6765732e6d6f","start":3225,"end":3896,"line":117,"column":1,"end_line":151,"end_column":4},"outcome":"passed","microseconds":3377}
+{"record":"result","name":"Ranges.test.5","kind":"test","span":{"file":"ranges.mo","file_bytes":"72616e6765732e6d6f","start":3898,"end":4268,"line":153,"column":1,"end_line":162,"end_column":4},"outcome":"passed","microseconds":303}
+{"record":"result","name":"Ranges.test.6","kind":"test","span":{"file":"ranges.mo","file_bytes":"72616e6765732e6d6f","start":4270,"end":4692,"line":164,"column":1,"end_line":175,"end_column":4},"outcome":"passed","microseconds":530}
+{"record":"result","name":"Ranges.test.7","kind":"test","span":{"file":"ranges.mo","file_bytes":"72616e6765732e6d6f","start":4694,"end":4997,"line":177,"column":1,"end_line":182,"end_column":4},"outcome":"passed","microseconds":383}
+{"record":"result","name":"Ranges.test.8","kind":"test","span":{"file":"ranges.mo","file_bytes":"72616e6765732e6d6f","start":4999,"end":5472,"line":184,"column":1,"end_line":195,"end_column":4},"outcome":"passed","microseconds":372}
+{"record":"result","name":"Ranges.test.9","kind":"test","span":{"file":"ranges.mo","file_bytes":"72616e6765732e6d6f","start":5474,"end":5887,"line":197,"column":1,"end_line":205,"end_column":4},"outcome":"passed","microseconds":104}
+{"record":"totals","errors":0,"dropped":0,"passed":9,"failed":0,"stopped":0,"status":0}

@@ -1,0 +1,20 @@
+passed Stats.mean.example.1  stats.mo:8:5
+passed Stats.mean.example.2  stats.mo:9:5
+passed Stats.minimum.example.1  stats.mo:19:5
+passed Stats.minimum.example.2  stats.mo:20:5
+passed Stats.maximum.example.1  stats.mo:28:5
+passed Stats.spread.example.1  stats.mo:37:5
+passed Stats.spread.example.2  stats.mo:38:5
+passed Stats.median.example.1  stats.mo:50:5
+passed Stats.median.example.2  stats.mo:51:5
+passed Stats.median.example.3  stats.mo:52:5
+passed Stats.median.example.4  stats.mo:53:5
+passed Stats.median.example.5  stats.mo:54:5
+passed Stats.halfway.example.1  stats.mo:68:5
+passed Stats.halfway.example.2  stats.mo:69:5
+passed Stats.modes.example.1  stats.mo:79:5
+passed Stats.modes.example.2  stats.mo:80:5
+passed Stats.modes.example.3  stats.mo:81:5
+passed Stats.modes.example.4  stats.mo:82:5
+passed Stats.modes.example.5  stats.mo:83:5
+19 passed, 0 failed, 0 stopped
