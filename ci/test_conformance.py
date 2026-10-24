@@ -64,9 +64,26 @@ class ConformanceCheck(unittest.TestCase):
         result = self.command()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("1 reference rules indexed; 0 have explicit gaps; 1 name other drivers; "
-                      "1 have cost claims checked for semantics only; 1 untestable", result.stdout)
+                      "1 have cost claims checked for semantics only; 0 have cost measured; "
+                      "1 untestable", result.stdout)
         result = self.command("--section", "3")
         self.assertIn("cost (semantics checked, cost not measured): tests/test_heap.c", result.stdout)
+
+    def test_measured_cost_is_counted_apart(self):
+        (self.root / "tests/test_lower.c").write_text(
+            "static void sort_work(void) {\n}\nint main(void) {\n    sort_work();\n}\n")
+        self.index.write_text(HEADER + "3/1\t\t\t\t\t\tmeasured:tests/test_lower.c:sort_work\n")
+        result = self.command()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("0 have cost claims checked for semantics only; 1 have cost measured",
+                      result.stdout)
+        result = self.command("--section", "3")
+        self.assertIn("  cost measured: tests/test_lower.c:sort_work\n", result.stdout)
+        self.assertNotIn("cost not measured", result.stdout)
+        self.index.write_text(HEADER + "3/1\t\t\t\t\t\tmeasured:tests/test_lower.c:sort_wrk\n")
+        self.rejected("3/1: no test sort_wrk in tests/test_lower.c")
+        self.index.write_text(HEADER + "3/1\t\t\t\t\t\tmeasured:tests/test_lower.c\n")
+        self.rejected("3/1: measured cost evidence must name a test")
 
     def test_renamed_or_missing_driver_test_fails(self):
         driver = self.root / "ci/check_x.py"

@@ -99,7 +99,7 @@ two rows in a section.
 | `-a` | instruction | `neg` at `int` | |
 | `a == b`, `a != b` | instruction | `eq` at `int`, and `not` for `!=` | |
 | `a < b`, `a <= b`, `a > b`, `a >= b` | instruction | `lt` and `le` at `int`; `>` and `>=` swap the operands | |
-| `compare(b)`, also `Int.compare(a, b)` | lowering | native Order lowering, as for every type above | no new primitive |
+| `compare(b)`, also `Int.compare(a, b)` | lowering | native Order lowering, as for every type with Order; qualified `T.compare` and `T.to_text` lower through the ability proof (D285) | no new primitive |
 | `abs` | primitive | `INT_ABS` | |
 | `min(b)` | primitive | `INT_MIN` | |
 | `max(b)` | primitive | `INT_MAX` | |

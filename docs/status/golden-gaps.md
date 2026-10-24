@@ -14,8 +14,10 @@ and Ordering, Entry and Map text now have golden programs in `ref-bigint`,
 `ref-capability-fakes` and `ref-abilities`. `ref-library-natives` also covers `List.to_set` and
 `Int.to_float`. Direct calls on a nullary case, such as `Equal.to_text` and
 `Less.compare(Greater)`, are in `lang-dot-calls-cases`, and a `case` written across several lines
-inside interpolation is in `txt-interpolation-case`. Their former unsupported entries must not be
-retained as language limitations.
+inside interpolation is in `txt-interpolation-case`. Qualified `T.to_text` and `T.compare`, as
+calls and as values, have `ref-qualified-abilities` (D285). Their former unsupported entries must
+not be retained as language limitations.
+
 
 ## Qualified `to_text` and `compare`
 

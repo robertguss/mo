@@ -1,0 +1,18 @@
+Less Greater Equal
+say "hi" 0.25 Equal
+["a", "b"] Less
+{"k": [1]} [2].to_set
+Some(4) Less
+Ok(12) Error("not a number: x")
+Less
+Greater Greater
+Point(x: 1, y: 2) Less
+Entry(name: "a", kind: File) Less
+Square(side: 2) Circle(radius: 1)
+Greater
+$5 Greater false
+$5 Square(side: 1)
+<[Less]>
+Greater Greater Square(side: 1) | Circle(radius: 2)
+["Less", "Greater"]
+Less $70 ["Some(4)", "None"] ["[1]", "[]"]

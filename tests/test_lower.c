@@ -1901,6 +1901,105 @@ static void test_source_library_specs(void *unused) {
     }
 }
 
+static MO_MUST_USE bool count_instruction(void *context) {
+    uint64_t *count = context;
+    MO_ASSERT(*count != UINT64_MAX);
+    (*count)++;
+    return true;
+}
+
+/* Instructions a fresh process executes for Main.<name>(arguments), which must return a List(Int)
+ * of n elements, ascending when order is 1 and descending when it is -1. */
+static uint64_t list_work(const struct mo_image *image, const char *name, const int64_t *arguments,
+                          uint32_t count, int64_t n, int order) {
+    const struct mo_bytecode *file = mo_image_bytecode(image);
+    uint32_t function = UINT32_MAX;
+    for (uint32_t j = 0; j < file->function_count; j++) {
+        const struct mo_bytecode_string *s = &file->strings[file->functions[j].name];
+        if (s->length == strlen(name) && memcmp(s->bytes, name, s->length) == 0)
+            function = j;
+    }
+    MO_ASSERT(function != UINT32_MAX && count <= 3);
+    struct mo_limits limits = mo_limits_default();
+    struct mo_process *process = mo_process_new(image, &limits);
+    MO_ASSERT(process != NULL);
+    struct mo_cell cells[3], result;
+    for (uint32_t i = 0; i < count; i++)
+        cells[i] = mo_cell_int(arguments[i]);
+    struct mo_defect defect;
+    uint64_t instructions = 0;
+    MO_ASSERT(mo_call_controlled(process, function, cells, count, count_instruction, &instructions,
+                                 &result, &defect) == MO_CONTROL_RETURNED);
+    CHECK(mo_list_size(result) == n);
+    for (uint32_t i = 1; i < mo_list_size(result); i++) {
+        struct mo_cell before, after;
+        MO_ASSERT(mo_list_get(result, i - 1, &before) && mo_list_get(result, i, &after));
+        int64_t step = mo_cell_get_int(after) - mo_cell_get_int(before);
+        CHECK(order * step >= 0);
+    }
+    mo_process_free(process);
+    return instructions;
+}
+
+/* Reference 13.3: sort, sort_by and sort_by_desc take n log n work. They are Mo code in
+ * lib/list.mo, so the VM's own instruction count measures them, without a clock. For each input
+ * shape the sort's work is sorted(...) minus input(...), at N and 4N elements. n log n work
+ * grows by 4 log(4N) / log(N), 5 at N = 256; quadratic work grows by 16. The bound allows a
+ * quarter more than n log n. Natives such as append run uncounted; 13.3's other rows cover them. */
+static void test_source_sort_work(void *unused) {
+    (void)unused;
+    enum { N = 256 };
+    struct mo_arena input, output;
+    struct mo_sources sources;
+    struct mo_diags diags;
+    mo_arena_init(&input, MO_LIMIT_LOWER_WORK);
+    mo_arena_init(&output, MO_LIMIT_LOWER_WORK);
+    MO_ASSERT(mo_sources_init(&sources) && mo_diags_init(&diags));
+    struct mo_module_set *set =
+        mo_load_program(&input, &sources, "tests/lower/sort-work/main.mo", "lib", &diags);
+    MO_ASSERT(set != NULL && !mo_diags_any(&diags));
+    struct mo_program *program = mo_check(&input, set, &diags);
+    MO_ASSERT(program != NULL && !mo_diags_any(&diags));
+    struct mo_core *core = mo_lower(&output, program, &sources, &diags);
+    MO_ASSERT(core != NULL && !mo_diags_any(&diags) && mo_core_check(core, &diags));
+    struct mo_buffer bytes;
+    mo_buffer_init(&bytes, MO_LIMIT_BYTECODE_SIZE);
+    MO_ASSERT(mo_compile(core, &bytes, &diags));
+    struct mo_load_error error;
+    struct mo_image *image = mo_load(bytes.bytes, bytes.length, &error);
+    MO_ASSERT(image != NULL);
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    static const char *const ways[] = {"sort", "sort_by", "sort_by_desc"};
+    static const char *const shapes[] = {"scrambled", "sorted", "reversed", "equal"};
+    for (int64_t way = 0; way < 3; way++)
+        for (int64_t shape = 0; shape < 4; shape++) {
+            uint64_t work[2];
+            for (int64_t size = 0; size < 2; size++) {
+                int64_t n = size == 0 ? N : 4 * N, arguments[] = {n, shape, way};
+                uint64_t sorting =
+                    list_work(image, "Main.sorted", arguments, 3, n, way == 2 ? -1 : 1);
+                uint64_t building = list_work(image, "Main.input", arguments, 2, n, 0);
+                MO_ASSERT(sorting > building);
+                work[size] = sorting - building;
+            }
+            /* work[1] / work[0] <= 1.25 * 4 * log2(4N) / log2(N), with N = 256: 6.25. */
+            bool bounded = work[1] * 4 <= work[0] * 25;
+            CHECK(bounded);
+            if (!bounded)
+                (void)fprintf(stderr, "%s on %s input: %llu instructions at %d, %llu at %d\n",
+                              ways[way], shapes[shape], (unsigned long long)work[0], N,
+                              (unsigned long long)work[1], 4 * N);
+        }
+    mo_image_free(image);
+    mo_buffer_free(&bytes);
+    mo_diags_free(&diags);
+    mo_sources_free(&sources);
+    mo_arena_free(&output);
+    mo_arena_free(&input);
+}
+
 /* FileError's text form is lib/file-error.mo's to_text; without the library, lowering refuses it
  * rather than derive constructor syntax. */
 static void test_source_file_error_text(void *unused) {
@@ -2128,6 +2227,7 @@ int main(int argc, char **argv) {
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_specs, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_constants, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_library_specs, NULL) == 0);
+    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_sort_work, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_file_error_text, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_captures, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source, NULL) == 0);

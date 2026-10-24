@@ -170,7 +170,6 @@ static const struct native_text {
 #define HOSTOP(id, module, name, signature, params, bugs, spec_only)                               \
     {module, name, module "." name, signature, spec_only},
 #include "base/hostops.def"
-    {"Int", "compare", "Int.compare", "fn(Int, Int) : Ordering", false},
 };
 
 static const struct mo_symbol option_owner = {.name = "Option", .module = UINT32_MAX};
@@ -408,6 +407,25 @@ static MO_MUST_USE int compare_name(const struct mo_syntax *node, const char *na
     return order != 0 ? order : length < other ? -1 : length > other ? 1 : 0;
 }
 
+const char *mo_builtin_type(const struct mo_syntax *name, uint32_t *arity) {
+    static const struct {
+        const char *name;
+        uint32_t arity;
+    } natives[] = {
+        {"Bool", 0},     {"Int", 0},       {"BigInt", 0}, {"Byte", 0},      {"Decimal", 0},
+        {"Float", 0},    {"Text", 0},      {"Char", 0},   {"Bytes", 0},     {"Unit", 0},
+        {"List", 1},     {"Map", 2},       {"Set", 1},    {"Range", 0},     {"Time", 0},
+        {"Duration", 0}, {"Option", 1},    {"Result", 2}, {"Ordering", 0},  {"Args", 0},
+        {"Env", 0},      {"Console", 0},   {"Files", 0},  {"ReadFiles", 0}, {"Clock", 0},
+        {"Random", 0},   {"FileError", 0}, {"Entry", 0},  {"EntryKind", 0}};
+    for (size_t i = 0; i < sizeof(natives) / sizeof(natives[0]); i++)
+        if (compare_name(name, natives[i].name) == 0) {
+            *arity = natives[i].arity;
+            return natives[i].name;
+        }
+    return NULL;
+}
+
 static MO_MUST_USE const struct mo_symbol *lookup(const struct mo_module_scope *scope,
                                                   const struct mo_syntax *name) {
     return mo_find_symbol(scope, name->text, name->span.end - name->span.start);
@@ -582,22 +600,7 @@ static MO_MUST_USE const struct mo_source_type *resolve_type(struct preparation 
         const struct mo_syntax *parameters = symbol->declaration->children[1];
         arity = parameters == NULL ? 0 : parameters->count;
     } else if (symbol == NULL && name->kind == MO_S_CAPNAME) {
-        static const struct {
-            const char *name;
-            uint32_t arity;
-        } natives[] = {
-            {"Bool", 0},     {"Int", 0},       {"BigInt", 0}, {"Byte", 0},      {"Decimal", 0},
-            {"Float", 0},    {"Text", 0},      {"Char", 0},   {"Bytes", 0},     {"Unit", 0},
-            {"List", 1},     {"Map", 2},       {"Set", 1},    {"Range", 0},     {"Time", 0},
-            {"Duration", 0}, {"Option", 1},    {"Result", 2}, {"Ordering", 0},  {"Args", 0},
-            {"Env", 0},      {"Console", 0},   {"Files", 0},  {"ReadFiles", 0}, {"Clock", 0},
-            {"Random", 0},   {"FileError", 0}, {"Entry", 0},  {"EntryKind", 0}};
-        for (size_t i = 0; i < sizeof(natives) / sizeof(natives[0]); i++)
-            if (compare_name(name, natives[i].name) == 0) {
-                type.name = natives[i].name;
-                arity = natives[i].arity;
-                break;
-            }
+        type.name = mo_builtin_type(name, &arity);
         if (type.name == NULL && name->span.end - name->span.start == 1 &&
             p->function->declaration->kind == MO_S_FN) {
             if (count != 0) {
