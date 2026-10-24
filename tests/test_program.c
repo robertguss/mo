@@ -736,6 +736,14 @@ static void native_graph(void) {
         CHECK(trim && count && abs && min);
     }
     free_fixture(&f);
+    init(&f, "module Main\n"
+             "power = Int.pow\nroot = Float.sqrt\ndecode = Bytes.decode_utf8\n"
+             "fn main() : Int\n"
+             "if power(2, 3) == 8 and root(9.0) == 3.0 and "
+             "decode(\"λ\".bytes) == Some(\"λ\") and Bytes.get(\"a\".bytes, 0) == 97.to_byte\n"
+             "  Int.checked_sub(7, 3) or 0\nelse\n0\nend\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    free_fixture(&f);
     init_with_library(&f, "module Main\nfn main() : Int\nset = Set.empty.add(4)\n"
                           "counts = {\"a\": 1}.update(\"a\", 0, fn(n) n + 1 end)\n"
                           "all_pos = [1, 2, 3].all?(fn(x) x > 0 end)\n"

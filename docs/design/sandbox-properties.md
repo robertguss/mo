@@ -127,6 +127,10 @@ never reads a register that is undefined or moved.*
   remains in the heap after a call that returns; `fuzz_vm.c` does the same for
   generated valid bytecode. The VM asserts the states as it runs (`read`, `consume`, `write`,
   `clean` in `execute.c`). The unit tests also run under ASan and UBSan.
+- Evidence for count updates: `cbmc/refcount.c` proves duplication and drop's enqueue transition
+  on every nonzero 32-bit count, including immortal saturation and enqueueing exactly on the
+  transition from one to zero. It covers immediate, reference and four choice payload shapes.
+  It does not prove the destructor's child walk, allocation, release or reuse.
 - Not covered: `graph`, `cases` and `ownership`, the passes that drive `step`, are not
   CBMC-proved (their loops exceed the memory CBMC has); they are tested and fuzzed. The claim
   holds "given a correct VM, primitives and host" (`bytecode.md` section 9): a bug in the C
@@ -258,7 +262,7 @@ bug could break, so they are the parts the other evidence aims at:
 | --- | --- | --- |
 | Loader and verifier | `src/bytecode`, C | CBMC (reader, `instruction`, `step`, `lookup`; `instruction` and `step` not re-run after MO-58's new assertions), fuzzing, tests, sanitizers |
 | VM | `src/vm`, C | Pair assertions, fuzzing (`fuzz_vm.c`), differential test against Lean, sanitizers. **No CBMC proof of the interpreter loop.** |
-| Heap and arena | `src/heap`, `src/base/arena.c`, C | CBMC (arena), `fuzz_heap.c`, sanitizers |
+| Heap and arena | `src/heap`, `src/base/arena.c`, C | CBMC (arena, local reference count updates), `fuzz_heap.c`, sanitizers |
 | Primitives | `src/prim`, C | CBMC (arithmetic and UTF-8), `fuzz_prim.c`, oracles in `tests/test_prim.c` |
 | Host | `src/host`, C | CBMC (`normalize` of `mo_host_normalize`), `fuzz_host.c`, `fuzz_host_real.c`, resolver tests |
 | Standard library | `lib/`, Mo | memory safe by construction (condition 4) |
@@ -270,7 +274,8 @@ These are not guaranteed today.
 1. **No termination or time bound by default.** See P9.
 2. **No proof of the VM loop, the verifier's drivers, the heap, or path resolution after
    normalize.** CBMC covers the reader, the arena, the verifier's per-instruction functions, the
-   arithmetic and UTF-8 primitives, and lexical path containment (`mo_host_normalize`). The rest
+   arithmetic and UTF-8 primitives, local reference count updates, and lexical path containment
+   (`mo_host_normalize`). The heap's destructor walk and allocation remain unproved. The rest
    has tests, fuzzing, sanitizers and (for the VM) the Lean differential test.
 3. **The slow checks do not run on their own.** Sanitizers, fuzzing, Lean and CBMC run only when
    someone runs them (`AGENTS.md`, "Checks and merging"); no hosted CI runs any check. A

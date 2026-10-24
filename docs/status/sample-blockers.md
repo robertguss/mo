@@ -27,6 +27,10 @@ MO-91 part 3 (hidden types built through their module) clears the last four. `mo
 `open`, `deposit`, `withdraw` and `transfer`), and every observation passes: account 16,
 job-queue 13, kv 18 and rate-limit 6. All 12 samples now pass `mo check` and plain `mo test`.
 
+MO-111 lowers the remaining reference section 14 `Int`, `Float` and `Bytes` functions.
+These were library gaps, not blockers in the twelve samples, so the sample totals do not change.
+The `int-natives`, `float-natives` and `bytes-natives` lower-source fixtures cover them.
+
 MO-88 checks a generic capture's capability membership where the generic
 function is used (E0091 only when the type argument holds a capability):
 - `examples/inventory.mo` passes `mo check`, `mo run`, and its 8 examples and

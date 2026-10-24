@@ -175,7 +175,7 @@ if have python3; then
 				python3 ci/check_golden.py "$driver"
 		done
 		for driver in "${drivers[@]}"; do
-			later "Every error code has a test of its exact message ($driver)" \
+			later "Every error code has a message test or reachability explanation ($driver)" \
 				python3 ci/check_errors.py "$driver"
 		done
 		later "The session-recording harness: a recorded session's log reads to tally's example table" \
