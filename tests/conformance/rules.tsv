@@ -1,10 +1,10 @@
 rule	accepts	refuses	stops	gap
 1/1	ref-source	e0008		
 1/2	ref-shout	e0091		
-1/3	ref-source			Formatter layout is checked by test_format --fixed-points and ci/check_cli.py; this program checks indentation-independent execution only.
+1/3	ref-source			Tracked-source formatting is checked by ci/check_format.py; exact layout expectations remain in ci/check_cli.py, not run goldens.
 2.1/1	mod-chain	e0034,e0035		Acronym and digit path boundaries are checker unit cases, not yet standalone golden programs.
 2.1/2	ref-source	e0001,e0002		
-2.2/1	ref-source	e0028		Comment alignment is checked by the formatter fixtures in ci/check_cli.py, not by a run golden.
+2.2/1	ref-source	e0028		Comment alignment expectations are in ci/check_cli.py; ci/check_format.py checks every tracked program, but a run golden cannot assert formatted source.
 2.3/1	ref-source	e0003		
 2.3/2	lang-enum-shapes			CapCase rejection needs a separate malformed-type program; e0003 currently checks a malformed value name only.
 2.3/3	lang-generic-functions	e0066		
@@ -13,7 +13,7 @@ rule	accepts	refuses	stops	gap
 2.3/6	ref-source	e0003		
 2.3/7	ref-source			The reserved-word list needs a rejection program for each word in name position.
 2.4/1	ref-source	e0006		
-2.4/2				Formatter output, Unicode width, blank lines and trailing commas are covered by ci/check_cli.py and test_format --fixed-points, not execution goldens.
+2.4/2				Exact formatter output, Unicode width and blank lines remain CLI fixtures; ci/check_format.py now checks fixed points and preserved behavior for every tracked Mo file.
 3/1	ref-evaluation			
 3/2	ref-library-natives,num-bigint			
 3/3	num-decimal-exact,num-float-arithmetic			
@@ -33,7 +33,7 @@ rule	accepts	refuses	stops	gap
 3.2/1	num-int-literals	e0004,e0060		
 3.2/2	num-int-division,ref-library-natives	e0053		
 3.2/3	num-int-checked,ref-library-natives		fail-bug-overflow,fail-bug-divide-by-zero	
-3.2/4	num-bigint,ref-library-natives	e0076		BigInt.to_int is not lowered; see docs/status/golden-gaps.md.
+3.2/4	num-bigint,ref-library-natives,ref-bigint	e0076		
 3.3/1	num-decimal-exact,num-decimal-limits,num-decimal-rounding			Decimal overflow and division by zero lack standalone stop goldens; Int stops do not prove Decimal stops.
 3.3/2	num-float-arithmetic,num-float-convert,num-decimal-int	e0060		
 3.4/1	txt-escapes,txt-interpolation	e0005		A multiline case inside interpolation is rejected despite the any-expression rule; see docs/status/golden-gaps.md.
@@ -57,7 +57,7 @@ rule	accepts	refuses	stops	gap
 5.1/2	ref-functions	e0042,e0055		
 5.2/1	ref-functions	e0012,e0021,e0055,e0077		
 5.3/1	lang-recursion-tail			
-5.4/1	lang-dot-calls			No standalone diagnostic pins x.f() when f takes only the receiver.
+5.4/1	lang-dot-calls,ref-abilities			No standalone diagnostic pins x.f() when f takes only the receiver. Direct nullary-case receivers such as Equal.to_text still report E1103; bound values work.
 5.4/2	ref-functions			Hidden-field fallback to the same-named function needs a cross-module golden; visible fields and function-valued fields are covered.
 5.5/1	lang-generic-functions	e0081		
 5.5/2	lang-enum-tree	e0083		
@@ -70,7 +70,7 @@ rule	accepts	refuses	stops	gap
 6.1/2	lang-bindings	e0051		
 6.1/3	ref-source,lang-bindings	e0052,e0056,e0093		
 6.2/1	lang-records-update	e0057		
-6.2/2	lang-records-update,col-shared-values	e0026,e0057		Formatter compound-assignment rewriting is checked by ci/check_cli.py; memory reuse needs allocation instrumentation.
+6.2/2	lang-records-update,col-shared-values	e0026,e0057		Formatter compound-assignment expectations are in ci/check_cli.py and tracked-source preservation is in ci/check_format.py; memory reuse still needs allocation instrumentation.
 6.2/3	lang-dot-calls,col-shared-values			
 7.1/1	lang-is-and-if	e0022		
 7.1/2	lang-is-and-if	e0022		
@@ -113,10 +113,10 @@ rule	accepts	refuses	stops	gap
 9.2/16	col-range-loops,lang-abilities-text-forms,ref-abilities			Range Order rejection lacks an exact-error program.
 9.2/17	col-tuples,col-tuple-keys,lang-abilities-order			
 9.2/18	lang-abilities-order,col-list-basics,ref-abilities			
-9.2/19	col-map-equality,col-set-basics,ref-abilities			Derived Map text is not lowered; Map/Set Order rejection needs exact-error programs.
-9.2/20	lang-abilities-order,num-float-arithmetic,ref-abilities			Ordering.compare and Ordering interpolation remain unsupported; see docs/status/golden-gaps.md.
-9.2/21	lang-abilities-text-forms,num-float-arithmetic,ref-time,ref-abilities			Derived Map text is not lowered; exact Float exponent thresholds still need dedicated programs.
-9.2/22	lang-abilities-order,lang-abilities-custom-order,ref-abilities			Ordering.compare remains unsupported; see docs/status/golden-gaps.md.
+9.2/19	col-map-equality,col-set-basics,ref-abilities			Map/Set Order rejection still needs exact-error programs; derived Map text now has a golden.
+9.2/20	lang-abilities-order,num-float-arithmetic,ref-abilities			
+9.2/21	lang-abilities-text-forms,num-float-arithmetic,ref-time,ref-abilities			
+9.2/22	lang-abilities-order,lang-abilities-custom-order,ref-abilities			Direct nullary-case receivers such as Less.compare(Greater) still report E1103; comparison through bound Ordering values works. See docs/status/golden-gaps.md.
 9.2/23	lang-abilities-custom-order,lang-abilities-custom-text	e0082		Customization across module boundaries with hidden insides needs a dedicated golden.
 9.2/24	lang-generic-functions	e0081		
 10.1/1	mod-brace-import,mod-qualified	e0008,e0027,e0039		
@@ -128,12 +128,12 @@ rule	accepts	refuses	stops	gap
 10.5/1	mod-type-bare-after-use,lang-bindings,cap-files-walk	e0045		
 11.1/1	cap-record-of-capabilities,tst-fakes	e0091		
 11.1/2	cap-args-list			
-11.1/3				Env.get is not lowered; see docs/status/golden-gaps.md.
+11.1/3	ref-capability-fakes			
 11.1/4	cap-console-streams,cap-console-stdin			
 11.1/5	cap-files-fake,cap-files-read			
 11.1/6	cap-files-read			ReadFiles write-member refusal needs a dedicated diagnostic program.
 11.1/7	cap-clock-fixed			Real clock is nondeterministic; only the fixed fake is asserted here.
-11.1/8				Random.int is not lowered; see docs/status/golden-gaps.md.
+11.1/8	ref-capability-fakes			
 11.2/1	cap-files-read,cap-args-list	e0079		
 11.2/2	ref-shout	fail-main-exit-status,fail-main-result-error	fail-bug-exit-range	
 11.3/1	cap-files-fake			Empty-authority within escapes need a golden; lexical containment and real resolution have separate CBMC proofs.
@@ -153,7 +153,7 @@ rule	accepts	refuses	stops	gap
 12.2/7	sample-job-queue-tests			
 12.2/8	mod-hidden-type,fail-result-declared			No precondition keyword exists; a spelling-specific refusal fixture is not present.
 12.3/1	tst-private-names,tst-assert-is-binding	tst-failing-assert		
-12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed			Env.get and Random.int are not lowered, so their fake behavior has no runnable golden; fake access outside tests still needs an exact-error program.
+12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed,ref-capability-fakes			Fake access outside tests still needs an exact-error program; Env and Random fake behavior now has a golden.
 12.4/2	cap-console-fake,cap-files-fake			Fake observation outside tests needs an exact-error program.
 13.1/1	ref-evaluation			
 13.2/1	ref-shout		fail-bug-overflow,fail-bug-divide-by-zero,fail-bug-stop,fail-bug-map-duplicate,fail-bug-take-negative	Duration/Decimal overflow, time range, invalid fake path and file-folder conflicts still need stop goldens; resource-limit reports are in ci/check_cli.py.
@@ -170,9 +170,9 @@ rule	accepts	refuses	stops	gap
 13.4/2				Selection and full names are checked by promise_selection in ci/check_cli.py with generated programs; the golden runner has no command-selection fixture format.
 13.4/3	lang-recursion-tail			Stack, depth and heap switches/defaults are checked by ci/check_cli.py, not golden programs with resource arguments.
 13.4/4				JSON fields/version/unknown-field compatibility need the structured assertions in ci/check_cli.py rather than a run/test text golden.
-14/1	lang-dot-calls,col-range-loops,ref-abilities		fail-bug-take-negative	Ordering.compare remains unsupported; not every Order type has a standalone comparison program.
+14/1	lang-dot-calls,col-range-loops,ref-abilities		fail-bug-take-negative	Built-in Order families now have comparison programs; direct nullary-case receivers such as Less.compare(Greater) still report E1103.
 14/2	num-int-functions,num-int-checked,ref-library-natives,ref-time			Negative pow and Duration-construction overflow need stop goldens.
-14/3	num-bigint,ref-library-natives			BigInt abs/min/to_int are not lowered; max/pow/floor_div/floor_mod need goldens separate from the native lower-source fixture.
+14/3	num-bigint,ref-library-natives,ref-bigint			
 14/4	num-decimal-rounding,num-decimal-int,num-float-convert			Out-of-range places and Decimal-to-Int range boundaries still need dedicated programs.
 14/5	ref-library-natives			Float-to-Decimal range and 18-place ties-even boundaries need dedicated goldens.
 14/6	txt-counts,txt-lines-words,txt-split-join,txt-trim-pad,txt-search,txt-replace-repeat,txt-parse-numbers,ref-library-natives			Empty split/replace and negative repeat need stop goldens; exhaustive parsing boundaries remain covered only by primitive tests.
@@ -185,14 +185,14 @@ rule	accepts	refuses	stops	gap
 14/13	ref-evaluation,fail-option-result-map			
 14/14	fail-option-result-map			
 14/15	ref-time			
-14/16	cap-args-list			Env.get is not lowered.
+14/16	cap-args-list,ref-capability-fakes			
 14/17	cap-console-streams,cap-console-line-endings,cap-console-stdin,cap-console-fake			Invalid-UTF-8 input replacement grouping needs a binary stdin golden; fake observation outside tests needs an exact-error program.
 14/18	cap-files-fake,cap-files-fake-folders,cap-files-read,cap-files-walk			Real symlink confinement/link removal, too-many-links, invalid fake paths and exact folder/file error variants need black-box programs; host unit/CBMC tests are not counted as golden coverage.
 14/19	fail-option-result-map,fail-result-declared	fail-main-result-error		NotText and NotAllowed exact text forms need a dedicated program.
-14/20	cap-clock-fixed,cap-args-list			Random.int and Env.get are not lowered; real-clock out-of-range behavior needs host injection rather than a deterministic program.
+14/20	cap-clock-fixed,cap-args-list,ref-capability-fakes			Real-clock out-of-range behavior still needs host injection rather than a deterministic program; Env and Random fakes now have a golden.
 14/21	lib-json-query,lib-json-errors			
 14/22	lib-json-query,lib-json-errors			JsonNumber lexical equality and all numeric-conversion boundaries need a dedicated program.
-14/23	lib-unicode16			Full Unicode 16 corpus runs in check_unicode16.py; a golden cannot establish the future Unicode17 versioning promise.
+14/23	lib-unicode16			letter?/digit? classification is now exercised by lib-unicode16; the full Unicode 16 corpus remains in check_unicode16.py, and a golden cannot establish the future Unicode17 versioning promise.
 15/1				Roadmap only; processes, upgrades, packages and user-defined abilities are deliberately outside v0.1.
 A/1		e0412		No accepting error report exists; e0412 pins the complete rejection and its fix.
 A/2		e0412		The illustrated terminal rendering is explanatory; the existing exact e0412 golden pins the current renderer, not the sample's shop/orders.mo path.

@@ -7,11 +7,12 @@ level in the PR that fixes the recurrence.
 
 Last run: 2026-10-18, PRs #80 to #121 and the project threads. GitHub held no review comments for
 this range, so the evidence is fix-up commits inside PRs, the Review sections of PR bodies, red
-`check` runs, and corrections in the project threads. Class 1 bumped 2026-10-24 for #178.
+`check` runs, and corrections in the project threads. Class 1 bumped 2026-10-24 for #178 and
+#188's gap-review follow-up.
 
 | # | Class | Evidence | Enforced by | State |
 | --- | --- | --- | --- | --- |
-| 1 | Docs that describe a changed behaviour left stale: `sample-blockers.md`, `architecture.md`, `bytecode.md`, `agent-guide.md`, comments, usage strings | 18 times: #81, #85, #94, #95, #101, #105, #107, #110, #111, #113 (2), #115 (3), #116, #119, #139 (`AGENTS.md`), #178 (`examples/README.md`, tools hold-back, CBMC inventories, `check.h`) | `guide_claims` in `ci/check_cli.py` for the agent guide (#115); `review-change/rules.md` for the rest | prose only, except the guide |
+| 1 | Docs that describe a changed behaviour left stale: `sample-blockers.md`, `architecture.md`, `bytecode.md`, `agent-guide.md`, comments, usage strings | 19 times: #81, #85, #94, #95, #101, #105, #107, #110, #111, #113 (2), #115 (3), #116, #119, #139 (`AGENTS.md`), #178 (`examples/README.md`, tools hold-back, CBMC inventories, `check.h`), #188 (unsupported gap descriptions after main advanced) | `guide_claims` in `ci/check_cli.py` for the agent guide (#115); `ci/check_conformance.py` rejects unreviewed implementation changes for the gap map (#188); `review-change/rules.md` for the rest | check-enforced review for the guide and gap map; prose only elsewhere |
 | 2 | Library functions built as native signatures with hand-built Core where `docs/design/library.md` says they are written in Mo in `lib/` (`List.map`, `Map.update`, `List.sort_by_desc`, `List.count`, `Option.or_fail`) | #86, #87, #88, #97; moved into `lib/` by MO-46 part 2 (#121) | nothing: `make library-map` covers only `prims.def` and `hostops.def` | open: nothing stops a new one |
 | 3 | Lean-dependent drivers skipped locally (no elan in cloud sessions), so hosted CI found the failures, or the PR merged without them | #97 (merged without Lean), #116 (2 red runs), #121 (2 red runs, body said drivers passed); nearly every PR body since #100 says Lean was skipped | AGENTS.md "a skip is not a pass" | prose only (hosted CI removed 22 Oct); cloud sessions don't run `.agents/setup` |
 | 4 | PRs green alone merged onto a main that had moved, turning main red | #118 + #119 + #120: `tests/errors` pins E1003 at `main.mo:4097`, `lib/list.mo` takes one source slot, main red from f4e7f03 until #121; conflicts on the lowering table, `ci/check_cli.py` and `sample-blockers.md` in every sample PR after #106 | nothing (hosted CI removed 22 Oct) | open |

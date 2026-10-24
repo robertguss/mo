@@ -1,4 +1,8 @@
-# Reference conformance index
+# Reference rule map
+
+This is a map with a coverage guard, not conformance. It does not complete the
+Phase 2 conformance item. Entries describe evidence and remaining gaps, not a
+count of rules the implementation satisfies.
 
 `rules.tsv` maps the Language Reference v0.1 to existing executable programs.
 `reference.tsv` holds the corresponding reference text. Both files use the same
@@ -51,9 +55,10 @@ python3 ci/test_conformance.py
 bash ci/check.sh gcc drivers
 ```
 
-The conformance check validates coverage metadata, not language execution. It
+The map check validates coverage metadata, not language execution. It
 fails on an unindexed block, changed reference text, duplicate or unknown keys,
-missing source or expectation files, and a program in the wrong verdict column.
+missing source or expectation files, a program in the wrong verdict column,
+and compiler or library changes that have not had a gap review.
 Each block needs an accepting program or a written gap. A refusal-only block
 needs an explanation of why it has no accepting program.
 
@@ -81,6 +86,46 @@ python3 ci/check_conformance.py
 
 This command does not write programs, expectations, mappings, or exemptions.
 An added block still fails until it has a `rules.tsv` entry.
+
+Compiler and library changes can make a gap stale even when the reference has
+not changed. `implementation.sha256` records the contents and paths of C,
+header, definition and Mo files under `src/` and `lib/` at the last gap review.
+Any change there makes the map check fail. Recheck every gap against the new
+implementation, add programs with hand-written expectations for supported
+forms, and remove only the claims those programs establish. Then record the
+reviewed implementation:
+
+```sh
+python3 ci/check_conformance.py --implementation > tests/conformance/implementation.sha256
+python3 ci/check_conformance.py
+```
+
+The fingerprint forces a review; it cannot judge whether a reason is true.
+Do not refresh it merely to make the check pass.
+
+## Review against main on 24 October 2026
+
+All 91 original gap entries were reviewed against main `4a40389`. The review
+checked their linked programs, error fixtures and owning drivers, including
+the new tracked-source formatter check. Seven entries now have complete
+program mappings where they previously had gaps: `3.2/4`, `9.2/20`, `9.2/21`,
+`11.1/3`, `11.1/8`, `14/3` and `14/16`. There are 84 remaining gap entries.
+
+`ref-bigint` covers the restored native functions and conversion boundaries.
+`ref-capability-fakes` covers Env snapshots and seeded Random streams.
+`ref-abilities` now covers qualified Int comparison, comparisons across the
+built-in Order families, Ordering/Entry/Map text and both Float exponent
+thresholds. The existing `lib-unicode16` golden covers letter/digit
+classification added on main. Formatter descriptions now name
+`ci/check_format.py`; its preservation checks do not replace hand-written
+layout expectations.
+
+The remaining entries name absent standalone programs, partial matrices,
+checks owned by other drivers, costs requiring instrumentation, nondeterministic
+host failures, future-version claims, or confirmed compiler limitations.
+Multiline case interpolation and direct nullary-case receivers such as
+`Equal.to_text` still fail; bound Ordering values work. The exact failures are
+not conformance expectations. See `docs/status/golden-gaps.md`.
 
 ## Initial mapping
 

@@ -14,6 +14,7 @@ fn main(console: Console)
   console.print("#{low.checked_sub(1)} #{7.checked_sub(3)} #{high.checked_mul(2)} #{(-7).checked_mul(3)}")
   console.print("#{255.to_byte} #{256.to_byte} #{(-1).to_byte} #{(65.to_byte or stop "fits").to_int}")
   console.print("#{high.to_big + 1}")
+  console.print("#{3.to_float} #{[2, 1, 2].to_set}")
   console.print(numbers(-2.5))
   nan = 0.0.to_float / 0.0
   infinity = 1.0.to_float / 0.0

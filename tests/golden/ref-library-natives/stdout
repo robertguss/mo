@@ -5,6 +5,7 @@
 None Some(4) None Some(-21)
 Some(255) None None 65
 9223372036854775808
+3 [2, 1].to_set
 2.5 -3 -2 -3 3
 true false true false
 Some(0.1) None None
