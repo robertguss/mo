@@ -1350,6 +1350,23 @@ static MO_MUST_USE bool case_receiver(struct inference *p, const struct mo_synta
     return data != NULL && data->count == 0;
 }
 
+/* Whether T.f, where T names both a type and its only value (Unit), is the
+ * qualified form (D297): called with the receiver plus f's own arguments, or
+ * compare without a call, which the dot form can't be. args is NULL for no call. */
+static MO_MUST_USE bool type_reading(const struct mo_syntax *prefix, const struct mo_syntax *name,
+                                     const struct mo_syntax *call) {
+    uint32_t arity = 0;
+    if (mo_builtin_type(prefix, &arity) == NULL)
+        return false;
+    bool compare = compare_text(name, "compare") == 0;
+    if (!compare && compare_text(name, "to_text") != 0)
+        return false;
+    if (call == NULL)
+        return compare;
+    const struct mo_syntax *args = call->children[0];
+    return (args == NULL ? 0u : args->count) == (compare ? 2u : 1u);
+}
+
 static MO_MUST_USE bool missing_field(struct inference *p, struct mo_span span, const uint8_t *name,
                                       size_t length, const struct mo_syntax *declaration) {
     char *message = allocate(p, 256, 1, 1);
@@ -3111,7 +3128,9 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     case MO_S_QUALIFIED:
         return identifier(p, node, NULL);
     case MO_S_FIELD_ACCESS: {
-        if (node->children[0]->kind == MO_S_CAPNAME && !case_receiver(p, node->children[0]))
+        if (node->children[0]->kind == MO_S_CAPNAME &&
+            (!case_receiver(p, node->children[0]) ||
+             type_reading(node->children[0], node->children[1], NULL)))
             return identifier(p, node->children[1], node->children[0]);
         bool called;
         return field_value(p, infer(p, node->children[0], NULL), node->children[1], node, NULL,
@@ -3363,7 +3382,11 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         bool qualified = node->children[0]->kind == MO_S_CAPNAME &&
                          (node->children[1]->kind == MO_S_QUALIFIED ||
                           (node->children[1]->kind == MO_S_FIELD_ACCESS &&
-                           !case_receiver(p, node->children[0])));
+                           (!case_receiver(p, node->children[0]) ||
+                            type_reading(node->children[0], node->children[1]->children[0],
+                                         node->count > 2 && node->children[2]->kind == MO_S_CALL
+                                             ? node->children[2]
+                                             : NULL))));
         uint32_t start = qualified ? 2u : 1u;
         const struct mo_syntax *name =
             qualified ? node->children[1]->children[0] : node->children[0];

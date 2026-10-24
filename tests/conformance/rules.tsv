@@ -59,7 +59,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 5.3/1	lang-recursion-tail			
 5.4/1	lang-dot-calls,lang-dot-calls-cases,ref-abilities,ref-case-receivers	e0095,e0095-deferred		
 5.4/2	lang-dot-calls,ref-functions,mod-hidden-customized			
-5.4/3	ref-qualified-abilities	e0077-module-ability		
+5.4/3	ref-qualified-abilities,ref-unit-qualified	e0077-module-ability		
 5.5/1	lang-generic-functions	e0081		
 5.5/2	lang-enum-tree	e0083		
 5.6/1	lang-closures,lang-generic-functions			
