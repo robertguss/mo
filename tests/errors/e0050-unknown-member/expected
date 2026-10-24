@@ -1,0 +1,7 @@
+error E0050: the module or type has no function with this name  tests/errors/e0050-unknown-member/main.mo:9:23
+
+  9 |   console.print(Shape.bogus(Circle(radius: 1)))
+    |                       ^^^^^ no function of this name
+
+T.f names a function in the module of T, or one T has through its abilities (reference 5.4, 10.3).
+

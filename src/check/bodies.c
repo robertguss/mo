@@ -252,6 +252,8 @@ struct dispatch {
     bool solved;
 };
 
+static const char unknown_member[] = "the module or type has no function with this name";
+
 static MO_MUST_USE bool problem(struct inference *p, uint16_t code, struct mo_span span,
                                 const char *message, const char *reason,
                                 const struct mo_syntax *previous) {
@@ -262,7 +264,8 @@ static MO_MUST_USE bool problem(struct inference *p, uint16_t code, struct mo_sp
     if (!p->fatal && p->error.code != 0 && p->error.primary.span.start <= span.start)
         return false;
     const char *label =
-        code == MO_CODE_NAME_UNKNOWN    ? "not visible in this block"
+        code == MO_CODE_NAME_UNKNOWN
+            ? (message == unknown_member ? "no function of this name" : "not visible in this block")
         : code == MO_CODE_BIND_REPEATED ? "this name already has a meaning"
         : code == MO_CODE_UNUSED_NAME   ? "never read"
         : code == MO_CODE_TYPE_MISMATCH || code == MO_CODE_CONDITION_TYPE ||
@@ -1507,7 +1510,13 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
                     return native_identifier(p, native);
             }
         }
-        if (prefix != NULL || node->kind == MO_S_CAPNAME || node->kind == MO_S_QUALIFIED) {
+        if (prefix != NULL) {
+            bool reported = problem(p, MO_CODE_NAME_UNKNOWN, node->span, unknown_member,
+                                    "T.f names a function in the module of T, or one T has "
+                                    "through its abilities (reference 5.4, 10.3).",
+                                    NULL);
+            (void)reported;
+        } else if (node->kind == MO_S_CAPNAME || node->kind == MO_S_QUALIFIED) {
             bool reported = unfinished(p);
             (void)reported;
         } else {
