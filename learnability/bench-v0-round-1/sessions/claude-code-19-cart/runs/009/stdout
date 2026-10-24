@@ -1,0 +1,6 @@
+passed Cart.parse_code.example.1  cart.mo:43:5
+passed Cart.parse_code.example.2  cart.mo:44:5
+passed Cart.apply_code.example.1  cart.mo:58:5
+passed Cart.add.example.1  cart.mo:71:5
+passed Cart.receipt.example.1  cart.mo:129:5
+5 passed, 0 failed, 0 stopped

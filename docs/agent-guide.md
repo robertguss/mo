@@ -12,7 +12,7 @@ This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guid
 
 `mo emit FILE -o OUT` checks the program as `mo check` does, then writes its bytecode to `OUT`. `-o` is required, and `OUT` is never a source file of the program. A library module with no `main` is E0079, as for `mo run`, and a file that cannot be written is E1404. This build has no command that runs a bytecode file; run the source with `mo run`.
 
-A few forms the reference requires are still unfinished. `mo check` reports E1103 for a form the checker has not implemented, with a headline that says so, such as "this body rule is not implemented by the staged checker". It reports E1150 for a form it checks but cannot compile yet, such as `env.get`. The headline is "this native call is not lowered yet". E1103 and E1150 mean this toolchain has not implemented that form. `mo run` and `mo test` report the same code for the same form.
+A few forms the reference requires are still unfinished. `mo check` reports E1103 for a form the checker has not implemented, with a headline that says so, such as "this body rule is not implemented by the staged checker". It reports E1150 for a form it checks but cannot compile yet, such as a constant's function value that reads a later constant. The headline is "this constant's deferred function needs globals not yet initialized". E1103 and E1150 mean this toolchain has not implemented that form. `mo run` and `mo test` report the same code for the same form.
 
 If the reference offers another way to write the same behaviour from forms that compile, use that instead. Keep the unfinished form only when the reference requires it and offers no other way to write the same behaviour. For example, on a build where `List.sum` gives E1150, sum a `List(Int)` with `xs.reduce(0, fn(total, x) total + x end)`.
 
@@ -20,11 +20,19 @@ Every `Int`, `Float` and `Bytes` function listed in reference section 14 compile
 
 `Byte.to_int` and `List.sum` also compile and run through dot calls, module calls and function values. `sum` supports `Int`, `BigInt`, `Decimal` and `Float`, adds from the left, and returns the type's zero for an empty list. Integer and decimal overflow stop the program, as with `+`.
 
+Every `BigInt` function in reference section 14 compiles and runs, including `abs`, `min`, `max`, `pow`, `floor_div`, `floor_mod` and `to_int`. `Random.int` and the fake constructor `Random.seeded` also compile, including as function values.
+
+`Int.compare(a, b)` works as well as `a.compare(b)`. `Ordering`, `Entry`, and `Map` support `to_text` and interpolation. Maps print entries in insertion order, with text and character keys and values quoted and escaped.
+
+`Env.get` runs on real or fake capabilities. Tests, examples and promises can construct a fake with `Env.of`.
+
 `mo test` exits 1 with E1400 when it cannot build the inputs of a selected promise, such as one whose function takes a function. The headline is "this build cannot generate inputs for this promise". Keep the promise. Run the other examples, promises and tests by name with `--only`, as `--list` prints them.
 
 For a promise on a generic function, `mo test` generates and shrinks inputs for every concrete instantiation already in the program, including anchors and program uses. It keeps complete type-argument lists, without cross-products or default types. `--list` and `--only` use the source promise's name. Each concrete instance has a separate result and counts separately in the totals. Its text result names the instance, and its JSON result adds an `instance` field with the concrete name and types. An unsupported instance refuses the selected set before initialization or tests run.
 
 The `lib/` folder holds library modules written in Mo, and every `mo` command loads them with your program. `mo check lib/list.mo` and `mo test lib/list.mo` check and test one of them on its own. `lib/list.mo` has `List`'s `map`, `filter`, `filter_map`, `flat_map`, `reduce`, `find`, `any?`, `all?`, `count`, `sort_by`, `sort_by_desc`, `sort`, `min`, `max` and `group_by`, `lib/map.mo` has `Map.update`, `lib/option.mo` has `Option.or_fail` and `Option.map`, `lib/result.mo` has `Result.map` and `Result.map_error`, `lib/file-error.mo` has `FileError.to_text`, `lib/json.mo` is the `Json` module (`use Json`, then `Json.parse`, `to_text` and `pretty`), and `lib/files.mo` and `lib/read-files.mo` have `walk` for `Files` and `ReadFiles`. `lib/text.mo` has no functions, only tests of `Text`'s operations, written from reference section 14 and run by `mo test lib/text.mo`. `lib/set.mo` likewise tests `Set`'s operations, `List.to_set` and Set text forms with `mo test lib/set.mo`. `lib/unicode16.mo` is the `Unicode16` module. After `use Unicode16`, its built-in `graphemes`, `display_width`, `normalize_nfc`, `lowercase` and `uppercase` operations follow Unicode 16.0. `mo test lib/unicode16.mo` tests them. The rest of section 14 is still built in. Section 10.5 names what is always in scope.
+
+After `use Unicode16`, `Unicode16.letter?(c: Char) : Bool` tests Unicode 16.0 General_Category L (`Lu`, `Ll`, `Lt`, `Lm`, `Lo`), and `Unicode16.digit?(c: Char) : Bool` tests `Nd` (decimal digits). Neither includes `Nl`, `No` or marks, normalizes, or uses locale tailoring. For example, `text.chars.filter(fn(c) Unicode16.letter?(c) or Unicode16.digit?(c) end)` keeps letters and decimal digits.
 
 After `use Json` (or `use Shop.Account`), a bare `Json` (or `Account`) in a type is the module's own type of that name, as reference 10.3 says: write `fn f(value: Json)`. `Json.Json` means the same type.
 

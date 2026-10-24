@@ -1,0 +1,5 @@
+error E1150: this native call is not lowered yet  col-sum.mo:29:20
+
+  29 |   scaled = value * 10.to_big.pow(18 - fraction)
+     |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+

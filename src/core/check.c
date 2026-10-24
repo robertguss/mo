@@ -631,6 +631,9 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
         case MO_CORE_UNICODE_OP_LOWERCASE:
         case MO_CORE_UNICODE_OP_UPPERCASE:
             return sig(S(TEXT), 1, S(TEXT), NULL, NULL);
+        case MO_CORE_UNICODE_OP_LETTER:
+        case MO_CORE_UNICODE_OP_DIGIT:
+            return sig(S(BOOL), 1, S(CHAR), NULL, NULL);
         }
         break;
     case MO_CORE_PRIM_RANGE:

@@ -3,26 +3,15 @@
 Found while writing `tests/golden/`. Each program avoids these forms, so the corpus passes today;
 a form that lands should gain a golden program. Section numbers are Language Reference v0.1.
 
-## Checked and run, but no golden program yet
+## Coverage indexed by reference section
 
-- `List.to_set` (reference 14) runs in `lib/set.mo` and `tests/lower-source/set/main.mo`.
-- `Int.to_float` runs in the `int-natives` lower-source fixture.
+`tests/conformance/rules.tsv` lists remaining partial coverage by reference section, including
+missing boundary and refusal programs. It is a map with a guard, not proof of conformance or
+completion of the Phase 2 conformance item. A gap there is not a pass.
 
-`ref-library-natives` now covers the previously listed List functions, Int arithmetic natives,
-Float natives, Bytes operations and `Byte.to_int`. `ref-abilities` covers `List.sum` at all four
-numeric types and Set text. `tests/conformance/rules.tsv` lists the remaining partial coverage
-by reference section, including missing boundary and refusal programs. A gap there is not a pass.
-
-## Not lowered yet (E1150)
-
-- `BigInt`: `to_int`, `abs`, `min`.
-- `Env.get`, `Random.int`.
-- Interpolating an `Ordering`, an `Entry`, or a `Map` (derived text shape).
-- Comparing two `Ordering` values through bound names, such as
-  `a = Equal`, `b = Greater`, `a.compare(b)`. Reference 9.2 requires `Less`.
-  Calling `Equal.compare(Greater)` directly instead reports E1103 in the staged checker.
-
-`Int.compare` works and is covered by `ref-abilities`; its former entry here was stale.
+The native BigInt functions, Env and Random fakes, Ordering comparison, qualified `Int.compare`,
+and Ordering, Entry and Map text now work. Their former unsupported entries must not be retained
+as language limitations.
 
 ## Accepted by the reference, rejected by the parser
 

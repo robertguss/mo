@@ -2193,9 +2193,15 @@ def lower_source_fixtures(binary):
                        b"-9223372036854775808/9223372036854775807/9223372036854775807/-9223372036854775808/-2/-9223372036854775808\n"
                        b"9223372036854775807/-9223372036854775808/-9223372036854775808/9223372036854775807/9223372036854775807/9223372036854775807\n"
                        b"None/Some(4)/None/Some(-21)\nSome(255)/None/None/Some(0)\n",
+        "bigint-natives": b"1267650600228229401496703205376/-1267650600228229401496703205376/1267650600228229401496703205376\n"
+                          b"-3/-3/2/-2\nNone/None/Some(9223372036854775807)/Some(-9223372036854775808)\n",
+        "random-natives": b"",
         "float-natives": b"true/0/-0\n",
         "bytes-natives": b"10/0/Some(65)/Some(206)/Some(187)\nNone/None/None/Some(\"\")\n",
         "byte-natives": b"0/127/128/255/255\n",
+        "builtin-abilities": ('Less/Equal/Greater\nEntry(name: "a\\n\\\"λ", kind: Folder)\n'
+                              '{"b": Some(Less), "a": None}\n'
+                              '{}/[(File, Link), (Other, Folder)]\nLess/Greater/Greater\n').encode(),
         "list-sum": b"7/7/-15/42\n0/0/0/0\n",
         "list-all": b"true/true/false/false/true/true/true\n",
         "list-find": b"none/2/none/2/bc/20/40\n",
@@ -2238,6 +2244,11 @@ def lower_source_fixtures(binary):
         result = run(binary, ["run", str(path)], 0)
         assert result.stdout == expected and not result.stderr, (name, result)
 
+    random_tests = records(run(binary, ["test", "--json",
+                                       str(fixtures / "random-natives/main.mo")], 0), "test")
+    assert random_tests[-1]["passed"] == 1 and random_tests[-1]["failed"] == 0
+    assert random_tests[-1]["stopped"] == 0
+
     with tempfile.TemporaryDirectory(prefix="mo-numeric-bytes-") as directory:
         path = pathlib.Path(directory) / "main.mo"
         for expression, reason in (
@@ -2267,6 +2278,22 @@ def lower_source_fixtures(binary):
             result = subprocess.run([str(binary.resolve()), "run", str(path)], cwd=directory,
                                     capture_output=True, timeout=30)
             assert result.returncode == 0 and not result.stdout and not result.stderr, result
+
+    path = fixtures / "env-natives/main.mo"
+    checked = run(binary, ["check", str(path)], 0)
+    assert not checked.stdout and not checked.stderr
+    result = run(binary, ["test", str(path)], 0)
+    assert b"1 passed, 0 failed, 0 stopped" in result.stdout and not result.stderr
+    with tempfile.TemporaryDirectory(prefix="mo-env-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        path.write_text('module Main\nfn main(env: Env) : Int\n'
+                        'if env.get("MO116_VALUE") == Some("λ") and '
+                        'Env.get(env, "MO116_EMPTY") == Some("") and '
+                        'env.get("MO116_ABSENT") is None: 0 else: 1\nend\n')
+        environment = {**os.environ, "MO116_VALUE": "λ", "MO116_EMPTY": ""}
+        environment.pop("MO116_ABSENT", None)
+        result = run(binary, ["run", str(path)], 0, env=environment)
+        assert not result.stdout and not result.stderr
 
     # Examples on generic subjects run once each, independently of promise instances.
     path = fixtures / "generic-subject/main.mo"
@@ -2745,21 +2772,21 @@ def guide_claims(binary):
         unfinished = folder / "unfinished.mo"
         unfinished.write_text("module Unfinished\n\nfn main(console: Console)\n"
                               "  _printed = console.printed\nend\n", encoding="utf-8")
-        env = folder / "home.mo"
-        env.write_text('module Home\n\nfn home(env: Env) : Text\n'
-                       '  env.get("HOME") or "none"\nend\n\n'
-                       'fn main(env: Env, console: Console)\n  console.print(home(env))\nend\n\n'
-                       'test "home has a default"\n  assert home(Env.of({})) == "none"\nend\n',
-                       encoding="utf-8")
+        deferred = folder / "deferred.mo"
+        deferred.write_text('module Deferred\nhandler = fn() base end\nbase = 13\n'
+                            'fn main() : Int\nhandler()\nend\n'
+                            'test "reads base"\nassert handler() == 13\nend\n', encoding="utf-8")
         for command in ("check", "run", "test"):
             refuses([command, str(unfinished)], 1103,
                     "this body rule is not implemented by the staged checker",
                     "`mo check` reports E1103 for a form the checker has not implemented, with a "
                     'headline that says so, such as "this body rule is not implemented by the '
                     'staged checker".')
-            refuses([command, str(env)], 1150, "this native call is not lowered yet",
-                    "It reports E1150 for a form it checks but cannot compile yet, such as "
-                    '`env.get`. The headline is "this native call is not lowered yet".')
+            refuses([command, str(deferred)], 1150,
+                    "this constant's deferred function needs globals not yet initialized",
+                    "It reports E1150 for a form it checks but cannot compile yet, such as a "
+                    "constant's function value that reads a later constant. The headline is "
+                    '"this constant\'s deferred function needs globals not yet initialized".')
 
         # E1400 for a promise whose function takes a function; the rest run with --only.
         twice = folder / "twice.mo"
@@ -2810,6 +2837,9 @@ def guide_claims(binary):
          "After `use Unicode16`, its built-in `graphemes`, `display_width`, `normalize_nfc`, "
          "`lowercase` and `uppercase` operations follow Unicode 16.0.",
          "`mo test lib/unicode16.mo` tests them.")
+    says("`Unicode16.letter?(c: Char) : Bool` tests Unicode 16.0 General_Category L",
+         "`Unicode16.digit?(c: Char) : Bool` tests `Nd` (decimal digits).",
+         "Neither includes `Nl`, `No` or marks, normalizes, or uses locale tailoring.")
     says("After `use Json` (or `use Shop.Account`), a bare `Json` (or `Account`) in a type is the "
          "module's own type of that name, as reference 10.3 says: write `fn f(value: Json)`. "
          "`Json.Json` means the same type.")

@@ -192,6 +192,7 @@ def signatures():
     add("unicode16", "graphemes", T, L(T))
     add("unicode16", "displayWidth", T, I)
     add("unicode16", "normalizeNfc lowercase uppercase", T, T)
+    add("unicode16", "letter digit", H, "(bool)")
     add("range", "make", I + "|" + I, "(range)")
     add("range", "start end", "(range)", I)
     add("range", "toList", "(range)", L(I))

@@ -345,7 +345,7 @@ Each name in the following table means a **nullary S-expression**, e.g.
 | `CharOp` | `code isDigit isLetter isWhiteSpace lower upper toText` |
 | `TextOp` | `concat byteCount charCount isEmpty chars fromChars lines words split trim trimStart trimEnd startsWith endsWith contains dropPrefix dropSuffix replace repeat padLeft padRight lower upper toInt toDecimal toFloat join bytes` |
 | `BytesOp` | `size get decodeUtf8` |
-| `UnicodeOp` | `graphemes displayWidth normalizeNfc lowercase uppercase` |
+| `UnicodeOp` | `graphemes displayWidth normalizeNfc lowercase uppercase letter digit` |
 | `RangeOp` | `make start end toList contains toText` |
 | `TimeOp` | `sub add subDur checkedAdd toText parse durAdd durSub durMul durNeg inMilliseconds inSeconds durToText` |
 | `ListOp` | `size isEmpty get first last append prepend concat reverse take drop set removeAt uncons enumerate contains unique` |
@@ -403,7 +403,8 @@ regression checks, not proofs of numerical functional correctness.
 
 `(unicode16 (graphemes))` has signature Text → List(Text),
 `(unicode16 (displayWidth))` Text → Int; `(normalizeNfc)`, `(lowercase)`
-and `(uppercase)` under `unicode16` each have Text → Text. They are pure
+and `(uppercase)` under `unicode16` each have Text → Text. `(letter)` and
+`(digit)` under `unicode16` each have Char → Bool. They are pure
 ordinary operations, not spec-only calls or the ASCII Text operations.
 Core specifies types and safety, not Unicode tables. After evaluating
 arguments, a **reached** call stops with the exact report below (exit 1),
@@ -872,7 +873,7 @@ and argument values, plus `Fakes.core`, a named spec exercising all seven
 constructors, independent states, snapshots, shared random handles in closures
 and shared file writes through an ordinary function. `Library.core` tests
 Lemire results, maximum-span Int intervals, entries and the D236/D237 file
-matrix; its five Unicode16
+matrix; its seven Unicode16
 functions are present and checked but not called by that test. `JsonQuery.core`
 is the renamed `examples/json-query.mo` translation, module JsonQuery.
 `Metadata.core` exercises the full compiler envelope on a synthetic program
@@ -892,7 +893,7 @@ well as canonical output; NaNs are checked by bits, not IEEE equality.
 Existing Builtins expression cases also round-trip before execution.
 No inversion theorem is claimed. `ci/test_mocore.sh`, run by `make formal`,
 tests actual file input, UTF-8 rejection, exits, retained stop effects and
-all five reached Unicode16 operations versus a skipped one.
+all seven reached Unicode16 operations versus a skipped one.
 Regenerate **both** corpora from `formal/`:
 
 ```sh

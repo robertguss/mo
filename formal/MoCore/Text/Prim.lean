@@ -46,7 +46,7 @@ def textOps : List (String × TextOp) :=
 def bytesOps : List (String × BytesOp) := [("size", .size), ("get", .get), ("decodeUtf8", .decodeUtf8)]
 def unicodeOps : List (String × UnicodeOp) :=
   [("graphemes", .graphemes), ("displayWidth", .displayWidth), ("normalizeNfc", .normalizeNfc),
-   ("lowercase", .lowercase), ("uppercase", .uppercase)]
+   ("lowercase", .lowercase), ("uppercase", .uppercase), ("letter", .letter), ("digit", .digit)]
 def rangeOps : List (String × RangeOp) :=
   [("make", .make), ("start", .start), ("end", .«end»), ("toList", .toList),
    ("contains", .contains), ("toText", .toText)]

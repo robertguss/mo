@@ -1,0 +1,19 @@
+passed Todo.parse_item.example.1  todo.mo:14:5
+passed Todo.parse_item.example.2  todo.mo:15:5
+passed Todo.parse_item.example.3  todo.mo:16:5
+passed Todo.position.example.1  todo.mo:50:5
+passed Todo.position.example.2  todo.mo:51:5
+passed Todo.position.example.3  todo.mo:52:5
+passed Todo.position.example.4  todo.mo:53:5
+passed Todo.test.1  todo.mo:94:1
+failed Todo.test.2  todo.mo:103:1
+  left: Error("usage: todo add TEXT... | todo list | todo done N")
+  right: Ok(["edited 1: buy oat milk"])
+  105 |   assert run(["edit", "1", "buy", "oat", "milk"], files) == Ok(["edited 1: buy oat milk"])
+      |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this assertion was false
+failed Todo.test.3  todo.mo:113:1
+  left: Error("usage: todo add TEXT... | todo list | todo done N")
+  right: Ok(["cleared 3 done items"])
+  117 |   assert run(["clear"], files) == Ok(["cleared 3 done items"])
+      |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this assertion was false
+8 passed, 2 failed, 0 stopped

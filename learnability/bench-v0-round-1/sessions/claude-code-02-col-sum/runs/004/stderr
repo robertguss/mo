@@ -1,0 +1,7 @@
+error E0075: arithmetic is used on a type without Number  col-sum.mo:83:22
+
+  83 |     try digits_value(fraction + "0".repeat(18 - fraction.char_count))
+     |                      ^^^^^^^^ expected Int or BigInt or Decimal or Float, found Text
+
+Only Int, BigInt, Decimal and Float have Number; times and durations also add and subtract (reference 9.2).
+

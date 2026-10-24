@@ -544,7 +544,8 @@ static MO_MUST_USE const struct mo_ability_implementation *prove(struct mo_abili
         out->kind = MO_ABILITY_DERIVED;
         return derive_data(p, out, depth) ? out : NULL;
     }
-    if (named(type, "Entry") || named(type, "FileError"))
+    if (named(type, "Entry") || named(type, "FileError") || named(type, "Ordering") ||
+        named(type, "EntryKind"))
         return derive_native(p, out, depth) ? out : NULL;
     if (type->kind == MO_SOURCE_TUPLE || type->count != 0) {
         out->kind = MO_ABILITY_DERIVED;

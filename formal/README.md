@@ -75,7 +75,7 @@ Core is a **typed, monomorphic, strict functional language**:
   world so far); `failed` with its Text detail and world, distinct from a
   stop; an internal `jumped` to a join point; `wrong` (stuck, only
   for ill-typed programs); or `outOfFuel`. Overflow stops; it never wraps.
-  Unicode16's five functions have trusted primitive signatures and safety,
+  Unicode16's seven functions have trusted primitive signatures and safety,
   but reached calls stop at an explicit oracle boundary. Runtime Unicode
   tables are checked against UCD 16.0's tests, not against Lean.
 
@@ -225,7 +225,7 @@ Everything below is fully proven: there is no `sorry` anywhere.
   `listOp_safe` (all 19 list operations, at every element type), `mapOp_safe`
   (all 12, map literals included, at every key and value type), `setOp_safe`
   (all 11 set operations, at every element type), `eq_safe` (structural
-  equality at every type), the trusted stop for all five Unicode16 operations,
+  equality at every type), the trusted stop for all seven Unicode16 operations,
   and `ioOp_safe` (all 27 capability operations,
   33 counting the `Files` and `ReadFiles` forms apart), with dispatch to real
   or fake state and value typing for both kinds of handles. So every

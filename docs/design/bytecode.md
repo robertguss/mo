@@ -1,12 +1,15 @@
 # Mo Bytecode v0.2
 
-**Draft, 12 October 2026, revised after a second review.** This is the
+**Implementation contract, checked 24 October 2026 against main at
+[`acb2b84`](https://github.com/robertguss/mo/commit/acb2b8488f872c8d907184f2618c467dd8209afc).** This is the
 contract between Mo's compiler and its virtual machine, part of Architecture
 v0.1 (`architecture.md`). It fixes the file format, the instruction set, the
 representation of values, the calling convention and the rules the verifier
-enforces. In Phase 2, stream 2's compiler writes this format through
-`src/bytecode`'s writer, and stream 3 owns `src/bytecode` and the VM that
-reads, verifies and runs it.
+enforces. `src/codegen` writes this format through `src/bytecode`'s writer.
+The loader, verifier, text tools and VM are integrated. `mo emit FILE -o OUT`
+writes a binary file; `mo check --emit=bytecode` prints its indexed text form.
+`mo run` compiles source and runs the resulting image, but no CLI command loads
+an emitted `.bc` file (D271). This document does not change the format version.
 
 Four files carry the contract as code, and nothing else defines it:
 
@@ -889,8 +892,9 @@ PRIM(INT_POW,            "Int",   "pow",       "fn(Int, Int) : Int",            
 ```
 
 - **The checker** adds each primitive to its type's module, as if it were
-  declared there. So `lib/text.mo` holds only the functions written in Mo, and
-  nobody writes a primitive's signature twice.
+  declared there. A library module can also hold tests of C primitives, as
+  `lib/text.mo`, `lib/set.mo` and `lib/unicode16.mo` do, without repeating their
+  signatures. Higher-order functions and Json are Mo code in `lib/`.
 - **Lowering** turns a call to a primitive into a Core primitive operation.
 - **The code generator** emits `prim` with the instantiation type, and treats
   each parameter as owned (`o`) or borrowed (`b`).
@@ -900,9 +904,13 @@ PRIM(INT_POW,            "Int",   "pow",       "fn(Int, Int) : Int",            
 
 A primitive that "changes" a collection, such as `append`, `set`, `remove` or
 `take`, consumes it and follows section 4.6's two paths. A primitive that only
-reads, such as `get`, `size` or `contains?`, borrows. The list in `prims.def`
-is written first in Phase 2, from reference section 14 and these rules, and
-grows only with the library.
+reads, such as `get`, `size` or `contains?`, borrows. Every row in `prims.def`
+has a C implementation. That does not mean every source-level call lowers;
+native-call coverage belongs to `src/lower`. MO-116 delivered Env.get/of,
+Ordering/Entry/Map text conversion, Ordering comparison and qualified
+Int.compare (#189), using existing Core operations rather than new primitives.
+`docs/status/golden-gaps.md` lists working routes still needing golden programs
+and other gaps.
 
 On a stop, primitives and host operations must leave operands in their
 pre-instruction state, including their ownership and the objects they name, or
@@ -911,16 +919,13 @@ consumes or changes it. This applies to partial in-place updates followed by
 allocation failure and to `Map.%literal_insert` stopping on a duplicate key.
 A consumed or freed operand must never be printed from pre-instruction replay.
 
-The interpreter dispatches `host` through `mo_host_call`, committing owned
-register consumption only after success. `prim` remains a dispatch seam until
-the corresponding C operations are integrated; it stops with an internal
-"dispatch unavailable" reason, leaving all registers untouched. C-only
-instruction budgets bound fuzz execution, including initialization loops;
-they are disabled for normal execution and are not language resource limits.
-The differential runner distinguishes these internal stops from Mo's `stop`
-detail, counts primitive/host fixtures separately from matched outcomes and
-pins both pending counts. Integration moves those fixtures into comparison
-and lowers the corresponding count to zero; every other mismatch fails.
+The interpreter dispatches `prim` through `mo_prim_call` and `host` through
+`mo_host_call`, committing owned register consumption only after success.
+Both dispatch paths are implemented in `src/vm/execute.c`. The differential
+runner (`ci/check_vm.py`) pins unavailable primitive and host dispatch counts
+at zero; an unavailable dispatch is not a matched Mo outcome. C-only
+instruction budgets bound fuzz execution, including initialization loops.
+They are disabled for normal execution and are not language resource limits.
 
 ## 7. Capabilities and host operations
 
@@ -942,9 +947,13 @@ constructor makes a capability rather than using one, so `host` calls it by
 - `Console`: `print`, `error`, `read_line`, `printed` and `printed_errors`;
 - `Files`: `read_text`, `read_bytes`, `write_text`, `append_text`, `remove`,
   `make_folder`, `list`, `entries`, `exists?`, `within` and `read_only`;
+- `ReadFiles`: `read_text`, `read_bytes`, `list`, `entries`, `exists?` and `within`;
 - `Clock`: `now`. `Random`: `int`. `Args`: `list`. `Env`: `get`;
 - the fake constructors: `Console.fake`, `Console.fake_input`,
   `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `Args.of` and `Env.of`.
+
+`Files.walk` and `ReadFiles.walk` are Mo functions over these operations in
+`lib/files.mo` and `lib/read-files.mo`, not extra host opcodes.
 
 The verifier allows the fake constructors, `printed` and `printed_errors` only
 in spec code (3.3), which is where the reference allows them (reference
@@ -1816,7 +1825,7 @@ For every verified file `b`, `assemble(disassemble(b))` is `b` byte for byte.
 For every accepted text `x`, `disassemble(assemble(x))` is its canonical
 indexed text. Disassembling that file again prints exactly the same text.
 These are format rules, subject only to available memory and the caller's
-output buffer limit, not to first-use ordering. Stream 3 tests both rules,
+output buffer limit, not to first-use ordering. The bytecode text tests check both rules,
 including unused and duplicate strings, non-first-use types and layouts,
 float bits, exposure flags, spans (including clearing entries), variable ranges,
 spec text, declaration locations, subject links, all three expectations and
