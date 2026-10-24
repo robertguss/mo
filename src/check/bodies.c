@@ -2,6 +2,7 @@
 #include "check/check.h"
 #include "check/checked.h"
 #include "check/data.h"
+#include "check/internal.h"
 #include "check/map_keys.h"
 #include "check/native.h"
 #include "check/patterns.h"

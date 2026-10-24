@@ -13,7 +13,7 @@ static MO_MUST_USE unsigned bits(mo_u128 n) {
 }
 
 /* Decimal and Int ratios need at most 114 bits, including the rounding bit. */
-double mo_prim_ratio_float(bool negative, mo_u128 n, mo_u128 d) {
+static double mo_prim_ratio_float(bool negative, mo_u128 n, mo_u128 d) {
     MO_ASSERT(d != 0);
     uint64_t raw = negative ? UINT64_C(1) << 63 : 0;
     if (n != 0) {

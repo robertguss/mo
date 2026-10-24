@@ -143,14 +143,6 @@ static bool append_le(struct mo_buffer *buffer, uint64_t value, size_t size) {
     return mo_buffer_append(buffer, bytes, size);
 }
 
-bool mo_buffer_append_le16(struct mo_buffer *buffer, uint16_t value) {
-    return append_le(buffer, value, 2);
-}
-
 bool mo_buffer_append_le32(struct mo_buffer *buffer, uint32_t value) {
     return append_le(buffer, value, 4);
-}
-
-bool mo_buffer_append_le64(struct mo_buffer *buffer, uint64_t value) {
-    return append_le(buffer, value, 8);
 }

@@ -1,4 +1,5 @@
 #include "check/check.h"
+#include "check/internal.h"
 
 #include "base/codes.h"
 #include "base/limits.h"
