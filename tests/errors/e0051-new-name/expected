@@ -1,0 +1,11 @@
+error E0051: a visible name is bound again  tests/errors/e0051-new-name/main.mo:5:5
+
+  5 |     result = "#{item}"
+    |     ^^^^^^ this name already has a meaning
+
+  --> tests/errors/e0051-new-name/main.mo:3:3
+  3 |   result = 0
+    |   ^^^^^^ the other meaning of this name
+
+While a name is visible it can't be bound again; this value has another type, so bind it to a new name instead (reference 6.1).
+
