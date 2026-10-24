@@ -2860,12 +2860,28 @@ def guide_claims(binary):
         deferred.write_text('module Deferred\nhandler = fn() base end\nbase = 13\n'
                             'fn main() : Int\nhandler()\nend\n'
                             'test "reads base"\nassert handler() == 13\nend\n', encoding="utf-8")
+        qualified = [folder / "compared.mo", folder / "texted.mo"]
+        for path, call in zip(qualified, ('Text.compare("a", "b")', "List.to_text([1])")):
+            path.write_text(f"module {path.stem.title()}\n\nfn main(console: Console)\n"
+                            f'  console.print("#{{{call}}}")\nend\n', encoding="utf-8")
+        receivers = folder / "receivers.mo"
+        receivers.write_text("module Receivers\n\nfn main(console: Console)\n"
+                             '  console.print("#{Less.compare(Greater)} #{Folder.to_text}")\nend\n',
+                             encoding="utf-8")
+        says("For other types, write `to_text` and `compare` as dot calls: `Text.compare(a, b)` "
+             "and `List.to_text(xs)` report E1103.",
+             "A case without fields can be the receiver directly, as in `Less.compare(Greater)` "
+             "or `Folder.to_text`.")
+        assert run(binary, ["run", str(receivers)], 0).stdout == b"Less Folder\n"
         for command in ("check", "run", "test"):
             refuses([command, str(unfinished)], 1103,
                     "this body rule is not implemented by the staged checker",
                     "`mo check` reports E1103 for a form the checker has not implemented, with a "
                     'headline that says so, such as "this body rule is not implemented by the '
                     'staged checker".')
+            for path in qualified:
+                result = run(binary, [command, str(path)], 1)
+                assert b"error E1103: " in result.stderr and not result.stdout, (command, result)
             refuses([command, str(deferred)], 1150,
                     "this constant's deferred function needs globals not yet initialized",
                     "It reports E1150 for a form it checks but cannot compile yet, such as a "

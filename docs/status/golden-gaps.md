@@ -17,6 +17,15 @@ and Ordering, Entry and Map text now have golden programs in `ref-bigint`,
 inside interpolation is in `txt-interpolation-case`. Their former unsupported entries must not be
 retained as language limitations.
 
+## Qualified `to_text` and `compare`
+
+`docs/status/section-14-inventory.md` records a probe of every section 14 function. Every one
+runs as a dot call, including on a nullary case receiver (`lang-dot-calls-cases`, and
+`ref-case-receivers`). Written through a type or module, `to_text` and `compare` work only as
+`Int.compare` and the scalar `to_text` primitives; `Text.compare(a, b)`, `List.to_text(xs)` and
+the rest report E1103. D285 makes that form part of the language for every type with the
+ability, and MO-144 builds it. These failures are not expected-error fixtures.
+
 ## Refused by the reference, accepted by the checker
 
 A specification followed directly by its code, with no blank line, is accepted, and
