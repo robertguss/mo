@@ -134,13 +134,14 @@ Multiline case interpolation and direct calls on a nullary case such as
 
 ## Other drivers, cost and untestable claims
 
-D280, D281 and D282 (MO-131) reclassified 35 of the 45 gap entries on main
+D280, D281 and D282 (MO-131) reclassified 34 of the 45 gap entries on main
 `fb4b7bc`. Twenty rows now name other drivers, such as the formatter tests,
 `ci/check_cli.py`, `ci/check_errors.py`, the host and checker unit tests and
-`make grammar`. Twelve rows name C unit tests for cost claims, and seven give
+`make grammar`. Eleven rows name C unit tests for cost claims, and seven give
 an untestable reason. The gaps that remain are reference rules the compiler
-does not follow yet, refusals no fixture pins, and questions the reference
-leaves open.
+does not follow yet, refusals no fixture pins, questions the reference leaves
+open, and the cost of `sort`, which is Mo code in `lib/list.mo` that no C unit
+test checks.
 
 ## Initial mapping
 

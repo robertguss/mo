@@ -163,8 +163,8 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 13.3/4	col-map-basics,col-set-basics					tests/test_heap.c:test_tables
 13.3/5	col-map-order,col-set-basics					tests/test_prim.c:primitive_work,tests/test_heap.c:test_tables
 13.3/6	txt-counts					tests/test_prim.c
-13.3/7	txt-counts,txt-lines-words,txt-search					tests/test_prim.c:text_split
-13.3/8	txt-ordering,col-list-map-find,col-list-order-ties					tests/test_prim.c
+13.3/7	txt-counts,txt-lines-words,txt-search					tests/test_prim.c
+13.3/8	txt-ordering,col-list-map-find,col-list-order-ties			Stability is covered by the listed programs. sort, sort_by and sort_by_desc are Mo code in lib/list.mo, so no C unit test checks them as D281 assumes, and n log n work is not measured.
 13.3/9	col-shared-values,lang-records-update					tests/test_prim.c:shared_copy_charge,tests/test_prim.c:reuse_aliases,tests/test_heap.c:test_reuse_and_images
 13.4/1	ref-shout,tst-passing				ci/check_cli.py:check,ci/check_cli.py:emit_command,ci/check_cli.py:guide_claims,ci/check_cli.py:fix_command
 13.4/2					ci/check_cli.py:promise_selection
