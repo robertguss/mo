@@ -157,7 +157,7 @@ class Harness(unittest.TestCase):
         outside = session / "work-other"
         outside.mkdir()
         shutil.copyfile(example / "input/logs/s1/001/src/main.mo", outside / "main.mo")
-        (work / "main.mo").write_text("module Main\n")
+        self.source(session, "003")
         (work / "outside").symlink_to(outside, target_is_directory=True)
         (outside / "inside").symlink_to(work, target_is_directory=True)
         for command in ("check", "test"):

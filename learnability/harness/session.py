@@ -190,6 +190,9 @@ def record(config, argv):
         # The JSON run reads the copy, so it sees the files the log keeps, and it runs beside the
         # session's own run rather than after it.
         rest = [arg for arg in argv[1:] if arg != "--json"]
+        checks_work = any(os.path.isfile(path) and inside(path, work) for path in
+                          (os.path.realpath(os.path.join(cwd, arg)) for arg in rest
+                           if not arg.startswith("-")))
         quiet = subprocess.Popen([real, command, "--json", *from_work(rest, cwd, work)],
                                  cwd=os.path.join(pending, "src"), stdout=subprocess.PIPE,
                                  stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
@@ -205,7 +208,7 @@ def record(config, argv):
         else:
             output = quiet.communicate()[0]
             write(os.path.join(pending, "output.jsonl"), output)
-            keep = checked_a_program(output)
+            keep = checks_work and checked_a_program(output)
         if keep:
             log = claim(os.path.join(session, "log"), final=pending)
             write(os.path.join(runs, "log"), os.path.basename(log) + "\n")
