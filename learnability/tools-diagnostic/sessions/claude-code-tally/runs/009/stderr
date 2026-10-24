@@ -1,0 +1,21 @@
+error E0071: a pattern doesn't name a record or case  answers/tally.mo:194:5
+
+  194 |     Object(fields): fields.get(name)
+      |     ^^^^^^ not a record or case constructor
+
+A pattern names a case or record, a literal, a tuple or a list (reference 7.3).
+
+error E0071: a pattern doesn't name a record or case  answers/tally.mo:201:10
+
+  201 |     Some(String(t)): Some(t)
+      |          ^^^^^^ not a record or case constructor
+
+A pattern names a case or record, a literal, a tuple or a list (reference 7.3).
+
+error E0071: a pattern doesn't name a record or case  answers/tally.mo:208:10
+
+  208 |     Some(Number(n)): n.to_int
+      |          ^^^^^^ not a record or case constructor
+
+A pattern names a case or record, a literal, a tuple or a list (reference 7.3).
+

@@ -1,0 +1,19 @@
+passed Tally.percent.example.1  answers/tally.mo:141:5
+passed Tally.percent.example.2  answers/tally.mo:142:5
+passed Tally.percent.example.3  answers/tally.mo:143:5
+passed Tally.percent.example.4  answers/tally.mo:144:5
+passed Tally.percent.example.5  answers/tally.mo:145:5
+passed Tally.percent.example.6  answers/tally.mo:146:5
+passed Tally.function_at.example.1  answers/tally.mo:249:5
+passed Tally.function_at.example.2  answers/tally.mo:250:5
+passed Tally.function_at.example.3  answers/tally.mo:251:5
+passed Tally.function_at.example.4  answers/tally.mo:252:5
+passed Tally.candidates.example.1  answers/tally.mo:274:5
+passed Tally.candidates.example.2  answers/tally.mo:275:5
+passed Tally.test.1  answers/tally.mo:409:1
+passed Tally.test.2  answers/tally.mo:425:1
+passed Tally.test.3  answers/tally.mo:434:1
+passed Tally.test.4  answers/tally.mo:447:1
+passed Tally.test.5  answers/tally.mo:458:1
+passed Tally.test.6  answers/tally.mo:469:1
+18 passed, 0 failed, 0 stopped

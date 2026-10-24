@@ -1,0 +1,20 @@
+ok   tally/01-example
+ok   tally/02-no-sessions
+ok   tally/03-fixed-later
+ok   tally/04-unfixed
+ok   tally/05-comes-back
+ok   tally/06-other-function
+ok   tally/07-functions
+ok   tally/08-several-files
+ok   tally/09-duplicates
+ok   tally/10-mo-fix
+ok   tally/11-test-runs
+ok   tally/12-many-sessions
+ok   tally/13-rounding-a
+ok   tally/13-rounding-b
+ok   tally/14-unknown-records
+ok   tally/15-bad-lines
+ok   tally/16-usage-missing-logs
+ok   tally/16-usage-no-argument
+ok   tally/16-usage-two-arguments
+tally: 19 of 19 tests passed

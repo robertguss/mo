@@ -1,0 +1,15 @@
+README.md:3: docs/guide.md#nope: no such heading
+README.md:4: img/b.png: no such file
+README.md:5: ../x.md: leaves the folder
+README.md:6: #zzz: no such heading
+README.md:8: after.md: no such file
+README.md:9: img/badge.svg: no such file
+README.md:12: nextline.md: no such file
+README.md:20: outside.md: no such file
+README.md:25: at.md: no such file
+README.md:27: docs/missing.md: no such file
+README.md:31: next-line.md: no such file
+README.md:37: #dup-2: no such heading
+README.md:38: x.md: no such file
+docs/sub/c.md:1: ../../../x.md: leaves the folder
+14 broken links
