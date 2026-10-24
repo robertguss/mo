@@ -1050,7 +1050,9 @@ The compiler checks that the body accepts every `allows` and rejects every
 `mo test` checks the body against the function on many generated inputs,
 boundaries first. It builds a type exposed without its insides only through a
 limited number of calls to its module's exposed functions, other types from any
-values of their fields, and capabilities as fakes. A promise speaks about calls
+values of their fields, and capabilities as fakes. A value built that way can
+come with another such value that the same call returned, so a `Lease` can
+arrive with the `Queue` that issued it. A promise speaks about calls
 that return; a call that stops on a generated input is reported as a bug, with
 the input. The boundaries include each type's extremes, such as `Decimal`'s
 largest value and the last instant of the year 9999, so a promise that passes

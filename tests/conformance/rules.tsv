@@ -148,7 +148,7 @@ rule	accepts	refuses	stops	gap
 12.2/2	tst-promise-holds			A missing-sentence rejection still needs a dedicated exact-error fixture.
 12.2/3	tst-promise-holds			Non-Bool promise-body rejection still needs a dedicated exact-error fixture.
 12.2/4	tst-promise-holds	e0015,e0088,e1405,e1405-forbids		
-12.2/5	tst-promise-holds	tst-overflow-promise,tst-failing-promise		Not a proof of every call; generated boundary coverage for hidden types and all field types needs broader conformance programs.
+12.2/5	tst-promise-holds	tst-overflow-promise,tst-failing-promise		Not a proof of every call; generated boundary coverage for hidden types and all field types needs broader conformance programs. A built value's companion from the same call (D284) is checked by ci/check_cli.py hidden_promises, not a golden program.
 12.2/6				Generic instantiation selection/shrinking is covered by generic_promises and promise_selection in ci/check_cli.py using generated programs, not the golden runner; a golden per supported instance shape is still needed.
 12.2/7	sample-job-queue-tests			
 12.2/8	mod-hidden-type,fail-result-declared			No precondition keyword exists; a spelling-specific refusal fixture is not present.
