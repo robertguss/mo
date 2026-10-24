@@ -1,0 +1,14 @@
+error E0007: expected line break, found text  tests/errors/e0007-throw/main.mo:4:9
+
+  4 |   throw "odd"
+    |         ^^^^^
+
+Use the declaration or statement's syntax and close its delimiters (reference 2.4).
+
+error E0007: expected line break, found text  tests/errors/e0007-throw/main.mo:8:9
+
+  8 |   raise "odd"
+    |         ^^^^^
+
+Use the declaration or statement's syntax and close its delimiters (reference 2.4).
+

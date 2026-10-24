@@ -1,0 +1,21 @@
+error E0031: expected =, found snake_case name; Mo defines a function with fn  tests/errors/e0031-def/main.mo:3:5
+
+  3 | def double(n: Int) : Int
+    |     ^^^^^^
+
+A binding gives a name a value with = (reference 6.1).
+
+error E0031: expected =, found snake_case name; Mo defines a function with fn  tests/errors/e0031-def/main.mo:5:10
+
+  5 | function triple(n: Int) : Int
+    |          ^^^^^^
+
+A binding gives a name a value with = (reference 6.1).
+
+error E0031: expected =, found snake_case name; Mo defines a function with fn  tests/errors/e0031-def/main.mo:7:6
+
+  7 | func half(n: Int) : Int
+    |      ^^^^
+
+A binding gives a name a value with = (reference 6.1).
+

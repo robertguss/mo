@@ -1,0 +1,7 @@
+error E0015: expected text, found line break  tests/errors/e0015-sentence/main.mo:4:10
+
+  4 |   promise
+    |          ^
+
+Use the declaration or statement's syntax and close its delimiters (reference 12.2).
+
