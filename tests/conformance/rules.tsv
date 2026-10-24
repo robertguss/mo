@@ -36,7 +36,7 @@ rule	accepts	refuses	stops	gap
 3.2/4	num-bigint,ref-library-natives,ref-bigint	e0076		
 3.3/1	num-decimal-exact,num-decimal-limits,num-decimal-rounding			Decimal overflow and division by zero lack standalone stop goldens; Int stops do not prove Decimal stops.
 3.3/2	num-float-arithmetic,num-float-convert,num-decimal-int	e0060		
-3.4/1	txt-escapes,txt-interpolation	e0005		A multiline case inside interpolation is rejected despite the any-expression rule; see docs/status/golden-gaps.md.
+3.4/1	txt-escapes,txt-interpolation,txt-interpolation-case	e0005		
 3.4/2	txt-multiline			
 3.4/3	txt-escapes,txt-case-chars			
 3.4/4	txt-counts,txt-ordering,lib-unicode16	e0024		Constant-time byte_count needs a work-bound check; execution output cannot establish cost.
@@ -57,7 +57,7 @@ rule	accepts	refuses	stops	gap
 5.1/2	ref-functions	e0042,e0055		
 5.2/1	ref-functions	e0012,e0021,e0055,e0077		
 5.3/1	lang-recursion-tail			
-5.4/1	lang-dot-calls,ref-abilities			No standalone diagnostic pins x.f() when f takes only the receiver. Direct nullary-case receivers such as Equal.to_text still report E1103; bound values work.
+5.4/1	lang-dot-calls,lang-dot-calls-cases,ref-abilities			No standalone diagnostic pins x.f() when f takes only the receiver.
 5.4/2	ref-functions			Hidden-field fallback to the same-named function needs a cross-module golden; visible fields and function-valued fields are covered.
 5.5/1	lang-generic-functions	e0081		
 5.5/2	lang-enum-tree	e0083		
@@ -116,7 +116,7 @@ rule	accepts	refuses	stops	gap
 9.2/19	col-map-equality,col-set-basics,ref-abilities			Map/Set Order rejection still needs exact-error programs; derived Map text now has a golden.
 9.2/20	lang-abilities-order,num-float-arithmetic,ref-abilities			
 9.2/21	lang-abilities-text-forms,num-float-arithmetic,ref-time,ref-abilities			
-9.2/22	lang-abilities-order,lang-abilities-custom-order,ref-abilities			Direct nullary-case receivers such as Less.compare(Greater) still report E1103; comparison through bound Ordering values works. See docs/status/golden-gaps.md.
+9.2/22	lang-abilities-order,lang-abilities-custom-order,lang-dot-calls-cases,ref-abilities			
 9.2/23	lang-abilities-custom-order,lang-abilities-custom-text	e0082		Customization across module boundaries with hidden insides needs a dedicated golden.
 9.2/24	lang-generic-functions	e0081		
 10.1/1	mod-brace-import,mod-qualified	e0008,e0027,e0039		
@@ -170,7 +170,7 @@ rule	accepts	refuses	stops	gap
 13.4/2				Selection and full names are checked by promise_selection in ci/check_cli.py with generated programs; the golden runner has no command-selection fixture format.
 13.4/3	lang-recursion-tail			Stack, depth and heap switches/defaults are checked by ci/check_cli.py, not golden programs with resource arguments.
 13.4/4				JSON fields/version/unknown-field compatibility need the structured assertions in ci/check_cli.py rather than a run/test text golden.
-14/1	lang-dot-calls,col-range-loops,ref-abilities		fail-bug-take-negative	Built-in Order families now have comparison programs; direct nullary-case receivers such as Less.compare(Greater) still report E1103.
+14/1	lang-dot-calls,lang-dot-calls-cases,col-range-loops,ref-abilities		fail-bug-take-negative	
 14/2	num-int-functions,num-int-checked,ref-library-natives,ref-time			Negative pow and Duration-construction overflow need stop goldens.
 14/3	num-bigint,ref-library-natives,ref-bigint			
 14/4	num-decimal-rounding,num-decimal-int,num-float-convert			Out-of-range places and Decimal-to-Int range boundaries still need dedicated programs.
