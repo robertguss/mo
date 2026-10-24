@@ -1392,9 +1392,8 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
     }
     if (r->native != NULL && strcmp(r->native, "compare") == 0) {
         MO_ASSERT(args.count == 2);
-        return lower_compare(p, ability(b, r, MO_SOURCE_ORDER, proved),
-                             &b->instance->substitution, b->instance->owner, b->instance->depth,
-                             args.items[0], args.items[1]);
+        return lower_compare(p, ability(b, r, MO_SOURCE_ORDER, proved), &b->instance->substitution,
+                             b->instance->owner, b->instance->depth, args.items[0], args.items[1]);
     }
     if (r->native != NULL &&
         (strcmp(r->native, "Entry.name") == 0 || strcmp(r->native, "Entry.kind") == 0)) {

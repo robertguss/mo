@@ -1417,7 +1417,8 @@ static MO_MUST_USE struct value qualified_ability(struct inference *p,
     struct term *type = NULL;
     uint32_t arity = 0, alias;
     const char *builtin = mo_builtin_type(prefix, &arity);
-    const struct mo_module_scope *module = builtin != NULL ? NULL : prefix_module(p, prefix, &alias);
+    const struct mo_module_scope *module =
+        builtin != NULL ? NULL : prefix_module(p, prefix, &alias);
     size_t length = prefix->span.end - prefix->span.start;
     uint32_t bit = length == 1 && prefix->text[0] >= 'A' && prefix->text[0] <= 'Z'
                        ? UINT32_C(1) << (unsigned)(prefix->text[0] - 'A')
@@ -3189,8 +3190,8 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             !qualified && start < node->count && node->children[start]->kind == MO_S_CALL
                 ? mo_builtin_case_by_name(name)
                 : NULL;
-        bool ability = qualified && (compare_text(name, "to_text") == 0 ||
-                                     compare_text(name, "compare") == 0);
+        bool ability =
+            qualified && (compare_text(name, "to_text") == 0 || compare_text(name, "compare") == 0);
         if ((name->kind == MO_S_CAPNAME || qualified) && !ability && start < node->count &&
             node->children[start]->kind == MO_S_CALL) {
             uint32_t count = 0;
@@ -4187,8 +4188,8 @@ static MO_MUST_USE bool finish_operator(struct inference *p, struct note *note) 
             : MO_SOURCE_NUMBER;
     /* A qualified ability function, as a value or called, proves its
      * ability on its first parameter; a dot call on its receiver. */
-    bool qualified =
-        (text || compare) && (graph->output.operand_count == 0 || graph->output.receiver == UINT32_MAX);
+    bool qualified = (text || compare) &&
+                     (graph->output.operand_count == 0 || graph->output.receiver == UINT32_MAX);
     MO_ASSERT(qualified || (graph->output.operand_count != 0 && graph->operands[0] != NULL));
     struct note *operand = graph->output.operand_count == 0 ? note : graph->operands[0];
     const struct mo_source_type *type = operand->output.type;
@@ -4204,14 +4205,23 @@ static MO_MUST_USE bool finish_operator(struct inference *p, struct note *note) 
         if (at->graph == graph)
             module = at->module;
     }
-    if (module != NULL &&
-        (type->kind != MO_SOURCE_NAMED || type->declaration == NULL ||
-         &p->interfaces->scopes[type->module] != module))
+    if (module != NULL && (type->kind != MO_SOURCE_NAMED || type->declaration == NULL ||
+                           &p->interfaces->scopes[type->module] != module)) {
+        char *label = allocate(p, 256, 1, 1);
+        if (label == NULL)
+            return false;
+        int length = snprintf(label, 256, "%.100s doesn't declare %.100s", module->name,
+                              type->kind == MO_SOURCE_FUNCTION ? "functions"
+                              : type->kind == MO_SOURCE_TUPLE  ? "tuples"
+                                                               : type->name);
+        MO_ASSERT(length > 0 && length < 256);
+        p->type_label = label;
         return problem(p, MO_CODE_ARGUMENT_TYPE, p->span,
                        "a module's to_text or compare is given a type it doesn't declare",
                        "M.to_text(x) and M.compare(a, b) take a value of a type that the module M "
                        "declares (reference 5.4).",
                        NULL);
+    }
     if (ability == MO_SOURCE_NUMBER && type->kind == MO_SOURCE_NAMED &&
         type->module == UINT32_MAX &&
         (strcmp(type->name, "Time") == 0 || strcmp(type->name, "Duration") == 0))

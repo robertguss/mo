@@ -59,6 +59,7 @@ rule	accepts	refuses	stops	gap
 5.3/1	lang-recursion-tail			
 5.4/1	lang-dot-calls,ref-abilities			x.f() is accepted when f takes only the receiver, which this rule refuses (MO-141); see docs/status/golden-gaps.md. Direct nullary-case receivers such as Equal.to_text still report E1103; bound values work.
 5.4/2	ref-functions			Hidden-field fallback to the same-named function needs a cross-module golden; visible fields and function-valued fields are covered.
+5.4/3	ref-qualified-abilities	e0077-module-ability		
 5.5/1	lang-generic-functions	e0081		
 5.5/2	lang-enum-tree	e0083		
 5.6/1	lang-closures,lang-generic-functions			
@@ -170,7 +171,7 @@ rule	accepts	refuses	stops	gap
 13.4/2				Selection and full names are checked by promise_selection in ci/check_cli.py with generated programs; the golden runner has no command-selection fixture format.
 13.4/3	lang-recursion-tail			Stack, depth and heap switches/defaults are checked by ci/check_cli.py, not golden programs with resource arguments.
 13.4/4				JSON fields/version/unknown-field compatibility need the structured assertions in ci/check_cli.py rather than a run/test text golden.
-14/1	lang-dot-calls,col-range-loops,ref-abilities		fail-bug-take-negative	Built-in Order families now have comparison programs; direct nullary-case receivers such as Less.compare(Greater) still report E1103.
+14/1	lang-dot-calls,col-range-loops,ref-abilities,ref-qualified-abilities		fail-bug-take-negative	Built-in Order families now have comparison programs; direct nullary-case receivers such as Less.compare(Greater) still report E1103.
 14/2	num-int-functions,num-int-checked,ref-library-natives,ref-time		fail-bug-duration-unit-overflow	Negative pow needs a stop golden.
 14/3	num-bigint,ref-library-natives,ref-bigint			
 14/4	num-decimal-rounding,num-decimal-int,num-float-convert			Out-of-range places and Decimal-to-Int range boundaries still need dedicated programs.

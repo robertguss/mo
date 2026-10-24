@@ -12,7 +12,9 @@ completion of the Phase 2 conformance item. A gap there is not a pass.
 The native BigInt functions, Env and Random fakes, Ordering comparison, qualified `Int.compare`,
 and Ordering, Entry and Map text now have golden programs in `ref-bigint`,
 `ref-capability-fakes` and `ref-abilities`. `ref-library-natives` also covers `List.to_set` and
-`Int.to_float`. Their former unsupported entries must not be retained as language limitations.
+`Int.to_float`. Qualified `T.to_text` and `T.compare`, as calls and as values, have
+`ref-qualified-abilities` (D285). Their former unsupported entries must not be retained as
+language limitations.
 
 ## Direct nullary-case receivers still fail
 
