@@ -1,0 +1,7 @@
+error E0023: expected in, found ,  restock.mo:95:12
+
+  95 |   for index, line in text.lines.enumerate
+     |            ^
+
+A for uses a binder followed by in; loops close with end (reference 7.5).
+

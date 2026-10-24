@@ -1,0 +1,20 @@
+passed CalendarTest.test.1  calendar-test.mo:5:1
+failed CalendarTest.test.2  calendar-test.mo:12:1
+  13 |   assert not Calendar.leap_year?(1900)
+     |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this assertion was false
+passed CalendarTest.test.3  calendar-test.mo:17:1
+passed CalendarTest.test.4  calendar-test.mo:27:1
+passed CalendarTest.test.5  calendar-test.mo:34:1
+passed CalendarTest.test.6  calendar-test.mo:41:1
+passed Calendar.leap_year?.example.1  calendar.mo:7:5
+passed Calendar.leap_year?.example.2  calendar.mo:8:5
+passed Calendar.days_in_month.example.1  calendar.mo:17:5
+passed Calendar.days_in_month.example.2  calendar.mo:18:5
+passed Calendar.days_in_month.example.3  calendar.mo:19:5
+passed Calendar.day_of_year.example.1  calendar.mo:33:5
+passed Calendar.day_of_year.example.2  calendar.mo:34:5
+passed Calendar.day_of_year.example.3  calendar.mo:35:5
+passed Calendar.days_between.example.1  calendar.mo:50:5
+passed Calendar.days_between.example.2  calendar.mo:51:5
+passed Calendar.days_between.example.3  calendar.mo:52:5
+16 passed, 1 failed, 0 stopped

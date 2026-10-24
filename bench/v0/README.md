@@ -19,7 +19,7 @@ start it; its `freeze.md` (the `mo` commit, the prompt, the models, the seeds) i
 | [08-playlist](08-playlist/task.md) | fix compile errors | | 7 tests, 3 runs |
 | [09-rpn](09-rpn/task.md) | fix compile errors | | 8 tests, 3 runs |
 | [10-restock](10-restock/task.md) | fix compile errors | yes | 8 tests, 5 runs |
-| [11-calendar](11-calendar/task.md) | make a failing test pass | | 9 tests |
+| [11-calendar](11-calendar/task.md) | make a failing test pass | | 10 tests |
 | [12-search](12-search/task.md) | make a failing test pass | | 9 tests |
 | [13-titles](13-titles/task.md) | make a failing test pass | | 11 tests |
 | [14-wallet](14-wallet/task.md) | make a failing test pass | | 12 tests |
