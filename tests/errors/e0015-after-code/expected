@@ -1,0 +1,7 @@
+error E0015: examples and promises come first in a function's body  tests/errors/e0015-after-code/main.mo:5:3
+
+  5 |   promise "the result is twice the input"
+    |   ^^^^^^^
+
+Promises precede the function's body (reference 12.2).
+

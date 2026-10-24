@@ -12,7 +12,7 @@
 #   gcc clang   build and run the unit tests with that compiler
 #   sanitize    the unit tests under AddressSanitizer and UndefinedBehaviorSanitizer
 #   fuzz        every fuzz target briefly
-#   drivers     the checks that drive the test executables: CLI, goldens, errors, session harness, bytecode text, Unicode, codegen, formatter, benchmark v0, mo check time
+#   drivers     the checks that drive the test executables: CLI, goldens, errors, session harness, bytecode text, Unicode, codegen, formatter, benchmark v0, the three tools, mo check time
 #   lean        Mo Core in Lean, and the checks that compare the test executables with it
 #   static      grammar, module dependencies, library map, frozen tool tasks, formatting, clang-tidy
 #   cbmc        the CBMC proofs of the bytecode reader, the arena, the verifier, the primitives, path containment and resolution, reference counts and hash tables (cbmc/README.md)
@@ -195,6 +195,13 @@ if have python3; then
 		for driver in "${drivers[@]}"; do
 			later "Benchmark v0: tasks frozen, references pass, broken solutions and start folders fail ($driver)" \
 				python3 bench/v0/grade.py --check --mo "$driver"
+		done
+		# The frozen hidden tests' time limits fit one gcc debug build, so only the first runs them.
+		hidden=()
+		for driver in "${drivers[@]}"; do
+			later "The three tools: linkcheck, tally and notioncopy pass their tests and do their jobs here ($driver)" \
+				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_tools.py "$driver" "${hidden[@]}"
+			hidden=(--no-hidden)
 		done
 	else
 		missing "no mo command executable is built"

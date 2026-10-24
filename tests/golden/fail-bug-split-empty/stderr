@@ -1,0 +1,5 @@
+bug: Text.split with an empty separator
+  at Main.main (tests/golden/fail-bug-split-empty/main.mo:128..142)
+  at Main.main.entry (tests/golden/fail-bug-split-empty/main.mo:13..180)
+  text = "a,b"
+  console = <Console>
