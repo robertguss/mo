@@ -7,7 +7,7 @@ level in the PR that fixes the recurrence.
 
 Last run: 2026-10-18, PRs #80 to #121 and the project threads. GitHub held no review comments for
 this range, so the evidence is fix-up commits inside PRs, the Review sections of PR bodies, red
-`check` runs, and corrections in the project threads.
+`check` runs, and corrections in the project threads. Class 1 bumped 2026-10-24 for this cleanup.
 
 | # | Class | Evidence | Enforced by | State |
 | --- | --- | --- | --- | --- |
