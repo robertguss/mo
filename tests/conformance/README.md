@@ -138,8 +138,9 @@ D280, D281 and D282 (MO-131) reclassified 35 of the 45 gap entries on main
 `fb4b7bc`. Twenty rows now name other drivers, such as the formatter tests,
 `ci/check_cli.py`, `ci/check_errors.py`, the host and checker unit tests and
 `make grammar`. Twelve rows name C unit tests for cost claims, and seven give
-an untestable reason. Ten gaps remain: reference rules the compiler does not
-follow yet, refusals no fixture pins, and questions the reference leaves open.
+an untestable reason. The gaps that remain are reference rules the compiler
+does not follow yet, refusals no fixture pins, and questions the reference
+leaves open.
 
 ## Initial mapping
 
