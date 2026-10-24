@@ -1,0 +1,7 @@
+error E0007: expected line break, found snake_case name  tests/errors/e0007-catch/main.mo:6:9
+
+  6 |   catch problem
+    |         ^^^^^^^
+
+Use the declaration or statement's syntax and close its delimiters (reference 2.4).
+

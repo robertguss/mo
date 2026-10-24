@@ -1,6 +1,13 @@
-error E0050: no visible function has this dot-call name  tests/errors/e0050-length/main.mo:3:8
+error E0050: a name isn't visible in this block  tests/errors/e0050-length/main.mo:4:3
 
-  3 |   text.length
+  4 |   len(items)
+    |   ^^^ not visible in this block
+
+The library has no len or length: a list's length is list.size, and a text's is text.char_count or text.byte_count (reference 3.4).
+
+error E0050: no visible function has this dot-call name  tests/errors/e0050-length/main.mo:8:8
+
+  8 |   name.length
     |        ^^^^^^ not visible in this block
 
 The library has no len or length: a list's length is list.size, and a text's is text.char_count or text.byte_count (reference 3.4).

@@ -1,0 +1,14 @@
+error E0007: expected line break, found snake_case name  tests/errors/e0007-requires/main.mo:4:12
+
+  4 |   requires n >= 0
+    |            ^
+
+Use the declaration or statement's syntax and close its delimiters (reference 2.4).
+
+error E0007: expected line break, found snake_case name  tests/errors/e0007-requires/main.mo:9:16
+
+  9 |   precondition n >= 0
+    |                ^
+
+Use the declaration or statement's syntax and close its delimiters (reference 2.4).
+
