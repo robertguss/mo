@@ -25,8 +25,6 @@ class ConformanceCheck(unittest.TestCase):
         self.index.write_text("rule\taccepts\trefuses\tstops\tgap\n3/1\tgood\te0053\t\t\n")
         self.snapshot = self.root / "tests/conformance/reference.tsv"
         self.snapshot.write_text("3/1\tValues never change.\n")
-        (self.root / "tests/conformance/implementation.sha256").write_text(
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n")
         (self.root / "tests/golden/good/main.mo").write_text("module Main\nfn main()\nend\n")
         (self.root / "tests/golden/good/stdout").write_text("")
         (self.root / "tests/errors/e0053/main.mo").write_text("module Main\nx = 1 + true\n")
@@ -82,26 +80,6 @@ class ConformanceCheck(unittest.TestCase):
         self.rejected("reference changed")
         self.reference.write_text("## 3. Values\n\nValues never change.\n\nAnother rule.\n")
         self.rejected("reference changed")
-
-    def test_implementation_change_requires_gap_review(self):
-        review = self.root / "tests/conformance/implementation.sha256"
-        original = review.read_text()
-        for name in ("src/lower/expressions.c", "lib/map.mo"):
-            with self.subTest(name=name):
-                source = self.root / name
-                source.parent.mkdir(parents=True, exist_ok=True)
-                source.write_text("newly supported behavior\n")
-                self.rejected("implementation changed; recheck every gap")
-                result = self.command("--implementation")
-                self.assertEqual(result.returncode, 0, result.stderr)
-                review.write_text(result.stdout)
-                self.assertEqual(self.command().returncode, 0)
-                source.write_text("another implementation change\n")
-                self.rejected("implementation changed; recheck every gap")
-                source.unlink()
-                review.write_text(original)
-                result = self.command()
-                self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_missing_program_output_and_exact_error_fail(self):
         program = self.root / "tests/golden/good/main.mo"

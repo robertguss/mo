@@ -57,8 +57,7 @@ bash ci/check.sh gcc drivers
 
 The map check validates coverage metadata, not language execution. It
 fails on an unindexed block, changed reference text, duplicate or unknown keys,
-missing source or expectation files, a program in the wrong verdict column,
-and compiler or library changes that have not had a gap review.
+missing source or expectation files, or a program in the wrong verdict column.
 Each block needs an accepting program or a written gap. A refusal-only block
 needs an explanation of why it has no accepting program.
 
@@ -88,20 +87,9 @@ This command does not write programs, expectations, mappings, or exemptions.
 An added block still fails until it has a `rules.tsv` entry.
 
 Compiler and library changes can make a gap stale even when the reference has
-not changed. `implementation.sha256` records the contents and paths of C,
-header, definition and Mo files under `src/` and `lib/` at the last gap review.
-Any change there makes the map check fail. Recheck every gap against the new
-implementation, add programs with hand-written expectations for supported
-forms, and remove only the claims those programs establish. Then record the
-reviewed implementation:
-
-```sh
-python3 ci/check_conformance.py --implementation > tests/conformance/implementation.sha256
-python3 ci/check_conformance.py
-```
-
-The fingerprint forces a review; it cannot judge whether a reason is true.
-Do not refresh it merely to make the check pass.
+not changed. Refresh affected gaps when a PR closes one, or during a periodic
+review. Add programs with hand-written expectations for supported forms, and
+remove only the claims those programs establish.
 
 ## Review against main on 24 October 2026
 

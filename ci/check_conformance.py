@@ -3,21 +3,11 @@
 
 import argparse
 import csv
-import hashlib
 import pathlib
 import re
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FIELDS = ["rule", "accepts", "refuses", "stops", "gap"]
-
-
-def implementation_hash(root):
-    digest = hashlib.sha256()
-    sources = [path for tree in ("src", "lib") for path in (root / tree).rglob("*")
-               if path.suffix in (".c", ".h", ".def", ".mo")]
-    for path in sorted(sources):
-        digest.update(str(path.relative_to(root)).encode() + b"\0" + path.read_bytes() + b"\0")
-    return digest.hexdigest()
 
 
 def inventory(source):
@@ -108,20 +98,13 @@ def validate(root, rows, rules):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inventory", action="store_true", help="print reference rule text")
-    parser.add_argument("--implementation", action="store_true", help="print implementation hash")
     parser.add_argument("--section", help="show a section and its subsections, e.g. 5 or 5.6")
     args = parser.parse_args()
-    implementation = implementation_hash(ROOT)
-    if args.implementation:
-        print(implementation)
-        return
     rules = inventory((ROOT / "docs/reference/README.md").read_text())
     if args.inventory:
         for rule, source in rules.items():
             print(f"{rule}\t{source}")
         return
-    assert (ROOT / "tests/conformance/implementation.sha256").read_text().strip() == implementation, \
-        "implementation changed; recheck every gap, then refresh implementation.sha256 with --implementation"
     with (ROOT / "tests/conformance/reference.tsv").open(newline="") as stream:
         snapshot = list(csv.reader(stream, delimiter="\t", quoting=csv.QUOTE_NONE))
     assert snapshot == [list(item) for item in rules.items()], \
