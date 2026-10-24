@@ -86,6 +86,9 @@ class ConformanceCheck(unittest.TestCase):
         self.index.write_text(HEADER +
                               "3/1\tgood\t\t\t\t\ttests/test_gone.c:lists\n")
         self.rejected("3/1: missing driver tests/test_gone.c")
+        (self.root / "tests/test_heap.c").write_text("int main(void) {\n    lists();\n}\n")
+        self.index.write_text(HEADER + "3/1\tgood\t\t\t\t\ttests/test_heap.c:lists\n")
+        self.rejected("3/1: no test lists in tests/test_heap.c")
         (self.root / "Makefile").write_text("grammar-check: x\n")
         self.index.write_text(HEADER +
                               "3/1\t\t\t\t\tMakefile:grammar\n")

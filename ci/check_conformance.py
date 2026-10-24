@@ -17,7 +17,7 @@ def has_test(path, name):
     if path.name == "Makefile":
         return re.search(rf"^{name}:", text, re.M) is not None
     if path.suffix in (".c", ".h"):
-        return re.search(rf"^[A-Za-z_][\w *]*\b{name}\([^;]*$", text, re.M) is not None
+        return re.search(rf"^[A-Za-z_][\w *]*\b{name}\(", text, re.M) is not None
     if path.suffix == ".py":
         defined = re.search(rf"^\s*def {name}\(", text, re.M) is not None
         return defined and len(re.findall(rf"\b{name}\(", text)) > 1
