@@ -1,0 +1,3 @@
+{"record":"version","format":"1.0","mo":"0.0.0","command":"check"}
+{"record":"diagnostic","code":"E0045","headline":"a name clashes with a name always in scope","reason":"A clash between names is an error (reference 10.3); these names are always in scope (reference 10.5).","section":"10.3","primary":{"file":"answers/linkcheck.mo","file_bytes":"616e73776572732f6c696e6b636865636b2e6d6f","start":158,"end":162,"line":7,"column":8,"end_line":7,"end_column":12,"label":"Link"},"secondary":[],"fixes":[]}
+{"record":"totals","errors":1,"dropped":0,"status":1}

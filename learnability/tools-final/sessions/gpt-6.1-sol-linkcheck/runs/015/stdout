@@ -1,0 +1,7 @@
+passed Linkcheck.test.1  answers/linkcheck.mo:427:1
+failed Linkcheck.test.2  answers/linkcheck.mo:438:1
+  left: ["ok: 8 links in 3 files"]
+  right: ["ok: 9 links in 3 files"]
+  448 |   assert console.printed == ["ok: 9 links in 3 files"]
+      |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this assertion was false
+1 passed, 1 failed, 0 stopped

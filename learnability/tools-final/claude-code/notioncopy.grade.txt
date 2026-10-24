@@ -1,0 +1,23 @@
+ok   notioncopy/01-reference
+ok   notioncopy/02-reference-limit-4000
+ok   notioncopy/03-paragraphs
+ok   notioncopy/04-lists
+ok   notioncopy/05-code-blocks
+ok   notioncopy/06-tables
+ok   notioncopy/07-no-title
+ok   notioncopy/07-second-title
+ok   notioncopy/08-exactly-at-the-limit
+ok   notioncopy/08-one-byte-over
+ok   notioncopy/08-section-at-the-limit
+ok   notioncopy/09-long-section
+ok   notioncopy/10-block-over-the-limit
+ok   notioncopy/11-utf8
+ok   notioncopy/12-checksum-wikipedia
+ok   notioncopy/12-checksum-wraps
+ok   notioncopy/13-empty-source
+ok   notioncopy/14-usage-limit-without-number
+ok   notioncopy/14-usage-limit-zero
+ok   notioncopy/14-usage-missing-argument
+ok   notioncopy/14-usage-missing-source
+ok   notioncopy/14-usage-out-not-empty
+notioncopy: 22 of 22 tests passed

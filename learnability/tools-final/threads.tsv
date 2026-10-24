@@ -1,0 +1,7 @@
+family	tool	thread
+claude-code	linkcheck	T-01a16d9c-30df-76fd-ac61-66e3081a1d3b
+gpt-6.1-sol	linkcheck	T-01a16d9c-388c-77ce-801a-1b37cee5daa6
+claude-code	notioncopy	T-01a16d9c-40d3-777e-b10f-63cbf875264e
+gpt-6.1-sol	notioncopy	T-01a16d9c-47b9-71f3-9881-020f97827b8a
+claude-code	tally	T-01a16d9c-4e6a-711a-93da-96f9e98eb7db
+gpt-6.1-sol	tally	T-01a16d9c-57e9-70bd-ba0b-4300da676e1b

@@ -1,0 +1,9 @@
+passed Tally.percentage.example.1  answers/tally.mo:210:5
+passed Tally.percentage.example.2  answers/tally.mo:211:5
+passed Tally.percentage.example.3  answers/tally.mo:212:5
+passed Tally.function_at.example.1  answers/tally.mo:222:5
+passed Tally.function_at.example.2  answers/tally.mo:223:5
+passed Tally.function_at.example.3  answers/tally.mo:224:5
+passed Tally.test.1  answers/tally.mo:277:1
+passed Tally.test.2  answers/tally.mo:305:1
+8 passed, 0 failed, 0 stopped
