@@ -1,0 +1,23 @@
+passed Brackets.opener.example.1  brackets.mo:21:5
+passed Brackets.opener.example.2  brackets.mo:22:5
+passed Brackets.opener.example.3  brackets.mo:23:5
+passed Brackets.opener.example.4  brackets.mo:24:5
+passed Brackets.opener.example.5  brackets.mo:25:5
+passed Brackets.check.example.1  brackets.mo:47:5
+passed Brackets.check.example.2  brackets.mo:48:5
+passed Brackets.check.example.3  brackets.mo:49:5
+passed Brackets.check.example.4  brackets.mo:56:5
+passed Brackets.check.example.5  brackets.mo:57:5
+passed Brackets.check.example.6  brackets.mo:58:5
+passed Brackets.check.example.7  brackets.mo:65:5
+passed Brackets.check.example.8  brackets.mo:66:5
+passed Brackets.check.promise.1  brackets.mo:68:3
+passed Brackets.report.example.1  brackets.mo:105:5
+passed Brackets.report.example.2  brackets.mo:106:5
+passed Brackets.report.example.3  brackets.mo:108:5
+passed Brackets.report.example.4  brackets.mo:118:5
+passed Brackets.test.1  brackets.mo:152:1
+passed Brackets.test.2  brackets.mo:163:1
+passed Brackets.test.3  brackets.mo:171:1
+passed Brackets.test.4  brackets.mo:178:1
+22 passed, 0 failed, 0 stopped

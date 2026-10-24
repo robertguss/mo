@@ -1,0 +1,17 @@
+passed RpnTest.test.1  rpn-test.mo:5:1
+passed RpnTest.test.2  rpn-test.mo:12:1
+passed RpnTest.test.3  rpn-test.mo:17:1
+passed RpnTest.test.4  rpn-test.mo:22:1
+passed RpnTest.test.5  rpn-test.mo:26:1
+passed RpnTest.test.6  rpn-test.mo:33:1
+passed RpnTest.test.7  rpn-test.mo:41:1
+passed RpnTest.test.8  rpn-test.mo:49:1
+passed Rpn.apply.example.1  rpn.mo:16:5
+passed Rpn.apply.example.2  rpn.mo:17:5
+passed Rpn.apply.example.3  rpn.mo:18:5
+passed Rpn.evaluate.example.1  rpn.mo:32:5
+passed Rpn.evaluate.example.2  rpn.mo:33:5
+passed Rpn.evaluate.example.3  rpn.mo:34:5
+passed Rpn.evaluate.example.4  rpn.mo:35:5
+passed Rpn.describe.example.1  rpn.mo:64:5
+16 passed, 0 failed, 0 stopped
