@@ -6,7 +6,7 @@ below), the arena, `src/base/arena.c` (`arena.c`, in [The arena](#the-arena)), t
 verifier's transfer functions in `src/bytecode/verify.c` and `verify-instruction.c` (`verify.c`,
 in [The verifier](#the-verifier)), the primitives' arithmetic and UTF-8 in `src/base/decimal.c`,
 `src/prim/number.c`, `prim.c`, `text.c` and `unicode.c` (in [The primitives](#the-primitives)),
-lexical path containment, `src/host/files.c` `mo_host_normalize` (`path.c`, in
+lexical path containment and bounded resolution (`path.c`, `resolve.c` and `resolve-kernel.c`, in
 [The host paths](#the-host-paths)), and reference count updates (`refcount.c`, in
 [Reference count updates](#reference-count-updates)), plus hash-table probing (`table.c`, in
 [Hash-table probing](#hash-table-probing)).
@@ -72,8 +72,9 @@ body, or an assumption that rules out the paths that matter. Two checks catch th
   and `MO_UNREACHABLE` (and adjacent closing braces), which the proofs show never
   run; the branch CBMC adds to a call through a function pointer for a target the harness never
   gives it (the verifier's replay visitor), which it closes with `assume(false)`; and the lines
-  `unreachable_lines` in `prove.sh` names for a proof, each with its reason (only
-  `display_width`'s width overflow checks, which need a span of more than 2^63 bytes).
+  `unreachable_lines` in `prove.sh` names for a proof, each with its reason:
+  `display_width`'s width overflow checks need a span of more than 2^63 bytes; the portable
+  resolver cannot begin a step on a separator after its caller and previous step removed them.
 
 CI runs the proofs and the reach check side by side, `MO_CBMC_JOBS` at a time each.
 `ci/check.sh cbmc` sets that to half the processors, so a machine with many processors and
@@ -243,8 +244,39 @@ is `FILE_NOT_ALLOWED` with `containment`. It also never overflows, reads past th
 an `MO_ASSERT`. `files.c` is included with `MO_CBMC_NORMALIZE` defined, so only
 `mo_host_normalize` is compiled from that file.
 
-Not proved: the portable and `openat2` resolvers in `src/host/path.c`, link targets, NUL (the
-callers refuse that before they call normalize), and paths longer than the bound.
+`resolve.c` includes the real `src/host/path.c` with an **eight-byte path buffer, two link
+expansions, eight work steps, and a root plus three temporary descriptors**. The portable
+proof takes every relative path of up to seven bytes over `{'.', '/', 'a'}`, every mode and
+every initial work count from zero to its limit. Link targets range over the same alphabet,
+up to the full eight-byte `readlinkat` buffer, including truncation. The Linux wrapper proof
+also takes an eight-byte input to exercise its length refusal; other inputs are canonical
+paths that normalization can leave, including the empty path.
+
+| Proof | Checks |
+| --- | --- |
+| `resolve_portable` | memory, pointer, conversion and arithmetic safety of the component walk, link expansion and root-based ancestor replay; syscalls use live root-derived descriptors, never ask for `..`, never pass a slash-containing component, and open with `O_NOFOLLOW`; the shared work count stays within its limit and never decreases |
+| `resolve_kernel` | the real Linux resolver and `mo_host_resolve` wrapper, with portable resolution replaced by its proved contract; `openat2` always requires `RESOLVE_BENEATH` and `RESOLVE_NO_MAGICLINKS` and pins with `O_PATH`; I/O reopening uses only a retained `/proc/self/fd/` descriptor and cannot create a pathname |
+
+Both proofs keep the root open and leave exactly the successful output descriptor live, or no
+temporary descriptor on failure. Each bound has an unwinding assertion. Reach checks cover
+the functions above and the harness ends, except the portable loop that skips leading slashes:
+inputs and link targets are relative, and each component advance already skips separators.
+
+The OS is a model, not the subject of these proofs. Opens, inspection, link reads and directory
+creation can fail. Successful opens allocate a free descriptor; descriptor identities and file
+kinds are arbitrary, so replacements and identity mismatches are included. `close` releases its
+descriptor and succeeds. The Linux syscall may return `EINTR` once, so its retry body runs;
+unbounded interruptions are not proved. `snprintf` models the exact retained-descriptor format
+for the small descriptor set. Byte-copy models check both buffers and copy all requested bytes,
+including overlapping moves. Error translation preserves `ENOENT` and otherwise returns failure.
+
+Not proved: production-size paths or work/link limits, arbitrary descriptor numbers, libc or
+kernel internals, exact filesystem outcomes or error messages, concurrent namespace snapshots,
+or that the portable resolver implements whole-lookup ancestry rather than directory-object
+authority. These harnesses target 64-bit Linux; non-Linux directory-open flag branches are not
+proved. The kernel proof trusts the OS meaning of `RESOLVE_BENEATH`; the portable proof
+checks the calls that preserve retained authority, not an actual filesystem graph. NUL in an
+input path is refused by callers before normalization and is not included here.
 
 ## Reference count updates
 

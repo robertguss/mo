@@ -208,14 +208,19 @@ nothing else, through `..` or links.*
   I/O (D236; `architecture.md` section 7, "Files").
 - Evidence: CBMC `normalize` proof: `mo_host_normalize` accepts exactly the contained relative
   paths of up to 6 bytes over `{'.', '/', 'a'}`, and a refusal is a containment failure
-  (`cbmc/path.c`); `tests/test_host_resolver.c` and `tests/test_host.c` (including hostile links);
+  (`cbmc/path.c`). `resolve_portable` and `resolve_kernel` prove memory/arithmetic safety,
+  root-derived descriptor use, no-follow/beneath-root flags and temporary-descriptor cleanup
+  with an eight-byte path buffer, two links, eight work steps and three temporary descriptors
+  under modelled syscalls (`cbmc/README.md`). `tests/test_host_resolver.c` and `tests/test_host.c`
+  cover real lookups (including hostile links);
   `fuzz/fuzz_host_real.c` (path resolution never resolves outside the folder, `architecture.md`
   section 11).
 - Not covered: another process renaming an intermediate directory during a lookup can make the
   lookup follow that object to its new location; Mo's guarantee is directory-object authority,
   as in Capsicum, WASI and cap-std, and does not make the namespace an atomic snapshot
-  (`architecture.md` section 7). The portable and `openat2` resolvers in `src/host/path.c` are not
-  CBMC-proved; they remain tests and fuzz.
+  (`architecture.md` section 7). The resolver proofs do not cover production-size limits,
+  arbitrary descriptor numbers, OS/libc internals or unbounded `EINTR`. They check calls and
+  cleanup, not an actual filesystem graph or exact lookup outcomes.
 
 ### P9. Stack, call depth and heap are bounded
 
@@ -264,7 +269,7 @@ bug could break, so they are the parts the other evidence aims at:
 | VM | `src/vm`, C | Pair assertions, fuzzing (`fuzz_vm.c`), differential test against Lean, sanitizers. **No CBMC proof of the interpreter loop.** |
 | Heap and arena | `src/heap`, `src/base/arena.c`, C | CBMC (arena, local reference count updates, bounded hash-table probing and compaction), `fuzz_heap.c`, sanitizers |
 | Primitives | `src/prim`, C | CBMC (arithmetic and UTF-8), `fuzz_prim.c`, oracles in `tests/test_prim.c` |
-| Host | `src/host`, C | CBMC (`normalize` of `mo_host_normalize`), `fuzz_host.c`, `fuzz_host_real.c`, resolver tests |
+| Host | `src/host`, C | CBMC (lexical normalization, bounded portable and Linux resolution under modelled syscalls), `fuzz_host.c`, `fuzz_host_real.c`, resolver tests |
 | Standard library | `lib/`, Mo | memory safe by construction (condition 4) |
 
 ## Gaps
@@ -272,13 +277,14 @@ bug could break, so they are the parts the other evidence aims at:
 These are not guaranteed today.
 
 1. **No termination or time bound by default.** See P9.
-2. **No proof of the VM loop, the verifier's drivers, the heap, or path resolution after
-   normalize.** CBMC covers the reader, the arena, the verifier's per-instruction functions, the
+2. **No proof of the VM loop, the verifier's drivers, or the whole heap.** CBMC covers the reader,
+   the arena, the verifier's per-instruction functions, the
    arithmetic and UTF-8 primitives, local reference count updates, bounded hash-table probing
    and compaction, and lexical path containment (`mo_host_normalize`). The table proofs use
    eight slots, with a separate 256-slot probe-limit case and compaction of up to two entries
-   (`cbmc/README.md`). The heap's destructor walk and allocation remain unproved. The rest
-   has tests, fuzzing, sanitizers and (for the VM) the Lean differential test.
+   (`cbmc/README.md`). Bounded resolver proofs add call/cleanup checks under modelled syscalls,
+   not a proof of the OS or a filesystem graph. The heap's destructor walk and allocation remain
+   unproved. The rest has tests, fuzzing, sanitizers and (for the VM) the Lean differential test.
 3. **The slow checks do not run on their own.** Sanitizers, fuzzing, Lean and CBMC run only when
    someone runs them (`AGENTS.md`, "Checks and merging"); no hosted CI runs any check. A
    regression in them is found when they next run.
