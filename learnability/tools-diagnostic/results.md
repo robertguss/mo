@@ -1,6 +1,6 @@
 # The three tools' diagnostic round: results
 
-Six fresh sessions, one per tool per family, on mo f27cac3 (`freeze.md`), 24 Oct 2026. This round is diagnostic: it finds what to fix in the guide, the messages and the toolchain before the final round, and it is not measured against D229's target. Robert's check of the six programs (protocol section 5) is still to come, so the model graders' answers raise findings only.
+Six fresh sessions, one per tool per family, on mo f27cac3 (`freeze.md`), 24 Oct 2026. This round is diagnostic: it finds what to fix in the guide, the messages and the toolchain before the final round, and it is not measured against D229's target. Robert chose not to grade this round's programs himself (protocol section 5), so the model graders' answers raise findings only.
 
 ## Verdicts
 
@@ -31,7 +31,7 @@ Blind, with `grader-prompt.md`; identifiers in `grading-key.json`.
 GPT-6.1 Sol's notioncopy never reached step 3, so no grader read it.
 
 - **Settled with the tests:** Claude Code's notioncopy and tally (C: B's points are inputs the task doesn't describe), and GPT-6.1 Sol's linkcheck (C: `# Hello ` gets the anchor `hello-`, breaking rule 6).
-- **Waiting for Robert:** Claude Code's linkcheck. B and C say no against a full test pass: it never checks an empty `#` fragment (`[x](#)`), against rule 5, and it keeps combining marks and fullwidth `？` in anchors, against rule 6. It keeps its mechanical pass for this round either way (protocol section 4). If Robert agrees with the graders, it is a finding against linkcheck's hidden tests, which have no case for either.
+- **Robert agreed with the graders:** Claude Code's linkcheck is a no. B and C say no against a full test pass: it never checks an empty `#` fragment (`[x](#)` or `doc.md#`), against rule 5, and it keeps combining marks and fullwidth `？` in anchors, so `# Café ？` (with a combining accent) has no anchor `cafe-` and `# 日本語？` has no anchor `日本語`, against rule 6. Both were confirmed by running it on those inputs at f27cac3; GPT-6.1 Sol's linkcheck handles all of them. It keeps its mechanical pass for this round (protocol section 4), and this is a finding against linkcheck's hidden tests, which have no case for either (finding 6).
 
 ## First retry
 
@@ -44,8 +44,10 @@ GPT-6.1 Sol's notioncopy never reached step 3, so no grader read it.
 3. **Appending an `if` expression copies the list.** `xs = xs.append(if c: a else: b)` loses in-place reuse and copies on every call (`findings/append-if-copies.mo`: 13 s at 40,000 appends, 0.06 s with the `if` bound to a name first). It accounts for about 135 of the 145 seconds GPT-6.1 Sol's linkcheck took on test 20.
 4. **Stumbles were few.** Seven errors across six sessions: E0052 (an unused name) twice, E0071 (a case used without its type in scope) three times, E0068 (a catch-all choice arm) and E0093 (an unused import) once each, all fixed on the next run. The sessions' own reports and `check-log` summaries are in `grader-a.md` and `grader-b.md`.
 5. **Packaging.** The harness log sat outside the orb's workspace, so it was collected by asking each finished session to archive it (`notes.md`). Next round's `setup.sh` should keep it inside the workspace.
+6. **linkcheck's hidden tests miss two rules.** No test has an empty `#` fragment (rule 5) or a heading with a combining mark or fullwidth punctuation (rule 6), so a program that gets both wrong passes 21 of 21.
 
 ## Still to do
 
-- Robert grades the six programs blind (protocol section 5), and decides Claude Code's linkcheck above.
-- Findings 2 and 3 become tasks if Robert agrees; finding 1 is MO-113.
+- Finding 1 is fixed by MO-113 (#176). Finding 2 is MO-115 and finding 3 is MO-114.
+- Next freeze: add two linkcheck hidden tests, an empty `#` fragment (`[x](#)`, `doc.md#`) and a heading with a combining mark and fullwidth `？` (finding 6).
+- Robert's human check (protocol section 5) was skipped for this diagnostic round at his request; it starts in a later round.
