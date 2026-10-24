@@ -1,0 +1,11 @@
+error E0095: write x.f, not x.f()  tests/errors/e0095-deferred/main.mo:4:19
+
+  4 |   f = fn(s) s.trim() end
+    |                   ^^ the function takes only the receiver
+
+x.f, with no other arguments, calls f(x) (reference 5.4).
+
+Fix: remove the parentheses
+  tests/errors/e0095-deferred/main.mo:4:19
+  4 |   f = fn(s) s.trim end
+
