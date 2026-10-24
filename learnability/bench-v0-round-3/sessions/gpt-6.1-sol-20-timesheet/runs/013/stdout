@@ -1,0 +1,6 @@
+failed Timesheet.test.2  timesheet.mo:91:1
+  left: 0
+  right: 1
+  99 |   assert main(console) == 1
+     |   ^^^^^^^^^^^^^^^^^^^^^^^^^ this assertion was false
+0 passed, 1 failed, 0 stopped

@@ -1,0 +1,7 @@
+error E0050: no visible function has this dot-call name  playlist.mo:58:17
+
+  58 |   pieces = open.split(" (")
+     |                 ^^^^^ not visible in this block
+
+A dot call looks in the type's module, then among the names in scope (reference 5.4).
+

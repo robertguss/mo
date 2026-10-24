@@ -1,0 +1,14 @@
+passed CartTest.test.1  cart-test.mo:9:1
+passed CartTest.test.2  cart-test.mo:15:1
+passed CartTest.test.3  cart-test.mo:25:1
+passed CartTest.test.4  cart-test.mo:33:1
+passed CartTest.test.5  cart-test.mo:41:1
+passed CartTest.test.6  cart-test.mo:60:1
+passed CartTest.test.7  cart-test.mo:74:1
+passed CartTest.test.8  cart-test.mo:83:1
+passed CartTest.test.9  cart-test.mo:101:1
+passed CartTest.test.10  cart-test.mo:115:1
+passed CartTest.test.11  cart-test.mo:139:1
+passed Cart.add.example.1  cart.mo:28:5
+passed Cart.receipt.example.1  cart.mo:97:5
+13 passed, 0 failed, 0 stopped

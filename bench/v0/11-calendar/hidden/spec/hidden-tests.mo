@@ -23,3 +23,7 @@ test "a century of days"
   assert Calendar.days_between(1900, 2000) == 36524
   assert Calendar.days_between(2000, 2100) == 36525
 end
+
+test "a leap year at the smallest Int"
+  assert Calendar.days_between(-9223372036854775808, -9223372036854775807) == 366
+end

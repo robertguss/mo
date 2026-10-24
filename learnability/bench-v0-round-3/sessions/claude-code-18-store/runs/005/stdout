@@ -1,0 +1,22 @@
+passed Store.apply.example.1  store.mo:7:5
+passed Store.apply.example.2  store.mo:8:5
+passed Store.apply.example.3  store.mo:9:5
+passed Store.apply.example.4  store.mo:10:5
+passed Store.apply.example.5  store.mo:11:5
+passed Store.apply.example.6  store.mo:12:5
+passed Store.apply.example.7  store.mo:13:5
+passed Store.apply.example.8  store.mo:14:5
+passed Store.apply.example.9  store.mo:15:5
+passed Store.apply.example.10  store.mo:16:5
+passed Store.apply.example.11  store.mo:17:5
+passed Store.apply.example.12  store.mo:18:5
+passed Store.apply.example.13  store.mo:19:5
+passed Store.add.example.1  store.mo:36:5
+passed Store.add.example.2  store.mo:37:5
+passed Store.add.example.3  store.mo:38:5
+passed Store.add.example.4  store.mo:39:5
+passed Store.add.example.5  store.mo:40:5
+passed Store.add.example.6  store.mo:41:5
+passed Store.test.1  store.mo:63:1
+passed Store.test.2  store.mo:75:1
+21 passed, 0 failed, 0 stopped
