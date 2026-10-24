@@ -99,6 +99,30 @@ static void oracle(void) {
     prim_fixture_free(&f);
 }
 
+static void categories(void) {
+    struct prim_fixture f;
+    prim_fixture_init(&f, MO_DEFAULT_HEAP_SIZE);
+    for (uint32_t cp = 0; cp <= 0x10ffff; cp++) {
+        if (cp >= 0xd800 && cp <= 0xdfff)
+            continue;
+        struct mo_cell input = mo_cell_char(cp), out;
+        const char *reason;
+        MO_ASSERT(mo_prim_call(f.heap, &f.types, MO_PRIM_UNICODE16_LETTER,
+                               f.signature[MO_PRIM_UNICODE16_LETTER], &input, &out,
+                               &reason) == MO_PRIM_RETURNED);
+        MO_ASSERT(reason == NULL);
+        unsigned result = mo_cell_get_bool(out) ? 1U : 0U;
+        MO_ASSERT(mo_prim_call(f.heap, &f.types, MO_PRIM_UNICODE16_DIGIT,
+                               f.signature[MO_PRIM_UNICODE16_DIGIT], &input, &out,
+                               &reason) == MO_PRIM_RETURNED);
+        MO_ASSERT(reason == NULL);
+        result |= mo_cell_get_bool(out) ? 2U : 0U;
+        MO_ASSERT(putchar((int)result) != EOF);
+    }
+    MO_ASSERT(mo_heap_objects(f.heap) == 0);
+    prim_fixture_free(&f);
+}
+
 static void graphemes(void) {
     struct prim_fixture f;
     prim_fixture_init(&f, 1 << 20);
@@ -424,6 +448,10 @@ static void work(void) {
 }
 
 int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "--categories") == 0) {
+        categories();
+        return 0;
+    }
     if (argc == 2 && strcmp(argv[1], "--oracle") == 0) {
         oracle();
         return 0;

@@ -793,9 +793,12 @@ for fixture, expected in {
     "file-error-text": 0,
     "char-natives": 0,
     "int-natives": 0,
+    "bigint-natives": 0,
+    "random-natives": 0,
     "float-natives": 0,
     "bytes-natives": 0,
     "byte-natives": 0,
+    "builtin-abilities": 0,
     "list-sum": 0,
     "list-all": 0,
     "list-count": 0,
@@ -824,6 +827,12 @@ for fixture, expected in {
     body = (pathlib.Path("tests/lower-source") / fixture / "main.mo").read_text()
     assert body.startswith("module Main\n")
     CASES[fixture] = (body[len("module Main\n"):], expected)
+
+body = pathlib.Path("tests/lower-source/env-natives/main.mo").read_text()
+assert body.startswith("module Main\n")
+SPEC_CASES["env-natives"] = (body[len("module Main\n"):], {
+    "Main.test.1": ["returned", "Unit"],
+})
 
 
 for count in (4, 8, 16):

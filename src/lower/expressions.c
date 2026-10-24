@@ -1011,6 +1011,32 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
         }
         static const struct {
             const char *name;
+            enum mo_core_big_op operation;
+        } bigs[] = {{"BigInt.abs", MO_CORE_BIG_OP_ABS},
+                    {"BigInt.min", MO_CORE_BIG_OP_MIN},
+                    {"BigInt.max", MO_CORE_BIG_OP_MAX},
+                    {"BigInt.pow", MO_CORE_BIG_OP_POW},
+                    {"BigInt.floor_div", MO_CORE_BIG_OP_FLOOR_DIV},
+                    {"BigInt.floor_mod", MO_CORE_BIG_OP_FLOOR_MOD},
+                    {"BigInt.to_int", MO_CORE_BIG_OP_TO_INT}};
+        for (size_t i = 0; i < sizeof bigs / sizeof bigs[0]; i++) {
+            lower_work(p, 1);
+            if (strcmp(r->native, bigs[i].name) == 0)
+                return lower_prim(
+                    p, (struct mo_core_prim){.tag = MO_CORE_PRIM_BIG, .as.big = bigs[i].operation},
+                    args);
+        }
+        if (strcmp(r->native, "Int.compare") == 0) {
+            MO_ASSERT(args.count == 2);
+            static const struct mo_source_type integer = {
+                .kind = MO_SOURCE_NAMED, .name = "Int", .module = UINT32_MAX};
+            static const struct mo_ability_implementation proof = {
+                .ability = MO_SOURCE_ORDER, .kind = MO_ABILITY_NATIVE, .type = &integer};
+            return lower_compare(p, &proof, NULL, b->instance->owner, b->instance->depth,
+                                 args.items[0], args.items[1]);
+        }
+        static const struct {
+            const char *name;
             enum mo_core_float_op operation;
         } floats[] = {{"Float.abs", MO_CORE_FLOAT_OP_ABS},
                       {"Float.floor", MO_CORE_FLOAT_OP_FLOOR},
@@ -1107,7 +1133,9 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                         {"Unicode16.display_width", MO_CORE_UNICODE_OP_DISPLAY_WIDTH},
                         {"Unicode16.normalize_nfc", MO_CORE_UNICODE_OP_NORMALIZE_NFC},
                         {"Unicode16.lowercase", MO_CORE_UNICODE_OP_LOWERCASE},
-                        {"Unicode16.uppercase", MO_CORE_UNICODE_OP_UPPERCASE}};
+                        {"Unicode16.uppercase", MO_CORE_UNICODE_OP_UPPERCASE},
+                        {"Unicode16.letter?", MO_CORE_UNICODE_OP_LETTER},
+                        {"Unicode16.digit?", MO_CORE_UNICODE_OP_DIGIT}};
         for (size_t i = 0; i < sizeof unicodes / sizeof unicodes[0]; i++) {
             lower_work(p, 1);
             if (strcmp(r->native, unicodes[i].name) == 0)
@@ -1126,6 +1154,8 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                   {"Console.read_line", {MO_CORE_IO_OP_READ_LINE, false}},
                   {"Args.list", {MO_CORE_IO_OP_ARGS_LIST, false}},
                   {"Args.of", {MO_CORE_IO_OP_ARGS_OF, false}},
+                  {"Env.get", {MO_CORE_IO_OP_ENV_GET, false}},
+                  {"Env.of", {MO_CORE_IO_OP_ENV_OF, false}},
                   {"Console.fake", {MO_CORE_IO_OP_CONSOLE_FAKE, false}},
                   {"Console.fake_input", {MO_CORE_IO_OP_CONSOLE_FAKE_INPUT, false}},
                   {"Console.printed", {MO_CORE_IO_OP_PRINTED, false}},
@@ -1149,7 +1179,9 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                   {"ReadFiles.exists?", {MO_CORE_IO_OP_EXISTS, true}},
                   {"ReadFiles.within", {MO_CORE_IO_OP_WITHIN, true}},
                   {"Clock.now", {MO_CORE_IO_OP_NOW, false}},
-                  {"Clock.fixed", {MO_CORE_IO_OP_CLOCK_FIXED, false}}};
+                  {"Clock.fixed", {MO_CORE_IO_OP_CLOCK_FIXED, false}},
+                  {"Random.int", {MO_CORE_IO_OP_RANDOM_INT, false}},
+                  {"Random.seeded", {MO_CORE_IO_OP_RANDOM_SEEDED, false}}};
         for (size_t i = 0; i < sizeof io / sizeof io[0]; i++) {
             lower_work(p, 1);
             if (strcmp(r->native, io[i].name) == 0)

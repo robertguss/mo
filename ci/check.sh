@@ -175,6 +175,14 @@ if have python3; then
 				python3 ci/check_golden.py "$driver"
 		done
 		for driver in "${drivers[@]}"; do
+			later "The library: every file passes mo test ($driver)" \
+				python3 ci/check_lib.py "$driver"
+		done
+		for driver in "${drivers[@]}"; do
+			later "Every tracked Mo source: formatter idempotence, trees, check and execution ($driver)" \
+				python3 ci/check_format.py "$driver"
+		done
+		for driver in "${drivers[@]}"; do
 			later "Every error code has a message test or reachability explanation ($driver)" \
 				python3 ci/check_errors.py "$driver"
 		done

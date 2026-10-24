@@ -1,5 +1,5 @@
-error E1150: this native call is not lowered yet  tests/errors/e1150/main.mo:3:11
+error E1150: this constant's deferred function needs globals not yet initialized  tests/errors/e1150/main.mo:3:16
 
-  3 | handler = Env.get
-    |           ^^^^^^^
+  3 | handler = fn() base end
+    |                ^^^^
 

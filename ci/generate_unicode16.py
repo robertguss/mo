@@ -25,7 +25,8 @@ SOURCES = ("UnicodeData.txt", "SpecialCasing.txt", "DerivedCoreProperties.txt",
 GCB = ("Other", "CR", "LF", "Control", "Extend", "ZWJ", "Regional_Indicator",
        "Prepend", "SpacingMark", "L", "V", "T", "LV", "LVT")
 FLAGS = {"PICTOGRAPHIC": 1 << 6, "EMOJI": 1 << 7, "CASED": 1 << 8,
-         "IGNORABLE_CASE": 1 << 9, "ZERO": 1 << 10, "WIDE": 1 << 11, "VARIANT": 1 << 12}
+         "IGNORABLE_CASE": 1 << 9, "ZERO": 1 << 10, "WIDE": 1 << 11, "VARIANT": 1 << 12,
+         "LETTER": 1 << 13, "DIGIT": 1 << 14}
 
 
 def source_path(name):
@@ -92,6 +93,10 @@ def generate(sources):
             props[cp] |= int(row[3]) << 16
             if row[2].startswith("M"):
                 props[cp] |= FLAGS["ZERO"]
+            if row[2].startswith("L"):
+                props[cp] |= FLAGS["LETTER"]
+            if row[2] == "Nd":
+                props[cp] |= FLAGS["DIGIT"]
         if row[5] and not row[5].startswith("<"):
             decompositions[c] = tuple(int(x, 16) for x in row[5].split())
         if row[12]:

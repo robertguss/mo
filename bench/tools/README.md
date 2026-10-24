@@ -8,7 +8,7 @@ write.
 
 | Tool | Task text | Hidden tests |
 | --- | --- | --- |
-| `linkcheck` | [linkcheck/task.md](linkcheck/task.md) | 22, in 23 runs |
+| `linkcheck` | [linkcheck/task.md](linkcheck/task.md) | 23, in 24 runs |
 | `notioncopy` | [notioncopy/task.md](notioncopy/task.md) | 14, in 22 runs |
 | `tally` | [tally/task.md](tally/task.md) | 16, in 19 runs |
 
@@ -63,7 +63,12 @@ text, and a fresh round, and `grade.py --freeze TOOL` writes the new hashes.
   link and one anchor broken on purpose, and a 10-second limit. Tests 21 and 22 were added for
   the final round (D275), after the diagnostic round found a program that passed every test while
   breaking rules 5 and 6: 21 has empty `#` fragments, which name no heading, and 22 has headings
-  with a combining accent and fullwidth punctuation, which rule 6 removes.
+  with a combining accent and fullwidth punctuation, which rule 6 removes. Test 23 (MO-124) was
+  added after the final round (#181, finding 1): GPT-6.1 Sol passed all 23 runs but kept spaces
+  around heading text in its anchors. It checks trailing spaces and extra spaces after `#`,
+  duplicate anchors after trimming, and preservation of internal spaces. Its expected output was
+  written by hand from rule 6 before checking the reference. This is a later linkcheck freeze;
+  the task text and recorded final-round results are unchanged.
 - **notioncopy.** Tests 1 and 2 convert `docs/reference/README.md` at the same commit. Converting
   the reference as it was on 12 October gives, byte for byte, the Notion copy made that day
   (`hidden/notion-copy-2026-10-12.txt`, 68,664 bytes); test 1's pieces, joined, differ from it

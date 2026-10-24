@@ -126,3 +126,6 @@ cd721409421b075fc498594b6d2343684e085143962c29a83bc975df26f2126f  hidden/tests/2
 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  hidden/tests/22-anchor-marks/args
 4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865  hidden/tests/22-anchor-marks/status
 a4a49d8457fd2cddec4613da811afc2ede88553fe97e827233144591781014bb  hidden/tests/22-anchor-marks/stdout
+855fab13de84541936f7b20655266a2a3a99ab844aa79b127c86de3f34d9830c  hidden/tests/23-heading-spaces/.input/README.md
+4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865  hidden/tests/23-heading-spaces/status
+b82da3a1ec1f5060ea040bede4a8e7e03ece6728075cf302d5c6095b717e77ff  hidden/tests/23-heading-spaces/stdout

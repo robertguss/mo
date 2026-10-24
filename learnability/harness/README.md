@@ -43,9 +43,13 @@ and a folder in `.pending/`, and its run is not in the log.
   the agent's own and run in the `src/` copy, with each argument that names a file inside `work/`
   rewritten relative to it. So every `file` in it is a path under `src/`, wherever the agent ran
   `mo` from and however it named the file, and the agent's own run is untouched. An argument
-  naming a file outside `work/` is made absolute, so it is still that file; `src/` doesn't hold
-  it, so `tally` finds its errors' functions in the file as it is when `tally` runs. Paths are compared after resolving
-  symbolic links.
+  naming a file outside `work/` is made absolute, so it is still that file. Paths are compared
+  after resolving symbolic links.
+- **Runs on outside files aren't logged.** A `check` or `test` must name at least one file
+  inside `work/` to enter `log/`. A run whose files are all outside stays in `runs/` only,
+  so scratch programs with planted errors don't count as the session's errors (MO-125, D268).
+  The file's resolved path decides this, not the command's working directory. This rule applies
+  to rounds after benchmark v0's first round, which keeps its frozen harness and logs.
 - **A refused command isn't logged.** A `check` or `test` whose JSON output doesn't start with a
   `version` record (a usage mistake, such as `mo check` with no file, exits 2 and prints nothing)
   checked no program, and logging it would count as a run that fixed every error. A `fix` that
