@@ -1814,6 +1814,22 @@ def runner(binary):
         result = run(binary, ["run", "--max-heap", "1", str(path)], 70)
         assert not result.stdout and b"--max-heap = 1" in result.stderr
 
+        for argument in (
+            "if i % 2 == 0: 17 else: 29",
+            "case i % 2\n0: 17\n_: 29\nend",
+            "case i % 2\n0:\na = 17\na\n_:\nb = 29\nb\nend",
+            "(fn()\na = if i % 2 == 0: 17 else: 29\na\nend)()",
+        ):
+            path.write_text(
+                "module Main\nfn main(console: Console)\nvar xs = [7]\n"
+                "for i in 0..3000\nxs = xs.append(" + argument + ")\nend\n"
+                "for i in 0..3000\n"
+                "if xs.get(i + 1) != Some(if i % 2 == 0: 17 else: 29)\n"
+                'stop "wrong appended element"\nend\nend\n'
+                'console.print("#{xs.size}:#{xs.get(0) or -1}")\nend\n')
+            result = run(binary, ["run", str(path)], 0)
+            assert result.stdout == b"3001:7\n" and not result.stderr
+
         # Loading/checking failure is never run as code. Per D250, a module
         # without main is a library module: check and test accept it, and E0079
         # comes only from run.

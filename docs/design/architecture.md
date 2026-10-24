@@ -2844,8 +2844,10 @@ Reference arguments move their owners or get owned copies; staging slots use the
 parameter types even when an argument stops. The edge then normalizes locals to
 the target declaration's lexical state, drops old parameters, transfers the saved
 values and clears moved reference staging slots. The first entry and all backedges
-thus agree exactly; reference join parameters are conservatively owned. Body and
-rest results use the ordinary value merge, or ordinary returns in tail position.
+thus agree exactly; reference join parameters are conservatively owned. Liveness
+identifies unused reference parameters and emission drops them on entry, before
+the body can update an alias. Body and rest results use the ordinary value merge,
+or ordinary returns in tail position.
 Register names run from the binder's write through its body (parameters
 through the function, join parameters through the join body), not through
 temporary initialization.

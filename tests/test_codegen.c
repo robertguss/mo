@@ -1819,6 +1819,77 @@ static void test_primitive_ownership(void) {
     mo_arena_free(&arena);
     mo_buffer_free(&payload);
 }
+static void test_join_parameter_reuse(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode *b = compile(
+        &arena, "(Program () ((FunDecl \"go\" ((\"xs\" (list (int))) (\"c\" (bool))) (list (int)) "
+                "(let_ \"saved\" (var \"xs\") "
+                "(join \"next\" ((\"value\" (int)) (\"unused\" (list (int)))) "
+                "(prim (list (int) (append)) ((var \"saved\") (var \"value\"))) "
+                "(if_ (var \"c\") (jump \"next\" ((lit (int 17)) (var \"xs\"))) "
+                "(jump \"next\" ((lit (int 29)) (var \"xs\")))))) \"M\" (function) 0)) "
+                "() \"go\" (noSource))");
+    if (b != NULL) {
+        struct mo_buffer wire;
+        struct mo_write_error write_error;
+        struct mo_load_error load_error;
+        mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+        bool written = mo_bytecode_write(b, &wire, &write_error);
+        CHECK(written);
+        struct mo_image *image = written ? mo_load(wire.bytes, wire.length, &load_error) : NULL;
+        CHECK(image != NULL);
+        if (image != NULL) {
+            struct mo_limits limits = mo_limits_default();
+            struct mo_defect defect;
+            bool initialized = mo_image_init(image, &limits, &defect) == MO_RETURNED;
+            CHECK(initialized);
+            struct mo_process *p = initialized ? mo_process_new(image, &limits) : NULL;
+            CHECK(p != NULL);
+            if (p != NULL) {
+                struct mo_heap *heap = mo_process_heap(p);
+                uint32_t type = b->functions[0].result_type;
+                for (unsigned shared = 0; shared < 2; shared++) {
+                    for (unsigned choice = 0; choice < 2; choice++) {
+                        struct mo_cell args[2], result, retained, element;
+                        bool built = mo_value_list(heap, type, NULL, 0, &args[0]) &&
+                                     mo_list_append(heap, type, &args[0], mo_cell_int(7));
+                        CHECK(built);
+                        if (!built)
+                            continue;
+                        uintptr_t original = (uintptr_t)mo_cell_get_ref(args[0]);
+                        if (shared != 0)
+                            retained = mo_value_dup(heap, type, args[0]);
+                        args[1] = mo_cell_bool(choice != 0);
+                        enum mo_outcome outcome = mo_call(p, 0, args, 2, &result, &defect);
+                        CHECK(outcome == MO_RETURNED);
+                        if (outcome == MO_RETURNED) {
+                            CHECK(((uintptr_t)mo_cell_get_ref(result) == original) ==
+                                  (shared == 0));
+                            CHECK(mo_list_size(result) == 2);
+                            CHECK(mo_list_get(result, 0, &element) &&
+                                  mo_cell_get_int(element) == 7);
+                            CHECK(mo_list_get(result, 1, &element) &&
+                                  mo_cell_get_int(element) == (choice != 0 ? 17 : 29));
+                            mo_value_drop(heap, type, result);
+                        }
+                        if (shared != 0) {
+                            CHECK(mo_list_size(retained) == 1);
+                            CHECK(mo_list_get(retained, 0, &element) &&
+                                  mo_cell_get_int(element) == 7);
+                            mo_value_drop(heap, type, retained);
+                        }
+                        CHECK(mo_heap_objects(heap) == 0);
+                    }
+                }
+                mo_process_free(p);
+            }
+            mo_image_free(image);
+        }
+        mo_buffer_free(&wire);
+    }
+    mo_arena_free(&arena);
+}
 static void test_operation_order(void) {
     struct mo_arena arena;
     mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
@@ -2419,6 +2490,7 @@ static MO_MUST_USE int tests(int argc, char **argv) {
     test_closure_parameter_limit();
     test_shared_function_types();
     test_primitive_ownership();
+    test_join_parameter_reuse();
     test_operation_order();
     test_host_operations();
     test_collection_literals();
