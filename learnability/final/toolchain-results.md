@@ -2,8 +2,21 @@
 
 MO-121, 24 October 2026. The baseline is main at
 [`267370f`](https://github.com/robertguss/mo/commit/267370f50a13e0ce12d103346ae63b6861ba3436).
-The results below include this PR's two lowering fixes. None of the 32 recorded
+The results below include MO-121's two lowering fixes. None of the 32 recorded
 programs or graders' reports has changed.
+
+MO-136 reran the script on main at
+[`fc53746`](https://github.com/robertguss/mo/commit/fc53746413b436a0fe1ca0dc935f77c3a6710314),
+after MO-127 (#195) and MO-128 (#194). All 32 originals give the same exit
+status and diagnostic as before, so the table's totals are unchanged. One scratch
+probe changed: the GPT job-queue copied to `answers/` now passes all five
+promises, which closes [L3](#l3-hidden-builder-dependencies-fixed-by-mo-127).
+Every difference is now either fixed in the toolchain (L1, L2, L3) or traced to
+a later language rule (D228, D232), the collection layout (C1), or a mistake in
+a program (P1, P2). No toolchain gap remains open. MO-128 changes no result here:
+main at [`96ad7fb`](https://github.com/robertguss/mo/commit/96ad7fb), before
+both tasks, gives the same output as
+[`a127a55`](https://github.com/robertguss/mo/commit/a127a55), after MO-128 only.
 
 The old Phase 2 note that all 32 programs fail early no longer holds. On the
 recorded paths, 25 pass `mo check`. Sixteen pass `mo test`, nine have no
@@ -46,8 +59,8 @@ Passing generated promise trials is not a proof over all inputs.
 Paths are relative to this directory. `C0` means `check` exits 0. `T0 (N)` means
 `test` exits 0 with N passed, zero failed, and zero stopped. `T2` means no
 observations. Other results name the diagnostic and exit status. Trace IDs refer
-to the explanations below. The baseline and fixed compiler give the same
-results in this table.
+to the explanations below. The baseline, MO-121's fixed compiler, and main at
+`fc53746` give the same results in this table.
 
 | Program | Phase 1 verdict | Today's check | Today's test | Trace |
 | --- | --- | --- | --- | --- |
@@ -72,7 +85,7 @@ results in this table.
 | [gpt-6.1-sol/find.mo](gpt-6.1-sol/find.mo) | pass | C0 | T2 | Agrees on compilation. No observations. |
 | [gpt-6.1-sol/greet.mo](gpt-6.1-sol/greet.mo) | pass | C0 | T2 | Agrees on compilation. No observations. |
 | [gpt-6.1-sol/inventory.mo](gpt-6.1-sol/inventory.mo) | pass | C0 | T2 | Agrees on compilation. No observations. |
-| [gpt-6.1-sol/job-queue.mo](gpt-6.1-sol/job-queue.mo) | pass | E0035, exit 1 | E0035, exit 1 | C1. Collection layout. Restored path reveals L3, larger toolchain gap. |
+| [gpt-6.1-sol/job-queue.mo](gpt-6.1-sol/job-queue.mo) | pass | E0035, exit 1 | E0035, exit 1 | C1. Collection layout. Restored path passes all five promises since MO-127 fixed L3. |
 | [gpt-6.1-sol/json.mo](gpt-6.1-sol/json.mo) | pass | E0037, exit 1 | E0037, exit 1 | D232. Scratch module rename checks; no observations. |
 | [gpt-6.1-sol/kv.mo](gpt-6.1-sol/kv.mo) | pass | E0045, exit 1 | E0045, exit 1 | D232. Scratch `Entry` rename checks; no observations. |
 | [gpt-6.1-sol/library.mo](gpt-6.1-sol/library.mo) | close | C0 | T0 (12) | D228. `Time - Duration` became legal after grading. |
@@ -177,29 +190,34 @@ dot calls, and function values. Random checks include stream aliasing,
 independent equal seeds, and fixed draws derived from the published vectors in
 `formal/MoCore/Builtins.lean`, using the mapping in `formal/TRANSLATION.md`.
 
-### L3. Larger follow-up for hidden builder dependencies
+### L3. Hidden builder dependencies, fixed by MO-127
 
-The unchanged GPT job-queue copied to `answers/job-queue.mo` passes `check`, but
-plain `test` refuses `acknowledge.promise.1` at line 184 with E1400. Selecting
-`fail.promise.1` at line 209 gives the same refusal. Selecting `submit`,
-`expire_leases`, or `lease` individually passes each promise.
+At MO-121, the unchanged GPT job-queue copied to `answers/job-queue.mo` passed
+`check`, but plain `test` refused `acknowledge.promise.1` at line 184 with E1400.
+Selecting `fail.promise.1` at line 209 gave the same refusal. Selecting `submit`,
+`expire_leases`, or `lease` individually passed each promise.
 
 Both refused subjects take the exposed opaque `Lease`. Its only exposed builder
 is `lease(queue: Queue, now: Time, duration: Duration)`, returning it inside
 `(Queue, Result(Option(Lease), QueueError))`. `Queue` is also opaque but can start
 through exposed `empty()`. Reference section 12.2 permits building hidden types
-through bounded calls to their module's exposed functions.
+through bounded calls to their module's exposed functions. `src/tools/promises.c`'s
+`startable` rejected opaque builder inputs, so the `Queue` dependency made `Lease`
+unstartable. This was a toolchain limitation, not a mistake in the recorded
+program.
 
-`src/tools/promises.c`'s `startable` checks each prospective builder with
-`.plain = true`. `input_supported` rejects opaque builder inputs in that mode,
-so the `Queue` dependency makes `Lease` unstartable. This is a toolchain
-limitation, not a compile mistake in the recorded program. A larger fix must
-extend eligibility and the runtime builder planner together to support bounded
-dependencies between hidden types, terminate cycles, and preserve the existing
-construction limits. It must not bypass opacity by constructing `Lease` fields
-directly. The coordinator should create a task for this gap with the restored
-file and the two selectors as reproductions.
+MO-127 ([#195](https://github.com/robertguss/mo/pull/195)) lets a builder take
+hidden types of lower levels, up to three deep, built through their own exposed
+functions. On main at `fc53746`, the restored copy passes plain `test` with five
+passed, zero failed, and zero stopped, and each of the five `--only` selectors
+passes its promise. On [`a127a55`](https://github.com/robertguss/mo/commit/a127a55),
+the commit before MO-127, the same copy still stops with E1400 at line 184, so
+MO-127 is the change that fixed it.
 
-The Phase 2 item is traced but not fully fixed. L3 remains. D228, D232, and C1
+The Phase 2 item is now traced and every toolchain gap it found is fixed. Both
+GPT answers under `Answers.` still stop with E0035 at their recorded paths
+because of C1. The restored GPT rate-limit still fails one assertion because of
+P2. Those are faults in the collection and in the program, and the originals
+stay frozen. D228, D232, and C1
 also show why not every difference fits the original item's proposed choice
 between a grader mistake and a toolchain fix.
