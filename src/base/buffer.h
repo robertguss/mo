@@ -55,10 +55,8 @@ MO_MUST_USE bool mo_buffer_append_uint(struct mo_buffer *buffer, uint64_t value)
 MO_MUST_USE bool mo_buffer_append_hex(struct mo_buffer *buffer, uint64_t value,
                                       unsigned min_digits);
 
-/* Append a number in 2, 4 or 8 bytes, the lowest first, as the bytecode format writes its integers
+/* Append a number in 4 bytes, the lowest first, as the bytecode format writes its integers
  * (bytecode.md section 3). */
-MO_MUST_USE bool mo_buffer_append_le16(struct mo_buffer *buffer, uint16_t value);
 MO_MUST_USE bool mo_buffer_append_le32(struct mo_buffer *buffer, uint32_t value);
-MO_MUST_USE bool mo_buffer_append_le64(struct mo_buffer *buffer, uint64_t value);
 
 #endif

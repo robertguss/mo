@@ -90,8 +90,8 @@ struct mo_cell mo_input_child(const struct mo_inputs *inputs, struct mo_input_wa
     return mo_value_field(frame->value, index);
 }
 
-enum mo_input_result mo_input_walk_next(struct mo_input_walk *walk, uint32_t *type,
-                                        struct mo_cell *value) {
+static enum mo_input_result mo_input_walk_next(struct mo_input_walk *walk, uint32_t *type,
+                                               struct mo_cell *value) {
     while (walk->parameter < walk->end) {
         if (walk->depth != 0) {
             struct mo_input_walk_frame *frame = &walk->stack[walk->depth - 1];

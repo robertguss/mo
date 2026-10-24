@@ -79,9 +79,6 @@ struct mo_module_interfaces {
 MO_MUST_USE const struct mo_symbol *mo_find_symbol(const struct mo_module_scope *scope,
                                                    const uint8_t *name, size_t length);
 
-/* Names always in scope (reference 10.5), including native choice cases. */
-MO_MUST_USE bool mo_source_builtin(const uint8_t *name, size_t length);
-
 /* Indexes declarations, validates overload ownership, exposes public interfaces
  * and resolves explicit imports and their choice cases. NULL on error. Does not
  * check body names, types, uses of hidden insides or unused imports; those need

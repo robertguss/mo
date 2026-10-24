@@ -159,11 +159,8 @@ static void test_numbers_in_hexadecimal(void) {
 static void test_numbers_in_bytes(void) {
     struct mo_buffer buffer;
     mo_buffer_init(&buffer, 1000);
-    CHECK(mo_buffer_append_le16(&buffer, 0x1234));
     CHECK(mo_buffer_append_le32(&buffer, 0x89abcdefu));
-    CHECK(mo_buffer_append_le64(&buffer, 0x0102030405060708u));
-    const uint8_t expected[] = {0x34, 0x12, 0xef, 0xcd, 0xab, 0x89, 0x08,
-                                0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01};
+    const uint8_t expected[] = {0xef, 0xcd, 0xab, 0x89};
     CHECK(buffer.length == sizeof expected);
     CHECK(buffer.bytes != NULL && memcmp(buffer.bytes, expected, sizeof expected) == 0);
     mo_buffer_free(&buffer);

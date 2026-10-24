@@ -63,8 +63,6 @@ struct mo_input_walk {
 };
 
 /* Reads source cells only; these helpers never retain foreign ownership. */
-MO_MUST_USE enum mo_input_result mo_input_walk_next(struct mo_input_walk *walk, uint32_t *type,
-                                                    struct mo_cell *value);
 MO_MUST_USE enum mo_input_result mo_input_frame_init(const struct mo_inputs *inputs,
                                                      struct mo_input_walk_frame *frame,
                                                      uint32_t type, struct mo_cell value,

@@ -21,14 +21,6 @@ MO_MUST_USE enum mo_host_outcome mo_host_console(struct mo_host *host, struct mo
                                                  uint32_t operation, uint32_t type,
                                                  const struct mo_cell *args, struct mo_cell *out,
                                                  struct mo_host_error *error);
-MO_MUST_USE enum mo_host_outcome mo_host_misc(struct mo_host *host, struct mo_heap *heap,
-                                              uint32_t operation, uint32_t type,
-                                              const struct mo_cell *args, struct mo_cell *out,
-                                              struct mo_host_error *error);
-MO_MUST_USE enum mo_host_outcome mo_host_files(struct mo_host *host, struct mo_heap *heap,
-                                               uint32_t operation, uint32_t type,
-                                               const struct mo_cell *args, struct mo_cell *out,
-                                               struct mo_host_error *error);
 MO_MUST_USE enum mo_host_outcome mo_host_console_fake(struct mo_host *host, struct mo_heap *heap,
                                                       uint32_t type, const struct mo_cell *input,
                                                       struct mo_cell *out);

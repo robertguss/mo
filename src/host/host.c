@@ -30,6 +30,13 @@ const char *mo_host_start(struct mo_host *host) {
     return NULL;
 }
 
+static MO_MUST_USE enum mo_host_outcome
+mo_host_misc(struct mo_host *host, struct mo_heap *heap, uint32_t operation, uint32_t type,
+             const struct mo_cell *args, struct mo_cell *out, struct mo_host_error *error);
+static MO_MUST_USE enum mo_host_outcome
+mo_host_files(struct mo_host *host, struct mo_heap *heap, uint32_t operation, uint32_t type,
+              const struct mo_cell *args, struct mo_cell *out, struct mo_host_error *error);
+
 #define OPERATIONS(fake_)                                                                          \
     {                                                                                              \
         {MO_CAP_ARGS, fake_, mo_host_misc}, {MO_CAP_ENV, fake_, mo_host_misc},                     \
@@ -112,9 +119,10 @@ enum mo_host_outcome mo_host_call(struct mo_host *host, struct mo_heap *heap, ui
     return operations->call(host, heap, operation, type, args, out, error);
 }
 
-enum mo_host_outcome mo_host_misc(struct mo_host *host, struct mo_heap *heap, uint32_t operation,
-                                  uint32_t type, const struct mo_cell *args, struct mo_cell *out,
-                                  struct mo_host_error *error) {
+static enum mo_host_outcome mo_host_misc(struct mo_host *host, struct mo_heap *heap,
+                                         uint32_t operation, uint32_t type,
+                                         const struct mo_cell *args, struct mo_cell *out,
+                                         struct mo_host_error *error) {
     const struct mo_capability_info *info = mo_capability_get(args[0]);
     if (operation == MO_HOST_ARGS_LIST) {
         *out = mo_value_dup(heap, type, mo_state_get(info->state, 0));
@@ -152,9 +160,10 @@ enum mo_host_outcome mo_host_misc(struct mo_host *host, struct mo_heap *heap, ui
     return MO_HOST_RETURNED;
 }
 
-enum mo_host_outcome mo_host_files(struct mo_host *host, struct mo_heap *heap, uint32_t operation,
-                                   uint32_t type, const struct mo_cell *args, struct mo_cell *out,
-                                   struct mo_host_error *error) {
+static enum mo_host_outcome mo_host_files(struct mo_host *host, struct mo_heap *heap,
+                                          uint32_t operation, uint32_t type,
+                                          const struct mo_cell *args, struct mo_cell *out,
+                                          struct mo_host_error *error) {
     const struct mo_capability_info *info = mo_capability_get(args[0]);
     const struct mo_host_operations *operations = info->operations;
     if (operations->fake)
