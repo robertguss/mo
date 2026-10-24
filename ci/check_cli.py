@@ -1815,7 +1815,7 @@ def runner(binary):
                      'fn main(console: Console)\n_printed = console.printed\nend'):
             path.write_text("module Main\n" + body + "\n")
             items = records(run(binary, ["check", "--json", str(path)], 1), "check")
-            assert items[1]["code"] == "E0097" and items[-1]["errors"] == 1
+            assert items[1]["code"] == "E0098" and items[-1]["errors"] == 1
 
         for body, status, reason in (
             ("fn main()\nend", 0, None),

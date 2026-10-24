@@ -579,7 +579,7 @@ parsing. Native identities remain qualified table spellings, not fake source
 module symbols. Static native calls retain a callee row; dot calls retain
 their receiver and arguments without a callee row. Spec-only host operations
 check only in examples, promises, anchors and tests, including their anonymous
-functions. Constants and ordinary functions refuse them with E0097;
+functions. Constants and ordinary functions refuse them with E0098;
 calling an ordinary helper from a test does not change the helper's context.
 
 Collection annotations impose implicit Hash requirements, including through

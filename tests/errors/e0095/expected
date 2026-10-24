@@ -1,7 +1,0 @@
-error E0095: Mo has no => functions: write fn(x) ... end  tests/errors/e0095/main.mo:4:15
-
-  4 |   items.map(x => x + 1)
-    |               ^^
-
-An anonymous function is written fn(x) ... end, on one line or several, and its parameter types are inferred (reference 5.6).
-

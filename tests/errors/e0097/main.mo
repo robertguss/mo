@@ -1,7 +1,5 @@
 module Main
 
-fn main(console: Console)
-  quiet = Console.fake()
-  quiet.print("hidden")
-  console.print("shown")
+fn first(items: List(Int)) : Int
+  items.first!
 end

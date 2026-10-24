@@ -1,4 +1,4 @@
-error E0095: Mo has no |x| functions: write fn(x) ... end  tests/errors/e0095-bar/main.mo:4:13
+error E0096: Mo has no |x| functions: write fn(x) ... end  tests/errors/e0096-bar/main.mo:4:13
 
   4 |   items.map(|x| x + 1)
     |             ^

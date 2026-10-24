@@ -1,4 +1,4 @@
-error E0097: a fake capability is made only in a test, example or promise  tests/errors/e0097-constant/main.mo:3:9
+error E0098: a fake capability is made only in a test, example or promise  tests/errors/e0098-constant/main.mo:3:9
 
   3 | start = Clock.fixed(Time.epoch)
     |         ^^^^^^^^^^^^^^^^^^^^^^^ outside any test, example or promise

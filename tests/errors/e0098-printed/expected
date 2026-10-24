@@ -1,4 +1,4 @@
-error E0097: printed and printed_errors are read only in a test, example or promise  tests/errors/e0097-printed/main.mo:5:19
+error E0098: printed and printed_errors are read only in a test, example or promise  tests/errors/e0098-printed/main.mo:5:19
 
   5 |   lines = console.printed
     |                   ^^^^^^^ outside any test, example or promise

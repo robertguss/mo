@@ -1,7 +1,7 @@
-error E0096: Mo has no postfix ! to unwrap a value: use case, with stop "why it can't happen"  tests/errors/e0096/main.mo:4:14
+error E0096: Mo has no => functions: write fn(x) ... end  tests/errors/e0096/main.mo:4:15
 
-  4 |   items.first!
-    |              ^
+  4 |   items.map(x => x + 1)
+    |               ^^
 
-There is no unwrap: where a failure truly can't happen, the code says why, with stop (reference 8.4).
+An anonymous function is written fn(x) ... end, on one line or several, and its parameter types are inferred (reference 5.6).
 

@@ -1,7 +1,7 @@
-error E0097: a fake capability is made only in a test, example or promise  tests/errors/e0097/main.mo:4:11
+error E0097: Mo has no postfix ! to unwrap a value: use case, with stop "why it can't happen"  tests/errors/e0097/main.mo:4:14
 
-  4 |   quiet = Console.fake()
-    |           ^^^^^^^^^^^^^^ outside any test, example or promise
+  4 |   items.first!
+    |              ^
 
-Fakes are made only in tests, examples and promises, never in a module's constants or its functions (reference 12.4).
+There is no unwrap: where a failure truly can't happen, the code says why, with stop (reference 8.4).
 
