@@ -1,0 +1,14 @@
+error E0050: a name isn't visible in this block  tests/errors/e0050-null/main.mo:4:12
+
+  4 |   first != null
+    |            ^^^^ not visible in this block
+
+A local name is visible from its binding to the end of its block (reference 6.1).
+
+error E0050: a name isn't visible in this block  tests/errors/e0050-null/main.mo:8:3
+
+  8 |   nil
+    |   ^^^ not visible in this block
+
+A local name is visible from its binding to the end of its block (reference 6.1).
+

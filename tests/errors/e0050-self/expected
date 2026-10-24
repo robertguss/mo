@@ -1,0 +1,7 @@
+error E0050: a name isn't visible in this block  tests/errors/e0050-self/main.mo:8:3
+
+  8 |   self.x
+    |   ^^^^ not visible in this block
+
+A local name is visible from its binding to the end of its block (reference 6.1).
+

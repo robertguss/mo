@@ -1,0 +1,28 @@
+error E0007: expected line break, found <  tests/errors/e0007-chain/main.mo:4:9
+
+  4 |   a < b < c
+    |         ^
+
+Use the declaration or statement's syntax and close its delimiters (reference 2.4).
+
+error E0007: expected line break, found ==  tests/errors/e0007-chain/main.mo:8:10
+
+  8 |   a == b == c
+    |          ^^
+
+Use the declaration or statement's syntax and close its delimiters (reference 2.4).
+
+error E0007: expected line break, found ..  tests/errors/e0007-chain/main.mo:12:7
+
+  12 |   1..2..3
+     |       ^^
+
+Use the declaration or statement's syntax and close its delimiters (reference 2.4).
+
+error E0007: expected line break, found implies  tests/errors/e0007-chain/main.mo:16:15
+
+  16 |   a implies b implies c
+     |               ^^^^^^^
+
+Use the declaration or statement's syntax and close its delimiters (reference 2.4).
+
