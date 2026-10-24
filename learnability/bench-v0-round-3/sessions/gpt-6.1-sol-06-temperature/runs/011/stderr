@@ -1,0 +1,14 @@
+error E0077: an argument's type doesn't match its parameter  temperature.mo:39:25
+
+  39 |   Some(Reading(degrees: degrees, scale: scale))
+     |                         ^^^^^^^ expected Decimal, found Option(Decimal)
+
+A call passes each argument to its corresponding parameter (reference 5.2).
+
+error E0075: arithmetic is used on a type without Number  temperature.mo:72:3
+
+  72 |   reading.degrees.to_text + symbol(reading.scale) + " = " + converted.degrees.to_text + symbol(other)
+     |   ^^^^^^^^^^^^^^^^^^^^^^^ expected Int or BigInt or Decimal or Float, found Text
+
+Text has no Number, so + doesn't join texts; insert them into one text instead, as in "#{a}#{b}" (reference 3.4).
+

@@ -1,0 +1,13 @@
+passed WalletTest.test.1  wallet-test.mo:12:1
+passed WalletTest.test.2  wallet-test.mo:16:1
+passed WalletTest.test.3  wallet-test.mo:21:1
+passed WalletTest.test.4  wallet-test.mo:27:1
+passed WalletTest.test.5  wallet-test.mo:32:1
+passed WalletTest.test.6  wallet-test.mo:37:1
+passed WalletTest.test.7  wallet-test.mo:41:1
+passed WalletTest.test.8  wallet-test.mo:47:1
+passed Wallet.check.example.1  wallet.mo:27:5
+passed Wallet.check.example.2  wallet.mo:28:5
+passed Wallet.check.example.3  wallet.mo:29:5
+passed Wallet.withdraw.promise.1  wallet.mo:43:3
+12 passed, 0 failed, 0 stopped

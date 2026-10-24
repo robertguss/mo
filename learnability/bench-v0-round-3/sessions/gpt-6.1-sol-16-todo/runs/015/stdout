@@ -1,0 +1,11 @@
+passed Todo.parse_item.example.1  todo.mo:14:5
+passed Todo.parse_item.example.2  todo.mo:15:5
+passed Todo.parse_item.example.3  todo.mo:16:5
+passed Todo.position.example.1  todo.mo:50:5
+passed Todo.position.example.2  todo.mo:51:5
+passed Todo.position.example.3  todo.mo:52:5
+passed Todo.position.example.4  todo.mo:53:5
+passed Todo.test.1  todo.mo:109:1
+passed Todo.test.2  todo.mo:118:1
+passed Todo.test.3  todo.mo:125:1
+10 passed, 0 failed, 0 stopped

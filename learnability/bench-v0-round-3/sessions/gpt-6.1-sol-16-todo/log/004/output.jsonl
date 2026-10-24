@@ -1,0 +1,12 @@
+{"record":"version","format":"1.0","mo":"0.0.0","command":"test"}
+{"record":"result","name":"Todo.parse_item.example.1","kind":"example","span":{"file":"todo.mo","file_bytes":"746f646f2e6d6f","start":331,"end":403,"line":14,"column":5,"end_line":14,"end_column":77},"outcome":"passed","microseconds":19}
+{"record":"result","name":"Todo.parse_item.example.2","kind":"example","span":{"file":"todo.mo","file_bytes":"746f646f2e6d6f","start":408,"end":477,"line":15,"column":5,"end_line":15,"end_column":74},"outcome":"passed","microseconds":10}
+{"record":"result","name":"Todo.parse_item.example.3","kind":"example","span":{"file":"todo.mo","file_bytes":"746f646f2e6d6f","start":482,"end":512,"line":16,"column":5,"end_line":16,"end_column":35},"outcome":"passed","microseconds":4}
+{"record":"result","name":"Todo.position.example.1","kind":"example","span":{"file":"todo.mo","file_bytes":"746f646f2e6d6f","start":1550,"end":1577,"line":50,"column":5,"end_line":50,"end_column":32},"outcome":"passed","microseconds":5}
+{"record":"result","name":"Todo.position.example.2","kind":"example","span":{"file":"todo.mo","file_bytes":"746f646f2e6d6f","start":1582,"end":1606,"line":51,"column":5,"end_line":51,"end_column":29},"outcome":"passed","microseconds":4}
+{"record":"result","name":"Todo.position.example.3","kind":"example","span":{"file":"todo.mo","file_bytes":"746f646f2e6d6f","start":1611,"end":1635,"line":52,"column":5,"end_line":52,"end_column":29},"outcome":"passed","microseconds":3}
+{"record":"result","name":"Todo.position.example.4","kind":"example","span":{"file":"todo.mo","file_bytes":"746f646f2e6d6f","start":1640,"end":1664,"line":53,"column":5,"end_line":53,"end_column":29},"outcome":"passed","microseconds":4}
+{"record":"result","name":"Todo.test.1","kind":"test","span":{"file":"todo.mo","file_bytes":"746f646f2e6d6f","start":3481,"end":3907,"line":109,"column":1,"end_line":116,"end_column":4},"outcome":"passed","microseconds":298}
+{"record":"result","name":"Todo.test.2","kind":"test","span":{"file":"todo.mo","file_bytes":"746f646f2e6d6f","start":3909,"end":4339,"line":118,"column":1,"end_line":123,"end_column":4},"outcome":"passed","microseconds":257}
+{"record":"result","name":"Todo.test.3","kind":"test","span":{"file":"todo.mo","file_bytes":"746f646f2e6d6f","start":4341,"end":4712,"line":125,"column":1,"end_line":130,"end_column":4},"outcome":"passed","microseconds":200}
+{"record":"totals","errors":0,"dropped":0,"passed":10,"failed":0,"stopped":0,"status":0}

@@ -1,0 +1,13 @@
+passed Grades.parse_line.example.1  grades.mo:13:5
+passed Grades.parse_line.example.2  grades.mo:14:5
+passed Grades.parse_line.example.3  grades.mo:15:5
+passed Grades.parse_line.example.4  grades.mo:16:5
+passed Grades.average.example.1  grades.mo:39:5
+passed Grades.average.example.2  grades.mo:40:5
+passed Grades.average.example.3  grades.mo:41:5
+passed Grades.letter.example.1  grades.mo:51:5
+passed Grades.letter.example.2  grades.mo:52:5
+passed Grades.letter.example.3  grades.mo:53:5
+passed Grades.report.example.1  grades.mo:71:5
+passed Grades.report.example.2  grades.mo:72:5
+12 passed, 0 failed, 0 stopped
