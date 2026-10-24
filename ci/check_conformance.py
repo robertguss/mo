@@ -7,7 +7,32 @@ import pathlib
 import re
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-FIELDS = ["rule", "accepts", "refuses", "stops", "gap"]
+FIELDS = ["rule", "accepts", "refuses", "stops", "gap", "drivers", "cost", "untestable"]
+EVIDENCE = ("accepts", "gap", "drivers", "cost", "untestable")
+
+
+def has_test(path, name):
+    """Whether the driver at path defines, and for Python also calls, the test called name."""
+    text = path.read_text()
+    if path.name == "Makefile":
+        return re.search(rf"^{name}:", text, re.M) is not None
+    if path.suffix in (".c", ".h"):
+        return re.search(rf"^[A-Za-z_][\w *]*\b{name}\([^;]*$", text, re.M) is not None
+    if path.suffix == ".py":
+        defined = re.search(rf"^\s*def {name}\(", text, re.M) is not None
+        return defined and len(re.findall(rf"\b{name}\(", text)) > 1
+    return False
+
+
+def check_tests(root, rule, field, entries):
+    for entry in filter(None, entries.split(",")):
+        path, _, name = entry.partition(":")
+        assert name or field == "cost", f"{rule}: driver evidence must name a test: {entry}"
+        assert re.fullmatch(r"[\w./-]+", path) and re.fullmatch(r"\w*", name), (rule, field, entry)
+        assert field != "cost" or re.fullmatch(r"tests/test_\w+\.c", path), \
+            f"{rule}: cost evidence must be a C unit test: {entry}"
+        assert (root / path).is_file(), f"{rule}: missing driver {path}"
+        assert not name or has_test(root / path, name), f"{rule}: no test {name} in {path}"
 
 
 def inventory(source):
@@ -62,10 +87,13 @@ def validate(root, rows, rules):
         assert rule not in indexed, f"duplicate rule: {rule}"
         indexed[rule] = row
         assert rule in rules, f"unknown rule: {rule}"
-        assert any(row[field].strip() for field in ("accepts", "refuses", "stops", "gap")), \
+        assert None not in row, f"{rule}: more columns than {FIELDS}"
+        assert any(row[field].strip() for field in FIELDS[1:]), \
             f"{rule}: no program or gap explanation"
-        assert row["accepts"].strip() or row["gap"].strip(), \
-            f"{rule}: no accepting program or gap explanation"
+        assert any(row[field].strip() for field in EVIDENCE), \
+            f"{rule}: no accepting program, driver, untestable reason or gap explanation"
+        check_tests(root, rule, "drivers", row["drivers"])
+        check_tests(root, rule, "cost", row["cost"])
         for field in ("accepts", "refuses", "stops"):
             for name in filter(None, row[field].split(",")):
                 assert re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name), (rule, field, name)
@@ -110,7 +138,9 @@ def main():
     assert snapshot == [list(item) for item in rules.items()], \
         "reference changed; review rules.tsv, then refresh reference.tsv with --inventory"
     with (ROOT / "tests/conformance/rules.tsv").open(newline="") as stream:
-        reader = csv.DictReader(stream, delimiter="\t")
+        # Trailing empty columns may be left off, so a row without other-driver
+        # evidence keeps the original five columns.
+        reader = csv.DictReader(stream, delimiter="\t", restval="")
         assert reader.fieldnames == FIELDS, f"expected columns: {FIELDS}"
         rows = list(reader)
     validate(ROOT, rows, rules)
@@ -121,15 +151,18 @@ def main():
         for row in selected:
             print(f"\n{row['rule']} {rules[row['rule']]}")
             for field in FIELDS[1:]:
+                label = "cost (semantics checked, cost not measured)" if field == "cost" else field
                 if row[field]:
-                    print(f"  {field}: {row[field]}")
+                    print(f"  {label}: {row[field]}")
             diagnostics = [f"tests/check/diagnostics/{name}.diag"
                            for name in row["refuses"].split(",")
                            if name and (ROOT / f"tests/check/diagnostics/{name}.diag").is_file()]
             if diagnostics:
                 print(f"  diagnostic fields: {', '.join(diagnostics)}")
-    gaps = sum(bool(row["gap"]) for row in rows)
-    print(f"{len(rows)} reference rules indexed; {gaps} have explicit gaps")
+    count = {field: sum(bool(row[field]) for row in rows) for field in FIELDS[4:]}
+    print(f"{len(rows)} reference rules indexed; {count['gap']} have explicit gaps; "
+          f"{count['drivers']} name other drivers; {count['cost']} have cost claims checked "
+          f"for semantics only; {count['untestable']} untestable")
 
 
 if __name__ == "__main__":

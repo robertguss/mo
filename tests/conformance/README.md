@@ -39,9 +39,24 @@ programs pin the complete CLI error, including its locations and fixes.
   exit unsuccessfully, such as a failed example, promise, test, or `main` result.
 - `stops` lists golden cases that stop with exit status 70. A runtime bug is
   different from a compiler refusal or an ordinary declared failure.
-- `gap` explains any part the listed programs do not cover. It distinguishes
-  unsupported language behavior, missing programs, claims tested by another
-  driver, and claims that need work or allocation instrumentation.
+- `gap` explains any part of the block that nothing listed in the row covers:
+  unsupported language behavior, a missing program, or a question the
+  reference leaves open. Only this column counts as a gap.
+- `drivers` lists other checks that cover the block, as `PATH:TEST` separated
+  by commas (D280): a function in a Python driver such as
+  `ci/check_cli.py:promise_selection`, a function in a C unit test such as
+  `tests/test_format.c:check_source`, or a Makefile target such as
+  `Makefile:grammar`. Those checks are not copied into goldens.
+- `cost` lists the C unit tests, `tests/test_*.c` or `tests/test_*.c:TEST`,
+  that check the semantics of an operation whose cost the block promises
+  (D281). The cost itself is not measured; work and allocation counters are
+  left for Phase 3.
+- `untestable` gives a one-line reason no program can check the claim, such as
+  the real clock or a promise about a future version (D282).
+
+The last three columns may be left off a row that has none of them. A row with
+an accepting program, a driver, a cost test or an untestable reason and no
+`gap` is not a gap; the row still names its evidence or reason.
 
 An empty `refuses` or `stops` column does not mean every input is valid. It
 means no such program is indexed. Where the reference requires refusal and the
@@ -58,8 +73,10 @@ bash ci/check.sh gcc drivers
 The map check validates coverage metadata, not language execution. It
 fails on an unindexed block, changed reference text, duplicate or unknown keys,
 missing source or expectation files, or a program in the wrong verdict column.
-Each block needs an accepting program or a written gap. A refusal-only block
-needs an explanation of why it has no accepting program.
+It also fails when a `drivers` or `cost` entry names a file that is missing or
+a test the file no longer defines, so renaming a check fails the map. A Python
+test must also be called in its driver. Each block needs an accepting program,
+a driver, a cost test, an untestable reason or a written gap.
 
 The `drivers` group runs this check and its regression tests alongside
 `ci/check_golden.py` and `ci/check_errors.py`. Those existing runners execute
@@ -114,6 +131,15 @@ host failures, future-version claims, or confirmed compiler limitations.
 Multiline case interpolation and direct calls on a nullary case such as
 `Equal.to_text` now have the `txt-interpolation-case` and
 `lang-dot-calls-cases` programs.
+
+## Other drivers, cost and untestable claims
+
+D280, D281 and D282 (MO-131) reclassified 35 of the 45 gap entries on main
+`fb4b7bc`. Twenty rows now name other drivers, such as the formatter tests,
+`ci/check_cli.py`, `ci/check_errors.py`, the host and checker unit tests and
+`make grammar`. Twelve rows name C unit tests for cost claims, and seven give
+an untestable reason. Ten gaps remain: reference rules the compiler does not
+follow yet, refusals no fixture pins, and questions the reference leaves open.
 
 ## Initial mapping
 
