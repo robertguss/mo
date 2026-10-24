@@ -1,0 +1,5 @@
+README.md:10: #hello-: no such heading
+README.md:10: #--extra-spaces: no such heading
+README.md:11: #--both-sides---: no such heading
+README.md:11: #inside-gap: no such heading
+4 broken links
