@@ -55,6 +55,7 @@ declaration below it, or the module when it comes before `module`. `mo format`
 lines up the comments at the ends of consecutive lines in one column, two
 spaces after the longest line's code.
 
+<!-- mo-example: fragment -->
 ```mo
 ## The price of an order, with tax.
 fn total(order: Order) : Decimal
@@ -93,6 +94,7 @@ or a binary operator, or when the next line starts with a closing bracket, `.`,
 any block it opens, such as a `case` or an anonymous function written on
 several lines, to that block's `end`.
 
+<!-- mo-example: fragment -->
 ```mo
 order = Order(
   id: 7,
@@ -143,6 +145,7 @@ they round. Comparing or combining values of different types is an error.
 negates. A condition must be a `Bool`: no numbers, texts or lists stand in for
 one.
 
+<!-- mo-example: fragment -->
 ```mo
 ready = in_stock and not on_hold
 if order.lines.empty?
@@ -172,6 +175,7 @@ negative infinity instead.
 Overflow, and dividing by zero, are bugs: the program stops. Code that expects
 a result might not fit says what it wants instead:
 
+<!-- mo-example: fragment -->
 ```mo
 fits = a.checked_add(b)            # an Option(Int): None if it doesn't fit
 hash = h.wrapping_mul(31)          # wraps around
@@ -202,6 +206,7 @@ graphics. A number literal takes the type its context needs: in `x * 0.5`, with
 gives an `Int`, so convert first to get a fraction:
 `total.to_decimal / count.to_decimal`. Converting is explicit:
 
+<!-- mo-example: fragment -->
 ```mo
 share = cents.to_decimal / 100  # Int to Decimal
 ratio = share.to_float          # Decimal to Float, rounded to the nearest float
@@ -220,6 +225,7 @@ expression, even one with text in it, as in `"#{name or "you"}"`. Lines inside
 `#{...}` break as they do elsewhere (section 2.4), with `#{` and its `}` as
 brackets, so a `case` may run over several lines there:
 
+<!-- mo-example: fragment -->
 ```mo
 greeting = "Hello, #{name}! You have #{count} new messages."
 literal = "write \#{name} to insert a name"
@@ -266,6 +272,7 @@ fail but has nothing to return.
 A tuple groups two or more values: `(3, "three")` has type `(Int, Text)`.
 `pair.0` and `pair.1` read its parts, and a pattern takes it apart:
 
+<!-- mo-example: fragment -->
 ```mo
 (low, high) = bounds(readings)
 spread = high - low
@@ -277,6 +284,7 @@ spread = high - low
 the same type. Reading by position returns an `Option`, because the position
 may be past the end:
 
+<!-- mo-example: fragment -->
 ```mo
 first = items.first       # an Option
 third = items.get(2)      # positions start at 0
@@ -304,6 +312,7 @@ in the order they were added, setting an existing key keeps its place, and a
 key removed and added again goes last. Two maps are equal when they hold the same entries, in any order.
 Iterating a map gives `(key, value)` tuples.
 
+<!-- mo-example: fragment -->
 ```mo
 stock = {"apples": 3}
 more = stock.set("pears", 5)
@@ -325,6 +334,7 @@ years 1 to 9999 is a bug, so `time.checked_add(duration)` returns an `Option`,
 `None` outside them, for code that can't rule it out; a negative duration goes
 back in time. Times and durations compare with `<` and the other comparisons.
 
+<!-- mo-example: fragment -->
 ```mo
 expires = now + 30.minutes
 an_hour_ago = now - 1.hours
@@ -444,6 +454,7 @@ end
 `f(x)`: write `x.f`, not `x.f()`. Mo looks for `f` first in the module that declares the type of `x`, then
 among the names in scope. Chains read left to right: `text.trim.lines.size`.
 
+<!-- mo-example: fragment -->
 ```mo
 words = sentence.split(" ")  # Text's split
 loud = shout(words)          # a function in this module
@@ -487,6 +498,7 @@ written `fn(x) ... end`, on one line or several, and its parameter types are
 inferred. A function type is written like a signature: `fn(Decimal) : Decimal`,
 or `fn(Text)` for one that returns `Unit`.
 
+<!-- mo-example: fragment -->
 ```mo
 taxed = prices.map(fn(p) p * 1.2 end)
 labels = orders.map(fn(order)
@@ -506,6 +518,7 @@ a later round of a loop around it. Reading any other `var` is an error, since
 it would be unclear whether the function sees the value it was made with or a
 later one. Copy the value into a name first, and read the name:
 
+<!-- mo-example: fragment -->
 ```mo
 var count = 0
 current = count
@@ -541,6 +554,7 @@ Unused names, parameters and imports are errors, and so is a result that isn't
 `Unit` and isn't used. A name starting with `_` is unused on purpose, and
 `for _ in 0..3` repeats without a name.
 
+<!-- mo-example: fragment -->
 ```mo
 subtotal = order.lines.map(fn(line) line.price end).sum
 tax = subtotal * 0.2
@@ -552,6 +566,7 @@ tax = subtotal * 0.2
 function that declares it. Assigning to a field, or to a field of a field,
 builds a new record with that field changed:
 
+<!-- mo-example: fragment -->
 ```mo
 var cart = Cart(owner: "ana", items: [], total: 0)
 cart.items = cart.items.append(item)
@@ -574,6 +589,7 @@ caller assigns it.
 `else` blocks. With an `else`, an `if` has a value: the value of the block that
 ran. A block `if` stands on a line of its own or after `=`.
 
+<!-- mo-example: fragment -->
 ```mo
 if temperature > 30
   console.print("hot")
@@ -593,6 +609,7 @@ end
 A value that fits on one line uses the one-line form, which always has an
 `else` and may chain:
 
+<!-- mo-example: fragment -->
 ```mo
 unit = if count == 1: "item" else: "items"
 sign = if n < 0: "negative" else if n == 0: "zero" else: "positive"
@@ -605,6 +622,7 @@ that matches. An arm is `Pattern: statement` on one line, or `Pattern:` followed
 by lines that run until the next arm or `end`. The value of a `case` is the
 value of the arm that ran.
 
+<!-- mo-example: fragment -->
 ```mo
 message = case outcome
   Ok(order): "placed order #{order.id}"
@@ -645,6 +663,7 @@ binds are visible where the test is known to be true: in the block of the `if`
 or `while` it guards, after `and` in the same condition, after `implies`, and
 after an `assert`.
 
+<!-- mo-example: fragment -->
 ```mo
 if reply is Ok(body) and not body.empty?
   console.print(body)
@@ -682,6 +701,7 @@ Mo has no null and no exceptions. A value that may be missing is an `Option`; a
 function that can fail returns a `Result`; and a bug stops the program
 (section 13.2). Both are ordinary choice types:
 
+<!-- mo-example: fragment -->
 ```mo
 enum Option(T)
   None
@@ -701,6 +721,7 @@ computes `default` only for `None`. `x.or_fail(e)` turns `None` into
 `Error(e)`; it is a function, so `e` is computed even when `x` is a `Some`.
 `case` and `is` handle both cases:
 
+<!-- mo-example: fragment -->
 ```mo
 city = address.city or "unknown"
 case users.get(id)
@@ -742,6 +763,7 @@ failure with `case`. When the failure types differ, `try` wraps the failure if
 the function's failure type has exactly one case that holds it as its unnamed
 value, as `BadQuantity(QuantityError)` does:
 
+<!-- mo-example: fragment -->
 ```mo
 enum OrderError
   BadQuantity(QuantityError)
@@ -766,6 +788,7 @@ handled.
 There is no "unwrap". Where a failure truly can't happen, the code says why,
 with `stop`:
 
+<!-- mo-example: fragment -->
 ```mo
 rate = case rates.get(currency)
   Some(r): r
@@ -809,6 +832,7 @@ An ability is something a type can do. There are five, all built in:
 | `Text` | a text form, for `#{...}` and printing | `fn to_text(x: T) : Text` |
 | `Number` | `+`, `-`, `*`, `/`, `%` and `sum` | nothing: only `Int`, `BigInt`, `Decimal` and `Float` have it; times and durations also add and subtract (3.9) |
 
+<!-- mo-example: fragment -->
 ```mo
 enum Ordering
   Less
@@ -884,6 +908,7 @@ than these five takes a function as a parameter.
 A module starts with its name, then the `expose` line listing its public names,
 then its `use` lines:
 
+<!-- mo-example: fragment -->
 ```mo
 ## Orders: building, pricing and checking them.
 module Shop.Orders
@@ -999,6 +1024,7 @@ can only read. Calling `within` with a path that would leave the folder, such
 as `".."`, gives a capability that reaches nothing (section 14). Pass each
 function the least it needs:
 
+<!-- mo-example: fragment -->
 ```mo
 summary = try summarize(files.within("reports").read_only)
 ```
@@ -1099,6 +1125,7 @@ A `test` names a scenario in a sentence and checks it with `assert`. Tests
 live in the same file as the code and see its private names. A name bound by
 `assert ... is Pattern` stays in scope for the rest of its block:
 
+<!-- mo-example: fragment -->
 ```mo
 test "a quantity is read past spaces"
   assert parse_quantity(" 12 ") is Ok(n)
@@ -1125,6 +1152,7 @@ files and the same output: a file that `main` writes to a
 `Files.in_memory(...)` fake can be read back, and a `Console.fake()` passed to
 `main` shows afterwards what `main` printed.
 
+<!-- mo-example: fragment -->
 ```mo
 test "head prints the first line of each file"
   console = Console.fake()
@@ -1412,6 +1440,7 @@ which must be greater; `Random.seeded(seed: Int) : Random`. **Args** and
 **Json**, with `use Json`: `Json.parse(text: Text) : Result(Json, JsonError)`
 reads JSON as RFC 8259 defines it, into this type:
 
+<!-- mo-example: fragment -->
 ```mo
 enum Json
   Null

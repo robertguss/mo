@@ -72,6 +72,8 @@ def inventory(source):
             if text_fence:
                 block.append(line.strip())
             continue
+        if re.fullmatch(r"<!-- mo-example: (?:fragment|error E[0-9]{4}) -->", line.strip()):
+            continue
         heading = re.match(r"^#{2,3} (\d+(?:\.\d+)?)[.]? |^## Appendix ([ABC])[.]", line)
         if heading:
             flush()
