@@ -148,6 +148,13 @@ static void reference(void) {
 }
 
 int main(int argc, char **argv) {
+    if (argc >= 3 && strcmp(argv[1], "--files") == 0) {
+        for (int i = 2; i < argc; i++)
+            files(argv[i], true, false, false);
+        if (printf("format corpus: %u accepted inputs checked\n", accepted_inputs) < 0)
+            return 1;
+        return mo_test_report("test_format");
+    }
     MO_ASSERT(argc == 1 || (argc == 2 && strcmp(argv[1], "--fixed-points") == 0));
     fixed_points = argc == 2;
     check_source("module Main\nfn f()\nvar x=1\nx=x+2\nx\nend\n",
