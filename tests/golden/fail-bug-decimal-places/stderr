@@ -1,0 +1,5 @@
+bug: Decimal.to_fixed with places outside 0 to 18
+  at Main.main (tests/golden/fail-bug-decimal-places/main.mo:146..164)
+  at Main.main.entry (tests/golden/fail-bug-decimal-places/main.mo:13..200)
+  price = 2.5
+  console = <Console>

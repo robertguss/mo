@@ -1,0 +1,5 @@
+bug: stop
+  at Main.positive (tests/golden/fail-bug-constant-stop/main.mo:98..127)
+  detail: limit must be positive
+  at Main.limit.init (tests/golden/fail-bug-constant-stop/main.mo:39..50)
+  n = 0

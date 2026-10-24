@@ -1,0 +1,5 @@
+bug: Text.repeat with a negative count
+  at Main.main (tests/golden/fail-bug-repeat-negative/main.mo:128..143)
+  at Main.main.entry (tests/golden/fail-bug-repeat-negative/main.mo:13..179)
+  text = "ab"
+  console = <Console>
