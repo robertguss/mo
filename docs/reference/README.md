@@ -1059,6 +1059,14 @@ says so, as in "stops with overflow when `amount` is `Decimal`'s largest
 value", and shows the two fixes: return a failure for such inputs, or take a
 type whose module keeps its values in range. Proofs come in a later version.
 
+For a generic function, `mo test` checks every concrete instantiation already
+present in the program, including those supplied by anchors, examples and tests.
+It keeps each complete list of type arguments as used; it does not combine
+arguments from different uses or choose additional types. It generates and
+shrinks values separately for each instance, and a failure names its concrete
+types. This checks those instances, not every possible substitution for the
+function's type parameters.
+
 A promise about many steps, such as "an accepted job is never lost", is a
 promise on the function that takes one step: something each step keeps true
 between its input and its result.

@@ -3,12 +3,14 @@
 #define MO_TOOLS_TESTS_H
 
 #include "check/check.h"
+#include "lower/lower.h"
 #include "tools/tools.h"
 #include "vm/vm.h"
 
 struct mo_observation {
     const char *name;
     const struct mo_checked_spec *source;
+    const struct mo_lowered_promise *instance; /* generic promise only, NULL in the inventory */
 };
 
 struct mo_test_selection {
@@ -24,6 +26,9 @@ MO_MUST_USE struct mo_test_selection *mo_select_tests(struct mo_arena *arena,
                                                       const struct mo_cli *cli,
                                                       struct mo_diags *diags);
 MO_MUST_USE const char *mo_observation_kind(enum mo_checked_spec_kind kind);
+MO_MUST_USE struct mo_test_selection *
+mo_instantiate_tests(struct mo_arena *arena, const struct mo_test_selection *selection,
+                     const struct mo_lowered_promises *promises, struct mo_diags *diags);
 MO_MUST_USE bool mo_write_test(FILE *output, bool json, const struct mo_sources *sources,
                                const struct mo_observation *observation);
 

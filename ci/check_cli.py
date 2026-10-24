@@ -312,6 +312,75 @@ def promise_shrinking(binary):
             assert items[-1]['failed'] == 1 and items[-1]['stopped'] == 0
 
 
+def generic_promises(binary):
+    fixture = root / 'tests/lower-source/generic-subject/main.mo'
+    items = records(run(binary, ['test', '--json', str(fixture)], 0), 'test')
+    promises = [r for r in items[1:-1] if r['kind'] == 'promise']
+    assert {r['instance'] for r in promises} == {
+        'Main::Main.swap(Int, Text).promise.1',
+        'Main::Main.swap(Bool, Decimal).promise.1',
+    }
+    assert len(promises) == 2 and all(r['outcome'] == 'passed' for r in promises)
+    assert items[-1]['passed'] == 6 and items[-1]['errors'] == 0
+    with tempfile.TemporaryDirectory(prefix='mo-generic-promises-') as directory:
+        path = pathlib.Path(directory) / 'main.mo'
+        path.write_text('module Main\nfn probe(n: Int, _value: List(T)) : Int\n'
+                        'promise "nonnegative answer"\nresult >= 0\n'
+                        'allows _value: [13], n: 3, result: 4\n'
+                        'forbids _value: [13], n: -2, result: -1\nend\nn + 1\nend\n'
+                        'fn main() : Int\n_text = probe(3, ["text"])\nprobe(3, [true])\nend\n')
+        clock = binary.parent / 'tests/test_deadline.test'
+        items = records(run(clock, ['fixed', 'test', '--json', '--calls', '4', str(path)], 1), 'test')
+        results = items[1:-1]
+        assert {r['instance'] for r in results} == {
+            f'Main::Main.probe({t}).promise.1' for t in ('Int', 'Text', 'Bool')}
+        assert len(results) == 3
+        for result in results:
+            assert result['outcome'] == 'failed' and result['result'] == '-1'
+            assert result['input'] == [{'name': 'n', 'value': '-2'},
+                                       {'name': '_value', 'value': '[]'}]
+            assert 4 < result['calls'] <= 204
+        assert items[-1]['failed'] == 3 and items[-1]['errors'] == 0
+        text = run(binary, ['test', '--calls', '4', str(path)], 1)
+        assert not text.stderr
+        for t in ('Int', 'Text', 'Bool'):
+            assert f'instance: Main::Main.probe({t}).promise.1'.encode() in text.stdout
+
+        (path.parent / 'shapes.mo').write_text(
+            'module Shapes\nexpose Box(..)\nstruct Box(T)\nvalue: T\nend\n')
+        (path.parent / 'holds.mo').write_text(
+            'module Holds\nexpose keep\nfn keep(value: T) : T where T: Equal\n'
+            'promise "keeps input"\nresult == value\n'
+            'allows value: 13, result: 13\nforbids value: 13, result: 14\nend\nvalue\nend\n')
+        path.write_text('module Main\nuse Holds\nuse Shapes\n'
+                        'fn forward(value: T) : T where T: Equal\nHolds.keep(value)\nend\n'
+                        'fn main()\n_box = forward(Shapes.Box(value: "text"))\n'
+                        '_list = Holds.keep([true])\n_again = Holds.keep([false])\nend\n')
+        items = records(run(binary, ['test', '--json', '--only', 'Holds.keep.promise.1',
+                                     '--only', 'Holds.keep.promise.1', '--in', 'Holds', str(path)], 0), 'test')
+        assert {r['instance'] for r in items[1:-1]} == {
+            'Holds::Holds.keep(Int).promise.1',
+            'Main::Holds.keep(Shapes.Box(Text)).promise.1',
+            'Main::Holds.keep(List(Bool)).promise.1',
+        }
+        assert items[-1]['passed'] == 3 and items[-1]['errors'] == 0
+        listed = records(run(binary, ['test', '--json', '--list', str(path)], 0), 'test')
+        assert [r['name'] for r in listed[1:-1]] == ['Holds.keep.promise.1']
+
+        path.write_text('module Main\nseed = crash()\nfn crash() : Int\nstop "initializer ran"\nend\n'
+                        'test "first observation"\nassert true\nend\n'
+                        'fn probe(_value: T) : Int\npromise "seven"\nresult == 7\n'
+                        'allows _value: 13, result: 7\nforbids _value: 13, result: 8\nend\n7\nend\n'
+                        'fn identity(value: Int) : Int\nvalue\nend\n'
+                        'fn main() : Int\nprobe(identity)\nend\n')
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert len(items) == 3 and items[1]['code'] == 'E1400'
+        assert items[1]['primary']['label'] == 'Main.probe.promise.1'
+        assert all(items[-1][key] == 0 for key in ('passed', 'failed', 'stopped'))
+        items = records(run(binary, ['test', '--json', '--only', 'Main.test.1', str(path)], 1), 'test')
+        assert items[1]['code'] == 'E1406'
+
+
 def fake_capability_promises(binary):
     tail = 'fn main()\nend\n'
     with tempfile.TemporaryDirectory(prefix='mo-fake-promises-') as directory:
@@ -1097,8 +1166,8 @@ def observations(binary):
         assert [r["name"] for r in selected[1:-1]] == ["Main.plus.example.1", "Main.test.2"]
         assert selected[-1]["passed"] == 2 and selected[-1]["failed"] == selected[-1]["stopped"] == 0
 
-        # A generic promise with no ordinary instantiation must not disappear
-        # from either listing or unsupported-selection preflight.
+        # Anchors instantiate an otherwise unused generic promise. Listing
+        # stays source-based, and ordinary-only selection runs no promise.
         path.write_text('module Main\nfn keep(value: T) : T where T: Equal\n'
                         'promise "keeps input"\nresult == value\n'
                         'allows value: 3, result: 3\nforbids value: 3, result: 4\nend\n'
@@ -1113,21 +1182,21 @@ def observations(binary):
         anchored = records(run(binary, ["test", "--json", "--only", "Main.test.1", str(path)], 1), "test")
         assert anchored[1]["code"] == "E1405" and anchored[-1]["passed"] == 0
         path.write_text(original)
-        refused = records(run(binary, ["test", "--json", str(path)], 1), "test")
-        assert len(refused) == 3 and refused[1]["code"] == "E1400"
-        assert refused[1]["primary"]["label"] == "Main.keep.promise.1"
-        assert all(refused[-1][key] == 0 for key in ("passed", "failed", "stopped"))
+        accepted = records(run(binary, ["test", "--json", str(path)], 0), "test")
+        assert accepted[1]["name"] == "Main.keep.promise.1"
+        assert accepted[1]["instance"] == "Main::Main.keep(Int).promise.1"
+        assert all(r["outcome"] == "passed" for r in accepted[1:-1])
+        assert accepted[-1]["passed"] == 2 and accepted[-1]["errors"] == 0
         accepted = records(run(binary, ["test", "--json", "--only", "Main.test.1", str(path)], 0), "test")
         assert len(accepted) == 3 and accepted[1]["outcome"] == "passed"
-        # The same promise selection must refuse before even an unused stopping
-        # initializer, and before an ordinary test that occurs first in source.
+        # A buildable generic promise reaches initialization, never main.
         source = path.read_text().replace('test "selected control"\nassert true\nend\n', '')
         path.write_text(source.replace('module Main\n', 'module Main\nseed = crash()\n'
                                        'fn crash() : Int\nstop "must not initialize"\nend\n'
                                        'test "selected control"\nassert true\nend\n'))
         refused = records(run(binary, ["test", "--json", "--only", "Main.test.1",
                                        "--only", "Main.keep.promise.1", str(path)], 1), "test")
-        assert len(refused) == 3 and refused[1]["code"] == "E1400"
+        assert len(refused) == 3 and refused[1]["code"] == "E1406"
         assert all(refused[-1][key] == 0 for key in ("passed", "failed", "stopped"))
 
         source = ('module Main\ntest "Bool, not equality"\nassert (\n  false\n)\nend\n'
@@ -2177,7 +2246,7 @@ def lower_source_fixtures(binary):
                                     capture_output=True, timeout=30)
             assert result.returncode == 0 and not result.stdout and not result.stderr, result
 
-    # Examples on generic subjects run once each; generic promises still need inputs (E1400).
+    # Examples on generic subjects run once each, independently of promise instances.
     path = fixtures / "generic-subject/main.mo"
     for example in ("Main.swap.example.1", "Main.swap.example.2", "Main.larger.example.1",
                     "Main.larger.example.2"):
@@ -2845,6 +2914,7 @@ def check(binary):
     promise_boundaries(binary)
     promise_deadlines(binary)
     promise_shrinking(binary)
+    generic_promises(binary)
     fake_capability_promises(binary)
     hidden_promises(binary)
     composite_promises(binary)
