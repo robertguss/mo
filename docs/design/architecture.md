@@ -2283,6 +2283,12 @@ among them:
 | Small critical C functions | CBMC proofs of memory safety and of no overflow: checked arithmetic, Decimal's products and quotients, UTF-8 decoding, lexical path containment, path resolution after normalize, hash-table probing, reference count updates |
 | The whole toolchain | a golden corpus of programs with their expected output and exit status, and Phase 2's agent benchmark |
 
+**Reference count updates.** `cbmc/refcount.c` proves duplication and drop's enqueue transition
+for every nonzero 32-bit count, including saturation at the immortal count and the transition
+from one to zero. Duplication covers immediate, reference and four choice payload shapes with
+real type dispatch. The destructor's graph walk, allocation, release and reuse are not proved.
+`cbmc/README.md` gives the harness inputs and exclusions.
+
 **Generated Core programs.** `ci/gen_core.py` builds well-typed Core programs from the typing rules
 in `formal/MoCore/Check.lean`: it picks a type, then an expression of that type, over scalars,
 tuples, lists, maps, sets, options, results, declared data, functions, `let_`, `if_`, `case_`,

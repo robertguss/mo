@@ -82,6 +82,8 @@ proofs=(
 	"int_multiply|mo_prim_exact_product|||number.c"
 	"exact_product||||number.c"
 	"int_pow|multiply|||number.c|--unwind 66"
+	"refcount_dup||||refcount.c|--unwind 17"
+	"refcount_enqueue||||refcount.c"
 )
 
 checks=(--bounds-check --pointer-check --pointer-overflow-check --signed-overflow-check
@@ -126,6 +128,8 @@ proved_function() {
 	int_pow) echo power ;;
 	int_multiply) echo multiply ;;
 	exact_product) echo mo_prim_exact_product ;;
+	refcount_dup) echo 'mo_value_dup|mo_value_object' ;;
+	refcount_enqueue) echo 'enqueue_object|mo_heap_allocation' ;;
 	*) echo "$1" ;;
 	esac
 }
