@@ -54,7 +54,7 @@ static MO_MUST_USE struct mo_allocation *new_table(struct mo_heap *process, uint
  * first empty slot, including when a cluster exceeds the insertion bound. */
 static MO_MUST_USE bool insertion_slot(struct mo_allocation *table, uint64_t hash, uint32_t *out) {
     uint32_t mask = mo_table_info(table)->slots - 1;
-    uint32_t slot = (uint32_t)hash & mask;
+    uint32_t slot = (uint32_t)(hash & mask);
     for (unsigned probes = 0; probes < MO_LIMIT_HEAP_PROBES; probes++) {
         if (mo_table_slots(table)[slot] == 0) {
             *out = slot;
@@ -82,7 +82,7 @@ static void compact(struct mo_allocation *table) {
     uint32_t slots = mo_table_info(table)->slots;
     memset(mo_table_slots(table), 0, (size_t)slots * sizeof(uint32_t));
     for (uint32_t i = 0; i < next; i++) {
-        uint32_t slot = (uint32_t)mo_table_hashes(table)[i] & (slots - 1);
+        uint32_t slot = (uint32_t)(mo_table_hashes(table)[i] & (slots - 1));
         while (mo_table_slots(table)[slot] != 0) {
             slot = (slot + 1) & (slots - 1);
         }
@@ -95,7 +95,7 @@ static MO_MUST_USE bool lookup(struct mo_heap *process, uint32_t type, struct mo
                                struct mo_cell key, uint64_t hash, uint32_t *position,
                                uint32_t *slot_out, uint32_t *distance) {
     uint32_t mask = mo_table_info(table)->slots - 1;
-    uint32_t slot = (uint32_t)hash & mask, vacant = MO_NO_INDEX;
+    uint32_t slot = (uint32_t)(hash & mask), vacant = MO_NO_INDEX;
     for (uint32_t probes = 0; probes <= mask; probes++) {
         uint32_t entry = mo_table_slots(table)[slot];
         if (entry == 0) {
@@ -357,13 +357,13 @@ static MO_MUST_USE bool union_slots(struct mo_heap *process, struct mo_allocatio
     memset(overlay, 0, (size_t)overlay_size * sizeof *overlay);
     uint32_t mask = mo_table_info(table)->slots - 1;
     for (uint32_t i = 0; i < count; i++) {
-        uint32_t slot = (uint32_t)entries[i].hash & mask;
+        uint32_t slot = (uint32_t)(entries[i].hash & mask);
         bool placed = false;
         for (unsigned probes = 0; probes < MO_LIMIT_HEAP_PROBES; probes++) {
             uint32_t previous = mo_table_slots(table)[slot];
             if (previous == 0 || previous == MO_NO_INDEX) {
-                uint32_t at =
-                    (uint32_t)mo_heap_mix(process->image->index_key, slot, 0) & (overlay_size - 1);
+                uint32_t at = (uint32_t)(mo_heap_mix(process->image->index_key, slot, 0) &
+                                         (overlay_size - 1));
                 while (overlay[at] != 0 && overlay[at] != slot + 1)
                     at = (at + 1) & (overlay_size - 1);
                 if (overlay[at] == 0) {

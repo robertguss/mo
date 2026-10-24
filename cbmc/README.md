@@ -8,7 +8,8 @@ in [The verifier](#the-verifier)), the primitives' arithmetic and UTF-8 in `src/
 `src/prim/number.c`, `prim.c`, `text.c` and `unicode.c` (in [The primitives](#the-primitives)),
 lexical path containment, `src/host/files.c` `mo_host_normalize` (`path.c`, in
 [The host paths](#the-host-paths)), and reference count updates (`refcount.c`, in
-[Reference count updates](#reference-count-updates)).
+[Reference count updates](#reference-count-updates)), plus hash-table probing (`table.c`, in
+[Hash-table probing](#hash-table-probing)).
 
 For the bytecode reader, for **every input of up to
 `MO_CBMC_INPUT` bytes** (32 by default, and more for the proofs whose loops need it), decoding:
@@ -68,7 +69,7 @@ body, or an assumption that rules out the paths that matter. Two checks catch th
 - **Reach.** `bash cbmc/prove.sh --reach` runs CBMC's location coverage on each proof and fails
   unless every block of the proved function runs on some input, and so does the end of its
   harness. The only blocks allowed to stay unreached are the failure branches of `MO_ASSERT`
-  and `MO_UNREACHABLE` (and the jump out of a block ending in one), which the proofs show never
+  and `MO_UNREACHABLE` (and adjacent closing braces), which the proofs show never
   run; the branch CBMC adds to a call through a function pointer for a target the harness never
   gives it (the verifier's replay visitor), which it closes with `assume(false)`; and the lines
   `unreachable_lines` in `prove.sh` names for a proof, each with its reason (only
@@ -264,6 +265,37 @@ Not proved: arbitrary type graphs, the destructor's walk over child references, 
 release, reset and reuse, or the compiler's placement of updates. A pending queue is empty or
 has an existing tail distinct from the live object. A zero count is not a legal input to an
 update. These are local transition proofs, not a proof that the whole heap cannot leak.
+
+## Hash-table probing
+
+`table.c` includes the real `heap/table.c` and `cell.c`. Hashes range over every 64-bit value,
+including collisions. Keys and values are arbitrary Int cells. The runtime masks hashes before
+narrowing them to slot indices, so conversion checking does not need an exception for intentional
+hash truncation. This leaves the slot calculation unchanged.
+
+| Proof | Checks |
+| --- | --- |
+| `table_layout`, `table_layout_limit` | map and set cells, hashes, live flags, slots and trailer fit in the allocation without overlapping, at capacities 4 and 128 with twice as many slots; allocation may fail |
+| `table_insert` | returns the first empty slot after the hash, including wraparound, or refuses a full eight-slot index; entries and tombstones are both occupied |
+| `table_probe_limit` | at any start in 256 slots, accepts an empty slot on probe 128 and refuses when the first empty slot needs probe 129 |
+| `table_lookup`, `table_lookup_set` | in eight slots with at most four nonempty slots, returns the first matching entry or absence, the first reusable tombstone for absence, and the exact probe distance; equality failure leaves outputs untouched |
+| `table_compact` | up to two entries in a four-entry map become a dense live prefix in insertion order, with unchanged keys, values and hashes, each indexed once and reachable before an empty slot; no stale slot or tombstone survives |
+| `table_union` | plans up to three insertions in eight slots, using the first vacancy not reserved by an earlier key, including tombstones, collisions and overlay collisions; refuses a full index |
+
+The layout proofs use the real allocation accessors and a model allocator that returns an exact
+block or fails. The probing proofs replace those accessors with separate typed arrays of the
+same sizes. This avoids CBMC's byte-array alias circuits while retaining the bounds and region
+separation established by the layout proofs. `memmove` checks its source and destination bounds
+and copies one entry through saved cells, including overlap. Equality models exact Int equality
+or failure. The private overlay hash is an arbitrary deterministic function of its slot input.
+
+Every loop bound has an unwinding assertion. `--reach` checks the proved functions and harness
+ends, including insertion and union refusal. The half-full assumption on lookup excludes its
+terminal `MO_UNREACHABLE`, not a legitimate lookup result.
+
+Not proved: larger table shapes beyond the separate 256-slot probe-limit case, arbitrary key
+types or hashing/equality implementations, allocation/rebuild/retry orchestration, or whole
+collection operations. These are local probing and compaction proofs, not a proof of the heap.
 
 ## Running it
 
