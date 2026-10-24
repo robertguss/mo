@@ -20,8 +20,8 @@ and Ordering, Entry and Map text now have golden programs in `ref-bigint`,
 runs as a dot call, and direct nullary-case receivers such as `Less.compare(Greater)` now run
 (`ref-case-receivers`). Written through a type or module, `to_text` and `compare` work only as
 `Int.compare` and the scalar `to_text` primitives; `Text.compare(a, b)`, `List.to_text(xs)` and
-the rest report E1103. The reference does not say whether that form is part of the language:
-MO-142 asks Robert to decide. These failures are not expected-error fixtures.
+the rest report E1103. D285 makes that form part of the language for every type with the
+ability, and MO-144 builds it. These failures are not expected-error fixtures.
 
 ## Refused by the reference, accepted by the checker
 

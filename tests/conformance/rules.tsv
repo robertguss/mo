@@ -170,7 +170,7 @@ rule	accepts	refuses	stops	gap
 13.4/2				Selection and full names are checked by promise_selection in ci/check_cli.py with generated programs; the golden runner has no command-selection fixture format.
 13.4/3	lang-recursion-tail			Stack, depth and heap switches/defaults are checked by ci/check_cli.py, not golden programs with resource arguments.
 13.4/4				JSON fields/version/unknown-field compatibility need the structured assertions in ci/check_cli.py rather than a run/test text golden.
-14/1	lang-dot-calls,col-range-loops,ref-abilities,ref-case-receivers		fail-bug-take-negative	Qualified to_text and compare, such as Text.compare(a, b), report E1103 except Int.compare and the scalar to_text primitives; MO-142 decides whether they are language. docs/status/section-14-inventory.md lists every function.
+14/1	lang-dot-calls,col-range-loops,ref-abilities,ref-case-receivers		fail-bug-take-negative	Qualified to_text and compare, such as Text.compare(a, b), report E1103 except Int.compare and the scalar to_text primitives; D285 makes them language and MO-144 builds them. docs/status/section-14-inventory.md lists every function.
 14/2	num-int-functions,num-int-checked,ref-library-natives,ref-time		fail-bug-duration-unit-overflow	Negative pow needs a stop golden.
 14/3	num-bigint,ref-library-natives,ref-bigint			
 14/4	num-decimal-rounding,num-decimal-int,num-float-convert			Out-of-range places and Decimal-to-Int range boundaries still need dedicated programs.
