@@ -1161,6 +1161,22 @@ static MO_MUST_USE const struct mo_field_signature *find_field(const struct mo_d
                                                                               : NULL;
 }
 
+/* The index of the module alias spelled prefix, or alias_count when there is none. */
+static MO_MUST_USE uint32_t find_alias(const struct mo_module_scope *scope,
+                                       const struct mo_syntax *prefix) {
+    uint32_t lo = 0, hi = scope->alias_count;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (compare_text(prefix, scope->aliases[mid].name) > 0)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo < scope->alias_count && compare_text(prefix, scope->aliases[lo].name) == 0
+               ? lo
+               : scope->alias_count;
+}
+
 static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
                                                       const struct mo_syntax *name,
                                                       const struct mo_syntax *prefix,
@@ -1171,14 +1187,7 @@ static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
         name = name->children[1];
     }
     if (prefix != NULL) {
-        uint32_t lo = 0, hi = scope->alias_count;
-        while (lo < hi) {
-            uint32_t mid = lo + (hi - lo) / 2;
-            if (compare_text(prefix, scope->aliases[mid].name) > 0)
-                lo = mid + 1;
-            else
-                hi = mid;
-        }
+        uint32_t lo = find_alias(scope, prefix);
         const struct mo_module_scope *target =
             lo < scope->alias_count && compare_text(prefix, scope->aliases[lo].name) == 0
                 ? &p->interfaces->scopes[scope->aliases[lo].module]
@@ -1259,6 +1268,22 @@ static MO_MUST_USE struct value builtin_construct(struct inference *p,
                                                   const struct mo_builtin_case *data,
                                                   const struct mo_syntax *args,
                                                   struct term *expected);
+
+/* Whether the capitalized name before a dot is a case, a value as in Equal.to_text, rather than a
+ * module or type qualifier as in Int.compare (reference 5.4). A module alias keeps the qualifier.
+ */
+static MO_MUST_USE bool case_receiver(struct inference *p, const struct mo_syntax *name) {
+    if (name->kind != MO_S_CAPNAME)
+        return false;
+    const struct mo_module_scope *scope = &p->interfaces->scopes[p->function->function->module];
+    if (find_alias(scope, name) != scope->alias_count)
+        return false;
+    if (mo_builtin_case_by_name(name) != NULL)
+        return true;
+    uint32_t count = 0;
+    const struct mo_symbol *s = definition(p, name, NULL, &count);
+    return s != NULL && s->declaration->kind == MO_S_CASE_DECL;
+}
 
 static MO_MUST_USE bool missing_field(struct inference *p, struct mo_span span, const uint8_t *name,
                                       size_t length, const struct mo_syntax *declaration) {
@@ -2907,7 +2932,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     case MO_S_QUALIFIED:
         return identifier(p, node, NULL);
     case MO_S_FIELD_ACCESS: {
-        if (node->children[0]->kind == MO_S_CAPNAME)
+        if (node->children[0]->kind == MO_S_CAPNAME && !case_receiver(p, node->children[0]))
             return identifier(p, node->children[1], node->children[0]);
         bool called;
         return field_value(p, infer(p, node->children[0], NULL), node->children[1], node, NULL,
@@ -3157,8 +3182,9 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         return position(p, infer(p, node->children[0], NULL), node->children[1]);
     case MO_S_POSTFIX: {
         bool qualified = node->children[0]->kind == MO_S_CAPNAME &&
-                         (node->children[1]->kind == MO_S_FIELD_ACCESS ||
-                          node->children[1]->kind == MO_S_QUALIFIED);
+                         (node->children[1]->kind == MO_S_QUALIFIED ||
+                          (node->children[1]->kind == MO_S_FIELD_ACCESS &&
+                           !case_receiver(p, node->children[0])));
         uint32_t start = qualified ? 2u : 1u;
         const struct mo_syntax *name =
             qualified ? node->children[1]->children[0] : node->children[0];

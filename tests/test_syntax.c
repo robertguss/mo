@@ -450,7 +450,7 @@ static void token_positions(void) {
          "module A. # dot first\nB. # dot second\nC\n"
          "fn f(a: Int, b: Bool) where # where\nA: Copy, B: Copy\n"
          "  examples # examples\n    true\n  end # examples close\n"
-         "  text = \"#{Pair(x: # colon\n1)}\"\n"
+         "  text = \"#{Pair( # interpolated open\nx: 1)}\"\n"
          "  x = # assign\n    not # not\n    true\n"
          "  y = a + # binary\n    b\n"
          "  z = a + # chain first\n    b + # chain second\n    c\n"
@@ -459,7 +459,7 @@ static void token_positions(void) {
          "  ( # group open\n    1) # group close\n"
          "  [ # list open\n    1, 2] # list close\n"
          "  { # map open\n    1: 2} # map close\n"
-         "  map_text = \"#{{1: # map colon\n2}}\"\n"
+         "  map_text = \"#{{ # interpolated map open\n1: 2}}\"\n"
          "  if true\n    1\n  else if false\n    2\n  else # else\n    3\n  end # conditional "
          "close\n"
          "end # function close\n",
@@ -479,7 +479,7 @@ static void token_positions(void) {
     } cases[] = {
         {"# dot first", MO_S_MODULE, MO_T_DOT, 0},
         {"# dot second", MO_S_MODULE, MO_T_DOT, 1},
-        {"# colon", MO_S_NAMED_ARG, MO_T_COLON, 0},
+        {"# interpolated open", MO_S_CALL, MO_T_LPAREN, 0},
         {"# where", MO_S_WHERE, MO_T_WHERE, 0},
         {"# examples", MO_S_EXAMPLES, MO_T_EXAMPLES, 0},
         {"# examples close", MO_S_EXAMPLES, MO_T_END, 0},
@@ -497,7 +497,7 @@ static void token_positions(void) {
         {"# list open", MO_S_LIST, MO_T_LBRACK, 0},
         {"# list close", MO_S_LIST, MO_T_RBRACK, 0},
         {"# map open", MO_S_MAP, MO_T_LBRACE, 0},
-        {"# map colon", MO_S_MAP_ENTRY, MO_T_COLON, 0},
+        {"# interpolated map open", MO_S_MAP, MO_T_LBRACE, 0},
         {"# map close", MO_S_MAP, MO_T_RBRACE, 0},
         {"# else", MO_S_ELSE, MO_T_ELSE, 0},
         {"# conditional close", MO_S_IF, MO_T_END, 0},

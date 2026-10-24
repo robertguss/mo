@@ -1483,6 +1483,9 @@ static void recover(struct parser *p, uint32_t first_line) {
         }
     }
     if (p->current.kind == MO_T_NL) {
+        /* A line break inside an interpolation ends the statement: drop the open text, as
+         * mo_syntax_resume does, so the next line is read as code. */
+        p->lx.depth = 0;
         p->lx.failed = false;
         next(p);
     } else if (p->current.kind != MO_T_ERROR && p->current.line > first_line && line_start(p) &&

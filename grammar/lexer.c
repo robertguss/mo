@@ -788,12 +788,15 @@ static int scan(struct lexer *lx, struct node **value, int *line, int *col, bool
     return token;
 }
 
-// A line that ends with one of these tokens continues on the next line.
+// A line that ends with one of these tokens continues on the next line. An interpolation's #{
+// acts as an opening bracket here, and its closing } as a closing one in continues_before.
 static bool continues_after(int token) {
     switch (token) {
     case LPAREN:
     case LBRACK:
     case LBRACE:
+    case TEXT_HEAD:
+    case TEXT_MID:
     case COMMA:
     case DOT:
     case DOTDOT:
@@ -832,6 +835,8 @@ static bool continues_before(int token) {
     case RPAREN:
     case RBRACK:
     case RBRACE:
+    case TEXT_MID:
+    case TEXT_TAIL:
     case DOT:
     case DOTDOT:
     case EQ:
@@ -887,7 +892,6 @@ int yylex(YYSTYPE *value, YYLTYPE *location, struct lexer *lx) {
         bool newline = false;
         int nl_line = 0;
         int nl_col = 0;
-        int depth = lx->depth; // before the token, which may open an interpolation
         token = scan(lx, &node, &line, &col, &newline, &nl_line, &nl_col);
         if (token == YYerror) {
             return YYerror;
@@ -911,7 +915,7 @@ int yylex(YYSTYPE *value, YYLTYPE *location, struct lexer *lx) {
                 nl_line = lx->line;
                 nl_col = lx->col;
             }
-        } else if (newline && depth == 0 && lx->last != 0 && lx->last != NL) {
+        } else if (newline && lx->last != 0 && lx->last != NL) {
             line_ends = !continues_after(lx->last) && !continues_before(token);
         }
         if (line_ends) {
