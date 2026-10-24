@@ -1,0 +1,7 @@
+error E0050: a name isn't visible in this block  tests/errors/e0050-len/main.mo:3:3
+
+  3 |   len(items) == 0
+    |   ^^^ not visible in this block
+
+The library has no len or length: a list's length is list.size, and a text's is text.char_count or text.byte_count (reference 3.4).
+

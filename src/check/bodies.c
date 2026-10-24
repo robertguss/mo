@@ -54,6 +54,7 @@ struct local {
     uint32_t pattern_group, pattern_alternative;
     bool variable;
     bool used;
+    bool statement; /* bound by `name = value`, where `var` would make it assignable */
 };
 
 struct emitted_lambda {
@@ -655,8 +656,11 @@ static MO_MUST_USE bool mismatch(struct inference *p, struct term *found, struct
         reason = "Bool is a yes-or-no answer; conditions need Bool (reference 3.1).";
     } else if (code == MO_CODE_NUMBER_ABILITY) {
         message = "arithmetic is used on a type without Number";
-        reason = "Only Int, BigInt, Decimal and Float have Number; times and durations also add "
-                 "and subtract (reference 9.2).";
+        reason = named(found, "Text")
+                     ? "Text has no Number, so + doesn't join texts; insert them into one text "
+                       "instead, as in \"#{a}#{b}\" (reference 3.4)."
+                     : "Only Int, BigInt, Decimal and Float have Number; times and durations "
+                       "also add and subtract (reference 9.2).";
     } else if (code == MO_CODE_BYTE_ARITHMETIC) {
         message = "Byte is used in arithmetic";
         reason = "Byte has no arithmetic; convert it with to_int first (reference 3.2).";
@@ -867,6 +871,15 @@ static MO_MUST_USE int compare_text(const struct mo_syntax *a, const char *b) {
     size_t x = a->span.end - a->span.start, y = strlen(b);
     int order = memcmp(a->text, b, x < y ? x : y);
     return order != 0 ? order : x < y ? -1 : x > y ? 1 : 0;
+}
+
+/* The reason for an unknown name, called or dot-called, that another language uses for a length
+ * (reference appendix C), or NULL. */
+static const char *length_habit(const struct mo_syntax *name) {
+    return compare_text(name, "len") == 0 || compare_text(name, "length") == 0
+               ? "The library has no len or length: a list's length is list.size, and a text's "
+                 "is text.char_count or text.byte_count (reference 3.4)."
+               : NULL;
 }
 
 static MO_MUST_USE uint32_t height(const struct name_slot *s) {
@@ -1420,10 +1433,12 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
                  * it looked unused. Report that use, not a destructive rename. */
                 p->error.code = 0;
             }
+            const char *habit = entry == NULL ? length_habit(node) : NULL;
             bool reported =
                 problem(p, MO_CODE_NAME_UNKNOWN, node->span, "a name isn't visible in this block",
-                        "A local name is visible from its binding to the end of its "
-                        "block (reference 6.1).",
+                        habit != NULL ? habit
+                                      : "A local name is visible from its binding to the end of "
+                                        "its block (reference 6.1).",
                         NULL);
             (void)reported;
         }
@@ -1832,10 +1847,12 @@ static MO_MUST_USE struct value member(struct inference *p, struct value v,
         }
     }
     if (type->shape.declaration == NULL) {
+        const char *habit = length_habit(name);
         bool reported = problem(p, MO_CODE_NAME_UNKNOWN, name->span,
                                 "no visible function has this dot-call name",
-                                "A dot call looks in the type's module, then among the names in "
-                                "scope (reference 5.4).",
+                                habit != NULL ? habit
+                                              : "A dot call looks in the type's module, then "
+                                                "among the names in scope (reference 5.4).",
                                 NULL);
         (void)reported;
         return (struct value){0};
@@ -2954,12 +2971,25 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         struct local *l = s == NULL ? NULL : s->active;
         bool assignment = l != NULL && l->variable && node->kind != MO_S_VAR;
         if (l != NULL && !assignment) {
-            bool reported =
-                problem(p, MO_CODE_BIND_REPEATED, name->span, "a visible name is bound again",
-                        "While a local name or parameter is visible it can't be "
-                        "bound again (reference 6.1).",
-                        l->name);
+            /* Assigning a name first bound by `name = value` in this function needs only `var`
+             * there; any other earlier meaning needs a new name. */
+            bool to_var = l->statement && l->function == p->lambda && node->kind != MO_S_VAR;
+            bool reported = problem(
+                p, MO_CODE_BIND_REPEATED, name->span, "a visible name is bound again",
+                to_var ? "While a name is visible it can't be bound again; to assign it again, "
+                         "declare it with var where it is first bound (reference 6.2)."
+                       : "While a local name or parameter is visible it can't be bound again "
+                         "(reference 6.1).",
+                l->name);
             (void)reported;
+            if (to_var && p->error.code == MO_CODE_BIND_REPEATED &&
+                p->error.primary.span.start == name->span.start) {
+                struct mo_span at = l->name->span;
+                p->edit = (struct mo_edit){{at.file, at.start, at.start}, "var "};
+                p->fix = (struct mo_fix){"declare it with var", &p->edit, 1};
+                p->error.fixes = &p->fix;
+                p->error.fix_count = 1;
+            }
             return (struct value){0};
         }
         if ((node->kind == MO_S_ADD_ASSIGN || node->kind == MO_S_SUB_ASSIGN) && !assignment) {
@@ -3017,6 +3047,8 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         if (!assignment &&
             !(node->kind == MO_S_VAR ? bind(p, name, rhs.type, true) : binder(p, name, rhs.type)))
             return (struct value){0};
+        if (!assignment && node->kind == MO_S_BIND && name->kind == MO_S_NAME)
+            p->locals->statement = true;
         struct value result =
             graph(p,
                   (struct value){.type = native(p, "Unit", 0),
