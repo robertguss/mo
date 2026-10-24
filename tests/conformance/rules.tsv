@@ -217,10 +217,10 @@ C/2	txt-counts,col-list-basics	e0050-length
 C/3	fail-option-basics	e0050-null		
 C/4	fail-try-wrap,fail-result-declared	e0007-catch,e0007-throw		
 C/5	fail-option-basics	e0050-unwrap,e0096	fail-bug-stop	
-C/6	ref-evaluation	e0025		
+C/6	ref-evaluation	e0025,e0025-prefix		
 C/7	lang-is-and-if	e0022		
 C/8	lang-is-and-if	e0022		
-C/9	lang-case-guards	e0016		
+C/9	lang-case-guards	e0016,e0016-arrow		
 C/10	lang-closures	e0021-lambda,e0095,e0095-bar		
 C/11	ref-functions	e0092		
 C/12	lang-bindings	e0031,e0007-let		

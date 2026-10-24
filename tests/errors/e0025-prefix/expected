@@ -1,0 +1,14 @@
+error E0025: Mo writes not instead of !  tests/errors/e0025-prefix/main.mo:4:3
+
+  4 |   !b
+    |   ^
+
+Boolean expressions use and, or and not (reference 3.1).
+
+error E0025: Mo writes not instead of !  tests/errors/e0025-prefix/main.mo:8:9
+
+  8 |   a and !b
+    |         ^
+
+Boolean expressions use and, or and not (reference 3.1).
+
