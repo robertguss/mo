@@ -187,6 +187,17 @@ class Harness(unittest.TestCase):
         self.assertEqual((runs / "010/log").read_text(), "002\n")
         self.assertEqual(os.listdir(session / ".pending"), [])
 
+    def test_option_values_are_not_files(self):
+        session = self.start()
+        self.source(session, "001")
+        outside = self.tmp / "main.mo"
+        shutil.copyfile(session / "work/main.mo", outside)
+        got = self.mo(session, "test", "--only", "main.mo", str(outside))
+        self.assertEqual(got.returncode, 1)
+        self.assertIn(b"E0050", got.stderr)
+        self.assertEqual(os.listdir(session / "log"), [])
+        self.assertEqual((session / "runs/001/status").read_text(), "1\n")
+
     def test_fix_runs_are_logged(self):
         session = self.start()
         self.source(session, "001")
