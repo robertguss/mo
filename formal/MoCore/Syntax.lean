@@ -289,7 +289,7 @@ inductive BytesOp where
 
 /-- Unicode 16.0 trusted primitives; Core specifies their interface, not tables. -/
 inductive UnicodeOp where
-  | graphemes | displayWidth | normalizeNfc | lowercase | uppercase
+  | graphemes | displayWidth | normalizeNfc | lowercase | uppercase | letter | digit
   deriving DecidableEq, Repr, Inhabited
 
 /-- Operations on `Range`. `make a b` is `a..b`, the whole numbers from `a` up
@@ -527,6 +527,7 @@ def UnicodeOp.sig : UnicodeOp → List Ty × Ty
   | .graphemes => ([.text], .list .text)
   | .displayWidth => ([.text], .int)
   | .normalizeNfc | .lowercase | .uppercase => ([.text], .text)
+  | .letter | .digit => ([.char], .bool)
 
 def IoOp.sig : IoOp → List Ty × Ty
   | .argsList => ([.cap .args], .list .text)

@@ -466,6 +466,11 @@ done:
 }
 
 enum mo_prim_status mo_prim_unicode(struct mo_prim_call *c, struct mo_cell *out) {
+    if (c->id == MO_PRIM_UNICODE16_LETTER || c->id == MO_PRIM_UNICODE16_DIGIT) {
+        uint32_t flag = c->id == MO_PRIM_UNICODE16_LETTER ? MO_UCD_LETTER : MO_UCD_DIGIT;
+        *out = mo_cell_bool((properties(mo_cell_get_char(c->args[0])) & flag) != 0);
+        return MO_PRIM_RETURNED;
+    }
     size_t length;
     const uint8_t *bytes = mo_value_data(c->args[0], &length);
     switch ((unsigned)c->id) {

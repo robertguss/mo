@@ -555,9 +555,15 @@ the reference's section 14 and the Unicode policy below.
 | `Unicode16.normalize_nfc(text)` | primitive | `UNICODE16_NORMALIZE_NFC` | |
 | `Unicode16.lowercase(text)` | primitive | `UNICODE16_LOWERCASE` | |
 | `Unicode16.uppercase(text)` | primitive | `UNICODE16_UPPERCASE` | |
+| `Unicode16.letter?(c)` | primitive | `UNICODE16_LETTER` | Char → Bool; General_Category L (`Lu`, `Ll`, `Lt`, `Lm`, `Lo`) |
+| `Unicode16.digit?(c)` | primitive | `UNICODE16_DIGIT` | Char → Bool; General_Category `Nd` |
 
 These trusted primitives use Unicode **16.0.0**, independent of the host's
-locale or Unicode library. `graphemes` returns the default extended grapheme
+locale or Unicode library. `letter?` and `digit?` classify one code point,
+without normalization. Neither includes `Nl`, `No` or marks; `letter?` is not
+the derived Alphabetic property. Their flags in `src/prim/unicode16-data.h`
+come from the pinned `UnicodeData.txt`, including its First/Last ranges.
+`graphemes` returns the default extended grapheme
 clusters of UAX #29 revision 45, without tailoring or changing their bytes.
 `normalize_nfc` implements canonical decomposition, ordering and composition,
 not compatibility normalization. Case conversion uses full mappings from

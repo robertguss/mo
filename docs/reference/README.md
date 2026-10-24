@@ -1420,7 +1420,12 @@ objects nested more than 128 deep.
 
 **Unicode16**, following Unicode 16.0: `graphemes(text: Text) : List(Text)`,
 `display_width(text: Text) : Int`, and `normalize_nfc`, `lowercase` and
-`uppercase(text: Text) : Text`. `display_width` counts each user-perceived
+`uppercase(text: Text) : Text`. `letter?(c: Char) : Bool` tests General_Category
+L (`Lu`, `Ll`, `Lt`, `Lm`, `Lo`); `digit?(c: Char) : Bool` tests General_Category
+`Nd` (decimal digits). Neither includes `Nl`, `No` or marks, and neither
+normalizes or uses locale tailoring. These are code-point predicates, not
+tests of the derived Alphabetic property or whole grapheme clusters.
+`display_width` counts each user-perceived
 character, as `graphemes` splits the text: 2 columns for an emoji (with its
 selector, skin tone or joins), a flag, or one holding a wide or fullwidth
 character; 0 for one made only of control characters, marks and invisible

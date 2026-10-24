@@ -2837,6 +2837,9 @@ def guide_claims(binary):
          "After `use Unicode16`, its built-in `graphemes`, `display_width`, `normalize_nfc`, "
          "`lowercase` and `uppercase` operations follow Unicode 16.0.",
          "`mo test lib/unicode16.mo` tests them.")
+    says("`Unicode16.letter?(c: Char) : Bool` tests Unicode 16.0 General_Category L",
+         "`Unicode16.digit?(c: Char) : Bool` tests `Nd` (decimal digits).",
+         "Neither includes `Nl`, `No` or marks, normalizes, or uses locale tailoring.")
     says("After `use Json` (or `use Shop.Account`), a bare `Json` (or `Account`) in a type is the "
          "module's own type of that name, as reference 10.3 says: write `fn f(value: Json)`. "
          "`Json.Json` means the same type.")
