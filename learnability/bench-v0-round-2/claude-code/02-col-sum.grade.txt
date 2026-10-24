@@ -1,0 +1,13 @@
+  run 14-blank-first-line: stdout
+  --- expected
+  : 1.00
+  --- actual
+  1: 0.00
+  
+  run 15-blank-only: stdout
+  --- expected
+  : 0.00
+  --- actual
+  
+  run 15-blank-only: status: expected 0, got 1
+02-col-sum: fail at step 3 (does the task)

@@ -1,0 +1,7 @@
+error E0021: expected end, found )  stats.mo:77:48
+
+  77 |   most = counts.values.map(fn(group) group.size).max or 0
+     |                                                ^
+
+Arguments are passed in parentheses, separated by commas (reference 5.2).
+

@@ -10,7 +10,7 @@ start it; its `freeze.md` (the `mo` commit, the prompt, the models, the seeds) i
 | Task | Kind | Held out | Hidden tests |
 | --- | --- | --- | --- |
 | [01-rle](01-rle/task.md) | write a program | | 10 tests |
-| [02-col-sum](02-col-sum/task.md) | write a program | | 13 runs |
+| [02-col-sum](02-col-sum/task.md) | write a program | | 15 runs |
 | [03-brackets](03-brackets/task.md) | write a program | | 15 runs |
 | [04-line-counts](04-line-counts/task.md) | write a program | | 18 runs |
 | [05-ranges](05-ranges/task.md) | write a program | yes | 20 runs |
