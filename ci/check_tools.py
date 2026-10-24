@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Run the three Mo-written tools in tools/ on this repository (MO-139).
 
-Run from any directory: python3 ci/check_tools.py MO
+Run from any directory: python3 ci/check_tools.py MO [--no-hidden]
 
 For each tool, its own tests (`mo test`) and its frozen hidden tests (bench/tools/grade.py) must
-pass. Then each does its job here, as tools/README.md describes:
+pass. The hidden tests carry the frozen tasks' time limits, which were set for one gcc debug
+build, so ci/check.sh runs them only with its first executable and passes --no-hidden for the
+others (slower clang and sanitizer builds). Then each does its job here, as tools/README.md describes:
 
   - linkcheck over every tracked Markdown file: no broken link;
   - tally over each recorded learnability round's session logs: the same table, byte for byte,
@@ -37,7 +39,7 @@ def reference(tool):
     return [sys.executable, "-I", "-B", ROOT / f"bench/tools/{tool}/hidden/reference.py"]
 
 
-def tests(mo, failures):
+def tests(mo, failures, hidden):
     for tool in ("linkcheck", "notioncopy", "tally"):
         program = TOOLS / f"{tool}.mo"
         result = run([mo, "test", program], ROOT)
@@ -45,6 +47,8 @@ def tests(mo, failures):
         if result.returncode != 0:
             failures.append(f"mo test tools/{tool}.mo exited {result.returncode}:\n"
                             f"{result.stdout}{result.stderr}")
+        if not hidden:
+            continue
         result = run([sys.executable, ROOT / "bench/tools/grade.py", tool, program, "--mo", mo],
                      ROOT, timeout=600)
         print(f"{tool}: hidden tests: {last(result.stdout)}")
@@ -121,11 +125,11 @@ def notioncopy(mo, failures):
 
 
 def main(argv):
-    if len(argv) != 1:
-        raise SystemExit("usage: check_tools.py MO")
+    if len(argv) not in (1, 2) or (len(argv) == 2 and argv[1] != "--no-hidden"):
+        raise SystemExit("usage: check_tools.py MO [--no-hidden]")
     mo = pathlib.Path(argv[0]).resolve()
     failures = []
-    tests(mo, failures)
+    tests(mo, failures, hidden=len(argv) == 1)
     linkcheck(mo, failures)
     tally(mo, failures)
     notioncopy(mo, failures)
