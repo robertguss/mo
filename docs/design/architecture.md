@@ -1,7 +1,7 @@
 # Mo Architecture v0.1
 
 **Phase 2 implementation, checked 24 October 2026 against main at
-[`aa13b8c`](https://github.com/robertguss/mo/commit/aa13b8c0a9f84a5983b855f798d747b3081e8539).**
+[`acb2b84`](https://github.com/robertguss/mo/commit/acb2b8488f872c8d907184f2618c467dd8209afc).**
 This describes the `mo` toolchain in C (decision D207): the compiler, the
 virtual machine, and the contracts between them. It is written against the
 Language Reference v0.1 (`docs/reference/`), whose rules win wherever the two
@@ -982,11 +982,10 @@ the eight with a `main` run through this entry path. Every Files and ReadFiles
 operation lowers, with `walk` written in Mo. Set, Unicode16, Char, Byte.to_int,
 List.sum and the remaining section 14 Int, Float and Bytes primitives also
 lower. BigInt's abs/min/max/pow/floor_div/floor_mod/to_int and Random.int/seeded
-also lower (#186). This is not full source-library coverage: `Env.get` and
-other native routes still report E1150. MO-116 tracks the remaining routes,
-including `Int.compare`'s checker E1103. `docs/status/golden-gaps.md` inventories
-gaps but still lists some now-delivered routes; `src/lower/expressions.c` owns
-native dispatch.
+also lower (#186). Env.get/of, Ordering/Entry/Map text conversion, Ordering
+comparison and qualified Int.compare lower and run (#189, MO-116).
+`docs/status/golden-gaps.md` distinguishes working routes without golden
+programs from other gaps; `src/lower/expressions.c` owns native dispatch.
 
 Numeric immediates fold unary minus before building Core scalars, including
 Int's minimum. Float literals convert in a private C numeric locale with
@@ -1099,9 +1098,10 @@ overflow, not a lowering refusal. Native adapters keep source spans/closure name
 and the existing creation-prefix restrictions. The remaining section 14 Int,
 Float and Bytes primitives also have adapters, as do Byte.to_int and List.sum.
 Source-native dispatch is separate from primitive implementation in C;
-`Int.compare` through its module still refuses at the checker (E1103, MO-116).
+`Int.compare` has a checker signature and reuses native Order lowering without
+adding a primitive.
 BigInt's seven native adapters and Random's two IO adapters are implemented
-(#186); the older gap list's entries for them are stale.
+(#186).
 Function instances retain requirement
 proofs keyed by the callee's scoped parameter and ability, together with the
 supplying instance's type/proof environment. PARAMETER replacement follows those
@@ -1117,7 +1117,8 @@ a FIFO body queue. Tuple and record fields convert in declaration order; choice
 helpers use a one-level case, indexing proofs by flattened case/field order.
 Empty constructors print their bare name; other constructors print their name
 and fields, retaining declared field labels but not the positional `0` sentinel.
-Native Entry displays its path/kind labels. FileError's text is its own
+Native Entry displays its name/kind labels. Ordering and EntryKind use derived
+choice proofs, including when nested in Entry or a collection. FileError's text is its own
 `to_text` in `lib/file-error.mo`, so lowering derives none and refuses one with
 E1150 when the library isn't loaded.
 Nested native
@@ -1127,6 +1128,10 @@ retains arity with absent source names.
 List Text converts elements in order through a tail join, accumulates converted
 pieces in reverse, then reverses once and joins with `, ` inside square brackets.
 It does not repeatedly concatenate a growing text prefix.
+Map Text uses the same loop over `Map.entries`, converts each key before its
+value through their selected Text proofs, and joins the `key: value` pieces
+inside braces. Empty maps print `{}`; nested Text and Char parts use the same
+quoting as list elements.
 Derived Order uses the same reservation queue, keyed additionally by ability.
 Tuple/record comparisons inspect parts left to right and continue only on Equal;
 choice comparisons dispatch on both constructors, with different cases ordered
@@ -1878,8 +1883,8 @@ type with no start refuses the whole selection, even nested under List or Option
 generator may not silently cover only an empty list or one visible choice case. Listing
 and ordinary-only selection still require no generator. This eligibility check
 does not widen lowering's native-call
-support: subjects, conditions and anchors still refuse staged calls with E1150
-(for example Env.get). Random.int and Random.seeded lower (#186). Listing still
+support. `Env.get` and the spec-only `Env.of` constructor now map to existing
+Core IO operations. Listing still
 needs no generator or image. The runner uses
 `tools/inputs.h` unchanged, seeded by the full source promise name. Each trial
 uses a fresh process, retaining its tuple and returned result independently of

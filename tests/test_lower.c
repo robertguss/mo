@@ -1635,7 +1635,7 @@ static void test_limits(void) {
 }
 
 static void test_native_refusal(void) {
-    const char *names[] = {"Env.get", "unknown"};
+    const char *names[] = {"unknown"};
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         struct lower_fixture f;
         lower_fixture_init(&f, "module Main\nfn main() : Int\n1\nend\n");
