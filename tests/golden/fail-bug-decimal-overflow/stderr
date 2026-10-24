@@ -1,0 +1,5 @@
+bug: overflow: Decimal
+  at Main.main (tests/golden/fail-bug-decimal-overflow/main.mo:152..159)
+  at Main.main.entry (tests/golden/fail-bug-decimal-overflow/main.mo:13..197)
+  big = 100000000000000000000
+  console = <Console>

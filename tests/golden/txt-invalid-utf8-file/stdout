@@ -1,0 +1,3 @@
+5 Some(102) None
+tests/golden/txt-invalid-utf8-file/data/latin1.txt: not text | true
+Some("café")

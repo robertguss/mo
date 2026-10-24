@@ -1,0 +1,7 @@
+error E0008: expected CapCase name, found snake_case name  tests/errors/e0008-capcase/main.mo:1:8
+
+  1 | module main
+    |        ^^^^
+
+A module starts with its name, then expose and use lines (reference 10.1).
+

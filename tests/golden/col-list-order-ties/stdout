@@ -1,0 +1,7 @@
+Some("two-a") Some("nine-a")
+two-a two-b five nine-a nine-b
+two-b two-a five nine-b nine-a
+two-a two-b nine-a nine-b five
+nine-a nine-b five two-a two-b
+["a", "d", "bb", "cc", "ee"]
+Some(1) None
