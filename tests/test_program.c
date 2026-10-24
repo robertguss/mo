@@ -2440,7 +2440,7 @@ static void rejected_stages(void) {
          "fn helper(value: Result(Int, Inner(Int))) : Result(Int, Outer)\nOk(try value)\nend\n"
          "fn main()\nend\n",
          MO_CODE_TRY_WRAPPER},
-        {"fn main(console: Console)\nconsole.printed\nend\n", MO_CODE_CHECK_UNFINISHED},
+        {"fn main(console: Console)\nconsole.printed\nend\n", MO_CODE_FAKE_OUTSIDE_SPEC},
         {"value = 1\nfn main() : Int\nmissing\nend\n", MO_CODE_NAME_UNKNOWN},
         {"fn main() : Int\nexamples\n1\nend\n1\nend\n", MO_CODE_CONDITION_TYPE},
         {"fn helper(a: Int) : Int\nexamples\na == a\nend\na\nend\nfn main()\nend\n",

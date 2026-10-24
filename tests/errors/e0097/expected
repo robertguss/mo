@@ -1,0 +1,7 @@
+error E0097: a fake capability is made only in a test, example or promise  tests/errors/e0097/main.mo:4:11
+
+  4 |   quiet = Console.fake()
+    |           ^^^^^^^^^^^^^^ outside any test, example or promise
+
+Fakes are made only in tests, examples and promises, never in a module's constants or its functions (reference 12.4).
+

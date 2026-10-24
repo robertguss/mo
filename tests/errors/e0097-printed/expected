@@ -1,0 +1,7 @@
+error E0097: printed and printed_errors are read only in a test, example or promise  tests/errors/e0097-printed/main.mo:5:19
+
+  5 |   lines = console.printed
+    |                   ^^^^^^^ outside any test, example or promise
+
+They can be used only where every console is a fake: in tests, examples and promises (reference 12.4).
+

@@ -1,5 +1,5 @@
-error E1103: this body rule is not implemented by the staged checker  tests/errors/e1103/main.mo:2:11
+error E1103: this constant's call dependencies are not implemented  tests/errors/e1103/main.mo:6:3
 
-  2 | factory = Console.fake
-    |           ^^^^^^^^^^^^ this body rule is not implemented by the staged checker
+  6 |   action()
+    |   ^^^^^^^^ this constant's call dependencies are not implemented
 
