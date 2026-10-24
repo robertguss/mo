@@ -254,6 +254,20 @@ identifies that section by its heading and verifies those exact three examples;
 they still pass the parse, tree-equality and idempotence gates. No other reference
 blocks, examples or library samples are exempt.
 
+The drivers group also runs `ci/check_format.py` over every Git-tracked `.mo`
+file, including nested tests, goldens, benchmarks and learnability sessions.
+It applies the tree contract to every parseable input, then runs the real CLI
+twice on disposable copies. Refused inputs must remain unchanged; accepted
+inputs must be idempotent. Before and after formatting the whole corpus, checker
+diagnostics must match apart from source positions. Checked programs are run
+with empty arguments and stdin in fresh capability roots seeded with golden
+data; exit status, stdout, stderr and files must match. Only test-result source
+locations and bug-stack byte offsets are ignored; program stdout is byte-exact.
+Modules refused with E0079 have no main to run. Golden cases additionally use
+their recorded command, arguments and stdin, and the baseline must match the
+recorded exit status and stdout. A timeout or process signal fails the check.
+No tracked source is rewritten, including frozen tasks and sessions.
+
 **The source tree contract.** `src/syntax/syntax.h` defines a tagged node
 with ordered children, an operator token, and half-open spans. Absent
 optional children are `NULL`; an empty sequence is a node with no children.
