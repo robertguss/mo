@@ -69,7 +69,7 @@ to the explanations below. The baseline, MO-121's fixed compiler, and main at
 | [claude-code/find.mo](claude-code/find.mo) | pass | C0 | T0 (29) | Agrees. |
 | [claude-code/greet.mo](claude-code/greet.mo) | pass | C0 | T0 (8) | Agrees. |
 | [claude-code/inventory.mo](claude-code/inventory.mo) | pass | C0 | T0 (25) | Agrees. |
-| [claude-code/job-queue.mo](claude-code/job-queue.mo) | close, B and C; A pass | E0067, exit 1 | E0067, exit 1 | P1. Real pattern error. Scratch repair reveals L2, fixed here. |
+| [claude-code/job-queue.mo](claude-code/job-queue.mo) | close, B and C; A pass | E0067, exit 1 | E0067, exit 1 | P1. Real pattern error. Scratch repair reveals L2, fixed by MO-121. |
 | [claude-code/json.mo](claude-code/json.mo) | pass | E0037, exit 1 | E0037, exit 1 | D232. Later reserved module name. Scratch rename passes 19 observations. |
 | [claude-code/kv.mo](claude-code/kv.mo) | pass | E0045, exit 1 | E0045, exit 1 | D232. Later reserved `Entry`. Scratch rename passes 49 observations. |
 | [claude-code/library.mo](claude-code/library.mo) | pass | C0 | T0 (19) | Agrees. |
@@ -90,7 +90,7 @@ to the explanations below. The baseline, MO-121's fixed compiler, and main at
 | [gpt-6.1-sol/kv.mo](gpt-6.1-sol/kv.mo) | pass | E0045, exit 1 | E0045, exit 1 | D232. Scratch `Entry` rename checks; no observations. |
 | [gpt-6.1-sol/library.mo](gpt-6.1-sol/library.mo) | close | C0 | T0 (12) | D228. `Time - Duration` became legal after grading. |
 | [gpt-6.1-sol/notes-tool.mo](gpt-6.1-sol/notes-tool.mo) | pass | C0 | T2 | Agrees on compilation. No observations. |
-| [gpt-6.1-sol/rate-limit.mo](gpt-6.1-sol/rate-limit.mo) | pass | E0035, exit 1 | E0035, exit 1 | C1. Restored path reveals L1, fixed here, then P2, a wrong test expectation. |
+| [gpt-6.1-sol/rate-limit.mo](gpt-6.1-sol/rate-limit.mo) | pass | E0035, exit 1 | E0035, exit 1 | C1. Restored path reveals L1, fixed by MO-121, then P2, a wrong test expectation. |
 | [gpt-6.1-sol/roman.mo](gpt-6.1-sol/roman.mo) | pass | C0 | T0 (27) | Agrees. |
 | [gpt-6.1-sol/tictactoe.mo](gpt-6.1-sol/tictactoe.mo) | pass | C0 | T2 | Agrees on compilation. No observations. |
 | [gpt-6.1-sol/todo.mo](gpt-6.1-sol/todo.mo) | close | C0 | T2 | D228. `FileError.to_text` became legal after grading. No observations. |
@@ -143,8 +143,8 @@ fields. E0067 explains the error and offers exactly that fix. Graders B and C
 were right. Grader A missed it. Today's rejection agrees with the settled close
 verdict.
 
-Applying only that repair in scratch next reaches L2 on the baseline. With this
-PR's lowering fix, the repaired copy checks and passes all 34 observations.
+Applying only that repair in scratch next reaches L2 on the baseline. With MO-121's
+lowering fix, the repaired copy checks and passes all 34 observations.
 
 ### P2. GPT rate-limit expects the wrong wait after a capped refill
 
@@ -169,7 +169,7 @@ eight tests' waits were checked by hand is wrong. The aggregate result did not
 retain A's caveat. This report records the error without changing the frozen test
 or retroactively replacing the recorded verdict. No runtime change is warranted.
 
-### L1 and L2. Small source-to-Core dispatch gaps fixed here
+### L1 and L2. Small source-to-Core dispatch gaps fixed by MO-121
 
 L1 is GPT rate-limit line 123, calling `BigInt.min`. The checker accepts the
 method, but `src/lower/expressions.c` lacked mappings for `BigInt.abs`, `min`,
