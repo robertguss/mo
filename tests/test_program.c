@@ -738,10 +738,12 @@ static void native_graph(void) {
     free_fixture(&f);
     init(&f, "module Main\n"
              "power = Int.pow\nroot = Float.sqrt\ndecode = Bytes.decode_utf8\n"
+             "to_int = Byte.to_int\n"
              "fn main() : Int\n"
              "if power(2, 3) == 8 and root(9.0) == 3.0 and "
-             "decode(\"λ\".bytes) == Some(\"λ\") and Bytes.get(\"a\".bytes, 0) == 97.to_byte\n"
-             "  Int.checked_sub(7, 3) or 0\nelse\n0\nend\nend\n");
+             "decode(\"λ\".bytes) == Some(\"λ\") and Bytes.get(\"a\".bytes, 0) == 97.to_byte and "
+             "to_int(255.to_byte or stop \"byte\") == 255\n"
+             "  [Int.checked_sub(7, 3) or 0, -1, 3].sum\nelse\n0\nend\nend\n");
     CHECK(f.program != NULL && !mo_diags_any(&f.diags));
     free_fixture(&f);
     init_with_library(&f, "module Main\nfn main() : Int\nset = Set.empty.add(4)\n"

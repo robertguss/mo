@@ -12,11 +12,11 @@ a form that lands should gain a golden program. Section numbers are Language Ref
   `saturating_*`, `to_big`, `to_byte`, `to_float`; `Float`: `sqrt`, `floor`, `ceil`,
   `round`, `abs`, `nan?`, `infinite?`, `to_decimal`; `Bytes`: `size`, `get`, `decode_utf8`.
   The `int-natives`, `float-natives` and `bytes-natives` lower-source fixtures cover these.
+- `Byte.to_int` and `List.sum` run in the `byte-natives` and `list-sum` lower-source fixtures.
 
 ## Not lowered yet (E1150)
 
 - `Int.compare`. `BigInt`: `to_int`, `abs`, `min`.
-- `List.sum`.
 - `Env.get`, `Random.int`.
 - Interpolating an `Ordering`, an `Entry`, or a `Map` (derived text shape).
 

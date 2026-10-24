@@ -869,6 +869,61 @@ static bool direct_function(struct body *b, const struct mo_checked_expression *
     return callee->operand_count == 0 && callee->symbol == r->symbol;
 }
 
+static mo_core_expr list_sum(struct body *b, mo_core_ty number, mo_core_expr values) {
+    struct lowering *p = b->p;
+    mo_core_ty list = LOWER_NEW(p, struct mo_core_ty, 1);
+    list->tag = MO_CORE_TY_LIST;
+    list->as.list = number;
+    mo_core_expr zero = lower_int(p, 0);
+    if (number->tag != MO_CORE_TY_INT) {
+        MO_ASSERT(number->tag == MO_CORE_TY_BIG_INT || number->tag == MO_CORE_TY_DECIMAL ||
+                  number->tag == MO_CORE_TY_FLOAT);
+        enum mo_core_int_op convert = number->tag == MO_CORE_TY_BIG_INT ? MO_CORE_INT_OP_TO_BIG
+                                      : number->tag == MO_CORE_TY_DECIMAL
+                                          ? MO_CORE_INT_OP_TO_DECIMAL
+                                          : MO_CORE_INT_OP_TO_FLOAT;
+        zero = unary(b, (struct mo_core_prim){.tag = MO_CORE_PRIM_INT, .as.int_ = convert}, zero);
+    }
+    struct continuation *done = continuation(b, K_JUMP);
+    done->name = lower_fresh(p);
+    done->result = true;
+    mo_core_expr exit = join(b, done, number);
+    exit->as.join.body = lower_var(p, exit->as.join.params.items[0].name);
+    struct continuation *again = continuation(b, K_JUMP);
+    again->name = lower_fresh(p);
+    again->result = true;
+    again->position = lower_fresh(p);
+    again->position_type = list;
+    mo_core_expr round = join(b, again, number);
+    exit->as.join.rest = round;
+    mo_core_expr accumulator = lower_var(p, round->as.join.params.items[0].name);
+    mo_core_expr select = lower_expr(p, MO_CORE_EXPR_CASE);
+    round->as.join.body = select;
+    select->as.case_.expr =
+        unary(b,
+              (struct mo_core_prim){.tag = MO_CORE_PRIM_LIST,
+                                    .as.list = {.t = number, .op.tag = MO_CORE_LIST_OP_UNCONS}},
+              lower_var(p, again->position));
+    select->as.case_.arms.count = 2;
+    select->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+    select->as.case_.arms.items[0] =
+        (struct mo_core_arm){.ctor = lower_text(p, "None"), .body = jump(b, done, accumulator)};
+    struct mo_core_arm *some = &select->as.case_.arms.items[1];
+    some->ctor = lower_text(p, "Some");
+    some->names.count = 1;
+    some->names.items = LOWER_NEW(p, mo_core_string, 1);
+    some->names.items[0] = lower_fresh(p);
+    mo_core_expr pair = lower_var(p, some->names.items[0]);
+    mo_core_expr_list args = arguments(b, 2);
+    args.items[0] = accumulator;
+    args.items[1] = projection(b, pair, 0);
+    again->extra = projection(b, pair, 1);
+    some->body = jump(b, again, lower_prim(p, lower_operator(p, MO_T_PLUS, number, number), args));
+    again->extra = values;
+    round->as.join.rest = jump(b, again, zero);
+    return exit;
+}
+
 static mo_core_expr application(struct body *b, const struct mo_checked_expression *r,
                                 mo_core_expr_list args) {
     struct lowering *p = b->p;
@@ -972,6 +1027,16 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
                                   (struct mo_core_prim){.tag = MO_CORE_PRIM_FLOAT,
                                                         .as.float_ = floats[i].operation},
                                   args);
+        }
+        if (strcmp(r->native, "Byte.to_int") == 0)
+            return lower_prim(
+                p,
+                (struct mo_core_prim){.tag = MO_CORE_PRIM_BYTE, .as.byte = MO_CORE_BYTE_OP_TO_INT},
+                args);
+        if (strcmp(r->native, "List.sum") == 0) {
+            MO_ASSERT(args.count == 1);
+            return list_sum(b, result->tag == MO_CORE_TY_FN ? result->as.fn.ret : result,
+                            args.items[0]);
         }
         static const struct {
             const char *name;
