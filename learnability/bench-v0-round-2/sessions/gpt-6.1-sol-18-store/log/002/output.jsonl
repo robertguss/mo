@@ -1,0 +1,9 @@
+{"record":"version","format":"1.0","mo":"0.0.0","command":"test"}
+{"record":"result","name":"Store.apply.example.1","kind":"example","span":{"file":"store.mo","file_bytes":"73746f72652e6d6f","start":659,"end":701,"line":18,"column":5,"end_line":18,"end_column":47},"outcome":"passed","microseconds":32}
+{"record":"result","name":"Store.apply.example.2","kind":"example","span":{"file":"store.mo","file_bytes":"73746f72652e6d6f","start":706,"end":753,"line":19,"column":5,"end_line":19,"end_column":52},"outcome":"passed","microseconds":17}
+{"record":"result","name":"Store.apply.example.3","kind":"example","span":{"file":"store.mo","file_bytes":"73746f72652e6d6f","start":758,"end":793,"line":20,"column":5,"end_line":20,"end_column":40},"outcome":"passed","microseconds":12}
+{"record":"result","name":"Store.apply.example.4","kind":"example","span":{"file":"store.mo","file_bytes":"73746f72652e6d6f","start":798,"end":837,"line":21,"column":5,"end_line":21,"end_column":44},"outcome":"passed","microseconds":14}
+{"record":"result","name":"Store.apply.example.5","kind":"example","span":{"file":"store.mo","file_bytes":"73746f72652e6d6f","start":842,"end":890,"line":22,"column":5,"end_line":22,"end_column":53},"outcome":"passed","microseconds":13}
+{"record":"result","name":"Store.test.1","kind":"test","span":{"file":"store.mo","file_bytes":"73746f72652e6d6f","start":1544,"end":1804,"line":45,"column":1,"end_line":55,"end_column":4},"outcome":"passed","microseconds":83}
+{"record":"result","name":"Store.test.2","kind":"test","span":{"file":"store.mo","file_bytes":"73746f72652e6d6f","start":1806,"end":2099,"line":57,"column":1,"end_line":68,"end_column":4},"outcome":"passed","microseconds":115}
+{"record":"totals","errors":0,"dropped":0,"passed":7,"failed":0,"stopped":0,"status":0}
