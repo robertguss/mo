@@ -1009,7 +1009,8 @@ summary = try summarize(files.within("reports").read_only)
 ## 12. Examples, promises and tests
 
 A function's specification sits at the top of its body: its promises and
-examples, then a blank line, then its code.
+examples, then a blank line, then its code. Leaving out the blank line is not
+an error; `mo format` writes it.
 
 ### 12.1 Examples
 

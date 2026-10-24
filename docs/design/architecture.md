@@ -187,7 +187,9 @@ Spaces and tabs on an otherwise empty line count; comment-only lines do not.
 Runs collapse to one blank line, placed before the attached leading comments.
 The first statement of a block has no initial blank line; specification
 blocks and the ordinary function body form one statement sequence for this
-purpose. A module header can precede the first declaration's blank line.
+purpose, except that the printer always writes one blank line between a
+non-empty specification and the code after it (reference 12). A module header
+can precede the first declaration's blank line.
 No end-of-block blank lines are retained. No intra-statement break bits are
 recorded: D238 chooses those breaks from the tree at 100 display columns.
 
@@ -577,7 +579,7 @@ parsing. Native identities remain qualified table spellings, not fake source
 module symbols. Static native calls retain a callee row; dot calls retain
 their receiver and arguments without a callee row. Spec-only host operations
 check only in examples, promises, anchors and tests, including their anonymous
-functions. Constants and ordinary functions still refuse them with E1103;
+functions. Constants and ordinary functions refuse them with E0098;
 calling an ordinary helper from a test does not change the helper's context.
 
 Collection annotations impose implicit Hash requirements, including through
