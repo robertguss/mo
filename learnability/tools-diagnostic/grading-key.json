@@ -1,0 +1,22 @@
+{
+  "p353hzt": {
+    "family": "claude-code",
+    "tool": "linkcheck"
+  },
+  "puet625": {
+    "family": "claude-code",
+    "tool": "notioncopy"
+  },
+  "pfmjtu8": {
+    "family": "claude-code",
+    "tool": "tally"
+  },
+  "pjemxbj": {
+    "family": "gpt-6.1-sol",
+    "tool": "linkcheck"
+  },
+  "psxrhx9": {
+    "family": "gpt-6.1-sol",
+    "tool": "tally"
+  }
+}
