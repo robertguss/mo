@@ -8,7 +8,7 @@ parses. It checks three things:
 - in the learnability test, whether an agent's answer parses.
 
 It is an instrument, not the compiler. It checks syntax only: types, names in
-scope and whether a `case` covers every value are the compiler's, in Phase 2.
+scope and whether a `case` covers every value are the compiler's.
 
 ## The parts
 

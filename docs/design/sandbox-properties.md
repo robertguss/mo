@@ -36,15 +36,15 @@ files a capability reaches while a lookup runs (P8), and timing or other side ch
 | Verifier | `src/bytecode/validate.c`, `verify.c`, `verify-instruction.c`, `verify-program.c`: refuses a file at load time | every load |
 | Assertion | `MO_ASSERT`, never compiled out (`implementation.md`, condition 3) | every run |
 | Unit test | `tests/test_*.c`, through public headers | `bash ci/check.sh gcc` |
-| Sanitizers | the unit tests under ASan and UBSan | `bash ci/check.sh sanitize`, by hand |
+| Sanitizers | the unit tests under ASan and UBSan | `bash ci/check.sh sanitize` |
 | Fuzz target | `fuzz/fuzz_*.c` with seeds in `fuzz/corpus/` | `bash ci/check.sh fuzz`, by hand |
 | CBMC proof | bounded model checking of small functions, `cbmc/` (`cbmc/README.md`) | `make cbmc`, by hand |
-| Differential test | the C VM against the Lean evaluator of Mo Core, `ci/check_core_differential.py` | `bash ci/check.sh lean`, by hand |
+| Differential test | the C VM against the Lean evaluator of Mo Core, `ci/check_core_differential.py` | `bash ci/check.sh lean` |
 
-Mo has no hosted CI. Only the unit tests (`bash ci/check.sh gcc`) are a routine pre-PR check, plus `drivers` and
-`static` when a change reaches them (`AGENTS.md`, "Checks and merging"); the other groups run
-when someone runs them. A property whose only evidence is a by-hand group is still backed, but
-nothing re-runs it for you.
+Only the unit tests (`bash ci/check.sh gcc`) are a routine pre-PR check, plus `drivers` and
+`static` when a change reaches them (`AGENTS.md`, "Checks and merging"). Nightly runs sanitize
+and lean; fuzz and CBMC run by hand. A property whose only evidence is a by-hand group is still
+backed, but nothing re-runs it for you.
 
 ## Pair assertions
 
@@ -297,9 +297,9 @@ These are not guaranteed today.
    (`cbmc/README.md`). Bounded resolver proofs add call/cleanup checks under modelled syscalls,
    not a proof of the OS or a filesystem graph. The heap's destructor walk and allocation remain
    unproved. The rest has tests, fuzzing, sanitizers and (for the VM) the Lean differential test.
-3. **The slow checks do not run on their own.** Sanitizers, fuzzing, Lean and CBMC run only when
-   someone runs them (`AGENTS.md`, "Checks and merging"); no hosted CI runs any check. A
-   regression in them is found when they next run.
+3. **Fuzzing and CBMC do not run on their own.** They run only when someone
+   runs them (`AGENTS.md`, "Checks and merging"). A regression in them is
+   found when they next run.
 4. **No operating-system confinement.** Nothing in `src` installs seccomp, pledge, Landlock or a
    similar filter. A bug in the C runtime is not contained by one. Capabilities are the only
    boundary the toolchain provides.

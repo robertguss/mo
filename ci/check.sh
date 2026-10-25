@@ -12,7 +12,7 @@
 #   gcc clang   build and run the unit tests with that compiler
 #   sanitize    the unit tests under AddressSanitizer and UndefinedBehaviorSanitizer
 #   fuzz        every fuzz target briefly
-#   drivers     the checks that drive the test executables: CLI, goldens, errors, session harness, bytecode text, Unicode, codegen, formatter, benchmark v0, the three tools, mo check time
+#   drivers     black-box drivers of the built executables
 #   lean        Mo Core in Lean, and the checks that compare the test executables with it
 #   static      grammar, module dependencies, library map, frozen tool tasks, formatting, clang-tidy
 #   cbmc        the CBMC proofs of the bytecode reader, the arena, the verifier, the primitives, path containment and resolution, reference counts and hash tables (cbmc/README.md)

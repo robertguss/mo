@@ -10,7 +10,7 @@ code; file and half-open byte span; reference section; headline; reason; primary
 label; secondary labels; and fixes. `-` means absent. An edit's span is followed
 by its replacement in quotes; `""` deletes that span. The test reads the files
 without regenerating expectations. Stream 4 can use the same inputs and field
-expectations when its JSON renderer exists; these are not that wire format.
+expectations; these are not that wire format.
 
 Allocation and large generated limits are exercised in `test_check.c` and
 `test_check_bodies.c`, rather than storing megabytes of fixtures. Body errors
