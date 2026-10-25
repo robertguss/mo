@@ -1,14 +1,21 @@
-passed JobQueue.submit.promise.1  examples/job-queue.mo:39:3
-passed JobQueue.lease.promise.1  examples/job-queue.mo:55:3
-passed JobQueue.lease.example.1  examples/job-queue.mo:65:5
-passed JobQueue.lease.example.2  examples/job-queue.mo:66:5
-passed JobQueue.acknowledge.promise.1  examples/job-queue.mo:82:3
-passed JobQueue.fail.promise.1  examples/job-queue.mo:100:3
-passed JobQueue.fail.example.1  examples/job-queue.mo:108:5
-passed JobQueue.fail.example.2  examples/job-queue.mo:109:5
-passed JobQueue.fail.example.3  examples/job-queue.mo:110:5
-passed JobQueue.fail.example.4  examples/job-queue.mo:111:5
-passed JobQueue.expire.example.1  examples/job-queue.mo:121:5
-passed JobQueue.expire.example.2  examples/job-queue.mo:122:5
-passed JobQueue.test.1  examples/job-queue.mo:184:1
-13 passed, 0 failed, 0 stopped
+passed JobQueue.submit.promise.1  examples/job-queue.mo:49:3
+passed JobQueue.lease.promise.1  examples/job-queue.mo:65:3
+passed JobQueue.lease.example.1  examples/job-queue.mo:75:5
+passed JobQueue.lease.example.2  examples/job-queue.mo:76:5
+passed JobQueue.heartbeat.promise.1  examples/job-queue.mo:94:3
+passed JobQueue.heartbeat.promise.2  examples/job-queue.mo:108:3
+passed JobQueue.acknowledge.promise.1  examples/job-queue.mo:132:3
+passed JobQueue.acknowledge.promise.2  examples/job-queue.mo:146:3
+passed JobQueue.fail.promise.1  examples/job-queue.mo:166:3
+passed JobQueue.fail.promise.2  examples/job-queue.mo:180:3
+passed JobQueue.fail.example.1  examples/job-queue.mo:190:5
+passed JobQueue.fail.example.2  examples/job-queue.mo:191:5
+passed JobQueue.fail.example.3  examples/job-queue.mo:192:5
+passed JobQueue.fail.example.4  examples/job-queue.mo:193:5
+passed JobQueue.expire.example.1  examples/job-queue.mo:203:5
+passed JobQueue.expire.example.2  examples/job-queue.mo:204:5
+passed JobQueue.test.1  examples/job-queue.mo:268:1
+passed JobQueue.test.2  examples/job-queue.mo:282:1
+passed JobQueue.test.3  examples/job-queue.mo:302:1
+passed JobQueue.test.4  examples/job-queue.mo:322:1
+20 passed, 0 failed, 0 stopped

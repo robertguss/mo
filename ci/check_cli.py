@@ -2220,6 +2220,9 @@ def runner(binary):
                          "--only", "JobQueue.expire.example.1",
                          "--only", "JobQueue.expire.example.2",
                          "--only", "JobQueue.test.1",
+                         "--only", "JobQueue.test.2",
+                         "--only", "JobQueue.test.3",
+                         "--only", "JobQueue.test.4",
                          "examples/job-queue.mo"], 0), "test")
         assert [(r["name"], r["outcome"]) for r in job_queue_tests[1:-1]] == [
             ("JobQueue.lease.example.1", "passed"),
@@ -2230,9 +2233,12 @@ def runner(binary):
             ("JobQueue.fail.example.4", "passed"),
             ("JobQueue.expire.example.1", "passed"),
             ("JobQueue.expire.example.2", "passed"),
-            ("JobQueue.test.1", "passed")]
+            ("JobQueue.test.1", "passed"),
+            ("JobQueue.test.2", "passed"),
+            ("JobQueue.test.3", "passed"),
+            ("JobQueue.test.4", "passed")]
         assert job_queue_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
-                                       "passed": 9, "failed": 0, "stopped": 0, "status": 0}
+                                       "passed": 12, "failed": 0, "stopped": 0, "status": 0}
         assert run(binary, ["check", "examples/expenses.mo"], 0).stderr == b""
         records(run(binary, ["check", "--json", "examples/expenses.mo"], 0), "check")
         with tempfile.TemporaryDirectory(prefix="mo-expenses-") as expenses_dir:

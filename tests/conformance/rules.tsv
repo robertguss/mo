@@ -153,7 +153,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 12.2/6					ci/check_cli.py:generic_promises,ci/check_cli.py:promise_selection
 12.2/7	sample-job-queue-tests			
 12.2/8	mod-hidden-type,fail-result-declared	e0007-requires		
-12.3/1	tst-private-names,tst-assert-is-binding	tst-failing-assert		
+12.3/1	tst-private-names,tst-assert-is-binding,sample-job-queue-tests	tst-failing-assert		
 12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed,ref-capability-fakes	e0098,e0098-constant,e0098-printed		
 12.4/2	cap-console-fake,cap-files-fake	e0098-printed		
 13.1/1	ref-evaluation			
