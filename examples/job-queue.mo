@@ -317,6 +317,9 @@ test "old attempts cannot change a newer lease"
   assert finished.jobs.get(id) is Some(completed) and completed.state == Done
   assert fail(second, now, id, current.attempts) is Ok(released)
   assert released.jobs.get(id) is Some(retry) and retry.state == Ready and retry.attempts == 2
+  queue = holding([leased(1, t0 + 30.seconds), ready(2)])
+  assert acknowledge(queue, t0, 1, 1) == Ok(holding([done(1), ready(2)]))
+  assert fail(queue, t0, 1, 1) == Ok(holding([retried(1, 1), ready(2)]))
 end
 
 test "expired and ended leases are refused even before the expiry tick"

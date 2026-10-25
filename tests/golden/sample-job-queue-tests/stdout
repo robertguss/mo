@@ -17,5 +17,5 @@ passed JobQueue.expire.example.2  examples/job-queue.mo:204:5
 passed JobQueue.test.1  examples/job-queue.mo:268:1
 passed JobQueue.test.2  examples/job-queue.mo:282:1
 passed JobQueue.test.3  examples/job-queue.mo:302:1
-passed JobQueue.test.4  examples/job-queue.mo:322:1
+passed JobQueue.test.4  examples/job-queue.mo:325:1
 20 passed, 0 failed, 0 stopped
