@@ -1,0 +1,7 @@
+E0091 11.4
+0:47..54
+an anonymous function can't capture a capability
+Anonymous functions can't capture capabilities, or values holding them (reference 11.4).
+pass capabilities as parameters instead
+secondary 0:20..27 declared here
+fixes 0

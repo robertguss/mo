@@ -1,0 +1,6 @@
+E0096 5.6
+0:64..66
+Mo has no => functions: write fn(x) ... end
+An anonymous function is written fn(x) ... end, on one line or several, and its parameter types are inferred (reference 5.6).
+-
+fixes 0
