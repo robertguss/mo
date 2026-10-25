@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "base/capabilities.h"
+
 static MO_MUST_USE bool scaled_number(struct mo_buffer *out, mo_i128 value, unsigned places) {
     mo_u128 magnitude = value < 0 ? -(mo_u128)value : (mo_u128)value;
     char digits[40];
@@ -199,12 +201,18 @@ static MO_MUST_USE bool scalar_text(struct mo_heap *process, enum mo_type_kind k
     case MO_TYPE_ENV:
         return mo_buffer_append_text(out, "<environment>");
     case MO_TYPE_CAPABILITY: {
-        static const char *const names[] = {"<Args>",      "<Env>",   "<Console>", "<Files>",
-                                            "<ReadFiles>", "<Clock>", "<Random>",  "<Simulation>"};
         struct mo_allocation *a = mo_heap_allocation(mo_cell_get_ref(value));
         enum mo_capability capability = process->types->items[a->type].capability;
-        MO_ASSERT((unsigned)capability < sizeof names / sizeof names[0]);
-        return mo_buffer_append_text(out, names[capability]);
+        MO_ASSERT((unsigned)capability < MO_CAPABILITY_COUNT);
+        const char *name = mo_capability_names[capability];
+        size_t length = strlen(name);
+        char wrapped[16];
+        MO_ASSERT(length + 2 < sizeof wrapped);
+        wrapped[0] = '<';
+        memcpy(wrapped + 1, name, length);
+        wrapped[1 + length] = '>';
+        wrapped[2 + length] = '\0';
+        return mo_buffer_append_text(out, wrapped);
     }
     case MO_TYPE_TUPLE:
     case MO_TYPE_LIST:

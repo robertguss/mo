@@ -84,7 +84,7 @@ Core and monomorphization (`lower`) → Core checker (`core`) → bytecode compi
 counting, borrowing and in-place reuse (`codegen`) → loader and verifier (`bytecode`) → VM (`vm`).
 The VM never sees source, syntax trees or Core.
 
-Each directory in `src/` is a module with one public header named after it (`check/check.h`).
+Each directory in `src/` is a module with one public header named after it (`check/check.h`); the cross-module exceptions are `base/*.h`, `heap/types.h`, and `syntax/format.h`.
 Headers are included by their path from `src/` (`"base/base.h"`). Allowed dependencies, enforced
 by `make deps`:
 

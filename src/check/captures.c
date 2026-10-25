@@ -4,6 +4,7 @@
 #include "check/checked.h"
 #include "check/signatures.h"
 
+#include "base/capabilities.h"
 #include "base/codes.h"
 #include "base/limits.h"
 
@@ -83,11 +84,9 @@ static MO_MUST_USE bool stored(struct captures *p, const struct mo_source_type *
                 return false;
         return true;
     }
-    static const char *const capabilities[] = {"Args",      "Env",   "Console", "Files",
-                                               "ReadFiles", "Clock", "Random",  "Simulation"};
-    for (uint32_t i = 0; i < sizeof(capabilities) / sizeof(capabilities[0]); i++)
+    for (uint32_t i = 0; i < MO_CAPABILITY_COUNT; i++)
         if (type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX &&
-            strcmp(type->name, capabilities[i]) == 0)
+            strcmp(type->name, mo_capability_names[i]) == 0)
             *capability = true;
     for (uint32_t i = 0; i < type->count; i++)
         if (!stored(p, type->arguments[i], parameters, capability, depth + 1))

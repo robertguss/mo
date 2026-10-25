@@ -323,7 +323,8 @@ bool mo_text_check_references(struct mo_text_reader *r, bool complete) {
 static MO_MUST_USE bool output(struct mo_text_reader *r, struct mo_buffer *out) {
     if (!mo_text_check_references(r, true))
         return false;
-    uint8_t header[MO_BYTECODE_HEADER_SIZE] = {'M', 'O', 'B', 'C', 0, 0, MO_BYTECODE_MINOR, 0};
+    uint8_t header[MO_BYTECODE_HEADER_SIZE];
+    mo_bytecode_header_bytes(header);
     header[8] = r->tables[MO_SECTION_SERVICES].count != 0 ? MO_BYTECODE_SERVICE_FLAG : 0;
     if (r->wire_size > out->limit) {
         mo_text_refuse(r, 0, "bytecode output limit");

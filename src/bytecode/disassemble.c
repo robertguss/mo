@@ -7,8 +7,8 @@ const char *const mo_bytecode_type_names[] = {
     "unit",    "bool",   "byte",   "int",      "float",  "char",      "time", "duration",
     "decimal", "range",  "text",   "bytes",    "bigint", "tuple",     "list", "set",
     "map",     "record", "choice", "function", "env",    "capability"};
-const char *const mo_bytecode_capability_names[] = {"Args",      "Env",   "Console", "Files",
-                                                    "ReadFiles", "Clock", "Random",  "Simulation"};
+_Static_assert(sizeof mo_capability_names / sizeof *mo_capability_names == MO_CAP_SIMULATION + 1,
+               "capability names");
 const char *const mo_bytecode_function_names[] = {"function", "closure", "init",  "test",
                                                   "example",  "promise", "anchor"};
 const char *const mo_bytecode_expectation_names[] = {"none", "allows", "forbids"};
@@ -178,7 +178,7 @@ static MO_MUST_USE bool types(struct printer *p, const struct mo_bytecode *file)
                 return false;
             break;
         case MO_TYPE_CAPABILITY:
-            if (!text(p, " ") || !text(p, mo_bytecode_capability_names[t->capability]))
+            if (!text(p, " ") || !text(p, mo_capability_names[t->capability]))
                 return false;
             break;
         case MO_TYPE_UNIT:

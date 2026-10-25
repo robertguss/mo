@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "base/capabilities.h"
 #include "base/codes.h"
 #include "bytecode/bytecode.h"
 #include "codegen/bigint.h"
@@ -249,11 +250,8 @@ static MO_MUST_USE bool type_name(struct compiler *c, uint32_t id, struct mo_buf
                                         "Char", "Time",  "Duration", "Decimal", "Range",
                                         "Text", "Bytes", "BigInt"};
     const struct mo_type *t = &c->types.items[id];
-    if (t->kind == MO_TYPE_CAPABILITY) {
-        static const char *const caps[] = {"Args",      "Env",   "Console", "Files",
-                                           "ReadFiles", "Clock", "Random",  "Simulation"};
-        return type_text(c, out, caps[t->capability]);
-    }
+    if (t->kind == MO_TYPE_CAPABILITY)
+        return type_text(c, out, mo_capability_names[t->capability]);
     bool collection = t->kind == MO_TYPE_LIST || t->kind == MO_TYPE_SET || t->kind == MO_TYPE_MAP;
     if (t->kind != MO_TYPE_TUPLE && t->kind != MO_TYPE_FUNCTION && !collection)
         return type_text(c, out, t->kind <= MO_TYPE_BIGINT ? names[t->kind] : t->name);

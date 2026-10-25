@@ -3,6 +3,7 @@
 #include "check/native.h"
 #include "check/signatures.h"
 
+#include "base/capabilities.h"
 #include "base/codes.h"
 #include "base/limits.h"
 
@@ -520,10 +521,8 @@ static MO_MUST_USE const struct mo_ability_implementation *prove(struct mo_abili
                   (ability == MO_SOURCE_TEXT && named(type, "Bytes")) ||
                   (ability == MO_SOURCE_ORDER &&
                    (named(type, "Range") || named(type, "Map") || named(type, "Set")));
-    static const char *const capabilities[] = {"Args",      "Env",   "Console", "Files",
-                                               "ReadFiles", "Clock", "Random",  "Simulation"};
-    for (unsigned i = 0; i < sizeof(capabilities) / sizeof(capabilities[0]); i++)
-        denied = denied || named(type, capabilities[i]);
+    for (unsigned i = 0; i < MO_CAPABILITY_COUNT; i++)
+        denied = denied || named(type, mo_capability_names[i]);
     if (denied) {
         bool failed = missing(p, type, ability);
         (void)failed;
