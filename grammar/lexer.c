@@ -173,24 +173,51 @@ static const struct {
     const char *text;
     int token;
 } keywords[] = {
-    {"allows", ALLOWS},   {"and", AND},
-    {"assert", ASSERT},   {"break", BREAK},
-    {"case", CASE},       {"continue", CONTINUE},
-    {"else", ELSE},       {"end", END},
-    {"enum", ENUM},       {"examples", EXAMPLES},
-    {"expose", EXPOSE},   {"false", FALSE},
-    {"fn", FN},           {"for", FOR},
-    {"forbids", FORBIDS}, {"if", IF},
-    {"implies", IMPLIES}, {"in", IN},
-    {"is", IS},           {"module", MODULE},
-    {"not", NOT},         {"or", OR},
-    {"promise", PROMISE}, {"return", RETURN},
-    {"stop", STOP},       {"struct", STRUCT},
-    {"test", TEST},       {"true", TRUE},
-    {"try", TRY},         {"use", USE},
-    {"var", VAR},         {"where", WHERE},
+    {"allows", ALLOWS},
+    {"and", AND},
+    {"assert", ASSERT},
+    {"break", BREAK},
+    {"case", CASE},
+    {"continue", CONTINUE},
+    {"else", ELSE},
+    {"end", END},
+    {"enum", ENUM},
+    {"examples", EXAMPLES},
+    {"expose", EXPOSE},
+    {"false", FALSE},
+    {"fn", FN},
+    {"for", FOR},
+    {"forbids", FORBIDS},
+    {"if", IF},
+    {"implies", IMPLIES},
+    {"in", IN},
+    {"is", IS},
+    {"module", MODULE},
+    {"not", NOT},
+    {"or", OR},
+    {"promise", PROMISE},
+    {"return", RETURN},
+    {"stop", STOP},
+    {"struct", STRUCT},
+    {"test", TEST},
+    {"true", TRUE},
+    {"try", TRY},
+    {"use", USE},
+    {"var", VAR},
+    {"where", WHERE},
     {"while", WHILE},
+    {"service", SERVICE},
+    {"state", SOFT_STATE},
+    {"tools", SOFT_TOOLS},
+    {"every", SOFT_EVERY},
+    {"token", SOFT_TOKEN},
+    {"from", SOFT_FROM},
+    {"env", SOFT_ENV},
 };
+
+static int name_context_token(int token) {
+    return token >= SOFT_STATE && token <= SOFT_ENV ? NAME : token;
+}
 
 static int keyword(const unsigned char *text, size_t length) {
     for (size_t i = 0; i < sizeof keywords / sizeof keywords[0]; i++) {
@@ -357,8 +384,12 @@ static int name(struct lexer *lx, struct node **value, int line, int col) {
     }
     int token = question ? 0 : keyword(text, length);
     if (token != 0) {
-        enum node_kind kind = token == TRUE ? K_TRUE : token == FALSE ? K_FALSE : K_TOKEN;
-        *value = leaf(lx, kind, token, line, col);
+        int context = name_context_token(token);
+        enum node_kind kind = context == NAME  ? K_NAME
+                              : token == TRUE  ? K_TRUE
+                              : token == FALSE ? K_FALSE
+                                               : K_TOKEN;
+        *value = leaf(lx, kind, context, line, col);
         return token;
     }
     *value = leaf(lx, K_NAME, NAME, line, col);
@@ -899,9 +930,9 @@ int yylex(YYSTYPE *value, YYLTYPE *location, struct lexer *lx) {
         // Lambda parameters cannot nest: only names, _ and commas are allowed.
         // Update once per scanned token, not again when returning pending tokens.
         lx->lambda_close = token == RPAREN && lx->lambda_parameters;
-        lx->lambda_parameters =
-            (token == LPAREN && lx->last == FN) ||
-            (lx->lambda_parameters && (token == NAME || token == UNDERSCORE || token == COMMA));
+        lx->lambda_parameters = (token == LPAREN && lx->last == FN) ||
+                                (lx->lambda_parameters && (name_context_token(token) == NAME ||
+                                                           token == UNDERSCORE || token == COMMA));
         span_start = lx->token_start;
         span_length = lx->pos - lx->token_start;
         bool line_ends = false;
@@ -916,7 +947,7 @@ int yylex(YYSTYPE *value, YYLTYPE *location, struct lexer *lx) {
                 nl_col = lx->col;
             }
         } else if (newline && lx->last != 0 && lx->last != NL) {
-            line_ends = !continues_after(lx->last) && !continues_before(token);
+            line_ends = !continues_after(lx->last) && !continues_before(name_context_token(token));
         }
         if (line_ends) {
             lx->has_pending = true;
@@ -945,6 +976,6 @@ int yylex(YYSTYPE *value, YYLTYPE *location, struct lexer *lx) {
         lx->last_start = span_start;
         lx->last_length = span_length;
     }
-    lx->last = token;
+    lx->last = name_context_token(token);
     return token;
 }

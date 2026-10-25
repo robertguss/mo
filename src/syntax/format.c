@@ -72,6 +72,7 @@ static const char *const spellings[MO_T_PERCENT + 1] = {[MO_T_MODULE] = "module"
                                                         [MO_T_ASSERT] = "assert",
                                                         [MO_T_WHERE] = "where",
                                                         [MO_T_END] = "end",
+                                                        [MO_T_SERVICE] = "service",
                                                         [MO_T_LPAREN] = "(",
                                                         [MO_T_RPAREN] = ")",
                                                         [MO_T_LBRACK] = "[",
@@ -125,6 +126,12 @@ static void text(struct printer *f, const char *s) {
 
 static void soft(struct printer *f, unsigned space) {
     mo_doc_add(&f->doc, MO_DOC_BREAK, NULL, space);
+}
+
+static void clause_word(struct printer *f, const char *word) {
+    mo_doc_add(&f->doc, MO_DOC_TEXT, (const uint8_t *)word, strlen(word));
+    token_anchor(f, MO_T_NAME);
+    text(f, " ");
 }
 
 static void comments(struct printer *f, const struct mo_syntax_comment *c, bool trailing) {
@@ -449,6 +456,39 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
         block_body(f, n->children[1], n);
         text(f, "end");
         break;
+    case MO_S_SERVICE:
+        text(f, "service");
+        block_body(f, n->children[0], n);
+        text(f, "end");
+        break;
+    case MO_S_SERVICE_STATE:
+        clause_word(f, "state");
+        node(f, n->children[0]);
+        text(f, " = ");
+        node(f, n->children[1]);
+        break;
+    case MO_S_SERVICE_TOOLS:
+        clause_word(f, "tools");
+        for (uint32_t i = 0; i < n->children[0]->count; i++) {
+            if (i != 0) {
+                text(f, ",");
+                soft(f, 1);
+            }
+            node(f, n->children[0]->children[i]);
+        }
+        break;
+    case MO_S_SERVICE_EVERY:
+        clause_word(f, "every");
+        node(f, n->children[0]);
+        text(f, " ");
+        node(f, n->children[1]);
+        break;
+    case MO_S_SERVICE_TOKEN:
+        clause_word(f, "token");
+        clause_word(f, "from");
+        clause_word(f, "env");
+        node(f, n->children[0]);
+        break;
     case MO_S_PROMISE:
     case MO_S_EXAMPLES: {
         bool promise = n->kind == MO_S_PROMISE;
@@ -745,7 +785,7 @@ static void node(struct printer *f, const struct mo_syntax *n) {
     bool block = n->kind == MO_S_FN || n->kind == MO_S_STRUCT || n->kind == MO_S_ENUM ||
                  n->kind == MO_S_TEST || n->kind == MO_S_PROMISE || n->kind == MO_S_EXAMPLES ||
                  n->kind == MO_S_FOR || n->kind == MO_S_WHILE || n->kind == MO_S_IF ||
-                 n->kind == MO_S_CASE || n->kind == MO_S_LAMBDA;
+                 n->kind == MO_S_CASE || n->kind == MO_S_LAMBDA || n->kind == MO_S_SERVICE;
     if (block)
         op(f, MO_DOC_ALIGN_LINE);
     op(f, MO_DOC_GROUP);

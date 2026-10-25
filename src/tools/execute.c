@@ -112,6 +112,18 @@ static void execute_pipeline(void *argument) {
     struct mo_program *program = mo_check(arena, set, diags);
     if (program == NULL || mo_diags_any(diags))
         return;
+    for (uint32_t i = 0; i < program->service_count; i++) {
+        const struct mo_checked_service *service = &program->services[i];
+        if (cli->command == MO_COMMAND_RUN && service->module == 0) {
+            const char *message = "this build cannot run a service";
+            bool added =
+                mo_diags_add(diags, &(struct mo_diag){.code = MO_CODE_TOOL_SERVICE_UNAVAILABLE,
+                                                      .primary = {service->syntax->span, message},
+                                                      .message = message});
+            (void)added;
+            return;
+        }
+    }
     if ((cli->command == MO_COMMAND_RUN || cli->command == MO_COMMAND_EMIT) &&
         program->entry.function == UINT32_MAX) {
         const char *message = "the entry module has no main function";

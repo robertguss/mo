@@ -488,6 +488,32 @@ struct mo_checked_constant {
     struct mo_checked_body initializer;
 };
 
+enum mo_service_reply { MO_SERVICE_READ_ONLY, MO_SERVICE_UPDATE, MO_SERVICE_RESULT_UPDATE };
+
+struct mo_checked_service_tool {
+    const struct mo_syntax *name;
+    uint32_t function; /* index in program.functions */
+    enum mo_service_reply reply;
+};
+
+struct mo_checked_service_timer {
+    const struct mo_syntax *syntax;
+    uint32_t function;
+    struct mo_checked_body interval;
+};
+
+struct mo_checked_service {
+    const struct mo_syntax *syntax;
+    uint32_t module;
+    const struct mo_source_type *state;
+    struct mo_checked_body initializer;
+    uint32_t tool_count;
+    const struct mo_checked_service_tool *tools;
+    uint32_t timer_count;
+    const struct mo_checked_service_timer *timers;
+    const struct mo_syntax *token_source; /* environment-name literal, never a secret value */
+};
+
 /* Exact original source bytes, not decoded/unescaped wording. May contain NUL;
  * length is authoritative. span names those bytes in the original sources. */
 struct mo_spec_text {
@@ -564,6 +590,8 @@ struct mo_program {
     const struct mo_checked_constant *constants;
     uint32_t spec_count;
     const struct mo_checked_spec *specs;
+    uint32_t service_count;
+    const struct mo_checked_service *services;
     struct mo_checked_entry entry;
 };
 

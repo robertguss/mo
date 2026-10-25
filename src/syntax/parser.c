@@ -113,6 +113,7 @@ static MO_MUST_USE const char *spelling(enum mo_syntax_token token) {
                                         "assert",
                                         "where",
                                         "end",
+                                        "service",
                                         "(",
                                         ")",
                                         "[",
@@ -385,7 +386,8 @@ enum item_context {
     CASE_DECL_ITEM,
     SPEC_ITEM,
     EXPR_ITEM,
-    ANCHOR_ITEM
+    ANCHOR_ITEM,
+    SERVICE_ITEM
 };
 static MO_MUST_USE struct mo_syntax *read_item(struct parser *p, enum item_context context);
 static void recover(struct parser *p, uint32_t first_line);
@@ -1161,19 +1163,73 @@ static MO_MUST_USE struct mo_syntax *member(struct parser *p, bool record) {
     return n;
 }
 
+static MO_MUST_USE bool clause_word(struct parser *p, const char *word) {
+    struct mo_token t = p->current;
+    if (t.kind != MO_T_NAME || t.span.end - t.span.start != strlen(word) ||
+        memcmp(p->lx.source->bytes + t.span.start, word, strlen(word)) != 0)
+        return false;
+    next(p);
+    return true;
+}
+
+static MO_MUST_USE struct mo_syntax *service_clause(struct parser *p) {
+    struct mo_span start = p->current.span;
+    struct mo_syntax *n;
+    if (clause_word(p, "state")) {
+        struct mo_syntax *annotation = type(p);
+        expect(p, MO_T_ASSIGN);
+        n = N(MO_S_SERVICE_STATE, start, annotation, expr(p, 0));
+    } else if (clause_word(p, "tools")) {
+        struct mo_syntax *names = sequence(p);
+        do {
+            append(p, names, name(p, MO_T_NAME));
+        } while (take(p, MO_T_COMMA));
+        n = N(MO_S_SERVICE_TOOLS, start, names);
+    } else if (clause_word(p, "every")) {
+        struct mo_syntax *interval = expr(p, 0);
+        n = N(MO_S_SERVICE_EVERY, start, interval, name(p, MO_T_NAME));
+    } else if (clause_word(p, "token")) {
+        if (!clause_word(p, "from") || !clause_word(p, "env"))
+            error(p, MO_CODE_SOURCE_SYNTAX, p->current.span,
+                  "a token clause is token from env followed by plain text",
+                  "Write token from env followed by a noninterpolated text literal.");
+        n = N(MO_S_SERVICE_TOKEN, start, name(p, MO_T_TEXT));
+    } else {
+        error(p, MO_CODE_SOURCE_SYNTAX, start,
+              "a service clause starts with state, tools, every or token",
+              "Put each service clause on its own logical line, then close the service with end.");
+    }
+    expect(p, MO_T_NL);
+    return n;
+}
+
 static MO_MUST_USE struct mo_syntax *declaration(struct parser *p, bool fragment) {
     struct mo_span start = p->current.span;
     enum mo_syntax_token token = p->current.kind;
     if (fragment && token == MO_T_FN && peek_next(p) == MO_T_LPAREN)
         return statement(p, true);
-    bool nested =
-        token == MO_T_FN || token == MO_T_STRUCT || token == MO_T_ENUM || token == MO_T_TEST;
+    bool nested = token == MO_T_FN || token == MO_T_STRUCT || token == MO_T_ENUM ||
+                  token == MO_T_TEST || token == MO_T_SERVICE;
     if (nested)
         enter(p);
     struct mo_syntax *n;
     struct mo_syntax *parts[4] = {NULL};
     bool valid = true;
-    if (token == MO_T_STRUCT || token == MO_T_ENUM) {
+    if (token == MO_T_SERVICE) {
+        next(p);
+        expect(p, MO_T_NL);
+        struct mo_syntax *clauses = sequence(p);
+        while (p->current.kind != MO_T_END && p->current.kind != MO_T_EOF) {
+            struct mo_syntax *clause = read_item(p, SERVICE_ITEM);
+            if (clause != NULL)
+                append(p, clauses, clause);
+            else
+                clauses->incomplete = true;
+        }
+        expect(p, MO_T_END);
+        expect(p, MO_T_NL);
+        n = N(MO_S_SERVICE, start, clauses);
+    } else if (token == MO_T_STRUCT || token == MO_T_ENUM) {
         valid = declaration_header(p, token, parts);
         struct mo_syntax *members = sequence(p);
         while (p->current.kind != MO_T_END && p->current.kind != MO_T_EOF) {
@@ -1427,16 +1483,16 @@ static MO_MUST_USE bool line_start(const struct parser *p) {
 
 static MO_MUST_USE bool can_start(enum mo_syntax_token token) {
     return token == MO_T_FN || token == MO_T_STRUCT || token == MO_T_ENUM || token == MO_T_TEST ||
-           token == MO_T_VAR || token == MO_T_IF || token == MO_T_CASE || token == MO_T_FOR ||
-           token == MO_T_WHILE || token == MO_T_RETURN || token == MO_T_BREAK ||
-           token == MO_T_CONTINUE || token == MO_T_ASSERT || token == MO_T_NAME ||
-           token == MO_T_CAPNAME || token == MO_T_LPAREN || token == MO_T_LBRACK ||
-           token == MO_T_LBRACE || token == MO_T_INT || token == MO_T_DECIMAL ||
-           token == MO_T_CHAR || token == MO_T_TEXT || token == MO_T_TEXT_HEAD ||
-           token == MO_T_TRUE || token == MO_T_FALSE || token == MO_T_MINUS || token == MO_T_TRY ||
-           token == MO_T_NOT || token == MO_T_STOP || token == MO_T_UNDERSCORE ||
-           token == MO_T_ALLOWS || token == MO_T_FORBIDS || token == MO_T_PROMISE ||
-           token == MO_T_EXAMPLES;
+           token == MO_T_SERVICE || token == MO_T_VAR || token == MO_T_IF || token == MO_T_CASE ||
+           token == MO_T_FOR || token == MO_T_WHILE || token == MO_T_RETURN ||
+           token == MO_T_BREAK || token == MO_T_CONTINUE || token == MO_T_ASSERT ||
+           token == MO_T_NAME || token == MO_T_CAPNAME || token == MO_T_LPAREN ||
+           token == MO_T_LBRACK || token == MO_T_LBRACE || token == MO_T_INT ||
+           token == MO_T_DECIMAL || token == MO_T_CHAR || token == MO_T_TEXT ||
+           token == MO_T_TEXT_HEAD || token == MO_T_TRUE || token == MO_T_FALSE ||
+           token == MO_T_MINUS || token == MO_T_TRY || token == MO_T_NOT || token == MO_T_STOP ||
+           token == MO_T_UNDERSCORE || token == MO_T_ALLOWS || token == MO_T_FORBIDS ||
+           token == MO_T_PROMISE || token == MO_T_EXAMPLES;
 }
 
 static void recover(struct parser *p, uint32_t first_line) {
@@ -1463,7 +1519,8 @@ static void recover(struct parser *p, uint32_t first_line) {
             } else {
                 if (close == MO_T_END) {
                     if ((token == MO_T_IF && previous != MO_T_ELSE) || token == MO_T_FN ||
-                        token == MO_T_FOR || token == MO_T_WHILE || token == MO_T_CASE)
+                        token == MO_T_FOR || token == MO_T_WHILE || token == MO_T_CASE ||
+                        token == MO_T_SERVICE)
                         level++;
                 } else if (token == open)
                     level++;
@@ -1623,6 +1680,8 @@ static MO_MUST_USE struct mo_syntax *read_item(struct parser *p, enum item_conte
         expect(p, MO_T_NL);
     } else if (context == FIELD_ITEM || context == CASE_DECL_ITEM)
         n = member(p, context == FIELD_ITEM);
+    else if (context == SERVICE_ITEM)
+        n = service_clause(p);
     else if (context == SPEC_ITEM)
         n = specification_item(p);
     else if (context == ANCHOR_ITEM)

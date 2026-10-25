@@ -28,6 +28,11 @@ enum mo_syntax_kind {
     MO_S_CASE_DECL,
     MO_S_TEST,
     MO_S_CONST,
+    MO_S_SERVICE,       /* clauses sequence, in source order */
+    MO_S_SERVICE_STATE, /* type, initializer */
+    MO_S_SERVICE_TOOLS, /* local names sequence */
+    MO_S_SERVICE_EVERY, /* interval, local handler name */
+    MO_S_SERVICE_TOKEN, /* plain text */
     MO_S_PROMISE,
     MO_S_ANCHOR,
     MO_S_EXAMPLES,
@@ -134,6 +139,7 @@ enum mo_syntax_token {
     MO_T_ASSERT,
     MO_T_WHERE,
     MO_T_END,
+    MO_T_SERVICE,
     MO_T_LPAREN,
     MO_T_RPAREN,
     MO_T_LBRACK,

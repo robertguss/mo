@@ -10,7 +10,7 @@ static bool fixed_points;
 static unsigned accepted_inputs;
 
 static bool check_bytes(const char *path, const uint8_t *source, size_t size, const char *expected,
-                        bool fixed) {
+                        bool fixed, unsigned width) {
     int failures_before = mo_test_failures;
     struct mo_sources sources;
     struct mo_diags diags;
@@ -29,12 +29,14 @@ static bool check_bytes(const char *path, const uint8_t *source, size_t size, co
         return false;
     }
     accepted_inputs++;
+    mo_sources_free(&sources);
+    MO_ASSERT(mo_sources_init(&sources));
     struct mo_buffer output, original_tree, unchanged_tree;
     mo_buffer_init(&output, MO_LIMIT_FILE_SIZE);
     mo_buffer_init(&original_tree, 1 << 27);
     mo_buffer_init(&unchanged_tree, 1 << 27);
     format_tree(&original_tree, module->tree, false);
-    CHECK(mo_format(module, (struct mo_format_options){100, format_display_width}, &output));
+    CHECK(mo_format(module, (struct mo_format_options){width, format_display_width}, &output));
     format_tree(&unchanged_tree, module->tree, false);
     CHECK(format_buffer_equal(&original_tree, &unchanged_tree));
     mo_buffer_free(&original_tree);
@@ -58,7 +60,8 @@ static bool check_bytes(const char *path, const uint8_t *source, size_t size, co
         format_tree(&before, module->tree, true);
         format_tree(&after, formatted->tree, true);
         CHECK(format_buffer_equal(&before, &after));
-        CHECK(mo_format(formatted, (struct mo_format_options){100, format_display_width}, &twice));
+        CHECK(
+            mo_format(formatted, (struct mo_format_options){width, format_display_width}, &twice));
         CHECK(format_buffer_equal(&output, &twice));
         mo_buffer_free(&before);
         mo_buffer_free(&after);
@@ -80,7 +83,7 @@ static bool check_bytes(const char *path, const uint8_t *source, size_t size, co
 }
 
 static void check_source(const char *source, const char *expected) {
-    CHECK(check_bytes("fixture.mo", (const uint8_t *)source, strlen(source), expected, false));
+    CHECK(check_bytes("fixture.mo", (const uint8_t *)source, strlen(source), expected, false, 100));
 }
 
 static void files(const char *pattern, bool required, bool good, bool fixed) {
@@ -101,7 +104,7 @@ static void files(const char *pattern, bool required, bool good, bool fixed) {
                          strcmp(s->path, "grammar/tests/good/declarations.mo") != 0 &&
                          strcmp(s->path, "grammar/tests/good/lambda-list.mo") != 0 &&
                          strcmp(s->path, "grammar/tests/good/literals.mo") != 0;
-        bool accepted = check_bytes(s->path, s->bytes, s->length, NULL, canonical);
+        bool accepted = check_bytes(s->path, s->bytes, s->length, NULL, canonical, 100);
         CHECK(!good || accepted);
         mo_sources_free(&sources);
     }
@@ -134,7 +137,7 @@ static void reference(void) {
             char path[80];
             int written = snprintf(path, sizeof path, "docs/reference/README.md block %u", ++block);
             MO_ASSERT(written > 0 && (size_t)written < sizeof path);
-            CHECK(check_bytes(path, source->bytes + start, pos - start, NULL, !section_24));
+            CHECK(check_bytes(path, source->bytes + start, pos - start, NULL, !section_24, 100));
             if (section_24)
                 MO_ASSERT(mo_buffer_append(&continuations, source->bytes + start, pos - start));
             inside = false;
@@ -149,7 +152,7 @@ static void reference(void) {
                       "order = Order(id: 7, lines: [], paid?: false)\n"
                       "names = customers.filter(fn(c) c.active? end).map(fn(c) c.name end)\n"
                       "ready = stocked and priced\n",
-                      false));
+                      false, 100));
     mo_buffer_free(&continuations);
     mo_sources_free(&sources);
 }
@@ -164,6 +167,32 @@ int main(int argc, char **argv) {
     }
     MO_ASSERT(argc == 1 || (argc == 2 && strcmp(argv[1], "--fixed-points") == 0));
     fixed_points = argc == 2;
+    const char *service_names = "state  # name, not a declaration\n"
+                                "state = tools.every(from.env)\n"
+                                "value = Wiring(state: state, token: env)\n"
+                                "fn token(state: Int) : Int\n  state\nend\n"
+                                "struct Wiring\n  state: Int\n  token: Text\nend\n";
+    check_source(service_names, service_names);
+    check_source("service\nstate Queue=JobQueue.empty\ntools submit,lease\n"
+                 "every 1.minutes expire\ntoken from env \"QUEUE_TOKEN\"\nend\n",
+                 "service\n  state Queue = JobQueue.empty\n  tools submit, lease\n"
+                 "  every 1.minute expire\n  token from env \"QUEUE_TOKEN\"\nend\n");
+    const char *service_comments =
+        "## service\nservice # open\n"
+        "  token from env \"TOKEN\" # text\n\n"
+        "  # state\n  state List(Int) = # assignment\n"
+        "    [1, # first\n      2]\n"
+        "  # tools\n  tools state, # comma\n    tools, every, token, from, env # handler\n"
+        "  # timer one\n  every interval(from) # interval\n    .minute env # timer handler\n"
+        "  # timer two\n  every 1.minute state\n"
+        "  # timer three\n  every 2.minutes tools\n"
+        "  # timer four\n  every 3.minutes every\n\n"
+        "  # timer five\n  every 4.minutes token\n"
+        "  # final\nend # close\n# eof\n";
+    const unsigned widths[] = {20, 40, 100};
+    for (size_t i = 0; i < sizeof widths / sizeof widths[0]; i++)
+        CHECK(check_bytes("service-comments.mo", (const uint8_t *)service_comments,
+                          strlen(service_comments), NULL, false, widths[i]));
     check_source("1.seconds\n1.milliseconds\n1.minutes\n1.hours\n1.days\n"
                  "0.second\n2.millisecond\n2.minute\n2.hour\n2.day\n",
                  "1.second\n1.millisecond\n1.minute\n1.hour\n1.day\n"

@@ -1211,6 +1211,115 @@ def fix_command(binary):
         assert not list(folder.glob('.mo-write-*'))
 
 
+def service_commands(binary):
+    with tempfile.TemporaryDirectory(prefix='mo-service-') as directory:
+        folder = pathlib.Path(directory)
+        path = folder / 'counter.mo'
+        source = ('module Counter\nexpose snapshots\n\nservice\n'
+                  '  state Int = stop "service initializer ran"\n'
+                  '  tools snapshots\n'
+                  '  every 1.minute tick\n'
+                  '  token from env "MO_SERVICE_TEST_TOKEN_NOT_READ"\nend\n\n'
+                  'fn snapshots(state: Int, _now: Time) : List(Int)\n'
+                  '  [state]\nend\n\n'
+                  'fn tick(state: Int, _now: Time) : Int\n  state + 1\nend\n\n'
+                  'test "ordinary handlers"\n'
+                  '  now = Time.parse("2026-10-25T00:00:00Z") or stop "valid time"\n'
+                  '  assert snapshots(7, now) == [7]\n'
+                  '  assert tick(7, now) == 8\nend\n')
+        env = os.environ.copy()
+        env.pop('MO_SERVICE_TEST_TOKEN_NOT_READ', None)
+        path.write_text(source)
+        for command in ('check', 'format', 'fix'):
+            result = run(binary, [command, str(path)], 0, env=env)
+            assert not result.stdout and not result.stderr, result
+            assert path.read_text() == source
+        items = records(run(binary, ['test', '--json', str(path)], 0, env=env), 'test')
+        assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
+            ('Counter.test.1', 'passed')]
+        result = run(binary, ['run', str(path)], 1, env=env)
+        assert not result.stdout
+        assert b'error E1408: this build cannot run a service' in result.stderr
+        emitted = folder / 'counter.bc'
+        result = run(binary, ['emit', str(path), '-o', str(emitted)], 1, env=env)
+        assert b'E0079' in result.stderr and b'E1408' not in result.stderr
+        assert not emitted.exists()
+        path.write_text(source + '\nfn main()\nend\n')
+        result = run(binary, ['emit', str(path), '-o', str(emitted)], 0, env=env)
+        assert not result.stdout and not result.stderr
+        assert emitted.read_bytes().startswith(b'MOBC')
+        path.write_text(source)
+        main = folder / 'main.mo'
+        main.write_text('module Main\nuse Counter { snapshots }\n'
+                        'fn main(console: Console)\n'
+                        '  now = Time.parse("2026-10-25T00:00:00Z") or stop "valid time"\n'
+                        '  console.print("#{snapshots(9, now)}")\nend\n')
+        result = run(binary, ['run', str(main)], 0, env=env)
+        assert result.stdout == b'[9]\n' and not result.stderr
+
+        bare = (root / 'tests/errors/e0101/main.mo').read_text()
+        path = main
+        path.write_text(bare.replace('expose increment\n', ''))
+        before = path.read_bytes()
+        items = records(run(binary, ['check', '--json', str(path)], 1), 'check')
+        assert len(items) == 3 and items[1]['code'] == 'E0101', items
+        diagnostic = items[1]
+        assert diagnostic['headline'] == 'a service tool returns only its state'
+        assert diagnostic['primary']['label'] == \
+            'a timer returns this; a tool returns (Int, reply)'
+        assert diagnostic['reason'] == (
+            'A tool changes the state only by returning (state, reply). Returning the state '
+            "alone is how a timer changes it, so a tool's result would never be saved "
+            '(reference 11.5).')
+        assert [fix['title'] for fix in diagnostic['fixes']] == [
+            'return (state, Unit) to save the new state',
+            'return the state inside a record, as read-only data']
+        assert all(fix['edits'] for fix in diagnostic['fixes'])
+        result = run(binary, ['fix', str(path)], 1)
+        assert not result.stdout and result.stderr.count(b'error E0101:') == 1
+        assert path.read_bytes() == before
+        path.write_text(bare)
+        items = records(run(binary, ['check', '--json', str(path)], 1), 'check')
+        assert items[1]['code'] == 'E0101' and items[1]['fixes'] == []
+        run(binary, ['fix', str(path)], 1)
+        assert path.read_text() == bare
+
+
+def service_refusals(binary):
+    source = ('module Main\nservice\n  state Int = 0\n  tools snapshot\n'
+              '  every 1.minute tick\n  token from env "TOKEN"\nend\n'
+              'fn snapshot(state: Int, _now: Time) : List(Int)\n  [state]\nend\n'
+              'fn tick(state: Int, _now: Time) : Int\n  state\nend\n')
+    cases = [
+        ('state Int = 0', 'state Int = 0\n  state Int = 1', 'E0099'),
+        ('  tools snapshot\n', '', 'E0099'),
+        ('  token from env "TOKEN"\n', '', 'E0099'),
+        ('tools snapshot', 'tools snapshot, snapshot', 'E0099'),
+        ('1.minute tick', '1.minute snapshot', 'E0099'),
+        ('_now: Time) : List(Int)', '_now: Int) : List(Int)', 'E0100'),
+        ('fn tick(state: Int, _now: Time)', 'fn tick(state: Int, _now: Time, _extra: Int)',
+         'E0100'),
+        ('fn tick(state: Int, _now: Time) : Int\n  state',
+         'fn tick(state: Int, _now: Time) : List(Int)\n  [state]', 'E0100'),
+    ]
+    cases += [('"TOKEN"', json.dumps(name, ensure_ascii=False), 'E0102')
+              for name in ('', 'lowercase', '1TOKEN', 'TOKEN-NAME', 'TÖKEN')]
+    cases += [('1.minute', interval, 'E0103')
+              for interval in ('0.seconds', '-1.seconds', '1.5.seconds', '(1.minute)',
+                               'Duration.seconds(1)', '1.minute + 1.minute')]
+    cases += [('_now: Time) : List(Int)', f'_now: Time, _value: {type_}) : List(Int)',
+               'E0104') for type_ in ('Option(Console)', 'List(fn() : Int)')]
+    with tempfile.TemporaryDirectory(prefix='mo-service-refusals-') as directory:
+        path = pathlib.Path(directory) / 'main.mo'
+        for old, new, code in cases:
+            path.write_text(source.replace(old, new))
+            items = records(run(binary, ['check', '--json', str(path)], 1), 'check')
+            assert [r['code'] for r in items[1:-1]] == [code], (new, items)
+        for name in ('TOKEN', '_TOKEN_2', 'T0', '_'):
+            path.write_text(source.replace('"TOKEN"', json.dumps(name)))
+            run(binary, ['check', str(path)], 0)
+
+
 def imported_constants(binary):
     with tempfile.TemporaryDirectory(prefix='mo-imported-constants-') as directory:
         path = pathlib.Path(directory) / 'main.mo'
@@ -2982,6 +3091,22 @@ def guide_claims(binary):
          "compile, use that instead.",
          "Deleting a required spec, promise or capability to silence a diagnostic leaves the "
          "task undone.")
+    says("This build checks, formats and fixes `service ... end` blocks (reference 11.5).",
+         "`mo test` still calls ordinary handler examples, promises and tests; it does not "
+         "start the service or read its token.",
+         "Importing a module that declares a service does not start it.",
+         "`mo fix` applies neither alternative.",
+         "Exposed functions and functions whose names end in `?` receive no fixes.")
+    refuses(['run', 'tests/errors/e1408/main.mo'], '1408', 'this build cannot run a service',
+            'Only `mo run` on a service entry module refuses with E1408, '
+            '"this build cannot run a service".')
+    refuses(['check', 'tests/errors/e0101/main.mo'], '0101',
+            'a service tool returns only its state',
+            'A service tool that returns only its state gets E0101, '
+            '"a service tool returns only its state".')
+    refuses(['check', 'tests/errors/e0100-generic/main.mo'], '0100',
+            'a service handler is generic',
+            'A selected generic handler gets E0100, "a service handler is generic".')
     with tempfile.TemporaryDirectory(prefix="mo-guide-") as directory:
         folder = pathlib.Path(directory)
         greet = folder / "greet.mo"
@@ -3267,6 +3392,8 @@ def check(binary):
     driver = binary.parent / "tests/test_cli.test"
     faults = binary.parent / "tests/test_cli_faults.test"
     guide_claims(binary)
+    service_commands(binary)
+    service_refusals(binary)
     emit_command(binary)
     runner(binary)
     lower_source_fixtures(binary)

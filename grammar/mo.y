@@ -68,11 +68,14 @@ static struct node *OP(struct node *node, int token) {
 %token AND "and" OR "or" NOT "not" IS "is" IMPLIES "implies" TRUE "true" FALSE "false"
 %token STOP "stop" PROMISE "promise" ALLOWS "allows" FORBIDS "forbids"
 %token EXAMPLES "examples" TEST "test" ASSERT "assert" WHERE "where" END "end"
+%token SERVICE "service"
 %token LPAREN "(" RPAREN ")" LBRACK "[" RBRACK "]" LBRACE "{" RBRACE "}"
 %token COMMA "," COLON ":" DOT "." DOTDOT ".." BAR "|"
 %token ASSIGN "=" PLUSEQ "+=" MINUSEQ "-="
 %token EQ "==" NE "!=" LT "<" LE "<=" GT ">" GE ">="
 %token PLUS "+" MINUS "-" STAR "*" SLASH "/" PERCENT "%"
+%token SOFT_STATE "state" SOFT_TOOLS "tools" SOFT_EVERY "every"
+%token SOFT_TOKEN "token" SOFT_FROM "from" SOFT_ENV "env"
 
 %start start
 
@@ -96,6 +99,16 @@ fragment
 
 /* Modules */
 
+identifier
+    : NAME
+    | SOFT_STATE
+    | SOFT_TOOLS
+    | SOFT_EVERY
+    | SOFT_TOKEN
+    | SOFT_FROM
+    | SOFT_ENV
+    ;
+
 module_header
     : "module" module_path NL expose uses   { $$ = MK(K_MODULE, @$, $2, $4, $5); }
     ;
@@ -116,7 +129,7 @@ expose_items
     ;
 
 expose_item
-    : NAME
+    : identifier
     | CAPNAME
     | CAPNAME "(" ".." ")"                  { $$ = MK(K_EXPOSE_ALL, @$, $1); }
     ;
@@ -138,7 +151,7 @@ use_items
     ;
 
 use_item
-    : NAME
+    : identifier
     | CAPNAME
     ;
 
@@ -152,7 +165,8 @@ top_item
     | struct
     | enum
     | test
-    | NAME "=" expr NL                      { $$ = MK(K_CONST, @$, $1, $3); }
+    | service
+    | identifier "=" expr NL                { $$ = MK(K_CONST, @$, $1, $3); }
     ;
 
 fragment_items
@@ -165,7 +179,29 @@ fragment_item
     | struct
     | enum
     | test
+    | service
     | statement
+    ;
+
+service
+    : "service" NL service_clauses "end" NL { $$ = MK(K_SERVICE, @$, $3); }
+    ;
+
+service_clauses
+    : %empty                                { $$ = LEAF(K_LIST_OF, @$); }
+    | service_clauses service_clause         { $$ = ADD($1, $2); }
+    ;
+
+service_clause
+    : "state" type "=" expr NL             { $$ = MK(K_SERVICE_STATE, @$, $2, $4); }
+    | "tools" service_tools NL              { $$ = MK(K_SERVICE_TOOLS, @$, $2); }
+    | "every" expr identifier NL            { $$ = MK(K_SERVICE_EVERY, @$, $2, $3); }
+    | "token" "from" "env" TEXT NL         { $$ = MK(K_SERVICE_TOKEN, @$, $4); }
+    ;
+
+service_tools
+    : identifier                            { $$ = MK(K_LIST_OF, @$, $1); }
+    | service_tools "," identifier          { $$ = ADD($1, $3); }
     ;
 
 /* Types */
@@ -212,7 +248,7 @@ struct
 
 fields
     : %empty                                { $$ = LEAF(K_LIST_OF, @$); }
-    | fields NAME ":" type NL               { $$ = ADD($1, MK(K_FIELD, @2, $2, $4)); }
+    | fields identifier ":" type NL         { $$ = ADD($1, MK(K_FIELD, @2, $2, $4)); }
     ;
 
 enum
@@ -232,14 +268,14 @@ case
     ;
 
 named_fields
-    : NAME ":" type                         { $$ = MK(K_LIST_OF, @$, MK(K_FIELD, @$, $1, $3)); }
-    | named_fields "," NAME ":" type        { $$ = ADD($1, MK(K_FIELD, @3, $3, $5)); }
+    : identifier ":" type                   { $$ = MK(K_LIST_OF, @$, MK(K_FIELD, @$, $1, $3)); }
+    | named_fields "," identifier ":" type  { $$ = ADD($1, MK(K_FIELD, @3, $3, $5)); }
     ;
 
 /* Functions */
 
 function
-    : "fn" NAME "(" parameters ")" function_result where NL specification statements "end" NL
+    : "fn" identifier "(" parameters ")" function_result where NL specification statements "end" NL
                                             { $$ = MK(K_FN, @$, $2, $4, $6, $7, $9, $10); }
     ;
 
@@ -254,7 +290,7 @@ parameter_list
     ;
 
 parameter
-    : NAME ":" type                         { $$ = MK(K_PARAM, @$, $1, $3); }
+    : identifier ":" type                   { $$ = MK(K_PARAM, @$, $1, $3); }
     ;
 
 where
@@ -300,8 +336,8 @@ anchor
     ;
 
 anchor_values
-    : NAME ":" expr                         { $$ = MK(K_LIST_OF, @$, MK(K_NAMED_ARG, @$, $1, $3)); }
-    | anchor_values "," NAME ":" expr       { $$ = ADD($1, MK(K_NAMED_ARG, @3, $3, $5)); }
+    : identifier ":" expr                   { $$ = MK(K_LIST_OF, @$, MK(K_NAMED_ARG, @$, $1, $3)); }
+    | anchor_values "," identifier ":" expr { $$ = ADD($1, MK(K_NAMED_ARG, @3, $3, $5)); }
     ;
 
 examples
@@ -344,8 +380,8 @@ simple_statement
     | expr "=" block_if                     { $$ = MK(K_BIND, @$, $1, $3); }
     | expr "+=" expr                        { $$ = MK(K_ADD_ASSIGN, @$, $1, $3); }
     | expr "-=" expr                        { $$ = MK(K_SUB_ASSIGN, @$, $1, $3); }
-    | "var" NAME "=" expr                   { $$ = MK(K_VAR, @$, $2, $4); }
-    | "var" NAME "=" block_if               { $$ = MK(K_VAR, @$, $2, $4); }
+    | "var" identifier "=" expr             { $$ = MK(K_VAR, @$, $2, $4); }
+    | "var" identifier "=" block_if         { $$ = MK(K_VAR, @$, $2, $4); }
     | "return"                              { $$ = MK(K_RETURN, @$, NULL, NULL); }
     | "return" expr                         { $$ = MK(K_RETURN, @$, $2, NULL); }
     | "return" "if" condition               { $$ = MK(K_RETURN, @$, NULL, $3); }
@@ -358,7 +394,7 @@ simple_statement
     ;
 
 binder
-    : NAME                                  { $$ = MK(K_BINDER, @$, $1); }
+    : identifier                            { $$ = MK(K_BINDER, @$, $1); }
     | "_"                                   { $$ = MK(K_BINDER, @$, $1); }
     | "(" binders ")"                       { $$ = $2; }
     ;
@@ -446,7 +482,7 @@ unary
 
 postfix
     : primary
-    | postfix "." NAME                      { $$ = MK(K_FIELD_ACCESS, @$, $1, $3); }
+    | postfix "." identifier                { $$ = MK(K_FIELD_ACCESS, @$, $1, $3); }
     | postfix "." CAPNAME                   { $$ = MK(K_QUALIFIED, @$, $1, $3); }
     | postfix "." INT                       { $$ = MK(K_POSITION, @$, $1, $3); }
     | postfix "(" arguments ")"             { $$ = MK(K_CALL, @$, $1, $3); }
@@ -464,7 +500,7 @@ argument_list
 
 argument
     : expr
-    | NAME ":" expr                         { $$ = MK(K_NAMED_ARG, @$, $1, $3); }
+    | identifier ":" expr                   { $$ = MK(K_NAMED_ARG, @$, $1, $3); }
     ;
 
 primary
@@ -472,7 +508,7 @@ primary
     | DECIMAL
     | CHAR
     | text
-    | NAME
+    | identifier
     | CAPNAME
     | "_"
     | "true"
@@ -504,7 +540,7 @@ list_items
 
 list_item
     : expr
-    | ".." NAME                             { $$ = MK(K_REST, @$, $2); }
+    | ".." identifier                       { $$ = MK(K_REST, @$, $2); }
     | ".." "_"                              { $$ = MK(K_REST, @$, $2); }
     ;
 
@@ -587,7 +623,7 @@ lambda_parameter_list
     ;
 
 lambda_parameter
-    : NAME
+    : identifier
     | "_"
     ;
 

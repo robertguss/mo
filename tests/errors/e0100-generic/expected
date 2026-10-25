@@ -1,0 +1,7 @@
+error E0100: a service handler is generic  tests/errors/e0100-generic/main.mo:4:9
+
+  4 |   tools echo
+    |         ^^^^ a service handler is generic
+
+Exposed tools and timers have concrete signatures; call generic helpers through concrete wrappers (reference 11.5).
+

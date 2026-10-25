@@ -1,0 +1,12 @@
+error E1408: this build cannot run a service  tests/errors/e1408/main.mo:2:1
+
+  2 | service
+    | ^^^^^^^
+  3 |   state Int = stop "initializer must not run"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    | ...
+  5 |   token from env "MO_SERVICE_TEST_TOKEN_NOT_READ"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  6 | end
+    | ^^^ this build cannot run a service
+

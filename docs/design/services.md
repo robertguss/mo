@@ -1,10 +1,13 @@
 # Services: the Phase 3 design
 
-Status: Design note (18 Oct 2026, task `MO-98`), updated for D301 to D308 in `MO-153`.
-The service runtime and syntax are not implemented or part of the Mo Language Reference v0.1
-yet. The pure queue example implements D307. Phase 2 is complete (D300), so Phase 3 can begin
-(D267). D256 to D267 were settled with Robert on 18 Oct 2026; section 9 records the decisions
-he made on 24 Oct 2026.
+Status: Design note (18 Oct 2026, task `MO-98`), updated for D301 to D308 in `MO-153`
+and the D310 and D312 clarifications in `MO-155`.
+MO-155 adds service syntax and checking, with reference section 11.5. The service runtime
+is not implemented yet. The final diagnostic and reference wording remains for Robert's
+review before MO-155 merges. The pure queue example implements D307. Phase 2 is complete
+(D300), so Phase 3 can begin (D267). D256 to D267 were settled with Robert on 18 Oct 2026;
+section 9 records the decisions
+he made on 24 and 25 Oct 2026.
 
 ## 1. Purpose
 
@@ -47,7 +50,9 @@ proxy terminates TLS, so Mo needs no TLS of its own.
 
 A service is one state type plus pure handlers (D261). Tool handlers take the current state,
 the message's arrival time, and the tool arguments. A state-changing handler returns `(State, R)`
-or `Result((State, R), E)`; a read-only handler returns only its reply `R` (D302).
+or `Result((State, R), E)`. A tool returning exactly `State` is refused; every other result shape
+is a read-only reply, including `List(State)`, `Option(State)` and records containing `State`
+(D302, clarified by D310).
 The runtime owns the loop, the mailbox and saving;
 the service author writes none of them. This is the shape of Elixir's GenServer, with Mo's pure
 values underneath.
@@ -67,8 +72,8 @@ The runtime passes each message's arrival time to the handler, so handlers stay 
 Handlers are ordinary functions, and one small `service` block in the module wires them up
 (D266, D301). The block names the state type and its start value, which functions are tools, the
 timers, and where the access token comes from. This sketch turns `examples/job-queue.mo` into the
-task-queue service. Its service syntax and singular duration unit are settled but not implemented
-yet (section 9).
+task-queue service. MO-155 adds the service block; running it needs the later runtime tasks
+(section 9).
 
 ```mo
 ## Mo's own task queue. Agents lease a task, check in while working, and
@@ -96,19 +101,19 @@ end
 ## Renews the current lease for 30 minutes from now.
 fn heartbeat(queue: Queue, now: Time, id: Int, attempt: Int) : Result((Queue, Unit), QueueError)
   after = try JobQueue.heartbeat(queue, now, id, attempt)
-  Ok((after, ()))
+  Ok((after, Unit))
 end
 
 ## Marks the current lease as done.
 fn acknowledge(queue: Queue, now: Time, id: Int, attempt: Int) : Result((Queue, Unit), QueueError)
   after = try JobQueue.acknowledge(queue, now, id, attempt)
-  Ok((after, ()))
+  Ok((after, Unit))
 end
 
 ## Returns a failed lease to the queue, or marks its final attempt dead.
 fn fail(queue: Queue, now: Time, id: Int, attempt: Int) : Result((Queue, Unit), QueueError)
   after = try JobQueue.fail(queue, now, id, attempt)
-  Ok((after, ()))
+  Ok((after, Unit))
 end
 
 fn expire(queue: Queue, now: Time) : Queue
@@ -120,6 +125,21 @@ Every handler is a plain function. The cost is some repetition, since `queue` an
 on every handler. A read-only tool such as `count` has the signature
 `fn count(queue: Queue, now: Time) : Int` and returns no replacement state. A timer handler takes
 `(State, Time)` and returns only `State`.
+
+The service selects a local overload by its first parameter's exact state type. The selected
+tool or timer signature must contain no unresolved generic parameters. Generic helpers remain
+usable through concrete wrapper functions; Phase 3 adds no explicit generic-specialization
+syntax at this boundary. Robert approved this D301 follow-up on 25 Oct in the
+[approval conversation](https://ampcode.com/threads/T-01a1705d-1274-74f9-8fcf-0bf58e6f89b8).
+
+The clauses have a strict order (D312): exactly one `state`, exactly one `tools`
+naming at least one function, zero or more `every` clauses, and exactly one `token` last.
+Empty and timer-only services are refused. No function name may appear twice anywhere
+in the block. Intervals are duration literals with a whole-number value of at least 1.
+The start value is used only when there is no saved state. State, handler inputs and
+handler results contain neither capabilities nor function values, including nested values.
+The environment name contains only uppercase ASCII letters, digits and underscores,
+and cannot start with a digit.
 
 The rejected alternative put handlers inside the `service` block with the state implicit, so
 assigning `queue` changed saved state. It read shorter, but `queue` and `now` appeared from
@@ -171,14 +191,25 @@ on every failed message, since the last good state is still available.
 
 ## 9. Settled
 
-Robert settled D301 to D308 on 24 Oct 2026. These decisions define the Phase 3 build plan.
+Robert settled D301 to D308 on 24 Oct 2026 and clarified D302 in D310 on 25 Oct.
+D312 records the later MO-155 approval on 25 Oct, without changing D309, D310 or D311.
+These decisions define the Phase 3 build plan.
 
 1. **Service block (D301).** A module has at most one top-level `service ... end` block. It
    declares `state Type = start value`, `tools a, b, c`, `every <duration> <handler>`, and
-   `token from env "NAME"`. Handlers remain ordinary functions.
-2. **Read-only handlers (D302).** A read-only handler returns only its reply. A state-changing
-   handler returns `(State, reply)` or a `Result` wrapping that pair. The runtime neither logs
-   nor saves read-only messages.
+   `token from env "NAME"`. Handlers remain ordinary functions. In the D301 follow-up approved
+   on 25 Oct, Robert reserved only `service`; `state`, `tools`, `every`, `token`, `from` and
+   `env` remain ordinary identifiers outside their clause positions.
+2. **Read-only handlers (D302, clarified by D310).** Only `(State, Reply)` and
+   `Result((State, Reply), E)` update stored state. A tool returning exactly `State` is refused
+   with a new checker error. Timer handlers use `(State, Time): State` to mean replacement
+   state, so accepting a bare-state tool as read-only would look like an update that is never
+   saved. The error offers two suggestions: return `(state, Unit)` to update, or wrap the
+   value in a record to return it as read-only data. `mo fix` applies neither alternative.
+   Every other result shape is read-only, including
+   `List(State)`, `Option(State)` and records containing `State`. The runtime neither logs nor
+   saves these messages. The [D310 ruling](https://app.notion.com/p/404700320c45811da3a7deef66d2b37f)
+   requires the diagnostic code and exact wording under "For Robert" in the MO-155 PR.
 3. **Durations (D303).** All five existing units accept singular spellings: `1.second`,
    `1.millisecond`, `1.minute`, `1.hour`, and `1.day`. The syntax-only formatter normalizes
    only direct integer-literal receivers, singular for numeric value 1 and plural otherwise.
@@ -192,7 +223,8 @@ Robert settled D301 to D308 on 24 Oct 2026. These decisions define the Phase 3 b
    adds no limit syntax.
 5. **Timers (D305).** A due tick is an ordinary mailbox message. At most one tick per timer is
    waiting at a time. Ticks missed while the service was down are not replayed; each timer runs
-   once at startup. Timers are not saved state, and there are no one-off timers.
+   once at startup. Simultaneous ticks follow the source order of the `every` clauses (D312).
+   Timers are not saved state, and there are no one-off timers.
 6. **Simulation (D306).** Examples, promises and tests can start an in-memory service, send
    tool messages, advance a fake clock to fire due ticks, and crash and restart the service.
    Crashes and restarts use the real log-and-snapshot code with a fake store. Simulation is
@@ -204,6 +236,41 @@ Robert settled D301 to D308 on 24 Oct 2026. These decisions define the Phase 3 b
 8. **Failure limit (D308).** 5 failed messages within 60 seconds restart the service from its
    snapshot and log. After 3 restarts within 10 minutes it stops until a person starts it.
    Every failure, restart and stop is logged with its reason.
+
+### MO-155 diagnostics and fixes, for Robert
+
+[D312](https://app.notion.com/p/404700320c45814188abd07e6534971a) records the approved
+rules from the [approval conversation](https://ampcode.com/threads/T-01a1705d-1274-74f9-8fcf-0bf58e6f89b8).
+Work continues in the [execution conversation](https://ampcode.com/threads/T-01a16ff1-e184-7194-808d-d6d0112ba4a4).
+All final diagnostic codes, diagnostic wording and reference wording still go under
+"For Robert" in the eventual MO-155 PR before merge.
+
+E0101 uses these strings:
+
+- Headline: `a service tool returns only its state`
+- Label: `a timer returns this; a tool returns (<State>, reply)`
+- Reason: `A tool changes the state only by returning (state, reply). Returning the state alone is how a timer changes it, so a tool's result would never be saved (reference 11.5).`
+- First fix title: `return (state, Unit) to save the new state`
+- Second fix title: `return the state inside a record, as read-only data`
+
+Each suggested adapter keeps the tool's name and `##` comment, renames the original
+function to a helper, and rebinds module references to the helper. Exposed functions
+receive no executable edits. The state-changing alternative uses Mo's `Unit` value,
+not `()` syntax.
+
+The review proposes one further exception for Robert: a handler whose name ends in
+`?` receives E0101 without fixes. Neither adapter can preserve that name while
+obeying the existing rule that `?` functions return `Bool`. Generated adapters also
+respect the existing type-depth limit; exhausting it publishes no partial choice.
+
+E0100 uses `a service handler is generic` for a generic handler, with signature rules
+in the reasons. E0104 refuses capabilities and function values in state, handler inputs
+or handler results. E1408 uses `this build cannot run a service` only for `mo run` of
+a service entry module. Checking, testing ordinary handlers, formatting, fixing and
+importing remain available. Importing a service module does not start it.
+Emission retains the ordinary entry-point contract: `mo emit` needs `main` and emits
+that program, not a running service. A service module without `main` receives E0079,
+not E1408. `mo check --emit core` and `mo check --emit bytecode` remain available.
 
 The queue uses its existing `Job.attempts` and `Leased(until)` fields for lease identity. The
 shared `leased_job` check enforces the same rules for heartbeat, acknowledgement and failure.

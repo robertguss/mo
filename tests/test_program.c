@@ -10,6 +10,182 @@
 
 #include <string.h>
 
+static void service_inputs(void) {
+    struct fixture f;
+    init(&f, "module Main\nservice\n  state List(Int) = []\n  tools snapshots\n"
+             "  every 2.minutes z_tick\n  every 3.hours a_tick\n"
+             "  token from env \"_TOKEN2\"\nend\n"
+             "fn snapshots(state: List(Int), _now: Time) : List(List(Int))\n[state]\nend\n"
+             "fn a_tick(state: List(Int), _now: Time) : List(Int)\nstate\nend\n"
+             "fn z_tick(state: List(Int), _now: Time) : List(Int)\nstate\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL) {
+        CHECK(f.program->service_count == 1);
+        if (f.program->service_count == 1) {
+            const struct mo_checked_service *service = &f.program->services[0];
+            CHECK(service->module == 0 && strcmp(service->state->name, "List") == 0);
+            CHECK(service->tool_count == 1 && service->timer_count == 2);
+            if (service->tool_count == 1)
+                CHECK(service->tools[0].function == 0 &&
+                      service->tools[0].reply == MO_SERVICE_READ_ONLY);
+            if (service->timer_count == 2)
+                CHECK(service->timers[0].function == 2 && service->timers[1].function == 1);
+            const char *intervals[] = {"2.minutes", "3.hours"};
+            for (uint32_t i = 0; i < service->timer_count && i < 2; i++) {
+                const struct mo_checked_body *body = &service->timers[i].interval;
+                CHECK(body->root < body->count);
+                if (body->root >= body->count)
+                    continue;
+                const struct mo_checked_expression *root = &body->items[body->root];
+                CHECK(root->type->kind == MO_SOURCE_NAMED && root->type->module == UINT32_MAX &&
+                      strcmp(root->type->name, "Duration") == 0);
+                CHECK(root->syntax == service->timers[i].syntax->children[0]);
+                struct mo_span span = root->syntax->span;
+                const struct mo_source *source = &f.sources.files[span.file];
+                CHECK(span.end - span.start == strlen(intervals[i]) &&
+                      memcmp(source->bytes + span.start, intervals[i], strlen(intervals[i])) == 0);
+            }
+            CHECK(service->initializer.root < service->initializer.count);
+        }
+    }
+    free_fixture(&f);
+}
+
+static void service_handlers(void) {
+    struct fixture f;
+    init(&f, "module Main\n"
+             "struct State\nvalue: Int\nend\nstruct Alternate\nvalue: Int\nend\n"
+             "struct Reply\nstate: State\nend\n"
+             "fn inspect(state: Alternate, _now: Time) : Bool\nstate.value > 0\nend\n"
+             "fn identity(value: T) : T\nvalue\nend\n"
+             "fn inspect(state: State, _now: Time) : List(State)\n[identity(state)]\nend\n"
+             "fn update(state: State, _now: Time) : (State, Bool)\n(state, true)\nend\n"
+             "fn attempt(state: State, _now: Time) : Result((State, Bool), Text)\n"
+             "Ok((state, false))\nend\n"
+             "fn optional(state: State, _now: Time) : Option(State)\nSome(state)\nend\n"
+             "fn wrapped(state: State, _now: Time) : Reply\nReply(state: state)\nend\n"
+             "fn reverse(state: State, _now: Time) : (Bool, State)\n(true, state)\nend\n"
+             "fn error_state(state: State, _now: Time) : Result(Bool, State)\nError(state)\nend\n"
+             "service\nstate State = State(value: 3)\n"
+             "tools inspect, update, attempt, optional, wrapped, reverse, error_state\n"
+             "token from env \"TOKEN\"\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL && f.program->service_count == 1) {
+        const struct mo_checked_service *service = &f.program->services[0];
+        const enum mo_service_reply replies[] = {MO_SERVICE_READ_ONLY,     MO_SERVICE_UPDATE,
+                                                 MO_SERVICE_RESULT_UPDATE, MO_SERVICE_READ_ONLY,
+                                                 MO_SERVICE_READ_ONLY,     MO_SERVICE_READ_ONLY,
+                                                 MO_SERVICE_READ_ONLY};
+        CHECK(service->tool_count == sizeof(replies) / sizeof(replies[0]));
+        for (uint32_t i = 0; i < service->tool_count; i++) {
+            CHECK(service->tools[i].function == i + 2);
+            if (i < sizeof(replies) / sizeof(replies[0]))
+                CHECK(service->tools[i].reply == replies[i]);
+        }
+    } else
+        CHECK(false);
+    free_fixture(&f);
+
+    const struct {
+        const char *declaration, *message;
+    } refused[] = {
+        {"fn tool(_state: Bool, _now: Time) : Bool\ntrue\nend\n",
+         "a service handler has no matching local function"},
+        {"fn tool(_state: Int, _now: Int) : Bool\ntrue\nend\n",
+         "a service handler has the wrong parameters"},
+        {"fn tool(_state: Int) : Bool\ntrue\nend\n", "a service handler has the wrong parameters"},
+        {"fn tool(_state: Int, _now: Time, value: T) : T\nvalue\nend\n",
+         "a service handler is generic"},
+        {"fn tool(state: T, _now: Time) : T\nstate\nend\n",
+         "a service handler has no matching local function"},
+        {"tool = 3\n", "a service handler has no matching local function"},
+    };
+    for (size_t i = 0; i < sizeof(refused) / sizeof(refused[0]); i++) {
+        char source[512];
+        int length = snprintf(source, sizeof(source),
+                              "module Main\nservice\nstate Int = 0\ntools tool\n"
+                              "token from env \"TOKEN\"\nend\n%s",
+                              refused[i].declaration);
+        MO_ASSERT(length > 0 && (size_t)length < sizeof(source));
+        init(&f, source);
+        CHECK(f.program == NULL && f.diags.count == 1);
+        if (f.diags.count == 1) {
+            CHECK(f.diags.items[0].code == MO_CODE_SERVICE_HANDLER);
+            CHECK(strcmp(f.diags.items[0].message, refused[i].message) == 0);
+        }
+        free_fixture(&f);
+    }
+}
+
+static void service_rules(void) {
+    const struct {
+        const char *clauses;
+        uint16_t code;
+    } refused[] = {
+        {"", MO_CODE_SERVICE_BLOCK},
+        {"state Int = 0\ntoken from env \"TOKEN\"\n", MO_CODE_SERVICE_BLOCK},
+        {"tools tool\nstate Int = 0\ntoken from env \"TOKEN\"\n", MO_CODE_SERVICE_BLOCK},
+        {"state Int = 0\nstate Int = 1\ntools tool\ntoken from env \"TOKEN\"\n",
+         MO_CODE_SERVICE_BLOCK},
+        {"state Int = 0\ntools tool, tool\ntoken from env \"TOKEN\"\n", MO_CODE_SERVICE_BLOCK},
+        {"state Int = 0\ntools tool\nevery 1.minute tick\nevery 2.minutes tick\n"
+         "token from env \"TOKEN\"\n",
+         MO_CODE_SERVICE_BLOCK},
+        {"state Int = 0\ntools tool\ntoken from env \"TOKEN\"\nevery 1.minute tick\n",
+         MO_CODE_SERVICE_BLOCK},
+        {"state Int = 0\ntools tool\n", MO_CODE_SERVICE_BLOCK},
+        {"state Int = 0\ntools tool\nevery 0.minutes tick\ntoken from env \"TOKEN\"\n",
+         MO_CODE_SERVICE_VALUE},
+        {"state Int = 0\ntools tool\nevery (1.minute) tick\ntoken from env \"TOKEN\"\n",
+         MO_CODE_SERVICE_VALUE},
+        {"state Int = 0\ntools tool\nevery 1.5.minutes tick\ntoken from env \"TOKEN\"\n",
+         MO_CODE_SERVICE_VALUE},
+        {"state Int = 0\ntools tool\ntoken from env \"lower\"\n", MO_CODE_SERVICE_TOKEN},
+        {"state Int = 0\ntools tool\ntoken from env \"1TOKEN\"\n", MO_CODE_SERVICE_TOKEN},
+        {"state Int = 0\ntools tool\ntoken from env \"\"\n", MO_CODE_SERVICE_TOKEN},
+        {"state Int = false\ntools tool\ntoken from env \"TOKEN\"\n", MO_CODE_SERVICE_VALUE},
+    };
+    for (size_t i = 0; i < sizeof(refused) / sizeof(refused[0]); i++) {
+        char source[1024];
+        int n = snprintf(source, sizeof source,
+                         "module Main\nservice\n%send\n"
+                         "fn tool(_state: Int, _now: Time) : Bool\ntrue\nend\n"
+                         "fn tick(state: Int, _now: Time) : Int\nstate\nend\n",
+                         refused[i].clauses);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof source);
+        struct fixture f;
+        init(&f, source);
+        CHECK(f.program == NULL && f.diags.count == 1);
+        if (f.diags.count == 1)
+            CHECK(f.diags.items[0].code == refused[i].code);
+        free_fixture(&f);
+    }
+    const char *types[] = {"fn(Int): Int", "List(fn(Int): Int)", "Box(fn(Int): Int)",
+                           "Callback",     "List(Callback)",     "Files",
+                           "Box(Files)"};
+    for (size_t i = 0; i < sizeof(types) / sizeof(types[0]); i++) {
+        for (unsigned position = 0; position < 3; position++) {
+            const char *state = position == 0 ? types[i] : "Int";
+            char source[1024];
+            int n = snprintf(
+                source, sizeof source,
+                "module Main\nstruct Box(T)\nvalue: T\nend\n"
+                "struct Callback\nvalue: fn(Int): Int\nend\n"
+                "service\nstate %s = stop \"start\"\ntools tool\n"
+                "token from env \"_TOKEN2\"\nend\n"
+                "fn tool(_state: %s, _now: Time, _input: %s) : %s\nstop \"reply\"\nend\n",
+                state, state, position == 1 ? types[i] : "Int", position == 2 ? types[i] : "Bool");
+            MO_ASSERT(n > 0 && (size_t)n < sizeof source);
+            struct fixture f;
+            init(&f, source);
+            CHECK(f.program == NULL && f.diags.count == 1);
+            if (f.diags.count == 1)
+                CHECK(f.diags.items[0].code == MO_CODE_SERVICE_CAPABILITY);
+            free_fixture(&f);
+        }
+    }
+}
+
 static void number_literal_bound(void) {
     struct fixture f;
     init(&f, "module Main\nfn f(x: T) : T where T: Number\nx + 1\nend\n"
@@ -2800,6 +2976,9 @@ static void time_arithmetic_graph(void) {
 
 static void run(void *argument) {
     (void)argument;
+    service_inputs();
+    service_handlers();
+    service_rules();
     map_graph();
     time_arithmetic_graph();
     constant_graph();

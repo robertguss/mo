@@ -81,9 +81,13 @@ reserved:
 
 ```text
 allows and assert break case continue else end enum examples expose false fn
-for forbids if implies in is module not or promise return stop struct test true
+for forbids if implies in is module not or promise return service stop struct test true
 try use var where while
 ```
+
+`service` is reserved. The service-clause words `state`, `tools`, `every`,
+`token`, `from` and `env` remain ordinary identifiers outside their clause
+positions (D301 follow-up, approved 25 Oct 2026).
 
 ### 2.4 Lines
 
@@ -970,9 +974,9 @@ runs, in the order of their dependencies. A constant depends on the constants
 it uses, directly or through the functions it calls. So a constant may use one
 written below it, or one in another module, but constants that depend on each
 other in a cycle are an error. A constant that stops stops the program before
-it starts. There is no module-level state:
-values that last and change belong to processes, which come in a later
-version.
+it starts. Module-level bindings are constants, not mutable state. A service
+declares its state separately (section 11.5); handlers receive that state as
+an argument and return any replacement state.
 
 ### 10.5 Always in scope
 
@@ -1052,6 +1056,78 @@ summary = try summarize(files.within("reports").read_only)
 - Capabilities have no abilities: they can't be compared, printed or used as
   keys.
 - There are no log statements. To report something, print it or return it.
+
+### 11.5 Service blocks
+
+A module may declare one top-level `service ... end` block. Its clauses name
+the state type and start value, local functions exposed as tools, timer
+handlers, and the environment variable holding its access token.
+`service` is reserved. The clause words `state`, `tools`, `every`, `token`,
+`from` and `env` remain ordinary identifiers outside their clause positions.
+
+Clauses occur in this order: exactly one `state`, exactly one `tools` naming
+at least one function, zero or more `every` clauses, and exactly one `token`
+last. Empty services and timer-only services are refused. No function name
+may appear twice anywhere in the block, including across tools and timers.
+
+```mo
+module Counter
+
+service
+  state Int = 0
+  tools increment, snapshots
+  every 1.minute tick
+  token from env "COUNTER_TOKEN"
+end
+
+fn increment(state: Int, _now: Time, amount: Int) : (Int, Bool)
+  (state + amount, true)
+end
+
+fn snapshots(state: Int, _now: Time) : List(Int)
+  [state]
+end
+
+fn tick(state: Int, _now: Time) : Int
+  state + 1
+end
+```
+
+The start value has the declared state type. The runtime uses it only when
+there is no saved state. Each tool is a function declared in this module
+whose first two parameters are the state type and `Time`.
+The service selects the local overload whose first parameter exactly matches
+its state type, then requires that signature to contain no unresolved generic
+parameters. Generic helpers can be called through concrete wrappers. A service
+block has no explicit generic-specialization syntax. The state, handler inputs
+and handler results must contain neither capabilities nor function values,
+including inside records, choices, tuples and collections.
+
+A tool updates stored state only when it returns `(State, Reply)` or
+`Result((State, Reply), E)`. Returning exactly `State` is an error. The error
+offers two fixes: return `(state, Unit)` to update state, or wrap the value in
+a record to return it as read-only data. `mo fix` applies neither alternative.
+The suggested adapters retain the tool's name and `##` comment, rename the
+original function to a helper, and rebind the module's references to that
+helper. Exposed functions and functions whose names end in `?` receive no fixes.
+The latter must still return `Bool`, so neither adapter can keep that name.
+Every other result shape is a read-only reply,
+including `List(State)`, `Option(State)` and records containing state.
+Read-only messages are neither logged nor saved.
+
+Each `every` clause has a duration literal with a whole-number value of at
+least 1, such as `1.minute` or `30.seconds`, and a local handler with exactly
+the signature `(State, Time): State`. Simultaneous ticks follow the source
+order of the `every` clauses. Unlike a tool returning bare state, a timer
+handler returns replacement state. Handlers remain ordinary functions that
+examples, promises and tests can call directly.
+
+The token source is a plain text literal naming an environment variable. The
+name is nonempty and contains only uppercase ASCII letters, digits and `_`,
+and cannot start with a digit. Checking does not read that variable or run a
+service. This build checks, tests, formats and fixes service modules, but
+`mo run` of a service entry module reports E1408, "this build cannot run a
+service". Importing a service module does not start it.
 
 ## 12. Examples, promises and tests
 
