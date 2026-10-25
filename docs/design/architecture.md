@@ -104,7 +104,8 @@ modules.
 The five conditions of D207 are sanitizers, fuzzing, Tiger Style (`MO_ASSERT`
 always on, explicit limits, arenas, every result checked, `-Wconversion`), a
 small trusted C core, and bytecode verified on load. The sanitizer and fuzz
-checks run by hand through `ci/check.sh`, not on GitHub (D270; section 11).
+checks run by hand through `ci/check.sh`; sanitizers also run nightly on
+GitHub (MO-152; section 11). Neither gates pull requests (D270).
 
 **Memory.** Compiler stages allocate from arenas that live as long as the
 stage's output and are freed at once. The VM allocates Mo values from a
@@ -2403,8 +2404,12 @@ tuple of fewer than two elements, section 12); the checkers still see the wider 
 `check_core_generated.py`. A program either engine cuts off at its budget is counted, not
 compared, and a run fails if one engine alone cuts off more than 2% of them. The default run
 covers 1,000 programs and every file in `tests/differential`, the minimized programs earlier runs
-found. A larger run, such as the 100,000 programs a nightly job once ran, is a run by hand with
-`MO_CORE_DIFF` and `MO_CORE_DIFF_SEED` set. To replay one: `MO_CORE_DIFF=1 MO_CORE_DIFF_SEED=<seed>`.
+found. The nightly job adds a 1,000-program batch starting at the UTC day number times 1,000,
+prints the inclusive seed range before running it, and compares gcc debug, clang debug and
+clang sanitize with Lean. Each day's range is disjoint, even if main has not changed; a manual
+run on the same day repeats that range. Mismatching programs are uploaded as an Actions artifact.
+Larger runs remain available by setting `MO_CORE_DIFF` and `MO_CORE_DIFF_SEED` by hand.
+To replay one: `MO_CORE_DIFF=1 MO_CORE_DIFF_SEED=<seed>`.
 
 **Fuzz targets** (condition 2), each with its invariant:
 
@@ -2423,12 +2428,24 @@ found. A larger run, such as the 100,000 programs a nightly job once ran, is a r
 - the formatter: formatting twice gives the same text, and keeps the tree.
 
 `ci/check.sh` groups the checks as `gcc`, `clang`, `sanitize`, `drivers`,
-`lean`, `fuzz`, `static` and `cbmc`. No Mo check runs on GitHub, no status check
-is required on main, and there is no nightly comparison job (D270). Before a
-PR, an agent runs `bash ci/check.sh gcc` locally and reports other groups run
-and not run. Slow groups run by hand. A missing tool is a named skip, not a
-pass; `CI=1` makes it fail. `.agents/setup` installs elan and CBMC for the
-Lean build (`make formal`) and proofs. Robert approves merges.
+`lean`, `fuzz`, `static` and `cbmc`. `.github/workflows/nightly.yml` runs
+`gcc clang sanitize drivers static lean` with `CI=1` on main daily at 07:17 UTC
+and on manual dispatch (MO-152). It has no pull-request or push trigger, refuses
+dispatches on other branches, and checks the event's exact commit. A single
+Ubuntu 24.04 job shares the builds across groups, with a 120-minute timeout;
+an overlapping run leaves the active run alone, with at most one pending run
+retained (a newer request replaces the pending one). It installs clang 18 with
+`libclang-rt-18-dev`, clang-tidy 18, clang-format 14 (checked as 14.0.6), Bison
+and elan with the version from `formal/lean-toolchain`. Actions receive only
+read access to repository contents, and checkout does not retain credentials.
+
+No status check is required on main, preserving D270's PR flow. Before a PR,
+an agent runs `bash ci/check.sh gcc` locally and reports other groups run and
+not run. Fuzz and CBMC still run by hand. A missing tool is a named skip, not
+a pass; `CI=1` makes it fail. `.agents/setup` installs elan and CBMC for the
+local Lean build (`make formal`) and proofs. Robert approves merges. Nightly
+failures are visible in Actions; email delivery depends on the recipient's
+GitHub Actions notification settings, not on the workflow.
 
 The recorded hour-long fuzz runs cover 22 sources and a large-bytecode variant,
 23 runs with no crash (`docs/status/v3-fuzz-log.md`). CBMC covers the reader,

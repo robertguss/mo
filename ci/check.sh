@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Every check robertguss/mo has, in order, except that the drivers and lean groups run their
-# checks side by side. Nothing runs these on GitHub; run them locally, or ask the CI orb to run
-# them on a pull request (ci/orb/README.md; decisions D208, D214).
+# checks side by side. GitHub's nightly workflow runs gcc clang sanitize drivers static lean
+# on main. For a pull request, run checks locally or ask the CI orb (ci/orb/README.md; D208, D214).
 #
 # A check whose tool is missing is skipped with a note, and the summary at the end counts what
 # was skipped instead of claiming that all checks passed. Set CI=1 to make a missing tool an

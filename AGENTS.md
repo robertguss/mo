@@ -55,14 +55,23 @@ bash ci/check.sh [group…]  # every check; groups: gcc clang sanitize fuzz driv
 
 ## Checks and merging
 
-No Mo check runs on GitHub: there are no Actions workflows, and `main` requires no status check
-(only force-pushes are blocked). The Socket Security app may still post its own checks; none is
-required. Before opening a PR, run `bash ci/check.sh gcc` (build and unit tests)
+The `nightly` GitHub Actions workflow checks `main` daily at 07:17 UTC and on manual dispatch,
+never on pull requests or pushes. It runs `gcc clang sanitize drivers static lean` with `CI=1`
+and an additional 1,000-program VM-vs-Lean batch with a fresh, printed seed range each UTC day.
+Failed runs appear in Actions; Robert must enable email notifications for failed workflows in
+his GitHub notification settings and be the scheduled workflow's notification recipient (its
+creator, latest cron editor, or person who re-enabled it). Manual-run notifications go to the
+person who dispatched the run. After the workflow first merges, verify that recipient, dispatch
+it on `main`, and require a passing run before marking MO-152 Done.
+
+`main` still requires no status check (only force-pushes are blocked). The Socket Security app
+may still post its own checks; none is required. Before opening a PR, run
+`bash ci/check.sh gcc` (build and unit tests)
 and report its result in the PR body, listing any check it skipped for a missing tool (a skip is
 not a pass; `CI=1` makes it fail instead). Run any other group the change reaches and say which
 groups you did not run: usually `clang` and `static` (formatting, module includes, library map)
 for C changes, `drivers` for CLI or golden changes, `static` for `prims.def` or `hostops.def`.
-The slow groups (`cbmc`, `lean`, `sanitize`, `fuzz`) run only when someone runs them by hand. The
+The `cbmc` and `fuzz` groups still run only by hand. The
 build embeds or checks `docs/agent-guide.md`, `docs/reference/README.md` and
 `docs/design/library.md`, so after editing one, also run `bash ci/check.sh drivers static`. A PR
 merges when Robert says so. He lets agents merge docs-only PRs without review: PRs that change only
