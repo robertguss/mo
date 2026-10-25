@@ -326,7 +326,10 @@ end
 
 A `Time` is an instant between the years 1 and 9999, read from a `Clock`
 (section 11). A `Duration` is a length of time, made from an `Int`:
-`5.seconds`, `200.milliseconds`, `3.minutes`, `2.hours`, `7.days`. Both count
+`5.seconds`, `200.milliseconds`, `3.minutes`, `2.hours`, `7.days`. Each unit also
+accepts its singular spelling: `second`, `millisecond`, `minute`, `hour`, `day`.
+Either spelling works with any `Int`, including qualified calls and function
+values such as `Int.minute`. Both times and durations count
 whole microseconds. Subtracting two times gives a `Duration`, and never
 overflows; adding a `Duration` to a `Time`, or subtracting one from it, gives
 a `Time`; durations add, subtract and multiply by an `Int`. A time outside the
@@ -334,10 +337,19 @@ years 1 to 9999 is a bug, so `time.checked_add(duration)` returns an `Option`,
 `None` outside them, for code that can't rule it out; a negative duration goes
 back in time. Times and durations compare with `<` and the other comparisons.
 
+`mo format` writes a singular unit on a direct integer-literal receiver whose
+value is 1, including hexadecimal and binary literals, and a plural unit on
+other integer literals. It leaves other receivers and qualified function names
+as written: `n.minute`, `record.seconds`, `(1).minutes`, `(-1).second`, and
+`Int.minute`. In `-1.seconds`, the receiver is the literal 1, so it writes
+`-1.second`. The formatter uses syntax, not types; this boundary avoids renaming
+unrelated fields or functions (D303,
+[wording approval](https://ampcode.com/threads/T-01a1705d-1274-74f9-8fcf-0bf58e6f89b8)).
+
 <!-- mo-example: fragment -->
 ```mo
 expires = now + 30.minutes
-an_hour_ago = now - 1.hours
+an_hour_ago = now - 1.hour
 late? = now - order.placed > 2.days
 ```
 
@@ -1262,7 +1274,8 @@ taking `b: Int`), all `: Int`. `checked_add`, `checked_sub` and `checked_mul`
 `(b: Int) : Option(Int)`. `to_decimal : Decimal`, `to_float : Float` (rounded
 to the nearest float), `to_big : BigInt`, `to_byte : Option(Byte)`,
 `to_char : Option(Char)`, `to_text : Text`. `seconds`, `milliseconds`,
-`minutes`, `hours` and `days : Duration`.
+`minutes`, `hours` and `days : Duration`, also named `second`, `millisecond`,
+`minute`, `hour` and `day` respectively (3.9).
 
 **BigInt**: the arithmetic operators, `abs`, `min(b: BigInt)`, `max(b: BigInt)`,
 `pow(n: Int)`, `floor_div(b: BigInt)` and `floor_mod(b: BigInt)`, all

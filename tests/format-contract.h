@@ -37,12 +37,14 @@ struct format_visit {
     bool sum, omit_comments;
     bool spec_body; /* a function's code after a non-empty specification */
     bool blank;     /* the first line of that code, which always follows a blank line */
+    bool literal_step, duration_name;
 };
 
 /* Expand += into assignment/addition, independently of the printer's matching
  * logic. Only the synthesized repeated target has no comments. Iterative
  * traversal also covers the parser's arbitrarily long flat chains. */
-static inline void format_tree(struct mo_buffer *b, const struct mo_syntax *root) {
+static inline void format_tree(struct mo_buffer *b, const struct mo_syntax *root,
+                               bool duration_aliases) {
     struct mo_buffer stack;
     mo_buffer_init(&stack, 1 << 27);
     struct format_visit visit = {.node = root};
@@ -60,9 +62,20 @@ static inline void format_tree(struct mo_buffer *b, const struct mo_syntax *root
         format_word(b, (uint32_t)(visit.sum ? MO_T_PLUS : n->token));
         format_word(b, n->count);
         format_word(b, visit.sum ? 0 : visit.blank ? 1u : n->blank_before);
-        format_word(b, n->text == NULL ? 0 : n->span.end - n->span.start);
+        uint32_t length = n->text == NULL ? 0 : n->span.end - n->span.start;
+        if (duration_aliases && visit.duration_name && n->kind == MO_S_NAME) {
+            static const char *const singular[] = {"millisecond", "second", "minute", "hour",
+                                                   "day"};
+            for (size_t j = 0; j < sizeof singular / sizeof singular[0]; j++) {
+                size_t size = strlen(singular[j]);
+                if (length == size + 1 && memcmp(n->text, singular[j], size) == 0 &&
+                    n->text[size] == 's')
+                    length--;
+            }
+        }
+        format_word(b, length);
         if (n->text != NULL)
-            MO_ASSERT(mo_buffer_append(b, n->text, n->span.end - n->span.start));
+            MO_ASSERT(mo_buffer_append(b, n->text, length));
         format_comments(b, visit.sum || visit.omit_comments ? NULL : n->leading);
         format_comments(b, visit.sum || visit.omit_comments ? NULL : n->trailing);
         format_comments(b, visit.sum || visit.omit_comments ? NULL : n->ending);
@@ -74,6 +87,11 @@ static inline void format_tree(struct mo_buffer *b, const struct mo_syntax *root
                 .spec_body = n->kind == MO_S_FN && i == 6 && n->children[4] != NULL &&
                              n->children[4]->count != 0,
                 .blank = visit.spec_body && i == 1,
+                .literal_step =
+                    n->kind == MO_S_POSTFIX && i == 2 && n->children[0]->kind == MO_S_INT,
+                .duration_name =
+                    n->kind == MO_S_FIELD_ACCESS && i == n->count &&
+                    (visit.literal_step || (n->count == 2 && n->children[0]->kind == MO_S_INT)),
             };
             MO_ASSERT(mo_buffer_append(&stack, &child, sizeof child));
         }

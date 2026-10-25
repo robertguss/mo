@@ -125,6 +125,12 @@ The executable grammar in `grammar/mo.y` is the authority. Appendix B summarizes
 
 Each command is given the file of the program's main module. `mo check FILE` reports the program's errors, `mo run FILE [ARGS...]` runs it with the arguments after the file's name, and `mo test FILE` checks its examples, promises and tests. `mo emit FILE -o OUT` writes its bytecode. `mo format` and `mo fix` rewrite the files they are given.
 
+Duration units accept singular and plural spellings, including `millisecond`.
+`mo format` writes `1.minute` and `2.minutes` on direct integer literals, using
+their numeric value even in hexadecimal or binary. It preserves other receivers
+and qualified function values, such as `n.minute`, `(1).minutes`, and `Int.minute`,
+because it does not infer types (reference 3.9).
+
 `mo guide` needs no file. It prints this page. `mo guide --reference` prints the reference.
 
 `mo` exits with status 0 when everything passed, 1 when the program has errors or an example, promise or test fails, and 2 for a mistake in the command itself. Once the program runs, `mo run` exits with the program's own status, or 70 after a bug. Section 11.2 states the program's own status. Section 13.2 states that bug.

@@ -2740,6 +2740,14 @@ static void corpus(void) {
 static void time_arithmetic_graph(void) {
     struct fixture f;
     init(&f, "module Main\n"
+             "fn units(n: Int) : (Duration, Duration, Duration, Duration, Duration)\n"
+             "(n.second, n.millisecond, n.minute, n.hour, n.day)\nend\n"
+             "fn compare_units() : Bool\nconvert = Int.minute\n"
+             "1.minute == Int.minute(2) - convert(1)\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    free_fixture(&f);
+
+    init(&f, "module Main\n"
              "fn scale(x: Decimal) : Decimal\n"
              "x * 2\n"
              "end\n"

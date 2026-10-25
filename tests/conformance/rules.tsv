@@ -48,6 +48,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 3.8/1	col-map-basics,col-set-basics	e0094	fail-bug-map-duplicate	
 3.8/2	col-map-order,col-map-equality,col-set-basics			
 3.9/1	ref-time		fail-bug-time-range,fail-bug-duration-overflow	
+3.9/2	ref-time				tests/test_format.c:check_source,ci/check_cli.py:check,ci/check_format.py:audit
 4.1/1	lang-records	e0062,e0063,e0065		
 4.1/2	lang-records-order	e0063		
 4.2/1	lang-enum-shapes	e0063		

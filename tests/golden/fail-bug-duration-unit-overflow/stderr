@@ -1,4 +1,4 @@
 bug: overflow: Duration
-  at Main.main (tests/golden/fail-bug-duration-unit-overflow/main.mo:102..123)
-  at Main.main.entry (tests/golden/fail-bug-duration-unit-overflow/main.mo:13..161)
+  at Main.main (tests/golden/fail-bug-duration-unit-overflow/main.mo:102..122)
+  at Main.main.entry (tests/golden/fail-bug-duration-unit-overflow/main.mo:13..160)
   console = <Console>

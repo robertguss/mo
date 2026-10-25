@@ -179,8 +179,13 @@ Robert settled D301 to D308 on 24 Oct 2026. These decisions define the Phase 3 b
 2. **Read-only handlers (D302).** A read-only handler returns only its reply. A state-changing
    handler returns `(State, reply)` or a `Result` wrapping that pair. The runtime neither logs
    nor saves read-only messages.
-3. **Durations (D303).** Singular units are accepted too: `1.second`, `1.minute`, `1.hour`, and
-   `1.day`. The formatter writes the singular after a literal 1 and the plural otherwise.
+3. **Durations (D303).** All five existing units accept singular spellings: `1.second`,
+   `1.millisecond`, `1.minute`, `1.hour`, and `1.day`. The syntax-only formatter normalizes
+   only direct integer-literal receivers, singular for numeric value 1 and plural otherwise.
+   It preserves grouped and arbitrary receivers, record fields and qualified function names
+   (reference 3.9). Native signatures map each alias to the existing plural identity, so
+   lowering, Core, bytecode and the VM need no new operations. Formatter recognition stays
+   local to syntax; the independent test contract equates only literal-receiver aliases.
 4. **Budgets (D304).** Per-message VM instructions, per-message memory and mailbox length have
    fixed runtime defaults, named in `src/base/limits.h`. A message over budget fails only that
    message. A full mailbox refuses new messages immediately with a busy tool error. Phase 3

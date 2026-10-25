@@ -41,8 +41,8 @@ static void check(void *argument) {
                                            &file, &error));
             struct mo_module_syntax *formatted = mo_parse_fragment(&arena, &sources, file, &diags);
             MO_ASSERT(formatted != NULL && !mo_diags_any(&diags));
-            format_tree(&before, original->tree);
-            format_tree(&after, formatted->tree);
+            format_tree(&before, original->tree, true);
+            format_tree(&after, formatted->tree, true);
             MO_ASSERT(format_buffer_equal(&before, &after));
             MO_ASSERT(mo_format(formatted, options, &twice));
             MO_ASSERT(format_buffer_equal(&output, &twice));

@@ -97,10 +97,10 @@ fn heartbeat(queue: Queue, now: Time, id: Int, attempt: Int) : Result(Queue, Que
         job.attempts == attempt and
         job.state is Leased(until: until) and
         until > now
-    allows queue: holding([leased(1, t0 + 1.seconds)]), now: t0, id: 1, attempt: 1, result: Ok(
+    allows queue: holding([leased(1, t0 + 1.second)]), now: t0, id: 1, attempt: 1, result: Ok(
       holding([leased(1, t0 + 30.minutes)])
     )
-    forbids queue: holding([leased(1, t0 + 1.seconds)]), now: t0, id: 1, attempt: 2, result: Ok(
+    forbids queue: holding([leased(1, t0 + 1.second)]), now: t0, id: 1, attempt: 2, result: Ok(
       holding([leased(1, t0 + 30.minutes)])
     )
   end
@@ -112,10 +112,10 @@ fn heartbeat(queue: Queue, now: Time, id: Int, attempt: Int) : Result(Queue, Que
         job.attempts == attempt and
         job.state is Leased(until: until) and
         now.checked_add(30.minutes) == Some(until)
-    allows queue: holding([leased(1, t0 + 1.seconds), ready(2)]), now: t0, id: 1, attempt: 1, result: Ok(
+    allows queue: holding([leased(1, t0 + 1.second), ready(2)]), now: t0, id: 1, attempt: 1, result: Ok(
       holding([leased(1, t0 + 30.minutes), ready(2)])
     )
-    forbids queue: holding([leased(1, t0 + 1.seconds), ready(2)]), now: t0, id: 1, attempt: 1, result: Ok(
+    forbids queue: holding([leased(1, t0 + 1.second), ready(2)]), now: t0, id: 1, attempt: 1, result: Ok(
       holding([leased(1, t0 + 30.minutes)])
     )
   end
@@ -201,7 +201,7 @@ end
 fn expire(queue: Queue, now: Time) : Queue
   examples
     expire(holding([leased(1, t0)]), t0) == holding([retried(1, 1)])
-    expire(holding([leased(1, t0 + 1.seconds)]), t0) == holding([leased(1, t0 + 1.seconds)])
+    expire(holding([leased(1, t0 + 1.second)]), t0) == holding([leased(1, t0 + 1.second)])
   end
 
   var after = queue
@@ -291,11 +291,11 @@ test "heartbeat renews from now without counting an attempt or changing another 
   assert renewed.jobs.get(other) == submitted.jobs.get(other)
   assert renewed.next_id == submitted.next_id
   assert expire(renewed, t0 + 30.minutes) == renewed
-  assert acknowledge(renewed, t0 + 50.minutes - 1.seconds, id, 1) is Ok(finished)
+  assert acknowledge(renewed, t0 + 50.minutes - 1.second, id, 1) is Ok(finished)
   assert finished.jobs.get(id) is Some(completed) and completed.state == Done
   assert expire(renewed, t0 + 50.minutes).jobs.get(id) is Some(returned) and returned.state == Ready
   late = Time.parse("9999-12-31T23:40:00Z") or stop "the time is written correctly"
-  queue = holding([leased(1, late + 1.seconds)])
+  queue = holding([leased(1, late + 1.second)])
   assert heartbeat(queue, late, 1, 1) == Error(BadLease(length: 30.minutes))
 end
 
@@ -323,7 +323,7 @@ test "old attempts cannot change a newer lease"
 end
 
 test "expired and ended leases are refused even before the expiry tick"
-  for job in [leased(1, t0), leased(1, t0 - 1.seconds), ready(1), done(1), dead(1)]
+  for job in [leased(1, t0), leased(1, t0 - 1.second), ready(1), done(1), dead(1)]
     queue = holding([job])
     assert heartbeat(queue, t0, 1, job.attempts) == Error(NotLeased(id: 1))
     assert acknowledge(queue, t0, 1, job.attempts) == Error(NotLeased(id: 1))

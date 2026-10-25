@@ -15,13 +15,13 @@ test "durations count whole microseconds made from an Int"
 end
 
 test "durations add, subtract, negate and multiply by an Int"
-  assert 1.seconds + 500.milliseconds == 1500.milliseconds
-  assert 1.seconds - 1500.milliseconds == (-500).milliseconds
+  assert 1.second + 500.milliseconds == 1500.milliseconds
+  assert 1.second - 1500.milliseconds == (-500).milliseconds
   assert -(2.seconds) == (-2).seconds
   assert -((-2).seconds) == 2.seconds
   assert 200.milliseconds * 3 == 600.milliseconds
   assert 200.milliseconds * (-3) == (-600).milliseconds
-  assert 1.days * 0 == 0.seconds
+  assert 1.day * 0 == 0.seconds
 end
 
 test "in_milliseconds rounds toward zero and in_seconds is exact"
@@ -51,20 +51,20 @@ test "a duration's text is its seconds, as short as it can be"
 end
 
 test "durations compare and order"
-  assert 1.seconds > 999.milliseconds
+  assert 1.second > 999.milliseconds
   assert (-1).seconds < 0.seconds
-  assert 60.seconds <= 1.minutes
-  assert 60.seconds >= 1.minutes
+  assert 60.seconds <= 1.minute
+  assert 60.seconds >= 1.minute
   assert 60.seconds != 61.seconds
-  assert 2.seconds.compare(1.seconds) == Greater
-  assert [3.seconds, (-1).seconds, 1.milliseconds].sort == [(-1).seconds, 1.milliseconds, 3.seconds]
+  assert 2.seconds.compare(1.second) == Greater
+  assert [3.seconds, (-1).seconds, 1.millisecond].sort == [(-1).seconds, 1.millisecond, 3.seconds]
 end
 
 test "adding or subtracting a duration gives a time, and two times give a duration"
   t = Time.parse("2026-10-12T02:15:00Z") or stop "valid time"
   assert (t + 30.minutes).to_text == "2026-10-12T02:45:00Z"
-  assert (t - 1.hours).to_text == "2026-10-12T01:15:00Z"
-  assert t + (-1).hours == t - 1.hours
+  assert (t - 1.hour).to_text == "2026-10-12T01:15:00Z"
+  assert t + (-1).hours == t - 1.hour
   assert (t + 90.minutes) - t == 90.minutes
   assert t - (t + 90.minutes) == (-90).minutes
   assert t - t == 0.seconds
@@ -73,16 +73,16 @@ end
 
 test "time arithmetic follows the calendar across months, years and leap days"
   new_year = Time.parse("2026-12-31T23:30:00Z") or stop "valid time"
-  assert (new_year + 1.hours).to_text == "2027-01-01T00:30:00Z"
+  assert (new_year + 1.hour).to_text == "2027-01-01T00:30:00Z"
   leap = Time.parse("2024-02-28T12:00:00Z") or stop "valid time"
-  assert (leap + 1.days).to_text == "2024-02-29T12:00:00Z"
+  assert (leap + 1.day).to_text == "2024-02-29T12:00:00Z"
   assert (leap + 2.days).to_text == "2024-03-01T12:00:00Z"
   century = Time.parse("2100-02-28T12:00:00Z") or stop "valid time"
-  assert (century + 1.days).to_text == "2100-03-01T12:00:00Z"
+  assert (century + 1.day).to_text == "2100-03-01T12:00:00Z"
   fourth = Time.parse("2000-02-28T12:00:00Z") or stop "valid time"
-  assert (fourth + 1.days).to_text == "2000-02-29T12:00:00Z"
+  assert (fourth + 1.day).to_text == "2000-02-29T12:00:00Z"
   plain = Time.parse("2026-02-28T12:00:00Z") or stop "valid time"
-  assert (plain + 1.days).to_text == "2026-03-01T12:00:00Z"
+  assert (plain + 1.day).to_text == "2026-03-01T12:00:00Z"
   assert (plain + 365.days).to_text == "2027-02-28T12:00:00Z"
 end
 
@@ -112,13 +112,13 @@ test "checked_add gives None for a time outside the years 1 to 9999"
   last = Time.parse("9999-12-31T23:59:59.999999Z") or stop "last instant"
   assert first.checked_add((-1).seconds) == None
   assert first.checked_add(0.seconds) == Some(first)
-  assert first.checked_add(1.seconds) == Time.parse("0001-01-01T00:00:01Z")
-  assert last.checked_add(1.milliseconds) == None
-  assert last.checked_add(-(1.days)) == Time.parse("9999-12-30T23:59:59.999999Z")
+  assert first.checked_add(1.second) == Time.parse("0001-01-01T00:00:01Z")
+  assert last.checked_add(1.millisecond) == None
+  assert last.checked_add(-(1.day)) == Time.parse("9999-12-30T23:59:59.999999Z")
   assert first.checked_add(last - first) == Some(last)
   assert last.checked_add(first - last) == Some(first)
   near = Time.parse("9999-12-31T23:59:59.998Z") or stop "valid time"
-  assert near.checked_add(1.milliseconds) == Time.parse("9999-12-31T23:59:59.999Z")
+  assert near.checked_add(1.millisecond) == Time.parse("9999-12-31T23:59:59.999Z")
   assert near.checked_add(2.milliseconds) == None
 end
 
@@ -184,5 +184,5 @@ test "a fixed clock tells the time it was given"
   clock = Clock.fixed(t)
   assert clock.now == t
   assert clock.now - t == 0.seconds
-  assert Clock.fixed(t + 1.days).now == t + 1.days
+  assert Clock.fixed(t + 1.day).now == t + 1.day
 end

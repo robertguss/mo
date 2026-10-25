@@ -121,11 +121,11 @@ two rows in a section.
 | `to_byte` | primitive | `INT_TO_BYTE` | |
 | `to_char` | primitive | `INT_TO_CHAR` | |
 | `to_text` | primitive | `INT_TO_TEXT` | |
-| `seconds` | primitive | `INT_SECONDS` | |
-| `milliseconds` | primitive | `INT_MILLISECONDS` | |
-| `minutes` | primitive | `INT_MINUTES` | |
-| `hours` | primitive | `INT_HOURS` | |
-| `days` | primitive | `INT_DAYS` | |
+| `seconds` | primitive | `INT_SECONDS` | `second` resolves to the same primitive |
+| `milliseconds` | primitive | `INT_MILLISECONDS` | `millisecond` resolves to the same primitive |
+| `minutes` | primitive | `INT_MINUTES` | `minute` resolves to the same primitive |
+| `hours` | primitive | `INT_HOURS` | `hour` resolves to the same primitive |
+| `days` | primitive | `INT_DAYS` | `day` resolves to the same primitive |
 
 ## BigInt
 

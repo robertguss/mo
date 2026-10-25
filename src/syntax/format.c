@@ -278,13 +278,49 @@ static void block_body(struct printer *f, const struct mo_syntax *body,
     op(f, MO_DOC_UNNEST);
 }
 
-static void postfix_step(struct printer *f, const struct mo_syntax *n) {
+static bool integer_is_one(const struct mo_syntax *n) {
+    size_t length = n->span.end - n->span.start;
+    size_t start =
+        length > 2 && n->text[0] == '0' && (n->text[1] == 'x' || n->text[1] == 'b') ? 2u : 0u;
+    bool one = false;
+    for (size_t i = start; i < length; i++) {
+        uint8_t digit = n->text[i];
+        if (digit == '_')
+            continue;
+        if (one || (digit != '0' && digit != '1'))
+            return false;
+        one = digit == '1';
+    }
+    return one;
+}
+
+static void postfix_step(struct printer *f, const struct mo_syntax *n,
+                         const struct mo_syntax *receiver) {
     if (n->kind == MO_S_CALL) {
         sequence_brackets(f, n, n->children[n->count - 1], "(", ")");
     } else {
         const struct mo_syntax *field = n->children[n->count - 1];
         soft(f, 0);
         text(f, ".");
+        if (n->kind == MO_S_FIELD_ACCESS && receiver != NULL && receiver->kind == MO_S_INT &&
+            !receiver->incomplete && field != NULL && field->kind == MO_S_NAME &&
+            !field->incomplete) {
+            static const char *const units[] = {"seconds", "milliseconds", "minutes", "hours",
+                                                "days"};
+            size_t length = field->span.end - field->span.start;
+            for (size_t i = 0; i < sizeof units / sizeof units[0]; i++) {
+                size_t plural = strlen(units[i]);
+                if ((length == plural || length == plural - 1) &&
+                    memcmp(field->text, units[i], length) == 0) {
+                    struct mo_syntax spelling = *field;
+                    spelling.text = (const uint8_t *)units[i];
+                    spelling.span.end = spelling.span.start +
+                                        (uint32_t)(plural - (integer_is_one(receiver) ? 1u : 0u));
+                    node(f, &spelling);
+                    return;
+                }
+            }
+        }
         node(f, field);
     }
 }
@@ -632,7 +668,7 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
             node(f, n->children[0]);
         if (n->kind != MO_S_CALL)
             op(f, MO_DOC_NEST);
-        postfix_step(f, n);
+        postfix_step(f, n, n->count == 2 ? n->children[0] : NULL);
         if (n->kind != MO_S_CALL)
             op(f, MO_DOC_UNNEST);
         break;
@@ -646,7 +682,7 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
             f->cursor = &cursor;
             comments(f, step->leading, false);
             op(f, MO_DOC_GROUP);
-            postfix_step(f, step);
+            postfix_step(f, step, i == 1 ? n->children[0] : NULL);
             op(f, MO_DOC_END_GROUP);
             if (cursor.next != NULL)
                 f->doc.ok = false;
