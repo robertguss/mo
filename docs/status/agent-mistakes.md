@@ -36,3 +36,7 @@ the active run is preserved, but only the newest pending run is retained.
 One-offs this run: macOS build breaks (#81; tests that create non-UTF-8 file names, which APFS
 refuses, found by a local push on 22 Oct), a skill written into `.claude/skills/` instead of
 `.agents/skills/` (#108), a Python line over 100 columns (#115).
+
+MO-165's independent review caught a driver run against a stale sanitizer executable while a
+separate build replaced it. That run is not passing evidence. Finish executable builds before
+running their drivers, and check the gate's own exit status rather than a following `tail`.

@@ -151,9 +151,11 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 12.2/3	tst-promise-holds	e0074-promise		
 12.2/4	tst-promise-holds	e0015,e0088,e1405,e1405-forbids		
 12.2/5	tst-promise-holds	tst-overflow-promise,tst-failing-promise			ci/check_cli.py:promise_boundaries,ci/check_cli.py:hidden_promises,ci/check_cli.py:composite_promises,ci/check_cli.py:fake_capability_promises,ci/check_cli.py:promise_shrinking
-12.2/6					ci/check_cli.py:generic_promises,ci/check_cli.py:promise_selection
-12.2/7	sample-job-queue-tests			
-12.2/8	mod-hidden-type,fail-result-declared	e0007-requires		
+12.2/6					ci/check_cli.py:hidden_promises,ci/check_cli.py:promise_shrinking
+12.2/7					ci/check_cli.py:hidden_promises
+12.2/8					ci/check_cli.py:generic_promises,ci/check_cli.py:promise_selection
+12.2/9	sample-job-queue-tests
+12.2/10	mod-hidden-type,fail-result-declared	e0007-requires
 12.3/1	tst-private-names,tst-assert-is-binding,sample-job-queue-tests	tst-failing-assert		
 12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed,ref-capability-fakes	e0098,e0098-constant,e0098-printed		
 12.4/2	cap-console-fake,cap-files-fake	e0098-printed		

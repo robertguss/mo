@@ -2254,9 +2254,38 @@ parameter of the hidden type. Boundary 0 is the first start on its minimum input
 adds one step and boundary 2 three, cycling through the steps on their boundary inputs; random
 values pick starts, steps and inputs from the request's seed, sized like the trial. The value is
 then deep-copied into the trial's heap through a structural generator over the type, which also
-copies retained inputs for shrinking. Built values are not shrunk, and the report shows them as
-they are. Builder calls poll the promise's deadline; running out while generating ends the
-search as between trials.
+copies retained inputs for shrinking. Builder calls poll the promise's deadline; running out
+while generating ends the search as between trials.
+
+Each trial owns a bounded tree of successful builder sequences, with separate child scopes for
+each call's generated arguments. Failed starts can allocate records too; at 4096 records or an
+allocation refusal, recording stops but ordinary generation continues. A false promise with an
+incomplete tree retains its original counterexample and diagnoses E1404 as a shrink limitation.
+Passing tuples are unaffected. Records are freed with their trial, not accumulated for a promise.
+
+Before structural shrinking, the driver replays the whole input tuple from its original ordinal.
+It tries every start-preserving subsequence of each unlocked sequence, then structurally shrinks
+the actual arguments of successful calls. Lower-level recipes are visited before their parents.
+Accepted argument tuples are frozen in a trace-owned heap; later copies rebind direct chain
+parameters to the newly reconstructed prefix. A frozen argument's nested hidden values stay
+opaque. This does not add nested self-type builders, substitute constructors, or promise a joint
+minimum. After accepted argument reductions, deletion gets another pass. Ordinary structural
+shrinking follows, without returning to builder reduction.
+
+Replay reserves each hidden occurrence's original node and blob-byte debit, even when its new
+value is smaller; later collection sizes and random draws must not change with the edit. A value
+larger than its reservation refuses that candidate. Calls returning None, Error or stopping also
+refuse the edit, not the confirmed failure. Accepted and proposed traces have separate lifetimes.
+Installed companion origins, their dependencies and companion-type recipes are locked, and the
+recorded companion bindings are replayed exactly. They are not independently simplified.
+
+Builder and structural reduction share 200 additional subject trials and one absolute deadline.
+At most 4096 builder edits are attempted, including invalid edits which do not call the subject.
+Each replay is bounded by the recorded tree, four calls per sequence and existing per-generator
+work limits. Frozen argument snapshots together use one input node, byte and work allowance.
+Exhausting the recording, edit-attempt or snapshot allowance preserves the confirmed failure
+and reports E1404. Reaching the subject-trial cap or deadline stops normally with the confirmed
+failure. None of these bounds claims that the result is minimal.
 
 ### 10.2 JSON output
 
