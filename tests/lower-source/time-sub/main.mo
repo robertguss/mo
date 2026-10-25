@@ -20,6 +20,7 @@ fn main(console: Console) : Int
   latest = must_parse("9999-12-31T23:59:59.999999Z")
   span = latest - earliest
   reverse_span = earliest - latest
+  minute = Int.minute
   console.print("#{pos_diff.in_milliseconds}/#{neg_diff.in_milliseconds}/#{combo.in_seconds}/#{neg_dur.in_milliseconds}")
   if zero_diff == 0.seconds and
     pos_diff == 10.seconds and
@@ -33,5 +34,11 @@ fn main(console: Console) : Int
     1.minutes == 60.seconds and
     1.hours == 60.minutes and
     1.days == 24.hours and
+    1.second == 1000.milliseconds and
+    1.millisecond == Int.millisecond(1) and
+    1.minute == minute(1) and
+    2.minute == 2.minutes and
+    1.hour == 3600.seconds and
+    1.day == 86400.seconds and
     latest.checked_add(1.milliseconds) is None: 0 else: 1
 end

@@ -170,6 +170,11 @@ static const struct native_text {
 #define HOSTOP(id, module, name, signature, params, bugs, spec_only)                               \
     {module, name, module "." name, signature, spec_only},
 #include "base/hostops.def"
+    {"Int", "second", "Int.seconds", "fn(Int) : Duration", false},
+    {"Int", "millisecond", "Int.milliseconds", "fn(Int) : Duration", false},
+    {"Int", "minute", "Int.minutes", "fn(Int) : Duration", false},
+    {"Int", "hour", "Int.hours", "fn(Int) : Duration", false},
+    {"Int", "day", "Int.days", "fn(Int) : Duration", false},
 };
 
 static const struct mo_symbol option_owner = {.name = "Option", .module = UINT32_MAX};

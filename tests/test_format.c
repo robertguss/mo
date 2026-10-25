@@ -29,9 +29,16 @@ static bool check_bytes(const char *path, const uint8_t *source, size_t size, co
         return false;
     }
     accepted_inputs++;
-    struct mo_buffer output;
+    struct mo_buffer output, original_tree, unchanged_tree;
     mo_buffer_init(&output, MO_LIMIT_FILE_SIZE);
+    mo_buffer_init(&original_tree, 1 << 27);
+    mo_buffer_init(&unchanged_tree, 1 << 27);
+    format_tree(&original_tree, module->tree, false);
     CHECK(mo_format(module, (struct mo_format_options){100, format_display_width}, &output));
+    format_tree(&unchanged_tree, module->tree, false);
+    CHECK(format_buffer_equal(&original_tree, &unchanged_tree));
+    mo_buffer_free(&original_tree);
+    mo_buffer_free(&unchanged_tree);
     if (fixed_points && fixed)
         CHECK(size == output.length && (size == 0 || memcmp(source, output.bytes, size) == 0));
     if (expected != NULL) {
@@ -48,8 +55,8 @@ static bool check_bytes(const char *path, const uint8_t *source, size_t size, co
         mo_buffer_init(&before, 1 << 27);
         mo_buffer_init(&after, 1 << 27);
         mo_buffer_init(&twice, MO_LIMIT_FILE_SIZE);
-        format_tree(&before, module->tree);
-        format_tree(&after, formatted->tree);
+        format_tree(&before, module->tree, true);
+        format_tree(&after, formatted->tree, true);
         CHECK(format_buffer_equal(&before, &after));
         CHECK(mo_format(formatted, (struct mo_format_options){100, format_display_width}, &twice));
         CHECK(format_buffer_equal(&output, &twice));
@@ -157,6 +164,24 @@ int main(int argc, char **argv) {
     }
     MO_ASSERT(argc == 1 || (argc == 2 && strcmp(argv[1], "--fixed-points") == 0));
     fixed_points = argc == 2;
+    check_source("1.seconds\n1.milliseconds\n1.minutes\n1.hours\n1.days\n"
+                 "0.second\n2.millisecond\n2.minute\n2.hour\n2.day\n",
+                 "1.second\n1.millisecond\n1.minute\n1.hour\n1.day\n"
+                 "0.seconds\n2.milliseconds\n2.minutes\n2.hours\n2.days\n");
+    check_source("0x00_01.minutes\n0b0_01.hours\n0x10.minute\n0b10.hour\n1_0.day\n"
+                 "11.second\n0b11.hour\n0x11.minute\n"
+                 "18446744073709551617.second\n-1.seconds\n1.minutes.in_seconds\n",
+                 "0x00_01.minute\n0b0_01.hour\n0x10.minutes\n0b10.hours\n1_0.days\n"
+                 "11.seconds\n0b11.hours\n0x11.minutes\n"
+                 "18446744073709551617.seconds\n-1.second\n1.minute.in_seconds\n");
+    const char *duration_names = "r.minute\nr.seconds\nn.hour\nInt.minute\nInt.minutes(1)\n"
+                                 "(1).minutes\n(-1).second\n1.0.minute\n1.to_big.minute\n"
+                                 "struct Units\n  minute: Int\n  seconds: Int\nend\n";
+    check_source(duration_names, duration_names);
+    check_source("1.minutes.minute\n2.minute.second\n", "1.minute.minute\n2.minutes.second\n");
+    check_source("# before\n1. # dot\nminutes # after\n2.minute. # chain\nin_seconds\n",
+                 "# before\n1\n  .       # dot\n  minute  # after\n"
+                 "2.minutes\n  .  # chain\n  in_seconds\n");
     check_source("module Main\nfn f()\nvar x=1\nx=x+2\nx\nend\n",
                  "module Main\nfn f()\n  var x = 1\n  x += 2\n  x\nend\n");
     check_source("fn f()\ncart.total.net=cart.total.net+item.price\n"

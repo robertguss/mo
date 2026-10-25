@@ -3431,6 +3431,11 @@ def check(binary):
         run(binary, ["format", str(path)], 0)
         assert path.read_bytes() == (b'module Main\n\nfn f() : Int\n  examples\n    f() == 1\n'
                                      b'  end\n\n  1\nend\n')
+        for fragment in (b'1.', b'2.minute.', b'fn f()\n1.minutes\n', b'Int.minute('):
+            incomplete = b'module Main\n' + fragment
+            path.write_bytes(incomplete)
+            result = run(binary, ["format", str(path)], 1)
+            assert result.stderr and not result.stdout and path.read_bytes() == incomplete
         bad = folder / 'bad.mo'
         bad_source = b'module Bad\nfn f()\n(\nend\n'
         bad.write_bytes(bad_source)
