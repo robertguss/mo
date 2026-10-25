@@ -2439,6 +2439,12 @@ retained (a newer request replaces the pending one). It installs clang 18 with
 and elan with the version from `formal/lean-toolchain`. Actions receive only
 read access to repository contents, and checkout does not retain credentials.
 
+The drivers group runs the first build's tool checks, including the frozen
+tasks, and the sample timing check separately from other checks.
+Their wall-clock limits must not measure competition from other checks.
+Other builds run tool checks without the frozen tasks in parallel. Failures
+in any stage fail the group without skipping the remaining checks.
+
 No status check is required on main, preserving D270's PR flow. Before a PR,
 an agent runs `bash ci/check.sh gcc` locally and reports other groups run and
 not run. Fuzz and CBMC still run by hand. A missing tool is a named skip, not

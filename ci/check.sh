@@ -161,9 +161,9 @@ if [[ -n "$groups" ]] && { want drivers || want lean; }; then
 fi
 
 if want drivers; then
-# Each script below checks the executables it is given one after another, so each gets one
-# executable at a time and they all run side by side (`later`), the longest first.
+isolated_tools_driver=
 if have python3; then
+	later "Check runner: timed checks run alone and failures propagate" python3 ci/test_check.py
 	later "Reference conformance: every rule has programs or an explicit gap" \
 		python3 ci/check_conformance.py
 	later "Reference conformance: coverage-check regression tests" \
@@ -202,12 +202,10 @@ if have python3; then
 			later "Benchmark v0: tasks frozen, references pass, broken solutions and start folders fail ($driver)" \
 				python3 bench/v0/grade.py --check --mo "$driver"
 		done
-		# The frozen hidden tests' time limits fit one gcc debug build, so only the first runs them.
-		hidden=()
-		for driver in "${drivers[@]}"; do
+		isolated_tools_driver=${drivers[0]}
+		for driver in "${drivers[@]:1}"; do
 			later "The three tools: linkcheck, tally and notioncopy pass their tests and do their jobs here ($driver)" \
-				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_tools.py "$driver" "${hidden[@]}"
-			hidden=(--no-hidden)
+				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_tools.py "$driver" --no-hidden
 		done
 	else
 		missing "no mo command executable is built"
@@ -252,6 +250,11 @@ else
 fi
 report_status=0
 report || report_status=$?
+tools_status=0
+if [[ -n "$isolated_tools_driver" ]]; then
+	step "The three tools: tests, frozen tasks and repository checks ($isolated_tools_driver)"
+	PYTHONDONTWRITEBYTECODE=1 python3 ci/check_tools.py "$isolated_tools_driver" || tools_status=$?
+fi
 # Timed alone, after the checks that ran side by side, so their load does not inflate it.
 # It runs even when one of them failed.
 timed_driver=
@@ -267,7 +270,7 @@ elif have python3; then
 else
 	missing "python3 is not installed, so mo check is not timed"
 fi
-if ((report_status != 0 || timing_status != 0)); then exit 1; fi
+if ((report_status != 0 || tools_status != 0 || timing_status != 0)); then exit 1; fi
 fi
 
 if want fuzz; then
