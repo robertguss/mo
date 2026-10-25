@@ -40,3 +40,8 @@ refuses, found by a local push on 22 Oct), a skill written into `.claude/skills/
 MO-165's independent review caught a driver run against a stale sanitizer executable while a
 separate build replaced it. That run is not passing evidence. Finish executable builds before
 running their drivers, and check the gate's own exit status rather than a following `tail`.
+
+MO-167's independent review caught control results whose source and commands existed only in
+temporary files. The Fil-C trial report now includes runnable source and commands for the failing
+cell round trip, its passing by-address control, and both bounds probes. These controls remain
+replayable after the trial orb disappears.
