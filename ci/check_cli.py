@@ -460,8 +460,6 @@ def hidden_promises(binary):
         items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
         assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
             ('Main.count.promise.1', 'passed'), ('Main.test.1', 'passed')]
-        # Reaching 15 takes two steps after the constant, so the steps chain. Built values are
-        # reported as they are, not shrunk, and the same on every run.
         path.write_text(counter + 'promise "stays small"\nresult < 15\n'
                         'allows counter: zero, result: 0\nforbids counter: zero, result: 15\n'
                         'end\ncounter.value\nend\n' + tail)
@@ -516,16 +514,118 @@ def hidden_promises(binary):
             items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
             assert len(items) == 3 and items[1]['code'] == 'E1400', items
 
-        # Boundary 0 is the start alone, boundary 1 one step and boundary 2 three.
         path.write_text('module Main\nexpose Counter, zero, bump\nstruct Counter\nvalue: Int\nend\n'
                         'zero = Counter(value: 0)\n'
                         'fn bump(counter: Counter) : Counter\nCounter(value: counter.value + 1)\nend\n'
-                        'fn count(counter: Counter) : Int\npromise "under three"\nresult < 3\n'
-                        'allows counter: zero, result: 0\nforbids counter: zero, result: 3\nend\n'
+                        'fn count(counter: Counter) : Int\npromise "under two"\nresult < 2\n'
+                        'allows counter: zero, result: 0\nforbids counter: zero, result: 2\nend\n'
                         'counter.value\nend\n' + tail)
+        items = records(run(binary, ['test', '--json', '--calls', '2', str(path)], 0), 'test')
+        assert items[1]['outcome'] == 'passed', items[1]
+        items = records(run(binary, ['test', '--json', '--calls', '3', str(path)], 1), 'test')
+        assert items[1]['outcome'] == 'failed', items[1]
+        assert items[1]['input'] == [{'name': 'counter', 'value': 'Counter(value: 2)'}], items[1]
+        assert items[1]['result'] == '2', items[1]
+
+        for typ, measure, anchor, minimum, expected in (
+                ('Int', 'value', '2', 2, 'H(value: 7)'),
+                ('Text', 'value.byte_count', '"xxx"', 3, 'H(value: "xxxxxxx")')):
+            path.write_text('module Main\nexpose H, make\n'
+                            f'struct H\nvalue: {typ}\nend\n'
+                            f'fn make(value: {typ}) : Option(H)\n'
+                            f'if {measure} >= {minimum}: Some(H(value: value)) else: None\nend\n'
+                            'fn size(h: H, console: Console) : Int\npromise "under seven"\n'
+                            'result < 7 or console.printed.size > 1\n'
+                            f'allows h: H(value: {anchor}), console: Console.fake(), result: {minimum}\n'
+                            f'forbids h: H(value: {anchor}), console: Console.fake(), result: 7\nend\n'
+                            'console.print("once")\n'
+                            f'h.{measure}\nend\n' + tail)
+            items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+            assert items[1]['outcome'] == 'failed', items[1]
+            assert items[1]['input'] == [{'name': 'h', 'value': expected},
+                                         {'name': 'console', 'value': '<Console>'}], items[1]
+            assert items[1]['result'] == '7', items[1]
+
+        path.write_text('module Main\nexpose H, make\nstruct H\nvalue: Int\nend\n'
+                        'fn make(value: Int) : Option(H)\n'
+                        'if value >= 2: Some(H(value: value)) else: None\nend\n'
+                        'fn probe(a: H, b: H, c: H, d: H) : Int\npromise "zero"\nresult == 0\n'
+                        'allows a: H(value: 2), b: H(value: 2), c: H(value: 2), d: H(value: 2), result: 0\n'
+                        'forbids a: H(value: 2), b: H(value: 2), c: H(value: 2), d: H(value: 2), result: 1\n'
+                        'end\n1 + a.value * 0 + b.value * 0 + c.value * 0 + d.value * 0\nend\n' + tail)
+        items = records(run(binary, ['test', '--json', '--calls', '1', str(path)], 1), 'test')
+        assert items[1]['calls'] == 201 and items[1]['result'] == '1', items
+        assert 'H(value: 2)' in [entry['value'] for entry in items[1]['input']], items
+        assert items[-1]['errors'] == 0, items
+
+        path.write_text('module Main\nexpose H, zero, one, ten, hundred\nstruct H\nvalue: Int\nend\n'
+                        'zero = H(value: 0)\n'
+                        'fn one(h: H) : H\nH(value: h.value + 1)\nend\n'
+                        'fn ten(h: H) : H\nH(value: h.value + 10)\nend\n'
+                        'fn hundred(h: H) : H\nH(value: h.value + 100)\nend\n'
+                        'fn count(h: H) : Int\npromise "not ten or one hundred eleven"\n'
+                        'result != 10 and result != 111\n'
+                        'allows h: zero, result: 0\nforbids h: zero, result: 10\nend\n'
+                        'h.value\nend\n' + tail)
+        items = records(run(binary, ['test', '--json', '--calls', '3', str(path)], 1), 'test')
+        assert items[1]['input'] == [{'name': 'h', 'value': 'H(value: 10)'}], items
+        assert items[1]['result'] == '10' and items[-1]['errors'] == 0, items
+
+        path.write_text('module Main\nexpose H, make\nstruct H\nvalues: List(Int)\nend\n'
+                        'fn make(values: List(Int)) : Option(H)\n'
+                        'if values.size > 0: Some(H(values: values)) else: None\nend\n'
+                        'fn count(h: H) : Int\npromise "under two"\nresult < 2\n'
+                        'allows h: H(values: [0]), result: 1\n'
+                        'forbids h: H(values: [0]), result: 2\nend\nh.values.size\nend\n' + tail)
         items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
-        assert items[1]['outcome'] == 'failed' and items[1]['calls'] == 3, items[1]
-        assert items[1]['input'] == [{'name': 'counter', 'value': 'Counter(value: 3)'}]
+        assert items[1]['input'] == [{'name': 'h', 'value': 'H(values: [0, 0])'}], items
+        assert items[1]['result'] == '2' and items[-1]['errors'] == 0, items
+
+        path.write_text('module Main\nexpose H, make\nstruct H\nvalue: Int\n'
+                        'payload: List(List(Int))\nend\n'
+                        'filler = (0..4).to_list.map(fn(_i) (0..1020).to_list end)\n'
+                        'fn make(value: Int) : Option(H)\nif value >= 2\n'
+                        'Some(H(value: value, payload: if value > 20: filler else: []))\n'
+                        'else\nNone\nend\nend\n'
+                        'fn probe(h: H, xs: List(Int)) : Int\npromise "bounded sibling"\n'
+                        'result < 7 or xs.size != 5 or not xs.any?(fn(x) x > 1000000 end)\n'
+                        'allows h: H(value: 2, payload: []), xs: [0, 0, 0, 0, 1000001], result: 2\n'
+                        'forbids h: H(value: 2, payload: []), xs: [0, 0, 0, 0, 1000001], result: 7\n'
+                        'end\nh.value + xs.size * 0\nend\n' + tail)
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['input'] == [{'name': 'h', 'value': 'H(value: 7, payload: [])'},
+                                    {'name': 'xs', 'value': '[0, 0, 0, 0, 1000001]'}], items
+        assert items[1]['result'] == '7' and items[-1]['errors'] == 0, items
+
+        parameters = ', '.join(f'_a{i}: A' for i in range(29))
+        for body, status in (('0', 0), ('1', 1)):
+            path.write_text('module Main\nexpose A, B, one, make\nenum A\nOnly\nend\n'
+                            'one = Only\nstruct B\nvalue: Int\nend\n'
+                            f'fn make({parameters}, flag: Bool) : Option(B)\n'
+                            'if flag\n'
+                            'Some(B(value: 7))\nelse\nNone\nend\nend\n'
+                            'fn probe(a: B, b: B, c: B) : Int\npromise "zero"\nresult == 0\n'
+                            'allows a: B(value: 7), b: B(value: 7), c: B(value: 7), result: 0\n'
+                            'forbids a: B(value: 7), b: B(value: 7), c: B(value: 7), result: 1\nend\n'
+                            f'{body} + a.value * 0 + b.value * 0 + c.value * 0\nend\n' + tail)
+            items = records(run(binary, ['test', '--json', '--calls', '1', str(path)], status), 'test')
+            failure = next(r for r in items if r.get('kind') == 'promise')
+            assert failure['outcome'] == ('failed' if status else 'passed'), items
+            assert items[-1]['errors'] == status, items
+            if status:
+                assert failure['calls'] == 1, items
+                assert failure['input'] == [
+                    {'name': 'a', 'value': 'B(value: 7)'},
+                    {'name': 'b', 'value': 'B(value: 7)'},
+                    {'name': 'c', 'value': 'B(value: 7)'}], items
+                assert failure['result'] == '1', items
+                diagnostic = next(r for r in items if r['record'] == 'diagnostic')
+                assert diagnostic['code'] == 'E1404', items
+                assert 'builder recording is incomplete' in diagnostic['headline'], items
+                again = records(run(binary, ['test', '--json', '--calls', '1', str(path)], 1), 'test')
+                repeated = next(r for r in again if r.get('kind') == 'promise')
+                for key in ('input', 'result', 'calls', 'line'):
+                    assert repeated[key] == failure[key], again
 
         # A builder may take other hidden types, each built by its own factory first: a Stamp
         # needs a Ticket, which needs a Pool. Every stamp is a multiple of 10 from 10 to 50 only
@@ -546,6 +646,18 @@ def hidden_promises(binary):
         items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
         assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
             ('Main.seat_of.promise.1', 'passed'), ('Main.test.1', 'passed')], items
+        path.write_text(exposed + '\nstruct Pool\nsize: Int\nend\n'
+                        'struct Ticket\nseat: Int\nend\nstruct Stamp\nseat: Int\nend\n'
+                        'fn open(size: Int) : Option(Pool)\n'
+                        'if size >= 2: Some(Pool(size: size)) else: None\nend\n'
+                        'fn issue(pool: Pool) : Ticket\nTicket(seat: pool.size)\nend\n'
+                        'fn stamp(ticket: Ticket) : Stamp\nStamp(seat: ticket.seat)\nend\n'
+                        'fn seat_of(stamp: Stamp) : Int\npromise "under seven"\nresult < 7\n'
+                        'allows stamp: Stamp(seat: 2), result: 2\n'
+                        'forbids stamp: Stamp(seat: 2), result: 7\nend\nstamp.seat\nend\n' + tail)
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['input'] == [{'name': 'stamp', 'value': 'Stamp(seat: 7)'}], items
+        assert items[1]['result'] == '7' and items[-1]['errors'] == 0, items
         # That is MO_CLI_BUILDER_LEVELS levels; a fourth, a Badge from a Stamp, is refused, and
         # so is a cycle: an A only from a B and a B only from an A.
         badge = ('struct Badge\nseat: Int\nend\n'
@@ -584,6 +696,21 @@ def hidden_promises(binary):
         assert items[1]['outcome'] == 'failed' and items[1]['calls'] == 11, items[1]
         a, b = (entry['value'] for entry in items[1]['input'])
         assert a[1:] == b[1:] and a[0] == 'A' and b[0] == 'B', items[1]
+
+        source = path.read_text().replace('expose A, B, make', 'expose A, B, C, make, start')
+        source = source.replace('fn apart(a: A, b: B)', 'fn apart(a: A, b: B, extra: C)')
+        source = source.replace('result: true', 'extra: C(value: 7), result: true')
+        source = source.replace('result: false', 'extra: C(value: 7), result: false')
+        source = source.replace('a.n != b.n or a.m != b.m',
+                                'a.n != b.n or a.m != b.m or extra.value < 7')
+        path.write_text(source + 'struct C\nvalue: Int\nend\n'
+                        'fn start(value: Int) : Option(C)\n'
+                        'if value >= 2: Some(C(value: value)) else: None\nend\n')
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['outcome'] == 'failed', items
+        a, b, extra = (entry['value'] for entry in items[1]['input'])
+        assert a[1:] == b[1:] and a[0] == 'A' and b[0] == 'B', items
+        assert extra == 'C(value: 7)' and items[-1]['errors'] == 0, items
 
         # Random values fall back to the boundary order's full search: this start counts only on
         # its 45th boundary tuple (true, Int's smallest, Int's largest), past the 32 ordered tries a

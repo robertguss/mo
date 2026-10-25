@@ -364,6 +364,10 @@ static inline struct mo_limits mo_limits_default(void) {
 /* Companions one input tuple keeps (D284): for each hidden value built for it, the first other
  * hidden value its last call returned in the same tuple. Past this many, later ones keep none. */
 #define MO_CLI_BUILDER_COMPANIONS 16
+/* Optional replay records per trial. Exhaustion never changes ordinary input generation. */
+#define MO_CLI_BUILDER_RECIPES 4096
+/* Includes invalid replay edits which never reach a subject call. */
+#define MO_CLI_BUILDER_SHRINK_ATTEMPTS 4096
 
 /* Promise input generation, not limits on program results. The caller can
  * choose smaller budgets. Refusal leaves the sequence unchanged; tools may

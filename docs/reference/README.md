@@ -1115,6 +1115,19 @@ says so, as in "stops with overflow when `amount` is `Decimal`'s largest
 value", and shows the two fixes: return a failure for such inputs, or take a
 type whose module keeps its values in range. Proofs come in a later version.
 
+After a false promise, `mo test` tries smaller inputs, keeping only those that
+still fail. For a hidden type, it shortens the recorded builder sequence and
+simplifies the arguments to those calls; it never edits hidden fields. Values
+used as same-call companions stay whole. Builder reduction and other input
+shrinking share at most 200 additional subject calls and the original deadline;
+the reported counterexample need not be the smallest possible one.
+
+Recording is optional and bounded to 4096 builder recipes per generated tuple,
+including recipes made during unsuccessful starts. Exhaustion does not change
+which inputs can be generated or whether they pass. If that tuple fails with
+incomplete recording, the report keeps the original failing input and adds
+E1404 explaining that shrinking is limited.
+
 For a generic function, `mo test` checks every concrete instantiation already
 present in the program, including those supplied by anchors, examples and tests.
 It keeps each complete list of type arguments as used; it does not combine

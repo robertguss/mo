@@ -282,6 +282,7 @@ bool mo_promises_supported(const struct mo_program *program,
 
 struct trial {
     struct mo_process *process;
+    struct mo_build_trace trace;
     struct mo_cell input[MO_LIMIT_BYTECODE_PARAMETERS];
     struct mo_cell value;
     struct mo_defect defect;
@@ -292,6 +293,7 @@ struct trial {
 };
 
 static void discard(struct trial *trial, const struct mo_bytecode_function *subject) {
+    mo_build_trace_free(&trial->trace);
     if (trial->process == NULL)
         return;
     struct mo_heap *heap = mo_process_heap(trial->process);
@@ -485,7 +487,8 @@ bool mo_test_promise(const struct mo_cli *cli, const struct mo_program *program,
         enum mo_input_result generated = MO_INPUT_NO_MEMORY;
         if (candidate.process != NULL) {
             mo_fakes_bind(&fakes, mo_process_host(candidate.process));
-            mo_builders_begin(&builders, mo_process_heap(candidate.process));
+            mo_builders_begin(&builders, mo_process_heap(candidate.process), &candidate.trace,
+                              inputs.ordinal);
             generated =
                 mo_inputs_next(&inputs, mo_process_heap(candidate.process), candidate.input, &kind);
             /* Every second random trial takes a built value's companions as its other inputs
@@ -526,25 +529,45 @@ bool mo_test_promise(const struct mo_cli *cli, const struct mo_program *program,
     if (known && best.process != NULL && best.condition != 0) {
         struct mo_input_shrinker shrinker;
         mo_input_shrink_init(&shrinker, &inputs, MO_CLI_PROMISE_SHRINK_CALLS);
+        struct mo_builder_shrinker builder_shrinker;
+        mo_builder_shrink_init(&builder_shrinker, &builders);
+        bool building = true;
         for (uint32_t shrinking = 0;
-             shrinking < MO_CLI_PROMISE_SHRINK_CALLS && mo_deadline_running(&deadline);
-             shrinking++) {
+             shrinking < MO_CLI_PROMISE_SHRINK_CALLS && mo_deadline_running(&deadline);) {
             struct trial candidate = {.process = mo_process_new(image, &cli->limits)};
-            if (candidate.process != NULL)
+            enum mo_input_result generated = MO_INPUT_NO_MEMORY;
+            if (candidate.process != NULL) {
                 mo_fakes_bind(&fakes, mo_process_host(candidate.process));
-            enum mo_input_result generated =
-                candidate.process == NULL
-                    ? MO_INPUT_NO_MEMORY
-                    : mo_input_shrink_next(&shrinker, best.input,
-                                           mo_process_heap(candidate.process), candidate.input);
+                if (building) {
+                    generated = mo_builder_shrink_next(&builder_shrinker, &inputs, &best.trace,
+                                                       mo_process_heap(candidate.process),
+                                                       &candidate.trace, candidate.input);
+                    if (generated == MO_INPUT_DONE) {
+                        building = false;
+                        mo_build_trace_free(&best.trace);
+                    }
+                }
+                if (!building)
+                    generated = mo_input_shrink_next(
+                        &shrinker, best.input, mo_process_heap(candidate.process), candidate.input);
+            }
             candidate.has_input = generated == MO_INPUT_OK;
+            if (building && generated == MO_INPUT_UNINHABITED) {
+                discard(&candidate, ordinary);
+                continue;
+            }
             if (generated != MO_INPUT_OK) {
                 discard(&candidate, ordinary);
                 if (generated != MO_INPUT_DONE && mo_deadline_running(&deadline))
-                    inability(diags, observation, "promise shrink input could not be generated",
-                              NULL);
+                    inability(
+                        diags, observation,
+                        building && !best.trace.complete
+                            ? "promise shrinking is limited because builder recording is incomplete"
+                            : "promise shrink input could not be generated",
+                        NULL);
                 break;
             }
+            shrinking++;
             calls++;
             if (!evaluate(&candidate, file, function, &deadline)) {
                 discard(&candidate, ordinary);
@@ -552,7 +575,10 @@ bool mo_test_promise(const struct mo_cli *cli, const struct mo_program *program,
                 break;
             }
             bool fails = candidate.outcome != MO_RETURNED;
-            mo_input_shrink_feedback(&shrinker, fails);
+            if (building)
+                mo_builder_shrink_feedback(&builder_shrinker, fails);
+            else
+                mo_input_shrink_feedback(&shrinker, fails);
             if (fails) {
                 discard(&best, ordinary);
                 best = candidate;
@@ -562,6 +588,7 @@ bool mo_test_promise(const struct mo_cli *cli, const struct mo_program *program,
             } else
                 discard(&candidate, ordinary);
         }
+        mo_builder_shrink_free(&builder_shrinker);
     }
     if (deadline.state == MO_DEADLINE_ERROR && known) {
         interrupted(diags, observation, &deadline);
