@@ -32,7 +32,7 @@ Class 7 bumped on 2026-10-27 for MO-159's admission, helper-context and recovery
 | 10 | Boilerplate or wrong verification evidence pasted into PR bodies (Lean 4.29.0, Z3, Valgrind, a build path that doesn't exist) | #84, #89, #90, #91, #92, #95, #96, #98 | nothing (the required hosted `check` was removed 22 Oct) | prose only |
 | 11 | Python caches committed | #102, #104, #105, #106 | `.gitignore` (#112) | enforced |
 
-On 22 Oct Robert removed hosted CI (no workflows, no required `check`), so rows 3, 4, 9 and 10 now
+On 22 Oct Robert removed hosted CI (no required `check`), so rows 3, 4 and 10 now
 depend on agents running `ci/check.sh` groups locally.
 
 MO-152 restores nightly checks of main, including Lean and static checks; it does not restore a

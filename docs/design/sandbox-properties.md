@@ -42,9 +42,9 @@ files a capability reaches while a lookup runs (P8), and timing or other side ch
 | Differential test | the C VM against the Lean evaluator of Mo Core, `ci/check_core_differential.py` | `bash ci/check.sh lean` |
 
 Only the unit tests (`bash ci/check.sh gcc`) are a routine pre-PR check, plus `drivers` and
-`static` when a change reaches them (`AGENTS.md`, "Checks and merging"). Nightly runs sanitize
-and lean; fuzz and CBMC run by hand. A property whose only evidence is a by-hand group is still
-backed, but nothing re-runs it for you.
+`static` when a change reaches them (`AGENTS.md`, "Checks and merging"). Nightly runs
+`gcc clang sanitize drivers static lean`; fuzz and CBMC run by hand. A property whose only
+evidence is a by-hand group is still backed, but nothing re-runs it for you.
 
 ## Pair assertions
 

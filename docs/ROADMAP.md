@@ -81,7 +81,7 @@ met, is in Notion's [Phase 2 page](https://www.notion.so/3f6700320c4581c4b7c4daf
 
 No Mo check gates pull requests (D270). Agents run
 `bash ci/check.sh gcc` locally before opening a PR and report other checks run
-and not run. Slow checks run by hand. Robert approves merges, except for the
+and not run. Robert approves merges, except for the
 docs-only merges permitted by the repository's workflow.
 
 ## Next phase
