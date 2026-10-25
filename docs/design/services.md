@@ -1,9 +1,10 @@
 # Services: the Phase 3 design
 
-Status: Design note (18 Oct 2026, task `MO-98`). Nothing here is implemented, and none of it is
-part of the Mo Language Reference v0.1 yet. Building starts once Phase 2 is done (D267). The
-decisions below are D256 to D267, made with Robert in the roadmap brainstorm of 18 Oct 2026; the
-open questions in section 9 are still to be settled with him.
+Status: Design note (18 Oct 2026, task `MO-98`), updated for D301 to D308 in `MO-153`.
+The service runtime and syntax are not implemented or part of the Mo Language Reference v0.1
+yet. The pure queue example implements D307. Phase 2 is complete (D300), so Phase 3 can begin
+(D267). D256 to D267 were settled with Robert on 18 Oct 2026; section 9 records the decisions
+he made on 24 Oct 2026.
 
 ## 1. Purpose
 
@@ -33,7 +34,7 @@ done or failed. If an agent dies mid-task, its lease runs out and the task retur
 The queue never talks to Notion, so it needs no HTTP client or TLS.
 
 The queue's logic already exists as a pure module, `examples/job-queue.mo`: `submit`, `lease`,
-`acknowledge`, `fail` and `expire`, each taking a `Queue` and returning the new one (inside a
+`heartbeat`, `acknowledge`, `fail` and `expire`, each taking a `Queue` and returning the new one (inside a
 `Result` where the operation can fail). Its header promises that no operation ever loses a job,
 and `lease` and `acknowledge` carry promises that say so. Phase 3 wraps that module as a service; it does not
 rewrite it.
@@ -44,8 +45,10 @@ proxy terminates TLS, so Mo needs no TLS of its own.
 
 ## 4. The service model
 
-A service is one state type plus pure handlers (D261). Each handler takes the current state and a
-message and returns the new state and a reply. The runtime owns the loop, the mailbox and saving;
+A service is one state type plus pure handlers (D261). Tool handlers take the current state,
+the message's arrival time, and the tool arguments. A state-changing handler returns `(State, R)`
+or `Result((State, R), E)`; a read-only handler returns only its reply `R` (D302).
+The runtime owns the loop, the mailbox and saving;
 the service author writes none of them. This is the shape of Elixir's GenServer, with Mo's pure
 values underneath.
 
@@ -62,9 +65,10 @@ The runtime passes each message's arrival time to the handler, so handlers stay 
 ## 5. Syntax
 
 Handlers are ordinary functions, and one small `service` block in the module wires them up
-(D266). The block names the state type and its start value, which functions are tools, the
+(D266, D301). The block names the state type and its start value, which functions are tools, the
 timers, and where the access token comes from. This sketch turns `examples/job-queue.mo` into the
-task-queue service; it is not valid Mo today, and its keywords are still open (section 9).
+task-queue service. Its service syntax and singular duration unit are settled but not implemented
+yet (section 9).
 
 ```mo
 ## Mo's own task queue. Agents lease a task, check in while working, and
@@ -74,7 +78,7 @@ use JobQueue
 
 service
   state Queue = JobQueue.empty
-  tools submit, lease, acknowledge, fail
+  tools submit, lease, heartbeat, acknowledge, fail
   every 1.minute expire
   token from env "QUEUE_TOKEN"
 end
@@ -89,9 +93,21 @@ fn lease(queue: Queue, now: Time) : Result((Queue, Option(Job)), QueueError)
   JobQueue.lease(queue, now, 30.minutes)
 end
 
-## Marks a leased task as done.
-fn acknowledge(queue: Queue, now: Time, id: Int) : Result((Queue, Unit), QueueError)
-  after = try JobQueue.acknowledge(queue, id)
+## Renews the current lease for 30 minutes from now.
+fn heartbeat(queue: Queue, now: Time, id: Int, attempt: Int) : Result((Queue, Unit), QueueError)
+  after = try JobQueue.heartbeat(queue, now, id, attempt)
+  Ok((after, ()))
+end
+
+## Marks the current lease as done.
+fn acknowledge(queue: Queue, now: Time, id: Int, attempt: Int) : Result((Queue, Unit), QueueError)
+  after = try JobQueue.acknowledge(queue, now, id, attempt)
+  Ok((after, ()))
+end
+
+## Returns a failed lease to the queue, or marks its final attempt dead.
+fn fail(queue: Queue, now: Time, id: Int, attempt: Int) : Result((Queue, Unit), QueueError)
+  after = try JobQueue.fail(queue, now, id, attempt)
   Ok((after, ()))
 end
 
@@ -100,9 +116,10 @@ fn expire(queue: Queue, now: Time) : Queue
 end
 ```
 
-Every handler is a plain function: state in, new state out. The cost is some repetition, since
-`queue` and `now` appear on every handler. The sketch is not complete: it lists `fail` as a tool
-without writing its wrapper, and it has no check-in tool yet (open question 5).
+Every handler is a plain function. The cost is some repetition, since `queue` and `now` appear
+on every handler. A read-only tool such as `count` has the signature
+`fn count(queue: Queue, now: Time) : Int` and returns no replacement state. A timer handler takes
+`(State, Time)` and returns only `State`.
 
 The rejected alternative put handlers inside the `service` block with the state implicit, so
 assigning `queue` changed saved state. It read shorter, but `queue` and `now` appeared from
@@ -115,6 +132,8 @@ Every state change is saved before the reply goes out (D262). The runtime logs e
 changes state and takes snapshots now and then. After a crash it loads the last snapshot and
 replays the log. "Accepted" always means "on disk". The same log is what Phase 4 needs for exact
 replay of failures.
+
+Read-only messages neither enter the log nor cause a snapshot (D302).
 
 The log and snapshots are stored in SQLite, embedded in the runtime (D263). SQLite is vendored as
 C and pointed at Mo's own allocator, keeping the rule that only `base` and `heap` allocate memory
@@ -145,29 +164,51 @@ gets an error reply, the state stays exactly as it was before the message, and t
 running. Nothing half-changed is ever saved, because handlers are pure and the runtime saves only
 a handler's returned state.
 
-A supervisor restarts the whole service only after repeated failures, for example five within a
-minute. Unlike Erlang, Mo does not restart on every crash, since the last good state is always
-there.
+A supervisor restarts the service from its snapshot and log after 5 failed messages within
+60 seconds (D308). After 3 restarts within 10 minutes, the service stops and stays down until a
+person starts it. Every failure, restart and stop is logged with its reason. Mo does not restart
+on every failed message, since the last good state is still available.
 
-## 9. Open questions
+## 9. Settled
 
-Each of these is Robert's call, and each is settled one at a time and then recorded here.
+Robert settled D301 to D308 on 24 Oct 2026. These decisions define the Phase 3 build plan.
 
-1. **Keywords.** The exact words and layout of the `service` block (`service`, `state`, `tools`,
-   `every`, `token from env`), whether a handler that changes no state still returns it, and
-   whether `1.minute` joins the existing `minutes` for durations.
-2. **Budgets.** What limits a service and each message gets (time, memory, mailbox length), what
-   happens when one runs out, and where the limits are written.
-3. **Timers.** How `every` behaves: whether a tick that is due while a message runs waits or is
-   skipped, whether ticks missed during a restart are replayed, and whether one-off timers exist.
-4. **Simulation mode.** How tests swap in pretend worlds for a service (D30): a fake clock that
-   drives timers, simulated crashes and restarts, and messages fed without a network.
-5. **Checking in.** `examples/job-queue.mo` has no operation for an agent to check in while it
-   works, so a lease cannot be extended yet. The queue needs one, and its name and rules are open.
-6. **The failure limit.** The exact count and window before the supervisor restarts a service;
-   "five within a minute" is an example, not a decision.
-7. **Idle VMs.** Whether an exe.dev VM sleeps when idle has not been checked, and a week with no
-   restart depends on it.
+1. **Service block (D301).** A module has at most one top-level `service ... end` block. It
+   declares `state Type = start value`, `tools a, b, c`, `every <duration> <handler>`, and
+   `token from env "NAME"`. Handlers remain ordinary functions.
+2. **Read-only handlers (D302).** A read-only handler returns only its reply. A state-changing
+   handler returns `(State, reply)` or a `Result` wrapping that pair. The runtime neither logs
+   nor saves read-only messages.
+3. **Durations (D303).** Singular units are accepted too: `1.second`, `1.minute`, `1.hour`, and
+   `1.day`. The formatter writes the singular after a literal 1 and the plural otherwise.
+4. **Budgets (D304).** Per-message VM instructions, per-message memory and mailbox length have
+   fixed runtime defaults, named in `src/base/limits.h`. A message over budget fails only that
+   message. A full mailbox refuses new messages immediately with a busy tool error. Phase 3
+   adds no limit syntax.
+5. **Timers (D305).** A due tick is an ordinary mailbox message. At most one tick per timer is
+   waiting at a time. Ticks missed while the service was down are not replayed; each timer runs
+   once at startup. Timers are not saved state, and there are no one-off timers.
+6. **Simulation (D306).** Examples, promises and tests can start an in-memory service, send
+   tool messages, advance a fake clock to fire due ticks, and crash and restart the service.
+   Crashes and restarts use the real log-and-snapshot code with a fake store. Simulation is
+   deterministic and allowed only in tests, like fakes.
+7. **Checking in (D307).** A lease is identified by `(id, attempt)`. `heartbeat(queue, now, id,
+   attempt)` sets its expiry to `now + 30.minutes` without counting an attempt. It refuses an
+   expired lease or a job that has moved on. `acknowledge` and `fail` also take `now`, `id` and
+   `attempt`, and refuse a lease that is not current. Expiry includes `now == until`.
+8. **Failure limit (D308).** 5 failed messages within 60 seconds restart the service from its
+   snapshot and log. After 3 restarts within 10 minutes it stops until a person starts it.
+   Every failure, restart and stop is logged with its reason.
+
+The queue uses its existing `Job.attempts` and `Leased(until)` fields for lease identity. The
+shared `leased_job` check enforces the same rules for heartbeat, acknowledgement and failure.
+An unknown id returns `NoSuchJob`; a non-current lease returns `NotLeased`. Heartbeat uses
+checked time addition, like `lease`, and returns `BadLease(length: 30.minutes)` if the new expiry
+would exceed the year 9999. It leaves every other job, the attempt count and `next_id` unchanged.
+
+The exe.dev documentation describes persistent VMs that stop when their owner stops them and
+does not describe idle sleeping. Deployment still requires a 48-hour idle check. That check and
+the week-long run below have not happened.
 
 ## 10. Done means
 
