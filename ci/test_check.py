@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Exercise check.sh scheduling and failure propagation with disposable commands."""
 
 import json
 import os
