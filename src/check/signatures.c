@@ -768,15 +768,18 @@ static MO_MUST_USE bool dependencies(struct preparation *p, const struct mo_sour
 
 static MO_MUST_USE bool capture_dependencies(struct preparation *p,
                                              const struct mo_source_type *type,
-                                             uint32_t *parameters, bool *capability) {
+                                             uint32_t *parameters, bool *capability,
+                                             bool *function) {
     if (!dependency_work(p))
         return false;
     if (type->kind == MO_SOURCE_PARAMETER) {
         *parameters |= type->parameters;
         return true;
     }
-    if (type->kind == MO_SOURCE_FUNCTION)
+    if (type->kind == MO_SOURCE_FUNCTION) {
+        *function = true;
         return true; /* Parameter/result types aren't values stored in a function. */
+    }
     if (type->kind == MO_SOURCE_NAMED && type->declaration != NULL) {
         const struct mo_nominal_signature *owner =
             mo_nominal_signature_by_symbol(p->signatures, type->declaration);
@@ -785,9 +788,10 @@ static MO_MUST_USE bool capture_dependencies(struct preparation *p,
             return true;
         }
         *capability = *capability || owner->holds_capability;
+        *function = *function || owner->holds_function;
         for (uint32_t i = 0; i < type->count; i++)
             if ((owner->capture_parameters & owner->type->arguments[i]->parameters) != 0 &&
-                !capture_dependencies(p, type->arguments[i], parameters, capability))
+                !capture_dependencies(p, type->arguments[i], parameters, capability, function))
                 return false;
         return true;
     }
@@ -798,7 +802,7 @@ static MO_MUST_USE bool capture_dependencies(struct preparation *p,
             strcmp(type->name, capabilities[i]) == 0)
             *capability = true;
     for (uint32_t i = 0; i < type->count; i++)
-        if (!capture_dependencies(p, type->arguments[i], parameters, capability))
+        if (!capture_dependencies(p, type->arguments[i], parameters, capability, function))
             return false;
     return true;
 }
@@ -868,24 +872,26 @@ static MO_MUST_USE bool data_dependencies(struct preparation *p) {
         uint32_t hash = data->hash_parameters, keys = data->key_parameters;
         uint32_t captures = owner->capture_parameters;
         bool capability = owner->holds_capability;
+        bool function = owner->holds_function;
         for (uint32_t j = 0; j < data->count; j++) {
             if (!mo_signature_type_available(s, data->fields[j].type))
                 owner->invalid = true;
             if (!dependencies(p, data->fields[j].type, false, &hash) ||
                 !dependencies(p, data->fields[j].type, true, &keys) ||
-                !capture_dependencies(p, data->fields[j].type, &captures, &capability))
+                !capture_dependencies(p, data->fields[j].type, &captures, &capability, &function))
                 return false;
         }
         data->hash_parameters = hash;
         data->key_parameters = keys;
         if (owner->invalid == invalid && (hash & ~owner->hash_parameters) == 0 &&
             (keys & ~owner->key_parameters) == 0 && captures == owner->capture_parameters &&
-            capability == owner->holds_capability)
+            capability == owner->holds_capability && function == owner->holds_function)
             continue;
         owner->hash_parameters |= hash;
         owner->key_parameters |= keys;
         owner->capture_parameters = captures;
         owner->holds_capability = capability;
+        owner->holds_function = function;
         for (const struct dependent *edge = watchers[owner_index]; edge != NULL;
              edge = edge->next) {
             if (!dependency_work(p))
@@ -1316,4 +1322,21 @@ struct mo_signatures *mo_prepare_signatures(struct mo_arena *arena, const struct
     struct mo_signatures *out =
         mo_prepare_available_signatures(arena, set, interfaces, diags, false);
     return mo_diags_any(diags) ? NULL : out;
+}
+
+const struct mo_source_type *
+mo_resolve_service_type(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
+                        const struct mo_signatures *signatures, uint32_t module,
+                        const struct mo_syntax *clause, struct mo_diags *diags) {
+    MO_ASSERT(clause->kind == MO_S_SERVICE_STATE);
+    struct mo_symbol owner = {.name = "service", .declaration = clause, .module = module};
+    struct mo_signatures view = *signatures;
+    struct preparation p = {.arena = arena,
+                            .interfaces = interfaces,
+                            .diags = diags,
+                            .function = &owner,
+                            .signatures = &view,
+                            .span = clause->span,
+                            .checked = true};
+    return resolve(&p, clause->children[0]);
 }

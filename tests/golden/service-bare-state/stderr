@@ -1,0 +1,7 @@
+error E0101: a service tool returns only its state  tests/golden/service-bare-state/main.mo:5:9
+
+  5 |   tools increment
+    |         ^^^^^^^^^ a timer returns this; a tool returns (Int, reply)
+
+A tool changes the state only by returning (state, reply). Returning the state alone is how a timer changes it, so a tool's result would never be saved. Other modules call this function, so change its result by hand (reference 11.5).
+

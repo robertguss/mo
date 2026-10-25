@@ -1,0 +1,7 @@
+error E0100: a service handler has the wrong parameters  tests/errors/e0100/main.mo:4:9
+
+  4 |   tools snapshot
+    |         ^^^^^^^^ a service handler has the wrong parameters
+
+A tool starts with (State, Time); a timer takes exactly (State, Time) (reference 11.5).
+

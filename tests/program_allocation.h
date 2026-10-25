@@ -35,7 +35,11 @@ static const char *const allocation_sources[] = {
     "prefix = \"value\"\nstruct Label\nvalue: Int\nend\n"
     "fn to_text(label: Label) : Text\n\"#{prefix}#{label.value}\"\nend\n"
     "fn twice(value: T) : T where T: Number\nvalue + value\nend\n"
-    "fn main() : Int\nanswer\nend\n"};
+    "fn main() : Int\nanswer\nend\n"
+    "service\nstate List(Label) = [Label(value: answer)]\ntools snapshots\n"
+    "every 1.minute tick\ntoken from env \"TOKEN\"\nend\n"
+    "fn snapshots(state: List(Label), _now: Time) : List(List(Label))\n[state]\nend\n"
+    "fn tick(state: List(Label), _now: Time) : List(Label)\nstate\nend\n"};
 
 static void allocation_failures(size_t s) {
     struct fixture f;

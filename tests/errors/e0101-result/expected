@@ -1,0 +1,7 @@
+error E0101: a service tool returns only its state  tests/errors/e0101-result/main.mo:4:9
+
+  4 |   tools change
+    |         ^^^^^^ a tool returns Result((Int, reply), E)
+
+A tool changes the state only by returning (state, reply) or Result((state, reply), E). A Result holding the state alone is a read-only reply, so the new state would never be saved (reference 11.5).
+

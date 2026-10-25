@@ -1,0 +1,7 @@
+error E0103: a service timer needs a positive duration literal  tests/errors/e0103-interval/main.mo:5:9
+
+  5 |   every 0.seconds tick
+    |         ^^^^^^^^^ a service timer needs a positive duration literal
+
+Use a duration literal with a whole number of at least 1, such as 1.minute (reference 11.5).
+

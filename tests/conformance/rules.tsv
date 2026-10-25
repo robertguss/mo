@@ -12,6 +12,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 2.3/5	ref-source	e0052		
 2.3/6	ref-source	e0003		
 2.3/7	ref-source	e0017-reserved		
+2.3/8	service-read-only				tests/test_syntax.c:services,Makefile:grammar
 2.4/1	ref-source	e0006		
 2.4/2					tests/test_format.c:check_source,ci/check_cli.py:check,ci/check_format.py:audit
 3/1	ref-evaluation			
@@ -126,7 +127,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 10.2/1	mod-hidden-type	e0040,e0047,e0064		
 10.3/1	mod-qualified,mod-brace-import,mod-choice-cases,mod-type-named-like-module	e0036,e0037,e0038,e0038-import-repeat,e0038-module-case,e0038-module-imported-case,e0044,e0046,e0048		
 10.4/1	lang-constants,mod-constants			
-10.4/2	lang-constants,mod-constants	e0089	fail-bug-constant-stop				A constant has no effects, so no program can observe how many times it is computed.
+10.4/2	lang-constants,mod-constants,service-read-only	e0089	fail-bug-constant-stop				A constant has no effects, so no program can observe how many times it is computed.
 10.5/1	mod-type-bare-after-use,lang-bindings,cap-files-walk	e0045		
 11.1/1	cap-record-of-capabilities,tst-fakes	e0091		
 11.1/2	cap-args-list			
@@ -144,6 +145,13 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 11.4/3	tst-fakes	e0098,e0098-constant		
 11.4/4	cap-record-of-capabilities	e0080-capability		
 11.4/5	ref-shout	e0007-log		
+11.5/1	service-read-only	e1408			ci/check_cli.py:service_commands
+11.5/2	service-read-only				tests/test_syntax.c:services,tests/test_program.c:service_rules
+11.5/3	service-read-only	e0099,e0099-duplicate-handler			ci/check_cli.py:service_refusals,tests/test_program.c:service_rules,Makefile:grammar
+11.5/4	service-read-only	e0100,e0100-generic,e0100-import,e0100-state,e0103,e0104,e0104-function		Saved-state initialization awaits the service runtime; E1408 pins its current refusal.	ci/check_cli.py:service_refusals,tests/test_program.c:service_handlers
+11.5/5	service-read-only	e0101,e0101-predicate,e0101-result,service-bare-state,service-result-state		Runtime logging and persistence of updates and read-only replies are not implemented.	ci/check_cli.py:service_commands,tests/test_program.c:service_handlers,tests/test_fix.c:service_fixes
+11.5/6	service-read-only	e0103-interval		Simultaneous tick execution awaits the scheduler; service_inputs checks retained source order.	ci/check_cli.py:service_refusals,tests/test_program.c:service_inputs
+11.5/7	service-read-only	e0102,e1408			ci/check_cli.py:service_commands,ci/check_cli.py:service_refusals,ci/check_cli.py:guide_claims
 12/1	tst-passing	e0015-after-code,e0018-after-code			tests/test_format.c:check_source,ci/check_cli.py:check
 12.1/1	tst-passing	tst-failing-example		
 12.2/1	tst-promise-holds	e0015		

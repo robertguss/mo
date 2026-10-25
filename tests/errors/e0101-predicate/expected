@@ -1,0 +1,7 @@
+error E0101: a service tool returns only its state  tests/errors/e0101-predicate/main.mo:4:9
+
+  4 |   tools active?
+    |         ^^^^^^^ a timer returns this; a tool returns (Bool, reply)
+
+A tool changes the state only by returning (state, reply). Returning the state alone is how a timer changes it, so a tool's result would never be saved. A name ending in ? must return Bool, so rename the function before changing its result (reference 11.5).
+

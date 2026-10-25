@@ -205,6 +205,7 @@ static const struct {
     {"assert", MO_T_ASSERT},
     {"where", MO_T_WHERE},
     {"end", MO_T_END},
+    {"service", MO_T_SERVICE},
 };
 
 static MO_MUST_USE bool digits(struct mo_lex *lx, int base) {

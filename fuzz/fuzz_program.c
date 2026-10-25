@@ -87,17 +87,25 @@ static void graph(const struct mo_program *program) {
               program->entry.function < program->function_count);
     MO_ASSERT((program->entry.result == MO_ENTRY_RESULT) == (program->entry.error_text != NULL));
     uint32_t nonconstants = program->function_count + program->spec_count;
-    for (uint32_t f = 0; f < nonconstants + program->constant_count; f++) {
+    uint32_t ordinary = nonconstants + program->constant_count, total = ordinary;
+    for (uint32_t i = 0; i < program->service_count; i++)
+        total += 1 + program->services[i].timer_count;
+    uint32_t service_index = 0, timer = 0;
+    for (uint32_t f = 0; f < total; f++) {
         const struct mo_checked_function *function =
             f < program->function_count ? &program->functions[f] : NULL;
         const struct mo_checked_spec *spec = function == NULL && f < nonconstants
                                                  ? &program->specs[f - program->function_count]
                                                  : NULL;
         const struct mo_checked_constant *constant =
-            f >= nonconstants ? &program->constants[f - nonconstants] : NULL;
-        const struct mo_checked_body *body = function != NULL ? &function->body
-                                             : spec != NULL   ? &spec->body
-                                                              : &constant->initializer;
+            f >= nonconstants && f < ordinary ? &program->constants[f - nonconstants] : NULL;
+        const struct mo_checked_service *service =
+            f >= ordinary ? &program->services[service_index] : NULL;
+        const struct mo_checked_body *body = function != NULL   ? &function->body
+                                             : spec != NULL     ? &spec->body
+                                             : constant != NULL ? &constant->initializer
+                                             : timer == 0       ? &service->initializer
+                                                          : &service->timers[timer - 1].interval;
         uint32_t parameters = function != NULL ? function->signature->type->parameters
                               : spec != NULL && spec->kind == MO_SPEC_PROMISE
                                   ? program->functions[spec->subject].signature->type->parameters
@@ -132,12 +140,21 @@ static void graph(const struct mo_program *program) {
                                   condition->text.span.end - condition->text.span.start);
                 }
             }
-        } else {
+        } else if (constant != NULL) {
             MO_ASSERT(constant->type == body->items[body->root].type &&
                       constant->type->parameters == 0 &&
                       constant->symbol->declaration->kind == MO_S_CONST);
             for (uint32_t i = 0; i < f - nonconstants; i++)
                 MO_ASSERT(program->constants[i].symbol != constant->symbol);
+        } else {
+            MO_ASSERT(service->module < program->set->count && service->tool_count != 0 &&
+                      service->state->parameters == 0);
+            if (timer != 0) {
+                const struct mo_source_type *type = body->items[body->root].type;
+                MO_ASSERT(type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX &&
+                          strcmp(type->name, "Duration") == 0 &&
+                          service->timers[timer - 1].function < program->function_count);
+            }
         }
         for (uint32_t i = 0; i < body->count; i++) {
             const struct mo_checked_expression *row = &body->items[i];
@@ -195,12 +212,17 @@ static void graph(const struct mo_program *program) {
                     MO_ASSERT((try_->arguments.items[j].type->parameters & ~parameters) == 0);
             }
             if (row->lambda != NULL) {
-                MO_ASSERT(row->lambda->body < i && row->lambda->number != 0 &&
-                          row->lambda->capture_count == 0);
+                MO_ASSERT(row->lambda->body < i && row->lambda->number != 0);
                 for (uint32_t j = 0; j < row->lambda->parameter_count; j++)
                     if (row->lambda->parameters[j] != NULL)
                         binding(body, row->lambda->parameters[j], parameters);
+                for (uint32_t j = 0; j < row->lambda->capture_count; j++)
+                    binding(body, row->lambda->captures[j], parameters);
             }
+        }
+        if (service != NULL && ++timer > service->timer_count) {
+            service_index++;
+            timer = 0;
         }
     }
 }

@@ -187,10 +187,10 @@ static MO_MUST_USE uint32_t limits(const struct mo_source *source, const struct 
             continue;
         enum node_kind k = n->kind;
         bool nested =
-            k == K_FN || k == K_STRUCT || k == K_ENUM || k == K_TEST || k == K_CASE ||
-            k == K_LAMBDA || k == K_FOR || k == K_WHILE || k == K_LIST || k == K_MAP ||
-            k == K_GROUP || k == K_TUPLE || k == K_CALL || k == K_PROMISE || k == K_EXAMPLES ||
-            (k == K_CASE_DECL && n->kids[1] != NULL) ||
+            k == K_FN || k == K_STRUCT || k == K_ENUM || k == K_TEST || k == K_SERVICE ||
+            k == K_CASE || k == K_LAMBDA || k == K_FOR || k == K_WHILE || k == K_LIST ||
+            k == K_MAP || k == K_GROUP || k == K_TUPLE || k == K_CALL || k == K_PROMISE ||
+            k == K_EXAMPLES || (k == K_CASE_DECL && n->kids[1] != NULL) ||
             ((k == K_IF || k == K_LINE_IF || k == K_TEXT_INTERPOLATED) && !v.continuation) ||
             (k == K_TYPE && (type_form(source, n) != 0 || n->count == 2));
         uint32_t depth = v.depth + (nested ? 1u : 0u);

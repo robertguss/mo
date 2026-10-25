@@ -24,6 +24,7 @@ struct captures {
     uint32_t *free; /* per function: type parameters that must not hold capabilities */
     struct proof_seen *seen;
     bool reporting, changed, failed;
+    bool service;
 };
 
 static MO_MUST_USE bool report_at(struct captures *p, uint16_t code, const char *message,
@@ -62,8 +63,10 @@ static MO_MUST_USE bool stored(struct captures *p, const struct mo_source_type *
         return false;
     if (depth > MO_LIMIT_SOURCE_ABILITY_DEPTH)
         return report(p, MO_CODE_CHECK_ABILITY_DEPTH, "the type is nested too deeply", NULL);
-    if (type->kind == MO_SOURCE_FUNCTION)
+    if (type->kind == MO_SOURCE_FUNCTION) {
+        *capability = *capability || p->service;
         return true;
+    }
     if (type->kind == MO_SOURCE_PARAMETER) {
         *parameters |= UINT32_C(1) << (unsigned)(type->name[0] - 'A');
         return true;
@@ -72,7 +75,8 @@ static MO_MUST_USE bool stored(struct captures *p, const struct mo_source_type *
         const struct mo_nominal_signature *owner =
             mo_nominal_signature_by_symbol(p->signatures, type->declaration);
         MO_ASSERT(owner != NULL);
-        *capability = *capability || owner->holds_capability;
+        *capability =
+            *capability || owner->holds_capability || (p->service && owner->holds_function);
         for (uint32_t i = 0; i < type->count; i++)
             if ((owner->capture_parameters & owner->type->arguments[i]->parameters) != 0 &&
                 !stored(p, type->arguments[i], parameters, capability, depth + 1))
@@ -226,6 +230,14 @@ static MO_MUST_USE bool sweep(struct captures *p) {
     for (uint32_t i = 0; i < program->constant_count; i++)
         if (!body(p, 0, &program->constants[i].initializer))
             return false;
+    for (uint32_t i = 0; i < program->service_count; i++) {
+        const struct mo_checked_service *service = &program->services[i];
+        if (!body(p, 0, &service->initializer))
+            return false;
+        for (uint32_t j = 0; j < service->timer_count; j++)
+            if (!body(p, 0, &service->timers[j].interval))
+                return false;
+    }
     return true;
 }
 
@@ -260,4 +272,24 @@ bool mo_check_capture_arguments(struct mo_arena *arena, const struct mo_program 
     } while (p.changed);
     p.reporting = true;
     return sweep(&p);
+}
+
+bool mo_check_service_purity(struct mo_arena *arena, const struct mo_program *program,
+                             const struct mo_source_type *type, struct mo_span span,
+                             struct mo_diags *diags) {
+    struct captures p = {.arena = arena,
+                         .program = program,
+                         .signatures = program->signatures,
+                         .diags = diags,
+                         .span = span,
+                         .service = true};
+    uint32_t parameters = 0;
+    bool capability = false;
+    if (!stored(&p, type, &parameters, &capability, 0))
+        return false;
+    MO_ASSERT(parameters == 0);
+    return !capability ||
+           report(&p, MO_CODE_SERVICE_CAPABILITY, "a service value holds a capability or function",
+                  "Service state, tool inputs and tool results cannot contain capabilities or "
+                  "functions (reference 11.5).");
 }

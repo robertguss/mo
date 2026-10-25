@@ -189,6 +189,80 @@ static void declarations_and_statements(void) {
     free_fixture(&f);
 }
 
+static void services(void) {
+    const char *source = "module Counter\nservice\n"
+                         "token from env \"COUNTER_TOKEN\"\n"
+                         "every interval(from) tick\n"
+                         "state List(Int) = []\n"
+                         "tools state, tools, every, token, from, env\n"
+                         "every 1.minute env\n"
+                         "end\nservice\nend\n";
+    for (unsigned fragment = 0; fragment < 2; fragment++) {
+        struct fixture f;
+        init(&f, source, fragment != 0);
+        CHECK(f.module != NULL && !mo_diags_any(&f.diags));
+        if (f.module != NULL && !mo_diags_any(&f.diags)) {
+            const enum mo_syntax_kind kinds[] = {
+                MO_S_SERVICE,       MO_S_SEQUENCE,      MO_S_SERVICE_TOKEN, MO_S_TEXT,
+                MO_S_SERVICE_EVERY, MO_S_CALL,          MO_S_NAME,          MO_S_SEQUENCE,
+                MO_S_NAME,          MO_S_NAME,          MO_S_SERVICE_STATE, MO_S_TYPE,
+                MO_S_CAPNAME,       MO_S_SEQUENCE,      MO_S_TYPE,          MO_S_CAPNAME,
+                MO_S_LIST,          MO_S_SERVICE_TOOLS, MO_S_SEQUENCE,      MO_S_NAME,
+                MO_S_NAME,          MO_S_NAME,          MO_S_NAME,          MO_S_NAME,
+                MO_S_NAME,          MO_S_SERVICE_EVERY, MO_S_FIELD_ACCESS,  MO_S_INT,
+                MO_S_NAME,          MO_S_NAME};
+            size_t at = 0;
+            shape(item(&f, 0), kinds, sizeof kinds / sizeof kinds[0], &at);
+            CHECK(at == sizeof kinds / sizeof kinds[0]);
+            CHECK(item(&f, 1)->kind == MO_S_SERVICE && item(&f, 1)->children[0]->count == 0);
+            spans(&f, f.module->tree);
+        }
+        free_fixture(&f);
+    }
+    struct fixture f;
+    init(&f,
+         "service\nstate Int = )\ntools from\nevery 1.minute env\n"
+         "token from env \"TOKEN\"\nend\nfn after()\nend\n",
+         true);
+    CHECK(f.module != NULL && f.diags.count == 1);
+    if (f.module != NULL && f.module->tree->children[1]->count == 2) {
+        CHECK(item(&f, 0)->kind == MO_S_SERVICE && item(&f, 0)->incomplete);
+        struct mo_syntax *clauses = item(&f, 0)->children[0];
+        CHECK(clauses->count == 3 && clauses->children[0]->kind == MO_S_SERVICE_TOOLS &&
+              clauses->children[1]->kind == MO_S_SERVICE_EVERY &&
+              clauses->children[2]->kind == MO_S_SERVICE_TOKEN);
+        CHECK(item(&f, 1)->kind == MO_S_FN && !item(&f, 1)->incomplete);
+    } else
+        CHECK(false);
+    free_fixture(&f);
+    const char *rejected[] = {"service\n",
+                              "service\nstate Int = 0\n",
+                              "service\nstate\nInt = 0\nend\n",
+                              "service\ntools\nfrom\nend\n",
+                              "service\nevery\n1.minute env\nend\n",
+                              "service\ntoken from env\n\"TOKEN\"\nend\n",
+                              "service\ntoken from env \"#{token}\"\nend\n",
+                              "service\ntools Module.tool\nend\n",
+                              "service\nevery 1.minute Module.tick\nend\n",
+                              "service\nservice\nend\nend\n",
+                              "fn f()\nservice\nend\nend\n",
+                              "service = 1\n",
+                              "x = service\n",
+                              "fn service()\nend\n",
+                              "fn f(service: Int)\nend\n",
+                              "struct R\nservice: Int\nend\n",
+                              "module M\nuse A{service}\n",
+                              "module M\nexpose service\n",
+                              "x.service\n",
+                              "fn(service) service end\n",
+                              "R(service: 1)\n"};
+    for (size_t i = 0; i < sizeof rejected / sizeof rejected[0]; i++) {
+        init(&f, rejected[i], true);
+        CHECK(mo_diags_any(&f.diags));
+        free_fixture(&f);
+    }
+}
+
 static void headers(void) {
     struct fixture f;
     const char *text =
@@ -679,6 +753,13 @@ static void limits(void) {
         repeat(&source, "]", MO_LIMIT_NESTING_DEPTH + extra);
         boundary(&source, extra == 0 ? 0 : MO_CODE_NESTED_TOO_DEEPLY, true);
         mo_buffer_clear(&source);
+        MO_ASSERT(mo_buffer_append_text(&source, "service\nstate Int = "));
+        repeat(&source, "[", MO_LIMIT_NESTING_DEPTH - 1u + extra);
+        MO_ASSERT(mo_buffer_append_byte(&source, '0'));
+        repeat(&source, "]", MO_LIMIT_NESTING_DEPTH - 1u + extra);
+        MO_ASSERT(mo_buffer_append_text(&source, "\nend\n"));
+        boundary(&source, extra == 0 ? 0 : MO_CODE_NESTED_TOO_DEEPLY, true);
+        mo_buffer_clear(&source);
         repeat(&source, "1 + ", MO_LIMIT_NESTING_DEPTH + extra);
         MO_ASSERT(mo_buffer_append_text(&source, "1\n"));
         boundary(&source, 0, true);
@@ -890,6 +971,8 @@ static void arena_sweeps(void) {
         "module M\nuse A\nn = 1\n",
         "module M\nfn f()\nx = \"\"\"\n  \\q\n  \"\"\"\n2\nend\n",
         "module M\n# comment\nfn f()\nif true\n1\nend\nend\n",
+        ("module M\n# service\nservice # opener\nstate List(Int) = []\n"
+         "tools from, env\n\n# timer\nevery 1.minute token\ntoken from env \"TOKEN\"\nend\n"),
     };
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
         struct fixture f;
@@ -1103,6 +1186,7 @@ static void lambda_lists(void) {
 int main(void) {
     shapes();
     declarations_and_statements();
+    services();
     headers();
     diagnostics();
     recovery();
