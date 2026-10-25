@@ -138,7 +138,7 @@ static MO_MUST_USE bool handler(struct service_check *p, const struct mo_syntax 
     const struct mo_source_type *type = selected->type;
     if (type->parameters != 0)
         return report(p, MO_CODE_SERVICE_HANDLER, "a service handler is generic",
-                      "Exposed tools and timers have concrete signatures; call generic helpers "
+                      "Tools and timers have concrete signatures; call generic helpers "
                       "through concrete wrappers (reference 11.5).");
     if (type->count < 3 || !native(type->arguments[1], "Time"))
         return report(p, MO_CODE_SERVICE_HANDLER, "a service handler has the wrong parameters",
@@ -156,8 +156,13 @@ static MO_MUST_USE bool handler(struct service_check *p, const struct mo_syntax 
             return false;
     uint32_t index = (uint32_t)(selected - p->program->signatures->items);
     *function = p->functions[index];
-    if (!timer && bare)
-        return mo_service_state_error(p->arena, p->program, name, *function, p->diags);
+    bool result_state =
+        !bare && native(result, "Result") && same(p, result->arguments[0], p->service->state, 0);
+    if (p->failed)
+        return false;
+    if (!timer && (bare || result_state))
+        return mo_service_state_error(p->arena, p->program, name, *function, result_state,
+                                      p->diags);
     *reply = update_pair(p, result) ? MO_SERVICE_UPDATE
              : native(result, "Result") && update_pair(p, result->arguments[0])
                  ? MO_SERVICE_RESULT_UPDATE

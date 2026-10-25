@@ -1284,6 +1284,34 @@ def service_commands(binary):
         run(binary, ['fix', str(path)], 1)
         assert path.read_text() == bare
 
+        for case, label in (
+            ('e0101-predicate', 'a timer returns this; a tool returns (Bool, reply)'),
+            ('e0101-result', 'a tool returns Result((Int, reply), E)'),
+        ):
+            source = (root / 'tests/errors' / case / 'main.mo').read_text()
+            path.write_text(source)
+            items = records(run(binary, ['check', '--json', str(path)], 1), 'check')
+            assert len(items) == 3 and items[1]['code'] == 'E0101', items
+            assert items[1]['primary']['label'] == label and items[1]['fixes'] == []
+            run(binary, ['fix', str(path)], 1)
+            assert path.read_text() == source
+
+        (folder / 'job-queue.mo').write_text((root / 'examples/job-queue.mo').read_text())
+        for handler in ('heartbeat', 'acknowledge', 'fail'):
+            path.write_text('module Main\nuse JobQueue\n'
+                            'service\n  state JobQueue.Queue = JobQueue.empty\n'
+                            '  tools change\n  token from env "TOKEN"\nend\n'
+                            'fn change(state: JobQueue.Queue, now: Time, id: Int, attempt: Int)'
+                            ' : Result(JobQueue.Queue, JobQueue.QueueError)\n'
+                            f'  JobQueue.{handler}(state, now, id, attempt)\nend\n')
+            items = records(run(binary, ['check', '--json', str(path)], 1), 'check')
+            assert len(items) == 3 and items[1]['code'] == 'E0101', items
+            assert items[1]['primary']['label'] == 'a tool returns Result((JobQueue.Queue, reply), E)'
+            assert items[1]['fixes'] == []
+            source = path.read_text()
+            run(binary, ['fix', str(path)], 1)
+            assert path.read_text() == source
+
 
 def service_refusals(binary):
     source = ('module Main\nservice\n  state Int = 0\n  tools snapshot\n'
@@ -3096,13 +3124,17 @@ def guide_claims(binary):
          "start the service or read its token.",
          "Importing a module that declares a service does not start it.",
          "`mo fix` applies neither alternative.",
-         "Exposed functions and functions whose names end in `?` receive no fixes.")
+         "A `Result(State, E)` tool receives no fixes.",
+         "Functions on the module's `expose` line receive no fixes because callers in other "
+         "modules cannot be updated.",
+         "Functions whose names end in `?` receive no fixes because a `?` name must still "
+         "return `Bool`.")
     refuses(['run', 'tests/errors/e1408/main.mo'], '1408', 'this build cannot run a service',
             'Only `mo run` on a service entry module refuses with E1408, '
             '"this build cannot run a service".')
     refuses(['check', 'tests/errors/e0101/main.mo'], '0101',
             'a service tool returns only its state',
-            'A service tool that returns only its state gets E0101, '
+            'A service tool that returns exactly `State` or `Result(State, E)` gets E0101, '
             '"a service tool returns only its state".')
     refuses(['check', 'tests/errors/e0100-generic/main.mo'], '0100',
             'a service handler is generic',

@@ -237,24 +237,45 @@ static MO_MUST_USE bool replacement(struct proposal *p, struct text *out, bool u
 }
 
 bool mo_service_state_error(struct mo_arena *arena, const struct mo_program *program,
-                            const struct mo_syntax *tool_name, uint32_t function,
+                            const struct mo_syntax *tool_name, uint32_t function, bool result_state,
                             struct mo_diags *diags) {
     MO_ASSERT(function < program->function_count);
     const struct mo_symbol *symbol = program->functions[function].signature->function;
     const struct mo_module_scope *scope = &program->interfaces->scopes[symbol->module];
     const struct mo_sources *sources = program->set->sources;
+    bool predicate = symbol->name[symbol->name_length - 1] == '?';
     struct proposal p = {.arena = arena,
                          .program = program,
                          .declaration = symbol->declaration,
                          .handler = symbol->name};
     struct mo_diag diagnostic = {
         .code = MO_CODE_SERVICE_STATE_RESULT,
-        .primary = {tool_name->span, "a timer returns this; a tool returns (State, reply)"},
+        .primary = {tool_name->span, result_state
+                                         ? "a tool returns Result((State, reply), E)"
+                                         : "a timer returns this; a tool returns (State, reply)"},
         .message = "a service tool returns only its state",
         .reason = "A tool changes the state only by returning (state, reply). Returning the state "
                   "alone is how a timer changes it, so a tool's result would never be saved "
                   "(reference 11.5).",
     };
+    if (result_state)
+        diagnostic.reason =
+            "A tool changes the state only by returning (state, reply) or Result((state, reply), "
+            "E). "
+            "A Result holding the state alone is a read-only reply, so the new state would never "
+            "be saved (reference 11.5).";
+    else if (predicate)
+        diagnostic.reason =
+            "A tool changes the state only by returning (state, reply). Returning the state alone "
+            "is how a timer changes it, so a tool's result would never be saved. A name ending in "
+            "? "
+            "must return Bool, so rename the function before changing its result (reference 11.5).";
+    else if (symbol->exported)
+        diagnostic.reason =
+            "A tool changes the state only by returning (state, reply). Returning the state alone "
+            "is how a timer changes it, so a tool's result would never be saved. Other modules "
+            "call "
+            "this function, so change its result by hand (reference 11.5).";
     struct mo_edit edits[2];
     struct mo_fix fixes[2] = {
         {"return (state, Unit) to save the new state", &edits[0], 1},
@@ -268,9 +289,15 @@ bool mo_service_state_error(struct mo_arena *arena, const struct mo_program *pro
     p.source = &sources->files[tool_name->span.file];
     MO_ASSERT(p.declaration->span.file == tool_name->span.file);
     struct text label = {.limit = MO_LIMIT_FILE_SIZE};
+    const struct mo_syntax *state = result_state
+                                        ? p.declaration->children[1]->children[0]->children[1]
+                                        : p.declaration->children[2];
     for (uint32_t pass = 0; pass < 2; pass++) {
-        if (!literal(&p, &label, "a timer returns this; a tool returns (") ||
-            !annotation(&p, &label, p.declaration->children[2]) || !literal(&p, &label, ", reply)"))
+        if (!literal(&p, &label,
+                     result_state ? "a tool returns Result(("
+                                  : "a timer returns this; a tool returns (") ||
+            !annotation(&p, &label, state) ||
+            !literal(&p, &label, result_state ? ", reply), E)" : ", reply)"))
             goto failed;
         if (pass == 0) {
             label.bytes = allocate(&p, label.length + 1);
@@ -282,7 +309,7 @@ bool mo_service_state_error(struct mo_arena *arena, const struct mo_program *pro
     }
     label.bytes[label.length] = '\0';
     diagnostic.primary.text = label.bytes;
-    if (symbol->exported || symbol->name[symbol->name_length - 1] == '?') {
+    if (result_state || symbol->exported || predicate) {
         bool kept = mo_diags_add(diags, &diagnostic);
         (void)kept;
         return false;

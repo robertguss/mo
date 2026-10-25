@@ -87,7 +87,7 @@ try use var where while
 
 `service` is reserved. The service-clause words `state`, `tools`, `every`,
 `token`, `from` and `env` remain ordinary identifiers outside their clause
-positions (D301 follow-up, approved 25 Oct 2026).
+positions (section 11.5).
 
 ### 2.4 Lines
 
@@ -1059,8 +1059,10 @@ summary = try summarize(files.within("reports").read_only)
 
 ### 11.5 Service blocks
 
+This build checks service blocks but can't run them yet; see the end of this section.
+
 A module may declare one top-level `service ... end` block. Its clauses name
-the state type and start value, local functions exposed as tools, timer
+the state type and start value, local functions offered as tools, timer
 handlers, and the environment variable holding its access token.
 `service` is reserved. The clause words `state`, `tools`, `every`, `token`,
 `from` and `env` remain ordinary identifiers outside their clause positions.
@@ -1095,7 +1097,7 @@ end
 
 The start value has the declared state type. The runtime uses it only when
 there is no saved state. Each tool is a function declared in this module
-whose first two parameters are the state type and `Time`.
+whose first two parameters are the state type and `Time`, the moment the message arrived.
 The service selects the local overload whose first parameter exactly matches
 its state type, then requires that signature to contain no unresolved generic
 parameters. Generic helpers can be called through concrete wrappers. A service
@@ -1104,13 +1106,15 @@ and handler results must contain neither capabilities nor function values,
 including inside records, choices, tuples and collections.
 
 A tool updates stored state only when it returns `(State, Reply)` or
-`Result((State, Reply), E)`. Returning exactly `State` is an error. The error
-offers two fixes: return `(state, Unit)` to update state, or wrap the value in
-a record to return it as read-only data. `mo fix` applies neither alternative.
+`Result((State, Reply), E)`. Returning exactly `State`, or `Result(State, E)`, is an error.
+For a bare `State` result, the error offers two fixes: return `(state, Unit)` to
+update state, or wrap the value in a record to return it as read-only data.
+`Result(State, E)` receives no fixes. `mo fix` applies neither alternative.
 The suggested adapters retain the tool's name and `##` comment, rename the
 original function to a helper, and rebind the module's references to that
-helper. Exposed functions and functions whose names end in `?` receive no fixes.
-The latter must still return `Bool`, so neither adapter can keep that name.
+helper. A function on the module's `expose` line receives no fixes, because a
+fix can't update callers in other modules. Nor does a function whose name ends
+in `?`: it must return `Bool` (section 2.3), so neither adapter could keep its name.
 Every other result shape is a read-only reply,
 including `List(State)`, `Option(State)` and records containing state.
 Read-only messages are neither logged nor saved.
@@ -1625,12 +1629,14 @@ warnings: a problem is an error, or it isn't reported.
 The executable grammar, `grammar/mo.y`, is the authority, and this is its
 summary. `x*` means zero or more, `x+` one or more, `x?` optional, and `NL` a
 line break as section 2.4 defines it.
+Section 11.5 fixes the order and number of a service's clauses.
 
 ```text
 module      = "module" Path NL ("expose" exposed ("," exposed)* NL)? use* item*
 exposed     = name | Name | Name "(" ".." ")"
 use         = "use" Path ("{" (name | Name) ("," (name | Name))* "}")? NL
-item        = function | struct | enum | test | name "=" expr NL
+item        = function | struct | enum | test | service | name "=" expr NL
+service     = "service" NL ("state" type "=" expr NL | "tools" name ("," name)* NL | "every" expr name NL | "token" "from" "env" text NL)* "end" NL
 function    = "fn" name "(" params? ")" (":" type)? where? NL (promise | examples)* statement* "end" NL
 params      = name ":" type ("," name ":" type)*
 where       = "where" Name ":" Name ("," Name ":" Name)*

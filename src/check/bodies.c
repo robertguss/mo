@@ -685,8 +685,7 @@ static MO_MUST_USE bool mismatch(struct inference *p, struct term *found, struct
         reason = "A function's signature gives its types (reference 5.1).";
     } else if (code == MO_CODE_SERVICE_VALUE) {
         message = "a service value has the wrong type";
-        reason = "The start value has the declared state type; a timer interval has type "
-                 "Duration (reference 11.5).";
+        reason = "The start value has the declared state type (reference 11.5).";
     } else if (code == MO_CODE_NOT_FUNCTION) {
         message = "a value that isn't a function is called";
         reason = "A call applies a function to its arguments (reference 5.2).";

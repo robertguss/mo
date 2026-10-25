@@ -12,10 +12,11 @@ this range, so the evidence is fix-up commits inside PRs, the Review sections of
 class 6 also bumped for MO-152's nightly workflow review and on 2026-10-25 for MO-153's
 queue-preservation mutants and MO-154's repeated-digit duration-formatting mutant. Classes 6
 and 7 bumped again on 2026-10-25 for MO-155's timer metadata and invalid service fix adapters.
+Class 1 bumped on 2026-10-25 for Robert's PR #231 review of the service reference grammar.
 
 | # | Class | Evidence | Enforced by | State |
 | --- | --- | --- | --- | --- |
-| 1 | Docs that describe a changed behaviour left stale: `sample-blockers.md`, `architecture.md`, `bytecode.md`, `agent-guide.md`, comments, usage strings | 19 times: #81, #85, #94, #95, #101, #105, #107, #110, #111, #113 (2), #115 (3), #116, #119, #139 (`AGENTS.md`), #178 (`examples/README.md`, tools hold-back, CBMC inventories, `check.h`), #188 (unsupported gap descriptions after main advanced) | `guide_claims` in `ci/check_cli.py` for the agent guide (#115); `ci/check_conformance.py` rejects unmapped reference blocks and unreviewed reference changes (#188), not stale implementation gaps; `review-change/rules.md` for the rest | check-enforced for guide claims and reference mappings; prose only for implementation gaps and other docs |
+| 1 | Docs that describe a changed behaviour left stale: `sample-blockers.md`, `architecture.md`, `bytecode.md`, `agent-guide.md`, comments, usage strings | 20 times: #81, #85, #94, #95, #101, #105, #107, #110, #111, #113 (2), #115 (3), #116, #119, #139 (`AGENTS.md`), #178 (`examples/README.md`, tools hold-back, CBMC inventories, `check.h`), #188 (unsupported gap descriptions after main advanced), #231 (Appendix B omitted service from item and had no service production) | `guide_claims` in `ci/check_cli.py` for the agent guide (#115); `ci/check_conformance.py` rejects unmapped reference blocks and unreviewed reference changes (#188), not stale implementation gaps or missing grammar productions; `review-change/rules.md` for the rest | check-enforced for guide claims and reference mappings; prose only for implementation gaps, grammar-summary completeness and other docs |
 | 2 | Library functions built as native signatures with hand-built Core where `docs/design/library.md` says they are written in Mo in `lib/` (`List.map`, `Map.update`, `List.sort_by_desc`, `List.count`, `Option.or_fail`) | #86, #87, #88, #97; moved into `lib/` by MO-46 part 2 (#121) | nothing: `make library-map` covers only `prims.def` and `hostops.def` | open: nothing stops a new one |
 | 3 | Lean-dependent drivers skipped locally (no elan in cloud sessions), so hosted CI found the failures, or the PR merged without them | #97 (merged without Lean), #116 (2 red runs), #121 (2 red runs, body said drivers passed); nearly every PR body since #100 says Lean was skipped | AGENTS.md "a skip is not a pass" | prose only (hosted CI removed 22 Oct); cloud sessions don't run `.agents/setup` |
 | 4 | PRs green alone merged onto a main that had moved, turning main red | #118 + #119 + #120: `tests/errors` pins E1003 at `main.mo:4097`, `lib/list.mo` takes one source slot, main red from f4e7f03 until #121; conflicts on the lowering table, `ci/check_cli.py` and `sample-blockers.md` in every sample PR after #106 | nothing (hosted CI removed 22 Oct) | open |
@@ -52,3 +53,12 @@ a stale zero-capture assertion. The service corpus now includes a capturing init
 fuzzer validates each captured binding instead. That seed failed the old assertion and passes
 with capture validation. The C types cannot express interval-root validity or capture membership,
 so the public checked-graph tests and fuzz invariants enforce those contracts.
+
+Robert's PR #231 review caught the missing service production in Appendix B after section 11.5
+had been added. The summary now includes the production and points to section 11.5 for clause
+order and counts. No automated completeness check is claimed here; stronger enforcement remains
+open. The same review approved the `?`-handler no-fix exception and refined D310 in D313 to
+refuse `Result(State, E)` without fixes. That result-rule change is a new decision, not evidence
+that the earlier implementation violated D310. Smaller fix edits, formatted adapters with names
+derived from the tool, and retaining E0101 alongside resource-refusal remain design follow-ups
+in `docs/design/services.md`, not implemented safeguards.

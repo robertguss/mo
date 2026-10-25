@@ -3,11 +3,12 @@
 
 #include "check/check.h"
 
-/* The concrete local handler returns exactly State. Keep its service name and
- * documentation on an adapter and rename its bound module uses to a helper.
- * Bodies and specs must already be checked. Exported and ?-named handlers get no fixes. */
+/* The concrete local handler returns State, or Result(State, E) when result_state is true.
+ * Bodies and specs must already be checked. Only bare-State handlers can get adapters;
+ * exported and ?-named handlers get no fixes. Adapters retain the service name and
+ * documentation, renaming bound module uses to a helper. */
 MO_MUST_USE bool mo_service_state_error(struct mo_arena *arena, const struct mo_program *program,
                                         const struct mo_syntax *tool_name, uint32_t function,
-                                        struct mo_diags *diags);
+                                        bool result_state, struct mo_diags *diags);
 
 #endif

@@ -1,7 +1,7 @@
 # Services: the Phase 3 design
 
 Status: Design note (18 Oct 2026, task `MO-98`), updated for D301 to D308 in `MO-153`
-and the D310 and D312 clarifications in `MO-155`.
+and the D310, D312 and D313 clarifications in `MO-155`.
 MO-155 adds service syntax and checking, with reference section 11.5. The service runtime
 is not implemented yet. The final diagnostic and reference wording remains for Robert's
 review before MO-155 merges. The pure queue example implements D307. Phase 2 is complete
@@ -50,9 +50,10 @@ proxy terminates TLS, so Mo needs no TLS of its own.
 
 A service is one state type plus pure handlers (D261). Tool handlers take the current state,
 the message's arrival time, and the tool arguments. A state-changing handler returns `(State, R)`
-or `Result((State, R), E)`. A tool returning exactly `State` is refused; every other result shape
+or `Result((State, R), E)`. A tool returning exactly `State` or `Result(State, E)` is refused;
+every other result shape
 is a read-only reply, including `List(State)`, `Option(State)` and records containing `State`
-(D302, clarified by D310).
+(D302, clarified by D310 and refined by D313).
 The runtime owns the loop, the mailbox and saving;
 the service author writes none of them. This is the shape of Elixir's GenServer, with Mo's pure
 values underneath.
@@ -193,6 +194,7 @@ on every failed message, since the last good state is still available.
 
 Robert settled D301 to D308 on 24 Oct 2026 and clarified D302 in D310 on 25 Oct.
 D312 records the later MO-155 approval on 25 Oct, without changing D309, D310 or D311.
+D313 refines D310 and D312 without changing those decision records.
 These decisions define the Phase 3 build plan.
 
 1. **Service block (D301).** A module has at most one top-level `service ... end` block. It
@@ -200,16 +202,21 @@ These decisions define the Phase 3 build plan.
    `token from env "NAME"`. Handlers remain ordinary functions. In the D301 follow-up approved
    on 25 Oct, Robert reserved only `service`; `state`, `tools`, `every`, `token`, `from` and
    `env` remain ordinary identifiers outside their clause positions.
-2. **Read-only handlers (D302, clarified by D310).** Only `(State, Reply)` and
-   `Result((State, Reply), E)` update stored state. A tool returning exactly `State` is refused
-   with a new checker error. Timer handlers use `(State, Time): State` to mean replacement
+2. **Read-only handlers (D302, clarified by D310 and D313).** Only `(State, Reply)` and
+   `Result((State, Reply), E)` update stored state. A tool returning exactly `State` or
+   `Result(State, E)` is refused with E0101. Timer handlers use `(State, Time): State` to mean replacement
    state, so accepting a bare-state tool as read-only would look like an update that is never
-   saved. The error offers two suggestions: return `(state, Unit)` to update, or wrap the
-   value in a record to return it as read-only data. `mo fix` applies neither alternative.
+   saved. Only a bare-State tool is eligible for two suggestions: return `(state, Unit)` to
+   update, or wrap the value in a record to return it as read-only data. Functions on the
+   module's `expose` line and names ending in `?` receive no fixes. `Result(State, E)` receives
+   no fixes. `mo fix` applies neither alternative.
    Every other result shape is read-only, including
    `List(State)`, `Option(State)` and records containing `State`. The runtime neither logs nor
    saves these messages. The [D310 ruling](https://app.notion.com/p/404700320c45811da3a7deef66d2b37f)
    requires the diagnostic code and exact wording under "For Robert" in the MO-155 PR.
+   [D313](https://app.notion.com/p/404700320c45815eb7d4fdd3858b31ee) refuses `Result(State, E)`
+   because the queue's `heartbeat`, `acknowledge` and `fail` return `Result(Queue, QueueError)`.
+   Direct wrappers must not silently treat accepted updates as read-only replies.
 3. **Durations (D303).** All five existing units accept singular spellings: `1.second`,
    `1.millisecond`, `1.minute`, `1.hour`, and `1.day`. The syntax-only formatter normalizes
    only direct integer-literal receivers, singular for numeric value 1 and plural otherwise.
@@ -241,11 +248,15 @@ These decisions define the Phase 3 build plan.
 
 [D312](https://app.notion.com/p/404700320c45814188abd07e6534971a) records the approved
 rules from the [approval conversation](https://ampcode.com/threads/T-01a1705d-1274-74f9-8fcf-0bf58e6f89b8).
-Work continues in the [execution conversation](https://ampcode.com/threads/T-01a16ff1-e184-7194-808d-d6d0112ba4a4).
+[D313](https://app.notion.com/p/404700320c45815eb7d4fdd3858b31ee) records the later refinement
+from the latest approval relayed into the
+[execution conversation](https://ampcode.com/threads/T-01a16ff1-e184-7194-808d-d6d0112ba4a4).
+Both records paraphrase the approval rather than quote Robert's words.
 All final diagnostic codes, diagnostic wording and reference wording still go under
-"For Robert" in the eventual MO-155 PR before merge.
+"For Robert" in [PR #231](https://github.com/robertguss/mo/pull/231) before merge.
+MO-155 remains In review. Final approval is still required before merge.
 
-E0101 uses these strings:
+For a bare-State tool eligible for fixes, E0101 uses these strings:
 
 - Headline: `a service tool returns only its state`
 - Label: `a timer returns this; a tool returns (<State>, reply)`
@@ -254,17 +265,31 @@ E0101 uses these strings:
 - Second fix title: `return the state inside a record, as read-only data`
 
 Each suggested adapter keeps the tool's name and `##` comment, renames the original
-function to a helper, and rebinds module references to the helper. Exposed functions
-receive no executable edits. The state-changing alternative uses Mo's `Unit` value,
+function to a helper, and rebinds module references to the helper. Functions on the module's
+`expose` line receive no fixes. The state-changing alternative uses Mo's `Unit` value,
 not `()` syntax.
 
-The review proposes one further exception for Robert: a handler whose name ends in
-`?` receives E0101 without fixes. Neither adapter can preserve that name while
-obeying the existing rule that `?` functions return `Bool`. Generated adapters also
+Robert approved the no-fix exception for a handler whose name ends in `?` (D313).
+Neither adapter can preserve that name while obeying the existing rule that `?`
+functions return `Bool`. These cases keep the bare-State headline and label, with
+the following reasons:
+
+- `?` handler: `A tool changes the state only by returning (state, reply). Returning the state alone is how a timer changes it, so a tool's result would never be saved. A name ending in ? must return Bool, so rename the function before changing its result (reference 11.5).`
+- Exposed handler: `A tool changes the state only by returning (state, reply). Returning the state alone is how a timer changes it, so a tool's result would never be saved. Other modules call this function, so change its result by hand (reference 11.5).`
+
+A tool returning `Result(State, E)` receives E0101 with no fixes (D313):
+
+- Headline: `a service tool returns only its state`
+- Label: `a tool returns Result((<State>, reply), E)`
+- Reason: `A tool changes the state only by returning (state, reply) or Result((state, reply), E). A Result holding the state alone is a read-only reply, so the new state would never be saved (reference 11.5).`
+
+Generated adapters also
 respect the existing type-depth limit; exhausting it publishes no partial choice.
 
-E0100 uses `a service handler is generic` for a generic handler, with signature rules
-in the reasons. E0104 refuses capabilities and function values in state, handler inputs
+E0100 uses `a service handler is generic` for a generic handler, with the reason
+`Tools and timers have concrete signatures; call generic helpers through concrete wrappers (reference 11.5).`
+The wrong-type reason is `The start value has the declared state type (reference 11.5).`
+E0104 refuses capabilities and function values in state, handler inputs
 or handler results. E1408 uses `this build cannot run a service` only for `mo run` of
 a service entry module. Checking, testing ordinary handlers, formatting, fixing and
 importing remain available. Importing a service module does not start it.
@@ -281,6 +306,17 @@ would exceed the year 9999. It leaves every other job, the attempt count and `ne
 The exe.dev documentation describes persistent VMs that stop when their owner stops them and
 does not describe idle sleeping. Deployment still requires a 48-hour idle check. That check and
 the week-long run below have not happened.
+
+### Fix follow-ups, not implemented in MO-155
+
+Robert's PR #231 review records these later improvements:
+
+- Emit smaller source edits instead of whole-file replacements.
+- Format generated adapters and derive helper and record names from the tool's name.
+- Retain E0101 alongside a resource-refusal diagnostic when generating fixes exceeds a limit.
+
+These are design follow-ups, not claims about the current implementation. They add no service
+runtime or deployment work to MO-155.
 
 ## 10. Done means
 

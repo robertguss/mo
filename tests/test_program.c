@@ -53,29 +53,32 @@ static void service_inputs(void) {
 
 static void service_handlers(void) {
     struct fixture f;
-    init(&f, "module Main\n"
-             "struct State\nvalue: Int\nend\nstruct Alternate\nvalue: Int\nend\n"
-             "struct Reply\nstate: State\nend\n"
-             "fn inspect(state: Alternate, _now: Time) : Bool\nstate.value > 0\nend\n"
-             "fn identity(value: T) : T\nvalue\nend\n"
-             "fn inspect(state: State, _now: Time) : List(State)\n[identity(state)]\nend\n"
-             "fn update(state: State, _now: Time) : (State, Bool)\n(state, true)\nend\n"
-             "fn attempt(state: State, _now: Time) : Result((State, Bool), Text)\n"
-             "Ok((state, false))\nend\n"
-             "fn optional(state: State, _now: Time) : Option(State)\nSome(state)\nend\n"
-             "fn wrapped(state: State, _now: Time) : Reply\nReply(state: state)\nend\n"
-             "fn reverse(state: State, _now: Time) : (Bool, State)\n(true, state)\nend\n"
-             "fn error_state(state: State, _now: Time) : Result(Bool, State)\nError(state)\nend\n"
-             "service\nstate State = State(value: 3)\n"
-             "tools inspect, update, attempt, optional, wrapped, reverse, error_state\n"
-             "token from env \"TOKEN\"\nend\n");
+    init(&f,
+         "module Main\n"
+         "struct State\nvalue: Int\nend\nstruct Alternate\nvalue: Int\nend\n"
+         "struct Reply\nstate: State\nend\n"
+         "fn inspect(state: Alternate, _now: Time) : Bool\nstate.value > 0\nend\n"
+         "fn identity(value: T) : T\nvalue\nend\n"
+         "fn inspect(state: State, _now: Time) : List(State)\n[identity(state)]\nend\n"
+         "fn update(state: State, _now: Time) : (State, Bool)\n(state, true)\nend\n"
+         "fn attempt(state: State, _now: Time) : Result((State, Bool), Text)\n"
+         "Ok((state, false))\nend\n"
+         "fn optional(state: State, _now: Time) : Option(State)\nSome(state)\nend\n"
+         "fn wrapped(state: State, _now: Time) : Reply\nReply(state: state)\nend\n"
+         "fn reverse(state: State, _now: Time) : (Bool, State)\n(true, state)\nend\n"
+         "fn error_state(state: State, _now: Time) : Result(Bool, State)\nError(state)\nend\n"
+         "fn result_list(state: State, _now: Time) : Result(List(State), Text)\n"
+         "Ok([state])\nend\n"
+         "service\nstate State = State(value: 3)\n"
+         "tools inspect, update, attempt, optional, wrapped, reverse, error_state, result_list\n"
+         "token from env \"TOKEN\"\nend\n");
     CHECK(f.program != NULL && !mo_diags_any(&f.diags));
     if (f.program != NULL && f.program->service_count == 1) {
         const struct mo_checked_service *service = &f.program->services[0];
         const enum mo_service_reply replies[] = {MO_SERVICE_READ_ONLY,     MO_SERVICE_UPDATE,
                                                  MO_SERVICE_RESULT_UPDATE, MO_SERVICE_READ_ONLY,
                                                  MO_SERVICE_READ_ONLY,     MO_SERVICE_READ_ONLY,
-                                                 MO_SERVICE_READ_ONLY};
+                                                 MO_SERVICE_READ_ONLY,     MO_SERVICE_READ_ONLY};
         CHECK(service->tool_count == sizeof(replies) / sizeof(replies[0]));
         for (uint32_t i = 0; i < service->tool_count; i++) {
             CHECK(service->tools[i].function == i + 2);
@@ -85,6 +88,25 @@ static void service_handlers(void) {
     } else
         CHECK(false);
     free_fixture(&f);
+
+    const char *states[] = {"Int", "Box(Int)", "(Int, Text)", "Result(Int, Text)"};
+    for (size_t i = 0; i < sizeof(states) / sizeof(states[0]); i++) {
+        char source[512];
+        int n = snprintf(source, sizeof source,
+                         "module Main\nstruct Box(T)\nvalue: T\nend\n"
+                         "service\nstate %s = stop \"start\"\ntools tool\n"
+                         "token from env \"TOKEN\"\nend\n"
+                         "fn tool(state: %s, _now: Time) : Result(%s, Bool)\nOk(state)\nend\n",
+                         states[i], states[i], states[i]);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof source);
+        init(&f, source);
+        CHECK(f.program == NULL && f.diags.count == 1);
+        if (f.diags.count == 1) {
+            CHECK(f.diags.items[0].code == MO_CODE_SERVICE_STATE_RESULT);
+            CHECK(f.diags.items[0].fix_count == 0);
+        }
+        free_fixture(&f);
+    }
 
     const struct {
         const char *declaration, *message;
