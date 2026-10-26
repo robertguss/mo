@@ -146,4 +146,66 @@ MO_MUST_USE enum mo_defect_variables_result mo_visit_defect_variables(
 MO_MUST_USE bool mo_render_defect(const struct mo_process *process, const struct mo_defect *defect,
                                   struct mo_buffer *out);
 
+struct mo_service_loop;
+struct mo_service_time {
+    int64_t now;      /* valid Time, UTC microseconds */
+    uint64_t elapsed; /* monotonic microseconds, independent of wall-clock corrections */
+};
+enum mo_service_status {
+    MO_SERVICE_OK,
+    MO_SERVICE_BUSY,
+    MO_SERVICE_DOWN,
+    MO_SERVICE_MEMORY,
+    MO_SERVICE_WORK,
+    MO_SERVICE_DEFECT,
+    MO_SERVICE_INTERVAL
+};
+enum mo_service_event_kind { MO_SERVICE_FAILURE, MO_SERVICE_RESTART, MO_SERVICE_STOP };
+struct mo_service_event {
+    enum mo_service_event_kind kind;
+    enum mo_service_status reason;
+    struct mo_service_time time;
+    const struct mo_defect *defect;
+};
+struct mo_service_response {
+    uint64_t id;
+    uint32_t handler; /* tool or timer table index */
+    bool timer, updated;
+    enum mo_service_status status;
+    uint32_t type; /* complete result type, not a schema-unwrapped reply */
+    struct mo_cell value;
+    const struct mo_defect *defect;
+};
+struct mo_service_hooks {
+    struct mo_service_time (*clock)(void *context);
+    void (*reply)(const struct mo_service_response *reply, void *context);
+    void (*event)(const struct mo_service_event *event, void *context);
+    void *context;
+};
+/* C embedding only. The image is initialized and outlives the service. All
+ * hooks are required, synchronous, bounded and non-reentrant. Views and reply
+ * values are borrowed only during their callback. Events are the embedding's
+ * logging boundary. Clock elapsed never decreases; now is a valid Time.
+ * No service is published and no tick is queued until all intervals evaluate
+ * to positive Durations. Only OK writes out. No token/environment access. */
+MO_MUST_USE enum mo_service_status mo_service_new(const struct mo_image *image, uint32_t index,
+                                                  const struct mo_service_hooks *hooks,
+                                                  struct mo_service_loop **out);
+void mo_service_free(struct mo_service_loop *service);
+/* Arguments must be valid typed values from this heap or the image. Submission
+ * borrows and retains them only on OK. Callers drop their own references.
+ * Heap/state access is idle-only; a state view lasts until the next step/free. */
+MO_MUST_USE struct mo_heap *mo_service_heap(struct mo_service_loop *service);
+MO_MUST_USE struct mo_cell mo_service_state(const struct mo_service_loop *service);
+MO_MUST_USE enum mo_service_status mo_service_send(struct mo_service_loop *service, uint32_t tool,
+                                                   const struct mo_cell *arguments, uint32_t count,
+                                                   uint64_t id);
+/* Poll timers, run at most one FIFO message, then poll again. false means no
+ * message ran (idle or stopped). On a supervisor stop, queued tool requests
+ * receive DOWN and ticks are discarded. A stopped service never restarts
+ * itself. New construction is the explicit start operation for this stage. */
+MO_MUST_USE bool mo_service_step(struct mo_service_loop *service);
+MO_MUST_USE uint32_t mo_service_pending(const struct mo_service_loop *service);
+MO_MUST_USE bool mo_service_running(const struct mo_service_loop *service);
+
 #endif
