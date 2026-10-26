@@ -202,7 +202,13 @@ fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test $(BUILD)/d
 				awk 'BEGIN { print "module Main\nfn run(a: Bool, b: Bool, c: Bool, d: Range, e: Int, f: Int, g: Int, h: fn(Bool) : Int) : Bool"; for (i = 0; i < 255; i++) printf "a implies b or c and not d == e .. f + g * -h("; printf "a"; for (i = 0; i < 255; i++) printf ")"; print "\nend\nfn main()\nend" }' >$$corpus/max-nesting.mo; \
 			fi; \
 			if [ "$$name" = fuzz_syntax ]; then cp grammar/tests/good/*.mo grammar/tests/bad/*.mo examples/*.mo $$corpus/; fi; \
-			if [ "$$name" = fuzz_grammar ]; then cp grammar/tests/good/*.mo examples/*.mo $$corpus/; fi; \
+			if [ "$$name" = fuzz_grammar ]; then \
+				cp grammar/tests/good/*.mo examples/*.mo $$corpus/; \
+				cp -R fuzz/corpus/fuzz_grammar/. $$corpus/; \
+				if ! cmp -s $$corpus/job-queue.mo fuzz/corpus/fuzz_grammar/job-queue.mo || \
+					[ ! -f $$corpus/expenses.mo ] || [ ! -f $$corpus/layout.mo ]; then \
+					echo "error: fuzz_grammar smoke corpus lost unique seeds or live sources"; exit 1; fi; \
+			fi; \
 			if [ "$$name" = fuzz_format ]; then \
 				mkdir -p $$corpus/syntax; \
 				cp grammar/tests/good/*.mo examples/*.mo $$corpus/; \
