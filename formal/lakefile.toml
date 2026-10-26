@@ -6,6 +6,7 @@ defaultTargets = ["MoCore", "mocore"]
 
 [[lean_lib]]
 name = "MoCore"
+roots = ["MoCore", "ExportSamples", "HeapFloatOracle"]
 
 [[lean_exe]]
 name = "mocore"
