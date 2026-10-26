@@ -58,7 +58,8 @@ Four contracts connect the parts, and each one is a file that every side reads:
 ```text
 src/base/      assertions, arenas, limits, checked arithmetic (64 and 128 bits,
                and Decimal's 256-bit products), UTF-8, hashing, interned names,
-               diagnostics, source files, and the tables prims.def and hostops.def
+               diagnostics, source files, bounded byte spans, SQLite's bounded
+               allocator, and the tables prims.def and hostops.def
 src/syntax/    lexer, parser, syntax tree, formatter
 src/check/     program loading, names, types, abilities, capabilities,
                exhaustiveness, the rules of reference section 6
@@ -68,13 +69,15 @@ src/codegen/   borrow inference, reference counting, reuse, registers; writes by
 src/bytecode/  the format: writer, reader, verifier, assembler and disassembler
 src/heap/      the runtime type table and layouts (types.h); values, cells, heap
                objects, reference counts, and the generic equality, hashing,
-               dropping and printing walks
+               dropping, printing and saved-value encoding walks
 src/prim/      the primitives of prims.def
-src/host/      capabilities, real and fake
+src/host/      capabilities, real and fake, and the runtime's service store
 src/vm/        processes, the interpreter, calls and frames, stops and defect reports
 src/tools/     the mo command: check, run, test, format, fix, emit and guide;
                diagnostics as text and JSON
 lib/           the standard library written in Mo (condition 4 of D207)
+vendor/sqlite/ SQLite, unmodified and pinned (vendor/sqlite/README.md); only
+               src/host/store.c includes it, and it allocates through base
 ```
 
 Every module uses `base`. Beyond that, each uses only the modules listed here:

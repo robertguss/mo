@@ -140,7 +140,8 @@ bool mo_heap_image_refresh(struct mo_heap_image *image) {
         uint32_t count = 0;
         for (uint32_t i = 0; i < types->layout_count; i++) {
             const struct mo_layout *layout = &types->layouts[i];
-            if (layout->kind == MO_LAYOUT_CASE || layout->kind == MO_LAYOUT_CLOSURE) {
+            if (layout->kind == MO_LAYOUT_CASE || layout->kind == MO_LAYOUT_CLOSURE ||
+                layout->kind == MO_LAYOUT_RECORD || layout->kind == MO_LAYOUT_TUPLE) {
                 bool closure = layout->kind == MO_LAYOUT_CLOSURE;
                 lookup[count++] =
                     (struct mo_layout_lookup){.category = closure ? 1 : 0,

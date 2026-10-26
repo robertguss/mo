@@ -79,3 +79,14 @@ HOSTOP(RANDOM_INT,             "Random",    "int",            "fn(Random, Int, I
 HOSTOP(RANDOM_SEEDED,          "Random",    "seeded",         "fn(Int) : Random",                                    "b",   "",                                   true)
 
 #undef HOSTOP
+
+/* Runtime-owned store capability. No Mo type, signature or bytecode operation:
+ * handlers cannot obtain this capability. Both disk and memory stores execute
+ * these operations through mo_store_call. Ordinary HOSTOP readers ignore them. */
+#ifndef STOREOP
+#define STOREOP(id)
+#endif
+STOREOP(LOAD)
+STOREOP(APPEND)
+STOREOP(SNAPSHOT)
+#undef STOREOP

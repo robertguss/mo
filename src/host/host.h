@@ -93,4 +93,41 @@ MO_MUST_USE bool mo_host_fake_snapshot(struct mo_host *host, struct mo_heap *hea
 void mo_host_fake_state_drop(struct mo_host *host, struct mo_heap *heap,
                              struct mo_host_fake_state *state);
 
+/* Runtime-owned capability; never handed to a Mo handler. A NULL path makes
+ * the in-memory fake, retained by the embedding across simulated restarts.
+ * A disk path names one service's database, locked exclusively until close.
+ * Each handle belongs to at most one live service. Only success writes out. */
+struct mo_store;
+enum mo_store_status { MO_STORE_OK, MO_STORE_IO, MO_STORE_CORRUPT, MO_STORE_LIMIT };
+enum mo_store_operation {
+#define HOSTOP(id, module, name, signature, params, bugs, spec_only)
+#define STOREOP(id) MO_STORE_##id,
+#include "base/hostops.def"
+};
+enum mo_store_record_kind { MO_STORE_LOG = 1, MO_STORE_STATE = 2 };
+/* A payload holds at most MO_LIMIT_SAVED_BYTES; its frame adds this envelope. */
+#define MO_STORE_FRAME_BYTES 34
+struct mo_store_record {
+    enum mo_store_record_kind kind;
+    uint64_t sequence, image;
+    const uint8_t *bytes;
+    size_t length;
+};
+/* A pure bounded frame reader, shared by disk loading and fuzzing. The payload
+ * view borrows input; its values still require heap decoding before use. */
+MO_MUST_USE bool mo_store_record_read(enum mo_store_record_kind kind, const uint8_t *bytes,
+                                      size_t length, struct mo_store_record *out);
+MO_MUST_USE enum mo_store_status mo_store_open(const char *path, struct mo_store **out);
+void mo_store_close(struct mo_store *store);
+/* LOAD streams a snapshot then consecutive log records in one read transaction.
+ * The callback stages results privately; publish only after LOAD succeeds.
+ * No callback means an empty store. APPEND requires sequence = head + 1.
+ * SNAPSHOT requires sequence = head and prunes the covered log atomically.
+ * Initial SNAPSHOT is sequence zero. Every successful write is synced before
+ * returning. A failed write has an uncertain commit outcome: close/recover. */
+MO_MUST_USE enum mo_store_status
+mo_store_call(struct mo_store *store, enum mo_store_operation operation,
+              const struct mo_store_record *record,
+              bool (*consume)(const struct mo_store_record *record, void *context), void *context);
+
 #endif
