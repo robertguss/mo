@@ -7,9 +7,10 @@ virtual machine, and the contracts between them. It is written against the
 Language Reference v0.1 (`docs/reference/`), whose rules win wherever the two
 disagree. It also builds on Mo Core (`formal/`) and the bytecode
 specification (`bytecode.md`). The pipeline is integrated; remaining unsupported
-forms are refused, not silently accepted. [The roadmap](../ROADMAP.md) separates
-delivered work from Phase 2's remaining acceptance work. Section 9 describes
-future hooks, not implemented services or upgrades. Section 13 lists open questions.
+forms are refused, not silently accepted. [The roadmap](../ROADMAP.md) records
+Phase 2 as finished and separates that delivered work from later phases.
+Section 9 describes future hooks, not implemented services or upgrades.
+Section 13 lists open questions.
 
 ## 1. The shape of the system
 
