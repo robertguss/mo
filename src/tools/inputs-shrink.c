@@ -392,7 +392,7 @@ enum mo_input_result mo_inputs_extreme(const struct mo_inputs *inputs, const str
             end = number == INT64_MIN ? MO_INPUT_SMALLEST : MO_INPUT_LARGEST;
         } else if (kind == MO_TYPE_TIME) {
             int64_t number = mo_cell_get_time(value);
-            if (number != INT64_C(-62135596800000000) && number != INT64_C(253402300799999999))
+            if (number != MO_TIME_MIN_US && number != MO_TIME_MAX_US)
                 continue;
             end = number < 0 ? MO_INPUT_SMALLEST : MO_INPUT_LARGEST;
         } else if (kind == MO_TYPE_DECIMAL) {

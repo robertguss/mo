@@ -173,9 +173,6 @@ static bool empty_folders(struct mo_host *host, struct mo_heap *heap, struct mo_
     return mo_value_set(heap, host->types->folders, none, 0, out);
 }
 
-#define INSTANT_FIRST INT64_C(-62135596800000000)
-#define INSTANT_LAST INT64_C(253402300799999999)
-
 static enum mo_input_result make(struct mo_host *host, struct mo_heap *heap, uint32_t type,
                                  const struct mo_input_request *request,
                                  struct mo_input_limits *remaining, struct mo_cell *out) {
@@ -201,11 +198,11 @@ static enum mo_input_result make(struct mo_host *host, struct mo_heap *heap, uin
         break;
     case MO_CAP_CLOCK:
         number = request->kind == MO_INPUT_RANDOM
-                     ? INSTANT_FIRST +
-                           (int64_t)(request->seed % (uint64_t)(INSTANT_LAST + 1 - INSTANT_FIRST))
+                     ? MO_TIME_MIN_US + (int64_t)(request->seed %
+                                                  (uint64_t)(MO_TIME_MAX_US + 1 - MO_TIME_MIN_US))
                  : request->boundary == 0 ? 0
-                 : request->boundary == 1 ? INSTANT_FIRST
-                                          : INSTANT_LAST;
+                 : request->boundary == 1 ? MO_TIME_MIN_US
+                                          : MO_TIME_MAX_US;
         break;
     case MO_CAP_RANDOM:
         number = request->kind == MO_INPUT_RANDOM ? (int64_t)request->seed

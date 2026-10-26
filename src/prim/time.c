@@ -2,7 +2,7 @@
 
 /* Inclusive UTC microseconds of years 1 through 9999, as in the cell and model. */
 static MO_MUST_USE bool in_time(mo_i128 t) {
-    return t >= INT64_C(-62135596800000000) && t <= INT64_C(253402300799999999);
+    return t >= MO_TIME_MIN_US && t <= MO_TIME_MAX_US;
 }
 
 static MO_MUST_USE bool digits(const uint8_t *s, size_t start, unsigned count, int64_t *out) {

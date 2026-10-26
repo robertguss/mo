@@ -70,8 +70,8 @@ enum mo_input_result mo_input_immediate_build(struct mo_input_builder *builder,
     bool random = request->mode == MO_INPUT_PRNG;
     uint32_t index = request->mode == MO_INPUT_SAMPLE ? request->boundary : 0;
     const int64_t ints[] = {0, 1, -1, INT64_MIN, INT64_MAX};
-    const int64_t times[] = {0, INT64_C(-62135596800000000), INT64_C(-62104060800000001),
-                             INT64_C(253370764800000000), INT64_C(253402300799999999)};
+    const int64_t times[] = {0, MO_TIME_MIN_US, INT64_C(-62104060800000001),
+                             INT64_C(253370764800000000), MO_TIME_MAX_US};
     const uint64_t floats[] = {0,
                                UINT64_C(0x3ff0000000000000),
                                UINT64_C(0xbff0000000000000),
