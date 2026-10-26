@@ -305,6 +305,31 @@ static MO_MUST_USE bool sections(struct writer *w) {
             WRITE(word(w, d->lines[j].text));
         }
     }
+    if (f->service_count != 0) {
+        WRITE(count(w, f->service_count, MO_LIMIT_SERVICES, f->services));
+        for (uint32_t i = 0; i < f->service_count; i++) {
+            const struct mo_bytecode_service *s = &f->services[i];
+            WRITE(word(w, s->module));
+            WRITE(word(w, s->state_type));
+            WRITE(word(w, s->start));
+            WRITE(word(w, s->token_env));
+            WRITE(count(w, s->tool_count, MO_LIMIT_SERVICE_HANDLERS, s->tools));
+            for (uint32_t j = 0; j < s->tool_count; j++) {
+                const struct mo_bytecode_service_tool *t = &s->tools[j];
+                WRITE(word(w, t->name));
+                WRITE(word(w, t->function));
+                WRITE(word(w, t->read_only ? 1U : 0U));
+                WRITE(indices(w, t->argument_types, t->argument_count,
+                              MO_LIMIT_BYTECODE_PARAMETERS - 2));
+                WRITE(word(w, t->result_type));
+            }
+            WRITE(count(w, s->timer_count, MO_LIMIT_SERVICE_HANDLERS, s->timers));
+            for (uint32_t j = 0; j < s->timer_count; j++) {
+                WRITE(word(w, s->timers[j].function));
+                WRITE(word(w, s->timers[j].interval));
+            }
+        }
+    }
     return true;
 }
 
@@ -314,8 +339,8 @@ bool mo_bytecode_encode(const struct mo_bytecode *file, struct mo_buffer *out,
     struct writer w = {.file = file, .out = out, .reason = "bytecode/output limit or no memory"};
     size_t name_bytes = file->string_count <= MO_LIMIT_STRINGS ? (size_t)file->string_count * 4 : 0;
     mo_arena_init(&w.scratch, mo_bytecode_work_budget(MO_BYTECODE_HEADER_SIZE + name_bytes));
-    const uint8_t header[MO_BYTECODE_HEADER_SIZE] = {'M', 'O', 'B', 'C', 0, 0, MO_BYTECODE_MINOR,
-                                                     0};
+    uint8_t header[MO_BYTECODE_HEADER_SIZE] = {'M', 'O', 'B', 'C', 0, 0, MO_BYTECODE_MINOR, 0};
+    header[8] = file->service_count != 0 ? MO_BYTECODE_SERVICE_FLAG : 0;
     bool encoded = raw(&w, header, sizeof header) && sections(&w);
     mo_arena_free(&w.scratch);
     if (!encoded) {

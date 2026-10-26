@@ -227,9 +227,76 @@ static void entry(struct lowering *p, struct instance *main) {
     }
 }
 
+static uint32_t service_value(struct lowering *p, uint32_t module, const char *suffix,
+                              uint32_t index, const struct mo_source_type *type,
+                              const struct mo_checked_body *body) {
+    struct instance *f = LOWER_NEW(p, struct instance, 1);
+    f->owner = module;
+    f->index = p->function_count++;
+    *p->function_tail = f;
+    p->function_tail = &f->next;
+    f->fun.module = lower_text(p, p->program->set->names[module]);
+    f->fun.name = lower_concat(p, f->fun.module, suffix, lower_number(p, index));
+    f->fun.const_count.digits = lower_number(p, p->program->constant_count);
+    f->fun.ret = lower_type(p, type, NULL);
+    f->meta.name = f->fun.name;
+    f->meta.span = lower_span(p, p->span);
+    lower_body(p, f, body, 0, NULL);
+    return f->index;
+}
+
+static uint32_t service_handler(struct lowering *p, uint32_t index) {
+    const struct mo_symbol *symbol = p->program->functions[index].signature->function;
+    return lower_instance(p, symbol, (struct mo_type_arguments){0}, NULL, 0, NULL, symbol->module,
+                          0)
+        ->index;
+}
+
+static struct mo_services services(struct lowering *p) {
+    uint32_t count = p->program->service_count;
+    struct mo_service *items = LOWER_NEW(p, struct mo_service, count);
+    for (uint32_t i = 0; i < count; i++) {
+        const struct mo_checked_service *source = &p->program->services[i];
+        struct mo_service *s = &items[i];
+        p->span = source->syntax->span;
+        s->start = service_value(p, source->module, ".%service.start.", 0, source->state,
+                                 &source->initializer);
+        struct mo_core_ty text_type = {.tag = MO_CORE_TY_TEXT};
+        mo_core_expr token = lower_literal(p, source->token_source, &text_type, false);
+        s->token_env = token->as.lit->as.text.bytes;
+        s->tool_count = source->tool_count;
+        struct mo_service_tool *tools = LOWER_NEW(p, struct mo_service_tool, s->tool_count);
+        s->tools = tools;
+        for (uint32_t j = 0; j < s->tool_count; j++) {
+            const struct mo_checked_service_tool *tool = &source->tools[j];
+            tools[j] = (struct mo_service_tool){
+                .name = lower_copy(p, (const char *)tool->name->text,
+                                   tool->name->span.end - tool->name->span.start)
+                            .bytes,
+                .function = service_handler(p, tool->function),
+                .read_only = tool->reply == MO_SERVICE_READ_ONLY};
+        }
+        s->timer_count = source->timer_count;
+        struct mo_service_timer *timers = LOWER_NEW(p, struct mo_service_timer, s->timer_count);
+        s->timers = timers;
+        static const struct mo_source_type duration = {
+            .kind = MO_SOURCE_NAMED, .name = "Duration", .module = UINT32_MAX};
+        for (uint32_t j = 0; j < s->timer_count; j++) {
+            const struct mo_checked_service_timer *timer = &source->timers[j];
+            p->span = timer->syntax->span;
+            timers[j] = (struct mo_service_timer){
+                .function = service_handler(p, timer->function),
+                .interval = service_value(p, source->module, ".%service.interval.", j, &duration,
+                                          &timer->interval)};
+        }
+    }
+    return (struct mo_services){count, items};
+}
+
 static struct mo_core *lower(struct mo_arena *arena, const struct mo_program *program,
                              const struct mo_sources *sources, struct mo_diags *diags,
-                             struct mo_lowered_promises *promises) {
+                             struct mo_lowered_promises *promises,
+                             struct mo_services *service_output) {
     MO_ASSERT(arena != NULL && program != NULL && sources != NULL && diags != NULL);
     struct lowering *p = mo_arena_allocate(arena, sizeof *p, _Alignof(struct lowering));
     if (p == NULL) {
@@ -277,6 +344,7 @@ static struct mo_core *lower(struct mo_arena *arena, const struct mo_program *pr
             lower_function(p, f);
     lower_constants(p);
     lower_specs(p);
+    struct mo_services service_data = services(p);
     entry(p, main);
     for (;;) {
         lower_derived_functions(p);
@@ -337,17 +405,28 @@ static struct mo_core *lower(struct mo_arena *arena, const struct mo_program *pr
             }
         }
     }
+    if (service_output != NULL)
+        *service_output = service_data;
     return result;
 }
 
 struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *program,
                          const struct mo_sources *sources, struct mo_diags *diags) {
-    return lower(arena, program, sources, diags, NULL);
+    return lower(arena, program, sources, diags, NULL, NULL);
 }
 
 struct mo_core *mo_lower_for_tests(struct mo_arena *arena, const struct mo_program *program,
                                    const struct mo_sources *sources, struct mo_diags *diags,
                                    struct mo_lowered_promises *promises) {
     MO_ASSERT(promises != NULL);
-    return lower(arena, program, sources, diags, promises);
+    return lower(arena, program, sources, diags, promises, NULL);
+}
+
+struct mo_core *mo_lower_services(struct mo_arena *arena, const struct mo_program *program,
+                                  const struct mo_sources *sources, struct mo_diags *diags,
+                                  struct mo_lowered_promises *promises,
+                                  struct mo_services *service_output) {
+    MO_ASSERT(service_output != NULL);
+    *service_output = (struct mo_services){0};
+    return lower(arena, program, sources, diags, promises, service_output);
 }

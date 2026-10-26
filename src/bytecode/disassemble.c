@@ -430,6 +430,40 @@ static MO_MUST_USE bool debug(struct printer *p, const struct mo_bytecode *file)
     return text(p, "end\n");
 }
 
+static MO_MUST_USE bool services(struct printer *p, const struct mo_bytecode *f) {
+    if (f->service_count == 0)
+        return true;
+    if (!text(p, "services\n"))
+        return false;
+    for (uint32_t i = 0; i < f->service_count; i++) {
+        const struct mo_bytecode_service *s = &f->services[i];
+        if (!number(p, "  S", i) || !number(p, " m", s->module) ||
+            !number(p, " t", s->state_type) || !number(p, " f", s->start) ||
+            !number(p, " s", s->token_env) || !text(p, " tools ["))
+            return false;
+        for (uint32_t j = 0; j < s->tool_count; j++) {
+            const struct mo_bytecode_service_tool *t = &s->tools[j];
+            if ((j != 0 && !text(p, ", ")) || !number(p, "(s", t->name) ||
+                !number(p, ", f", t->function) || !text(p, t->read_only ? ", 1, [" : ", 0, ["))
+                return false;
+            for (uint32_t k = 0; k < t->argument_count; k++)
+                if ((k != 0 && !text(p, ", ")) || !number(p, "t", t->argument_types[k]))
+                    return false;
+            if (!number(p, "], t", t->result_type) || !text(p, ")"))
+                return false;
+        }
+        if (!text(p, "] timers ["))
+            return false;
+        for (uint32_t j = 0; j < s->timer_count; j++)
+            if ((j != 0 && !text(p, ", ")) || !number(p, "(f", s->timers[j].function) ||
+                !number(p, ", f", s->timers[j].interval) || !text(p, ")"))
+                return false;
+        if (!text(p, "]\n"))
+            return false;
+    }
+    return text(p, "end\n");
+}
+
 static MO_MUST_USE bool print(struct printer *p, const struct mo_bytecode *f) {
     if (!text(p, "bytecode 0.2 indexed\nstrings\n"))
         return false;
@@ -459,7 +493,7 @@ static MO_MUST_USE bool print(struct printer *p, const struct mo_bytecode *f) {
             !hexadecimal(p, f->files[i].bytes, f->files[i].length) || !text(p, "\n"))
             return false;
     }
-    return text(p, "end\n") && debug(p, f);
+    return text(p, "end\n") && debug(p, f) && services(p, f);
 }
 
 bool mo_bytecode_disassemble(const uint8_t *bytes, size_t length, struct mo_buffer *out,

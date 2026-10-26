@@ -40,7 +40,8 @@ reader, the input and the tables it returns. Each specification is used twice:
 So each proof covers one function, with its callees trusted only as far as their own proofs
 show. `read.c` is included, not linked, so its static functions can be proved one by one. Its
 loops over entries call one function per entry (`type_entry`, `choice_cases`, `parameters`,
-`layout_entry`, `module_entry`, `file_entry`, `debug_entry`), which keeps every proof small.
+`layout_entry`, `module_entry`, `file_entry`, `debug_entry`, `service_entry`), which keeps every
+proof small.
 
 | Proof | Checks | Replaces |
 | --- | --- | --- |
@@ -53,6 +54,7 @@ loops over entries call one function per entry (`type_entry`, `choice_cases`, `p
 | `type_entry`, `types` | one type of each kind, then the types table | the helpers above |
 | `constants`, `parameters`, `functions` | each constant and function, and their tables | the helpers above |
 | `layout_entry`, `module_entry`, `file_entry`, `debug_entry` | one layout, module, filename or debug record | `word`, `array`, `boolean`, `indices`, `blob` |
+| `service_entry` | one descriptor, including its tool and timer tables | `word`, `array`, `boolean`, `indices` |
 | `sections` | every section in order, the reader's objects unchanged | every function above |
 | `decode` | `mo_bytecode_decode_info`: header, checksum, trailing bytes, types' references | `allocate`, `sections` |
 
@@ -64,7 +66,8 @@ A proof can also hold because part of its function never runs: an input too smal
 body, or an assumption that rules out the paths that matter. Two checks catch that:
 
 - **Input sizes.** Each proof runs on inputs large enough for each of its loops to run once:
-  `functions` needs 40 bytes (a function entry takes 36), `debug_entry` 52 and `sections` 64.
+  `functions` needs 40 bytes (a function entry takes 36), `debug_entry` 52, `service_entry` 56
+  and `sections` 64.
   `prove.sh` refuses a proof whose input leaves a loop bound below 2.
 - **Reach.** `bash cbmc/prove.sh --reach` runs CBMC's location coverage on each proof and fails
   unless every block of the proved function runs on some input, and so does the end of its

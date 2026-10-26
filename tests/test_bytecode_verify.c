@@ -2433,6 +2433,20 @@ static void failure_kinds(void) {
     mo_buffer_free(&wire);
 }
 
+static void service_refusal(void) {
+    struct fixture t;
+    init(&t);
+    const struct mo_bytecode_service service = {.start = 99};
+    t.file.service_count = 1;
+    t.file.services = &service;
+    struct mo_buffer wire;
+    struct mo_write_error error;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    CHECK(!mo_bytecode_write(&t.file, &wire, &error));
+    CHECK(wire.length == 0);
+    mo_buffer_free(&wire);
+}
+
 int main(int argc, char **argv) {
     MO_ASSERT(argc == 1 || (argc == 3 && strcmp(argv[1], "--corpus") == 0));
     if (argc == 3) {
@@ -2459,5 +2473,6 @@ int main(int argc, char **argv) {
     work_bound();
     hostile_work();
     failure_kinds();
+    service_refusal();
     return mo_test_report("bytecode verifier");
 }

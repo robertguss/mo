@@ -187,6 +187,7 @@ struct mo_parameter {
 #define MO_BYTECODE_MAGIC "MOBC"
 enum { MO_BYTECODE_MAJOR = 0, MO_BYTECODE_MINOR = 2, MO_BYTECODE_HEADER_SIZE = 20 };
 #define MO_BYTECODE_FLAGS UINT32_C(0)
+#define MO_BYTECODE_SERVICE_FLAG UINT32_C(1)
 #define MO_BYTECODE_FNV_OFFSET UINT64_C(14695981039346656037)
 #define MO_BYTECODE_FNV_PRIME UINT64_C(1099511628211)
 
@@ -209,7 +210,8 @@ enum mo_bytecode_section {
     MO_SECTION_MODULES = 7,
     MO_SECTION_FILES = 8,
     MO_SECTION_DEBUG = 9,
-    MO_SECTION_COUNT = 10,
+    MO_SECTION_SERVICES = 10,
+    MO_SECTION_COUNT = 11,
 };
 
 /* Section 3 uses u32 for every count, index, enum and boolean after
@@ -341,6 +343,33 @@ struct mo_bytecode_module {
     const uint32_t *globals;
 };
 
+struct mo_bytecode_service_tool {
+    uint32_t name;
+    uint32_t function;
+    bool read_only;
+    uint32_t argument_count;
+    const uint32_t *argument_types; /* excludes State and Time */
+    uint32_t result_type;           /* complete handler result, including update/error wrappers */
+};
+
+struct mo_bytecode_service_timer {
+    uint32_t function;
+    uint32_t interval; /* () : Duration, evaluated by the future runtime at startup */
+};
+
+/* Optional trailing section, present exactly when SERVICE_FLAG is set. Each
+ * module has at most one service. Nothing in the loader or VM starts it. */
+struct mo_bytecode_service {
+    uint32_t module;
+    uint32_t state_type;
+    uint32_t start;
+    uint32_t token_env; /* string index naming a variable, never its secret value */
+    uint32_t tool_count;
+    const struct mo_bytecode_service_tool *tools;
+    uint32_t timer_count;
+    const struct mo_bytecode_service_timer *timers;
+};
+
 /* File indexes the filename-byte table, not ordinary UTF-8 strings. Spans use
  * half-open byte ranges, like base/diag.h. Entries are in strictly increasing code-offset order,
  * at instruction boundaries; a span applies until the next entry or the code's end.
@@ -424,6 +453,8 @@ struct mo_bytecode {
                                             * length then bytes on disk, copied into the image */
     uint32_t debug_count;
     const struct mo_bytecode_debug *debug;
+    uint32_t service_count;
+    const struct mo_bytecode_service *services;
 };
 
 struct mo_image;

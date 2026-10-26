@@ -260,15 +260,36 @@ static MO_MUST_USE bool debug(struct mo_text_reader *r) {
            list(r, MO_LIMIT_DEBUG_ENTRIES, condition);
 }
 
+static MO_MUST_USE bool service_tool(struct mo_text_reader *r) {
+    return punctuation(r, "(") && reference(r, 's', false) && punctuation(r, ",") &&
+           function_index(r) && punctuation(r, ",") && boolean(r) && punctuation(r, ",") &&
+           list(r, MO_LIMIT_BYTECODE_PARAMETERS - 2, type_index) && punctuation(r, ",") &&
+           type_index(r) && punctuation(r, ")");
+}
+
+static MO_MUST_USE bool service_timer(struct mo_text_reader *r) {
+    return punctuation(r, "(") && function_index(r) && punctuation(r, ",") && function_index(r) &&
+           punctuation(r, ")");
+}
+
+static MO_MUST_USE bool service(struct mo_text_reader *r) {
+    return reference(r, 'm', false) && type_index(r) && function_index(r) &&
+           reference(r, 's', false) && mo_text_take(r, "tools", "expected tools") &&
+           list(r, MO_LIMIT_SERVICE_HANDLERS, service_tool) &&
+           mo_text_take(r, "timers", "expected timers") &&
+           list(r, MO_LIMIT_SERVICE_HANDLERS, service_timer);
+}
+
 bool mo_text_indexed_section(struct mo_text_reader *r, enum mo_bytecode_section section) {
-    static const char *const names[] = {"strings", "types",     "layouts", "constants", "globals",
-                                        "init",    "functions", "modules", "files",     "debug"};
-    static const char prefixes[] = "stLkgifmPd";
+    static const char *const names[] = {"strings", "types", "layouts",   "constants",
+                                        "globals", "init",  "functions", "modules",
+                                        "files",   "debug", "services"};
+    static const char prefixes[] = "stLkgifmPdS";
     static const char *const expected[] = {
         "expected strings section",   "expected types section",   "expected layouts section",
         "expected constants section", "expected globals section", "expected init section",
         "expected functions section", "expected modules section", "expected files section",
-        "expected debug section"};
+        "expected debug section",     "expected services section"};
     r->tables[section].source = r->token.start;
     if (!mo_text_take(r, names[section], expected[section]) || !mo_text_end_line(r))
         return false;
@@ -321,6 +342,9 @@ bool mo_text_indexed_section(struct mo_text_reader *r, enum mo_bytecode_section 
         }
         case MO_SECTION_DEBUG:
             ok = debug(r);
+            break;
+        case MO_SECTION_SERVICES:
+            ok = service(r);
             break;
         case MO_SECTION_COUNT:
             MO_UNREACHABLE();

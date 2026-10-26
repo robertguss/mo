@@ -318,6 +318,30 @@ Robert's PR #231 review records these later improvements:
 These are design follow-ups, not claims about the current implementation. They add no service
 runtime or deployment work to MO-155.
 
+### MO-156 descriptor and lowering
+
+Service declarations compile to the optional bytecode descriptor in
+`bytecode.md` section 3.6. Lowering carries `base/service.h` metadata alongside
+Core: the start function, selected concrete tool and timer functions, tool
+names and read-only flags, interval functions, and token variable name.
+Codegen derives schema type indices from the compiled handler signatures.
+The descriptor stores the complete result type; a later schema generator can
+remove the state/reply and Result wrappers according to D313.
+
+Mo Core and Lean need no new forms. The initializer and each interval are
+ordinary zero-argument functions, using existing expressions, calls and
+duration primitives. They are not global initializers. Core checks and text
+round-trips these functions; Lean can evaluate their bodies without knowing
+about service metadata. The Core wire format, evaluator, and VM instruction
+set are unchanged. Core text alone does not carry service registration; the
+source-to-bytecode compiler carries that separate metadata.
+
+Intervals remain functions rather than a second compile-time duration
+evaluator. This preserves checked arithmetic, including overflow, and keeps
+the source-order timer table separate from function-table order. A future
+runtime must validate the computed interval before scheduling it. MO-156 adds
+no runtime, environment reads, mailbox, persistence or network listener.
+
 ## 10. Done means
 
 Mo's own agents take every task from the job queue for one week with no restart, and a deliberate

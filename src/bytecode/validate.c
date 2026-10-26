@@ -665,6 +665,147 @@ static MO_MUST_USE bool code_debug(struct validation *v, uint32_t index) {
     return true;
 }
 
+static MO_MUST_USE bool service_type(struct validation *v, uint32_t root, bool *seen,
+                                     uint32_t *queue) {
+    uint32_t count = 0;
+    if (!seen[root]) {
+        seen[root] = true;
+        queue[count++] = root;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        const struct mo_type *t = &v->file->types[queue[i]];
+        if (t->kind == MO_TYPE_FUNCTION || t->kind == MO_TYPE_CAPABILITY || t->kind == MO_TYPE_ENV)
+            return refuse(v, "service type contains a capability or function");
+        for (uint32_t j = 0; j < t->parameter_count + t->field_count; j++) {
+            uint32_t child =
+                j < t->parameter_count ? t->parameters[j] : t->fields[j - t->parameter_count].type;
+            if (!seen[child]) {
+                seen[child] = true;
+                queue[count++] = child;
+            }
+        }
+        for (uint32_t j = 0; j < t->case_count; j++)
+            for (uint32_t k = 0; k < t->cases[j].field_count; k++) {
+                uint32_t child = t->cases[j].fields[k].type;
+                if (!seen[child]) {
+                    seen[child] = true;
+                    queue[count++] = child;
+                }
+            }
+    }
+    return true;
+}
+
+static MO_MUST_USE bool service_function(const struct mo_bytecode *f, uint32_t module,
+                                         uint32_t index) {
+    return index < f->function_count && f->functions[index].module == module &&
+           f->functions[index].kind == MO_FUNCTION_FUNCTION && !f->functions[index].spec_code;
+}
+
+static MO_MUST_USE bool update_pair(const struct mo_bytecode *f, uint32_t type, uint32_t state) {
+    const struct mo_type *t = &f->types[type];
+    return t->kind == MO_TYPE_TUPLE && t->parameter_count == 2 && t->parameters[0] == state;
+}
+
+static MO_MUST_USE bool services(struct validation *v) {
+    const struct mo_bytecode *f = v->file;
+    if (f->service_count == 0)
+        return true;
+    uint32_t maximum = 0;
+    for (uint32_t i = 0; i < f->service_count; i++) {
+        uint32_t count = f->services[i].tool_count + f->services[i].timer_count;
+        if (count > maximum)
+            maximum = count;
+    }
+    bool *seen = allocate(v, f->type_count, sizeof *seen, _Alignof(bool));
+    bool *tokens_seen = allocate(v, f->string_count, sizeof *tokens_seen, _Alignof(bool));
+    uint32_t *queue = allocate(v, f->type_count, sizeof *queue, _Alignof(uint32_t));
+    uint32_t *modules_seen =
+        allocate(v, f->service_count, sizeof *modules_seen, _Alignof(uint32_t));
+    uint32_t *handlers = allocate(v, maximum, sizeof *handlers, _Alignof(uint32_t));
+    uint32_t *names = allocate(v, maximum, sizeof *names, _Alignof(uint32_t));
+    if (seen == NULL || tokens_seen == NULL || queue == NULL || modules_seen == NULL ||
+        handlers == NULL || names == NULL)
+        return false;
+    memset(seen, 0, f->type_count * sizeof *seen);
+    memset(tokens_seen, 0, f->string_count * sizeof *tokens_seen);
+    for (uint32_t i = 0; i < f->service_count; i++) {
+        v->current = (struct mo_bytecode_error_site){MO_SECTION_SERVICES, i};
+        const struct mo_bytecode_service *s = &f->services[i];
+        if (s->module >= f->module_count || s->state_type >= f->type_count ||
+            !service_function(f, s->module, s->start) ||
+            f->functions[s->start].parameter_count != 0 ||
+            f->functions[s->start].result_type != s->state_type)
+            return refuse(v, "invalid service start function or state type");
+        modules_seen[i] = s->module;
+        if (!named(v, s->token_env))
+            return refuse(v, "invalid service token environment name");
+        uint32_t token = v->info->names->canonical[s->token_env];
+        if (!tokens_seen[token]) {
+            const struct mo_bytecode_string *env = &f->strings[token];
+            for (uint32_t j = 0; j < env->length; j++) {
+                uint8_t c = env->bytes[j];
+                if (!(c == '_' || (c >= 'A' && c <= 'Z') || (j != 0 && c >= '0' && c <= '9')))
+                    return refuse(v, "invalid service token environment name");
+            }
+            tokens_seen[token] = true;
+        }
+        if (s->tool_count == 0 || s->timer_count > MO_LIMIT_SERVICE_HANDLERS - s->tool_count)
+            return refuse(v, "invalid service handler count");
+        if (!service_type(v, s->state_type, seen, queue))
+            return false;
+        for (uint32_t j = 0; j < s->tool_count + s->timer_count; j++) {
+            bool tool = j < s->tool_count;
+            uint32_t index = tool ? s->tools[j].function : s->timers[j - s->tool_count].function;
+            if (!service_function(f, s->module, index))
+                return refuse(v, "invalid service handler function");
+            handlers[j] = index;
+            const struct mo_bytecode_function *fn = &f->functions[index];
+            if (fn->parameter_count < 2 || fn->parameters[0].type != s->state_type ||
+                f->types[fn->parameters[1].type].kind != MO_TYPE_TIME)
+                return refuse(v, "invalid service handler parameters");
+            for (uint32_t k = 0; k < fn->parameter_count; k++)
+                if (!service_type(v, fn->parameters[k].type, seen, queue))
+                    return false;
+            if (!service_type(v, fn->result_type, seen, queue))
+                return false;
+            if (!tool) {
+                uint32_t interval = s->timers[j - s->tool_count].interval;
+                if (fn->parameter_count != 2 || fn->result_type != s->state_type ||
+                    !service_function(f, s->module, interval) ||
+                    f->functions[interval].parameter_count != 0 ||
+                    f->types[f->functions[interval].result_type].kind != MO_TYPE_DURATION)
+                    return refuse(v, "invalid service timer signature");
+                continue;
+            }
+            const struct mo_bytecode_service_tool *t = &s->tools[j];
+            if (!named(v, t->name) || t->argument_count != fn->parameter_count - 2 ||
+                t->result_type != fn->result_type)
+                return refuse(v, "service tool schema differs from handler");
+            names[j] = v->info->names->canonical[t->name];
+            for (uint32_t k = 0; k < t->argument_count; k++)
+                if (t->argument_types[k] != fn->parameters[k + 2].type)
+                    return refuse(v, "service tool schema differs from handler");
+            const struct mo_type *result = &f->types[t->result_type];
+            uint32_t success = MO_BYTECODE_NO_INDEX;
+            if (result->kind == MO_TYPE_CHOICE && strncmp(result->name, "Result(", 7) == 0 &&
+                result->case_count == 2 && strcmp(result->cases[0].name, "Ok") == 0 &&
+                strcmp(result->cases[1].name, "Error") == 0 && result->cases[0].unnamed &&
+                result->cases[1].unnamed)
+                success = result->cases[0].fields[0].type;
+            bool update =
+                update_pair(f, t->result_type, s->state_type) ||
+                (success != MO_BYTECODE_NO_INDEX && update_pair(f, success, s->state_type));
+            if (t->result_type == s->state_type || success == s->state_type ||
+                t->read_only == update)
+                return refuse(v, "invalid service tool result classification");
+        }
+        if (!unique(handlers, s->tool_count + s->timer_count) || !unique(names, s->tool_count))
+            return refuse(v, "duplicate service handler or tool name");
+    }
+    return unique(modules_seen, f->service_count) || refuse(v, "duplicate service module");
+}
+
 static MO_MUST_USE bool validate(struct validation *v) {
     const struct mo_bytecode *f = v->file;
     if (!functions(v) || !modules(v)) {
@@ -674,6 +815,9 @@ static MO_MUST_USE bool validate(struct validation *v) {
     if (!type_table(v) || !layouts(v) || !constants(v)) {
         return false;
     }
+    mo_arena_free(&v->arena);
+    if (!services(v))
+        return false;
     mo_arena_free(&v->arena);
     for (uint32_t i = 0; i < f->function_count; i++) {
         bool ok = code_debug(v, i);
