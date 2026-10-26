@@ -154,7 +154,7 @@ static enum mo_host_outcome mo_host_misc(struct mo_host *host, struct mo_heap *h
     }
     MO_ASSERT(now.tv_nsec >= 0 && now.tv_nsec < 1000000000);
     mo_i128 microseconds = (mo_i128)now.tv_sec * 1000000 + now.tv_nsec / 1000;
-    if (microseconds < INT64_C(-62135596800000000) || microseconds > INT64_C(253402300799999999))
+    if (microseconds < MO_TIME_MIN_US || microseconds > MO_TIME_MAX_US)
         return mo_host_bug(error, "time outside the years 1 to 9999");
     *out = mo_cell_time((int64_t)microseconds);
     return MO_HOST_RETURNED;
@@ -247,8 +247,7 @@ enum mo_host_outcome mo_host_fake_restore(struct mo_host *host, struct mo_heap *
         return ok ? MO_HOST_RETURNED : MO_HOST_OUT_OF_MEMORY;
     }
     case MO_CAP_CLOCK: {
-        MO_ASSERT(initial->as.time >= INT64_C(-62135596800000000) &&
-                  initial->as.time <= INT64_C(253402300799999999));
+        MO_ASSERT(initial->as.time >= MO_TIME_MIN_US && initial->as.time <= MO_TIME_MAX_US);
         struct mo_cell time = mo_cell_time(initial->as.time);
         return mo_host_state_cap(host, heap, type, true, &host->types->time, &time, 1, out);
     }

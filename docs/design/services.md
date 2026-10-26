@@ -249,7 +249,7 @@ These decisions define the Phase 3 build plan.
    snapshot and log. After 3 restarts within 10 minutes it stops until a person starts it.
    Every failure, restart and stop is logged with its reason.
 
-### MO-155 diagnostics and fixes, for Robert
+### MO-155 diagnostics and fixes
 
 [D312](https://app.notion.com/p/404700320c45814188abd07e6534971a) records the approved
 rules from the [approval conversation](https://ampcode.com/threads/T-01a1705d-1274-74f9-8fcf-0bf58e6f89b8).
@@ -257,9 +257,6 @@ rules from the [approval conversation](https://ampcode.com/threads/T-01a1705d-12
 from the latest approval relayed into the
 [execution conversation](https://ampcode.com/threads/T-01a16ff1-e184-7194-808d-d6d0112ba4a4).
 Both records paraphrase the approval rather than quote Robert's words.
-All final diagnostic codes, diagnostic wording and reference wording still go under
-"For Robert" in [PR #231](https://github.com/robertguss/mo/pull/231) before merge.
-MO-155 remains In review. Final approval is still required before merge.
 
 For a bare-State tool eligible for fixes, E0101 uses these strings:
 
