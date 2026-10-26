@@ -3,6 +3,7 @@
 
 #include <string.h>
 
+#include "base/utf8.h"
 #include "heap/types.h"
 
 struct reader {
@@ -100,43 +101,7 @@ static MO_MUST_USE const uint32_t *indices(struct reader *r, uint32_t *n, uint32
 }
 
 bool mo_bytecode_utf8(const uint8_t *bytes, uint32_t length) {
-    for (uint32_t i = 0; i < length;) {
-        uint32_t scalar = bytes[i++];
-        unsigned n = 0;
-        uint32_t minimum = 0;
-        if (scalar < 0x80) {
-            continue;
-        }
-        if (scalar >= 0xc2 && scalar <= 0xdf) {
-            n = 1;
-            minimum = 0x80;
-            scalar &= 0x1f;
-        } else if (scalar >= 0xe0 && scalar <= 0xef) {
-            n = 2;
-            minimum = 0x800;
-            scalar &= 0x0f;
-        } else if (scalar >= 0xf0 && scalar <= 0xf4) {
-            n = 3;
-            minimum = 0x10000;
-            scalar &= 0x07;
-        } else {
-            return false;
-        }
-        if (n > length - i) {
-            return false;
-        }
-        for (unsigned j = 0; j < n; j++) {
-            uint32_t b = bytes[i++];
-            if ((b & 0xc0) != 0x80) {
-                return false;
-            }
-            scalar = (scalar << 6) | (b & 0x3f);
-        }
-        if (scalar < minimum || scalar >= 0x110000 || (scalar >= 0xd800 && scalar <= 0xdfff)) {
-            return false;
-        }
-    }
-    return true;
+    return mo_utf8_valid(bytes, length);
 }
 
 static MO_MUST_USE const uint8_t *blob(struct reader *r, uint32_t *n, bool terminate) {

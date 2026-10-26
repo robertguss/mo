@@ -14,7 +14,9 @@
  * conversion, never fails an MO_ASSERT, and refuses with an error inside the input.
  * cbmc/README.md says what the proofs assume.
  *
- * read.c is included rather than linked, so that its static functions can be called here. */
+ * read.c is included rather than linked, so that its static functions can be called here.
+ * utf8.c is included so the reader's UTF-8 check is the shared decoder. */
+#include "base/utf8.c"
 #include "bytecode/read.c"
 
 #include <stdlib.h>

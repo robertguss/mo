@@ -39,7 +39,7 @@ proofs=(
 	"scratch|||"
 	"array|word allocate||"
 	"indices|array word|indices.0:/4|"
-	"utf8||mo_bytecode_utf8.0:4,mo_bytecode_utf8.1:+|"
+	"utf8||mo_utf8_valid.0:+,mo_utf8_decode.0:4|"
 	"blob|word allocate mo_bytecode_utf8:model_utf8||"
 	"name|word||"
 	"fields|array name word|fields.0:/8|"
