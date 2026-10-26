@@ -324,6 +324,20 @@ struct mo_limits {
 #define MO_LIMIT_SERVICE_RESTARTS 3
 #define MO_LIMIT_SERVICE_RESTART_WINDOW_US UINT64_C(600000000)
 
+/* Durable records and bounded value/schema walks, independent of native layout. */
+#define MO_LIMIT_SAVED_BYTES (16 << 20)
+#define MO_LIMIT_SAVED_DEPTH 128
+#define MO_LIMIT_SAVED_NODES (1 << 20)
+#define MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES 100
+/* Open stores per process. Their SQLite memory shares one budget sized for each
+ * disk store's worst operation, one record plus a bounded page cache. */
+#define MO_LIMIT_STORES 8
+#define MO_LIMIT_STORE_CACHE_KIB 256
+#define MO_LIMIT_STORE_MEMORY (MO_LIMIT_STORES * (24 << 20))
+#define MO_LIMIT_STORE_SQL 4096
+/* One SQLite row: a framed payload plus SQLite's record header. */
+#define MO_LIMIT_STORE_ROW (MO_LIMIT_SAVED_BYTES + 4096)
+
 static inline struct mo_limits mo_limits_default(void) {
     return (struct mo_limits){
         .stack_size = MO_DEFAULT_STACK_SIZE,

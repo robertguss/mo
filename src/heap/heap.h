@@ -160,6 +160,15 @@ MO_MUST_USE bool mo_value_compare(struct mo_heap *process, uint32_t type, struct
  * must use a fixed fallback rather than stop when printing runs out of room. */
 MO_MUST_USE bool mo_value_print(struct mo_heap *process, uint32_t type, struct mo_cell value,
                                 struct mo_buffer *out);
+/* Stable saved-value format in docs/design/saved-state.md. Encode borrows a
+ * valid typed value. Decode treats every byte as untrusted, including its
+ * schema, and publishes one owned value only after consuming the entire input.
+ * Refusal preserves out and releases all temporary values. Neither format
+ * contains native pointers, layouts, capabilities or function values. */
+MO_MUST_USE bool mo_value_encode(struct mo_heap *process, uint32_t type, struct mo_cell value,
+                                 struct mo_buffer *out);
+MO_MUST_USE bool mo_value_decode(struct mo_heap *process, uint32_t type, const uint8_t *bytes,
+                                 size_t length, struct mo_cell *out);
 /* Lookup borrows its result; found=false leaves out unchanged. Operations
  * return false on limits or allocation failure, leaving every input unchanged.
  * Iteration's position is an entry cursor, not a live-element index. */

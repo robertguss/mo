@@ -11,6 +11,13 @@ instruction routes are checked too. The explicit lowering recipes and the
 two existing unmodeled quoted-text helpers are listed in
 `formal/TRANSLATION.md`; a new primitive without a Core route fails the check.
 
+The runtime-owned store operations in the `STOREOP` section of `hostops.def`
+are not library functions. `LOAD` reads a snapshot and consecutive messages,
+`APPEND` commits the next message, and `SNAPSHOT` replaces state and prunes the
+covered log. `host/store.c` implements all three for disk and in-memory SQLite.
+No handler receives the store capability, and no checker signature, Core form
+or bytecode operation exposes it. See [saved state](saved-state.md).
+
 ## The rule
 
 The library is written in Mo wherever it can be (condition 4 of D207). C

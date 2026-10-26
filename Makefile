@@ -30,7 +30,7 @@ FUZZ_BUILD := build/fuzz
 CSTD := -std=c17
 # Headers are included by their path in src/, which starts with their module, such as
 # "base/base.h".
-INCLUDES := -Isrc -Ibuild/generated
+INCLUDES := -Isrc -Ibuild/generated -Ivendor/sqlite
 ifeq ($(shell uname -s),Darwin)
 INCLUDES += -D_DARWIN_C_SOURCE
 endif
@@ -48,13 +48,14 @@ LDLIBS += -lm
 # src/tools/main.c is the mo command's main function, so only mo links it.
 MAIN_SOURCE := src/tools/main.c
 LIB_SOURCES := $(filter-out $(MAIN_SOURCE),$(sort $(wildcard src/*/*.c)))
+LIB_SOURCES += vendor/sqlite/sqlite3.c
 BASE_SOURCES := $(filter src/base/%,$(LIB_SOURCES))
 # build/sources lists the C files of src/, and is rewritten only when one is added or removed:
 # removing a file changes no other prerequisite of the programs that linked it.
 SOURCE_LIST := build/sources
 TEST_SOURCES := $(wildcard tests/test_*.c)
 FUZZ_SOURCES := $(wildcard fuzz/fuzz_*.c)
-C_FILES := $(wildcard src/*/*.c src/*/*.h src/core/*.def tests/*.c tests/*.h fuzz/*.c grammar/*.c grammar/*.h ci/*.c cbmc/*.c)
+C_FILES := $(wildcard src/*/*.c src/*/*.h src/core/*.def tests/*.c tests/*.h fuzz/*.c fuzz/*.h grammar/*.c grammar/*.h ci/*.c cbmc/*.c)
 TIDY_FILES := $(wildcard src/*/*.c tests/*.c fuzz/*.c grammar/*.c ci/*.c)
 
 # The executable grammar (grammar/): Bison builds its parser from grammar/mo.y. The code Bison
@@ -275,6 +276,18 @@ $(FUZZ_BUILD)/%.o: %.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(FUZZ_CC) $(COMMON) $(FUZZ) -c $< -o $@
 
+SQLITE_FLAGS := $(CSTD) -DSQLITE_THREADSAFE=1 -DSQLITE_ZERO_MALLOC \
+	-DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_DQS=0 -MMD -MP
+$(BUILD)/debug/vendor/sqlite/sqlite3.o: vendor/sqlite/sqlite3.c Makefile
+	@mkdir -p $(dir $@)
+	$(CC) $(SQLITE_FLAGS) $(DEBUG) -c $< -o $@
+$(BUILD)/sanitize/vendor/sqlite/sqlite3.o: vendor/sqlite/sqlite3.c Makefile
+	@mkdir -p $(dir $@)
+	$(CC) $(SQLITE_FLAGS) $(SANITIZE) -c $< -o $@
+$(FUZZ_BUILD)/vendor/sqlite/sqlite3.o: vendor/sqlite/sqlite3.c Makefile
+	@mkdir -p $(dir $@)
+	$(FUZZ_CC) $(SQLITE_FLAGS) $(FUZZ) -c $< -o $@
+
 $(SOURCE_LIST): FORCE
 	@mkdir -p $(dir $@)
 	@echo '$(LIB_SOURCES)' | cmp -s - $@ || echo '$(LIB_SOURCES)' >$@
@@ -401,6 +414,23 @@ $(BUILD)/debug/tests/test_service_runtime.test: $(BUILD)/debug/tests/test_servic
 	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
 
 $(BUILD)/sanitize/tests/test_service_runtime.test: $(BUILD)/sanitize/tests/test_service_runtime.o $(call objects,$(BUILD)/sanitize,$(filter-out $(SERVICE_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/service-faults/%.o,$(SERVICE_FAULT_SOURCES))
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/debug/store-faults/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -Dmo_store_call=mo_store_fault_call -c $< -o $@
+$(BUILD)/debug/store-faults/store.o: src/host/store.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -Dsqlite3_step=mo_store_fault_step -c $< -o $@
+$(BUILD)/sanitize/store-faults/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) -Dmo_store_call=mo_store_fault_call -c $< -o $@
+$(BUILD)/sanitize/store-faults/store.o: src/host/store.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) -Dsqlite3_step=mo_store_fault_step -c $< -o $@
+$(BUILD)/debug/tests/test_service_store.test: $(BUILD)/debug/tests/test_service_store.o $(call objects,$(BUILD)/debug,$(filter-out src/vm/service.c src/host/store.c,$(LIB_SOURCES))) $(BUILD)/debug/store-faults/service.o $(BUILD)/debug/store-faults/store.o
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+$(BUILD)/sanitize/tests/test_service_store.test: $(BUILD)/sanitize/tests/test_service_store.o $(call objects,$(BUILD)/sanitize,$(filter-out src/vm/service.c src/host/store.c,$(LIB_SOURCES))) $(BUILD)/sanitize/store-faults/service.o $(BUILD)/sanitize/store-faults/store.o
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
 # Only this test substitutes the resolver's native calls and lowers host read

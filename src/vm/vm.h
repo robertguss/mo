@@ -158,8 +158,12 @@ enum mo_service_status {
     MO_SERVICE_MEMORY,
     MO_SERVICE_WORK,
     MO_SERVICE_DEFECT,
-    MO_SERVICE_INTERVAL
+    MO_SERVICE_INTERVAL,
+    MO_SERVICE_STORE,
+    MO_SERVICE_SAVED_INVALID
 };
+/* Stable descriptions for embedding errors; no saved bytes or secrets appear. */
+MO_MUST_USE const char *mo_service_status_text(enum mo_service_status status);
 enum mo_service_event_kind { MO_SERVICE_FAILURE, MO_SERVICE_RESTART, MO_SERVICE_STOP };
 struct mo_service_event {
     enum mo_service_event_kind kind;
@@ -191,9 +195,20 @@ struct mo_service_hooks {
 MO_MUST_USE enum mo_service_status mo_service_new(const struct mo_image *image, uint32_t index,
                                                   const struct mo_service_hooks *hooks,
                                                   struct mo_service_loop **out);
+/* Durable construction borrows a store that outlives the service. It validates
+ * and replays before publishing out or scheduling startup ticks. The initial
+ * value is evaluated only for an empty store. Store failures stop the service;
+ * callers must recover before submitting more messages. No successful update
+ * reply precedes the durable append. No Mo-facing API is introduced. */
+MO_MUST_USE enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t index,
+                                                   const struct mo_service_hooks *hooks,
+                                                   struct mo_store *store,
+                                                   struct mo_service_loop **out);
 void mo_service_free(struct mo_service_loop *service);
 /* Arguments must be valid typed values from this heap or the image. Submission
- * borrows and retains them only on OK. Callers drop their own references.
+ * retains values only on OK; durable updates copy them through the saved codec
+ * so sharing cannot hide recovery's memory cost. Refusal leaves no queued item.
+ * Callers drop their own references.
  * Heap/state access is idle-only; a state view lasts until the next step/free. */
 MO_MUST_USE struct mo_heap *mo_service_heap(struct mo_service_loop *service);
 MO_MUST_USE struct mo_cell mo_service_state(const struct mo_service_loop *service);

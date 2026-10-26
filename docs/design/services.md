@@ -396,8 +396,14 @@ the last committed in-memory state and queued tools in FIFO order, discards queu
 ticks and schedules fresh startup ticks. Stop refuses later submissions and replies
 to queued tools with the internal down status. It never restarts automatically;
 freeing and constructing a service is the explicit start operation at this stage.
-MO-158 will supply snapshot/log recovery. This loop makes no durability claim and
-does not simulate disk recovery.
+`mo_service_new` retains this in-memory-only behavior. MO-158 adds
+`mo_service_open`, which borrows a host store, restores its validated snapshot
+and log before scheduling ticks, and commits updates before replying. A
+supervisor restart keeps the in-memory state, which is always the last committed
+state, so it does not reread the store. A storage failure stops the loop
+without counting as a handler failure. The [saved-state format](saved-state.md)
+defines the SQLite transactions, bounds, value encoding and refusal behavior.
+This C embedding still exposes no Mo simulation API or service CLI command.
 
 ## 10. Done means
 
