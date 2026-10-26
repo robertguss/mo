@@ -4,6 +4,7 @@
 
 #include "base/codes.h"
 #include "base/limits.h"
+#include "base/utf8.h"
 
 /* Schema fields use object representations, not casts between unrelated C structs or enums. */
 enum shape {
@@ -113,44 +114,7 @@ static MO_MUST_USE bool error_node(struct reader *r, uint16_t code, const struct
 
 /* Strict UTF-8, including in comments and atoms. Advance only after a complete scalar. */
 static MO_MUST_USE bool scalar(const uint8_t *bytes, size_t length, size_t *pos, uint32_t *out) {
-    if (*pos >= length)
-        return false;
-    size_t at = *pos;
-    uint32_t c = bytes[at++];
-    unsigned extra = 0;
-    uint32_t minimum = 0;
-    if (c < 0x80) {
-        *pos = at;
-        *out = c;
-        return true;
-    }
-    if (c >= 0xc2 && c <= 0xdf) {
-        extra = 1;
-        minimum = 0x80;
-        c &= 0x1f;
-    } else if (c >= 0xe0 && c <= 0xef) {
-        extra = 2;
-        minimum = 0x800;
-        c &= 0x0f;
-    } else if (c >= 0xf0 && c <= 0xf4) {
-        extra = 3;
-        minimum = 0x10000;
-        c &= 7;
-    } else
-        return false;
-    if (length - at < extra)
-        return false;
-    for (unsigned i = 0; i < extra; i++) {
-        uint32_t b = bytes[at++];
-        if ((b & 0xc0) != 0x80)
-            return false;
-        c = (c << 6) | (b & 0x3f);
-    }
-    if (c < minimum || c > 0x10ffff || (c >= 0xd800 && c <= 0xdfff))
-        return false;
-    *pos = at;
-    *out = c;
-    return true;
+    return mo_utf8_decode(bytes, length, pos, out);
 }
 static MO_MUST_USE bool append_scalar(struct mo_buffer *out, uint32_t c) {
     uint8_t bytes[4];

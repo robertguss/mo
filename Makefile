@@ -163,12 +163,13 @@ fuzz: $(FUZZERS)
 
 # A crash artifact fails the run that found it. Start with none, so that one saved by an
 # earlier run does not keep failing the runs after the bug is fixed.
-fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test $(BUILD)/debug/tests/test_bytecode_text.test $(BUILD)/debug/tests/test_vm.test
+fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test $(BUILD)/debug/tests/test_bytecode_text.test $(BUILD)/debug/tests/test_vm.test $(BUILD)/debug/tests/test_services.test
 	@rm -rf $(FUZZ_BUILD)/artifacts
 	@mkdir -p $(FUZZ_BUILD)/artifacts
 	@mkdir -p $(FUZZ_BUILD)/bytecode-fixtures
 	$(BUILD)/debug/tests/test_bytecode_verify.test --corpus $(FUZZ_BUILD)/bytecode-fixtures
 	$(BUILD)/debug/tests/test_bytecode_text.test --corpus $(FUZZ_BUILD)/bytecode-fixtures
+	$(BUILD)/debug/tests/test_services.test --corpus $(FUZZ_BUILD)/bytecode-fixtures
 	@mkdir -p $(FUZZ_BUILD)/vm-fixtures
 	$(BUILD)/debug/tests/test_vm.test --corpus $(FUZZ_BUILD)/vm-fixtures
 	python3 ci/check_primitives.py --corpus $(FUZZ_BUILD)/corpus/fuzz_prim

@@ -3,6 +3,7 @@
 
 #include <string.h>
 
+#include "base/utf8.h"
 #include "heap/types.h"
 
 struct reader {
@@ -100,43 +101,7 @@ static MO_MUST_USE const uint32_t *indices(struct reader *r, uint32_t *n, uint32
 }
 
 bool mo_bytecode_utf8(const uint8_t *bytes, uint32_t length) {
-    for (uint32_t i = 0; i < length;) {
-        uint32_t scalar = bytes[i++];
-        unsigned n = 0;
-        uint32_t minimum = 0;
-        if (scalar < 0x80) {
-            continue;
-        }
-        if (scalar >= 0xc2 && scalar <= 0xdf) {
-            n = 1;
-            minimum = 0x80;
-            scalar &= 0x1f;
-        } else if (scalar >= 0xe0 && scalar <= 0xef) {
-            n = 2;
-            minimum = 0x800;
-            scalar &= 0x0f;
-        } else if (scalar >= 0xf0 && scalar <= 0xf4) {
-            n = 3;
-            minimum = 0x10000;
-            scalar &= 0x07;
-        } else {
-            return false;
-        }
-        if (n > length - i) {
-            return false;
-        }
-        for (unsigned j = 0; j < n; j++) {
-            uint32_t b = bytes[i++];
-            if ((b & 0xc0) != 0x80) {
-                return false;
-            }
-            scalar = (scalar << 6) | (b & 0x3f);
-        }
-        if (scalar < minimum || scalar >= 0x110000 || (scalar >= 0xd800 && scalar <= 0xdfff)) {
-            return false;
-        }
-    }
-    return true;
+    return mo_utf8_valid(bytes, length);
 }
 
 static MO_MUST_USE const uint8_t *blob(struct reader *r, uint32_t *n, bool terminate) {
@@ -468,6 +433,36 @@ static void file_entry(struct reader *r, struct mo_bytecode_bytes *file) {
         refuse(r, "filename must be nonempty and contain no NUL");
 }
 
+static void service_entry(struct reader *r, struct mo_bytecode_service *s) {
+    s->module = word(r);
+    s->state_type = word(r);
+    s->start = word(r);
+    s->token_env = word(r);
+    struct mo_bytecode_service_tool *tools =
+        array(r, &s->tool_count, MO_LIMIT_SERVICE_HANDLERS, 28, sizeof *tools,
+              _Alignof(struct mo_bytecode_service_tool));
+    s->tools = tools;
+    for (uint32_t j = 0; j < s->tool_count && !r->failed; j++) {
+        tools[j].name = word(r);
+        tools[j].function = word(r);
+        tools[j].read_only = boolean(r);
+        tools[j].argument_types =
+            indices(r, &tools[j].argument_count, MO_LIMIT_BYTECODE_PARAMETERS - 2);
+        tools[j].result_type = word(r);
+        tools[j].description = word(r);
+        tools[j].argument_names =
+            indices(r, &tools[j].argument_name_count, MO_LIMIT_BYTECODE_PARAMETERS - 2);
+    }
+    struct mo_bytecode_service_timer *timers =
+        array(r, &s->timer_count, MO_LIMIT_SERVICE_HANDLERS, 8, sizeof *timers,
+              _Alignof(struct mo_bytecode_service_timer));
+    s->timers = timers;
+    for (uint32_t j = 0; j < s->timer_count && !r->failed; j++) {
+        timers[j].function = word(r);
+        timers[j].interval = word(r);
+    }
+}
+
 static void sections(struct reader *r) {
     struct mo_bytecode *f = r->file;
     struct mo_bytecode_string *strings =
@@ -527,6 +522,17 @@ static void sections(struct reader *r) {
     for (uint32_t i = 0; i < f->debug_count && !r->failed; i++) {
         debug_entry(r, &debug[i], &r->debug_positions[i]);
     }
+    if (f->header.flags == MO_BYTECODE_SERVICE_FLAG) {
+        struct mo_bytecode_service *services =
+            array(r, &f->service_count, MO_LIMIT_SERVICES, 24, sizeof *services,
+                  _Alignof(struct mo_bytecode_service));
+        f->services = services;
+        if (!r->failed && f->service_count == 0)
+            refuse(r, "empty service extension");
+        for (uint32_t i = 0; i < f->service_count && !r->failed; i++) {
+            service_entry(r, &services[i]);
+        }
+    }
 }
 
 struct mo_bytecode *mo_bytecode_decode_info(struct mo_arena *arena, const uint8_t *bytes,
@@ -551,7 +557,7 @@ struct mo_bytecode *mo_bytecode_decode_info(struct mo_arena *arena, const uint8_
                                         .reason = "unsupported version or flags"};
         return NULL;
     }
-    if (bytes[8] != 0 || bytes[9] != 0 || bytes[10] != 0 || bytes[11] != 0) {
+    if (bytes[8] > MO_BYTECODE_SERVICE_FLAG || bytes[9] != 0 || bytes[10] != 0 || bytes[11] != 0) {
         *error = (struct mo_load_error){.offset = 8, .reason = "unsupported version or flags"};
         return NULL;
     }
@@ -579,6 +585,7 @@ struct mo_bytecode *mo_bytecode_decode_info(struct mo_arena *arena, const uint8_
     memcpy(r.file->header.magic, bytes, 4);
     r.file->header.major = major;
     r.file->header.minor = minor;
+    r.file->header.flags = bytes[8];
     r.file->header.checksum = checksum;
     mo_arena_init(&r.scratch, mo_bytecode_work_budget(length));
     sections(&r);

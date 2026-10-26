@@ -268,7 +268,7 @@ static MO_MUST_USE bool check_service(struct service_check *p, const struct mo_s
         if (!handler(p, tool->name, false, &tool->function, &tool->reply))
             return false;
     }
-    const struct mo_source_type duration = {
+    static const struct mo_source_type duration = {
         .kind = MO_SOURCE_NAMED, .name = "Duration", .module = UINT32_MAX};
     const struct mo_syntax *clauses = service->syntax->children[0];
     uint32_t timer = 0;

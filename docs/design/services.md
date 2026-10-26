@@ -3,8 +3,7 @@
 Status: Design note (18 Oct 2026, task `MO-98`), updated for D301 to D308 in `MO-153`
 and the D310, D312 and D313 clarifications in `MO-155`.
 MO-155 adds service syntax and checking, with reference section 11.5. The service runtime
-is not implemented yet. The final diagnostic and reference wording remains for Robert's
-review before MO-155 merges. The pure queue example implements D307. Phase 2 is complete
+is not implemented yet. The pure queue example implements D307. Phase 2 is complete
 (D300), so Phase 3 can begin (D267). D256 to D267 were settled with Robert on 18 Oct 2026;
 section 9 records the decisions
 he made on 24 and 25 Oct 2026.
@@ -244,7 +243,7 @@ These decisions define the Phase 3 build plan.
    snapshot and log. After 3 restarts within 10 minutes it stops until a person starts it.
    Every failure, restart and stop is logged with its reason.
 
-### MO-155 diagnostics and fixes, for Robert
+### MO-155 diagnostics and fixes
 
 [D312](https://app.notion.com/p/404700320c45814188abd07e6534971a) records the approved
 rules from the [approval conversation](https://ampcode.com/threads/T-01a1705d-1274-74f9-8fcf-0bf58e6f89b8).
@@ -252,9 +251,6 @@ rules from the [approval conversation](https://ampcode.com/threads/T-01a1705d-12
 from the latest approval relayed into the
 [execution conversation](https://ampcode.com/threads/T-01a16ff1-e184-7194-808d-d6d0112ba4a4).
 Both records paraphrase the approval rather than quote Robert's words.
-All final diagnostic codes, diagnostic wording and reference wording still go under
-"For Robert" in [PR #231](https://github.com/robertguss/mo/pull/231) before merge.
-MO-155 remains In review. Final approval is still required before merge.
 
 For a bare-State tool eligible for fixes, E0101 uses these strings:
 
@@ -317,6 +313,30 @@ Robert's PR #231 review records these later improvements:
 
 These are design follow-ups, not claims about the current implementation. They add no service
 runtime or deployment work to MO-155.
+
+### MO-156 descriptor and lowering
+
+Service declarations compile to the optional bytecode descriptor in
+`bytecode.md` section 3.6. Lowering carries `base/service.h` metadata alongside
+Core: the start function, selected concrete tool and timer functions, tool
+names and read-only flags, interval functions, and token variable name.
+Codegen derives schema type indices from the compiled handler signatures.
+The descriptor stores the complete result type; a later schema generator can
+remove the state/reply and Result wrappers according to D313.
+
+Mo Core and Lean need no new forms. The initializer and each interval are
+ordinary zero-argument functions, using existing expressions, calls and
+duration primitives. They are not global initializers. Core checks and text
+round-trips these functions; Lean can evaluate their bodies without knowing
+about service metadata. The Core wire format, evaluator, and VM instruction
+set are unchanged. Core text alone does not carry service registration; the
+source-to-bytecode compiler carries that separate metadata.
+
+Intervals remain functions rather than a second compile-time duration
+evaluator. This preserves checked arithmetic, including overflow, and keeps
+the source-order timer table separate from function-table order. A future
+runtime must validate the computed interval before scheduling it. MO-156 adds
+no runtime, environment reads, mailbox, persistence or network listener.
 
 ## 10. Done means
 

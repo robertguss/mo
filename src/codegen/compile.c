@@ -86,6 +86,7 @@ struct function {
 };
 struct compiler {
     const struct mo_core *core;
+    const struct mo_services *services;
     struct mo_arena arena;
     struct mo_types types;
     struct vector strings, constants, modules, constructors, ownership, edges, constraints;
@@ -556,7 +557,7 @@ static MO_MUST_USE bool signature_take(const char **cursor, char ch) {
 /* Only the trusted .def templates are parsed, never a source signature or a type graph. */
 static MO_MUST_USE mo_core_ty signature_type(struct compiler *c, const char **cursor,
                                              const mo_core_ty variables[4], unsigned depth) {
-    MO_ASSERT(depth < 16);
+    MO_ASSERT(depth < MO_LIMIT_DEF_SIGNATURE_DEPTH);
     struct mo_core_ty *t = allocate(c, 1, sizeof *t);
     if (t == NULL)
         return NULL;
@@ -3378,6 +3379,77 @@ static MO_MUST_USE bool initializer(struct compiler *c, struct function *f, uint
            emit(c, f, c->declaration, MO_OP_CONST, result, 2, NULL, 0) != MO_NO_INDEX &&
            emit(c, f, c->declaration, MO_OP_RET, &unit, 1, NULL, 0) != MO_NO_INDEX;
 }
+static MO_MUST_USE bool service_descriptors(struct compiler *c, struct mo_bytecode *file) {
+    if (c->services == NULL || c->services->count == 0)
+        return true;
+    if (c->services->count > MO_LIMIT_SERVICES)
+        return problem(c, MO_CODE_BYTECODE_TOO_BIG, "Service count exceeds MO_LIMIT_SERVICES.");
+    file->service_count = c->services->count;
+    struct mo_bytecode_service *items = allocate(c, file->service_count, sizeof *items);
+    if (items == NULL)
+        return false;
+    file->services = items;
+    for (uint32_t i = 0; i < file->service_count; i++) {
+        const struct mo_service *s = &c->services->items[i];
+        if (s->start >= c->core->funs.count)
+            return problem(c, MO_CODE_CODEGEN_INVALID, "Service function index is out of range.");
+        if (s->tool_count > MO_LIMIT_SERVICE_HANDLERS ||
+            s->timer_count > MO_LIMIT_SERVICE_HANDLERS - s->tool_count)
+            return problem(c, MO_CODE_BYTECODE_TOO_BIG,
+                           "Service handler count exceeds MO_LIMIT_SERVICE_HANDLERS.");
+        struct mo_bytecode_service_tool *tools = allocate(c, s->tool_count, sizeof *tools);
+        struct mo_bytecode_service_timer *timers = allocate(c, s->timer_count, sizeof *timers);
+        if (tools == NULL || timers == NULL)
+            return false;
+        items[i] = (struct mo_bytecode_service){.module = c->funs[s->start].module,
+                                                .state_type = c->funs[s->start].result_type,
+                                                .start = s->start,
+                                                .token_env = string(c, text(s->token_env)),
+                                                .tool_count = s->tool_count,
+                                                .tools = tools,
+                                                .timer_count = s->timer_count,
+                                                .timers = timers};
+        for (uint32_t j = 0; j < s->tool_count; j++) {
+            const struct mo_service_tool *t = &s->tools[j];
+            if (t->function >= c->core->funs.count || c->funs[t->function].parameter_count < 2)
+                return problem(c, MO_CODE_CODEGEN_INVALID, "Invalid service handler signature.");
+            const struct mo_bytecode_function *fn = &c->funs[t->function];
+            uint32_t count = fn->parameter_count - 2;
+            if (count != t->argument_count)
+                return problem(c, MO_CODE_CODEGEN_INVALID, "Invalid service handler signature.");
+            uint32_t *arguments = allocate(c, count, sizeof *arguments);
+            uint32_t *names = allocate(c, count, sizeof *names);
+            if (arguments == NULL || names == NULL)
+                return false;
+            for (uint32_t k = 0; k < count; k++) {
+                arguments[k] = fn->parameters[k + 2].type;
+                names[k] = string(c, text(t->argument_names[k]));
+            }
+            tools[j] =
+                (struct mo_bytecode_service_tool){.name = string(c, text(t->name)),
+                                                  .function = t->function,
+                                                  .read_only = t->read_only,
+                                                  .argument_count = count,
+                                                  .argument_types = arguments,
+                                                  .result_type = fn->result_type,
+                                                  .description = string(c, text(t->description)),
+                                                  .argument_name_count = count,
+                                                  .argument_names = names};
+        }
+        for (uint32_t j = 0; j < s->timer_count; j++) {
+            if (s->timers[j].function >= c->core->funs.count ||
+                s->timers[j].interval >= c->core->funs.count)
+                return problem(c, MO_CODE_CODEGEN_INVALID,
+                               "Service function index is out of range.");
+            timers[j] =
+                (struct mo_bytecode_service_timer){s->timers[j].function, s->timers[j].interval};
+        }
+    }
+    file->string_count = c->strings.count;
+    file->strings = c->strings.items;
+    return c->error == 0;
+}
+
 static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
     for (uint32_t i = 0; i < c->function_count; i++) {
         struct function *f = &c->bodies[i];
@@ -3508,7 +3580,7 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
                     ? "Register recycling exceeds MO_LIMIT_CODEGEN_REGISTER_WORK."
                     : "No memory for code generation's register recycling pass.");
     }
-    const struct mo_bytecode file = {
+    struct mo_bytecode file = {
         .string_count = c->strings.count,
         .strings = c->strings.items,
         .type_count = c->types.count,
@@ -3529,6 +3601,8 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
         .files = c->files,
         .debug_count = c->function_count,
         .debug = c->debug};
+    if (!service_descriptors(c, &file))
+        return false;
     struct mo_write_error error;
     struct mo_buffer encoded;
     mo_buffer_init(&encoded, MO_LIMIT_BYTECODE_SIZE);
@@ -3547,11 +3621,12 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
                                                         : MO_CODE_CODEGEN_INVALID;
     return problem(c, code, error.reason);
 }
-bool mo_compile(const struct mo_core *core, struct mo_buffer *out, struct mo_diags *diags) {
+bool mo_compile_services(const struct mo_core *core, const struct mo_services *services,
+                         struct mo_buffer *out, struct mo_diags *diags) {
     MO_ASSERT(core != NULL && out != NULL && out->length == 0 && diags != NULL);
     if (!mo_core_check(core, diags))
         return false;
-    struct compiler c = {.core = core, .range_int = MO_NO_INDEX};
+    struct compiler c = {.core = core, .services = services, .range_int = MO_NO_INDEX};
     mo_arena_init(&c.arena, MO_LIMIT_CODEGEN_SCRATCH_SIZE);
     mo_types_init(&c.types, &c.arena);
     c.strings.width = sizeof(struct mo_bytecode_string);
@@ -3593,4 +3668,8 @@ bool mo_compile(const struct mo_core *core, struct mo_buffer *out, struct mo_dia
     }
     mo_arena_free(&c.arena);
     return ok;
+}
+
+bool mo_compile(const struct mo_core *core, struct mo_buffer *out, struct mo_diags *diags) {
+    return mo_compile_services(core, NULL, out, diags);
 }
