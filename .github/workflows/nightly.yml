@@ -33,7 +33,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y build-essential python3 clang-18 libclang-rt-18-dev \
-            clang-format-14 clang-tidy-18 bison elan
+            clang-format-14 clang-tidy-18 bison
           # The runner also has other LLVM versions. Select these tools explicitly.
           mkdir -p "$RUNNER_TEMP/mo-tools"
           ln -s /usr/bin/clang-18 "$RUNNER_TEMP/mo-tools/clang"
@@ -41,7 +41,7 @@ jobs:
           ln -s /usr/bin/clang-format-14 "$RUNNER_TEMP/mo-tools/clang-format"
           echo "$RUNNER_TEMP/mo-tools" >> "$GITHUB_PATH"
           /usr/bin/clang-format-14 --version | grep -F 'version 14.0.6'
-          /usr/bin/elan toolchain install "$(cat formal/lean-toolchain)"
+          bash .agents/setup lean
 
       - name: Run the checks
         run: |

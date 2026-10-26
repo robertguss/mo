@@ -1244,10 +1244,24 @@ def service_commands(binary):
         result = run(binary, ['emit', str(path), '-o', str(emitted)], 1, env=env)
         assert b'E0079' in result.stderr and b'E1408' not in result.stderr
         assert not emitted.exists()
+        result = run(binary, ['check', '--emit=bytecode', str(path)], 0, env=env)
+        assert b'\nservices\n  S0 ' in result.stdout and not result.stderr
         path.write_text(source + '\nfn main()\nend\n')
         result = run(binary, ['emit', str(path), '-o', str(emitted)], 0, env=env)
         assert not result.stdout and not result.stderr
         assert emitted.read_bytes().startswith(b'MOBC')
+        assert int.from_bytes(emitted.read_bytes()[8:12], 'little') == 1
+        run(binary.parent / 'tests/test_cli.test', ['--run-bytecode', str(emitted)], 0)
+        result = run(binary, ['check', '--emit=bytecode', str(path)], 0, env=env)
+        assert b'\nservices\n  S0 ' in result.stdout and not result.stderr
+        assert b'MO_SERVICE_TEST_TOKEN_NOT_READ' in result.stdout
+        indexed = folder / 'counter.bytecode'
+        indexed.write_bytes(result.stdout)
+        run(binary.parent / 'tests/test_cli.test', ['--roundtrip-bytecode', str(indexed)], 0)
+        result = run(binary, ['check', '--emit=core', str(path)], 0, env=env)
+        assert b'"Counter.%service.start"' in result.stdout and not result.stderr
+        assert b'Counter.%service.interval.1' in result.stdout
+        assert b'MO_SERVICE_TEST_TOKEN_NOT_READ' not in result.stdout
         path.write_text(source)
         main = folder / 'main.mo'
         main.write_text('module Main\nuse Counter { snapshots }\n'
@@ -1255,6 +1269,27 @@ def service_commands(binary):
                         '  now = Time.parse("2026-10-25T00:00:00Z") or stop "valid time"\n'
                         '  console.print("#{snapshots(9, now)}")\nend\n')
         result = run(binary, ['run', str(main)], 0, env=env)
+        assert result.stdout == b'[9]\n' and not result.stderr
+        result = run(binary, ['check', '--emit=bytecode', str(main)], 0, env=env)
+        assert b'\nservices\n  S0 ' in result.stdout and not result.stderr
+
+        main.write_text('module Main\nuse Counter { snapshots }\n'
+                        'struct First\nvalue: Int\nend\nstruct Second\nvalue: Bool\nend\n'
+                        'service\nstate Second = stop "not started"\ntools snapshot\n'
+                        'token from env "SECOND_TOKEN_NOT_READ"\nend\n'
+                        'fn snapshot(state: First, _now: Time) : List(First)\n[state]\nend\n'
+                        'fn snapshot(state: Second, _now: Time) : List(Second)\n[state]\nend\n'
+                        'fn main(console: Console)\n'
+                        '  now = Time.parse("2026-10-25T00:00:00Z") or stop "valid time"\n'
+                        '  console.print("#{snapshots(9, now)}")\nend\n')
+        result = run(binary, ['check', '--emit=bytecode', str(main)], 0, env=env)
+        services = result.stdout.split(b'\nservices\n')[1].splitlines()
+        assert services[0].startswith(b'  S0 ') and services[1].startswith(b'  S1 ')
+        assert services[2] == b'end' and len(services) == 3
+        indexed.write_bytes(result.stdout)
+        run(binary.parent / 'tests/test_cli.test', ['--roundtrip-bytecode', str(indexed)], 0)
+        run(binary, ['emit', str(main), '-o', str(emitted)], 0, env=env)
+        result = run(binary.parent / 'tests/test_cli.test', ['--run-bytecode', str(emitted)], 0)
         assert result.stdout == b'[9]\n' and not result.stderr
 
         bare = (root / 'tests/errors/e0101/main.mo').read_text()
@@ -3120,6 +3155,15 @@ def guide_claims(binary):
          "Deleting a required spec, promise or capability to silence a diagnostic leaves the "
          "task undone.")
     says("This build checks, formats and fixes `service ... end` blocks (reference 11.5).",
+         "`mo check --emit=bytecode FILE` prints the program's bytecode as indexed text, with a "
+         "`services` section holding one descriptor for each module that declares a service, "
+         "including imported modules.",
+         "It works on a module without `main`.",
+         "`mo emit FILE -o OUT` writes the same descriptors, but still needs a `main` (E0079).",
+         "Neither command evaluates a service's start value or reads its token, and this "
+         "build still cannot run a service (E1408).",
+         "`mo check --emit=core FILE` shows the start value and timer intervals as ordinary "
+         "functions but no service registration, so Core output alone cannot reconstruct a service.",
          "`mo test` still calls ordinary handler examples, promises and tests; it does not "
          "start the service or read its token.",
          "Importing a module that declares a service does not start it.",
