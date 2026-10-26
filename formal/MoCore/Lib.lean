@@ -201,15 +201,10 @@ def fileErrorText : FunDecl :=
 /-! ## Calling the instances -/
 
 def mapL (a b : Ty) (xs f : Expr) : Expr := call (inst "List.map" [a, b]) [xs, f]
-def filterL (a : Ty) (xs pred : Expr) : Expr := call (inst "List.filter" [a]) [xs, pred]
-def filterMapL (a b : Ty) (xs f : Expr) : Expr := call (inst "List.filter_map" [a, b]) [xs, f]
 def findL (a : Ty) (xs pred : Expr) : Expr := call (inst "List.find" [a]) [xs, pred]
-def anyL (a : Ty) (xs pred : Expr) : Expr := call (inst "List.any?" [a]) [xs, pred]
 def allL (a : Ty) (xs pred : Expr) : Expr := call (inst "List.all?" [a]) [xs, pred]
 def countL (a : Ty) (xs pred : Expr) : Expr := call (inst "List.count" [a]) [xs, pred]
-def reduceL (a b : Ty) (xs start f : Expr) : Expr := call (inst "List.reduce" [a, b]) [xs, start, f]
 def maxL (t : Ty) (xs : Expr) : Expr := call (inst "List.max" [t]) [xs]
-def sumL (t : Ty) (xs : Expr) : Expr := call (inst "List.sum" [t]) [xs]
 def sortByDescL (a k : Ty) (xs key : Expr) : Expr := call (inst "List.sort_by_desc" [a, k]) [xs, key]
 def sortByL (a k : Ty) (xs key : Expr) : Expr := call (inst "List.sort_by" [a, k]) [xs, key]
 def updateL (k val : Ty) (m key default f : Expr) : Expr :=

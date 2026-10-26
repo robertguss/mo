@@ -40,6 +40,7 @@ struct mo_load_error nondet_error(void);
 struct mo_type nondet_type(void);
 struct mo_layout nondet_layout(void);
 struct mo_bytecode_module nondet_module(void);
+struct mo_bytecode_service nondet_service(void);
 struct mo_bytecode_debug nondet_debug(void);
 /* A pointer to no object: a model returns one for a table its callers store but never read, so a
  * caller that did read it would fail its proof. */
@@ -98,6 +99,9 @@ static void *new_table(size_t n, size_t size) {
     NEW_TABLE_OF(struct mo_bytecode_span)
     NEW_TABLE_OF(struct mo_bytecode_register_name)
     NEW_TABLE_OF(struct mo_bytecode_spec_line)
+    NEW_TABLE_OF(struct mo_bytecode_service)
+    NEW_TABLE_OF(struct mo_bytecode_service_tool)
+    NEW_TABLE_OF(struct mo_bytecode_service_timer)
     uint8_t *p = malloc(most * size);
     __CPROVER_assume(p != NULL);
     return p + (most - n) * size;
@@ -152,7 +156,8 @@ static bool same_file(const struct mo_bytecode *a, const struct mo_bytecode *b) 
            a->function_count == b->function_count && a->functions == b->functions &&
            a->module_count == b->module_count && a->modules == b->modules &&
            a->file_count == b->file_count && a->files == b->files &&
-           a->debug_count == b->debug_count && a->debug == b->debug;
+           a->debug_count == b->debug_count && a->debug == b->debug &&
+           a->service_count == b->service_count && a->services == b->services;
 }
 
 #define UNCHANGED(before, after) same_reader(&(before), &(after))
@@ -352,6 +357,14 @@ void model_module_entry(struct reader *r, struct mo_bytecode_module *m) {
     havoc_reading(r);
     __CPROVER_assume(READS(r, old));
     *m = nondet_module();
+}
+
+void model_service_entry(struct reader *r, struct mo_bytecode_service *s) {
+    __CPROVER_assert(READER(r) && __CPROVER_w_ok(s, sizeof *s), "service_entry: requires");
+    struct reader old = *r;
+    havoc_reading(r);
+    __CPROVER_assume(READS(r, old));
+    *s = nondet_service();
 }
 
 void model_layout_entry(struct reader *r, struct mo_layout *l) {
@@ -829,6 +842,19 @@ void harness_module_entry(void) {
     __CPROVER_assert(READS(r, old), "module_entry: reads");
     reading(&old, r);
     __CPROVER_assert(UNCHANGED(old, *r), "module_entry: changes only the offset and failure");
+    reached_end();
+}
+
+void harness_service_entry(void) {
+    struct reader *r = any_reader();
+    struct mo_bytecode_service *s = object(sizeof *s);
+    struct reader old = *r;
+    struct mo_bytecode file = *r->file;
+    service_entry(r, s);
+    __CPROVER_assert(READS(r, old), "service_entry: reads");
+    reading(&old, r);
+    __CPROVER_assert(UNCHANGED(old, *r) && same_file(&file, r->file),
+                     "service_entry: changes only its entry, the offset and failure");
     reached_end();
 }
 

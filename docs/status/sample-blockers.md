@@ -144,6 +144,4 @@ Build `mo`, then run:
 build/clang/debug/mo check --json examples/<sample>.mo
 ```
 
-Read `errors` from each totals record and assert `dropped == 0`. Historical
-LW5 and I1 verification records remain in [lw5-verification.md](lw5-verification.md)
-and [i1-verification.md](i1-verification.md).
+Read `errors` from each totals record and assert `dropped == 0`.

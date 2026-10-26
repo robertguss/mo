@@ -105,7 +105,48 @@ static void source(const struct mo_bytecode *f, uint32_t file, uint32_t start, u
 }
 
 static void accepted_tables(const struct mo_bytecode *f, size_t size) {
-    MO_ASSERT(f->header.major == 0 && f->header.minor == 2 && f->header.flags == 0);
+    MO_ASSERT(f->header.major == 0 && f->header.minor == 2);
+    MO_ASSERT(f->header.flags == (f->service_count == 0 ? 0U : 1U));
+    MO_ASSERT(f->service_count <= MO_LIMIT_SERVICES);
+    for (uint32_t i = 0; i < f->service_count; i++) {
+        const struct mo_bytecode_service *s = &f->services[i];
+        MO_ASSERT(s->module < f->module_count && s->state_type < f->type_count &&
+                  s->start < f->function_count && s->token_env < f->string_count);
+        const struct mo_bytecode_function *start = &f->functions[s->start];
+        MO_ASSERT(start->kind == MO_FUNCTION_FUNCTION && !start->spec_code &&
+                  start->module == s->module && start->parameter_count == 0 &&
+                  start->result_type == s->state_type);
+        MO_ASSERT(s->tool_count > 0 && s->tool_count <= MO_LIMIT_SERVICE_HANDLERS &&
+                  s->timer_count <= MO_LIMIT_SERVICE_HANDLERS - s->tool_count);
+        for (uint32_t j = 0; j < s->tool_count; j++) {
+            const struct mo_bytecode_service_tool *t = &s->tools[j];
+            MO_ASSERT(t->name < f->string_count && t->function < f->function_count);
+            MO_ASSERT(t->description < f->string_count &&
+                      t->argument_name_count == t->argument_count);
+            const struct mo_bytecode_function *fn = &f->functions[t->function];
+            MO_ASSERT(fn->kind == MO_FUNCTION_FUNCTION && !fn->spec_code &&
+                      fn->module == s->module && fn->parameter_count == t->argument_count + 2 &&
+                      fn->parameters[0].type == s->state_type &&
+                      f->types[fn->parameters[1].type].kind == MO_TYPE_TIME &&
+                      fn->result_type == t->result_type && fn->result_type != s->state_type);
+            for (uint32_t k = 0; k < t->argument_count; k++) {
+                MO_ASSERT(t->argument_types[k] == fn->parameters[k + 2].type);
+                MO_ASSERT(t->argument_names[k] < f->string_count);
+                const struct mo_bytecode_string *name = &f->strings[t->argument_names[k]];
+                MO_ASSERT(name->length != 0 && memchr(name->bytes, 0, name->length) == NULL);
+            }
+        }
+        for (uint32_t j = 0; j < s->timer_count; j++) {
+            MO_ASSERT(s->timers[j].function < f->function_count &&
+                      s->timers[j].interval < f->function_count);
+            const struct mo_bytecode_function *fn = &f->functions[s->timers[j].function];
+            const struct mo_bytecode_function *interval = &f->functions[s->timers[j].interval];
+            MO_ASSERT(fn->module == s->module && fn->parameter_count == 2 &&
+                      fn->result_type == s->state_type && interval->module == s->module &&
+                      interval->parameter_count == 0 &&
+                      f->types[interval->result_type].kind == MO_TYPE_DURATION);
+        }
+    }
     MO_ASSERT(f->string_count <= MO_LIMIT_STRINGS && f->type_count <= MO_LIMIT_TYPES &&
               f->layout_count <= MO_LIMIT_LAYOUTS && f->constant_count <= MO_LIMIT_CONSTANTS &&
               f->global_count <= MO_LIMIT_GLOBALS && f->function_count <= MO_LIMIT_FUNCTIONS &&
