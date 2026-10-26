@@ -557,7 +557,7 @@ static MO_MUST_USE bool signature_take(const char **cursor, char ch) {
 /* Only the trusted .def templates are parsed, never a source signature or a type graph. */
 static MO_MUST_USE mo_core_ty signature_type(struct compiler *c, const char **cursor,
                                              const mo_core_ty variables[4], unsigned depth) {
-    MO_ASSERT(depth < 16);
+    MO_ASSERT(depth < MO_LIMIT_DEF_SIGNATURE_DEPTH);
     struct mo_core_ty *t = allocate(c, 1, sizeof *t);
     if (t == NULL)
         return NULL;

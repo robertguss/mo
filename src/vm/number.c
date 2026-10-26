@@ -125,7 +125,7 @@ bool mo_vm_number(uint32_t opcode, struct mo_cell a, struct mo_cell b, struct mo
         else
             value = x - y;
         if (opcode == MO_OP_ADD_TIME || opcode == MO_OP_SUB_TIME) {
-            if (value < INT64_C(-62135596800000000) || value > INT64_C(253402300799999999)) {
+            if (value < MO_TIME_MIN_US || value > MO_TIME_MAX_US) {
                 *reason = "time outside years 1 to 9999";
                 return false;
             }

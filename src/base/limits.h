@@ -281,6 +281,11 @@
  * ceiling, not the source/constant size limit; allocation uses --max-heap. */
 #define MO_LIMIT_VALUE_BYTES UINT32_MAX
 
+/* Inclusive UTC microseconds of Instant: years 1 through 9999 (reference 3.9).
+ * A time outside this range is a bug. */
+#define MO_TIME_MIN_US INT64_C(-62135596800000000)
+#define MO_TIME_MAX_US INT64_C(253402300799999999)
+
 /* Best-effort diagnostic output, outside an exhausted process heap. */
 #define MO_LIMIT_DEFECT_TEXT_SIZE (64 << 10)
 
@@ -316,6 +321,15 @@ static inline struct mo_limits mo_limits_default(void) {
 }
 
 /* What the toolchain keeps of its own. */
+
+/* Compiler-generated identifiers (service fix adapters), including the terminating NUL.
+ * Prefixes stay shorter so a decimal suffix still fits. */
+#define MO_LIMIT_GENERATED_NAME 64
+#define MO_LIMIT_GENERATED_PREFIX 48
+
+/* Nesting of trusted prims.def and hostops.def signature templates. The parsers
+ * assert this; they never walk a source type graph. */
+#define MO_LIMIT_DEF_SIGNATURE_DEPTH 16
 
 /* Mo's own option words and operands, not borrowed file lists or forwarded
  * program arguments (the OS bounds those). The command name is length-bounded
@@ -427,5 +441,9 @@ _Static_assert(MO_LIMIT_BYTECODE_SIZE >= MO_LIMIT_STRING_SIZE, "the longest stri
 _Static_assert(MO_LIMIT_BYTECODE_TEXT_SIZE == UINT64_C(8) * MO_LIMIT_BYTECODE_SIZE,
                "canonical bytecode text fits within eight times the binary limit");
 _Static_assert(MO_LIMIT_BYTECODE_TEXT_SIZE <= UINT32_MAX, "bytecode text offsets fit u32");
+_Static_assert(MO_LIMIT_GENERATED_PREFIX < MO_LIMIT_GENERATED_NAME,
+               "generated prefixes are shorter than generated names");
+_Static_assert(MO_TIME_MIN_US < 0, "year 1 is before the Unix epoch");
+_Static_assert(MO_TIME_MAX_US > 0, "year 9999 is after the Unix epoch");
 
 #endif

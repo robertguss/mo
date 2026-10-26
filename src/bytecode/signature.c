@@ -138,7 +138,7 @@ static MO_MUST_USE bool layouts(const struct match *m, uint32_t index) {
 
 /* Recursion follows only the fixed, trusted templates in the .def files, never the type graph. */
 static MO_MUST_USE bool type(struct match *m, uint32_t index, unsigned depth) {
-    MO_ASSERT(depth < 16 && index < m->file->type_count);
+    MO_ASSERT(depth < MO_LIMIT_DEF_SIGNATURE_DEPTH && index < m->file->type_count);
     const struct mo_type *t = &m->file->types[index];
     spaces(m);
     if (*m->cursor == '(') {

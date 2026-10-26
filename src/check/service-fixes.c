@@ -12,7 +12,7 @@ struct proposal {
     const struct mo_source *source;
     const struct mo_syntax *declaration;
     const char *handler;
-    char helper[64], record[64];
+    char helper[MO_LIMIT_GENERATED_NAME], record[MO_LIMIT_GENERATED_NAME];
     uint8_t *changes; /* source bytes: 0 unchanged, 1 renamed name, 2 moved documentation */
     uint64_t work;
     uint16_t error;
@@ -71,7 +71,7 @@ static void reserve_suffix(uint8_t *used, size_t count, const uint8_t *name, siz
 /* Include local bindings as well as module names: a renamed reference must
  * never become captured. Counting names in comments too is harmless. */
 static MO_MUST_USE bool fresh_name(struct proposal *p, const struct mo_module_scope *scope,
-                                   const char *prefix, char out[64]) {
+                                   const char *prefix, char out[MO_LIMIT_GENERATED_NAME]) {
     size_t prefix_length = strlen(prefix);
     size_t count = p->source->length / (prefix_length + 1) + scope->imported_count;
     uint8_t *used = allocate(p, count + 1);
@@ -100,8 +100,8 @@ static MO_MUST_USE bool fresh_name(struct proposal *p, const struct mo_module_sc
         MO_ASSERT(suffix < count);
         suffix++;
     }
-    int n = snprintf(out, 64, "%s%zu", prefix, suffix);
-    MO_ASSERT(n > 0 && n < 64);
+    int n = snprintf(out, MO_LIMIT_GENERATED_NAME, "%s%zu", prefix, suffix);
+    MO_ASSERT(n > 0 && n < MO_LIMIT_GENERATED_NAME);
     return true;
 }
 
@@ -144,7 +144,7 @@ static MO_MUST_USE bool annotation(struct proposal *p, struct text *out,
 }
 
 static MO_MUST_USE bool argument(struct proposal *p, struct text *out, uint32_t index) {
-    char name[64];
+    char name[MO_LIMIT_GENERATED_NAME];
     int n = snprintf(name, sizeof name, "service_argument%u", index);
     MO_ASSERT(n > 0 && (size_t)n < sizeof name);
     return append(p, out, name, (size_t)n);
@@ -325,7 +325,7 @@ bool mo_service_state_error(struct mo_arena *arena, const struct mo_program *pro
         p.error = MO_CODE_CHECK_TYPE_DEPTH;
         goto failed;
     }
-    char prefix[48];
+    char prefix[MO_LIMIT_GENERATED_PREFIX];
     int n = snprintf(prefix, sizeof prefix, "service_tool_%u_", function);
     MO_ASSERT(n > 0 && (size_t)n < sizeof prefix);
     if (!fresh_name(&p, scope, prefix, p.helper))

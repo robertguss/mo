@@ -53,7 +53,7 @@ uint32_t mo_cell_get_char(struct mo_cell cell) {
 
 struct mo_cell mo_cell_time(int64_t value) {
     /* Inclusive first and last microseconds of years 1 through 9999. */
-    MO_ASSERT(value >= INT64_C(-62135596800000000) && value <= INT64_C(253402300799999999));
+    MO_ASSERT(value >= MO_TIME_MIN_US && value <= MO_TIME_MAX_US);
     return mo_cell_int(value);
 }
 int64_t mo_cell_get_time(struct mo_cell cell) {
