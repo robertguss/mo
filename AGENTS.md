@@ -18,7 +18,7 @@ The documents that define correct behaviour, in order of authority:
   11, testing strategy, are the ones to know). `docs/design/bytecode.md` is the bytecode spec.
 - `docs/design/implementation.md`: the five conditions every C change must meet.
 - `docs/design/library.md`: where each library function is implemented.
-- `docs/status/sample-blockers.md`: what still stops each of the twelve `examples/*.mo` from passing.
+- `docs/status/sample-blockers.md`: sample status (currently clear).
 
 ## Commands
 
@@ -61,8 +61,7 @@ and an additional 1,000-program VM-vs-Lean batch with a fresh, printed seed rang
 Failed runs appear in Actions; Robert must enable email notifications for failed workflows in
 his GitHub notification settings and be the scheduled workflow's notification recipient (its
 creator, latest cron editor, or person who re-enabled it). Manual-run notifications go to the
-person who dispatched the run. After the workflow first merges, verify that recipient, dispatch
-it on `main`, and require a passing run before marking MO-152 Done.
+person who dispatched the run.
 
 `main` still requires no status check (only force-pushes are blocked). The Socket Security app
 may still post its own checks; none is required. Before opening a PR, run
@@ -159,7 +158,3 @@ After a PR opens or merges, or after Robert makes a decision, run `notion-sync`.
 When Robert or a reviewer corrects a mistake, fix it and add or bump its row in
 `docs/status/agent-mistakes.md` in the same PR. A row that recurs is fixed at a stronger level, using
 the `correct` skill.
-
-After a solved, verified problem, offer once to invoke the `ce-compound` skill at the completion checkpoint only when the work produced durable project reasoning that is not readily recoverable from the final code, tests, types, comments, or existing documentation, and losing it would plausibly cause recurrence, material risk, or substantial rediscovery. Apply this counterfactual: if the learning document disappeared, would a future engineer reading the final implementation still be likely to repeat the mistake or redo substantial investigation? If not, do not offer. Completion, effort, and diff size alone are not enough. Offer at the checkpoint so a qualifying learning can ship in the PR that produced it, and only where the repository treats captured learnings as tracked, committed knowledge.
-
-Write every report, summary, or handoff to the user through the `ce-noslop` skill. This applies when you are the top-level agent writing to the user, not when you are a subagent reporting to its caller. Do not apply it to code, config, verbatim quotes, or text the user asked to post as written.

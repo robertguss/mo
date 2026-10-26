@@ -8,7 +8,7 @@ context: fork
 
 You run in a fresh context with no view of the conversation that built the change, so everything you judge comes from the repo. You are a **skeptic** reviewing someone else's change: assume each test is greener than it should be and each contract crossing is missing a side, until the code shows otherwise. If you can see the conversation that built the change, start a subagent with this skill instead of reviewing it yourself.
 
-No Mo check runs on GitHub, so run the checks below rather than assume formatting, warnings, module includes and the library map are fine; then spend your attention on what no check can see.
+Nightly runs on main; pull requests are not gated, so local `ci/check.sh` is still required. Run the checks below rather than assume formatting, warnings, module includes and the library map are fine; then spend your attention on what no check can see.
 
 ## 1. Scope the change
 
