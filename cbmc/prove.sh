@@ -39,7 +39,7 @@ proofs=(
 	"scratch|||"
 	"array|word allocate||"
 	"indices|array word|indices.0:/4|"
-	"utf8||mo_bytecode_utf8.0:4,mo_bytecode_utf8.1:+|"
+	"utf8||mo_utf8_valid.0:+,mo_utf8_decode.0:4|"
 	"blob|word allocate mo_bytecode_utf8:model_utf8||"
 	"name|word||"
 	"fields|array name word|fields.0:/8|"
@@ -53,7 +53,8 @@ proofs=(
 	"module_entry|word array boolean indices|module_entry.0:/8|"
 	"file_entry|blob|memchr.0:+|"
 	"debug_entry|array word|debug_entry.0:/16,debug_entry.1:/16,debug_entry.2:/16|52"
-	"sections|array blob types layout_entry constants word indices functions module_entry file_entry debug_entry scratch|sections.0:/4,sections.1:/12,sections.2:/12,sections.3:/16,sections.4:/5,sections.5:/36,mo_bytecode_names_init.0:/4|64"
+	"service_entry|word array boolean indices|service_entry.0:/28,service_entry.1:/8|68"
+	"sections|array blob types layout_entry constants word indices functions module_entry file_entry debug_entry service_entry scratch|sections.0:/4,sections.1:/12,sections.2:/12,sections.3:/16,sections.4:/5,sections.5:/36,sections.6:/24,mo_bytecode_names_init.0:/4|64"
 	"decode|allocate sections|mo_bytecode_decode_info.0:9,mo_bytecode_decode_info.1:+,mo_bytecode_decode_info.2:/4,mo_bytecode_decode_info.3:/4,memcmp.0:5|"
 	"arena_allocate||||arena.c"
 	"arena_allocate_array|mo_arena_allocate|||arena.c"
@@ -118,7 +119,8 @@ unreachable_lines() {
 # The function a proof is about, when it is not the proof's own name.
 proved_function() {
 	case "$1" in
-	utf8) echo mo_bytecode_utf8 ;;
+	# The wrapper is one call; cover the shared decoder it now uses.
+	utf8) echo 'mo_bytecode_utf8|mo_utf8_valid|mo_utf8_decode' ;;
 	decode) echo mo_bytecode_decode_info ;;
 	# An arena proof covers the static helpers its function calls, too.
 	arena_allocate) echo 'mo_arena_allocate|add_chunk|fits|padding_for' ;;

@@ -905,30 +905,12 @@ fuzz seeds with fresh Lean output. C's schema-driven codec round-trips
 every fixture and all new types/operations/state records; the fuzzer tries
 all 16 caller-supplied categories, including standalone RandomState.
 
-Historical **version 0.1** measurements, 2026-10-12 in a Linux x86-64 orb,
-Lean 4.34.0 native executable; sizes/timings below predate fake state. Use
-the command below for today's 0.8 corpus, which includes Fakes, Library and Metadata.
 One warm-up, then **21 fresh processes per sample**; wall time includes
 process startup, input I/O, parse, checker, initialization, entry evaluation,
 structural rendering and captured stdout. Fuel 10000. These are the inputs
-in `TextChecks.samples`, not the entire Mo test suite or a VM benchmark.
-
-| Sample | Input bytes | Median ms | Min ms | Max ms |
-| --- | ---: | ---: | ---: | ---: |
-| Greet | 1115 | 3.733 | 3.079 | 4.505 |
-| Wc | 4644 | 3.951 | 3.632 | 4.833 |
-| Find | 8694 | 3.911 | 3.473 | 4.586 |
-| Expenses | 14229 | 4.461 | 4.171 | 4.996 |
-| JsonQuery (then Json) | 25000 | 5.094 | 4.532 | 5.846 |
-| Todo | 12178 | 4.210 | 3.812 | 4.913 |
-| Account | 6004 | 3.832 | 3.509 | 4.461 |
-| RateLimit | 5414 | 3.768 | 3.350 | 4.382 |
-| JobQueue | 12553 | 4.026 | 3.529 | 4.597 |
-| Kv | 14032 | 4.216 | 3.773 | 4.963 |
-| NotesTool | 4535 | 3.484 | 3.090 | 4.601 |
-| Inventory | 25063 | 5.652 | 4.630 | 6.219 |
-
-Reproduce from `formal/` (Python is only the timing harness):
+in `TextChecks.samples`, including Fakes, Library and Metadata, not the entire
+Mo test suite or a VM benchmark. Reproduce from `formal/` (Python is only the
+timing harness):
 
 ```sh
 lake env lean --run ExportSamples.lean /tmp/mocore-samples

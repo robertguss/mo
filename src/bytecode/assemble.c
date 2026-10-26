@@ -111,8 +111,9 @@ bool mo_text_ref(struct mo_text_reader *r, char prefix, bool optional, uint32_t 
         "expected layout index LN",    "expected constant index kN", "expected global index gN",
         "expected init index iN",      "expected function index fN", "expected module index mN",
         "expected debug index dN",     "expected register rN",       "expected word offset @N",
-        "expected primitive index pN", "expected host index hN",     "expected filename index PN"};
-    static const char prefixes[] = "\0stLkgifmdr@phP";
+        "expected primitive index pN", "expected host index hN",     "expected filename index PN",
+        "expected service index SN"};
+    static const char prefixes[] = "\0stLkgifmdr@phPS";
     size_t which = 0;
     while (prefixes[which] != prefix) {
         which++;
@@ -213,7 +214,7 @@ bool mo_text_save(struct mo_text_reader *r, enum mo_bytecode_section section, ui
     static const uint32_t limits[] = {MO_LIMIT_STRINGS,   MO_LIMIT_TYPES,   MO_LIMIT_LAYOUTS,
                                       MO_LIMIT_CONSTANTS, MO_LIMIT_GLOBALS, MO_LIMIT_INITS,
                                       MO_LIMIT_FUNCTIONS, MO_LIMIT_MODULES, MO_LIMIT_FILES,
-                                      MO_LIMIT_FUNCTIONS};
+                                      MO_LIMIT_FUNCTIONS, MO_LIMIT_SERVICES};
     struct mo_text_table *t = &r->tables[section];
     if (index > t->count || (!r->shorthand && index != t->count) || index >= limits[section]) {
         mo_text_refuse(r, source, "expected consecutive entry index within section limit");
@@ -298,13 +299,15 @@ bool mo_text_check_references(struct mo_text_reader *r, bool complete) {
                                            "",
                                            "expected primitive index in range",
                                            "expected host index in range",
-                                           "expected filename index in final pool"};
+                                           "expected filename index in final pool",
+                                           "expected service index in final pool"};
     for (const struct mo_text_reference *ref = r->references; ref != NULL; ref = ref->next) {
         /* Shorthand's deferred operands can still append layouts and constants. All other
          * tables are complete before resolving those operands. */
         if (!complete && (ref->space == 3 || ref->space == 4))
             continue;
-        uint32_t bound = ref->space == 14   ? r->tables[MO_SECTION_FILES].count
+        uint32_t bound = ref->space == 15   ? r->tables[MO_SECTION_SERVICES].count
+                         : ref->space == 14 ? r->tables[MO_SECTION_FILES].count
                          : ref->space == 9  ? r->tables[MO_SECTION_DEBUG].count
                          : ref->space < 9   ? r->tables[ref->space - 1].count
                          : ref->space == 12 ? (uint32_t)MO_PRIM_COUNT
@@ -321,6 +324,7 @@ static MO_MUST_USE bool output(struct mo_text_reader *r, struct mo_buffer *out) 
     if (!mo_text_check_references(r, true))
         return false;
     uint8_t header[MO_BYTECODE_HEADER_SIZE] = {'M', 'O', 'B', 'C', 0, 0, MO_BYTECODE_MINOR, 0};
+    header[8] = r->tables[MO_SECTION_SERVICES].count != 0 ? MO_BYTECODE_SERVICE_FLAG : 0;
     if (r->wire_size > out->limit) {
         mo_text_refuse(r, 0, "bytecode output limit");
         return false;
@@ -331,6 +335,8 @@ static MO_MUST_USE bool output(struct mo_text_reader *r, struct mo_buffer *out) 
     }
     for (unsigned s = 0; s < MO_SECTION_COUNT; s++) {
         const struct mo_text_table *t = &r->tables[s];
+        if (s == MO_SECTION_SERVICES && t->count == 0)
+            continue;
         if (!mo_buffer_append_le32(out, t->count)) {
             mo_text_refuse(r, 0, "no memory");
             return false;
@@ -374,7 +380,7 @@ bool mo_bytecode_assemble(const char *text, size_t length, struct mo_buffer *out
     struct mo_text_reader r = {.text = text == NULL ? "" : text,
                                .length = (uint32_t)length,
                                .error = error_out,
-                               .wire_size = MO_BYTECODE_HEADER_SIZE + 4 * MO_SECTION_COUNT};
+                               .wire_size = MO_BYTECODE_HEADER_SIZE + 4 * MO_SECTION_SERVICES};
     r.last_reference = &r.references;
     size_t bounded = length < MO_LIMIT_BYTECODE_SIZE ? length : MO_LIMIT_BYTECODE_SIZE;
     mo_arena_init(&r.arena, mo_bytecode_work_budget(bounded));
@@ -393,8 +399,16 @@ bool mo_bytecode_assemble(const char *text, size_t length, struct mo_buffer *out
     if (ok && r.shorthand) {
         ok = mo_text_shorthand(&r);
     } else if (ok) {
-        for (unsigned s = 0; s < MO_SECTION_COUNT && ok; s++) {
+        for (unsigned s = 0; s < MO_SECTION_SERVICES && ok; s++) {
             ok = mo_text_indexed_section(&r, (enum mo_bytecode_section)s);
+        }
+    }
+    if (ok && mo_text_is(&r, "services")) {
+        r.wire_size += 4;
+        ok = mo_text_indexed_section(&r, MO_SECTION_SERVICES);
+        if (ok && r.tables[MO_SECTION_SERVICES].count == 0) {
+            mo_text_refuse(&r, r.tables[MO_SECTION_SERVICES].source, "empty service extension");
+            ok = false;
         }
     }
     if (ok && r.token.kind != 0) {

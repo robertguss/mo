@@ -15,7 +15,6 @@ open MoCore
 /-! ## Types -/
 
 abbrev tInt : Ty := .int
-abbrev tBig : Ty := .bigInt
 abbrev tByte : Ty := .byte
 abbrev tDec : Ty := .decimal
 abbrev tFloat : Ty := .float
@@ -54,8 +53,6 @@ def ff : Expr := bool false
 def unitE : Expr := .lit .unit
 /-- A time literal from RFC 3339 text (for constants such as `t0`). -/
 def timeE (s : String) : Expr := .lit (.time (timeLit s))
-/-- A duration literal in microseconds. -/
-def durE (us : Int) : Expr := .lit (.duration us)
 
 /-! ## Variables, bindings and functions -/
 

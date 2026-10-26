@@ -177,9 +177,10 @@ static void execute_pipeline(void *argument) {
     struct mo_arena lowered;
     mo_arena_init(&lowered, MO_LIMIT_LOWER_WORK);
     struct mo_lowered_promises promises;
-    struct mo_core *core = cli->command == MO_COMMAND_TEST
-                               ? mo_lower_for_tests(&lowered, program, sources, diags, &promises)
-                               : mo_lower(&lowered, program, sources, diags);
+    struct mo_services services;
+    struct mo_core *core =
+        mo_lower_services(&lowered, program, sources, diags,
+                          cli->command == MO_COMMAND_TEST ? &promises : NULL, &services);
     struct mo_buffer wire, printed;
     mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
     mo_buffer_init(&printed, cli->emit == MO_EMIT_CORE ? MO_LIMIT_CORE_TEXT_SIZE
@@ -198,7 +199,7 @@ static void execute_pipeline(void *argument) {
         goto done;
     if (anchors || cli->command == MO_COMMAND_RUN || cli->command == MO_COMMAND_TEST ||
         cli->emit == MO_EMIT_BYTECODE || emitting) {
-        if (!mo_compile(core, &wire, diags))
+        if (!mo_compile_services(core, &services, &wire, diags))
             goto done;
     }
     if (cli->command == MO_COMMAND_TEST) {

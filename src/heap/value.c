@@ -3,46 +3,7 @@
 #include <errno.h>
 #include <string.h>
 
-/* Validate UTF-8 before allocating or changing ownership. */
-static MO_MUST_USE bool valid_utf8(const uint8_t *bytes, size_t length) {
-    for (size_t i = 0; i < length;) {
-        uint32_t scalar = bytes[i++];
-        if (scalar < 0x80) {
-            continue;
-        }
-        unsigned following;
-        uint32_t minimum;
-        if (scalar >= 0xc2 && scalar <= 0xdf) {
-            following = 1;
-            minimum = 0x80;
-            scalar &= 0x1f;
-        } else if (scalar >= 0xe0 && scalar <= 0xef) {
-            following = 2;
-            minimum = 0x800;
-            scalar &= 0x0f;
-        } else if (scalar >= 0xf0 && scalar <= 0xf4) {
-            following = 3;
-            minimum = 0x10000;
-            scalar &= 7;
-        } else {
-            return false;
-        }
-        if (following > length - i) {
-            return false;
-        }
-        for (unsigned j = 0; j < following; j++) {
-            uint32_t byte = bytes[i++];
-            if (byte < 0x80 || byte > 0xbf) {
-                return false;
-            }
-            scalar = (scalar << 6) | (byte & 0x3f);
-        }
-        if (scalar < minimum || scalar >= 0x110000 || (scalar >= 0xd800 && scalar <= 0xdfff)) {
-            return false;
-        }
-    }
-    return true;
-}
+#include "base/utf8.h"
 
 static MO_MUST_USE bool byte_value(struct mo_heap *process, enum mo_type_kind kind,
                                    const uint8_t *bytes, size_t length, uint32_t auxiliary,
@@ -52,7 +13,7 @@ static MO_MUST_USE bool byte_value(struct mo_heap *process, enum mo_type_kind ki
         process->builtins[kind] == MO_NO_INDEX) {
         return false;
     }
-    if (kind == MO_TYPE_TEXT && !valid_utf8(bytes, length)) {
+    if (kind == MO_TYPE_TEXT && !mo_utf8_valid(bytes, length)) {
         errno = EINVAL;
         return false;
     }

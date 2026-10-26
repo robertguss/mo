@@ -3,6 +3,7 @@
 #ifndef MO_LOWER_H
 #define MO_LOWER_H
 
+#include "base/service.h"
 #include "check/check.h"
 #include "core/core.h"
 
@@ -31,5 +32,13 @@ MO_MUST_USE struct mo_core *mo_lower_for_tests(struct mo_arena *arena,
                                                const struct mo_sources *sources,
                                                struct mo_diags *diags,
                                                struct mo_lowered_promises *promises);
+
+/* Retains service descriptors alongside ordinary Core functions. promises may be
+ * NULL. services is required and is cleared on refusal. Neither output borrows
+ * the source program, except the documented test-only promise provenance. */
+MO_MUST_USE struct mo_core *
+mo_lower_services(struct mo_arena *arena, const struct mo_program *program,
+                  const struct mo_sources *sources, struct mo_diags *diags,
+                  struct mo_lowered_promises *promises, struct mo_services *services);
 
 #endif
