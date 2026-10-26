@@ -14,7 +14,9 @@
  * conversion, never fails an MO_ASSERT, and refuses with an error inside the input.
  * cbmc/README.md says what the proofs assume.
  *
- * read.c is included rather than linked, so that its static functions can be called here. */
+ * read.c is included rather than linked, so that its static functions can be called here.
+ * utf8.c is included so the reader's UTF-8 check is the shared decoder. */
+#include "base/utf8.c"
 #include "bytecode/read.c"
 
 #include <stdlib.h>
@@ -726,6 +728,10 @@ void harness_utf8(void) {
     size_t length;
     const uint8_t *bytes = any_input(&length);
     (void)mo_bytecode_utf8(bytes, (uint32_t)length);
+    /* valid() only calls decode while pos < length; Core also asks at EOF. */
+    size_t pos = length;
+    uint32_t out;
+    (void)mo_utf8_decode(bytes, length, &pos, &out);
     reached_end();
 }
 

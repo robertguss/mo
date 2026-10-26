@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "base/limits.h"
+#include "base/utf8.h"
 
 void mo_types_init(struct mo_types *types, struct mo_arena *arena) {
     MO_ASSERT(types != NULL && arena != NULL);
@@ -11,8 +12,7 @@ void mo_types_init(struct mo_types *types, struct mo_arena *arena) {
 }
 
 /* Name limits include instantiation spellings, not just source identifiers.
- * Check UTF-8 here because the compiler and loader share this builder and base
- * does not yet provide a decoder. NUL is the terminator, never part of a name. */
+ * NUL is the terminator, never part of a name. */
 static MO_MUST_USE enum mo_type_problem check_name(const char *name) {
     if (name == NULL || name[0] == '\0') {
         return MO_TYPES_INVALID;
@@ -24,42 +24,8 @@ static MO_MUST_USE enum mo_type_problem check_name(const char *name) {
     if (length > MO_LIMIT_STRING_SIZE) {
         return MO_TYPES_STRING_LIMIT;
     }
-    const unsigned char *bytes = (const unsigned char *)name;
-    for (size_t i = 0; i < length;) {
-        uint32_t scalar = bytes[i++];
-        unsigned continuation = 0;
-        uint32_t minimum = 0;
-        if (scalar < 0x80) {
-            continue;
-        }
-        if (scalar >= 0xc2 && scalar <= 0xdf) {
-            continuation = 1;
-            minimum = 0x80;
-            scalar &= 0x1f;
-        } else if (scalar >= 0xe0 && scalar <= 0xef) {
-            continuation = 2;
-            minimum = 0x800;
-            scalar &= 0x0f;
-        } else if (scalar >= 0xf0 && scalar <= 0xf4) {
-            continuation = 3;
-            minimum = 0x10000;
-            scalar &= 0x07;
-        } else {
-            return MO_TYPES_INVALID;
-        }
-        if (continuation > length - i) {
-            return MO_TYPES_INVALID;
-        }
-        for (unsigned j = 0; j < continuation; j++) {
-            uint32_t byte = bytes[i++];
-            if ((byte & 0xc0) != 0x80) {
-                return MO_TYPES_INVALID;
-            }
-            scalar = (scalar << 6) | (byte & 0x3f);
-        }
-        if (scalar < minimum || scalar >= 0x110000 || (scalar >= 0xd800 && scalar <= 0xdfff)) {
-            return MO_TYPES_INVALID;
-        }
+    if (!mo_utf8_valid((const uint8_t *)name, length)) {
+        return MO_TYPES_INVALID;
     }
     return MO_TYPES_OK;
 }
