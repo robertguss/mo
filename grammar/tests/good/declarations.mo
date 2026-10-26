@@ -65,6 +65,13 @@ end
 fn nothing()
 end
 
+fn token(state: Int, tools: Int, every: Int) : Int
+  token = state + tools
+  from = every
+  env = fn(env) env + token end
+  env(from)
+end
+
 test "an empty order is refused"
   assert place([]) == Error(Empty)
 end

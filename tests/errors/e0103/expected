@@ -1,0 +1,7 @@
+error E0103: a service value has the wrong type  tests/errors/e0103/main.mo:3:15
+
+  3 |   state Int = "wrong"
+    |               ^^^^^^^ expected Int, found Text
+
+The start value has the declared state type (reference 11.5).
+

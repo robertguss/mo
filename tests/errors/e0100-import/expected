@@ -1,0 +1,7 @@
+error E0100: a service handler has no matching local function  tests/errors/e0100-import/main.mo:5:9
+
+  5 |   tools snapshot
+    |         ^^^^^^^^ a service handler has no matching local function
+
+A handler is a function in this module whose first parameter exactly matches the service state type (reference 11.5).
+

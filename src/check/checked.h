@@ -47,6 +47,19 @@ mo_check_spec_body(struct mo_arena *arena, const struct mo_module_interfaces *in
                    const struct mo_function_signature *signature, struct mo_checked_spec *spec,
                    struct mo_checked_condition *conditions, struct mo_diags *diags, bool *halt);
 
+MO_MUST_USE bool mo_check_service_value(struct mo_arena *arena,
+                                        const struct mo_module_interfaces *interfaces,
+                                        const struct mo_signatures *signatures,
+                                        struct mo_constant_context *constants, uint32_t module,
+                                        const struct mo_syntax *clause,
+                                        const struct mo_source_type *expected,
+                                        struct mo_diags *diags, struct mo_checked_body *out);
+MO_MUST_USE bool mo_check_services(struct mo_arena *arena, struct mo_program *program,
+                                   struct mo_constant_context *constants, struct mo_diags *diags);
+MO_MUST_USE bool mo_check_service_purity(struct mo_arena *arena, const struct mo_program *program,
+                                         const struct mo_source_type *type, struct mo_span span,
+                                         struct mo_diags *diags);
+
 MO_MUST_USE bool mo_check_recursion(struct mo_arena *arena, const struct mo_program *program,
                                     struct mo_diags *diags);
 

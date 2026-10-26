@@ -1,0 +1,7 @@
+error E0102: the token source is not an environment variable name  tests/errors/e0102/main.mo:5:3
+
+  5 |   token from env "1TOKEN"
+    |   ^^^^^^^^^^^^^^^^^^^^^^^ the token source is not an environment variable name
+
+Use capital letters, digits and underscores, without a leading digit (reference 11.5).
+

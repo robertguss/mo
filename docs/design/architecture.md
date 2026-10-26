@@ -306,6 +306,13 @@ prefix operators are `PREFIX` nodes containing operator tokens then the
 operand; a single prefix keeps its one-child shape. Consumers walk these
 chains iteratively, preserving operator order and left associativity.
 
+A `SERVICE` node owns one ordered clause sequence. `SERVICE_STATE` has a type
+and initializer, `SERVICE_TOOLS` a name sequence, `SERVICE_EVERY` an interval
+and handler name, and `SERVICE_TOKEN` a text literal. The parser retains
+duplicate and misplaced clauses so the checker can explain them with E0099.
+Only `service` is reserved; clause words are contextual. Formatting uses the
+tree's spellings and trivia without borrowing the original source.
+
 Erroneous items are omitted. Their containers have `incomplete` set, so the
 checker can inspect retained children without checking the container as a
 whole. A damaged declaration header can leave even a required child `NULL`,
@@ -452,7 +459,19 @@ loaded syntax, checks top-level name clashes and overload ownership, marks
 exposure, and resolves explicit imports. Its result is not a checked
 program: body checking still owns lexical names, signature types, uses of
 hidden insides, unused imports and every flow rule below. Tests, which have
-textual labels rather than callable names, are not module symbols.
+textual labels rather than callable names, and unnamed service blocks are
+not module symbols.
+
+Service checking runs after ordinary bodies and specifications. It retains
+typed start values and timer intervals, selected local function indices,
+tool-result classifications and timer source order in `mo_program.services`.
+It checks initializer types contextually, selects overloads by exact state
+type and reuses nominal containment summaries to reject stored capabilities
+and functions. These summaries reach a fixed point across recursive types.
+Checking does not run an initializer or read a token. Lowering still handles
+ordinary functions and tests; service descriptors and execution belong to
+later Phase 3 tasks. The CLI refuses only `mo run` of a service entry module
+with E1408. Ordinary emission retains its existing `main` requirement.
 
 Symbols are sorted by name and source position; lookup is binary search.
 `mo_find_symbol` accepts bytes and length, without copying syntax spellings.

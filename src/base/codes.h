@@ -124,6 +124,12 @@
     X(96, SOURCE_LAMBDA, "5.6")                                                                    \
     X(97, SOURCE_UNWRAP, "8.4")                                                                    \
     X(98, FAKE_OUTSIDE_SPEC, "12.4")                                                               \
+    X(99, SERVICE_BLOCK, "11.5")                                                                   \
+    X(100, SERVICE_HANDLER, "11.5")                                                                \
+    X(101, SERVICE_STATE_RESULT, "11.5")                                                           \
+    X(102, SERVICE_TOKEN, "11.5")                                                                  \
+    X(103, SERVICE_VALUE, "11.5")                                                                  \
+    X(104, SERVICE_CAPABILITY, "11.5")                                                             \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \
@@ -266,7 +272,9 @@
     /* Image initialization stops before test observations can run. */                             \
     X(1406, TOOL_TEST_INITIALIZATION, NULL)                                                        \
     /* Fixing is given no regular source file, or cannot atomically replace one. */                \
-    X(1407, TOOL_FIX_IO, NULL)
+    X(1407, TOOL_FIX_IO, NULL)                                                                     \
+    /* Running a service is not implemented in this build. */                                      \
+    X(1408, TOOL_SERVICE_UNAVAILABLE, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */
 enum mo_code {

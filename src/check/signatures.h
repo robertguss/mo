@@ -22,6 +22,7 @@ struct mo_nominal_signature {
     uint32_t capture_parameters; /* parameters stored in values, excluding phantom/function types */
     uint32_t case_count;
     bool holds_capability;
+    bool holds_function;
     bool invalid;
 };
 
@@ -33,6 +34,11 @@ mo_prepare_available_signatures(struct mo_arena *arena, const struct mo_module_s
                                 struct mo_diags *diags, bool checked);
 MO_MUST_USE bool mo_signature_type_available(const struct mo_signatures *signatures,
                                              const struct mo_source_type *type);
+
+MO_MUST_USE const struct mo_source_type *
+mo_resolve_service_type(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
+                        const struct mo_signatures *signatures, uint32_t module,
+                        const struct mo_syntax *clause, struct mo_diags *diags);
 
 MO_MUST_USE const struct mo_data_signature *
 mo_data_signature_by_symbol(const struct mo_signatures *signatures, const struct mo_symbol *symbol);

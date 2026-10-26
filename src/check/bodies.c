@@ -272,7 +272,7 @@ static MO_MUST_USE bool problem(struct inference *p, uint16_t code, struct mo_sp
         : code == MO_CODE_TYPE_MISMATCH || code == MO_CODE_CONDITION_TYPE ||
                 code == MO_CODE_NUMBER_ABILITY || code == MO_CODE_BYTE_ARITHMETIC ||
                 code == MO_CODE_ARGUMENT_TYPE || code == MO_CODE_RESULT_TYPE ||
-                code == MO_CODE_NOT_FUNCTION
+                code == MO_CODE_SERVICE_VALUE || code == MO_CODE_NOT_FUNCTION
             ? p->type_label
         : code == MO_CODE_CANNOT_INFER         ? "no use decides the type"
         : code == MO_CODE_BOOL_NAME            ? "must be Bool or a function returning Bool"
@@ -683,6 +683,9 @@ static MO_MUST_USE bool mismatch(struct inference *p, struct term *found, struct
     } else if (code == MO_CODE_RESULT_TYPE) {
         message = "a function's result doesn't match its signature";
         reason = "A function's signature gives its types (reference 5.1).";
+    } else if (code == MO_CODE_SERVICE_VALUE) {
+        message = "a service value has the wrong type";
+        reason = "The start value has the declared state type (reference 11.5).";
     } else if (code == MO_CODE_NOT_FUNCTION) {
         message = "a value that isn't a function is called";
         reason = "A call applies a function to its arguments (reference 5.2).";
@@ -2502,7 +2505,9 @@ static MO_MUST_USE struct value propagate(struct inference *p, struct value inpu
                                           struct term *expected) {
     if (input.type == NULL)
         return input;
-    if (p->function->function->declaration->kind == MO_S_CONST && p->lambda == 0) {
+    enum mo_syntax_kind owner = p->function->function->declaration->kind;
+    if ((owner == MO_S_CONST || owner == MO_S_SERVICE_STATE || owner == MO_S_SERVICE_EVERY) &&
+        p->lambda == 0) {
         bool reported = problem(p, MO_CODE_TRY_RESULT, p->span,
                                 "try has no enclosing function returning Option or Result",
                                 "try passes a failure upwards from the nearest function or "
@@ -3853,6 +3858,11 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     case MO_S_CASE_DECL:
     case MO_S_TEST:
     case MO_S_CONST:
+    case MO_S_SERVICE:
+    case MO_S_SERVICE_STATE:
+    case MO_S_SERVICE_TOOLS:
+    case MO_S_SERVICE_EVERY:
+    case MO_S_SERVICE_TOKEN:
     case MO_S_PROMISE:
     case MO_S_ANCHOR:
     case MO_S_EXAMPLES:
@@ -5423,6 +5433,7 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
     bool anchor = spec != NULL && spec->kind == MO_SPEC_ANCHOR;
     bool test = spec != NULL && spec->kind == MO_SPEC_TEST;
     bool constant = syntax->kind == MO_S_CONST;
+    bool service = syntax->kind == MO_S_SERVICE_STATE || syntax->kind == MO_S_SERVICE_EVERY;
     struct inference p = {.arena = arena,
                           .diags = diags,
                           .interfaces = interfaces,
@@ -5452,11 +5463,11 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
                               : native(&p, test ? "Unit" : "Bool", 0);
     if (p.result == NULL)
         goto failed;
-    const struct mo_syntax *parameters = test || constant ? NULL : syntax->children[1];
-    uint32_t parameter_count = constant       ? 0
-                               : spec == NULL ? parameters->count
-                               : promise      ? parameters->count + 1
-                                              : 0;
+    const struct mo_syntax *parameters = test || constant || service ? NULL : syntax->children[1];
+    uint32_t parameter_count = constant || service ? 0
+                               : spec == NULL      ? parameters->count
+                               : promise           ? parameters->count + 1
+                                                   : 0;
     const struct mo_syntax **inputs = NULL;
     struct note **spec_notes = NULL;
     if (promise || anchor) {
@@ -5530,6 +5541,9 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
     } else if (spec != NULL)
         v = test ? discard(&p, written->children[1])
                  : infer_as(&p, written, p.result, MO_CODE_CONDITION_TYPE);
+    else if (service)
+        v = infer_as(&p, syntax->children[syntax->kind == MO_S_SERVICE_STATE ? 1 : 0], p.result,
+                     MO_CODE_SERVICE_VALUE);
     else if (constant)
         v = infer_as(&p, syntax->children[1], p.result, MO_CODE_RESULT_TYPE);
     else
@@ -5865,5 +5879,28 @@ bool mo_check_constant(struct mo_arena *arena, const struct mo_module_interfaces
     }
     constant->initializer = checked.body;
     constant->type = value;
+    return true;
+}
+
+bool mo_check_service_value(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
+                            const struct mo_signatures *signatures,
+                            struct mo_constant_context *constants, uint32_t module,
+                            const struct mo_syntax *clause, const struct mo_source_type *expected,
+                            struct mo_diags *diags, struct mo_checked_body *out) {
+    MO_ASSERT(clause->kind == MO_S_SERVICE_STATE || clause->kind == MO_S_SERVICE_EVERY);
+    struct mo_symbol owner = {.name = "service", .declaration = clause, .module = module};
+    struct mo_source_type type = {.kind = MO_SOURCE_FUNCTION,
+                                  .name = "fn",
+                                  .module = UINT32_MAX,
+                                  .count = 1,
+                                  .arguments = &expected,
+                                  .height = expected->height + 1};
+    struct mo_function_signature signature = {.function = &owner, .type = &type};
+    struct mo_checked_function checked;
+    bool halt;
+    if (infer_function(arena, interfaces, signatures, constants, &signature, diags, &checked, &halt,
+                       NULL, NULL) == NULL)
+        return false;
+    *out = checked.body;
     return true;
 }
