@@ -24,7 +24,7 @@ request, the slow ones (sanitizers, fuzzing, Lean, CBMC) only when run by hand.
 2. **Fuzzing.** The parser, the bytecode loader, the VM and everything
    that reads outside input get fuzz targets in `fuzz/`, with seed inputs in
    `fuzz/corpus/<target>/`. `bash ci/check.sh fuzz` runs every target briefly;
-   `ci/orb/nightly.sh` fuzzes each one for five minutes when run by hand.
+   `ci/orb/long-fuzz.sh` fuzzes each one for five minutes when run by hand.
 3. **Tiger Style.** Assertions everywhere (`MO_ASSERT` is never compiled out),
    explicit limits, arenas instead of scattered `malloc` and `free`, every
    return value checked, and warnings treated as errors, including

@@ -14,7 +14,9 @@ repo="robertguss/mo"
 ci_home="${MO_CI_HOME:-$HOME/mo-ci}"
 work="$ci_home/work"
 logs="$ci_home/logs"
-timeout_seconds="${MO_CI_TIMEOUT_SECONDS:-1800}"
+# Four hours: a full ci/check.sh includes CBMC proofs plus reach (~57 minutes
+# back to back) on top of gcc, clang, sanitize, fuzz, drivers, lean and static.
+timeout_seconds="${MO_CI_TIMEOUT_SECONDS:-14400}"
 
 # Exit status: the check's own status when it ran (0 means every check passed),
 # 64 for a usage error, 69 when the CI orb could not run the check at all.
