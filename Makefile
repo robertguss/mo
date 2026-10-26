@@ -385,6 +385,24 @@ $(BUILD)/debug/tests/test_vm_faults.test: $(BUILD)/debug/tests/test_vm_faults.o 
 $(BUILD)/sanitize/tests/test_vm_faults.test: $(BUILD)/sanitize/tests/test_vm_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out $(VM_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/vm-faults/%.o,$(VM_FAULT_SOURCES))
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
+# Only the service test substitutes allocation at its arena, process and heap boundaries.
+SERVICE_FAULT_SOURCES := src/vm/service.c src/vm/process.c src/heap/heap.c
+SERVICE_FAULT_RENAMES := -Dcalloc=mo_service_fault_calloc -Drealloc=mo_service_fault_realloc \
+	-Dmo_arena_allocate=mo_service_fault_allocate -Dmo_arena_allocate_array=mo_service_fault_array
+$(BUILD)/debug/service-faults/%.o: src/%.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) $(SERVICE_FAULT_RENAMES) -c $< -o $@
+
+$(BUILD)/sanitize/service-faults/%.o: src/%.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) $(SERVICE_FAULT_RENAMES) -c $< -o $@
+
+$(BUILD)/debug/tests/test_service_runtime.test: $(BUILD)/debug/tests/test_service_runtime.o $(call objects,$(BUILD)/debug,$(filter-out $(SERVICE_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/debug/service-faults/%.o,$(SERVICE_FAULT_SOURCES))
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/tests/test_service_runtime.test: $(BUILD)/sanitize/tests/test_service_runtime.o $(call objects,$(BUILD)/sanitize,$(filter-out $(SERVICE_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/service-faults/%.o,$(SERVICE_FAULT_SOURCES))
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
 # Only this test substitutes the resolver's native calls and lowers host read
 # limits. Heap builders and every other executable retain the production limits.
 HOST_RESOLVER_SOURCES := src/host/path.c src/host/console.c src/host/real-files.c src/host/host.c

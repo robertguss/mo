@@ -1,9 +1,10 @@
 # Services: the Phase 3 design
 
 Status: Design note (18 Oct 2026, task `MO-98`), updated for D301 to D308 in `MO-153`
-and the D310, D312 and D313 clarifications in `MO-155`.
-MO-155 adds service syntax and checking, with reference section 11.5. The service runtime
-is not implemented yet. The pure queue example implements D307. Phase 2 is complete
+and the D310, D312 and D313 clarifications in `MO-155`. MO-156 adds descriptors;
+MO-157 adds the in-process C service loop described below. No command starts a service yet.
+MO-155 adds service syntax and checking, with reference section 11.5.
+The pure queue example implements D307. Phase 2 is complete
 (D300), so Phase 3 can begin (D267). D256 to D267 were settled with Robert on 18 Oct 2026;
 section 9 records the decisions
 he made on 24 and 25 Oct 2026.
@@ -189,6 +190,11 @@ A supervisor restarts the service from its snapshot and log after 5 failed messa
 person starts it. Every failure, restart and stop is logged with its reason. Mo does not restart
 on every failed message, since the last good state is still available.
 
+[D308](https://app.notion.com/p/403700320c458174865ee7815f59aa4f) defines a failed message as
+"a handler that crashed or went over budget". A normally returned `Error(...)` is an
+application rejection, not a supervisor failure. It leaves the state unchanged without
+advancing the failure count.
+
 ## 9. Settled
 
 Robert settled D301 to D308 on 24 Oct 2026 and clarified D302 in D310 on 25 Oct.
@@ -337,6 +343,61 @@ evaluator. This preserves checked arithmetic, including overflow, and keeps
 the source-order timer table separate from function-table order. A future
 runtime must validate the computed interval before scheduling it. MO-156 adds
 no runtime, environment reads, mailbox, persistence or network listener.
+
+### MO-157 in-process loop
+
+`vm/service.c` owns one service's state, FIFO mailbox, timers and supervisor. Its C
+embedding API is in `vm/vm.h`; there is no new module, bytecode form, primitive,
+capability operation, Mo API or CLI command. Core and Lean still evaluate ordinary
+functions. The embedding supplies a clock, a reply callback and an event callback.
+Callbacks are synchronous, bounded and non-reentrant. The event callback is the
+logging boundary and receives failure, restart and stop reasons, plus the VM defect
+while its frames are still available. The response contains the full handler result;
+schema unwrapping and wire errors belong to MO-160.
+
+`mo_service_new` evaluates every interval with the VM and refuses zero or negative
+Durations before any tick is queued. It then evaluates the start value and queues
+one startup tick per timer, in source order as space permits. Initialization uses
+the same work and memory bounds as handlers. No environment variable is read.
+
+`mo_service_send` retains typed arguments and samples their arrival time. It refuses
+a full mailbox synchronously without retaining arguments. `mo_service_step` polls
+timers, executes at most one queued message and polls again. UTC microseconds become
+the handler's `Time`; a separate monotonic microsecond clock drives deadlines and
+supervisor windows. A full mailbox delays a due tick until space is available.
+Admission selects the oldest unqueued due tick, breaking ties in source order, so
+recurring ticks cannot starve deferred startup ticks. Multiple elapsed periods
+coalesce into one waiting tick. Deadlines advance past the
+sampled time without looping over missed periods or overflowing the clock range.
+
+The fixed defaults in `base/limits.h` are 64 queued messages and 1,048,576 VM
+instructions per call. The existing controlled-call boundary counts one instruction
+per bytecode dispatch, including calls and returns; a native primitive is one
+instruction, not a wall-clock timeout. Memory is capped at 64 MiB per service process,
+partitioned into the existing 8 MiB stack and 56 MiB heap. Retained state and queued
+arguments count against that heap, so they reduce a message's remaining allocation
+space. Shared immutable image data is outside this process budget. Mailbox and timer
+metadata have a separate 8 MiB arena limit. These are internal defaults, not syntax
+or configuration options.
+
+The service retains its old state while a handler runs, preventing in-place mutation
+of that state. Only a successful timer result, tuple or `Ok` tuple replaces it.
+Read-only results and application `Error` results do not. After a defect or budget
+failure, the loop reports the failed message, drops its live frame owners and reuse
+tokens, and reuses the idle process for the next message. This cleanup is private to
+services, whose handlers cannot receive capabilities. The public VM contract that
+ordinary stopped or cancelled processes are terminal is unchanged.
+
+The supervisor counts only defects and exhausted budgets. Its windows contain
+events younger than 60 seconds or 10 minutes, respectively; an event exactly at the
+window's age is expired. The fifth failure clears the failure window and records a
+restart. The third restart inside its window records a stop too. Restart preserves
+the last committed in-memory state and queued tools in FIFO order, discards queued
+ticks and schedules fresh startup ticks. Stop refuses later submissions and replies
+to queued tools with the internal down status. It never restarts automatically;
+freeing and constructing a service is the explicit start operation at this stage.
+MO-158 will supply snapshot/log recovery. This loop makes no durability claim and
+does not simulate disk recovery.
 
 ## 10. Done means
 

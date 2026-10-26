@@ -312,6 +312,18 @@ struct mo_limits {
 #define MO_DEFAULT_CALL_DEPTH 10000
 #define MO_DEFAULT_HEAP_SIZE (1 << 30)
 
+/* D304/D308. Service calls share these fixed limits, including initialization.
+ * Memory includes retained state and queued values; stack and heap partitions
+ * together fit MESSAGE_MEMORY. Mailbox/timer metadata has a separate bound. */
+#define MO_LIMIT_SERVICE_MAILBOX 64
+#define MO_LIMIT_SERVICE_WORK (1 << 20)
+#define MO_LIMIT_SERVICE_MESSAGE_MEMORY (64 << 20)
+#define MO_LIMIT_SERVICE_METADATA (8 << 20)
+#define MO_LIMIT_SERVICE_FAILURES 5
+#define MO_LIMIT_SERVICE_FAILURE_WINDOW_US UINT64_C(60000000)
+#define MO_LIMIT_SERVICE_RESTARTS 3
+#define MO_LIMIT_SERVICE_RESTART_WINDOW_US UINT64_C(600000000)
+
 static inline struct mo_limits mo_limits_default(void) {
     return (struct mo_limits){
         .stack_size = MO_DEFAULT_STACK_SIZE,
