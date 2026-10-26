@@ -438,7 +438,7 @@ _Static_assert(MO_LIMIT_BYTECODE_TEXT_SIZE == UINT64_C(8) * MO_LIMIT_BYTECODE_SI
                "canonical bytecode text fits within eight times the binary limit");
 _Static_assert(MO_LIMIT_BYTECODE_TEXT_SIZE <= UINT32_MAX, "bytecode text offsets fit u32");
 _Static_assert(MO_LIMIT_GENERATED_PREFIX < MO_LIMIT_GENERATED_NAME,
-               "a generated prefix plus a decimal suffix fits");
+               "generated prefixes are shorter than generated names");
 _Static_assert(MO_TIME_MIN_US < 0, "year 1 is before the Unix epoch");
 _Static_assert(MO_TIME_MAX_US > 0, "year 9999 is after the Unix epoch");
 
