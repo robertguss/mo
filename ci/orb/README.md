@@ -1,10 +1,11 @@
 # The CI orb
 
-Mo has no hosted CI: no Mo check runs on GitHub, and `main` requires no status
-check. `ci/check.sh` runs every check locally. The CI orb is an optional runner
-that runs it on a pull request when asked (decisions D208 and D214); an
-equivalent verified Linux environment, including a Docker container on the Mac,
-works too.
+Pull requests are not gated (`main` requires no status check, D270). GitHub's
+nightly workflow (`.github/workflows/nightly.yml`, MO-152) runs
+`gcc clang sanitize drivers static lean` on main; fuzz and CBMC stay by hand.
+`ci/check.sh` runs every check locally. The CI orb is an optional runner that
+runs it on a pull request when asked (decisions D208 and D214); an equivalent
+verified Linux environment, including a Docker container on the Mac, works too.
 
 ## Asking for an optional CI-orb run
 
@@ -39,9 +40,11 @@ or in the CI orb, is the way to check a change to the slow groups' own inputs
   user and could read another process's environment under `/proc`, which is
   acceptable only because just Robert and his agents can push here. The check
   runs in its own process group with a time limit (`MO_CI_TIMEOUT_SECONDS`,
-  1800 by default). Stopping the script with TERM or INT stops everything the
-  check started; a script killed with KILL can't, and its check runs on until
-  its time limit. The next run clears what it left behind.
+  14400 by default). Four hours covers a full `ci/check.sh`, including CBMC
+  proofs plus reach (~57 minutes back to back). Stopping the script with TERM
+  or INT stops everything the check started; a script killed with KILL can't,
+  and its check runs on until its time limit. The next run clears what it left
+  behind.
 - Keeps the full log in `~/mo-ci/logs/robertguss__mo-pr<N>-<sha>.log`.
 - Comments the result on the pull request, prints a summary, and exits with the
   check's status: 0 when every check passed. It exits with 64 for a usage
@@ -51,13 +54,14 @@ Runs share one clone, so a second run waits for the first.
 
 ## Long fuzzing
 
-`ci/check.sh`'s `fuzz` group fuzzes each target only briefly. For a longer run,
-the CI orb can run the full check by hand with `bash ci/orb/nightly.sh`:
-`ci/check.sh` on `main`'s latest commit, each target fuzzed for five minutes
-(`MO_CI_FUZZ_SECONDS`, 300 by default), keeping the log and any crashing inputs
-under `~/mo-ci/logs`. It has its own clone and lock under `~/mo-ci/nightly`, so
-pull requests' runs don't wait the hour or more it takes. Add any crashing input
-to the target's corpus when you fix it.
+GitHub's nightly workflow is the scheduled check of main (MO-152). It does not
+run fuzz or CBMC. `ci/check.sh`'s `fuzz` group fuzzes each target only briefly.
+For a longer run, the CI orb can run the full check by hand with
+`bash ci/orb/long-fuzz.sh`: `ci/check.sh` on `main`'s latest commit, each target
+fuzzed for five minutes (`MO_CI_FUZZ_SECONDS`, 300 by default), keeping the log
+and any crashing inputs under `~/mo-ci/logs`. It has its own clone and lock
+under `~/mo-ci/long-fuzz`, so pull requests' runs don't wait the hour or more it
+takes. Add any crashing input to the target's corpus when you fix it.
 
 ## The CI orb itself
 

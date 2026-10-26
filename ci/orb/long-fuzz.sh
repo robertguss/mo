@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Runs robertguss/mo's checks on main's latest commit with long fuzzing, as the CI
-# orb does once a night. Pull requests fuzz each target for a few seconds
+# Optional long-fuzz run of robertguss/mo's checks on main's latest commit.
+# Pull requests fuzz each target for a few seconds
 # (ci/orb/run.sh); this gives every target minutes, on the code that merged.
+# GitHub's nightly workflow (.github/workflows/nightly.yml, MO-152) is the
+# scheduled check of main; this script is not that job.
 #
-#   bash ci/orb/nightly.sh
+#   bash ci/orb/long-fuzz.sh
 #
 # Checks out origin/main in a fresh worktree, runs that commit's ci/check.sh with
 # CI=1, a minimal environment and FUZZ_SECONDS (300 by default), keeps the full
@@ -13,21 +15,21 @@ set -uo pipefail
 
 repo="robertguss/mo"
 ci_home="${MO_CI_HOME:-$HOME/mo-ci}"
-work="$ci_home/nightly"
+work="$ci_home/long-fuzz"
 logs="$ci_home/logs"
-timeout_seconds="${MO_CI_NIGHTLY_TIMEOUT_SECONDS:-14400}"
+timeout_seconds="${MO_CI_LONG_FUZZ_TIMEOUT_SECONDS:-14400}"
 fuzz_seconds="${MO_CI_FUZZ_SECONDS:-300}"
 
 # Exit status: the check's own status when it ran (0 means every check passed),
 # 64 for a usage error, 69 when the CI orb could not run the check at all.
 if [[ $# -ne 0 || ! "$fuzz_seconds" =~ ^[1-9][0-9]*$ ]]; then
-	echo "usage: [MO_CI_FUZZ_SECONDS=N] bash ci/orb/nightly.sh" >&2
+	echo "usage: [MO_CI_FUZZ_SECONDS=N] bash ci/orb/long-fuzz.sh" >&2
 	exit 64
 fi
 mkdir -p "$work" "$logs"
 
-# One nightly run at a time. It doesn't take run.sh's lock: its clone is its own.
-exec 9>"$ci_home/nightly.lock" || exit 69
+# One long-fuzz run at a time. It doesn't take run.sh's lock: its clone is its own.
+exec 9>"$ci_home/long-fuzz.lock" || exit 69
 flock 9 || exit 69
 
 check_pid=""
@@ -57,9 +59,9 @@ if ! git -C "$clone" fetch --quiet origin main; then
 	exit 69
 fi
 sha=$(git -C "$clone" rev-parse FETCH_HEAD) || exit 69
-rm -rf "$work"/home.* "$work"/nightly-*
+rm -rf "$work"/home.* "$work"/long-fuzz-*
 git -C "$clone" worktree prune
-tree="$work/nightly-$sha"
+tree="$work/long-fuzz-$sha"
 if ! git -C "$clone" worktree add --quiet --detach "$tree" "$sha"; then
 	tree=""
 	echo "error: could not check out $sha" >&2
@@ -68,7 +70,7 @@ fi
 
 check_home=$(mktemp -d "$work/home.XXXXXX") || exit 69
 stamp=$(date -u +%Y-%m-%d)
-logfile="$logs/${repo//\//__}-nightly-$stamp-$sha.log"
+logfile="$logs/${repo//\//__}-long-fuzz-$stamp-$sha.log"
 start=$(date +%s)
 (
 	cd "$tree" || exit 1
@@ -86,7 +88,7 @@ took=$(($(date +%s) - start))
 # Keep crashing inputs, which the worktree's removal would otherwise delete.
 artifacts="$tree/build/fuzz/artifacts"
 if [[ -d "$artifacts" ]] && [[ -n "$(ls -A "$artifacts" 2>/dev/null)" ]]; then
-	kept="$logs/${repo//\//__}-nightly-$stamp-$sha-artifacts"
+	kept="$logs/${repo//\//__}-long-fuzz-$stamp-$sha-artifacts"
 	mkdir -p "$kept" && cp -R "$artifacts/." "$kept/"
 	echo "fuzz artifacts: $kept"
 fi
@@ -97,7 +99,7 @@ case "$status" in
 137) outcome="checks were killed after ${took}s (timeout or out of memory)" ;;
 *) outcome="checks failed (exit status $status)" ;;
 esac
-echo "CI orb nightly: $outcome on main at ${sha:0:7} in ${took}s, fuzzing ${fuzz_seconds}s per target."
+echo "CI orb long-fuzz: $outcome on main at ${sha:0:7} in ${took}s, fuzzing ${fuzz_seconds}s per target."
 echo "log: $logfile"
 if ((status != 0)); then
 	echo "--- last 40 lines of the log ---"
