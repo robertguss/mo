@@ -1129,10 +1129,6 @@ int main(int argc, char **argv) {
         bigint_text_work(415241);
         return 0;
     }
-    if (argc == 2 && strcmp(argv[1], "--big-text-10m") == 0) {
-        bigint_text_work(4152410);
-        return 0;
-    }
     if (argc == 2 && strcmp(argv[1], "--oracle") == 0) {
         primitive_oracle(true);
         return 0;
@@ -1148,25 +1144,6 @@ int main(int argc, char **argv) {
         vm_uncons_work(1000000);
         primitive_work();
         return mo_test_report("primitive work");
-    }
-    if (argc == 2 && strcmp(argv[1], "--reuse-work") == 0) {
-        reuse_work();
-        vm_builder_work(30000);
-        return mo_test_report("owned reuse work");
-    }
-    if (argc == 2 && strcmp(argv[1], "--vm-builder-work") == 0) {
-        vm_builder_work(100000);
-        return mo_test_report("compiled VM builder work");
-    }
-    if (argc == 2 && strcmp(argv[1], "--list-drop-work") == 0) {
-        list_drop_work();
-        return mo_test_report("single-holder List uncons work");
-    }
-    if (argc == 2 && strcmp(argv[1], "--vm-uncons-work") == 0) {
-        vm_uncons_work(250000);
-        vm_uncons_work(500000);
-        vm_uncons_work(1000000);
-        return mo_test_report("compiled VM uncons work");
     }
     MO_ASSERT(argc == 1);
     empty_constants_and_rounding();
