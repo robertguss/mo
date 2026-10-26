@@ -598,7 +598,11 @@ number counted from 1 in source order: `Wc.test.2`, `Wc.count.example.3`,
 `Account.transfer.promise.1.forbids.1`, `Kv.max_ttl.init`, and
 `Wc.count.fn.1` for the first anonymous function in `Wc.count`.
 
+A service's start value is `Module.%service.start` and its timer intervals are `Module.%service.interval.1`, `.2`, … in `every` clause order. `%` marks a compiler-generated name that no source can spell; these names are internal and may change.
+
 ### 3.6 Services
+
+An image carries a descriptor for every service module in the program, including imported ones. Only the entry module's descriptor describes the service that running the program starts; the others are retained but never started (reference 11.5).
 
 The optional services section contains at most `MO_LIMIT_SERVICES` descriptors,
 one per declaring module. Its order follows checked module order. Each entry
@@ -607,7 +611,7 @@ has these fields, in wire order:
 | Field | Encoding |
 | --- | --- |
 | module, state type, start function, token variable | four `u32` indices into modules, types, functions and strings |
-| tools | count, then entries: name string index, handler function index, read-only boolean, argument-type index array, result-type index |
+| tools | count, then entries: name string index, handler function index, read-only boolean, argument-type index array, result-type index, description string index, parameter-name string-index array |
 | timers | count, then pairs of handler function index and interval function index |
 
 Tools and timers retain clause order. Together they contain at most
@@ -623,6 +627,14 @@ global initializer: loading, importing, or initializing the image never calls
 it. Each tool begins with `(State, Time)`; its schema arguments are precisely
 the remaining parameters, in order, and its schema result is the complete
 handler result (including any state/reply pair or Result wrapper).
+
+The description joins the selected handler's leading `##` comment lines with
+newlines, removing each `##` and one following space if present. Ordinary `#`
+comments are excluded. With no documentation comment, it is an empty string.
+Parameter names exclude State and Time and retain signature order. The loader
+requires a valid description string index and exactly one nonempty, NUL-free
+name per schema argument; each name is a string index. A tool occupies 28 wire
+bytes plus eight bytes per schema argument, including both array counts.
 
 The loader checks the D313 classification independently of the compiler.
 Bare `State` and `Result(State, E)` refuse. Only `(State, Reply)` and
@@ -650,7 +662,7 @@ Indexed text may append this section after `debug ... end`:
 
 ```text
 services
-  S0 m0 t1 f3 s7 tools [(s8, f0, 1, [], t2)] timers [(f1, f4)]
+  S0 m0 t1 f3 s7 tools [(s8, f0, 1, [], t2, s9, [])] timers [(f1, f4)]
 end
 ```
 

@@ -322,6 +322,9 @@ static MO_MUST_USE bool sections(struct writer *w) {
                 WRITE(indices(w, t->argument_types, t->argument_count,
                               MO_LIMIT_BYTECODE_PARAMETERS - 2));
                 WRITE(word(w, t->result_type));
+                WRITE(word(w, t->description));
+                WRITE(indices(w, t->argument_names, t->argument_name_count,
+                              MO_LIMIT_BYTECODE_PARAMETERS - 2));
             }
             WRITE(count(w, s->timer_count, MO_LIMIT_SERVICE_HANDLERS, s->timers));
             for (uint32_t j = 0; j < s->timer_count; j++) {

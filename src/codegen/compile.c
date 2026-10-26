@@ -3395,7 +3395,8 @@ static MO_MUST_USE bool service_descriptors(struct compiler *c, struct mo_byteco
             return problem(c, MO_CODE_CODEGEN_INVALID, "Service function index is out of range.");
         if (s->tool_count > MO_LIMIT_SERVICE_HANDLERS ||
             s->timer_count > MO_LIMIT_SERVICE_HANDLERS - s->tool_count)
-            return problem(c, MO_CODE_BYTECODE_TOO_BIG, "Service handler count exceeds its limit.");
+            return problem(c, MO_CODE_BYTECODE_TOO_BIG,
+                           "Service handler count exceeds MO_LIMIT_SERVICE_HANDLERS.");
         struct mo_bytecode_service_tool *tools = allocate(c, s->tool_count, sizeof *tools);
         struct mo_bytecode_service_timer *timers = allocate(c, s->timer_count, sizeof *timers);
         if (tools == NULL || timers == NULL)
@@ -3414,17 +3415,26 @@ static MO_MUST_USE bool service_descriptors(struct compiler *c, struct mo_byteco
                 return problem(c, MO_CODE_CODEGEN_INVALID, "Invalid service handler signature.");
             const struct mo_bytecode_function *fn = &c->funs[t->function];
             uint32_t count = fn->parameter_count - 2;
+            if (count != t->argument_count)
+                return problem(c, MO_CODE_CODEGEN_INVALID, "Invalid service handler signature.");
             uint32_t *arguments = allocate(c, count, sizeof *arguments);
-            if (arguments == NULL)
+            uint32_t *names = allocate(c, count, sizeof *names);
+            if (arguments == NULL || names == NULL)
                 return false;
-            for (uint32_t k = 0; k < count; k++)
+            for (uint32_t k = 0; k < count; k++) {
                 arguments[k] = fn->parameters[k + 2].type;
-            tools[j] = (struct mo_bytecode_service_tool){.name = string(c, text(t->name)),
-                                                         .function = t->function,
-                                                         .read_only = t->read_only,
-                                                         .argument_count = count,
-                                                         .argument_types = arguments,
-                                                         .result_type = fn->result_type};
+                names[k] = string(c, text(t->argument_names[k]));
+            }
+            tools[j] =
+                (struct mo_bytecode_service_tool){.name = string(c, text(t->name)),
+                                                  .function = t->function,
+                                                  .read_only = t->read_only,
+                                                  .argument_count = count,
+                                                  .argument_types = arguments,
+                                                  .result_type = fn->result_type,
+                                                  .description = string(c, text(t->description)),
+                                                  .argument_name_count = count,
+                                                  .argument_names = names};
         }
         for (uint32_t j = 0; j < s->timer_count; j++) {
             if (s->timers[j].function >= c->core->funs.count ||

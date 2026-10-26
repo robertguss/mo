@@ -736,7 +736,7 @@ static MO_MUST_USE bool services(struct validation *v) {
             !service_function(f, s->module, s->start) ||
             f->functions[s->start].parameter_count != 0 ||
             f->functions[s->start].result_type != s->state_type)
-            return refuse(v, "invalid service start function or state type");
+            return refuse(v, "invalid service module, start function or state type");
         modules_seen[i] = s->module;
         if (!named(v, s->token_env))
             return refuse(v, "invalid service token environment name");
@@ -775,16 +775,20 @@ static MO_MUST_USE bool services(struct validation *v) {
                     !service_function(f, s->module, interval) ||
                     f->functions[interval].parameter_count != 0 ||
                     f->types[f->functions[interval].result_type].kind != MO_TYPE_DURATION)
-                    return refuse(v, "invalid service timer signature");
+                    return refuse(v, "invalid service timer handler or interval function");
                 continue;
             }
             const struct mo_bytecode_service_tool *t = &s->tools[j];
-            if (!named(v, t->name) || t->argument_count != fn->parameter_count - 2 ||
+            if (!named(v, t->name))
+                return refuse(v, "invalid service tool name");
+            if (t->argument_count != fn->parameter_count - 2 ||
+                t->argument_name_count != t->argument_count || t->description >= f->string_count ||
                 t->result_type != fn->result_type)
                 return refuse(v, "service tool schema differs from handler");
             names[j] = v->info->names->canonical[t->name];
             for (uint32_t k = 0; k < t->argument_count; k++)
-                if (t->argument_types[k] != fn->parameters[k + 2].type)
+                if (t->argument_types[k] != fn->parameters[k + 2].type ||
+                    !named(v, t->argument_names[k]))
                     return refuse(v, "service tool schema differs from handler");
             const struct mo_type *result = &f->types[t->result_type];
             uint32_t success = MO_BYTECODE_NO_INDEX;

@@ -837,8 +837,8 @@ SPEC_CASES["env-natives"] = (body[len("module Main\n"):], {
 body = pathlib.Path("tests/lower-source/service-descriptor/main.mo").read_text()
 assert body.startswith("module Main\n")
 SPEC_CASES["service-descriptor"] = (body[len("module Main\n"):], {
-    "Main.%service.start.0": ["failed", "7"],
-    "Main.%service.interval.0": ["failed", "120s"],
+    "Main.%service.start": ["failed", "7"],
+    "Main.%service.interval.1": ["failed", "120s"],
     None: ["returned", "19"],
 })
 
@@ -906,7 +906,7 @@ def check_specs(driver, vm, root, world):
                 probe = parse(report.stdout)
                 payload = probe[2]
                 actual_target = "%lower.service.value"
-                primitive = "(int (toText))" if ".start." in target else "(time (durToText))"
+                primitive = "(int (toText))" if target.endswith(".start") else "(time (durToText))"
                 payload[2].append(parse(f'''(FunDecl {wire(actual_target)} () (unit)
                     (fail (prim {primitive} ((call {wire(target)} ()))))
                     "Main" (test) {len(payload[3])})'''))

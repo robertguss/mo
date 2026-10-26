@@ -260,11 +260,16 @@ static MO_MUST_USE bool debug(struct mo_text_reader *r) {
            list(r, MO_LIMIT_DEBUG_ENTRIES, condition);
 }
 
+static MO_MUST_USE bool string_index(struct mo_text_reader *r) {
+    return reference(r, 's', false);
+}
+
 static MO_MUST_USE bool service_tool(struct mo_text_reader *r) {
     return punctuation(r, "(") && reference(r, 's', false) && punctuation(r, ",") &&
            function_index(r) && punctuation(r, ",") && boolean(r) && punctuation(r, ",") &&
            list(r, MO_LIMIT_BYTECODE_PARAMETERS - 2, type_index) && punctuation(r, ",") &&
-           type_index(r) && punctuation(r, ")");
+           type_index(r) && punctuation(r, ",") && string_index(r) && punctuation(r, ",") &&
+           list(r, MO_LIMIT_BYTECODE_PARAMETERS - 2, string_index) && punctuation(r, ")");
 }
 
 static MO_MUST_USE bool service_timer(struct mo_text_reader *r) {

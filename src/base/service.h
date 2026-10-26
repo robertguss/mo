@@ -11,6 +11,9 @@ struct mo_service_tool {
     const char *name;
     uint32_t function;
     bool read_only;
+    const char *description;
+    uint32_t argument_count;
+    const char *const *argument_names; /* excludes State and Time */
 };
 
 struct mo_service_timer {

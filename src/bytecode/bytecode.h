@@ -350,6 +350,9 @@ struct mo_bytecode_service_tool {
     uint32_t argument_count;
     const uint32_t *argument_types; /* excludes State and Time */
     uint32_t result_type;           /* complete handler result, including update/error wrappers */
+    uint32_t description;           /* string index; empty when no documentation comment */
+    uint32_t argument_name_count;   /* checked equal to argument_count on load */
+    const uint32_t *argument_names;
 };
 
 struct mo_bytecode_service_timer {

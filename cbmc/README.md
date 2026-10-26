@@ -66,7 +66,7 @@ A proof can also hold because part of its function never runs: an input too smal
 body, or an assumption that rules out the paths that matter. Two checks catch that:
 
 - **Input sizes.** Each proof runs on inputs large enough for each of its loops to run once:
-  `functions` needs 40 bytes (a function entry takes 36), `debug_entry` 52, `service_entry` 56
+  `functions` needs 40 bytes (a function entry takes 36), `debug_entry` 52, `service_entry` 68
   and `sections` 64.
   `prove.sh` refuses a proof whose input leaves a loop bound below 2.
 - **Reach.** `bash cbmc/prove.sh --reach` runs CBMC's location coverage on each proof and fails

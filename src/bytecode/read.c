@@ -474,7 +474,7 @@ static void service_entry(struct reader *r, struct mo_bytecode_service *s) {
     s->start = word(r);
     s->token_env = word(r);
     struct mo_bytecode_service_tool *tools =
-        array(r, &s->tool_count, MO_LIMIT_SERVICE_HANDLERS, 20, sizeof *tools,
+        array(r, &s->tool_count, MO_LIMIT_SERVICE_HANDLERS, 28, sizeof *tools,
               _Alignof(struct mo_bytecode_service_tool));
     s->tools = tools;
     for (uint32_t j = 0; j < s->tool_count && !r->failed; j++) {
@@ -484,6 +484,9 @@ static void service_entry(struct reader *r, struct mo_bytecode_service *s) {
         tools[j].argument_types =
             indices(r, &tools[j].argument_count, MO_LIMIT_BYTECODE_PARAMETERS - 2);
         tools[j].result_type = word(r);
+        tools[j].description = word(r);
+        tools[j].argument_names =
+            indices(r, &tools[j].argument_name_count, MO_LIMIT_BYTECODE_PARAMETERS - 2);
     }
     struct mo_bytecode_service_timer *timers =
         array(r, &s->timer_count, MO_LIMIT_SERVICE_HANDLERS, 8, sizeof *timers,

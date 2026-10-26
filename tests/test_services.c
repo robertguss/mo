@@ -75,6 +75,88 @@ static void write_refused(const struct mo_bytecode *file, const char *reason) {
     mo_buffer_free(&wire);
 }
 
+static void schema_refusals(const struct mo_bytecode *file, const struct mo_buffer *wire) {
+    struct mo_bytecode changed = *file;
+    struct mo_bytecode_service service = file->services[0];
+    struct mo_bytecode_service_tool tool = service.tools[1];
+    changed.services = &service;
+    service.tools = &tool;
+    service.tool_count = 1;
+    tool.description = file->string_count;
+    write_refused(&changed, "service tool schema differs from handler");
+    tool = file->services[0].tools[1];
+    for (uint32_t count = 0; count <= 3; count++) {
+        uint32_t names[] = {tool.name, tool.name, tool.name};
+        tool.argument_names = names;
+        tool.argument_name_count = count;
+        if (count != 2)
+            write_refused(&changed, "service tool schema differs from handler");
+    }
+    tool = file->services[0].tools[1];
+    uint32_t names[] = {tool.argument_names[0], file->string_count};
+    tool.argument_names = names;
+    write_refused(&changed, "service tool schema differs from handler");
+    names[1] = file->services[0].tools[0].description;
+    CHECK(named(file, names[1], ""));
+    write_refused(&changed, "service tool schema differs from handler");
+
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_LOWER_WORK);
+    struct mo_bytecode_string *strings = mo_arena_allocate_array(
+        &arena, file->string_count + 1, sizeof *strings, _Alignof(struct mo_bytecode_string));
+    MO_ASSERT(strings != NULL);
+    memcpy(strings, file->strings, file->string_count * sizeof *strings);
+    strings[file->string_count] = (struct mo_bytecode_string){3, (const uint8_t *)"a\0b"};
+    changed.strings = strings;
+    changed.string_count++;
+    names[1] = file->string_count;
+    write_refused(&changed, "service tool schema differs from handler");
+    tool = file->services[0].tools[0];
+    tool.name = file->string_count;
+    write_refused(&changed, "invalid service tool name");
+    tool.name = tool.description;
+    write_refused(&changed, "invalid service tool name");
+    tool.name = changed.string_count;
+    write_refused(&changed, "invalid service tool name");
+    mo_arena_free(&arena);
+
+    struct mo_buffer text;
+    struct mo_load_error le;
+    mo_buffer_init(&text, MO_LIMIT_BYTECODE_TEXT_SIZE);
+    CHECK(mo_bytecode_disassemble(wire->bytes, wire->length, &text, &le));
+    CHECK(mo_buffer_append(&text, "\0", 1));
+    const char *start = strstr((const char *)text.bytes, " tools [");
+    MO_ASSERT(start != NULL);
+    start += strlen(" tools [");
+    const char *end = strchr(start, ')');
+    MO_ASSERT(end != NULL);
+    tool = file->services[0].tools[0];
+    for (unsigned i = 0; i < 3; i++) {
+        char entry[160];
+        int n = snprintf(entry, sizeof entry, "(s%u, f%u, 1, [], t%u, s%u, [%s])",
+                         i == 2 ? tool.description : tool.name, tool.function, tool.result_type,
+                         i == 1 ? file->string_count : tool.description, i == 0 ? "s0" : "");
+        MO_ASSERT(n > 0 && (size_t)n < sizeof entry);
+        struct mo_buffer input, output;
+        mo_buffer_init(&input, MO_LIMIT_BYTECODE_TEXT_SIZE);
+        mo_buffer_init(&output, MO_LIMIT_BYTECODE_SIZE);
+        CHECK(mo_buffer_append(&input, text.bytes, (size_t)(start - (const char *)text.bytes)));
+        CHECK(mo_buffer_append(&input, entry, (size_t)n));
+        CHECK(mo_buffer_append(&input, end + 1, strlen(end + 1)));
+        struct mo_assemble_error error;
+        bool assembled =
+            mo_bytecode_assemble((const char *)input.bytes, input.length, &output, &error);
+        CHECK(!assembled && output.length == 0);
+        if (!assembled)
+            CHECK(strcmp(error.reason, i == 2   ? "invalid service tool name"
+                                       : i == 1 ? "expected string index in final pool"
+                                                : "service tool schema differs from handler") == 0);
+        mo_buffer_free(&input);
+        mo_buffer_free(&output);
+    }
+    mo_buffer_free(&text);
+}
+
 static void table_refusals(const struct mo_bytecode *file) {
     struct mo_arena arena;
     mo_arena_init(&arena, MO_LIMIT_LOWER_WORK);
@@ -146,6 +228,7 @@ static void descriptor(void) {
          "every 2.minutes z_tick\nevery 3.hours a_tick\ntoken from env \"_TOKEN2\"\nend\n"
          "fn identity(value: T) : T\nvalue\nend\n"
          "fn snapshots(state: Int, _now: Time) : List(Int)\n[state]\nend\n"
+         "## Update the counter.\n##\n# not a description\n##Keep the reply flag.\n"
          "fn update(state: Int, _now: Time, amount: Int, enabled: Bool) : (Int, Bool)\n"
          "(state + amount, enabled)\nend\n"
          "fn attempt(state: Int, _now: Time) : Result((Int, Bool), Text)\nOk((state, true))\nend\n"
@@ -204,21 +287,30 @@ static void descriptor(void) {
     }
     const struct mo_bytecode *file = mo_image_bytecode(image);
     table_refusals(file);
+    schema_refusals(file, &wire);
     CHECK(file->service_count == 1 && file->header.flags == MO_BYTECODE_SERVICE_FLAG);
     MO_ASSERT(file->service_count == 1);
     const struct mo_bytecode_service *s = &file->services[0];
     CHECK(named(file, file->modules[s->module].name, "Main"));
     CHECK(named(file, s->token_env, "_TOKEN2"));
+    CHECK(named(file, file->functions[s->start].name, "Main.%service.start"));
+    CHECK(named(file, file->functions[s->timers[0].interval].name, "Main.%service.interval.1"));
+    CHECK(named(file, file->functions[s->timers[1].interval].name, "Main.%service.interval.2"));
     CHECK(file->types[s->state_type].kind == MO_TYPE_INT);
     CHECK(s->tool_count == 8 && s->timer_count == 2);
     const char *names[] = {"snapshots", "update",  "attempt",     "optional",
                            "wrapped",   "reverse", "error_state", "result_list"};
     for (uint32_t i = 0; i < s->tool_count; i++) {
         CHECK(named(file, s->tools[i].name, names[i]));
+        CHECK(named(file, s->tools[i].description,
+                    i == 1 ? "Update the counter.\n\nKeep the reply flag." : ""));
+        CHECK(s->tools[i].argument_name_count == s->tools[i].argument_count);
         CHECK(s->tools[i].read_only == (i != 1 && i != 2));
         CHECK(file->functions[s->tools[i].function].parameters[0].type == s->state_type);
     }
     CHECK(s->tools[1].argument_count == 2);
+    CHECK(named(file, s->tools[1].argument_names[0], "amount"));
+    CHECK(named(file, s->tools[1].argument_names[1], "enabled"));
     CHECK(file->types[s->tools[1].argument_types[0]].kind == MO_TYPE_INT);
     CHECK(file->types[s->tools[1].argument_types[1]].kind == MO_TYPE_BOOL);
     struct mo_limits limits = mo_limits_default();
@@ -240,15 +332,16 @@ static void descriptor(void) {
     mo_process_free(process);
     size_t size = 28 + 8 * s->timer_count;
     for (uint32_t i = 0; i < s->tool_count; i++)
-        size += 20 + 4 * s->tools[i].argument_count;
+        size += 28 + 8 * s->tools[i].argument_count;
     size_t start = wire.length - size;
     refused(&wire, 8, 2, "unsupported version or flags");
     refused(&wire, start, 0, "empty service extension");
     refused(&wire, start, MO_LIMIT_SERVICES + 1, "count past limit or remaining bytes");
-    refused(&wire, start + 4, file->module_count, "invalid service start function or state type");
-    refused(&wire, start + 12, UINT32_MAX, "invalid service start function or state type");
+    refused(&wire, start + 4, file->module_count,
+            "invalid service module, start function or state type");
+    refused(&wire, start + 12, UINT32_MAX, "invalid service module, start function or state type");
     refused(&wire, start + 8, file->functions[s->tools[0].function].result_type,
-            "invalid service start function or state type");
+            "invalid service module, start function or state type");
     refused(&wire, start + 16, s->tools[0].name, "invalid service token environment name");
     refused(&wire, start + 20, MO_LIMIT_SERVICE_HANDLERS + 1,
             "count past limit or remaining bytes");
@@ -256,10 +349,12 @@ static void descriptor(void) {
     refused(&wire, start + 24 + 8, 0, "invalid service tool result classification");
     refused(&wire, start + 24 + 8, 2, "invalid boolean");
     refused(&wire, start + 24 + 16, s->state_type, "service tool schema differs from handler");
-    refused(&wire, start + 44, s->tools[0].name, "duplicate service handler or tool name");
-    refused(&wire, start + 44 + 16, file->functions[s->tools[0].function].result_type,
+    refused(&wire, start + 24, s->tools[0].description, "invalid service tool name");
+    refused(&wire, start + 44, file->string_count, "service tool schema differs from handler");
+    refused(&wire, start + 52, s->tools[0].name, "duplicate service handler or tool name");
+    refused(&wire, start + 52 + 16, file->functions[s->tools[0].function].result_type,
             "service tool schema differs from handler");
-    refused(&wire, wire.length - 4, s->start, "invalid service timer signature");
+    refused(&wire, wire.length - 4, s->start, "invalid service timer handler or interval function");
     refused(&wire, wire.length - 8, s->timers[0].function,
             "duplicate service handler or tool name");
     uint32_t invalid_functions[] = {s->timers[0].function, UINT32_MAX, UINT32_MAX, UINT32_MAX};
@@ -308,9 +403,52 @@ done:
     free_fixture(&f);
 }
 
+static void selected_overload(void) {
+    struct fixture f;
+    init(&f, "module Main\n"
+             "struct Unselected\nvalue: Int\nend\nstruct Selected\nvalue: Int\nend\n"
+             "service\nstate Selected = Selected(value: 7)\ntools query\n"
+             "token from env \"TOKEN\"\nend\n"
+             "## Wrong overload.\n"
+             "fn query(_state: Unselected, _now: Time, wrong: Text) : Text\nwrong\nend\n"
+             "## Selected overload.\n"
+             "fn query(_state: Selected, _now: Time, wanted: Text) : Text\nwanted\nend\n");
+    MO_ASSERT(f.program != NULL && !mo_diags_any(&f.diags));
+    const char *modules[] = {"Main"};
+    f.set.names = modules;
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_LOWER_WORK);
+    struct mo_services services;
+    struct mo_core *core =
+        mo_lower_services(&arena, f.program, &f.sources, &f.diags, NULL, &services);
+    MO_ASSERT(core != NULL && !mo_diags_any(&f.diags));
+    free_fixture(&f);
+    struct mo_diags diags;
+    CHECK(mo_diags_init(&diags));
+    struct mo_buffer wire;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    MO_ASSERT(mo_compile_services(core, &services, &wire, &diags));
+    struct mo_load_error error;
+    struct mo_image *image = mo_load(wire.bytes, wire.length, &error);
+    MO_ASSERT(image != NULL);
+    const struct mo_bytecode *file = mo_image_bytecode(image);
+    MO_ASSERT(file->service_count == 1 && file->services[0].tool_count == 1);
+    const struct mo_bytecode_service_tool *tool = &file->services[0].tools[0];
+    CHECK(named(file, tool->name, "query"));
+    CHECK(named(file, tool->description, "Selected overload."));
+    MO_ASSERT(tool->argument_name_count == 1);
+    CHECK(named(file, tool->argument_names[0], "wanted"));
+    text_roundtrip(&wire);
+    mo_image_free(image);
+    mo_buffer_free(&wire);
+    mo_diags_free(&diags);
+    mo_arena_free(&arena);
+}
+
 static void run(void *context) {
     (void)context;
     descriptor();
+    selected_overload();
 }
 
 int main(int argc, char **argv) {

@@ -449,7 +449,13 @@ static MO_MUST_USE bool services(struct printer *p, const struct mo_bytecode *f)
             for (uint32_t k = 0; k < t->argument_count; k++)
                 if ((k != 0 && !text(p, ", ")) || !number(p, "t", t->argument_types[k]))
                     return false;
-            if (!number(p, "], t", t->result_type) || !text(p, ")"))
+            if (!number(p, "], t", t->result_type) || !number(p, ", s", t->description) ||
+                !text(p, ", ["))
+                return false;
+            for (uint32_t k = 0; k < t->argument_name_count; k++)
+                if ((k != 0 && !text(p, ", ")) || !number(p, "s", t->argument_names[k]))
+                    return false;
+            if (!text(p, "])"))
                 return false;
         }
         if (!text(p, "] timers ["))

@@ -236,7 +236,8 @@ static uint32_t service_value(struct lowering *p, uint32_t module, const char *s
     *p->function_tail = f;
     p->function_tail = &f->next;
     f->fun.module = lower_text(p, p->program->set->names[module]);
-    f->fun.name = lower_concat(p, f->fun.module, suffix, lower_number(p, index));
+    f->fun.name = lower_concat(p, f->fun.module, suffix,
+                               index == 0 ? lower_text(p, "") : lower_number(p, index));
     f->fun.const_count.digits = lower_number(p, p->program->constant_count);
     f->fun.ret = lower_type(p, type, NULL);
     f->meta.name = f->fun.name;
@@ -252,6 +253,31 @@ static uint32_t service_handler(struct lowering *p, uint32_t index) {
         ->index;
 }
 
+static const char *service_description(struct lowering *p, const struct mo_syntax *fn) {
+    size_t size = 1;
+    for (const struct mo_syntax_comment *c = fn->leading; c != NULL; c = c->next)
+        if (c->documentation)
+            size += c->span.end - c->span.start + 1;
+    char *text = LOWER_NEW(p, char, size);
+    size_t length = 0;
+    bool first = true;
+    for (const struct mo_syntax_comment *c = fn->leading; c != NULL; c = c->next) {
+        if (!c->documentation)
+            continue;
+        size_t end = c->span.end - c->span.start, start = 2;
+        MO_ASSERT(end >= start);
+        if (start < end && c->text[start] == ' ')
+            start++;
+        if (!first)
+            text[length++] = '\n';
+        memcpy(text + length, c->text + start, end - start);
+        length += end - start;
+        first = false;
+    }
+    text[length] = '\0';
+    return text;
+}
+
 static struct mo_services services(struct lowering *p) {
     uint32_t count = p->program->service_count;
     struct mo_service *items = LOWER_NEW(p, struct mo_service, count);
@@ -259,7 +285,7 @@ static struct mo_services services(struct lowering *p) {
         const struct mo_checked_service *source = &p->program->services[i];
         struct mo_service *s = &items[i];
         p->span = source->syntax->span;
-        s->start = service_value(p, source->module, ".%service.start.", 0, source->state,
+        s->start = service_value(p, source->module, ".%service.start", 0, source->state,
                                  &source->initializer);
         struct mo_core_ty text_type = {.tag = MO_CORE_TY_TEXT};
         mo_core_expr token = lower_literal(p, source->token_source, &text_type, false);
@@ -269,12 +295,21 @@ static struct mo_services services(struct lowering *p) {
         s->tools = tools;
         for (uint32_t j = 0; j < s->tool_count; j++) {
             const struct mo_checked_service_tool *tool = &source->tools[j];
+            const struct mo_checked_function *fn = &p->program->functions[tool->function];
+            MO_ASSERT(fn->parameter_count >= 2);
+            uint32_t argument_count = fn->parameter_count - 2;
+            const char **names = LOWER_NEW(p, const char *, argument_count);
+            for (uint32_t k = 0; k < argument_count; k++)
+                names[k] = lower_text(p, fn->parameters[k + 2]->name).bytes;
             tools[j] = (struct mo_service_tool){
                 .name = lower_copy(p, (const char *)tool->name->text,
                                    tool->name->span.end - tool->name->span.start)
                             .bytes,
                 .function = service_handler(p, tool->function),
-                .read_only = tool->reply == MO_SERVICE_READ_ONLY};
+                .read_only = tool->reply == MO_SERVICE_READ_ONLY,
+                .description = service_description(p, fn->signature->function->declaration),
+                .argument_count = argument_count,
+                .argument_names = names};
         }
         s->timer_count = source->timer_count;
         struct mo_service_timer *timers = LOWER_NEW(p, struct mo_service_timer, s->timer_count);
@@ -286,8 +321,8 @@ static struct mo_services services(struct lowering *p) {
             p->span = timer->syntax->span;
             timers[j] = (struct mo_service_timer){
                 .function = service_handler(p, timer->function),
-                .interval = service_value(p, source->module, ".%service.interval.", j, &duration,
-                                          &timer->interval)};
+                .interval = service_value(p, source->module, ".%service.interval.", j + 1,
+                                          &duration, &timer->interval)};
         }
     }
     return (struct mo_services){count, items};
