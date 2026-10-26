@@ -196,12 +196,13 @@ exactly once, without accessing children or reentering the heap.
 
 ## 3. The file
 
-All integers are little-endian. A file is a header, then ten sections in this
-order, each a 32-bit count followed by its entries.
+All integers are little-endian. A file is a header, then ten required sections
+and an optional services section in this order. Each section is a 32-bit count
+followed by its entries.
 
 ```text
 header      magic "MOBC", format version (major and minor, 16 bits each),
-            flags (32 bits, zero in v0.2), checksum (FNV-1a, 64 bits, of
+            flags (32 bits, 0 or 1), checksum (FNV-1a, 64 bits, of
             everything after the header)
 strings     UTF-8 strings: names, text constants, and the text of tests and
             example lines
@@ -216,7 +217,13 @@ modules     each module's name, its exposed types and functions, and its
             constants (3.2)
 files       exact nonempty/non-NUL filename bytes, not UTF-8 strings (3.4)
 debug       spans, declaration/condition locations and register names (3.4)
+services    service descriptors, present only when flags = 1 (3.6)
 ```
+
+Flag value 1 announces a nonempty services section after debug. No other flag
+bits are accepted. Files without services retain flags = 0 and have no extra
+count word; their encoding is unchanged. Older v0.2 loaders reject flags = 1
+rather than silently ignoring service metadata. The format version stays 0.2.
 
 The checksum detects truncation and corruption. It's no defense against an
 attacker: Phase 5 signs upgrade packages separately. Every count and index has
@@ -590,6 +597,79 @@ number counted from 1 in source order: `Wc.test.2`, `Wc.count.example.3`,
 `Account.transfer.promise.1`, `Account.transfer.promise.1.allows.2`,
 `Account.transfer.promise.1.forbids.1`, `Kv.max_ttl.init`, and
 `Wc.count.fn.1` for the first anonymous function in `Wc.count`.
+
+A service's start value is `Module.%service.start` and its timer intervals are `Module.%service.interval.1`, `.2`, … in `every` clause order. `%` marks a compiler-generated name that no source can spell; these names are internal and may change.
+
+### 3.6 Services
+
+An image carries a descriptor for every service module in the program, including imported ones. Only the entry module's descriptor describes the service that running the program starts; the others are retained but never started (reference 11.5).
+
+The optional services section contains at most `MO_LIMIT_SERVICES` descriptors,
+one per declaring module. Its order follows checked module order. Each entry
+has these fields, in wire order:
+
+| Field | Encoding |
+| --- | --- |
+| module, state type, start function, token variable | four `u32` indices into modules, types, functions and strings |
+| tools | count, then entries: name string index, handler function index, read-only boolean, argument-type index array, result-type index, description string index, parameter-name string-index array |
+| timers | count, then pairs of handler function index and interval function index |
+
+Tools and timers retain clause order. Together they contain at most
+`MO_LIMIT_SERVICE_HANDLERS` entries; at least one tool is required. Tool names
+are nonempty/NUL-free and unique by bytes. Handler indices are unique across
+both lists. The token string is the environment variable's name, never its
+value: nonempty uppercase ASCII letters, digits and underscores, with no
+leading digit.
+
+Every referenced function belongs to the declaring module and has kind
+`function`, not spec code. The start function is `() : State`. It is not a
+global initializer: loading, importing, or initializing the image never calls
+it. Each tool begins with `(State, Time)`; its schema arguments are precisely
+the remaining parameters, in order, and its schema result is the complete
+handler result (including any state/reply pair or Result wrapper).
+
+The description joins the selected handler's leading `##` comment lines with
+newlines, removing each `##` and one following space if present. Ordinary `#`
+comments are excluded. With no documentation comment, it is an empty string.
+Parameter names exclude State and Time and retain signature order. The loader
+requires a valid description string index and exactly one nonempty, NUL-free
+name per schema argument; each name is a string index. A tool occupies 28 wire
+bytes plus eight bytes per schema argument, including both array counts.
+
+The loader checks the D313 classification independently of the compiler.
+Bare `State` and `Result(State, E)` refuse. Only `(State, Reply)` and
+`Result((State, Reply), E)` have read-only = 0; all other results have
+read-only = 1. Built-in Result uses a nominal choice name beginning `Result(`,
+with unnamed one-field `Ok` and `Error` cases in that order. State, parameters
+and results must contain no capability, function or closure-environment type,
+including through recursive records, choices and containers.
+
+Each timer handler is `(State, Time) : State`. Its interval function is
+`() : Duration`, lowered from the checked positive whole-number duration
+literal. It uses ordinary checked duration arithmetic; overflow is a defect
+when called, not a wrapped interval. The loader checks the signature, not the
+value computed by arbitrary bytecode. A future service runtime must refuse
+nonpositive intervals before scheduling them. No scheduling, token lookup or
+state saving occurs in this format layer.
+
+All indices and signatures are checked before an image is returned. A missing
+function, wrong schema type, wrong read-only flag or duplicate service module
+refuses the entire image. The writer enforces the same rules by loading its
+output. Cross-table failures use byte offset 20 and the service entry's error
+site for text diagnostics.
+
+Indexed text may append this section after `debug ... end`:
+
+```text
+services
+  S0 m0 t1 f3 s7 tools [(s8, f0, 1, [], t2, s9, [])] timers [(f1, f4)]
+end
+```
+
+Indices name existing entries. Service indices are consecutive from `S0`;
+booleans use 0 or 1, as elsewhere in indexed text. An absent section means no
+services; an empty section refuses. Shorthand has no service declarations.
+Disassembly and reassembly retain the service section byte for byte.
 
 ## 4. Instructions
 

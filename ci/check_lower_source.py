@@ -834,6 +834,14 @@ SPEC_CASES["env-natives"] = (body[len("module Main\n"):], {
     "Main.test.1": ["returned", "Unit"],
 })
 
+body = pathlib.Path("tests/lower-source/service-descriptor/main.mo").read_text()
+assert body.startswith("module Main\n")
+SPEC_CASES["service-descriptor"] = (body[len("module Main\n"):], {
+    "Main.%service.start": ["failed", "7"],
+    "Main.%service.interval.1": ["failed", "120s"],
+    None: ["returned", "19"],
+})
+
 
 for count in (4, 8, 16):
     CASES[f"linear_bool_{count}"] = (
@@ -891,6 +899,21 @@ def check_specs(driver, vm, root, world):
             assert "Main::Main.keep((Text, Bool)).promise.1" in promises, promises
         for target, expected in selections.items():
             actual_target, oracle_path = target, path
+            vm_path, vm_target = path, target
+            if name == "service-descriptor" and target is not None:
+                # Observe the generated ordinary functions through the same Unit test
+                # adapter in Lean and the VM; neither gains service semantics.
+                probe = parse(report.stdout)
+                payload = probe[2]
+                actual_target = "%lower.service.value"
+                primitive = "(int (toText))" if target.endswith(".start") else "(time (durToText))"
+                payload[2].append(parse(f'''(FunDecl {wire(actual_target)} () (unit)
+                    (fail (prim {primitive} ((call {wire(target)} ()))))
+                    "Main" (test) {len(payload[3])})'''))
+                payload[5] = parse("(noSource)")
+                oracle_path = root / "service-value-probe.core"
+                oracle_path.write_text(wire(probe) + "\n")
+                vm_path, vm_target = oracle_path, actual_target
             anchor = target is not None and any(
                 f[1] == target and f[6][0] == "anchor" for f in program[2])
             if anchor:
@@ -911,7 +934,7 @@ def check_specs(driver, vm, root, world):
                 actual[0] = "returned"
             assert actual == expected, (name, target, expected, actual)
             runner = vm if target is None else vm.parent / "tests/test_vm.test"
-            actual = run(str(runner), path, target)
+            actual = run(str(runner), vm_path, vm_target)
             assert actual == expected, (name, target, expected, actual)
             checked += 1
     print(f"lower source specs: {len(SPEC_CASES)} real programs; {checked} expected "

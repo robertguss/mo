@@ -684,7 +684,7 @@ static void boundaries(void) {
     static const char minimal[] = "bytecode 0.2 shorthand\n";
     struct mo_buffer small;
     struct mo_assemble_error error;
-    mo_buffer_init(&small, MO_BYTECODE_HEADER_SIZE + 4 * MO_SECTION_COUNT - 1);
+    mo_buffer_init(&small, MO_BYTECODE_HEADER_SIZE + 4 * MO_SECTION_SERVICES - 1);
     CHECK(!mo_bytecode_assemble(minimal, sizeof minimal - 1, &small, &error));
     CHECK(small.length == 0 && error.offset == 0 &&
           strcmp(error.reason, "bytecode output limit") == 0);

@@ -3,6 +3,7 @@
 #define MO_CODEGEN_H
 
 #include "base/buffer.h"
+#include "base/service.h"
 #include "core/core.h"
 
 /* Borrows complete checked Core. out must be initialized, empty and independent of Core.
@@ -14,5 +15,10 @@
  * Success goes through the bytecode writer's structural checks and full verification. */
 MO_MUST_USE bool mo_compile(const struct mo_core *core, struct mo_buffer *out,
                             struct mo_diags *diags);
+
+/* As mo_compile, with the lowering-owned service metadata for this Core program.
+ * Functions remain ordinary Core; metadata never changes their execution. */
+MO_MUST_USE bool mo_compile_services(const struct mo_core *core, const struct mo_services *services,
+                                     struct mo_buffer *out, struct mo_diags *diags);
 
 #endif
