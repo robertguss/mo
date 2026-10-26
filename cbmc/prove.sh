@@ -118,7 +118,8 @@ unreachable_lines() {
 # The function a proof is about, when it is not the proof's own name.
 proved_function() {
 	case "$1" in
-	utf8) echo mo_bytecode_utf8 ;;
+	# The wrapper is one call; cover the shared decoder it now uses.
+	utf8) echo 'mo_bytecode_utf8|mo_utf8_valid|mo_utf8_decode' ;;
 	decode) echo mo_bytecode_decode_info ;;
 	# An arena proof covers the static helpers its function calls, too.
 	arena_allocate) echo 'mo_arena_allocate|add_chunk|fits|padding_for' ;;
