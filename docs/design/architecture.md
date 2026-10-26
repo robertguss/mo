@@ -2484,8 +2484,9 @@ dispatches on other branches, and checks the event's exact commit. A single
 Ubuntu 24.04 job shares the builds across groups, with a 120-minute timeout;
 an overlapping run leaves the active run alone, with at most one pending run
 retained (a newer request replaces the pending one). It installs clang 18 with
-`libclang-rt-18-dev`, clang-tidy 18, clang-format 14 (checked as 14.0.6), Bison
-and elan with the version from `formal/lean-toolchain`. Actions receive only
+`libclang-rt-18-dev`, clang-tidy 18, clang-format 14 (checked as 14.0.6) and
+Bison, then Lean through `.agents/setup lean` into `/opt/elan` with the version
+from `formal/lean-toolchain`. Actions receive only
 read access to repository contents, and checkout does not retain credentials.
 
 The drivers group runs the first build's tool checks, including the frozen
