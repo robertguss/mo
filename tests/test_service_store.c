@@ -278,7 +278,7 @@ static void uncertain_commit(struct mo_image *image) {
     crash_point = 0;
     CHECK(o.status == MO_SERVICE_STORE && !mo_service_running(s) && o.stops == 1);
     CHECK(strcmp(mo_service_status_text(o.status),
-                 "service store failed; reopen it before retrying") == 0);
+                 "service store failed; reopen it to see whether the last change was saved") == 0);
     CHECK(mo_cell_get_int(mo_service_state(s)) == 7);
     mo_service_free(s);
     s = open_service(image, store, &o);
@@ -501,6 +501,43 @@ static void read_failures(struct mo_image *image) {
     mo_store_close(store);
 }
 
+/* A store written by one image is refused by a service from another image,
+ * and the refusal writes nothing to the file. */
+static void foreign_image(struct mo_image *image, const char *path) {
+    struct mo_store *store;
+    MO_ASSERT(mo_store_open(path, &store) == MO_STORE_OK);
+    struct observations o = {0};
+    struct mo_service_loop *s = open_service(image, store, &o);
+    add(s, 11);
+    mo_service_free(s);
+    mo_store_close(store);
+    FILE *file = fopen(path, "rb");
+    MO_ASSERT(file != NULL);
+    static unsigned char before[1 << 16], after[1 << 16];
+    size_t length = fread(before, 1, sizeof before, file);
+    MO_ASSERT(length > 0 && length < sizeof before && fclose(file) == 0);
+    struct mo_image *other =
+        compile("module Main\nservice\nstate Int = 7\ntools add\ntoken from env \"TOKEN\"\nend\n"
+                "fn add(state: Int, _now: Time, n: Int) : (Int, Int)\n(state - n, state)\nend\n");
+    CHECK(mo_image_bytecode(other)->header.checksum != mo_image_bytecode(image)->header.checksum);
+    MO_ASSERT(mo_store_open(path, &store) == MO_STORE_OK);
+    struct mo_service_hooks hooks = {clock_now, reply, event, &o};
+    s = NULL;
+    CHECK(mo_service_open(other, 0, &hooks, store, &s) == MO_SERVICE_SAVED_INVALID && s == NULL);
+    mo_store_close(store);
+    file = fopen(path, "rb");
+    MO_ASSERT(file != NULL);
+    CHECK(fread(after, 1, sizeof after, file) == length && memcmp(before, after, length) == 0);
+    MO_ASSERT(fclose(file) == 0);
+    MO_ASSERT(mo_store_open(path, &store) == MO_STORE_OK);
+    s = open_service(image, store, &o);
+    CHECK(mo_cell_get_int(mo_service_state(s)) == 18);
+    mo_service_free(s);
+    mo_store_close(store);
+    mo_image_free(other);
+    CHECK(unlink(path) == 0);
+}
+
 static void hostile_database(struct mo_image *image, const char *path) {
     struct mo_store *store = NULL;
     CHECK(mo_store_open("", &store) == MO_STORE_CORRUPT && store == NULL);
@@ -611,7 +648,8 @@ static void invalid_payloads(struct mo_image *image) {
             } else {
                 CHECK(s == NULL);
                 CHECK(strcmp(mo_service_status_text(status),
-                             "saved service state or message is invalid; recovery refused") == 0);
+                             "saved service data is damaged or was written by a different program; "
+                             "recovery refused") == 0);
             }
             mo_service_free(s);
             mo_store_close(store);
@@ -907,6 +945,7 @@ static void run(void *unused) {
     message_limit();
     state_limit();
     replay_limit();
+    foreign_image(image, path);
     hostile_database(image, path);
     invalid_payloads(image);
     composite_recovery();

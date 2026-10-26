@@ -101,7 +101,8 @@ malformed value and reports invalid data.
 SQLite creates the database file empty and fills it in the first commit. A
 crash during the very first open therefore leaves a zero-byte file, which a
 later open refuses like any other truncated store. No message was acknowledged
-from such a file, so deleting it is safe; the runtime does not do so itself.
+from such a file, so deleting it, and any `-journal` file beside it, is safe
+while no process has it open; the runtime does not do so itself.
 
 ## Record envelope
 
@@ -204,13 +205,15 @@ needs two copies of the state.
 
 `MO_SERVICE_SAVED_INVALID` identifies invalid or incompatible saved input:
 content checks, SQLite's own corruption codes, and a stored value longer than
-the runtime ever writes (`SQLITE_TOOBIG`). Any other SQLite failure
+the runtime ever writes (`SQLITE_TOOBIG`), including data written by a
+different bytecode image. Any other SQLite failure
 while loading, such as an I/O error or an exhausted store budget, is
 `MO_SERVICE_STORE`, because a retry may succeed and the data may be intact.
-`mo_service_status_text` describes it as `saved service state or message is
-invalid; recovery refused`. A store operation failure is `MO_SERVICE_STORE`,
-described as `service store failed; reopen it before retrying`. These proposed
-embedding descriptions require Robert's approval before merge. No CLI command,
+`mo_service_status_text` describes it as `saved service data is damaged or
+was written by a different program; recovery refused`. A store operation
+failure is `MO_SERVICE_STORE`, described as `service store failed; reopen it
+to see whether the last change was saved`. Robert approved these embedding
+descriptions. No CLI command,
 reference wording, network endpoint or public simulation API changes here.
 
 `tests/test_saved_state.c` covers the scalar and compound encoding contracts,
