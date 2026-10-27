@@ -6,9 +6,6 @@
 
 #define MO_BUILTIN_LAYOUT(kind) (UINT32_MAX - (uint32_t)(kind))
 #define MO_STATE_LAYOUT (UINT32_MAX - 32)
-#define MO_ABILITY_EQUAL 1
-#define MO_ABILITY_HASH 2
-#define MO_ABILITY_ORDER 4
 
 struct mo_allocation {
     struct mo_allocation *previous;

@@ -1446,6 +1446,19 @@ static void closure_initialization(void) {
 static void abilities(void) {
     struct fixture t;
     init(&t);
+    CHECK(MO_ABILITY_EQUAL == 1 && MO_ABILITY_HASH == 2 && MO_ABILITY_ORDER == 4);
+    {
+        struct mo_arena arena;
+        mo_arena_init(&arena, 1 << 16);
+        uint8_t *flags = mo_bytecode_abilities(&arena, t.types, t.file.type_count);
+        CHECK(flags != NULL);
+        if (flags != NULL) {
+            CHECK(flags[MO_TYPE_INT] == (MO_ABILITY_EQUAL | MO_ABILITY_HASH));
+            CHECK(flags[MO_TYPE_FLOAT] == MO_ABILITY_EQUAL);
+            CHECK(flags[17] == 0);
+        }
+        mo_arena_free(&arena);
+    }
     const uint32_t eq[] = {MO_OP_CONST, 1,           1, MO_OP_EQUAL, 3,         3, 1,
                            1,           MO_OP_CONST, 0, 0,           MO_OP_RET, 0};
     code(&t, eq, N(eq));

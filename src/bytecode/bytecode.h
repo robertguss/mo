@@ -460,6 +460,10 @@ struct mo_bytecode {
     const struct mo_bytecode_service *services;
 };
 
+struct mo_arena;
+MO_MUST_USE uint8_t *mo_bytecode_abilities(struct mo_arena *arena, const struct mo_type *types,
+                                           uint32_t type_count);
+
 struct mo_image;
 /* Stable failure categories; callers branch on kind, never on diagnostic reason text.
  * INVALID includes malformed input and verification refusals; LIMIT is a named format,
