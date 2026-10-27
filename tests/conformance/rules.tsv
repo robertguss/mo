@@ -148,9 +148,9 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 11.5/1	service-read-only	e1408			ci/check_cli.py:service_commands
 11.5/2	service-read-only				tests/test_syntax.c:services,tests/test_program.c:service_rules
 11.5/3	service-read-only	e0099,e0099-duplicate-handler			ci/check_cli.py:service_refusals,tests/test_program.c:service_rules,Makefile:grammar
-11.5/4	service-read-only	e0100,e0100-generic,e0100-import,e0100-state,e0103,e0104,e0104-function		Saved-state initialization awaits the service runtime; E1408 pins its current refusal.	ci/check_cli.py:service_refusals,tests/test_program.c:service_handlers
-11.5/5	service-read-only	e0101,e0101-predicate,e0101-result,service-bare-state,service-result-state		Runtime logging and persistence of updates and read-only replies are not implemented.	ci/check_cli.py:service_commands,tests/test_program.c:service_handlers,tests/test_fix.c:service_fixes
-11.5/6	service-read-only	e0103-interval		Simultaneous tick execution awaits the scheduler; service_inputs checks retained source order.	ci/check_cli.py:service_refusals,tests/test_program.c:service_inputs
+11.5/4	service-read-only	e0100,e0100-generic,e0100-import,e0100-state,e0103,e0104,e0104-function		mo run of a service entry is still E1408	ci/check_cli.py:service_refusals,tests/test_program.c:service_handlers
+11.5/5	service-read-only	e0101,e0101-predicate,e0101-result,service-bare-state,service-result-state			ci/check_cli.py:service_commands,tests/test_program.c:service_handlers,tests/test_fix.c:service_fixes,tests/test_service_store.c:run
+11.5/6	service-read-only	e0103-interval			ci/check_cli.py:service_refusals,tests/test_program.c:service_inputs,tests/test_service_runtime.c:timers
 11.5/7	service-read-only	e0102,e1408			ci/check_cli.py:service_commands,ci/check_cli.py:service_refusals,ci/check_cli.py:guide_claims
 12/1	tst-passing	e0015-after-code,e0018-after-code			tests/test_format.c:check_source,ci/check_cli.py:check
 12.1/1	tst-passing	tst-failing-example		

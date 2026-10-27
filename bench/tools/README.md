@@ -15,7 +15,7 @@ write.
 Each tool's folder holds:
 
 - `task.md`: the text a session reads. Its first paragraph replaces `TASK` in the learnability
-  prompt (`learnability/final/prompt.md`), and the rest of the file follows it.
+  prompt (`learnability/tools-final/prompt.md`), and the rest of the file follows it.
 - `hidden/reference.py`: a plain Python program written to the task text's rules. It is how the
   expected outputs were checked, never what they were copied from: each small test's expected
   output was written by hand first.

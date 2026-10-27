@@ -117,52 +117,6 @@ not changed. Refresh affected gaps when a PR closes one, or during a periodic
 review. Add programs with hand-written expectations for supported forms, and
 remove only the claims those programs establish.
 
-## Review against main on 24 October 2026
-
-All 91 original gap entries were reviewed against main `4a40389`. The review
-checked their linked programs, error fixtures and owning drivers, including
-the new tracked-source formatter check. Seven entries now have complete
-program mappings where they previously had gaps: `3.2/4`, `9.2/20`, `9.2/21`,
-`11.1/3`, `11.1/8`, `14/3` and `14/16`. There are 84 remaining gap entries.
-
-`ref-bigint` covers the restored native functions and conversion boundaries.
-`ref-capability-fakes` covers Env snapshots and seeded Random streams.
-`ref-abilities` now covers qualified Int comparison, comparisons across the
-built-in Order families, Ordering/Entry/Map text and both Float exponent
-thresholds. The existing `lib-unicode16` golden covers letter/digit
-classification added on main. Formatter descriptions now name
-`ci/check_format.py`; its preservation checks do not replace hand-written
-layout expectations.
-
-The remaining entries name absent standalone programs, partial matrices,
-checks owned by other drivers, costs requiring instrumentation, nondeterministic
-host failures, future-version claims, or confirmed compiler limitations.
-Multiline case interpolation and direct calls on a nullary case such as
-`Equal.to_text` now have the `txt-interpolation-case` and
-`lang-dot-calls-cases` programs; `ref-case-receivers` adds coverage of the latter.
-
-## The last four gaps
-
-MO-140 closed the four gaps left on main `22bf10b`. `12/1` names the formatter
-checks it cited as drivers. `14/1`'s gap only pointed at
-`docs/status/section-14-inventory.md`, the record of MO-135's probe; its programs
-cover the block. `14/17` closed when reference 14 adopted maximal invalid
-subparts (D291) and `cap-console-stdin-invalid` gained inputs where that rule
-differs from one U+FFFD per run. `14/22` closed when reference 14 said
-`to_decimal` gives `None` past 18 decimal places and never rounds (D295); it
-cites `lib/json.mo`'s `to_decimal` examples. No row has a gap.
-
-## Other drivers, cost and untestable claims
-
-D280, D281 and D282 (MO-131) reclassified 34 of the 45 gap entries on main
-`fb4b7bc`. Twenty rows now name other drivers, such as the formatter tests,
-`ci/check_cli.py`, `ci/check_errors.py`, the host and checker unit tests and
-`make grammar`. Eleven rows name C unit tests for cost claims, and seven give
-an untestable reason. The gaps that remain are reference rules the compiler
-does not follow yet, refusals no fixture pins, questions the reference leaves
-open, and the cost of `sort`, which is Mo code in `lib/list.mo` that no C unit
-test checks.
-
 ## Initial mapping
 
 The initial mapping reuses the golden corpus, exact error programs, and their

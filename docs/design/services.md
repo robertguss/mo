@@ -73,8 +73,8 @@ The runtime passes each message's arrival time to the handler, so handlers stay 
 Handlers are ordinary functions, and one small `service` block in the module wires them up
 (D266, D301). The block names the state type and its start value, which functions are tools, the
 timers, and where the access token comes from. This sketch turns `examples/job-queue.mo` into the
-task-queue service. MO-155 adds the service block; running it needs the later runtime tasks
-(section 9).
+task-queue service. MO-155 adds the service block. The C service loop and SQLite
+store have landed; `mo run` still does not start a service (section 9).
 
 ```mo
 ## Mo's own task queue. Agents lease a task, check in while working, and
@@ -168,9 +168,10 @@ type before the upgrade is accepted. Invalid tags, lengths, links or field value
 or upgrade with a diagnostic, never a crash or partially restored state. `heap` owns the bounded
 decoder and value validation against runtime type descriptors; `host` owns reading snapshots and
 log records from SQLite, and the runtime uses only validated values. This is not a `check` pass:
-the VM never sees source. Implementation must add `fuzz/fuzz_saved_state.c`, with seeds under
-`fuzz/corpus/fuzz_saved_state/`, covering snapshot and log decoding and rejection of malformed
-values; Phase 5 extends it to migration input and output validation.
+the VM never sees source. Snapshot and log decoding and rejection of malformed
+values are covered by `fuzz/fuzz_saved_state.c`, `fuzz/fuzz_service_log.c` and
+`fuzz/fuzz_service_snapshot.c`; Phase 5 extends them to migration input and output
+validation.
 
 ## 7. Access
 
@@ -292,7 +293,7 @@ E0100 uses `a service handler is generic` for a generic handler, with the reason
 `Tools and timers have concrete signatures; call generic helpers through concrete wrappers (reference 11.5).`
 The wrong-type reason is `The start value has the declared state type (reference 11.5).`
 E0104 refuses capabilities and function values in state, handler inputs
-or handler results. E1408 uses `this build cannot run a service` only for `mo run` of
+or handler results. E1408 uses `mo run does not start services yet` only for `mo run` of
 a service entry module. Checking, testing ordinary handlers, formatting, fixing and
 importing remain available. Importing a service module does not start it.
 Emission retains the ordinary entry-point contract: `mo emit` needs `main` and emits
@@ -340,8 +341,7 @@ source-to-bytecode compiler carries that separate metadata.
 
 Intervals remain functions rather than a second compile-time duration
 evaluator. This preserves checked arithmetic, including overflow, and keeps
-the source-order timer table separate from function-table order. A future
-runtime must validate the computed interval before scheduling it. MO-156 adds
+the source-order timer table separate from function-table order. MO-156 adds
 no runtime, environment reads, mailbox, persistence or network listener.
 
 ### MO-157 in-process loop

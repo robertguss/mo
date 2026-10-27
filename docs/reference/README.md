@@ -1060,7 +1060,7 @@ summary = try summarize(files.within("reports").read_only)
 
 ### 11.5 Service blocks
 
-This build checks service blocks but can't run them yet; see the end of this section.
+This build checks service blocks. `mo run` of a service entry module still reports E1408; see the end of this section.
 
 A module may declare one top-level `service ... end` block. Its clauses name
 the state type and start value, local functions offered as tools, timer
@@ -1131,8 +1131,8 @@ The token source is a plain text literal naming an environment variable. The
 name is nonempty and contains only uppercase ASCII letters, digits and `_`,
 and cannot start with a digit. Checking does not read that variable or run a
 service. This build checks, tests, formats and fixes service modules, but
-`mo run` of a service entry module reports E1408, "this build cannot run a
-service". Importing a service module does not start it.
+`mo run` of a service entry module reports E1408, "mo run does not start
+services yet". Importing a service module does not start it.
 
 ## 12. Examples, promises and tests
 

@@ -258,6 +258,18 @@ stops, prints a report from state that is still readable, and frees its heap who
   differential test compares outcomes, including stop messages, with Mo Core's evaluator (`ci/check_core_differential.py`).
 - Not covered: the differential test runs generated programs without capabilities.
 
+### P11. Restored saved-state bytes are validated before a handler sees them
+
+*Loading a snapshot or replaying a log validates each restored value against the service's
+state type, and each saved message against its handler's input type, before any handler sees
+it. Invalid tags, lengths, links or field values refuse the load.*
+
+- Enforced by: `heap/saved.c` (`mo_value_decode`) against trusted runtime type descriptors;
+  `host/store.c` SQLite snapshot and log records; `vm/service.c` uses only validated values.
+- Evidence: `tests/test_service_store.c`; `fuzz/fuzz_saved_state.c`, `fuzz/fuzz_service_log.c`,
+  `fuzz/fuzz_service_snapshot.c`.
+- Not covered: Phase 5 migrations; `mo run` does not start a service.
+
 ## What the trusted base is
 
 A property above holds "given a correct VM, primitives and host". Those are the parts a memory

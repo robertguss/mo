@@ -1,16 +1,16 @@
 # Mo Architecture v0.1
 
-**Phase 2 implementation, checked 24 October 2026 against main at
-[`acb2b84`](https://github.com/robertguss/mo/commit/acb2b8488f872c8d907184f2618c467dd8209afc).**
+**Checked 27 October 2026 against main at
+[`7c22cca5`](https://github.com/robertguss/mo/commit/7c22cca5f8d45c8781aa07d870dfa42bdfe420d0).**
 This describes the `mo` toolchain in C (decision D207): the compiler, the
 virtual machine, and the contracts between them. It is written against the
 Language Reference v0.1 (`docs/reference/`), whose rules win wherever the two
 disagree. It also builds on Mo Core (`formal/`) and the bytecode
 specification (`bytecode.md`). The pipeline is integrated; remaining unsupported
 forms are refused, not silently accepted. [The roadmap](../ROADMAP.md) records
-Phase 2 as finished and separates that delivered work from later phases.
-Section 9 describes future hooks, not implemented services or upgrades.
-Section 13 lists open questions.
+Phase 2 as finished. Service descriptors, the C service loop and SQLite store
+have landed; `mo run` still does not start a service. Section 9 describes
+later-phase hooks. Section 13 lists open questions.
 
 ## 1. The shape of the system
 
@@ -72,7 +72,8 @@ src/heap/      the runtime type table and layouts (types.h); values, cells, heap
                dropping, printing and saved-value encoding walks
 src/prim/      the primitives of prims.def
 src/host/      capabilities, real and fake, and the runtime's service store
-src/vm/        processes, the interpreter, calls and frames, stops and defect reports
+src/vm/        processes, the interpreter, calls and frames, stops, defect reports
+               and the in-process service loop (service.c)
 src/tools/     the mo command: check, run, test, format, fix, emit and guide;
                diagnostics as text and JSON
 lib/           the standard library written in Mo (condition 4 of D207)
@@ -472,10 +473,10 @@ tool-result classifications and timer source order in `mo_program.services`.
 It checks initializer types contextually, selects overloads by exact state
 type and reuses nominal containment summaries to reject stored capabilities
 and functions. These summaries reach a fixed point across recursive types.
-Checking does not run an initializer or read a token. Lowering still handles
-ordinary functions and tests; service descriptors and execution belong to
-later Phase 3 tasks. The CLI refuses only `mo run` of a service entry module
-with E1408. Ordinary emission retains its existing `main` requirement.
+Checking does not run an initializer or read a token. Lowering emits service
+descriptors; `src/vm/service.c` runs the in-process loop and `src/host/store.c`
+saves state. The CLI still refuses `mo run` of a service entry module with
+E1408. Ordinary emission retains its existing `main` requirement.
 
 Symbols are sorted by name and source position; lookup is binary search.
 `mo_find_symbol` accepts bytes and length, without copying syntax spellings.
@@ -1638,11 +1639,10 @@ constant stack (reference 5.3); a callee with more registers grows that frame
 
 ## 9. Hooks for later phases
 
-- **Processes (Phase 3):** the VM's state, its heap, stack and current
-  function, lives in one `mo_process` structure from the start, so a scheduler
-  can run many. Messages between processes copy values, or share them when
-  the value is deeply immutable and its count is atomic, as in Lean 4's
-  multi-threaded objects.
+- **Processes (Phase 3):** one service's loop, mailbox, timers and supervisor
+  live in `src/vm/service.c`, each with its own `mo_process`. A multi-core
+  scheduler, and messages between processes that copy values or share them
+  when deeply immutable, wait for later phases.
 - **Introspection (Phase 4):** debug information maps every instruction to its
   span and every register to its source name, and every value has a
   structural text form, so a running process can be shown in source terms.
@@ -1689,17 +1689,18 @@ constant stack (reference 5.3); a callee with more registers grows that frame
 - **`mo format`** and **`mo fix`** rewrite files in place (3.1, 3.5).
 - **`mo guide`** prints `docs/agent-guide.md`, and `mo guide --reference`
   prints `docs/reference/README.md`, both built into the toolchain so their
-  text matches its version (D235). The guide is short, about 2,000 tokens:
-  what the reference can't say, such as the commands, the loop of checking,
-  fixing and testing, and one small complete program with its tests.
+  text matches its version (D235). The guide is short: what the reference
+  can't say, such as the commands, the loop of checking, fixing and testing,
+  and one small complete program with its tests.
 
 **Limits.** `mo run` and `mo test` give each process the limits of
 `struct mo_limits` in `src/base/limits.h`, whose defaults are the defaults of
 `--max-stack`, `--max-depth` and `--max-heap` (reference 13.4). The VM counts
 frames for the depth, so a tail call, which reuses its frame, never counts.
 Going past a limit stops the process with a defect report that names the
-limit and its value. A program can't set its own limits until Phase 3's
-budgets subsume them.
+limit and its value. A program can't set its own limits; Phase 3 adds no
+limit syntax. Service-message budgets (D304) are fixed defaults in
+`src/base/limits.h`.
 
 **The `mo` command's own exit status** is 0 when everything passed, 1 when
 the program has errors or a test failed, and 2 for a mistake in the command
