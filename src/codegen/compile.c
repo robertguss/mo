@@ -5,7 +5,6 @@
 
 #include "base/codes.h"
 #include "bytecode/bytecode.h"
-#include "codegen/abilities.h"
 #include "codegen/bigint.h"
 #include "codegen/control.h"
 #include "codegen/index.h"
@@ -775,7 +774,7 @@ static MO_MUST_USE uint32_t operation_signature(struct compiler *c,
     uint8_t ability = 0;
     if (op->opcode == MO_OP_EQUAL) {
         constrained = key[2];
-        ability = MO_CODEGEN_EQUAL;
+        ability = MO_ABILITY_EQUAL;
     } else if (*cursor != 0) {
         MO_ASSERT(strncmp(cursor, "where ", 6) == 0);
         cursor += 6;
@@ -785,7 +784,7 @@ static MO_MUST_USE uint32_t operation_signature(struct compiler *c,
         constrained = key[2 + slot];
         cursor += 3;
         MO_ASSERT(strcmp(cursor, "Equal") == 0 || strcmp(cursor, "Hash") == 0);
-        ability = strcmp(cursor, "Equal") == 0 ? MO_CODEGEN_EQUAL : MO_CODEGEN_HASH;
+        ability = strcmp(cursor, "Equal") == 0 ? MO_ABILITY_EQUAL : MO_ABILITY_HASH;
     }
     if (ability != 0) {
         struct constraint *item =
@@ -1621,14 +1620,15 @@ static MO_MUST_USE bool reference(struct compiler *c, uint32_t type_id) {
     return type_id != MO_NO_INDEX && mo_type_is_reference(&c->types, type_id);
 }
 static MO_MUST_USE bool abilities_valid(struct compiler *c) {
-    uint8_t *flags = mo_codegen_abilities(&c->arena, &c->types);
+    MO_ASSERT(c->types.finished);
+    uint8_t *flags = mo_bytecode_abilities(&c->arena, c->types.items, c->types.count);
     if (flags == NULL)
         return problem(c, MO_CODE_CODEGEN_MEMORY,
                        "No scratch memory for runtime ability inference.");
     for (uint32_t i = 0; i < c->types.count; i++) {
         const struct mo_type *t = &c->types.items[i];
         if ((t->kind == MO_TYPE_MAP || t->kind == MO_TYPE_SET) &&
-            (flags[t->parameters[0]] & MO_CODEGEN_HASH) == 0)
+            (flags[t->parameters[0]] & MO_ABILITY_HASH) == 0)
             return problem(c, MO_CODE_CODEGEN_REPRESENTATION,
                            "Map keys and Set elements without Hash cannot come from lowering.");
     }
@@ -1639,7 +1639,7 @@ static MO_MUST_USE bool abilities_valid(struct compiler *c) {
             c->span = item->span;
             c->declaration = item->declaration;
             return problem(c, MO_CODE_CODEGEN_REPRESENTATION,
-                           item->ability == MO_CODEGEN_EQUAL
+                           item->ability == MO_ABILITY_EQUAL
                                ? "An operation on a type without Equal cannot come from lowering."
                                : "An operation on a type without Hash cannot come from lowering.");
         }

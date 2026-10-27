@@ -53,6 +53,8 @@ enum mo_layout_kind { MO_LAYOUT_RECORD, MO_LAYOUT_TUPLE, MO_LAYOUT_CASE, MO_LAYO
  * layout table; this contract does not assign their numbers. */
 #define MO_NO_INDEX UINT32_MAX
 
+enum { MO_ABILITY_EQUAL = 1, MO_ABILITY_HASH = 2, MO_ABILITY_ORDER = 4 };
+
 struct mo_type_field {
     const char *name; /* NULL only for an unnamed case field */
     uint32_t type;

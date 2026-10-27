@@ -1,4 +1,4 @@
-/* CBMC proofs of Decimal's products and quotients, src/base/decimal.c (V5 part 3, MO-55).
+/* CBMC proofs of Decimal's products and quotients, src/base/decimal.c.
  *
  * Decimal's * and / in the VM go through mo_decimal_mul and mo_decimal_div. Each multiplies two
  * magnitudes into 256 bits, divides that by the denominator one bit at a time, and rounds what is

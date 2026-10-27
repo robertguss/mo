@@ -1,4 +1,4 @@
-/* CBMC proofs of UTF-8 in the Unicode16 primitives, src/prim/unicode.c (V5 part 3, MO-55).
+/* CBMC proofs of UTF-8 in the Unicode16 primitives, src/prim/unicode.c.
  *
  * Unicode16.display_width and the grapheme splitter that Text's terminal output uses read spans
  * that may be malformed; the other Unicode16 primitives read texts, which are always

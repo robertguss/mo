@@ -1,5 +1,5 @@
 /* CBMC proofs of the bytecode verifier's transfer functions, src/bytecode/verify.c and
- * src/bytecode/verify-instruction.c (V5 part 2, MO-55).
+ * src/bytecode/verify-instruction.c.
  *
  * The verifier runs on a file the reader decoded and the validator accepted. Its work for one
  * function is three passes: graph builds the blocks and their edges, cases tracks which case

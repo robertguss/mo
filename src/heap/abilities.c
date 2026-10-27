@@ -83,7 +83,7 @@ bool mo_heap_abilities(struct mo_heap_image *process) {
     for (uint32_t i = 0; i < types->count; i++) {
         const struct mo_type *type = &types->items[i];
         process->abilities[i] = initial_abilities(type->kind);
-        if (process->abilities[i] != 7) {
+        if (process->abilities[i] != (MO_ABILITY_EQUAL | MO_ABILITY_HASH | MO_ABILITY_ORDER)) {
             queue[write_index++] = i;
         }
         uint32_t count = dependency_count(type);
