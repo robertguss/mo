@@ -1338,7 +1338,8 @@ static void simulation_verifier(void) {
     functions[interval].code_count = sizeof code / sizeof code[0];
     debug[interval].span_count = 0;
     debug[interval].name_count = 0;
-    simulation_load(&file, NULL, "%service.interval.1 at 2026-01-01T00:00:00Z:");
+    simulation_load(&file, NULL,
+                    "Simulation.start at 2026-01-01T00:00:00Z: interval of timer Main.tick:");
     mo_arena_free(&arena);
     mo_image_free(image);
 }

@@ -112,16 +112,17 @@ end
             for text in failures[i % len(failures)][1:]:
                 assert text in rendered, (text, record)
 
-        for source, handler, reason in (
+        for source, prefix, reason in (
             (SERVICE.replace('state Int = 0', 'state Int = initial()') +
-             '\nfn initial() : Int\nstop "initial"\nend\n', '%service.start', 'initial'),
-            (SERVICE.replace('state + 1', 'if state == 0: stop "boom" else: state'), 'tick', 'boom'),
+             '\nfn initial() : Int\nstop "initial"\nend\n',
+             'Simulation.start at 2026-01-01T00:00:00Z: start value', 'initial'),
+            (SERVICE.replace('state + 1', 'if state == 0: stop "boom" else: state'),
+             'Simulation handler Main.tick at 2026-01-01T00:00:00Z', 'boom'),
         ):
             path.write_text(source + f'\ntest "startup failure"\n_sim = Simulation.start(Main, {TIME})\nend\n')
             stopped = results(binary, path, 1)
             assert stopped[0]['outcome'] == 'stopped', stopped
-            expected = (f'Simulation handler Main.{handler} at 2026-01-01T00:00:00Z: '
-                        f'service handler failed: stop: {reason}')
+            expected = f'{prefix}: service handler failed: stop: {reason}'
             assert expected in str(stopped[0]), stopped
 
         path.write_text(SERVICE.replace('state + 1',

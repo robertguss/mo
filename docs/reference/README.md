@@ -1264,11 +1264,11 @@ tool's parameters after State and Time. An application `Error(e)` is returned
 as `Ok(Error(e))`; it does not count toward the failure limit. `ServiceDown` means
 nothing was queued, and `ToolFailed` means a handler defect or work/memory
 limit, with no update committed. A state-changing `Ok(r)` means committed.
-Each ToolFailed counts toward the service's failure limit: 5 within 60 seconds
+Each `ToolFailed` counts toward the service's failure limit: 5 within 60 seconds
 of simulated time restart the service from its last saved state, and 3 such
-restarts within 10 minutes stop it, after which send returns ServiceDown until restart.
-Call these operations through the module, as in Simulation.crash(sim); dot
-calls such as sim.crash are not available.
+restarts within 10 minutes stop it, after which `send` returns `ServiceDown` until `restart`.
+Call these operations through the module, as in `Simulation.crash(sim)`; dot
+calls such as `sim.crash` are not available.
 
 `Simulation.advance(handle, by: Duration)`, `Simulation.crash(handle)` and
 `Simulation.restart(handle)` return Unit. Advance visits each deadline in

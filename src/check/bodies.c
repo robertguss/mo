@@ -2228,6 +2228,9 @@ static MO_MUST_USE struct value simulation_call(struct inference *p, const struc
                             "Simulation.crash(sim) (reference 12.4).",
                             NULL);
         (void)kept;
+        if (p->error.code == MO_CODE_CALL_ARGUMENTS &&
+            p->error.primary.span.start == name->span.start)
+            p->error.primary.text = "call this operation directly";
         return (struct value){0};
     }
     enum mo_sim_operation operation = operations[op].operation;

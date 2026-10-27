@@ -51,7 +51,8 @@ static void failure(struct simulation *s, uint32_t function, int64_t now,
 #include "base/hostops.def"
     };
     const struct mo_bytecode *file = mo_image_bytecode(s->image);
-    uint32_t tool = file->services[s->descriptor].tools[0].function;
+    const struct mo_bytecode_service *service = &file->services[s->descriptor];
+    uint32_t tool = service->tools[0].function;
     uint32_t time_type = file->functions[tool].parameters[1].type;
     struct mo_buffer time;
     mo_buffer_init(&time, 32);
@@ -60,6 +61,13 @@ static void failure(struct simulation *s, uint32_t function, int64_t now,
     int length = printed ? (int)time.length : (int)strlen(text);
     if (function != MO_NO_INDEX) {
         MO_ASSERT(function < file->function_count);
+        uint32_t timer = 0;
+        while (timer < service->timer_count && service->timers[timer].interval != function)
+            timer++;
+        bool start = function == service->start;
+        bool interval = timer < service->timer_count;
+        if (interval)
+            function = service->timers[timer].function;
         const struct mo_bytecode_string *name = &file->strings[file->functions[function].name];
         const char *reason = defect == NULL ? NULL : defect->reason;
         size_t detail_length = 0;
@@ -68,10 +76,22 @@ static void failure(struct simulation *s, uint32_t function, int64_t now,
                                     : (const uint8_t *)"";
         if (detail_length > sizeof s->caller->simulation_report)
             detail_length = sizeof s->caller->simulation_report;
-        report(s, "Simulation handler %.*s at %.*s: %s%s%s%s%.*s", (int)name->length, name->bytes,
-               length, text, mo_service_status_text(status), reason == NULL ? "" : ": ",
-               reason == NULL ? "" : reason, detail_length == 0 ? "" : ": ", (int)detail_length,
-               detail);
+        if (start)
+            report(s, "Simulation.start at %.*s: start value: %s%s%s%s%.*s", length, text,
+                   mo_service_status_text(status), reason == NULL ? "" : ": ",
+                   reason == NULL ? "" : reason, detail_length == 0 ? "" : ": ", (int)detail_length,
+                   detail);
+        else if (interval)
+            report(s, "Simulation.%s at %.*s: interval of timer %.*s: %s%s%s%s%.*s",
+                   operations[s->operation], length, text, (int)name->length, name->bytes,
+                   mo_service_status_text(status), reason == NULL ? "" : ": ",
+                   reason == NULL ? "" : reason, detail_length == 0 ? "" : ": ", (int)detail_length,
+                   detail);
+        else
+            report(s, "Simulation handler %.*s at %.*s: %s%s%s%s%.*s", (int)name->length,
+                   name->bytes, length, text, mo_service_status_text(status),
+                   reason == NULL ? "" : ": ", reason == NULL ? "" : reason,
+                   detail_length == 0 ? "" : ": ", (int)detail_length, detail);
     } else
         report(s, "Simulation.%s at %.*s: %s", operations[s->operation], length, text,
                mo_service_status_text(status));
