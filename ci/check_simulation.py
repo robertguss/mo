@@ -112,15 +112,39 @@ end
             for text in failures[i % len(failures)][1:]:
                 assert text in rendered, (text, record)
 
-        for source, handler in (
+        for source, handler, reason in (
             (SERVICE.replace('state Int = 0', 'state Int = initial()') +
-             '\nfn initial() : Int\nstop "initial"\nend\n', '%service.start'),
-            (SERVICE.replace('state + 1', 'if state == 0: stop "tick" else: state'), 'tick'),
+             '\nfn initial() : Int\nstop "initial"\nend\n', '%service.start', 'initial'),
+            (SERVICE.replace('state + 1', 'if state == 0: stop "boom" else: state'), 'tick', 'boom'),
         ):
             path.write_text(source + f'\ntest "startup failure"\n_sim = Simulation.start(Main, {TIME})\nend\n')
             stopped = results(binary, path, 1)
             assert stopped[0]['outcome'] == 'stopped', stopped
-            assert handler in str(stopped[0]) and 'Time(' in str(stopped[0]), stopped
+            expected = (f'Simulation handler Main.{handler} at 2026-01-01T00:00:00Z: '
+                        f'service handler failed: stop: {reason}')
+            assert expected in str(stopped[0]), stopped
+
+        path.write_text(SERVICE.replace('state + 1',
+                        'if state == 1: stop "later" else: state + 1') + f'''
+test "deadline failure"
+sim = Simulation.start(Main, {TIME})
+Simulation.advance(sim, 1.minute)
+end
+''')
+        stopped = results(binary, path, 1)
+        assert ('Simulation handler Main.tick at 2026-01-01T00:01:00Z: '
+                'service handler failed: stop: later') in str(stopped[0]), stopped
+
+        path.write_text(SERVICE.replace('module Main', 'module Main\nuse Ticks') + f'''
+test "wrong service"
+sim = Simulation.start(Main, {TIME})
+_reply = Simulation.send(sim, Ticks.history)
+end
+''')
+        shutil.copyfile('tests/lower-source/service-simulation/ticks.mo', root / 'ticks.mo')
+        stopped = results(binary, path, 1)
+        assert ('Simulation.send selected Ticks.history, but this simulation runs Main; '
+                'nothing was queued or committed') in str(stopped[0]), stopped
 
         transfers = '''module Main
 enum Chain

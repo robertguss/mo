@@ -1,0 +1,7 @@
+error E0050: the module or type has no function with this name  tests/errors/e0050-simulation-operation/main.mo:4:14
+
+  4 |   Simulation.reset(sim)
+    |              ^^^^^ no function of this name
+
+Simulation's operations are start, send, advance, crash and restart (reference 12.4).
+

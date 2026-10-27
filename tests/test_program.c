@@ -22,8 +22,16 @@ static void simulation_inputs(void) {
              "sim = Simulation.start(Main, Time.parse(\"2026-01-01T00:00:00Z\") or stop \"time\")\n"
              "assert helper(sim) == Ok((3, 0))\n"
              "Simulation.crash(sim)\nSimulation.restart(sim)\n"
-             "assert helper(sim) == Ok((6, 3))\nend\n");
+             "assert sim.helper == Ok((6, 3))\nend\n");
     CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    free_fixture(&f);
+
+    init(&f, "module Main\nfn helper(sim: Simulation)\nsim.crash()\nend\n");
+    CHECK(f.program == NULL && f.diags.count == 1);
+    if (f.diags.count == 1) {
+        CHECK(f.diags.items[0].code == MO_CODE_NAME_UNKNOWN);
+        CHECK(strcmp(f.diags.items[0].message, "no visible function has this dot-call name") == 0);
+    }
     free_fixture(&f);
 
     const char *invalid[] = {"Main.private", "Main.tick", "Main.missing", "selected"};

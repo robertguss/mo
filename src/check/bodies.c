@@ -1609,12 +1609,17 @@ static MO_MUST_USE struct value qualified_ability(struct inference *p,
     return out;
 }
 
+static MO_MUST_USE struct value simulation_call(struct inference *p, const struct mo_syntax *name,
+                                                const struct mo_syntax *args);
+
 static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_syntax *node,
                                            const struct mo_syntax *prefix) {
     if (node->kind == MO_S_QUALIFIED) {
         prefix = node->children[0];
         node = node->children[1];
     }
+    if (prefix != NULL && compare_text(prefix, "Simulation") == 0)
+        return simulation_call(p, node, NULL);
     if (prefix == NULL && node->kind == MO_S_NAME) {
         struct name_slot *s = slot(p, node, false);
         if (s != NULL && s->active != NULL) {
@@ -2078,6 +2083,9 @@ static MO_MUST_USE struct value member(struct inference *p, struct value v,
     }
     if (type->shape.declaration == NULL) {
         const char *habit = length_habit(name);
+        if (named(type, "Simulation"))
+            habit = "Simulation operations are called through the module, as in "
+                    "Simulation.crash(sim), not as dot calls (reference 12.4).";
         bool reported = problem(p, MO_CODE_NAME_UNKNOWN, name->span,
                                 "no visible function has this dot-call name",
                                 habit != NULL ? habit
@@ -2205,10 +2213,20 @@ static MO_MUST_USE struct value simulation_call(struct inference *p, const struc
     uint32_t op = 0;
     while (op < MO_SIM_COUNT && compare_text(name, operations[op].name) != 0)
         op++;
-    if (op == MO_SIM_COUNT || args == NULL) {
-        bool kept = problem(
-            p, MO_CODE_CALL_ARGUMENTS, name->span, "a simulation operation needs a direct call",
-            "Call Simulation.start, send, advance, crash or restart directly.", NULL);
+    if (op == MO_SIM_COUNT) {
+        bool kept = problem(p, MO_CODE_NAME_UNKNOWN, name->span, unknown_member,
+                            "Simulation's operations are start, send, advance, crash and "
+                            "restart (reference 12.4).",
+                            NULL);
+        (void)kept;
+        return (struct value){0};
+    }
+    if (args == NULL) {
+        bool kept = problem(p, MO_CODE_CALL_ARGUMENTS, name->span,
+                            "a simulation operation needs a direct call",
+                            "Simulation operations are not values; call one directly, as in "
+                            "Simulation.crash(sim) (reference 12.4).",
+                            NULL);
         (void)kept;
         return (struct value){0};
     }
@@ -2226,6 +2244,9 @@ static MO_MUST_USE struct value simulation_call(struct inference *p, const struc
     uint32_t count = operation == MO_SIM_START || operation == MO_SIM_ADVANCE ? 2 : 1;
     uint32_t service_index = 0, tool_index = 0;
     const struct mo_source_type *signature = NULL;
+    if ((operation == MO_SIM_SEND && args->count < 2) ||
+        (operation != MO_SIM_SEND && args->count != count))
+        goto bad_arguments;
     if (selector != UINT32_MAX) {
         const struct mo_syntax *prefix = args->count > selector ? args->children[selector] : NULL;
         const struct mo_syntax *tool = NULL;
@@ -2281,11 +2302,17 @@ static MO_MUST_USE struct value simulation_call(struct inference *p, const struc
             }
         }
         if (service == NULL || (operation == MO_SIM_SEND && signature == NULL)) {
+            bool start = operation == MO_SIM_START;
             bool kept =
                 problem(p, MO_CODE_SERVICE_HANDLER, prefix == NULL ? args->span : prefix->span,
-                        "a simulation selector must name a registered service tool",
-                        "Use a direct service module for start, or Module.tool for send; "
-                        "timers and unregistered functions are not tool selectors.",
+                        start ? "Simulation.start must name a service module"
+                              : "Simulation.send must name a registered tool",
+                        start ? "Name the current module or one it uses directly, as in "
+                                "Simulation.start(TaskQueue, at); that module must declare a "
+                                "service (reference 12.4)."
+                              : "Write the service module and one of its tools directly, as in "
+                                "TaskQueue.submit; timers and other functions are not tools "
+                                "(reference 12.4).",
                         NULL);
             (void)kept;
             return (struct value){0};
@@ -2293,14 +2320,8 @@ static MO_MUST_USE struct value simulation_call(struct inference *p, const struc
         if (!use_alias(p, alias, prefix))
             return (struct value){0};
     }
-    if (args->count != count) {
-        bool kept =
-            problem(p, MO_CODE_CALL_ARGUMENTS, args->span,
-                    "a simulation call's arguments don't match its parameters",
-                    "Pass the tool arguments after State and Time; send supplies both.", NULL);
-        (void)kept;
-        return (struct value){0};
-    }
+    if (args->count != count)
+        goto bad_arguments;
     struct term *result = native(p,
                                  operation == MO_SIM_START  ? "Simulation"
                                  : operation == MO_SIM_SEND ? "Result"
@@ -2342,6 +2363,21 @@ static MO_MUST_USE struct value simulation_call(struct inference *p, const struc
         out.never = out.never || input.never;
     }
     return out;
+
+bad_arguments : {
+    const char *reasons[MO_SIM_COUNT] = {
+        [MO_SIM_START] = "Simulation.start takes a service module and a start Time.",
+        [MO_SIM_SEND] = ("Simulation.send takes the handle, Module.tool, then the tool's arguments "
+                         "after State and Time, which send supplies."),
+        [MO_SIM_ADVANCE] = "Simulation.advance takes the handle and a Duration.",
+        [MO_SIM_CRASH] = "Simulation.crash takes only the handle.",
+        [MO_SIM_RESTART] = "Simulation.restart takes only the handle."};
+    bool kept = problem(p, MO_CODE_CALL_ARGUMENTS, args->span,
+                        "a simulation call's arguments don't match its parameters",
+                        reasons[operation], NULL);
+    (void)kept;
+    return (struct value){0};
+}
 }
 
 static MO_MUST_USE struct value sequence(struct inference *p, const struct mo_syntax *node,

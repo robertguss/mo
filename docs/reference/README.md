@@ -982,7 +982,8 @@ an argument and return any replacement state.
 
 Always in scope: the built-in types of section 3, `Option` with `Some` and
 `None`, `Result` with `Ok` and `Error`, `Ordering` with its cases, the
-capability types, `FileError` with its cases, and `Entry` with `EntryKind` and its cases. The functions of section 14 belong to their types' modules:
+capability types, `FileError` with its cases, `SimulationError` with `ServiceDown` and `ToolFailed`,
+and `Entry` with `EntryKind` and its cases. The functions of section 14 belong to their types' modules:
 call them with a dot, as in `text.lines`, or through the module, as in
 `Set.empty` and `Time.parse(text)`. So a local may be called `lines` or
 `count` without clashing with them.
@@ -1260,9 +1261,14 @@ direct module and registered tool selectors are allowed, including registered
 tools not listed in `expose`. Timers, other private functions and function
 values are not selectors. Arguments after the selector exactly match the
 tool's parameters after State and Time. An application `Error(e)` is returned
-as `Ok(Error(e))`; it does not count as a crashed handler. `ServiceDown` means
+as `Ok(Error(e))`; it does not count toward the failure limit. `ServiceDown` means
 nothing was queued, and `ToolFailed` means a handler defect or work/memory
 limit, with no update committed. A state-changing `Ok(r)` means committed.
+Each ToolFailed counts toward the service's failure limit: 5 within 60 seconds
+of simulated time restart the service from its last saved state, and 3 such
+restarts within 10 minutes stop it, after which send returns ServiceDown until restart.
+Call these operations through the module, as in Simulation.crash(sim); dot
+calls such as sim.crash are not available.
 
 `Simulation.advance(handle, by: Duration)`, `Simulation.crash(handle)` and
 `Simulation.restart(handle)` return Unit. Advance visits each deadline in
@@ -1284,12 +1290,12 @@ operations except start. Like other capabilities, Simulation cannot be stored
 in service state or tool signatures, and cannot be a main parameter.
 
 Startup, timer, persistence and invalid-recovery failures stop the test with
-a bug report, not a SimulationError. Arguments and replies cross heaps through
-the saved-value codec and obey its depth, node and byte limits, including
+a bug report, not a SimulationError. Arguments and replies are copied into and
+out of the service, limited to 128 levels of nesting, 1,048,576 values and 16 MiB encoded, including
 read-only and application Error replies. Copy-in failure queues and commits
 nothing. Updating messages also obey the aggregate saved-message byte limit;
-an admission refusal reports that no handler ran and does not count toward
-supervision. Read-only messages are not saved. Copy-out failure names the
+an admission refusal reports that no handler ran and does not count toward the
+failure limit. Read-only messages are not saved. Copy-out failure names the
 executed tool and any committed update; it does not roll back or retry.
 Promise and generator support is deferred.
 

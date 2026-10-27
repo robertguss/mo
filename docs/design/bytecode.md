@@ -1066,7 +1066,7 @@ teardown after a stopped test, invokes its release once: free the loop, then
 close the store, without accessing the caller's heap. Crash only frees the
 loop; restart reuses that same open store. Construction owns the store until
 the handle exists, after which only release closes it. The shared store limit
-is eight; dropped tests must return their slots. Arguments and replies are
+is eight; a test that stops still returns its slot. Arguments and replies are
 copied between same-image heaps by the saved codec, never shared by refcount.
 Simulation is excluded from main capabilities and service descriptor types.
 `SimulationError` is a two-case choice, `ServiceDown` then `ToolFailed`, both

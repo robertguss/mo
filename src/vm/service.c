@@ -208,6 +208,7 @@ struct recovery {
     struct mo_cell state;
     uint64_t sequence, snapshot;
     enum mo_service_status limit;
+    uint32_t failed_function;
     bool found;
 };
 
@@ -270,7 +271,9 @@ static bool restore_record(const struct mo_store_record *record, void *context) 
             mo_value_drop(heap, s->descriptor->state_type, r->state);
             r->state = state;
             r->sequence = record->sequence;
-        }
+        } else
+            r->failed_function =
+                m.timer ? s->descriptor->timers[m.handler].function : tool->function;
         if (reply.status == MO_SERVICE_OK)
             mo_value_drop(heap, reply.type, reply.value);
         finish_call(s->process);
@@ -281,10 +284,11 @@ static bool restore_record(const struct mo_store_record *record, void *context) 
 }
 
 static enum mo_service_status recover(struct mo_service_loop *s, bool *found, struct mo_cell *state,
-                                      bool *snapshot_due) {
-    struct recovery r = {.service = s, .limit = MO_SERVICE_OK};
+                                      bool *snapshot_due, uint32_t *failed_function) {
+    struct recovery r = {.service = s, .limit = MO_SERVICE_OK, .failed_function = MO_NO_INDEX};
     enum mo_store_status status = mo_store_call(s->store, MO_STORE_LOAD, NULL, restore_record, &r);
     if (status != MO_STORE_OK) {
+        *failed_function = r.failed_function;
         if (r.found)
             mo_value_drop(s->process->heap, s->descriptor->state_type, r.state);
         if (r.limit != MO_SERVICE_OK)
@@ -433,12 +437,14 @@ enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t in
         s->timers[i].interval = (uint64_t)interval;
     }
     if (status == MO_SERVICE_OK)
-        failed_function = s->descriptor->start;
+        failed_function = MO_NO_INDEX;
     bool found = false, snapshot_due = false;
     if (status == MO_SERVICE_OK && store != NULL)
-        status = recover(s, &found, &s->state, &snapshot_due);
-    if (status == MO_SERVICE_OK && !found)
+        status = recover(s, &found, &s->state, &snapshot_due, &failed_function);
+    if (status == MO_SERVICE_OK && !found) {
+        failed_function = s->descriptor->start;
         status = invoke(s, s->descriptor->start, NULL, 0, &s->state, &defect);
+    }
     if (status == MO_SERVICE_OK && !found && store != NULL) {
         struct mo_cell original = s->state;
         size_t length;
@@ -449,6 +455,8 @@ enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t in
         snapshot_due = true;
     }
     /* Recovery may stop between an append and its due snapshot; finish it now. */
+    if (status == MO_SERVICE_OK)
+        failed_function = MO_NO_INDEX;
     if (status == MO_SERVICE_OK && snapshot_due && !snapshot(s, s->state))
         status = MO_SERVICE_STORE;
     struct mo_service_time time = sample_clock(s);

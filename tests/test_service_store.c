@@ -16,12 +16,12 @@
 
 static unsigned crash_point, log_steps, simulation_appends;
 static struct {
-    bool enabled, forward, refuse;
+    bool enabled, forward, refuse, refuse_case;
     struct mo_service_hooks hooks;
     struct mo_service_loop *loop;
     struct mo_store *store;
     struct mo_service_time initial_time, final_time;
-    unsigned sends, replies, failures, restarts, memory;
+    unsigned sends, replies, failures, restarts, memory, opens, fail_open, open_fault;
 } observed;
 MO_MUST_USE enum mo_store_status
 mo_store_fault_call(struct mo_store *store, enum mo_store_operation operation,
@@ -37,6 +37,15 @@ MO_MUST_USE enum mo_service_status mo_simulation_observe_send(struct mo_service_
                                                               uint32_t tool,
                                                               const struct mo_cell *arguments,
                                                               uint32_t count, uint64_t id);
+MO_MUST_USE bool mo_simulation_fault_case(struct mo_heap *heap, uint32_t type, uint32_t tag,
+                                          const struct mo_cell *fields, uint32_t count,
+                                          struct mo_cell *out);
+
+bool mo_simulation_fault_case(struct mo_heap *heap, uint32_t type, uint32_t tag,
+                              const struct mo_cell *fields, uint32_t count, struct mo_cell *out) {
+    return !(observed.enabled && observed.refuse_case) &&
+           mo_value_case(heap, type, tag, fields, count, out);
+}
 
 static struct mo_service_time observed_clock(void *context) {
     (void)context;
@@ -68,6 +77,8 @@ enum mo_service_status mo_simulation_observe_open(const struct mo_image *image, 
     observed.hooks = *hooks;
     observed.store = store;
     observed.initial_time = hooks->clock(hooks->context);
+    if (++observed.opens == observed.fail_open)
+        crash_point = observed.open_fault;
     struct mo_service_hooks recording = {observed_clock, observed_reply, observed_event, NULL};
     enum mo_service_status status = mo_service_open(image, index, &recording, store, out);
     if (status == MO_SERVICE_OK)
@@ -1152,6 +1163,23 @@ static void simulation_persistence(void) {
     simulation_appends = 0;
     simulation_run(image, NULL, 0);
     CHECK(simulation_appends == 0);
+    for (unsigned i = 0; i < 2; i++) {
+        memset(&observed, 0, sizeof observed);
+        observed.enabled = true;
+        observed.forward = true;
+        observed.fail_open = 2;
+        observed.open_fault = i == 0 ? 7u : 11u;
+        simulation_run(image,
+                       i == 0 ? "Simulation.restart at 2026-01-01T00:00:00Z: service store failed"
+                              : "Simulation.restart at 2026-01-01T00:00:00Z: saved service data",
+                       0);
+        CHECK(observed.opens == 2);
+        observed.enabled = false;
+        crash_point = 0;
+    }
+    crash_point = 6;
+    simulation_run(image, "Simulation.start at 2026-01-01T00:00:00Z: service store failed", 0);
+    crash_point = 0;
     mo_image_free(image);
 
     image = compile(
@@ -1166,9 +1194,38 @@ static void simulation_persistence(void) {
                    65536);
     CHECK(simulation_appends == 1);
     crash_point = 4;
-    simulation_run(image, "store", 0);
+    simulation_run(image, "Simulation.send at 2026-01-01T00:00:00Z: service store failed", 0);
     crash_point = 0;
     mo_image_free(image);
+
+    for (unsigned i = 0; i < 2; i++) {
+        char source_text[1024];
+        int written =
+            snprintf(source_text, sizeof source_text,
+                     "module Main\nservice\nstate Int = 0\ntools broken\n"
+                     "token from env \"TOKEN\"\nend\n"
+                     "fn broken(_state: Int, _now: Time) : List(Int)\nstop \"broken\"\nend\n"
+                     "test \"error allocation\"\n"
+                     "sim = Simulation.start(Main, Time.parse(\"2026-01-01T00:00:00Z\") "
+                     "or stop \"time\")\n%s"
+                     "_reply = Simulation.send(sim, Main.broken)\nend\n",
+                     i == 0 ? "Simulation.crash(sim)\n" : "");
+        MO_ASSERT(written > 0 && (size_t)written < sizeof source_text);
+        image = compile(source_text);
+        memset(&observed, 0, sizeof observed);
+        observed.enabled = true;
+        observed.forward = true;
+        observed.refuse_case = true;
+        simulation_run(image,
+                       i == 0 ? "Simulation.send: allocation failed while returning ServiceDown; "
+                                "nothing was queued or committed"
+                              : "Simulation.send: allocation failed while returning ToolFailed; "
+                                "tool broken failed and nothing was committed",
+                       0);
+        CHECK(observed.sends == i && observed.replies == i && observed.failures == i);
+        observed.enabled = false;
+        mo_image_free(image);
+    }
 }
 
 static void simulation_load(const struct mo_bytecode *file, const char *refusal,
@@ -1281,7 +1338,7 @@ static void simulation_verifier(void) {
     functions[interval].code_count = sizeof code / sizeof code[0];
     debug[interval].span_count = 0;
     debug[interval].name_count = 0;
-    simulation_load(&file, NULL, "%service.interval.1 at Time(");
+    simulation_load(&file, NULL, "%service.interval.1 at 2026-01-01T00:00:00Z:");
     mo_arena_free(&arena);
     mo_image_free(image);
 }

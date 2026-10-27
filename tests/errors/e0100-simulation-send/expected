@@ -1,0 +1,7 @@
+error E0100: Simulation.send must name a registered tool  tests/errors/e0100-simulation-send/main.mo:4:24
+
+  4 |   Simulation.send(sim, Main.helper)
+    |                        ^^^^ Simulation.send must name a registered tool
+
+Write the service module and one of its tools directly, as in TaskQueue.submit; timers and other functions are not tools (reference 12.4).
+

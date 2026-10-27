@@ -1,0 +1,7 @@
+error E0100: Simulation.start must name a service module  tests/errors/e0100-simulation-start/main.mo:4:27
+
+  4 |   _sim = Simulation.start(Main, Time.parse("2026-01-01T00:00:00Z") or stop "time")
+    |                           ^^^^ Simulation.start must name a service module
+
+Name the current module or one it uses directly, as in Simulation.start(TaskQueue, at); that module must declare a service (reference 12.4).
+

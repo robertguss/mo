@@ -15,3 +15,7 @@
 - Lean checks simulation operation types but does not model services. Exclude
   only runs that reach its explicit boundary stop; keep ordinary runs from the
   same program in differential comparison.
+- Recovery and snapshot failures have no start-handler attribution. Set a
+  handler identity only while invoking that handler or accepting its value;
+  replay supplies its own identity. A stopped startup is not necessarily a
+  failed initializer.

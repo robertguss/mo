@@ -5,13 +5,14 @@
 #include <inttypes.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <string.h>
 
 struct simulation {
     const struct mo_image *image;
     struct mo_store *store;
     struct mo_service_loop *loop;
     struct mo_service_time time;
-    uint32_t descriptor;
+    uint32_t descriptor, operation;
     struct mo_process *caller;
     struct mo_cell reply;
     enum mo_service_status status;
@@ -42,13 +43,39 @@ report(struct simulation *s, const char *format, ...) {
     s->failed = true;
 }
 
-static void handler_failure(struct simulation *s, uint32_t function,
-                            enum mo_service_status status) {
+static void failure(struct simulation *s, uint32_t function, int64_t now,
+                    enum mo_service_status status, const struct mo_defect *defect) {
+    static const char *const operations[] = {
+#define HOSTOP(id, module, member, signature, params, bugs, spec_only)
+#define SIMOP(id, module, member, spec_only) member,
+#include "base/hostops.def"
+    };
     const struct mo_bytecode *file = mo_image_bytecode(s->image);
-    MO_ASSERT(function < file->function_count);
-    const struct mo_bytecode_string *name = &file->strings[file->functions[function].name];
-    report(s, "Simulation handler %.*s at Time(%" PRId64 "): %s", (int)name->length, name->bytes,
-           s->time.now, mo_service_status_text(status));
+    uint32_t tool = file->services[s->descriptor].tools[0].function;
+    uint32_t time_type = file->functions[tool].parameters[1].type;
+    struct mo_buffer time;
+    mo_buffer_init(&time, 32);
+    bool printed = mo_value_print(s->caller->heap, time_type, mo_cell_time(now), &time);
+    const char *text = printed ? (const char *)time.bytes : "<time unavailable>";
+    int length = printed ? (int)time.length : (int)strlen(text);
+    if (function != MO_NO_INDEX) {
+        MO_ASSERT(function < file->function_count);
+        const struct mo_bytecode_string *name = &file->strings[file->functions[function].name];
+        const char *reason = defect == NULL ? NULL : defect->reason;
+        size_t detail_length = 0;
+        const uint8_t *detail = defect != NULL && defect->has_detail
+                                    ? mo_value_data(defect->detail, &detail_length)
+                                    : (const uint8_t *)"";
+        if (detail_length > sizeof s->caller->simulation_report)
+            detail_length = sizeof s->caller->simulation_report;
+        report(s, "Simulation handler %.*s at %.*s: %s%s%s%s%.*s", (int)name->length, name->bytes,
+               length, text, mo_service_status_text(status), reason == NULL ? "" : ": ",
+               reason == NULL ? "" : reason, detail_length == 0 ? "" : ": ", (int)detail_length,
+               detail);
+    } else
+        report(s, "Simulation.%s at %.*s: %s", operations[s->operation], length, text,
+               mo_service_status_text(status));
+    mo_buffer_free(&time);
 }
 
 static struct mo_service_time clock_now(void *context) {
@@ -57,11 +84,9 @@ static struct mo_service_time clock_now(void *context) {
 
 static void event(const struct mo_service_event *e, void *context) {
     struct simulation *s = context;
-    if (e->function != MO_NO_INDEX)
-        handler_failure(s, e->function, e->reason);
-    else if (e->reason == MO_SERVICE_STORE || e->reason == MO_SERVICE_SAVED_INVALID)
-        report(s, "Simulation at Time(%" PRId64 "): %s", e->time.now,
-               mo_service_status_text(e->reason));
+    if (e->function != MO_NO_INDEX || e->reason == MO_SERVICE_STORE ||
+        e->reason == MO_SERVICE_SAVED_INVALID)
+        failure(s, e->function, e->time.now, e->reason, e->defect);
 }
 
 static void reply(const struct mo_service_response *r, void *context) {
@@ -70,7 +95,7 @@ static void reply(const struct mo_service_response *r, void *context) {
     const struct mo_bytecode_service *service = &file->services[s->descriptor];
     if (r->timer) {
         if (r->status != MO_SERVICE_OK)
-            handler_failure(s, service->timers[r->handler].function, r->status);
+            failure(s, service->timers[r->handler].function, s->time.now, r->status, r->defect);
         return;
     }
     MO_ASSERT(!s->replied);
@@ -101,8 +126,7 @@ static void open_loop(struct simulation *s) {
     enum mo_service_status status =
         mo_service_open(s->image, s->descriptor, &hooks, s->store, &s->loop);
     if (status != MO_SERVICE_OK) {
-        report(s, "Simulation restart/start at Time(%" PRId64 "): %s", s->time.now,
-               mo_service_status_text(status));
+        failure(s, MO_NO_INDEX, s->time.now, status, NULL);
         return;
     }
     drain(s);
@@ -111,7 +135,18 @@ static void open_loop(struct simulation *s) {
 static void send(struct simulation *s, uint32_t descriptor, uint32_t tool,
                  const struct mo_cell *arguments, uint32_t result_type, struct mo_cell *out) {
     if (descriptor != s->descriptor) {
-        report(s, "Simulation.send selected a tool from a different service");
+        const struct mo_bytecode *file = mo_image_bytecode(s->image);
+        const struct mo_bytecode_service *selected = &file->services[descriptor];
+        const struct mo_bytecode_string *module =
+            &file->strings[file->modules[selected->module].name];
+        const struct mo_bytecode_string *name = &file->strings[selected->tools[tool].name];
+        const struct mo_bytecode_string *actual =
+            &file->strings[file->modules[file->services[s->descriptor].module].name];
+        report(s,
+               "Simulation.send selected %.*s.%.*s, but this simulation runs %.*s; "
+               "nothing was queued or committed",
+               (int)module->length, module->bytes, (int)name->length, name->bytes,
+               (int)actual->length, actual->bytes);
         return;
     }
     if (s->loop == NULL || !mo_service_running(s->loop))
@@ -181,8 +216,19 @@ static void send(struct simulation *s, uint32_t descriptor, uint32_t tool,
         uint32_t error_type = p->types->items[result_type].cases[1].fields[0].type;
         bool made = mo_value_case(p->heap, error_type, s->status == MO_SERVICE_DOWN ? 0 : 1, NULL,
                                   0, &error);
-        if (!made || !mo_value_case(p->heap, result_type, 1, &error, 1, out))
-            report(s, "Simulation error reply copy-out: allocation");
+        if (!made || !mo_value_case(p->heap, result_type, 1, &error, 1, out)) {
+            if (s->status == MO_SERVICE_DOWN)
+                report(s, "Simulation.send: allocation failed while returning ServiceDown; "
+                          "nothing was queued or committed");
+            else {
+                const struct mo_bytecode_string *name =
+                    &p->file->strings[p->file->services[descriptor].tools[tool].name];
+                report(s,
+                       "Simulation.send: allocation failed while returning ToolFailed; "
+                       "tool %.*s failed and nothing was committed",
+                       (int)name->length, name->bytes);
+            }
+        }
         if (made)
             mo_value_drop(p->heap, error_type, error);
     } else
@@ -202,7 +248,7 @@ static void advance(struct simulation *s, int64_t by) {
         if (count > MO_LIMIT_SIMULATION_TICKS) {
             report(s,
                    "Simulation.advance: %" PRIu64 " firings exceed MO_LIMIT_SIMULATION_TICKS "
-                   "(%u); no handlers ran, clock moved or updates committed",
+                   "(%u); no handler ran, the clock did not move and nothing was committed",
                    count, MO_LIMIT_SIMULATION_TICKS);
             return;
         }
@@ -226,6 +272,7 @@ enum mo_outcome mo_vm_simulate(struct mo_process *p, uint32_t operation, uint32_
     if (operation == MO_SIM_START) {
         struct simulation initial = {.image = p->image,
                                      .descriptor = descriptor,
+                                     .operation = operation,
                                      .caller = p,
                                      .time = {.now = mo_cell_get_time(arguments[0])}};
         enum mo_store_status status = mo_store_open(NULL, &initial.store);
@@ -251,6 +298,7 @@ enum mo_outcome mo_vm_simulate(struct mo_process *p, uint32_t operation, uint32_
         s = (struct simulation *)info->handle;
         MO_ASSERT(s->image == p->image);
         s->caller = p;
+        s->operation = operation;
         s->failed = false;
         s->replied = false;
         *out = mo_cell_unit();
