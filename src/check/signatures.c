@@ -170,11 +170,6 @@ static const struct native_text {
 #define HOSTOP(id, module, name, signature, params, bugs, spec_only)                               \
     {module, name, module "." name, signature, spec_only},
 #include "base/hostops.def"
-    {"Int", "second", "Int.seconds", "fn(Int) : Duration", false},
-    {"Int", "millisecond", "Int.milliseconds", "fn(Int) : Duration", false},
-    {"Int", "minute", "Int.minutes", "fn(Int) : Duration", false},
-    {"Int", "hour", "Int.hours", "fn(Int) : Duration", false},
-    {"Int", "day", "Int.days", "fn(Int) : Duration", false},
 };
 
 static const struct mo_symbol option_owner = {.name = "Option", .module = UINT32_MAX};
@@ -1299,16 +1294,34 @@ struct mo_signatures *mo_prepare_available_signatures(struct mo_arena *arena,
                                       strcmp(items[i].function->name, "compare") == 0))
             out->customizers[out->customizer_count++] = &items[i];
     qsort(out->customizers, out->customizer_count, sizeof(*out->customizers), customizer_order);
-    out->native_count = (uint32_t)(sizeof(native_texts) / sizeof(native_texts[0]));
+    uint32_t prim_count = (uint32_t)(sizeof(native_texts) / sizeof(native_texts[0]));
+    MO_ASSERT(mo_duration_unit_count <= UINT32_MAX - prim_count);
+    out->native_count = prim_count + (uint32_t)mo_duration_unit_count;
     out->native =
         allocate(&p, out->native_count, sizeof(*out->native), _Alignof(struct mo_native_signature));
     if (p.failed)
         goto failed;
     p.native = true;
     p.native_span = set->modules[0]->span;
-    for (uint32_t i = 0; i < out->native_count; i++)
+    for (uint32_t i = 0; i < prim_count; i++)
         if (!native_signature(&p, &native_texts[i], &out->native[i]))
             goto failed;
+    for (uint32_t i = 0; i < (uint32_t)mo_duration_unit_count; i++) {
+        const char *plural = mo_duration_units[i];
+        size_t n = strlen(plural);
+        MO_ASSERT(n > 1);
+        char *name = allocate(&p, n, 1, 1);
+        char *qualified = allocate(&p, 4 + n + 1, 1, 1);
+        if (name == NULL || qualified == NULL)
+            goto failed;
+        memcpy(name, plural, n - 1);
+        name[n - 1] = '\0';
+        memcpy(qualified, "Int.", 4);
+        memcpy(qualified + 4, plural, n + 1);
+        struct native_text alias = {"Int", name, qualified, "fn(Int) : Duration", false};
+        if (!native_signature(&p, &alias, &out->native[prim_count + i]))
+            goto failed;
+    }
     mo_diags_sort(diags);
     return out;
 failed:
