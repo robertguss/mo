@@ -1,7 +1,0 @@
-error E0068: a choice arm is a catch-all  timesheet.mo:77:9
-
-  77 |         _: None
-     |         ^ covers cases without naming them
-
-A whole arm over a choice type can't be _ or a name; list the cases (reference 7.2).
-

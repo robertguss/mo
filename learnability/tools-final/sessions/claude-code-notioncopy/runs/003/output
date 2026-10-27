@@ -1,7 +1,0 @@
-error E0068: a choice arm is a catch-all  answers/notioncopy.mo:332:5
-
-  332 |     _: Error("notioncopy: the limit must be a whole number above 0, not #{text}\n#{usage}")
-      |     ^ covers cases without naming them
-
-A whole arm over a choice type can't be _ or a name; list the cases (reference 7.2).
-

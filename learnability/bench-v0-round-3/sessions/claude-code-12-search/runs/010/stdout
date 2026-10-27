@@ -1,9 +1,0 @@
-passed Search.lower_bound.example.1  search.mo:9:5
-passed Search.lower_bound.example.2  search.mo:10:5
-passed Search.lower_bound.example.3  search.mo:11:5
-passed Search.lower_bound.example.4  search.mo:12:5
-passed Search.index_of.example.1  search.mo:35:5
-passed Search.index_of.example.2  search.mo:36:5
-passed Search.count_between.example.1  search.mo:46:5
-passed Search.count_between.example.2  search.mo:47:5
-8 passed, 0 failed, 0 stopped

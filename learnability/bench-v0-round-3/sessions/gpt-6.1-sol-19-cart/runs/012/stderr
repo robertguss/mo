@@ -1,7 +1,0 @@
-error E0046: the imported name doesn't exist  cart-test.mo:3:22
-
-  3 | use Cart{Cart, Line, CodeError}
-    |                      ^^^^^^^^^ CodeError
-
-Use brings in names declared by the module (reference 10.3).
-

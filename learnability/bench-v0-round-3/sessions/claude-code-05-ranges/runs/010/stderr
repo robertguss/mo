@@ -1,7 +1,0 @@
-error E0021: expected end, found )  ranges.mo:92:82
-
-  92 |       spans.all?(fn(s) result.any?(fn(r) r.low <= s.low and s.high <= r.high end))
-     |                                                                                  ^
-
-Arguments are passed in parentheses, separated by commas (reference 5.2).
-

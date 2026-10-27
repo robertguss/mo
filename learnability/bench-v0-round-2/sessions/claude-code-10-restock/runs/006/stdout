@@ -1,9 +1,0 @@
-passed Restock.parse_row.example.1  restock.mo:29:5
-passed Restock.parse_row.example.2  restock.mo:30:5
-passed Restock.parse_row.example.3  restock.mo:31:5
-passed Restock.parse_row.example.4  restock.mo:32:5
-passed Restock.order.example.1  restock.mo:54:5
-passed Restock.order.example.2  restock.mo:55:5
-passed Restock.order.example.3  restock.mo:56:5
-passed Restock.plan.example.1  restock.mo:65:5
-8 passed, 0 failed, 0 stopped
