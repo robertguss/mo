@@ -2,6 +2,7 @@
 #include "check/checked.h"
 #include "check/signatures.h"
 
+#include "base/capabilities.h"
 #include "base/codes.h"
 #include "base/limits.h"
 
@@ -481,12 +482,11 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
         const struct mo_checked_function *entry = &functions[main];
         struct mo_span entry_span = entry->signature->function->declaration->children[0]->span;
         unsigned capabilities = 0;
-        static const char *const names[] = {"Args",      "Env",   "Console", "Files",
-                                            "ReadFiles", "Clock", "Random"};
         for (uint32_t i = 0; i < entry->parameter_count; i++) {
             unsigned capability = 0;
-            for (unsigned j = 0; j < sizeof(names) / sizeof(names[0]); j++)
-                if (native_type(entry->parameters[i]->type, names[j]))
+            for (unsigned j = 0; j < MO_CAPABILITY_COUNT; j++)
+                if (strcmp(mo_capability_names[j], "Simulation") != 0 &&
+                    native_type(entry->parameters[i]->type, mo_capability_names[j]))
                     capability = 1u << j;
             if (capability == 0 || (capabilities & capability) != 0) {
                 bool kept = report(diags, MO_CODE_MAIN_CONTRACT, entry_span,

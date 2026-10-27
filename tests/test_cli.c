@@ -166,8 +166,21 @@ static void limit_values(void) {
     CHECK(mo_cli_parse(4, boundary, &cli, &error));
     const char *option[] = {"mo", "test", "--only", long_arg, "main.mo"};
     CHECK(!mo_cli_parse(5, option, &cli, &error));
+    CHECK(strncmp(error, "command option is too long (maximum 4096 bytes): \"", 49) == 0);
     long_arg[MO_CLI_ARGUMENT_SIZE] = '\0';
     CHECK(mo_cli_parse(5, option, &cli, &error));
+    const char *words[2 + 2 * MO_CLI_ARGUMENTS + 2];
+    words[0] = "mo";
+    words[1] = "test";
+    uint32_t at = 2;
+    for (uint32_t i = 0; i < MO_CLI_ARGUMENTS / 2; i++) {
+        words[at++] = "--only";
+        words[at++] = "a";
+    }
+    words[at++] = "--only";
+    words[at++] = "main.mo";
+    CHECK(!mo_cli_parse((int)at, words, &cli, &error));
+    CHECK(strncmp(error, "too many command options (maximum 256 words): \"", 47) == 0);
     char tail[3970]; /* 16 * 7 flag bytes + 15 * 4097 + 3969 == 65536. */
     memset(tail, 'x', sizeof(tail));
     tail[3968] = '\0';
@@ -181,6 +194,7 @@ static void limit_values(void) {
     tail[3968] = 'x';
     tail[3969] = '\0';
     CHECK(!mo_cli_parse(35, aggregate, &cli, &error));
+    CHECK(strncmp(error, "command options are too large (maximum 65536 bytes): \"", 53) == 0);
 }
 
 /* An externally visible rendering fixture: tabs, wide/combining scalars,

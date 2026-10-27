@@ -6,6 +6,8 @@
 #include "bytecode/bytecode.h"
 #include "heap/types.h"
 
+#include <string.h>
+
 _Static_assert(sizeof(struct mo_type) <= sizeof(struct mo_bytecode) &&
                    sizeof(struct mo_bytecode_function) <= sizeof(struct mo_bytecode) &&
                    sizeof(struct mo_bytecode_debug) <= sizeof(struct mo_bytecode) &&
@@ -20,6 +22,19 @@ static inline MO_MUST_USE size_t mo_bytecode_work_budget(size_t wire_size) {
         2 * (sizeof(struct mo_bytecode) + MO_ARENA_CHUNK_HEADER + MO_ARENA_ALIGNMENT);
     MO_ASSERT(wire_size <= MO_LIMIT_BYTECODE_SIZE && wire_size < SIZE_MAX / per_byte);
     return (wire_size + 1) * per_byte;
+}
+
+static inline void mo_bytecode_header_bytes(uint8_t header[MO_BYTECODE_HEADER_SIZE]) {
+    memset(header, 0, MO_BYTECODE_HEADER_SIZE);
+    memcpy(header, MO_BYTECODE_MAGIC, 4);
+    header[4] = (uint8_t)MO_BYTECODE_MAJOR;
+    header[5] = (uint8_t)((unsigned)MO_BYTECODE_MAJOR >> 8);
+    header[6] = (uint8_t)MO_BYTECODE_MINOR;
+    header[7] = (uint8_t)((unsigned)MO_BYTECODE_MINOR >> 8);
+    header[8] = (uint8_t)MO_BYTECODE_FLAGS;
+    header[9] = (uint8_t)(MO_BYTECODE_FLAGS >> 8);
+    header[10] = (uint8_t)(MO_BYTECODE_FLAGS >> 16);
+    header[11] = (uint8_t)(MO_BYTECODE_FLAGS >> 24);
 }
 
 struct mo_bytecode_names;

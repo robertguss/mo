@@ -133,16 +133,12 @@ bool mo_buffer_append_hex(struct mo_buffer *buffer, uint64_t value, unsigned min
     return mo_buffer_append(buffer, first, (size_t)(end - first));
 }
 
-/* Appends the low size bytes of value, the lowest first. */
-static bool append_le(struct mo_buffer *buffer, uint64_t value, size_t size) {
-    uint8_t bytes[8];
-    MO_ASSERT(size <= sizeof bytes);
-    for (size_t i = 0; i < size; i++) {
-        bytes[i] = (uint8_t)(value >> (8 * i));
-    }
-    return mo_buffer_append(buffer, bytes, size);
-}
-
 bool mo_buffer_append_le32(struct mo_buffer *buffer, uint32_t value) {
-    return append_le(buffer, value, 4);
+    uint8_t bytes[4] = {
+        (uint8_t)value,
+        (uint8_t)(value >> 8),
+        (uint8_t)(value >> 16),
+        (uint8_t)(value >> 24),
+    };
+    return mo_buffer_append(buffer, bytes, sizeof bytes);
 }

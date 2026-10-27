@@ -47,19 +47,48 @@ static bool refuse(struct mo_cli *out, const char **error, const char *message,
     return false;
 }
 
+static void error_uint(struct mo_cli *out, size_t *at, uint64_t value) {
+    char digits[20];
+    unsigned n = 0;
+    do {
+        digits[n++] = (char)('0' + value % 10);
+        value /= 10;
+    } while (value != 0);
+    while (n > 0) {
+        char digit[] = {digits[--n], '\0'};
+        error_text(out, at, digit);
+    }
+}
+
+static bool refuse_maximum(struct mo_cli *out, const char **error, const char *prefix,
+                           uint64_t maximum, const char *suffix, const char *arg) {
+    size_t at = 0;
+    error_text(out, &at, prefix);
+    error_uint(out, &at, maximum);
+    error_text(out, &at, suffix);
+    error_text(out, &at, ":");
+    error_argument(out, &at, arg);
+    out->error[at] = '\0';
+    *error = out->error;
+    return false;
+}
+
 static bool option(struct mo_cli *out, const char **error, const char *arg, uint32_t *count,
                    size_t *total) {
     size_t length = 0;
     while (length <= MO_CLI_ARGUMENT_SIZE && arg[length] != '\0')
         length++;
     if (length > MO_CLI_ARGUMENT_SIZE)
-        return refuse(out, error, "command option is too long (maximum 4096 bytes)", arg, NULL);
+        return refuse_maximum(out, error, "command option is too long (maximum ",
+                              MO_CLI_ARGUMENT_SIZE, " bytes)", arg);
     if (*count == MO_CLI_ARGUMENTS)
-        return refuse(out, error, "too many command options (maximum 256 words)", arg, NULL);
+        return refuse_maximum(out, error, "too many command options (maximum ", MO_CLI_ARGUMENTS,
+                              " words)", arg);
     (*count)++;
     *total += length + 1;
     if (*total > MO_CLI_ARGUMENT_BYTES)
-        return refuse(out, error, "command options are too large (maximum 65536 bytes)", arg, NULL);
+        return refuse_maximum(out, error, "command options are too large (maximum ",
+                              MO_CLI_ARGUMENT_BYTES, " bytes)", arg);
     return true;
 }
 

@@ -59,7 +59,6 @@ MO_MUST_USE bool mo_text_quote(struct mo_text_reader *r, struct mo_bytecode_stri
 MO_MUST_USE bool mo_text_payload(struct mo_text_reader *r, uint32_t type, bool shorthand);
 MO_MUST_USE bool mo_text_indexed_section(struct mo_text_reader *r,
                                          enum mo_bytecode_section section);
-MO_MUST_USE bool mo_text_instruction(struct mo_text_reader *r);
 MO_MUST_USE bool mo_text_shorthand(struct mo_text_reader *r);
 
 #endif

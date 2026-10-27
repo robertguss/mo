@@ -8,6 +8,7 @@
 #include "check/patterns.h"
 #include "check/signatures.h"
 
+#include "base/capabilities.h"
 #include "base/codes.h"
 #include "base/limits.h"
 #include "base/simops.h"
@@ -466,7 +467,7 @@ static MO_MUST_USE bool map_keys(struct inference *p, const struct mo_syntax *no
             value.bytes = key->text;
             value.length = key->span.end - key->span.start;
         }
-        if (value.category != 0)
+        if (value.category != MO_MAP_KEY_UNKNOWN)
             keys[count++] = (struct literal_key){value, key, i, versions[i]};
     }
     /* Stable merges retain the first source key and bound equal-prefix work. */
@@ -4416,11 +4417,9 @@ static MO_MUST_USE bool capture_type(struct inference *p, const struct mo_source
                 return false;
         return true;
     }
-    static const char *const capabilities[] = {"Args",      "Env",   "Console", "Files",
-                                               "ReadFiles", "Clock", "Random",  "Simulation"};
-    for (uint32_t i = 0; i < sizeof(capabilities) / sizeof(capabilities[0]); i++)
+    for (uint32_t i = 0; i < MO_CAPABILITY_COUNT; i++)
         if (type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX &&
-            strcmp(type->name, capabilities[i]) == 0)
+            strcmp(type->name, mo_capability_names[i]) == 0)
             *capability = true;
     for (uint32_t i = 0; i < type->count; i++)
         if (!capture_type(p, type->arguments[i], capability, unknown, depth + 1))

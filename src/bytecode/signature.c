@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "base/capabilities.h"
+
 struct edge {
     uint32_t parent, next;
 };
@@ -198,10 +200,8 @@ static MO_MUST_USE bool type(struct match *m, uint32_t index, unsigned depth) {
             return take(m, ')');
         }
     }
-    static const char *const caps[] = {"Args",      "Env",   "Console", "Files",
-                                       "ReadFiles", "Clock", "Random"};
-    for (uint32_t i = 0; i < sizeof caps / sizeof *caps; i++) {
-        if (word_is(start, length, caps[i])) {
+    for (uint32_t i = 0; i < MO_CAPABILITY_COUNT; i++) {
+        if (word_is(start, length, mo_capability_names[i])) {
             return t->kind == MO_TYPE_CAPABILITY && (uint32_t)t->capability == i;
         }
     }

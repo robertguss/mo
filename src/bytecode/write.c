@@ -342,7 +342,8 @@ bool mo_bytecode_encode(const struct mo_bytecode *file, struct mo_buffer *out,
     struct writer w = {.file = file, .out = out, .reason = "bytecode/output limit or no memory"};
     size_t name_bytes = file->string_count <= MO_LIMIT_STRINGS ? (size_t)file->string_count * 4 : 0;
     mo_arena_init(&w.scratch, mo_bytecode_work_budget(MO_BYTECODE_HEADER_SIZE + name_bytes));
-    uint8_t header[MO_BYTECODE_HEADER_SIZE] = {'M', 'O', 'B', 'C', 0, 0, MO_BYTECODE_MINOR, 0};
+    uint8_t header[MO_BYTECODE_HEADER_SIZE];
+    mo_bytecode_header_bytes(header);
     header[8] = file->service_count != 0 ? MO_BYTECODE_SERVICE_FLAG : 0;
     bool encoded = raw(&w, header, sizeof header) && sections(&w);
     mo_arena_free(&w.scratch);
