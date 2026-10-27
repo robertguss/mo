@@ -8,6 +8,7 @@
 #include "check/check.h"
 #include "test.h"
 
+#include <glob.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -236,8 +237,17 @@ static void corpus(void) {
         {"e0086.mo", "e0086.diag", PROGRAM},
         {"e0087.mo", "e0087.diag", PROGRAM},
         {"e0087-ambiguous.mo", "e0087-ambiguous.diag", PROGRAM},
+        {"e0088.mo", "e0088.diag", PROGRAM},
+        {"e0089.mo", "e0089.diag", PROGRAM},
+        {"e0090.mo", "e0090.diag", BODIES},
+        {"e0091.mo", "e0091.diag", PROGRAM},
+        {"e0092.mo", "e0092.diag", PROGRAM},
+        {"e0093.mo", "e0093.diag", PROGRAM},
         {"e0094.mo", "e0094.diag", BODIES},
         {"e0095.mo", "e0095.diag", BODIES},
+        {"e0096/main.mo", "e0096.diag", LOADING},
+        {"e0097/main.mo", "e0097.diag", LOADING},
+        {"e0098.mo", "e0098.diag", BODIES},
         {"e0412.mo", "e0412.diag", BODIES},
         {"e1103.mo", "e1103.diag", BODIES},
     };
@@ -262,7 +272,11 @@ static void corpus(void) {
                 targets[j] = 1;
             uint32_t *uses[] = {targets, NULL};
             struct mo_module_set set = {
-                .count = cases[i].phase == PROGRAM ? 1u : 2u, .modules = modules, .uses = uses};
+                .count =
+                    (cases[i].phase == PROGRAM && modules[0]->header.uses->count == 0) ? 1u : 2u,
+                .modules = modules,
+                .uses = uses,
+                .sources = &f.sources};
             if (cases[i].phase == PROGRAM) {
                 CHECK(mo_check(&f.arena, &set, &f.diags) == NULL);
             } else {
@@ -309,6 +323,23 @@ static void corpus(void) {
         }
         finish(&f);
     }
+    glob_t diags = {0};
+    MO_ASSERT(glob("tests/check/diagnostics/*.diag", 0, NULL, &diags) == 0);
+    for (size_t i = 0; i < diags.gl_pathc; i++) {
+        const char *slash = strrchr(diags.gl_pathv[i], '/');
+        const char *name = slash == NULL ? diags.gl_pathv[i] : slash + 1;
+        bool found = false;
+        for (size_t j = 0; j < sizeof(cases) / sizeof(cases[0]); j++) {
+            if (strcmp(cases[j].expected, name) == 0) {
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+            MO_ASSERT(fprintf(stderr, "%s: missing from corpus()\n", name) >= 0);
+        CHECK(found);
+    }
+    globfree(&diags);
 }
 
 static void samples(void) {

@@ -14,7 +14,7 @@
 #   fuzz        every fuzz target briefly
 #   drivers     black-box drivers of the built executables
 #   lean        Mo Core in Lean, and the checks that compare the test executables with it
-#   static      grammar, module dependencies, library map, frozen tool tasks, formatting, clang-tidy
+#   static      grammar, module dependencies, library map, fuzz seeds, frozen tool tasks, formatting, clang-tidy
 #   cbmc        the CBMC proofs of the bytecode reader, the arena, the verifier, the primitives, path containment and resolution, reference counts and hash tables (cbmc/README.md)
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -391,6 +391,9 @@ make --no-print-directory deps
 
 step "The library map: docs/design/library.md has a row for every primitive and host operation"
 make --no-print-directory library-map
+
+step "Every fuzz target has a committed corpus or a Makefile generated-seed branch"
+if have python3; then python3 ci/check_fuzz_seeds.py; else missing "python3 is not installed"; fi
 
 step "The three tools' frozen tasks: hashes match and each reference passes its hidden tests"
 if have python3; then python3 bench/tools/grade.py --check; else missing "python3 is not installed"; fi

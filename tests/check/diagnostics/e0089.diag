@@ -1,0 +1,6 @@
+E0089 10.4
+0:40..45
+constants depend on each other in a cycle
+Constants are computed in the order of their dependencies; a cycle is an error (reference 10.4).
+constants depend on each other in a cycle
+fixes 0

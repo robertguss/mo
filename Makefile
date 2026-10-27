@@ -165,6 +165,7 @@ fuzz: $(FUZZERS)
 # A crash artifact fails the run that found it. Start with none, so that one saved by an
 # earlier run does not keep failing the runs after the bug is fixed.
 fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test $(BUILD)/debug/tests/test_bytecode_text.test $(BUILD)/debug/tests/test_vm.test $(BUILD)/debug/tests/test_services.test
+	python3 ci/check_fuzz_seeds.py
 	@rm -rf $(FUZZ_BUILD)/artifacts
 	@mkdir -p $(FUZZ_BUILD)/artifacts
 	@mkdir -p $(FUZZ_BUILD)/bytecode-fixtures
@@ -194,8 +195,13 @@ fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test $(BUILD)/d
 			if [ "$$base" = fuzz_vm ] || [ "$$base" = fuzz_bytecode_verify ]; then cp $(FUZZ_BUILD)/vm-fixtures/*.bc $(FUZZ_BUILD)/bytecode-fixtures/*.bc $$corpus/; fi; \
 			if [ "$$name" = fuzz_core_text ] || [ "$$name" = fuzz_core_check ] || [ "$$name" = fuzz_codegen ]; then \
 				cp tests/core/*.core fuzz/corpus/fuzz_core_text/*.core $$corpus/; fi; \
-			if [ "$$name" = fuzz_check ]; then cp tests/check/diagnostics/e*.mo $$corpus/; fi; \
-			if [ "$$name" = fuzz_bodies ]; then cp tests/check/diagnostics/e*.mo examples/*.mo $$corpus/; fi; \
+			if [ "$$name" = fuzz_check ] || [ "$$name" = fuzz_bodies ]; then \
+				cp tests/check/diagnostics/e*.mo $$corpus/; \
+				for path in tests/check/diagnostics/e*/*.mo; do \
+					cp "$$path" "$$corpus/$$(basename $$(dirname $$path))-$$(basename $$path)"; \
+				done; \
+			fi; \
+			if [ "$$name" = fuzz_bodies ]; then cp examples/*.mo $$corpus/; fi; \
 			if [ "$$name" = fuzz_bodies ] || [ "$$name" = fuzz_program ]; then \
 				awk 'BEGIN { print "module Main\nfn run(a: Bool, b: Bool, c: Bool, d: Range, e: Int, f: Int, g: Int, h: fn(Bool) : Int) : Bool"; for (i = 0; i < 255; i++) printf "a implies b or c and not d == e .. f + g * -h("; printf "a"; for (i = 0; i < 255; i++) printf ")"; print "\nend" }' >$$corpus/max-nesting.mo; \
 			fi; \

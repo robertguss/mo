@@ -1,0 +1,7 @@
+E0092 5.6
+0:54..59
+an anonymous function reads a var assigned after it is made
+Copy the value into a name first; later rounds of an enclosing loop also count as later assignments (reference 5.6).
+copy this value into a name first
+secondary 0:64..69 assigned here
+fixes 0

@@ -1,0 +1,6 @@
+E0098 12.4
+0:46..60
+a fake capability is made only in a test, example or promise
+Fakes are made only in tests, examples and promises, never in a module's constants or its functions (reference 12.4).
+outside any test, example or promise
+fixes 0
