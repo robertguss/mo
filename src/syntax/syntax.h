@@ -224,4 +224,8 @@ MO_MUST_USE bool mo_read_header(struct mo_arena *arena, const struct mo_sources 
                                 uint32_t file, struct mo_header *header_out,
                                 struct mo_diags *diags);
 
+extern const char *const mo_duration_units[];
+extern const size_t mo_duration_unit_count;
+MO_MUST_USE const char *mo_duration_unit(const uint8_t *text, size_t length);
+
 #endif

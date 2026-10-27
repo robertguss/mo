@@ -49,6 +49,23 @@ static void service_inputs(void) {
         }
     }
     free_fixture(&f);
+
+    init(&f, "module Main\nservice\nstate Int = 0\ntools tool\n"
+             "every 1.millisecond tick\ntoken from env \"TOKEN\"\nend\n"
+             "fn tool(_state: Int, _now: Time) : Bool\ntrue\nend\n"
+             "fn tick(state: Int, _now: Time) : Int\nstate\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    if (f.program != NULL && f.program->service_count == 1) {
+        const struct mo_checked_service *service = &f.program->services[0];
+        CHECK(service->timer_count == 1);
+        if (service->timer_count == 1) {
+            struct mo_span span = service->timers[0].syntax->children[0]->span;
+            CHECK(span.end - span.start == strlen("1.millisecond") &&
+                  memcmp(f.sources.files[span.file].bytes + span.start, "1.millisecond",
+                         strlen("1.millisecond")) == 0);
+        }
+    }
+    free_fixture(&f);
 }
 
 static void service_handlers(void) {
@@ -161,6 +178,8 @@ static void service_rules(void) {
         {"state Int = 0\ntools tool\nevery (1.minute) tick\ntoken from env \"TOKEN\"\n",
          MO_CODE_SERVICE_VALUE},
         {"state Int = 0\ntools tool\nevery 1.5.minutes tick\ntoken from env \"TOKEN\"\n",
+         MO_CODE_SERVICE_VALUE},
+        {"state Int = 0\ntools tool\nevery 1.foo tick\ntoken from env \"TOKEN\"\n",
          MO_CODE_SERVICE_VALUE},
         {"state Int = 0\ntools tool\ntoken from env \"lower\"\n", MO_CODE_SERVICE_TOKEN},
         {"state Int = 0\ntools tool\ntoken from env \"1TOKEN\"\n", MO_CODE_SERVICE_TOKEN},
@@ -2941,7 +2960,8 @@ static void time_arithmetic_graph(void) {
              "fn units(n: Int) : (Duration, Duration, Duration, Duration, Duration)\n"
              "(n.second, n.millisecond, n.minute, n.hour, n.day)\nend\n"
              "fn compare_units() : Bool\nconvert = Int.minute\n"
-             "1.minute == Int.minute(2) - convert(1)\nend\n");
+             "1.minute == Int.minute(2) - convert(1) and "
+             "1.millisecond == Int.millisecond(1)\nend\n");
     CHECK(f.program != NULL && !mo_diags_any(&f.diags));
     free_fixture(&f);
 

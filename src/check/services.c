@@ -204,14 +204,7 @@ static MO_MUST_USE bool interval(struct service_check *p, const struct mo_syntax
     if (valid) {
         const struct mo_syntax *number = value->children[0];
         const struct mo_syntax *unit = value->children[1];
-        static const char *const units[] = {"second", "seconds", "millisecond", "milliseconds",
-                                            "minute", "minutes", "hour",        "hours",
-                                            "day",    "days"};
-        valid = false;
-        for (size_t i = 0; i < sizeof units / sizeof units[0]; i++)
-            if (unit->span.end - unit->span.start == strlen(units[i]) &&
-                memcmp(unit->text, units[i], strlen(units[i])) == 0)
-                valid = true;
+        valid = mo_duration_unit(unit->text, unit->span.end - unit->span.start) != NULL;
         bool positive = false;
         uint32_t length = number->span.end - number->span.start;
         uint32_t start = length > 2 && number->text[0] == '0' &&

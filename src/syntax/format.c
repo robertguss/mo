@@ -5,6 +5,19 @@
 
 #include <string.h>
 
+const char *const mo_duration_units[] = {"seconds", "milliseconds", "minutes", "hours", "days"};
+const size_t mo_duration_unit_count = sizeof mo_duration_units / sizeof mo_duration_units[0];
+
+const char *mo_duration_unit(const uint8_t *text, size_t length) {
+    for (size_t i = 0; i < mo_duration_unit_count; i++) {
+        size_t plural = strlen(mo_duration_units[i]);
+        if ((length == plural || length == plural - 1) &&
+            memcmp(text, mo_duration_units[i], length) == 0)
+            return mo_duration_units[i];
+    }
+    return NULL;
+}
+
 struct comment_cursor {
     const struct mo_syntax *node;
     const struct mo_syntax_comment *next;
@@ -312,20 +325,16 @@ static void postfix_step(struct printer *f, const struct mo_syntax *n,
         if (n->kind == MO_S_FIELD_ACCESS && receiver != NULL && receiver->kind == MO_S_INT &&
             !receiver->incomplete && field != NULL && field->kind == MO_S_NAME &&
             !field->incomplete) {
-            static const char *const units[] = {"seconds", "milliseconds", "minutes", "hours",
-                                                "days"};
             size_t length = field->span.end - field->span.start;
-            for (size_t i = 0; i < sizeof units / sizeof units[0]; i++) {
-                size_t plural = strlen(units[i]);
-                if ((length == plural || length == plural - 1) &&
-                    memcmp(field->text, units[i], length) == 0) {
-                    struct mo_syntax spelling = *field;
-                    spelling.text = (const uint8_t *)units[i];
-                    spelling.span.end = spelling.span.start +
-                                        (uint32_t)(plural - (integer_is_one(receiver) ? 1u : 0u));
-                    node(f, &spelling);
-                    return;
-                }
+            const char *unit = mo_duration_unit(field->text, length);
+            if (unit != NULL) {
+                size_t plural = strlen(unit);
+                struct mo_syntax spelling = *field;
+                spelling.text = (const uint8_t *)unit;
+                spelling.span.end =
+                    spelling.span.start + (uint32_t)(plural - (integer_is_one(receiver) ? 1u : 0u));
+                node(f, &spelling);
+                return;
             }
         }
         node(f, field);
