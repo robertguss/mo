@@ -2947,8 +2947,7 @@ def constants(binary):
                 assert reason.encode() in result.stderr and b"Main.main" not in result.stderr
 
         # Calling a constant function value is not another read of the value.
-        # An earlier-global alias and nearest-lambda try used to emit invalid
-        # Core; a permitted closure must not be rejected with deferred globals.
+        # A permitted closure must not be rejected with deferred globals.
         for body, status in (
             ('base = 13\nhandler = first\nanswer = handler()\n'
              'reader = fn() Some(try Some(1)) end\nfn first() : Int\nbase\nend\n'

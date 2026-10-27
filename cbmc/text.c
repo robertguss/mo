@@ -1,4 +1,4 @@
-/* CBMC proofs of UTF-8 in Text's and Bytes' primitives, src/prim/text.c (V5 part 3, MO-55).
+/* CBMC proofs of UTF-8 in Text's and Bytes' primitives, src/prim/text.c.
  *
  * Bytes.decode_utf8 decides which bytes are text, and every Text primitive that walks a text
  * scalar by scalar trusts what it accepted. Char.to_text and List.from_chars spell a Char in
