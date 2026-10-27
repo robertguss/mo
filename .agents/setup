@@ -33,7 +33,7 @@ install_missing "${packages[@]}"
 if needs static; then
 	sudo mkdir -p /usr/local/bin
 	sudo ln -sfn /usr/bin/clang-format-14 /usr/local/bin/clang-format
-	/usr/bin/clang-format-14 --version | grep -F 'version 14.0.6'
+	PATH="/usr/local/bin:$PATH" clang-format --version | grep -F 'version 14.0.6'
 fi
 
 # libFuzzer and the sanitizer runtimes ship in a package named after clang's
