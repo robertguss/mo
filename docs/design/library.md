@@ -1,6 +1,6 @@
 # Where the library is implemented
 
-**Draft, 12 October 2026.** This is a map of Mo's core library: every function
+This is a map of Mo's core library: every function
 of reference section 14, and every operator that section 3 defines on a
 built-in type, with where it is implemented. It belongs to Architecture v0.1
 (`architecture.md`) and points into two of its contracts, `src/base/prims.def`

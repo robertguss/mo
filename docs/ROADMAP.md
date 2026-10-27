@@ -87,13 +87,15 @@ docs-only merges permitted by the repository's workflow.
 ## Next phase
 
 Phase 3's design is in [services.md](design/services.md). Service syntax and
-checking landed in MO-155 (#231); the runtime, MCP and SQLite are still open.
-D256 to D267 narrow it to a job queue used by Mo's own agents
-over MCP, with pure handlers, saved state in runtime-embedded SQLite, timers,
-supervision and an access token. Done means a week of real use and a deliberate
-crash with no lost accepted job. A multi-core scheduler, an HTTP client, TLS
-and SQL access for Mo programs wait for later phases. Budgets, timers and
-restart policy remain design questions.
+checking landed in MO-155 (#231); descriptors in MO-156; the C service loop
+in `src/vm/service.c` in MO-157; the SQLite store in `src/host/store.c` in
+MO-158. Still open: CLI start of services (`mo run` still E1408), MCP, the
+D306 Mo simulation API, and the week-long done criterion. D256 to D267
+narrow it to a job queue used by Mo's own agents over MCP, with pure
+handlers, saved state in runtime-embedded SQLite, timers, supervision and an
+access token. Done means a week of real use and a deliberate crash with no
+lost accepted job. A multi-core scheduler, an HTTP client, TLS and SQL access
+for Mo programs wait for later phases.
 
 ## Alongside every phase
 

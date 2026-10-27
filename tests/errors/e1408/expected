@@ -1,4 +1,4 @@
-error E1408: this build cannot run a service  tests/errors/e1408/main.mo:2:1
+error E1408: mo run does not start services yet  tests/errors/e1408/main.mo:2:1
 
   2 | service
     | ^^^^^^^
@@ -8,5 +8,5 @@ error E1408: this build cannot run a service  tests/errors/e1408/main.mo:2:1
   5 |   token from env "MO_SERVICE_TEST_TOKEN_NOT_READ"
     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   6 | end
-    | ^^^ this build cannot run a service
+    | ^^^ mo run does not start services yet
 

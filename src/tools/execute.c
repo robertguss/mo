@@ -115,7 +115,7 @@ static void execute_pipeline(void *argument) {
     for (uint32_t i = 0; i < program->service_count; i++) {
         const struct mo_checked_service *service = &program->services[i];
         if (cli->command == MO_COMMAND_RUN && service->module == 0) {
-            const char *message = "this build cannot run a service";
+            const char *message = "mo run does not start services yet";
             bool added =
                 mo_diags_add(diags, &(struct mo_diag){.code = MO_CODE_TOOL_SERVICE_UNAVAILABLE,
                                                       .primary = {service->syntax->span, message},

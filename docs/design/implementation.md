@@ -52,7 +52,7 @@ evidence backs it, and it lists the gaps.
 make                # build build/<compiler>/debug/mo
 make test           # unit tests
 make sanitize       # the tests under AddressSanitizer and UndefinedBehaviorSanitizer
-make fuzz-smoke     # every fuzz target for 20 seconds (needs clang with libFuzzer)
+make fuzz-smoke     # every fuzz target for 5 seconds (needs clang with libFuzzer; Makefile FUZZ_SECONDS)
 make format         # format the C sources with clang-format
 make deps           # each module includes only what the architecture allows
 make library-map    # docs/design/library.md and the tables of primitives agree

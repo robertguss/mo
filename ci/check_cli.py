@@ -1239,7 +1239,7 @@ def service_commands(binary):
             ('Counter.test.1', 'passed')]
         result = run(binary, ['run', str(path)], 1, env=env)
         assert not result.stdout
-        assert b'error E1408: this build cannot run a service' in result.stderr
+        assert b'error E1408: mo run does not start services yet' in result.stderr
         emitted = folder / 'counter.bc'
         result = run(binary, ['emit', str(path), '-o', str(emitted)], 1, env=env)
         assert b'E0079' in result.stderr and b'E1408' not in result.stderr
@@ -3159,8 +3159,8 @@ def guide_claims(binary):
          "including imported modules.",
          "It works on a module without `main`.",
          "`mo emit FILE -o OUT` writes the same descriptors, but still needs a `main` (E0079).",
-         "Neither command evaluates a service's start value or reads its token, and this "
-         "build still cannot run a service (E1408).",
+         "Neither command evaluates a service's start value or reads its token, and `mo run` "
+         "still does not start a service (E1408).",
          "`mo check --emit=core FILE` shows the start value and timer intervals as ordinary "
          "functions but no service registration, so Core output alone cannot reconstruct a service.",
          "`mo test` does not automatically start a service or read its token.",
@@ -3179,9 +3179,9 @@ def guide_claims(binary):
          "modules cannot be updated.",
          "Functions whose names end in `?` receive no fixes because a `?` name must still "
          "return `Bool`.")
-    refuses(['run', 'tests/errors/e1408/main.mo'], '1408', 'this build cannot run a service',
+    refuses(['run', 'tests/errors/e1408/main.mo'], '1408', 'mo run does not start services yet',
             '`mo run` on a service entry module still refuses with E1408, '
-            '"this build cannot run a service".')
+            '"mo run does not start services yet".')
     refuses(['check', 'tests/errors/e0101/main.mo'], '0101',
             'a service tool returns only its state',
             'A service tool that returns exactly `State` or `Result(State, E)` gets E0101, '

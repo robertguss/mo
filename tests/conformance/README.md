@@ -123,7 +123,7 @@ All 91 original gap entries were reviewed against main `4a40389`. The review
 checked their linked programs, error fixtures and owning drivers, including
 the new tracked-source formatter check. Seven entries now have complete
 program mappings where they previously had gaps: `3.2/4`, `9.2/20`, `9.2/21`,
-`11.1/3`, `11.1/8`, `14/3` and `14/16`. There are 84 remaining gap entries.
+`11.1/3`, `11.1/8`, `14/3` and `14/16`. After that review, 84 gap entries remained.
 
 `ref-bigint` covers the restored native functions and conversion boundaries.
 `ref-capability-fakes` covers Env snapshots and seeded Random streams.
@@ -134,7 +134,7 @@ classification added on main. Formatter descriptions now name
 `ci/check_format.py`; its preservation checks do not replace hand-written
 layout expectations.
 
-The remaining entries name absent standalone programs, partial matrices,
+At that review, the remaining entries named absent standalone programs, partial matrices,
 checks owned by other drivers, costs requiring instrumentation, nondeterministic
 host failures, future-version claims, or confirmed compiler limitations.
 Multiline case interpolation and direct calls on a nullary case such as
@@ -150,7 +150,7 @@ cover the block. `14/17` closed when reference 14 adopted maximal invalid
 subparts (D291) and `cap-console-stdin-invalid` gained inputs where that rule
 differs from one U+FFFD per run. `14/22` closed when reference 14 said
 `to_decimal` gives `None` past 18 decimal places and never rounds (D295); it
-cites `lib/json.mo`'s `to_decimal` examples. No row has a gap.
+cites `lib/json.mo`'s `to_decimal` examples. No row had a gap after MO-140.
 
 ## Other drivers, cost and untestable claims
 
@@ -158,10 +158,10 @@ D280, D281 and D282 (MO-131) reclassified 34 of the 45 gap entries on main
 `fb4b7bc`. Twenty rows now name other drivers, such as the formatter tests,
 `ci/check_cli.py`, `ci/check_errors.py`, the host and checker unit tests and
 `make grammar`. Eleven rows name C unit tests for cost claims, and seven give
-an untestable reason. The gaps that remain are reference rules the compiler
-does not follow yet, refusals no fixture pins, questions the reference leaves
-open, and the cost of `sort`, which is Mo code in `lib/list.mo` that no C unit
-test checks.
+an untestable reason. At that point, the remaining gaps were reference rules
+the compiler did not follow, refusals no fixture pinned, questions the reference
+left open, and the cost of `sort`. The latter is now measured by
+`tests/test_lower.c:test_source_sort_work`, as described under Columns above.
 
 ## Initial mapping
 

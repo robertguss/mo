@@ -648,7 +648,7 @@ Each timer handler is `(State, Time) : State`. Its interval function is
 `() : Duration`, lowered from the checked positive whole-number duration
 literal. It uses ordinary checked duration arithmetic; overflow is a defect
 when called, not a wrapped interval. The loader checks the signature, not the
-value computed by arbitrary bytecode. A future service runtime must refuse
+value computed by arbitrary bytecode. The service runtime refuses
 nonpositive intervals before scheduling them. No scheduling, token lookup or
 state saving occurs in this format layer.
 
@@ -1033,6 +1033,9 @@ constructor makes a capability rather than using one, so `host` calls it by
 - `Clock`: `now`. `Random`: `int`. `Args`: `list`. `Env`: `get`;
 - the fake constructors: `Console.fake`, `Console.fake_input`,
   `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `Args.of` and `Env.of`.
+
+`STOREOP` entries in `hostops.def` (`LOAD`, `APPEND`, `SNAPSHOT`) are runtime-only:
+they have no bytecode opcode and no `host` encoding.
 
 `Files.walk` and `ReadFiles.walk` are Mo functions over these operations in
 `lib/files.mo` and `lib/read-files.mo`, not extra host opcodes.
