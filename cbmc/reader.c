@@ -1,4 +1,4 @@
-/* CBMC proofs of the bytecode reader, src/bytecode/read.c (V4, MO-54).
+/* CBMC proofs of the bytecode reader, src/bytecode/read.c.
  *
  * Each function the reader is built from has a specification here: what it requires of the
  * reader, and what it guarantees. Each specification is used twice:

@@ -2269,7 +2269,6 @@ static void test_merge(void) {
         "(prim (text (charCount)) ((var \"value\")))) \"M\" (function) 0) "
         "(FunDecl \"identity\" ((\"x\" (text))) (text) (var \"x\") \"M\" (function) 0)) "
         "() \"start\" (noSource))",
-        /* These used to be explicit E1055 refusals; both now reconverge. */
         "(Program () ((FunDecl \"start\" ((\"b\" (bool)) (\"x\" (text))) (text) "
         "(let_ \"y\" (if_ (var \"b\") (proj (tuple ((var \"x\") (lit (int 1)))) 0) (var \"x\")) "
         "(var \"y\")) \"M\" (function) 0)) () \"start\" (noSource))",

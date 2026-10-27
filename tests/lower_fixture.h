@@ -6,7 +6,7 @@
 
 #include <string.h>
 
-/* Equivalent checked-program fixtures while mo_check is being integrated.
+/* Equivalent checked-program fixtures.
  * Only public contracts are used. Graph rows and binder tables are bounded. */
 struct lower_fixture {
     struct mo_arena arena;

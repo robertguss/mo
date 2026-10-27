@@ -1,4 +1,4 @@
-/* CBMC proofs of the arena, src/base/arena.c (V5, MO-55).
+/* CBMC proofs of the arena, src/base/arena.c.
  *
  * Every arena the rest of Mo uses is built by mo_arena_init and changed only by the functions
  * below, so each proof starts from any arena those functions can leave behind (ARENA, any_arena)

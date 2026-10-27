@@ -1,5 +1,5 @@
 /* CBMC proofs of Int's and Decimal's primitives, src/prim/number.c and Int.pow in
- * src/prim/prim.c (V5 part 3, MO-55).
+ * src/prim/prim.c.
  *
  * Int is a 64-bit integer that never wraps silently: an operation whose result does not fit
  * stops the program (reference 13.2), except the wrapping_, saturating_ and checked_ families,
