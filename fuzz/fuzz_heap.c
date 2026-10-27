@@ -1,6 +1,5 @@
 #include "../tests/heap_fixture.h"
 
-#include <math.h>
 #include <string.h>
 
 static const int operations = 1;

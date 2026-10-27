@@ -1,11 +1,8 @@
 #define _POSIX_C_SOURCE 200809L
-#include "base/binary.h"
 #include "base/stack.h"
 #include "base/store-memory.h"
 #include "bytecode/io.h"
-#include "codegen/codegen.h"
-#include "lower/lower.h"
-#include "program_fixture.h"
+#include "service_compile.h"
 #include "test.h"
 #include "vm/vm.h"
 
@@ -171,33 +168,6 @@ static void event(const struct mo_service_event *e, void *context) {
     struct observations *o = context;
     o->failures += e->kind == MO_SERVICE_FAILURE ? 1u : 0u;
     o->stops += e->kind == MO_SERVICE_STOP ? 1u : 0u;
-}
-
-static struct mo_image *compile(const char *source) {
-    struct fixture f;
-    init(&f, source);
-    MO_ASSERT(f.program != NULL && !mo_diags_any(&f.diags));
-    const char *modules[] = {"Main"};
-    f.set.names = modules;
-    struct mo_arena arena;
-    mo_arena_init(&arena, MO_LIMIT_LOWER_WORK);
-    struct mo_services services;
-    struct mo_core *core =
-        mo_lower_services(&arena, f.program, &f.sources, &f.diags, NULL, &services);
-    MO_ASSERT(core != NULL && !mo_diags_any(&f.diags));
-    struct mo_buffer bytes;
-    mo_buffer_init(&bytes, MO_LIMIT_BYTECODE_SIZE);
-    MO_ASSERT(mo_compile_services(core, &services, &bytes, &f.diags));
-    struct mo_load_error error;
-    struct mo_image *image = mo_load(bytes.bytes, bytes.length, &error);
-    MO_ASSERT(image != NULL);
-    struct mo_limits limits = mo_limits_default();
-    struct mo_defect defect;
-    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
-    mo_buffer_free(&bytes);
-    mo_arena_free(&arena);
-    free_fixture(&f);
-    return image;
 }
 
 static struct mo_service_loop *open_service(struct mo_image *image, struct mo_store *store,
