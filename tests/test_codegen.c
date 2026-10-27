@@ -884,6 +884,7 @@ static void test_range_and_fail(void) {
 }
 
 static void test_representation_refusals(void) {
+    CHECK(MO_ABILITY_EQUAL == 1 && MO_ABILITY_HASH == 2 && MO_ABILITY_ORDER == 4);
     const struct {
         const char *data, *params, *result, *body, *reason;
         uint16_t code;
