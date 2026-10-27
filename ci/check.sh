@@ -29,7 +29,7 @@ for group in $groups; do
 done
 want() { [[ -z "$groups" || " $groups " == *" $1 "* ]]; }
 
-skipped=() # why each skipped check was skipped
+skipped=()
 
 step() { printf '\n==> %s\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }

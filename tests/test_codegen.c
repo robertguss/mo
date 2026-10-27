@@ -884,6 +884,7 @@ static void test_range_and_fail(void) {
 }
 
 static void test_representation_refusals(void) {
+    CHECK(MO_ABILITY_EQUAL == 1 && MO_ABILITY_HASH == 2 && MO_ABILITY_ORDER == 4);
     const struct {
         const char *data, *params, *result, *body, *reason;
         uint16_t code;
@@ -2268,7 +2269,6 @@ static void test_merge(void) {
         "(prim (text (charCount)) ((var \"value\")))) \"M\" (function) 0) "
         "(FunDecl \"identity\" ((\"x\" (text))) (text) (var \"x\") \"M\" (function) 0)) "
         "() \"start\" (noSource))",
-        /* These used to be explicit E1055 refusals; both now reconverge. */
         "(Program () ((FunDecl \"start\" ((\"b\" (bool)) (\"x\" (text))) (text) "
         "(let_ \"y\" (if_ (var \"b\") (proj (tuple ((var \"x\") (lit (int 1)))) 0) (var \"x\")) "
         "(var \"y\")) \"M\" (function) 0)) () \"start\" (noSource))",
