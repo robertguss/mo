@@ -10,6 +10,7 @@
 
 #include "base/codes.h"
 #include "base/limits.h"
+#include "base/simops.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2191,6 +2192,158 @@ static MO_MUST_USE struct value field_value(struct inference *p, struct value re
     return call(p, resolved, args, &receiver);
 }
 
+static MO_MUST_USE struct value simulation_call(struct inference *p, const struct mo_syntax *name,
+                                                const struct mo_syntax *args) {
+    static const struct {
+        const char *name, *qualified;
+        enum mo_sim_operation operation;
+    } operations[] = {
+#define HOSTOP(id, module, member, signature, params, bugs, spec_only)
+#define SIMOP(id, module, member, spec_only) {member, module "." member, MO_SIM_##id},
+#include "base/hostops.def"
+    };
+    uint32_t op = 0;
+    while (op < MO_SIM_COUNT && compare_text(name, operations[op].name) != 0)
+        op++;
+    if (op == MO_SIM_COUNT || args == NULL) {
+        bool kept = problem(
+            p, MO_CODE_CALL_ARGUMENTS, name->span, "a simulation operation needs a direct call",
+            "Call Simulation.start, send, advance, crash or restart directly.", NULL);
+        (void)kept;
+        return (struct value){0};
+    }
+    enum mo_sim_operation operation = operations[op].operation;
+    if (operation == MO_SIM_START && !p->spec) {
+        bool kept = problem(p, MO_CODE_FAKE_OUTSIDE_SPEC, name->span,
+                            "a fake capability is made only in a test, example or promise",
+                            "Fakes are made only in tests, examples and promises, never in a "
+                            "module's constants or its functions (reference 12.4).",
+                            NULL);
+        (void)kept;
+        return (struct value){0};
+    }
+    uint32_t selector = operation == MO_SIM_START ? 0 : operation == MO_SIM_SEND ? 1 : UINT32_MAX;
+    uint32_t count = operation == MO_SIM_START || operation == MO_SIM_ADVANCE ? 2 : 1;
+    uint32_t service_index = 0, tool_index = 0;
+    const struct mo_source_type *signature = NULL;
+    if (selector != UINT32_MAX) {
+        const struct mo_syntax *prefix = args->count > selector ? args->children[selector] : NULL;
+        const struct mo_syntax *tool = NULL;
+        if (operation == MO_SIM_SEND) {
+            if (prefix != NULL && prefix->count == 2 &&
+                (prefix->kind == MO_S_FIELD_ACCESS || prefix->kind == MO_S_QUALIFIED)) {
+                tool = prefix->children[1];
+                prefix = prefix->children[0];
+            } else if (prefix != NULL && prefix->kind == MO_S_POSTFIX && prefix->count == 2 &&
+                       (prefix->children[1]->kind == MO_S_FIELD_ACCESS ||
+                        prefix->children[1]->kind == MO_S_QUALIFIED)) {
+                tool = prefix->children[1]->children[0];
+                prefix = prefix->children[0];
+            } else
+                prefix = NULL;
+        }
+        const struct mo_module_scope *scope = NULL;
+        uint32_t alias = UINT32_MAX;
+        const struct mo_program *program = p->signatures->service_program;
+        if (prefix != NULL && prefix->kind == MO_S_CAPNAME) {
+            const struct mo_module_scope *own =
+                &p->interfaces->scopes[p->function->function->module];
+            const struct mo_syntax *path =
+                program == NULL ? NULL
+                                : program->set->modules[p->function->function->module]->header.path;
+            bool current = own->name != NULL ? compare_text(prefix, own->name) == 0
+                                             : path != NULL && path->count == 1 &&
+                                                   compare_name(prefix, path->children[0]) == 0;
+            scope = current ? own : prefix_module(p, prefix, &alias);
+        }
+        const struct mo_checked_service *service = NULL;
+        if (scope != NULL && program != NULL) {
+            for (uint32_t i = 0; i < program->service_count; i++) {
+                if (!work(p))
+                    return (struct value){0};
+                if (&p->interfaces->scopes[program->services[i].module] == scope) {
+                    service = &program->services[i];
+                    service_index = i;
+                    break;
+                }
+            }
+        }
+        if (service != NULL && operation == MO_SIM_SEND) {
+            for (tool_index = 0; tool_index < service->tool_count; tool_index++) {
+                if (!work(p))
+                    return (struct value){0};
+                if (compare_name(tool, service->tools[tool_index].name) == 0) {
+                    signature =
+                        program->functions[service->tools[tool_index].function].signature->type;
+                    count = signature->count - 1;
+                    break;
+                }
+            }
+        }
+        if (service == NULL || (operation == MO_SIM_SEND && signature == NULL)) {
+            bool kept =
+                problem(p, MO_CODE_SERVICE_HANDLER, prefix == NULL ? args->span : prefix->span,
+                        "a simulation selector must name a registered service tool",
+                        "Use a direct service module for start, or Module.tool for send; "
+                        "timers and unregistered functions are not tool selectors.",
+                        NULL);
+            (void)kept;
+            return (struct value){0};
+        }
+        if (!use_alias(p, alias, prefix))
+            return (struct value){0};
+    }
+    if (args->count != count) {
+        bool kept =
+            problem(p, MO_CODE_CALL_ARGUMENTS, args->span,
+                    "a simulation call's arguments don't match its parameters",
+                    "Pass the tool arguments after State and Time; send supplies both.", NULL);
+        (void)kept;
+        return (struct value){0};
+    }
+    struct term *result = native(p,
+                                 operation == MO_SIM_START  ? "Simulation"
+                                 : operation == MO_SIM_SEND ? "Result"
+                                                            : "Unit",
+                                 operation == MO_SIM_SEND ? 2 : 0);
+    if (result == NULL)
+        return (struct value){0};
+    if (operation == MO_SIM_SEND) {
+        result->arguments[0] = annotation(p, signature->arguments[signature->count - 1], NULL, 0);
+        result->arguments[1] = native(p, "SimulationError", 0);
+        if (result->arguments[0] == NULL || result->arguments[1] == NULL)
+            return (struct value){0};
+    }
+    struct value out = graph(p, (struct value){.type = result}, count - (selector != UINT32_MAX));
+    if (out.type == NULL)
+        return out;
+    if (p->checked) {
+        out.graph->output.native = operations[op].qualified;
+        out.graph->output.service = service_index;
+        out.graph->output.tool = tool_index;
+    }
+    uint32_t emitted = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        if (i == selector)
+            continue;
+        struct term *wanted = operation == MO_SIM_START ? native(p, "Time", 0)
+                              : i == 0                  ? native(p, "Simulation", 0)
+                              : operation == MO_SIM_ADVANCE
+                                  ? native(p, "Duration", 0)
+                                  : annotation(p, signature->arguments[i], NULL, 0);
+        if (wanted == NULL)
+            return (struct value){0};
+        struct value input = infer_as(p, args->children[i], wanted, MO_CODE_ARGUMENT_TYPE);
+        if (input.type == NULL)
+            return (struct value){0};
+        if (p->checked)
+            out.graph->operands[emitted] = input.note;
+        emitted++;
+        out.never = out.never || input.never;
+    }
+    return out;
+}
+
 static MO_MUST_USE struct value sequence(struct inference *p, const struct mo_syntax *node,
                                          struct term *expected) {
     struct value last = {.type = native(p, "Unit", 0)};
@@ -3395,6 +3548,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         uint32_t start = qualified ? 2u : 1u;
         const struct mo_syntax *name =
             qualified ? node->children[1]->children[0] : node->children[0];
+        bool simulation = qualified && compare_text(node->children[0], "Simulation") == 0;
         const struct mo_data_signature *data = NULL;
         const struct mo_builtin_case *builtin =
             !qualified && start < node->count && node->children[start]->kind == MO_S_CALL
@@ -3402,8 +3556,8 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                 : NULL;
         bool ability =
             qualified && (compare_text(name, "to_text") == 0 || compare_text(name, "compare") == 0);
-        if ((name->kind == MO_S_CAPNAME || qualified) && !ability && start < node->count &&
-            node->children[start]->kind == MO_S_CALL) {
+        if (!simulation && (name->kind == MO_S_CAPNAME || qualified) && !ability &&
+            start < node->count && node->children[start]->kind == MO_S_CALL) {
             uint32_t count = 0;
             const struct mo_symbol *symbol =
                 definition(p, name, qualified ? node->children[0] : NULL, &count);
@@ -3412,13 +3566,18 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             data = symbol == NULL ? NULL : data_type(p, symbol);
         }
         struct value v =
-            builtin != NULL ? builtin_construct(p, builtin, node->children[start]->children[0],
-                                                start + 1 == node->count ? expected : NULL)
-            : data != NULL  ? construct(p, data, node->children[start]->children[0],
+            simulation
+                ? simulation_call(p, name,
+                                  start < node->count && node->children[start]->kind == MO_S_CALL
+                                      ? node->children[start]->children[0]
+                                      : NULL)
+            : builtin != NULL ? builtin_construct(p, builtin, node->children[start]->children[0],
+                                                  start + 1 == node->count ? expected : NULL)
+            : data != NULL    ? construct(p, data, node->children[start]->children[0],
                                        start + 1 == node->count ? expected : NULL)
-            : qualified     ? identifier(p, node->children[1]->children[0], node->children[0])
-                            : infer(p, node->children[0], NULL);
-        if (data != NULL || builtin != NULL)
+            : qualified       ? identifier(p, node->children[1]->children[0], node->children[0])
+                              : infer(p, node->children[0], NULL);
+        if (simulation || data != NULL || builtin != NULL)
             start++;
         if (p->checked && v.type != NULL && v.note == NULL && start < node->count) {
             if (v.graph == NULL)
@@ -4219,7 +4378,7 @@ static MO_MUST_USE bool capture_type(struct inference *p, const struct mo_source
         return true;
     }
     static const char *const capabilities[] = {"Args",      "Env",   "Console", "Files",
-                                               "ReadFiles", "Clock", "Random"};
+                                               "ReadFiles", "Clock", "Random",  "Simulation"};
     for (uint32_t i = 0; i < sizeof(capabilities) / sizeof(capabilities[0]); i++)
         if (type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX &&
             strcmp(type->name, capabilities[i]) == 0)
@@ -4353,7 +4512,8 @@ static MO_MUST_USE bool finish_patterns(struct inference *p) {
         bool choice = type->shape.declaration != NULL &&
                       type->shape.declaration->declaration->kind == MO_S_ENUM;
         choice = choice || named(type, "Option") || named(type, "Result") ||
-                 named(type, "Ordering") || named(type, "EntryKind") || named(type, "FileError");
+                 named(type, "Ordering") || named(type, "EntryKind") || named(type, "FileError") ||
+                 named(type, "SimulationError");
         if (check->catch_all != NULL && choice) {
             defer(p, MO_CODE_CASE_CATCH_ALL, check->catch_all->span, "a choice arm is a catch-all",
                   "A whole arm over a choice type can't be _ or a name; "

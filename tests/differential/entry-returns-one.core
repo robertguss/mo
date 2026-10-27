@@ -1,1 +1,1 @@
-(core 0.8 (Program () ((FunDecl "entry" () (int) (lit (int 1)) "Generated" (function) 0)) () "entry" (noSource)))
+(core 0.9 (Program () ((FunDecl "entry" () (int) (lit (int 1)) "Generated" (function) 0)) () "entry" (noSource)))

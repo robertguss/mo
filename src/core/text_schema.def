@@ -8,7 +8,7 @@ static const struct schema s_param, s_arm, s_ctor, s_ctors, s_data, s_data_list,
 static const struct schema s_const, s_consts, s_program, s_kind, s_prim;
 static const struct schema s_int_op, s_big_op, s_byte_op, s_dec_op, s_float_op, s_base, s_cmp_op;
 static const struct schema s_char_op, s_text_op, s_bytes_op, s_unicode_op, s_range_op, s_time_op;
-static const struct schema s_list_op, s_map_op, s_set_op, s_io_op;
+static const struct schema s_list_op, s_map_op, s_set_op, s_io_op, s_sim_op;
 static const struct schema s_values, s_value_pair, s_value_pairs, s_binding, s_env, s_root;
 static const struct schema s_string_pair, s_string_pairs, s_world, s_bug, s_outcome;
 static const struct schema s_fake, s_random_state, s_cap_state, s_cap_states;
@@ -87,7 +87,8 @@ NODE(ty_object, struct mo_core_ty, enum mo_core_ty_tag, T(INT, "int", END),
      T(RESULT, "result", F(struct mo_core_ty, as.result.t, ty),
        F(struct mo_core_ty, as.result.e, ty), END),
      T(ORDERING, "ordering", END), T(FILE_ERROR, "fileError", END), T(ENTRY, "entry", END),
-     T(ENTRY_KIND, "entryKind", END),
+     T(ENTRY_KIND, "entryKind", END), T(SIMULATION, "simulation", END),
+     T(SIMULATION_ERROR, "simulationError", END),
      T(FN, "fn", F(struct mo_core_ty, as.fn.params, ty_list), F(struct mo_core_ty, as.fn.ret, ty),
        END),
      T(CAP, "cap", F(struct mo_core_ty, as.cap, cap), END));
@@ -178,6 +179,16 @@ NODE(io_op, struct mo_core_io_op, enum mo_core_io_op_tag,
 #undef OP
 #undef RO
 
+NODE(sim_op, struct mo_core_sim_op, enum mo_sim_operation,
+     V(enum mo_sim_operation, MO_SIM_START, "start", F(struct mo_core_sim_op, descriptor, natural),
+       END),
+     V(enum mo_sim_operation, MO_SIM_SEND, "send", F(struct mo_core_sim_op, descriptor, natural),
+       F(struct mo_core_sim_op, tool, natural), F(struct mo_core_sim_op, arguments, ty_list),
+       F(struct mo_core_sim_op, result, ty), END),
+     V(enum mo_sim_operation, MO_SIM_ADVANCE, "advance", END),
+     V(enum mo_sim_operation, MO_SIM_CRASH, "crash", END),
+     V(enum mo_sim_operation, MO_SIM_RESTART, "restart", END));
+
 #define P(tag, wire, ...) V(enum mo_core_prim_tag, MO_CORE_PRIM_##tag, wire, __VA_ARGS__)
 #define PF(member, name) F(struct mo_core_prim, as.member, name)
 #define TYPED(tag, member, wire) P(tag, wire, PF(member, ty), END),
@@ -187,7 +198,7 @@ NODE(prim, struct mo_core_prim, enum mo_core_prim_tag, P(INT, "int", PF(int_, in
      P(NOT, "not", END), P(CMP, "cmp", PF(cmp.base, base), PF(cmp.op, cmp_op), END),
      P(CHAR, "char", PF(char_, char_op), END), P(TEXT, "text", PF(text, text_op), END),
      P(BYTES, "bytes", PF(bytes, bytes_op), END), P(RANGE, "range", PF(range, range_op), END),
-     P(UNICODE16, "unicode16", PF(unicode16, unicode_op), END),
+     P(UNICODE16, "unicode16", PF(unicode16, unicode_op), END), P(SIM, "sim", PF(sim, sim_op), END),
      P(TIME, "time", PF(time, time_op), END),
      P(LIST, "list", PF(list.t, ty), PF(list.op, list_op), END),
      P(MAP, "map", PF(map.k, ty), PF(map.v, ty), PF(map.op, map_op), END),

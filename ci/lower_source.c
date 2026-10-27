@@ -96,6 +96,7 @@ static void run_source(void *argument) {
     mo_arena_init(&output, MO_LIMIT_LOWER_WORK);
     MO_ASSERT(mo_sources_init(&sources) && mo_diags_init(&diags));
     struct mo_core *core = NULL;
+    struct mo_services services = {0};
     if (input->core) {
         uint32_t file;
         struct mo_source_error error;
@@ -106,14 +107,16 @@ static void run_source(void *argument) {
         struct mo_module_set *set =
             mo_load_program(&source, &sources, input->path, input->library, &diags);
         struct mo_program *program = set == NULL ? NULL : mo_check(&source, set, &diags);
-        core = program == NULL ? NULL : mo_lower(&output, program, &sources, &diags);
+        core = program == NULL
+                   ? NULL
+                   : mo_lower_services(&output, program, &sources, &diags, NULL, &services);
     }
     /* Printing/checking after releasing the entire front end proves the result
      * owns its types, names, spans and filenames, not merely its Expr tree. */
     mo_arena_free(&source);
     mo_sources_free(&sources);
     if (core != NULL) {
-        MO_ASSERT(mo_core_check(core, &diags)); /* Any refusal here is a lowering bug. */
+        MO_ASSERT(mo_core_check_services(core, input->core ? NULL : &services, &diags));
         if (input->core) {
             input->result = run_core(core, &diags);
             mo_diags_free(&diags);

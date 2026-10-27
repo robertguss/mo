@@ -233,7 +233,7 @@ static void accepted_tables(const struct mo_bytecode *f, size_t size) {
                 MO_ASSERT(t->has_fields == has_fields);
             }
         } else if (t->kind == MO_TYPE_CAPABILITY) {
-            MO_ASSERT(t->capability >= MO_CAP_ARGS && t->capability <= MO_CAP_RANDOM);
+            MO_ASSERT(t->capability >= MO_CAP_ARGS && t->capability <= MO_CAP_SIMULATION);
         } else if (t->kind == MO_TYPE_ENV) {
             MO_ASSERT(t->function < f->function_count &&
                       f->functions[t->function].kind == MO_FUNCTION_CLOSURE);

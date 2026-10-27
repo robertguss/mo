@@ -18,6 +18,10 @@ covered log. `host/store.c` implements all three for disk and in-memory SQLite.
 No handler receives the store capability, and no checker signature, Core form
 or bytecode operation exposes it. See [saved state](saved-state.md).
 
+The `SIMOP` section is VM-handled, not host-dispatched. Those rows carry no
+fixed Mo signature: a checked service/tool selector supplies the types.
+The map prefixes their row IDs with `SIM_` to distinguish this family.
+
 ## The rule
 
 The library is written in Mo wherever it can be (condition 4 of D207). C
@@ -618,6 +622,21 @@ ligature rules, and treats spacing combining marks (`Mc`) as zero. For
 example, `का` has width 1 in Mo and 2 there. Single scalars and complex
 clusters can therefore differ; neither policy specifies a font's rendering.
 Mo's policy is versioned with `Unicode16`, not the environment.
+
+## Simulation
+
+The fake capability is created only in spec code. Helpers that receive it
+may use the remaining operations. Selectors are compile-time syntax, not
+function values. `send` returns `Result(R, SimulationError)` for the complete
+declared tool result R; none of these operations defines a transport schema.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `Simulation.start(module, at)` | instruction | `SIM_START` | spec-only fake store and real service loop |
+| `Simulation.send(handle, module.tool, args)` | instruction | `SIM_SEND` | selected tool signature and cross-heap saved codec |
+| `Simulation.advance(handle, by)` | instruction | `SIM_ADVANCE` | every due deadline on the fake timeline |
+| `Simulation.crash(handle)` | instruction | `SIM_CRASH` | discard loop, retain open store and clock |
+| `Simulation.restart(handle)` | instruction | `SIM_RESTART` | real recovery and fresh supervisor |
 
 ## Functions
 

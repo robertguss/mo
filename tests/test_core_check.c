@@ -8,7 +8,8 @@
 #include <string.h>
 #include <time.h>
 
-static void check_program(const char *payload, uint16_t code) {
+static void check_program_services(const char *payload, uint16_t code,
+                                   const struct mo_services *services) {
     struct mo_arena arena;
     struct mo_diags diags;
     struct mo_buffer input;
@@ -21,7 +22,7 @@ static void check_program(const char *payload, uint16_t code) {
     struct mo_core *p = mo_core_parse(&arena, (const char *)input.bytes, input.length, &diags);
     CHECK(p != NULL && !mo_diags_any(&diags));
     if (p != NULL) {
-        CHECK(mo_core_check(p, &diags) == (code == 0));
+        CHECK(mo_core_check_services(p, services, &diags) == (code == 0));
         CHECK(code == 0 ? !mo_diags_any(&diags) : diags.count == 1);
         if (diags.count == 1) {
             CHECK(diags.items[0].code == code);
@@ -40,6 +41,10 @@ static void check_program(const char *payload, uint16_t code) {
     mo_arena_free(&arena);
 }
 
+static void check_program(const char *payload, uint16_t code) {
+    check_program_services(payload, code, NULL);
+}
+
 static void expression(const char *ret, const char *body, uint16_t code) {
     struct mo_buffer p;
     mo_buffer_init(&p, MO_LIMIT_CORE_TEXT_SIZE);
@@ -51,6 +56,47 @@ static void expression(const char *ret, const char *body, uint16_t code) {
     CHECK(mo_buffer_append_byte(&p, 0));
     check_program((const char *)p.bytes, code);
     mo_buffer_free(&p);
+}
+
+static void simulation_descriptors(void) {
+    expression("(fn ((simulation)) (unit))",
+               "(lam ((\"s\" (simulation))) (let_ \"a\" (prim (sim (advance)) "
+               "((var \"s\") (lit (duration 0)))) (let_ \"b\" (prim (sim (crash)) "
+               "((var \"s\"))) (prim (sim (restart)) ((var \"s\"))))))",
+               0);
+    expression("(fn ((simulation)) (result (unit) (simulationError)))",
+               "(lam ((\"s\" (simulation))) (prim (sim (send 0 0 () (unit))) ((var \"s\"))))",
+               MO_CODE_CORE_CHECK_ARGUMENTS);
+    const struct mo_service_tool tool = {.name = "tool", .function = 1};
+    const struct mo_service_timer timer = {.function = 2};
+    const struct mo_service service = {
+        .start = 0, .tool_count = 1, .tools = &tool, .timer_count = 1, .timers = &timer};
+    const struct mo_services services = {1, &service};
+    const char *ops[] = {
+        "send 0 0 ((int)) (tuple ((int) (int)))",  "send 1 0 ((int)) (tuple ((int) (int)))",
+        "send 0 1 ((int)) (tuple ((int) (int)))",  "send 0 2 ((int)) (tuple ((int) (int)))",
+        "send 0 0 ((text)) (tuple ((int) (int)))", "send 0 0 ((int)) (int)"};
+    for (size_t i = 0; i < sizeof ops / sizeof *ops; i++) {
+        char payload[2048];
+        int n = snprintf(
+            payload, sizeof payload,
+            "(Program () ("
+            "(FunDecl \"start\" () (int) (lit (int 7)) \"Main\" (function) 0) "
+            "(FunDecl \"tool\" ((\"state\" (int)) (\"now\" (time)) (\"n\" (int))) "
+            "(tuple ((int) (int))) (tuple ((var \"state\") (var \"n\"))) \"Main\" (function) 0) "
+            "(FunDecl \"timer\" ((\"state\" (int)) (\"now\" (time))) (int) "
+            "(var \"state\") \"Main\" (function) 0) "
+            "(FunDecl \"helper\" ((\"s\" (simulation))) "
+            "(result (tuple ((int) (int))) (simulationError)) "
+            "(prim (sim (%s)) ((var \"s\") (lit (int 9)))) \"Main\" (function) 0) "
+            "(FunDecl \"main\" () (int) (lit (int 0)) \"Main\" (function) 0)) "
+            "() \"main\" (noSource))",
+            ops[i]);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof payload);
+        check_program_services(payload, i == 0 ? 0 : MO_CODE_CORE_CHECK_ARGUMENTS, &services);
+        if (i == 0)
+            check_program(payload, MO_CODE_CORE_CHECK_ARGUMENTS);
+    }
 }
 
 static void test_tail_and_inference(void) {
@@ -614,6 +660,9 @@ static MO_MUST_USE int tests(int argc, char **argv) {
     check_program("(Program () ((FunDecl \"main\" () (int) (lit (int 9223372036854775808)) "
                   "\"Main\" (function) 0)) () \"main\" (noSource))",
                   MO_CODE_CORE_CHECK_LITERAL);
+    expression("(unit)", "(let_ \"s\" (prim (sim (start 0)) ((lit (time 0)))) (lit (unit)))",
+               MO_CODE_CORE_CHECK_ARGUMENTS);
+    simulation_descriptors();
     test_tail_and_inference();
     test_refusals();
     test_literal_boundaries();

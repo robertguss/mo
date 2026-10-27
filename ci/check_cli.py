@@ -3164,9 +3164,16 @@ def guide_claims(binary):
          "build still cannot run a service (E1408).",
          "`mo check --emit=core FILE` shows the start value and timer intervals as ordinary "
          "functions but no service registration, so Core output alone cannot reconstruct a service.",
-         "`mo test` still calls ordinary handler examples, promises and tests; it does not "
-         "start the service or read its token.",
-         "Importing a module that declares a service does not start it.",
+         "`mo test` does not automatically start a service or read its token.",
+         "Tests and examples can explicitly start one with `Simulation.start(Module, at)`, "
+         "send registered tools with `Simulation.send(handle, Module.tool, args...)`, "
+         "advance its fake clock, and crash/restart through the real log and snapshot path "
+         "backed by an in-memory store.",
+         "`send` returns the complete declared handler result inside another `Result`; "
+         "an application `Error` is still inside `Ok`.",
+         "Helpers may receive the handle.",
+         "Promise/generator support is deferred.",
+         "Importing a service module does not start it.",
          "`mo fix` applies neither alternative.",
          "A `Result(State, E)` tool receives no fixes.",
          "Functions on the module's `expose` line receive no fixes because callers in other "
@@ -3174,7 +3181,7 @@ def guide_claims(binary):
          "Functions whose names end in `?` receive no fixes because a `?` name must still "
          "return `Bool`.")
     refuses(['run', 'tests/errors/e1408/main.mo'], '1408', 'this build cannot run a service',
-            'Only `mo run` on a service entry module refuses with E1408, '
+            '`mo run` on a service entry module still refuses with E1408, '
             '"this build cannot run a service".')
     refuses(['check', 'tests/errors/e0101/main.mo'], '0101',
             'a service tool returns only its state',
@@ -3183,6 +3190,8 @@ def guide_claims(binary):
     refuses(['check', 'tests/errors/e0100-generic/main.mo'], '0100',
             'a service handler is generic',
             'A selected generic handler gets E0100, "a service handler is generic".')
+    simulation = run(binary, ['test', 'tests/lower-source/service-simulation/main.mo'], 0)
+    assert not simulation.stderr and simulation.stdout.endswith(b"9 passed, 0 failed, 0 stopped\n")
     with tempfile.TemporaryDirectory(prefix="mo-guide-") as directory:
         folder = pathlib.Path(directory)
         greet = folder / "greet.mo"

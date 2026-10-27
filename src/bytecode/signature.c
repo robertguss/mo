@@ -234,6 +234,10 @@ static MO_MUST_USE bool type(struct match *m, uint32_t index, unsigned depth) {
         }
         return take(m, ')');
     }
+    if (word_is(start, length, "SimulationError")) {
+        static const char *const names[] = {"ServiceDown", "ToolFailed"};
+        return cases(t, names, 2) && !t->has_fields;
+    }
     if (word_is(start, length, "FileError")) {
         static const char *const names[] = {"NotFound", "NotAllowed", "NotText", "Failed"};
         if (!cases(t, names, 4) || !layouts(m, index)) {

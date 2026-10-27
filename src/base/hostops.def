@@ -31,6 +31,10 @@
  * refuses anywhere else (bytecode.md 9, item 6): the fake constructors, and Console's printed
  * and printed_errors (reference 12.4).
  *
+ * SIMOP is a separate VM-handled family. Its rows have no fixed Mo signature:
+ * direct service/tool selectors supply argument and result types. Ordinary
+ * HOSTOP readers, including host, ignore it, just as they ignore STOREOP.
+ *
  * The lines follow docs/design/library.md, capability by capability. */
 
 #ifndef HOSTOP
@@ -90,3 +94,13 @@ STOREOP(LOAD)
 STOREOP(APPEND)
 STOREOP(SNAPSHOT)
 #undef STOREOP
+
+#ifndef SIMOP
+#define SIMOP(id, module, name, spec_only)
+#endif
+SIMOP(START,   "Simulation", "start",   true)
+SIMOP(SEND,    "Simulation", "send",    false)
+SIMOP(ADVANCE, "Simulation", "advance", false)
+SIMOP(CRASH,   "Simulation", "crash",   false)
+SIMOP(RESTART, "Simulation", "restart", false)
+#undef SIMOP

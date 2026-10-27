@@ -323,6 +323,8 @@ struct mo_limits {
 #define MO_LIMIT_SERVICE_FAILURE_WINDOW_US UINT64_C(60000000)
 #define MO_LIMIT_SERVICE_RESTARTS 3
 #define MO_LIMIT_SERVICE_RESTART_WINDOW_US UINT64_C(600000000)
+#define MO_LIMIT_SIMULATION_TICKS 10000
+#define MO_LIMIT_SIMULATION_REPORT 1024
 
 /* Durable records and bounded value/schema walks, independent of native layout. */
 #define MO_LIMIT_SAVED_BYTES (16 << 20)

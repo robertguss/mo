@@ -977,6 +977,32 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
         }
         return e;
     }
+    if (r->native != NULL && strncmp(r->native, "Simulation.", 11) == 0) {
+        static const struct {
+            const char *name;
+            enum mo_sim_operation operation;
+        } operations[] = {
+#define HOSTOP(id, module, member, signature, params, bugs, spec_only)
+#define SIMOP(id, module, member, spec_only) {module "." member, MO_SIM_##id},
+#include "base/hostops.def"
+        };
+        size_t index = 0;
+        while (index < MO_SIM_COUNT && strcmp(r->native, operations[index].name) != 0)
+            index++;
+        MO_ASSERT(index < MO_SIM_COUNT);
+        struct mo_core_sim_op op = {.tag = operations[index].operation,
+                                    .descriptor = {.digits = lower_number(p, r->service)},
+                                    .tool = {.digits = lower_number(p, r->tool)}};
+        if (op.tag == MO_SIM_SEND) {
+            MO_ASSERT(r->operand_count >= 1);
+            op.arguments.count = r->operand_count - 1;
+            op.arguments.items = LOWER_NEW(p, mo_core_ty, op.arguments.count);
+            for (size_t i = 0; i < op.arguments.count; i++)
+                op.arguments.items[i] = type(b, row(b, r->operands[i + 1])->type);
+            op.result = type(b, r->type->arguments[0]);
+        }
+        return lower_prim(p, (struct mo_core_prim){.tag = MO_CORE_PRIM_SIM, .as.sim = op}, args);
+    }
     if (r->native != NULL) {
         static const struct {
             const char *name;
@@ -1407,7 +1433,8 @@ static mo_core_expr application(struct body *b, const struct mo_checked_expressi
         strcmp(r->native, "NotAllowed") != 0 && strcmp(r->native, "NotText") != 0 &&
         strcmp(r->native, "Failed") != 0 && strcmp(r->native, "Entry") != 0 &&
         strcmp(r->native, "File") != 0 && strcmp(r->native, "Folder") != 0 &&
-        strcmp(r->native, "Link") != 0 && strcmp(r->native, "Other") != 0)
+        strcmp(r->native, "Link") != 0 && strcmp(r->native, "Other") != 0 &&
+        strcmp(r->native, "ServiceDown") != 0 && strcmp(r->native, "ToolFailed") != 0)
         lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "this native call is not lowered yet");
     if (kind(r) == MO_S_TUPLE || kind(r) == MO_S_MAP_ENTRY) {
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_TUPLE);

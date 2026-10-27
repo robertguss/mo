@@ -401,6 +401,18 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             write(p, f, a[0], value, false);
             break;
         }
+        case MO_OP_SIM: {
+            MO_ASSERT(count <= MO_LIMIT_BYTECODE_PARAMETERS);
+            struct mo_cell arguments[MO_LIMIT_BYTECODE_PARAMETERS];
+            for (uint32_t i = 0; i < count; i++)
+                arguments[i] = read(p, f, a[4 + i]);
+            enum mo_outcome outcome =
+                mo_vm_simulate(p, a[1], a[2], a[3], fn->register_types[a[0]], arguments, &value);
+            if (outcome != MO_RETURNED)
+                return outcome;
+            write(p, f, a[0], value, false);
+            break;
+        }
         case MO_OP_HOST: {
             MO_ASSERT(a[0] < fn->register_count && a[1] < MO_HOST_COUNT &&
                       count <= MO_LIMIT_BYTECODE_PARAMETERS);

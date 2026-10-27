@@ -13,6 +13,7 @@ import sys
 import tempfile
 
 from check_core_check import VERSION, WORLD, parse, wire
+from check_simulation import results as simulation_results
 from check_vm import oracle, run
 
 LIBRARY = "lib"  # the repository's lib/, relative to the working directory ci/check.sh runs from
@@ -941,6 +942,28 @@ def check_specs(driver, vm, root, world):
           "outcomes match Lean and VM; 0 refusals")
 
 
+def check_simulation_specs(driver, root, world):
+    source = pathlib.Path('tests/lower-source/service-simulation/main.mo')
+    lowered = subprocess.run([str(driver), str(source)], capture_output=True, text=True,
+                             timeout=30)
+    assert lowered.returncode == 0, lowered.stderr
+    path = root / 'simulation.core'
+    path.write_text(lowered.stdout)
+    runs = simulation_results(driver.parent / 'mo', source)
+    matched = boundary = 0
+    for result in runs:
+        assert result['outcome'] == 'passed', result
+        actual = oracle(path, world, result['name'])
+        if actual == ['stopped', 'Simulation is not modeled by mocore']:
+            boundary += 1
+        else:
+            assert actual == ['returned', 'Unit'], (result['name'], actual)
+            matched += 1
+    assert (matched, boundary) == (1, 8), (matched, boundary)
+    print(f'lower source simulation: {matched} runs matched; {boundary} reached '
+          'Simulation boundary runs excluded; 0 programs/functions excluded')
+
+
 def main():
     driver, vm = map(pathlib.Path, sys.argv[1:3])
     require_vm = "--require-vm" in sys.argv
@@ -950,6 +973,7 @@ def main():
         root = pathlib.Path(directory)
         world = root / "world.core"
         world.write_text(f"(core {VERSION} {WORLD})\n")
+        check_simulation_specs(driver, root, world)
         check_modules(driver, vm, root, world)
         for name, (body, status) in CASES.items():
             source = root / "main.mo"

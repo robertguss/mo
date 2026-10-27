@@ -30,6 +30,7 @@ struct mo_process {
     bool cancelled;
     bool bounded, terminal, owns_heap;
     struct mo_defect defect;
+    char simulation_report[MO_LIMIT_SIMULATION_REPORT];
 };
 struct mo_vm_image {
     struct mo_heap_image *heap;
@@ -57,6 +58,11 @@ MO_MUST_USE struct mo_vm_span mo_vm_span(const struct mo_bytecode *file, uint32_
                                          uint32_t pc);
 MO_MUST_USE bool mo_vm_number(uint32_t opcode, struct mo_cell a, struct mo_cell b,
                               struct mo_cell *out, const char **reason);
+MO_MUST_USE uint64_t mo_service_deadlines(const struct mo_service_loop *service, uint64_t until,
+                                          uint64_t *next);
+MO_MUST_USE enum mo_outcome mo_vm_simulate(struct mo_process *process, uint32_t operation,
+                                           uint32_t descriptor, uint32_t tool, uint32_t result_type,
+                                           const struct mo_cell *arguments, struct mo_cell *out);
 void mo_vm_dispose(struct mo_process *process);
 
 #endif

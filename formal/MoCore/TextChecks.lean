@@ -39,6 +39,8 @@ def primitives : List Prim :=
   (floatOps.map fun (_, o) => .float o) ++ (charOps.map fun (_, o) => .char o) ++
   (textOps.map fun (_, o) => .text o) ++ (bytesOps.map fun (_, o) => .bytes o) ++
   (unicodeOps.map fun (_, o) => .unicode16 o) ++
+  ([SimOp.start 2, .send 2 3 [.int, .text] (.result (.tuple [.int, .text]) .text),
+    .advance, .crash, .restart].map Prim.sim) ++
   (rangeOps.map fun (_, o) => .range o) ++ (timeOps.map fun (_, o) => .time o) ++
   (bases.flatMap fun (_, b) => cmpOps.map fun (_, o) => .cmp b o) ++
   (setOps.map fun (_, o) => .set (.option .float) o) ++
@@ -109,12 +111,12 @@ def world : World :=
   some "('\\'', \"\\n\", 1.5s, 1970-01-01T00:00:00Z, -2..3, bytes[0, 255])"
 
 #guard (["", "(core 0.1 (unit))", "(core 0.2 (unit))", "(core 0.3 (unit))", "(core 0.4 (unit))",
-  "(core 0.5 (unit))", "(core 0.6 (unit))", "(core 0.7 (unit))", "(core 0.9 (unit))",
-  "(core 0.8 (unit)) extra", "(core 0.8 (unit)",
-  "(core 0.8 \"\\q\")", "(core 0.8 \"\\u{d800}\")", "(core 0.8 \"\\u{110000}\")",
-  "(core 0.8 \"\\u{}\")", "(core 0.8 \"unterminated)"]).all fun s => (parseDocument s).toOption.isNone
-#guard (parseDocument ";before\n(core ;version\n0.8 (int -00012));after" >>= litIn).toOption == some (.int (-12))
-#guard (parseDocument "(core 0.8 (float 0xFFFFFFFFFFFFFFFF))" >>= litIn).toOption == some (.float 0xffffffffffffffff)
+  "(core 0.5 (unit))", "(core 0.6 (unit))", "(core 0.7 (unit))", "(core 0.8 (unit))",
+  "(core 0.9 (unit)) extra", "(core 0.9 (unit)",
+  "(core 0.9 \"\\q\")", "(core 0.9 \"\\u{d800}\")", "(core 0.9 \"\\u{110000}\")",
+  "(core 0.9 \"\\u{}\")", "(core 0.9 \"unterminated)"]).all fun s => (parseDocument s).toOption.isNone
+#guard (parseDocument ";before\n(core ;version\n0.9 (int -00012));after" >>= litIn).toOption == some (.int (-12))
+#guard (parseDocument "(core 0.9 (float 0xFFFFFFFFFFFFFFFF))" >>= litIn).toOption == some (.float 0xffffffffffffffff)
 #guard (["(float 0x123)", "(float 0x10000000000000000)", "(char \"ab\")", "(unit extra)",
   "(int +1)", "(int 1_0)"]).all fun s => (parseSexp s >>= litIn).toOption.isNone
 
@@ -296,6 +298,7 @@ def fuzzSeeds : List (String × Sexp) :=
    ("cap_state", stateOut world.toCapState),
    ("random_state", randomOut ⟨0, 0x8000000000000000, 0xffffffffffffffff, 0x0123456789abcdef⟩),
    ("unicode16", primOut (.unicode16 .normalizeNfc)),
+   ("simulation", primOut (.sim (.send 2 3 [.int, .list .text] (.result .unit .text)))),
    ("entries", primOut (.io (.entries true)))]
 
 #guard (structural Greet.program (.list .entry)

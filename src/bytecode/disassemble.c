@@ -8,12 +8,12 @@ const char *const mo_bytecode_type_names[] = {
     "decimal", "range",  "text",   "bytes",    "bigint", "tuple",     "list", "set",
     "map",     "record", "choice", "function", "env",    "capability"};
 const char *const mo_bytecode_capability_names[] = {"Args",      "Env",   "Console", "Files",
-                                                    "ReadFiles", "Clock", "Random"};
+                                                    "ReadFiles", "Clock", "Random",  "Simulation"};
 const char *const mo_bytecode_function_names[] = {"function", "closure", "init",  "test",
                                                   "example",  "promise", "anchor"};
 const char *const mo_bytecode_expectation_names[] = {"none", "allows", "forbids"};
-const char *const mo_bytecode_operand_prefixes[] = {"",  "r", "t", "L", "k", "g",
-                                                    "f", "p", "h", "@", "",  ""};
+const char *const mo_bytecode_operand_prefixes[] = {"",  "r", "t", "L", "k", "g", "f",
+                                                    "p", "h", "@", "",  "",  ""};
 
 struct printer {
     struct mo_buffer *out;

@@ -115,16 +115,17 @@ function is_id(token) {
 # A line of a table: PRIM(ID, "Module", "name", ...) or HOSTOP(ID, "Module", "name", ...). Ids,
 # modules and names hold no commas.
 FILENAME == prims || FILENAME == hostops {
-	if ($0 !~ /^(PRIM|HOSTOP)\(/)
+	if ($0 !~ /^(PRIM|HOSTOP|SIMOP)\(/)
 		next
-	table = (FILENAME == prims) ? "primitive" : "host"
+	simulation = ($0 ~ /^SIMOP\(/)
+	table = simulation ? "instruction" : (FILENAME == prims) ? "primitive" : "host"
 	line = $0
 	sub(/^[A-Z]+\(/, "", line)
 	if (split(line, fields, ",") < 3) {
 		problem(FILENAME ":" FNR, "a line needs an id, a module and a name")
 		next
 	}
-	id = trim(fields[1])
+	id = (simulation ? "SIM_" : "") trim(fields[1])
 	if (id in kind) {
 		problem(FILENAME ":" FNR, id " is a line of both tables, or twice of one")
 		next
@@ -208,7 +209,7 @@ FILENAME == map {
 		id = tokens[i]
 		if (!(id in kind))
 			problem(where, id " is no line of " prims " or " hostops)
-		else if (place_cell == "primitive" || place_cell == "host") {
+		else if (place_cell == "primitive" || place_cell == "host" || kind[id] == "instruction") {
 			if (kind[id] != place_cell)
 				problem(where, "a " place_cell " row names " id ", which is a line of " (kind[id] == "primitive" ? prims : hostops))
 			else

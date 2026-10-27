@@ -54,6 +54,8 @@ MO_MUST_USE bool mo_check_service_value(struct mo_arena *arena,
                                         const struct mo_syntax *clause,
                                         const struct mo_source_type *expected,
                                         struct mo_diags *diags, struct mo_checked_body *out);
+MO_MUST_USE bool mo_prepare_services(struct mo_arena *arena, struct mo_program *program,
+                                     struct mo_diags *diags);
 MO_MUST_USE bool mo_check_services(struct mo_arena *arena, struct mo_program *program,
                                    struct mo_constant_context *constants, struct mo_diags *diags);
 MO_MUST_USE bool mo_check_service_purity(struct mo_arena *arena, const struct mo_program *program,

@@ -17,7 +17,7 @@ instruction limit, Lean's fuel) is counted, not compared; one engine alone doing
     MO_MOCORE               the Lean oracle (default formal/.lake/build/bin/mocore)
 
 A program a run found to differ is minimized by hand, fixed in whichever engine was wrong, and
-committed to tests/differential/ as NAME.core (a bare `(core 0.8 (Program ...))`), so every later
+committed to tests/differential/ as NAME.core (a bare `(core 0.9 (Program ...))`), so every later
 run checks it. Seeds make every run reproducible: rerun with MO_CORE_DIFF=1 MO_CORE_DIFF_SEED=<seed>. All storage
 is disposable.
 """

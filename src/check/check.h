@@ -152,6 +152,7 @@ struct mo_signatures {
     uint32_t import_count;
     struct mo_import_usage *imports; /* private written-origin usage, independent of symbols */
     bool recovering; /* private diagnostic recovery; never true in a published preparation */
+    const struct mo_program *service_program;
 };
 
 /* Prepares all named function signatures, including abstract generic parameters
@@ -452,8 +453,9 @@ struct mo_checked_expression {
     const struct mo_checked_binding *binding; /* read, new binding, or assignment target */
     const struct mo_symbol *symbol; /* selected function, constant or declared constructor */
     const char *native; /* native case spelling, or qualified native function/field spelling */
-    uint32_t field;     /* declaration-order index, UINT32_MAX unless selecting/supplying a field */
-    uint32_t receiver;  /* operand row inserted by dot dispatch, UINT32_MAX otherwise */
+    uint32_t service, tool;
+    uint32_t field;    /* declaration-order index, UINT32_MAX unless selecting/supplying a field */
+    uint32_t receiver; /* operand row inserted by dot dispatch, UINT32_MAX otherwise */
     struct mo_type_arguments arguments;
     uint32_t ability_count;
     const struct mo_checked_ability_use *abilities;

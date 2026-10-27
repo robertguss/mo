@@ -104,12 +104,13 @@ static const struct expected_opcode specification[] = {
     {"reuse", "wqL", 'c', MO_LIMIT_FIELDS},
     {"free_token", "q", '-', 0},
     {"clear", "w", '-', 0},
+    {"sim", "wXXX", 'r', 256},
 };
 
 /* A descriptor has an access exactly when it names a register. This includes every consuming
  * access, whether unconditional, signature-dependent, a move, or a token. */
 MO_MUST_USE static bool well_formed(struct mo_operand_info operand) {
-    return operand.kind >= MO_OPERAND_NONE && operand.kind <= MO_OPERAND_CASE &&
+    return operand.kind >= MO_OPERAND_NONE && operand.kind <= MO_OPERAND_INDEX &&
            operand.access >= MO_ACCESS_NONE && operand.access <= MO_ACCESS_TOKEN_CONSUME &&
            ((operand.kind == MO_OPERAND_REGISTER) == (operand.access != MO_ACCESS_NONE));
 }
@@ -138,6 +139,8 @@ MO_MUST_USE static char descriptor_letter(struct mo_operand_info operand) {
         return 'I';
     case MO_OPERAND_CASE:
         return 'V';
+    case MO_OPERAND_INDEX:
+        return 'X';
     case MO_OPERAND_REGISTER:
         break;
     }

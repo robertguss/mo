@@ -69,6 +69,8 @@ struct constant {
 };
 struct checker {
     struct mo_arena arena, body;
+    const struct mo_core *core;
+    const struct mo_services *services;
     struct index *types, *nominals, *annotations, *funs, *data, *consts;
     size_t nodes, type_count, scope;
     bool spec;
@@ -299,6 +301,8 @@ static MO_MUST_USE struct type *annotation(struct checker *c, mo_core_ty t, size
     case MO_CORE_TY_DURATION:
     case MO_CORE_TY_ORDERING:
     case MO_CORE_TY_FILE_ERROR:
+    case MO_CORE_TY_SIMULATION:
+    case MO_CORE_TY_SIMULATION_ERROR:
     case MO_CORE_TY_ENTRY:
     case MO_CORE_TY_ENTRY_KIND:
         r = scalar(c, t->tag);
@@ -394,6 +398,7 @@ static MO_MUST_USE struct type *literal(struct checker *c, mo_core_lit l) {
  * before allocation: a hostile arbitrary-precision Nat cannot request a giant signature. */
 struct signature {
     struct type *ret, *args[3];
+    struct type **selected;
     size_t count;
     bool spec, repeated;
 };
@@ -401,6 +406,60 @@ static MO_MUST_USE struct signature sig(struct type *r, size_t n, struct type *a
                                         struct type *d) {
     return (struct signature){.ret = r, .args = {a, b, d}, .count = n};
 }
+
+static MO_MUST_USE struct signature simulation(struct checker *c, const struct mo_core_sim_op *op) {
+    struct signature invalid = {0};
+    struct type *handle = scalar(c, MO_CORE_TY_SIMULATION);
+    if (op->tag == MO_SIM_ADVANCE)
+        return sig(scalar(c, MO_CORE_TY_UNIT), 2, handle, scalar(c, MO_CORE_TY_DURATION), NULL);
+    if (op->tag == MO_SIM_CRASH || op->tag == MO_SIM_RESTART)
+        return sig(scalar(c, MO_CORE_TY_UNIT), 1, handle, NULL, NULL);
+    if (c->services == NULL || c->services->count == 0)
+        goto refuse;
+    size_t descriptor, tool;
+    if (!natural(op->descriptor, c->services->count - 1, &descriptor))
+        goto refuse;
+    const struct mo_service *s = &c->services->items[descriptor];
+    if (s->start >= c->core->funs.count)
+        goto refuse;
+    const struct mo_core_fun *start = &c->core->funs.items[s->start];
+    if (start->kind != MO_CORE_FUNCTION || start->params.count != 0)
+        goto refuse;
+    if (op->tag == MO_SIM_START) {
+        struct signature result = sig(handle, 1, scalar(c, MO_CORE_TY_TIME), NULL, NULL);
+        result.spec = true;
+        return result;
+    }
+    if (op->tag != MO_SIM_SEND || s->tool_count == 0 ||
+        !natural(op->tool, s->tool_count - 1, &tool) ||
+        s->tools[tool].function >= c->core->funs.count)
+        goto refuse;
+    const struct mo_core_fun *fn = &c->core->funs.items[s->tools[tool].function];
+    if (fn->kind != MO_CORE_FUNCTION || fn->params.count < 2 ||
+        op->arguments.count != fn->params.count - 2 ||
+        annotation(c, start->ret, 0) != annotation(c, fn->params.items[0].ty, 0) ||
+        fn->params.items[1].ty->tag != MO_CORE_TY_TIME ||
+        annotation(c, op->result, 0) != annotation(c, fn->ret, 0))
+        goto refuse;
+    struct signature result = {.ret = binary(c, MO_CORE_TY_RESULT, annotation(c, op->result, 0),
+                                             scalar(c, MO_CORE_TY_SIMULATION_ERROR)),
+                               .count = op->arguments.count + 1};
+    result.selected = allocate(c, &c->body, result.count, sizeof *result.selected);
+    if (result.selected == NULL)
+        return invalid;
+    result.selected[0] = handle;
+    for (size_t i = 0; i < op->arguments.count; i++) {
+        result.selected[i + 1] = annotation(c, op->arguments.items[i], 0);
+        if (result.selected[i + 1] != annotation(c, fn->params.items[i + 2].ty, 0))
+            goto refuse;
+    }
+    return result;
+refuse:
+    if (c->fatal == 0)
+        c->fatal = MO_CODE_CORE_CHECK_ARGUMENTS;
+    return invalid;
+}
+
 #define S(tag) scalar(c, MO_CORE_TY_##tag)
 #define O(t) unary(c, MO_CORE_TY_OPTION, (t))
 #define L(t) unary(c, MO_CORE_TY_LIST, (t))
@@ -409,6 +468,8 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
                                               size_t argc) {
     struct type *t = NULL, *k = NULL, *v = NULL, *collection = NULL;
     switch (p->tag) {
+    case MO_CORE_PRIM_SIM:
+        return simulation(c, &p->as.sim);
     case MO_CORE_PRIM_INT:
         switch (p->as.int_) {
         case MO_CORE_INT_OP_ADD:
@@ -1018,6 +1079,10 @@ static MO_MUST_USE struct data *constructors(struct checker *c, struct type *t) 
         }
         counts[3] = 2;
         fields[3][1] = fields[3][0];
+    } else if (t->tag == MO_CORE_TY_SIMULATION_ERROR) {
+        n = 2;
+        names[0] = "ServiceDown";
+        names[1] = "ToolFailed";
     } else if (t->tag == MO_CORE_TY_ENTRY) {
         n = 1;
         names[0] = "Entry";
@@ -1285,7 +1350,9 @@ static MO_MUST_USE struct answer tc_uncached(struct checker *c, struct expr *e,
         if (p->count != e->count)
             return bad(e, MO_CODE_CORE_CHECK_ARGUMENTS);
         for (size_t i = 0; i < e->count; i++) {
-            struct type *t = p->repeated ? p->args[p->args[1] == NULL ? 0 : i % 2] : p->args[i];
+            struct type *t = p->selected != NULL ? p->selected[i]
+                             : p->repeated       ? p->args[p->args[1] == NULL ? 0 : i % 2]
+                                                 : p->args[i];
             a = tc(c, e->children[i], ctx, NULL, t);
             if (a.code != 0)
                 return a;
@@ -1442,9 +1509,10 @@ static MO_MUST_USE bool label_name(struct mo_buffer *b, mo_core_string name) {
 }
 static MO_MUST_USE bool label_type(struct mo_buffer *b, const struct type *t, size_t *remaining) {
     static const char *const names[] = {
-        "Int",    "BigInt", "Byte",     "Decimal",   "Float", "Bool",      "Char", "Text", "Bytes",
-        "Unit",   "Range",  "Time",     "Duration",  "Tuple", "List",      "Map",  "Set",  "Data",
-        "Option", "Result", "Ordering", "FileError", "Entry", "EntryKind", "Fn",   "Cap"};
+        "Int",       "BigInt", "Byte",      "Decimal", "Float",  "Bool",       "Char",
+        "Text",      "Bytes",  "Unit",      "Range",   "Time",   "Duration",   "Tuple",
+        "List",      "Map",    "Set",       "Data",    "Option", "Result",     "Ordering",
+        "FileError", "Entry",  "EntryKind", "Fn",      "Cap",    "Simulation", "SimulationError"};
     static const char *const caps[] = {"Console", "Files", "ReadFiles", "Clock",
                                        "Random",  "Args",  "Env"};
     if (*remaining == 0)
@@ -1607,9 +1675,10 @@ static MO_MUST_USE struct answer check_body(struct checker *c, mo_core_expr body
         return bad(e, c->fatal);
     return tc(c, e, &ctx, NULL, ret);
 }
-bool mo_core_check(const struct mo_core *p, struct mo_diags *diags) {
+bool mo_core_check_services(const struct mo_core *p, const struct mo_services *services,
+                            struct mo_diags *diags) {
     MO_ASSERT(p != NULL && diags != NULL);
-    struct checker c = {.declaration = p->entry};
+    struct checker c = {.core = p, .services = services, .declaration = p->entry};
     if (!mo_core_metadata_valid(p))
         return report(&c, diags, MO_CODE_CORE_CHECK_METADATA, (struct mo_core_span){0},
                       (struct answer){0});
@@ -1689,4 +1758,8 @@ done:
     mo_arena_free(&c.body);
     mo_arena_free(&c.arena);
     return result;
+}
+
+bool mo_core_check(const struct mo_core *p, struct mo_diags *diags) {
+    return mo_core_check_services(p, NULL, diags);
 }

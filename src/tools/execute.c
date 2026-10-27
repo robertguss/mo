@@ -185,7 +185,7 @@ static void execute_pipeline(void *argument) {
     mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
     mo_buffer_init(&printed, cli->emit == MO_EMIT_CORE ? MO_LIMIT_CORE_TEXT_SIZE
                                                        : MO_LIMIT_BYTECODE_TEXT_SIZE);
-    if (core == NULL || mo_diags_any(diags) || !mo_core_check(core, diags))
+    if (core == NULL || mo_diags_any(diags) || !mo_core_check_services(core, &services, diags))
         goto done;
     if (cli->command == MO_COMMAND_TEST) {
         selection = mo_instantiate_tests(arena, selection, &promises, diags);

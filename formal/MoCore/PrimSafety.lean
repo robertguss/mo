@@ -891,6 +891,7 @@ theorem prims_safe : PrimsSafe P := by
   | text op => exact textOp_safe op
   | bytes op => exact bytesOp_safe op
   | unicode16 _ => intro vs w h; exact True.intro
+  | sim _ => intro vs w h; exact True.intro
   | range op => exact rangeOp_safe op
   | time op => exact timeOp_safe op
   | list t op => exact listOp_safe t op

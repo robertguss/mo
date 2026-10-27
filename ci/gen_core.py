@@ -17,7 +17,7 @@ Same seed, same programs, on every platform.
 import random
 import sys
 
-VERSION = "0.8"
+VERSION = "0.9"
 WORLD = (
     "(World () () () () () () 0 (RandomState 0x0000000000000001 0x0000000000000001 "
     "0x0000000000000001 0x0000000000000001) () ())"

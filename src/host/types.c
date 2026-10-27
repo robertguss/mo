@@ -42,7 +42,8 @@ void mo_host_prepare_types(struct mo_host_types *out, const struct mo_types *sou
     for (unsigned i = 0; i <= MO_CAP_RANDOM; i++)
         out->capabilities[i] = MO_NO_INDEX;
     for (uint32_t i = 0; i < source->count; i++) {
-        if (source->items[i].kind == MO_TYPE_CAPABILITY)
+        if (source->items[i].kind == MO_TYPE_CAPABILITY &&
+            source->items[i].capability != MO_CAP_SIMULATION)
             out->capabilities[source->items[i].capability] = i;
     }
     out->integer = add(out, MO_TYPE_INT, 0);

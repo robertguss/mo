@@ -118,6 +118,22 @@ def ioIn : Sexp → Parse IoOp
   | .node [.atom "within", ro] => return .within (← asBool ro)
   | s => enumIn ioOps s
 
+def simOut : SimOp → Sexp
+  | .start d => tag "start" [natural d]
+  | .send d t args result => tag "send" [natural d, natural t, seq (args.map tyOut), tyOut result]
+  | .advance => tag "advance"
+  | .crash => tag "crash"
+  | .restart => tag "restart"
+
+def simIn : Sexp → Parse SimOp
+  | .node [.atom "start", d] => return .start (← asNat d)
+  | .node [.atom "send", d, t, args, result] =>
+    return .send (← asNat d) (← asNat t) (← asList tyIn args) (← tyIn result)
+  | .node [.atom "advance"] => pure .advance
+  | .node [.atom "crash"] => pure .crash
+  | .node [.atom "restart"] => pure .restart
+  | _ => throw "invalid SimOp"
+
 def primOut : Prim → Sexp
   | .int o => tag "int" [enumOut intOps o]
   | .big o => tag "big" [enumOut bigOps o]
@@ -130,6 +146,7 @@ def primOut : Prim → Sexp
   | .text o => tag "text" [enumOut textOps o]
   | .bytes o => tag "bytes" [enumOut bytesOps o]
   | .unicode16 o => tag "unicode16" [enumOut unicodeOps o]
+  | .sim o => tag "sim" [simOut o]
   | .range o => tag "range" [enumOut rangeOps o]
   | .time o => tag "time" [enumOut timeOps o]
   | .list t o => tag "list" [tyOut t, listOut o]
@@ -150,6 +167,7 @@ def primIn : Sexp → Parse Prim
   | .node [.atom "text", o] => return .text (← enumIn textOps o)
   | .node [.atom "bytes", o] => return .bytes (← enumIn bytesOps o)
   | .node [.atom "unicode16", o] => return .unicode16 (← enumIn unicodeOps o)
+  | .node [.atom "sim", o] => return .sim (← simIn o)
   | .node [.atom "range", o] => return .range (← enumIn rangeOps o)
   | .node [.atom "time", o] => return .time (← enumIn timeOps o)
   | .node [.atom "list", t, o] => return .list (← tyIn t) (← listIn o)

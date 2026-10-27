@@ -165,8 +165,12 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 12.2/9	sample-job-queue-tests
 12.2/10	mod-hidden-type,fail-result-declared	e0007-requires
 12.3/1	tst-private-names,tst-assert-is-binding,sample-job-queue-tests	tst-failing-assert		
-12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed,ref-capability-fakes	e0098,e0098-constant,e0098-printed		
-12.4/2	cap-console-fake,cap-files-fake	e0098-printed		
+12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed,ref-capability-fakes	e0098,e0098-constant,e0098-printed,e0098-simulation			ci/check_simulation.py:main
+12.4/2					ci/check_simulation.py:main,tests/test_program.c:simulation_inputs,tests/test_service_store.c:simulation_persistence
+12.4/3					ci/check_simulation.py:main,tests/test_service_store.c:simulation_persistence
+12.4/4					ci/check_simulation.py:main,tests/test_program.c:simulation_inputs
+12.4/5		tst-simulation-admission			ci/check_simulation.py:main,tests/test_service_store.c:simulation_persistence,tests/test_service_store.c:simulation_admission
+12.4/6	cap-console-fake,cap-files-fake	e0098-printed
 13.1/1	ref-evaluation			
 13.2/1	ref-shout	tst-fake-files-bugs	fail-bug-overflow,fail-bug-divide-by-zero,fail-bug-stop,fail-bug-map-duplicate,fail-bug-take-negative,fail-bug-decimal-overflow,fail-bug-decimal-divide-by-zero,fail-bug-duration-overflow,fail-bug-duration-unit-overflow,fail-bug-time-range,fail-bug-pow-negative,fail-bug-decimal-places,fail-bug-split-empty,fail-bug-replace-empty,fail-bug-repeat-negative,fail-bug-drop-negative,fail-bug-constant-stop		ci/check_cli.py:observations,tests/test_host.c:test_real_console,tests/test_host.c:test_real_files,tests/test_host.c:test_clock_random
 13.3/1						tests/test_prim.c:primitive_work,tests/test_heap.c:test_reuse_and_images

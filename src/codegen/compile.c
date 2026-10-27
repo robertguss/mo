@@ -252,7 +252,7 @@ static MO_MUST_USE bool type_name(struct compiler *c, uint32_t id, struct mo_buf
     const struct mo_type *t = &c->types.items[id];
     if (t->kind == MO_TYPE_CAPABILITY) {
         static const char *const caps[] = {"Args",      "Env",   "Console", "Files",
-                                           "ReadFiles", "Clock", "Random"};
+                                           "ReadFiles", "Clock", "Random",  "Simulation"};
         return type_text(c, out, caps[t->capability]);
     }
     bool collection = t->kind == MO_TYPE_LIST || t->kind == MO_TYPE_SET || t->kind == MO_TYPE_MAP;
@@ -375,6 +375,7 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
     case MO_CORE_TY_RESULT:
     case MO_CORE_TY_ORDERING:
     case MO_CORE_TY_FILE_ERROR:
+    case MO_CORE_TY_SIMULATION_ERROR:
     case MO_CORE_TY_ENTRY_KIND: {
         uint32_t a = MO_NO_INDEX, b = MO_NO_INDEX;
         if (t->tag == MO_CORE_TY_OPTION)
@@ -390,11 +391,12 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
         struct mo_codegen_index *old = mo_codegen_find(c->builtin_index, bytes);
         if (old != NULL)
             return old->value;
-        const char *base = t->tag == MO_CORE_TY_OPTION       ? "Option"
-                           : t->tag == MO_CORE_TY_RESULT     ? "Result"
-                           : t->tag == MO_CORE_TY_ORDERING   ? "Ordering"
-                           : t->tag == MO_CORE_TY_FILE_ERROR ? "FileError"
-                                                             : "EntryKind";
+        const char *base = t->tag == MO_CORE_TY_OPTION             ? "Option"
+                           : t->tag == MO_CORE_TY_RESULT           ? "Result"
+                           : t->tag == MO_CORE_TY_ORDERING         ? "Ordering"
+                           : t->tag == MO_CORE_TY_FILE_ERROR       ? "FileError"
+                           : t->tag == MO_CORE_TY_SIMULATION_ERROR ? "SimulationError"
+                                                                   : "EntryKind";
         struct mo_buffer buf;
         mo_buffer_init(&buf, MO_LIMIT_STRING_SIZE);
         bool ok = type_text(c, &buf, base);
@@ -419,12 +421,14 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
         static const char *const option[] = {"None", "Some"}, *const result[] = {"Ok", "Error"},
                                  *const ordering[] = {"Less", "Equal", "Greater"},
                                  *const entry[] = {"File", "Folder", "Link", "Other"},
+                                 *const simulation_errors[] = {"ServiceDown", "ToolFailed"},
                                  *const errors[] = {"NotFound", "NotAllowed", "NotText", "Failed"};
-        names = t->tag == MO_CORE_TY_OPTION       ? option
-                : t->tag == MO_CORE_TY_RESULT     ? result
-                : t->tag == MO_CORE_TY_ORDERING   ? ordering
-                : t->tag == MO_CORE_TY_FILE_ERROR ? errors
-                                                  : entry;
+        names = t->tag == MO_CORE_TY_OPTION             ? option
+                : t->tag == MO_CORE_TY_RESULT           ? result
+                : t->tag == MO_CORE_TY_ORDERING         ? ordering
+                : t->tag == MO_CORE_TY_FILE_ERROR       ? errors
+                : t->tag == MO_CORE_TY_SIMULATION_ERROR ? simulation_errors
+                                                        : entry;
         struct mo_type_field fields[] = {{NULL, a}, {NULL, b}};
         if (t->tag == MO_CORE_TY_FILE_ERROR) {
             uint32_t text_type = scalar(c, MO_TYPE_TEXT);
@@ -532,6 +536,7 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
             return MO_NO_INDEX;
         return id;
     }
+    case MO_CORE_TY_SIMULATION:
     case MO_CORE_TY_CAP: {
         static const enum mo_capability caps[] = {MO_CAP_CONSOLE, MO_CAP_FILES,  MO_CAP_READ_FILES,
                                                   MO_CAP_CLOCK,   MO_CAP_RANDOM, MO_CAP_ARGS,
@@ -539,7 +544,10 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
         uint32_t id = MO_NO_INDEX;
         enum mo_type_problem status = mo_types_intern(
             &c->types,
-            &(struct mo_type){.kind = MO_TYPE_CAPABILITY, .capability = caps[t->as.cap->tag]}, &id);
+            &(struct mo_type){.kind = MO_TYPE_CAPABILITY,
+                              .capability = t->tag == MO_CORE_TY_SIMULATION ? MO_CAP_SIMULATION
+                                                                            : caps[t->as.cap->tag]},
+            &id);
         return type_result(c, status, id);
     }
     }
@@ -664,6 +672,57 @@ static MO_MUST_USE mo_core_ty signature_type(struct compiler *c, const char **cu
     }
     return t;
 }
+static MO_MUST_USE uint32_t simulation_signature(struct compiler *c,
+                                                 const struct mo_core_sim_op *op) {
+    struct mo_core_ty *types = allocate(c, 3, sizeof *types);
+    if (types == NULL)
+        return MO_NO_INDEX;
+    types[0] = (struct mo_core_ty){.tag = MO_CORE_TY_SIMULATION};
+    types[1] = (struct mo_core_ty){.tag = MO_CORE_TY_SIMULATION_ERROR};
+    types[2] = (struct mo_core_ty){.tag = MO_CORE_TY_RESULT, .as.result = {op->result, &types[1]}};
+    uint32_t parameters[MO_LIMIT_BYTECODE_PARAMETERS];
+    uint32_t count = 1, result;
+    parameters[0] = type(c, &types[0], 0);
+    if (op->tag == MO_SIM_START) {
+        result = parameters[0];
+        parameters[0] = scalar(c, MO_TYPE_TIME);
+    } else if (op->tag == MO_SIM_SEND) {
+        if (op->arguments.count >= MO_LIMIT_BYTECODE_PARAMETERS) {
+            bool reported = problem(c, MO_CODE_BYTECODE_TOO_BIG,
+                                    "Simulation send exceeds MO_LIMIT_BYTECODE_PARAMETERS.");
+            (void)reported;
+            return MO_NO_INDEX;
+        }
+        for (size_t i = 0; i < op->arguments.count; i++)
+            parameters[count++] = type(c, op->arguments.items[i], 0);
+        result = type(c, &types[2], 0);
+    } else {
+        result = scalar(c, MO_TYPE_UNIT);
+        if (op->tag == MO_SIM_ADVANCE)
+            parameters[count++] = scalar(c, MO_TYPE_DURATION);
+    }
+    if (c->error != 0)
+        return MO_NO_INDEX;
+    uint32_t id = MO_NO_INDEX;
+    enum mo_type_problem status = mo_types_intern(&c->types,
+                                                  &(struct mo_type){.kind = MO_TYPE_FUNCTION,
+                                                                    .parameters = parameters,
+                                                                    .parameter_count = count,
+                                                                    .result = result},
+                                                  &id);
+    return type_result(c, status, id);
+}
+
+static MO_MUST_USE uint32_t selector(mo_core_natural number) {
+    uint32_t out = 0;
+    for (size_t i = 0; i < number.digits.length; i++) {
+        uint32_t digit = (uint32_t)(number.digits.bytes[i] - '0');
+        MO_ASSERT(digit <= 9 && out <= (UINT32_MAX - digit) / 10);
+        out = out * 10 + digit;
+    }
+    return out;
+}
+
 static MO_MUST_USE uint32_t operation_signature(struct compiler *c,
                                                 const struct mo_codegen_operation *op,
                                                 const mo_core_ty variables[4]) {
@@ -1356,6 +1415,16 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         return n;
     case MO_CORE_EXPR_PRIM: {
         const struct mo_core_prim *p = &expr->as.prim.prim;
+        if (p->tag == MO_CORE_PRIM_SIM) {
+            n->operation.opcode = MO_OP_SIM;
+            n->signature = simulation_signature(c, &p->as.sim);
+            if (n->signature == MO_NO_INDEX)
+                return NULL;
+            n->type = c->types.items[n->signature].result;
+            if (!children(c, f, n, expr->as.prim.args, MO_NO_INDEX, depth))
+                return NULL;
+            break;
+        }
         if (!mo_codegen_operation(p, &n->operation)) {
             if (!unsupported(c, "The Core primitive has no code generation route."))
                 return NULL;
@@ -1581,6 +1650,8 @@ static MO_MUST_USE uint32_t flow_id(struct function *f, uint32_t r) {
     return r == MO_NO_INDEX ? MO_NO_INDEX : ((struct reg *)f->regs.items)[r].flow;
 }
 static MO_MUST_USE bool operation_owned(const struct node *n, uint32_t slot) {
+    if (n->operation.opcode == MO_OP_SIM)
+        return false;
     return n->operation.literal != MO_CODEGEN_LITERAL_NONE || n->operation.params[slot] == 'o';
 }
 static void seed(struct compiler *c, uint32_t id) {
@@ -2701,7 +2772,16 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
                 regs[0] = regs[1];
                 regs[1] = swap;
             }
-            if (n->operation.opcode == MO_OP_PRIM || n->operation.opcode == MO_OP_HOST) {
+            if (n->operation.opcode == MO_OP_SIM) {
+                const struct mo_core_sim_op *sim = &n->core->as.prim.prim.as.sim;
+                const uint32_t fixed[] = {n->reg, (uint32_t)sim->tag,
+                                          sim->tag == MO_SIM_START || sim->tag == MO_SIM_SEND
+                                              ? selector(sim->descriptor)
+                                              : 0,
+                                          sim->tag == MO_SIM_SEND ? selector(sim->tool) : 0};
+                if (emit(c, f, n->span, MO_OP_SIM, fixed, 4, regs, n->count) == MO_NO_INDEX)
+                    return false;
+            } else if (n->operation.opcode == MO_OP_PRIM || n->operation.opcode == MO_OP_HOST) {
                 const uint32_t fixed[] = {n->operation.compare ? n->binds[0] : n->reg,
                                           n->operation.row, n->signature};
                 if (emit(c, f, n->span, n->operation.opcode, fixed,
@@ -3624,7 +3704,7 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
 bool mo_compile_services(const struct mo_core *core, const struct mo_services *services,
                          struct mo_buffer *out, struct mo_diags *diags) {
     MO_ASSERT(core != NULL && out != NULL && out->length == 0 && diags != NULL);
-    if (!mo_core_check(core, diags))
+    if (!mo_core_check_services(core, services, diags))
         return false;
     struct compiler c = {.core = core, .services = services, .range_int = MO_NO_INDEX};
     mo_arena_init(&c.arena, MO_LIMIT_CODEGEN_SCRATCH_SIZE);

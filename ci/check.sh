@@ -173,6 +173,8 @@ if have python3; then
 		for driver in "${drivers[@]}"; do
 			later "The mo command: text/JSON goldens, argument matrix and JSON validity ($driver)" \
 				python3 ci/check_cli.py "$driver"
+			later "Service simulation: deterministic lifecycle and real persistence ($driver)" \
+				python3 ci/check_simulation.py "$driver"
 		done
 		for driver in "${drivers[@]}"; do
 			later "Reference examples: check every block and run complete programs ($driver)" \

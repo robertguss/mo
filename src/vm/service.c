@@ -70,7 +70,7 @@ static struct mo_service_time sample_clock(struct mo_service_loop *s) {
 static void log_event(struct mo_service_loop *s, enum mo_service_event_kind kind,
                       enum mo_service_status reason, struct mo_service_time time,
                       const struct mo_defect *defect) {
-    struct mo_service_event event = {kind, reason, time, defect};
+    struct mo_service_event event = {kind, reason, time, defect, MO_NO_INDEX};
     s->hooks.event(&event, s->hooks.context);
 }
 
@@ -419,7 +419,9 @@ enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t in
     struct mo_cell value;
     struct mo_defect defect = {0};
     enum mo_service_status status = MO_SERVICE_OK;
+    uint32_t failed_function = s->descriptor->start;
     for (uint32_t i = 0; i < s->descriptor->timer_count; i++) {
+        failed_function = s->descriptor->timers[i].interval;
         status = invoke(s, s->descriptor->timers[i].interval, NULL, 0, &value, &defect);
         if (status != MO_SERVICE_OK)
             break;
@@ -430,6 +432,8 @@ enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t in
         }
         s->timers[i].interval = (uint64_t)interval;
     }
+    if (status == MO_SERVICE_OK)
+        failed_function = s->descriptor->start;
     bool found = false, snapshot_due = false;
     if (status == MO_SERVICE_OK && store != NULL)
         status = recover(s, &found, &s->state, &snapshot_due);
@@ -449,7 +453,10 @@ enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t in
         status = MO_SERVICE_STORE;
     struct mo_service_time time = sample_clock(s);
     if (status != MO_SERVICE_OK) {
-        log_event(s, MO_SERVICE_FAILURE, status, time, defect.reason == NULL ? NULL : &defect);
+        const struct mo_service_event event = {MO_SERVICE_FAILURE, status, time,
+                                               defect.reason == NULL ? NULL : &defect,
+                                               failed_function};
+        s->hooks.event(&event, s->hooks.context);
         mo_service_free(s);
         return status;
     }
@@ -485,6 +492,25 @@ uint32_t mo_service_pending(const struct mo_service_loop *s) {
 bool mo_service_running(const struct mo_service_loop *s) {
     MO_ASSERT(s != NULL);
     return s->running;
+}
+
+uint64_t mo_service_deadlines(const struct mo_service_loop *s, uint64_t until, uint64_t *next) {
+    MO_ASSERT(s != NULL && next != NULL && s->count == 0);
+    mo_u128 count = 0, first = (mo_u128)UINT64_MAX + 1;
+    if (!s->running)
+        return 0;
+    for (uint32_t i = 0; i < s->descriptor->timer_count; i++) {
+        const struct service_timer *timer = &s->timers[i];
+        MO_ASSERT(!timer->waiting && timer->interval != 0);
+        if (timer->next > until)
+            continue;
+        count += ((mo_u128)until - timer->next) / timer->interval + 1;
+        if (timer->next < first)
+            first = timer->next;
+    }
+    if (count != 0)
+        *next = (uint64_t)first;
+    return count > UINT64_MAX ? UINT64_MAX : (uint64_t)count;
 }
 
 enum mo_service_status mo_service_send(struct mo_service_loop *s, uint32_t tool,
