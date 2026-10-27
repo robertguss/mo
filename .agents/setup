@@ -38,7 +38,7 @@ fi
 
 # libFuzzer and the sanitizer runtimes ship in a package named after clang's
 # major version. lean needs them too: run alone it builds the sanitize executables it compares.
-if needs sanitize || needs fuzz || needs lean; then
+if needs sanitize || needs fuzz || needs lean || needs static; then
 	clang_major=$(clang --version | sed -n 's/.*clang version \([0-9][0-9]*\).*/\1/p' | head -n 1)
 	install_missing "libclang-rt-${clang_major}-dev"
 fi
