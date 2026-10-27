@@ -138,14 +138,30 @@ static MO_MUST_USE bool add_symbol(struct resolver *r, struct mo_module_scope *s
 
 bool mo_source_builtin(const uint8_t *name, size_t length) {
     MO_ASSERT(name != NULL);
-    static const char *const names[] = {
-        "Bool",       "Int",      "BigInt",    "Byte",  "Decimal",   "Float",     "Text",
-        "Char",       "Bytes",    "Unit",      "List",  "Map",       "Set",       "Range",
-        "Time",       "Duration", "Option",    "None",  "Some",      "Result",    "Ok",
-        "Error",      "Ordering", "Less",      "Equal", "Greater",   "Args",      "Env",
-        "Console",    "Files",    "ReadFiles", "Clock", "Random",    "FileError", "NotFound",
-        "NotAllowed", "NotText",  "Failed",    "Entry", "EntryKind", "File",      "Folder",
-        "Link",       "Other"};
+    static const char *const names[] = {"Bool",        "Int",
+                                        "BigInt",      "Byte",
+                                        "Decimal",     "Float",
+                                        "Text",        "Char",
+                                        "Bytes",       "Unit",
+                                        "List",        "Map",
+                                        "Set",         "Range",
+                                        "Time",        "Duration",
+                                        "Option",      "None",
+                                        "Some",        "Result",
+                                        "Ok",          "Error",
+                                        "Ordering",    "Less",
+                                        "Equal",       "Greater",
+                                        "Args",        "Env",
+                                        "Console",     "Files",
+                                        "ReadFiles",   "Clock",
+                                        "Random",      "FileError",
+                                        "NotFound",    "NotAllowed",
+                                        "NotText",     "Failed",
+                                        "Entry",       "EntryKind",
+                                        "File",        "Folder",
+                                        "Link",        "Other",
+                                        "Simulation",  "SimulationError",
+                                        "ServiceDown", "ToolFailed"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++)
         if (length == strlen(names[i]) && memcmp(name, names[i], length) == 0)
             return true;

@@ -156,13 +156,6 @@ static MO_MUST_USE bool handler(struct service_check *p, const struct mo_syntax 
             return false;
     uint32_t index = (uint32_t)(selected - p->program->signatures->items);
     *function = p->functions[index];
-    bool result_state =
-        !bare && native(result, "Result") && same(p, result->arguments[0], p->service->state, 0);
-    if (p->failed)
-        return false;
-    if (!timer && (bare || result_state))
-        return mo_service_state_error(p->arena, p->program, name, *function, result_state,
-                                      p->diags);
     *reply = update_pair(p, result) ? MO_SERVICE_UPDATE
              : native(result, "Result") && update_pair(p, result->arguments[0])
                  ? MO_SERVICE_RESULT_UPDATE
@@ -225,8 +218,8 @@ static MO_MUST_USE bool interval(struct service_check *p, const struct mo_syntax
 }
 
 static MO_MUST_USE bool check_service(struct service_check *p, const struct mo_syntax *state,
-                                      const struct mo_syntax *tools, const struct mo_syntax *token,
-                                      struct mo_constant_context *constants) {
+                                      const struct mo_syntax *tools,
+                                      const struct mo_syntax *token) {
     struct mo_checked_service *service = p->service;
     const struct mo_program *program = p->program;
     p->span = state->span;
@@ -242,9 +235,6 @@ static MO_MUST_USE bool check_service(struct service_check *p, const struct mo_s
     if (!mo_check_type_abilities(&abilities, service->state))
         return report(p, abilities.error, abilities.message, abilities.reason);
     if (!mo_check_service_purity(p->arena, program, service->state, state->span, p->diags) ||
-        !mo_check_service_value(p->arena, program->interfaces, program->signatures, constants,
-                                service->module, state, service->state, p->diags,
-                                &service->initializer) ||
         !token_source(p, token))
         return false;
     struct mo_checked_service_tool *checked_tools = allocate(
@@ -261,8 +251,6 @@ static MO_MUST_USE bool check_service(struct service_check *p, const struct mo_s
         if (!handler(p, tool->name, false, &tool->function, &tool->reply))
             return false;
     }
-    static const struct mo_source_type duration = {
-        .kind = MO_SOURCE_NAMED, .name = "Duration", .module = UINT32_MAX};
     const struct mo_syntax *clauses = service->syntax->children[0];
     uint32_t timer = 0;
     for (uint32_t i = 0; i < clauses->count; i++) {
@@ -275,17 +263,15 @@ static MO_MUST_USE bool check_service(struct service_check *p, const struct mo_s
         out->syntax = clause;
         enum mo_service_reply ignored;
         if (!interval(p, clause->children[0]) ||
-            !handler(p, clause->children[1], true, &out->function, &ignored) ||
-            !mo_check_service_value(p->arena, program->interfaces, program->signatures, constants,
-                                    service->module, clause, &duration, p->diags, &out->interval))
+            !handler(p, clause->children[1], true, &out->function, &ignored))
             return false;
     }
     MO_ASSERT(timer == service->timer_count);
     return true;
 }
 
-bool mo_check_services(struct mo_arena *arena, struct mo_program *program,
-                       struct mo_constant_context *constants, struct mo_diags *diags) {
+bool mo_prepare_services(struct mo_arena *arena, struct mo_program *program,
+                         struct mo_diags *diags) {
     struct service_check p = {
         .arena = arena, .program = program, .diags = diags, .span = program->set->modules[0]->span};
     struct mo_checked_service *services =
@@ -351,8 +337,56 @@ bool mo_check_services(struct mo_arena *arena, struct mo_program *program,
         if (p.named == NULL)
             return false;
         memset(p.named, 0, (size_t)count * sizeof(*p.named));
-        if (!check_service(&p, state, tools, token, constants))
+        if (!check_service(&p, state, tools, token))
             return false;
+    }
+    return true;
+}
+
+bool mo_check_services(struct mo_arena *arena, struct mo_program *program,
+                       struct mo_constant_context *constants, struct mo_diags *diags) {
+    struct service_check p = {.arena = arena, .program = program, .diags = diags};
+    struct mo_checked_service *services = allocate(&p, program->service_count, sizeof(*services),
+                                                   _Alignof(struct mo_checked_service));
+    if (services == NULL)
+        return false;
+    memcpy(services, program->services, program->service_count * sizeof(*services));
+    program->services = services;
+    static const struct mo_source_type duration = {
+        .kind = MO_SOURCE_NAMED, .name = "Duration", .module = UINT32_MAX};
+    for (uint32_t i = 0; i < program->service_count; i++) {
+        struct mo_checked_service *s = &services[i];
+        p.service = s;
+        const struct mo_syntax *state = s->syntax->children[0]->children[0];
+        if (!mo_check_service_value(arena, program->interfaces, program->signatures, constants,
+                                    s->module, state, s->state, diags, &s->initializer))
+            return false;
+        for (uint32_t j = 0; j < s->tool_count; j++) {
+            const struct mo_checked_service_tool *tool = &s->tools[j];
+            const struct mo_source_type *signature =
+                program->functions[tool->function].signature->type;
+            const struct mo_source_type *result = signature->arguments[signature->count - 1];
+            bool bare = same(&p, result, s->state, 0);
+            bool wrapped = native(result, "Result") && same(&p, result->arguments[0], s->state, 0);
+            if (p.failed)
+                return false;
+            if (bare || wrapped)
+                return mo_service_state_error(arena, program, tool->name, tool->function, wrapped,
+                                              diags);
+        }
+        struct mo_checked_service_timer *timers = allocate(
+            &p, s->timer_count, sizeof(*timers), _Alignof(struct mo_checked_service_timer));
+        if (timers == NULL)
+            return false;
+        memcpy(timers, s->timers, s->timer_count * sizeof(*timers));
+        s->timers = timers;
+        for (uint32_t j = 0; j < s->timer_count; j++) {
+            struct mo_checked_service_timer *timer = &timers[j];
+            if (!mo_check_service_value(arena, program->interfaces, program->signatures, constants,
+                                        s->module, timer->syntax, &duration, diags,
+                                        &timer->interval))
+                return false;
+        }
     }
     return true;
 }

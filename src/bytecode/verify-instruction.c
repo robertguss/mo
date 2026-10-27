@@ -308,6 +308,39 @@ bool mo_verify_instruction(struct mo_verify_function *v, uint32_t pc) {
             reason);
         break;
     }
+    case MO_OP_SIM: {
+        REQUIRE(a[1] < MO_SIM_COUNT, "unknown simulation operation");
+        if (a[1] == MO_SIM_START) {
+            REQUIRE(fn->spec_code, "simulation start in non-spec code");
+            REQUIRE(a[2] < f->service_count && a[3] == 0, "simulation start descriptor");
+            REQUIRE(n == 1 && kind(v, a[4], MO_TYPE_TIME), "simulation start argument");
+            REQUIRE(kind(v, a[0], MO_TYPE_CAPABILITY) &&
+                        f->types[reg(v, a[0])].capability == MO_CAP_SIMULATION,
+                    "simulation start result");
+            break;
+        }
+        REQUIRE(n != 0 && kind(v, a[4], MO_TYPE_CAPABILITY) &&
+                    f->types[reg(v, a[4])].capability == MO_CAP_SIMULATION,
+                "simulation handle argument");
+        if (a[1] == MO_SIM_SEND) {
+            REQUIRE(a[2] < f->service_count, "simulation send descriptor");
+            const struct mo_bytecode_service *service = &f->services[a[2]];
+            REQUIRE(a[3] < service->tool_count, "simulation send tool");
+            const struct mo_bytecode_service_tool *tool = &service->tools[a[3]];
+            REQUIRE(args(v, a + 5, n - 1, tool->argument_types, tool->argument_count),
+                    "simulation send argument types or count");
+            const char *reason = "simulation send result";
+            REQUIRE(mo_bytecode_signature(v, "fn(T) : Result(T, SimulationError)",
+                                          &tool->result_type, 1, reg(v, a[0]), &reason),
+                    reason);
+        } else {
+            REQUIRE(a[2] == 0 && a[3] == 0, "simulation control has selector indices");
+            REQUIRE(kind(v, a[0], MO_TYPE_UNIT), "simulation control result");
+            REQUIRE(a[1] == MO_SIM_ADVANCE ? n == 2 && kind(v, a[5], MO_TYPE_DURATION) : n == 1,
+                    "simulation control arguments");
+        }
+        break;
+    }
     case MO_OP_RESET:
         REQUIRE(kind(v, a[1], MO_TYPE_RECORD) || kind(v, a[1], MO_TYPE_TUPLE) ||
                     kind(v, a[1], MO_TYPE_CHOICE),

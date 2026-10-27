@@ -956,7 +956,7 @@ qualified form, and so is a cycle of modules that use each other. The
 library's `Json` and `Unicode16` modules are used the same way. Every library
 module reserves its name, so a program can't declare a module named `FileError`,
 `Files`, `Json`, `List`, `Map`, `Option`, `ReadFiles`, `Result`, `Set`, `Text`,
-`Time` or `Unicode16`.
+`Time` or `Unicode16`. The built-in `Simulation` module also reserves its name.
 
 ### 10.4 Constants
 
@@ -982,7 +982,8 @@ an argument and return any replacement state.
 
 Always in scope: the built-in types of section 3, `Option` with `Some` and
 `None`, `Result` with `Ok` and `Error`, `Ordering` with its cases, the
-capability types, `FileError` with its cases, and `Entry` with `EntryKind` and its cases. The functions of section 14 belong to their types' modules:
+capability types, `FileError` with its cases, `SimulationError` with `ServiceDown` and `ToolFailed`,
+and `Entry` with `EntryKind` and its cases. The functions of section 14 belong to their types' modules:
 call them with a dot, as in `text.lines`, or through the module, as in
 `Set.empty` and `Time.parse(text)`. So a local may be called `lines` or
 `count` without clashing with them.
@@ -1246,10 +1247,57 @@ outside the program: `Console.fake()`, whose `printed` and `printed_errors` list
 the lines written to standard output and standard error;
 `Console.fake_input(lines)`, which also has those lines to read;
 `Files.in_memory(files)`, from a map of paths to texts; `Clock.fixed(time)`;
-`Random.seeded(n)`; `Args.of(list)`; and `Env.of(map)`. Fakes are made only
+`Random.seeded(n)`; `Args.of(list)`; `Env.of(map)`; and `Simulation.start(module, at)`
+for a test service. Fakes are made only
 there, never in a module's constants or its functions. `printed` and
 `printed_errors` can be used only there too, where every console is a fake,
 and using them anywhere else is an error.
+
+`Simulation.start(Module, at: Time) : Simulation` starts the selected service
+with an in-memory store and runs its startup ticks. `Simulation.send(handle,
+Module.tool, args...)` supplies state and the current fake time, then returns
+`Result(R, SimulationError)` for the tool's complete declared result R. Only
+direct module and registered tool selectors are allowed, including registered
+tools not listed in `expose`. Timers, other private functions and function
+values are not selectors. Arguments after the selector exactly match the
+tool's parameters after State and Time. An application `Error(e)` is returned
+as `Ok(Error(e))`; it does not count toward the failure limit. `ServiceDown` means
+nothing was queued, and `ToolFailed` means a handler defect or work/memory
+limit, with no update committed. A state-changing `Ok(r)` means committed.
+Each `ToolFailed` counts toward the service's failure limit: 5 within 60 seconds
+of simulated time restart the service from its last saved state, and 3 such
+restarts within 10 minutes stop it, after which `send` returns `ServiceDown` until `restart`.
+Call these operations through the module, as in `Simulation.crash(sim)`; dot
+calls such as `sim.crash` are not available.
+
+`Simulation.advance(handle, by: Duration)`, `Simulation.crash(handle)` and
+`Simulation.restart(handle)` return Unit. Advance visits each deadline in
+order, supplies that deadline as `now`, and drains simultaneous timers in
+service source order. Zero does nothing. A crashed service's clock advances
+without running handlers. Before advancing a running service, all due firings
+are counted separately; more than 10,000 is a bug with no clock movement,
+execution or commit. Negative advances and times beyond year 9999 are bugs.
+Each successful operation returns with an empty mailbox. Send is synchronous
+and cannot be interrupted by crash.
+
+Crash is idempotent. It discards live state, timers and supervisor history,
+but retains the same open store and clock. Restart recovers through the real
+log and snapshots, emits no replies for replay, and starts fresh supervision
+and startup ticks. Restarting a running service or selecting another service's
+tool is a bug. Copies of the capability share its identity; its last release
+closes the service and then the store. Helpers holding the handle may use all
+operations except start. Like other capabilities, Simulation cannot be stored
+in service state or tool signatures, and cannot be a main parameter.
+
+Startup, timer, persistence and invalid-recovery failures stop the test with
+a bug report, not a SimulationError. Arguments and replies are copied into and
+out of the service, limited to 128 levels of nesting, 1,048,576 values and 16 MiB encoded, including
+read-only and application Error replies. Copy-in failure queues and commits
+nothing. Updating messages also obey the aggregate saved-message byte limit;
+an admission refusal reports that no handler ran and does not count toward the
+failure limit. Read-only messages are not saved. Copy-out failure names the
+executed tool and any committed update; it does not roll back or retry.
+Promise and generator support is deferred.
 
 A capability is a handle on something outside the program, and a fake is a
 handle on something kept for the test. Every use of one fake sees the same

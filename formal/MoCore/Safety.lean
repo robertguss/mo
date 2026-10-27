@@ -25,6 +25,10 @@ theorem ValTy.bool_inv (h : ValTy P v .bool) : ∃ b, v = .bool b := by
   | bool => exact ⟨_, rfl⟩
   | con hcs => simp [ctorsOf] at hcs
 
+theorem ValTy.simulation_false (h : ValTy P v .simulation) : False := by
+  cases h with
+  | con hcs => simp [ctorsOf] at hcs
+
 theorem Lit.value_ty {l : Lit} (h : l.Ok) : ValTy P l.value l.ty := by
   cases l <;> first
     | exact .int h | exact .byte h | exact .decimal h | exact .time h | exact .duration h

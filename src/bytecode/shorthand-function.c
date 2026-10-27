@@ -509,6 +509,7 @@ static MO_MUST_USE bool instruction(struct function_reader *f) {
             break;
         case MO_OPERAND_CASE:
         case MO_OPERAND_FIELD:
+        case MO_OPERAND_INDEX:
             ok = mo_text_ref(r, 0, false, &value);
             break;
         case MO_OPERAND_TARGET:

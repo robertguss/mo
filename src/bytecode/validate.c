@@ -526,6 +526,8 @@ static MO_MUST_USE bool operand(const struct mo_bytecode *f, const struct mo_byt
         return value < MO_LIMIT_FIELDS;
     case MO_OPERAND_CASE:
         return value < MO_LIMIT_CHOICE_CASES;
+    case MO_OPERAND_INDEX:
+        return true;
     case MO_OPERAND_NONE:
         return false;
     }

@@ -1021,6 +1021,32 @@ def libraryProgram : Program :=
   stops program (prim (.unicode16 op) [chr 'é']) tBool
     (.outside "Unicode16 is a trusted primitive unavailable in mocore")
 
+def simulationStart : Expr := prim (.sim (.start 0)) [.lit (.time 0)]
+#guard typedAs? program [] simulationStart .simulation true
+#guard !typedAs? program [] simulationStart .simulation false
+#guard !typedAs? program [] (prim (.sim (.start 0)) [int 0]) .simulation true
+#guard [SimOp.advance, .crash, .restart].all fun op =>
+  let args := if op.sig.1.length == 2 then [v "s", .lit (.duration 1)] else [v "s"]
+  let e := prim (.sim op) args
+  Text.exprRoundTrip e && typedAs? program [("s", .simulation)] e .unit false &&
+    match run program e { files := [("kept", "value")], now := 123 } [("s", .unit)] with
+    | .stopped (.outside "Simulation is not modeled by mocore") w =>
+      w.stdout.isEmpty && w.files == [("kept", "value")] && w.now == 123
+    | _ => false
+#guard typedAs? program [("s", .simulation)]
+  (prim (.sim (.send 2 3 [.int, .text] (.result (.tuple [.int, .text]) .text)))
+    [v "s", int 7, str "job"])
+  (.result (.result (.tuple [.int, .text]) .text) .simulationError)
+#guard !typedAs? program [("s", .simulation)]
+  (prim (.sim (.send 2 3 [.int, .text] .unit)) [v "s", str "wrong", int 7])
+  (.result .unit .simulationError)
+#guard match run program (seq (io .print [v "c", str "before simulation"]) simulationStart)
+    { files := [("kept", "value")], now := 123 } (handles [("c", .console)]) with
+  | .stopped (.outside "Simulation is not modeled by mocore") w =>
+    w.stdout == ["before simulation"] && w.files == [("kept", "value")] && w.now == 123
+  | _ => false
+#guard passes program (ite ff (seq simulationStart ff) tt)
+
 -- Real-state dispatch, empty root, inaccessible/narrowed roots and persistent folders.
 #guard passes program
   (eq (tRes (tList .entry) tFileError) (io (.entries false) [v "files", str "."])

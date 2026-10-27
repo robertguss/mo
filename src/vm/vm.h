@@ -170,6 +170,7 @@ struct mo_service_event {
     enum mo_service_status reason;
     struct mo_service_time time;
     const struct mo_defect *defect;
+    uint32_t function;
 };
 struct mo_service_response {
     uint64_t id;

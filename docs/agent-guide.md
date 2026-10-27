@@ -12,7 +12,7 @@ This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guid
 
 `mo emit FILE -o OUT` checks the program as `mo check` does, then writes its bytecode to `OUT`. `-o` is required, and `OUT` is never a source file of the program. A library module with no `main` is E0079, as for `mo run`, and a file that cannot be written is E1404. This build has no command that runs a bytecode file; run the source with `mo run`.
 
-This build checks, formats and fixes `service ... end` blocks (reference 11.5). `mo test` still calls ordinary handler examples, promises and tests; it does not start the service or read its token. Only `mo run` on a service entry module refuses with E1408, "this build cannot run a service". Keep the service block and test its handlers directly until the runtime is implemented. Importing a module that declares a service does not start it.
+This build checks, formats and fixes `service ... end` blocks (reference 11.5). `mo test` does not automatically start a service or read its token. Tests and examples can explicitly start one with `Simulation.start(Module, at)`, send registered tools with `Simulation.send(handle, Module.tool, args...)`, advance its fake clock, and crash/restart through the real log and snapshot path backed by an in-memory store. `send` returns the complete declared handler result inside another `Result`; an application `Error` is still inside `Ok`. Helpers may receive the handle. Promise/generator support is deferred. `mo run` on a service entry module still refuses with E1408, "this build cannot run a service". Importing a service module does not start it.
 
 `mo check --emit=bytecode FILE` prints the program's bytecode as indexed text, with a `services` section holding one descriptor for each module that declares a service, including imported modules. It works on a module without `main`. `mo emit FILE -o OUT` writes the same descriptors, but still needs a `main` (E0079). Neither command evaluates a service's start value or reads its token, and this build still cannot run a service (E1408). `mo check --emit=core FILE` shows the start value and timer intervals as ordinary functions but no service registration, so Core output alone cannot reconstruct a service.
 
@@ -166,7 +166,7 @@ On a complete toolchain, `mo format`, `mo check`, and `mo test` exit 0. Run `mo 
 
 On this build, accept a remaining diagnostic only when Know this build names it: E1103 or E1150 on a form the reference requires and offers no other way to write the same behaviour, or E1400 on a promise whose inputs `mo test` cannot build. Deleting a required spec, promise or capability to silence a diagnostic leaves the task undone. Deleting a promise because `mo test` returns E1400 leaves the task undone.
 
-E1408 is also an expected build limitation when `mo run` targets a service entry module. Keep the service declaration and test its ordinary handlers. Passing those tests does not prove that the service runtime works.
+E1408 is also an expected build limitation when `mo run` targets a service entry module. Use `Simulation` in tests for scheduling and persistence, or test ordinary handlers directly for their value logic. Simulation provides no networking or deployment.
 
 Where the reference says nothing, do not add a rule, and do not fill that silence from the architecture or from `formal/TRANSLATION.md`.
 

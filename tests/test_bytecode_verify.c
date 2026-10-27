@@ -1,3 +1,4 @@
+#include "base/simops.h"
 #include "bytecode/verify.h"
 #include "bytecode_text.h"
 #include "test.h"
@@ -2446,6 +2447,65 @@ static void failure_kinds(void) {
     mo_buffer_free(&wire);
 }
 
+static void simulation_without_services(void) {
+    struct fixture t;
+    init(&t);
+    t.types[19] = (struct mo_type){.kind = MO_TYPE_CAPABILITY, .capability = MO_CAP_SIMULATION};
+    t.file.type_count = 20;
+    const uint32_t registers[] = {19, 7, 0};
+    t.functions[0].register_types = registers;
+    t.functions[0].register_count = N(registers);
+    parameter(&t, 0, 2, MO_PARAMETER_BORROWED);
+    for (uint32_t op = MO_SIM_ADVANCE; op <= MO_SIM_RESTART; op++) {
+        uint32_t controls[] = {MO_OP_SIM | (1U << 16), 2, op, 0, 0, 0, MO_OP_RET, 2};
+        const uint32_t advance[] = {
+            MO_OP_SIM | (2U << 16), 2, MO_SIM_ADVANCE, 0, 0, 0, 1, MO_OP_RET, 2};
+        if (op == MO_SIM_ADVANCE)
+            code(&t, advance, N(advance));
+        else
+            code(&t, controls, N(controls));
+        expect(&t, NULL, 0, 0);
+    }
+    const uint32_t start_regs[] = {6, 19, 0};
+    const uint32_t start[] = {MO_OP_CONST, 0,
+                              4,           MO_OP_SIM | (1U << 16),
+                              1,           MO_SIM_START,
+                              0,           0,
+                              0,           MO_OP_DROP,
+                              1,           MO_OP_CONST,
+                              2,           0,
+                              MO_OP_RET,   2};
+    t.functions[0].register_types = start_regs;
+    t.functions[0].kind = MO_FUNCTION_TEST;
+    t.functions[0].spec_code = true;
+    t.constants[4] = (struct mo_bytecode_constant){.type = 6};
+    t.file.constant_count = 5;
+    parameter(&t, 0, 0, MO_PARAMETER_OWNED);
+    code(&t, start, N(start));
+    expect(&t, "simulation start descriptor", 0, 3);
+
+    t.types[20] = (struct mo_type){.kind = MO_TYPE_ENV, .function = 0};
+    t.file.type_count = 21;
+    const uint32_t send_regs[] = {19, 20, 0};
+    const uint32_t send[] = {MO_OP_SIM | (1U << 16),
+                             2,
+                             MO_SIM_SEND,
+                             0,
+                             0,
+                             0,
+                             MO_OP_DROP,
+                             0,
+                             MO_OP_DROP,
+                             1,
+                             MO_OP_RET,
+                             2};
+    t.functions[0].register_types = send_regs;
+    t.functions[0].kind = MO_FUNCTION_CLOSURE;
+    parameter(&t, 0, 1, MO_PARAMETER_OWNED);
+    code(&t, send, N(send));
+    expect(&t, "simulation send descriptor", 0, 0);
+}
+
 static void service_refusal(void) {
     struct fixture t;
     init(&t);
@@ -2486,6 +2546,7 @@ int main(int argc, char **argv) {
     work_bound();
     hostile_work();
     failure_kinds();
+    simulation_without_services();
     service_refusal();
     return mo_test_report("bytecode verifier");
 }

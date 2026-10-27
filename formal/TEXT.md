@@ -1,7 +1,7 @@
-# Core text, version 0.8
+# Core text, version 0.9
 
 The Lean implementation in `MoCore/Text/` is the reference codec. Every file
-is `(core 0.8 PAYLOAD)` followed by LF. Constructors are case-sensitive and
+is `(core 0.9 PAYLOAD)` followed by LF. Constructors are case-sensitive and
 named after Lean. A nullary constructor is still a list: `(unit)`.
 
 This is an interchange format, not Mo source or the informal notation in
@@ -10,7 +10,37 @@ transport (`Outcome`, including closures), and observable reports (`Report`,
 the protocol `mocore` writes). The latter uses reference 9.2's structural
 value spelling inside a string. C differential tests compare **reports**.
 
-## Changes from 0.7
+## Changes from 0.8
+
+Version 0.9 adds types `(simulation)` and `(simulationError)` and the primitive
+family `(sim OP)`. Only 0.9 is accepted; 0.8, older and unknown versions are
+rejected. The error type has nullary `ServiceDown` and `ToolFailed` constructors.
+
+| OP | Arguments | Result |
+| --- | --- | --- |
+| `(start D)` | Time | Simulation (spec-only) |
+| `(send D T (ARGTYPES) RESULT)` | Simulation followed by ARGTYPES | Result(RESULT, SimulationError) |
+| `(advance)` | Simulation, Duration | Unit |
+| `(crash)` | Simulation | Unit |
+| `(restart)` | Simulation | Unit |
+
+D and T are natural descriptor and tool indices. Explicit send types let Lean
+check the program without service descriptors. C requires valid descriptors
+for start and send and verifies the selected handler against these types.
+Advance, crash and restart need no descriptors, including in standalone Core
+text. A missing descriptor table is an empty table, so start and send are
+refused without one. Source lowering supplies descriptors separately.
+No World or CapState field is added.
+
+Any reached operation in Lean stops with
+`outside "Simulation is not modeled by mocore"`, preserving the World at that
+point. Only runs that reach that boundary are counted as exclusions from VM
+comparison; ordinary runs in the same program still compare. Neither whole
+programs nor functions are removed. The seeded Core generator emits no sim
+operations. Safety/PrimSafety cover the new cases; Builtins checks reached and
+unreached operations and preservation of prior effects.
+
+### Earlier changes from 0.7
 
 Version 0.8 refuses malformed `Files.in_memory` keys at construction, with
 `(filePathInvalid S)` naming the first malformed key in insertion order.
@@ -25,7 +55,7 @@ D236's decimal Float form and opaque capability-kind names. Every well-typed
 Core value has a structural form, including Bytes, functions and capabilities;
 there is no `Text`, `Equal` or other ability requirement. A malformed low-level
 value passed outside a checked Run stops with `structural value: REASON`.
-Only 0.8 is accepted; 0.7, older and unknown versions are rejected.
+Version 0.9 preserves these rules.
 
 ### Earlier changes from 0.6
 
@@ -109,7 +139,7 @@ buffer's own limit is an independent constraint. Lean's codec does not
 impose the C resource limits.
 
 ```ebnf
-file = "(", "core", "0.8", payload, ")" ;
+file = "(", "core", "0.9", payload, ")" ;
 sexp = atom | string | "(", { sexp }, ")" ;
 integer = [ "-" ], digit, { digit } ;
 bits = "0x", hex-digit (* exactly sixteen *) ;
@@ -134,14 +164,14 @@ Decimal integers count 10⁻¹⁸ units; Time and Duration integers count
 microseconds. Char strings contain exactly one Unicode scalar.
 
 ```text
-(core 0.8 (map (text) (list (byte))))
-(core 0.8 (float 0x8000000000000000))
-(core 0.8 (text "hello\nβ"))
+(core 0.9 (map (text) (list (byte))))
+(core 0.9 (float 0x8000000000000000))
+(core 0.9 (text "hello\nβ"))
 ```
 
 Files are UTF-8 without a BOM; invalid UTF-8 is a parse error. An atom is a
 nonempty run of scalars other than the delimiters defined above. Symbols
-are atoms used as constructor names, `core`, `0.8`, `true` and `false`;
+are atoms used as constructor names, `core`, `0.9`, `true` and `false`;
 only the exact symbols listed in this document are accepted in those
 positions. There is no symbol escaping. Empty lists are `()`. Parsing
 accepts any layout using those delimiters, including adjacent lists,
@@ -411,7 +441,7 @@ arguments, a **reached** call stops with the exact report below (exit 1),
 where effects are everything produced so far:
 
 ```text
-(core 0.8 (stopped (outside "Unicode16 is a trusted primitive unavailable in mocore") (effects () () () () ())))
+(core 0.9 (stopped (outside "Unicode16 is a trusted primitive unavailable in mocore") (effects () () () () ())))
 ```
 
 An unchosen branch or unused function containing such a call still runs.
@@ -679,7 +709,7 @@ Separators are `, ` and `: `, with no spaces just inside delimiters.
 returned list of texts contains two levels of quoting:
 
 ```text
-(core 0.8 (returned "[\"a\", \"b\\n\"]" (effects () () () () ())))
+(core 0.9 (returned "[\"a\", \"b\\n\"]" (effects () () () () ())))
 ```
 
 This avoids confusing a top-level Text with a constructor/number, and
@@ -770,7 +800,7 @@ A complete one-file program returning a Float's negative zero, with a
 preexisting file and one input line (layout expanded for reading):
 
 ```text
-(core 0.8
+(core 0.9
   (Run
     (Program ()
       ((FunDecl "main" () (float) (lit (float 0x8000000000000000))
@@ -784,13 +814,13 @@ preexisting file and one input line (layout expanded for reading):
 The exact canonical report (exit 0):
 
 ```text
-(core 0.8 (returned "0x8000000000000000" (effects () () (("a" "hi\n")) () ())))
+(core 0.9 (returned "0x8000000000000000" (effects () () (("a" "hi\n")) () ())))
 ```
 
 A named test demonstrating failure without a bug:
 
 ```text
-(core 0.8
+(core 0.9
   (Run
     (Program ()
       ((FunDecl "main" () (unit) (lit (unit)) "Main" (function) 0)
@@ -801,15 +831,15 @@ A named test demonstrating failure without a bug:
     (test "expected seven") 30))
 ```
 
-Its report is `(core 0.8 (failed "got six" (effects () () () () ())))` (exit 2).
-Changing fuel to 0 gives `(core 0.8 (outOfFuel))` (exit 3). An ordinary
+Its report is `(core 0.9 (failed "got six" (effects () () () () ())))` (exit 2).
+Changing fuel to 0 gives `(core 0.9 (outOfFuel))` (exit 3). An ordinary
 function with `fail` instead is `illTyped` (exit 5), never evaluated.
 
 A test constructs a console and passes it to ordinary `main`. Observing the
 same handle after the call reads its output; real output stays empty:
 
 ```text
-(core 0.8
+(core 0.9
   (Run
     (Program ()
       ((FunDecl "main" (("c" (cap (console)))) (unit)
@@ -832,14 +862,14 @@ same handle after the call reads its output; real output stays empty:
 Its exact report (exit 0) includes the allocated state's full nine fields:
 
 ```text
-(core 0.8 (returned "Unit" (effects () () () () ((CapState () () () ("hello") () () 0 (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec) ())))))
+(core 0.9 (returned "Unit" (effects () () () () ((CapState () () () ("hello") () () 0 (RandomState 0xe220a8397b1dcdaf 0x6e789e6aa1b965f4 0x06c45d188009454f 0xf88bb8a8724c81ec) ())))))
 ```
 
 A D237 run makes two folders, writes their only file, then removes it.
 The real folder list retains both empty folders:
 
 ```text
-(core 0.8
+(core 0.9
   (Run
     (Program ()
       ((FunDecl "main" (("f" (cap (files)))) (result (unit) (fileError))
@@ -857,7 +887,7 @@ The real folder list retains both empty folders:
 Its exact report (exit 0):
 
 ```text
-(core 0.8 (returned "Ok(Unit)" (effects () () () ("a" "a/b") ())))
+(core 0.9 (returned "Ok(Unit)" (effects () () () ("a" "a/b") ())))
 ```
 
 The file protocol regression also calls this ordinary function with a fake
@@ -923,7 +953,7 @@ for path in sorted(pathlib.Path('/tmp/mocore-samples').glob('*.core')):
     for _ in range(21):
         start = time.perf_counter_ns()
         result = subprocess.run([exe, str(path)], check=True, capture_output=True)
-        assert result.stdout.startswith(b'(core 0.8 (returned ')
+        assert result.stdout.startswith(b'(core 0.9 (returned ')
         times.append((time.perf_counter_ns() - start) / 1e6)
     print(path.stem, path.stat().st_size, statistics.median(times), min(times), max(times))
 PY
@@ -944,9 +974,9 @@ need new run/report examples too. Do not silently reinterpret RandomState,
 Boolean `ro`, root, fake index, or a constructor's field order.
 
 Any added constructor or changed shape/meaning advances the minor wire
-version (next `0.9`), updates both Lean and C and their differential corpus,
+version (next `0.10`), updates both Lean and C and their differential corpus,
 and adds tests for rejecting unsupported versions. The current parser
-accepts **only `0.8`** and rejects unknown constructors; there are no ignored
+accepts **only `0.9`** and rejects unknown constructors; there are no ignored
 extension fields or fallback operation names. Support for older versions,
 if wanted, must be explicit. This document, not the informal lowering
 notation or Lean's `Repr`, specifies what the C implementation must write.

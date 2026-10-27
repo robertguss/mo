@@ -10,6 +10,8 @@
 #include "base/arena.h"
 #include "base/buffer.h"
 #include "base/diag.h"
+#include "base/service.h"
+#include "base/simops.h"
 
 typedef struct {
     const char *bytes;
@@ -78,7 +80,9 @@ enum mo_core_ty_tag {
     MO_CORE_TY_ENTRY,
     MO_CORE_TY_ENTRY_KIND,
     MO_CORE_TY_FN,
-    MO_CORE_TY_CAP
+    MO_CORE_TY_CAP,
+    MO_CORE_TY_SIMULATION,
+    MO_CORE_TY_SIMULATION_ERROR
 };
 struct mo_core_ty {
     enum mo_core_ty_tag tag;
@@ -204,6 +208,13 @@ struct mo_core_io_op {
     bool ro;
 };
 
+struct mo_core_sim_op {
+    enum mo_sim_operation tag;
+    mo_core_natural descriptor, tool;
+    mo_core_ty_list arguments;
+    mo_core_ty result;
+};
+
 enum mo_core_prim_tag {
     MO_CORE_PRIM_INT,
     MO_CORE_PRIM_BIG,
@@ -224,7 +235,8 @@ enum mo_core_prim_tag {
 #define MO_CORE_TYPED_TAG(tag, member, text) MO_CORE_PRIM_##tag,
     MO_CORE_TYPED_OPS(MO_CORE_TYPED_TAG)
 #undef MO_CORE_TYPED_TAG
-        MO_CORE_PRIM_IO
+        MO_CORE_PRIM_IO,
+    MO_CORE_PRIM_SIM
 };
 struct mo_core_prim {
     enum mo_core_prim_tag tag;
@@ -259,6 +271,7 @@ struct mo_core_prim {
         mo_core_ty eq;
         mo_core_ty structural;
         struct mo_core_io_op io;
+        struct mo_core_sim_op sim;
     } as;
 };
 
@@ -760,7 +773,7 @@ enum mo_core_text_kind {
     MO_CORE_TEXT_CAP_STATE,
     MO_CORE_TEXT_RANDOM_STATE
 };
-#define MO_CORE_TEXT_VERSION "0.8"
+#define MO_CORE_TEXT_VERSION "0.9"
 /* Core parsing, printing, metadata validation and checking use bounded recursion.
  * Callers must run Core work on MO_SOURCE_STACK_SIZE via mo_with_stack (base/stack.h),
  * rather than relying on platform thread-stack defaults; see architecture section 12. */
@@ -781,6 +794,8 @@ MO_MUST_USE bool mo_core_metadata_valid(const struct mo_core *core);
  * Uses expression spans, then declaration spans; without either, file UINT32_MAX,
  * start/end zero. E1052/E1053 report resource limits, not typing bugs. */
 MO_MUST_USE bool mo_core_check(const struct mo_core *core, struct mo_diags *diags);
+MO_MUST_USE bool mo_core_check_services(const struct mo_core *core,
+                                        const struct mo_services *services, struct mo_diags *diags);
 MO_MUST_USE bool mo_core_print(const struct mo_core *core, struct mo_buffer *out);
 MO_MUST_USE struct mo_core *mo_core_parse(struct mo_arena *arena, const char *text, size_t length,
                                           struct mo_diags *diags);

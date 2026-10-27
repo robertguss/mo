@@ -1,0 +1,7 @@
+error E0055: a simulation operation needs a direct call  tests/errors/e0055-simulation-value/main.mo:4:19
+
+  4 |   _f = Simulation.crash
+    |                   ^^^^^ call this operation directly
+
+Simulation operations are not values; call one directly, as in Simulation.crash(sim) (reference 12.4).
+

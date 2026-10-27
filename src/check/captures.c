@@ -84,7 +84,7 @@ static MO_MUST_USE bool stored(struct captures *p, const struct mo_source_type *
         return true;
     }
     static const char *const capabilities[] = {"Args",      "Env",   "Console", "Files",
-                                               "ReadFiles", "Clock", "Random"};
+                                               "ReadFiles", "Clock", "Random",  "Simulation"};
     for (uint32_t i = 0; i < sizeof(capabilities) / sizeof(capabilities[0]); i++)
         if (type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX &&
             strcmp(type->name, capabilities[i]) == 0)

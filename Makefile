@@ -428,9 +428,15 @@ $(BUILD)/sanitize/store-faults/service.o: src/vm/service.c Makefile $(SOURCE_LIS
 $(BUILD)/sanitize/store-faults/store.o: src/host/store.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(SANITIZE) -Dsqlite3_step=mo_store_fault_step -c $< -o $@
-$(BUILD)/debug/tests/test_service_store.test: $(BUILD)/debug/tests/test_service_store.o $(call objects,$(BUILD)/debug,$(filter-out src/vm/service.c src/host/store.c,$(LIB_SOURCES))) $(BUILD)/debug/store-faults/service.o $(BUILD)/debug/store-faults/store.o
+$(BUILD)/debug/store-faults/simulation.o: src/vm/simulation.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -Dmo_service_open=mo_simulation_observe_open -Dmo_service_send=mo_simulation_observe_send -Dmo_value_case=mo_simulation_fault_case -c $< -o $@
+$(BUILD)/sanitize/store-faults/simulation.o: src/vm/simulation.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) -Dmo_service_open=mo_simulation_observe_open -Dmo_service_send=mo_simulation_observe_send -Dmo_value_case=mo_simulation_fault_case -c $< -o $@
+$(BUILD)/debug/tests/test_service_store.test: $(BUILD)/debug/tests/test_service_store.o $(call objects,$(BUILD)/debug,$(filter-out src/vm/service.c src/vm/simulation.c src/host/store.c,$(LIB_SOURCES))) $(BUILD)/debug/store-faults/service.o $(BUILD)/debug/store-faults/store.o $(BUILD)/debug/store-faults/simulation.o
 	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
-$(BUILD)/sanitize/tests/test_service_store.test: $(BUILD)/sanitize/tests/test_service_store.o $(call objects,$(BUILD)/sanitize,$(filter-out src/vm/service.c src/host/store.c,$(LIB_SOURCES))) $(BUILD)/sanitize/store-faults/service.o $(BUILD)/sanitize/store-faults/store.o
+$(BUILD)/sanitize/tests/test_service_store.test: $(BUILD)/sanitize/tests/test_service_store.o $(call objects,$(BUILD)/sanitize,$(filter-out src/vm/service.c src/vm/simulation.c src/host/store.c,$(LIB_SOURCES))) $(BUILD)/sanitize/store-faults/service.o $(BUILD)/sanitize/store-faults/store.o $(BUILD)/sanitize/store-faults/simulation.o
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
 # Only this test substitutes the resolver's native calls and lowers host read

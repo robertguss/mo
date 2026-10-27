@@ -10,6 +10,57 @@
 
 #include <string.h>
 
+static void simulation_inputs(void) {
+    struct fixture f;
+    init(&f, "module Main\n"
+             "service\nstate Int = 0\ntools add\ntoken from env \"TOKEN\"\nend\n"
+             "fn add(state: Int, _now: Time, amount: Int) : (Int, Int)\n"
+             "(state + amount, state)\nend\n"
+             "fn helper(sim: Simulation) : Result((Int, Int), SimulationError)\n"
+             "Simulation.send(sim, Main.add, 3)\nend\n"
+             "test \"a simulation can pass through a helper\"\n"
+             "sim = Simulation.start(Main, Time.parse(\"2026-01-01T00:00:00Z\") or stop \"time\")\n"
+             "assert helper(sim) == Ok((3, 0))\n"
+             "Simulation.crash(sim)\nSimulation.restart(sim)\n"
+             "assert sim.helper == Ok((6, 3))\nend\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    free_fixture(&f);
+
+    init(&f, "module Main\nfn helper(sim: Simulation)\nsim.crash()\nend\n");
+    CHECK(f.program == NULL && f.diags.count == 1);
+    if (f.diags.count == 1) {
+        CHECK(f.diags.items[0].code == MO_CODE_NAME_UNKNOWN);
+        CHECK(strcmp(f.diags.items[0].message, "no visible function has this dot-call name") == 0);
+    }
+    free_fixture(&f);
+
+    const char *invalid[] = {"Main.private", "Main.tick", "Main.missing", "selected"};
+    for (size_t i = 0; i < sizeof invalid / sizeof *invalid; i++) {
+        char source[2048];
+        int n = snprintf(
+            source, sizeof source,
+            "module Main\nservice\nstate Int = 0\ntools read\nevery 1.minute tick\n"
+            "token from env \"TOKEN\"\nend\n"
+            "fn read(state: Int, _now: Time) : List(Int)\n[state]\nend\n"
+            "fn private(state: Int, _now: Time) : List(Int)\n[state]\nend\n"
+            "fn tick(state: Int, _now: Time) : Int\nstate + 1\nend\n"
+            "test \"selector is syntax\"\n"
+            "sim = Simulation.start(Main, Time.parse(\"2026-01-01T00:00:00Z\") or stop \"time\")\n"
+            "selected = read\n_result = Simulation.send(sim, %s)\nend\n",
+            invalid[i]);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof source);
+        init(&f, source);
+        bool selector = false;
+        for (uint32_t j = 0; j < f.diags.count; j++)
+            selector |= f.diags.items[j].code == MO_CODE_SERVICE_HANDLER;
+        CHECK(f.program == NULL && selector);
+        if (!selector)
+            for (uint32_t j = 0; j < f.diags.count; j++)
+                (void)fprintf(stderr, "%s: %s\n", invalid[i], f.diags.items[j].message);
+        free_fixture(&f);
+    }
+}
+
 static void service_inputs(void) {
     struct fixture f;
     init(&f, "module Main\nservice\n  state List(Int) = []\n  tools snapshots\n"
@@ -3018,6 +3069,7 @@ static void time_arithmetic_graph(void) {
 
 static void run(void *argument) {
     (void)argument;
+    simulation_inputs();
     service_inputs();
     service_handlers();
     service_rules();

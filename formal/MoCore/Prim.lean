@@ -803,6 +803,7 @@ def Prim.eval (p : Prim) (vs : List Value) (w : World)
   | .text op, vs, w => evalTextOp op vs w
   | .bytes op, vs, w => evalBytesOp op vs w
   | .unicode16 _, _, w => outside "Unicode16 is a trusted primitive unavailable in mocore" w
+  | .sim _, _, w => outside "Simulation is not modeled by mocore" w
   | .range op, vs, w => evalRangeOp op vs w
   | .time op, vs, w => evalTimeOp op vs w
   | .list _ op, vs, w => evalListOp op vs w

@@ -445,6 +445,20 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
     struct mo_constant_context constants;
     if (!mo_check_constants(arena, interfaces, signatures, &constants, diags))
         return NULL;
+    *program = (struct mo_program){.set = set,
+                                   .interfaces = interfaces,
+                                   .signatures = signatures,
+                                   .function_count = signatures->count,
+                                   .functions = functions,
+                                   .constant_count = constants.count,
+                                   .constants = constants.items};
+    for (uint32_t i = 0; i < signatures->count; i++)
+        functions[i] = (struct mo_checked_function){.signature = order[i]};
+    if (!signatures->recovering) {
+        if (!mo_prepare_services(arena, program, diags))
+            return NULL;
+        signatures->service_program = program;
+    }
     uint32_t main = UINT32_MAX;
     for (uint32_t i = 0; i < signatures->count; i++) {
         const struct mo_function_signature *fn = order[i];
@@ -518,14 +532,7 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
                                                   .capabilities = entry->parameters,
                                                   .error_text = error_text};
     }
-    *program = (struct mo_program){.set = set,
-                                   .interfaces = interfaces,
-                                   .signatures = signatures,
-                                   .function_count = signatures->count,
-                                   .functions = functions,
-                                   .constant_count = constants.count,
-                                   .constants = constants.items,
-                                   .entry = checked_entry};
+    program->entry = checked_entry;
     struct mo_checked_spec *specs =
         allocate(arena, diags, span, spec_count, sizeof(*specs), _Alignof(struct mo_checked_spec));
     if (specs == NULL || !check_specs(arena, program, &constants, specs, spec_count, diags))

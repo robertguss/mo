@@ -4,6 +4,7 @@
  * of its parameters, the form of the bugs, and which operations only spec code may use.
  * ci/library_map.sh checks the tables against docs/design/library.md. */
 #include "base/base.h"
+#include "base/simops.h"
 #include "test.h"
 
 #include <stdbool.h>
@@ -674,7 +675,21 @@ static void test_every_capability_operation_is_there(void) {
     CHECK(HOSTOP_COUNT == count);
 }
 
+static void test_vm_families_are_not_host_operations(void) {
+    static const char *const names[] = {
+#define HOSTOP(id, module, name, signature, params, bugs, spec_only)
+#define SIMOP(id, module, name, spec_only) module "." name,
+#include "base/hostops.def"
+    };
+    CHECK(MO_SIM_COUNT == 5 && sizeof names / sizeof *names == MO_SIM_COUNT);
+    CHECK(strcmp(names[MO_SIM_START], "Simulation.start") == 0);
+    CHECK(strcmp(names[MO_SIM_SEND], "Simulation.send") == 0);
+    for (size_t i = 0; i < HOSTOP_COUNT; i++)
+        CHECK(strcmp(hostops[i].module, "Simulation") != 0);
+}
+
 int main(void) {
+    test_vm_families_are_not_host_operations();
     test_signatures_are_read_as_mo_writes_them();
     test_the_rule_for_shared_names();
     test_every_line_is_well_formed();

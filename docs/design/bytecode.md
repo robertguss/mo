@@ -63,7 +63,7 @@ monomorphization, each once. A type is one of:
 | `choice` | name; cases, each with a name and its fields' names and types, and whether its one field is unnamed | see 2.3 |
 | `function` | parameter types, result type | reference to a closure |
 | `env` | the closure code's function index | the closure seen from inside (section 5.3) |
-| `capability` | which: `Args`, `Env`, `Console`, `Files`, `ReadFiles`, `Clock` or `Random` | reference |
+| `capability` | which: `Args`, `Env`, `Console`, `Files`, `ReadFiles`, `Clock`, `Random` or `Simulation` | reference |
 
 Structural types (tuples, lists, sets, maps and functions) are interned, so
 two types are equal exactly when their indices are. Records and choice types
@@ -292,7 +292,7 @@ The numbers below are the enum values in `heap/types.h`.
 | `choice` (18) | name string index, case count, that many cases |
 | `function` (19) | parameter count, that many type indices, result type index; at most `MO_LIMIT_BYTECODE_PARAMETERS`, without `env` |
 | `env` (20) | closure code's function index |
-| `capability` (21) | `mo_capability`: Args = 0, Env = 1, Console = 2, Files = 3, ReadFiles = 4, Clock = 5, Random = 6 |
+| `capability` (21) | `mo_capability`: Args = 0, Env = 1, Console = 2, Files = 3, ReadFiles = 4, Clock = 5, Random = 6, Simulation = 7 |
 
 A **field** is its name string index, then its type index. A **case** is its
 name string index, field count, then its fields in declaration order. Only
@@ -835,6 +835,7 @@ None runs off the end of the code.
 | `equal r_d, t, r_a, r_b` | reads both; structural equality for a type with `Equal` (reference 9.2), `r_d` a `bool` |
 | `prim r_d, p, t, r_1, …, r_n` | a primitive (section 6). `t` is the function type of its signature at its instantiation, such as `fn(List(Int), Int) : Option(Int)` for `List.get`, so the verifier and the VM know the type of every argument and of the result, even for a primitive with no parameters, such as `Set.empty` |
 | `host r_d, h, r_c, r_1, …, r_n` | a capability operation (section 7). `r_c` is the capability, which it reads. A fake constructor has no capability to call through, so it is `host r_d, h, r_1, …, r_n`, and only spec code may use it (section 9) |
+| `sim r_d, op, D, T, r_1, …, r_n` | opcode 87, VM-handled `SIMOP` family; fixed immediate operation/descriptor/tool indices, all argument registers borrowed. START=0, SEND=1, ADVANCE=2, CRASH=3, RESTART=4. Start takes Time, returns Simulation and is spec-only. Send takes the handle plus descriptor-selected tool arguments and returns Result(complete handler result, SimulationError). Advance takes handle/Duration; crash/restart take handle; controls return Unit. Controls require D=T=0; start requires T=0. The verifier checks all indices, arities and types against service descriptors; no fixed host signature is used. |
 
 `set_field`, and every primitive that "changes" a collection, work the same
 way:
@@ -1058,6 +1059,18 @@ doesn't change a list the test holds. Every handle on one fake shares its
 state: the `Console.fake()` passed to `main` and the one the test reads
 `printed` from are the same object. `files.within("a")` and `files.read_only`
 make new handles on the same state, with a longer prefix or read-only set.
+
+**Simulation** is a VM-owned fake capability. Its native context owns one
+service loop and one open in-memory store. The last reference, or heap
+teardown after a stopped test, invokes its release once: free the loop, then
+close the store, without accessing the caller's heap. Crash only frees the
+loop; restart reuses that same open store. Construction owns the store until
+the handle exists, after which only release closes it. The shared store limit
+is eight; a test that stops still returns its slot. Arguments and replies are
+copied between same-image heaps by the saved codec, never shared by refcount.
+Simulation is excluded from main capabilities and service descriptor types.
+`SimulationError` is a two-case choice, `ServiceDown` then `ToolFailed`, both
+without fields. These names are checked as a built-in shape at send sites.
 
 **A real capability** is made by the runtime, once, for `main`. Dropping a real
 `Files` or `ReadFiles` handle closes its folder's descriptor. The number of
@@ -1366,7 +1379,7 @@ EXPECTATION = "none" | "allows" | "forbids"
 ```
 
 `SIMPLE` is a payload-free kind from section 3 (`unit` through `bigint`).
-`CAP` is one of its seven capability names. `KIND` is one of section 3.3's
+`CAP` is one of its eight capability names. `KIND` is one of section 3.3's
 seven function kinds; `OWNERSHIP` is `owned` or `borrowed`; `BOOL` is `0` or
 `1`; `SIGN` is `zero`, `positive` or `negative`. These names encode the enum
 values in the headers, not extra strings. `P` and `H` are `p` and `h` followed

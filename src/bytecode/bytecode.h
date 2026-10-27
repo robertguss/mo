@@ -12,6 +12,7 @@
 #include "base/hostops.h"
 #include "base/limits.h"
 #include "base/prims.h"
+#include "base/simops.h"
 
 enum mo_operand_kind {
     MO_OPERAND_NONE,
@@ -26,6 +27,7 @@ enum mo_operand_kind {
     MO_OPERAND_TARGET,
     MO_OPERAND_FIELD,
     MO_OPERAND_CASE,
+    MO_OPERAND_INDEX,
 };
 
 /* MOVE consumes only an owned source, and preserves borrowing otherwise. The three parameter
@@ -113,6 +115,8 @@ struct mo_opcode_info {
     { MO_OPERAND_FIELD, MO_ACCESS_NONE }
 #define MO_DESC_CASE                                                                               \
     { MO_OPERAND_CASE, MO_ACCESS_NONE }
+#define MO_DESC_INDEX                                                                              \
+    { MO_OPERAND_INDEX, MO_ACCESS_NONE }
 
 static const struct mo_opcode_info mo_opcodes[MO_OPCODE_COUNT] = {
 #define OPCODE(id, number, name, count, limit, tail, a, b, c, d)                                   \
@@ -141,6 +145,7 @@ static const struct mo_opcode_info mo_opcodes[MO_OPCODE_COUNT] = {
 #undef MO_DESC_TARGET
 #undef MO_DESC_FIELD
 #undef MO_DESC_CASE
+#undef MO_DESC_INDEX
 
 /* A table lookup also accepts the untrusted low 16 bits of an instruction head. */
 MO_MUST_USE static inline const struct mo_opcode_info *mo_opcode_find(uint32_t number) {

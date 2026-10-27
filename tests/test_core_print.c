@@ -52,7 +52,7 @@ static MO_MUST_USE int print_file(const char *path) {
 
 static void test_round_trip(void) {
     static const char text[] =
-        "(core 0.8 (Run (Program () ((FunDecl \"entry\" () (int) (lit (int 7)) \"M\" (function) "
+        "(core 0.9 (Run (Program () ((FunDecl \"entry\" () (int) (lit (int 7)) \"M\" (function) "
         "0)) () \"entry\" (noSource)) (World () () () () () () 0 (RandomState 0x0000000000000001 "
         "0x0000000000000002 0x0000000000000003 0x0000000000000004) () ()) (entry ()) 0))\n";
     struct mo_arena arena;

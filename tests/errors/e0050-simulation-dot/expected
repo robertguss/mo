@@ -1,0 +1,7 @@
+error E0050: no visible function has this dot-call name  tests/errors/e0050-simulation-dot/main.mo:4:7
+
+  4 |   sim.crash
+    |       ^^^^^ not visible in this block
+
+Simulation operations are called through the module, as in Simulation.crash(sim), not as dot calls (reference 12.4).
+

@@ -73,6 +73,8 @@ static MO_MUST_USE struct mo_codegen_operation comparison(const struct mo_core_p
 bool mo_codegen_operation(const struct mo_core_prim *p, struct mo_codegen_operation *out) {
     enum mo_primitive_id row = MO_PRIM_COUNT;
     switch (p->tag) {
+    case MO_CORE_PRIM_SIM:
+        return false;
     case MO_CORE_PRIM_INT: {
         if (p->as.int_ <= MO_CORE_INT_OP_NEG) {
             *out = arithmetic((unsigned)p->as.int_, 0);

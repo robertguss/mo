@@ -1,0 +1,6 @@
+stopped Main.test.1  tests/golden/tst-simulation-admission/main.mo:13:1
+  bug: Simulation admission: aggregate saved message is 16777301 bytes, exceeding MO_LIMIT_SAVED_BYTES (16777216); nothing was queued or committed; no handler ran
+  at Main.test.1  tests/golden/tst-simulation-admission/main.mo:16:12
+  large = <value unavailable>
+  sim = <Simulation>
+0 passed, 0 failed, 1 stopped

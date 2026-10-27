@@ -521,7 +521,7 @@ static MO_MUST_USE const struct mo_ability_implementation *prove(struct mo_abili
                   (ability == MO_SOURCE_ORDER &&
                    (named(type, "Range") || named(type, "Map") || named(type, "Set")));
     static const char *const capabilities[] = {"Args",      "Env",   "Console", "Files",
-                                               "ReadFiles", "Clock", "Random"};
+                                               "ReadFiles", "Clock", "Random",  "Simulation"};
     for (unsigned i = 0; i < sizeof(capabilities) / sizeof(capabilities[0]); i++)
         denied = denied || named(type, capabilities[i]);
     if (denied) {
@@ -545,7 +545,7 @@ static MO_MUST_USE const struct mo_ability_implementation *prove(struct mo_abili
         return derive_data(p, out, depth) ? out : NULL;
     }
     if (named(type, "Entry") || named(type, "FileError") || named(type, "Ordering") ||
-        named(type, "EntryKind"))
+        named(type, "EntryKind") || named(type, "SimulationError"))
         return derive_native(p, out, depth) ? out : NULL;
     if (type->kind == MO_SOURCE_TUPLE || type->count != 0) {
         out->kind = MO_ABILITY_DERIVED;

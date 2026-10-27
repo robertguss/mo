@@ -234,7 +234,7 @@ static void type_entry(struct reader *r, struct mo_type *t) {
         break;
     case MO_TYPE_CAPABILITY: {
         uint32_t cap = word(r);
-        if (cap > MO_CAP_RANDOM) {
+        if (cap > MO_CAP_SIMULATION) {
             refuse(r, "unknown capability");
         }
         t->capability = (enum mo_capability)cap;

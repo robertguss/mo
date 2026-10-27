@@ -363,6 +363,8 @@ static bool operand_ok(const struct world *w, enum mo_operand_kind kind, uint32_
         return value < MO_LIMIT_FIELDS;
     case MO_OPERAND_CASE:
         return value < MO_LIMIT_CHOICE_CASES;
+    case MO_OPERAND_INDEX:
+        return true;
     case MO_OPERAND_NONE:
         return false;
     }

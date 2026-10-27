@@ -151,6 +151,8 @@ static MO_MUST_USE struct mo_cell vm_run_restore(struct vm_run_context *c, size_
             initial.as.random[2] = s->random.s2;
             initial.as.random[3] = s->random.s3;
             break;
+        case MO_CAP_SIMULATION:
+            MO_UNREACHABLE();
         }
         struct mo_host_error error;
         MO_ASSERT(mo_host_fake_restore(c->host, c->heap, backing_type, &initial, &cached->value,
@@ -315,6 +317,8 @@ static void vm_run_effects(struct vm_run_context *c) {
                     (struct mo_core_random_state){snapshot.as.random[0], snapshot.as.random[1],
                                                   snapshot.as.random[2], snapshot.as.random[3]};
                 break;
+            case MO_CAP_SIMULATION:
+                MO_UNREACHABLE();
             }
             mo_host_fake_state_drop(c->host, c->heap, &snapshot);
         }

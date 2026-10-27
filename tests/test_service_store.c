@@ -2,6 +2,7 @@
 #include "base/binary.h"
 #include "base/stack.h"
 #include "base/store-memory.h"
+#include "bytecode/io.h"
 #include "codegen/codegen.h"
 #include "lower/lower.h"
 #include "program_fixture.h"
@@ -13,17 +14,95 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-static unsigned crash_point, log_steps;
+static unsigned crash_point, log_steps, simulation_appends;
+static struct {
+    bool enabled, forward, refuse, refuse_case;
+    struct mo_service_hooks hooks;
+    struct mo_service_loop *loop;
+    struct mo_store *store;
+    struct mo_service_time initial_time, final_time;
+    unsigned sends, replies, failures, restarts, memory, opens, fail_open, open_fault;
+} observed;
 MO_MUST_USE enum mo_store_status
 mo_store_fault_call(struct mo_store *store, enum mo_store_operation operation,
                     const struct mo_store_record *record,
                     bool (*consume)(const struct mo_store_record *, void *), void *context);
 int mo_store_fault_step(sqlite3_stmt *stmt);
+MO_MUST_USE enum mo_service_status mo_simulation_observe_open(const struct mo_image *image,
+                                                              uint32_t index,
+                                                              const struct mo_service_hooks *hooks,
+                                                              struct mo_store *store,
+                                                              struct mo_service_loop **out);
+MO_MUST_USE enum mo_service_status mo_simulation_observe_send(struct mo_service_loop *loop,
+                                                              uint32_t tool,
+                                                              const struct mo_cell *arguments,
+                                                              uint32_t count, uint64_t id);
+MO_MUST_USE bool mo_simulation_fault_case(struct mo_heap *heap, uint32_t type, uint32_t tag,
+                                          const struct mo_cell *fields, uint32_t count,
+                                          struct mo_cell *out);
+
+bool mo_simulation_fault_case(struct mo_heap *heap, uint32_t type, uint32_t tag,
+                              const struct mo_cell *fields, uint32_t count, struct mo_cell *out) {
+    return !(observed.enabled && observed.refuse_case) &&
+           mo_value_case(heap, type, tag, fields, count, out);
+}
+
+static struct mo_service_time observed_clock(void *context) {
+    (void)context;
+    return observed.hooks.clock(observed.hooks.context);
+}
+
+static void observed_reply(const struct mo_service_response *response, void *context) {
+    (void)context;
+    observed.replies++;
+    observed.memory += response->status == MO_SERVICE_MEMORY ? 1u : 0u;
+    if (observed.forward)
+        observed.hooks.reply(response, observed.hooks.context);
+}
+
+static void observed_event(const struct mo_service_event *e, void *context) {
+    (void)context;
+    observed.failures += e->kind == MO_SERVICE_FAILURE ? 1u : 0u;
+    observed.restarts += e->kind == MO_SERVICE_RESTART ? 1u : 0u;
+    if (observed.forward)
+        observed.hooks.event(e, observed.hooks.context);
+}
+
+enum mo_service_status mo_simulation_observe_open(const struct mo_image *image, uint32_t index,
+                                                  const struct mo_service_hooks *hooks,
+                                                  struct mo_store *store,
+                                                  struct mo_service_loop **out) {
+    if (!observed.enabled)
+        return mo_service_open(image, index, hooks, store, out);
+    observed.hooks = *hooks;
+    observed.store = store;
+    observed.initial_time = hooks->clock(hooks->context);
+    if (++observed.opens == observed.fail_open)
+        crash_point = observed.open_fault;
+    struct mo_service_hooks recording = {observed_clock, observed_reply, observed_event, NULL};
+    enum mo_service_status status = mo_service_open(image, index, &recording, store, out);
+    if (status == MO_SERVICE_OK)
+        observed.loop = *out;
+    return status;
+}
+
+enum mo_service_status mo_simulation_observe_send(struct mo_service_loop *loop, uint32_t tool,
+                                                  const struct mo_cell *arguments, uint32_t count,
+                                                  uint64_t id) {
+    if (observed.enabled) {
+        observed.sends++;
+        if (observed.refuse)
+            return MO_SERVICE_MEMORY;
+    }
+    return mo_service_send(loop, tool, arguments, count, id);
+}
 
 enum mo_store_status mo_store_fault_call(struct mo_store *store, enum mo_store_operation operation,
                                          const struct mo_store_record *record,
                                          bool (*consume)(const struct mo_store_record *, void *),
                                          void *context) {
+    if (operation == MO_STORE_APPEND)
+        simulation_appends++;
     if (operation == MO_STORE_APPEND && crash_point == 1)
         _exit(71);
     if (operation == MO_STORE_SNAPSHOT && crash_point == 6)
@@ -921,8 +1000,355 @@ static void shared_result_bound(void) {
     mo_image_free(image);
 }
 
+static uint32_t simulation_test(const struct mo_bytecode *file) {
+    for (uint32_t i = 0; i < file->function_count; i++)
+        if (file->functions[i].kind == MO_FUNCTION_TEST)
+            return i;
+    MO_UNREACHABLE();
+}
+
+static void simulation_run(struct mo_image *image, const char *reason, size_t heap) {
+    struct mo_limits limits = mo_limits_default();
+    if (heap != 0)
+        limits.heap_size = heap;
+    struct mo_process *p = mo_process_new(image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_cell result;
+    struct mo_defect defect;
+    enum mo_outcome outcome =
+        mo_call(p, simulation_test(mo_image_bytecode(image)), NULL, 0, &result, &defect);
+    CHECK(outcome == (reason == NULL ? MO_RETURNED : MO_STOPPED));
+    if (reason != NULL && outcome == MO_STOPPED) {
+        CHECK(defect.reason != NULL && strstr(defect.reason, reason) != NULL);
+        if (defect.reason == NULL || strstr(defect.reason, reason) == NULL)
+            (void)fprintf(stderr, "simulation wanted %s, got %s\n", reason, defect.reason);
+    }
+    if (observed.enabled)
+        observed.final_time = observed.hooks.clock(observed.hooks.context);
+    mo_process_free(p);
+}
+
+static bool simulation_start_snapshot(const struct mo_store_record *record, void *context) {
+    uint32_t type = *(uint32_t *)context;
+    struct mo_heap *heap = mo_service_heap(observed.loop);
+    struct mo_cell value;
+    CHECK(record->kind == MO_STORE_STATE && record->sequence == 0);
+    bool decoded = mo_value_decode(heap, type, record->bytes, record->length, &value);
+    CHECK(decoded);
+    if (decoded) {
+        CHECK(mo_cell_get_int(value) == 7);
+        mo_value_drop(heap, type, value);
+    }
+    return true;
+}
+
+static void simulation_admission(void) {
+    const char *bodies[] = {
+        "a = \"x\".repeat(8388608)\n_result = Simulation.send(sim, Main.accept, a, a)\n",
+        "a = \"x\".repeat(8388608)\nb = \"y\".repeat(8388523)\n"
+        "assert Simulation.send(sim, Main.accept, a, b) == Ok((8, 7))\n",
+        "a = \"x\".repeat(8388608)\n"
+        "assert Simulation.send(sim, Main.read, a, a) == Ok([7])\n",
+        "_result = Simulation.send(sim, Main.accept, \"a\", \"b\")\n",
+        "for _i in 0..5\nassert Simulation.send(sim, Main.memory) == Error(ToolFailed)\nend\n"
+        "assert Simulation.send(sim, Main.snapshot) == Ok([7])\n",
+        "b = \"x\".repeat(16777216)\n_result = Simulation.send(sim, Main.accept, \"first\", b)\n"};
+    for (unsigned scenario = 0; scenario < 6; scenario++) {
+        char source[4096];
+        int n = snprintf(
+            source, sizeof source,
+            "module Main\nservice\nstate Int = 7\ntools accept, read, broken, memory, snapshot\n"
+            "token from env \"TOKEN\"\nend\n"
+            "fn accept(state: Int, _now: Time, _a: Text, _b: Text) : (Int, Int)\n"
+            "(state + 1, state)\nend\n"
+            "fn read(state: Int, _now: Time, _a: Text, _b: Text) : List(Int)\n[state]\nend\n"
+            "fn broken(_state: Int, _now: Time) : (Int, Int)\nstop \"broken\"\nend\n"
+            "fn memory(state: Int, _now: Time) : (Int, Text)\n"
+            "(state + 1, \"x\".repeat(67108864))\nend\n"
+            "fn snapshot(state: Int, _now: Time) : List(Int)\n[state]\nend\n"
+            "test \"admission and execution differ\"\n"
+            "sim = Simulation.start(Main, Time.parse(\"2026-01-01T00:00:00Z\") or stop \"time\")\n"
+            "%send\n",
+            bodies[scenario]);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof source);
+        struct mo_image *image = compile(source);
+        memset(&observed, 0, sizeof observed);
+        observed.enabled = true;
+        observed.forward = true;
+        observed.refuse = scenario == 3;
+        simulation_appends = 0;
+        struct mo_limits limits = mo_limits_default();
+        struct mo_process *p = mo_process_new(image, &limits);
+        MO_ASSERT(p != NULL);
+        struct mo_cell result;
+        struct mo_defect defect;
+        enum mo_outcome outcome =
+            mo_call(p, simulation_test(mo_image_bytecode(image)), NULL, 0, &result, &defect);
+        bool refused = scenario == 0 || scenario == 3 || scenario == 5;
+        CHECK(outcome == (refused ? MO_STOPPED : MO_RETURNED));
+        if (refused && outcome == MO_STOPPED) {
+            const char *reason =
+                scenario == 0   ? "aggregate saved message is 16777301 bytes, exceeding "
+                                  "MO_LIMIT_SAVED_BYTES (16777216)"
+                : scenario == 5 ? "Simulation argument _b copy-in: MO_LIMIT_SAVED_BYTES (16777216)"
+                                : "Simulation admission refused";
+            CHECK(strstr(defect.reason, reason) != NULL);
+            CHECK(strstr(defect.reason, "nothing was queued or committed") != NULL);
+            if (scenario != 5)
+                CHECK(strstr(defect.reason, "; no handler ran") != NULL);
+            CHECK(observed.sends == (scenario == 3 ? 1u : 0u));
+            CHECK(observed.replies == 0 && observed.failures == 0 && observed.restarts == 0);
+            CHECK(mo_service_pending(observed.loop) == 0);
+            CHECK(mo_cell_get_int(mo_service_state(observed.loop)) == 7);
+            check_inventory(observed.store, 0, 0);
+            uint32_t type = mo_image_bytecode(image)->services[0].state_type;
+            CHECK(mo_store_call(observed.store, MO_STORE_LOAD, NULL, simulation_start_snapshot,
+                                &type) == MO_STORE_OK);
+            observed.forward = false;
+            for (unsigned i = 0; i < 5; i++) {
+                CHECK(mo_service_send(observed.loop, 2, NULL, 0, i) == MO_SERVICE_OK);
+                CHECK(mo_service_step(observed.loop));
+                CHECK(observed.restarts == (i == 4 ? 1u : 0u));
+            }
+            CHECK(observed.failures == 5 && observed.replies == 5);
+            CHECK(mo_cell_get_int(mo_service_state(observed.loop)) == 7);
+            check_inventory(observed.store, 0, 0);
+        } else if (!refused) {
+            CHECK(observed.sends == (scenario == 4 ? 6u : 1u));
+            CHECK(observed.replies == observed.sends);
+            CHECK(observed.memory == (scenario == 4 ? 5u : 0u));
+            CHECK(observed.failures == (scenario == 4 ? 5u : 0u));
+            CHECK(observed.restarts == (scenario == 4 ? 1u : 0u));
+        }
+        CHECK(simulation_appends == (scenario == 1 ? 1u : 0u));
+        mo_process_free(p);
+        observed.enabled = false;
+        mo_image_free(image);
+    }
+}
+
+static void simulation_persistence(void) {
+    const char *source =
+        "module Main\nservice\nstate Int = 0\ntools read\nevery 1.minute tick\n"
+        "token from env \"TOKEN\"\nend\n"
+        "fn tick(state: Int, _now: Time) : Int\nstate + 1\nend\n"
+        "fn read(state: Int, _now: Time) : List(Int)\n[state]\nend\n"
+        "test \"precount refuses without executing\"\n"
+        "sim = Simulation.start(Main, Time.parse(\"2026-01-01T00:00:00Z\") or stop \"time\")\n"
+        "Simulation.advance(sim, 10001.minutes)\nend\n";
+    struct mo_image *image = compile(source);
+    simulation_appends = 0;
+    memset(&observed, 0, sizeof observed);
+    observed.enabled = true;
+    observed.forward = true;
+    simulation_run(image, "10001 firings exceed MO_LIMIT_SIMULATION_TICKS (10000)", 0);
+    CHECK(simulation_appends == 1);
+    CHECK(observed.initial_time.now == observed.final_time.now);
+    CHECK(observed.initial_time.elapsed == observed.final_time.elapsed);
+    CHECK(observed.replies == 1);
+    observed.enabled = false;
+    mo_image_free(image);
+
+    image = compile(
+        "module Main\nservice\nstate Int = 0\ntools read, reject\n"
+        "token from env \"TOKEN\"\nend\n"
+        "fn read(state: Int, _now: Time) : List(Int)\n[state]\nend\n"
+        "fn reject(_state: Int, _now: Time) : Result((Int, Int), Text)\nError(\"no\")\nend\n"
+        "test \"read and rejection never append\"\n"
+        "sim = Simulation.start(Main, Time.parse(\"2026-01-01T00:00:00Z\") or stop \"time\")\n"
+        "for _i in 0..20\nassert Simulation.send(sim, Main.read) == Ok([0])\n"
+        "assert Simulation.send(sim, Main.reject) == Ok(Error(\"no\"))\nend\n"
+        "Simulation.crash(sim)\nSimulation.restart(sim)\n"
+        "assert Simulation.send(sim, Main.read) == Ok([0])\nend\n");
+    simulation_appends = 0;
+    simulation_run(image, NULL, 0);
+    CHECK(simulation_appends == 0);
+    for (unsigned i = 0; i < 2; i++) {
+        memset(&observed, 0, sizeof observed);
+        observed.enabled = true;
+        observed.forward = true;
+        observed.fail_open = 2;
+        observed.open_fault = i == 0 ? 7u : 11u;
+        simulation_run(image,
+                       i == 0 ? "Simulation.restart at 2026-01-01T00:00:00Z: service store failed"
+                              : "Simulation.restart at 2026-01-01T00:00:00Z: saved service data",
+                       0);
+        CHECK(observed.opens == 2);
+        observed.enabled = false;
+        crash_point = 0;
+    }
+    crash_point = 6;
+    simulation_run(image, "Simulation.start at 2026-01-01T00:00:00Z: service store failed", 0);
+    crash_point = 0;
+    mo_image_free(image);
+
+    image = compile(
+        "module Main\nservice\nstate Int = 0\ntools add\n"
+        "token from env \"TOKEN\"\nend\n"
+        "fn add(state: Int, _now: Time) : (Int, Text)\n(state + 1, \"x\".repeat(100000))\nend\n"
+        "test \"reply allocation does not undo an update\"\n"
+        "sim = Simulation.start(Main, Time.parse(\"2026-01-01T00:00:00Z\") or stop \"time\")\n"
+        "_result = Simulation.send(sim, Main.add)\nend\n");
+    simulation_appends = 0;
+    simulation_run(image, "tool add executed; its update was committed; no rollback or retry",
+                   65536);
+    CHECK(simulation_appends == 1);
+    crash_point = 4;
+    simulation_run(image, "Simulation.send at 2026-01-01T00:00:00Z: service store failed", 0);
+    crash_point = 0;
+    mo_image_free(image);
+
+    for (unsigned i = 0; i < 2; i++) {
+        char source_text[1024];
+        int written =
+            snprintf(source_text, sizeof source_text,
+                     "module Main\nservice\nstate Int = 0\ntools broken\n"
+                     "token from env \"TOKEN\"\nend\n"
+                     "fn broken(_state: Int, _now: Time) : List(Int)\nstop \"broken\"\nend\n"
+                     "test \"error allocation\"\n"
+                     "sim = Simulation.start(Main, Time.parse(\"2026-01-01T00:00:00Z\") "
+                     "or stop \"time\")\n%s"
+                     "_reply = Simulation.send(sim, Main.broken)\nend\n",
+                     i == 0 ? "Simulation.crash(sim)\n" : "");
+        MO_ASSERT(written > 0 && (size_t)written < sizeof source_text);
+        image = compile(source_text);
+        memset(&observed, 0, sizeof observed);
+        observed.enabled = true;
+        observed.forward = true;
+        observed.refuse_case = true;
+        simulation_run(image,
+                       i == 0 ? "Simulation.send: allocation failed while returning ServiceDown; "
+                                "nothing was queued or committed"
+                              : "Simulation.send: allocation failed while returning ToolFailed; "
+                                "tool broken failed and nothing was committed",
+                       0);
+        CHECK(observed.sends == i && observed.replies == i && observed.failures == i);
+        observed.enabled = false;
+        mo_image_free(image);
+    }
+}
+
+static void simulation_load(const struct mo_bytecode *file, const char *refusal,
+                            const char *runtime_reason) {
+    struct mo_buffer wire;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_write_error written;
+    MO_ASSERT(mo_bytecode_encode(file, &wire, &written));
+    struct mo_load_error error;
+    struct mo_image *image = mo_load(wire.bytes, wire.length, &error);
+    if (refusal != NULL) {
+        CHECK(image == NULL && error.reason != NULL && strstr(error.reason, refusal) != NULL);
+        if (image != NULL || error.reason == NULL || strstr(error.reason, refusal) == NULL)
+            (void)fprintf(stderr, "simulation load wanted %s, got %s\n", refusal,
+                          image == NULL ? error.reason : "accepted");
+    } else {
+        MO_ASSERT(image != NULL);
+        struct mo_limits limits = mo_limits_default();
+        struct mo_defect defect;
+        MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+        simulation_run(image, runtime_reason, 0);
+    }
+    if (image != NULL)
+        mo_image_free(image);
+    mo_buffer_free(&wire);
+}
+
+static void simulation_verifier(void) {
+    struct mo_image *image = compile(
+        "module Main\nservice\nstate Int = 0\ntools add\nevery 1.minute tick\n"
+        "token from env \"TOKEN\"\nend\n"
+        "fn add(state: Int, _now: Time, n: Int) : (Int, Int)\n(state + n, n)\nend\n"
+        "fn tick(state: Int, _now: Time) : Int\nstate + 1\nend\n"
+        "test \"wire contract\"\n"
+        "sim = Simulation.start(Main, Time.parse(\"2026-01-01T00:00:00Z\") or stop \"time\")\n"
+        "_result = Simulation.send(sim, Main.add, 7)\nend\n");
+    struct mo_bytecode file = *mo_image_bytecode(image);
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_bytecode_function *functions = mo_arena_allocate_array(
+        &arena, file.function_count, sizeof *functions, _Alignof(struct mo_bytecode_function));
+    struct mo_bytecode_debug *debug = mo_arena_allocate_array(
+        &arena, file.debug_count, sizeof *debug, _Alignof(struct mo_bytecode_debug));
+    MO_ASSERT(functions != NULL && debug != NULL);
+    memcpy(functions, file.functions, file.function_count * sizeof *functions);
+    memcpy(debug, file.debug, file.debug_count * sizeof *debug);
+    file.functions = functions;
+    file.debug = debug;
+    uint32_t test = simulation_test(&file);
+    struct mo_bytecode_function *fn = &functions[test];
+    uint32_t *words =
+        mo_arena_allocate_array(&arena, fn->code_count, sizeof *words, _Alignof(uint32_t));
+    MO_ASSERT(words != NULL);
+    memcpy(words, fn->code, fn->code_count * sizeof *words);
+    fn->code = words;
+    simulation_load(&file, NULL, NULL);
+    fn->kind = MO_FUNCTION_FUNCTION;
+    fn->spec_code = false;
+    uint32_t text = debug[test].text;
+    debug[test].text = MO_NO_INDEX;
+    simulation_load(&file, "simulation start in non-spec code", NULL);
+    fn->kind = MO_FUNCTION_TEST;
+    fn->spec_code = true;
+    debug[test].text = text;
+    for (uint32_t pc = 0; pc < fn->code_count;) {
+        const struct mo_opcode_info *op = mo_opcode_find(words[pc] & MO_OPCODE_MASK);
+        MO_ASSERT(op != NULL);
+        uint32_t tail = words[pc] >> MO_OPCODE_VARIABLE_SHIFT;
+        if (op->number == MO_OP_SIM) {
+            uint32_t descriptor = words[pc + 3];
+            words[pc + 3] = file.service_count;
+            simulation_load(&file, "descriptor", NULL);
+            words[pc + 3] = descriptor;
+            if (tail == 2) {
+                uint32_t tool = words[pc + 4];
+                words[pc + 4] = file.services[0].tool_count;
+                simulation_load(&file, "simulation send tool", NULL);
+                words[pc + 4] = tool;
+                uint32_t argument = words[pc + 6];
+                words[pc + 6] = words[pc + 5];
+                simulation_load(&file, "simulation send argument types or count", NULL);
+                words[pc + 6] = argument;
+                uint32_t destination = words[pc + 1];
+                words[pc + 1] = argument;
+                simulation_load(&file, "simulation send result", NULL);
+                words[pc + 1] = destination;
+            }
+        }
+        pc += 1u + op->fixed_count + tail;
+    }
+    struct mo_bytecode_constant *constants = mo_arena_allocate_array(
+        &arena, file.constant_count, sizeof *constants, _Alignof(struct mo_bytecode_constant));
+    MO_ASSERT(constants != NULL);
+    memcpy(constants, file.constants, file.constant_count * sizeof *constants);
+    file.constants = constants;
+    uint32_t zero = MO_NO_INDEX;
+    for (uint32_t i = 0; i < file.constant_count; i++) {
+        if (file.types[constants[i].type].kind == MO_TYPE_DURATION) {
+            memset(constants[i].value.immediate, 0, sizeof constants[i].value.immediate);
+            zero = i;
+            break;
+        }
+    }
+    MO_ASSERT(zero != MO_NO_INDEX);
+    uint32_t interval = file.services[0].timers[0].interval;
+    uint32_t code[] = {MO_OP_CONST, 0, zero, MO_OP_RET, 0};
+    functions[interval].register_count = 1;
+    functions[interval].register_types = &functions[interval].result_type;
+    functions[interval].code = code;
+    functions[interval].code_count = sizeof code / sizeof code[0];
+    debug[interval].span_count = 0;
+    debug[interval].name_count = 0;
+    simulation_load(&file, NULL,
+                    "Simulation.start at 2026-01-01T00:00:00Z: interval of timer Main.tick:");
+    mo_arena_free(&arena);
+    mo_image_free(image);
+}
+
 static void run(void *unused) {
     (void)unused;
+    simulation_admission();
+    simulation_persistence();
+    simulation_verifier();
     allocator_bound();
     struct mo_image *image = compile(
         "module Main\nservice\nstate Int = 7\ntools add, read, reject, broken\n"

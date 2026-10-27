@@ -4,16 +4,42 @@
 
 #include "base/binary.h"
 
+struct saved_output {
+    struct mo_buffer *bytes;
+    const char *failure;
+};
+
+static bool saved_append(struct saved_output *out, const void *bytes, size_t size) {
+    if (size > out->bytes->limit - out->bytes->length) {
+        out->failure = "MO_LIMIT_SAVED_BYTES (16777216)";
+        return false;
+    }
+    if (!mo_buffer_append(out->bytes, bytes, size)) {
+        out->failure = "allocation";
+        return false;
+    }
+    return true;
+}
+
+static bool saved_uint(struct saved_output *out, uint64_t value, unsigned width) {
+    uint8_t bytes[8];
+    MO_ASSERT(width <= sizeof bytes);
+    for (unsigned i = 0; i < width; i++) {
+        bytes[i] = (uint8_t)value;
+        value >>= 8;
+    }
+    return saved_append(out, bytes, width);
+}
+
 struct schema_writer {
     const struct mo_types *types;
-    struct mo_buffer *out;
+    struct saved_output *out;
     uint32_t *seen, next;
 };
 
-static bool name(struct mo_buffer *out, const char *text) {
+static bool name(struct saved_output *out, const char *text) {
     size_t length = text == NULL ? 0 : strlen(text);
-    return length <= UINT32_MAX && mo_binary_write(out, length, 4) &&
-           mo_buffer_append(out, text, length);
+    return length <= UINT32_MAX && saved_uint(out, length, 4) && saved_append(out, text, length);
 }
 
 /* The saved format's fixed v1 tags, independent of native enum order. */
@@ -67,26 +93,28 @@ static uint8_t saved_tag(enum mo_type_kind kind) {
 }
 
 static bool schema(struct schema_writer *w, uint32_t index, unsigned depth) {
-    if (depth == MO_LIMIT_SAVED_DEPTH)
+    if (depth == MO_LIMIT_SAVED_DEPTH) {
+        w->out->failure = "MO_LIMIT_SAVED_DEPTH (128)";
         return false;
+    }
     if (w->seen[index] != MO_NO_INDEX)
-        return mo_binary_write(w->out, 255, 1) && mo_binary_write(w->out, w->seen[index], 4);
+        return saved_uint(w->out, 255, 1) && saved_uint(w->out, w->seen[index], 4);
     w->seen[index] = w->next++;
     const struct mo_type *t = &w->types->items[index];
     uint8_t tag = saved_tag(t->kind);
-    if (tag == SAVED_NO_TAG || !mo_binary_write(w->out, tag, 1))
+    if (tag == SAVED_NO_TAG || !saved_uint(w->out, tag, 1))
         return false;
     if (t->kind == MO_TYPE_RECORD || t->kind == MO_TYPE_CHOICE) {
         if (!name(w->out, t->name))
             return false;
     }
-    if (!mo_binary_write(w->out, t->parameter_count, 4))
+    if (!saved_uint(w->out, t->parameter_count, 4))
         return false;
     for (uint32_t i = 0; i < t->parameter_count; i++)
         if (!schema(w, t->parameters[i], depth + 1))
             return false;
     uint32_t groups = t->kind == MO_TYPE_CHOICE ? t->case_count : 1;
-    if (!mo_binary_write(w->out, groups, 4))
+    if (!saved_uint(w->out, groups, 4))
         return false;
     for (uint32_t c = 0; c < groups; c++) {
         uint32_t count = t->field_count;
@@ -95,10 +123,10 @@ static bool schema(struct schema_writer *w, uint32_t index, unsigned depth) {
             count = t->cases[c].field_count;
             fields = t->cases[c].fields;
             if (!name(w->out, t->cases[c].name) ||
-                !mo_binary_write(w->out, t->cases[c].unnamed ? 1 : 0, 1))
+                !saved_uint(w->out, t->cases[c].unnamed ? 1 : 0, 1))
                 return false;
         }
-        if (!mo_binary_write(w->out, count, 4))
+        if (!saved_uint(w->out, count, 4))
             return false;
         for (uint32_t i = 0; i < count; i++)
             if (!name(w->out, fields[i].name) || !schema(w, fields[i].type, depth + 1))
@@ -107,12 +135,14 @@ static bool schema(struct schema_writer *w, uint32_t index, unsigned depth) {
     return true;
 }
 
-static bool write_schema(struct mo_heap *heap, uint32_t type, struct mo_buffer *out) {
+static bool write_schema(struct mo_heap *heap, uint32_t type, struct saved_output *out) {
     struct mo_scratch scratch;
     mo_scratch_init(&scratch, heap);
     uint32_t *seen =
         mo_scratch_resize(&scratch, NULL, 0, (size_t)heap->types->count * sizeof *seen);
     bool ok = seen != NULL;
+    if (!ok)
+        out->failure = "allocation";
     if (ok) {
         for (uint32_t i = 0; i < heap->types->count; i++)
             seen[i] = MO_NO_INDEX;
@@ -123,10 +153,13 @@ static bool write_schema(struct mo_heap *heap, uint32_t type, struct mo_buffer *
     return ok;
 }
 
-static bool encode(struct mo_heap *heap, uint32_t type, struct mo_cell value, struct mo_buffer *out,
-                   unsigned depth, uint32_t *nodes) {
-    if (depth == MO_LIMIT_SAVED_DEPTH || *nodes == MO_LIMIT_SAVED_NODES)
+static bool encode(struct mo_heap *heap, uint32_t type, struct mo_cell value,
+                   struct saved_output *out, unsigned depth, uint32_t *nodes) {
+    if (depth == MO_LIMIT_SAVED_DEPTH || *nodes == MO_LIMIT_SAVED_NODES) {
+        out->failure = depth == MO_LIMIT_SAVED_DEPTH ? "MO_LIMIT_SAVED_DEPTH (128)"
+                                                     : "MO_LIMIT_SAVED_NODES (1048576)";
         return false;
+    }
     (*nodes)++;
     const struct mo_type *t = &heap->types->items[type];
     switch (t->kind) {
@@ -134,26 +167,24 @@ static bool encode(struct mo_heap *heap, uint32_t type, struct mo_cell value, st
         return true;
     case MO_TYPE_BOOL:
     case MO_TYPE_BYTE:
-        return mo_binary_write(out, mo_cell_get_byte(value), 1);
+        return saved_uint(out, mo_cell_get_byte(value), 1);
     case MO_TYPE_CHAR:
-        return mo_binary_write(out, mo_cell_get_char(value), 4);
+        return saved_uint(out, mo_cell_get_char(value), 4);
     case MO_TYPE_INT:
     case MO_TYPE_TIME:
     case MO_TYPE_DURATION:
     case MO_TYPE_FLOAT: {
         uint64_t bits;
         memcpy(&bits, value.bytes, 8);
-        return mo_binary_write(out, bits, 8);
+        return saved_uint(out, bits, 8);
     }
     case MO_TYPE_DECIMAL: {
         mo_u128 bits = (mo_u128)mo_cell_get_decimal(value);
-        return mo_binary_write(out, (uint64_t)bits, 8) &&
-               mo_binary_write(out, (uint64_t)(bits >> 64), 8);
+        return saved_uint(out, (uint64_t)bits, 8) && saved_uint(out, (uint64_t)(bits >> 64), 8);
     }
     case MO_TYPE_RANGE: {
         struct mo_range r = mo_cell_get_range(value);
-        return mo_binary_write(out, (uint64_t)r.start, 8) &&
-               mo_binary_write(out, (uint64_t)r.end, 8);
+        return saved_uint(out, (uint64_t)r.start, 8) && saved_uint(out, (uint64_t)r.end, 8);
     }
     case MO_TYPE_TEXT:
     case MO_TYPE_BYTES:
@@ -161,13 +192,13 @@ static bool encode(struct mo_heap *heap, uint32_t type, struct mo_cell value, st
         size_t length;
         const uint8_t *bytes = mo_value_data(value, &length);
         return (t->kind != MO_TYPE_BIGINT ||
-                mo_binary_write(out, (uint64_t)mo_value_bigint_sign(value), 1)) &&
-               mo_binary_write(out, length, 4) && mo_buffer_append(out, bytes, length);
+                saved_uint(out, (uint64_t)mo_value_bigint_sign(value), 1)) &&
+               saved_uint(out, length, 4) && saved_append(out, bytes, length);
     }
     case MO_TYPE_MAP:
     case MO_TYPE_SET: {
         uint32_t count = mo_table_size(value), position = 0;
-        if (!mo_binary_write(out, count, 4))
+        if (!saved_uint(out, count, 4))
             return false;
         struct mo_cell key, item;
         while (mo_table_next(value, &position, &key, &item)) {
@@ -182,10 +213,10 @@ static bool encode(struct mo_heap *heap, uint32_t type, struct mo_cell value, st
     case MO_TYPE_RECORD:
     case MO_TYPE_TUPLE:
     case MO_TYPE_LIST: {
-        if (t->kind == MO_TYPE_CHOICE && !mo_binary_write(out, mo_cell_get_tag(value), 4))
+        if (t->kind == MO_TYPE_CHOICE && !saved_uint(out, mo_cell_get_tag(value), 4))
             return false;
         uint32_t count = mo_value_children(heap->types, type, value);
-        if (!mo_binary_write(out, count, 4))
+        if (!saved_uint(out, count, 4))
             return false;
         for (uint32_t i = 0; i < count; i++) {
             uint32_t child_type;
@@ -363,20 +394,48 @@ static bool decode(struct decoder *d, uint32_t type, unsigned depth, struct mo_c
     return ok;
 }
 
-bool mo_value_encode(struct mo_heap *heap, uint32_t type, struct mo_cell value,
-                     struct mo_buffer *out) {
+static bool encode_value(struct mo_heap *heap, uint32_t type, struct mo_cell value,
+                         struct mo_buffer *out, const char **failure) {
     MO_ASSERT(type < heap->types->count);
     struct mo_buffer bytes, shape;
     mo_buffer_init(&bytes, MO_LIMIT_SAVED_BYTES);
     mo_buffer_init(&shape, MO_LIMIT_SAVED_BYTES);
+    struct saved_output output = {&bytes, NULL}, schema_output = {&shape, NULL};
     uint32_t nodes = 0;
-    bool ok = write_schema(heap, type, &shape) && mo_buffer_append(&bytes, "MOSV\1", 5) &&
-              mo_binary_write(&bytes, shape.length, 4) &&
-              mo_buffer_append(&bytes, shape.bytes, shape.length) &&
-              encode(heap, type, value, &bytes, 0, &nodes);
+    bool ok = write_schema(heap, type, &schema_output) && saved_append(&output, "MOSV\1", 5) &&
+              saved_uint(&output, shape.length, 4) &&
+              saved_append(&output, shape.bytes, shape.length) &&
+              encode(heap, type, value, &output, 0, &nodes);
     if (ok)
         ok = mo_buffer_append(out, bytes.bytes, bytes.length);
+    *failure = schema_output.failure != NULL ? schema_output.failure
+               : output.failure != NULL      ? output.failure
+                                             : "allocation";
     mo_buffer_free(&shape);
+    mo_buffer_free(&bytes);
+    return ok;
+}
+
+bool mo_value_encode(struct mo_heap *heap, uint32_t type, struct mo_cell value,
+                     struct mo_buffer *out) {
+    const char *failure;
+    return encode_value(heap, type, value, out, &failure);
+}
+
+bool mo_value_copy_saved(struct mo_heap *from, struct mo_heap *to, uint32_t type,
+                         struct mo_cell value, struct mo_cell *out, size_t *encoded_length,
+                         const char **failure) {
+    MO_ASSERT(from->image == to->image && encoded_length != NULL && failure != NULL);
+    struct mo_buffer bytes;
+    mo_buffer_init(&bytes, MO_LIMIT_SAVED_BYTES);
+    bool ok = encode_value(from, type, value, &bytes, failure);
+    if (ok) {
+        ok = mo_value_decode(to, type, bytes.bytes, bytes.length, out);
+        if (!ok)
+            *failure = "allocation (--max-heap or native memory)";
+    }
+    if (ok)
+        *encoded_length = bytes.length;
     mo_buffer_free(&bytes);
     return ok;
 }
@@ -394,7 +453,8 @@ bool mo_value_decode(struct mo_heap *heap, uint32_t type, const uint8_t *bytes, 
         return false;
     struct mo_buffer shape;
     mo_buffer_init(&shape, MO_LIMIT_SAVED_BYTES);
-    bool ok = write_schema(heap, type, &shape) && shape.length == shape_length &&
+    struct saved_output schema_output = {&shape, NULL};
+    bool ok = write_schema(heap, type, &schema_output) && shape.length == shape_length &&
               memcmp(shape.bytes, shape_bytes, shape.length) == 0;
     mo_buffer_free(&shape);
     struct mo_cell value;

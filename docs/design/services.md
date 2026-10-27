@@ -405,6 +405,42 @@ without counting as a handler failure. The [saved-state format](saved-state.md)
 defines the SQLite transactions, bounds, value encoding and refusal behavior.
 This C embedding still exposes no Mo simulation API or service CLI command.
 
+### MO-159 test simulation
+
+`vm/simulation.c` owns the test capability's service loop, one open in-memory
+store, and both clock readings. Its `SIMOP` family is VM-handled because host
+cannot depend on VM. Rows in `hostops.def` have no fixed signature: checking
+resolves a direct module/tool selector, and Core and bytecode validate its
+indices and complete argument/result types against service descriptors. Only
+construction is spec-only; an ordinary helper can operate on a supplied handle.
+Core 0.9 and Lean's explicit evaluation boundary are specified in
+`formal/TEXT.md` and `formal/TRANSLATION.md`.
+
+The test and service heaps share an immutable image, never heap-owned values.
+Every argument and reply crosses through the saved-value codec, including
+read-only arguments and replies and application errors. This adds the saved
+depth, node and byte bounds to those simulation-only transfers. The service's
+own acceptance and recovery-memory checks remain in place. A reply-copy
+failure cannot undo a committed update and must not invite an automatic retry.
+
+Advance counts individual firings before moving either clock. Above
+`MO_LIMIT_SIMULATION_TICKS` (10,000), it executes nothing. Otherwise it visits
+each deadline and drains the existing loop there, preserving admission order
+and the deadline's arrival time. No live-loop coalescing rule changes. Simulation
+simply never jumps past a due deadline while the service is running.
+
+Crash frees the loop; restart calls `mo_service_open` on the same still-open
+store. Opening a new in-memory store would erase the evidence being tested.
+The capability's once-only release frees the loop before closing the store,
+including when the owning test heap is torn down after a bug or assertion.
+Aliases share that ownership. These operation-boundary crashes complement,
+rather than replace, MO-158's transaction and snapshot fault injection.
+
+The test-only TaskQueue fixture wraps the unchanged `examples/job-queue.mo`.
+Its submit/crash/restart/lease test exercises real recovery; ignoring an accepted
+reply and retrying after recovery produces two jobs. Promise generators, the
+MO-162 service, networking and deployment are outside this change.
+
 ## 10. Done means
 
 Mo's own agents take every task from the job queue for one week with no restart, and a deliberate

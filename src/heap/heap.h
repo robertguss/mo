@@ -169,6 +169,9 @@ MO_MUST_USE bool mo_value_encode(struct mo_heap *process, uint32_t type, struct 
                                  struct mo_buffer *out);
 MO_MUST_USE bool mo_value_decode(struct mo_heap *process, uint32_t type, const uint8_t *bytes,
                                  size_t length, struct mo_cell *out);
+MO_MUST_USE bool mo_value_copy_saved(struct mo_heap *from, struct mo_heap *to, uint32_t type,
+                                     struct mo_cell value, struct mo_cell *out,
+                                     size_t *encoded_length, const char **failure);
 /* Lookup borrows its result; found=false leaves out unchanged. Operations
  * return false on limits or allocation failure, leaving every input unchanged.
  * Iteration's position is an entry cursor, not a live-element index. */

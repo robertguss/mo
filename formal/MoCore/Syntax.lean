@@ -54,6 +54,8 @@ inductive Ty where
   | result (t e : Ty)
   | ordering
   | fileError
+  | simulation
+  | simulationError
   | entry
   | entryKind
   | fn (params : List Ty) (ret : Ty)
@@ -72,6 +74,7 @@ def Ty.beq : Ty → Ty → Bool
   | .bool, .bool | .char, .char | .text, .text | .bytes, .bytes | .unit, .unit
   | .range, .range | .time, .time | .duration, .duration | .ordering, .ordering
   | .fileError, .fileError | .entry, .entry | .entryKind, .entryKind => true
+  | .simulation, .simulation | .simulationError, .simulationError => true
   | .tuple as, .tuple bs => Ty.beqList as bs
   | .list a, .list b => Ty.beq a b
   | .map k v, .map k' v' => Ty.beq k k' && Ty.beq v v'
@@ -93,6 +96,7 @@ mutual
 theorem Ty.beq_refl : ∀ (a : Ty), Ty.beq a a = true
   | .int | .bigInt | .byte | .decimal | .float | .bool | .char | .text | .bytes | .unit
   | .range | .time | .duration | .ordering | .fileError | .entry | .entryKind => rfl
+  | .simulation | .simulationError => rfl
   | .tuple as => by simp only [Ty.beq]; exact Ty.beqList_refl as
   | .list a => by simp only [Ty.beq]; exact Ty.beq_refl a
   | .map k v => by simp only [Ty.beq, Ty.beq_refl k, Ty.beq_refl v, Bool.and_self]
@@ -112,6 +116,7 @@ theorem Ty.eq_of_beq : ∀ (a b : Ty), Ty.beq a b = true → a = b
   | .int, b, h | .bigInt, b, h | .byte, b, h | .decimal, b, h | .float, b, h | .bool, b, h
   | .char, b, h | .text, b, h | .bytes, b, h | .unit, b, h | .range, b, h | .time, b, h
   | .duration, b, h | .ordering, b, h | .fileError, b, h
+  | .simulation, b, h | .simulationError, b, h
   | .entry, b, h | .entryKind, b, h => by cases b <;> simp_all [Ty.beq]
   | .data s, b, h | .cap s, b, h => by cases b <;> simp_all [Ty.beq]
   | .tuple as, b, h => by
@@ -159,6 +164,7 @@ def Ty.render : Ty → String
   | .float => "Float" | .bool => "Bool" | .char => "Char" | .text => "Text"
   | .bytes => "Bytes" | .unit => "Unit" | .range => "Range" | .time => "Time"
   | .duration => "Duration" | .ordering => "Ordering" | .fileError => "FileError"
+  | .simulation => "Simulation" | .simulationError => "SimulationError"
   | .entry => "Entry" | .entryKind => "EntryKind"
   | .tuple ts => "(" ++ Ty.renderList ts ++ ")"
   | .list t => "List(" ++ Ty.render t ++ ")"
@@ -354,6 +360,12 @@ inductive IoOp where
   | consoleFake | consoleFakeInput | filesInMemory | clockFixed | randomSeeded | argsOf | envOf
   deriving DecidableEq, Repr, Inhabited
 
+inductive SimOp where
+  | start (descriptor : Nat)
+  | send (descriptor tool : Nat) (args : List Ty) (result : Ty)
+  | advance | crash | restart
+  deriving Repr, Inhabited
+
 /-- The primitive operations. -/
 inductive Prim where
   | int (op : IntOp)
@@ -368,6 +380,7 @@ inductive Prim where
   | text (op : TextOp)
   | bytes (op : BytesOp)
   | unicode16 (op : UnicodeOp)
+  | sim (op : SimOp)
   | range (op : RangeOp)
   | time (op : TimeOp)
   | list (t : Ty) (op : ListOp)
@@ -554,6 +567,12 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .argsOf => ([.list .text], .cap .args)
   | .envOf => ([.map .text .text], .cap .env)
 
+def SimOp.sig : SimOp → List Ty × Ty
+  | .start _ => ([.time], .simulation)
+  | .send _ _ args result => (.simulation :: args, .result result .simulationError)
+  | .advance => ([.simulation, .duration], .unit)
+  | .crash | .restart => ([.simulation], .unit)
+
 /-- The typing signature of every primitive: argument types and result type. -/
 def Prim.sig : Prim → List Ty × Ty
   | .int op => op.sig
@@ -567,6 +586,7 @@ def Prim.sig : Prim → List Ty × Ty
   | .text op => op.sig
   | .bytes op => op.sig
   | .unicode16 op => op.sig
+  | .sim op => op.sig
   | .range op => op.sig
   | .time op => op.sig
   | .list t op => op.sig t
@@ -740,6 +760,7 @@ def constCtx (P : Program) (n : Nat) : List (String × Ty) :=
 
 /-- Fake construction and console observations belong only to spec code. -/
 def Prim.specOnly : Prim → Bool
+  | .sim (.start _) => true
   | .io .printed | .io .printedErrors => true
   | .io .consoleFake | .io .consoleFakeInput | .io .filesInMemory | .io .clockFixed
   | .io .randomSeeded | .io .argsOf | .io .envOf => true
@@ -805,6 +826,7 @@ def ctorsOf (P : Program) : Ty → Option (List Ctor)
   | .result t e => some (resultCtors t e)
   | .ordering => some orderingCtors
   | .fileError => some fileErrorCtors
+  | .simulationError => some [⟨"ServiceDown", []⟩, ⟨"ToolFailed", []⟩]
   | .entry => some [⟨"Entry", [("name", .text), ("kind", .entryKind)]⟩]
   | .entryKind => some [⟨"File", []⟩, ⟨"Folder", []⟩, ⟨"Link", []⟩, ⟨"Other", []⟩]
   | _ => none

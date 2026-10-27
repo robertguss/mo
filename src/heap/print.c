@@ -200,7 +200,7 @@ static MO_MUST_USE bool scalar_text(struct mo_heap *process, enum mo_type_kind k
         return mo_buffer_append_text(out, "<environment>");
     case MO_TYPE_CAPABILITY: {
         static const char *const names[] = {"<Args>",      "<Env>",   "<Console>", "<Files>",
-                                            "<ReadFiles>", "<Clock>", "<Random>"};
+                                            "<ReadFiles>", "<Clock>", "<Random>",  "<Simulation>"};
         struct mo_allocation *a = mo_heap_allocation(mo_cell_get_ref(value));
         enum mo_capability capability = process->types->items[a->type].capability;
         MO_ASSERT((unsigned)capability < sizeof names / sizeof names[0]);

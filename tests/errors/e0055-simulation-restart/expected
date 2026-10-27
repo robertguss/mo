@@ -1,0 +1,7 @@
+error E0055: a simulation call's arguments don't match its parameters  tests/errors/e0055-simulation-restart/main.mo:4:22
+
+  4 |   Simulation.restart(sim, 1)
+    |                      ^^^^^^ pass one positional argument per parameter
+
+Simulation.restart takes only the handle.
+
