@@ -179,6 +179,8 @@ static void service_rules(void) {
          MO_CODE_SERVICE_VALUE},
         {"state Int = 0\ntools tool\nevery 1.5.minutes tick\ntoken from env \"TOKEN\"\n",
          MO_CODE_SERVICE_VALUE},
+        {"state Int = 0\ntools tool\nevery 1.foo tick\ntoken from env \"TOKEN\"\n",
+         MO_CODE_SERVICE_VALUE},
         {"state Int = 0\ntools tool\ntoken from env \"lower\"\n", MO_CODE_SERVICE_TOKEN},
         {"state Int = 0\ntools tool\ntoken from env \"1TOKEN\"\n", MO_CODE_SERVICE_TOKEN},
         {"state Int = 0\ntools tool\ntoken from env \"\"\n", MO_CODE_SERVICE_TOKEN},
