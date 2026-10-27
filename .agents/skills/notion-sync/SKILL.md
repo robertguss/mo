@@ -17,7 +17,7 @@ The Notion hub is Robert's single view of Mo. GitHub is the source of truth; the
 | Archive page under the hub: old hub history and retired pages | `3fd700320c4581998298fbb834ad7377` |
 | Mo Tasks DB (Task, Status, PR, Blocked by, Stream; "Pull requests" and "PR state" are filled by the GitHub sync) | `collection://1b61c271-224a-4e05-998c-b0bc93e325f9` |
 | Decision Log DB (Number, Decision "Dnnn · title", Date, Status, Robert's words, Supersedes or refines) | `collection://bb053cc4-7cf0-49da-bd28-2205d3caf386` |
-| Phase 2 spec page, which holds the checklist the Status page counts | `3f6700320c4581c4b7c4dafa8f459b52` |
+| Phase 3 build plan page, which holds the checklist the Status page counts | `403700320c45811fa2b9f29203397c2f` |
 
 The Notion connector can be signed in to Robert's work workspace instead. Call `notion-get-self` first; the workspace must be "Robert's Notion". If it isn't, stop and ask Robert to reconnect his personal account.
 
@@ -32,12 +32,12 @@ Done when you hold the live row for every PR the Status page or Mo Tasks mention
 Compare each of these spots with the live state. These go stale first:
 
 - on the Status page under "Main": the "As of" line with main's SHA, "What main can do", "What main can't do yet", the samples count, "Open PRs", and "Next up";
-- the Phase 2 paragraph's checklist count at the top of the Status page;
+- the Phase 3 paragraph's checklist count at the top of the Status page;
 - the Changelog: every merged PR is listed under its day;
-- "Still to do for Phase 2" and "Waiting for Robert";
+- "Still to do for Phase 3" and "Waiting for Robert";
 - "Recent decisions" against the Decision Log;
 - each task's Status and PR in Mo Tasks: an open PR is "In review", a merged one "Done";
-- any note saying a PR is waiting on CI or conflicting (Mo has no hosted CI), and any PR described as open that has since merged.
+- any note saying a PR is waiting on CI or conflicting (nightly runs on main; pull requests are not gated, so local `ci/check.sh` is still required), and any PR described as open that has since merged.
 
 ## 3. Fix
 

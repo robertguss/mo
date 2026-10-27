@@ -69,6 +69,6 @@ The proof was shown able to fail: deleting the `written == 0` refusal on `..` ma
 
 | Check | Code | Last confirmed |
 | --- | --- | --- |
-| `normalize` | `mo_host_normalize` in `src/host/files.c`; spec and harness in `cbmc/path.c`; callers `mo_host_real_files_call` and `call` in `src/host/fake-files.c` | `348105c` (this PR's proof files) |
+| `normalize` | `mo_host_normalize` in `src/host/files.c`; spec and harness in `cbmc/path.c`; callers `mo_host_real_files_call` and `call` in `src/host/fake-files.c` | `5231d311` |
 
-Move the sync commit only after `bash cbmc/prove.sh normalize` passes on that commit and the spec still matches the C: one component per `/`, one pop per `..`, one refusal per empty or escaping component. A pass on a stale description is the dangerous case; `/maintain-formal-verification-skill` is the upkeep loop when commits skipped this skill.
+Move the sync commit only after `bash cbmc/prove.sh normalize` passes on that commit and the spec still matches the C: one component per `/`, one pop per `..`, one refusal per empty or escaping component. A pass on a stale description is the dangerous case.

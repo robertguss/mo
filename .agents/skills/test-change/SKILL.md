@@ -20,7 +20,7 @@ Each behaviour has one home. Pick by what the behaviour is:
 | Core or VM semantics | Core text in `tests/core/`, run against the Lean evaluator by the `lean` group | the Lean model in `formal/` |
 | Code that reads outside input | a fuzz target `fuzz/fuzz_<name>.c` with seeds in `fuzz/corpus/<name>/` | the invariant in architecture section 11 |
 | Syntax | `grammar/tests/`, and the parser corpus in `tests/test_syntax_corpus.c` | the reference grammar |
-| A sample program | `examples/*.mo`, and its row in `docs/status/sample-blockers.md` | the sample's own promises |
+| A sample program | `examples/*.mo`, and sample status (currently clear) in `docs/status/sample-blockers.md` | the sample's own promises |
 
 When a behaviour fits two rows, take the one closest to the user: a CLI golden over a unit test for anything `mo` prints.
 
@@ -32,7 +32,7 @@ When a behaviour fits two rows, take the one closest to the user: a CLI golden o
 
 3. **Repeat per behaviour.** One test at a time, each seen red, until every behaviour in the plan has one. Done when the plan's test list is fully ticked.
 
-4. **Run the gate.** `bash ci/check.sh gcc` at least, which every PR reports, plus `clang`, `static`, `drivers`, `sanitize`, `lean`, `fuzz` or `cbmc` when the change reaches what they check. Nothing runs them on GitHub. Read the summary: a skipped check is not a passed one. Done when it ends with all checks passed, or every skip is named in the PR.
+4. **Run the gate.** `bash ci/check.sh gcc` at least, which every PR reports, plus `clang`, `static`, `drivers`, `sanitize`, `lean`, `fuzz` or `cbmc` when the change reaches what they check. Nightly runs on main; pull requests are not gated, so local `ci/check.sh` is still required. Read the summary: a skipped check is not a passed one. Done when it ends with all checks passed, or every skip is named in the PR.
 
 ## What a test asserts
 

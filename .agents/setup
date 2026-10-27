@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Prepares an orb for robertguss/mo: C compilers with sanitizers and libFuzzer,
 # clang-format and clang-tidy, make, Bison for the executable grammar, CBMC for
-# the bytecode reader's proofs (cbmc/), and
+# the bytecode reader, arena, verifier, primitives, path containment and
+# resolution, refcounts, hash tables (cbmc/), and
 # Lean 4, through elan, for Mo Core. Installs only; never builds or runs anything.
 #
 #   bash .agents/setup            everything

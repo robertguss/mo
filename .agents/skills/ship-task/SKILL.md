@@ -27,7 +27,7 @@ Done when the plan has no open questions.
 
 Write the code and its tests following `test-change`, in commits that each leave the tree building.
 
-Done when every behaviour in the plan has a test seen red, then green, and the `ci/check.sh` groups the change touches pass, or each skipped check is named with the tool it lacks. A PR merges when Robert says so (AGENTS.md "Checks and merging"); no Mo check runs on GitHub.
+Done when every behaviour in the plan has a test seen red, then green, and the `ci/check.sh` groups the change touches pass, or each skipped check is named with the tool it lacks. A PR merges when Robert says so (AGENTS.md "Checks and merging"). Nightly runs on main; pull requests are not gated, so local `ci/check.sh` is still required.
 
 ## 5. Review
 

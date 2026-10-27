@@ -18,7 +18,7 @@ The documents that define correct behaviour, in order of authority:
   11, testing strategy, are the ones to know). `docs/design/bytecode.md` is the bytecode spec.
 - `docs/design/implementation.md`: the five conditions every C change must meet.
 - `docs/design/library.md`: where each library function is implemented.
-- `docs/status/sample-blockers.md`: what still stops each of the twelve `examples/*.mo` from passing.
+- `docs/status/sample-blockers.md`: sample status (currently clear).
 
 ## Commands
 
@@ -61,8 +61,7 @@ and an additional 1,000-program VM-vs-Lean batch with a fresh, printed seed rang
 Failed runs appear in Actions; Robert must enable email notifications for failed workflows in
 his GitHub notification settings and be the scheduled workflow's notification recipient (its
 creator, latest cron editor, or person who re-enabled it). Manual-run notifications go to the
-person who dispatched the run. After the workflow first merges, verify that recipient, dispatch
-it on `main`, and require a passing run before marking MO-152 Done.
+person who dispatched the run.
 
 `main` still requires no status check (only force-pushes are blocked). The Socket Security app
 may still post its own checks; none is required. Before opening a PR, run
