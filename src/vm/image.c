@@ -104,9 +104,9 @@ static MO_MUST_USE enum mo_outcome initialize(struct mo_image *image,
     for (uint32_t i = 0; i < file->constant_count; i++) {
         if (!constant(p, &file->constants[i], &runtime->constants[i]) ||
             !mo_value_make_immortal(p->heap, file->constants[i].type, runtime->constants[i])) {
-            runtime->outcome =
-                mo_vm_stop(p, "running out of memory", errno == ENOMEM ? NULL : "--max-heap", false,
-                           mo_cell_unit(), MO_STOPPED);
+            runtime->outcome = mo_vm_stop(p, "running out of memory",
+                                          errno == ENOMEM ? "native memory" : "--max-heap", false,
+                                          mo_cell_unit(), MO_STOPPED);
             *defect_out = p->defect;
             return runtime->outcome;
         }

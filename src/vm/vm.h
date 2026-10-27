@@ -22,6 +22,7 @@ struct mo_defect {
     const char *reason;
     const char *limit_name;
     size_t limit;
+    bool memory;
     bool has_detail;
     struct mo_cell detail;
     struct mo_vm_span span;

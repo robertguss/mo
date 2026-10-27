@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include "base/base.h"
+#include "base/binary.h"
 #include "base/buffer.h"
 #include "base/hostops.h"
 #include "base/limits.h"
@@ -193,8 +194,8 @@ struct mo_parameter {
 enum { MO_BYTECODE_MAJOR = 0, MO_BYTECODE_MINOR = 2, MO_BYTECODE_HEADER_SIZE = 20 };
 #define MO_BYTECODE_FLAGS UINT32_C(0)
 #define MO_BYTECODE_SERVICE_FLAG UINT32_C(1)
-#define MO_BYTECODE_FNV_OFFSET UINT64_C(14695981039346656037)
-#define MO_BYTECODE_FNV_PRIME UINT64_C(1099511628211)
+#define MO_BYTECODE_FNV_OFFSET MO_FNV_OFFSET
+#define MO_BYTECODE_FNV_PRIME MO_FNV_PRIME
 
 struct mo_bytecode_header {
     uint8_t magic[4];
@@ -362,11 +363,11 @@ struct mo_bytecode_service_tool {
 
 struct mo_bytecode_service_timer {
     uint32_t function;
-    uint32_t interval; /* () : Duration, evaluated by the future runtime at startup */
+    uint32_t interval; /* () : Duration, evaluated at startup */
 };
 
 /* Optional trailing section, present exactly when SERVICE_FLAG is set. Each
- * module has at most one service. Nothing in the loader or VM starts it. */
+ * module has at most one service. The loader does not auto-start it. */
 struct mo_bytecode_service {
     uint32_t module;
     uint32_t state_type;

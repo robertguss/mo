@@ -193,8 +193,8 @@ call(struct mo_process *process, uint32_t function, const struct mo_cell *argume
     if (limit != NULL) {
         drop_arguments(process, fn, arguments);
         bool native = strcmp(limit, "native memory") == 0;
-        outcome = mo_vm_stop(process, native ? "running out of memory" : "out of stack",
-                             native ? NULL : limit, false, mo_cell_unit(), MO_STOPPED);
+        outcome = mo_vm_stop(process, native ? "running out of memory" : "out of stack", limit,
+                             false, mo_cell_unit(), MO_STOPPED);
     } else {
         mo_vm_enter(process, function, arguments, mo_cell_unit(), false, false, 0, 0);
         outcome = mo_vm_execute(process, result_out);
@@ -280,8 +280,9 @@ enum mo_outcome mo_call_main(struct mo_process *process, uint32_t function,
         if (outcome != MO_HOST_RETURNED) {
             const char *reason =
                 outcome == MO_HOST_OUT_OF_MEMORY ? "running out of memory" : error.reason;
-            const char *limit =
-                outcome == MO_HOST_OUT_OF_MEMORY && errno != ENOMEM ? "--max-heap" : NULL;
+            const char *limit = outcome == MO_HOST_OUT_OF_MEMORY && errno != ENOMEM ? "--max-heap"
+                                : outcome == MO_HOST_OUT_OF_MEMORY ? "native memory"
+                                                                   : NULL;
             enum mo_outcome stopped =
                 mo_vm_stop(process, reason, limit, false, mo_cell_unit(), MO_STOPPED);
             *defect_out = process->defect;
