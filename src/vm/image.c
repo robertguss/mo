@@ -67,6 +67,7 @@ static MO_MUST_USE enum mo_outcome initialize(struct mo_image *image,
             (struct mo_defect){.reason = "running out of memory",
                                .limit_name = bytes > limits->heap_size ? "--max-heap" : NULL,
                                .limit = limits->heap_size,
+                               .memory = true,
                                .span = {.file = MO_NO_INDEX}};
         return MO_STOPPED;
     }
@@ -95,6 +96,7 @@ static MO_MUST_USE enum mo_outcome initialize(struct mo_image *image,
                                              : "internal error: system randomness unavailable",
                                .limit_name = errno == ENOSPC ? "--max-heap" : NULL,
                                .limit = limits->heap_size,
+                               .memory = errno == ENOSPC || errno == ENOMEM,
                                .span = {.file = MO_NO_INDEX}};
         free(runtime);
         return MO_STOPPED;

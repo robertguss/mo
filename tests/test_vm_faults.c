@@ -125,8 +125,8 @@ int main(void) {
         CHECK(mo_image_init(image, &limits, &defect) == MO_STOPPED);
         CHECK(strcmp(defect.reason, fault == 2 ? "internal error: system randomness unavailable"
                                                : "running out of memory") == 0);
-        CHECK(defect.limit_name == NULL && defect.process == NULL &&
-              mo_image_runtime(image) == NULL);
+        CHECK(defect.limit_name == NULL && defect.memory == (fault != 2) &&
+              defect.process == NULL && mo_image_runtime(image) == NULL);
         entropy_failure = false;
         countdown = 0;
         CHECK(mo_image_init(image, &limits, &defect) == MO_RETURNED);
@@ -136,7 +136,7 @@ int main(void) {
         countdown = 1; /* The constructor's native calloc, with ample heap. */
         CHECK(mo_call(p, 0, &arg, 1, &out, &defect) == MO_STOPPED);
         CHECK(strcmp(defect.reason, "running out of memory") == 0 && defect.limit_name == NULL &&
-              defect.frames->pc == 0 && mo_cell_get_int(out) == 99);
+              defect.memory && defect.frames->pc == 0 && mo_cell_get_int(out) == 99);
         mo_process_free(p);
         mo_image_free(image);
     }
