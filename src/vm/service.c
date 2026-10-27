@@ -265,8 +265,11 @@ static bool restore_record(const struct mo_store_record *record, void *context) 
         struct mo_buffer encoded;
         mo_buffer_init(&encoded, MO_LIMIT_SAVED_BYTES);
         ok = replacement(s, &reply, &state) &&
-             saved_copy(s, s->descriptor->state_type, state, &state, &encoded) &&
-             mo_binary_checksum(encoded.bytes, encoded.length) == expected;
+             saved_copy(s, s->descriptor->state_type, state, &state, &encoded);
+        if (ok && mo_binary_checksum(encoded.bytes, encoded.length) != expected) {
+            mo_value_drop(heap, s->descriptor->state_type, state);
+            ok = false;
+        }
         mo_buffer_free(&encoded);
         if (ok) {
             mo_value_drop(heap, s->descriptor->state_type, r->state);
