@@ -7,6 +7,8 @@
 #include "program_fixture.h"
 #include "vm/vm.h"
 
+#include <time.h>
+
 static const char *corpus;
 
 static void seed(const struct mo_buffer *bytes, const char *name) {
@@ -210,7 +212,9 @@ static void table_refusals(const struct mo_bytecode *file) {
     changed.services = many;
     changed.service_count = MO_LIMIT_SERVICES;
     changed.strings = strings;
+    clock_t before = clock();
     write_refused(&changed, "duplicate service module");
+    CHECK(before != (clock_t)-1 && (double)(clock() - before) / CLOCKS_PER_SEC < 2.0);
     mo_arena_free(&arena);
 }
 
