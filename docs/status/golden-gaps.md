@@ -1,12 +1,8 @@
-# Golden corpus: what the language reference defines and `mo` does not yet provide
-
-Found while writing `tests/golden/`. Each program avoids these forms, so the corpus passes today;
-a form that lands should gain a golden program. Section numbers are Language Reference v0.1.
+# Golden corpus
 
 ## Coverage indexed by reference section
 
-`tests/conformance/rules.tsv` lists remaining partial coverage by reference section, including
-missing boundary and refusal programs. It is a map with a guard, not proof of conformance or
+`tests/conformance/rules.tsv` is a map with a guard, not proof of conformance or
 completion of the Phase 2 conformance item. A gap there is not a pass.
 
 The native BigInt functions, Env and Random fakes, Ordering comparison, qualified `Int.compare`,

@@ -14,8 +14,8 @@ C has no memory safety, and Mo's capability security is only as strong as the
 VM's integrity: a memory bug in the VM could let a program reach something it
 wasn't handed. These five conditions make up for that. Checks enforce them
 wherever there is code to check, not good intentions; `ci/check.sh` runs every
-check. Nothing runs them automatically: the fast groups run before each pull
-request, the slow ones (sanitizers, fuzzing, Lean, CBMC) only when run by hand.
+check. Nightly runs `gcc clang sanitize drivers static lean` on main; fuzz and
+CBMC run by hand. The fast groups run before each pull request.
 
 1. **Sanitizers in every test run.** Every test also runs under
    AddressSanitizer and UndefinedBehaviorSanitizer (`bash ci/check.sh sanitize`,
@@ -86,9 +86,9 @@ better error messages, and is tested against this grammar. See
 
 ## Checks and merging
 
-Mo has no hosted CI. Before a pull request, `bash ci/check.sh gcc` builds and
-runs the unit tests; the sanitizer, fuzz, Lean and CBMC groups run only when
-someone runs them by hand. A pull request merges when Robert says so. The merge
+Before a pull request, `bash ci/check.sh gcc` builds and
+runs the unit tests. Nightly runs `gcc clang sanitize drivers static lean`;
+fuzz and CBMC run by hand. A pull request merges when Robert says so. The merge
 rule is in AGENTS.md "Checks and merging", and the evidence a PR records is in
 `ci/orb/README.md`.
 

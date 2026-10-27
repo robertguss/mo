@@ -13,8 +13,7 @@
  * - ast.c checks what a context-free grammar can't: that a pattern is a
  *   pattern, what stands on the left of `=`, and how cases and records are
  *   built;
- * - meaning (types, names in scope, exhaustiveness) is the compiler's, from
- *   Phase 2.
+ * - meaning (types, names in scope, exhaustiveness) is the compiler's.
  */
 
 %code top {

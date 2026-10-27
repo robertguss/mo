@@ -97,11 +97,11 @@ CI's `drivers` group runs `grade.py --check` with every built `mo`: every `SHA25
 its files, every reference must pass, every broken solution must check and fail a hidden test,
 and every start folder must fail too, a fix task's at `mo check` and the others' at a hidden
 test, with a failing-test task's start failing its named test and no other. The `static` group
-checks that the executable grammar accepts every reference and broken solution. So no task needs a
-form this build hasn't finished: the references avoid `List.sum`, `to_set`, `to_big` and the
-checked and saturating arithmetic other than `checked_add`, which `mo check` reports as E1150 at
-this commit. Once a session has seen a task, neither its text nor its files change: a change is
-a new decision and a new task, and `grade.py --freeze TASK` writes its new hashes.
+checks that the executable grammar accepts every reference and broken solution. The frozen
+references avoid `List.sum`, `to_set`, `to_big` and the
+checked and saturating arithmetic other than `checked_add`. Once a session has seen a task,
+neither its text nor its files change: a change is a new decision and a new task, and
+`grade.py --freeze TASK` writes its new hashes.
 
 ## Held-out tasks
 
