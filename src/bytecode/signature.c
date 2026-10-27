@@ -6,53 +6,57 @@ struct edge {
     uint32_t parent, next;
 };
 
-uint8_t *mo_bytecode_abilities(struct mo_arena *arena, const struct mo_bytecode *f) {
+uint8_t *mo_bytecode_abilities(struct mo_arena *arena, const struct mo_type *types,
+                               uint32_t type_count) {
     size_t count = 0;
-    for (uint32_t i = 0; i < f->type_count; i++) {
-        const struct mo_type *t = &f->types[i];
+    for (uint32_t i = 0; i < type_count; i++) {
+        const struct mo_type *t = &types[i];
         count += t->parameter_count + t->field_count;
         for (uint32_t j = 0; j < t->case_count; j++) {
             count += t->cases[j].field_count;
         }
     }
+    if (count > UINT32_MAX) {
+        return NULL;
+    }
     struct edge *edges =
         mo_arena_allocate_array(arena, count, sizeof *edges, _Alignof(struct edge));
-    uint32_t *heads =
-        mo_arena_allocate_array(arena, f->type_count, sizeof *heads, _Alignof(uint32_t));
-    uint32_t *queue = mo_arena_allocate_array(arena, (size_t)f->type_count * 2, sizeof *queue,
-                                              _Alignof(uint32_t));
-    uint8_t *flags = mo_arena_allocate_array(arena, f->type_count, 1, 1);
+    uint32_t *heads = mo_arena_allocate_array(arena, type_count, sizeof *heads, _Alignof(uint32_t));
+    uint32_t *queue =
+        mo_arena_allocate_array(arena, (size_t)type_count * 2, sizeof *queue, _Alignof(uint32_t));
+    uint8_t *flags = mo_arena_allocate_array(arena, type_count, sizeof *flags, _Alignof(uint8_t));
     if (edges == NULL || heads == NULL || queue == NULL || flags == NULL) {
         return NULL;
     }
-    for (uint32_t i = 0; i < f->type_count; i++) {
-        heads[i] = MO_NO_INDEX;
-        flags[i] = 3;
-    }
+    uint8_t both = MO_ABILITY_EQUAL | MO_ABILITY_HASH;
     uint32_t end = 0, n = 0;
-    for (uint32_t i = 0; i < f->type_count; i++) {
-        const struct mo_type *t = &f->types[i];
+    for (uint32_t i = 0; i < type_count; i++) {
+        heads[i] = MO_NO_INDEX;
+    }
+    for (uint32_t i = 0; i < type_count; i++) {
+        const struct mo_type *t = &types[i];
+        flags[i] = both;
         if (t->kind == MO_TYPE_FUNCTION || t->kind == MO_TYPE_ENV ||
             t->kind == MO_TYPE_CAPABILITY) {
             flags[i] = 0;
         } else if (t->kind == MO_TYPE_FLOAT) {
             flags[i] = MO_ABILITY_EQUAL;
         }
-        if (flags[i] != 3) {
+        if (flags[i] != both) {
             queue[end++] = i;
         }
         uint32_t total = t->parameter_count + t->field_count;
         for (uint32_t j = 0; j < total; j++) {
             uint32_t child =
                 j < t->parameter_count ? t->parameters[j] : t->fields[j - t->parameter_count].type;
-            MO_ASSERT(n < count);
+            MO_ASSERT(n < count && child < type_count);
             edges[n] = (struct edge){i, heads[child]};
             heads[child] = n++;
         }
         for (uint32_t j = 0; j < t->case_count; j++) {
             for (uint32_t k = 0; k < t->cases[j].field_count; k++) {
                 uint32_t child = t->cases[j].fields[k].type;
-                MO_ASSERT(n < count);
+                MO_ASSERT(n < count && child < type_count);
                 edges[n] = (struct edge){i, heads[child]};
                 heads[child] = n++;
             }
@@ -65,7 +69,7 @@ uint8_t *mo_bytecode_abilities(struct mo_arena *arena, const struct mo_bytecode 
             uint8_t after = flags[parent] & flags[child];
             if (after != flags[parent]) {
                 flags[parent] = after;
-                MO_ASSERT(end < 2U * f->type_count);
+                MO_ASSERT(end < 2U * type_count);
                 queue[end++] = parent;
             }
         }
