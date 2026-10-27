@@ -25,10 +25,16 @@ install_missing() {
 	fi
 }
 
-packages=(build-essential clang make git)
-if needs static; then packages+=(clang-format clang-tidy bison); fi
+packages=(build-essential clang make git python3)
+if needs static; then packages+=(clang-format-14 clang-tidy bison); fi
 if needs cbmc; then packages+=(cbmc); fi
 install_missing "${packages[@]}"
+
+if needs static; then
+	sudo mkdir -p /usr/local/bin
+	sudo ln -sfn /usr/bin/clang-format-14 /usr/local/bin/clang-format
+	/usr/bin/clang-format-14 --version | grep -F 'version 14.0.6'
+fi
 
 # libFuzzer and the sanitizer runtimes ship in a package named after clang's
 # major version. lean needs them too: run alone it builds the sanitize executables it compares.
