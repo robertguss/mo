@@ -420,13 +420,13 @@ $(BUILD)/sanitize/tests/test_service_runtime.test: $(BUILD)/sanitize/tests/test_
 
 $(BUILD)/debug/store-faults/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(DEBUG) -Dmo_store_call=mo_store_fault_call -c $< -o $@
+	$(CC) $(COMMON) $(DEBUG) -Dmo_store_call=mo_store_fault_call -Dmo_process_free=mo_store_fault_process_free -c $< -o $@
 $(BUILD)/debug/store-faults/store.o: src/host/store.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) -Dsqlite3_step=mo_store_fault_step -c $< -o $@
 $(BUILD)/sanitize/store-faults/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(SANITIZE) -Dmo_store_call=mo_store_fault_call -c $< -o $@
+	$(CC) $(COMMON) $(SANITIZE) -Dmo_store_call=mo_store_fault_call -Dmo_process_free=mo_store_fault_process_free -c $< -o $@
 $(BUILD)/sanitize/store-faults/store.o: src/host/store.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(SANITIZE) -Dsqlite3_step=mo_store_fault_step -c $< -o $@

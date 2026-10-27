@@ -30,8 +30,8 @@ bool mo_binary_write(struct mo_buffer *out, uint64_t value, unsigned width) {
 }
 
 uint64_t mo_binary_checksum(const uint8_t *bytes, size_t length) {
-    uint64_t sum = UINT64_C(14695981039346656037);
+    uint64_t sum = MO_FNV_OFFSET;
     for (size_t i = 0; i < length; i++)
-        sum = (sum ^ bytes[i]) * UINT64_C(1099511628211);
+        sum = (sum ^ bytes[i]) * MO_FNV_PRIME;
     return sum;
 }

@@ -67,6 +67,7 @@ static MO_MUST_USE enum mo_outcome initialize(struct mo_image *image,
             (struct mo_defect){.reason = "running out of memory",
                                .limit_name = bytes > limits->heap_size ? "--max-heap" : NULL,
                                .limit = limits->heap_size,
+                               .memory = true,
                                .span = {.file = MO_NO_INDEX}};
         return MO_STOPPED;
     }
@@ -95,6 +96,7 @@ static MO_MUST_USE enum mo_outcome initialize(struct mo_image *image,
                                              : "internal error: system randomness unavailable",
                                .limit_name = errno == ENOSPC ? "--max-heap" : NULL,
                                .limit = limits->heap_size,
+                               .memory = errno == ENOSPC || errno == ENOMEM,
                                .span = {.file = MO_NO_INDEX}};
         free(runtime);
         return MO_STOPPED;
@@ -104,9 +106,9 @@ static MO_MUST_USE enum mo_outcome initialize(struct mo_image *image,
     for (uint32_t i = 0; i < file->constant_count; i++) {
         if (!constant(p, &file->constants[i], &runtime->constants[i]) ||
             !mo_value_make_immortal(p->heap, file->constants[i].type, runtime->constants[i])) {
-            runtime->outcome =
-                mo_vm_stop(p, "running out of memory", errno == ENOMEM ? NULL : "--max-heap", false,
-                           mo_cell_unit(), MO_STOPPED);
+            runtime->outcome = mo_vm_stop(p, "running out of memory",
+                                          errno == ENOMEM ? "native memory" : "--max-heap", false,
+                                          mo_cell_unit(), MO_STOPPED);
             *defect_out = p->defect;
             return runtime->outcome;
         }

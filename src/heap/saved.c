@@ -369,7 +369,6 @@ static bool decode(struct decoder *d, uint32_t type, unsigned depth, struct mo_c
                 ok = false;
             }
         } else if (t->kind == MO_TYPE_MAP) {
-            /* Preserve insertion order and reject duplicate keys, never normalize bad input. */
             ok = mo_value_map(d->heap, type, NULL, NULL, 0, &result);
             if (ok) {
                 for (uint32_t i = 0; ok && i < count; i++)

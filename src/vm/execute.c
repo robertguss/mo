@@ -52,8 +52,8 @@ static void clean(const struct mo_vm_frame *f) {
 }
 
 static MO_MUST_USE enum mo_outcome memory(struct mo_process *p) {
-    return mo_vm_stop(p, "running out of memory", errno == ENOMEM ? NULL : "--max-heap", false,
-                      mo_cell_unit(), MO_STOPPED);
+    return mo_vm_stop(p, "running out of memory", errno == ENOMEM ? "native memory" : "--max-heap",
+                      false, mo_cell_unit(), MO_STOPPED);
 }
 
 static MO_MUST_USE enum mo_outcome primitive_stop(struct mo_process *p, enum mo_prim_status status,
@@ -218,8 +218,8 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
                                     : mo_vm_reserve(p, offset + bytes, p->depth + (tail ? 0u : 1u));
             if (limit != NULL) {
                 bool native = strcmp(limit, "native memory") == 0;
-                return mo_vm_stop(p, native ? "running out of memory" : "out of stack",
-                                  native ? NULL : limit, false, mo_cell_unit(), MO_STOPPED);
+                return mo_vm_stop(p, native ? "running out of memory" : "out of stack", limit,
+                                  false, mo_cell_unit(), MO_STOPPED);
             }
             f = mo_vm_frame(p); /* reserve may move the native stack */
             struct mo_cell arguments[MO_LIMIT_BYTECODE_PARAMETERS];
@@ -424,8 +424,8 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             enum mo_host_outcome outcome = mo_host_call(
                 &p->host, p->heap, a[1], fn->register_types[a[0]], arguments, &value, &error);
             if (outcome == MO_HOST_OUT_OF_MEMORY && errno == EOVERFLOW)
-                return mo_vm_stop(p, "running out of memory: MO_LIMIT_VALUE_BYTES", NULL, false,
-                                  mo_cell_unit(), MO_STOPPED);
+                return mo_vm_stop(p, "running out of memory: MO_LIMIT_VALUE_BYTES", "native memory",
+                                  false, mo_cell_unit(), MO_STOPPED);
             if (outcome == MO_HOST_OUT_OF_MEMORY)
                 return memory(p);
             if (outcome != MO_HOST_RETURNED)

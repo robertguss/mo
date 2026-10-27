@@ -39,14 +39,19 @@ enum mo_outcome mo_vm_stop(struct mo_process *p, const char *reason, const char 
             top = &f->trace;
         offset = f->previous;
     }
-    size_t amount = limit == NULL                       ? 0
-                    : strcmp(limit, "--max-stack") == 0 ? p->limits.stack_size
-                    : strcmp(limit, "--max-depth") == 0 ? p->limits.call_depth
-                                                        : p->limits.heap_size;
+    bool native = limit != NULL && strcmp(limit, "native memory") == 0;
+    const char *name = native ? NULL : limit;
+    size_t amount = name == NULL                       ? 0
+                    : strcmp(name, "--max-stack") == 0 ? p->limits.stack_size
+                    : strcmp(name, "--max-depth") == 0 ? p->limits.call_depth
+                                                       : p->limits.heap_size;
+    bool memory = native || (name != NULL &&
+                             (strcmp(name, "--max-heap") == 0 || strcmp(name, "--max-stack") == 0));
     p->terminal = true;
     p->defect = (struct mo_defect){.reason = reason,
-                                   .limit_name = limit,
+                                   .limit_name = name,
                                    .limit = amount,
+                                   .memory = memory,
                                    .has_detail = detail,
                                    .detail = value,
                                    .frames = top,

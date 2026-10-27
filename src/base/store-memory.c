@@ -8,7 +8,6 @@
 
 #include "base/limits.h"
 
-/* One exact allocation per block, charged at its full size including this header. */
 struct block {
     size_t charge;
     int size;

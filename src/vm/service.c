@@ -35,6 +35,17 @@ struct mo_service_loop {
     bool running;
 };
 
+enum {
+    LOG_TIMER_WIDTH = 1,
+    LOG_HANDLER_WIDTH = 4,
+    LOG_ARRIVAL_WIDTH = 8,
+    LOG_COUNT_WIDTH = 4,
+    LOG_CHECKSUM_WIDTH = 8,
+    LOG_ARGUMENT_LENGTH_WIDTH = 4,
+    MESSAGE_HEADER_BYTES = LOG_TIMER_WIDTH + LOG_HANDLER_WIDTH + LOG_ARRIVAL_WIDTH +
+                           LOG_COUNT_WIDTH + LOG_CHECKSUM_WIDTH
+};
+
 const char *mo_service_status_text(enum mo_service_status status) {
     switch (status) {
     case MO_SERVICE_OK:
@@ -112,7 +123,6 @@ static bool work_remaining(void *context) {
 static enum mo_service_status invoke(struct mo_service_loop *s, uint32_t function,
                                      const struct mo_cell *arguments, uint32_t count,
                                      struct mo_cell *out, struct mo_defect *defect) {
-    /* Controlled calls poll once at entry, then once before each instruction. */
     uint64_t remaining = (uint64_t)MO_LIMIT_SERVICE_WORK + 1;
     enum mo_controlled_outcome outcome = mo_call_controlled(
         s->process, function, arguments, count, work_remaining, &remaining, out, defect);
@@ -123,11 +133,7 @@ static enum mo_service_status invoke(struct mo_service_loop *s, uint32_t functio
         return MO_SERVICE_WORK;
     case MO_CONTROL_STOPPED:
     case MO_CONTROL_FAILED:
-        return strncmp(defect->reason, "running out of memory", 21) == 0 ||
-                       (defect->limit_name != NULL &&
-                        strcmp(defect->limit_name, "--max-stack") == 0)
-                   ? MO_SERVICE_MEMORY
-                   : MO_SERVICE_DEFECT;
+        return defect->memory ? MO_SERVICE_MEMORY : MO_SERVICE_DEFECT;
     }
     MO_UNREACHABLE();
 }
@@ -172,33 +178,26 @@ static bool replacement(struct mo_service_loop *s, const struct mo_service_respo
 /* Copies through the saved codec, so the live value is as unshared as the one
  * recovery decodes and never larger than a record payload. */
 static bool saved_copy(struct mo_service_loop *s, uint32_t type, struct mo_cell value,
-                       struct mo_cell *out, size_t *length) {
-    *length = 0;
+                       struct mo_cell *out, struct mo_buffer *encoded) {
     if (s->store == NULL) {
         *out = mo_value_dup(s->process->heap, type, value);
         return true;
     }
-    struct mo_buffer bytes;
-    mo_buffer_init(&bytes, MO_LIMIT_SAVED_BYTES);
-    bool ok = mo_value_encode(s->process->heap, type, value, &bytes) &&
-              mo_value_decode(s->process->heap, type, bytes.bytes, bytes.length, out);
-    *length = bytes.length;
-    mo_buffer_free(&bytes);
-    return ok;
+    mo_buffer_clear(encoded);
+    return mo_value_encode(s->process->heap, type, value, encoded) &&
+           mo_value_decode(s->process->heap, type, encoded->bytes, encoded->length, out);
 }
 
-/* Timer flag, handler, arrival, argument count and state checksum. */
-#define MESSAGE_HEADER_BYTES 25
+static bool snapshot(struct mo_service_loop *s, const uint8_t *bytes, size_t length) {
+    struct mo_store_record record = {MO_STORE_STATE, s->sequence, s->image_key, bytes, length};
+    return mo_store_call(s->store, MO_STORE_SNAPSHOT, &record, NULL, NULL) == MO_STORE_OK;
+}
 
-static bool snapshot(struct mo_service_loop *s, struct mo_cell state) {
+static bool snapshot_state(struct mo_service_loop *s, struct mo_cell state) {
     struct mo_buffer bytes;
     mo_buffer_init(&bytes, MO_LIMIT_SAVED_BYTES);
-    bool ok = mo_value_encode(s->process->heap, s->descriptor->state_type, state, &bytes);
-    if (ok) {
-        struct mo_store_record record = {MO_STORE_STATE, s->sequence, s->image_key, bytes.bytes,
-                                         bytes.length};
-        ok = mo_store_call(s->store, MO_STORE_SNAPSHOT, &record, NULL, NULL) == MO_STORE_OK;
-    }
+    bool ok = mo_value_encode(s->process->heap, s->descriptor->state_type, state, &bytes) &&
+              snapshot(s, bytes.bytes, bytes.length);
     mo_buffer_free(&bytes);
     return ok;
 }
@@ -228,12 +227,15 @@ static bool restore_record(const struct mo_store_record *record, void *context) 
     }
     struct mo_binary in = {record->bytes, record->length, 0};
     uint64_t timer, handler, arrival, count, expected;
-    if (!r->found || record->sequence != r->sequence + 1 || !mo_binary_uint(&in, 1, &timer) ||
-        timer > 1 || !mo_binary_uint(&in, 4, &handler) || !mo_binary_uint(&in, 8, &arrival) ||
-        !mo_binary_uint(&in, 4, &count) || !mo_binary_uint(&in, 8, &expected))
+    if (!r->found || record->sequence != r->sequence + 1 ||
+        !mo_binary_uint(&in, LOG_TIMER_WIDTH, &timer) || timer > 1 ||
+        !mo_binary_uint(&in, LOG_HANDLER_WIDTH, &handler) ||
+        !mo_binary_uint(&in, LOG_ARRIVAL_WIDTH, &arrival) ||
+        !mo_binary_uint(&in, LOG_COUNT_WIDTH, &count) ||
+        !mo_binary_uint(&in, LOG_CHECKSUM_WIDTH, &expected))
         return false;
     struct service_message m = {.handler = (uint32_t)handler, .timer = timer != 0};
-    memcpy(&m.arrival, &arrival, 8);
+    memcpy(&m.arrival, &arrival, LOG_ARRIVAL_WIDTH);
     if (m.arrival < MO_TIME_MIN_US || m.arrival > MO_TIME_MAX_US ||
         handler >= (m.timer ? s->descriptor->timer_count : s->descriptor->tool_count))
         return false;
@@ -245,7 +247,8 @@ static bool restore_record(const struct mo_store_record *record, void *context) 
     while (ok && built < count) {
         uint64_t length;
         const uint8_t *bytes;
-        ok = mo_binary_uint(&in, 4, &length) && mo_binary_read(&in, (size_t)length, &bytes) &&
+        ok = mo_binary_uint(&in, LOG_ARGUMENT_LENGTH_WIDTH, &length) &&
+             mo_binary_read(&in, (size_t)length, &bytes) &&
              mo_value_decode(heap, tool->argument_types[built], bytes, (size_t)length,
                              &m.arguments[built]);
         if (ok)
@@ -259,14 +262,15 @@ static bool restore_record(const struct mo_store_record *record, void *context) 
         if (reply.status == MO_SERVICE_MEMORY || reply.status == MO_SERVICE_WORK)
             r->limit = reply.status;
         struct mo_cell state;
-        struct mo_buffer bytes;
-        size_t length;
-        mo_buffer_init(&bytes, MO_LIMIT_SAVED_BYTES);
+        struct mo_buffer encoded;
+        mo_buffer_init(&encoded, MO_LIMIT_SAVED_BYTES);
         ok = replacement(s, &reply, &state) &&
-             mo_value_encode(heap, s->descriptor->state_type, state, &bytes) &&
-             mo_binary_checksum(bytes.bytes, bytes.length) == expected &&
-             saved_copy(s, s->descriptor->state_type, state, &state, &length);
-        mo_buffer_free(&bytes);
+             saved_copy(s, s->descriptor->state_type, state, &state, &encoded);
+        if (ok && mo_binary_checksum(encoded.bytes, encoded.length) != expected) {
+            mo_value_drop(heap, s->descriptor->state_type, state);
+            ok = false;
+        }
+        mo_buffer_free(&encoded);
         if (ok) {
             mo_value_drop(heap, s->descriptor->state_type, r->state);
             r->state = state;
@@ -306,23 +310,24 @@ static enum mo_service_status recover(struct mo_service_loop *s, bool *found, st
 }
 
 static bool persist(struct mo_service_loop *s, const struct service_message *m,
-                    struct mo_cell state) {
+                    const struct mo_buffer *state) {
     if (s->store == NULL)
         return true;
     struct mo_buffer bytes, value;
     mo_buffer_init(&bytes, MO_LIMIT_SAVED_BYTES);
     mo_buffer_init(&value, MO_LIMIT_SAVED_BYTES);
     uint32_t count = m->timer ? 0 : s->descriptor->tools[m->handler].argument_count;
-    bool ok =
-        mo_value_encode(s->process->heap, s->descriptor->state_type, state, &value) &&
-        mo_binary_write(&bytes, m->timer ? 1 : 0, 1) && mo_binary_write(&bytes, m->handler, 4) &&
-        mo_binary_write(&bytes, (uint64_t)m->arrival, 8) && mo_binary_write(&bytes, count, 4) &&
-        mo_binary_write(&bytes, mo_binary_checksum(value.bytes, value.length), 8);
+    bool ok = mo_binary_write(&bytes, m->timer ? 1 : 0, LOG_TIMER_WIDTH) &&
+              mo_binary_write(&bytes, m->handler, LOG_HANDLER_WIDTH) &&
+              mo_binary_write(&bytes, (uint64_t)m->arrival, LOG_ARRIVAL_WIDTH) &&
+              mo_binary_write(&bytes, count, LOG_COUNT_WIDTH) &&
+              mo_binary_write(&bytes, mo_binary_checksum(state->bytes, state->length),
+                              LOG_CHECKSUM_WIDTH);
     for (uint32_t i = 0; ok && i < count; i++) {
         mo_buffer_clear(&value);
         ok = mo_value_encode(s->process->heap, s->descriptor->tools[m->handler].argument_types[i],
                              m->arguments[i], &value) &&
-             mo_binary_write(&bytes, value.length, 4) &&
+             mo_binary_write(&bytes, value.length, LOG_ARGUMENT_LENGTH_WIDTH) &&
              mo_buffer_append(&bytes, value.bytes, value.length);
     }
     if (ok) {
@@ -335,7 +340,7 @@ static bool persist(struct mo_service_loop *s, const struct service_message *m,
     if (ok) {
         s->sequence++;
         if (s->sequence % MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES == 0)
-            ok = snapshot(s, state);
+            ok = snapshot(s, state->bytes, state->length);
     }
     return ok;
 }
@@ -439,6 +444,8 @@ enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t in
     if (status == MO_SERVICE_OK)
         failed_function = MO_NO_INDEX;
     bool found = false, snapshot_due = false;
+    struct mo_buffer encoded;
+    mo_buffer_init(&encoded, MO_LIMIT_SAVED_BYTES);
     if (status == MO_SERVICE_OK && store != NULL)
         status = recover(s, &found, &s->state, &snapshot_due, &failed_function);
     if (status == MO_SERVICE_OK && !found) {
@@ -447,8 +454,7 @@ enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t in
     }
     if (status == MO_SERVICE_OK && !found && store != NULL) {
         struct mo_cell original = s->state;
-        size_t length;
-        if (!saved_copy(s, s->descriptor->state_type, original, &s->state, &length))
+        if (!saved_copy(s, s->descriptor->state_type, original, &s->state, &encoded))
             status = MO_SERVICE_MEMORY;
         else
             mo_value_drop(s->process->heap, s->descriptor->state_type, original);
@@ -457,8 +463,11 @@ enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t in
     /* Recovery may stop between an append and its due snapshot; finish it now. */
     if (status == MO_SERVICE_OK)
         failed_function = MO_NO_INDEX;
-    if (status == MO_SERVICE_OK && snapshot_due && !snapshot(s, s->state))
+    if (status == MO_SERVICE_OK && snapshot_due &&
+        !(encoded.length != 0 ? snapshot(s, encoded.bytes, encoded.length)
+                              : snapshot_state(s, s->state)))
         status = MO_SERVICE_STORE;
+    mo_buffer_free(&encoded);
     struct mo_service_time time = sample_clock(s);
     if (status != MO_SERVICE_OK) {
         const struct mo_service_event event = {MO_SERVICE_FAILURE, status, time,
@@ -533,21 +542,24 @@ enum mo_service_status mo_service_send(struct mo_service_loop *s, uint32_t tool,
         return MO_SERVICE_BUSY;
     struct mo_service_time time = sample_clock(s);
     struct service_message message = {.arrival = time.now, .handler = tool, .id = id};
+    struct mo_buffer encoded;
+    mo_buffer_init(&encoded, MO_LIMIT_SAVED_BYTES);
     size_t payload = MESSAGE_HEADER_BYTES;
     for (uint32_t i = 0; i < count; i++) {
         uint32_t type = handler->argument_types[i];
-        size_t length = 0;
         if (handler->read_only)
             message.arguments[i] = mo_value_dup(s->process->heap, type, arguments[i]);
-        else if (!saved_copy(s, type, arguments[i], &message.arguments[i], &length) ||
-                 (payload += 4 + length) > MO_LIMIT_SAVED_BYTES) {
+        else if (!saved_copy(s, type, arguments[i], &message.arguments[i], &encoded) ||
+                 (payload += LOG_ARGUMENT_LENGTH_WIDTH + encoded.length) > MO_LIMIT_SAVED_BYTES) {
             uint32_t built = payload > MO_LIMIT_SAVED_BYTES ? i + 1 : i;
             for (uint32_t j = 0; j < built; j++)
                 mo_value_drop(s->process->heap, handler->argument_types[j], message.arguments[j]);
+            mo_buffer_free(&encoded);
             return MO_SERVICE_MEMORY;
         }
     }
     *append(s) = message;
+    mo_buffer_free(&encoded);
     return MO_SERVICE_OK;
 }
 
@@ -568,6 +580,26 @@ static uint32_t record(uint64_t *times, uint32_t count, uint64_t now, uint64_t w
     return keep;
 }
 
+static void drain(struct mo_service_loop *s, bool keep) {
+    uint32_t old_count = s->count, head = s->head;
+    s->count = 0;
+    for (uint32_t i = 0; i < old_count; i++) {
+        struct service_message message = s->mailbox[(head + i) % MO_LIMIT_SERVICE_MAILBOX];
+        if (keep && !message.timer) {
+            *append(s) = message;
+            continue;
+        }
+        if (!message.timer) {
+            struct mo_service_response reply = {
+                .id = message.id, .handler = message.handler, .status = MO_SERVICE_DOWN};
+            s->hooks.reply(&reply, s->hooks.context);
+        }
+        drop_message(s, &message);
+    }
+    if (!keep)
+        s->head = (head + old_count) % MO_LIMIT_SERVICE_MAILBOX;
+}
+
 static void supervise(struct mo_service_loop *s, enum mo_service_status reason,
                       struct mo_service_time time) {
     s->failure_count =
@@ -581,21 +613,7 @@ static void supervise(struct mo_service_loop *s, enum mo_service_status reason,
     s->running = s->restart_count != MO_LIMIT_SERVICE_RESTARTS;
     if (!s->running)
         log_event(s, MO_SERVICE_STOP, reason, time, NULL);
-    uint32_t old_count = s->count;
-    s->count = 0;
-    for (uint32_t i = 0; i < old_count; i++) {
-        struct service_message message = s->mailbox[(s->head + i) % MO_LIMIT_SERVICE_MAILBOX];
-        if (message.timer)
-            continue;
-        if (s->running)
-            *append(s) = message;
-        else {
-            struct mo_service_response reply = {
-                .id = message.id, .handler = message.handler, .status = MO_SERVICE_DOWN};
-            s->hooks.reply(&reply, s->hooks.context);
-            drop_message(s, &message);
-        }
-    }
+    drain(s, s->running);
     if (s->running)
         start_timers(s, time);
 }
@@ -619,19 +637,21 @@ bool mo_service_step(struct mo_service_loop *s) {
     struct mo_service_time time = sample_clock(s);
     if (reply.status == MO_SERVICE_OK) {
         struct mo_cell state;
-        size_t length;
+        struct mo_buffer encoded;
+        mo_buffer_init(&encoded, MO_LIMIT_SAVED_BYTES);
         reply.updated = replacement(s, &reply, &state);
-        if (reply.updated && !saved_copy(s, s->descriptor->state_type, state, &state, &length)) {
+        if (reply.updated && !saved_copy(s, s->descriptor->state_type, state, &state, &encoded)) {
             reply.status = MO_SERVICE_MEMORY;
             reply.updated = false;
             log_event(s, MO_SERVICE_FAILURE, reply.status, time, NULL);
-        } else if (reply.updated && !persist(s, &message, state)) {
+        } else if (reply.updated && !persist(s, &message, &encoded)) {
             mo_value_drop(s->process->heap, s->descriptor->state_type, state);
             reply.status = MO_SERVICE_STORE;
             reply.updated = false;
             s->running = false;
             log_event(s, MO_SERVICE_STOP, MO_SERVICE_STORE, time, NULL);
         }
+        mo_buffer_free(&encoded);
         if (reply.updated) {
             mo_value_drop(s->process->heap, s->descriptor->state_type, s->state);
             s->state = state;
@@ -650,19 +670,8 @@ bool mo_service_step(struct mo_service_loop *s) {
     drop_message(s, &message);
     if (!returned || reply.status == MO_SERVICE_MEMORY)
         supervise(s, reply.status, time);
-    if (!s->running) {
-        while (s->count != 0) {
-            struct service_message queued = s->mailbox[s->head];
-            s->head = (s->head + 1) % MO_LIMIT_SERVICE_MAILBOX;
-            s->count--;
-            if (!queued.timer) {
-                struct mo_service_response down = {
-                    .id = queued.id, .handler = queued.handler, .status = MO_SERVICE_DOWN};
-                s->hooks.reply(&down, s->hooks.context);
-            }
-            drop_message(s, &queued);
-        }
-    }
+    if (!s->running)
+        drain(s, false);
     if (s->running)
         poll_timers(s, time);
     return true;

@@ -12,6 +12,8 @@
 #include <unistd.h>
 
 static unsigned crash_point, log_steps, simulation_appends;
+static bool check_recovery_heap;
+static unsigned recovery_heap_checks;
 static struct {
     bool enabled, forward, refuse, refuse_case;
     struct mo_service_hooks hooks;
@@ -25,6 +27,7 @@ mo_store_fault_call(struct mo_store *store, enum mo_store_operation operation,
                     const struct mo_store_record *record,
                     bool (*consume)(const struct mo_store_record *, void *), void *context);
 int mo_store_fault_step(sqlite3_stmt *stmt);
+void mo_store_fault_process_free(struct mo_process *process);
 MO_MUST_USE enum mo_service_status mo_simulation_observe_open(const struct mo_image *image,
                                                               uint32_t index,
                                                               const struct mo_service_hooks *hooks,
@@ -92,6 +95,14 @@ enum mo_service_status mo_simulation_observe_send(struct mo_service_loop *loop, 
             return MO_SERVICE_MEMORY;
     }
     return mo_service_send(loop, tool, arguments, count, id);
+}
+
+void mo_store_fault_process_free(struct mo_process *process) {
+    if (check_recovery_heap && process != NULL) {
+        CHECK(mo_heap_objects(mo_process_heap(process)) == 0);
+        recovery_heap_checks++;
+    }
+    mo_process_free(process);
 }
 
 enum mo_store_status mo_store_fault_call(struct mo_store *store, enum mo_store_operation operation,
@@ -706,6 +717,50 @@ static void invalid_payloads(struct mo_image *image) {
         }
         mo_buffer_free(&saved.bytes);
     }
+}
+
+static void wrong_state_checksum(void) {
+    struct mo_image *image =
+        compile("module Main\nservice\nstate List(Int) = [3, 8]\ntools add\n"
+                "token from env \"TOKEN\"\nend\n"
+                "fn add(state: List(Int), _now: Time, n: Int) : (List(Int), Int)\n"
+                "(state.append(n), n)\nend\n");
+    struct saved_record saved = {.kind = MO_STORE_LOG};
+    mo_buffer_init(&saved.bytes, MO_LIMIT_SAVED_BYTES);
+    struct mo_store *store;
+    MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
+    struct observations o = {0};
+    struct mo_service_loop *s = open_service(image, store, &o);
+    add(s, 11);
+    MO_ASSERT(mo_store_call(store, MO_STORE_LOAD, NULL, copy_record, &saved) == MO_STORE_OK);
+    mo_service_free(s);
+    s = open_service(image, store, &o);
+    struct mo_cell element;
+    CHECK(mo_list_size(mo_service_state(s)) == 3);
+    MO_ASSERT(mo_list_get(mo_service_state(s), 2, &element));
+    CHECK(mo_cell_get_int(element) == 11);
+    mo_service_free(s);
+    mo_store_close(store);
+    MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
+    s = open_service(image, store, &o);
+    mo_service_free(s);
+    MO_ASSERT(saved.bytes.length > 17);
+    saved.bytes.bytes[17] ^= 1;
+    struct mo_store_record record = {MO_STORE_LOG, 1, mo_image_bytecode(image)->header.checksum,
+                                     saved.bytes.bytes, saved.bytes.length};
+    MO_ASSERT(mo_store_call(store, MO_STORE_APPEND, &record, NULL, NULL) == MO_STORE_OK);
+    struct mo_service_hooks hooks = {clock_now, reply, event, &o};
+    unsigned replies = o.replies, failures = o.failures;
+    s = NULL;
+    check_recovery_heap = true;
+    CHECK(mo_service_open(image, 0, &hooks, store, &s) == MO_SERVICE_SAVED_INVALID);
+    check_recovery_heap = false;
+    CHECK(s == NULL && o.replies == replies && o.failures == failures + 1);
+    CHECK(recovery_heap_checks == 1);
+    mo_service_free(s);
+    mo_store_close(store);
+    mo_buffer_free(&saved.bytes);
+    mo_image_free(image);
 }
 
 static void replay_limit(void) {
@@ -1341,6 +1396,7 @@ static void run(void *unused) {
     message_limit();
     state_limit();
     replay_limit();
+    wrong_state_checksum();
     foreign_image(image, path);
     hostile_database(image, path);
     invalid_payloads(image);
