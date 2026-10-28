@@ -79,6 +79,9 @@ static void scan_input(const uint8_t *data, size_t size, const struct mo_cell *c
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (size > MO_LIMIT_MCP_HEADER_BYTES)
         return 0;
+    const struct mo_bearer bearer = {.bytes = "fuzz-credential", .length = 15};
+    MO_ASSERT(mo_bearer_check(&bearer, data, size) ==
+              (size == bearer.length && memcmp(data, bearer.bytes, size) == 0));
     prepare();
     struct mo_limits limits = mo_limits_default();
     limits.heap_size = MO_LIMIT_MCP_HEADER_HEAP;

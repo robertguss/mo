@@ -1203,6 +1203,50 @@ static MO_MUST_USE int sequence(void) {
     return 0;
 }
 
+static void test_bearer(void) {
+    const char *environment = "MO_TEST_ONLY_MCP_BEARER";
+    struct mo_bearer bearer;
+    MO_ASSERT(unsetenv(environment) == 0);
+    CHECK(!mo_bearer_read(&bearer, environment));
+    CHECK(!mo_bearer_check(&bearer, NULL, 0));
+    const char *invalid[] = {"", "=", "bad token", "a=b", "a\tb", "a:b", "a\nb"};
+    for (size_t i = 0; i < sizeof invalid / sizeof *invalid; i++) {
+        MO_ASSERT(setenv(environment, invalid[i], 1) == 0);
+        CHECK(!mo_bearer_read(&bearer, environment));
+        CHECK(bearer.length == 0);
+    }
+    uint8_t value[MO_LIMIT_MCP_TOKEN_BYTES + 2];
+    memset(value, 'A', sizeof value);
+    const size_t lengths[] = {1, 17, MO_LIMIT_MCP_TOKEN_BYTES};
+    for (size_t i = 0; i < sizeof lengths / sizeof *lengths; i++) {
+        size_t length = lengths[i];
+        value[length] = 0;
+        MO_ASSERT(setenv(environment, (const char *)value, 1) == 0);
+        CHECK(mo_bearer_read(&bearer, environment));
+        CHECK(mo_bearer_check(&bearer, value, length));
+        CHECK(!mo_bearer_check(&bearer, value, length - 1));
+        CHECK(!mo_bearer_check(&bearer, value, length + 1));
+        value[length] = 'A';
+        CHECK(!mo_bearer_check(&bearer, value, length + 1));
+        value[length - 1] = 'B';
+        CHECK(!mo_bearer_check(&bearer, value, length));
+        value[length - 1] = 'A';
+    }
+    value[sizeof value - 1] = 0;
+    MO_ASSERT(setenv(environment, (const char *)value, 1) == 0);
+    CHECK(!mo_bearer_read(&bearer, environment));
+    const char alphabet[] = "aZ09-._~+/==";
+    MO_ASSERT(setenv(environment, alphabet, 1) == 0);
+    CHECK(mo_bearer_read(&bearer, environment));
+    CHECK(mo_bearer_check(&bearer, (const uint8_t *)alphabet, sizeof alphabet - 1));
+    mo_host_wipe(&bearer, sizeof bearer);
+    CHECK(bearer.length == 0);
+    for (size_t i = 0; i < sizeof bearer.bytes; i++)
+        CHECK(bearer.bytes[i] == 0);
+    CHECK(!mo_bearer_check(&bearer, NULL, 0));
+    MO_ASSERT(unsetenv(environment) == 0);
+}
+
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--sequence") == 0)
         return sequence();
@@ -1228,6 +1272,7 @@ int main(int argc, char **argv) {
     test_main_capabilities();
     test_supplied_main_capabilities();
     test_vm_host_exhaustion();
+    test_bearer();
     mo_heap_image_free(fixture.image);
     mo_arena_free(&fixture.arena);
     return mo_test_report("host");

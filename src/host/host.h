@@ -130,4 +130,13 @@ mo_store_call(struct mo_store *store, enum mo_store_operation operation,
               const struct mo_store_record *record,
               bool (*consume)(const struct mo_store_record *record, void *context), void *context);
 
+struct mo_bearer {
+    uint8_t bytes[MO_LIMIT_MCP_TOKEN_BYTES];
+    size_t length;
+};
+MO_MUST_USE bool mo_bearer_read(struct mo_bearer *out, const char *environment);
+MO_MUST_USE bool mo_bearer_check(const struct mo_bearer *bearer, const uint8_t *bytes,
+                                 size_t length);
+void mo_host_wipe(void *bytes, size_t length);
+
 #endif

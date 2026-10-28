@@ -448,6 +448,7 @@ static inline struct mo_limits mo_limits_default(void) {
 #define MO_LIMIT_FIX_ROUNDS 8
 #define MO_LIMIT_FIX_ROUND_EDITS 4096
 
+#define MO_LIMIT_MCP_TOKEN_BYTES 256
 #define MO_LIMIT_MCP_HEADER_BYTES (2 << 10)
 #define MO_LIMIT_MCP_LINE_BYTES (8 << 10)
 #define MO_LIMIT_MCP_HEADER_FIELDS 64
