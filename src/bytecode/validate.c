@@ -788,10 +788,15 @@ static MO_MUST_USE bool services(struct validation *v) {
                 t->result_type != fn->result_type)
                 return refuse(v, "service tool schema differs from handler");
             names[j] = v->info->names->canonical[t->name];
-            for (uint32_t k = 0; k < t->argument_count; k++)
+            uint32_t argument_names[MO_LIMIT_BYTECODE_PARAMETERS - 2];
+            for (uint32_t k = 0; k < t->argument_count; k++) {
                 if (t->argument_types[k] != fn->parameters[k + 2].type ||
                     !named(v, t->argument_names[k]))
                     return refuse(v, "service tool schema differs from handler");
+                argument_names[k] = v->info->names->canonical[t->argument_names[k]];
+            }
+            if (!unique(argument_names, t->argument_count))
+                return refuse(v, "duplicate service tool parameter name");
             const struct mo_type *result = &f->types[t->result_type];
             uint32_t success = MO_BYTECODE_NO_INDEX;
             if (result->kind == MO_TYPE_CHOICE && strncmp(result->name, "Result(", 7) == 0 &&

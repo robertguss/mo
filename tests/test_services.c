@@ -89,8 +89,8 @@ static void schema_refusals(const struct mo_bytecode *file, const struct mo_buff
         uint32_t names[] = {tool.name, tool.name, tool.name};
         tool.argument_names = names;
         tool.argument_name_count = count;
-        if (count != 2)
-            write_refused(&changed, "service tool schema differs from handler");
+        write_refused(&changed, count == 2 ? "duplicate service tool parameter name"
+                                           : "service tool schema differs from handler");
     }
     tool = file->services[0].tools[1];
     uint32_t names[] = {tool.argument_names[0], file->string_count};
@@ -106,10 +106,12 @@ static void schema_refusals(const struct mo_bytecode *file, const struct mo_buff
         &arena, file->string_count + 1, sizeof *strings, _Alignof(struct mo_bytecode_string));
     MO_ASSERT(strings != NULL);
     memcpy(strings, file->strings, file->string_count * sizeof *strings);
-    strings[file->string_count] = (struct mo_bytecode_string){3, (const uint8_t *)"a\0b"};
+    strings[file->string_count] = strings[names[0]];
     changed.strings = strings;
     changed.string_count++;
     names[1] = file->string_count;
+    write_refused(&changed, "duplicate service tool parameter name");
+    strings[file->string_count] = (struct mo_bytecode_string){3, (const uint8_t *)"a\0b"};
     write_refused(&changed, "service tool schema differs from handler");
     tool = file->services[0].tools[0];
     tool.name = file->string_count;
@@ -412,7 +414,8 @@ static void selected_overload(void) {
              "## Wrong overload.\n"
              "fn query(_state: Unselected, _now: Time, wrong: Text) : Text\nwrong\nend\n"
              "## Selected overload.\n"
-             "fn query(_state: Selected, _now: Time, wanted: Text) : Text\nwanted\nend\n");
+             "fn query(_state: Selected, _now: Time, wanted: Text, _ignored: Int) : Text\n"
+             "wanted\nend\n");
     MO_ASSERT(f.program != NULL && !mo_diags_any(&f.diags));
     const char *modules[] = {"Main"};
     f.set.names = modules;
@@ -436,8 +439,9 @@ static void selected_overload(void) {
     const struct mo_bytecode_service_tool *tool = &file->services[0].tools[0];
     CHECK(named(file, tool->name, "query"));
     CHECK(named(file, tool->description, "Selected overload."));
-    MO_ASSERT(tool->argument_name_count == 1);
+    MO_ASSERT(tool->argument_name_count == 2);
     CHECK(named(file, tool->argument_names[0], "wanted"));
+    CHECK(named(file, tool->argument_names[1], "_ignored"));
     text_roundtrip(&wire);
     mo_image_free(image);
     mo_buffer_free(&wire);

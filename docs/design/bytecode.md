@@ -631,10 +631,13 @@ handler result (including any state/reply pair or Result wrapper).
 The description joins the selected handler's leading `##` comment lines with
 newlines, removing each `##` and one following space if present. Ordinary `#`
 comments are excluded. With no documentation comment, it is an empty string.
-Parameter names exclude State and Time and retain signature order. The loader
-requires a valid description string index and exactly one nonempty, NUL-free
-name per schema argument; each name is a string index. A tool occupies 28 wire
-bytes plus eight bytes per schema argument, including both array counts.
+Parameter names exclude State and Time and retain signature order and exact
+spelling, including leading underscores. The loader requires a valid
+description string index and exactly one nonempty, NUL-free
+name per schema argument; each name is a string index. Names are unique by
+bytes within each tool, even when equal strings have different indices.
+Duplicates refuse with `duplicate service tool parameter name`. A tool occupies
+28 wire bytes plus eight bytes per schema argument, including both array counts.
 
 The loader checks the D313 classification independently of the compiler.
 Bare `State` and `Result(State, E)` refuse. Only `(State, Reply)` and
