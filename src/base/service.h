@@ -30,9 +30,17 @@ struct mo_service {
     const struct mo_service_timer *timers;
 };
 
+struct mo_service_shape {
+    bool is_struct;
+    uint32_t case_count;
+    const bool *unnamed;
+};
+
 struct mo_services {
     uint32_t count;
     const struct mo_service *items;
+    uint32_t data_count;
+    const struct mo_service_shape *data_shapes;
 };
 
 #endif

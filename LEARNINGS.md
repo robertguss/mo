@@ -27,6 +27,11 @@
 - Source structs lower to one-case choices, not `MO_TYPE_RECORD`. A nested
   choice payload can require a boxed wrapper. Bridge code must validate the
   actual types and case shapes rather than assume C record layouts.
+- Preserve source struct/enum form and unnamed-payload flags while lowering,
+  before the Core representation loses those distinctions. The service
+  sidecar owns copies in the lowering arena and indexes them by Core data
+  order. Built-in Entry is a physical record, not a source data declaration;
+  its descriptor shape must be supplied separately during code generation.
 - Heap value allocations already wipe before release, but that does not cover
   VM stacks or native scratch arenas. Mark a protocol process confidential
   before allocating values or calling it. Its stack and scratch then use

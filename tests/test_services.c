@@ -445,10 +445,62 @@ static void selected_overload(void) {
     mo_arena_free(&arena);
 }
 
+static void source_shapes(void) {
+    struct fixture f;
+    init(&f, "module Main\n"
+             "struct Record\nname: Text\nkind: EntryKind\nend\n"
+             "enum One\nOnly(name: Text, kind: EntryKind)\nend\n"
+             "enum Payload\nEmpty\nUnnamed(Int)\nNamed(value: Int)\nend\n"
+             "service\nstate Int = 0\ntools echo\ntoken from env \"TOKEN\"\nend\n"
+             "fn echo(_state: Int, _now: Time, record: Record, one: One, payload: Payload, "
+             "entry: Entry, entries: List(Entry)) : (Record, One, Payload, Entry, List(Entry))\n"
+             "(record, one, payload, entry, entries)\nend\n");
+    MO_ASSERT(f.program != NULL && !mo_diags_any(&f.diags));
+    const char *modules[] = {"Main"};
+    f.set.names = modules;
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_LOWER_WORK);
+    struct mo_services services;
+    struct mo_core *core =
+        mo_lower_services(&arena, f.program, &f.sources, &f.diags, NULL, &services);
+    MO_ASSERT(core != NULL && !mo_diags_any(&f.diags));
+    free_fixture(&f);
+    const char *names[] = {"Main.Record", "Main.One", "Main.Payload"};
+    uint32_t found = 0;
+    CHECK(services.data_count == core->data.count);
+    for (uint32_t i = 0; i < services.data_count; i++) {
+        const struct mo_service_shape *shape = &services.data_shapes[i];
+        mo_core_string name = core->data.items[i].name;
+        for (uint32_t j = 0; j < sizeof names / sizeof *names; j++) {
+            if (name.length != strlen(names[j]) || memcmp(name.bytes, names[j], name.length) != 0)
+                continue;
+            found++;
+            CHECK(shape->is_struct == (j == 0));
+            CHECK(shape->case_count == (j == 0 ? 0U : j == 1 ? 1U : 3U));
+            if (shape->is_struct)
+                CHECK(shape->unnamed == NULL);
+            else
+                for (uint32_t k = 0; k < shape->case_count; k++)
+                    CHECK(shape->unnamed[k] == (j == 2 && k == 1));
+        }
+    }
+    CHECK(found == 3);
+    struct mo_diags diags;
+    CHECK(mo_diags_init(&diags));
+    struct mo_buffer wire;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    CHECK(mo_compile_services(core, &services, &wire, &diags));
+    text_roundtrip(&wire);
+    mo_buffer_free(&wire);
+    mo_diags_free(&diags);
+    mo_arena_free(&arena);
+}
+
 static void run(void *context) {
     (void)context;
     descriptor();
     selected_overload();
+    source_shapes();
 }
 
 int main(int argc, char **argv) {

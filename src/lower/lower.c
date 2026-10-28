@@ -325,7 +325,7 @@ static struct mo_services services(struct lowering *p) {
                                           &duration, &timer->interval)};
         }
     }
-    return (struct mo_services){count, items};
+    return (struct mo_services){.count = count, .items = items};
 }
 
 static struct mo_core *lower(struct mo_arena *arena, const struct mo_program *program,
@@ -409,12 +409,21 @@ static struct mo_core *lower(struct mo_arena *arena, const struct mo_program *pr
     result->funs.items = LOWER_NEW(p, struct mo_core_fun, result->funs.count);
     result->data.count = p->data_count;
     result->data.items = LOWER_NEW(p, struct mo_core_data, result->data.count);
+    struct mo_service_shape *shapes = NULL;
+    if (service_data.count != 0) {
+        service_data.data_count = p->data_count;
+        shapes = LOWER_NEW(p, struct mo_service_shape, p->data_count);
+        service_data.data_shapes = shapes;
+    }
     size_t i = 0;
     for (struct instance *f = p->functions; f != NULL; f = f->next)
         result->funs.items[i++] = f->fun;
     i = 0;
-    for (struct data_instance *d = p->data; d != NULL; d = d->next)
+    for (struct data_instance *d = p->data; d != NULL; d = d->next) {
+        if (shapes != NULL)
+            shapes[i] = d->shape;
         result->data.items[i++] = d->data;
+    }
     lower_metadata(p, result);
     if (promises != NULL) {
         *promises = (struct mo_lowered_promises){0};
