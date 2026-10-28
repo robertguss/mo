@@ -1,7 +1,7 @@
 # Agent benchmark v0
 
 Phase 2's baseline of how well fresh agent sessions write Mo (MO-62): twenty tasks of the four
-kinds `learnability/protocol.md` names, five of each, with four held out. Each task's text,
+kinds `learnability/protocol.md` names, five of each. Each task's text,
 starting files and hidden tests are frozen here before any session sees them, as
 `bench/tools/` freezes the three tools' tasks. A round is run, graded and reported as the
 protocol says, with one session per task per family (D255), and only once Robert has said to
@@ -13,22 +13,22 @@ start it; its `freeze.md` (the `mo` commit, the prompt, the models, the seeds) i
 | [02-col-sum](02-col-sum/task.md) | write a program | | 15 runs |
 | [03-brackets](03-brackets/task.md) | write a program | | 15 runs |
 | [04-line-counts](04-line-counts/task.md) | write a program | | 18 runs |
-| [05-ranges](05-ranges/task.md) | write a program | yes | 20 runs |
+| [05-ranges](05-ranges/task.md) | write a program | | 20 runs |
 | [06-temperature](06-temperature/task.md) | fix compile errors | | 6 tests, 3 runs |
 | [07-grades](07-grades/task.md) | fix compile errors | | 6 tests, 3 runs |
 | [08-playlist](08-playlist/task.md) | fix compile errors | | 7 tests, 3 runs |
 | [09-rpn](09-rpn/task.md) | fix compile errors | | 8 tests, 3 runs |
-| [10-restock](10-restock/task.md) | fix compile errors | yes | 8 tests, 5 runs |
+| [10-restock](10-restock/task.md) | fix compile errors | | 8 tests, 5 runs |
 | [11-calendar](11-calendar/task.md) | make a failing test pass | | 10 tests |
 | [12-search](12-search/task.md) | make a failing test pass | | 9 tests |
 | [13-titles](13-titles/task.md) | make a failing test pass | | 11 tests |
 | [14-wallet](14-wallet/task.md) | make a failing test pass | | 12 tests |
-| [15-parking](15-parking/task.md) | make a failing test pass | yes | 10 tests |
+| [15-parking](15-parking/task.md) | make a failing test pass | | 10 tests |
 | [16-todo](16-todo/task.md) | extend a program | | 16 runs |
 | [17-stats](17-stats/task.md) | extend a program | | 11 tests |
 | [18-store](18-store/task.md) | extend a program | | 12 runs |
 | [19-cart](19-cart/task.md) | extend a program | | 15 tests |
-| [20-timesheet](20-timesheet/task.md) | extend a program | yes | 18 runs |
+| [20-timesheet](20-timesheet/task.md) | extend a program | | 18 runs |
 
 A *test* is a `test` in a hidden Mo module, run with `mo test`; a *run* is one `mo run` of the
 program, whose standard output and exit status (and, where the test says, standard error and
@@ -88,8 +88,9 @@ grammar, `build/<compiler>/debug/mo-grammar` from `make grammar`, accepts every 
 test and run passes). A folder whose only diagnostics are E1103 or E1150 may be a toolchain gap,
 and its hidden tests still run. It is one only when each of those diagnostics is on a form the
 reference requires, which the round checks by reading it: this build also reports E1103 for some
-mistakes, such as calling a function that doesn't exist through its module. The model graders and Robert's check (protocol sections 4 and 5)
-come after this, on what the sessions wrote.
+mistakes, such as calling a function that doesn't exist through its module. The model graders
+(protocol section 4) come after this, on what the sessions wrote; their answers raise findings
+only (section 5, D275).
 
 ## Frozen means frozen
 
@@ -105,8 +106,8 @@ neither its text nor its files change: a change is a new decision and a new task
 
 ## Held-out tasks
 
-Tasks 05, 10, 15 and 20 were written on 22 October 2026 for benchmark v0's first round, and no
-session, grader or published document has seen them. Protocol section 6 asks that they be
-written after the release of every model taking part, so a round that uses a model released
-after that date writes new ones first. They are reported apart from the others. After the round
-they are ordinary tasks, and the next round writes four new held-out ones.
+Tasks 05, 10, 15 and 20 were written on 22 October 2026 as round 1's held-out tasks, and no
+session, grader or published document had seen them then. Round 1's sessions and graders have
+since seen them, so they are ordinary tasks (round 2 `freeze.md`). Protocol section 6 asks that
+held-out tasks be written after the release of every model taking part, so a later round that
+uses a newer model writes new ones first. Round 1 reported them apart from the others.

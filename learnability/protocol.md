@@ -27,7 +27,7 @@ Before the first session of a round starts, its folder holds `freeze.md`, which 
   default model, and the date each model was released;
 - the graders' models and their prompt. Phase 1's `rubric.md` assumes there is no compiler, so
   the first Phase 2 round writes a new grader prompt for section 4's question, and freezes it;
-- the random seeds of section 5.
+- the graders' identifier and order seeds (section 4).
 
 A round is frozen once `freeze.md` is committed. Changing anything it lists after a session has
 seen a task makes a new round: the sessions already run are reported as their own round, never
@@ -108,39 +108,22 @@ diagnostics `mo check` gave in the session log.
   not see the hidden tests' results, or which step a program failed at, until it has answered,
   so the tests can't sway its answer.
 - **On its own.** Each grader grades every program alone. When the two disagree with each other,
-  or with the mechanical verdict, the program goes to a third fresh grader, and then to Robert
-  if that still leaves the graders and the tests in conflict.
+  or with the mechanical verdict, the program goes to a third fresh grader. If that still
+  leaves the graders and the tests in conflict, the coordinator decides by running the program
+  on the inputs in dispute (D275) and records it as a finding.
 
-When the graders' answer differs from the hidden tests' and the third grader or Robert agrees
-with the graders, that is a finding against the hidden tests, not a new verdict: the program
-keeps its mechanical verdict for this round, pass or fail, the finding is written in
-`results.md` beside it, and the test is fixed for the next round, which is a new freeze.
+When the graders' answer differs from the hidden tests', that is a finding against the hidden
+tests, not a new verdict: the program keeps its mechanical verdict for this round, pass or fail,
+the finding is written in `results.md` beside it, and the test is fixed for the next round, which
+is a new freeze.
 
 ## 5. The human check
 
-Before the model graders' answers are relied on, Robert grades a sample of programs himself.
-
-- **Which programs.** 30 programs that the model graders also read, drawn at random with the
-  seed recorded in `freeze.md`. A round with fewer than 30 is graded whole, and the next rounds
-  add to it until 30 are graded; until then the graders' answers only raise findings.
-- **How.** Blind, as section 4 describes, with the same question, and without the hidden tests'
-  results: does it do the task, yes or no.
-- **What's computed.** Cohen's kappa between Robert and each model grader, and between Robert and
-  the mechanical verdict, with the observed agreement beside each
-  (`python3 learnability/wilson.py --kappa FILE`).
-- **What it means.** A grader (or the hidden tests) agrees with Robert well enough when its kappa
-  is at least 0.6. Kappa is unstable when one answer is rare: with 29 of 30 programs passing,
-  one disagreement gives a kappa of 0. So when Robert gave either answer to fewer than 5
-  programs, agreement is judged instead by at most 3 disagreements in 30 (90% agreement). On
-  30 programs a kappa is only known to about 0.15 either side, so the rule is a floor, not a
-  fine measure.
-- **What follows.** Every disagreement with Robert is looked at and written down, whatever the
-  numbers. A model grader that falls short isn't used in the round. If the hidden tests fall
-  short, they are not trusted: each disagreement is traced to a test or to Robert's reading
-  before any result is reported.
-
-The check is done by the end of benchmark v0's round at the latest, and again whenever a
-grader's model or prompt changes.
+Robert does not grade programs himself (D275, recorded in
+`learnability/tools-final/freeze.md`: "I dont want to do a blind human review and
+trust your judgement"). Hidden tests decide each verdict. The model graders'
+answers raise findings against the hidden tests, as section 4 says; they do not
+change a program's pass or fail for the round.
 
 ## 6. Held-out tasks
 
@@ -208,12 +191,11 @@ from the session with the most, and the rates without that session.
 ## 8. Reporting
 
 Each round's folder (as `final/` is for Phase 1) holds `freeze.md`, the prompt, every program as
-written, every session log, every grader's grading, the human check's grades, `notes.md` (how
-the round ran, and any session run again and why), and `results.md`, which gives, per family:
+written, every session log, every grader's grading, `notes.md` (how the round ran, and any
+session run again and why), and `results.md`, which gives, per family:
 
 - pass counts, fail counts by step and toolchain gaps, by task kind and for held-out and other
   tasks apart, each with its Wilson interval, and each task's result;
 - the `tally` table and its rates, with `mo fix` counted separately, and the tests' pass rate
   beside it, because "it compiles" is not "it works";
-- the human check's kappas and agreement;
 - every finding against the hidden tests, and the stumbles.

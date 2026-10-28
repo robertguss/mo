@@ -67,7 +67,7 @@ met, is in Notion's [Phase 2 page](https://www.notion.so/3f6700320c4581c4b7c4daf
   Maintained copies are in [tools/](../tools/README.md), and the `drivers` group
   runs them: linkcheck over the repository's Markdown, tally over every recorded
   round's session logs, and notioncopy on the reference (MO-139, D287).
-- Benchmark v0 has 20 frozen tasks, 4 held out. Round 1 (#193) is the baseline:
+- Benchmark v0 has 20 frozen tasks. Round 1 (#193) is the baseline:
   all 40 programs pass the hidden tests, and 37 of 37 compile errors were fixed
   within three attempts, but only 29 of 37 (78.4%) on the next attempt. Round 2
   (#210), after MO-137's messages, fixed 26 of 37 (70.3%) on the next attempt.
