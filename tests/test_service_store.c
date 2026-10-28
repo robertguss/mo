@@ -12,7 +12,7 @@
 #include <unistd.h>
 
 static unsigned crash_point, log_steps, simulation_appends;
-static bool check_recovery_heap;
+static bool check_recovery_heap, refuse_store_allocation;
 static unsigned recovery_heap_checks;
 static struct {
     bool enabled, forward, refuse, refuse_case;
@@ -28,6 +28,7 @@ mo_store_fault_call(struct mo_store *store, enum mo_store_operation operation,
                     bool (*consume)(const struct mo_store_record *, void *), void *context);
 int mo_store_fault_step(sqlite3_stmt *stmt);
 void mo_store_fault_process_free(struct mo_process *process);
+MO_MUST_USE void *mo_store_fault_allocate(struct mo_arena *arena, size_t size, size_t alignment);
 MO_MUST_USE enum mo_service_status mo_simulation_observe_open(const struct mo_image *image,
                                                               uint32_t index,
                                                               const struct mo_service_hooks *hooks,
@@ -40,6 +41,10 @@ MO_MUST_USE enum mo_service_status mo_simulation_observe_send(struct mo_service_
 MO_MUST_USE bool mo_simulation_fault_case(struct mo_heap *heap, uint32_t type, uint32_t tag,
                                           const struct mo_cell *fields, uint32_t count,
                                           struct mo_cell *out);
+
+void *mo_store_fault_allocate(struct mo_arena *arena, size_t size, size_t alignment) {
+    return refuse_store_allocation ? NULL : mo_arena_allocate(arena, size, alignment);
+}
 
 bool mo_simulation_fault_case(struct mo_heap *heap, uint32_t type, uint32_t tag,
                               const struct mo_cell *fields, uint32_t count, struct mo_cell *out) {
@@ -411,7 +416,12 @@ static void payload_limit(const char *path) {
     struct mo_store *store;
     MO_ASSERT(mo_store_open(path, &store) == MO_STORE_OK);
     struct mo_store *extra = NULL;
-    CHECK(mo_store_open(NULL, &extra) == MO_STORE_LIMIT && extra == NULL);
+    CHECK(mo_store_open(NULL, &extra) == MO_STORE_HANDLES && extra == NULL);
+    char message[128];
+    MO_ASSERT(snprintf(message, sizeof message,
+                       "too many open service stores; close one of the %d open stores",
+                       MO_LIMIT_STORES) > 0);
+    CHECK(strcmp(mo_store_status_text(MO_STORE_HANDLES), message) == 0);
     struct mo_store_record record = {MO_STORE_STATE, 0, 1, bytes.bytes, MO_LIMIT_SAVED_BYTES + 1};
     CHECK(mo_store_call(store, MO_STORE_SNAPSHOT, &record, NULL, NULL) != MO_STORE_OK);
     record.length = MO_LIMIT_SAVED_BYTES;
@@ -600,8 +610,18 @@ static void foreign_image(struct mo_image *image, const char *path) {
 
 static void hostile_database(struct mo_image *image, const char *path) {
     struct mo_store *store = NULL;
-    CHECK(mo_store_open("", &store) == MO_STORE_CORRUPT && store == NULL);
-    CHECK(mo_store_open(":memory:", &store) == MO_STORE_CORRUPT && store == NULL);
+    CHECK(mo_store_open("", &store) == MO_STORE_EMPTY_PATH && store == NULL);
+    CHECK(strcmp(mo_store_status_text(MO_STORE_EMPTY_PATH),
+                 "service store path is empty; use a file path") == 0);
+    CHECK(mo_store_open(":memory:", &store) == MO_STORE_MEMORY_PATH && store == NULL);
+    CHECK(strcmp(mo_store_status_text(MO_STORE_MEMORY_PATH),
+                 ":memory: is not a service store path; use a file path") == 0);
+    CHECK(mo_store_status_text(MO_STORE_OK) == NULL);
+    CHECK(strcmp(mo_store_status_text(MO_STORE_IO),
+                 "service store failed; reopen it to see whether the last change was saved") == 0);
+    CHECK(strcmp(mo_store_status_text(MO_STORE_CORRUPT),
+                 "saved service data is damaged or was written by a different program; recovery "
+                 "refused") == 0);
     MO_ASSERT(mo_store_open(path, &store) == MO_STORE_OK);
     struct mo_store *second = NULL;
     CHECK(mo_store_open(path, &second) != MO_STORE_OK && second == NULL);
@@ -640,6 +660,12 @@ static void hostile_database(struct mo_image *image, const char *path) {
     CHECK(truncate(path, 0) == 0);
     CHECK(mo_store_open(path, &store) == MO_STORE_CORRUPT && store == NULL);
     CHECK(unlink(path) == 0);
+    refuse_store_allocation = true;
+    for (unsigned i = 0; i <= MO_LIMIT_STORES; i++)
+        CHECK(mo_store_open(NULL, &store) == MO_STORE_MEMORY && store == NULL);
+    refuse_store_allocation = false;
+    CHECK(strcmp(mo_store_status_text(MO_STORE_MEMORY), "service store memory allocation failed") ==
+          0);
     struct mo_store *all[MO_LIMIT_STORES];
     for (unsigned i = 0; i < MO_LIMIT_STORES; i++)
         CHECK(mo_store_open(NULL, &all[i]) == MO_STORE_OK);

@@ -20,6 +20,13 @@ them. A NULL path selects an in-memory SQLite database for tests, using the
 same transactions and record format. Other paths must name disk files. Empty
 paths, `:memory:`, and existing zero-byte files are refused.
 
+Under D320, empty paths return `MO_STORE_EMPTY_PATH`, literal `:memory:` returns
+`MO_STORE_MEMORY_PATH`, and zero-byte files remain `MO_STORE_CORRUPT`. Store
+metadata allocation failure returns `MO_STORE_MEMORY`. `mo_store_status_text`
+returns fixed, path-free error text, or NULL for `MO_STORE_OK`. The service's
+existing store and damaged-state messages are unchanged. MO-161 adds CLI use
+of these messages; this API does not print them.
+
 SQLite 3.54.1 is vendored unchanged, with its archive digest and public-domain
 dedication recorded in `vendor/sqlite/README.md`. `SQLITE_ZERO_MALLOC` removes
 its default allocator. Before initialization, host installs the bounded
@@ -27,7 +34,8 @@ callbacks in `base/store-memory.c`, which `base` owns because only `base` and
 `heap` call `malloc`. Each block is charged its exact size plus a small header,
 under a mutex, before it is allocated. All stores in a process share one
 budget, `MO_LIMIT_STORE_MEMORY`, and at most `MO_LIMIT_STORES` (8) stores are
-open at once; another open fails with `MO_STORE_LIMIT`. Each connection's page
+open at once; another open fails with `MO_STORE_HANDLES`. Its message includes
+the value of `MO_LIMIT_STORES`, rather than a separate literal. Each connection's page
 cache is `MO_LIMIT_STORE_CACHE_KIB` (256 KiB). A disk store's largest operation
 measured about 17 MB of SQLite memory with a 16 MiB record, and an idle one
 about 0.3 MB, so the budget allows 24 MiB per store and every disk store can

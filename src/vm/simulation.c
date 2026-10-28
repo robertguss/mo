@@ -298,7 +298,7 @@ enum mo_outcome mo_vm_simulate(struct mo_process *p, uint32_t operation, uint32_
         enum mo_store_status status = mo_store_open(NULL, &initial.store);
         if (status != MO_STORE_OK)
             return mo_vm_stop(p,
-                              status == MO_STORE_LIMIT
+                              status == MO_STORE_HANDLES || status == MO_STORE_MEMORY
                                   ? "Simulation.start: MO_LIMIT_STORES (8) or store memory limit"
                                   : "Simulation.start: fake store creation failed",
                               NULL, false, mo_cell_unit(), MO_STOPPED);
