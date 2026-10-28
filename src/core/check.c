@@ -5,6 +5,9 @@
 #include "base/codes.h"
 #include "base/limits.h"
 
+const char *const mo_core_capability_names[MO_CORE_CAPABILITY_COUNT] = {
+    "Console", "Files", "ReadFiles", "Clock", "Random", "Args", "Env"};
+
 /* Ordered indices preserve Lean's first-match lookup without scans of wide declarations or
  * parameter lists. Types are interned by tag and child identities, never by recursive equality.
  * No hash table depends on friendly names. AVL recursion is logarithmic and bounded by nodes. */
@@ -1513,8 +1516,6 @@ static MO_MUST_USE bool label_type(struct mo_buffer *b, const struct type *t, si
         "Text",      "Bytes",  "Unit",      "Range",   "Time",   "Duration",   "Tuple",
         "List",      "Map",    "Set",       "Data",    "Option", "Result",     "Ordering",
         "FileError", "Entry",  "EntryKind", "Fn",      "Cap",    "Simulation", "SimulationError"};
-    static const char *const caps[] = {"Console", "Files", "ReadFiles", "Clock",
-                                       "Random",  "Args",  "Env"};
     if (*remaining == 0)
         return mo_buffer_append_text(b, "...");
     (*remaining)--;
@@ -1524,7 +1525,8 @@ static MO_MUST_USE bool label_type(struct mo_buffer *b, const struct type *t, si
         return mo_buffer_append_byte(b, '(') && label_name(b, t->name) &&
                mo_buffer_append_byte(b, ')');
     if (t->tag == MO_CORE_TY_CAP)
-        return mo_buffer_append_byte(b, '(') && mo_buffer_append_text(b, caps[t->cap]) &&
+        return mo_buffer_append_byte(b, '(') &&
+               mo_buffer_append_text(b, mo_core_capability_names[t->cap]) &&
                mo_buffer_append_byte(b, ')');
     if (t->count == 0)
         return true;

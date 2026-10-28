@@ -3,6 +3,7 @@
 #include "check/native.h"
 #include "check/signatures.h"
 
+#include "base/binary.h"
 #include "base/capabilities.h"
 #include "base/codes.h"
 #include "base/limits.h"
@@ -62,7 +63,7 @@ static MO_MUST_USE void *allocate(struct mo_ability_context *p, uint32_t count, 
 }
 
 static MO_MUST_USE uint64_t hash_value(uint64_t hash, uint64_t value) {
-    return (hash ^ value) * UINT64_C(1099511628211);
+    return (hash ^ value) * MO_FNV_PRIME;
 }
 
 /* What a declaration hashes to: its module, name and place, never its address, so that where the
@@ -149,7 +150,7 @@ static MO_MUST_USE struct mo_ability_cache *cache(struct mo_ability_context *p,
         allocate(p, type->count, sizeof(*arguments), _Alignof(struct mo_ability_cache *));
     if (arguments == NULL)
         return NULL;
-    uint64_t hash = hash_value(UINT64_C(14695981039346656037), (uint64_t)type->kind);
+    uint64_t hash = hash_value(MO_FNV_OFFSET, (uint64_t)type->kind);
     hash = hash_value(hash, type->module);
     hash = hash_declaration(hash, type->declaration);
     hash = hash_value(hash, type->count);
@@ -521,8 +522,8 @@ static MO_MUST_USE const struct mo_ability_implementation *prove(struct mo_abili
                   (ability == MO_SOURCE_TEXT && named(type, "Bytes")) ||
                   (ability == MO_SOURCE_ORDER &&
                    (named(type, "Range") || named(type, "Map") || named(type, "Set")));
-    for (unsigned i = 0; i < MO_CAPABILITY_COUNT; i++)
-        denied = denied || named(type, mo_capability_names[i]);
+    denied = denied || (type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX &&
+                        mo_capability_named(type->name));
     if (denied) {
         bool failed = missing(p, type, ability);
         (void)failed;

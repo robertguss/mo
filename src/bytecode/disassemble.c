@@ -7,8 +7,7 @@ const char *const mo_bytecode_type_names[] = {
     "unit",    "bool",   "byte",   "int",      "float",  "char",      "time", "duration",
     "decimal", "range",  "text",   "bytes",    "bigint", "tuple",     "list", "set",
     "map",     "record", "choice", "function", "env",    "capability"};
-_Static_assert(sizeof mo_capability_names / sizeof *mo_capability_names == MO_CAP_SIMULATION + 1,
-               "capability names");
+_Static_assert(MO_CAPABILITY_COUNT == (int)MO_CAP_SIMULATION + 1, "capability names");
 const char *const mo_bytecode_function_names[] = {"function", "closure", "init",  "test",
                                                   "example",  "promise", "anchor"};
 const char *const mo_bytecode_expectation_names[] = {"none", "allows", "forbids"};

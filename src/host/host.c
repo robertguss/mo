@@ -45,8 +45,8 @@ mo_host_files(struct mo_host *host, struct mo_heap *heap, uint32_t operation, ui
             MO_CAP_RANDOM, fake_, mo_host_misc                                                     \
         }                                                                                          \
     }
-const struct mo_host_operations mo_host_operations[2][MO_CAP_RANDOM + 1] = {OPERATIONS(false),
-                                                                            OPERATIONS(true)};
+const struct mo_host_operations mo_host_operations[2][MO_HOST_CAPABILITY_COUNT] = {
+    OPERATIONS(false), OPERATIONS(true)};
 #undef OPERATIONS
 
 enum mo_host_outcome mo_host_bug(struct mo_host_error *error, const char *reason) {
