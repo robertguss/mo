@@ -3,7 +3,8 @@
 # clang-format and clang-tidy, make, Bison for the executable grammar, CBMC for
 # the bytecode reader, arena, verifier, primitives, path containment and
 # resolution, refcounts, hash tables (cbmc/), and
-# Lean 4, through elan, for Mo Core. Installs only; never builds or runs anything.
+# Lean 4, through elan, for Mo Core. Installs packages; when fuzz is needed may
+# compile a short fuzzer link probe. Never builds or runs Mo.
 #
 #   bash .agents/setup            everything
 #   bash .agents/setup GROUP...   only what those ci/check.sh groups need
