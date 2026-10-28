@@ -40,6 +40,12 @@
   behaviour. The allocation-boundary test checks complete chunk wiping on
   success, allocation failure and instruction-budget stops; it is not the
   full protocol canary/deadline test.
+- For valid JSON, counting opening brackets/braces and commas outside strings
+  gives `nodes - 1 + empty containers`, where nodes are JSON values and object
+  keys are not separate values. This is not an exact semantic-node count.
+  The approved native prescan only returns that marker count or a byte-budget
+  refusal; JSON validity and the eventual node admission policy remain in Mo.
+  The body byte ceiling is experimental, like the header ceilings.
 
 ## MO-159 simulation boundaries
 

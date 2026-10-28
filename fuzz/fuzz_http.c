@@ -82,6 +82,24 @@ static void scan_input(const uint8_t *data, size_t size, const struct mo_cell *c
 }
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+    size_t marks;
+    bool counted = mo_protocol_body_marks(data, size, &marks);
+    MO_ASSERT(counted == (size <= MO_LIMIT_MCP_BODY_BYTES));
+    size_t expected = 0;
+    bool quoted = false;
+    if (counted) {
+        for (size_t i = 0; i < size; i++) {
+            if (data[i] == '"') {
+                size_t before = i;
+                while (before > 0 && data[before - 1] == '\\')
+                    before--;
+                if (!quoted || (i - before) % 2 == 0)
+                    quoted = !quoted;
+            } else if (!quoted && (data[i] == '[' || data[i] == '{' || data[i] == ','))
+                expected++;
+        }
+    }
+    MO_ASSERT(marks == expected);
     if (size > MO_LIMIT_MCP_HEADER_BYTES)
         return 0;
     const struct mo_bearer bearer = {.bytes = "fuzz-credential", .length = 15};

@@ -198,3 +198,26 @@ struct mo_image *mo_protocol_build(void) {
     }
     return image;
 }
+
+bool mo_protocol_body_marks(const uint8_t *bytes, size_t size, size_t *count) {
+    MO_ASSERT((bytes != NULL || size == 0) && count != NULL);
+    *count = 0;
+    if (size > MO_LIMIT_MCP_BODY_BYTES)
+        return false;
+    bool quoted = false, escaped = false;
+    for (size_t i = 0; i < size; i++) {
+        uint8_t c = bytes[i];
+        if (quoted) {
+            if (escaped)
+                escaped = false;
+            else if (c == '\\')
+                escaped = true;
+            else if (c == '"')
+                quoted = false;
+        } else if (c == '"')
+            quoted = true;
+        else if (c == '[' || c == '{' || c == ',')
+            (*count)++;
+    }
+    return true;
+}

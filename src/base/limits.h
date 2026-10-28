@@ -454,6 +454,7 @@ static inline struct mo_limits mo_limits_default(void) {
 #define MO_LIMIT_MCP_HEADER_FIELDS 64
 #define MO_LIMIT_MCP_HEADER_HEAP (1 << 20)
 #define MO_LIMIT_MCP_HEADER_WORK UINT64_C(1000000)
+#define MO_LIMIT_MCP_BODY_BYTES (256 << 10)
 
 /* How the limits depend on each other and on the formats. */
 _Static_assert(MO_LIMIT_FILE_SIZE < UINT32_MAX, "spans hold byte offsets in 32 bits");

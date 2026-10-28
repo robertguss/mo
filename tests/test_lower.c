@@ -1905,6 +1905,27 @@ static void test_source_library_specs(void *unused) {
 
 static void test_embedded_protocol(void *entry) {
     if (entry == NULL) {
+        const struct {
+            const char *text;
+            size_t marks;
+        } bodies[] = {{"", 0},
+                      {"[0,true,null]", 3},
+                      {"{\"a\":[{},[]],\"b\":0}", 6},
+                      {"[\"a\\\"[,{}\",{}]", 3},
+                      {"[\"a\\\\\",{}]", 3},
+                      {"\"[,{}", 0},
+                      {"[,[{", 4}};
+        size_t marks;
+        CHECK(mo_protocol_body_marks(NULL, 0, &marks) && marks == 0);
+        for (size_t i = 0; i < sizeof bodies / sizeof *bodies; i++) {
+            CHECK(mo_protocol_body_marks((const uint8_t *)bodies[i].text, strlen(bodies[i].text),
+                                         &marks));
+            CHECK(marks == bodies[i].marks);
+        }
+        static uint8_t body[MO_LIMIT_MCP_BODY_BYTES];
+        memset(body, ',', sizeof body);
+        CHECK(mo_protocol_body_marks(body, sizeof body, &marks) && marks == sizeof body);
+        CHECK(!mo_protocol_body_marks(body, sizeof body + 1, &marks) && marks == 0);
         struct mo_image *image = mo_protocol_build();
         CHECK(image != NULL);
         if (image != NULL)
