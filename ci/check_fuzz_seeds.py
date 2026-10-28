@@ -59,15 +59,20 @@ if orphan:
     sys.exit(1)
 
 # Both flat and nested diagnostic copies must be live in fuzz-smoke, and match files.
+# Nested needs the for-glob and the cp rename; either alone can be commented out.
 flat_glob = "tests/check/diagnostics/e*.mo"
 nested_glob = "tests/check/diagnostics/e*/*.mo"
-for pattern in (flat_glob, nested_glob):
+nested_copy = 'cp "$$path" "$$corpus/$$(basename $$(dirname $$path))-$$(basename $$path)"'
+required = (
+    (flat_glob, "flat diagnostics tests/check/diagnostics/e*.mo"),
+    (nested_glob, "nested diagnostics tests/check/diagnostics/e*/*.mo"),
+    (nested_copy, "nested diagnostic rename copy into the smoke corpus"),
+)
+for pattern, label in required:
     if pattern not in makefile:
-        print(
-            f"Makefile fuzz-smoke must copy {pattern}",
-            file=sys.stderr,
-        )
+        print(f"Makefile fuzz-smoke must include {label}", file=sys.stderr)
         sys.exit(1)
+for pattern in (flat_glob, nested_glob):
     if not any(root.glob(pattern)):
         print(
             f"fuzz-smoke diagnostic glob matches no files: {pattern}",
