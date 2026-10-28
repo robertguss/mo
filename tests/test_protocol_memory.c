@@ -62,6 +62,7 @@ void mo_protocol_memory_free(void *address) {
 }
 
 static void scratch(struct mo_image *image) {
+    static const uint8_t zero[4096] = {0};
     struct mo_limits limits = mo_limits_default();
     struct mo_process *process = mo_process_new(image, &limits);
     MO_ASSERT(process != NULL);
@@ -80,6 +81,30 @@ static void scratch(struct mo_image *image) {
         for (size_t i = 0; i < 4096; i++)
             CHECK(kept[i] == 0x71);
         fail_after = 0;
+        if (grown != NULL) {
+            CHECK(grown != bytes);
+            CHECK(memcmp(bytes, zero, sizeof zero) == 0);
+            memset(grown, 0x56, 8192);
+            uint8_t *shrunk = mo_scratch_resize(&work, grown, 8192, 4096);
+            CHECK(shrunk == grown);
+            CHECK(memcmp(grown + 4096, zero, 4096) == 0);
+            for (size_t i = 0; i < 4096; i++)
+                CHECK(grown[i] == 0x56);
+            uint8_t *newest = mo_scratch_resize(&work, NULL, 0, 16);
+            MO_ASSERT(newest != NULL);
+            memset(newest, 0x37, 16);
+            shrunk = mo_scratch_resize(&work, grown, 4096, 2048);
+            CHECK(shrunk == grown);
+            CHECK(memcmp(grown + 2048, zero, 2048) == 0);
+            for (size_t i = 0; i < 2048; i++)
+                CHECK(grown[i] == 0x56);
+            for (size_t i = 0; i < 16; i++)
+                CHECK(newest[i] == 0x37);
+            CHECK(mo_scratch_resize(&work, newest, 16, 0) == newest);
+            CHECK(memcmp(newest, zero, 16) == 0);
+            CHECK(mo_scratch_resize(&work, grown, 2048, 0) == grown);
+            CHECK(memcmp(grown, zero, 2048) == 0);
+        }
         mo_scratch_free(&work);
     }
     mo_process_free(process);

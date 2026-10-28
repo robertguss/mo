@@ -17,6 +17,8 @@ Classes 6 and 8 bumped on 2026-10-26 for MO-156's independent descriptor review.
 Class 1 bumped again on 2026-10-26 for PR #232's generated service names.
 Classes 6 and 7 bumped on 2026-10-26 for MO-157's independent runtime review.
 Class 7 bumped on 2026-10-27 for MO-159's admission, helper-context and recovery-attribution reviews.
+Class 6 bumped on 2026-10-28 for MO-160's confidential scratch lifetime review; its additional
+evidence and enforcement are below.
 
 | # | Class | Evidence | Enforced by | State |
 | --- | --- | --- | --- | --- |
@@ -104,3 +106,14 @@ early branch and specializing the existing unresolved-member diagnostic preserve
 and its initialized output. `test_program:simulation_inputs` checks helper acceptance and
 parenthesized refusal; the error golden pins the original headline and revised reason. Both
 new assertions failed before the fix. No new dispatch path is needed for diagnostic wording.
+
+Class 6 recurred in MO-160: the confidential scratch test checked live bytes after growth and
+whole chunks at destruction, but missed retained old bytes between those events. Removing only
+the move-time wipe passed that test. `tests/test_protocol_memory.c` now checks old storage before
+destruction and truncated tails after shrinking both the newest and an older block. Each of the
+three isolated wipe-removal mutants fails its corresponding assertion; retained prefixes and a
+neighboring allocation stay intact. Shrinking each block to zero also checks its discarded bytes;
+a mutant that skips only zero-length wipes fails both checks. This raises class 6's total to 29
+occurrences across 17 tasks. C types and final-release checks cannot enforce when discarded bytes
+become zero, so the test observes each lifetime boundary through the scratch API. No production
+defect was found.
