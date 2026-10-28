@@ -1,16 +1,16 @@
 # Mo Architecture v0.1
 
-**Checked 27 October 2026 against main at
-[`7c22cca5`](https://github.com/robertguss/mo/commit/7c22cca5f8d45c8781aa07d870dfa42bdfe420d0).**
+**Checked 28 October 2026 against main at
+[`e11b5f1a`](https://github.com/robertguss/mo/commit/e11b5f1a94fa1d3b1cbc995462039ac34370ac06).**
 This describes the `mo` toolchain in C (decision D207): the compiler, the
 virtual machine, and the contracts between them. It is written against the
 Language Reference v0.1 (`docs/reference/`), whose rules win wherever the two
 disagree. It also builds on Mo Core (`formal/`) and the bytecode
 specification (`bytecode.md`). The pipeline is integrated; remaining unsupported
 forms are refused, not silently accepted. [The roadmap](../ROADMAP.md) records
-Phase 2 as finished. Service descriptors, the C service loop and SQLite store
-have landed; `mo run` still does not start a service. Section 9 describes
-later-phase hooks. Section 13 lists open questions.
+Phase 2 as finished. Service descriptors, the C service loop, SQLite store and
+test Simulation API have landed; `mo run` still does not start a service.
+Section 9 describes later-phase hooks. Section 13 lists open questions.
 
 ## 1. The shape of the system
 
@@ -72,8 +72,9 @@ src/heap/      the runtime type table and layouts (types.h); values, cells, heap
                dropping, printing and saved-value encoding walks
 src/prim/      the primitives of prims.def
 src/host/      capabilities, real and fake, and the runtime's service store
-src/vm/        processes, the interpreter, calls and frames, stops, defect reports
-               and the in-process service loop (service.c)
+src/vm/        processes, the interpreter, calls and frames, stops, defect reports,
+               the in-process service loop (service.c) and the test Simulation
+               capability (simulation.c, SIMOP)
 src/tools/     the mo command: check, run, test, format, fix, emit and guide;
                diagnostics as text and JSON
 lib/           the standard library written in Mo (condition 4 of D207)
@@ -475,8 +476,9 @@ type and reuses nominal containment summaries to reject stored capabilities
 and functions. These summaries reach a fixed point across recursive types.
 Checking does not run an initializer or read a token. Lowering emits service
 descriptors; `src/vm/service.c` runs the in-process loop and `src/host/store.c`
-saves state. The CLI still refuses `mo run` of a service entry module with
-E1408. Ordinary emission retains its existing `main` requirement.
+saves state. Specs and tests drive that path through the Simulation capability
+in `src/vm/simulation.c`. The CLI still refuses `mo run` of a service entry
+module with E1408. Ordinary emission retains its existing `main` requirement.
 
 Symbols are sorted by name and source position; lookup is binary search.
 `mo_find_symbol` accepts bytes and length, without copying syntax spellings.
@@ -995,8 +997,9 @@ all bodies together, matching Core's whole-document node allowance.
 
 **Capability entry.** Unit, Int and Result entries forward any distinct subset
 of Args, Env, Console, Files, ReadFiles, Clock and Random in main's written
-order, without extra authority. The existing tools/host entry path constructs
-only the requested handles. Args.list, Args.of, Clock.now, Clock.fixed,
+order, without extra authority. Spec and test fakes, including
+`Simulation.start`, follow reference 12.4. The existing tools/host entry path
+constructs only the requested handles. Args.list, Args.of, Clock.now, Clock.fixed,
 Console.print, Console.error, Console.read_line, Console.fake,
 Console.fake_input, Console.printed, Console.printed_errors, Files.in_memory,
 Files.read_only, Files.read_text, Files.write_text, Files.list,
@@ -1029,8 +1032,8 @@ also lower (#186). Env.get/of, Ordering/Entry/Map text conversion and Ordering
 comparison lower and run (#189, MO-116). Qualified `T.to_text` and `T.compare`,
 called or taken as values, lower through the same Text or Order proof as the dot
 form for every type with the ability (#208, D285).
-`docs/status/golden-gaps.md` distinguishes working routes without golden
-programs from other gaps; `src/lower/expressions.c` owns native dispatch.
+`docs/status/golden-gaps.md` names the remaining `rules.tsv` gap;
+`src/lower/expressions.c` owns native dispatch.
 
 Numeric immediates fold unary minus before building Core scalars, including
 Int's minimum. Float literals convert in a private C numeric locale with

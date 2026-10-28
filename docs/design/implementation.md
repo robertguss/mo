@@ -37,8 +37,8 @@ CBMC run by hand. The fast groups run before each pull request.
    `puts` and `putchar`, so their results are checked by convention only. A
    `(void)` cast discards a result on purpose.
 4. **A small trusted core.** Only the VM, primitives and system calls are C.
-   The standard library above them, including JSON, HTTP routing and MCP, is
-   written in Mo, which is memory-safe by construction.
+   The standard library above them, including JSON, is written in Mo, which is
+   memory-safe by construction.
 5. **Bytecode verified when it's loaded,** as WebAssembly does, because upgrade
    packages will arrive over the network in Phase 5.
 

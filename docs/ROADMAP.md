@@ -51,9 +51,10 @@ met, is in Notion's [Phase 2 page](https://www.notion.so/3f6700320c4581c4b7c4daf
   since MO-144 (#208, D285) and MO-149 (#214, D297).
 - `tests/conformance/rules.tsv` maps each of the reference's blocks to
   golden programs, exact errors, other drivers, cost tests or an untestable
-  reason (238 rows in the 24 Oct snapshot, with no gaps after MO-140; 249
-  rows on this main). It is a map with a coverage guard; the Phase 2 checklist
-  decides whether it counts as the conformance suite.
+  reason (238 rows in the 24 Oct snapshot, with no gaps after MO-140; 253
+  rows on this main, with one gap at 11.5/4 for E1408). It is a map with a
+  coverage guard; the Phase 2 checklist decides whether it counts as the
+  conformance suite.
   `sort`'s n log n cost is measured by counting VM instructions (MO-146, D294).
 - 211 golden programs in the 24 Oct snapshot (214 on this main), the
   differential checks, fuzz targets and bounded CBMC proofs exist. The
@@ -89,13 +90,13 @@ docs-only merges permitted by the repository's workflow.
 Phase 3's design is in [services.md](design/services.md). Service syntax and
 checking landed in MO-155 (#231); descriptors in MO-156; the C service loop
 in `src/vm/service.c` in MO-157; the SQLite store in `src/host/store.c` in
-MO-158. Still open: CLI start of services (`mo run` still E1408), MCP, the
-D306 Mo simulation API, and the week-long done criterion. D256 to D267
-narrow it to a job queue used by Mo's own agents over MCP, with pure
-handlers, saved state in runtime-embedded SQLite, timers, supervision and an
-access token. Done means a week of real use and a deliberate crash with no
-lost accepted job. A multi-core scheduler, an HTTP client, TLS and SQL access
-for Mo programs wait for later phases.
+MO-158; the D306 Mo simulation API in `src/vm/simulation.c` in MO-159 (#252).
+Still open: CLI start of services (`mo run` still E1408), MCP, and the
+week-long done criterion. D256 to D267 narrow it to a job queue used by Mo's
+own agents over MCP, with pure handlers, saved state in runtime-embedded
+SQLite, timers, supervision and an access token. Done means a week of real
+use and a deliberate crash with no lost accepted job. A multi-core scheduler,
+an HTTP client, TLS and SQL access for Mo programs wait for later phases.
 
 ## Alongside every phase
 

@@ -188,7 +188,7 @@ struct mo_inferred_body {
  * proofs and polymorphic recursion belong to that walk. Capability/capture flow,
  * specs, constants, unused imports and main's contract still need their checking
  * stages. Equal scalar literals and repeated bare names in map literals are rejected.
- * Nonempty examples/promises return E1103. A success is not suitable for lowering.
+ * A success is not suitable for lowering.
  * NULL with the earliest retained independent source error in this body; a resource
  * failure stops immediately and takes priority.
  * Output belongs to arena and borrows syntax, interfaces and signatures. Equal

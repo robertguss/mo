@@ -2,7 +2,8 @@
 
 Status: Design note (18 Oct 2026, task `MO-98`), updated for D301 to D308 in `MO-153`
 and the D310, D312 and D313 clarifications in `MO-155`. MO-156 adds descriptors;
-MO-157 adds the in-process C service loop described below. No command starts a service yet.
+MO-157 adds the in-process C service loop described below; MO-158 the SQLite store;
+MO-159 the test Simulation API (`vm/simulation.c`). No command starts a service yet.
 MO-155 adds service syntax and checking, with reference section 11.5.
 The pure queue example implements D307. Phase 2 is complete
 (D300), so Phase 3 can begin (D267). D256 to D267 were settled with Robert on 18 Oct 2026;
@@ -403,7 +404,7 @@ supervisor restart keeps the in-memory state, which is always the last committed
 state, so it does not reread the store. A storage failure stops the loop
 without counting as a handler failure. The [saved-state format](saved-state.md)
 defines the SQLite transactions, bounds, value encoding and refusal behavior.
-This C embedding still exposes no Mo simulation API or service CLI command.
+This C embedding still exposes no service CLI command.
 
 ### MO-159 test simulation
 

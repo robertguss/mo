@@ -14,7 +14,7 @@ all twelve pass (`docs/status/sample-blockers.md`).
 | `todo.mo` | A to-do list kept in a file | records, commands as a choice type, writing files |
 | `account.mo` | A bank account's deposits, withdrawals and transfers | promises, examples, hidden insides |
 | `rate-limit.mo` | A token-bucket rate limiter per client | time as a value, state as a value, promises |
-| `job-queue.mo` | A job queue's core: submit, lease, acknowledge, fail, expire | a state machine over values, promises about many steps |
+| `job-queue.mo` | A job queue's core: submit, lease, acknowledge, fail, expire, heartbeat | a state machine over values, promises about many steps |
 | `kv.mo` | A Redis-like store: SET, GET, DEL, INCR and EXPIRE | parsing, maps, numbers at their limits |
 | `notes-tool.mo` | An MCP tool's handler that searches Markdown notes | a narrowed, read-only capability, typed results and errors |
 | `inventory.mo` | Generic list helpers and an aligned text table | generics, abilities, functions as values |
