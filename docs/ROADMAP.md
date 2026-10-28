@@ -56,7 +56,7 @@ met, is in Notion's [Phase 2 page](https://www.notion.so/3f6700320c4581c4b7c4daf
   coverage guard; the Phase 2 checklist decides whether it counts as the
   conformance suite.
   `sort`'s n log n cost is measured by counting VM instructions (MO-146, D294).
-- 211 golden programs in the 24 Oct snapshot (214 on this main), the
+- 211 golden programs in the 24 Oct snapshot (215 on this main), the
   differential checks, fuzz targets and bounded CBMC proofs exist. The
   recorded hour-long fuzz runs had no crash. One million
   generated Core programs agreed between the VM and Lean on main `267370f`,

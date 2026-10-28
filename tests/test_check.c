@@ -2148,6 +2148,8 @@ static void function_signatures(void) {
     } else
         CHECK(false);
     bool succeeded = false, failed = false;
+    /* mo_prepare_signatures builds the full native table; fine steps through
+     * small arenas, then coarse steps, must still hit both OOM and success. */
     for (size_t limit = 0; limit <= (1 << 20); limit += limit < 16384 ? 16u : 1024u) {
         struct mo_arena arena;
         mo_arena_init(&arena, limit);
