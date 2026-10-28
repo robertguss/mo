@@ -415,6 +415,21 @@ $(BUILD)/debug/tests/test_vm_faults.test: $(BUILD)/debug/tests/test_vm_faults.o 
 $(BUILD)/sanitize/tests/test_vm_faults.test: $(BUILD)/sanitize/tests/test_vm_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out $(VM_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/vm-faults/%.o,$(VM_FAULT_SOURCES))
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
+PROTOCOL_MEMORY_RENAMES := -Dmalloc=mo_protocol_memory_malloc -Drealloc=mo_protocol_memory_realloc -Dfree=mo_protocol_memory_free
+$(BUILD)/debug/protocol-memory/arena.o: src/base/arena.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) $(PROTOCOL_MEMORY_RENAMES) -c $< -o $@
+
+$(BUILD)/sanitize/protocol-memory/arena.o: src/base/arena.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) $(PROTOCOL_MEMORY_RENAMES) -c $< -o $@
+
+$(BUILD)/debug/tests/test_protocol_memory.test: $(BUILD)/debug/tests/test_protocol_memory.o $(call objects,$(BUILD)/debug,$(filter-out src/base/arena.c,$(LIB_SOURCES))) $(BUILD)/debug/protocol-memory/arena.o
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/tests/test_protocol_memory.test: $(BUILD)/sanitize/tests/test_protocol_memory.o $(call objects,$(BUILD)/sanitize,$(filter-out src/base/arena.c,$(LIB_SOURCES))) $(BUILD)/sanitize/protocol-memory/arena.o
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
 # Only the service test substitutes allocation at its arena, process and heap boundaries.
 SERVICE_FAULT_SOURCES := src/vm/service.c src/vm/process.c src/heap/heap.c
 SERVICE_FAULT_RENAMES := -Dcalloc=mo_service_fault_calloc -Drealloc=mo_service_fault_realloc \

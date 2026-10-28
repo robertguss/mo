@@ -86,6 +86,7 @@ MO_MUST_USE struct mo_heap *mo_heap_image_constants(struct mo_heap_image *image)
 MO_MUST_USE struct mo_heap *mo_heap_new(struct mo_heap_image *image,
                                         const struct mo_limits *limits);
 void mo_heap_free(struct mo_heap *process);
+void mo_heap_confidential(struct mo_heap *process);
 MO_MUST_USE size_t mo_heap_used(const struct mo_heap *process);
 MO_MUST_USE size_t mo_heap_objects(const struct mo_heap *process);
 

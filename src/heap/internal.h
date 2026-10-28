@@ -42,6 +42,7 @@ struct mo_heap {
     size_t used;
     size_t limit;
     size_t objects;
+    bool confidential;
     const uint64_t *hash_key;
     const uint8_t *abilities;
     const uint32_t *builtins;

@@ -27,6 +27,19 @@
 - Source structs lower to one-case choices, not `MO_TYPE_RECORD`. A nested
   choice payload can require a boxed wrapper. Bridge code must validate the
   actual types and case shapes rather than assume C record layouts.
+- Heap value allocations already wipe before release, but that does not cover
+  VM stacks or native scratch arenas. Mark a protocol process confidential
+  before allocating values or calling it. Its stack and scratch then use
+  confidential arenas; VM operand arrays and the process structure are wiped
+  too. This does not suppress defect rendering: the adapter must still keep
+  protocol defects out of rendering and variable visitors.
+- Confidential arenas avoid `realloc`, which could release an unwiped old
+  allocation. Moved blocks are cleared; their chunks stay charged to the arena
+  until destruction. Capacity planning must include those retained chunks,
+  not just the newest live buffer. Ordinary arenas keep their existing growth
+  behaviour. The allocation-boundary test checks complete chunk wiping on
+  success, allocation failure and instruction-budget stops; it is not the
+  full protocol canary/deadline test.
 
 ## MO-159 simulation boundaries
 

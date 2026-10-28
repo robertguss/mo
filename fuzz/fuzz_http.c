@@ -54,6 +54,7 @@ static void scan_input(const uint8_t *data, size_t size, const struct mo_cell *c
     limits.heap_size = MO_LIMIT_MCP_HEADER_HEAP;
     struct mo_process *process = mo_process_new(image, &limits);
     MO_ASSERT(process != NULL);
+    mo_process_confidential(process);
     mo_process_instruction_limit(process, MO_LIMIT_MCP_HEADER_WORK);
     struct mo_heap *heap = mo_process_heap(process);
     const struct mo_bytecode_function *function = &mo_image_bytecode(image)->functions[scan];
@@ -91,6 +92,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     limits.heap_size = MO_LIMIT_MCP_HEADER_HEAP;
     struct mo_process *process = mo_process_new(image, &limits);
     MO_ASSERT(process != NULL);
+    mo_process_confidential(process);
     mo_process_instruction_limit(process, MO_LIMIT_MCP_HEADER_WORK);
     struct mo_heap *heap = mo_process_heap(process);
     struct mo_cell cells[MO_LIMIT_MCP_HEADER_BYTES];
