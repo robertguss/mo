@@ -120,6 +120,13 @@ build/generated/tools/embedded.h: ci/embed_docs.py docs/reference/README.md $(GU
 $(BUILD)/debug/src/tools/execute.o $(BUILD)/sanitize/src/tools/execute.o \
 $(FUZZ_BUILD)/src/tools/execute.o: build/generated/tools/embedded.h $(GUIDE_STAMP)
 
+PROTOCOL_LIBRARY := lib/json.mo lib/list.mo lib/option.mo lib/result.mo
+build/generated/tools/protocol-sources.h: ci/embed_protocol.py $(PROTOCOL_LIBRARY) Makefile
+	python3 ci/embed_protocol.py $@ $(PROTOCOL_LIBRARY)
+	@touch $@
+
+$(BUILD)/debug/tests/test_lower.o $(BUILD)/sanitize/tests/test_lower.o: build/generated/tools/protocol-sources.h
+
 # The test executables without running them, for ci/check.sh's drivers group.
 test-executables: $(DEBUG_TESTS) $(BUILD)/debug/mo
 sanitize-executables: $(SANITIZE_TESTS) $(BUILD)/sanitize/mo
@@ -262,7 +269,7 @@ library-map: $(BUILD)/debug/module-path
 # puts or putchar. Casting the call to (void) ignores the result on purpose. Mo's own functions
 # are covered by MO_MUST_USE. The flags are the debug build's, so clang-tidy sees the code as
 # the compiler does (it ignores the -M options).
-tidy: $(GRAMMAR_GENERATED)/mo.tab.h build/generated/tools/embedded.h
+tidy: $(GRAMMAR_GENERATED)/mo.tab.h build/generated/tools/embedded.h build/generated/tools/protocol-sources.h
 	clang-tidy --quiet -checks='-*,cert-err33-c' -warnings-as-errors='*' -header-filter='^(src|tests|fuzz|grammar)/' \
 		$(TIDY_FILES) -- $(COMMON) $(DEBUG) $(GRAMMAR_INCLUDES)
 

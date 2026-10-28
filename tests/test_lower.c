@@ -6,6 +6,7 @@
 #include "lower/lower.h"
 #include "lower_fixture.h"
 #include "test.h"
+#include "tools/protocol-sources.h"
 #include "vm/vm.h"
 
 #include <string.h>
@@ -1901,6 +1902,60 @@ static void test_source_library_specs(void *unused) {
     }
 }
 
+static void test_embedded_json(void *unused) {
+    (void)unused;
+    struct mo_arena input, output;
+    struct mo_sources sources, disk;
+    struct mo_diags diags;
+    mo_arena_init(&input, MO_LIMIT_LOWER_WORK);
+    mo_arena_init(&output, MO_LIMIT_LOWER_WORK);
+    MO_ASSERT(mo_sources_init(&sources) && mo_sources_init(&disk) && mo_diags_init(&diags));
+    const char source[] =
+        "module Main\nuse Json\nfn main() : Int\n"
+        "text = \"{\\\"n\\\":-0,\\\"xs\\\":[true,null,\\\"é\\\"]}\"\n"
+        "value = case Json.parse(text)\nOk(json): json\nError(_): stop \"parse\"\nend\n"
+        "if value.to_text != text\nreturn -1\nend\n"
+        "case Json.parse(\"{\\\"x\\\":1,\\\"x\\\":2}\")\nError(_): 37\nOk(_): -2\nend\nend\n";
+    uint32_t file;
+    struct mo_source_error error;
+    MO_ASSERT(mo_sources_add_bytes(&sources, "embedded/main.mo", (const uint8_t *)source,
+                                   sizeof(source) - 1, &file, &error));
+    bool library[1 + sizeof(mo_protocol_sources) / sizeof(*mo_protocol_sources)] = {false};
+    for (size_t i = 0; i < sizeof(mo_protocol_sources) / sizeof(*mo_protocol_sources); i++) {
+        MO_ASSERT(mo_sources_add(&disk, mo_protocol_sources[i].path, &file, &error));
+        CHECK(disk.files[file].length == mo_protocol_sources[i].size);
+        if (disk.files[file].length == mo_protocol_sources[i].size)
+            CHECK(memcmp(disk.files[file].bytes, mo_protocol_sources[i].bytes,
+                         mo_protocol_sources[i].size) == 0);
+        MO_ASSERT(mo_sources_add_bytes(&sources, mo_protocol_sources[i].path,
+                                       mo_protocol_sources[i].bytes, mo_protocol_sources[i].size,
+                                       &file, &error));
+        library[i + 1] = true;
+    }
+    mo_sources_free(&disk);
+    struct mo_module_set *set = mo_load_program_sources(&input, &sources, library, &diags);
+    CHECK(set != NULL && !mo_diags_any(&diags));
+    if (set != NULL) {
+        struct mo_program *program = mo_check(&input, set, &diags);
+        CHECK(program != NULL && !mo_diags_any(&diags));
+        for (uint32_t i = 0; i < diags.count; i++)
+            (void)fprintf(stderr, "%s: %s\n", diags.items[i].message,
+                          diags.items[i].primary.text == NULL ? "" : diags.items[i].primary.text);
+        if (program != NULL) {
+            struct mo_core *core = mo_lower(&output, program, &sources, &diags);
+            CHECK(core != NULL && !mo_diags_any(&diags));
+            if (core != NULL) {
+                CHECK(spec_funs(core, "Json") == 0);
+                run(core, 37);
+            }
+        }
+    }
+    mo_diags_free(&diags);
+    mo_sources_free(&sources);
+    mo_arena_free(&output);
+    mo_arena_free(&input);
+}
+
 static MO_MUST_USE bool count_instruction(void *context) {
     uint64_t *count = context;
     MO_ASSERT(*count != UINT64_MAX);
@@ -2227,6 +2282,7 @@ int main(int argc, char **argv) {
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_specs, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_constants, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_library_specs, NULL) == 0);
+    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_json, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_sort_work, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_file_error_text, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_captures, NULL) == 0);

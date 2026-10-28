@@ -237,28 +237,44 @@ static void fuzz_input(void *argument) {
     if (size > (1 << 16))
         return;
     setup();
-    /* Three NUL-separated documents mutate a real graph. Ordinary .mo seeds
-     * get Money and Another defaults so their imports reach resolution too. */
-    size_t offset = 0;
-    for (size_t i = 0; i < 3; i++) {
-        if (i != 0 && offset > size) {
-            const char *fallback = i == 1 ? money : another;
-            write_file(files[i], (const uint8_t *)fallback, strlen(fallback));
-        } else {
-            const uint8_t *end = memchr(data + offset, 0, size - offset);
-            size_t length = end == NULL ? size - offset : (size_t)(end - data) - offset;
-            write_file(files[i], data + offset, length);
-            offset += length + 1;
-        }
-    }
-    size_t limit = size != 0 && (data[size - 1] & 7) == 0 ? size * (1u + data[0]) : 16 << 20;
-    generated(data, size, limit);
     struct mo_sources sources;
     struct mo_diags diags;
     struct mo_arena arena;
     MO_ASSERT(mo_sources_init(&sources) && mo_diags_init(&diags));
+    /* Three NUL-separated documents mutate a real graph. Ordinary .mo seeds
+     * get Money and Another defaults so their imports reach resolution too. */
+    size_t offset = 0;
+    for (size_t i = 0; i < 3; i++) {
+        const uint8_t *text;
+        size_t length;
+        if (i != 0 && offset > size) {
+            const char *fallback = i == 1 ? money : another;
+            text = (const uint8_t *)fallback;
+            length = strlen(fallback);
+        } else {
+            const uint8_t *end = memchr(data + offset, 0, size - offset);
+            text = data + offset;
+            length = end == NULL ? size - offset : (size_t)(end - data) - offset;
+            offset += length + 1;
+        }
+        write_file(files[i], text, length);
+        uint32_t file;
+        struct mo_source_error error;
+        MO_ASSERT(mo_sources_add_bytes(&sources, files[i], text, length, &file, &error));
+    }
+    size_t limit = size != 0 && (data[size - 1] & 7) == 0 ? size * (1u + data[0]) : 16 << 20;
+    generated(data, size, limit);
     mo_arena_init(&arena, limit);
-    struct mo_module_set *set = mo_load_program(&arena, &sources, files[0], library, &diags);
+    struct mo_module_set *set = mo_load_program_sources(&arena, &sources, NULL, &diags);
+    MO_ASSERT((set == NULL) == mo_diags_any(&diags));
+    if (set != NULL)
+        resolve(set, limit);
+    mo_arena_free(&arena);
+    mo_diags_free(&diags);
+    mo_sources_free(&sources);
+    MO_ASSERT(mo_sources_init(&sources) && mo_diags_init(&diags));
+    mo_arena_init(&arena, limit);
+    set = mo_load_program(&arena, &sources, files[0], library, &diags);
     MO_ASSERT((set == NULL) == mo_diags_any(&diags));
     if (set != NULL)
         resolve(set, limit);

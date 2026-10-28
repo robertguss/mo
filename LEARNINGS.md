@@ -1,5 +1,16 @@
 # Learnings
 
+## MO-160 protocol image loading
+
+- Json has implicit library dependencies even though it has no `use` lines:
+  its parser and writer need List, Option and Result. The embedded protocol
+  sources include those modules; the lowering test checks their exact bytes
+  against `lib/` and executes the compiled Json parser and writer.
+- `mo_load_program_sources` consumes a nonempty, already populated source set.
+  Source zero is the entry; library flags correspond to source indices. It loads
+  only that closed set, with no filesystem fallback. The caller retains both
+  sources and arena until all consumers of the returned module set finish.
+
 ## MO-159 simulation boundaries
 
 - `mo_service_send` returning `MO_SERVICE_MEMORY` means admission failed before
