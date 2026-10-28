@@ -1212,6 +1212,18 @@ static void simulation_persistence(void) {
         "Simulation.crash(sim)\nSimulation.restart(sim)\n"
         "assert Simulation.send(sim, Main.read) == Ok([0])\nend\n");
     simulation_appends = 0;
+    const char *store_limit = "Simulation.start: MO_LIMIT_STORES (8) or store memory limit";
+    refuse_store_allocation = true;
+    simulation_run(image, store_limit, 0);
+    refuse_store_allocation = false;
+    CHECK(simulation_appends == 0);
+    struct mo_store *all[MO_LIMIT_STORES];
+    for (unsigned i = 0; i < MO_LIMIT_STORES; i++)
+        MO_ASSERT(mo_store_open(NULL, &all[i]) == MO_STORE_OK);
+    simulation_run(image, store_limit, 0);
+    CHECK(simulation_appends == 0);
+    for (unsigned i = 0; i < MO_LIMIT_STORES; i++)
+        mo_store_close(all[i]);
     simulation_run(image, NULL, 0);
     CHECK(simulation_appends == 0);
     for (unsigned i = 0; i < 2; i++) {

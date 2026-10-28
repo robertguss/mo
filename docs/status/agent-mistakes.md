@@ -17,8 +17,8 @@ Classes 6 and 8 bumped on 2026-10-26 for MO-156's independent descriptor review.
 Class 1 bumped again on 2026-10-26 for PR #232's generated service names.
 Classes 6 and 7 bumped on 2026-10-26 for MO-157's independent runtime review.
 Class 7 bumped on 2026-10-27 for MO-159's admission, helper-context and recovery-attribution reviews.
-Class 6 bumped on 2026-10-28 for MO-160's confidential scratch lifetime review; its additional
-evidence and enforcement are below.
+Class 6 bumped on 2026-10-28 for MO-160's confidential scratch lifetime and Simulation store
+refusal reviews; its additional evidence and enforcement are below.
 Class 8 bumped on 2026-10-28 for MO-160's independent service-shape work-bound review.
 
 | # | Class | Evidence | Enforced by | State |
@@ -118,3 +118,10 @@ a mutant that skips only zero-length wipes fails both checks. This raises class 
 occurrences across 17 tasks. C types and final-release checks cannot enforce when discarded bytes
 become zero, so the test observes each lifetime boundary through the scratch API. No production
 defect was found.
+
+Class 6 recurred in MO-160's store-status split: the host test pinned the new memory status,
+but removing its Simulation mapping still passed. The existing compiled Simulation fixture now
+runs under store allocation refusal and full handle exhaustion, then succeeds after both are
+released. The missing-memory-mapping mutant fails one assertion. This raises class 6's total to
+30 occurrences across 17 tasks. The host's enum cannot enforce the caller's distinct, unchanged
+message, so the regression executes that boundary. No production defect was found.
