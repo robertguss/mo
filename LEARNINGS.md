@@ -60,6 +60,16 @@
   The approved native prescan only returns that marker count or a byte-budget
   refusal; JSON validity and the eventual node admission policy remain in Mo.
   The body byte ceiling is experimental, like the header ceilings.
+- JsonNumber is opaque outside Json. Its compact JSON rendering preserves the
+  original numeric token, so protocol Byte decoding can inspect that spelling
+  without a new accessor or a Float conversion. An all-zero mantissa is zero
+  even with a huge exponent; a nonzero token must prove both integrality and
+  range before conversion.
+- BigInt text input uses nine-digit chunks over the existing arithmetic, not
+  a new primitive. The 4096-digit target is experimental: isolated GCC O2
+  decoding used 373001 VM instructions and about 6 ms in the initial probe.
+  That result does not freeze an aggregate request budget. Native copying,
+  Json parsing, collection sizes and concurrent connections still count.
 
 ## MO-159 simulation boundaries
 
