@@ -300,6 +300,167 @@ static void table_refusals(const struct mo_bytecode *file) {
     mo_arena_free(&arena);
 }
 
+static void recursive_shape_reach(void) {
+    const uint32_t b = 3, c = 4, pair[] = {1, 6};
+    const struct mo_type_field a_field = {"children", 2}, b_field = {"back", 1};
+    const struct mo_type_case cases[] = {{.name = "End"},
+                                         {.name = "More", .fields = &b_field, .field_count = 1}};
+    const struct mo_type types[] = {
+        {.kind = MO_TYPE_INT},
+        {.kind = MO_TYPE_RECORD, .name = "A", .field_count = 1, .fields = &a_field},
+        {.kind = MO_TYPE_LIST, .parameter_count = 1, .parameters = &b},
+        {.kind = MO_TYPE_CHOICE, .name = "B", .case_count = 2, .cases = cases},
+        {.kind = MO_TYPE_RECORD, .name = "C"},
+        {.kind = MO_TYPE_TUPLE, .parameter_count = 2, .parameters = pair},
+        {.kind = MO_TYPE_LIST, .parameter_count = 1, .parameters = &c}};
+    struct mo_bytecode_service services[130];
+    struct mo_bytecode_service_tool tools[130];
+    uint32_t roots[130];
+    for (uint32_t i = 0; i < 130; i++) {
+        roots[i] = i % 3 == 0 ? 5 : i % 3 == 1 ? 1 : 6;
+        tools[i] = (struct mo_bytecode_service_tool){
+            .argument_count = 1, .argument_types = &roots[i], .result_type = 0};
+        services[i] = (struct mo_bytecode_service){.tool_count = 1, .tools = &tools[i]};
+    }
+    const struct mo_bytecode file = {
+        .type_count = 7, .types = types, .service_count = 130, .services = services};
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_LOWER_WORK);
+    struct mo_bytecode_service_reach *reach;
+    CHECK(mo_bytecode_service_reach(&arena, &file, &reach));
+    if (reach != NULL)
+        for (uint32_t i = 0; i < 130; i++) {
+            const uint32_t expected[] = {1, 3, 4};
+            uint32_t offset = i % 3 == 2 ? 2 : 0;
+            uint32_t count = i % 3 == 0 ? 3 : i % 3 == 1 ? 2 : 1;
+            CHECK(reach[i].count == count);
+            if (reach[i].count == count)
+                CHECK(memcmp(reach[i].types, expected + offset, count * sizeof *expected) == 0);
+        }
+    mo_arena_free(&arena);
+}
+
+static void shared_shape_work(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_LOWER_WORK);
+    uint32_t count = MO_LIMIT_SERVICES;
+    uint32_t *tuple =
+        mo_arena_allocate_array(&arena, MO_LIMIT_FIELDS, sizeof *tuple, _Alignof(uint32_t));
+    struct mo_bytecode_string *strings = mo_arena_allocate_array(
+        &arena, 4 + 3 * count, sizeof *strings, _Alignof(struct mo_bytecode_string));
+    struct mo_bytecode_function *functions = mo_arena_allocate_array(
+        &arena, 2 * count, sizeof *functions, _Alignof(struct mo_bytecode_function));
+    struct mo_bytecode_debug *debug = mo_arena_allocate_array(&arena, 2 * count, sizeof *debug,
+                                                              _Alignof(struct mo_bytecode_debug));
+    struct mo_bytecode_module *modules = mo_arena_allocate_array(
+        &arena, count, sizeof *modules, _Alignof(struct mo_bytecode_module));
+    struct mo_bytecode_service *services = mo_arena_allocate_array(
+        &arena, count, sizeof *services, _Alignof(struct mo_bytecode_service));
+    struct mo_bytecode_service_tool *tools = mo_arena_allocate_array(
+        &arena, count, sizeof *tools, _Alignof(struct mo_bytecode_service_tool));
+    uint32_t *exposed = mo_arena_allocate_array(&arena, count, sizeof *exposed, _Alignof(uint32_t));
+    MO_ASSERT(tuple && strings && functions && debug && modules && services && tools && exposed);
+    for (uint32_t i = 0; i < 2 * count; i++)
+        debug[i] = (struct mo_bytecode_debug){.text = MO_BYTECODE_NO_INDEX,
+                                              .file = MO_BYTECODE_NO_INDEX,
+                                              .subject = MO_BYTECODE_NO_INDEX};
+    memset(tuple, 0, MO_LIMIT_FIELDS * sizeof *tuple);
+    struct mo_type types[] = {
+        {.kind = MO_TYPE_INT},
+        {.kind = MO_TYPE_TIME},
+        {.kind = MO_TYPE_BOOL},
+        {.kind = MO_TYPE_TUPLE, .parameter_count = MO_LIMIT_FIELDS, .parameters = tuple}};
+    uint32_t registers[] = {0, 1, 3, 2}, start_register = 0;
+    struct mo_parameter parameters[] = {
+        {0, MO_PARAMETER_OWNED}, {1, MO_PARAMETER_OWNED}, {3, MO_PARAMETER_BORROWED}};
+    uint32_t start_code[] = {MO_OP_CONST, 0, 0, MO_OP_RET, 0};
+    uint32_t tool_code[] = {MO_OP_CONST, 3, 1, MO_OP_RET, 3};
+    struct mo_bytecode_constant constants[] = {{.type = 0}, {.type = 2, .value.immediate = {1}}};
+    const char *shared[] = {"TOKEN", "echo", "arg", ""};
+    for (uint32_t i = 0; i < 4; i++)
+        strings[i] =
+            (struct mo_bytecode_string){(uint32_t)strlen(shared[i]), (const uint8_t *)shared[i]};
+    uint32_t argument_type = 3, argument_name = 2;
+    for (uint32_t i = 0; i < count; i++) {
+        const char *suffixes[] = {"", ".start", ".echo"};
+        for (uint32_t j = 0; j < 3; j++) {
+            char name[48];
+            int n = snprintf(name, sizeof name, "M%u%s", i, suffixes[j]);
+            MO_ASSERT(n > 0 && (size_t)n < sizeof name);
+            uint8_t *bytes = mo_arena_copy(&arena, name, (size_t)n, 1);
+            MO_ASSERT(bytes != NULL);
+            strings[4 + 3 * i + j] = (struct mo_bytecode_string){(uint32_t)n, bytes};
+        }
+        functions[2 * i] = (struct mo_bytecode_function){.name = 5 + 3 * i,
+                                                         .module = i,
+                                                         .kind = MO_FUNCTION_FUNCTION,
+                                                         .result_type = 0,
+                                                         .register_count = 1,
+                                                         .register_types = &start_register,
+                                                         .code_count = 5,
+                                                         .code = start_code};
+        functions[2 * i + 1] = (struct mo_bytecode_function){.name = 6 + 3 * i,
+                                                             .module = i,
+                                                             .kind = MO_FUNCTION_FUNCTION,
+                                                             .parameter_count = 3,
+                                                             .parameters = parameters,
+                                                             .result_type = 2,
+                                                             .register_count = 4,
+                                                             .register_types = registers,
+                                                             .code_count = 5,
+                                                             .code = tool_code};
+        exposed[i] = 2 * i + 1;
+        modules[i] = (struct mo_bytecode_module){
+            .name = 4 + 3 * i, .function_count = 1, .functions = &exposed[i]};
+        tools[i] = (struct mo_bytecode_service_tool){.name = 1,
+                                                     .function = 2 * i + 1,
+                                                     .read_only = true,
+                                                     .argument_count = 1,
+                                                     .argument_types = &argument_type,
+                                                     .result_type = 2,
+                                                     .description = 3,
+                                                     .argument_name_count = 1,
+                                                     .argument_names = &argument_name};
+        services[i] = (struct mo_bytecode_service){.module = i,
+                                                   .state_type = 0,
+                                                   .start = 2 * i,
+                                                   .token_env = 0,
+                                                   .tool_count = 1,
+                                                   .tools = &tools[i]};
+    }
+    struct mo_bytecode file = {.string_count = 4 + 3 * count,
+                               .strings = strings,
+                               .type_count = 4,
+                               .types = types,
+                               .constant_count = 2,
+                               .constants = constants,
+                               .function_count = 2 * count,
+                               .debug_count = 2 * count,
+                               .debug = debug,
+                               .functions = functions,
+                               .module_count = count,
+                               .modules = modules,
+                               .service_count = count,
+                               .services = services};
+    struct mo_buffer wire;
+    struct mo_write_error error;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    CHECK(mo_bytecode_write(&file, &wire, &error));
+    clock_t before = clock();
+    for (unsigned i = 0; i < 8; i++) {
+        struct mo_load_error load_error;
+        struct mo_image *image = mo_load(wire.bytes, wire.length, &load_error);
+        CHECK(image != NULL);
+        if (image != NULL) {
+            CHECK(mo_image_bytecode(image)->service_count == count);
+            mo_image_free(image);
+        }
+    }
+    CHECK(before != (clock_t)-1 && (double)(clock() - before) / CLOCKS_PER_SEC < 2.0);
+    mo_buffer_free(&wire);
+    mo_arena_free(&arena);
+}
+
 static void descriptor(void) {
     struct fixture f;
     init(&f,
@@ -661,6 +822,8 @@ static void run(void *context) {
     selected_overload();
     source_shapes();
     shorthand_shapes();
+    recursive_shape_reach();
+    shared_shape_work();
 }
 
 int main(int argc, char **argv) {

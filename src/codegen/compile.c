@@ -3487,72 +3487,33 @@ static MO_MUST_USE bool initializer(struct compiler *c, struct function *f, uint
            emit(c, f, c->declaration, MO_OP_CONST, result, 2, NULL, 0) != MO_NO_INDEX &&
            emit(c, f, c->declaration, MO_OP_RET, &unit, 1, NULL, 0) != MO_NO_INDEX;
 }
-static MO_MUST_USE int service_type_order(const void *left, const void *right) {
-    uint32_t a = *(const uint32_t *)left, b = *(const uint32_t *)right;
-    return (a > b) - (a < b);
-}
 static MO_MUST_USE bool service_shapes(struct compiler *c, struct mo_bytecode_service *services,
-                                       uint32_t service_count) {
+                                       const struct mo_bytecode *file) {
     const struct mo_bytecode_service_shape **by_type = allocate(c, c->types.count, sizeof *by_type);
-    uint32_t *queue = allocate(c, c->types.count, sizeof *queue);
-    bool *seen = allocate(c, c->types.count, sizeof *seen);
-    if (by_type == NULL || queue == NULL || seen == NULL)
+    if (by_type == NULL)
         return false;
     memset(by_type, 0, c->types.count * sizeof *by_type);
-    memset(seen, 0, c->types.count * sizeof *seen);
     const struct mo_bytecode_service_shape *known = c->shapes.items;
     for (uint32_t i = 0; i < c->shapes.count; i++) {
         MO_ASSERT(known[i].type < c->types.count && by_type[known[i].type] == NULL);
         by_type[known[i].type] = &known[i];
     }
-    for (uint32_t i = 0; i < service_count; i++) {
+    struct mo_bytecode_service_reach *reach;
+    if (!mo_bytecode_service_reach(&c->arena, file, &reach))
+        return problem(c, MO_CODE_CODEGEN_MEMORY,
+                       "Code generation exhausted its scratch limit or memory.");
+    for (uint32_t i = 0; i < file->service_count; i++) {
         struct mo_bytecode_service *s = &services[i];
-        uint32_t count = 0;
-        for (uint32_t j = 0; j < s->tool_count; j++) {
-            const struct mo_bytecode_service_tool *tool = &s->tools[j];
-            for (uint32_t k = 0; k <= tool->argument_count; k++) {
-                uint32_t root =
-                    k < tool->argument_count ? tool->argument_types[k] : tool->result_type;
-                if (!seen[root]) {
-                    seen[root] = true;
-                    queue[count++] = root;
-                }
-            }
-        }
-        for (uint32_t j = 0; j < count; j++) {
-            const struct mo_type *t = &c->types.items[queue[j]];
-            MO_ASSERT((t->kind != MO_TYPE_RECORD && t->kind != MO_TYPE_CHOICE) ||
-                      by_type[queue[j]] != NULL);
-            s->shape_count += by_type[queue[j]] != NULL ? 1U : 0U;
-            for (uint32_t k = 0; k < t->parameter_count + t->field_count; k++) {
-                uint32_t child = k < t->parameter_count ? t->parameters[k]
-                                                        : t->fields[k - t->parameter_count].type;
-                if (!seen[child]) {
-                    seen[child] = true;
-                    queue[count++] = child;
-                }
-            }
-            for (uint32_t k = 0; k < t->case_count; k++)
-                for (uint32_t n = 0; n < t->cases[k].field_count; n++) {
-                    uint32_t child = t->cases[k].fields[n].type;
-                    if (!seen[child]) {
-                        seen[child] = true;
-                        queue[count++] = child;
-                    }
-                }
-        }
+        s->shape_count = reach[i].count;
         struct mo_bytecode_service_shape *shapes = allocate(c, s->shape_count, sizeof *shapes);
         if (shapes == NULL)
             return false;
         s->shapes = shapes;
-        qsort(queue, count, sizeof *queue, service_type_order);
-        uint32_t at = 0;
-        for (uint32_t j = 0; j < count; j++) {
-            if (by_type[queue[j]] != NULL)
-                shapes[at++] = *by_type[queue[j]];
-            seen[queue[j]] = false;
+        for (uint32_t j = 0; j < s->shape_count; j++) {
+            uint32_t type = reach[i].types[j];
+            MO_ASSERT(by_type[type] != NULL);
+            shapes[j] = *by_type[type];
         }
-        MO_ASSERT(at == s->shape_count);
     }
     return true;
 }
@@ -3624,7 +3585,7 @@ static MO_MUST_USE bool service_descriptors(struct compiler *c, struct mo_byteco
     }
     file->string_count = c->strings.count;
     file->strings = c->strings.items;
-    return c->error == 0 && service_shapes(c, items, file->service_count);
+    return c->error == 0 && service_shapes(c, items, file);
 }
 
 static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {

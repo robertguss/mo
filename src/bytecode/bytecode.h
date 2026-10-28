@@ -517,6 +517,14 @@ struct mo_assemble_error {
 MO_MUST_USE bool mo_bytecode_write(const struct mo_bytecode *file, struct mo_buffer *out,
                                    struct mo_write_error *error_out);
 
+struct mo_bytecode_service_reach {
+    uint32_t count;
+    uint32_t *types;
+};
+struct mo_arena;
+MO_MUST_USE bool mo_bytecode_service_reach(struct mo_arena *arena, const struct mo_bytecode *file,
+                                           struct mo_bytecode_service_reach **out);
+
 /* Assemble section 10's indexed or shorthand text into verified bytes. Indexed text supplies
  * every entry and index; shorthand appends first-use entries after optional indexed pool seeds.
  * The two forms mix only through those seeds. Text is bounded by MO_LIMIT_BYTECODE_TEXT_SIZE;

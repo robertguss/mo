@@ -2006,7 +2006,17 @@ symbol/pool lookups use balanced ordered trees, not linear scans or unkeyed
 hashing; module-global arrays are built by buckets, and choice case offsets
 are indexed once. Apart from bounded numeric conversion and nesting, work is
 near-linear in text bytes plus generated wire bytes, with logarithmic lookup
-factors. Verification keeps section 9's own budgets.
+factors, except for service-shape reachability. That analysis collapses recursive
+type components once, then propagates 64 services at a time through the component
+graph. For T types, E type edges, S services, R tool argument/result roots and P
+reachable nominal entries across services, it takes
+O((T + E) × ceil(S / 64) + R + P) work with O(T + E + S + P) arena storage.
+S is bounded by `MO_LIMIT_SERVICES`; there is no per-service rescan of the raw
+type graph. Both compiler and validator use `mo_bytecode_service_reach` on
+already-validated type and root indices. It returns one ascending nominal-type
+list per service, owned by the supplied arena; allocation failure returns false
+with null output. It does not validate shape forms or payload flags.
+Verification keeps section 9's own budgets.
 First-use table construction is only for shorthand; it never
 renumbers a seed or an indexed file.
 

@@ -32,6 +32,12 @@
   sidecar owns copies in the lowering arena and indexes them by Core data
   order. Built-in Entry is a physical record, not a source data declaration;
   its descriptor shape must be supplied separately during code generation.
+- Per-service shape traversal repeated large shared structural subgraphs even
+  when they contained no nominal types: 4096 services over one 65535-field
+  tuple caused 268431360 edge visits. Keeping one global visited set would
+  lose per-service completeness. Shared component analysis with 64-service
+  membership batches preserves isolation without allocating the full
+  types-by-services reachability matrix; its work bound includes batch count.
 - Heap value allocations already wipe before release, but that does not cover
   VM stacks or native scratch arenas. Mark a protocol process confidential
   before allocating values or calling it. Its stack and scratch then use
