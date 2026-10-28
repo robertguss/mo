@@ -171,10 +171,11 @@ static bool environment(struct mo_host *host, struct mo_heap *heap, struct mo_ce
 }
 
 static int stopped(struct mo_process *process, const char *reason, const char *limit, size_t amount,
-                   FILE *errors) {
+                   bool memory, FILE *errors) {
     struct mo_defect defect = {.reason = reason,
                                .limit_name = limit,
                                .limit = amount,
+                               .memory = memory,
                                .span.file = MO_NO_INDEX,
                                .process = process};
     bool shown = mo_write_defect(errors, process, &defect);
@@ -233,13 +234,13 @@ int mo_run_program(const struct mo_cli *cli, const struct mo_core *core,
     process = mo_process_new(image, &cli->limits);
     if (process == NULL) {
         status = stopped(NULL, "running out of memory", errno == ENOMEM ? NULL : "--max-heap",
-                         cli->limits.heap_size, errors);
+                         cli->limits.heap_size, true, errors);
         goto done;
     }
     struct mo_host *host = mo_process_host(process);
     struct mo_heap *heap = mo_process_heap(process);
     if (fflush(output) != 0 || fflush(errors) != 0 || fileno(output) < 0 || fileno(errors) < 0) {
-        status = stopped(process, "could not prepare console output", NULL, 0, errors);
+        status = stopped(process, "could not prepare console output", NULL, 0, false, errors);
         goto done;
     }
     host->output = fileno(output);
@@ -255,15 +256,17 @@ int mo_run_program(const struct mo_cli *cli, const struct mo_core *core,
         else if ((cap == MO_CAP_FILES || cap == MO_CAP_READ_FILES) && folder < 0) {
             folder = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
             if (folder < 0) {
-                status = stopped(process, "could not open the starting folder", NULL, 0, errors);
+                status =
+                    stopped(process, "could not open the starting folder", NULL, 0, false, errors);
                 goto done;
             }
         }
         if (!ok) {
-            const char *reason = errno == EINVAL ? "arguments or environment are not valid UTF-8"
-                                                 : "running out of memory";
+            bool memory = errno != EINVAL;
+            const char *reason = memory ? "running out of memory"
+                                        : "arguments or environment are not valid UTF-8";
             const char *limit = errno == ENOSPC ? "--max-heap" : NULL;
-            status = stopped(process, reason, limit, cli->limits.heap_size, errors);
+            status = stopped(process, reason, limit, cli->limits.heap_size, memory, errors);
             goto done;
         }
     }

@@ -349,6 +349,7 @@ void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
             defect = (struct mo_defect){.reason = "running out of memory",
                                         .limit_name = errno == ENOSPC ? "--max-heap" : NULL,
                                         .limit = cli->limits.heap_size,
+                                        .memory = true,
                                         .span.file = MO_NO_INDEX};
             result.outcome = MO_STOPPED;
         } else

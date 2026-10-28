@@ -42,6 +42,17 @@ struct mo_vm_image {
     struct mo_process initializer;
 };
 
+enum {
+    LOG_TIMER_WIDTH = 1,
+    LOG_HANDLER_WIDTH = 4,
+    LOG_ARRIVAL_WIDTH = 8,
+    LOG_COUNT_WIDTH = 4,
+    LOG_CHECKSUM_WIDTH = 8,
+    LOG_ARGUMENT_LENGTH_WIDTH = 4,
+    MESSAGE_HEADER_BYTES = LOG_TIMER_WIDTH + LOG_HANDLER_WIDTH + LOG_ARRIVAL_WIDTH +
+                           LOG_COUNT_WIDTH + LOG_CHECKSUM_WIDTH
+};
+
 MO_MUST_USE struct mo_vm_frame *mo_vm_frame(struct mo_process *process);
 MO_MUST_USE struct mo_cell *mo_vm_cells(struct mo_vm_frame *frame);
 MO_MUST_USE uint8_t *mo_vm_states(const struct mo_process *process, struct mo_vm_frame *frame);

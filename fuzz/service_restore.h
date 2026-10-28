@@ -1,9 +1,7 @@
 #ifndef MO_FUZZ_SERVICE_RESTORE_H
 #define MO_FUZZ_SERVICE_RESTORE_H
 
-#include "../tests/program_fixture.h"
-#include "codegen/codegen.h"
-#include "lower/lower.h"
+#include "../tests/service_compile.h"
 #include "vm/vm.h"
 
 static struct mo_service_time restore_clock(void *context) {
@@ -28,32 +26,10 @@ static struct mo_image *restore_image(void) {
     static struct mo_image *image;
     if (image != NULL)
         return image;
-    struct fixture f;
-    init(&f, "module Main\nservice\nstate Int = 7\ntools add\n"
-             "token from env \"TOKEN\"\nend\n"
-             "fn add(state: Int, _now: Time, n: Int) : (Int, Int)\n"
-             "(state + n, state + n)\nend\n");
-    MO_ASSERT(f.program != NULL && !mo_diags_any(&f.diags));
-    const char *modules[] = {"Main"};
-    f.set.names = modules;
-    struct mo_arena arena;
-    mo_arena_init(&arena, MO_LIMIT_LOWER_WORK);
-    struct mo_services services;
-    struct mo_core *core =
-        mo_lower_services(&arena, f.program, &f.sources, &f.diags, NULL, &services);
-    MO_ASSERT(core != NULL && !mo_diags_any(&f.diags));
-    struct mo_buffer bytes;
-    mo_buffer_init(&bytes, MO_LIMIT_BYTECODE_SIZE);
-    MO_ASSERT(mo_compile_services(core, &services, &bytes, &f.diags));
-    struct mo_load_error error;
-    image = mo_load(bytes.bytes, bytes.length, &error);
-    MO_ASSERT(image != NULL);
-    struct mo_limits limits = mo_limits_default();
-    struct mo_defect defect;
-    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
-    mo_buffer_free(&bytes);
-    mo_arena_free(&arena);
-    free_fixture(&f);
+    image = compile("module Main\nservice\nstate Int = 7\ntools add\n"
+                    "token from env \"TOKEN\"\nend\n"
+                    "fn add(state: Int, _now: Time, n: Int) : (Int, Int)\n"
+                    "(state + n, state + n)\nend\n");
     return image;
 }
 

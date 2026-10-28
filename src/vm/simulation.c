@@ -180,7 +180,7 @@ static void send(struct simulation *s, uint32_t descriptor, uint32_t tool,
         struct mo_heap *heap = mo_service_heap(s->loop);
         struct mo_cell copied[MO_LIMIT_BYTECODE_PARAMETERS];
         uint32_t count = 0;
-        uint64_t message_bytes = 25;
+        uint64_t message_bytes = MESSAGE_HEADER_BYTES;
         for (; count < handler->argument_count; count++) {
             const char *failure;
             size_t encoded_length;
@@ -192,7 +192,7 @@ static void send(struct simulation *s, uint32_t descriptor, uint32_t tool,
                        (int)name->length, name->bytes, failure);
                 break;
             }
-            message_bytes += 4 + encoded_length;
+            message_bytes += LOG_ARGUMENT_LENGTH_WIDTH + encoded_length;
         }
         if (!s->failed && !handler->read_only && message_bytes > MO_LIMIT_SAVED_BYTES)
             report(s,
