@@ -10,6 +10,7 @@ static struct mo_image *image;
 static uint32_t parse;
 static uint32_t scan;
 static uint32_t authorization;
+static uint32_t chunk_size;
 static uint32_t header_type;
 
 static void prepare(void) {
@@ -21,7 +22,7 @@ static void prepare(void) {
     struct mo_defect defect;
     MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
     const struct mo_bytecode *file = mo_image_bytecode(image);
-    parse = scan = authorization = UINT32_MAX;
+    parse = scan = authorization = chunk_size = UINT32_MAX;
     for (uint32_t i = 0; i < file->function_count; i++) {
         const struct mo_bytecode_string *name = &file->strings[file->functions[i].name];
         if (name->length == 18 && memcmp(name->bytes, "Http.parse_headers", 18) == 0)
@@ -30,10 +31,12 @@ static void prepare(void) {
             scan = i;
         if (name->length == 16 && memcmp(name->bytes, "Http.bearer_span", 16) == 0)
             authorization = i;
+        if (name->length == 15 && memcmp(name->bytes, "Http.chunk_size", 15) == 0)
+            chunk_size = i;
     }
     MO_ASSERT(parse != UINT32_MAX && file->functions[parse].parameter_count == 2);
     MO_ASSERT(scan != UINT32_MAX && file->functions[scan].parameter_count == 3);
-    MO_ASSERT(authorization != UINT32_MAX);
+    MO_ASSERT(authorization != UINT32_MAX && chunk_size != UINT32_MAX);
     const struct mo_types *types = mo_image_types(image);
     header_type = file->functions[parse].parameters[1].type;
     MO_ASSERT(types->items[header_type].kind == MO_TYPE_CHOICE &&
@@ -81,6 +84,44 @@ static void scan_input(const uint8_t *data, size_t size, const struct mo_cell *c
     mo_process_free(process);
 }
 
+static void chunk_input(const uint8_t *data, size_t size) {
+    static const char hex_digits[] = "0123456789abcdef";
+    struct mo_limits limits = mo_limits_default();
+    limits.heap_size = MO_LIMIT_MCP_HEADER_HEAP;
+    struct mo_process *process = mo_process_new(image, &limits);
+    MO_ASSERT(process != NULL);
+    mo_process_confidential(process);
+    mo_process_instruction_limit(process, MO_LIMIT_MCP_REQUEST_WORK);
+    struct mo_heap *heap = mo_process_heap(process);
+    const struct mo_bytecode_function *function = &mo_image_bytecode(image)->functions[chunk_size];
+    struct mo_cell cells[MO_LIMIT_MCP_LINE_BYTES + 2];
+    for (size_t i = 0; i < size; i++)
+        cells[i] = mo_cell_byte(data[i]);
+    struct mo_cell args[3];
+    MO_ASSERT(mo_value_list(heap, function->parameters[0].type, cells, (uint32_t)size, &args[0]));
+    args[1] = mo_cell_int(MO_LIMIT_MCP_BODY_BYTES);
+    args[2] = mo_cell_int(MO_LIMIT_MCP_LINE_BYTES);
+    struct mo_cell result;
+    struct mo_defect defect;
+    MO_ASSERT(mo_call(process, chunk_size, args, 3, &result, &defect) == MO_RETURNED);
+    if (mo_cell_get_tag(result) == 0) {
+        int64_t amount = mo_cell_get_int(mo_cell_get_payload(result));
+        MO_ASSERT(size >= 3 && memcmp(data + size - 2, "\r\n", 2) == 0);
+        MO_ASSERT(amount >= 0 && amount <= MO_LIMIT_MCP_BODY_BYTES);
+        uint64_t expected = 0;
+        size_t digits = 0;
+        for (; digits < size; digits++) {
+            const char *hex = memchr(hex_digits, data[digits] | 32, 16);
+            if (hex == NULL)
+                break;
+            expected = expected * 16 + (uint64_t)(hex - hex_digits);
+            MO_ASSERT(expected <= MO_LIMIT_MCP_BODY_BYTES);
+        }
+        MO_ASSERT(digits > 0 && expected == (uint64_t)amount);
+    }
+    mo_process_free(process);
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     size_t marks;
     bool counted = mo_protocol_body_marks(data, size, &marks);
@@ -100,6 +141,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         }
     }
     MO_ASSERT(marks == expected);
+    if (size <= MO_LIMIT_MCP_LINE_BYTES + 2) {
+        prepare();
+        chunk_input(data, size);
+    }
     if (size > MO_LIMIT_MCP_HEADER_BYTES)
         return 0;
     const struct mo_bearer bearer = {.bytes = "fuzz-credential", .length = 15};

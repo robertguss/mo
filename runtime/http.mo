@@ -7,7 +7,8 @@ HeaderScan(..),
 HeaderProblem(..),
 scan_headers,
 parse_headers,
-bearer_span
+bearer_span,
+chunk_size
 
 struct Span
   start: Int
@@ -229,4 +230,75 @@ fn parse_headers(bytes: List(Byte), limits: HeaderLimits) : Result(Head, HeaderP
     at = finish + 2
   end
   Error(Malformed)
+end
+
+fn skip_space(bytes: List(Byte), start: Int) : Int
+  var at = start
+  while octet(bytes, at) == Ok(32) or octet(bytes, at) == Ok(9)
+    at += 1
+  end
+  at
+end
+
+fn chunk_size(bytes: List(Byte), maximum: Int, line_limit: Int) : Result(Int, HeaderProblem)
+  return Error(TooLarge) if bytes.size > line_limit + 2
+  finish = try line_end(bytes, 0, line_limit)
+  return Error(Malformed) if finish + 2 != bytes.size
+  var at = 0
+  var size = 0
+  while at < finish
+    c = try octet(bytes, at)
+    digit = if c >= 48 and c <= 57
+      c - 48
+    else if c >= 65 and c <= 70
+      c - 55
+    else if c >= 97 and c <= 102
+      c - 87
+    else
+      -1
+    end
+    break if digit < 0
+    return Error(TooLarge) if size > maximum / 16 or (size == maximum / 16 and digit > maximum % 16)
+    size = size * 16 + digit
+    at += 1
+  end
+  return Error(Malformed) if at == 0
+  while at < finish
+    at = skip_space(bytes, at)
+    return Error(Malformed) if at >= finish or octet(bytes, at) != Ok(59)
+    at = skip_space(bytes, at + 1)
+    name_start = at
+    while at < finish
+      c = try octet(bytes, at)
+      break if not token?(c)
+      at += 1
+    end
+    return Error(Malformed) if at == name_start
+    equal = skip_space(bytes, at)
+    if equal < finish and octet(bytes, equal) == Ok(61)
+      at = skip_space(bytes, equal + 1)
+      return Error(Malformed) if at >= finish
+      if octet(bytes, at) == Ok(34)
+        at += 1
+        while at < finish and octet(bytes, at) != Ok(34)
+          if octet(bytes, at) == Ok(92)
+            at += 1
+            return Error(Malformed) if at >= finish
+          end
+          at += 1
+        end
+        return Error(Malformed) if at >= finish
+        at += 1
+      else
+        value_start = at
+        while at < finish
+          c = try octet(bytes, at)
+          break if not token?(c)
+          at += 1
+        end
+        return Error(Malformed) if at == value_start
+      end
+    end
+  end
+  Ok(size)
 end

@@ -11,7 +11,66 @@ fn require(ok: Bool)
   end
 end
 
+fn chunk_sizes()
+  for (line, size) in [
+    ("0\r\n", 0),
+    ("000\r\n", 0),
+    ("1aF\r\n", 431),
+    ("0011;flag;name=value\r\n", 17),
+    ("1 \t; \tname \t= \t\"a\\\"b\\\\c\";empty=\"\"\r\n", 1),
+    ("2;flag\r\n", 2)
+  ]
+    input = octets(line)
+    require(Http.chunk_size(input, size, input.size - 2) == Ok(size))
+    require(Http.chunk_size(input, size, input.size - 3) == Error(Http.TooLarge))
+    if size > 0
+      require(Http.chunk_size(input, size - 1, 128) == Error(Http.TooLarge))
+    end
+  end
+  for bad in [
+    "\r\n",
+    "-1\r\n",
+    "+1\r\n",
+    " 1\r\n",
+    "0x1\r\n",
+    "1 \r\n",
+    "1;\r\n",
+    "1;;x\r\n",
+    "1;=x\r\n",
+    "1;x=\r\n",
+    "1;x= \r\n",
+    "1;x=\"\r\n",
+    "1;x=\"x\\\r\n",
+    "1;x=\"x\"garbage\r\n",
+    "1;x=y \r\n",
+    "1;x=y=z\r\n",
+    "1\n",
+    "1\rX",
+    "1\r\nX"
+  ]
+    require(Http.chunk_size(octets(bad), 1024, 128) == Error(Http.Malformed))
+  end
+  for partial in ["", "1", "1\r", "1;name=\"text\""]
+    require(Http.chunk_size(octets(partial), 1024, 128) == Error(Http.Incomplete))
+  end
+  require(
+    Http.chunk_size(octets("100000000000000000000000000000000\r\n"), 262144, 128) ==
+      Error(Http.TooLarge)
+  )
+  for byte in [0, 1, 31, 127]
+    value = byte.to_byte or stop "byte fixture"
+    input = octets("1;x=\"").append(value).concat(octets("\"\r\n"))
+    require(Http.chunk_size(input, 1, 128) == Error(Http.Malformed))
+  end
+  for byte in [9, 128, 255]
+    value = byte.to_byte or stop "byte fixture"
+    input = octets("1;x=\"\\").append(value).concat(octets("\"\r\n"))
+    require(Http.chunk_size(input, 1, 128) == Ok(1))
+  end
+end
+
 fn main() : Int
+  chunk_sizes()
   text = "POST /mcp HTTP/1.1\r\nHost: localhost\r\nAuthorization:\tBearer canary-123 \t\r\n\r\n"
   input = octets(text)
   limits = Http.HeaderLimits(bytes: input.size, line: 128, fields: 2)
