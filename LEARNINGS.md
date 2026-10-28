@@ -10,6 +10,23 @@
   Source zero is the entry; library flags correspond to source indices. It loads
   only that closed set, with no filesystem fallback. The caller retains both
   sources and arena until all consumers of the returned module set finish.
+- `mo_protocol_build` returns an owned, loaded but uninitialized image. Its
+  sources are embedded; private runtime modules are not library modules. The
+  builder checks the header entry points and their full structural type shapes
+  before returning the image, including field and case order. Callers follow
+  each function's loaded parameter ownership when transferring cells.
+- The `MO_LIMIT_MCP_HEADER_*` bounds are experimental measurement targets,
+  not frozen defaults. Header scanning retains only delimiter state and byte
+  counts between fragments. Header parsing returns spans into native ingress;
+  it does not interpret body framing or turn field values into Text or Bytes.
+- The first header measurement rejected 16 KiB: scanning plus parsing a
+  64-field header with a 256-byte token took 2,579,101 VM instructions before
+  authority/authentication checks. At 2 KiB those stages took 357,021; the
+  experimental header ceiling was lowered accordingly, retaining the 1M
+  instruction budget. Full pre-auth work and peak memory still need measurement.
+- Source structs lower to one-case choices, not `MO_TYPE_RECORD`. A nested
+  choice payload can require a boxed wrapper. Bridge code must validate the
+  actual types and case shapes rather than assume C record layouts.
 
 ## MO-159 simulation boundaries
 

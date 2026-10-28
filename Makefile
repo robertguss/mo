@@ -120,12 +120,14 @@ build/generated/tools/embedded.h: ci/embed_docs.py docs/reference/README.md $(GU
 $(BUILD)/debug/src/tools/execute.o $(BUILD)/sanitize/src/tools/execute.o \
 $(FUZZ_BUILD)/src/tools/execute.o: build/generated/tools/embedded.h $(GUIDE_STAMP)
 
-PROTOCOL_LIBRARY := lib/json.mo lib/list.mo lib/option.mo lib/result.mo
-build/generated/tools/protocol-sources.h: ci/embed_protocol.py $(PROTOCOL_LIBRARY) Makefile
-	python3 ci/embed_protocol.py $@ $(PROTOCOL_LIBRARY)
+PROTOCOL_SOURCES := runtime/http.mo lib/json.mo lib/list.mo lib/option.mo lib/result.mo
+build/generated/tools/protocol-sources.h: ci/embed_protocol.py $(PROTOCOL_SOURCES) Makefile
+	python3 ci/embed_protocol.py $@ $(PROTOCOL_SOURCES)
 	@touch $@
 
-$(BUILD)/debug/tests/test_lower.o $(BUILD)/sanitize/tests/test_lower.o: build/generated/tools/protocol-sources.h
+$(BUILD)/debug/tests/test_lower.o $(BUILD)/sanitize/tests/test_lower.o \
+$(BUILD)/debug/src/tools/protocol.o $(BUILD)/sanitize/src/tools/protocol.o \
+$(FUZZ_BUILD)/src/tools/protocol.o: build/generated/tools/protocol-sources.h
 
 # The test executables without running them, for ci/check.sh's drivers group.
 test-executables: $(DEBUG_TESTS) $(BUILD)/debug/mo

@@ -7,6 +7,7 @@
 #include "lower_fixture.h"
 #include "test.h"
 #include "tools/protocol-sources.h"
+#include "tools/protocol.h"
 #include "vm/vm.h"
 
 #include <string.h>
@@ -1902,8 +1903,13 @@ static void test_source_library_specs(void *unused) {
     }
 }
 
-static void test_embedded_json(void *unused) {
-    (void)unused;
+static void test_embedded_protocol(void *entry) {
+    if (entry == NULL) {
+        struct mo_image *image = mo_protocol_build();
+        CHECK(image != NULL);
+        if (image != NULL)
+            mo_image_free(image);
+    }
     struct mo_arena input, output;
     struct mo_sources sources, disk;
     struct mo_diags diags;
@@ -1918,8 +1924,11 @@ static void test_embedded_json(void *unused) {
         "case Json.parse(\"{\\\"x\\\":1,\\\"x\\\":2}\")\nError(_): 37\nOk(_): -2\nend\nend\n";
     uint32_t file;
     struct mo_source_error error;
-    MO_ASSERT(mo_sources_add_bytes(&sources, "embedded/main.mo", (const uint8_t *)source,
-                                   sizeof(source) - 1, &file, &error));
+    if (entry == NULL)
+        MO_ASSERT(mo_sources_add_bytes(&sources, "embedded/main.mo", (const uint8_t *)source,
+                                       sizeof(source) - 1, &file, &error));
+    else
+        MO_ASSERT(mo_sources_add(&sources, entry, &file, &error));
     bool library[1 + sizeof(mo_protocol_sources) / sizeof(*mo_protocol_sources)] = {false};
     for (size_t i = 0; i < sizeof(mo_protocol_sources) / sizeof(*mo_protocol_sources); i++) {
         MO_ASSERT(mo_sources_add(&disk, mo_protocol_sources[i].path, &file, &error));
@@ -1930,7 +1939,7 @@ static void test_embedded_json(void *unused) {
         MO_ASSERT(mo_sources_add_bytes(&sources, mo_protocol_sources[i].path,
                                        mo_protocol_sources[i].bytes, mo_protocol_sources[i].size,
                                        &file, &error));
-        library[i + 1] = true;
+        library[i + 1] = strncmp(mo_protocol_sources[i].path, "lib/", 4) == 0;
     }
     mo_sources_free(&disk);
     struct mo_module_set *set = mo_load_program_sources(&input, &sources, library, &diags);
@@ -2282,7 +2291,9 @@ int main(int argc, char **argv) {
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_specs, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_constants, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_library_specs, NULL) == 0);
-    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_json, NULL) == 0);
+    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_protocol, NULL) == 0);
+    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_protocol,
+                            "tests/runtime/http-check.mo") == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_sort_work, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_file_error_text, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_captures, NULL) == 0);
