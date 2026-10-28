@@ -27,21 +27,45 @@ install_missing() {
 }
 
 packages=(build-essential clang make git python3)
-if needs static; then packages+=(clang-format-14 clang-tidy bison); fi
+if needs static; then packages+=(clang-format-14 clang-tidy-18 bison); fi
 if needs cbmc; then packages+=(cbmc); fi
 install_missing "${packages[@]}"
 
 if needs static; then
 	sudo mkdir -p /usr/local/bin
 	sudo ln -sfn /usr/bin/clang-format-14 /usr/local/bin/clang-format
+	sudo ln -sfn /usr/bin/clang-tidy-18 /usr/local/bin/clang-tidy
 	PATH="/usr/local/bin:$PATH" clang-format --version | grep -F 'version 14.0.6'
 fi
 
 # libFuzzer and the sanitizer runtimes ship in a package named after clang's
 # major version. lean needs them too: run alone it builds the sanitize executables it compares.
+# -fsanitize=fuzzer also needs libstdc++ for the GCC install clang selects (often newer
+# than the one build-essential pulled in).
 if needs sanitize || needs fuzz || needs lean || needs static; then
 	clang_major=$(clang --version | sed -n 's/.*clang version \([0-9][0-9]*\).*/\1/p' | head -n 1)
-	install_missing "libclang-rt-${clang_major}-dev"
+	rt_packages=("libclang-rt-${clang_major}-dev")
+	if needs fuzz; then
+		gcc_major=$(clang -v 2>&1 | sed -n 's|^Selected GCC installation: .*/\([0-9][0-9]*\)$|\1|p' | head -n 1)
+		if [[ -z "$gcc_major" ]]; then
+			echo "error: could not read Selected GCC installation from clang -v" >&2
+			exit 1
+		fi
+		rt_packages+=("libstdc++-${gcc_major}-dev")
+	fi
+	install_missing "${rt_packages[@]}"
+fi
+
+# Same link probe as ci/check.sh has_libfuzzer: setup must leave fuzz runnable.
+if needs fuzz; then
+	probe_dir=$(mktemp -d)
+	printf 'int LLVMFuzzerTestOneInput(const unsigned char *d, unsigned long n);\nint LLVMFuzzerTestOneInput(const unsigned char *d, unsigned long n) { (void)d; (void)n; return 0; }\n' >"$probe_dir/probe.c"
+	if ! clang -fsanitize=fuzzer "$probe_dir/probe.c" -o "$probe_dir/probe"; then
+		rm -rf "$probe_dir"
+		echo "error: clang -fsanitize=fuzzer still fails after installing libclang-rt and libstdc++" >&2
+		exit 1
+	fi
+	rm -rf "$probe_dir"
 fi
 
 # Lean 4 for Mo Core (formal/), through elan with no default toolchain, in
