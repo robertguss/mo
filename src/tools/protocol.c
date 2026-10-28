@@ -23,7 +23,8 @@ enum abi_type {
     ABI_SCAN,
     ABI_PROBLEM,
     ABI_HEAD_RESULT,
-    ABI_SCAN_RESULT
+    ABI_SCAN_RESULT,
+    ABI_SPAN_OPTION
 };
 
 struct abi_field {
@@ -56,6 +57,7 @@ static const struct abi_case head_result[] = {{"Ok", 1, {{NULL, ABI_HEAD}}},
                                               {"Error", 1, {{NULL, ABI_PROBLEM}}}};
 static const struct abi_case scan_result[] = {{"Ok", 1, {{NULL, ABI_SCAN}}},
                                               {"Error", 1, {{NULL, ABI_PROBLEM}}}};
+static const struct abi_case span_option[] = {{.name = "None"}, {"Some", 1, {{NULL, ABI_SPAN}}}};
 
 static const struct {
     enum mo_type_kind kind;
@@ -76,6 +78,7 @@ static const struct {
     [ABI_PROBLEM] = {.kind = MO_TYPE_CHOICE, .count = 3, .cases = problem},
     [ABI_HEAD_RESULT] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = head_result},
     [ABI_SCAN_RESULT] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = scan_result},
+    [ABI_SPAN_OPTION] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = span_option},
 };
 
 static bool matches(const struct mo_types *types, uint32_t index, enum abi_type expected) {
@@ -113,6 +116,7 @@ static bool valid_abi(const struct mo_image *image) {
     } functions[] = {
         {"Http.scan_headers", 3, {ABI_BYTES, ABI_SCAN, ABI_INT}, ABI_SCAN_RESULT},
         {"Http.parse_headers", 2, {ABI_BYTES, ABI_LIMITS}, ABI_HEAD_RESULT},
+        {"Http.bearer_span", 2, {ABI_BYTES, ABI_HEAD}, ABI_SPAN_OPTION},
     };
     const struct mo_bytecode *file = mo_image_bytecode(image);
     const struct mo_types *types = mo_image_types(image);

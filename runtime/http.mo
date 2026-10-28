@@ -6,7 +6,8 @@ HeaderLimits(..),
 HeaderScan(..),
 HeaderProblem(..),
 scan_headers,
-parse_headers
+parse_headers,
+bearer_span
 
 struct Span
   start: Int
@@ -113,6 +114,44 @@ fn line_end(bytes: List(Byte), start: Int, limit: Int) : Result(Int, HeaderProbl
     at += 1
   end
   Error(Malformed)
+end
+
+fn ascii?(bytes: List(Byte), part: Span, expected: List(Int)) : Bool
+  return false if part.size != expected.size
+  for offset in 0..part.size
+    c = case bytes.get(part.start + offset)
+      Some(byte): byte.to_int
+      None: return false
+    end
+    lower = if c >= 65 and c <= 90: c + 32 else: c
+    return false if expected.get(offset) != Some(lower)
+  end
+  true
+end
+
+fn bearer_span(bytes: List(Byte), head: Head) : Option(Span)
+  var found = None
+  for field in head.fields
+    if ascii?(bytes, field.name, [97, 117, 116, 104, 111, 114, 105, 122, 97, 116, 105, 111, 110])
+      case found
+        Some(_): return None
+        None: found = Some(field.value)
+      end
+    end
+  end
+  value = case found
+    Some(part): part
+    None: return None
+  end
+  return None if value.size <= 6
+  return None if not ascii?(bytes, Span(start: value.start, size: 6), [98, 101, 97, 114, 101, 114])
+  var at = value.start + 6
+  return None if octet(bytes, at) != Ok(32)
+  finish = value.start + value.size
+  while at < finish and octet(bytes, at) == Ok(32)
+    at += 1
+  end
+  if at < finish: Some(Span(start: at, size: finish - at)) else: None
 end
 
 fn request_line(bytes: List(Byte), finish: Int) : Result((Span, Span, Span), HeaderProblem)

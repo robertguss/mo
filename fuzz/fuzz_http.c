@@ -9,6 +9,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 static struct mo_image *image;
 static uint32_t parse;
 static uint32_t scan;
+static uint32_t authorization;
 static uint32_t header_type;
 
 static void prepare(void) {
@@ -20,16 +21,19 @@ static void prepare(void) {
     struct mo_defect defect;
     MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
     const struct mo_bytecode *file = mo_image_bytecode(image);
-    parse = scan = UINT32_MAX;
+    parse = scan = authorization = UINT32_MAX;
     for (uint32_t i = 0; i < file->function_count; i++) {
         const struct mo_bytecode_string *name = &file->strings[file->functions[i].name];
         if (name->length == 18 && memcmp(name->bytes, "Http.parse_headers", 18) == 0)
             parse = i;
         if (name->length == 17 && memcmp(name->bytes, "Http.scan_headers", 17) == 0)
             scan = i;
+        if (name->length == 16 && memcmp(name->bytes, "Http.bearer_span", 16) == 0)
+            authorization = i;
     }
     MO_ASSERT(parse != UINT32_MAX && file->functions[parse].parameter_count == 2);
     MO_ASSERT(scan != UINT32_MAX && file->functions[scan].parameter_count == 3);
+    MO_ASSERT(authorization != UINT32_MAX);
     const struct mo_types *types = mo_image_types(image);
     header_type = file->functions[parse].parameters[1].type;
     MO_ASSERT(types->items[header_type].kind == MO_TYPE_CHOICE &&
@@ -124,6 +128,16 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             span(mo_value_field(parts, 0), consumed);
             span(mo_value_field(parts, 1), consumed);
         }
+        const struct mo_bytecode_function *auth =
+            &mo_image_bytecode(image)->functions[authorization];
+        struct mo_cell args[2];
+        MO_ASSERT(mo_value_list(heap, auth->parameters[0].type, cells, (uint32_t)size, &args[0]));
+        args[1] = mo_value_dup(heap, auth->parameters[1].type, value);
+        struct mo_cell token;
+        outcome = mo_call(process, authorization, args, 2, &token, &defect);
+        MO_ASSERT(outcome != MO_FAILED);
+        if (outcome == MO_RETURNED && mo_cell_get_tag(token) == 1)
+            span(mo_value_field(mo_cell_get_payload(token), 0), consumed);
     }
     mo_process_free(process);
     return 0;

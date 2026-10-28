@@ -78,5 +78,34 @@ fn main() : Int
     )
     Error(_): stop "empty field"
   end
+  require(Http.bearer_span(input, head) == Some(Http.Span(start: 59, size: 10)))
+  for (value, expected) in [
+    ("Bearer x", Some(Http.Span(start: 42, size: 1))),
+    ("bEaReR   x", Some(Http.Span(start: 44, size: 1))),
+    ("Bearer\tx", None),
+    ("Bearer", None),
+    ("Bearer ", None),
+    ("Basic x", None),
+    ("Bearerx", None)
+  ]
+    bytes = octets("POST /mcp HTTP/1.1\r\naUtHoRiZaTiOn: #{value}\r\n\r\n")
+    parsed = case Http.parse_headers(bytes, Http.HeaderLimits(bytes: 256, line: 128, fields: 4))
+      Ok(parsed_head): parsed_head
+      Error(_): stop "authorization header"
+    end
+    require(Http.bearer_span(bytes, parsed) == expected)
+  end
+  for fields in [
+    "",
+    "Authorization: Bearer x\r\nAUTHORIZATION: Bearer x\r\n",
+    "Authorization: Basic x\r\nAuthorization: Bearer x\r\n"
+  ]
+    bytes = octets("POST /mcp HTTP/1.1\r\n#{fields}\r\n")
+    parsed = case Http.parse_headers(bytes, Http.HeaderLimits(bytes: 256, line: 128, fields: 4))
+      Ok(value): value
+      Error(_): stop "authorization cardinality"
+    end
+    require(Http.bearer_span(bytes, parsed) == None)
+  end
   37
 end
