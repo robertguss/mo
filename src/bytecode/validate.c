@@ -709,6 +709,72 @@ static MO_MUST_USE bool update_pair(const struct mo_bytecode *f, uint32_t type, 
     return t->kind == MO_TYPE_TUPLE && t->parameter_count == 2 && t->parameters[0] == state;
 }
 
+static MO_MUST_USE bool service_shapes(struct validation *v, const struct mo_bytecode_service *s,
+                                       bool *seen, uint32_t *queue) {
+    uint32_t count = 0, required = 0;
+    for (uint32_t i = 0; i < s->tool_count; i++) {
+        const struct mo_bytecode_service_tool *tool = &s->tools[i];
+        for (uint32_t j = 0; j <= tool->argument_count; j++) {
+            uint32_t root = j < tool->argument_count ? tool->argument_types[j] : tool->result_type;
+            if (!seen[root]) {
+                seen[root] = true;
+                queue[count++] = root;
+            }
+        }
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        const struct mo_type *t = &v->file->types[queue[i]];
+        required += nominal(t) ? 1U : 0U;
+        for (uint32_t j = 0; j < t->parameter_count + t->field_count; j++) {
+            uint32_t child =
+                j < t->parameter_count ? t->parameters[j] : t->fields[j - t->parameter_count].type;
+            if (!seen[child]) {
+                seen[child] = true;
+                queue[count++] = child;
+            }
+        }
+        for (uint32_t j = 0; j < t->case_count; j++)
+            for (uint32_t k = 0; k < t->cases[j].field_count; k++) {
+                uint32_t child = t->cases[j].fields[k].type;
+                if (!seen[child]) {
+                    seen[child] = true;
+                    queue[count++] = child;
+                }
+            }
+    }
+    for (uint32_t i = 0; i < s->shape_count; i++) {
+        const struct mo_bytecode_service_shape *shape = &s->shapes[i];
+        if (shape->type >= v->file->type_count)
+            return refuse(v, "service shape type out of range");
+        if (i != 0 && s->shapes[i - 1].type >= shape->type)
+            return refuse(v, "duplicate or unsorted service shape");
+        if (!seen[shape->type])
+            return refuse(v, "unreachable service shape");
+        const struct mo_type *t = &v->file->types[shape->type];
+        if (shape->is_struct) {
+            if (shape->case_count != 0)
+                return refuse(v, "struct service shape has payload flags");
+            if (t->kind != MO_TYPE_RECORD &&
+                (t->kind != MO_TYPE_CHOICE || t->case_count != 1 || t->cases[0].unnamed))
+                return refuse(v, "invalid service struct shape");
+        } else {
+            if (t->kind != MO_TYPE_CHOICE || shape->case_count != t->case_count)
+                return refuse(v, "invalid service enum shape");
+            for (uint32_t j = 0; j < shape->case_count; j++) {
+                if (shape->unnamed[j] && t->cases[j].field_count != 1)
+                    return refuse(v, "invalid service unnamed payload");
+                if (t->cases[j].unnamed && !shape->unnamed[j])
+                    return refuse(v, "service shape conflicts with unnamed case");
+            }
+        }
+    }
+    if (s->shape_count != required)
+        return refuse(v, "missing reachable service shape");
+    for (uint32_t i = 0; i < count; i++)
+        seen[queue[i]] = false;
+    return true;
+}
+
 static MO_MUST_USE bool services(struct validation *v) {
     const struct mo_bytecode *f = v->file;
     if (f->service_count == 0)
@@ -720,16 +786,18 @@ static MO_MUST_USE bool services(struct validation *v) {
             maximum = count;
     }
     bool *seen = allocate(v, f->type_count, sizeof *seen, _Alignof(bool));
+    bool *shapes_seen = allocate(v, f->type_count, sizeof *shapes_seen, _Alignof(bool));
     bool *tokens_seen = allocate(v, f->string_count, sizeof *tokens_seen, _Alignof(bool));
     uint32_t *queue = allocate(v, f->type_count, sizeof *queue, _Alignof(uint32_t));
     uint32_t *modules_seen =
         allocate(v, f->service_count, sizeof *modules_seen, _Alignof(uint32_t));
     uint32_t *handlers = allocate(v, maximum, sizeof *handlers, _Alignof(uint32_t));
     uint32_t *names = allocate(v, maximum, sizeof *names, _Alignof(uint32_t));
-    if (seen == NULL || tokens_seen == NULL || queue == NULL || modules_seen == NULL ||
-        handlers == NULL || names == NULL)
+    if (seen == NULL || shapes_seen == NULL || tokens_seen == NULL || queue == NULL ||
+        modules_seen == NULL || handlers == NULL || names == NULL)
         return false;
     memset(seen, 0, f->type_count * sizeof *seen);
+    memset(shapes_seen, 0, f->type_count * sizeof *shapes_seen);
     memset(tokens_seen, 0, f->string_count * sizeof *tokens_seen);
     for (uint32_t i = 0; i < f->service_count; i++) {
         v->current = (struct mo_bytecode_error_site){MO_SECTION_SERVICES, i};
@@ -813,6 +881,8 @@ static MO_MUST_USE bool services(struct validation *v) {
         }
         if (!unique(handlers, s->tool_count + s->timer_count) || !unique(names, s->tool_count))
             return refuse(v, "duplicate service handler or tool name");
+        if (!service_shapes(v, s, shapes_seen, queue))
+            return false;
     }
     return unique(modules_seen, f->service_count) || refuse(v, "duplicate service module");
 }

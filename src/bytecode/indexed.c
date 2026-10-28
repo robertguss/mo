@@ -277,12 +277,23 @@ static MO_MUST_USE bool service_timer(struct mo_text_reader *r) {
            punctuation(r, ")");
 }
 
+static MO_MUST_USE bool service_shape(struct mo_text_reader *r) {
+    if (!punctuation(r, "(") || !type_index(r) || !punctuation(r, ","))
+        return false;
+    static const char *const forms[] = {"enum", "struct"};
+    uint32_t source = r->token.start, form;
+    return mo_text_enum(r, forms, 2, "expected struct or enum", &form) &&
+           mo_text_word(r, form, source) && punctuation(r, ",") &&
+           list(r, MO_LIMIT_FIELDS, boolean) && punctuation(r, ")");
+}
+
 static MO_MUST_USE bool service(struct mo_text_reader *r) {
     return reference(r, 'm', false) && type_index(r) && function_index(r) &&
            reference(r, 's', false) && mo_text_take(r, "tools", "expected tools") &&
            list(r, MO_LIMIT_SERVICE_HANDLERS, service_tool) &&
            mo_text_take(r, "timers", "expected timers") &&
-           list(r, MO_LIMIT_SERVICE_HANDLERS, service_timer);
+           list(r, MO_LIMIT_SERVICE_HANDLERS, service_timer) &&
+           mo_text_take(r, "shapes", "expected shapes") && list(r, MO_LIMIT_TYPES, service_shape);
 }
 
 bool mo_text_indexed_section(struct mo_text_reader *r, enum mo_bytecode_section section) {

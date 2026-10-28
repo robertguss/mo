@@ -925,7 +925,7 @@ static void test_clock_random(void) {
 }
 
 static void test_empty_image(void) {
-    const char *source = "bytecode 0.2 shorthand\nmodule M exposes []\n";
+    const char *source = "bytecode 0.3 shorthand\nmodule M exposes []\n";
     struct mo_buffer wire;
     mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
     struct mo_assemble_error assembly;
@@ -950,7 +950,7 @@ static void test_empty_image(void) {
 
 static void test_main_capabilities(void) {
     const char *source =
-        "bytecode 0.2 shorthand\nmodule M exposes [M.main]\n"
+        "bytecode 0.3 shorthand\nmodule M exposes [M.main]\n"
         "function M.main(a: Args borrowed, e: Env borrowed, c: Console borrowed, "
         "f: Files borrowed, ro: ReadFiles borrowed, t: Clock borrowed, n: Random borrowed) "
         ": List(Text) function in M\n registers [r7: List(Text)]\n"
@@ -997,7 +997,7 @@ static void test_main_capabilities(void) {
 
 static void test_supplied_main_capabilities(void) {
     const char *source =
-        "bytecode 0.2 shorthand\nmodule M exposes [M.main]\n"
+        "bytecode 0.3 shorthand\nmodule M exposes [M.main]\n"
         "function M.main(left: Clock borrowed, right: Clock owned): Time function in M\n"
         " registers [r2: Time]\n host r2, Clock.now, r1\n drop r1\n ret r2\nend\n";
     struct mo_buffer wire;
@@ -1037,7 +1037,7 @@ static void test_supplied_main_capabilities(void) {
 
 static void test_vm_host_exhaustion(void) {
     const char *source =
-        "bytecode 0.2 shorthand\n"
+        "bytecode 0.3 shorthand\n"
         /* Host signatures require both boxed layouts; nominal declarations
          * reserve t0/t1 before their Text field introduces t2. */
         "layouts\n L0 case t0 3 [t2, t2]\n L1 case t1 1 [t0]\nend\n"

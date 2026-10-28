@@ -244,6 +244,8 @@ static MO_MUST_USE bool reserve(struct mo_shorthand *s) {
     while (!r->failed && r->token.kind != 0) {
         uint32_t source = r->token.start;
         if (body == MO_SECTION_COUNT) {
+            if (mo_text_is(r, "services"))
+                break;
             enum mo_bytecode_section section = mo_text_is(r, "record") || mo_text_is(r, "choice")
                                                    ? MO_SECTION_TYPES
                                                : mo_text_is(r, "function") ? MO_SECTION_FUNCTIONS
@@ -532,7 +534,7 @@ bool mo_text_shorthand(struct mo_text_reader *r) {
     r->cursor = cursor;
     const struct mo_text_decl *decl = s.first;
     bool had_init = false;
-    while (r->token.kind != 0 && !r->failed) {
+    while (r->token.kind != 0 && !r->failed && !mo_text_is(r, "services")) {
         if (mo_text_is(r, "init")) {
             if (had_init) {
                 mo_text_refuse(r, r->token.start, "expected at most one init declaration");

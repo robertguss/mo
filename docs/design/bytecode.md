@@ -1,4 +1,4 @@
-# Mo Bytecode v0.2
+# Mo Bytecode v0.3
 
 **Implementation contract, checked 24 October 2026 against main at
 [`acb2b84`](https://github.com/robertguss/mo/commit/acb2b8488f872c8d907184f2618c467dd8209afc).** This is the
@@ -9,7 +9,7 @@ enforces. `src/codegen` writes this format through `src/bytecode`'s writer.
 The loader, verifier, text tools and VM are integrated. `mo emit FILE -o OUT`
 writes a binary file; `mo check --emit=bytecode` prints its indexed text form.
 `mo run` compiles source and runs the resulting image, but no CLI command loads
-an emitted `.bc` file (D271). This document does not change the format version.
+an emitted `.bc` file (D271). D318 adds explicit service shapes in version 0.3.
 
 Four files carry the contract as code, and nothing else defines it:
 
@@ -222,8 +222,9 @@ services    service descriptors, present only when flags = 1 (3.6)
 
 Flag value 1 announces a nonempty services section after debug. No other flag
 bits are accepted. Files without services retain flags = 0 and have no extra
-count word; their encoding is unchanged. Older v0.2 loaders reject flags = 1
-rather than silently ignoring service metadata. The format version stays 0.2.
+count word; their sections are unchanged. Version 0.3 adds the explicit shape
+table to each service descriptor. Version 0.2 files are refused, with or
+without services.
 
 The checksum detects truncation and corruption. It's no defense against an
 attacker: Phase 5 signs upgrade packages separately. Every count and index has
@@ -238,7 +239,7 @@ Strings are a byte length followed by UTF-8 bytes, without a terminator.
 Filenames use the same length/bytes encoding but permit arbitrary non-NUL
 bytes. There are at most `MO_LIMIT_FILES` rows, each at most
 `MO_LIMIT_STRING_SIZE` bytes. They are metadata, not runtime Bytes constants.
-Binary and both text codecs accept only version 0.2, rejecting 0.1 and any
+Binary and both text codecs accept only version 0.3, rejecting 0.2 and any
 other major/minor; there is no compatibility inference from section contents.
 `UINT32_MAX` (`ff ff ff ff`, `MO_BYTECODE_NO_INDEX`) marks an absent optional
 index, never a table entry. Type and layout entries use the per-kind forms
@@ -613,6 +614,7 @@ has these fields, in wire order:
 | module, state type, start function, token variable | four `u32` indices into modules, types, functions and strings |
 | tools | count, then entries: name string index, handler function index, read-only boolean, argument-type index array, result-type index, description string index, parameter-name string-index array |
 | timers | count, then pairs of handler function index and interval function index |
+| shapes | count, then entries: type index, struct boolean, unnamed-payload boolean array |
 
 Tools and timers retain clause order. Together they contain at most
 `MO_LIMIT_SERVICE_HANDLERS` entries; at least one tool is required. Tool names
@@ -639,6 +641,31 @@ bytes within each tool, even when equal strings have different indices.
 Duplicates refuse with `duplicate service tool parameter name`. A tool occupies
 28 wire bytes plus eight bytes per schema argument, including both array counts.
 
+The shape table has exactly one entry for every nominal record or choice
+reachable from a tool's schema arguments or complete result, in ascending type
+index order. State and timer types alone do not make an entry reachable.
+Traversal follows container parameters, record fields and choice-case fields,
+including cycles. There are at most `MO_LIMIT_TYPES` entries. An entry occupies
+12 wire bytes plus four bytes per payload flag. The struct boolean is 1 for a
+source struct and 0 for an enum; a struct has zero payload flags. An enum has
+one boolean per case, in case order, bounded by `MO_LIMIT_FIELDS`.
+
+Lowering carries source form and unnamed-payload flags beside Core in
+`base/service.h`; codegen supplies the built-in forms. Core text and Lean are
+unchanged. Consumers use this explicit table, never type/constructor-name
+coincidence, a field named `0`, or the physical record/choice kind to infer form.
+Under D318's Entry amendment, a struct may reference a record with named fields
+or a choice with exactly one named-field case. Both retain declaration order.
+An enum must reference a choice. A true unnamed-payload flag requires exactly
+one field; a type-table case already marked unnamed must retain that flag.
+
+The loader refuses missing reachable entries, unreachable entries, duplicate
+or unsorted type indices, invalid type indices or forms, any struct payload
+flags, wrong enum flag counts, and contradictory or invalid unnamed flags.
+The ordinary type-table rules also refuse unnamed record fields. These checks
+apply independently to each service. Shapes describe representation only;
+they do not grant permission to expose a hidden type.
+
 The loader checks the D313 classification independently of the compiler.
 Bare `State` and `Result(State, E)` refuse. Only `(State, Reply)` and
 `Result((State, Reply), E)` have read-only = 0; all other results have
@@ -661,17 +688,20 @@ refuses the entire image. The writer enforces the same rules by loading its
 output. Cross-table failures use byte offset 20 and the service entry's error
 site for text diagnostics.
 
-Indexed text may append this section after `debug ... end`:
+Indexed text may append this section after `debug ... end`; shorthand may
+append it after its declarations:
 
 ```text
 services
-  S0 m0 t1 f3 s7 tools [(s8, f0, 1, [], t2, s9, [])] timers [(f1, f4)]
+  S0 m0 t1 f3 s7 tools [(s8, f0, 1, [], t2, s9, [])] timers [(f1, f4)] shapes [(t2, struct, [])]
 end
 ```
 
 Indices name existing entries. Service indices are consecutive from `S0`;
 booleans use 0 or 1, as elsewhere in indexed text. An absent section means no
-services; an empty section refuses. Shorthand has no service declarations.
+services; an empty section refuses. An enum shape is `(t3, enum, [0, 1])` for
+two cases with a named first payload and an unnamed second payload. The same
+indexed service syntax is used in both text modes.
 Disassembly and reassembly retain the service section byte for byte.
 
 ## 4. Instructions
@@ -1342,8 +1372,9 @@ payloads. No decoded-only fields are written.
 
 ```text
 file        = indexed | shorthand
-indexed     = "bytecode 0.2 indexed"
+indexed     = "bytecode 0.3 indexed"
               strings types layouts constants globals init functions modules files debug
+              [ services ]
 strings     = "strings" { S Q } "end"
 types       = "types" { T type_body } "end"
 type_body   = SIMPLE
@@ -1475,8 +1506,9 @@ No indexed globals, init, functions, modules or debug sections occur in
 shorthand, and no shorthand items occur in indexed text.
 
 ```text
-shorthand   = "bytecode 0.2 shorthand"
+shorthand   = "bytecode 0.3 shorthand"
               [ strings ] [ types ] [ layouts ] [ constants ] [ files ] { item }
+              [ services ]
 item        = nominal | global_decl | init_decl | function_decl | module_decl
 nominal     = "record" NAME { named_field } "end"
             | "choice" NAME { "case" NAME [ "(" named_fields ")" ] } "end"
@@ -1648,7 +1680,7 @@ links. Declarations and conditions include both present and absent locations.
 This is the canonical indexed text:
 
 ```text
-bytecode 0.2 indexed
+bytecode 0.3 indexed
 strings
   s0 "unused"
   s1 "Hidden"
@@ -1785,7 +1817,7 @@ In `Demo.identity`, `registers []` adds no registers beyond parameter `r0`.
 The shorthand spells out metadata defaults here to show their indexed form.
 
 ```text
-bytecode 0.2 shorthand
+bytecode 0.3 shorthand
 strings
   s0 "unused"
   s1 "Hidden"
@@ -1937,7 +1969,7 @@ The assembler and disassembler live in `src/bytecode`.
 bounded by `MO_LIMIT_BYTECODE_SIZE`.
 `mo_bytecode_disassemble(bytes, length, out, error_out)` verifies its input
 before writing canonical indexed text. Text input and output are bounded by
-`MO_LIMIT_BYTECODE_TEXT_SIZE` (2 GiB in v0.2), eight times the binary limit:
+`MO_LIMIT_BYTECODE_TEXT_SIZE` (2 GiB), eight times the binary limit:
 quoting and instruction names expand bytes. The canonical spelling above
 fits within eight times the binary file's length, so every verified file's
 text fits and text byte offsets still fit `u32`. Noncanonical input past the
@@ -1980,7 +2012,7 @@ renumbers a seed or an indexed file.
 
 ## 11. Versions
 
-The format's version is 0.2. In Phase 2 the same build writes and reads a file,
+The format's version is 0.3. The same build writes and reads a file,
 so the loader accepts only its own version. Phase 5's upgrades need files
 built by one version to load in another, and decide then what stays
 compatible.

@@ -75,6 +75,86 @@ static void write_refused(const struct mo_bytecode *file, const char *reason) {
     mo_buffer_free(&wire);
 }
 
+static void shape_refusals(const struct mo_bytecode *file, const struct mo_buffer *wire) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_LOWER_WORK);
+    struct mo_bytecode changed = *file;
+    struct mo_bytecode_service service = file->services[0];
+    changed.services = &service;
+    size_t size = service.shape_count * sizeof *service.shapes;
+    struct mo_bytecode_service_shape *shapes =
+        mo_arena_copy(&arena, service.shapes, size, _Alignof(struct mo_bytecode_service_shape));
+    MO_ASSERT(shapes != NULL && service.shape_count >= 2);
+    service.shapes = shapes;
+    service.shape_count--;
+    write_refused(&changed, "missing reachable service shape");
+    service.shape_count++;
+    shapes[0].type = file->type_count;
+    write_refused(&changed, "service shape type out of range");
+    shapes[0] = shapes[1];
+    write_refused(&changed, "duplicate or unsorted service shape");
+    shapes[1] = file->services[0].shapes[0];
+    write_refused(&changed, "duplicate or unsorted service shape");
+    memcpy(shapes, file->services[0].shapes, size);
+    for (uint32_t i = 0; i < file->type_count; i++)
+        if (file->types[i].name != NULL && strcmp(file->types[i].name, "Main.Unused") == 0) {
+            uint32_t at = 0;
+            while (at + 1 < service.shape_count && shapes[at + 1].type < i)
+                at++;
+            shapes[at] = (struct mo_bytecode_service_shape){.type = i, .is_struct = true};
+            write_refused(&changed, "unreachable service shape");
+            shapes[at] = file->services[0].shapes[at];
+        }
+    size_t wire_size = 4;
+    for (uint32_t i = 0; i < service.shape_count; i++)
+        wire_size += 12 + 4 * shapes[i].case_count;
+    size_t offset = wire->length - wire_size;
+    refused(wire, offset, MO_LIMIT_TYPES + 1, "count past limit or remaining bytes");
+    offset += 4;
+    for (uint32_t i = 0; i < service.shape_count; i++) {
+        struct mo_bytecode_service_shape *shape = &shapes[i];
+        const struct mo_type *type = &file->types[shape->type];
+        refused(wire, offset + 4, 2, "invalid boolean");
+        refused(wire, offset + 8, MO_LIMIT_FIELDS + 1, "count past limit or remaining bytes");
+        bool flag = false;
+        if (shape->is_struct) {
+            shape->case_count = 1;
+            shape->unnamed = &flag;
+            write_refused(&changed, "struct service shape has payload flags");
+            if (type->kind == MO_TYPE_RECORD) {
+                shape->is_struct = false;
+                write_refused(&changed, "invalid service enum shape");
+            }
+        } else {
+            bool *flags = mo_arena_copy(&arena, shape->unnamed, shape->case_count * sizeof *flags,
+                                        _Alignof(bool));
+            MO_ASSERT(flags != NULL);
+            shape->unnamed = flags;
+            shape->case_count--;
+            write_refused(&changed, "invalid service enum shape");
+            shape->case_count++;
+            for (uint32_t j = 0; j < shape->case_count; j++) {
+                refused(wire, offset + 12 + 4 * j, 2, "invalid boolean");
+                if (type->cases[j].field_count != 1 || type->cases[j].unnamed) {
+                    flags[j] = !flags[j];
+                    write_refused(&changed, type->cases[j].unnamed
+                                                ? "service shape conflicts with unnamed case"
+                                                : "invalid service unnamed payload");
+                    flags[j] = !flags[j];
+                }
+            }
+            if (shape->case_count != 1) {
+                shape->is_struct = true;
+                shape->case_count = 0;
+                write_refused(&changed, "invalid service struct shape");
+            }
+        }
+        *shape = file->services[0].shapes[i];
+        offset += 12 + 4 * shape->case_count;
+    }
+    mo_arena_free(&arena);
+}
+
 static void schema_refusals(const struct mo_bytecode *file, const struct mo_buffer *wire) {
     struct mo_bytecode changed = *file;
     struct mo_bytecode_service service = file->services[0];
@@ -290,6 +370,7 @@ static void descriptor(void) {
     const struct mo_bytecode *file = mo_image_bytecode(image);
     table_refusals(file);
     schema_refusals(file, &wire);
+    shape_refusals(file, &wire);
     CHECK(file->service_count == 1 && file->header.flags == MO_BYTECODE_SERVICE_FLAG);
     MO_ASSERT(file->service_count == 1);
     const struct mo_bytecode_service *s = &file->services[0];
@@ -332,7 +413,10 @@ static void descriptor(void) {
         CHECK(mo_cell_get_int(result) == (i == 0 ? 9 : 10));
     }
     mo_process_free(process);
-    size_t size = 28 + 8 * s->timer_count;
+    size_t shape_size = 4;
+    for (uint32_t i = 0; i < s->shape_count; i++)
+        shape_size += 12 + 4 * s->shapes[i].case_count;
+    size_t size = 28 + 8 * s->timer_count + shape_size;
     for (uint32_t i = 0; i < s->tool_count; i++)
         size += 28 + 8 * s->tools[i].argument_count;
     size_t start = wire.length - size;
@@ -356,8 +440,9 @@ static void descriptor(void) {
     refused(&wire, start + 52, s->tools[0].name, "duplicate service handler or tool name");
     refused(&wire, start + 52 + 16, file->functions[s->tools[0].function].result_type,
             "service tool schema differs from handler");
-    refused(&wire, wire.length - 4, s->start, "invalid service timer handler or interval function");
-    refused(&wire, wire.length - 8, s->timers[0].function,
+    refused(&wire, wire.length - shape_size - 4, s->start,
+            "invalid service timer handler or interval function");
+    refused(&wire, wire.length - shape_size - 8, s->timers[0].function,
             "duplicate service handler or tool name");
     uint32_t invalid_functions[] = {s->timers[0].function, UINT32_MAX, UINT32_MAX, UINT32_MAX};
     const char *invalid_names[] = {"Main.bare_result", "Main.impure", "Main.functional"};
@@ -452,6 +537,7 @@ static void selected_overload(void) {
 static void source_shapes(void) {
     struct fixture f;
     init(&f, "module Main\n"
+             "struct Unused\nvalue: Int\nend\n"
              "struct Record\nname: Text\nkind: EntryKind\nend\n"
              "enum One\nOnly(name: Text, kind: EntryKind)\nend\n"
              "enum Payload\nEmpty\nUnnamed(Int)\nNamed(value: Int)\nend\n"
@@ -494,10 +580,79 @@ static void source_shapes(void) {
     struct mo_buffer wire;
     mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
     CHECK(mo_compile_services(core, &services, &wire, &diags));
+    struct mo_load_error error;
+    struct mo_image *image = mo_load(wire.bytes, wire.length, &error);
+    MO_ASSERT(image != NULL);
+    const struct mo_bytecode *file = mo_image_bytecode(image);
+    const struct mo_bytecode_service *service = &file->services[0];
+    CHECK(service->shape_count == 5);
+    const char *shape_names[] = {"Main.Record", "Main.One", "Main.Payload", "Entry", "EntryKind"};
+    found = 0;
+    for (uint32_t i = 0; i < service->shape_count; i++) {
+        const struct mo_bytecode_service_shape *shape = &service->shapes[i];
+        CHECK(i == 0 || service->shapes[i - 1].type < shape->type);
+        for (uint32_t j = 0; j < sizeof shape_names / sizeof *shape_names; j++) {
+            if (strcmp(file->types[shape->type].name, shape_names[j]) != 0)
+                continue;
+            found++;
+            CHECK(shape->is_struct == (j == 0 || j == 3));
+            CHECK(shape->case_count == (j == 0 || j == 3 ? 0U : j == 1 ? 1U : j == 2 ? 3U : 4U));
+            for (uint32_t k = 0; k < shape->case_count; k++)
+                CHECK(shape->unnamed[k] == (j == 2 && k == 1));
+        }
+    }
+    CHECK(found == 5);
+    shape_refusals(file, &wire);
+    seed(&wire, "service-shapes.bc");
+    mo_image_free(image);
     text_roundtrip(&wire);
     mo_buffer_free(&wire);
     mo_diags_free(&diags);
     mo_arena_free(&arena);
+}
+
+static void shorthand_shapes(void) {
+    const char source[] =
+        "bytecode 0.3 shorthand\n"
+        "strings\n s0 \"M\"\n s1 \"TOKEN\"\n s2 \"echo\"\n s3 \"entry\"\n s4 \"\"\n"
+        " s5 \"Item\"\n s6 \"name\"\n s7 \"kind\"\n s8 \"Kind\"\n s9 \"File\"\n"
+        " s10 \"Next\"\nend\n"
+        "types\n t0 record s5 [(s6, t2), (s7, t1)]\n t1 choice s8 [(s9, []), (s10, [(-, t0)])]\n"
+        " t2 text\n t3 int\n t4 time\nend\n"
+        "module M exposes [M.echo]\n"
+        "function M.start() : Int function in M\n registers [r0: Int]\n"
+        " const r0, 0\n ret r0\nend\n"
+        "function M.echo(state: Int owned, now: Time owned, entry: Item owned) : Item function in "
+        "M\n"
+        " registers []\n ret r2\nend\n"
+        "services\n S0 m0 t3 f0 s1 tools [(s2, f1, 1, [t0], t0, s4, [s3])] timers []"
+        " shapes [(t0, struct, []), (t1, enum, [0, 1])]\nend\n";
+    struct mo_buffer wire;
+    struct mo_assemble_error error;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    bool assembled = mo_bytecode_assemble(source, sizeof source - 1, &wire, &error);
+    CHECK(assembled);
+    if (assembled) {
+        struct mo_load_error load_error;
+        struct mo_image *image = mo_load(wire.bytes, wire.length, &load_error);
+        MO_ASSERT(image != NULL);
+        const struct mo_bytecode *file = mo_image_bytecode(image);
+        const struct mo_bytecode_service *service = &file->services[0];
+        CHECK(service->shape_count == 2 && service->shapes[0].type == 0 &&
+              service->shapes[0].is_struct && service->shapes[0].case_count == 0 &&
+              service->shapes[1].type == 1 && !service->shapes[1].is_struct &&
+              service->shapes[1].case_count == 2 && !service->shapes[1].unnamed[0] &&
+              service->shapes[1].unnamed[1]);
+        size_t types = 24;
+        for (uint32_t i = 0; i < file->string_count; i++)
+            types += 4 + file->strings[i].length;
+        refused(&wire, types + 16, UINT32_MAX, "name string index out of range");
+        text_roundtrip(&wire);
+        seed(&wire, "service-shorthand-shapes.bc");
+        mo_image_free(image);
+    } else
+        CHECK(fprintf(stderr, "shorthand refusal at %u: %s\n", error.offset, error.reason) >= 0);
+    mo_buffer_free(&wire);
 }
 
 static void run(void *context) {
@@ -505,6 +660,7 @@ static void run(void *context) {
     descriptor();
     selected_overload();
     source_shapes();
+    shorthand_shapes();
 }
 
 int main(int argc, char **argv) {
