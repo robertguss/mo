@@ -70,6 +70,10 @@
   decoding used 373001 VM instructions and about 6 ms in the initial probe.
   That result does not freeze an aggregate request budget. Native copying,
   Json parsing, collection sizes and concurrent connections still count.
+- JSON Schema 2020-12 requires `prefixItems` to be nonempty. An empty tuple
+  uses `minItems: 0`, `maxItems: 0` and `items: false` without `prefixItems`.
+  An empty enum uses the false schema, not an empty `oneOf`. Validate generated
+  schemas against the metaschema as well as validating example values.
 
 ## MO-159 simulation boundaries
 
