@@ -43,6 +43,13 @@ enum abi_type {
     ABI_JSON_NUMBER,
     ABI_JSON_ARRAY,
     ABI_JSON_OBJECT,
+    ABI_FLOAT,
+    ABI_CHAR,
+    ABI_TIME,
+    ABI_DECIMAL,
+    ABI_BIGINT,
+    ABI_SCALAR,
+    ABI_SCALAR_OPTION,
     ABI_COUNT
 };
 
@@ -125,6 +132,24 @@ static const struct abi_case json[] = {{.name = "Null"},
                                        {"Object", 1, {{"0", ABI_JSON_OBJECT}}}};
 static const struct abi_case json_number[] = {{"JsonNumber", 1, {{"text", ABI_TEXT}}}};
 
+static const struct abi_case scalar[] = {
+    {.name = "UnitValue"},
+    {"BoolValue", 1, {{"0", ABI_BOOL}}},
+    {"ByteValue", 1, {{"0", ABI_BYTE}}},
+    {"IntValue", 1, {{"0", ABI_INT}}},
+    {"FloatValue", 1, {{"0", ABI_FLOAT}}},
+    {"CharValue", 1, {{"0", ABI_CHAR}}},
+    {"TimeValue", 1, {{"0", ABI_TIME}}},
+    {"DurationValue", 1, {{"0", ABI_INT}}},
+    {"DecimalValue", 1, {{"0", ABI_DECIMAL}}},
+    {"TextValue", 1, {{"0", ABI_TEXT}}},
+    {"BytesValue", 1, {{"0", ABI_BYTES}}},
+    {"BigIntValue", 1, {{"0", ABI_BIGINT}}},
+    {"RangeValue", 2, {{"start", ABI_INT}, {"finish", ABI_INT}}},
+};
+static const struct abi_case scalar_option[] = {{.name = "None"},
+                                                {"Some", 1, {{NULL, ABI_SCALAR}}}};
+
 static const struct {
     enum mo_type_kind kind;
     enum abi_type element, value;
@@ -163,6 +188,13 @@ static const struct {
     [ABI_JSON_NUMBER] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = json_number},
     [ABI_JSON_ARRAY] = {.kind = MO_TYPE_LIST, .element = ABI_JSON},
     [ABI_JSON_OBJECT] = {.kind = MO_TYPE_MAP, .element = ABI_TEXT, .value = ABI_JSON},
+    [ABI_FLOAT] = {.kind = MO_TYPE_FLOAT},
+    [ABI_CHAR] = {.kind = MO_TYPE_CHAR},
+    [ABI_TIME] = {.kind = MO_TYPE_TIME},
+    [ABI_DECIMAL] = {.kind = MO_TYPE_DECIMAL},
+    [ABI_BIGINT] = {.kind = MO_TYPE_BIGINT},
+    [ABI_SCALAR] = {.kind = MO_TYPE_CHOICE, .count = 13, .cases = scalar},
+    [ABI_SCALAR_OPTION] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = scalar_option},
 };
 
 static bool matches(const struct mo_types *types, uint32_t index, enum abi_type expected,
@@ -211,6 +243,8 @@ static bool valid_abi(const struct mo_image *image) {
         {"Http.bearer_span", 2, {ABI_BYTES, ABI_HEAD}, ABI_SPAN_OPTION},
         {"Http.chunk_size", 3, {ABI_BYTES, ABI_INT, ABI_INT}, ABI_INT_RESULT},
         {"Mcp.catalog", 1, {ABI_MCP_SERVICE}, ABI_JSON},
+        {"McpScalar.decode", 3, {ABI_MCP_KIND, ABI_JSON, ABI_INT}, ABI_SCALAR_OPTION},
+        {"McpScalar.encode", 1, {ABI_SCALAR}, ABI_JSON},
     };
     const struct mo_bytecode *file = mo_image_bytecode(image);
     const struct mo_types *types = mo_image_types(image);

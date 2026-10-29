@@ -2,6 +2,8 @@ module McpCheck
 use Json
 use Mcp
 use McpNumber
+use McpScalar
+use McpType
 
 fn require(ok: Bool)
   if not ok
@@ -97,8 +99,63 @@ fn numbers()
   require(McpNumber.bigint("9".repeat(4097), 4096) == None)
 end
 
+fn scalars()
+  for (kind, input, output) in [
+    (McpType.UnitType, "null", "null"),
+    (McpType.BoolType, "true", "true"),
+    (McpType.ByteType, "2.55e2", "255"),
+    (McpType.IntType, "\"-09223372036854775808\"", "\"-9223372036854775808\""),
+    (McpType.IntType, "\"9223372036854775807\"", "\"9223372036854775807\""),
+    (McpType.FloatType, "\"-0\"", "\"-0\""),
+    (McpType.FloatType, "\"nan\"", "\"nan\""),
+    (McpType.FloatType, "\"inf\"", "\"inf\""),
+    (McpType.FloatType, "\"-inf\"", "\"-inf\""),
+    (McpType.CharType, "\"😀\"", "\"😀\""),
+    (McpType.TextType, "\"a\\u0000é\"", "\"a\\u0000é\""),
+    (McpType.DecimalType, "\"-001.000000000000000001\"", "\"-1.000000000000000001\""),
+    (McpType.DurationType, "\"-9223372036854775808\"", "\"-9223372036854775808\""),
+    (McpType.DurationType, "\"9223372036854775807\"", "\"9223372036854775807\""),
+    (McpType.TimeType, "\"1969-12-31t23:59:59.999999z\"", "\"1969-12-31T23:59:59.999999Z\""),
+    (McpType.TimeType, "\"2026-10-12T03:15:00.120000+01:00\"", "\"2026-10-12T02:15:00.12Z\""),
+    (McpType.TimeType, "\"0001-01-01T00:00:00Z\"", "\"0001-01-01T00:00:00Z\""),
+    (McpType.TimeType, "\"9999-12-31T23:59:59.999999Z\"", "\"9999-12-31T23:59:59.999999Z\""),
+    (McpType.BytesType, "[255.0,-0,1e0]", "[255,0,1]"),
+    (McpType.BigIntType, "\"-000123456789012345678901\"", "\"-123456789012345678901\""),
+    (McpType.RangeType, "{\"start\":\"07\",\"end\":\"-3\"}", "{\"start\":\"7\",\"end\":\"-3\"}")
+  ]
+    value = McpScalar.decode(kind, json(input), 4096) or stop "scalar decode"
+    require(McpScalar.encode(value) == json(output))
+  end
+  for (kind, input) in [
+    (McpType.UnitType, "{}"),
+    (McpType.BoolType, "0"),
+    (McpType.ByteType, "256"),
+    (McpType.IntType, "\"9223372036854775808\""),
+    (McpType.IntType, "\"-9223372036854775809\""),
+    (McpType.IntType, "\"+1\""),
+    (McpType.IntType, "\"1\\n\""),
+    (McpType.FloatType, "\"-nan\""),
+    (McpType.FloatType, "\"+1\""),
+    (McpType.CharType, "\"\""),
+    (McpType.CharType, "\"a😀\""),
+    (McpType.DecimalType, "\"0.0000000000000000001\""),
+    (McpType.DurationType, "\"9223372036854775808\""),
+    (McpType.TimeType, "\"2026-01-01T00:00:00.0000001Z\""),
+    (McpType.TimeType, "\"2026-01-01T00:00:60Z\""),
+    (McpType.TimeType, "\"2026-02-29T00:00:00Z\""),
+    (McpType.BytesType, "[0,255.5]"),
+    (McpType.BytesType, "[\"1\"]"),
+    (McpType.RangeType, "{\"start\":\"1\"}"),
+    (McpType.RangeType, "{\"start\":\"1\",\"end\":\"2\",\"other\":null}"),
+    (McpType.RangeType, "{\"start\":1,\"end\":\"2\"}")
+  ]
+    require(McpScalar.decode(kind, json(input), 4096) == None)
+  end
+end
+
 fn main() : Int
   numbers()
+  scalars()
   for (value, success, failure) in [
     (Json.Null, "{\"value\":null}", "{\"error\":{\"kind\":\"application\",\"value\":null}}"),
     (

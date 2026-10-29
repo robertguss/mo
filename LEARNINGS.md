@@ -80,6 +80,12 @@
   uses `minItems: 0`, `maxItems: 0` and `items: false` without `prefixItems`.
   An empty enum uses the false schema, not an empty `oneOf`. Validate generated
   schemas against the metaschema as well as validating example values.
+- D321's private Time bridge clarification permits `TimeValue(Time)` so Mo
+  retains parsing and canonical formatting without a new public constructor.
+  C copies only signed microseconds into a fresh cell. Duration remains an
+  Int payload in microseconds; neither conversion transfers image-local types
+  or heap references. Temporary Bytes conversion storage uses `mo_scratch_resize`
+  so it shares the destination heap budget.
 
 ## MO-159 simulation boundaries
 
