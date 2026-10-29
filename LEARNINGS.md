@@ -91,6 +91,14 @@
   value, so JSON equality cannot enforce uniqueness. Destination table
   cardinality detects that collapse after typed conversion. Product construction
   uses the heap's indexed layout lookup rather than scanning layouts per value.
+- D322's RPC classification checks the version header after parsing an object
+  but before validating its envelope, except for an exact string `initialize`
+  method. Parse errors precede that check. Numeric RPC IDs keep their lexical
+  spelling rather than using the mathematical Byte or tool-Int decoders.
+- Pagination admission must include the RPC envelope, the worst-case escaped
+  ID and the next cursor. Checking only a tool's schema size can admit a catalog
+  that cannot advance for a valid request. Cached serialized tool sizes avoid
+  rendering every growing page prefix to choose its boundary.
 
 ## MO-159 simulation boundaries
 

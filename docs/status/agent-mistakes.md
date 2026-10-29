@@ -135,3 +135,9 @@ Int keys or nested Set members. It compares nested sets without depending on the
 the native table builder. Types cannot distinguish legitimate duplicate refusal from blanket
 rejection, so the executable oracle checks both. This is the 31st occurrence across 17 tasks;
 no production defect was found.
+
+MO-160's owner questioned a JSON-RPC branch after reading a relay that omitted D322's
+"If a method member is present" qualifier. Robert's original approval and its complete Notion
+record already made the branch conditional. The parser was unchanged; the RPC fixture now
+also covers an unsolicited response with malformed id and params. The correction concerns
+interpretation of a shortened relay, not a new public decision.

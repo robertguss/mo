@@ -56,6 +56,14 @@ enum abi_type {
     ABI_VALUE_RESULT,
     ABI_VALUES_RESULT,
     ABI_JSON_RESULT,
+    ABI_TEXT_OPTION,
+    ABI_TEXTS,
+    ABI_JSON_OPTION,
+    ABI_RPC_REQUEST,
+    ABI_RPC_ENVELOPE,
+    ABI_RPC_METHOD,
+    ABI_CATALOG,
+    ABI_CATALOG_OPTION,
     ABI_COUNT
 };
 
@@ -169,6 +177,36 @@ static const struct abi_case values_result[] = {{"Ok", 1, {{NULL, ABI_VALUES}}},
 static const struct abi_case json_result[] = {{"Ok", 1, {{NULL, ABI_JSON}}},
                                               {"Error", 1, {{NULL, ABI_VALUE_PROBLEM}}}};
 
+static const struct abi_case text_option[] = {{.name = "None"}, {"Some", 1, {{NULL, ABI_TEXT}}}};
+static const struct abi_case json_option[] = {{.name = "None"}, {"Some", 1, {{NULL, ABI_JSON}}}};
+static const struct abi_case rpc_request[] = {
+    {"Request",
+     4,
+     {{"id", ABI_JSON}, {"id_text", ABI_TEXT}, {"method", ABI_TEXT}, {"params", ABI_JSON}}}};
+static const struct abi_case rpc_envelope[] = {
+    {"Rejected", 1, {{"0", ABI_INT}}},
+    {.name = "WrongVersion"},
+    {.name = "Unsolicited"},
+    {"Notification", 1, {{"params", ABI_JSON}}},
+    {"Message", 1, {{"0", ABI_RPC_REQUEST}}},
+};
+static const struct abi_case rpc_method[] = {
+    {.name = "InvalidParams"},
+    {.name = "UnknownMethod"},
+    {.name = "Initialize"},
+    {.name = "Ping"},
+    {"ListTools", 1, {{"0", ABI_INT}}},
+    {"Call", 2, {{"tool", ABI_INT}, {"arguments", ABI_JSON}}},
+};
+static const struct abi_case catalog[] = {{"Catalog",
+                                           4,
+                                           {{"tools", ABI_JSON_ARRAY},
+                                            {"sizes", ABI_INTS},
+                                            {"image_key", ABI_TEXT},
+                                            {"response_bytes", ABI_INT}}}};
+static const struct abi_case catalog_option[] = {{.name = "None"},
+                                                 {"Some", 1, {{NULL, ABI_CATALOG}}}};
+
 static const struct {
     enum mo_type_kind kind;
     enum abi_type element, value;
@@ -220,6 +258,14 @@ static const struct {
     [ABI_VALUE_RESULT] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = value_result},
     [ABI_VALUES_RESULT] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = values_result},
     [ABI_JSON_RESULT] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = json_result},
+    [ABI_TEXT_OPTION] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = text_option},
+    [ABI_TEXTS] = {.kind = MO_TYPE_LIST, .element = ABI_TEXT},
+    [ABI_JSON_OPTION] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = json_option},
+    [ABI_RPC_REQUEST] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = rpc_request},
+    [ABI_RPC_ENVELOPE] = {.kind = MO_TYPE_CHOICE, .count = 5, .cases = rpc_envelope},
+    [ABI_RPC_METHOD] = {.kind = MO_TYPE_CHOICE, .count = 6, .cases = rpc_method},
+    [ABI_CATALOG] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = catalog},
+    [ABI_CATALOG_OPTION] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = catalog_option},
 };
 
 static bool matches(const struct mo_types *types, uint32_t index, enum abi_type expected,
@@ -268,6 +314,13 @@ static bool valid_abi(const struct mo_image *image) {
         {"Http.bearer_span", 2, {ABI_BYTES, ABI_HEAD}, ABI_SPAN_OPTION},
         {"Http.chunk_size", 3, {ABI_BYTES, ABI_INT, ABI_INT}, ABI_INT_RESULT},
         {"Mcp.catalog", 1, {ABI_MCP_SERVICE}, ABI_JSON},
+        {"Mcp.prepare", 3, {ABI_MCP_SERVICE, ABI_TEXT, ABI_INT}, ABI_CATALOG_OPTION},
+        {"Mcp.page", 3, {ABI_CATALOG, ABI_INT, ABI_JSON}, ABI_JSON_OPTION},
+        {"McpRpc.parse", 2, {ABI_TEXT, ABI_TEXT_OPTION}, ABI_RPC_ENVELOPE},
+        {"McpRpc.method", 3, {ABI_RPC_REQUEST, ABI_TEXTS, ABI_TEXT}, ABI_RPC_METHOD},
+        {"McpRpc.result", 2, {ABI_JSON, ABI_JSON}, ABI_JSON},
+        {"McpRpc.error", 3, {ABI_JSON_OPTION, ABI_INT, ABI_TEXT}, ABI_JSON},
+        {"McpRpc.initialized", 1, {ABI_TEXT}, ABI_JSON},
         {"McpScalar.decode", 3, {ABI_MCP_KIND, ABI_JSON, ABI_INT}, ABI_SCALAR_OPTION},
         {"McpScalar.encode", 1, {ABI_SCALAR}, ABI_JSON},
         {"McpValue.decode",
