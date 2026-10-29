@@ -241,6 +241,9 @@ MO_MUST_USE bool mo_value_bigint(struct mo_heap *process, enum mo_bigint_sign si
 MO_MUST_USE bool mo_value_construct(struct mo_heap *process, uint32_t layout,
                                     const struct mo_cell *fields, uint32_t count,
                                     struct mo_cell *out);
+MO_MUST_USE bool mo_value_product(struct mo_heap *process, uint32_t type,
+                                  const struct mo_cell *fields, uint32_t count,
+                                  struct mo_cell *out);
 MO_MUST_USE bool mo_value_case(struct mo_heap *process, uint32_t type, uint32_t tag,
                                const struct mo_cell *fields, uint32_t count, struct mo_cell *out);
 MO_MUST_USE bool mo_value_list(struct mo_heap *process, uint32_t type,

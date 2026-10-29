@@ -16,6 +16,19 @@ enum mo_protocol_value_status {
     MO_PROTOCOL_VALUE_LIMIT,
 };
 
+struct mo_protocol_values {
+    const struct mo_types *protocol, *service;
+    const struct mo_bytecode_service *descriptor;
+    uint32_t value;
+};
+
+MO_MUST_USE enum mo_protocol_value_status
+mo_protocol_value_pack(const struct mo_protocol_values *types, struct mo_heap *to, uint32_t type,
+                       struct mo_cell value, size_t byte_limit, struct mo_cell *out);
+MO_MUST_USE enum mo_protocol_value_status
+mo_protocol_value_unpack(const struct mo_protocol_values *types, struct mo_heap *to, uint32_t type,
+                         struct mo_cell value, size_t byte_limit, struct mo_cell *out);
+
 MO_MUST_USE enum mo_protocol_value_status
 mo_protocol_scalar_pack(const struct mo_types *protocol, uint32_t scalar, struct mo_heap *to,
                         enum mo_type_kind kind, struct mo_cell value, size_t byte_limit,

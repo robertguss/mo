@@ -86,6 +86,11 @@
   Int payload in microseconds; neither conversion transfers image-local types
   or heap references. Temporary Bytes conversion storage uses `mo_scratch_resize`
   so it shares the destination heap budget.
+- Composite conversion must use the service image's typed equality for Map
+  keys and Set elements. Different accepted wire spellings can become the same
+  value, so JSON equality cannot enforce uniqueness. Destination table
+  cardinality detects that collapse after typed conversion. Product construction
+  uses the heap's indexed layout lookup rather than scanning layouts per value.
 
 ## MO-159 simulation boundaries
 
