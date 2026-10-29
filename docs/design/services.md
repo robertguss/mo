@@ -449,8 +449,8 @@ validated requests have different result variants.
 
 RPC integer IDs retain their original spelling, including `-0`, within D317's
 128-byte limit. String IDs are limited to 128 decoded UTF-8 bytes. Error envelopes
-omit an indeterminate ID. Exact error messages remain caller-supplied pending
-Robert's wording approval.
+omit an indeterminate ID. Exact error messages remain caller-supplied in this
+unit; D325's approved wording belongs to MO-160 part 2.
 
 `Mcp.prepare` checks that every single-tool page fits the supplied response
 ceiling with the worst-case escaped ID and its cursor, when needed. `Mcp.page`
@@ -458,7 +458,10 @@ counts serialized UTF-8 bytes, including the RPC envelope, and omits `nextCursor
 on the last page. These functions take the image key and response ceiling from
 the caller; they do not freeze resource defaults. The listener still needs to
 supply the loaded image key and `mo_version()` and enforce HTTP status mapping.
-The response to notifications with array params remains held for clarification.
+D324 confirms D322 item 10: every notification that passes item 4, including one
+with array params, receives HTTP 202 with an empty body and never runs a tool.
+The regression-list line requesting HTTP 400 was a mistake. This unit returns
+`Notification` for those envelopes; the HTTP mapping belongs to the listener.
 
 ## 10. Done means
 

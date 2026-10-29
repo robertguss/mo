@@ -69,15 +69,14 @@ fn envelopes()
     "notifications/initialized",
     "unknown"
   ]
-    text = Json.Object({
-      "jsonrpc": Json.String("2.0"),
-      "method": Json.String(name),
-      "params": Json.Object({"task": Json.Null, "_meta": Json.Null})
-    }).to_text
-    require(
-      McpRpc.parse(text, Some("2025-11-25")) ==
-        McpRpc.Notification(params: json("{\"task\":null,\"_meta\":null}"))
-    )
+    for params in [json("{\"task\":null,\"_meta\":null}"), json("[null]")]
+      text = Json.Object({
+        "jsonrpc": Json.String("2.0"),
+        "method": Json.String(name),
+        "params": params
+      }).to_text
+      require(McpRpc.parse(text, Some("2025-11-25")) == McpRpc.Notification(params: params))
+    end
   end
 end
 

@@ -22,6 +22,7 @@ refusal reviews; its additional evidence and enforcement are below.
 Class 8 bumped on 2026-10-28 for MO-160's independent service-shape work-bound review.
 Class 9 bumped on 2026-10-28 for MO-160's numeric fuzz corpus directory mismatch.
 Class 6 bumped on 2026-10-29 for MO-160's composite fuzz acceptance oracle.
+Class 12 added on 2026-10-29 for D324's correction to D322's notification regression list.
 
 | # | Class | Evidence | Enforced by | State |
 | --- | --- | --- | --- | --- |
@@ -36,6 +37,7 @@ Class 6 bumped on 2026-10-29 for MO-160's composite fuzz acceptance oracle.
 | 9 | Static drift: clang-format, a module-boundary include, an unchecked result, a fuzz corpus outside its target's directory | #81, #85, #111, #121, MO-160 (numeric seeds used `mcp_number` instead of `fuzz_mcp_number`) | `static` group: `make format-check`, `make deps`, `make tidy`, `ci/check_fuzz_seeds.py`; `fuzz-smoke` also runs seed admission before copying each target's corpus | nightly on main; format-check needs clang-format 14.0.6 |
 | 10 | Boilerplate or wrong verification evidence pasted into PR bodies (Lean 4.29.0, Z3, Valgrind, a build path that doesn't exist) | #84, #89, #90, #91, #92, #95, #96, #98 | nothing (the required hosted `check` was removed 22 Oct) | prose only |
 | 11 | Python caches committed | #102, #104, #105, #106 | `.gitignore` (#112) | enforced |
+| 12 | Decision relays or regression lists contradict the approved rule | MO-160: a relay omitted D322's conditional method qualifier; D322's regression list requested HTTP 400 for array-params notifications despite item 10 requiring 202, corrected by Robert in D324 | `tests/runtime/mcp-rpc-check.mo` requires `Notification` for object and array params before method validation; `docs/design/services.md` records D324's 202 mapping | test-enforced for pure classification; HTTP mapping awaits the listener; prose only for decision-summary consistency |
 
 On 22 Oct Robert removed hosted CI (no required `check`), so rows 3, 4 and 10 now
 depend on agents running `ci/check.sh` groups locally.
@@ -141,3 +143,9 @@ MO-160's owner questioned a JSON-RPC branch after reading a relay that omitted D
 record already made the branch conditional. The parser was unchanged; the RPC fixture now
 also covers an unsolicited response with malformed id and params. The correction concerns
 interpretation of a shortened relay, not a new public decision.
+
+D324 corrected the contradictory HTTP 400 line in D322's regression list, not item 10's
+notification rule. The pure parser was already correct. Its fixture now explicitly requires
+array params to produce `Notification` for every method, including `tools/call`, while
+requests with array params still fail method validation. The listener is not in this unit,
+so these tests do not claim to verify HTTP 202 or an empty wire response.
